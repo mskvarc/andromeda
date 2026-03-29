@@ -1,6 +1,7 @@
 use crate::{
     api::{
         error::{ApiError, NgsiLdError},
+        extractor::{accept::AcceptFormat, context::ContextUrl, entity_query::EntityQuery, jsonld::JsonLd, params::ValidatedQuery},
         response::ngsild::{NgsiLdCollectionResponse, NgsiLdResponse},
         tenant::TenantState,
     },
@@ -9,7 +10,6 @@ use crate::{
     jsonld::ContextSpec,
     service::context_source_forwarding::{ForwardingOperation, merge_query_results, merge_retrieve_results},
 };
-use andromeda_extractor::{accept::AcceptFormat, context::ContextUrl, entity_query::EntityQuery, jsonld::JsonLd, params::ValidatedQuery};
 use axum::{
     Json,
     extract::{OriginalUri, Path},

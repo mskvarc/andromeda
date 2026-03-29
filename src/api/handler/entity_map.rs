@@ -1,9 +1,13 @@
 use crate::{
-    api::{error::ApiError, response::ngsild::NgsiLdResponse, tenant::TenantState},
+    api::{
+        error::ApiError,
+        extractor::{accept::AcceptFormat, context::ContextUrl, entity_query::EntityQuery},
+        response::ngsild::NgsiLdResponse,
+        tenant::TenantState,
+    },
     error::AndromedaError,
     jsonld::ContextSpec,
 };
-use andromeda_extractor::{accept::AcceptFormat, context::ContextUrl, entity_query::EntityQuery};
 use axum::{
     Json,
     extract::{OriginalUri, Path},

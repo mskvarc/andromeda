@@ -1,4 +1,4 @@
-use andromeda_extractor::tenant::{NGSILD_TENANT_HEADER, TenantHeader};
+use crate::api::extractor::tenant::{NGSILD_TENANT_HEADER, TenantHeader};
 use axum::{
     body::Body,
     extract::FromRequestParts,

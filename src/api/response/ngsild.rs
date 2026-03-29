@@ -4,8 +4,11 @@
 //! - `application/json`: @context in Link header, not in body
 //! - `application/ld+json`: @context as URL in response body
 
-use crate::{api::header::insert_jsonld_contexts, jsonld::ContextSpec, service::entity::decode_percent_encoded_uris};
-use andromeda_extractor::accept::ResponseFormat;
+use crate::{
+    api::{extractor::accept::ResponseFormat, header::insert_jsonld_contexts},
+    jsonld::ContextSpec,
+    service::entity::decode_percent_encoded_uris,
+};
 use axum::{
     Json,
     http::{HeaderMap, HeaderValue, StatusCode, header::CONTENT_TYPE},

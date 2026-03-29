@@ -4,7 +4,7 @@
 //! preventing false positives (e.g. `application/json-patch+json` no longer
 //! matches `application/json`).
 
-use crate::error::ExtractorRejection;
+use crate::api::extractor::error::ExtractorRejection;
 use axum::{
     body::Bytes,
     extract::{FromRequest, Request},

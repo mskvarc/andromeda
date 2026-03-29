@@ -1,10 +1,14 @@
 //! POST query handler for the NGSI-LD Temporal API.
 
 use crate::{
-    api::{error::ApiError, response::ngsild::NgsiLdCollectionResponse, tenant::TenantState},
+    api::{
+        error::ApiError,
+        extractor::{accept::AcceptFormat, context::ContextUrl, jsonld::JsonLd},
+        response::ngsild::NgsiLdCollectionResponse,
+        tenant::TenantState,
+    },
     query::temporal::TemporalQueryParameters,
 };
-use andromeda_extractor::{accept::AcceptFormat, context::ContextUrl, jsonld::JsonLd};
 use axum::{
     extract::OriginalUri,
     response::{IntoResponse, Response},

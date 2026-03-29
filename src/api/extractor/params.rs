@@ -1,4 +1,4 @@
-use crate::error::ExtractorRejection;
+use crate::api::extractor::error::ExtractorRejection;
 use axum::{extract::FromRequestParts, http::request::Parts};
 use serde::de::DeserializeOwned;
 

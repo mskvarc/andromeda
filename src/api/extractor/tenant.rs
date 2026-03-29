@@ -1,6 +1,5 @@
+use crate::api::extractor::error::ExtractorRejection;
 use axum::{extract::FromRequestParts, http::request::Parts};
-
-use crate::error::ExtractorRejection;
 
 pub const NGSILD_TENANT_HEADER: &str = "NGSILD-Tenant";
 

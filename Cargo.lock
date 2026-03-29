@@ -72,7 +72,6 @@ dependencies = [
 name = "andromeda"
 version = "0.1.0"
 dependencies = [
- "andromeda-extractor",
  "async-trait",
  "axum",
  "chrono",
@@ -113,23 +112,6 @@ dependencies = [
  "urlencoding",
  "urn",
  "uuid",
-]
-
-[[package]]
-name = "andromeda-extractor"
-version = "0.1.0"
-dependencies = [
- "axum",
- "json-ld-engine",
- "mediatype",
- "ngsi-ld-error",
- "ngsi-ld-query",
- "parse_link_header",
- "serde",
- "serde_json",
- "serde_urlencoded",
- "tokio",
- "tracing",
 ]
 
 [[package]]

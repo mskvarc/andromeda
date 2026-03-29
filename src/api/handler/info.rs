@@ -1,5 +1,9 @@
-use crate::api::{error::ApiError, response::ngsild::NgsiLdResponse, state::AppState};
-use andromeda_extractor::{accept::AcceptFormat, context::ContextUrl};
+use crate::api::{
+    error::ApiError,
+    extractor::{accept::AcceptFormat, context::ContextUrl},
+    response::ngsild::NgsiLdResponse,
+    state::AppState,
+};
 use axum::{
     extract::State,
     response::{IntoResponse, Response},

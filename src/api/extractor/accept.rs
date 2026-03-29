@@ -4,7 +4,7 @@
 //! substring matching, preventing false positives like `application/json-patch+json`
 //! matching `application/json`.
 
-use crate::error::ExtractorRejection;
+use crate::api::extractor::error::ExtractorRejection;
 use axum::{
     extract::FromRequestParts,
     http::{header::ACCEPT, request::Parts},
