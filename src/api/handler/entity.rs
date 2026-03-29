@@ -1,6 +1,6 @@
 use crate::{
     api::{
-        error::{ApiError, NgsiLdError},
+        error::{ApiError, ngsi_ld::NgsiLdError},
         extractor::{accept::AcceptFormat, context::ContextUrl, entity_query::EntityQuery, jsonld::JsonLd, params::ValidatedQuery},
         response::ngsild::{NgsiLdCollectionResponse, NgsiLdResponse},
         tenant::TenantState,

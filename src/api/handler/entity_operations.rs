@@ -18,9 +18,9 @@ use axum::{
 };
 use json_ld_engine::ContextSpec;
 use mediatype::{MediaTypeBuf, names};
-use ngsi_ld_error::{
-    NgsiLdErrorType,
+use crate::api::error::{
     batch::{BatchEntityError, BatchProblemDetail},
+    ngsi_ld::NgsiLdErrorType,
 };
 use ngsi_ld_types::ForwardingMode;
 use serde::Deserialize;

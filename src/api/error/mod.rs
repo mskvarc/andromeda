@@ -1,9 +1,12 @@
+pub mod batch;
+pub mod ngsi_ld;
+
 use axum::{
     http::Uri,
     response::{IntoResponse, Response},
 };
-pub use ngsi_ld_error::{NgsiLdError, NgsiLdErrorType};
 
+use crate::api::error::ngsi_ld::{NgsiLdError, NgsiLdErrorType};
 use crate::error::{AndromedaError, AndromedaErrorKind};
 
 #[derive(Debug)]
@@ -12,21 +15,21 @@ pub struct ApiError {
 }
 
 impl ApiError {
-    pub fn from_error(error: AndromedaError, instance: Uri) -> Self {
-        Self {
+    pub fn from_error(error: AndromedaError, instance: Uri) -> ApiError {
+        ApiError {
             error: error.with_instance(instance),
         }
     }
 }
 
 impl From<AndromedaError> for ApiError {
-    fn from(error: AndromedaError) -> Self {
-        Self { error }
+    fn from(error: AndromedaError) -> ApiError {
+        ApiError { error }
     }
 }
 
 impl From<AndromedaError> for NgsiLdError {
-    fn from(err: AndromedaError) -> Self {
+    fn from(err: AndromedaError) -> NgsiLdError {
         let instance = err.context().instance.clone().unwrap_or_else(|| Uri::from_static("/"));
 
         let error_type = match err.kind() {
@@ -39,16 +42,28 @@ impl From<AndromedaError> for NgsiLdError {
             AndromedaErrorKind::NoMultiTenantSupport => NgsiLdErrorType::NoMultiTenantSupport,
             AndromedaErrorKind::NonexistentTenant => NgsiLdErrorType::NonexistentTenant,
             AndromedaErrorKind::OperationNotSupported => NgsiLdErrorType::OperationNotSupported,
-            AndromedaErrorKind::Repository | AndromedaErrorKind::Json | AndromedaErrorKind::Io | AndromedaErrorKind::Config | AndromedaErrorKind::Internal => {
-                NgsiLdErrorType::InternalError
-            }
+            AndromedaErrorKind::Repository
+            | AndromedaErrorKind::Json
+            | AndromedaErrorKind::Io
+            | AndromedaErrorKind::Config
+            | AndromedaErrorKind::Internal => NgsiLdErrorType::InternalError,
         };
 
         let detail = match err.kind() {
-            AndromedaErrorKind::Repository | AndromedaErrorKind::Json | AndromedaErrorKind::Io | AndromedaErrorKind::Config | AndromedaErrorKind::Internal => {
-                "Internal error".to_string()
-            }
-            _ => err.message().to_string(),
+            AndromedaErrorKind::InvalidRequest
+            | AndromedaErrorKind::BadRequestData
+            | AndromedaErrorKind::NotFound
+            | AndromedaErrorKind::AlreadyExists
+            | AndromedaErrorKind::Conflict
+            | AndromedaErrorKind::LdContextNotAvailable
+            | AndromedaErrorKind::NoMultiTenantSupport
+            | AndromedaErrorKind::NonexistentTenant
+            | AndromedaErrorKind::OperationNotSupported => err.message().to_string(),
+            AndromedaErrorKind::Repository
+            | AndromedaErrorKind::Json
+            | AndromedaErrorKind::Io
+            | AndromedaErrorKind::Config
+            | AndromedaErrorKind::Internal => "Internal error".to_string(),
         };
 
         NgsiLdError::new(error_type, detail, instance)

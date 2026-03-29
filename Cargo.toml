@@ -25,11 +25,11 @@ indexmap = { version = "2.13.0", features = ["serde"] }
 json-ld-engine = { path = "lib/json-ld-engine" }
 json-ld-expandable = { path = "lib/json-ld-expandable" }
 mediatype = "0.21.0"
-ngsi-ld-error = { path = "lib/ngsi-ld-error" }
 ngsi-ld-query = { path = "lib/ngsi-ld-query" }
 ngsi-ld-types = { path = "lib/ngsi-ld-types" }
 parse_link_header = "0.4.0"
 percent-encoding = "2.3.2"
+problem_details = { version = "0.9.0", features = ["axum"] }
 regex = "1.12.3"
 reqwest = { version = "0.13.2", features = ["json"] }
 serde = { version = "1.0.228", features = ["derive"] }
@@ -37,6 +37,7 @@ serde_json = "1.0.149"
 serde_urlencoded = "0.7.1"
 shadow-rs = "1.7.1"
 sqlx = { version = "0.8.6", features = ["runtime-tokio", "postgres", "json", "chrono", "uuid"] }
+strum = { version = "0.27.1", features = ["derive"] }
 thiserror = "2.0.18"
 tokio = { version = "1.50.0", features = ["full"] }
 tower-http = { version = "0.6.8", features = ["normalize-path"] }

@@ -2,8 +2,9 @@ use axum::{
     http::{StatusCode, Uri},
     response::{IntoResponse, Response},
 };
-use ngsi_ld_error::NgsiLdError;
 use ngsi_ld_query::error::QueryError;
+
+use crate::api::error::ngsi_ld::{NgsiLdError, NgsiLdErrorType};
 
 #[derive(Debug)]
 pub enum ExtractorRejection {
@@ -40,11 +41,11 @@ impl IntoResponse for ExtractorRejection {
         match self {
             ExtractorRejection::Empty(status) => status.into_response(),
             ExtractorRejection::InvalidRequest { detail, instance } => {
-                let ngsi = NgsiLdError::new(ngsi_ld_error::NgsiLdErrorType::InvalidRequest, detail, instance);
+                let ngsi = NgsiLdError::new(NgsiLdErrorType::InvalidRequest, detail, instance);
                 ngsi.into_response()
             }
             ExtractorRejection::BadRequestData { detail, instance } => {
-                let ngsi = NgsiLdError::new(ngsi_ld_error::NgsiLdErrorType::BadRequestData, detail, instance);
+                let ngsi = NgsiLdError::new(NgsiLdErrorType::BadRequestData, detail, instance);
                 ngsi.into_response()
             }
         }

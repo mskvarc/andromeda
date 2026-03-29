@@ -5,9 +5,9 @@ use crate::{
     jsonld::ContextSpec,
 };
 use futures::{StreamExt, stream};
-use ngsi_ld_error::{
-    NgsiLdErrorType,
+use crate::api::error::{
     batch::{BatchEntityError, BatchOperationResult, BatchProblemDetail},
+    ngsi_ld::NgsiLdErrorType,
 };
 use ngsi_ld_types::notification::{ChangeEvent, TriggerReason};
 use serde_json::Value;
@@ -299,7 +299,15 @@ fn to_batch_error(entity_id: &str, err: &AndromedaError) -> BatchEntityError {
         AndromedaErrorKind::BadRequestData => NgsiLdErrorType::BadRequestData,
         AndromedaErrorKind::InvalidRequest => NgsiLdErrorType::InvalidRequest,
         AndromedaErrorKind::LdContextNotAvailable => NgsiLdErrorType::LdContextNotAvailable,
-        _ => NgsiLdErrorType::InternalError,
+        AndromedaErrorKind::Conflict => NgsiLdErrorType::Conflict,
+        AndromedaErrorKind::NoMultiTenantSupport => NgsiLdErrorType::NoMultiTenantSupport,
+        AndromedaErrorKind::NonexistentTenant => NgsiLdErrorType::NonexistentTenant,
+        AndromedaErrorKind::OperationNotSupported => NgsiLdErrorType::OperationNotSupported,
+        AndromedaErrorKind::Repository
+        | AndromedaErrorKind::Json
+        | AndromedaErrorKind::Io
+        | AndromedaErrorKind::Config
+        | AndromedaErrorKind::Internal => NgsiLdErrorType::InternalError,
     };
 
     BatchEntityError {
