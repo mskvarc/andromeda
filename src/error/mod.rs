@@ -6,8 +6,7 @@ use sqlx::{Error as SqlxError, migrate::MigrateError};
 use tracing::subscriber::SetGlobalDefaultError;
 use urn::Error as UrnError;
 
-use crate::jsonld::Error as JsonLdError;
-use ngsi_ld_query::error::QueryError;
+use crate::{jsonld::Error as JsonLdError, query::error::QueryError};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AndromedaErrorKind {

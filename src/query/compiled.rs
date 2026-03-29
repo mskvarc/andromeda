@@ -1,4 +1,4 @@
-use crate::{entity::OrderDirection, error::QueryError, q::Expr};
+use crate::query::{entity::OrderDirection, error::QueryError, q::Expr};
 
 #[derive(Debug)]
 pub struct CompiledEntityQuery {
@@ -22,7 +22,7 @@ pub struct CompiledEntityQuery {
 pub struct CompiledOrderTerm {
     pub attr_iri: String,
     pub direction: OrderDirection,
-    /// ICU collation identifier for string sorting (§4.23).
+    /// ICU collation identifier for string sorting (S4.23).
     pub collation: Option<String>,
 }
 

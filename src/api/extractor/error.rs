@@ -1,8 +1,8 @@
+use crate::query::error::QueryError;
 use axum::{
     http::{StatusCode, Uri},
     response::{IntoResponse, Response},
 };
-use ngsi_ld_query::error::QueryError;
 
 use crate::api::error::ngsi_ld::{NgsiLdError, NgsiLdErrorType};
 

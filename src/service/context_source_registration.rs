@@ -1,14 +1,14 @@
 use crate::{
     error::AndromedaError,
     jsonld::{ContextSpec, JsonLdEngine},
+    query::{
+        compiled::{CompiledCsrQuery, CompiledCsrTemporalFilter},
+        csr::CsrQueryParameters,
+        params::SharedQueryParams,
+    },
     repository::context_source_registration::{ContextSourceRegistrationRepository, CreateCsrParams, CsrUpdateFragment, unwrap_geo_property_to_string},
 };
 use chrono::{DateTime, Utc};
-use ngsi_ld_query::{
-    compiled::{CompiledCsrQuery, CompiledCsrTemporalFilter},
-    csr::CsrQueryParameters,
-    params::SharedQueryParams,
-};
 use ngsi_ld_types::notification::{CsrChangeEvent, CsrTriggerReason};
 use serde_json::Value;
 use sqlx::postgres::PgPool;

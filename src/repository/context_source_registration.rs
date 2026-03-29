@@ -1,9 +1,8 @@
 use crate::{
     error::AndromedaError,
-    query::{csr_sql, sql::BindValue},
+    query::{compiled::CompiledCsrQuery, csr_sql, sql::BindValue},
 };
 use chrono::{DateTime, Utc};
-use ngsi_ld_query::compiled::CompiledCsrQuery;
 use ngsi_ld_types::{
     registration::{ContextSourceRegistration, CsrOperation, CsrStatus, ForwardingMode},
     uri::NGSI_LD_URN_NID,

@@ -1,14 +1,14 @@
 use super::{EntityService, extract_attribute_keys, normalize_entity_attributes, unwrap_expanded, validate_attribute_envelopes};
 use crate::{
+    api::error::{
+        batch::{BatchEntityError, BatchOperationResult, BatchProblemDetail},
+        ngsi_ld::NgsiLdErrorType,
+    },
     domain::entity::Entity,
     error::{AndromedaError, AndromedaErrorKind},
     jsonld::ContextSpec,
 };
 use futures::{StreamExt, stream};
-use crate::api::error::{
-    batch::{BatchEntityError, BatchOperationResult, BatchProblemDetail},
-    ngsi_ld::NgsiLdErrorType,
-};
 use ngsi_ld_types::notification::{ChangeEvent, TriggerReason};
 use serde_json::Value;
 use std::collections::HashSet;
@@ -303,11 +303,9 @@ fn to_batch_error(entity_id: &str, err: &AndromedaError) -> BatchEntityError {
         AndromedaErrorKind::NoMultiTenantSupport => NgsiLdErrorType::NoMultiTenantSupport,
         AndromedaErrorKind::NonexistentTenant => NgsiLdErrorType::NonexistentTenant,
         AndromedaErrorKind::OperationNotSupported => NgsiLdErrorType::OperationNotSupported,
-        AndromedaErrorKind::Repository
-        | AndromedaErrorKind::Json
-        | AndromedaErrorKind::Io
-        | AndromedaErrorKind::Config
-        | AndromedaErrorKind::Internal => NgsiLdErrorType::InternalError,
+        AndromedaErrorKind::Repository | AndromedaErrorKind::Json | AndromedaErrorKind::Io | AndromedaErrorKind::Config | AndromedaErrorKind::Internal => {
+            NgsiLdErrorType::InternalError
+        }
     };
 
     BatchEntityError {

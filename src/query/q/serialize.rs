@@ -1,6 +1,6 @@
 //! Serialize a parsed `q` expression back into NGSI-LD query string format.
 
-use super::ast::*;
+use crate::query::q::ast::*;
 use std::fmt::Write;
 
 pub fn serialize(expr: &Expr) -> String {
@@ -137,7 +137,7 @@ fn write_quoted(buf: &mut String, s: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::q::parse;
+    use crate::query::q::parse;
 
     #[test]
     fn roundtrip_simple_compare() {

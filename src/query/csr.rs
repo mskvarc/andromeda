@@ -1,4 +1,4 @@
-use crate::{error::QueryError, params::SharedQueryParams};
+use crate::query::{error::QueryError, params::SharedQueryParams};
 use serde::Deserialize;
 use url::Url;
 use urn::Urn;

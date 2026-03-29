@@ -6,8 +6,10 @@ use axum::{
     response::{IntoResponse, Response},
 };
 
-use crate::api::error::ngsi_ld::{NgsiLdError, NgsiLdErrorType};
-use crate::error::{AndromedaError, AndromedaErrorKind};
+use crate::{
+    api::error::ngsi_ld::{NgsiLdError, NgsiLdErrorType},
+    error::{AndromedaError, AndromedaErrorKind},
+};
 
 #[derive(Debug)]
 pub struct ApiError {
@@ -42,11 +44,9 @@ impl From<AndromedaError> for NgsiLdError {
             AndromedaErrorKind::NoMultiTenantSupport => NgsiLdErrorType::NoMultiTenantSupport,
             AndromedaErrorKind::NonexistentTenant => NgsiLdErrorType::NonexistentTenant,
             AndromedaErrorKind::OperationNotSupported => NgsiLdErrorType::OperationNotSupported,
-            AndromedaErrorKind::Repository
-            | AndromedaErrorKind::Json
-            | AndromedaErrorKind::Io
-            | AndromedaErrorKind::Config
-            | AndromedaErrorKind::Internal => NgsiLdErrorType::InternalError,
+            AndromedaErrorKind::Repository | AndromedaErrorKind::Json | AndromedaErrorKind::Io | AndromedaErrorKind::Config | AndromedaErrorKind::Internal => {
+                NgsiLdErrorType::InternalError
+            }
         };
 
         let detail = match err.kind() {
@@ -59,11 +59,9 @@ impl From<AndromedaError> for NgsiLdError {
             | AndromedaErrorKind::NoMultiTenantSupport
             | AndromedaErrorKind::NonexistentTenant
             | AndromedaErrorKind::OperationNotSupported => err.message().to_string(),
-            AndromedaErrorKind::Repository
-            | AndromedaErrorKind::Json
-            | AndromedaErrorKind::Io
-            | AndromedaErrorKind::Config
-            | AndromedaErrorKind::Internal => "Internal error".to_string(),
+            AndromedaErrorKind::Repository | AndromedaErrorKind::Json | AndromedaErrorKind::Io | AndromedaErrorKind::Config | AndromedaErrorKind::Internal => {
+                "Internal error".to_string()
+            }
         };
 
         NgsiLdError::new(error_type, detail, instance)

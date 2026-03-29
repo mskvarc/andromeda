@@ -8,10 +8,10 @@ use crate::{
     query::{
         compiled::{CompiledEntityQuery, CompiledOrderTerm, GeoQuery},
         entity::EntityQueryParameters,
+        params::SharedQueryParams,
     },
     repository::entity::EntityRepository,
 };
-use ngsi_ld_query::params::SharedQueryParams;
 use serde_json::Value;
 use sqlx::postgres::PgPool;
 use std::collections::{HashMap, HashSet};

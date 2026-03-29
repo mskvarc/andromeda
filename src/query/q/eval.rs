@@ -1,6 +1,6 @@
 //! In-memory evaluation of parsed `q` filter expressions against expanded JSON-LD entities.
 
-use super::ast::*;
+use crate::query::q::ast::*;
 use regex::Regex;
 use serde_json::Value;
 
@@ -45,7 +45,7 @@ fn eval_predicate(pred: &Predicate, obj: &serde_json::Map<String, Value>) -> boo
         }
         Predicate::NotMatchPattern { path, pattern } => {
             let Some(entity_val) = resolve_value(obj, path) else {
-                return true; // attribute doesn't exist → not matching pattern is vacuously true
+                return true; // attribute doesn't exist -> not matching pattern is vacuously true
             };
             match (entity_val_to_string(&entity_val), Regex::new(pattern)) {
                 (Some(s), Ok(re)) => !re.is_match(&s),
@@ -57,7 +57,7 @@ fn eval_predicate(pred: &Predicate, obj: &serde_json::Map<String, Value>) -> boo
 
 /// Resolve the value of an attribute path from an expanded JSON-LD entity object.
 ///
-/// Navigates: `obj[attr][0]` → sub-attrs → `hasValue[0].@value` or `hasObject[0].@id`,
+/// Navigates: `obj[attr][0]` -> sub-attrs -> `hasValue[0].@value` or `hasObject[0].@id`,
 /// then optional value_path for compound values.
 fn resolve_value(obj: &serde_json::Map<String, Value>, path: &AttrPath) -> Option<Value> {
     const HAS_VALUE: &str = "https://uri.etsi.org/ngsi-ld/hasValue";
@@ -189,7 +189,7 @@ fn entity_val_to_string(val: &Value) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::q::parse;
+    use crate::query::q::parse;
 
     fn vehicle_entity() -> Value {
         serde_json::json!([{

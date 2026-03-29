@@ -1,6 +1,5 @@
-use crate::api::extractor::error::ExtractorRejection;
+use crate::{api::extractor::error::ExtractorRejection, query::entity::EntityQueryParameters};
 use axum::{extract::FromRequestParts, http::request::Parts};
-use ngsi_ld_query::entity::EntityQueryParameters;
 
 #[derive(Debug)]
 pub struct EntityQuery(pub EntityQueryParameters);

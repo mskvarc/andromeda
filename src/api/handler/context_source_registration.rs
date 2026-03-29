@@ -7,13 +7,13 @@ use crate::{
         tenant::TenantState,
     },
     jsonld::ContextSpec,
+    query::csr::CsrQueryParameters,
 };
 use axum::{
     extract::{OriginalUri, Path},
     http::StatusCode,
     response::{IntoResponse, Response},
 };
-use ngsi_ld_query::csr::CsrQueryParameters;
 use serde_json::Value;
 use url::{Url, form_urlencoded};
 use urn::Urn;
@@ -95,7 +95,7 @@ pub async fn query(
     context: ContextUrl,
     ValidatedQuery(params): ValidatedQuery<CsrQueryParameters>,
 ) -> Result<Response, ApiError> {
-    use ngsi_ld_query::params::SharedQueryParams;
+    use crate::query::params::SharedQueryParams;
 
     let service = &state.csr;
     let context: ContextSpec = context.into_inner();

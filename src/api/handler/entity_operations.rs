@@ -1,6 +1,10 @@
 use crate::{
     api::{
-        error::ApiError,
+        error::{
+            ApiError,
+            batch::{BatchEntityError, BatchProblemDetail},
+            ngsi_ld::NgsiLdErrorType,
+        },
         extractor::{accept::AcceptFormat, context::ContextUrl, jsonld::JsonLd, params::ValidatedQuery},
         response::ngsild::NgsiLdCollectionResponse,
         tenant::TenantState,
@@ -18,10 +22,6 @@ use axum::{
 };
 use json_ld_engine::ContextSpec;
 use mediatype::{MediaTypeBuf, names};
-use crate::api::error::{
-    batch::{BatchEntityError, BatchProblemDetail},
-    ngsi_ld::NgsiLdErrorType,
-};
 use ngsi_ld_types::ForwardingMode;
 use serde::Deserialize;
 use serde_json::Value;

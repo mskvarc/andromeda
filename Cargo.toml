@@ -25,7 +25,6 @@ indexmap = { version = "2.13.0", features = ["serde"] }
 json-ld-engine = { path = "lib/json-ld-engine" }
 json-ld-expandable = { path = "lib/json-ld-expandable" }
 mediatype = "0.21.0"
-ngsi-ld-query = { path = "lib/ngsi-ld-query" }
 ngsi-ld-types = { path = "lib/ngsi-ld-types" }
 parse_link_header = "0.4.0"
 percent-encoding = "2.3.2"

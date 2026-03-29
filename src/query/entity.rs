@@ -1,4 +1,4 @@
-use crate::{error::QueryError, params::SharedQueryParams};
+use crate::query::{error::QueryError, params::SharedQueryParams};
 use serde::Deserialize;
 use url::Url;
 use urn::Urn;
@@ -51,7 +51,7 @@ pub struct EntityQueryParameters {
     pub split_entities: Option<bool>,
     #[serde(rename = "geometryProperty")]
     pub geometry_property: Option<String>,
-    /// ICU collation identifier for orderBy string sorting (§4.23).
+    /// ICU collation identifier for orderBy string sorting (S4.23).
     pub collation: Option<String>,
 }
 
@@ -93,7 +93,7 @@ impl EntityQueryParameters {
                         if term.is_empty() {
                             return None;
                         }
-                        // Spec §4.23.3: AttrName *1(;directionOp)
+                        // Spec S4.23.3: AttrName *1(;directionOp)
                         // directionOp ::= asc | desc | dist-asc | dist-desc
                         if let Some((attr, dir_str)) = term.split_once(';') {
                             let attr = attr.trim();
@@ -193,9 +193,9 @@ pub struct OrderTerm {
 pub enum OrderDirection {
     Asc,
     Desc,
-    /// Sort by distance in ascending order from the geo query reference geometry (§4.23).
+    /// Sort by distance in ascending order from the geo query reference geometry (S4.23).
     DistAsc,
-    /// Sort by distance in descending order from the geo query reference geometry (§4.23).
+    /// Sort by distance in descending order from the geo query reference geometry (S4.23).
     DistDesc,
 }
 

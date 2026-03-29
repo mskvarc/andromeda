@@ -1,5 +1,4 @@
-use super::ast::*;
-use crate::error::QueryError;
+use crate::query::{error::QueryError, q::ast::*};
 use serde_json::Number;
 
 pub fn parse(input: &str) -> Result<Expr, QueryError> {

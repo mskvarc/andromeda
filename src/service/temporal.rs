@@ -5,6 +5,7 @@ use crate::{
     jsonld::{CompactOptions, ContextSpec, JsonLdEngine},
     query::{
         compiled::GeoQuery,
+        params::SharedQueryParams,
         temporal::{CompiledTemporalQuery, TemporalQueryParameters},
         temporal_sql::{build_stage1_entity_ids, build_temporal_history_query},
     },
@@ -19,7 +20,6 @@ use crate::{
     service::temporal_recorder::TemporalRecorder,
 };
 use chrono::{DateTime, SecondsFormat, Utc};
-use ngsi_ld_query::params::SharedQueryParams;
 use ngsi_ld_types::temporal::TemporalFormat;
 use serde_json::{Value, json};
 use sqlx::Row;
