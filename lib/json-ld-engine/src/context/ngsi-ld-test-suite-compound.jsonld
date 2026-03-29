@@ -1,0 +1,27 @@
+{
+    "@context": [
+        "https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.9.jsonld",
+        {
+            "@version": 1.1,
+            "@vocab": "https://ngsi-ld-test-suite/context#",
+            "Building": "https://ngsi-ld-test-suite/context#Building",
+            "Vehicle": "https://ngsi-ld-test-suite/context#Vehicle",
+            "Bus": "https://ngsi-ld-test-suite/context#Bus",
+            "Parking": "https://ngsi-ld-test-suite/context#Parking",
+            "TouristDestination": "https://ngsi-ld-test-suite/context#TouristDestination",
+            "OffStreetParking": "https://ngsi-ld-test-suite/context#OffStreetParking",
+            "name": "https://ngsi-ld-test-suite/context#name",
+            "subCategory": "https://ngsi-ld-test-suite/context#subCategory",
+            "airQualityLevel": "https://ngsi-ld-test-suite/context#airQualityLevel",
+            "almostFull": "https://ngsi-ld-test-suite/context#almostFull",
+            "speed": "https://ngsi-ld-test-suite/context#speed",
+            "fuelLevel": "https://ngsi-ld-test-suite/context#fuelLevel",
+            "brandName": "https://ngsi-ld-test-suite/context#brandName",
+            "locatedIn": {
+                "@id": "https://ngsi-ld-test-suite/context#locatedIn",
+                "@type": "@id"
+            },
+            "location": "https://ngsi-ld-test-suite/context#location"
+        }
+    ]
+}

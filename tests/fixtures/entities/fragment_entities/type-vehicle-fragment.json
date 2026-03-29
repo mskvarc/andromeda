@@ -1,0 +1,6 @@
+{
+    "type": "Vehicle",
+    "@context": [
+      "https://forge.etsi.org/rep/cim/ngsi-ld-test-suite/-/raw/develop/resources/jsonld-contexts/ngsi-ld-test-suite-compound.jsonld"
+    ]
+}

@@ -1,0 +1,22 @@
+{
+   "added_attribute":[
+      {
+         "type":"Property",
+         "value":120,
+         "observedAt":"2020-09-01T12:03:00Z"
+      },
+      {
+         "type":"Property",
+         "value":80,
+         "observedAt":"2020-09-01T12:05:00Z"
+      },
+      {
+         "type":"Property",
+         "value":100,
+         "observedAt":"2020-09-01T12:07:00Z"
+      }
+   ],
+   "@context":[
+      "https://forge.etsi.org/rep/cim/ngsi-ld-test-suite/-/raw/develop/resources/jsonld-contexts/ngsi-ld-test-suite-compound.jsonld"
+   ]
+}

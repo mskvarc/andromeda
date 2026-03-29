@@ -1,0 +1,20 @@
+[
+  {
+    "id": "urn:ngsi-ld:ContextSourceRegistration:randomUUID",
+    "type": "ContextSourceRegistration",
+    "information": [
+      {
+        "entities": [
+          {
+            "type": "Building"
+          }
+        ]
+      }
+    ],
+    "endpoint": "http://my.csource.org:1026",
+    "mode": "inclusive",
+    "operations": ["federationOps"],
+    "csourceProperty1": "aValue",
+    "csourceProperty2": "anotherValue"
+  }
+]

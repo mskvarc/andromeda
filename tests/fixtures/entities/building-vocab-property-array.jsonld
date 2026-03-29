@@ -1,0 +1,11 @@
+{
+    "id": "urn:ngsi-ld:Building:randomUUID",
+    "type": "Building",
+    "vocabProperty": {
+        "type": "VocabProperty",
+        "vocab": ["monument", "sightseeing"]
+    },
+    "@context": [
+        "https://forge.etsi.org/rep/cim/ngsi-ld-test-suite/-/raw/develop/resources/jsonld-contexts/ngsi-ld-test-suite-compound.jsonld"
+    ]
+}

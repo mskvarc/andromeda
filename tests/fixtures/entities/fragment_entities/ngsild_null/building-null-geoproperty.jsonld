@@ -1,0 +1,9 @@
+{
+  "id": "urn:ngsi-ld:Building:randomUUID",
+  "type": "Building",
+  "location": {
+    "type": "GeoProperty",
+    "value": "urn:ngsi-ld:null"
+  },
+  "@context": "https://forge.etsi.org/rep/cim/ngsi-ld-test-suite/-/raw/develop/resources/jsonld-contexts/ngsi-ld-test-suite-compound.jsonld"
+}

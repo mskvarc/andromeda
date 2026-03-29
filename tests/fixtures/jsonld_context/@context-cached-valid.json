@@ -1,0 +1,6 @@
+{
+    "@context": [
+        "http://smartdatamodels.org/context.jsonld",
+        "https://fiware.github.io/data-models/context.jsonld"
+    ]
+}

@@ -1,0 +1,14 @@
+{
+    "jsonProperty": {
+        "type": "JsonProperty",
+        "json": {
+            "id": "some-id",
+            "type": "some-type",
+            "null": null,
+            "anythingElse": "anything-else"
+        }
+    }, 
+    "@context": [
+        "https://forge.etsi.org/rep/cim/ngsi-ld-test-suite/-/raw/develop/resources/jsonld-contexts/ngsi-ld-test-suite-compound.jsonld"
+    ]
+}

@@ -1,3 +1,38 @@
-fn main() {
-    println!("Hello, world!");
+mod api;
+mod core;
+mod domain;
+mod error;
+mod jsonld;
+mod query;
+mod repository;
+mod response;
+mod server;
+mod service;
+mod tenancy;
+mod transport;
+mod worker;
+
+use crate::error::AndromedaError;
+use core::config::Configuration;
+use tracing::{Level, info};
+use tracing_subscriber::FmtSubscriber;
+
+#[tokio::main]
+async fn main() -> Result<(), AndromedaError> {
+    let config = Configuration::new()?;
+
+    let subscriber = FmtSubscriber::builder().with_max_level(Level::INFO).finish();
+
+    tracing::subscriber::set_global_default(subscriber)?;
+
+    // Set the default core context URL to v1.8 (ETSI test suite expectation)
+    json_ld_engine::set_default_core_context_url(json_ld_engine::core_context::NGSI_LD_CORE_CONTEXT_V18_URL);
+
+    info!("Starting Andromeda...");
+
+    info!("Configuration: {:#?}", config);
+
+    server::run(&config).await?;
+
+    Ok(())
 }

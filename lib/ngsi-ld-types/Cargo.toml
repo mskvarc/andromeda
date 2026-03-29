@@ -1,0 +1,20 @@
+[package]
+name = "ngsi-ld-types"
+version = "0.1.0"
+edition = "2024"
+authors = ["Matej Škvarč <matej.skvarc@senlab.io>"]
+description = "NGSI-LD type system with full serialization support for all three representations"
+
+[dependencies]
+chrono = { version = "0.4.44", features = ["serde"] }
+indexmap = { version = "2.13.0", features = ["serde"] }
+ngsi-ld-value = { path = "../ngsi-ld-value" }
+regex = { version = "1.12.3", features = ["unicode"] }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = { version = "1.0.149", features = ["preserve_order"] }
+thiserror = "2.0.18"
+url = { version = "2.5.8", features = ["serde"] }
+urn = { version = "0.7.0", features = ["serde"] }
+
+[dev-dependencies]
+serde_json = "1.0.149"

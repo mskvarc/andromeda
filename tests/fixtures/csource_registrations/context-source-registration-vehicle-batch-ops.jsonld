@@ -1,0 +1,20 @@
+
+{
+  "id": "urn:ngsi-ld:ContextSourceRegistration:randomUUID",
+  "type": "ContextSourceRegistration",
+  "information": [
+    {
+      "entities": [
+        {
+          "idPattern": "urn:ngsi-ld:Vehicle:*",
+          "type": "Vehicle"
+        }
+        ]
+    }
+  ],
+  "operations": ["redirectionOps", "createBatch", "upsertBatch", "updateBatch", "deleteBatch", "mergeBatch"],
+  "endpoint": "http://my.csource.org:1026/",
+  "@context":[
+    "https://forge.etsi.org/rep/cim/ngsi-ld-test-suite/-/raw/develop/resources/jsonld-contexts/ngsi-ld-test-suite-compound.jsonld"
+ ]
+}

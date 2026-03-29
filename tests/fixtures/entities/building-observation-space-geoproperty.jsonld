@@ -1,0 +1,17 @@
+{
+    "id": "urn:ngsi-ld:Building:randomUUID",
+    "type": "Building",
+    "observationSpace": {
+        "type": "GeoProperty",
+        "value": {
+            "type": "Point",
+            "coordinates": [
+                13.3986,
+                52.5547
+            ]
+        }
+    },
+    "@context": [
+        "https://forge.etsi.org/rep/cim/ngsi-ld-test-suite/-/raw/develop/resources/jsonld-contexts/ngsi-ld-test-suite-compound.jsonld"
+    ]
+}

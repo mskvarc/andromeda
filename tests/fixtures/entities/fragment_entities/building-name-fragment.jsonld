@@ -1,0 +1,10 @@
+{
+  "name": {
+    "type": "Property",
+    "value": "Le Tour Eiffel",
+    "datasetId": "urn:ngsi-ld:Dataset:french-name"
+  },
+  "@context": [
+    "https://forge.etsi.org/rep/cim/ngsi-ld-test-suite/-/raw/develop/resources/jsonld-contexts/ngsi-ld-test-suite-compound.jsonld"
+  ]
+}

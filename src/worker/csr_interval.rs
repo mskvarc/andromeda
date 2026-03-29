@@ -1,0 +1,266 @@
+use crate::{
+    domain::notification::{EndpointTransport, parse_endpoint_transport},
+    repository::{
+        context_source_registration::ContextSourceRegistrationRepository,
+        csource_subscription::CsourceSubscriptionRepository,
+        subscription_store::SubscriptionStore,
+    },
+    transport::mqtt::MqttConnectionManager,
+};
+use chrono::Utc;
+use ngsi_ld_types::{notification::CsourceNotification, subscription::Subscription};
+use serde_json::Value;
+use std::{sync::Arc, time::Duration};
+use tracing::{debug, error, info};
+use uuid::Uuid;
+
+#[async_trait::async_trait]
+impl super::Worker for CsrIntervalWorker {
+    async fn run(self) {
+        CsrIntervalWorker::run(self).await
+    }
+}
+
+pub struct CsrIntervalWorker {
+    sub_repo: CsourceSubscriptionRepository,
+    csr_repo: ContextSourceRegistrationRepository,
+    http_client: reqwest::Client,
+    mqtt_manager: Arc<MqttConnectionManager>,
+    poll_interval: Duration,
+    tenant: crate::tenancy::TenantRef,
+}
+
+impl CsrIntervalWorker {
+    pub fn new(
+        sub_repo: CsourceSubscriptionRepository,
+        csr_repo: ContextSourceRegistrationRepository,
+        mqtt_manager: Arc<MqttConnectionManager>,
+        tenant: crate::tenancy::TenantRef,
+    ) -> Self {
+        Self {
+            sub_repo,
+            csr_repo,
+            http_client: reqwest::ClientBuilder::new().http1_title_case_headers().build().unwrap(),
+            mqtt_manager,
+            poll_interval: Duration::from_secs(1),
+            tenant,
+        }
+    }
+
+    pub async fn run(self) {
+        info!("CsrIntervalWorker starting (poll interval: {:?})", self.poll_interval);
+
+        let mut ticker = tokio::time::interval(self.poll_interval);
+
+        loop {
+            ticker.tick().await;
+
+            let due_subs = match self.sub_repo.find_due_interval_subscriptions().await {
+                Ok(subs) => subs,
+                Err(e) => {
+                    error!("CsrIntervalWorker failed to find due subscriptions: {}", e);
+                    continue;
+                }
+            };
+
+            for sub in due_subs {
+                let csrs = match self.fetch_matching_csrs(&sub).await {
+                    Ok(c) => c,
+                    Err(e) => {
+                        error!("CsrIntervalWorker failed to fetch CSRs for {}: {}", sub.id, e);
+                        if let Err(e) = self.sub_repo.mark_failure(&sub.id).await {
+                            debug!("Failed to mark failure for {}: {}", sub.id, e);
+                        }
+                        continue;
+                    }
+                };
+
+                if csrs.is_empty() {
+                    continue;
+                }
+
+                // Claim slot only when we are about to emit a notification.
+                let claimed = match self.sub_repo.claim_notification_slot(&sub.id, None).await {
+                    Ok(c) => c,
+                    Err(e) => {
+                        debug!("CsrIntervalWorker failed to claim slot for {}: {}", sub.id, e);
+                        continue;
+                    }
+                };
+
+                if !claimed {
+                    continue;
+                }
+
+                let notification = CsourceNotification {
+                    id: format!("urn:ngsi-ld:Notification:{}", Uuid::new_v4()),
+                    type_: "CsourceNotification".to_string(),
+                    subscription_id: sub.id.clone(),
+                    notified_at: Utc::now(),
+                    data: csrs,
+                    trigger_reason: None,
+                };
+
+                let payload = match serde_json::to_value(&notification) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        error!("Failed to serialize CsourceNotification for {}: {}", sub.id, e);
+                        continue;
+                    }
+                };
+
+                let endpoint_uri = &sub.notification.endpoint.uri;
+                let accept = sub.notification.endpoint.accept.as_deref();
+                let jsonld_context = sub.jsonld_context.as_deref();
+
+                let transport = parse_endpoint_transport(endpoint_uri, sub.notification.endpoint.notifier_info.as_deref());
+
+                let success = match transport {
+                    Ok(EndpointTransport::Mqtt(ref config)) => {
+                        let content_type = match accept {
+                            Some("application/ld+json") => "application/ld+json",
+                            Some("application/geo+json") => "application/geo+json",
+                            _ => "application/json",
+                        };
+                        let body = match serde_json::to_vec(&payload) {
+                            Ok(b) => b,
+                            Err(e) => {
+                                debug!("Failed to serialize MQTT payload: {}", e);
+                                continue;
+                            }
+                        };
+                        self.mqtt_manager
+                            .publish(
+                                config,
+                                &body,
+                                content_type,
+                                sub.notification.endpoint.receiver_info.as_deref(),
+                                jsonld_context,
+                                self.tenant.response_header_value(),
+                            )
+                            .await
+                    }
+                    _ => {
+                        crate::transport::http::deliver_http(
+                            &self.http_client,
+                            endpoint_uri,
+                            accept,
+                            None,
+                            jsonld_context,
+                            self.tenant.response_header_value(),
+                            &payload,
+                        )
+                        .await
+                    }
+                };
+
+                if success {
+                    if let Err(e) = self.sub_repo.mark_success(&sub.id).await {
+                        debug!("Failed to mark success for {}: {}", sub.id, e);
+                    }
+                } else {
+                    if let Err(e) = self.sub_repo.mark_failure(&sub.id).await {
+                        debug!("Failed to mark failure for {}: {}", sub.id, e);
+                    }
+                }
+            }
+        }
+    }
+
+    async fn fetch_matching_csrs(&self, sub: &Subscription) -> Result<Vec<Value>, crate::error::AndromedaError> {
+        let mut matching = Vec::new();
+        let page_size: i64 = 500;
+        let mut offset: i64 = 0;
+
+        loop {
+            let (page, total) = self.csr_repo.list(Some(page_size), Some(offset)).await?;
+            if page.is_empty() {
+                break;
+            }
+
+            for csr in page {
+                let csr_value = serde_json::to_value(&csr).map_err(|e| crate::error::AndromedaError::internal(format!("Failed to serialize CSR: {}", e)))?;
+                if matches_csr_for_subscription(&csr_value, sub) {
+                    matching.push(csr_value);
+                }
+            }
+
+            offset += page_size;
+            if offset >= total {
+                break;
+            }
+        }
+
+        Ok(matching)
+    }
+}
+
+fn matches_csr_for_subscription(csr_data: &Value, sub: &Subscription) -> bool {
+    // Entity selector matching
+    if let Some(ref selectors) = sub.entities {
+        let information = csr_data.get("information").and_then(|v| v.as_array());
+        let any_matches = selectors.iter().any(|sel| match information {
+            Some(info_arr) => info_arr.iter().any(|info| {
+                let entities = info.get("entities").and_then(|v| v.as_array());
+                match entities {
+                    Some(ents) => ents.iter().any(|ent| {
+                        let ent_type = ent.get("type").and_then(|v| v.as_str()).unwrap_or("");
+                        if ent_type != sel.type_ {
+                            return false;
+                        }
+                        if let Some(ref id) = sel.id {
+                            let ent_id = ent.get("id").and_then(|v| v.as_str()).unwrap_or("");
+                            if ent_id != id {
+                                return false;
+                            }
+                        }
+                        if let Some(ref pattern) = sel.id_pattern {
+                            if let Ok(re) = regex::Regex::new(pattern) {
+                                let ent_id = ent.get("id").and_then(|v| v.as_str()).unwrap_or("");
+                                if !re.is_match(ent_id) {
+                                    return false;
+                                }
+                            }
+                        }
+                        true
+                    }),
+                    None => false,
+                }
+            }),
+            None => false,
+        });
+
+        if !any_matches {
+            return false;
+        }
+    }
+
+    // Watched attributes matching
+    if let Some(ref watched) = sub.watched_attributes {
+        let watched_set: std::collections::HashSet<&str> = watched.iter().map(|s| s.as_str()).collect();
+        let information = csr_data.get("information").and_then(|v| v.as_array());
+        let any_attr_matches = match information {
+            Some(info_arr) => info_arr.iter().any(|info| {
+                let prop_names: Vec<&str> = info
+                    .get("propertyNames")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect())
+                    .unwrap_or_default();
+                let rel_names: Vec<&str> = info
+                    .get("relationshipNames")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect())
+                    .unwrap_or_default();
+
+                prop_names.iter().any(|n| watched_set.contains(n)) || rel_names.iter().any(|n| watched_set.contains(n))
+            }),
+            None => false,
+        };
+
+        if !any_attr_matches {
+            return false;
+        }
+    }
+
+    true
+}

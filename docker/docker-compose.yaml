@@ -1,0 +1,62 @@
+services:
+  postgres:
+    build:
+      context: postgresql
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: postgres
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
+  mosquitto:
+    image: eclipse-mosquitto:2.0.18-openssl
+    volumes:
+      - ../tests/fixtures/mqtt:/mosquitto/config:ro
+    ports:
+      - "1883:1883"
+    healthcheck:
+      test: ["CMD", "mosquitto_sub", "-t", "$$SYS/#", "-C", "1", "-i", "healthcheck", "-W", "3"]
+      interval: 2s
+      timeout: 5s
+      retries: 10
+
+  mosquitto-auth:
+    image: eclipse-mosquitto:2.0.18-openssl
+    volumes:
+      - ../tests/fixtures/mqtt:/mosquitto/config:ro
+    command: ["mosquitto", "-c", "/mosquitto/config/mosquitto_with_auth.conf"]
+    ports:
+      - "9883:9883"
+    healthcheck:
+      test: ["CMD", "mosquitto_sub", "-t", "$$SYS/#", "-C", "1", "-i", "healthcheck", "-W", "3", "-p", "9883", "-u", "user_with_password", "-P", "password"]
+      interval: 2s
+      timeout: 5s
+      retries: 10
+
+  andromeda:
+    build:
+      context: ..
+      dockerfile: docker/andromeda/Dockerfile
+    ports:
+      - "1056:1056"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command:
+      - "--host"
+      - "0.0.0.0"
+      - "--port"
+      - "1056"
+      - "--database-url"
+      - "postgres://postgres:postgres@postgres:5432/postgres"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:1056/ngsi-ld/v1/entities?type=HealthCheck || exit 1"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
