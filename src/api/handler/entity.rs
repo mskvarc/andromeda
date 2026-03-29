@@ -5,7 +5,10 @@ use crate::{
         response::ngsild::{NgsiLdCollectionResponse, NgsiLdResponse},
         tenant::TenantState,
     },
-    domain::entity::{Entity, EntityPatch},
+    domain::{
+        entity::{Entity, EntityPatch},
+        registration::ForwardingMode,
+    },
     error::AndromedaError,
     jsonld::ContextSpec,
     service::context_source_forwarding::{ForwardingOperation, merge_query_results, merge_retrieve_results},
@@ -16,7 +19,6 @@ use axum::{
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
 };
-use ngsi_ld_types::ForwardingMode;
 use serde::{Deserialize, Deserializer};
 use serde_json::Value;
 use std::collections::HashSet;

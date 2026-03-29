@@ -1,6 +1,9 @@
 use super::{EntityService, extract_attribute_keys, extract_entity_types, normalize_entity_attributes, unwrap_expanded, validate_attribute_envelopes};
-use crate::{error::AndromedaError, jsonld::ContextSpec};
-use ngsi_ld_types::notification::{ChangeEvent, TriggerReason};
+use crate::{
+    domain::notification::{ChangeEvent, TriggerReason},
+    error::AndromedaError,
+    jsonld::ContextSpec,
+};
 use serde_json::Value;
 use urn::Urn;
 
@@ -27,7 +30,7 @@ impl EntityService {
 
         // Load existing entity, apply append, save back
         let mut existing = self.repo.get(&id).await?.ok_or_else(|| AndromedaError::not_found(&id))?;
-        let not_appended = ngsi_ld_types::expanded::append_entity_attrs(&mut existing, &attrs, no_overwrite).map_err(AndromedaError::bad_request_data)?;
+        let not_appended = crate::domain::expanded::append_entity_attrs(&mut existing, &attrs, no_overwrite).map_err(AndromedaError::bad_request_data)?;
         self.repo.save(&id, &existing).await?;
 
         if let Err(e) = self.temporal_recorder.record_entity_attributes(&id, &expanded).await {
@@ -58,7 +61,7 @@ impl EntityService {
         let mut existing = self.repo.get(&id).await?.ok_or_else(|| AndromedaError::not_found(&id))?;
         let previous_attributes = Some(existing.clone());
         let attrs_before: std::collections::HashSet<String> = extract_attribute_keys(&existing).into_iter().collect();
-        let not_updated = ngsi_ld_types::expanded::update_entity_attrs(&mut existing, &attrs).map_err(AndromedaError::bad_request_data)?;
+        let not_updated = crate::domain::expanded::update_entity_attrs(&mut existing, &attrs).map_err(AndromedaError::bad_request_data)?;
         self.repo.save(&id, &existing).await?;
 
         if let Err(e) = self.temporal_recorder.record_entity_attributes(&id, &expanded).await {
@@ -129,7 +132,7 @@ impl EntityService {
         let previous_attributes = Some(existing.clone());
         let attrs_before: std::collections::HashSet<String> = extract_attribute_keys(&existing).into_iter().collect();
 
-        ngsi_ld_types::expanded::partial_update_attr(&mut existing, &attr_iri, dataset_id, &attr_value).map_err(|msg| {
+        crate::domain::expanded::partial_update_attr(&mut existing, &attr_iri, dataset_id, &attr_value).map_err(|msg| {
             if msg.contains("type mismatch") {
                 AndromedaError::bad_request_data(msg)
             } else {
@@ -192,7 +195,7 @@ impl EntityService {
             let _ = self.temporal_recorder.record_attribute_deletion(&id, &attr_iri, dataset_id).await;
         }
 
-        ngsi_ld_types::expanded::delete_attr(&mut existing, &attr_iri, dataset_id, delete_all).map_err(|msg| AndromedaError::not_found(msg))?;
+        crate::domain::expanded::delete_attr(&mut existing, &attr_iri, dataset_id, delete_all).map_err(|msg| AndromedaError::not_found(msg))?;
         self.repo.save(&id, &existing).await?;
 
         let entity_types = self.fetch_entity_types(&id).await;
@@ -222,7 +225,7 @@ impl EntityService {
         // Single fetch: used for showChanges and replacement
         let mut existing = self.repo.get(&id).await?.ok_or_else(|| AndromedaError::not_found(&id))?;
         let previous_attributes = Some(existing.clone());
-        ngsi_ld_types::expanded::replace_attr(&mut existing, &attr_iri, &attr_value).map_err(|msg| AndromedaError::not_found(msg))?;
+        crate::domain::expanded::replace_attr(&mut existing, &attr_iri, &attr_value).map_err(|msg| AndromedaError::not_found(msg))?;
         self.repo.save(&id, &existing).await?;
 
         if let Err(e) = self.temporal_recorder.record_entity_attributes(&id, &expanded).await {

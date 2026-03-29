@@ -18,7 +18,7 @@ use crate::{
         state::{AndromedaState, AppState},
     },
     core::config::Configuration,
-    domain::notification::{CsourceSubscriptionChange, SubscriptionChange},
+    domain::notification::{ChangeEvent, CsourceSubscriptionChange, CsrChangeEvent, SubscriptionChange},
     error::AndromedaError,
     repository::{
         context_source_registration::ContextSourceRegistrationRepository,
@@ -49,7 +49,6 @@ use axum::{
     Router,
     routing::{delete, get, patch, post, put},
 };
-use ngsi_ld_types::notification::{ChangeEvent, CsrChangeEvent};
 use sqlx::postgres::PgPoolOptions;
 use std::sync::Arc;
 use tokio::task::JoinHandle;

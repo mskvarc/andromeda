@@ -5,7 +5,7 @@
 //! functions with no I/O — the caller is responsible for loading and persisting
 //! the entity.
 
-use crate::iri;
+use crate::domain::iri;
 use serde_json::{Map, Value};
 
 // ---------------------------------------------------------------------------
@@ -33,7 +33,9 @@ pub fn instance_is_null_sentinel(instance: &Value) -> bool {
             .is_some_and(|s| s == NULL_SENTINEL || s == NULL_SENTINEL_IRI)
     };
 
-    check_value_null(iri::HAS_VALUE, "@value") || check_value_null(iri::HAS_OBJECT, "@id") || check_value_null(iri::HAS_LANGUAGE_MAP, "@value")
+    check_value_null(iri::HAS_VALUE.as_str(), "@value")
+        || check_value_null(iri::HAS_OBJECT.as_str(), "@id")
+        || check_value_null(iri::HAS_LANGUAGE_MAP.as_str(), "@value")
 }
 
 // ---------------------------------------------------------------------------
@@ -43,7 +45,7 @@ pub fn instance_is_null_sentinel(instance: &Value) -> bool {
 /// Extract the `datasetId` (`@id` value) from an expanded attribute instance.
 pub fn get_instance_dataset_id(instance: &Value) -> Option<String> {
     instance
-        .get(iri::DATASET_ID)
+        .get(iri::DATASET_ID.as_str())
         .and_then(|v| v.as_array())
         .and_then(|arr| arr.first())
         .and_then(|v| v.as_object())
@@ -99,7 +101,7 @@ pub fn extract_scopes(expanded: &Value) -> Vec<String> {
     let Some(obj) = expanded_object_ref(expanded) else {
         return Vec::new();
     };
-    let Some(scope_value) = obj.get(iri::SCOPE) else {
+    let Some(scope_value) = obj.get(iri::SCOPE.as_str()) else {
         return Vec::new();
     };
     match scope_value {
@@ -129,7 +131,7 @@ pub fn extract_location_geojson(expanded: &Value) -> Option<String> {
     let geo_node = location
         .as_array()
         .and_then(|arr| arr.last())
-        .and_then(|inst| inst.get(iri::HAS_VALUE))
+        .and_then(|inst| inst.get(iri::HAS_VALUE.as_str()))
         .and_then(|v| v.as_array())
         .and_then(|arr| arr.first())?;
 
@@ -319,11 +321,6 @@ fn remove_instances_by_dataset(entity_obj: &mut Map<String, Value>, key: &str, d
 
 // ---------------------------------------------------------------------------
 // Entity-level mutation operations
-//
-// Each function takes a mutable expanded entity and applies NGSI-LD merge /
-// append / update / delete semantics.  The caller (service layer) is
-// responsible for loading the entity from the DB beforehand and saving it
-// after.
 // ---------------------------------------------------------------------------
 
 /// NGSI-LD Merge Patch (§5.6.1): deep-merge `patch` into `entity`, handling
@@ -399,7 +396,7 @@ pub fn append_entity_attrs(entity: &mut Value, attrs: &Value, no_overwrite: bool
         }
 
         // Scope: merge arrays with deduplication
-        if key == iri::SCOPE {
+        if key == iri::SCOPE.as_str() {
             if let (Some(Value::Array(existing_scopes)), Some(new_scopes)) = (entity_obj.get_mut(key), value.as_array()) {
                 if no_overwrite {
                     // noOverwrite: add scope values that don't already exist
@@ -495,7 +492,7 @@ pub fn update_entity_attrs(entity: &mut Value, attrs: &Value) -> Result<Vec<Stri
         }
 
         // Scope: only update if already present, otherwise report as not updated
-        if key == iri::SCOPE {
+        if key == iri::SCOPE.as_str() {
             if entity_obj.contains_key(key) {
                 entity_obj.insert(key.clone(), value.clone());
             } else {
@@ -570,7 +567,7 @@ pub fn partial_update_attr(entity: &mut Value, attr_iri: &str, dataset_id: Optio
 
         let found = instances.iter_mut().find(|instance| {
             instance
-                .get(iri::DATASET_ID)
+                .get(iri::DATASET_ID.as_str())
                 .and_then(|v| v.as_array())
                 .and_then(|arr| arr.first())
                 .and_then(|obj| obj.get("@id"))
@@ -669,16 +666,10 @@ pub fn replace_attr(entity: &mut Value, attr_iri: &str, value: &Value) -> Result
 
     let existing = entity_obj.get(attr_iri).ok_or_else(|| format!("Attribute {} not found", attr_iri))?;
 
-    // The new value may be a single instance object or an object wrapping
-    // expanded attribute content.  Determine its datasetId so we can replace
-    // only the matching instance when the attribute is multi-instance.
     let new_ds = get_instance_dataset_id(value);
 
     let existing_instances = existing.as_array();
 
-    // If the existing attribute has multiple instances, replace only the
-    // instance that matches by datasetId (or the default instance when the
-    // replacement carries no datasetId).
     if let Some(instances) = existing_instances {
         let mut new_instances: Vec<Value> = Vec::with_capacity(instances.len());
         let mut replaced = false;
@@ -686,7 +677,6 @@ pub fn replace_attr(entity: &mut Value, attr_iri: &str, value: &Value) -> Result
         for inst in instances {
             let inst_ds = get_instance_dataset_id(inst);
             if inst_ds == new_ds {
-                // Replace this instance with the new value
                 new_instances.push(value.clone());
                 replaced = true;
             } else {
@@ -700,7 +690,6 @@ pub fn replace_attr(entity: &mut Value, attr_iri: &str, value: &Value) -> Result
 
         entity_obj.insert(attr_iri.to_string(), Value::Array(new_instances));
     } else {
-        // Existing value is not an array (unusual) — just wrap the new value
         entity_obj.insert(attr_iri.to_string(), Value::Array(vec![value.clone()]));
     }
 

@@ -1,11 +1,11 @@
 use crate::{
     api::header::{jsonld_context_link, link_header_value},
+    domain::registration::{ContextSourceRegistration, CsrOperation, ForwardingMode},
     error::AndromedaError,
     jsonld::JsonLdEngine,
     repository::context_source_registration::ContextSourceRegistrationRepository,
 };
 use json_ld_engine::ContextSpec;
-use ngsi_ld_types::registration::{ContextSourceRegistration, CsrOperation, ForwardingMode};
 use serde_json::Value;
 use sqlx::postgres::PgPool;
 use tracing::{debug, warn};

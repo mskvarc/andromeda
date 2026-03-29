@@ -1,7 +1,8 @@
 use crate::{
     domain::{
         entity::Entity,
-        notification::{EndpointTransport, parse_endpoint_transport},
+        notification::{EndpointTransport, Notification, parse_endpoint_transport},
+        subscription::Subscription,
     },
     jsonld::{CompactOptions, ContextSpec, JsonLdEngine},
     query::q,
@@ -10,7 +11,6 @@ use crate::{
     transport::mqtt::MqttConnectionManager,
 };
 use chrono::Utc;
-use ngsi_ld_types::{notification::Notification, subscription::Subscription};
 use serde_json::Value;
 use std::{sync::Arc, time::Duration};
 use tracing::{debug, error, info};

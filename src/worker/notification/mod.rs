@@ -2,7 +2,19 @@ pub(crate) mod matching;
 pub(crate) mod payload;
 
 use crate::{
-    domain::notification::{CompiledSelector, CompiledSubscription, EndpointTransport, SubscriptionChange, parse_endpoint_transport},
+    domain::{
+        notification::{
+            ChangeEvent,
+            CompiledSelector,
+            CompiledSubscription,
+            EndpointTransport,
+            Notification,
+            SubscriptionChange,
+            TriggerReason,
+            parse_endpoint_transport,
+        },
+        subscription::{EntitySelector, Subscription, SubscriptionStatus},
+    },
     jsonld::JsonLdEngine,
     query::q,
     repository::{entity::EntityRepository, subscription::SubscriptionRepository, subscription_store::SubscriptionStore},
@@ -10,10 +22,6 @@ use crate::{
     transport::mqtt::MqttConnectionManager,
 };
 use chrono::{SecondsFormat, Utc};
-use ngsi_ld_types::{
-    notification::{ChangeEvent, Notification, TriggerReason},
-    subscription::{EntitySelector, Subscription, SubscriptionStatus},
-};
 use regex::Regex;
 use serde_json::Value;
 use std::{

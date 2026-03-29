@@ -9,7 +9,7 @@ use crate::{
         response::ngsild::NgsiLdCollectionResponse,
         tenant::TenantState,
     },
-    domain::entity::Entity,
+    domain::{entity::Entity, registration::ForwardingMode},
     error::AndromedaError,
     query::entity::EntityQueryParameters,
 };
@@ -22,7 +22,6 @@ use axum::{
 };
 use json_ld_engine::ContextSpec;
 use mediatype::{MediaTypeBuf, names};
-use ngsi_ld_types::ForwardingMode;
 use serde::Deserialize;
 use serde_json::Value;
 

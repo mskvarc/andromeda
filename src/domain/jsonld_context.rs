@@ -1,5 +1,5 @@
+use crate::domain::serde_helpers;
 use chrono::{DateTime, Utc};
-use ngsi_ld_types::time_format;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::fmt;
@@ -44,11 +44,11 @@ pub struct ContextMetadata {
     pub url: Option<String>,
     pub local_id: String,
     pub kind: ContextKind,
-    #[serde(with = "time_format::rfc3339")]
+    #[serde(with = "serde_helpers::rfc3339")]
     pub created_at: DateTime<Utc>,
-    #[serde(with = "time_format::rfc3339_option")]
+    #[serde(with = "serde_helpers::rfc3339_option")]
     pub expires_at: Option<DateTime<Utc>>,
-    #[serde(with = "time_format::rfc3339")]
+    #[serde(with = "serde_helpers::rfc3339")]
     pub last_usage: DateTime<Utc>,
     pub number_of_hits: i32,
     pub extra_info: Option<Value>,

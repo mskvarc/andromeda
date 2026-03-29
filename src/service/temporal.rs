@@ -1,6 +1,7 @@
 //! Service layer for the NGSI-LD Temporal API.
 
 use crate::{
+    domain::temporal::TemporalFormat,
     error::AndromedaError,
     jsonld::{CompactOptions, ContextSpec, JsonLdEngine},
     query::{
@@ -20,7 +21,6 @@ use crate::{
     service::temporal_recorder::TemporalRecorder,
 };
 use chrono::{DateTime, SecondsFormat, Utc};
-use ngsi_ld_types::temporal::TemporalFormat;
 use serde_json::{Value, json};
 use sqlx::Row;
 use std::sync::Arc;
@@ -452,7 +452,7 @@ impl TemporalService {
         for attr_iri in aggr_data.keys() {
             let mut skeleton = serde_json::Map::new();
             skeleton.insert("@id".to_string(), json!(entity_id));
-            skeleton.insert(attr_iri.clone(), json!([{"@type": [ngsi_ld_types::iri::PROPERTY]}]));
+            skeleton.insert(attr_iri.clone(), json!([{"@type": [crate::domain::iri::PROPERTY.as_str()]}]));
             if let Ok(compacted) = self.engine.compact(Value::Object(skeleton), context, CompactOptions::default()).await {
                 if let Some(obj) = compacted.as_object() {
                     for key in obj.keys() {

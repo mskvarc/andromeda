@@ -1,8 +1,16 @@
 pub mod attribute;
+pub mod attribute_type;
 pub mod entity;
 pub mod entity_map;
+pub mod expanded;
+pub mod iri;
 pub mod jsonld_context;
 pub mod notification;
+pub mod registration;
+pub mod response_format;
+pub mod serde_helpers;
 pub mod snapshot;
+pub mod subscription;
 pub mod temporal;
 pub mod types;
+pub mod uri;

@@ -2,9 +2,8 @@
 //!
 //! Records attribute history whenever entities are created or modified.
 
-use crate::{error::AndromedaError, repository::temporal::TemporalRepository};
+use crate::{domain::iri, error::AndromedaError, repository::temporal::TemporalRepository};
 use chrono::{DateTime, Utc};
-use ngsi_ld_types::iri;
 use serde_json::Value;
 use std::sync::Arc;
 
@@ -12,13 +11,13 @@ use std::sync::Arc;
 ///
 /// IMPORTANT: This array MUST be kept sorted for binary_search.
 const NGSI_LD_SYSTEM_ATTRS: &[&str] = &[
-    iri::CREATED_AT,
-    iri::DATASET_ID,
-    iri::DELETED_AT,
-    iri::INSTANCE_ID,
-    iri::MODIFIED_AT,
-    iri::OBSERVED_AT,
-    iri::UNIT_CODE,
+    iri::CREATED_AT.as_str(),
+    iri::DATASET_ID.as_str(),
+    iri::DELETED_AT.as_str(),
+    iri::INSTANCE_ID.as_str(),
+    iri::MODIFIED_AT.as_str(),
+    iri::OBSERVED_AT.as_str(),
+    iri::UNIT_CODE.as_str(),
 ];
 
 /// Named parameters for temporal value storage, replacing the 7-element tuple.
@@ -73,14 +72,14 @@ impl TemporalRecorder {
             }
 
             // Handle scope specially: scope entries are @value nodes, not typed attribute instances
-            if attr_name == iri::SCOPE {
+            if attr_name == iri::SCOPE.as_str() {
                 if let Some(scope_arr) = attr_value.as_array() {
                     for scope_entry in scope_arr {
                         if let Some(scope_val) = scope_entry.as_object().and_then(|o| o.get("@value")).and_then(|v| v.as_str()) {
                             // Record as a synthetic Property-like entry
                             let synthetic = serde_json::json!({
-                                "@type": [iri::PROPERTY],
-                                iri::HAS_VALUE: [{"@value": scope_val}]
+                                "@type": [iri::PROPERTY.as_str()],
+                                iri::HAS_VALUE.as_str(): [{"@value": scope_val}]
                             });
                             match self.record_attribute_instance(entity_id, attr_name, &synthetic).await {
                                 Ok(()) => {}
@@ -242,10 +241,12 @@ fn is_ngsi_ld_attribute_instance(obj: &serde_json::Map<String, Value>) -> bool {
     };
     types.iter().any(|t| {
         t.as_str().is_some_and(|s| {
-            matches!(
-                s,
-                iri::PROPERTY | iri::RELATIONSHIP | iri::GEO_PROPERTY | iri::VOCAB_PROPERTY | iri::LANGUAGE_PROPERTY | iri::JSON_PROPERTY
-            )
+            s == iri::PROPERTY.as_str()
+                || s == iri::RELATIONSHIP.as_str()
+                || s == iri::GEO_PROPERTY.as_str()
+                || s == iri::VOCAB_PROPERTY.as_str()
+                || s == iri::LANGUAGE_PROPERTY.as_str()
+                || s == iri::JSON_PROPERTY.as_str()
         })
     })
 }
@@ -256,14 +257,18 @@ fn detect_attribute_type(instance: &Value) -> &'static str {
 
     for t in types {
         if let Some(s) = t.as_str() {
-            match s {
-                iri::PROPERTY => return iri::PROPERTY_SHORT,
-                iri::RELATIONSHIP => return iri::RELATIONSHIP_SHORT,
-                iri::GEO_PROPERTY => return iri::GEO_PROPERTY_SHORT,
-                iri::VOCAB_PROPERTY => return iri::VOCAB_PROPERTY_SHORT,
-                iri::LANGUAGE_PROPERTY => return iri::LANGUAGE_PROPERTY_SHORT,
-                iri::JSON_PROPERTY => return iri::JSON_PROPERTY_SHORT,
-                _ => {}
+            if s == iri::PROPERTY.as_str() {
+                return iri::PROPERTY_SHORT;
+            } else if s == iri::RELATIONSHIP.as_str() {
+                return iri::RELATIONSHIP_SHORT;
+            } else if s == iri::GEO_PROPERTY.as_str() {
+                return iri::GEO_PROPERTY_SHORT;
+            } else if s == iri::VOCAB_PROPERTY.as_str() {
+                return iri::VOCAB_PROPERTY_SHORT;
+            } else if s == iri::LANGUAGE_PROPERTY.as_str() {
+                return iri::LANGUAGE_PROPERTY_SHORT;
+            } else if s == iri::JSON_PROPERTY.as_str() {
+                return iri::JSON_PROPERTY_SHORT;
             }
         }
     }
@@ -323,7 +328,7 @@ fn extract_typed_value(instance: &Value, attribute_type: &str) -> Result<TypedVa
     match attribute_type {
         iri::RELATIONSHIP_SHORT => {
             let uri = instance
-                .get(iri::HAS_OBJECT)
+                .get(iri::HAS_OBJECT.as_str())
                 .and_then(|v| v.as_array())
                 .and_then(|arr| arr.first())
                 .and_then(|obj| obj.get("@id"))
@@ -333,7 +338,7 @@ fn extract_typed_value(instance: &Value, attribute_type: &str) -> Result<TypedVa
         }
         iri::GEO_PROPERTY_SHORT => {
             let geo_node = instance
-                .get(iri::HAS_VALUE)
+                .get(iri::HAS_VALUE.as_str())
                 .and_then(|v| v.as_array())
                 .and_then(|arr| arr.first())
                 .ok_or_else(|| AndromedaError::bad_request_data("GeoProperty missing value"))?;
@@ -359,7 +364,7 @@ fn extract_typed_value(instance: &Value, attribute_type: &str) -> Result<TypedVa
         iri::VOCAB_PROPERTY_SHORT => {
             // VocabProperty uses hasVocab with @id nodes
             let arr = instance
-                .get(iri::HAS_VOCAB)
+                .get(iri::HAS_VOCAB.as_str())
                 .and_then(|v| v.as_array())
                 .ok_or_else(|| AndromedaError::bad_request_data("VocabProperty missing vocab value"))?;
             if arr.len() > 1 {
@@ -378,14 +383,14 @@ fn extract_typed_value(instance: &Value, attribute_type: &str) -> Result<TypedVa
         iri::LANGUAGE_PROPERTY_SHORT => {
             // LanguageProperty uses hasLanguageMap with @language containers
             let lang_map = instance
-                .get(iri::HAS_LANGUAGE_MAP)
+                .get(iri::HAS_LANGUAGE_MAP.as_str())
                 .ok_or_else(|| AndromedaError::bad_request_data("LanguageProperty missing languageMap"))?;
             Ok(TypedValue::Object(lang_map.clone()))
         }
         iri::JSON_PROPERTY_SHORT => {
             // JsonProperty uses hasJSON with @json typed value
             let json_val = instance
-                .get(iri::HAS_JSON)
+                .get(iri::HAS_JSON.as_str())
                 .and_then(|v| v.as_array())
                 .and_then(|arr| arr.first())
                 .and_then(|obj| obj.get("@value"))
@@ -395,7 +400,7 @@ fn extract_typed_value(instance: &Value, attribute_type: &str) -> Result<TypedVa
         _ => {
             // Property — uses hasValue
             let has_value = instance
-                .get(iri::HAS_VALUE)
+                .get(iri::HAS_VALUE.as_str())
                 .and_then(|v| v.as_array())
                 .and_then(|arr| arr.first())
                 .ok_or_else(|| AndromedaError::bad_request_data("Property missing value"))?;
@@ -404,7 +409,7 @@ fn extract_typed_value(instance: &Value, attribute_type: &str) -> Result<TypedVa
             if let Some(value) = has_value.get("@value") {
                 let type_hint = has_value.get("@type").and_then(|t| t.as_str());
 
-                if type_hint == Some(iri::DATETIME_TYPE) || type_hint == Some("http://www.w3.org/2001/XMLSchema#dateTime") {
+                if type_hint == Some(iri::DATETIME_TYPE.as_str()) || type_hint == Some("http://www.w3.org/2001/XMLSchema#dateTime") {
                     if let Some(s) = value.as_str() {
                         return Ok(TypedValue::DateTime(s.to_string()));
                     }
@@ -490,7 +495,7 @@ pub(crate) fn extract_coordinates(value: &Value) -> Value {
 
 fn extract_observed_at(instance: &Value) -> Option<String> {
     instance
-        .get(iri::OBSERVED_AT)
+        .get(iri::OBSERVED_AT.as_str())
         .and_then(|v| v.as_array())
         .and_then(|arr| arr.first())
         .and_then(|obj| obj.get("@value"))
@@ -500,7 +505,7 @@ fn extract_observed_at(instance: &Value) -> Option<String> {
 
 fn extract_dataset_id(instance: &Value) -> Option<String> {
     instance
-        .get(iri::DATASET_ID)
+        .get(iri::DATASET_ID.as_str())
         .and_then(|v| v.as_array())
         .and_then(|arr| arr.first())
         .and_then(|obj| obj.get("@id"))
@@ -510,7 +515,7 @@ fn extract_dataset_id(instance: &Value) -> Option<String> {
 
 fn extract_or_generate_instance_id(instance: &Value) -> String {
     instance
-        .get(iri::INSTANCE_ID)
+        .get(iri::INSTANCE_ID.as_str())
         .and_then(|v| v.as_array())
         .and_then(|arr| arr.first())
         .and_then(|obj| obj.get("@id"))
@@ -527,14 +532,14 @@ fn extract_or_generate_instance_id(instance: &Value) -> String {
 const METADATA_SKIP_KEYS: &[&str] = &[
     "@id",
     "@type",
-    iri::DATASET_ID,
-    iri::HAS_JSON,
-    iri::HAS_LANGUAGE_MAP,
-    iri::HAS_OBJECT,
-    iri::HAS_VALUE,
-    iri::HAS_VOCAB,
-    iri::INSTANCE_ID,
-    iri::OBSERVED_AT,
+    iri::DATASET_ID.as_str(),
+    iri::HAS_JSON.as_str(),
+    iri::HAS_LANGUAGE_MAP.as_str(),
+    iri::HAS_OBJECT.as_str(),
+    iri::HAS_VALUE.as_str(),
+    iri::HAS_VOCAB.as_str(),
+    iri::INSTANCE_ID.as_str(),
+    iri::OBSERVED_AT.as_str(),
 ];
 
 fn collect_metadata(instance: &Value) -> Option<Value> {

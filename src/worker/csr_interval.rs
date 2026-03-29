@@ -1,5 +1,8 @@
 use crate::{
-    domain::notification::{EndpointTransport, parse_endpoint_transport},
+    domain::{
+        notification::{CsourceNotification, EndpointTransport, parse_endpoint_transport},
+        subscription::Subscription,
+    },
     repository::{
         context_source_registration::ContextSourceRegistrationRepository,
         csource_subscription::CsourceSubscriptionRepository,
@@ -8,7 +11,6 @@ use crate::{
     transport::mqtt::MqttConnectionManager,
 };
 use chrono::Utc;
-use ngsi_ld_types::{notification::CsourceNotification, subscription::Subscription};
 use serde_json::Value;
 use std::{sync::Arc, time::Duration};
 use tracing::{debug, error, info};

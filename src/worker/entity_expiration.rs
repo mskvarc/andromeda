@@ -1,7 +1,9 @@
 //! Background worker that periodically deletes entities whose expiresAt has passed (§4.22).
 
-use crate::repository::entity::EntityRepository;
-use ngsi_ld_types::notification::{ChangeEvent, TriggerReason};
+use crate::{
+    domain::notification::{ChangeEvent, TriggerReason},
+    repository::entity::EntityRepository,
+};
 use std::time::Duration;
 use tokio::sync::broadcast;
 use tracing::{error, info};

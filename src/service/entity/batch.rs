@@ -4,12 +4,14 @@ use crate::{
         batch::{BatchEntityError, BatchOperationResult, BatchProblemDetail},
         ngsi_ld::NgsiLdErrorType,
     },
-    domain::entity::Entity,
+    domain::{
+        entity::Entity,
+        notification::{ChangeEvent, TriggerReason},
+    },
     error::{AndromedaError, AndromedaErrorKind},
     jsonld::ContextSpec,
 };
 use futures::{StreamExt, stream};
-use ngsi_ld_types::notification::{ChangeEvent, TriggerReason};
 use serde_json::Value;
 use std::collections::HashSet;
 use urn::Urn;
@@ -105,7 +107,7 @@ impl EntityService {
         if update_mode {
             // Safe to unwrap: we checked `existing.is_some()` above.
             let mut existing = existing.unwrap();
-            ngsi_ld_types::expanded::merge_entity(&mut existing, &expanded).map_err(|msg| to_batch_error(&id, &AndromedaError::internal(msg)))?;
+            crate::domain::expanded::merge_entity(&mut existing, &expanded).map_err(|msg| to_batch_error(&id, &AndromedaError::internal(msg)))?;
             self.repo.save(&id, &existing).await.map_err(|e| to_batch_error(&id, &e))?;
         } else {
             self.repo.save(&id, &expanded).await.map_err(|e| to_batch_error(&id, &e))?;
@@ -163,7 +165,7 @@ impl EntityService {
         if no_overwrite {
             let mut existing = existing;
             let skipped = has_overlapping_attrs(&existing, &attrs);
-            ngsi_ld_types::expanded::append_entity_attrs(&mut existing, &attrs, true).map_err(|msg| to_batch_error(&id, &AndromedaError::internal(msg)))?;
+            crate::domain::expanded::append_entity_attrs(&mut existing, &attrs, true).map_err(|msg| to_batch_error(&id, &AndromedaError::internal(msg)))?;
             self.repo.save(&id, &existing).await.map_err(|e| to_batch_error(&id, &e))?;
             if skipped {
                 return Err(to_batch_error(
@@ -173,8 +175,8 @@ impl EntityService {
             }
         } else {
             let mut existing = existing;
-            ngsi_ld_types::expanded::update_entity_attrs(&mut existing, &attrs).map_err(|msg| to_batch_error(&id, &AndromedaError::internal(msg)))?;
-            ngsi_ld_types::expanded::append_entity_attrs(&mut existing, &attrs, false).map_err(|msg| to_batch_error(&id, &AndromedaError::internal(msg)))?;
+            crate::domain::expanded::update_entity_attrs(&mut existing, &attrs).map_err(|msg| to_batch_error(&id, &AndromedaError::internal(msg)))?;
+            crate::domain::expanded::append_entity_attrs(&mut existing, &attrs, false).map_err(|msg| to_batch_error(&id, &AndromedaError::internal(msg)))?;
             self.repo.save(&id, &existing).await.map_err(|e| to_batch_error(&id, &e))?;
         }
 
@@ -225,7 +227,7 @@ impl EntityService {
             .map_err(|e| to_batch_error(&id, &e))?
             .ok_or_else(|| to_batch_error(&id, &AndromedaError::not_found(&id)))?;
 
-        ngsi_ld_types::expanded::merge_entity(&mut existing, &expanded).map_err(|msg| to_batch_error(&id, &AndromedaError::internal(msg)))?;
+        crate::domain::expanded::merge_entity(&mut existing, &expanded).map_err(|msg| to_batch_error(&id, &AndromedaError::internal(msg)))?;
         self.repo.save(&id, &existing).await.map_err(|e| to_batch_error(&id, &e))?;
 
         if let Err(e) = self.temporal_recorder.record_entity_attributes(&id, &expanded).await {

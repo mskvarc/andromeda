@@ -7,14 +7,16 @@ pub use discovery::EntityDiscoveryService;
 pub use query::EntityQueryService;
 
 use crate::{
-    domain::entity::{Entity, EntityPatch},
+    domain::{
+        entity::{Entity, EntityPatch},
+        notification::{ChangeEvent, TriggerReason},
+    },
     error::AndromedaError,
     jsonld::{ContextSpec, JsonLdEngine},
     repository::{entity::EntityRepository, temporal::TemporalRepository},
     service::temporal_recorder::TemporalRecorder,
 };
 use chrono::{DateTime, SecondsFormat, Utc};
-use ngsi_ld_types::notification::{ChangeEvent, TriggerReason};
 use serde_json::{Map, Value};
 use sqlx::postgres::PgPool;
 use std::{collections::HashSet, sync::Arc};
@@ -104,7 +106,7 @@ impl EntityService {
         normalize_entity_attributes(&mut patch_json);
         let expanded = self.engine.expand(patch_json, context).await?;
         validate_attribute_envelopes(&expanded)?;
-        ngsi_ld_types::expanded::merge_entity(&mut existing, &expanded).map_err(AndromedaError::internal)?;
+        crate::domain::expanded::merge_entity(&mut existing, &expanded).map_err(AndromedaError::internal)?;
         self.repo.save(&id, &existing).await?;
 
         if let Err(e) = self.temporal_recorder.record_entity_attributes(&id, &expanded).await {
@@ -301,14 +303,14 @@ fn is_explicit_attribute_object(obj: &Map<String, Value>) -> bool {
 }
 
 fn is_known_attribute_type(attr_type: &str) -> bool {
-    attr_type.parse::<ngsi_ld_types::AttributeType>().is_ok()
+    attr_type.parse::<crate::domain::attribute_type::AttributeType>().is_ok()
 }
 
 fn normalize_explicit_attribute_object(obj: &mut Map<String, Value>) {
     let Some(attr_type_str) = obj.get("type").and_then(Value::as_str) else {
         return;
     };
-    let reserved = match attr_type_str.parse::<ngsi_ld_types::AttributeType>() {
+    let reserved = match attr_type_str.parse::<crate::domain::attribute_type::AttributeType>() {
         Ok(t) => t.reserved_fields(),
         Err(_) => return,
     };
@@ -353,7 +355,7 @@ pub(crate) fn decode_percent_encoded_uris(value: &mut Value) {
     }
 }
 
-use ngsi_ld_types::iri;
+use crate::domain::iri;
 
 fn validate_attribute_envelopes(expanded: &Value) -> Result<(), AndromedaError> {
     let entities = match expanded {
@@ -392,11 +394,11 @@ fn validate_attr_instances(attr_name: &str, value: &Value) -> Result<(), Androme
             .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect())
             .unwrap_or_default();
 
-        let is_property = types.iter().any(|t| *t == iri::PROPERTY);
-        let is_geo_property = types.iter().any(|t| *t == iri::GEO_PROPERTY);
-        let is_relationship = types.iter().any(|t| *t == iri::RELATIONSHIP);
+        let is_property = types.iter().any(|t| *t == iri::PROPERTY.as_str());
+        let is_geo_property = types.iter().any(|t| *t == iri::GEO_PROPERTY.as_str());
+        let is_relationship = types.iter().any(|t| *t == iri::RELATIONSHIP.as_str());
 
-        if (is_property || is_geo_property) && !obj.contains_key(iri::HAS_VALUE) {
+        if (is_property || is_geo_property) && !obj.contains_key(iri::HAS_VALUE.as_str()) {
             let short_type = if is_geo_property { "GeoProperty" } else { "Property" };
             return Err(AndromedaError::bad_request_data(format!(
                 "{} '{}' is missing required field 'value'",
@@ -404,7 +406,7 @@ fn validate_attr_instances(attr_name: &str, value: &Value) -> Result<(), Androme
             )));
         }
 
-        if is_relationship && !obj.contains_key(iri::HAS_OBJECT) {
+        if is_relationship && !obj.contains_key(iri::HAS_OBJECT.as_str()) {
             return Err(AndromedaError::bad_request_data(format!(
                 "Relationship '{}' is missing required field 'object'",
                 attr_name

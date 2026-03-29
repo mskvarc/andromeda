@@ -5,14 +5,16 @@
 //! delegated to the [`SubscriptionVariant`] trait.
 
 use crate::{
-    domain::notification::parse_endpoint_transport,
+    domain::{
+        notification::parse_endpoint_transport,
+        subscription::{Subscription, SubscriptionStatus},
+    },
     error::AndromedaError,
     jsonld::{ContextSpec, JsonLdEngine},
     repository::subscription_store::{StatusUpdateFields, SubscriptionStore, compute_updated_status},
     service::subscription_core,
 };
 use async_trait::async_trait;
-use ngsi_ld_types::subscription::{Subscription, SubscriptionStatus};
 use serde_json::Value;
 
 // ---------------------------------------------------------------------------

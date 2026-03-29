@@ -1,7 +1,9 @@
 //! Query parameters and compiled representation for the NGSI-LD Temporal API.
 
-use crate::query::{compiled::GeoQuery, error::QueryError, params::SharedQueryParams, q::Expr};
-use ngsi_ld_types::temporal::{AggrMethod, TemporalFormat, TimeProp, TimeRel};
+use crate::{
+    domain::temporal::{AggrMethod, TemporalFormat, TimeProp, TimeRel},
+    query::{compiled::GeoQuery, error::QueryError, params::SharedQueryParams, q::Expr},
+};
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]
@@ -237,7 +239,7 @@ pub struct CompiledTemporalQuery {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ngsi_ld_types::temporal::{AggrMethod, TemporalFormat, TimeProp, TimeRel};
+    use crate::domain::temporal::{AggrMethod, TemporalFormat, TimeProp, TimeRel};
 
     fn params_from_query(query: &str) -> TemporalQueryParameters {
         serde_urlencoded::from_str(query).unwrap()

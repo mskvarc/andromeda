@@ -1,15 +1,15 @@
 //! SQL builder for temporal queries (Stage 1: entity IDs, Stage 2: history per entity).
 
 use crate::{
+    domain::{
+        iri,
+        temporal::{AggrMethod, TemporalFormat, TimeProp, TimeRel},
+    },
     error::AndromedaError,
     query::{
         sql::{BindValue, build_entity_filter_conditions},
         temporal::CompiledTemporalQuery,
     },
-};
-use ngsi_ld_types::{
-    iri,
-    temporal::{AggrMethod, TemporalFormat, TimeProp, TimeRel},
 };
 
 fn time_column_expr_stage1(timeproperty: TimeProp) -> &'static str {
@@ -53,7 +53,7 @@ pub fn build_stage1_entity_ids(
 
     // datasetId filter: handle @none for default instance
     if !compiled.dataset_id_filter.is_empty() {
-        let has_none = compiled.dataset_id_filter.iter().any(|s| s == iri::NONE);
+        let has_none = compiled.dataset_id_filter.iter().any(|s| s == iri::NONE.as_str());
         let non_none: Vec<String> = compiled.dataset_id_filter.iter().filter(|s| *s != "@none").cloned().collect();
 
         if has_none && non_none.is_empty() {
@@ -201,7 +201,7 @@ pub fn build_temporal_history_query(
 
     // datasetId filter
     if !compiled.dataset_id_filter.is_empty() {
-        let has_none = compiled.dataset_id_filter.iter().any(|s| s == iri::NONE);
+        let has_none = compiled.dataset_id_filter.iter().any(|s| s == iri::NONE.as_str());
         let non_none: Vec<String> = compiled.dataset_id_filter.iter().filter(|s| *s != "@none").cloned().collect();
 
         if has_none && non_none.is_empty() {

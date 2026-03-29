@@ -1,12 +1,12 @@
 use crate::{
+    domain::{
+        registration::{ContextSourceRegistration, CsrOperation, CsrStatus, ForwardingMode},
+        uri::NGSI_LD_URN_NID,
+    },
     error::AndromedaError,
     query::{compiled::CompiledCsrQuery, csr_sql, sql::BindValue},
 };
 use chrono::{DateTime, Utc};
-use ngsi_ld_types::{
-    registration::{ContextSourceRegistration, CsrOperation, CsrStatus, ForwardingMode},
-    uri::NGSI_LD_URN_NID,
-};
 use serde_json::Value;
 use sqlx::{Row, postgres::PgPool};
 use urn::UrnBuilder;
@@ -511,7 +511,7 @@ fn row_to_csr(row: &sqlx::postgres::PgRow) -> Result<ContextSourceRegistration, 
     let context_source_info: Option<Value> = row.get("context_source_info");
     let jsonld_context: Option<String> = row.get("jsonld_context");
     let status_str: String = row.get("status");
-    let status: CsrStatus = status_str.parse().map_err(|e: String| AndromedaError::internal(e))?;
+    let status: CsrStatus = status_str.parse().map_err(|e: strum::ParseError| AndromedaError::internal(e.to_string()))?;
     let times_sent: i32 = row.get("times_sent");
     let times_failed: i32 = row.get("times_failed");
     let last_success: Option<DateTime<Utc>> = row.get("last_success");

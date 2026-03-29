@@ -1,8 +1,13 @@
 //! Subscription matching and entity-level filtering (geoQ, scopeQ, q).
 
-use crate::{domain::notification::CompiledSubscription, query::q};
+use crate::{
+    domain::{
+        notification::{ChangeEvent, CompiledSubscription},
+        subscription::SubscriptionStatus,
+    },
+    query::q,
+};
 use chrono::Utc;
-use ngsi_ld_types::{notification::ChangeEvent, subscription::SubscriptionStatus};
 use regex::Regex;
 use serde_json::Value;
 use std::{collections::HashMap, sync::Arc};
@@ -272,9 +277,8 @@ pub fn matches_scope_filter(scope_q: &str, entity_data: &Value) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::notification::{CompiledSubscription, EndpointTransport};
-    use ngsi_ld_types::{
-        notification::{ChangeEvent, TriggerReason},
+    use crate::domain::{
+        notification::{ChangeEvent, CompiledSubscription, EndpointTransport, TriggerReason},
         subscription::SubscriptionStatus,
     };
 

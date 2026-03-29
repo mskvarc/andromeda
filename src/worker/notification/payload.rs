@@ -2,13 +2,16 @@
 //! filtering, nullification, and format simplification.
 
 use crate::{
-    domain::{entity::Entity, notification::CompiledSubscription},
+    domain::{
+        entity::Entity,
+        iri,
+        notification::{CompiledSubscription, TriggerReason},
+    },
     jsonld::{CompactOptions, ContextSpec, JsonLdEngine},
     response::entity::{apply_inline_join, simplify_value},
     service::entity::{EntityQueryService, expanded_entity_object_mut, inject_attr_sys_attrs},
 };
 use chrono::{DateTime, SecondsFormat, Utc};
-use ngsi_ld_types::{iri, notification::TriggerReason};
 use serde_json::Value;
 use std::collections::HashSet;
 use tracing::debug;
@@ -328,21 +331,21 @@ fn nullify_entity_attributes(entity: &mut Value) {
 fn nullify_attribute_instance(instance: &mut Value) {
     let Some(obj) = instance.as_object_mut() else { return };
 
-    let null_value = serde_json::json!([{"@value": iri::NULL_URI}]);
-    let null_object = serde_json::json!([{"@id": iri::NULL_URI}]);
-    let null_json = serde_json::json!([{"@value": iri::NULL_URI, "@type": "@json"}]);
-    let null_vocab = serde_json::json!([{"@id": iri::NULL_URI}]);
+    let null_value = serde_json::json!([{"@value": iri::NULL_URI.as_str()}]);
+    let null_object = serde_json::json!([{"@id": iri::NULL_URI.as_str()}]);
+    let null_json = serde_json::json!([{"@value": iri::NULL_URI.as_str(), "@type": "@json"}]);
+    let null_vocab = serde_json::json!([{"@id": iri::NULL_URI.as_str()}]);
 
-    if obj.contains_key(iri::HAS_OBJECT) {
-        obj.insert(iri::HAS_OBJECT.to_string(), null_object);
-    } else if obj.contains_key(iri::HAS_LANGUAGE_MAP) {
-        obj.insert(iri::HAS_LANGUAGE_MAP.to_string(), null_value);
-    } else if obj.contains_key(iri::HAS_JSON) {
-        obj.insert(iri::HAS_JSON.to_string(), null_json);
-    } else if obj.contains_key(iri::HAS_VOCAB) {
-        obj.insert(iri::HAS_VOCAB.to_string(), null_vocab);
+    if obj.contains_key(iri::HAS_OBJECT.as_str()) {
+        obj.insert(iri::HAS_OBJECT.as_str().to_string(), null_object);
+    } else if obj.contains_key(iri::HAS_LANGUAGE_MAP.as_str()) {
+        obj.insert(iri::HAS_LANGUAGE_MAP.as_str().to_string(), null_value);
+    } else if obj.contains_key(iri::HAS_JSON.as_str()) {
+        obj.insert(iri::HAS_JSON.as_str().to_string(), null_json);
+    } else if obj.contains_key(iri::HAS_VOCAB.as_str()) {
+        obj.insert(iri::HAS_VOCAB.as_str().to_string(), null_vocab);
     } else {
-        obj.insert(iri::HAS_VALUE.to_string(), null_value);
+        obj.insert(iri::HAS_VALUE.as_str().to_string(), null_value);
     }
 }
 
@@ -360,10 +363,10 @@ fn fix_null_language_maps(entity: &mut Value) {
                     None
                 }
             })
-            == Some(iri::NULL_URI);
+            == Some(iri::NULL_URI.as_str());
         if is_null_lang_map {
             if let Some(attr) = value.as_object_mut() {
-                attr.insert("languageMap".to_string(), Value::String(iri::NULL_URI.to_string()));
+                attr.insert("languageMap".to_string(), Value::String(iri::NULL_URI.as_str().to_string()));
             }
         }
     }
@@ -560,7 +563,7 @@ fn previous_key_for_attr(val: &Value) -> &'static str {
     val.as_object()
         .and_then(|o| o.get("type"))
         .and_then(|t| t.as_str())
-        .and_then(|s| s.parse::<ngsi_ld_types::AttributeType>().ok())
+        .and_then(|s| s.parse::<crate::domain::attribute_type::AttributeType>().ok())
         .map(|t| t.previous_key())
         .unwrap_or("previousValue")
 }

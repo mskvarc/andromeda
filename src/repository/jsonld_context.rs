@@ -1,10 +1,12 @@
 use crate::{
-    domain::jsonld_context::{ContextKind, ContextMetadata},
+    domain::{
+        jsonld_context::{ContextKind, ContextMetadata},
+        uri::NGSI_LD_URN_NID,
+    },
     error::AndromedaError,
 };
 use async_trait::async_trait;
 use json_ld_engine::ContextCache;
-use ngsi_ld_types::uri::NGSI_LD_URN_NID;
 use serde_json::Value;
 use sqlx::{postgres::PgPool, types::Json};
 use urn::{Urn, UrnBuilder};

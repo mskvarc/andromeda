@@ -1,14 +1,18 @@
 //! Temporal response building: `build_entity_temporal`, `ensure_temporal_attrs_are_arrays`,
 //! `transform_to_temporal_values`, `build_aggregated_data`, `expand_geojson`, `expand_coordinates`.
 
-use crate::{domain::temporal::TeaEntry, error::AndromedaError, query::temporal::CompiledTemporalQuery, service::temporal::format_datetime};
+use crate::{
+    domain::{
+        attribute_type::AttributeType,
+        iri,
+        temporal::{AggrMethod, TeaEntry, TimeRel},
+    },
+    error::AndromedaError,
+    query::temporal::CompiledTemporalQuery,
+    service::temporal::format_datetime,
+};
 use chrono::{DateTime, Utc};
 use indexmap::IndexMap;
-use ngsi_ld_types::{
-    AttributeType,
-    iri,
-    temporal::{AggrMethod, TimeRel},
-};
 use serde_json::{Value, json};
 use sqlx::Row;
 
@@ -240,35 +244,38 @@ fn history_row_to_expanded_instance(row: &sqlx::postgres::PgRow, tea: &TeaEntry,
     let mut instance = serde_json::Map::new();
 
     let attr_type: Option<AttributeType> = tea.attribute_type.parse().ok();
-    let type_iri = attr_type.map(|t| t.iri()).unwrap_or(tea.attribute_type.as_str());
+    let type_iri = attr_type.map(|t| t.iri().as_str()).unwrap_or(tea.attribute_type.as_str());
     instance.insert("@type".to_string(), json!([type_iri]));
 
-    let value_key = attr_type.map(|t| t.value_key()).unwrap_or(iri::HAS_VALUE);
+    let value_key = attr_type.map(|t| t.value_key().as_str()).unwrap_or(iri::HAS_VALUE.as_str());
 
-    let is_tombstone = row.try_get::<Option<String>, _>("value_string").ok().flatten().as_deref() == Some(iri::NULL_URI);
+    let is_tombstone = row.try_get::<Option<String>, _>("value_string").ok().flatten().as_deref() == Some(iri::NULL_URI.as_str());
 
     if is_tombstone {
-        if tea.attribute_name == iri::SCOPE {
+        if tea.attribute_name == iri::SCOPE.as_str() {
             instance.insert(value_key.to_string(), json!([]));
         } else if attr_type == Some(AttributeType::Relationship) {
-            instance.insert(value_key.to_string(), json!([{"@id": iri::NULL_URI}]));
+            instance.insert(value_key.to_string(), json!([{"@id": iri::NULL_URI.as_str()}]));
         } else if attr_type == Some(AttributeType::LanguageProperty) {
-            instance.insert(value_key.to_string(), json!([{"@value": iri::NULL_URI, "@language": iri::NONE}]));
+            instance.insert(
+                value_key.to_string(),
+                json!([{"@value": iri::NULL_URI.as_str(), "@language": iri::NONE.as_str()}]),
+            );
         } else {
-            instance.insert(value_key.to_string(), json!([{"@value": iri::NULL_URI}]));
+            instance.insert(value_key.to_string(), json!([{"@value": iri::NULL_URI.as_str()}]));
         }
         if let Ok(time) = row.try_get::<DateTime<Utc>, _>("time") {
             instance.insert(
-                iri::DELETED_AT.to_string(),
-                json!([{"@value": format_datetime(time), "@type": iri::DATETIME_TYPE}]),
+                iri::DELETED_AT.as_str().to_string(),
+                json!([{"@value": format_datetime(time), "@type": iri::DATETIME_TYPE.as_str()}]),
             );
         }
-        if tea.attribute_name != iri::SCOPE {
+        if tea.attribute_name != iri::SCOPE.as_str() {
             let instance_id: String = row.try_get("instance_id")?;
-            instance.insert(iri::INSTANCE_ID.to_string(), json!([{"@id": instance_id}]));
+            instance.insert(iri::INSTANCE_ID.as_str().to_string(), json!([{"@id": instance_id}]));
         }
         if let Some(ds_id) = &tea.dataset_id {
-            instance.insert(iri::DATASET_ID.to_string(), json!([{"@id": ds_id}]));
+            instance.insert(iri::DATASET_ID.as_str().to_string(), json!([{"@id": ds_id}]));
         }
         return Ok(Value::Object(instance));
     }
@@ -342,7 +349,10 @@ fn history_row_to_expanded_instance(row: &sqlx::postgres::PgRow, tea: &TeaEntry,
         }
         "DateTime" => {
             if let Ok(v) = row.try_get::<DateTime<Utc>, _>("value_datetime") {
-                instance.insert(value_key.to_string(), json!([{"@value": format_datetime(v), "@type": iri::DATETIME_TYPE}]));
+                instance.insert(
+                    value_key.to_string(),
+                    json!([{"@value": format_datetime(v), "@type": iri::DATETIME_TYPE.as_str()}]),
+                );
             }
         }
         "Uri" => {
@@ -355,25 +365,25 @@ fn history_row_to_expanded_instance(row: &sqlx::postgres::PgRow, tea: &TeaEntry,
 
     if let Ok(Some(observed_at)) = row.try_get::<Option<DateTime<Utc>>, _>("observed_at") {
         instance.insert(
-            iri::OBSERVED_AT.to_string(),
-            json!([{"@value": format_datetime(observed_at), "@type": iri::DATETIME_TYPE}]),
+            iri::OBSERVED_AT.as_str().to_string(),
+            json!([{"@value": format_datetime(observed_at), "@type": iri::DATETIME_TYPE.as_str()}]),
         );
     }
 
     if sys_attrs {
         if let Ok(time) = row.try_get::<DateTime<Utc>, _>("time") {
             instance.insert(
-                iri::CREATED_AT.to_string(),
-                json!([{"@value": format_datetime(time), "@type": iri::DATETIME_TYPE}]),
+                iri::CREATED_AT.as_str().to_string(),
+                json!([{"@value": format_datetime(time), "@type": iri::DATETIME_TYPE.as_str()}]),
             );
         }
     }
 
     let instance_id: String = row.try_get("instance_id")?;
-    instance.insert(iri::INSTANCE_ID.to_string(), json!([{"@id": instance_id}]));
+    instance.insert(iri::INSTANCE_ID.as_str().to_string(), json!([{"@id": instance_id}]));
 
     if let Some(ds_id) = &tea.dataset_id {
-        instance.insert(iri::DATASET_ID.to_string(), json!([{"@id": ds_id}]));
+        instance.insert(iri::DATASET_ID.as_str().to_string(), json!([{"@id": ds_id}]));
     }
 
     if let Ok(Some(meta)) = row.try_get::<Option<Value>, _>("metadata") {

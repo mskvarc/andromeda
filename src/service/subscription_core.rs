@@ -2,13 +2,13 @@
 //! context-source subscriptions.
 
 use crate::{
+    domain::subscription::Subscription,
     error::AndromedaError,
     jsonld::{ContextSpec, JsonLdEngine},
     query::q,
     repository::subscription_store::SubscriptionFields,
 };
 use chrono::Utc;
-use ngsi_ld_types::subscription::Subscription;
 use serde_json::Value;
 use tracing::warn;
 

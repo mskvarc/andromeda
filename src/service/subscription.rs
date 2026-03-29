@@ -1,5 +1,5 @@
 use crate::{
-    domain::notification::SubscriptionChange,
+    domain::{notification::SubscriptionChange, subscription::Subscription},
     error::AndromedaError,
     jsonld::{ContextSpec, JsonLdEngine},
     repository::{jsonld_context::JsonLdContextRepository, subscription::SubscriptionRepository},
@@ -9,7 +9,6 @@ use crate::{
     },
 };
 use async_trait::async_trait;
-use ngsi_ld_types::subscription::Subscription;
 use serde_json::Value;
 use sqlx::postgres::PgPool;
 use tokio::sync::broadcast;

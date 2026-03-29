@@ -1,6 +1,5 @@
 use super::subscription_store::SubscriptionFields;
-use crate::error::AndromedaError;
-use ngsi_ld_types::subscription::SubscriptionStatus;
+use crate::{domain::subscription::SubscriptionStatus, error::AndromedaError};
 use sqlx::postgres::PgPool;
 use tracing::info;
 

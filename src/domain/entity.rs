@@ -1,6 +1,5 @@
-use crate::domain::attribute::AttributeValue;
+use crate::domain::{attribute::AttributeValue, uri::Uri};
 use indexmap::IndexMap;
-use ngsi_ld_types::Uri;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 

@@ -1,10 +1,12 @@
-use crate::error::AndromedaError;
+use crate::{
+    domain::{
+        subscription::{NotificationParams, NotificationStatus, Subscription, SubscriptionStatus},
+        uri::NGSI_LD_URN_NID,
+    },
+    error::AndromedaError,
+};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use ngsi_ld_types::{
-    subscription::{NotificationParams, NotificationStatus, Subscription, SubscriptionStatus},
-    uri::NGSI_LD_URN_NID,
-};
 use serde_json::Value;
 use sqlx::Row;
 use urn::UrnBuilder;
@@ -61,7 +63,7 @@ macro_rules! impl_subscription_store {
     ($type:ty, table: $table:literal, columns: $columns:literal, has_dataset_id: $hdi:expr) => {
         #[async_trait::async_trait]
         impl $crate::repository::subscription_store::SubscriptionStore for $type {
-            async fn get(&self, id: &str) -> Result<Option<ngsi_ld_types::subscription::Subscription>, $crate::error::AndromedaError> {
+            async fn get(&self, id: &str) -> Result<Option<$crate::domain::subscription::Subscription>, $crate::error::AndromedaError> {
                 let row = sqlx::query(concat!("SELECT ", $columns, " FROM ", $table, " WHERE id = $1"))
                     .bind(id)
                     .fetch_optional(&self.pool)
@@ -77,7 +79,7 @@ macro_rules! impl_subscription_store {
                 &self,
                 limit: Option<i64>,
                 offset: Option<i64>,
-            ) -> Result<(Vec<ngsi_ld_types::subscription::Subscription>, i64), $crate::error::AndromedaError> {
+            ) -> Result<(Vec<$crate::domain::subscription::Subscription>, i64), $crate::error::AndromedaError> {
                 let limit = limit.unwrap_or(100);
                 let offset = offset.unwrap_or(0);
 
@@ -120,7 +122,7 @@ macro_rules! impl_subscription_store {
                 Ok(row.0)
             }
 
-            async fn list_active(&self) -> Result<Vec<ngsi_ld_types::subscription::Subscription>, $crate::error::AndromedaError> {
+            async fn list_active(&self) -> Result<Vec<$crate::domain::subscription::Subscription>, $crate::error::AndromedaError> {
                 let rows = sqlx::query(concat!("SELECT ", $columns, " FROM ", $table, " WHERE status = 'active'"))
                     .fetch_all(&self.pool)
                     .await?;
@@ -193,7 +195,7 @@ macro_rules! impl_subscription_store {
                 &self,
                 id: &str,
                 fields: &$crate::repository::subscription_store::SubscriptionFields<'_>,
-                status: ngsi_ld_types::subscription::SubscriptionStatus,
+                status: $crate::domain::subscription::SubscriptionStatus,
             ) -> Result<(), $crate::error::AndromedaError> {
                 self.create(id, fields, status).await
             }
@@ -202,12 +204,12 @@ macro_rules! impl_subscription_store {
                 &self,
                 id: &str,
                 fields: &$crate::repository::subscription_store::SubscriptionFields<'_>,
-                status: ngsi_ld_types::subscription::SubscriptionStatus,
+                status: $crate::domain::subscription::SubscriptionStatus,
             ) -> Result<bool, $crate::error::AndromedaError> {
                 self.update(id, fields, status).await
             }
 
-            async fn find_due_interval_subscriptions(&self) -> Result<Vec<ngsi_ld_types::subscription::Subscription>, $crate::error::AndromedaError> {
+            async fn find_due_interval_subscriptions(&self) -> Result<Vec<$crate::domain::subscription::Subscription>, $crate::error::AndromedaError> {
                 let rows = sqlx::query(concat!(
                     "SELECT ",
                     $columns,
@@ -276,7 +278,7 @@ pub fn build_subscription_from_row(row: &sqlx::postgres::PgRow, has_dataset_id: 
     let description: Option<String> = row.get("description");
     let entities_json: Option<Value> = row.get("entities");
     let watched_attributes: Option<Vec<String>> = row.get("watched_attributes");
-    let notification_trigger: Option<Vec<ngsi_ld_types::NotificationTrigger>> = row
+    let notification_trigger: Option<Vec<crate::domain::subscription::NotificationTrigger>> = row
         .get::<Option<Vec<String>>, _>("notification_trigger")
         .map(|v| v.into_iter().filter_map(|s| s.parse().ok()).collect());
     let time_interval: Option<f64> = row.get("time_interval");
@@ -290,7 +292,7 @@ pub fn build_subscription_from_row(row: &sqlx::postgres::PgRow, has_dataset_id: 
     let expires_at: Option<DateTime<Utc>> = row.get("expires_at");
     let throttling: Option<f64> = row.get("throttling");
     let status_str: String = row.get("status");
-    let status: SubscriptionStatus = status_str.parse().map_err(|e: String| AndromedaError::internal(e))?;
+    let status: SubscriptionStatus = status_str.parse().map_err(|e: strum::ParseError| AndromedaError::internal(e.to_string()))?;
     let temporal_q: Option<Value> = row.get("temporal_q");
     let lang: Option<String> = row.get("lang");
     let jsonld_context: Option<String> = row.get("jsonld_context");

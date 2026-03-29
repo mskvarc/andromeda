@@ -1,4 +1,5 @@
 use crate::{
+    domain::notification::{CsrChangeEvent, CsrTriggerReason},
     error::AndromedaError,
     jsonld::{ContextSpec, JsonLdEngine},
     query::{
@@ -9,7 +10,6 @@ use crate::{
     repository::context_source_registration::{ContextSourceRegistrationRepository, CreateCsrParams, CsrUpdateFragment, unwrap_geo_property_to_string},
 };
 use chrono::{DateTime, Utc};
-use ngsi_ld_types::notification::{CsrChangeEvent, CsrTriggerReason};
 use serde_json::Value;
 use sqlx::postgres::PgPool;
 use tokio::sync::broadcast;

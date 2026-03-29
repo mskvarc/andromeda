@@ -1,5 +1,17 @@
 use crate::{
-    domain::notification::{CompiledCsrSubscription, CompiledSelector, CsourceSubscriptionChange, EndpointTransport, parse_endpoint_transport},
+    domain::{
+        notification::{
+            CompiledCsrSubscription,
+            CompiledSelector,
+            CsourceNotification,
+            CsourceSubscriptionChange,
+            CsrChangeEvent,
+            CsrTriggerReason,
+            EndpointTransport,
+            parse_endpoint_transport,
+        },
+        subscription::{Subscription, SubscriptionStatus},
+    },
     query::q,
     repository::{
         context_source_registration::ContextSourceRegistrationRepository,
@@ -9,10 +21,6 @@ use crate::{
     transport::mqtt::MqttConnectionManager,
 };
 use chrono::Utc;
-use ngsi_ld_types::{
-    notification::{CsourceNotification, CsrChangeEvent, CsrTriggerReason},
-    subscription::{Subscription, SubscriptionStatus},
-};
 use regex::Regex;
 use serde_json::Value;
 use std::{

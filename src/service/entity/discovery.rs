@@ -1,10 +1,12 @@
 use crate::{
-    domain::types::{AttributeDetail, EntityType, EntityTypeInfo, Types},
+    domain::{
+        types::{AttributeDetail, EntityType, EntityTypeInfo, Types},
+        uri::NGSI_LD_URN_NID,
+    },
     error::AndromedaError,
     jsonld::{CompactOptions, ContextSpec, JsonLdEngine, JsonLdExpandable},
     repository::entity::EntityRepository,
 };
-use ngsi_ld_types::uri::NGSI_LD_URN_NID;
 use serde_json::Value;
 use sqlx::postgres::PgPool;
 use std::collections::{HashMap, HashSet};
@@ -353,7 +355,7 @@ fn extract_attribute_types(value: &Value) -> Option<Vec<String>> {
             let types: Vec<String> = arr
                 .iter()
                 .filter_map(|v| v.as_str())
-                .filter_map(|s| ngsi_ld_types::AttributeType::from_iri_suffix(s).map(|t| t.to_string()))
+                .filter_map(|s| crate::domain::attribute_type::AttributeType::from_iri_suffix(s).map(|t| t.to_string()))
                 .collect();
             if types.is_empty() { None } else { Some(types) }
         }

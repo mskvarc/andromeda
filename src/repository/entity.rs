@@ -1,4 +1,5 @@
 use crate::{
+    domain::expanded,
     error::AndromedaError,
     query::{
         compiled::CompiledEntityQuery,
@@ -6,7 +7,6 @@ use crate::{
     },
 };
 use chrono::{DateTime, Utc};
-use ngsi_ld_types::expanded;
 use serde_json::Value;
 use sqlx::{Row, postgres::PgPool};
 use std::collections::HashMap;
