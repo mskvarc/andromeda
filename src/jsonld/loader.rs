@@ -8,10 +8,10 @@
 //! 3. [`ContextCache`] (optional, e.g. database-backed L2 cache).
 //! 4. Remote HTTP fetch (if enabled).
 
-use crate::{Error, core_context::is_ngsi_ld_core_context_url};
+use crate::jsonld::{Error, core_context::is_ngsi_ld_core_context_url};
 use async_trait::async_trait;
 use dashmap::DashMap;
-use iref::{Iri, IriBuf};
+use iref3::{Iri, IriBuf};
 use json_ld::{LoadError, Loader, RemoteDocument};
 use json_syntax::Parse;
 use moka::future::Cache;

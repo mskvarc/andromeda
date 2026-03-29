@@ -105,7 +105,7 @@ impl EntitySubscriptionVariant {
         };
 
         for url in urls {
-            if json_ld_engine::core_context::is_ngsi_ld_core_context_url(url) {
+            if crate::jsonld::core_context::is_ngsi_ld_core_context_url(url) {
                 continue;
             }
             match self.engine.resolve_context(url).await {

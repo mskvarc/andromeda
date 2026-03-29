@@ -3,7 +3,7 @@
 //! [`JsonLdEngine`] provides expand and compact operations.  Use
 //! [`JsonLdEngineBuilder`] to configure and construct an engine instance.
 
-use crate::{
+use crate::jsonld::{
     Error,
     context::{self, ContextSpec, CoreContextPolicy},
     core_context::{
@@ -639,7 +639,7 @@ fn normalize_context_urls_for_logging(urls: &[String]) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core_context::NGSI_LD_CORE_CONTEXT_V16_URL;
+    use crate::jsonld::core_context::NGSI_LD_CORE_CONTEXT_V16_URL;
     use serde_json::json;
     use std::time::{SystemTime, UNIX_EPOCH};
 

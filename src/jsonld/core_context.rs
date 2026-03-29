@@ -5,7 +5,7 @@
 //! known version.
 
 use dashmap::DashMap;
-use once_cell::sync::Lazy;
+use std::sync::LazyLock;
 
 /// Core Context v1.3.
 pub const NGSI_LD_CORE_CONTEXT_V13_URL: &str = "https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.3.jsonld";
@@ -50,7 +50,7 @@ pub const NGSI_LD_CORE_CONTEXT_URL_LIST: [&str; 8] = [
     NGSI_LD_CORE_CONTEXT_V19_URL,
 ];
 
-pub static NGSI_LD_CORE_CONTEXT_MAP: Lazy<DashMap<&str, &str>> = Lazy::new(|| {
+pub static NGSI_LD_CORE_CONTEXT_MAP: LazyLock<DashMap<&str, &str>> = LazyLock::new(|| {
     let m = DashMap::new();
     m.insert(NGSI_LD_CORE_CONTEXT_V13_URL, NGSI_LD_CORE_CONTEXT_V13);
     m.insert(NGSI_LD_CORE_CONTEXT_V14_URL, NGSI_LD_CORE_CONTEXT_V14);

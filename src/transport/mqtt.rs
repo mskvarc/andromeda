@@ -53,7 +53,7 @@ fn build_envelope(body: &[u8], content_type: &str, receiver_info: Option<&[Value
     metadata.insert("Content-Type".to_string(), Value::String(content_type.to_string()));
 
     if content_type == "application/json" {
-        let ctx_url = jsonld_context.unwrap_or(crate::jsonld::NGSI_LD_CORE_CONTEXT_URL);
+        let ctx_url = jsonld_context.unwrap_or(crate::jsonld::core_context::NGSI_LD_CORE_CONTEXT_URL);
         let link = jsonld_context_link(ctx_url);
         if let Some(value) = link_header_string(&link) {
             metadata.insert("Link".to_string(), Value::String(value));
@@ -162,7 +162,7 @@ impl MqttConnectionManager {
                 }
 
                 if content_type == "application/json" {
-                    let ctx_url = jsonld_context.unwrap_or(crate::jsonld::NGSI_LD_CORE_CONTEXT_URL);
+                    let ctx_url = jsonld_context.unwrap_or(crate::jsonld::core_context::NGSI_LD_CORE_CONTEXT_URL);
                     let link = jsonld_context_link(ctx_url);
                     if let Some(value) = link_header_string(&link) {
                         properties.user_properties.push(("Link".to_string(), value));

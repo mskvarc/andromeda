@@ -4,7 +4,7 @@
 //! preventing false positives (e.g. `application/json-patch+json` no longer
 //! matches `application/json`).
 
-use crate::api::extractor::error::ExtractorRejection;
+use crate::{api::extractor::error::ExtractorRejection, jsonld::ContextSpec};
 use axum::{
     body::Bytes,
     extract::{FromRequest, Request},
@@ -13,7 +13,6 @@ use axum::{
         header::{CONTENT_TYPE, LINK},
     },
 };
-use json_ld_engine::ContextSpec;
 use mediatype::{MediaTypeBuf, names};
 use serde::de::DeserializeOwned;
 use std::collections::HashSet;

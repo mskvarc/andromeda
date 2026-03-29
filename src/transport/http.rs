@@ -29,7 +29,7 @@ pub async fn deliver_http(
 
     // Add Link header for application/json notifications (NGSI-LD spec requirement)
     if content_type == "application/json" {
-        let ctx_url = jsonld_context.unwrap_or(crate::jsonld::NGSI_LD_CORE_CONTEXT_URL);
+        let ctx_url = jsonld_context.unwrap_or(crate::jsonld::core_context::NGSI_LD_CORE_CONTEXT_URL);
         let link = jsonld_context_link(ctx_url);
         if let Some(value) = link_header_value(&link) {
             request = request.header("Link", value);

@@ -4,7 +4,7 @@
 //! (Link-header contexts, body contexts, core-context policy) and provides
 //! helpers for merging, resolving, and formatting them.
 
-use crate::{
+use crate::jsonld::{
     Error,
     core_context::{NGSI_LD_CORE_CONTEXT_URL, is_ngsi_ld_core_context_url},
 };

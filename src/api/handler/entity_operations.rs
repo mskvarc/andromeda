@@ -11,6 +11,7 @@ use crate::{
     },
     domain::{entity::Entity, registration::ForwardingMode},
     error::AndromedaError,
+    jsonld::ContextSpec,
     query::entity::EntityQueryParameters,
 };
 use axum::{
@@ -20,7 +21,6 @@ use axum::{
     http::{HeaderMap, StatusCode, Uri, header::CONTENT_TYPE},
     response::{IntoResponse, Response},
 };
-use json_ld_engine::ContextSpec;
 use mediatype::{MediaTypeBuf, names};
 use serde::Deserialize;
 use serde_json::Value;
@@ -805,7 +805,7 @@ pub async fn batch_delete(TenantState(state): TenantState, OriginalUri(uri): Ori
     }
 
     // Distributed forwarding per spec 5.6.10
-    let context: json_ld_engine::ContextSpec = context.into_inner();
+    let context: crate::jsonld::ContextSpec = context.into_inner();
     let context_url = context.link_contexts().first().map(|s| s.as_str());
     let forwarded = state
         .forwarding

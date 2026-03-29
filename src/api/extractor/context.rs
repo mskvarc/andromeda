@@ -1,7 +1,7 @@
 //! JSON-LD context URL extraction from Link headers.
 
+use crate::jsonld::ContextSpec;
 use axum::{extract::FromRequestParts, http::request::Parts};
-use json_ld_engine::ContextSpec;
 
 /// JSON-LD context extracted from Link header.
 #[derive(Clone, Debug, Default)]

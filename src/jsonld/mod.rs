@@ -1,28 +1,27 @@
-//! JSON-LD support — thin re-export layer over [`json_ld_engine`].
+//! JSON-LD processing engine for NGSI-LD.
+//!
+//! Provides expand and compact operations, context management, multi-tier
+//! caching (in-memory L1, optional database-backed L2, embedded registry),
+//! and NGSI-LD core context handling for all released versions (v1.3–v1.9).
 
+mod context;
+pub mod core_context;
+mod engine;
+mod error;
+mod expandable;
+mod loader;
 pub mod term_resolver;
 
-// Re-export everything the application uses from the engine library.
-pub use json_ld_engine::{
-    CompactOptions,
-    ContextSpec,
-    CoreContextPolicy,
-    Error,
-    JsonLdEngine,
-    core_context::{NGSI_LD_CORE_CONTEXT_URL, NGSI_LD_CORE_CONTEXT_V19, is_ngsi_ld_core_context_url},
-};
+pub use context::{ContextSpec, CoreContextPolicy, set_default_core_context_url};
+pub use engine::{CompactOptions, JsonLdEngine};
+pub use error::Error;
+pub use expandable::JsonLdExpandable;
+pub use loader::ContextCache;
 
-// The trait lives in json_ld_engine; re-export it so derive macros resolve.
-pub use json_ld_engine::JsonLdExpandable;
-
-// Re-export the derive macro for convenience.
 pub use json_ld_expandable::JsonLdExpandable as JsonLdExpandableMacro;
 
 /// Build a [`JsonLdEngine`] from application config and an L2 context cache.
-pub fn build_engine(
-    config: &crate::core::config::JsonLdConfig,
-    l2_cache: std::sync::Arc<impl json_ld_engine::ContextCache + 'static>,
-) -> Result<JsonLdEngine, Error> {
+pub fn build_engine(config: &crate::core::config::JsonLdConfig, l2_cache: std::sync::Arc<impl ContextCache + 'static>) -> Result<JsonLdEngine, Error> {
     let mut builder = JsonLdEngine::builder()
         .allow_remote(config.allow_remote_contexts)
         .timeout_seconds(config.timeout_seconds)

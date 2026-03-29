@@ -4,9 +4,9 @@ use crate::{
         uri::NGSI_LD_URN_NID,
     },
     error::AndromedaError,
+    jsonld::ContextCache,
 };
 use async_trait::async_trait;
-use json_ld_engine::ContextCache;
 use serde_json::Value;
 use sqlx::{postgres::PgPool, types::Json};
 use urn::{Urn, UrnBuilder};

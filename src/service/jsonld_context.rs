@@ -1,7 +1,10 @@
 use crate::{
     domain::jsonld_context::{ContextKind, ContextMetadata},
     error::AndromedaError,
-    jsonld::{JsonLdEngine, NGSI_LD_CORE_CONTEXT_URL, NGSI_LD_CORE_CONTEXT_V19, is_ngsi_ld_core_context_url},
+    jsonld::{
+        JsonLdEngine,
+        core_context::{NGSI_LD_CORE_CONTEXT_URL, NGSI_LD_CORE_CONTEXT_V19, is_ngsi_ld_core_context_url},
+    },
     repository::jsonld_context::{ContextGetResult, ContextListResult, JsonLdContextRepository},
 };
 use chrono::Utc;

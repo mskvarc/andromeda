@@ -26,7 +26,7 @@ async fn main() -> Result<(), AndromedaError> {
     tracing::subscriber::set_global_default(subscriber)?;
 
     // Set the default core context URL to v1.8 (ETSI test suite expectation)
-    json_ld_engine::set_default_core_context_url(json_ld_engine::core_context::NGSI_LD_CORE_CONTEXT_V18_URL);
+    crate::jsonld::set_default_core_context_url(crate::jsonld::core_context::NGSI_LD_CORE_CONTEXT_V18_URL);
 
     info!("Starting Andromeda...");
 

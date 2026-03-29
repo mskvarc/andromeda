@@ -78,22 +78,28 @@ dependencies = [
  "clap",
  "clap-themes",
  "confique",
+ "contextual",
+ "dashmap",
  "demurgos_headers",
  "derive_more",
  "futures",
  "geo",
  "geojson",
  "indexmap 2.13.0",
+ "iref 3.2.2",
  "iref 4.0.0",
- "json-ld-engine",
+ "json-ld",
  "json-ld-expandable",
+ "json-syntax",
  "libtest-mimic",
  "mediatype",
  "mime",
+ "moka",
  "parse_link_header",
  "percent-encoding",
  "pretty_assertions",
  "problem_details",
+ "rdf-types",
  "regex",
  "reqwest",
  "rumqttc",
@@ -2039,27 +2045,6 @@ dependencies = [
  "smallvec",
  "static-iref",
  "thiserror 1.0.69",
-]
-
-[[package]]
-name = "json-ld-engine"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "contextual",
- "dashmap",
- "iref 3.2.2",
- "json-ld",
- "json-syntax",
- "moka",
- "once_cell",
- "rdf-types",
- "reqwest",
- "serde_json",
- "thiserror 2.0.18",
- "tokio",
- "tracing",
- "url",
 ]
 
 [[package]]
