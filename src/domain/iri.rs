@@ -82,8 +82,6 @@ pub const JSON_PROPERTY_SHORT: &str = "JsonProperty";
 
 /// A null/placeholder URI used when no meaningful IRI is available.
 pub const NULL_URI: &Iri = iri!("urn:ngsi-ld:null");
-/// Sentinel representing "none" / absent value.
-pub const NONE: &Iri = iri!("urn:ngsi-ld:none");
 
 #[cfg(test)]
 mod tests {
@@ -115,6 +113,5 @@ mod tests {
     #[test]
     fn sentinel_iris_are_well_formed() {
         assert_eq!(NULL_URI.as_str(), "urn:ngsi-ld:null");
-        assert_eq!(NONE.as_str(), "urn:ngsi-ld:none");
     }
 }

@@ -261,10 +261,7 @@ fn history_row_to_expanded_instance(row: &sqlx::postgres::PgRow, tea: &TeaEntry,
         } else if attr_type == Some(AttributeType::Relationship) {
             instance.insert(value_key.to_string(), json!([{"@id": iri::NULL_URI.as_str()}]));
         } else if attr_type == Some(AttributeType::LanguageProperty) {
-            instance.insert(
-                value_key.to_string(),
-                json!([{"@value": iri::NULL_URI.as_str(), "@language": iri::NONE.as_str()}]),
-            );
+            instance.insert(value_key.to_string(), json!([{"@value": iri::NULL_URI.as_str(), "@language": "@none"}]));
         } else {
             instance.insert(value_key.to_string(), json!([{"@value": iri::NULL_URI.as_str()}]));
         }

@@ -12,7 +12,7 @@ pub mod rfc3339 {
     where
         S: Serializer,
     {
-        serializer.serialize_str(&dt.to_rfc3339())
+        serializer.serialize_str(&dt.to_rfc3339_opts(chrono::SecondsFormat::Secs, true))
     }
 
     pub fn deserialize<'de, D>(deserializer: D) -> Result<DateTime<Utc>, D::Error>
@@ -36,7 +36,7 @@ pub mod rfc3339_option {
         S: Serializer,
     {
         match opt {
-            Some(dt) => serializer.serialize_some(&dt.to_rfc3339()),
+            Some(dt) => serializer.serialize_some(&dt.to_rfc3339_opts(chrono::SecondsFormat::Secs, true)),
             None => serializer.serialize_none(),
         }
     }

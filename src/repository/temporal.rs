@@ -288,10 +288,7 @@ impl TemporalRepository {
         .await?;
 
         if result.is_none() {
-            return Err(AndromedaError::not_found(format!(
-                "Attribute instance {} not found",
-                params.instance_id
-            )));
+            return Err(AndromedaError::not_found(format!("Attribute instance {} not found", params.instance_id)));
         }
 
         Ok(())

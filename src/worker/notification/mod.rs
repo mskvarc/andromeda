@@ -66,11 +66,7 @@ pub struct NotificationWorkerDeps {
 }
 
 impl NotificationWorker {
-    pub fn new(
-        change_rx: broadcast::Receiver<ChangeEvent>,
-        sub_change_rx: broadcast::Receiver<SubscriptionChange>,
-        deps: NotificationWorkerDeps,
-    ) -> Self {
+    pub fn new(change_rx: broadcast::Receiver<ChangeEvent>, sub_change_rx: broadcast::Receiver<SubscriptionChange>, deps: NotificationWorkerDeps) -> Self {
         Self {
             change_rx,
             sub_change_rx,

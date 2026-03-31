@@ -511,13 +511,7 @@ fn make_batch_parse_error(entity_id: &str, error_type: NgsiLdErrorType, detail: 
 }
 
 fn has_supported_json_content_type(headers: &HeaderMap) -> bool {
-    classify_batch_content_type(
-        headers
-            .get(CONTENT_TYPE)
-            .and_then(|v| v.to_str().ok())
-            .unwrap_or(""),
-    )
-    .is_some()
+    classify_batch_content_type(headers.get(CONTENT_TYPE).and_then(|v| v.to_str().ok()).unwrap_or("")).is_some()
 }
 
 pub async fn batch_create(

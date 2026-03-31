@@ -304,10 +304,7 @@ impl ContextSourceForwardingService {
             None
         };
 
-        let csrs = self
-            .csr_repo
-            .find_matching(expanded_type.as_deref(), request.entity_id)
-            .await?;
+        let csrs = self.csr_repo.find_matching(expanded_type.as_deref(), request.entity_id).await?;
 
         // Separate CSRs into those that match the operation and exclusive ones that don't
         let mut matching_csrs = Vec::new();
@@ -349,13 +346,7 @@ impl ContextSourceForwardingService {
             };
 
             match self
-                .forward_write(
-                    &url,
-                    request.method.clone(),
-                    request.body,
-                    request.context_url,
-                    csr.tenant.as_deref(),
-                )
+                .forward_write(&url, request.method.clone(), request.body, request.context_url, csr.tenant.as_deref())
                 .await
             {
                 Ok((status, response_body)) => {
@@ -368,10 +359,7 @@ impl ContextSourceForwardingService {
                     });
                 }
                 Err(e) => {
-                    warn!(
-                        "Failed to forward {} to context source {}: {}",
-                        request.method, csr.id, e
-                    );
+                    warn!("Failed to forward {} to context source {}: {}", request.method, csr.id, e);
                 }
             }
         }
@@ -384,10 +372,7 @@ impl ContextSourceForwardingService {
     /// Per spec 5.6.7-5.6.10, 5.6.20: batch operations iterate over CSRs,
     /// filter the input array per CSR, and forward matching entities.
     /// `batch_path` is the operation endpoint (e.g., "/entityOperations/create").
-    pub async fn forward_batch_provision(
-        &self,
-        request: ForwardBatchProvisionRequest<'_>,
-    ) -> Result<Vec<ForwardedWriteResult>, AndromedaError> {
+    pub async fn forward_batch_provision(&self, request: ForwardBatchProvisionRequest<'_>) -> Result<Vec<ForwardedWriteResult>, AndromedaError> {
         let expanded_type = if let Some(t) = request.entity_type_compact {
             Some(self.engine.expand_type(t, request.context).await?)
         } else {
@@ -395,10 +380,7 @@ impl ContextSourceForwardingService {
         };
 
         let csrs = self.csr_repo.find_matching(expanded_type.as_deref(), None).await?;
-        let matching_csrs: Vec<_> = csrs
-            .into_iter()
-            .filter(|csr| request.operation.matches(csr))
-            .collect();
+        let matching_csrs: Vec<_> = csrs.into_iter().filter(|csr| request.operation.matches(csr)).collect();
 
         if matching_csrs.is_empty() {
             return Ok(Vec::new());
@@ -411,10 +393,7 @@ impl ContextSourceForwardingService {
                 Some(qs) if !qs.is_empty() => format!("{base}/ngsi-ld/v1{}?{qs}", request.batch_path),
                 _ => format!("{base}/ngsi-ld/v1{}", request.batch_path),
             };
-            debug!(
-                "Forwarding batch {} to context source {}: {}",
-                request.batch_path, csr.id, url
-            );
+            debug!("Forwarding batch {} to context source {}: {}", request.batch_path, csr.id, url);
 
             let exclusive_attrs = if csr.mode == Some(ForwardingMode::Exclusive) {
                 collect_exclusive_attrs(&csr)
@@ -423,13 +402,7 @@ impl ContextSourceForwardingService {
             };
 
             match self
-                .forward_write(
-                    &url,
-                    reqwest::Method::POST,
-                    Some(request.body),
-                    request.context_url,
-                    csr.tenant.as_deref(),
-                )
+                .forward_write(&url, reqwest::Method::POST, Some(request.body), request.context_url, csr.tenant.as_deref())
                 .await
             {
                 Ok((status, response_body)) => {
