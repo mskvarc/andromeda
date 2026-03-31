@@ -1,12 +1,17 @@
 [workspace]
-members = [".", "lib/json-ld-expandable"]
-resolver = "2"
+members = [".", "json-ld-expandable"]
+resolver = "3"
 
-[package]
-name = "andromeda"
+[workspace.package]
 version = "0.1.0"
 edition = "2024"
 authors = ["Matej Škvarč <matej.skvarc@senlab.io>"]
+
+[package]
+name = "andromeda"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
 build = "build.rs"
 
 [dependencies]
@@ -27,7 +32,7 @@ indexmap = { version = "2.13.0", features = ["serde"] }
 iref = { version = "4.0.0", features = ["serde"] }
 iref3 = { package = "iref", version = "3.2.2" }
 json-ld = "0.21.4"
-json-ld-expandable = { path = "lib/json-ld-expandable" }
+json-ld-expandable = { path = "json-ld-expandable" }
 json-syntax = { version = "0.12.5", features = ["serde_json"] }
 mediatype = "0.21.0"
 mime = "0.3.17"
