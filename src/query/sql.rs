@@ -458,9 +458,8 @@ fn scope_q_to_sql(scope_q: &str, binds: &mut Vec<BindValue>, param_idx: &mut usi
 }
 
 fn single_scope_to_sql(scope: &str, binds: &mut Vec<BindValue>, param_idx: &mut usize) -> Result<String, AndromedaError> {
-    if scope.ends_with("/#") {
+    if let Some(prefix) = scope.strip_suffix("/#") {
         // Hash wildcard: match one or more levels below the prefix
-        let prefix = &scope[..scope.len() - 2];
         let regex = format!("^{}/.+$", regex::escape(prefix));
         let sql = format!("EXISTS(SELECT 1 FROM unnest(scopes) s WHERE s ~ ${})", *param_idx);
         binds.push(BindValue::String(regex));
@@ -499,12 +498,12 @@ pub fn build_entity_filter_conditions(
     let types_col = format!("{}.types", table_prefix);
     let payload_col = format!("{}.payload", table_prefix);
 
-    if let Some(ids) = ids {
-        if !ids.is_empty() {
-            conditions.push(format!("{} = ANY(${})", id_col, *param_idx));
-            binds.push(BindValue::StringVec(ids.to_vec()));
-            *param_idx += 1;
-        }
+    if let Some(ids) = ids
+        && !ids.is_empty()
+    {
+        conditions.push(format!("{} = ANY(${})", id_col, *param_idx));
+        binds.push(BindValue::StringVec(ids.to_vec()));
+        *param_idx += 1;
     }
 
     if let Some(pattern) = id_pattern {
@@ -513,17 +512,17 @@ pub fn build_entity_filter_conditions(
         *param_idx += 1;
     }
 
-    if let Some(types) = types {
-        if !types.is_empty() {
-            if types.len() == 1 {
-                conditions.push(format!("${} = ANY({})", *param_idx, types_col));
-                binds.push(BindValue::String(types[0].clone()));
-            } else {
-                conditions.push(format!("{} && ${}", types_col, *param_idx));
-                binds.push(BindValue::StringVec(types.to_vec()));
-            }
-            *param_idx += 1;
+    if let Some(types) = types
+        && !types.is_empty()
+    {
+        if types.len() == 1 {
+            conditions.push(format!("${} = ANY({})", *param_idx, types_col));
+            binds.push(BindValue::String(types[0].clone()));
+        } else {
+            conditions.push(format!("{} && ${}", types_col, *param_idx));
+            binds.push(BindValue::StringVec(types.to_vec()));
         }
+        *param_idx += 1;
     }
 
     if let Some(expr) = q_expr {

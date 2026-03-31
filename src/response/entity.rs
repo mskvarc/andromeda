@@ -124,30 +124,29 @@ pub fn apply_inline_join(entity: &mut Value, linked: &HashMap<String, Entity>) {
             Value::Object(attr_obj) => {
                 let attr_type = attr_obj.get("type").and_then(|t| t.as_str()).map(String::from);
                 if attr_type.as_deref() == Some("Relationship") {
-                    if let Some(object_uri) = attr_obj.get("object").and_then(|o| o.as_str()).map(String::from) {
-                        if let Some(linked_entity) = linked.get(&object_uri) {
-                            if let Ok(mut linked_val) = serde_json::to_value(linked_entity) {
-                                apply_inline_join(&mut linked_val, linked);
-                                attr_obj.insert("entity".to_string(), linked_val);
-                            }
-                        }
+                    if let Some(object_uri) = attr_obj.get("object").and_then(|o| o.as_str()).map(String::from)
+                        && let Some(linked_entity) = linked.get(&object_uri)
+                        && let Ok(mut linked_val) = serde_json::to_value(linked_entity)
+                    {
+                        apply_inline_join(&mut linked_val, linked);
+                        attr_obj.insert("entity".to_string(), linked_val);
                     }
-                } else if attr_type.as_deref() == Some("ListRelationship") {
-                    if let Some(object_list) = attr_obj.get("objectList").and_then(|o| o.as_array()) {
-                        let entity_list: Vec<Value> = object_list
-                            .iter()
-                            .filter_map(|uri_val| uri_val.as_str())
-                            .filter_map(|uri| linked.get(uri))
-                            .filter_map(|e| {
-                                serde_json::to_value(e).ok().map(|mut v| {
-                                    apply_inline_join(&mut v, linked);
-                                    v
-                                })
+                } else if attr_type.as_deref() == Some("ListRelationship")
+                    && let Some(object_list) = attr_obj.get("objectList").and_then(|o| o.as_array())
+                {
+                    let entity_list: Vec<Value> = object_list
+                        .iter()
+                        .filter_map(|uri_val| uri_val.as_str())
+                        .filter_map(|uri| linked.get(uri))
+                        .filter_map(|e| {
+                            serde_json::to_value(e).ok().map(|mut v| {
+                                apply_inline_join(&mut v, linked);
+                                v
                             })
-                            .collect();
-                        if !entity_list.is_empty() {
-                            attr_obj.insert("entityList".to_string(), Value::Array(entity_list));
-                        }
+                        })
+                        .collect();
+                    if !entity_list.is_empty() {
+                        attr_obj.insert("entityList".to_string(), Value::Array(entity_list));
                     }
                 }
             }
@@ -156,30 +155,29 @@ pub fn apply_inline_join(entity: &mut Value, linked: &HashMap<String, Entity>) {
                     if let Value::Object(attr_obj) = item {
                         let attr_type = attr_obj.get("type").and_then(|t| t.as_str()).map(String::from);
                         if attr_type.as_deref() == Some("Relationship") {
-                            if let Some(object_uri) = attr_obj.get("object").and_then(|o| o.as_str()).map(String::from) {
-                                if let Some(linked_entity) = linked.get(&object_uri) {
-                                    if let Ok(mut linked_val) = serde_json::to_value(linked_entity) {
-                                        apply_inline_join(&mut linked_val, linked);
-                                        attr_obj.insert("entity".to_string(), linked_val);
-                                    }
-                                }
+                            if let Some(object_uri) = attr_obj.get("object").and_then(|o| o.as_str()).map(String::from)
+                                && let Some(linked_entity) = linked.get(&object_uri)
+                                && let Ok(mut linked_val) = serde_json::to_value(linked_entity)
+                            {
+                                apply_inline_join(&mut linked_val, linked);
+                                attr_obj.insert("entity".to_string(), linked_val);
                             }
-                        } else if attr_type.as_deref() == Some("ListRelationship") {
-                            if let Some(object_list) = attr_obj.get("objectList").and_then(|o| o.as_array()) {
-                                let entity_list: Vec<Value> = object_list
-                                    .iter()
-                                    .filter_map(|uri_val| uri_val.as_str())
-                                    .filter_map(|uri| linked.get(uri))
-                                    .filter_map(|e| {
-                                        serde_json::to_value(e).ok().map(|mut v| {
-                                            apply_inline_join(&mut v, linked);
-                                            v
-                                        })
+                        } else if attr_type.as_deref() == Some("ListRelationship")
+                            && let Some(object_list) = attr_obj.get("objectList").and_then(|o| o.as_array())
+                        {
+                            let entity_list: Vec<Value> = object_list
+                                .iter()
+                                .filter_map(|uri_val| uri_val.as_str())
+                                .filter_map(|uri| linked.get(uri))
+                                .filter_map(|e| {
+                                    serde_json::to_value(e).ok().map(|mut v| {
+                                        apply_inline_join(&mut v, linked);
+                                        v
                                     })
-                                    .collect();
-                                if !entity_list.is_empty() {
-                                    attr_obj.insert("entityList".to_string(), Value::Array(entity_list));
-                                }
+                                })
+                                .collect();
+                            if !entity_list.is_empty() {
+                                attr_obj.insert("entityList".to_string(), Value::Array(entity_list));
                             }
                         }
                     }

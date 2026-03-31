@@ -25,23 +25,23 @@ impl SubscriptionVariant for CsrSubscriptionVariant {
 
     async fn expand_terms(&self, payload: &mut Value, context: &ContextSpec, _base_url: Option<&str>) -> Result<(), AndromedaError> {
         // Store @context as jsonldContext (simplified — no context hosting)
-        if payload.get("jsonldContext").is_none() {
-            if let Some(ctx_val) = payload.get("@context") {
-                let jsonld_context_value = match ctx_val {
-                    Value::String(s) => Value::String(s.clone()),
-                    Value::Array(_) | Value::Object(_) => ctx_val.clone(),
-                    _ => Value::Null,
-                };
+        if payload.get("jsonldContext").is_none()
+            && let Some(ctx_val) = payload.get("@context")
+        {
+            let jsonld_context_value = match ctx_val {
+                Value::String(s) => Value::String(s.clone()),
+                Value::Array(_) | Value::Object(_) => ctx_val.clone(),
+                _ => Value::Null,
+            };
 
-                if jsonld_context_value != Value::Null {
-                    if let Some(obj) = payload.as_object_mut() {
-                        let stored = match jsonld_context_value {
-                            Value::String(s) => Value::String(s),
-                            other => Value::String(other.to_string()),
-                        };
-                        obj.insert("jsonldContext".to_string(), stored);
-                    }
-                }
+            if jsonld_context_value != Value::Null
+                && let Some(obj) = payload.as_object_mut()
+            {
+                let stored = match jsonld_context_value {
+                    Value::String(s) => Value::String(s),
+                    other => Value::String(other.to_string()),
+                };
+                obj.insert("jsonldContext".to_string(), stored);
             }
         }
 

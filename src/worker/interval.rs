@@ -211,18 +211,17 @@ impl IntervalWorker {
                         .and_then(|v| v.as_str())
                         .unwrap_or("");
 
-                    if let Some(ref id) = selector.id {
-                        if entity_id != id {
-                            continue;
-                        }
+                    if let Some(ref id) = selector.id
+                        && entity_id != id
+                    {
+                        continue;
                     }
 
-                    if let Some(ref pattern) = selector.id_pattern {
-                        if let Ok(re) = regex::Regex::new(pattern) {
-                            if !re.is_match(entity_id) {
-                                continue;
-                            }
-                        }
+                    if let Some(ref pattern) = selector.id_pattern
+                        && let Ok(re) = regex::Regex::new(pattern)
+                        && !re.is_match(entity_id)
+                    {
+                        continue;
                     }
 
                     all_entities.push(entity);
@@ -239,12 +238,11 @@ impl IntervalWorker {
     async fn prepare_notification_entities(&self, sub: &Subscription, entities: Vec<Value>) -> Result<Vec<Value>, crate::error::AndromedaError> {
         let mut results = Vec::new();
         for mut entity in entities {
-            if sub.notification.sys_attrs.unwrap_or(false) {
-                if let Some(id) = extract_entity_id(&entity) {
-                    if let Ok(Some((created_at, modified_at, expires_at))) = self.entity_repo.get_sys_attrs(&id).await {
-                        inject_sys_attrs(&mut entity, created_at, modified_at, expires_at);
-                    }
-                }
+            if sub.notification.sys_attrs.unwrap_or(false)
+                && let Some(id) = extract_entity_id(&entity)
+                && let Ok(Some((created_at, modified_at, expires_at))) = self.entity_repo.get_sys_attrs(&id).await
+            {
+                inject_sys_attrs(&mut entity, created_at, modified_at, expires_at);
             }
 
             let filtered = if let Some(ref attrs) = sub.notification.attributes {
@@ -330,20 +328,20 @@ fn apply_subscription_filters(sub: &Subscription, entities: Vec<Value>) -> Vec<V
     entities
         .into_iter()
         .filter(|entity| {
-            if let Some(ref expr) = compiled_q {
-                if !q::evaluate(expr, entity) {
-                    return false;
-                }
+            if let Some(ref expr) = compiled_q
+                && !q::evaluate(expr, entity)
+            {
+                return false;
             }
-            if let Some(ref geo_q) = sub.geo_q {
-                if !matches_geo_filter(geo_q, entity) {
-                    return false;
-                }
+            if let Some(ref geo_q) = sub.geo_q
+                && !matches_geo_filter(geo_q, entity)
+            {
+                return false;
             }
-            if let Some(ref scope_q) = sub.scope_q {
-                if !matches_scope_filter(scope_q, entity) {
-                    return false;
-                }
+            if let Some(ref scope_q) = sub.scope_q
+                && !matches_scope_filter(scope_q, entity)
+            {
+                return false;
             }
             true
         })

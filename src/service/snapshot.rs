@@ -79,10 +79,10 @@ impl SnapshotService {
     pub async fn update(&self, id: &str, patch: SnapshotPatch) -> Result<Snapshot, AndromedaError> {
         let existing = self.get(id).await?;
 
-        if let Some(p) = patch.snapshot_priority {
-            if !(1..=10).contains(&p) {
-                return Err(AndromedaError::bad_request_data("snapshotPriority must be between 1 and 10"));
-            }
+        if let Some(p) = patch.snapshot_priority
+            && !(1..=10).contains(&p)
+        {
+            return Err(AndromedaError::bad_request_data("snapshotPriority must be between 1 and 10"));
         }
 
         // Recalculate expiresAt if lifetime changed

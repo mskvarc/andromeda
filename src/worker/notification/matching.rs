@@ -23,11 +23,11 @@ pub fn matches_subscription(sub: &CompiledSubscription, event: &ChangeEvent) -> 
         return false;
     }
 
-    if let Some(expires_at) = sub.expires_at {
-        if expires_at <= Utc::now() {
-            debug!("Subscription {} skipped: expired at {}", sub.id, expires_at);
-            return false;
-        }
+    if let Some(expires_at) = sub.expires_at
+        && expires_at <= Utc::now()
+    {
+        debug!("Subscription {} skipped: expired at {}", sub.id, expires_at);
+        return false;
     }
 
     if sub.time_interval_secs.is_some() {
@@ -45,7 +45,7 @@ pub fn matches_subscription(sub: &CompiledSubscription, event: &ChangeEvent) -> 
             let type_matches = if let Some(ref pattern) = sel.type_pattern {
                 event.entity_types.iter().any(|t| pattern.is_match(t))
             } else {
-                event.entity_types.iter().any(|t| *t == sel.type_)
+                event.entity_types.contains(&sel.type_)
             };
             if !type_matches {
                 debug!(
@@ -55,23 +55,23 @@ pub fn matches_subscription(sub: &CompiledSubscription, event: &ChangeEvent) -> 
                 return false;
             }
 
-            if let Some(ref id) = sel.id {
-                if *id != event.entity_id {
-                    debug!("Subscription {} selector id mismatch: selector={} event_id={}", sub.id, id, event.entity_id);
-                    return false;
-                }
+            if let Some(ref id) = sel.id
+                && *id != event.entity_id
+            {
+                debug!("Subscription {} selector id mismatch: selector={} event_id={}", sub.id, id, event.entity_id);
+                return false;
             }
 
-            if let Some(ref pattern) = sel.id_pattern {
-                if !pattern.is_match(&event.entity_id) {
-                    debug!(
-                        "Subscription {} selector idPattern mismatch: pattern={} event_id={}",
-                        sub.id,
-                        pattern.as_str(),
-                        event.entity_id
-                    );
-                    return false;
-                }
+            if let Some(ref pattern) = sel.id_pattern
+                && !pattern.is_match(&event.entity_id)
+            {
+                debug!(
+                    "Subscription {} selector idPattern mismatch: pattern={} event_id={}",
+                    sub.id,
+                    pattern.as_str(),
+                    event.entity_id
+                );
+                return false;
             }
 
             true
@@ -83,14 +83,14 @@ pub fn matches_subscription(sub: &CompiledSubscription, event: &ChangeEvent) -> 
         }
     }
 
-    if let Some(ref watched) = sub.watched_attrs {
-        if !event.changed_attributes.iter().any(|a| watched.contains(a)) {
-            debug!(
-                "Subscription {} skipped: watchedAttributes {:?} did not match event attrs {:?}",
-                sub.id, watched, event.changed_attributes
-            );
-            return false;
-        }
+    if let Some(ref watched) = sub.watched_attrs
+        && !event.changed_attributes.iter().any(|a| watched.contains(a))
+    {
+        debug!(
+            "Subscription {} skipped: watchedAttributes {:?} did not match event attrs {:?}",
+            sub.id, watched, event.changed_attributes
+        );
+        return false;
     }
 
     debug!(
@@ -102,32 +102,32 @@ pub fn matches_subscription(sub: &CompiledSubscription, event: &ChangeEvent) -> 
 
 /// Evaluate q, geoQ, and scopeQ filters against the fetched entity data.
 pub fn matches_entity_filters(sub: &CompiledSubscription, entity_data: &Value) -> bool {
-    if let Some(ref expr) = sub.compiled_q {
-        if !q::evaluate(expr, entity_data) {
-            debug!("Subscription {} skipped: q filter did not match entity", sub.id);
-            return false;
-        }
+    if let Some(ref expr) = sub.compiled_q
+        && !q::evaluate(expr, entity_data)
+    {
+        debug!("Subscription {} skipped: q filter did not match entity", sub.id);
+        return false;
     }
 
-    if let Some(ref geo_q) = sub.geo_q {
-        if !matches_geo_filter(geo_q, entity_data) {
-            debug!("Subscription {} skipped: geoQ filter did not match entity", sub.id);
-            return false;
-        }
+    if let Some(ref geo_q) = sub.geo_q
+        && !matches_geo_filter(geo_q, entity_data)
+    {
+        debug!("Subscription {} skipped: geoQ filter did not match entity", sub.id);
+        return false;
     }
 
-    if let Some(ref scope_q) = sub.scope_q {
-        if !matches_scope_filter(scope_q, entity_data) {
-            debug!("Subscription {} skipped: scopeQ filter did not match entity", sub.id);
-            return false;
-        }
+    if let Some(ref scope_q) = sub.scope_q
+        && !matches_scope_filter(scope_q, entity_data)
+    {
+        debug!("Subscription {} skipped: scopeQ filter did not match entity", sub.id);
+        return false;
     }
 
-    if let Some(ref csf_expr) = sub.compiled_csf {
-        if !q::evaluate(csf_expr, entity_data) {
-            debug!("Subscription {} skipped: csf filter did not match entity", sub.id);
-            return false;
-        }
+    if let Some(ref csf_expr) = sub.compiled_csf
+        && !q::evaluate(csf_expr, entity_data)
+    {
+        debug!("Subscription {} skipped: csf filter did not match entity", sub.id);
+        return false;
     }
 
     true
@@ -350,8 +350,7 @@ mod tests {
 }
 
 fn scope_matches(pattern: &str, scope: &str) -> bool {
-    if pattern.ends_with("/#") {
-        let prefix = &pattern[..pattern.len() - 2];
+    if let Some(prefix) = pattern.strip_suffix("/#") {
         if let Some(rest) = scope.strip_prefix(prefix) {
             rest.starts_with('/') && !rest[1..].contains('/')
         } else {

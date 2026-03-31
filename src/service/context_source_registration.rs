@@ -130,10 +130,10 @@ impl ContextSourceRegistrationService {
 
     pub async fn create(&self, payload: Value, context: &ContextSpec) -> Result<String, AndromedaError> {
         // Validate type
-        if let Some(type_val) = payload.get("type") {
-            if type_val.as_str() != Some("ContextSourceRegistration") {
-                return Err(AndromedaError::bad_request_data("type must be 'ContextSourceRegistration'"));
-            }
+        if let Some(type_val) = payload.get("type")
+            && type_val.as_str() != Some("ContextSourceRegistration")
+        {
+            return Err(AndromedaError::bad_request_data("type must be 'ContextSourceRegistration'"));
         }
 
         // information is required
@@ -158,19 +158,19 @@ impl ContextSourceRegistrationService {
         }
 
         // Validate mode if present
-        if let Some(mode) = payload.get("mode").and_then(|v| v.as_str()) {
-            if !["inclusive", "exclusive", "redirect", "auxiliary"].contains(&mode) {
-                return Err(AndromedaError::bad_request_data(
-                    "mode must be one of: inclusive, exclusive, redirect, auxiliary",
-                ));
-            }
+        if let Some(mode) = payload.get("mode").and_then(|v| v.as_str())
+            && !["inclusive", "exclusive", "redirect", "auxiliary"].contains(&mode)
+        {
+            return Err(AndromedaError::bad_request_data(
+                "mode must be one of: inclusive, exclusive, redirect, auxiliary",
+            ));
         }
 
         // Validate id is a valid URI if provided
-        if let Some(id) = payload.get("id").and_then(|v| v.as_str()) {
-            if !Self::is_valid_uri(id) {
-                return Err(AndromedaError::bad_request_data("id must be a valid URI"));
-            }
+        if let Some(id) = payload.get("id").and_then(|v| v.as_str())
+            && !Self::is_valid_uri(id)
+        {
+            return Err(AndromedaError::bad_request_data("id must be a valid URI"));
         }
 
         // Determine the id
@@ -224,7 +224,7 @@ impl ContextSourceRegistrationService {
     }
 
     pub async fn query(&self, params: &CsrQueryParameters, context: &ContextSpec) -> Result<(Vec<Value>, i64), AndromedaError> {
-        params.validate().map_err(|e| AndromedaError::bad_request_data(&e.to_string()))?;
+        params.validate().map_err(|e| AndromedaError::bad_request_data(e.to_string()))?;
 
         let compiled = self.compile_csr_query(params, context).await?;
 
@@ -289,7 +289,7 @@ impl ContextSourceRegistrationService {
         // Parse q expression
         let q_expr = if let Some(ref q) = params.q {
             if !q.is_empty() {
-                Some(crate::query::q::parse(q).map_err(|e| AndromedaError::bad_request_data(&format!("Invalid q parameter: {}", e)))?)
+                Some(crate::query::q::parse(q).map_err(|e| AndromedaError::bad_request_data(format!("Invalid q parameter: {}", e)))?)
             } else {
                 None
             }
@@ -318,10 +318,10 @@ impl ContextSourceRegistrationService {
         }
 
         // Validate type if present
-        if let Some(type_val) = payload.get("type") {
-            if type_val.as_str() != Some("ContextSourceRegistration") {
-                return Err(AndromedaError::bad_request_data("type must be 'ContextSourceRegistration'"));
-            }
+        if let Some(type_val) = payload.get("type")
+            && type_val.as_str() != Some("ContextSourceRegistration")
+        {
+            return Err(AndromedaError::bad_request_data("type must be 'ContextSourceRegistration'"));
         }
 
         // Reject nulling out mandatory fields
@@ -344,12 +344,12 @@ impl ContextSourceRegistrationService {
         }
 
         // Validate mode if present
-        if let Some(mode) = payload.get("mode").and_then(|v| v.as_str()) {
-            if !["inclusive", "exclusive", "redirect", "auxiliary"].contains(&mode) {
-                return Err(AndromedaError::bad_request_data(
-                    "mode must be one of: inclusive, exclusive, redirect, auxiliary",
-                ));
-            }
+        if let Some(mode) = payload.get("mode").and_then(|v| v.as_str())
+            && !["inclusive", "exclusive", "redirect", "auxiliary"].contains(&mode)
+        {
+            return Err(AndromedaError::bad_request_data(
+                "mode must be one of: inclusive, exclusive, redirect, auxiliary",
+            ));
         }
 
         // Expand entity types and attribute names in information if present
@@ -409,46 +409,46 @@ impl ContextSourceRegistrationService {
         if let Some(info_arr) = information.as_array_mut() {
             for info in info_arr.iter_mut() {
                 // Expand entity types
-                if let Some(entities) = info.get_mut("entities") {
-                    if let Some(entities_arr) = entities.as_array_mut() {
-                        for entity in entities_arr.iter_mut() {
-                            if let Some(type_val) = entity.get("type").and_then(|v| v.as_str()) {
-                                let expanded = self.engine.expand_type(type_val, context).await?;
-                                if let Some(obj) = entity.as_object_mut() {
-                                    obj.insert("type".to_string(), Value::String(expanded));
-                                }
+                if let Some(entities) = info.get_mut("entities")
+                    && let Some(entities_arr) = entities.as_array_mut()
+                {
+                    for entity in entities_arr.iter_mut() {
+                        if let Some(type_val) = entity.get("type").and_then(|v| v.as_str()) {
+                            let expanded = self.engine.expand_type(type_val, context).await?;
+                            if let Some(obj) = entity.as_object_mut() {
+                                obj.insert("type".to_string(), Value::String(expanded));
                             }
                         }
                     }
                 }
 
                 // Expand property names
-                if let Some(prop_names) = info.get("propertyNames") {
-                    if let Some(names_arr) = prop_names.as_array() {
-                        let mut expanded_names = Vec::new();
-                        for name in names_arr {
-                            if let Some(n) = name.as_str() {
-                                expanded_names.push(Value::String(self.engine.expand_term(n, context).await?));
-                            }
+                if let Some(prop_names) = info.get("propertyNames")
+                    && let Some(names_arr) = prop_names.as_array()
+                {
+                    let mut expanded_names = Vec::new();
+                    for name in names_arr {
+                        if let Some(n) = name.as_str() {
+                            expanded_names.push(Value::String(self.engine.expand_term(n, context).await?));
                         }
-                        if let Some(obj) = info.as_object_mut() {
-                            obj.insert("propertyNames".to_string(), Value::Array(expanded_names));
-                        }
+                    }
+                    if let Some(obj) = info.as_object_mut() {
+                        obj.insert("propertyNames".to_string(), Value::Array(expanded_names));
                     }
                 }
 
                 // Expand relationship names
-                if let Some(rel_names) = info.get("relationshipNames") {
-                    if let Some(names_arr) = rel_names.as_array() {
-                        let mut expanded_names = Vec::new();
-                        for name in names_arr {
-                            if let Some(n) = name.as_str() {
-                                expanded_names.push(Value::String(self.engine.expand_term(n, context).await?));
-                            }
+                if let Some(rel_names) = info.get("relationshipNames")
+                    && let Some(names_arr) = rel_names.as_array()
+                {
+                    let mut expanded_names = Vec::new();
+                    for name in names_arr {
+                        if let Some(n) = name.as_str() {
+                            expanded_names.push(Value::String(self.engine.expand_term(n, context).await?));
                         }
-                        if let Some(obj) = info.as_object_mut() {
-                            obj.insert("relationshipNames".to_string(), Value::Array(expanded_names));
-                        }
+                    }
+                    if let Some(obj) = info.as_object_mut() {
+                        obj.insert("relationshipNames".to_string(), Value::Array(expanded_names));
                     }
                 }
             }
@@ -461,46 +461,46 @@ impl ContextSourceRegistrationService {
         if let Some(info_arr) = information.as_array_mut() {
             for info in info_arr.iter_mut() {
                 // Compact entity types
-                if let Some(entities) = info.get_mut("entities") {
-                    if let Some(entities_arr) = entities.as_array_mut() {
-                        for entity in entities_arr.iter_mut() {
-                            if let Some(type_val) = entity.get("type").and_then(|v| v.as_str()) {
-                                let compacted = crate::jsonld::term_resolver::compact_type_iri(&self.engine, type_val, context).await;
-                                if let Some(obj) = entity.as_object_mut() {
-                                    obj.insert("type".to_string(), Value::String(compacted));
-                                }
+                if let Some(entities) = info.get_mut("entities")
+                    && let Some(entities_arr) = entities.as_array_mut()
+                {
+                    for entity in entities_arr.iter_mut() {
+                        if let Some(type_val) = entity.get("type").and_then(|v| v.as_str()) {
+                            let compacted = crate::jsonld::term_resolver::compact_type_iri(&self.engine, type_val, context).await;
+                            if let Some(obj) = entity.as_object_mut() {
+                                obj.insert("type".to_string(), Value::String(compacted));
                             }
                         }
                     }
                 }
 
                 // Compact property names
-                if let Some(prop_names) = info.get("propertyNames") {
-                    if let Some(names_arr) = prop_names.as_array() {
-                        let mut compacted_names = Vec::new();
-                        for name in names_arr {
-                            if let Some(n) = name.as_str() {
-                                compacted_names.push(Value::String(crate::jsonld::term_resolver::compact_attr_iri(&self.engine, n, context).await));
-                            }
+                if let Some(prop_names) = info.get("propertyNames")
+                    && let Some(names_arr) = prop_names.as_array()
+                {
+                    let mut compacted_names = Vec::new();
+                    for name in names_arr {
+                        if let Some(n) = name.as_str() {
+                            compacted_names.push(Value::String(crate::jsonld::term_resolver::compact_attr_iri(&self.engine, n, context).await));
                         }
-                        if let Some(obj) = info.as_object_mut() {
-                            obj.insert("propertyNames".to_string(), Value::Array(compacted_names));
-                        }
+                    }
+                    if let Some(obj) = info.as_object_mut() {
+                        obj.insert("propertyNames".to_string(), Value::Array(compacted_names));
                     }
                 }
 
                 // Compact relationship names
-                if let Some(rel_names) = info.get("relationshipNames") {
-                    if let Some(names_arr) = rel_names.as_array() {
-                        let mut compacted_names = Vec::new();
-                        for name in names_arr {
-                            if let Some(n) = name.as_str() {
-                                compacted_names.push(Value::String(crate::jsonld::term_resolver::compact_attr_iri(&self.engine, n, context).await));
-                            }
+                if let Some(rel_names) = info.get("relationshipNames")
+                    && let Some(names_arr) = rel_names.as_array()
+                {
+                    let mut compacted_names = Vec::new();
+                    for name in names_arr {
+                        if let Some(n) = name.as_str() {
+                            compacted_names.push(Value::String(crate::jsonld::term_resolver::compact_attr_iri(&self.engine, n, context).await));
                         }
-                        if let Some(obj) = info.as_object_mut() {
-                            obj.insert("relationshipNames".to_string(), Value::Array(compacted_names));
-                        }
+                    }
+                    if let Some(obj) = info.as_object_mut() {
+                        obj.insert("relationshipNames".to_string(), Value::Array(compacted_names));
                     }
                 }
             }

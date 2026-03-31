@@ -48,9 +48,11 @@ pub enum NgsiLdErrorType {
     InternalError,
     /// The query is too complex to evaluate (403).
     #[strum(to_string = "Too complex query")]
+    #[allow(dead_code)]
     TooComplexQuery,
     /// The query would return too many results (403).
     #[strum(to_string = "Too many results")]
+    #[allow(dead_code)]
     TooManyResults,
     /// A required JSON-LD `@context` could not be retrieved (503).
     #[strum(to_string = "LD context not available")]

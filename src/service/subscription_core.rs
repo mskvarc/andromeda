@@ -38,20 +38,20 @@ pub fn validate_create_payload(payload: &Value) -> Result<(), AndromedaError> {
         if notification.get("endpoint").is_none() {
             return Err(AndromedaError::bad_request_data("notification.endpoint is required"));
         }
-        if let Some(endpoint) = notification.get("endpoint") {
-            if endpoint.get("uri").is_none() {
-                return Err(AndromedaError::bad_request_data("notification.endpoint.uri is required"));
-            }
+        if let Some(endpoint) = notification.get("endpoint")
+            && endpoint.get("uri").is_none()
+        {
+            return Err(AndromedaError::bad_request_data("notification.endpoint.uri is required"));
         }
     }
 
     // Per spec 5.11.2 / 5.8.2, expiresAt must be in the future at creation time.
     if let Some(expires_at_val) = payload.get("expiresAt").and_then(|v| v.as_str()) {
         // Format validation is handled by validate_common_fields; only check future here.
-        if let Ok(expires_at) = chrono::DateTime::parse_from_rfc3339(expires_at_val) {
-            if expires_at <= Utc::now() {
-                return Err(AndromedaError::bad_request_data("expiresAt must be in the future"));
-            }
+        if let Ok(expires_at) = chrono::DateTime::parse_from_rfc3339(expires_at_val)
+            && expires_at <= Utc::now()
+        {
+            return Err(AndromedaError::bad_request_data("expiresAt must be in the future"));
         }
     }
 
@@ -63,29 +63,28 @@ pub fn validate_create_payload(payload: &Value) -> Result<(), AndromedaError> {
 /// Per spec 5.8.2.4, entity subscription updates must reject past expiresAt.
 /// CSR subscription updates (5.11.3) do NOT have this restriction.
 pub fn validate_expires_at_not_in_past(payload: &Value) -> Result<(), AndromedaError> {
-    if let Some(expires_at_val) = payload.get("expiresAt").and_then(|v| v.as_str()) {
-        if let Ok(expires_at) = chrono::DateTime::parse_from_rfc3339(expires_at_val) {
-            if expires_at <= Utc::now() {
-                return Err(AndromedaError::bad_request_data("expiresAt must be in the future"));
-            }
-        }
+    if let Some(expires_at_val) = payload.get("expiresAt").and_then(|v| v.as_str())
+        && let Ok(expires_at) = chrono::DateTime::parse_from_rfc3339(expires_at_val)
+        && expires_at <= Utc::now()
+    {
+        return Err(AndromedaError::bad_request_data("expiresAt must be in the future"));
     }
     Ok(())
 }
 
 /// Validate fields shared between create and update.
 pub fn validate_common_fields(payload: &Value) -> Result<(), AndromedaError> {
-    if let Some(type_val) = payload.get("type") {
-        if type_val.as_str() != Some("Subscription") {
-            return Err(AndromedaError::bad_request_data("type must be 'Subscription'"));
-        }
+    if let Some(type_val) = payload.get("type")
+        && type_val.as_str() != Some("Subscription")
+    {
+        return Err(AndromedaError::bad_request_data("type must be 'Subscription'"));
     }
 
     // expiresAt format validation (but not future check — that's create-only per spec 5.11.2)
-    if let Some(expires_at_val) = payload.get("expiresAt").and_then(|v| v.as_str()) {
-        if chrono::DateTime::parse_from_rfc3339(expires_at_val).is_err() {
-            return Err(AndromedaError::bad_request_data("expiresAt must be a valid ISO 8601 date-time"));
-        }
+    if let Some(expires_at_val) = payload.get("expiresAt").and_then(|v| v.as_str())
+        && chrono::DateTime::parse_from_rfc3339(expires_at_val).is_err()
+    {
+        return Err(AndromedaError::bad_request_data("expiresAt must be a valid ISO 8601 date-time"));
     }
 
     if payload.get("timeInterval").is_some() && payload.get("watchedAttributes").is_some() {
@@ -96,16 +95,16 @@ pub fn validate_common_fields(payload: &Value) -> Result<(), AndromedaError> {
         return Err(AndromedaError::bad_request_data("timeInterval and throttling are mutually exclusive"));
     }
 
-    if let Some(throttling) = payload.get("throttling").and_then(|v| v.as_f64()) {
-        if throttling < 0.0 {
-            return Err(AndromedaError::bad_request_data("throttling must be greater than or equal to 0"));
-        }
+    if let Some(throttling) = payload.get("throttling").and_then(|v| v.as_f64())
+        && throttling < 0.0
+    {
+        return Err(AndromedaError::bad_request_data("throttling must be greater than or equal to 0"));
     }
 
-    if let Some(time_interval) = payload.get("timeInterval").and_then(|v| v.as_f64()) {
-        if time_interval <= 0.0 {
-            return Err(AndromedaError::bad_request_data("timeInterval must be greater than 0"));
-        }
+    if let Some(time_interval) = payload.get("timeInterval").and_then(|v| v.as_f64())
+        && time_interval <= 0.0
+    {
+        return Err(AndromedaError::bad_request_data("timeInterval must be greater than 0"));
     }
 
     if let Some(q_str) = payload.get("q").and_then(|v| v.as_str()) {
@@ -117,12 +116,11 @@ pub fn validate_common_fields(payload: &Value) -> Result<(), AndromedaError> {
         }
     }
 
-    if let Some(watched) = payload.get("watchedAttributes") {
-        if let Some(arr) = watched.as_array() {
-            if arr.is_empty() {
-                return Err(AndromedaError::bad_request_data("watchedAttributes must not be empty"));
-            }
-        }
+    if let Some(watched) = payload.get("watchedAttributes")
+        && let Some(arr) = watched.as_array()
+        && arr.is_empty()
+    {
+        return Err(AndromedaError::bad_request_data("watchedAttributes must not be empty"));
     }
 
     Ok(())
@@ -177,26 +175,26 @@ pub fn validate_notification_fragment(payload: &Value) -> Result<(), AndromedaEr
 /// entity-subscription service adds that on top.
 pub async fn expand_common_subscription_terms(engine: &JsonLdEngine, payload: &mut Value, context: &ContextSpec) -> Result<(), AndromedaError> {
     // Expand entities[].type
-    if let Some(entities) = payload.get_mut("entities") {
-        if let Some(arr) = entities.as_array_mut() {
-            for entity_sel in arr.iter_mut() {
-                if let Some(type_val) = entity_sel.get("type").and_then(|v| v.as_str()) {
-                    // Detect regex alternation patterns and skip expansion
-                    if type_val.contains('|') || (type_val.contains('(') && type_val.contains(')')) {
-                        continue;
+    if let Some(entities) = payload.get_mut("entities")
+        && let Some(arr) = entities.as_array_mut()
+    {
+        for entity_sel in arr.iter_mut() {
+            if let Some(type_val) = entity_sel.get("type").and_then(|v| v.as_str()) {
+                // Detect regex alternation patterns and skip expansion
+                if type_val.contains('|') || (type_val.contains('(') && type_val.contains(')')) {
+                    continue;
+                }
+                match engine.expand_type(type_val, context).await {
+                    Ok(expanded) => {
+                        if let Some(obj) = entity_sel.as_object_mut() {
+                            obj.insert("type".to_string(), Value::String(expanded));
+                        }
                     }
-                    match engine.expand_type(type_val, context).await {
-                        Ok(expanded) => {
-                            if let Some(obj) = entity_sel.as_object_mut() {
-                                obj.insert("type".to_string(), Value::String(expanded));
-                            }
+                    Err(e) => {
+                        if e.is_context_not_available() {
+                            return Err(AndromedaError::from(e));
                         }
-                        Err(e) => {
-                            if e.is_context_not_available() {
-                                return Err(AndromedaError::from(e));
-                            }
-                            warn!("Failed to expand entity selector type '{}': {}", type_val, e);
-                        }
+                        warn!("Failed to expand entity selector type '{}': {}", type_val, e);
                     }
                 }
             }
@@ -204,20 +202,20 @@ pub async fn expand_common_subscription_terms(engine: &JsonLdEngine, payload: &m
     }
 
     // Expand watchedAttributes
-    if let Some(watched) = payload.get_mut("watchedAttributes") {
-        if let Some(arr) = watched.as_array_mut() {
-            for attr in arr.iter_mut() {
-                if let Some(term) = attr.as_str() {
-                    match engine.expand_term(term, context).await {
-                        Ok(expanded) => {
-                            *attr = Value::String(expanded);
+    if let Some(watched) = payload.get_mut("watchedAttributes")
+        && let Some(arr) = watched.as_array_mut()
+    {
+        for attr in arr.iter_mut() {
+            if let Some(term) = attr.as_str() {
+                match engine.expand_term(term, context).await {
+                    Ok(expanded) => {
+                        *attr = Value::String(expanded);
+                    }
+                    Err(e) => {
+                        if e.is_context_not_available() {
+                            return Err(AndromedaError::from(e));
                         }
-                        Err(e) => {
-                            if e.is_context_not_available() {
-                                return Err(AndromedaError::from(e));
-                            }
-                            warn!("Failed to expand watchedAttribute '{}': {}", term, e);
-                        }
+                        warn!("Failed to expand watchedAttribute '{}': {}", term, e);
                     }
                 }
             }
@@ -225,22 +223,21 @@ pub async fn expand_common_subscription_terms(engine: &JsonLdEngine, payload: &m
     }
 
     // Expand notification.attributes
-    if let Some(notification) = payload.get_mut("notification") {
-        if let Some(attrs) = notification.get_mut("attributes") {
-            if let Some(arr) = attrs.as_array_mut() {
-                for attr in arr.iter_mut() {
-                    if let Some(term) = attr.as_str() {
-                        match engine.expand_term(term, context).await {
-                            Ok(expanded) => {
-                                *attr = Value::String(expanded);
-                            }
-                            Err(e) => {
-                                if e.is_context_not_available() {
-                                    return Err(AndromedaError::from(e));
-                                }
-                                warn!("Failed to expand notification attribute '{}': {}", term, e);
-                            }
+    if let Some(notification) = payload.get_mut("notification")
+        && let Some(attrs) = notification.get_mut("attributes")
+        && let Some(arr) = attrs.as_array_mut()
+    {
+        for attr in arr.iter_mut() {
+            if let Some(term) = attr.as_str() {
+                match engine.expand_term(term, context).await {
+                    Ok(expanded) => {
+                        *attr = Value::String(expanded);
+                    }
+                    Err(e) => {
+                        if e.is_context_not_available() {
+                            return Err(AndromedaError::from(e));
                         }
+                        warn!("Failed to expand notification attribute '{}': {}", term, e);
                     }
                 }
             }
@@ -248,32 +245,31 @@ pub async fn expand_common_subscription_terms(engine: &JsonLdEngine, payload: &m
     }
 
     // Expand q expression attribute terms
-    if let Some(q_str) = payload.get("q").and_then(|v| v.as_str()).map(String::from) {
-        if let Ok(expr) = q::parse(&q_str) {
-            if let Ok(expanded) = crate::jsonld::term_resolver::expand_q_expr(engine, expr, context).await {
-                let expanded_str = q::serialize(&expanded);
-                if let Some(obj) = payload.as_object_mut() {
-                    obj.insert("q".to_string(), Value::String(expanded_str));
-                }
-            }
+    if let Some(q_str) = payload.get("q").and_then(|v| v.as_str()).map(String::from)
+        && let Ok(expr) = q::parse(&q_str)
+        && let Ok(expanded) = crate::jsonld::term_resolver::expand_q_expr(engine, expr, context).await
+    {
+        let expanded_str = q::serialize(&expanded);
+        if let Some(obj) = payload.as_object_mut() {
+            obj.insert("q".to_string(), Value::String(expanded_str));
         }
     }
 
     // Expand geoQ.geoproperty
-    if let Some(geo_q) = payload.get_mut("geoQ") {
-        if let Some(geoprop) = geo_q.get("geoproperty").and_then(|v| v.as_str()).map(String::from) {
-            match engine.expand_term(&geoprop, context).await {
-                Ok(expanded) => {
-                    if let Some(obj) = geo_q.as_object_mut() {
-                        obj.insert("geoproperty".to_string(), Value::String(expanded));
-                    }
+    if let Some(geo_q) = payload.get_mut("geoQ")
+        && let Some(geoprop) = geo_q.get("geoproperty").and_then(|v| v.as_str()).map(String::from)
+    {
+        match engine.expand_term(&geoprop, context).await {
+            Ok(expanded) => {
+                if let Some(obj) = geo_q.as_object_mut() {
+                    obj.insert("geoproperty".to_string(), Value::String(expanded));
                 }
-                Err(e) => {
-                    if e.is_context_not_available() {
-                        return Err(AndromedaError::from(e));
-                    }
-                    warn!("Failed to expand geoQ.geoproperty '{}': {}", geoprop, e);
+            }
+            Err(e) => {
+                if e.is_context_not_available() {
+                    return Err(AndromedaError::from(e));
                 }
+                warn!("Failed to expand geoQ.geoproperty '{}': {}", geoprop, e);
             }
         }
     }
@@ -299,10 +295,10 @@ pub async fn expand_common_subscription_terms(engine: &JsonLdEngine, payload: &m
 pub fn fixup_integer_fields(value: &mut Value) {
     if let Some(obj) = value.as_object_mut() {
         for key in &["timeInterval", "throttling"] {
-            if let Some(val) = obj.get(*key).and_then(|v| v.as_f64()) {
-                if val.fract() == 0.0 {
-                    obj.insert(key.to_string(), Value::Number(serde_json::Number::from(val as i64)));
-                }
+            if let Some(val) = obj.get(*key).and_then(|v| v.as_f64())
+                && val.fract() == 0.0
+            {
+                obj.insert(key.to_string(), Value::Number(serde_json::Number::from(val as i64)));
             }
         }
     }
@@ -310,10 +306,10 @@ pub fn fixup_integer_fields(value: &mut Value) {
 
 /// Inject default notificationTrigger if absent.
 pub fn fixup_default_notification_trigger(value: &mut Value) {
-    if value.get("notificationTrigger").is_none() {
-        if let Some(obj) = value.as_object_mut() {
-            obj.insert("notificationTrigger".to_string(), serde_json::json!(["attributeCreated", "attributeUpdated"]));
-        }
+    if value.get("notificationTrigger").is_none()
+        && let Some(obj) = value.as_object_mut()
+    {
+        obj.insert("notificationTrigger".to_string(), serde_json::json!(["attributeCreated", "attributeUpdated"]));
     }
 }
 
@@ -327,63 +323,61 @@ pub fn fixup_jsonld_context(value: &mut Value) {
             None
         }
     });
-    if let Some(parsed) = parsed {
-        if let Some(obj) = value.as_object_mut() {
-            obj.insert("jsonldContext".to_string(), parsed);
-        }
+    if let Some(parsed) = parsed
+        && let Some(obj) = value.as_object_mut()
+    {
+        obj.insert("jsonldContext".to_string(), parsed);
     }
 }
 
 /// Compute expired status at read time based on expiresAt.
 pub fn fixup_expired_status(value: &mut Value, expires_at: Option<chrono::DateTime<Utc>>) {
-    if let Some(expires_at) = expires_at {
-        if expires_at <= Utc::now() {
-            if let Some(obj) = value.as_object_mut() {
-                obj.insert("status".to_string(), Value::String("expired".to_string()));
-                obj.insert("isActive".to_string(), Value::Bool(false));
-            }
-        }
+    if let Some(expires_at) = expires_at
+        && expires_at <= Utc::now()
+        && let Some(obj) = value.as_object_mut()
+    {
+        obj.insert("status".to_string(), Value::String("expired".to_string()));
+        obj.insert("isActive".to_string(), Value::Bool(false));
     }
 }
 
 /// Compact IRI-bearing fields in a serialized Subscription for HTTP response.
 pub async fn compact_subscription_iris(engine: &JsonLdEngine, value: &mut Value, context: &ContextSpec) {
     // Compact entities[].type IRIs
-    if let Some(entities) = value.get_mut("entities") {
-        if let Some(arr) = entities.as_array_mut() {
-            for entity_sel in arr.iter_mut() {
-                if let Some(type_iri) = entity_sel.get("type").and_then(|v| v.as_str()).map(String::from) {
-                    let compacted = crate::jsonld::term_resolver::compact_type_iri(engine, &type_iri, context).await;
-                    if let Some(obj) = entity_sel.as_object_mut() {
-                        obj.insert("type".to_string(), Value::String(compacted));
-                    }
+    if let Some(entities) = value.get_mut("entities")
+        && let Some(arr) = entities.as_array_mut()
+    {
+        for entity_sel in arr.iter_mut() {
+            if let Some(type_iri) = entity_sel.get("type").and_then(|v| v.as_str()).map(String::from) {
+                let compacted = crate::jsonld::term_resolver::compact_type_iri(engine, &type_iri, context).await;
+                if let Some(obj) = entity_sel.as_object_mut() {
+                    obj.insert("type".to_string(), Value::String(compacted));
                 }
             }
         }
     }
 
     // Compact watchedAttributes IRIs
-    if let Some(watched) = value.get_mut("watchedAttributes") {
-        if let Some(arr) = watched.as_array_mut() {
-            for attr in arr.iter_mut() {
-                if let Some(iri) = attr.as_str().map(String::from) {
-                    let compacted = crate::jsonld::term_resolver::compact_attr_iri(engine, &iri, context).await;
-                    *attr = Value::String(compacted);
-                }
+    if let Some(watched) = value.get_mut("watchedAttributes")
+        && let Some(arr) = watched.as_array_mut()
+    {
+        for attr in arr.iter_mut() {
+            if let Some(iri) = attr.as_str().map(String::from) {
+                let compacted = crate::jsonld::term_resolver::compact_attr_iri(engine, &iri, context).await;
+                *attr = Value::String(compacted);
             }
         }
     }
 
     // Compact notification.attributes IRIs
-    if let Some(notification) = value.get_mut("notification") {
-        if let Some(attrs) = notification.get_mut("attributes") {
-            if let Some(arr) = attrs.as_array_mut() {
-                for attr in arr.iter_mut() {
-                    if let Some(iri) = attr.as_str().map(String::from) {
-                        let compacted = crate::jsonld::term_resolver::compact_attr_iri(engine, &iri, context).await;
-                        *attr = Value::String(compacted);
-                    }
-                }
+    if let Some(notification) = value.get_mut("notification")
+        && let Some(attrs) = notification.get_mut("attributes")
+        && let Some(arr) = attrs.as_array_mut()
+    {
+        for attr in arr.iter_mut() {
+            if let Some(iri) = attr.as_str().map(String::from) {
+                let compacted = crate::jsonld::term_resolver::compact_attr_iri(engine, &iri, context).await;
+                *attr = Value::String(compacted);
             }
         }
     }

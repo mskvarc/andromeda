@@ -162,21 +162,20 @@ fn extract_context_error_from_chain(err: &(dyn StdError + 'static)) -> Option<Er
     let mut current: Option<&(dyn StdError + 'static)> = Some(err);
 
     while let Some(source) = current {
-        if let Some(jsonld_error) = source.downcast_ref::<Error>() {
-            if let Some(explicit) = explicit_context_error_copy(jsonld_error) {
-                return Some(explicit);
-            }
+        if let Some(jsonld_error) = source.downcast_ref::<Error>()
+            && let Some(explicit) = explicit_context_error_copy(jsonld_error)
+        {
+            return Some(explicit);
         }
 
         // LoadError (from json-ld-core) stores its inner error in a `cause`
         // field without a #[source] attribute, so source() returns None and
         // the chain breaks.  Bridge the gap by accessing `cause` directly.
-        if let Some(load_error) = source.downcast_ref::<LoadError>() {
-            if let Some(inner) = load_error.cause.downcast_ref::<Error>() {
-                if let Some(explicit) = explicit_context_error_copy(inner) {
-                    return Some(explicit);
-                }
-            }
+        if let Some(load_error) = source.downcast_ref::<LoadError>()
+            && let Some(inner) = load_error.cause.downcast_ref::<Error>()
+            && let Some(explicit) = explicit_context_error_copy(inner)
+        {
+            return Some(explicit);
         }
 
         current = source.source();

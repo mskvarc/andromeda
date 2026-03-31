@@ -109,10 +109,7 @@ pub async fn get(
     let id = parse_entity_id(&id, &uri)?;
     let context: ContextSpec = context.into_inner();
 
-    let result = service
-        .get(&id.to_string(), &params, &context)
-        .await
-        .map_err(|e| e.with_instance(uri.clone()))?;
+    let result = service.get(id.as_ref(), &params, &context).await.map_err(|e| e.with_instance(uri.clone()))?;
 
     let options = params.options.as_deref().unwrap_or("");
     let key_values = options.contains("keyValues") || options.contains("simplified");
@@ -231,7 +228,7 @@ pub async fn query(
 pub async fn delete(TenantState(state): TenantState, OriginalUri(uri): OriginalUri, Path(id): Path<String>) -> Result<Response, ApiError> {
     let service = &state.temporal;
     let id = parse_entity_id(&id, &uri)?;
-    service.delete(&id.to_string()).await.map_err(|e| e.with_instance(uri.clone()))?;
+    service.delete(id.as_ref()).await.map_err(|e| e.with_instance(uri.clone()))?;
     Ok(StatusCode::NO_CONTENT.into_response())
 }
 
@@ -250,7 +247,7 @@ pub async fn add_attrs(
     let id = parse_entity_id(&id, &uri)?;
     let context = context.merge(body_context);
     service
-        .add_attrs(&id.to_string(), payload, &context)
+        .add_attrs(id.as_ref(), payload, &context)
         .await
         .map_err(|e| e.with_instance(uri.clone()))?;
     Ok(StatusCode::NO_CONTENT.into_response())
@@ -270,7 +267,7 @@ pub async fn delete_attr(
     let context = context.into_inner();
     service
         .delete_attr(
-            &id.to_string(),
+            id.as_ref(),
             &attr_id,
             params.dataset_id.as_deref(),
             params.delete_all.unwrap_or(false),
@@ -301,7 +298,7 @@ pub async fn modify_attr_instance(
     validate_instance_id(&instance_id, &uri)?;
     let context = context.merge(body_context);
     service
-        .modify_attr_instance(&id.to_string(), &attr_id, &instance_id, payload, &context)
+        .modify_attr_instance(id.as_ref(), &attr_id, &instance_id, payload, &context)
         .await
         .map_err(|e| e.with_instance(uri.clone()))?;
     Ok(StatusCode::NO_CONTENT.into_response())
@@ -321,7 +318,7 @@ pub async fn delete_attr_instance(
     validate_instance_id(&instance_id, &uri)?;
     let context: ContextSpec = context.into_inner();
     service
-        .delete_attr_instance(&id.to_string(), &attr_id, &instance_id, &context)
+        .delete_attr_instance(id.as_ref(), &attr_id, &instance_id, &context)
         .await
         .map_err(|e| e.with_instance(uri.clone()))?;
     Ok(StatusCode::NO_CONTENT.into_response())

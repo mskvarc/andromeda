@@ -24,15 +24,15 @@ pub mod media_type {
 
 fn link_value_with_params(target: &str, rel: Option<&str>, media_type: Option<&str>) -> LinkValue {
     let mut value = LinkValue::new(target.to_string());
-    if let Some(rel) = rel {
-        if let Ok(rel) = rel.parse::<RelationType>() {
-            value = value.push_rel(rel);
-        }
+    if let Some(rel) = rel
+        && let Ok(rel) = rel.parse::<RelationType>()
+    {
+        value = value.push_rel(rel);
     }
-    if let Some(media_type) = media_type {
-        if let Ok(parsed) = media_type.parse::<Mime>() {
-            value = value.set_media_type(parsed);
-        }
+    if let Some(media_type) = media_type
+        && let Ok(parsed) = media_type.parse::<Mime>()
+    {
+        value = value.set_media_type(parsed);
     }
     value
 }

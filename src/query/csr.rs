@@ -84,12 +84,12 @@ impl CsrQueryParameters {
         }
 
         // Geo query requires georel, geometry, and coordinates together
-        if self.georel.is_some() || self.geometry.is_some() || self.coordinates.is_some() {
-            if self.georel.is_none() || self.geometry.is_none() || self.coordinates.is_none() {
-                return Err(QueryError::BadRequestData(
-                    "Incomplete geo query: georel, geometry, and coordinates are all required".to_string(),
-                ));
-            }
+        if (self.georel.is_some() || self.geometry.is_some() || self.coordinates.is_some())
+            && (self.georel.is_none() || self.geometry.is_none() || self.coordinates.is_none())
+        {
+            return Err(QueryError::BadRequestData(
+                "Incomplete geo query: georel, geometry, and coordinates are all required".to_string(),
+            ));
         }
 
         // Temporal query requires timeAt when timerel is present

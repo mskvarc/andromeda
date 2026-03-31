@@ -294,10 +294,10 @@ fn strip_ngsild_prefix(value: &mut Value) {
         Value::Object(obj) => {
             let keys: Vec<String> = obj.keys().cloned().collect();
             for key in keys {
-                if let Some(short) = key.strip_prefix("ngsi-ld:") {
-                    if let Some(val) = obj.remove(&key) {
-                        obj.insert(short.to_string(), val);
-                    }
+                if let Some(short) = key.strip_prefix("ngsi-ld:")
+                    && let Some(val) = obj.remove(&key)
+                {
+                    obj.insert(short.to_string(), val);
                 }
             }
             for val in obj.values_mut() {
@@ -320,10 +320,10 @@ fn ensure_array_fields(value: &mut Value, fields: &[&str]) {
     match value {
         Value::Object(obj) => {
             for &field in fields {
-                if let Some(val) = obj.get_mut(field) {
-                    if !val.is_array() {
-                        *val = serde_json::json!([val]);
-                    }
+                if let Some(val) = obj.get_mut(field)
+                    && !val.is_array()
+                {
+                    *val = serde_json::json!([val]);
                 }
             }
             // Recurse into nested arrays (attributeDetails, @graph, etc.)

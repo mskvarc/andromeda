@@ -146,13 +146,13 @@ impl TemporalQueryParameters {
     /// - For single-entity GET (require_temporal=false): timerel and timeAt are optional (both or neither).
     pub fn validate(&self, require_temporal: bool) -> Result<(), QueryError> {
         // Validate format parameter
-        if let Some(f) = &self.format {
-            if !matches!(f.as_str(), "temporalValues" | "aggregatedValues") {
-                return Err(QueryError::InvalidRequest(format!(
-                    "Invalid format value: '{}'. Must be 'temporalValues' or 'aggregatedValues'",
-                    f
-                )));
-            }
+        if let Some(f) = &self.format
+            && !matches!(f.as_str(), "temporalValues" | "aggregatedValues")
+        {
+            return Err(QueryError::InvalidRequest(format!(
+                "Invalid format value: '{}'. Must be 'temporalValues' or 'aggregatedValues'",
+                f
+            )));
         }
 
         // Validate options parameter

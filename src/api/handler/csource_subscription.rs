@@ -65,13 +65,13 @@ fn strip_subscription_sys_attrs(mut value: Value) -> Value {
         if obj.get("isActive").and_then(|v| v.as_bool()) == Some(true) {
             obj.remove("isActive");
         }
-        if let Some(notification) = obj.get_mut("notification") {
-            if let Some(notif_obj) = notification.as_object_mut() {
-                notif_obj.remove("timesSent");
-                notif_obj.remove("lastNotification");
-                notif_obj.remove("lastSuccess");
-                notif_obj.remove("lastFailure");
-            }
+        if let Some(notification) = obj.get_mut("notification")
+            && let Some(notif_obj) = notification.as_object_mut()
+        {
+            notif_obj.remove("timesSent");
+            notif_obj.remove("lastNotification");
+            notif_obj.remove("lastSuccess");
+            notif_obj.remove("lastFailure");
         }
     }
     value
@@ -120,10 +120,10 @@ fn append_pagination_links(response: &mut Response, uri: &axum::http::Uri, limit
         .into_iter()
         .map(|(rel, target)| link_value(&target, Some(rel), Some(media_type::JSON_LD)))
         .collect::<Vec<_>>();
-    if let Some(link) = link_from_values(values) {
-        if let Some(value) = link_header_value(&link) {
-            response.headers_mut().append("Link", value);
-        }
+    if let Some(link) = link_from_values(values)
+        && let Some(value) = link_header_value(&link)
+    {
+        response.headers_mut().append("Link", value);
     }
 }
 
@@ -237,13 +237,13 @@ pub async fn query(
             uri.clone(),
         ));
     }
-    if let Some(page) = params.page {
-        if page <= 0 {
-            return Err(ApiError::from_error(
-                crate::error::AndromedaError::bad_request_data("page must be greater than 0"),
-                uri.clone(),
-            ));
-        }
+    if let Some(page) = params.page
+        && page <= 0
+    {
+        return Err(ApiError::from_error(
+            crate::error::AndromedaError::bad_request_data("page must be greater than 0"),
+            uri.clone(),
+        ));
     }
     let offset = if let Some(page) = params.page {
         (page - 1) * limit

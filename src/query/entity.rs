@@ -148,10 +148,10 @@ impl EntityQueryParameters {
             }
         }
 
-        if let Some(fmt) = &self.format {
-            if !matches!(fmt.as_str(), "normalized" | "keyValues" | "simplified" | "concise") {
-                return Err(QueryError::InvalidRequest(format!("Invalid format value: '{}'", fmt)));
-            }
+        if let Some(fmt) = &self.format
+            && !matches!(fmt.as_str(), "normalized" | "keyValues" | "simplified" | "concise")
+        {
+            return Err(QueryError::InvalidRequest(format!("Invalid format value: '{}'", fmt)));
         }
 
         if let Some(ids) = &self.id {

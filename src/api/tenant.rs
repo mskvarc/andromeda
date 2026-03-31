@@ -56,10 +56,10 @@ pub async fn echo_tenant_header_middleware(request: Request<Body>, next: Next) -
 
     let mut response = next.run(request).await;
 
-    if let Some(value) = tenant {
-        if let Ok(header) = HeaderValue::from_str(&value) {
-            response.headers_mut().insert(NGSILD_TENANT_HEADER, header);
-        }
+    if let Some(value) = tenant
+        && let Ok(header) = HeaderValue::from_str(&value)
+    {
+        response.headers_mut().insert(NGSILD_TENANT_HEADER, header);
     }
 
     response

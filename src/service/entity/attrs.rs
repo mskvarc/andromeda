@@ -195,7 +195,7 @@ impl EntityService {
             let _ = self.temporal_recorder.record_attribute_deletion(&id, &attr_iri, dataset_id).await;
         }
 
-        crate::domain::expanded::delete_attr(&mut existing, &attr_iri, dataset_id, delete_all).map_err(|msg| AndromedaError::not_found(msg))?;
+        crate::domain::expanded::delete_attr(&mut existing, &attr_iri, dataset_id, delete_all).map_err(AndromedaError::not_found)?;
         self.repo.save(&id, &existing).await?;
 
         let entity_types = self.fetch_entity_types(&id).await;
@@ -225,7 +225,7 @@ impl EntityService {
         // Single fetch: used for showChanges and replacement
         let mut existing = self.repo.get(&id).await?.ok_or_else(|| AndromedaError::not_found(&id))?;
         let previous_attributes = Some(existing.clone());
-        crate::domain::expanded::replace_attr(&mut existing, &attr_iri, &attr_value).map_err(|msg| AndromedaError::not_found(msg))?;
+        crate::domain::expanded::replace_attr(&mut existing, &attr_iri, &attr_value).map_err(AndromedaError::not_found)?;
         self.repo.save(&id, &existing).await?;
 
         if let Err(e) = self.temporal_recorder.record_entity_attributes(&id, &expanded).await {

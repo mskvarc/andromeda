@@ -409,10 +409,10 @@ fn extract_typed_value(instance: &Value, attribute_type: &str) -> Result<TypedVa
             if let Some(value) = has_value.get("@value") {
                 let type_hint = has_value.get("@type").and_then(|t| t.as_str());
 
-                if type_hint == Some(iri::DATETIME_TYPE.as_str()) || type_hint == Some("http://www.w3.org/2001/XMLSchema#dateTime") {
-                    if let Some(s) = value.as_str() {
-                        return Ok(TypedValue::DateTime(s.to_string()));
-                    }
+                if (type_hint == Some(iri::DATETIME_TYPE.as_str()) || type_hint == Some("http://www.w3.org/2001/XMLSchema#dateTime"))
+                    && let Some(s) = value.as_str()
+                {
+                    return Ok(TypedValue::DateTime(s.to_string()));
                 }
 
                 match value {
@@ -463,7 +463,7 @@ pub(crate) fn reconstruct_geojson(node: &Value) -> String {
         .and_then(|v| v.as_array())
         .and_then(|arr| arr.first())
         .and_then(|v| v.get("@list").or(Some(v)))
-        .map(|list| extract_coordinates(list))
+        .map(extract_coordinates)
         .unwrap_or(Value::Array(vec![]));
 
     let result = serde_json::json!({
@@ -477,7 +477,7 @@ pub(crate) fn reconstruct_geojson(node: &Value) -> String {
 pub(crate) fn extract_coordinates(value: &Value) -> Value {
     match value {
         Value::Array(arr) => {
-            let items: Vec<Value> = arr.iter().map(|v| extract_coordinates(v)).collect();
+            let items: Vec<Value> = arr.iter().map(extract_coordinates).collect();
             Value::Array(items)
         }
         Value::Object(obj) => {

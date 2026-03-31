@@ -151,16 +151,16 @@ impl HttpContextLoader {
                 }
 
                 // 2. L2 cache
-                if let Some(ref cache) = l2_cache {
-                    if let Some(payload) = cache.get(&url_string).await {
-                        trace!("L2 cache hit for context: {}", url_string);
-                        let (parsed, _) = json_syntax::Value::parse_str(&serde_json::to_string(&payload).unwrap_or_default()).map_err(|e| LoaderError {
-                            url: url_string.clone(),
-                            kind: LoaderErrorKind::Invalid(e.to_string()),
-                        })?;
-                        let normalized = normalize_loaded_context_document(&url_string, parsed);
-                        return Ok(Arc::new(normalized));
-                    }
+                if let Some(ref cache) = l2_cache
+                    && let Some(payload) = cache.get(&url_string).await
+                {
+                    trace!("L2 cache hit for context: {}", url_string);
+                    let (parsed, _) = json_syntax::Value::parse_str(&serde_json::to_string(&payload).unwrap_or_default()).map_err(|e| LoaderError {
+                        url: url_string.clone(),
+                        kind: LoaderErrorKind::Invalid(e.to_string()),
+                    })?;
+                    let normalized = normalize_loaded_context_document(&url_string, parsed);
+                    return Ok(Arc::new(normalized));
                 }
 
                 // 3. Remote fetch
@@ -196,11 +196,11 @@ impl HttpContextLoader {
                 // The try_get_with closure only runs on L1 miss, so an L1
                 // hit would skip the L2 put.  This is cheap (upsert / no-op
                 // if already present) and keeps the DB-backed list consistent.
-                if let Some(ref cache) = self.l2_cache {
-                    if !is_ngsi_ld_core_context_url(&url_for_l2) {
-                        let serde_value = json_syntax::Value::into_serde_json((*value).clone());
-                        cache.put(&url_for_l2, serde_value).await;
-                    }
+                if let Some(ref cache) = self.l2_cache
+                    && !is_ngsi_ld_core_context_url(&url_for_l2)
+                {
+                    let serde_value = json_syntax::Value::into_serde_json((*value).clone());
+                    cache.put(&url_for_l2, serde_value).await;
                 }
                 Ok(value)
             }
@@ -302,10 +302,8 @@ fn remove_embedded_core_context_aliases(value: &mut serde_json::Value) {
 
 fn strip_core_aliases_from_context_slot(context: &mut serde_json::Value) {
     match context {
-        serde_json::Value::String(url) => {
-            if is_ngsi_ld_core_context_url(url) {
-                *context = serde_json::Value::Array(Vec::new());
-            }
+        serde_json::Value::String(url) if is_ngsi_ld_core_context_url(url) => {
+            *context = serde_json::Value::Array(Vec::new());
         }
         serde_json::Value::Array(items) => {
             items.retain(|item| !item.as_str().is_some_and(is_ngsi_ld_core_context_url));
@@ -406,16 +404,16 @@ async fn fetch_and_parse(client: &Client, url: &str, max_bytes: usize) -> Result
         }
     }
 
-    if let Some(len) = response.content_length() {
-        if len as usize > max_bytes {
-            return Err(LoaderError {
-                url: url.to_string(),
-                kind: LoaderErrorKind::TooLarge {
-                    size: len as usize,
-                    max: max_bytes,
-                },
-            });
-        }
+    if let Some(len) = response.content_length()
+        && len as usize > max_bytes
+    {
+        return Err(LoaderError {
+            url: url.to_string(),
+            kind: LoaderErrorKind::TooLarge {
+                size: len as usize,
+                max: max_bytes,
+            },
+        });
     }
 
     let bytes = response.bytes().await.map_err(|e| LoaderError {

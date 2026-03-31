@@ -284,7 +284,7 @@ impl TemporalService {
             .engine
             .compact(response, context, CompactOptions::default())
             .await
-            .map_err(|e| AndromedaError::from(e))?;
+            .map_err(AndromedaError::from)?;
         ensure_temporal_attrs_are_arrays(&mut compacted);
 
         let value = if format == TemporalFormat::TemporalValues {
@@ -453,13 +453,13 @@ impl TemporalService {
             let mut skeleton = serde_json::Map::new();
             skeleton.insert("@id".to_string(), json!(entity_id));
             skeleton.insert(attr_iri.clone(), json!([{"@type": [crate::domain::iri::PROPERTY.as_str()]}]));
-            if let Ok(compacted) = self.engine.compact(Value::Object(skeleton), context, CompactOptions::default()).await {
-                if let Some(obj) = compacted.as_object() {
-                    for key in obj.keys() {
-                        if !["id", "type", "@context"].contains(&key.as_str()) {
-                            iri_to_short.insert(attr_iri.clone(), key.clone());
-                            break;
-                        }
+            if let Ok(compacted) = self.engine.compact(Value::Object(skeleton), context, CompactOptions::default()).await
+                && let Some(obj) = compacted.as_object()
+            {
+                for key in obj.keys() {
+                    if !["id", "type", "@context"].contains(&key.as_str()) {
+                        iri_to_short.insert(attr_iri.clone(), key.clone());
+                        break;
                     }
                 }
             }
@@ -539,7 +539,7 @@ impl TemporalService {
         let last_n_cap = self.default_last_n;
         // last_n_cap is a system cap: user's lastN is honoured up to this limit.
         // system_last_n is true when the cap is active (user didn't specify, or specified > cap).
-        let system_last_n = format != TemporalFormat::AggregatedValues && params.last_n.map_or(true, |n| n > last_n_cap);
+        let system_last_n = format != TemporalFormat::AggregatedValues && params.last_n.is_none_or(|n| n > last_n_cap);
         let effective_last_n = if format != TemporalFormat::AggregatedValues {
             Some(params.last_n.map_or(last_n_cap, |n| n.min(last_n_cap)))
         } else {

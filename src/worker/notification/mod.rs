@@ -299,10 +299,10 @@ impl NotificationWorker {
                 }
             }
 
-            if compiled_sub.notification_sys_attrs {
-                if let (Some(ref mut data), Some((created_at, modified_at, expires_at))) = (entity_data.as_mut(), sys_attrs) {
-                    inject_sys_attrs(data, created_at, modified_at, expires_at);
-                }
+            if compiled_sub.notification_sys_attrs
+                && let (Some(ref mut data), Some((created_at, modified_at, expires_at))) = (entity_data.as_mut(), sys_attrs)
+            {
+                inject_sys_attrs(data, created_at, modified_at, expires_at);
             }
 
             let data = match entity_data {
@@ -398,7 +398,7 @@ fn compile_subscription(sub: &Subscription) -> Option<CompiledSubscription> {
     let selectors: Vec<CompiledSelector> = sub
         .entities
         .as_ref()
-        .map(|entities| entities.iter().filter_map(|e| compile_selector(e)).collect())
+        .map(|entities| entities.iter().filter_map(compile_selector).collect())
         .unwrap_or_default();
 
     let triggers: Vec<String> = sub

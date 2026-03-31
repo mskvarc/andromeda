@@ -558,10 +558,10 @@ fn row_to_csr(row: &sqlx::postgres::PgRow) -> Result<ContextSourceRegistration, 
 /// If `v` is a GeoProperty wrapper `{"type":"GeoProperty","value":{...}}`, return the inner
 /// value's JSON string. Otherwise return the value as-is (assumed to be raw GeoJSON).
 pub fn unwrap_geo_property_to_string(v: &Value) -> String {
-    if v.get("type").and_then(|t| t.as_str()) == Some("GeoProperty") {
-        if let Some(inner) = v.get("value") {
-            return inner.to_string();
-        }
+    if v.get("type").and_then(|t| t.as_str()) == Some("GeoProperty")
+        && let Some(inner) = v.get("value")
+    {
+        return inner.to_string();
     }
     v.to_string()
 }

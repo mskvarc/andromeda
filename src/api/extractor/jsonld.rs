@@ -194,10 +194,8 @@ where
         }
 
         let mut context = ContextSpec::none();
-        if is_ld_json {
-            if let Some(ctx) = merge_context_values_from_document(&value) {
-                context = context.with_body_context(Some(ctx));
-            }
+        if is_ld_json && let Some(ctx) = merge_context_values_from_document(&value) {
+            context = context.with_body_context(Some(ctx));
         }
 
         // Always strip @context before deserializing into Entity

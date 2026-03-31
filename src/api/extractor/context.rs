@@ -37,10 +37,10 @@ where
             for segment in link_str.split(',') {
                 if let Ok(map) = parse_link_header::parse(segment) {
                     for (rel, link) in map {
-                        if let Some(rel) = rel {
-                            if rel.split_whitespace().any(|r| r == "http://www.w3.org/ns/json-ld#context") {
-                                links.push(link.raw_uri.clone());
-                            }
+                        if let Some(rel) = rel
+                            && rel.split_whitespace().any(|r| r == "http://www.w3.org/ns/json-ld#context")
+                        {
+                            links.push(link.raw_uri.clone());
                         }
                     }
                 }

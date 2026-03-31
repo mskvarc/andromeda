@@ -247,10 +247,10 @@ pub fn compute_updated_status(current_status: SubscriptionStatus, fields: &Statu
     let now = Utc::now();
 
     // If a new expires_at is provided and already in the past, keep current status
-    if let Some(Some(ea)) = fields.expires_at {
-        if ea <= now {
-            return current_status;
-        }
+    if let Some(Some(ea)) = fields.expires_at
+        && ea <= now
+    {
+        return current_status;
     }
 
     match (fields.is_active, fields.expires_at.is_some()) {

@@ -46,20 +46,20 @@ pub fn build_csr_query(query: &CompiledCsrQuery) -> Result<BuiltQuery, Andromeda
     }
 
     // Attrs filter: match against information[].propertyNames / relationshipNames
-    if let Some(ref attrs) = query.attrs {
-        if !attrs.is_empty() {
-            let attr_placeholders: Vec<String> = attrs.iter().enumerate().map(|(i, _)| format!("${}", param_idx + i)).collect();
-            let any_list = attr_placeholders.join(", ");
-            conditions.push(format!(
-                "EXISTS (SELECT 1 FROM jsonb_array_elements(information) AS info WHERE \
+    if let Some(ref attrs) = query.attrs
+        && !attrs.is_empty()
+    {
+        let attr_placeholders: Vec<String> = attrs.iter().enumerate().map(|(i, _)| format!("${}", param_idx + i)).collect();
+        let any_list = attr_placeholders.join(", ");
+        conditions.push(format!(
+            "EXISTS (SELECT 1 FROM jsonb_array_elements(information) AS info WHERE \
                  EXISTS (SELECT 1 FROM jsonb_array_elements_text(COALESCE(info->'propertyNames', '[]'::jsonb)) AS pn WHERE pn IN ({any_list})) OR \
                  EXISTS (SELECT 1 FROM jsonb_array_elements_text(COALESCE(info->'relationshipNames', '[]'::jsonb)) AS rn WHERE rn IN ({any_list})))"
-            ));
-            for attr in attrs {
-                binds.push(BindValue::String(attr.clone()));
-            }
-            param_idx += attrs.len();
+        ));
+        for attr in attrs {
+            binds.push(BindValue::String(attr.clone()));
         }
+        param_idx += attrs.len();
     }
 
     // Q expression filter against additional_properties JSONB column
@@ -140,7 +140,7 @@ pub fn build_csr_query(query: &CompiledCsrQuery) -> Result<BuiltQuery, Andromeda
                 param_idx += 2;
             }
             other => {
-                return Err(AndromedaError::bad_request_data(&format!("Invalid timerel: {}", other)));
+                return Err(AndromedaError::bad_request_data(format!("Invalid timerel: {}", other)));
             }
         }
     }

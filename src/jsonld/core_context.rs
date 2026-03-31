@@ -70,7 +70,7 @@ pub const DATA_INTEGRITY_CONTEXT: &str = include_str!("context/data-integrity-v2
 
 /// Returns `true` if `url` matches any known NGSI-LD core context version.
 pub fn is_ngsi_ld_core_context_url(url: &str) -> bool {
-    NGSI_LD_CORE_CONTEXT_URL_LIST.iter().any(|core| *core == url)
+    NGSI_LD_CORE_CONTEXT_URL_LIST.contains(&url)
 }
 
 #[cfg(test)]

@@ -39,12 +39,11 @@ pub async fn deliver_http(
     // Add custom receiver headers
     if let Some(infos) = receiver_info {
         for info in infos {
-            if let (Some(key), Some(value)) = (info.get("key").and_then(|v| v.as_str()), info.get("value").and_then(|v| v.as_str())) {
-                if let Ok(header_name) = reqwest::header::HeaderName::from_bytes(key.as_bytes()) {
-                    if let Ok(header_value) = reqwest::header::HeaderValue::from_str(value) {
-                        request = request.header(header_name, header_value);
-                    }
-                }
+            if let (Some(key), Some(value)) = (info.get("key").and_then(|v| v.as_str()), info.get("value").and_then(|v| v.as_str()))
+                && let Ok(header_name) = reqwest::header::HeaderName::from_bytes(key.as_bytes())
+                && let Ok(header_value) = reqwest::header::HeaderValue::from_str(value)
+            {
+                request = request.header(header_name, header_value);
             }
         }
     }

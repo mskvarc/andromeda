@@ -525,10 +525,10 @@ impl ContextSourceForwardingService {
 /// Build a minimal forwarding query string with only type and id params.
 fn build_forwarding_query_string(entity_type: Option<&str>, entity_ids: Option<&[String]>) -> String {
     let mut parts = Vec::new();
-    if let Some(ids) = entity_ids {
-        if !ids.is_empty() {
-            parts.push(format!("id={}", ids.join(",")));
-        }
+    if let Some(ids) = entity_ids
+        && !ids.is_empty()
+    {
+        parts.push(format!("id={}", ids.join(",")));
     }
     if let Some(t) = entity_type {
         parts.push(format!("type={}", t));
@@ -594,20 +594,20 @@ fn collect_exclusive_attrs(csr: &ContextSourceRegistration) -> Vec<String> {
                 attrs.push(prop.clone());
                 // Also add compacted form (last path/fragment segment) for matching
                 // against deserialized EntityPatch attr keys which are compacted
-                if let Some(short) = compact_iri(prop) {
-                    if short != *prop {
-                        attrs.push(short);
-                    }
+                if let Some(short) = compact_iri(prop)
+                    && short != *prop
+                {
+                    attrs.push(short);
                 }
             }
         }
         if let Some(ref rels) = info.relationship_names {
             for rel in rels {
                 attrs.push(rel.clone());
-                if let Some(short) = compact_iri(rel) {
-                    if short != *rel {
-                        attrs.push(short);
-                    }
+                if let Some(short) = compact_iri(rel)
+                    && short != *rel
+                {
+                    attrs.push(short);
                 }
             }
         }
@@ -619,10 +619,8 @@ fn collect_exclusive_attrs(csr: &ContextSourceRegistration) -> Vec<String> {
 fn compact_iri(iri: &str) -> Option<String> {
     if let Some(pos) = iri.rfind('#') {
         Some(iri[pos + 1..].to_string())
-    } else if let Some(pos) = iri.rfind('/') {
-        Some(iri[pos + 1..].to_string())
     } else {
-        None
+        iri.rfind('/').map(|pos| iri[pos + 1..].to_string())
     }
 }
 
@@ -654,12 +652,12 @@ pub fn merge_query_results(local_entities: Vec<Value>, remote_results: Vec<Forwa
             ForwardingMode::Auxiliary => {
                 // Only merge attributes into entities that already exist locally
                 for remote_entity in forwarded.entities {
-                    if let Some(remote_id) = remote_entity.get("id").and_then(|v| v.as_str()) {
-                        if let Some(local_entity) = entity_map.get_mut(remote_id) {
-                            merge_entity_attributes(local_entity, &remote_entity);
-                        }
-                        // Don't add new entities in auxiliary mode
+                    if let Some(remote_id) = remote_entity.get("id").and_then(|v| v.as_str())
+                        && let Some(local_entity) = entity_map.get_mut(remote_id)
+                    {
+                        merge_entity_attributes(local_entity, &remote_entity);
                     }
+                    // Don't add new entities in auxiliary mode
                 }
             }
             _ => {

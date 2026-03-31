@@ -57,13 +57,13 @@ pub async fn build_notification_data(
         };
         inject_deleted_attributes(&mut entity, effective_changed, previous_attributes, deleted_at);
 
-        if sub.notification_sys_attrs {
-            if let Some(obj) = expanded_entity_object_mut(&mut entity) {
-                let ca = obj.get("https://uri.etsi.org/ngsi-ld/createdAt").cloned();
-                let ma = obj.get("https://uri.etsi.org/ngsi-ld/modifiedAt").cloned();
-                if let (Some(ca), Some(ma)) = (ca, ma) {
-                    inject_attr_sys_attrs(obj, &ca, &ma);
-                }
+        if sub.notification_sys_attrs
+            && let Some(obj) = expanded_entity_object_mut(&mut entity)
+        {
+            let ca = obj.get("https://uri.etsi.org/ngsi-ld/createdAt").cloned();
+            let ma = obj.get("https://uri.etsi.org/ngsi-ld/modifiedAt").cloned();
+            if let (Some(ca), Some(ma)) = (ca, ma) {
+                inject_attr_sys_attrs(obj, &ca, &ma);
             }
         }
     }
@@ -133,16 +133,16 @@ pub async fn build_notification_data(
         fix_null_language_maps(&mut compacted);
     }
 
-    if sub.notification_show_changes {
-        if let Some(prev) = previous_attributes {
-            let prev_entity = match prev {
-                Value::Array(arr) => arr.first().cloned().unwrap_or(Value::Null),
-                other => other.clone(),
-            };
-            if let Ok(prev_compacted) = engine.compact(prev_entity, &context, CompactOptions { strip_context: true }).await {
-                let prev_compacted = normalize_compacted_entity(prev_compacted);
-                inject_previous_values(&mut compacted, &prev_compacted, changed_attributes, engine, &context).await;
-            }
+    if sub.notification_show_changes
+        && let Some(prev) = previous_attributes
+    {
+        let prev_entity = match prev {
+            Value::Array(arr) => arr.first().cloned().unwrap_or(Value::Null),
+            other => other.clone(),
+        };
+        if let Ok(prev_compacted) = engine.compact(prev_entity, &context, CompactOptions { strip_context: true }).await {
+            let prev_compacted = normalize_compacted_entity(prev_compacted);
+            inject_previous_values(&mut compacted, &prev_compacted, changed_attributes, engine, &context).await;
         }
     }
 
@@ -173,25 +173,25 @@ pub async fn build_notification_data(
                     }
                 }
             }
-        } else if join == "inline" {
-            if let Ok(main_entity) = serde_json::from_value::<Entity>(all_compacted[0].clone()) {
-                let sys_attrs = sub.notification_sys_attrs;
-                match entity_query
-                    .resolve_linked_entities(
-                        &[main_entity],
-                        sub.notification_join_level,
-                        sys_attrs,
-                        &context,
-                        &std::collections::HashSet::new(),
-                    )
-                    .await
-                {
-                    Ok(linked_map) => {
-                        apply_inline_join(&mut all_compacted[0], &linked_map);
-                    }
-                    Err(e) => {
-                        debug!("Failed to resolve linked entities for join=inline: {}", e);
-                    }
+        } else if join == "inline"
+            && let Ok(main_entity) = serde_json::from_value::<Entity>(all_compacted[0].clone())
+        {
+            let sys_attrs = sub.notification_sys_attrs;
+            match entity_query
+                .resolve_linked_entities(
+                    &[main_entity],
+                    sub.notification_join_level,
+                    sys_attrs,
+                    &context,
+                    &std::collections::HashSet::new(),
+                )
+                .await
+            {
+                Ok(linked_map) => {
+                    apply_inline_join(&mut all_compacted[0], &linked_map);
+                }
+                Err(e) => {
+                    debug!("Failed to resolve linked entities for join=inline: {}", e);
                 }
             }
         }
@@ -233,12 +233,12 @@ pub fn context_for_subscription(sub: &CompiledSubscription) -> ContextSpec {
 pub fn context_for_subscription_raw(jsonld_context: Option<&str>) -> ContextSpec {
     if let Some(url) = jsonld_context {
         let trimmed = url.trim();
-        if (trimmed.starts_with('{') && trimmed.ends_with('}')) || (trimmed.starts_with('[') && trimmed.ends_with(']')) {
-            if let Ok(value) = serde_json::from_str::<Value>(trimmed) {
-                return ContextSpec::none()
-                    .with_body_context(Some(value))
-                    .with_core_policy(crate::jsonld::CoreContextPolicy::Append);
-            }
+        if ((trimmed.starts_with('{') && trimmed.ends_with('}')) || (trimmed.starts_with('[') && trimmed.ends_with(']')))
+            && let Ok(value) = serde_json::from_str::<Value>(trimmed)
+        {
+            return ContextSpec::none()
+                .with_body_context(Some(value))
+                .with_core_policy(crate::jsonld::CoreContextPolicy::Append);
         }
         ContextSpec::from_links(vec![url.to_string()]).with_core_policy(crate::jsonld::CoreContextPolicy::Append)
     } else {
@@ -248,19 +248,19 @@ pub fn context_for_subscription_raw(jsonld_context: Option<&str>) -> ContextSpec
 
 pub fn normalize_compacted_entity(mut entity: Value) -> Value {
     if let Value::Object(obj) = &mut entity {
-        if !obj.contains_key("id") {
-            if let Some(id) = obj.remove("@id") {
-                obj.insert("id".to_string(), id);
-            }
+        if !obj.contains_key("id")
+            && let Some(id) = obj.remove("@id")
+        {
+            obj.insert("id".to_string(), id);
         }
-        if !obj.contains_key("type") {
-            if let Some(t) = obj.remove("@type") {
-                let normalized = match t {
-                    Value::Array(arr) if arr.len() == 1 => arr.into_iter().next().unwrap(),
-                    other => other,
-                };
-                obj.insert("type".to_string(), normalized);
-            }
+        if !obj.contains_key("type")
+            && let Some(t) = obj.remove("@type")
+        {
+            let normalized = match t {
+                Value::Array(arr) if arr.len() == 1 => arr.into_iter().next().unwrap(),
+                other => other,
+            };
+            obj.insert("type".to_string(), normalized);
         }
     }
     entity
@@ -269,10 +269,10 @@ pub fn normalize_compacted_entity(mut entity: Value) -> Value {
 fn decode_percent_encoded_strings(value: &mut Value) {
     match value {
         Value::String(s) => {
-            if s.contains('%') {
-                if let Ok(decoded) = percent_encoding::percent_decode_str(s).decode_utf8() {
-                    *s = decoded.into_owned();
-                }
+            if s.contains('%')
+                && let Ok(decoded) = percent_encoding::percent_decode_str(s).decode_utf8()
+            {
+                *s = decoded.into_owned();
             }
         }
         Value::Object(obj) => {
@@ -364,10 +364,8 @@ fn fix_null_language_maps(entity: &mut Value) {
                 }
             })
             == Some(iri::NULL_URI.as_str());
-        if is_null_lang_map {
-            if let Some(attr) = value.as_object_mut() {
-                attr.insert("languageMap".to_string(), Value::String(iri::NULL_URI.as_str().to_string()));
-            }
+        if is_null_lang_map && let Some(attr) = value.as_object_mut() {
+            attr.insert("languageMap".to_string(), Value::String(iri::NULL_URI.as_str().to_string()));
         }
     }
 }
@@ -456,10 +454,10 @@ fn inject_deleted_instances(
         }
     }
 
-    if !deleted_instances.is_empty() {
-        if let Some(cur_arr) = entity_obj.get_mut(attr_iri).and_then(|v| v.as_array_mut()) {
-            cur_arr.extend(deleted_instances);
-        }
+    if !deleted_instances.is_empty()
+        && let Some(cur_arr) = entity_obj.get_mut(attr_iri).and_then(|v| v.as_array_mut())
+    {
+        cur_arr.extend(deleted_instances);
     }
 }
 

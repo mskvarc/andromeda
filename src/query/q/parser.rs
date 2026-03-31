@@ -141,12 +141,10 @@ fn tokenize(input: &str) -> Result<Vec<Token>, QueryError> {
                 while i < chars.len() && chars[i].is_ascii_digit() {
                     i += 1;
                 }
-                if i < chars.len() && chars[i] == '.' && !(i + 1 < chars.len() && chars[i + 1] == '.') {
-                    if i + 1 < chars.len() && chars[i + 1].is_ascii_digit() {
+                if i < chars.len() && chars[i] == '.' && !(i + 1 < chars.len() && chars[i + 1] == '.') && i + 1 < chars.len() && chars[i + 1].is_ascii_digit() {
+                    i += 1;
+                    while i < chars.len() && chars[i].is_ascii_digit() {
                         i += 1;
-                        while i < chars.len() && chars[i].is_ascii_digit() {
-                            i += 1;
-                        }
                     }
                 }
                 if i < chars.len() && (chars[i] == 'e' || chars[i] == 'E') {
@@ -187,12 +185,15 @@ fn tokenize(input: &str) -> Result<Vec<Token>, QueryError> {
                     let word: String = chars[start..i].iter().collect();
                     tokens.push(Token::Ident(word));
                 } else {
-                    if i < chars.len() && chars[i] == '.' && !(i + 1 < chars.len() && chars[i + 1] == '.') {
-                        if i + 1 < chars.len() && chars[i + 1].is_ascii_digit() {
+                    if i < chars.len()
+                        && chars[i] == '.'
+                        && !(i + 1 < chars.len() && chars[i + 1] == '.')
+                        && i + 1 < chars.len()
+                        && chars[i + 1].is_ascii_digit()
+                    {
+                        i += 1;
+                        while i < chars.len() && chars[i].is_ascii_digit() {
                             i += 1;
-                            while i < chars.len() && chars[i].is_ascii_digit() {
-                                i += 1;
-                            }
                         }
                     }
                     if i < chars.len() && (chars[i] == 'e' || chars[i] == 'E') {

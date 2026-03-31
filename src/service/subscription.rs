@@ -26,37 +26,37 @@ impl SubscriptionVariant for EntitySubscriptionVariant {
 
     async fn expand_terms(&self, payload: &mut Value, context: &ContextSpec, base_url: Option<&str>) -> Result<(), AndromedaError> {
         // Preserve @context as jsonldContext — entity subs host compound contexts
-        if payload.get("jsonldContext").is_none() {
-            if let Some(ctx_val) = payload.get("@context").cloned() {
-                self.ensure_context_urls_cached(&ctx_val).await;
+        if payload.get("jsonldContext").is_none()
+            && let Some(ctx_val) = payload.get("@context").cloned()
+        {
+            self.ensure_context_urls_cached(&ctx_val).await;
 
-                let stored = match &ctx_val {
-                    Value::String(s) => Some(Value::String(s.clone())),
-                    Value::Array(arr) if arr.len() == 1 && arr[0].is_string() => Some(arr[0].clone()),
-                    Value::Array(_) | Value::Object(_) => {
-                        let hosted_payload = serde_json::json!({ "@context": ctx_val });
-                        match self.context_repo.create_implicitly(hosted_payload, base_url).await {
-                            Ok(urn) => {
-                                let stored_value = match base_url {
-                                    Some(b) => format!("{}/ngsi-ld/v1/jsonldContexts/{}", b.trim_end_matches('/'), urn),
-                                    None => urn.to_string(),
-                                };
-                                Some(Value::String(stored_value))
-                            }
-                            Err(e) => {
-                                warn!("Failed to create hosted context for subscription @context: {}", e);
-                                None
-                            }
+            let stored = match &ctx_val {
+                Value::String(s) => Some(Value::String(s.clone())),
+                Value::Array(arr) if arr.len() == 1 && arr[0].is_string() => Some(arr[0].clone()),
+                Value::Array(_) | Value::Object(_) => {
+                    let hosted_payload = serde_json::json!({ "@context": ctx_val });
+                    match self.context_repo.create_implicitly(hosted_payload, base_url).await {
+                        Ok(urn) => {
+                            let stored_value = match base_url {
+                                Some(b) => format!("{}/ngsi-ld/v1/jsonldContexts/{}", b.trim_end_matches('/'), urn),
+                                None => urn.to_string(),
+                            };
+                            Some(Value::String(stored_value))
+                        }
+                        Err(e) => {
+                            warn!("Failed to create hosted context for subscription @context: {}", e);
+                            None
                         }
                     }
-                    _ => None,
-                };
-
-                if let Some(stored) = stored {
-                    if let Some(obj) = payload.as_object_mut() {
-                        obj.insert("jsonldContext".to_string(), stored);
-                    }
                 }
+                _ => None,
+            };
+
+            if let Some(stored) = stored
+                && let Some(obj) = payload.as_object_mut()
+            {
+                obj.insert("jsonldContext".to_string(), stored);
             }
         }
 

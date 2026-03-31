@@ -294,11 +294,11 @@ impl CsrNotificationWorker {
     async fn handle_csr_change(&self, event: CsrChangeEvent) {
         // For Updated events with a pre-update snapshot, detect subscriptions that
         // no longer match and send noLongerMatching notifications.
-        if event.trigger_reason == CsrTriggerReason::Updated {
-            if let Some(ref snapshot) = event.csr_snapshot {
-                self.handle_csr_update_with_snapshot(&event, snapshot).await;
-                return;
-            }
+        if event.trigger_reason == CsrTriggerReason::Updated
+            && let Some(ref snapshot) = event.csr_snapshot
+        {
+            self.handle_csr_update_with_snapshot(&event, snapshot).await;
+            return;
         }
 
         // Fetch the CSR data (use snapshot for deletes)
@@ -617,10 +617,10 @@ fn matches_csr_subscription(sub: &CompiledCsrSubscription, csr_data: &Value) -> 
         return false;
     }
 
-    if let Some(expires_at) = sub.expires_at {
-        if expires_at <= Utc::now() {
-            return false;
-        }
+    if let Some(expires_at) = sub.expires_at
+        && expires_at <= Utc::now()
+    {
+        return false;
     }
 
     // Skip time-interval subscriptions
@@ -692,10 +692,10 @@ fn matches_csr_subscription(sub: &CompiledCsrSubscription, csr_data: &Value) -> 
     }
 
     // Evaluate csf (Context Source Filter) against the CSR data
-    if let Some(ref csf_expr) = sub.compiled_csf {
-        if !q::evaluate(csf_expr, csr_data) {
-            return false;
-        }
+    if let Some(ref csf_expr) = sub.compiled_csf
+        && !q::evaluate(csf_expr, csr_data)
+    {
+        return false;
     }
 
     true
@@ -710,54 +710,54 @@ fn filter_csr_for_subscription(csr_data: &Value, sub: &CompiledCsrSubscription) 
         return filtered;
     }
 
-    if let Some(information) = filtered.get_mut("information") {
-        if let Some(info_arr) = information.as_array() {
-            let filtered_info: Vec<Value> = info_arr
-                .iter()
-                .filter(|info| {
-                    // Check entity selector match
-                    if !sub.selectors.is_empty() {
-                        let entities = info.get("entities").and_then(|v| v.as_array());
-                        let matches = match entities {
-                            Some(ents) => sub.selectors.iter().any(|sel| {
-                                ents.iter().any(|ent| {
-                                    let ent_type = ent.get("type").and_then(|v| v.as_str()).unwrap_or("");
-                                    ent_type == sel.type_
-                                })
-                            }),
-                            None => false,
-                        };
-                        if !matches {
-                            return false;
-                        }
+    if let Some(information) = filtered.get_mut("information")
+        && let Some(info_arr) = information.as_array()
+    {
+        let filtered_info: Vec<Value> = info_arr
+            .iter()
+            .filter(|info| {
+                // Check entity selector match
+                if !sub.selectors.is_empty() {
+                    let entities = info.get("entities").and_then(|v| v.as_array());
+                    let matches = match entities {
+                        Some(ents) => sub.selectors.iter().any(|sel| {
+                            ents.iter().any(|ent| {
+                                let ent_type = ent.get("type").and_then(|v| v.as_str()).unwrap_or("");
+                                ent_type == sel.type_
+                            })
+                        }),
+                        None => false,
+                    };
+                    if !matches {
+                        return false;
                     }
+                }
 
-                    // Check watched attributes match
-                    if let Some(ref watched) = sub.watched_attrs {
-                        let prop_names: Vec<&str> = info
-                            .get("propertyNames")
-                            .and_then(|v| v.as_array())
-                            .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect())
-                            .unwrap_or_default();
-                        let rel_names: Vec<&str> = info
-                            .get("relationshipNames")
-                            .and_then(|v| v.as_array())
-                            .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect())
-                            .unwrap_or_default();
+                // Check watched attributes match
+                if let Some(ref watched) = sub.watched_attrs {
+                    let prop_names: Vec<&str> = info
+                        .get("propertyNames")
+                        .and_then(|v| v.as_array())
+                        .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect())
+                        .unwrap_or_default();
+                    let rel_names: Vec<&str> = info
+                        .get("relationshipNames")
+                        .and_then(|v| v.as_array())
+                        .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect())
+                        .unwrap_or_default();
 
-                        if !prop_names.iter().any(|n| watched.contains(*n)) && !rel_names.iter().any(|n| watched.contains(*n)) {
-                            return false;
-                        }
+                    if !prop_names.iter().any(|n| watched.contains(*n)) && !rel_names.iter().any(|n| watched.contains(*n)) {
+                        return false;
                     }
+                }
 
-                    true
-                })
-                .cloned()
-                .collect();
+                true
+            })
+            .cloned()
+            .collect();
 
-            if let Some(obj) = filtered.as_object_mut() {
-                obj.insert("information".to_string(), Value::Array(filtered_info));
-            }
+        if let Some(obj) = filtered.as_object_mut() {
+            obj.insert("information".to_string(), Value::Array(filtered_info));
         }
     }
 

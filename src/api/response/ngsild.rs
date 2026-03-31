@@ -111,16 +111,16 @@ impl<T: Serialize> IntoResponse for NgsiLdResponse<T> {
         let mut headers = HeaderMap::new();
         headers.insert(CONTENT_TYPE, HeaderValue::from_static(self.format.content_type()));
 
-        if let Some(ref loc) = self.location {
-            if let Ok(val) = HeaderValue::from_str(loc) {
-                headers.insert("Location", val);
-            }
+        if let Some(ref loc) = self.location
+            && let Ok(val) = HeaderValue::from_str(loc)
+        {
+            headers.insert("Location", val);
         }
 
-        if let Some(ref uri) = self.entity_map_uri {
-            if let Ok(val) = HeaderValue::from_str(uri) {
-                headers.insert("NGSILD-EntityMap", val);
-            }
+        if let Some(ref uri) = self.entity_map_uri
+            && let Ok(val) = HeaderValue::from_str(uri)
+        {
+            headers.insert("NGSILD-EntityMap", val);
         }
 
         match self.format {
@@ -244,24 +244,24 @@ impl<T: Serialize> IntoResponse for NgsiLdCollectionResponse<T> {
         headers.insert(CONTENT_TYPE, HeaderValue::from_static(self.format.content_type()));
 
         // Add NGSILD-Results-Count if provided
-        if let Some(count) = self.total_count {
-            if let Ok(val) = HeaderValue::from_str(&count.to_string()) {
-                headers.insert("NGSILD-Results-Count", val);
-            }
+        if let Some(count) = self.total_count
+            && let Ok(val) = HeaderValue::from_str(&count.to_string())
+        {
+            headers.insert("NGSILD-Results-Count", val);
         }
 
         // Add Content-Range if provided (temporal pagination)
-        if let Some(ref cr) = self.content_range {
-            if let Ok(val) = HeaderValue::from_str(cr) {
-                headers.insert("Content-Range", val);
-            }
+        if let Some(ref cr) = self.content_range
+            && let Ok(val) = HeaderValue::from_str(cr)
+        {
+            headers.insert("Content-Range", val);
         }
 
         // Add NGSILD-EntityMap header if provided
-        if let Some(ref uri) = self.entity_map_uri {
-            if let Ok(val) = HeaderValue::from_str(uri) {
-                headers.insert("NGSILD-EntityMap", val);
-            }
+        if let Some(ref uri) = self.entity_map_uri
+            && let Ok(val) = HeaderValue::from_str(uri)
+        {
+            headers.insert("NGSILD-EntityMap", val);
         }
 
         // Add Link header for application/json
@@ -369,7 +369,7 @@ fn entity_object_to_feature_with_geometry_property(entity: &Value, geometry_prop
                 return Some(val.clone());
             }
             // Simplified/keyValues: location is the GeoJSON directly
-            if loc.get("type").and_then(|t| t.as_str()).map_or(false, |t| {
+            if loc.get("type").and_then(|t| t.as_str()).is_some_and(|t| {
                 matches!(
                     t,
                     "Point" | "MultiPoint" | "LineString" | "MultiLineString" | "Polygon" | "MultiPolygon" | "GeometryCollection"

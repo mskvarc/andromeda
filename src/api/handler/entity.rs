@@ -282,13 +282,13 @@ pub async fn get(
     }
 
     // Validate format parameter
-    if let Some(ref fmt) = params.format {
-        if !matches!(fmt.as_str(), "normalized" | "keyValues" | "simplified" | "concise") {
-            return Err(ApiError::from_error(
-                crate::error::AndromedaError::invalid_request(format!("Invalid format value: '{}'", fmt)),
-                uri.clone(),
-            ));
-        }
+    if let Some(ref fmt) = params.format
+        && !matches!(fmt.as_str(), "normalized" | "keyValues" | "simplified" | "concise")
+    {
+        return Err(ApiError::from_error(
+            crate::error::AndromedaError::invalid_request(format!("Invalid format value: '{}'", fmt)),
+            uri.clone(),
+        ));
     }
 
     let attrs: Vec<String> = params
@@ -316,7 +316,7 @@ pub async fn get(
         let query_string = uri.query().unwrap_or("");
         let forwarded = state
             .forwarding
-            .forward_retrieve(&id.to_string(), query_string, context_url, ForwardingOperation::RetrieveEntity)
+            .forward_retrieve(id.as_ref(), query_string, context_url, ForwardingOperation::RetrieveEntity)
             .await
             .unwrap_or_default();
 
@@ -418,7 +418,7 @@ pub async fn delete(
     let service = &state.entities;
     let id: Urn = id.parse().map_err(|_| {
         ApiError::from_error(
-            crate::error::AndromedaError::bad_request_data(format!("Invalid entity id: not a valid URI")),
+            crate::error::AndromedaError::bad_request_data("Invalid entity id: not a valid URI".to_string()),
             uri.clone(),
         )
     })?;
@@ -645,13 +645,13 @@ pub async fn query(
 
     // splitEntities post-merge filtering: apply deferred q/geoQ/scopeQ (spec 5.7.2.4)
     if split_entities {
-        if let Some(ref q_str) = deferred_q {
-            if let Ok(Some(q_expr)) = crate::query::compile::expand_q_expression(Some(q_str), service.engine(), &context).await {
-                entities.retain(|e| {
-                    let val = serde_json::to_value(e).unwrap_or_default();
-                    crate::query::q::evaluate(&q_expr, &val)
-                });
-            }
+        if let Some(ref q_str) = deferred_q
+            && let Ok(Some(q_expr)) = crate::query::compile::expand_q_expression(Some(q_str), service.engine(), &context).await
+        {
+            entities.retain(|e| {
+                let val = serde_json::to_value(e).unwrap_or_default();
+                crate::query::q::evaluate(&q_expr, &val)
+            });
         }
         if let (Some(georel), Some(geometry), Some(coordinates)) = (&deferred_georel, &deferred_geometry, &deferred_coordinates) {
             let mut geo_val = serde_json::json!({
@@ -1322,7 +1322,7 @@ pub async fn delete_by_query(
     TenantState(state): TenantState,
     OriginalUri(uri): OriginalUri,
     context: ContextUrl,
-    EntityQuery(mut query): EntityQuery,
+    EntityQuery(query): EntityQuery,
 ) -> Result<Response, ApiError> {
     let is_local = query.local.unwrap_or(false);
     let context: ContextSpec = context.into_inner();

@@ -85,14 +85,13 @@ pub fn build_entity_temporal(
         let dataset_id: Option<String> = row.try_get("dataset_id")?;
         let value_type: String = row.try_get("value_type")?;
 
-        if compiled.system_last_n {
-            if let Some(last_n) = compiled.last_n {
-                if let Ok(total) = row.try_get::<i64, _>("partition_total") {
-                    max_partition_total = Some(max_partition_total.map_or(total, |m: i64| m.max(total)));
-                    if total > last_n as i64 {
-                        truncated = true;
-                    }
-                }
+        if compiled.system_last_n
+            && let Some(last_n) = compiled.last_n
+            && let Ok(total) = row.try_get::<i64, _>("partition_total")
+        {
+            max_partition_total = Some(max_partition_total.map_or(total, |m: i64| m.max(total)));
+            if total > last_n as i64 {
+                truncated = true;
             }
         }
 
@@ -144,7 +143,7 @@ pub fn build_entity_temporal(
                     if let Some((_, keep_min, keep_max)) = keep_range {
                         let (keep_min, keep_max) = (*keep_min, *keep_max);
                         for (_name, instances) in attrs.iter_mut() {
-                            instances.retain(|(t, _)| t.map_or(false, |t| t >= keep_min && t <= keep_max));
+                            instances.retain(|(t, _)| t.is_some_and(|t| t >= keep_min && t <= keep_max));
                         }
                         min_time = Some(keep_min);
                         max_time = Some(keep_max);
@@ -370,13 +369,11 @@ fn history_row_to_expanded_instance(row: &sqlx::postgres::PgRow, tea: &TeaEntry,
         );
     }
 
-    if sys_attrs {
-        if let Ok(time) = row.try_get::<DateTime<Utc>, _>("time") {
-            instance.insert(
-                iri::CREATED_AT.as_str().to_string(),
-                json!([{"@value": format_datetime(time), "@type": iri::DATETIME_TYPE.as_str()}]),
-            );
-        }
+    if sys_attrs && let Ok(time) = row.try_get::<DateTime<Utc>, _>("time") {
+        instance.insert(
+            iri::CREATED_AT.as_str().to_string(),
+            json!([{"@value": format_datetime(time), "@type": iri::DATETIME_TYPE.as_str()}]),
+        );
     }
 
     let instance_id: String = row.try_get("instance_id")?;
@@ -386,11 +383,11 @@ fn history_row_to_expanded_instance(row: &sqlx::postgres::PgRow, tea: &TeaEntry,
         instance.insert(iri::DATASET_ID.as_str().to_string(), json!([{"@id": ds_id}]));
     }
 
-    if let Ok(Some(meta)) = row.try_get::<Option<Value>, _>("metadata") {
-        if let Some(obj) = meta.as_object() {
-            for (k, v) in obj {
-                instance.insert(k.clone(), v.clone());
-            }
+    if let Ok(Some(meta)) = row.try_get::<Option<Value>, _>("metadata")
+        && let Some(obj) = meta.as_object()
+    {
+        for (k, v) in obj {
+            instance.insert(k.clone(), v.clone());
         }
     }
 
@@ -421,7 +418,7 @@ fn expand_geojson(geojson: &Value) -> Value {
 fn expand_coordinates(value: &Value) -> Value {
     match value {
         Value::Array(arr) => {
-            if arr.first().map_or(false, |v| v.is_number()) {
+            if arr.first().is_some_and(|v| v.is_number()) {
                 Value::Array(arr.iter().map(|v| json!({"@value": v})).collect())
             } else {
                 Value::Array(arr.iter().map(|v| json!({"@list": expand_coordinates(v)})).collect())

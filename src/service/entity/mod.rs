@@ -191,7 +191,7 @@ impl EntityService {
                     .with_changed_attributes(attr_keys)
                     .with_snapshot(entity_snapshot.clone())
                     .with_previous(entity_snapshot.clone())
-                    .with_sys_attrs(sys_attrs_snapshot.clone()),
+                    .with_sys_attrs(sys_attrs_snapshot),
             );
         }
 
@@ -208,7 +208,7 @@ impl EntityService {
     #[allow(dead_code)]
     pub async fn exists(&self, id: &Urn) -> Result<bool, AndromedaError> {
         let id = id.to_string();
-        Ok(self.repo.exists(&id).await?)
+        self.repo.exists(&id).await
     }
 }
 
@@ -333,14 +333,12 @@ fn wrap_raw_as_property(raw: Value) -> Value {
 pub(crate) fn decode_percent_encoded_uris(value: &mut Value) {
     match value {
         Value::Object(obj) => {
-            if obj.get("type").and_then(|t| t.as_str()) == Some("Relationship") {
-                if let Some(Value::String(uri)) = obj.get_mut("object") {
-                    if uri.contains('%') {
-                        if let Ok(decoded) = percent_encoding::percent_decode_str(uri).decode_utf8() {
-                            *uri = decoded.into_owned();
-                        }
-                    }
-                }
+            if obj.get("type").and_then(|t| t.as_str()) == Some("Relationship")
+                && let Some(Value::String(uri)) = obj.get_mut("object")
+                && uri.contains('%')
+                && let Ok(decoded) = percent_encoding::percent_decode_str(uri).decode_utf8()
+            {
+                *uri = decoded.into_owned();
             }
             for v in obj.values_mut() {
                 decode_percent_encoded_uris(v);

@@ -186,10 +186,10 @@ impl JsonLdEngine {
             "type": type_term
         });
 
-        if let Some(ctx) = context::resolve_context_value(None, context) {
-            if let Some(obj) = doc.as_object_mut() {
-                obj.insert("@context".to_string(), ctx);
-            }
+        if let Some(ctx) = context::resolve_context_value(None, context)
+            && let Some(obj) = doc.as_object_mut()
+        {
+            obj.insert("@context".to_string(), ctx);
         }
 
         let expanded = self.expand(doc, context).await?;
@@ -236,10 +236,10 @@ impl JsonLdEngine {
             term: {"@id": "urn:dummy"}
         });
 
-        if let Some(ctx) = context::resolve_context_value(None, context) {
-            if let Some(obj) = doc.as_object_mut() {
-                obj.insert("@context".to_string(), ctx);
-            }
+        if let Some(ctx) = context::resolve_context_value(None, context)
+            && let Some(obj) = doc.as_object_mut()
+        {
+            obj.insert("@context".to_string(), ctx);
         }
 
         let expanded = self.expand(doc, context).await?;
@@ -556,10 +556,10 @@ fn has_explicit_core_context(original_document: &serde_json::Value, spec: &Conte
         return true;
     }
 
-    if let Some(body_context) = spec.body_context() {
-        if context_value_contains_core_url(body_context) {
-            return true;
-        }
+    if let Some(body_context) = spec.body_context()
+        && context_value_contains_core_url(body_context)
+    {
+        return true;
     }
 
     original_document.get("@context").is_some_and(context_value_contains_core_url)
@@ -603,10 +603,10 @@ fn resolve_relative_context_urls(document: &mut serde_json::Value) {
         }
         serde_json::Value::Array(items) => {
             for item in items {
-                if let serde_json::Value::Object(obj) = item {
-                    if let Some(ctx) = obj.get_mut("@context") {
-                        resolve_entry(ctx);
-                    }
+                if let serde_json::Value::Object(obj) = item
+                    && let Some(ctx) = obj.get_mut("@context")
+                {
+                    resolve_entry(ctx);
                 }
             }
         }
