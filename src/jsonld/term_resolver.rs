@@ -6,43 +6,80 @@
 
 use crate::{
     error::AndromedaError,
-    jsonld::{CompactOptions, ContextSpec, JsonLdEngine},
+    jsonld::{CompactOptions, ContextSpec, ContextStripping, JsonLdEngine},
     query::q,
 };
 use serde_json::Value;
 use std::collections::HashSet;
 
+// ---------------------------------------------------------------------------
+// Generic async q-expression walker
+// ---------------------------------------------------------------------------
+
+/// Recursively walk a [`q::Expr`] tree, applying an async handler to each
+/// [`q::Predicate`] leaf.
+///
+/// `And` / `Or` branches are traversed recursively; `Pred` leaves are
+/// transformed by `handler`.
+async fn walk_q_expr<F, Fut>(expr: q::Expr, handler: &F) -> Result<q::Expr, AndromedaError>
+where
+    F: Fn(q::Predicate) -> Fut + Sync,
+    Fut: std::future::Future<Output = Result<q::Predicate, AndromedaError>> + Send,
+{
+    match expr {
+        q::Expr::And(terms) => {
+            let mut expanded = Vec::with_capacity(terms.len());
+            for t in terms {
+                expanded.push(walk_q_expr_boxed(t, handler).await?);
+            }
+            Ok(q::Expr::And(expanded))
+        }
+        q::Expr::Or(terms) => {
+            let mut expanded = Vec::with_capacity(terms.len());
+            for t in terms {
+                expanded.push(walk_q_expr_boxed(t, handler).await?);
+            }
+            Ok(q::Expr::Or(expanded))
+        }
+        q::Expr::Pred(pred) => {
+            let expanded = handler(pred).await?;
+            Ok(q::Expr::Pred(expanded))
+        }
+    }
+}
+
+/// Box-pinned wrapper for recursive async calls.
+fn walk_q_expr_boxed<'a, F, Fut>(
+    expr: q::Expr,
+    handler: &'a F,
+) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<q::Expr, AndromedaError>> + Send + 'a>>
+where
+    F: Fn(q::Predicate) -> Fut + Sync,
+    Fut: std::future::Future<Output = Result<q::Predicate, AndromedaError>> + Send + 'a,
+{
+    Box::pin(walk_q_expr(expr, handler))
+}
+
+// ---------------------------------------------------------------------------
+// Public API
+// ---------------------------------------------------------------------------
+
 /// Recursively expand attribute terms in a `q` expression.
+///
+/// Every attribute path (main attribute + sub-attributes) in the expression
+/// is expanded to its full IRI form using the provided context.
 pub fn expand_q_expr<'a>(
     engine: &'a JsonLdEngine,
     expr: q::Expr,
     context: &'a ContextSpec,
 ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<q::Expr, AndromedaError>> + Send + 'a>> {
-    Box::pin(async move {
-        match expr {
-            q::Expr::And(terms) => {
-                let mut expanded = Vec::new();
-                for t in terms {
-                    expanded.push(expand_q_expr(engine, t, context).await?);
-                }
-                Ok(q::Expr::And(expanded))
-            }
-            q::Expr::Or(terms) => {
-                let mut expanded = Vec::new();
-                for t in terms {
-                    expanded.push(expand_q_expr(engine, t, context).await?);
-                }
-                Ok(q::Expr::Or(expanded))
-            }
-            q::Expr::Pred(pred) => {
-                let expanded = expand_pred_terms(engine, pred, context).await?;
-                Ok(q::Expr::Pred(expanded))
-            }
-        }
-    })
+    Box::pin(async move { walk_q_expr(expr, &|pred| expand_pred_terms(engine, pred, context)).await })
 }
 
 /// Expand attribute terms in a single predicate.
+///
+/// The main attribute and all sub-attributes in the predicate's path are
+/// expanded to full IRIs.
 pub async fn expand_pred_terms(engine: &JsonLdEngine, pred: q::Predicate, context: &ContextSpec) -> Result<q::Predicate, AndromedaError> {
     match pred {
         q::Predicate::Exists(path) => {
@@ -72,28 +109,7 @@ pub fn apply_expand_values<'a>(
     expand_attrs: &'a HashSet<String>,
     context: &'a ContextSpec,
 ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<q::Expr, AndromedaError>> + Send + 'a>> {
-    Box::pin(async move {
-        match expr {
-            q::Expr::And(terms) => {
-                let mut expanded = Vec::new();
-                for t in terms {
-                    expanded.push(apply_expand_values(engine, t, expand_attrs, context).await?);
-                }
-                Ok(q::Expr::And(expanded))
-            }
-            q::Expr::Or(terms) => {
-                let mut expanded = Vec::new();
-                for t in terms {
-                    expanded.push(apply_expand_values(engine, t, expand_attrs, context).await?);
-                }
-                Ok(q::Expr::Or(expanded))
-            }
-            q::Expr::Pred(pred) => {
-                let expanded = expand_compare_values(engine, pred, expand_attrs, context).await?;
-                Ok(q::Expr::Pred(expanded))
-            }
-        }
-    })
+    Box::pin(async move { walk_q_expr(expr, &|pred| expand_compare_values(engine, pred, expand_attrs, context)).await })
 }
 
 async fn expand_compare_values(
@@ -107,7 +123,7 @@ async fn expand_compare_values(
             let rhs = expand_rhs_values(engine, rhs, context).await?;
             Ok(q::Predicate::Compare { path, op, rhs })
         }
-        other => Ok(other),
+        q::Predicate::Exists(_) | q::Predicate::Compare { .. } | q::Predicate::MatchPattern { .. } | q::Predicate::NotMatchPattern { .. } => Ok(pred),
     }
 }
 
@@ -129,7 +145,8 @@ async fn expand_rhs_values(engine: &JsonLdEngine, rhs: q::CompareValue, context:
             }
             Ok(q::CompareValue::ValueList(expanded))
         }
-        other => Ok(other),
+        q::CompareValue::Scalar(q::Scalar::Number(_) | q::Scalar::Bool(_) | q::Scalar::DateTime(_) | q::Scalar::Date(_) | q::Scalar::Time(_)) => Ok(rhs),
+        q::CompareValue::Range { .. } => Ok(rhs),
     }
 }
 
@@ -141,28 +158,7 @@ pub fn apply_json_keys<'a>(
     json_keys_attrs: &'a HashSet<String>,
     context: &'a ContextSpec,
 ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<q::Expr, AndromedaError>> + Send + 'a>> {
-    Box::pin(async move {
-        match expr {
-            q::Expr::And(terms) => {
-                let mut expanded = Vec::new();
-                for t in terms {
-                    expanded.push(apply_json_keys(engine, t, json_keys_attrs, context).await?);
-                }
-                Ok(q::Expr::And(expanded))
-            }
-            q::Expr::Or(terms) => {
-                let mut expanded = Vec::new();
-                for t in terms {
-                    expanded.push(apply_json_keys(engine, t, json_keys_attrs, context).await?);
-                }
-                Ok(q::Expr::Or(expanded))
-            }
-            q::Expr::Pred(pred) => {
-                let expanded = expand_json_keys_sub_attrs(engine, pred, json_keys_attrs, context).await?;
-                Ok(q::Expr::Pred(expanded))
-            }
-        }
-    })
+    Box::pin(async move { walk_q_expr(expr, &|pred| expand_json_keys_sub_attrs(engine, pred, json_keys_attrs, context)).await })
 }
 
 async fn expand_json_keys_sub_attrs(
@@ -188,7 +184,7 @@ async fn expand_json_keys_sub_attrs(
             let path = expand_sub_attrs(engine, path, context).await?;
             Ok(q::Predicate::NotMatchPattern { path, pattern })
         }
-        other => Ok(other),
+        q::Predicate::Exists(_) | q::Predicate::Compare { .. } | q::Predicate::MatchPattern { .. } | q::Predicate::NotMatchPattern { .. } => Ok(pred),
     }
 }
 
@@ -213,6 +209,9 @@ pub async fn expand_attr_path(engine: &JsonLdEngine, mut path: q::AttrPath, cont
 }
 
 /// Compact a type IRI back to a short term using the given context.
+///
+/// Returns the original IRI as-is if compaction fails or the IRI is not
+/// an HTTP/URN type.
 pub async fn compact_type_iri(engine: &JsonLdEngine, iri: &str, context: &ContextSpec) -> String {
     if !iri.starts_with("http") && !iri.starts_with("urn:") {
         return iri.to_string();
@@ -221,17 +220,32 @@ pub async fn compact_type_iri(engine: &JsonLdEngine, iri: &str, context: &Contex
         "@id": "urn:ngsi-ld:_:dummy",
         "@type": [iri]
     });
-    match engine.compact(doc, context, CompactOptions { strip_context: true }).await {
+    match engine
+        .compact(
+            doc,
+            context,
+            CompactOptions {
+                strip_context: ContextStripping::Strip,
+            },
+        )
+        .await
+    {
         Ok(compacted) => compacted
             .get("type")
             .and_then(|t| t.as_str())
             .map(String::from)
             .unwrap_or_else(|| iri.to_string()),
-        Err(_) => iri.to_string(),
+        Err(e) => {
+            tracing::debug!(error = %e, iri = iri, "compact_type_iri fallback to raw IRI");
+            iri.to_string()
+        }
     }
 }
 
 /// Compact an attribute IRI back to a short term using the given context.
+///
+/// Returns the original IRI as-is if compaction fails or the IRI is not
+/// an HTTP/URN type.
 pub async fn compact_attr_iri(engine: &JsonLdEngine, iri: &str, context: &ContextSpec) -> String {
     if !iri.starts_with("http") && !iri.starts_with("urn:") {
         return iri.to_string();
@@ -240,7 +254,16 @@ pub async fn compact_attr_iri(engine: &JsonLdEngine, iri: &str, context: &Contex
         "@id": "urn:ngsi-ld:_:dummy",
         iri: [{"@value": "dummy"}]
     }]);
-    match engine.compact(doc, context, CompactOptions { strip_context: true }).await {
+    match engine
+        .compact(
+            doc,
+            context,
+            CompactOptions {
+                strip_context: ContextStripping::Strip,
+            },
+        )
+        .await
+    {
         Ok(compacted) => {
             if let Some(obj) = compacted.as_object() {
                 for key in obj.keys() {
@@ -251,11 +274,22 @@ pub async fn compact_attr_iri(engine: &JsonLdEngine, iri: &str, context: &Contex
             }
             iri.to_string()
         }
-        Err(_) => iri.to_string(),
+        Err(e) => {
+            tracing::debug!(error = %e, iri = iri, "compact_attr_iri fallback to raw IRI");
+            iri.to_string()
+        }
     }
 }
 
 /// Validate that a jsonldContext value is a reachable, valid JSON-LD context.
+///
+/// Attempts to expand a minimal document using the given context. If
+/// expansion succeeds the context is considered valid and reachable.
+///
+/// # Errors
+///
+/// Returns an error if the context is not a valid URI / JSON-LD context,
+/// or if expansion fails (unreachable remote context, parse error, etc.).
 pub async fn validate_jsonld_context_value(engine: &JsonLdEngine, value: &Value) -> Result<(), AndromedaError> {
     let ctx_value = match value {
         Value::String(s) => {
@@ -270,7 +304,7 @@ pub async fn validate_jsonld_context_value(engine: &JsonLdEngine, value: &Value)
             }
         }
         Value::Array(_) | Value::Object(_) => value.clone(),
-        _ => {
+        Value::Null | Value::Bool(_) | Value::Number(_) => {
             return Err(AndromedaError::bad_request_data("jsonldContext must be a valid URI or JSON-LD context"));
         }
     };

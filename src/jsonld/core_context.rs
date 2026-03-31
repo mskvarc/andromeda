@@ -1,38 +1,47 @@
-//! NGSI-LD core context URL constants.
+//! NGSI-LD core context URL constants and embedded payloads.
 //!
 //! Provides canonical URLs for all released versions of the NGSI-LD core
-//! context (ETSI CIM 009) and a helper to test whether a URL matches any
-//! known version.
+//! context (ETSI CIM 009 / GS CIM 009), a W3C Data Integrity context, and
+//! helpers to test whether a URL matches any known version.
+//!
+//! The embedded payloads are compiled into the binary via [`include_str!`] so
+//! they are available without any network access.
 
-use dashmap::DashMap;
-use std::sync::LazyLock;
+use std::{collections::HashMap, sync::LazyLock};
 
-/// Core Context v1.3.
+/// Core Context v1.3 URL.
 pub const NGSI_LD_CORE_CONTEXT_V13_URL: &str = "https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.3.jsonld";
+/// Core Context v1.3 embedded payload.
 pub const NGSI_LD_CORE_CONTEXT_V13: &str = include_str!("context/ngsi-ld-core-context-v1.3.jsonld");
 
-/// Core Context v1.4.
+/// Core Context v1.4 URL.
 pub const NGSI_LD_CORE_CONTEXT_V14_URL: &str = "https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.4.jsonld";
+/// Core Context v1.4 embedded payload.
 pub const NGSI_LD_CORE_CONTEXT_V14: &str = include_str!("context/ngsi-ld-core-context-v1.4.jsonld");
 
-/// Core Context v1.5.
+/// Core Context v1.5 URL.
 pub const NGSI_LD_CORE_CONTEXT_V15_URL: &str = "https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.5.jsonld";
+/// Core Context v1.5 embedded payload.
 pub const NGSI_LD_CORE_CONTEXT_V15: &str = include_str!("context/ngsi-ld-core-context-v1.5.jsonld");
 
-/// Core Context v1.6.
+/// Core Context v1.6 URL.
 pub const NGSI_LD_CORE_CONTEXT_V16_URL: &str = "https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.6.jsonld";
+/// Core Context v1.6 embedded payload.
 pub const NGSI_LD_CORE_CONTEXT_V16: &str = include_str!("context/ngsi-ld-core-context-v1.6.jsonld");
 
-/// Core Context v1.7.
+/// Core Context v1.7 URL.
 pub const NGSI_LD_CORE_CONTEXT_V17_URL: &str = "https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.7.jsonld";
+/// Core Context v1.7 embedded payload.
 pub const NGSI_LD_CORE_CONTEXT_V17: &str = include_str!("context/ngsi-ld-core-context-v1.7.jsonld");
 
-/// Core Context v1.8.
+/// Core Context v1.8 URL.
 pub const NGSI_LD_CORE_CONTEXT_V18_URL: &str = "https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.8.jsonld";
+/// Core Context v1.8 embedded payload.
 pub const NGSI_LD_CORE_CONTEXT_V18: &str = include_str!("context/ngsi-ld-core-context-v1.8.jsonld");
 
-/// NGSI-LD Core Context URL — latest supported version (v1.9.1).
+/// NGSI-LD Core Context URL — latest supported version (v1.9).
 pub const NGSI_LD_CORE_CONTEXT_V19_URL: &str = "https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.9.jsonld";
+/// Core Context v1.9 embedded payload.
 pub const NGSI_LD_CORE_CONTEXT_V19: &str = include_str!("context/ngsi-ld-core-context-v1.9.jsonld");
 
 /// Version-less alias that resolves to the latest core context.
@@ -50,8 +59,12 @@ pub const NGSI_LD_CORE_CONTEXT_URL_LIST: [&str; 8] = [
     NGSI_LD_CORE_CONTEXT_V19_URL,
 ];
 
-pub static NGSI_LD_CORE_CONTEXT_MAP: LazyLock<DashMap<&str, &str>> = LazyLock::new(|| {
-    let m = DashMap::new();
+/// Lookup table from core context URL to its embedded JSON payload.
+///
+/// This is written once at initialization and only read afterwards, so a
+/// plain `HashMap` suffices (no concurrent-write support needed).
+pub static NGSI_LD_CORE_CONTEXT_MAP: LazyLock<HashMap<&str, &str>> = LazyLock::new(|| {
+    let mut m = HashMap::with_capacity(8);
     m.insert(NGSI_LD_CORE_CONTEXT_V13_URL, NGSI_LD_CORE_CONTEXT_V13);
     m.insert(NGSI_LD_CORE_CONTEXT_V14_URL, NGSI_LD_CORE_CONTEXT_V14);
     m.insert(NGSI_LD_CORE_CONTEXT_V15_URL, NGSI_LD_CORE_CONTEXT_V15);
@@ -60,12 +73,12 @@ pub static NGSI_LD_CORE_CONTEXT_MAP: LazyLock<DashMap<&str, &str>> = LazyLock::n
     m.insert(NGSI_LD_CORE_CONTEXT_V18_URL, NGSI_LD_CORE_CONTEXT_V18);
     m.insert(NGSI_LD_CORE_CONTEXT_V19_URL, NGSI_LD_CORE_CONTEXT_V19);
     m.insert(NGSI_LD_CORE_CONTEXT_URL, NGSI_LD_CORE_CONTEXT_V19);
-
     m
 });
 
 /// W3C Data Integrity context URL.
 pub const DATA_INTEGRITY_CONTEXT_URL: &str = "https://w3id.org/security/data-integrity/v2";
+/// W3C Data Integrity context embedded payload.
 pub const DATA_INTEGRITY_CONTEXT: &str = include_str!("context/data-integrity-v2.jsonld");
 
 /// Returns `true` if `url` matches any known NGSI-LD core context version.

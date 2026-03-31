@@ -7,8 +7,12 @@
 //! 2. [`ContextRegistry`] (embedded / preloaded contexts).
 //! 3. [`ContextCache`] (optional, e.g. database-backed L2 cache).
 //! 4. Remote HTTP fetch (if enabled).
+//!
+//! Every successful load upserts to L2 so the DB-backed hit counter
+//! (`number_of_hits`) is incremented on every access per NGSI-LD spec
+//! clause 5.13.
 
-use crate::jsonld::{Error, core_context::is_ngsi_ld_core_context_url};
+use crate::jsonld::{Error, core_context::is_ngsi_ld_core_context_url, engine::RemoteContextFetch};
 use async_trait::async_trait;
 use dashmap::DashMap;
 use iref3::{Iri, IriBuf};
@@ -16,8 +20,20 @@ use json_ld::{LoadError, Loader, RemoteDocument};
 use json_syntax::Parse;
 use moka::future::Cache;
 use reqwest::{Client, header::CONTENT_TYPE, redirect::Policy};
-use std::{sync::Arc, time::Duration};
+use std::{
+    sync::{Arc, LazyLock},
+    time::Duration,
+};
 use tracing::trace;
+
+/// Fallback IRI used in `LoadError` when the real IRI cannot be parsed.
+static FALLBACK_IRI: LazyLock<IriBuf> = LazyLock::new(|| IriBuf::new("urn:error".to_string()).expect("static IRI literal"));
+
+/// `application/ld+json` media type constant.
+static MEDIA_TYPE_LD_JSON: LazyLock<mime::Mime> = LazyLock::new(|| "application/ld+json".parse().expect("static media type literal"));
+
+/// Accept header value for context fetches.
+const ACCEPT_HEADER: &str = "application/ld+json, application/json";
 
 // ---------------------------------------------------------------------------
 // ContextCache trait (replaces direct DB dependency)
@@ -42,6 +58,9 @@ pub trait ContextCache: Send + Sync {
 // ---------------------------------------------------------------------------
 
 /// Thread-safe registry of preloaded / embedded JSON-LD contexts.
+///
+/// Used for core contexts and file-based preloads that must be available
+/// without network access.
 #[derive(Debug, Default, Clone)]
 pub struct ContextRegistry {
     contexts: Arc<DashMap<String, json_syntax::Value>>,
@@ -49,8 +68,8 @@ pub struct ContextRegistry {
 
 impl ContextRegistry {
     /// Create an empty registry.
-    pub fn new() -> Self {
-        Self::default()
+    pub fn new() -> ContextRegistry {
+        ContextRegistry::default()
     }
 
     /// Register a context document for a URL.
@@ -69,26 +88,32 @@ impl ContextRegistry {
 // ---------------------------------------------------------------------------
 
 /// HTTP context loader with L1 cache, registry, and optional L2 cache.
+///
+/// Cloning is not supported — wrap in `Arc` to share across tasks.
 pub struct HttpContextLoader {
     client: Client,
     cache: Cache<String, Arc<json_syntax::Value>>,
     registry: Arc<ContextRegistry>,
     l2_cache: Option<Arc<dyn ContextCache>>,
-    allow_remote: bool,
+    allow_remote: RemoteContextFetch,
     max_context_bytes: usize,
 }
 
 impl HttpContextLoader {
     /// Create a new loader.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::ContextLoad`] if the HTTP client cannot be built.
     pub(crate) fn new(
         registry: Arc<ContextRegistry>,
-        allow_remote: bool,
+        allow_remote: RemoteContextFetch,
         timeout_seconds: u64,
         max_redirects: u32,
         cache_capacity: u64,
         cache_ttl_seconds: u64,
         max_context_bytes: usize,
-    ) -> Result<Self, Error> {
+    ) -> Result<HttpContextLoader, Error> {
         let client = Client::builder()
             .timeout(Duration::from_secs(timeout_seconds))
             .redirect(Policy::limited(max_redirects as usize))
@@ -103,7 +128,7 @@ impl HttpContextLoader {
             .time_to_live(Duration::from_secs(cache_ttl_seconds))
             .build();
 
-        Ok(Self {
+        Ok(HttpContextLoader {
             client,
             cache,
             registry,
@@ -114,29 +139,23 @@ impl HttpContextLoader {
     }
 
     /// Attach an L2 context cache.
-    pub(crate) fn with_l2_cache(mut self, cache: Arc<dyn ContextCache>) -> Self {
+    pub(crate) fn with_l2_cache(mut self, cache: Arc<dyn ContextCache>) -> HttpContextLoader {
         self.l2_cache = Some(cache);
         self
     }
 
-    /// Reference to the underlying registry.
-    #[allow(dead_code)]
-    pub fn registry(&self) -> &Arc<ContextRegistry> {
-        &self.registry
-    }
-
-    /// Number of entries currently in the L1 cache.
-    #[allow(dead_code)]
-    pub fn cache_size(&self) -> u64 {
-        self.cache.entry_count()
-    }
-
+    /// Load a context by URL through the full resolution pipeline
+    /// (L1 → registry → L2 → remote).
+    ///
+    /// # Errors
+    ///
+    /// Returns an [`Error`] variant describing the failure (fetch disabled,
+    /// HTTP error, size exceeded, parse error, etc.).
     pub async fn load_value(&self, url: &str) -> Result<Arc<json_syntax::Value>, Error> {
         let url_string = normalize_local_hosted_context_url(url);
         if url_string != url {
             trace!("Normalized hosted context URL for lookup: {} -> {}", url, url_string);
         }
-        let url_for_l2 = url_string.clone();
         let registry = self.registry.clone();
         let client = self.client.clone();
         let allow_remote = self.allow_remote;
@@ -157,22 +176,33 @@ impl HttpContextLoader {
                     && let Some(payload) = cache.get(&url_string).await
                 {
                     trace!("L2 cache hit for context: {}", url_string);
-                    let (parsed, _) = json_syntax::Value::parse_str(&serde_json::to_string(&payload).unwrap_or_default()).map_err(|e| LoaderError {
+                    let serialized = serde_json::to_string(&payload);
+                    let json_str = match serialized {
+                        Ok(s) => s,
+                        Err(e) => {
+                            tracing::warn!("L2 cache entry for {} could not be serialized: {}", url_string, e);
+                            String::new()
+                        }
+                    };
+                    let (parsed, _) = json_syntax::Value::parse_str(&json_str).map_err(|e| LoaderError {
                         url: url_string.clone(),
                         kind: LoaderErrorKind::Invalid(e.to_string()),
                     })?;
                     let normalized = normalize_loaded_context_document(&url_string, parsed);
+                    // Persist L2 hit back (already in L2, but the closure only
+                    // runs on L1 miss — no additional write needed here).
                     return Ok(Arc::new(normalized));
                 }
 
                 // 3. Remote fetch
-                if !allow_remote {
+                if allow_remote == RemoteContextFetch::Deny {
                     return Err(LoaderError::fetch_disabled(url_string.clone()));
                 }
 
                 match fetch_and_parse(&client, &url_string, max_bytes).await {
                     Ok(value) => {
                         let normalized = normalize_loaded_context_document(&url_string, value);
+                        // Write to L2 only on remote fetch success (L1 miss path).
                         if let Some(ref cache) = l2_cache {
                             let serde_value = json_syntax::Value::into_serde_json(normalized.clone());
                             cache.put(&url_string, serde_value).await;
@@ -192,12 +222,12 @@ impl HttpContextLoader {
             })
             .await;
 
+        let url_for_l2 = normalize_local_hosted_context_url(url);
         match result {
             Ok(value) => {
-                // Always ensure the context is persisted to L2 cache.
-                // The try_get_with closure only runs on L1 miss, so an L1
-                // hit would skip the L2 put.  This is cheap (upsert / no-op
-                // if already present) and keeps the DB-backed list consistent.
+                // Always upsert to L2 so the DB-backed hit counter
+                // (`numberOfHits`, spec clause 5.13.3.5) is incremented
+                // on every access.
                 if let Some(ref cache) = self.l2_cache
                     && !is_ngsi_ld_core_context_url(&url_for_l2)
                 {
@@ -211,9 +241,16 @@ impl HttpContextLoader {
     }
 
     /// Fetch a context directly from the remote source, bypassing L1/L2 caches.
+    ///
+    /// Use this when the caller needs to verify that the original source is
+    /// still reachable (e.g. delete-with-reload).
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`LoaderError`] if remote fetch is disabled or the request fails.
     pub(crate) async fn fetch_remote_value(&self, url: &str) -> Result<Arc<json_syntax::Value>, LoaderError> {
         let url_string = normalize_local_hosted_context_url(url);
-        if !self.allow_remote {
+        if self.allow_remote == RemoteContextFetch::Deny {
             return Err(LoaderError::fetch_disabled(url_string));
         }
         let value = fetch_and_parse(&self.client, &url_string, self.max_context_bytes).await?;
@@ -227,15 +264,13 @@ impl Loader for HttpContextLoader {
         let requested_url = url.as_str();
         let normalized_url = normalize_local_hosted_context_url(requested_url);
         let value = self.load_value(&normalized_url).await.map_err(|e| {
-            LoadError::new(
-                IriBuf::new(normalized_url.clone()).unwrap_or_else(|_| IriBuf::new("urn:error".to_string()).unwrap()),
-                e,
-            )
+            let iri = IriBuf::new(normalized_url.clone()).unwrap_or_else(|_| FALLBACK_IRI.clone());
+            LoadError::new(iri, e)
         })?;
 
-        let iri = IriBuf::new(normalized_url).map_err(|e| LoadError::new(IriBuf::new("urn:error".to_string()).unwrap(), e))?;
+        let iri = IriBuf::new(normalized_url).map_err(|e| LoadError::new(FALLBACK_IRI.clone(), e))?;
 
-        Ok(RemoteDocument::new(Some(iri), Some("application/ld+json".parse().unwrap()), (*value).clone()))
+        Ok(RemoteDocument::new(Some(iri), Some(MEDIA_TYPE_LD_JSON.clone()), (*value).clone()))
     }
 }
 
@@ -298,7 +333,7 @@ fn remove_embedded_core_context_aliases(value: &mut serde_json::Value) {
                 remove_embedded_core_context_aliases(item);
             }
         }
-        _ => {}
+        serde_json::Value::Null | serde_json::Value::Bool(_) | serde_json::Value::Number(_) | serde_json::Value::String(_) => {}
     }
 }
 
@@ -321,27 +356,48 @@ fn strip_core_aliases_from_context_slot(context: &mut serde_json::Value) {
 }
 
 // ---------------------------------------------------------------------------
-// Internal error types (not exposed)
+// Internal error types
 // ---------------------------------------------------------------------------
 
-#[derive(Debug)]
+/// Internal error type for the context loader pipeline.
+///
+/// Converted to [`Error`] at the public API boundary via
+/// [`Error::from_loader_error`].
+#[derive(Debug, thiserror::Error)]
+#[error("{kind} for {url}")]
 pub(crate) struct LoaderError {
     pub(crate) url: String,
     pub(crate) kind: LoaderErrorKind,
 }
 
-#[derive(Debug)]
+/// Classification of loader failures.
+#[derive(Debug, thiserror::Error)]
 pub(crate) enum LoaderErrorKind {
+    /// Remote context fetch is disabled by configuration.
+    #[error("Remote context fetch disabled")]
     FetchDisabled,
+    /// HTTP request returned a non-success status code.
+    #[error("HTTP {0}")]
     Http(reqwest::StatusCode),
+    /// Network or transport-level request failure.
+    #[error("Request failed: {0}")]
     Request(String),
-    TooLarge { size: usize, max: usize },
+    /// Response body exceeds the configured size limit.
+    #[error("Context too large ({size} > {max} bytes)")]
+    TooLarge {
+        /// Actual payload size in bytes.
+        size: usize,
+        /// Configured maximum in bytes.
+        max: usize,
+    },
+    /// Response body could not be parsed as valid JSON-LD.
+    #[error("Invalid context: {0}")]
     Invalid(String),
 }
 
 impl LoaderError {
-    fn fetch_disabled(url: String) -> Self {
-        Self {
+    fn fetch_disabled(url: String) -> LoaderError {
+        LoaderError {
             url,
             kind: LoaderErrorKind::FetchDisabled,
         }
@@ -349,7 +405,8 @@ impl LoaderError {
 }
 
 impl Error {
-    pub(crate) fn from_loader_error(err: &LoaderError) -> Self {
+    /// Convert a [`LoaderError`] into the public [`Error`] type.
+    pub(crate) fn from_loader_error(err: &LoaderError) -> Error {
         match &err.kind {
             LoaderErrorKind::FetchDisabled => Error::ContextFetchDisabled { url: err.url.clone() },
             LoaderErrorKind::Http(status) => Error::ContextHttp {
@@ -378,15 +435,10 @@ impl Error {
 // ---------------------------------------------------------------------------
 
 async fn fetch_and_parse(client: &Client, url: &str, max_bytes: usize) -> Result<json_syntax::Value, LoaderError> {
-    let response = client
-        .get(url)
-        .header("Accept", "application/ld+json, application/json")
-        .send()
-        .await
-        .map_err(|e| LoaderError {
-            url: url.to_string(),
-            kind: LoaderErrorKind::Request(e.to_string()),
-        })?;
+    let response = client.get(url).header("Accept", ACCEPT_HEADER).send().await.map_err(|e| LoaderError {
+        url: url.to_string(),
+        kind: LoaderErrorKind::Request(e.to_string()),
+    })?;
 
     if !response.status().is_success() {
         return Err(LoaderError {
@@ -522,15 +574,7 @@ mod tests {
             })),
         );
 
-        let loader = HttpContextLoader::new(
-            registry, false,     // allow_remote
-            30,        // timeout_seconds
-            5,         // max_redirects
-            1024,      // cache_capacity
-            3600,      // cache_ttl_seconds
-            2_000_000, // max_context_bytes
-        )
-        .expect("loader");
+        let loader = HttpContextLoader::new(registry, RemoteContextFetch::Deny, 30, 5, 1024, 3600, 2_000_000).expect("loader");
         let iri = IriBuf::new("https://example.com/context.jsonld".to_string()).unwrap();
 
         let doc = loader.load(iri.as_iri()).await.expect("load");
@@ -547,7 +591,7 @@ mod tests {
             })),
         );
 
-        let loader = HttpContextLoader::new(registry, false, 30, 5, 1024, 3600, 2_000_000).expect("loader");
+        let loader = HttpContextLoader::new(registry, RemoteContextFetch::Deny, 30, 5, 1024, 3600, 2_000_000).expect("loader");
         let iri = IriBuf::new("http://localhost:1056/ngsi-ld/v1/ngsi-ld/v1/jsonldContexts/urn:ngsi-ld:Context:abc".to_string()).unwrap();
 
         let doc = loader.load(iri.as_iri()).await.expect("load");

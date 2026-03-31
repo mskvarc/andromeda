@@ -14,29 +14,35 @@ use std::{collections::HashSet, sync::OnceLock};
 /// Global default core context URL override (set once at startup).
 static DEFAULT_CORE_CONTEXT_URL: OnceLock<String> = OnceLock::new();
 
-/// Set the global default core context URL. Call once at startup.
+/// Set the global default core context URL.
+///
+/// Must be called exactly once at startup.  If called a second time the
+/// call is ignored and a warning is logged (the first value wins).
 pub fn set_default_core_context_url(url: impl Into<String>) {
-    let _ = DEFAULT_CORE_CONTEXT_URL.set(url.into());
+    if DEFAULT_CORE_CONTEXT_URL.set(url.into()).is_err() {
+        tracing::warn!(
+            "set_default_core_context_url called more than once; keeping the original value '{}'",
+            DEFAULT_CORE_CONTEXT_URL.get().map(String::as_str).unwrap_or("<unknown>")
+        );
+    }
 }
 
 /// Get the global default core context URL.
+///
+/// Returns the value set via [`set_default_core_context_url`], or the
+/// version-less [`NGSI_LD_CORE_CONTEXT_URL`] if none was configured.
 pub fn default_core_context_url() -> &'static str {
     DEFAULT_CORE_CONTEXT_URL.get().map(String::as_str).unwrap_or(NGSI_LD_CORE_CONTEXT_URL)
+}
+
+/// Retrieve the global default core context URL override, if set.
+fn global_default_core_url() -> Option<String> {
+    DEFAULT_CORE_CONTEXT_URL.get().cloned()
 }
 
 // ---------------------------------------------------------------------------
 // Public types
 // ---------------------------------------------------------------------------
-
-/// Strategy for merging document and Link-header contexts.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ContextMerge {
-    /// Document context first, then Link contexts.
-    PreferLink,
-    /// Link contexts first, then document context.
-    #[allow(dead_code)]
-    PreferDocument,
-}
 
 /// Policy for how the NGSI-LD core context is applied.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -53,11 +59,14 @@ pub enum CoreContextPolicy {
 }
 
 /// Describes the JSON-LD contexts that apply to a single operation.
+///
+/// Combines zero or more Link-header contexts, an optional body context,
+/// a core-context policy, and an optional core-URL override into a single
+/// value object that the engine uses for both expansion and compaction.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ContextSpec {
     link_contexts: Vec<String>,
     body_context: Option<Value>,
-    merge: ContextMerge,
     core_policy: CoreContextPolicy,
     /// Override the default core context URL (e.g. to use a specific version).
     default_core_url: Option<String>,
@@ -66,41 +75,39 @@ pub struct ContextSpec {
 impl ContextSpec {
     /// Empty spec with the default core-context append policy.
     pub fn none() -> Self {
-        let global_default = DEFAULT_CORE_CONTEXT_URL.get().cloned();
         Self {
             link_contexts: Vec::new(),
             body_context: None,
-            merge: ContextMerge::PreferLink,
+
             core_policy: CoreContextPolicy::Append,
-            default_core_url: global_default,
+            default_core_url: global_default_core_url(),
         }
     }
 
     /// Spec that resolves to only the core context.
     pub fn core_only() -> Self {
-        let global_default = DEFAULT_CORE_CONTEXT_URL.get().cloned();
         Self {
             link_contexts: Vec::new(),
             body_context: None,
-            merge: ContextMerge::PreferLink,
+
             core_policy: CoreContextPolicy::Only,
-            default_core_url: global_default,
+            default_core_url: global_default_core_url(),
         }
     }
 
     /// Spec built from Link-header context URLs.
     pub fn from_links(links: Vec<String>) -> Self {
-        let global_default = DEFAULT_CORE_CONTEXT_URL.get().cloned();
         Self {
             link_contexts: links,
             body_context: None,
-            merge: ContextMerge::PreferLink,
+
             core_policy: CoreContextPolicy::Append,
-            default_core_url: global_default,
+            default_core_url: global_default_core_url(),
         }
     }
 
     /// Set the body context.
+    #[must_use]
     pub fn with_body_context(mut self, context: Option<Value>) -> Self {
         self.body_context = context;
         self
@@ -111,45 +118,21 @@ impl ContextSpec {
         self.body_context.as_ref()
     }
 
-    /// Append a Link-header context URL.
-    #[allow(dead_code)]
-    pub fn push_link(&mut self, url: impl Into<String>) {
-        self.link_contexts.push(url.into());
-    }
-
     /// Link-header context URLs in insertion order.
     pub fn link_contexts(&self) -> &[String] {
         &self.link_contexts
     }
 
-    /// Set the merge strategy.
-    #[allow(dead_code)]
-    pub fn with_merge(mut self, merge: ContextMerge) -> Self {
-        self.merge = merge;
-        self
-    }
-
     /// Set the core-context policy.
+    #[must_use]
     pub fn with_core_policy(mut self, policy: CoreContextPolicy) -> Self {
         self.core_policy = policy;
         self
     }
 
-    /// Current merge strategy.
-    pub fn merge(&self) -> ContextMerge {
-        self.merge
-    }
-
     /// Current core-context policy.
     pub fn core_policy(&self) -> CoreContextPolicy {
         self.core_policy
-    }
-
-    /// Set the default core context URL override.
-    #[allow(dead_code)]
-    pub fn with_default_core_url(mut self, url: impl Into<String>) -> Self {
-        self.default_core_url = Some(url.into());
-        self
     }
 
     /// The effective core context URL (configured default or versionless fallback).
@@ -165,7 +148,6 @@ impl ContextSpec {
         Self {
             link_contexts: self.link_contexts.clone(),
             body_context: self.body_context.clone(),
-            merge: self.merge,
             core_policy: CoreContextPolicy::AppendIfNoExplicit,
             default_core_url: self.default_core_url.clone(),
         }
@@ -188,8 +170,7 @@ impl ContextSpec {
                 urls.push(core_url);
                 return urls;
             }
-            CoreContextPolicy::Omit => {}
-            CoreContextPolicy::Append | CoreContextPolicy::AppendIfNoExplicit => {}
+            CoreContextPolicy::Omit | CoreContextPolicy::Append | CoreContextPolicy::AppendIfNoExplicit => {}
         }
 
         let should_strip_core = matches!(self.core_policy, CoreContextPolicy::Append | CoreContextPolicy::AppendIfNoExplicit);
@@ -207,7 +188,7 @@ impl ContextSpec {
         let should_append_core = match self.core_policy {
             CoreContextPolicy::Append => true,
             CoreContextPolicy::AppendIfNoExplicit => !has_explicit,
-            _ => false,
+            CoreContextPolicy::Omit | CoreContextPolicy::Only => false,
         };
 
         if should_append_core && seen.insert(core_url.clone()) {
@@ -229,6 +210,8 @@ impl Default for ContextSpec {
 // ---------------------------------------------------------------------------
 
 /// Resolve a `@context` value by combining document and [`ContextSpec`] inputs.
+///
+/// Returns `None` when the resolved context is empty (no URLs, no objects).
 pub fn resolve_context_value(document_context: Option<&Value>, spec: &ContextSpec) -> Option<Value> {
     let mut doc_items = extract_context_items(document_context);
     if let Some(body_ctx) = spec.body_context() {
@@ -237,16 +220,9 @@ pub fn resolve_context_value(document_context: Option<&Value>, spec: &ContextSpe
 
     let mut link_items: Vec<Value> = spec.link_contexts().iter().cloned().map(Value::String).collect();
 
-    let mut combined = match spec.merge() {
-        ContextMerge::PreferLink => {
-            doc_items.append(&mut link_items);
-            doc_items
-        }
-        ContextMerge::PreferDocument => {
-            link_items.append(&mut doc_items);
-            link_items
-        }
-    };
+    // Merge order: document context first, then link contexts (links take precedence).
+    doc_items.append(&mut link_items);
+    let mut combined = doc_items;
 
     combined = dedupe_contexts(combined);
 
@@ -269,12 +245,19 @@ pub fn resolve_context_value(document_context: Option<&Value>, spec: &ContextSpe
 
     match combined.len() {
         0 => None,
-        1 => Some(combined.into_iter().next().unwrap()),
+        1 => combined.pop(),
         _ => Some(Value::Array(combined)),
     }
 }
 
 /// Apply the resolved context to a JSON document.
+///
+/// The document must be a JSON object or array of objects.
+///
+/// # Errors
+///
+/// Returns [`Error::InvalidDocument`] if the document is neither an object
+/// nor an array.
 pub fn apply_context(document: Value, spec: &ContextSpec) -> Result<Value, Error> {
     match document {
         Value::Object(mut obj) => {
@@ -404,15 +387,6 @@ mod tests {
         let resolved = resolve_context_value(Some(&doc_ctx), &spec).expect("context");
 
         assert_eq!(resolved, json!(["https://example.com/doc", "https://example.com/a", NGSI_LD_CORE_CONTEXT_URL]));
-    }
-
-    #[test]
-    fn prefer_document_keeps_link_first_with_core_last() {
-        let spec = ContextSpec::from_links(vec!["https://example.com/a".to_string()]).with_merge(ContextMerge::PreferDocument);
-        let doc_ctx = json!("https://example.com/doc");
-        let resolved = resolve_context_value(Some(&doc_ctx), &spec).expect("context");
-
-        assert_eq!(resolved, json!(["https://example.com/a", "https://example.com/doc", NGSI_LD_CORE_CONTEXT_URL]));
     }
 
     #[test]

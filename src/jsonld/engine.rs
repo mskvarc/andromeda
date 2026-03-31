@@ -19,6 +19,7 @@ use crate::jsonld::{
 use contextual::WithContext;
 use json_ld::{
     JsonLdProcessor,
+    Print,
     RemoteContextReference,
     RemoteDocument,
     syntax::{Context as JsonLdContext, TryFromJson},
@@ -26,8 +27,60 @@ use json_ld::{
 use json_syntax::Parse;
 use moka::future::Cache;
 use rdf_types::vocabulary::{BlankIdIndex, IndexVocabulary, IriIndex};
-use std::{collections::HashMap, fs, sync::Arc, time::Duration};
+use std::{collections::HashMap, fmt, fs, hash::Hash, sync::Arc, time::Duration};
 use tracing::info;
+
+// ---------------------------------------------------------------------------
+// ContextStripping
+// ---------------------------------------------------------------------------
+
+/// Controls whether `@context` is stripped from compacted output.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ContextStripping {
+    /// Remove `@context` from the compacted output.
+    Strip,
+    /// Keep `@context` in the compacted output.
+    Keep,
+}
+
+impl fmt::Display for ContextStripping {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ContextStripping::Strip => write!(f, "Strip"),
+            ContextStripping::Keep => write!(f, "Keep"),
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// RemoteContextFetch
+// ---------------------------------------------------------------------------
+
+/// Controls whether the engine is allowed to fetch remote contexts over HTTP.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RemoteContextFetch {
+    /// Allow fetching remote JSON-LD contexts.
+    Allow,
+    /// Deny all remote context fetches.
+    Deny,
+}
+
+impl fmt::Display for RemoteContextFetch {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            RemoteContextFetch::Allow => write!(f, "Allow"),
+            RemoteContextFetch::Deny => write!(f, "Deny"),
+        }
+    }
+}
+
+impl From<bool> for RemoteContextFetch {
+    /// `true` → [`Allow`](RemoteContextFetch::Allow),
+    /// `false` → [`Deny`](RemoteContextFetch::Deny).
+    fn from(allow: bool) -> RemoteContextFetch {
+        if allow { RemoteContextFetch::Allow } else { RemoteContextFetch::Deny }
+    }
+}
 
 // ---------------------------------------------------------------------------
 // CompactOptions
@@ -36,13 +89,15 @@ use tracing::info;
 /// Options for JSON-LD compaction.
 #[derive(Debug, Clone, Copy)]
 pub struct CompactOptions {
-    /// When `true`, strip `@context` from the compacted output.
-    pub strip_context: bool,
+    /// Whether to strip `@context` from the compacted output.
+    pub strip_context: ContextStripping,
 }
 
 impl Default for CompactOptions {
-    fn default() -> Self {
-        Self { strip_context: true }
+    fn default() -> CompactOptions {
+        CompactOptions {
+            strip_context: ContextStripping::Strip,
+        }
     }
 }
 
@@ -53,23 +108,27 @@ impl Default for CompactOptions {
 /// JSON-LD processing engine.
 ///
 /// Provides [`expand`](Self::expand) and [`compact`](Self::compact) operations
-/// backed by a configurable context loader.
+/// backed by a configurable context loader with multi-tier caching.
 ///
 /// Cloning is cheap — the loader and caches are shared via `Arc`.
 #[derive(Clone)]
 pub struct JsonLdEngine {
     loader: Arc<HttpContextLoader>,
     /// Cache for expanded type/term IRIs to avoid creating synthetic documents
-    /// on every call.  Keyed by `"{type|term}:{short_name}:{context_key}"`.
+    /// on every call.  Keyed by `"{type|term}:{short_name}:{context_hash}"`.
     term_cache: Cache<String, String>,
 }
 
 impl JsonLdEngine {
     /// Create an engine with default settings (remote contexts enabled, no L2
     /// cache, no preloaded contexts).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error`] if the embedded core contexts cannot be parsed.
     #[allow(dead_code)]
-    pub fn new() -> Result<Self, Error> {
-        Self::builder().build()
+    pub fn new() -> Result<JsonLdEngine, Error> {
+        JsonLdEngine::builder().build()
     }
 
     /// Start building an engine with custom configuration.
@@ -81,6 +140,11 @@ impl JsonLdEngine {
     ///
     /// Short property names are converted to full IRIs.  The result is always
     /// a JSON array of node objects.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::Expansion`] on expansion failure, or a context-loading
+    /// error variant if a required context could not be fetched.
     pub async fn expand(&self, document: serde_json::Value, context: &ContextSpec) -> Result<serde_json::Value, Error> {
         let had_explicit_core_context = has_explicit_core_context(&document, context);
         let mut document = context::apply_context(document, context)?;
@@ -111,9 +175,10 @@ impl JsonLdEngine {
             }
         };
 
-        use json_ld::Print;
-        let expanded_json_str = expanded.with(&vocabulary).compact_print().to_string();
-        let expanded_json: serde_json::Value = serde_json::from_str(&expanded_json_str)?;
+        let expanded_json: serde_json::Value = {
+            let printed = expanded.with(&vocabulary).compact_print().to_string();
+            serde_json::from_str(&printed)?
+        };
         Ok(expanded_json)
     }
 
@@ -122,9 +187,16 @@ impl JsonLdEngine {
     /// Full IRIs are converted back to short property names.  If compaction
     /// fails due to a protected-term redefinition the engine falls back to
     /// compacting with the core context only.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::Compaction`] on compaction failure, or a
+    /// context-loading error if a required context could not be fetched.
     pub async fn compact(&self, document: serde_json::Value, context: &ContextSpec, options: CompactOptions) -> Result<serde_json::Value, Error> {
-        let syntax_value = json_syntax::Value::from_serde_json(document.clone());
-        let remote_doc: RemoteDocument<IriIndex> = RemoteDocument::new(None, None, syntax_value);
+        // Convert once; clone the json_syntax value (not the serde_json value)
+        // so the original is available for the rare error/retry path.
+        let syntax_value = json_syntax::Value::from_serde_json(document);
+        let remote_doc: RemoteDocument<IriIndex> = RemoteDocument::new(None, None, syntax_value.clone());
 
         let mut vocabulary: IndexVocabulary<IriIndex, BlankIdIndex> = IndexVocabulary::new();
         let context_ref = build_context_reference(context)?;
@@ -132,28 +204,33 @@ impl JsonLdEngine {
         let compacted = match remote_doc.compact_with(&mut vocabulary, context_ref.clone(), &*self.loader).await {
             Ok(result) => result,
             Err(e) => {
-                let error_msg = e.to_string();
-                if error_msg.contains("Protected term redefinition") || error_msg.contains("protected") {
+                if Error::is_protected_term_error(&e) {
                     tracing::warn!(
                         "Compaction failed with protected term error: {}. \
                          Falling back to core-only context (user-provided context will be dropped). \
                          This may produce unexpected short names in the output. \
                          Consider reviewing the context for protected term conflicts.",
-                        error_msg
+                        e
                     );
                     let core_context = ContextSpec::core_only();
                     let core_context_ref = build_context_reference(&core_context)?;
                     let mut vocabulary2: IndexVocabulary<IriIndex, BlankIdIndex> = IndexVocabulary::new();
 
-                    let syntax_value2 = json_syntax::Value::from_serde_json(document.clone());
-                    let remote_doc2: RemoteDocument<IriIndex> = RemoteDocument::new(None, None, syntax_value2);
+                    let remote_doc2: RemoteDocument<IriIndex> = RemoteDocument::new(None, None, syntax_value);
 
                     remote_doc2.compact_with(&mut vocabulary2, core_context_ref, &*self.loader).await.map_err(|e| {
                         tracing::error!("Compaction failed even with core context: {}", e);
                         e
                     })?
                 } else {
-                    tracing::error!("Compaction failed: {}. Document: {}", e, document);
+                    let document = json_syntax::Value::into_serde_json(syntax_value);
+                    let doc_id = document.as_object().and_then(|o| o.get("@id").or(o.get("id"))).and_then(|v| v.as_str());
+                    tracing::error!(
+                        error = %e,
+                        document_id = doc_id.unwrap_or("<unknown>"),
+                        "Compaction failed"
+                    );
+                    tracing::debug!(document = %document, "Full document that failed compaction");
                     return Err(e.into());
                 }
             }
@@ -161,7 +238,7 @@ impl JsonLdEngine {
 
         let mut compacted_json = json_syntax::Value::into_serde_json(compacted);
 
-        if options.strip_context {
+        if options.strip_context == ContextStripping::Strip {
             strip_context(&mut compacted_json);
         }
 
@@ -172,6 +249,10 @@ impl JsonLdEngine {
     ///
     /// Results are cached per `(term, context)` pair to avoid constructing
     /// and expanding a synthetic JSON-LD document on every call.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::InvalidIri`] if the type term cannot be expanded.
     pub async fn expand_type(&self, type_term: &str, context: &ContextSpec) -> Result<String, Error> {
         if is_full_iri(type_term) {
             return Ok(type_term.to_string());
@@ -208,22 +289,15 @@ impl JsonLdEngine {
         Ok(iri)
     }
 
-    /// Expand a comma-separated list of type terms to their full IRIs.
-    #[allow(dead_code)]
-    pub async fn expand_types(&self, types: &str, context: &ContextSpec) -> Result<Vec<String>, Error> {
-        let mut result = Vec::new();
-        for type_term in types.split(',').map(str::trim) {
-            if !type_term.is_empty() {
-                result.push(self.expand_type(type_term, context).await?);
-            }
-        }
-        Ok(result)
-    }
-
     /// Expand a single attribute / property term to its full IRI.
     ///
     /// Results are cached per `(term, context)` pair to avoid constructing
     /// and expanding a synthetic JSON-LD document on every call.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::InvalidIri`] if the term cannot be resolved to a
+    /// full IRI through the context.
     pub async fn expand_term(&self, term: &str, context: &ContextSpec) -> Result<String, Error> {
         if is_full_iri(term) {
             return Ok(term.to_string());
@@ -246,41 +320,40 @@ impl JsonLdEngine {
 
         let expanded = self.expand(doc, context).await?;
 
-        let iri = if let Some(obj) = expanded.get(0).and_then(|v| v.as_object()) {
-            obj.keys()
-                .find(|key| *key != "@id" && *key != "@type")
-                .cloned()
-                .unwrap_or_else(|| format!("https://uri.etsi.org/ngsi-ld/default-context/{}", term))
-        } else {
-            format!("https://uri.etsi.org/ngsi-ld/default-context/{}", term)
-        };
+        let iri = expanded
+            .get(0)
+            .and_then(|v| v.as_object())
+            .and_then(|obj| obj.keys().find(|key| *key != "@id" && *key != "@type").cloned())
+            .ok_or_else(|| Error::invalid_iri(format!("Failed to expand term: {term}")))?;
 
         self.term_cache.insert(cache_key, iri.clone()).await;
         Ok(iri)
     }
 
-    /// Reference to the underlying loader (for advanced use).
-    #[allow(dead_code)]
-    pub fn loader(&self) -> &Arc<HttpContextLoader> {
-        &self.loader
-    }
-
-    /// Resolve a context URL and return its payload as a serde_json::Value.
+    /// Resolve a context URL and return its payload as a `serde_json::Value`.
     ///
     /// This loads the context through the normal loader pipeline (L1 cache,
     /// registry, L2 cache, remote fetch) and converts the result.
+    ///
+    /// # Errors
+    ///
+    /// Returns a context-loading error if the URL cannot be resolved.
     pub async fn resolve_context(&self, url: &str) -> Result<serde_json::Value, Error> {
         let value = self.loader.load_value(url).await?;
-        Ok(json_syntax::Value::into_serde_json((*value).clone()))
+        Ok(json_syntax::Value::into_serde_json(Arc::unwrap_or_clone(value)))
     }
 
     /// Fetch a context directly from the remote source, bypassing all caches.
     ///
     /// Use this when the caller needs to verify that the original source is
     /// still reachable (e.g. delete-with-reload).
+    ///
+    /// # Errors
+    ///
+    /// Returns a context-loading error if the remote fetch fails.
     pub async fn fetch_remote_context(&self, url: &str) -> Result<serde_json::Value, Error> {
         let value = self.loader.fetch_remote_value(url).await.map_err(|e| Error::from_loader_error(&e))?;
-        Ok(json_syntax::Value::into_serde_json((*value).clone()))
+        Ok(json_syntax::Value::into_serde_json(Arc::unwrap_or_clone(value)))
     }
 }
 
@@ -296,7 +369,7 @@ impl JsonLdEngine {
 pub struct JsonLdEngineBuilder {
     registry: Arc<ContextRegistry>,
     l2_cache: Option<Arc<dyn ContextCache>>,
-    allow_remote: bool,
+    allow_remote: RemoteContextFetch,
     timeout_seconds: u64,
     max_redirects: u32,
     cache_capacity: u64,
@@ -307,11 +380,11 @@ pub struct JsonLdEngineBuilder {
 
 impl JsonLdEngineBuilder {
     /// Create a builder with sensible defaults.
-    pub fn new() -> Self {
-        Self {
+    pub fn new() -> JsonLdEngineBuilder {
+        JsonLdEngineBuilder {
             registry: Arc::new(ContextRegistry::new()),
             l2_cache: None,
-            allow_remote: true,
+            allow_remote: RemoteContextFetch::Allow,
             timeout_seconds: 30,
             max_redirects: 5,
             cache_capacity: 1024,
@@ -322,68 +395,67 @@ impl JsonLdEngineBuilder {
     }
 
     /// Whether remote HTTP context fetching is allowed.
-    pub fn allow_remote(mut self, allow: bool) -> Self {
-        self.allow_remote = allow;
+    #[must_use]
+    pub fn allow_remote(mut self, allow: impl Into<RemoteContextFetch>) -> JsonLdEngineBuilder {
+        self.allow_remote = allow.into();
         self
     }
 
     /// HTTP request timeout in seconds.
-    pub fn timeout_seconds(mut self, seconds: u64) -> Self {
+    #[must_use]
+    pub fn timeout_seconds(mut self, seconds: u64) -> JsonLdEngineBuilder {
         self.timeout_seconds = seconds;
         self
     }
 
     /// Maximum number of HTTP redirects to follow.
-    pub fn max_redirects(mut self, max: u32) -> Self {
+    #[must_use]
+    pub fn max_redirects(mut self, max: u32) -> JsonLdEngineBuilder {
         self.max_redirects = max;
         self
     }
 
     /// Maximum number of entries in the in-memory (L1) context cache.
-    pub fn cache_capacity(mut self, capacity: u64) -> Self {
+    #[must_use]
+    pub fn cache_capacity(mut self, capacity: u64) -> JsonLdEngineBuilder {
         self.cache_capacity = capacity;
         self
     }
 
     /// Time-to-live for L1 cache entries, in seconds.
-    pub fn cache_ttl_seconds(mut self, ttl: u64) -> Self {
+    #[must_use]
+    pub fn cache_ttl_seconds(mut self, ttl: u64) -> JsonLdEngineBuilder {
         self.cache_ttl_seconds = ttl;
         self
     }
 
     /// Maximum size (in bytes) of a single remote context document.
-    pub fn max_context_bytes(mut self, max: u64) -> Self {
+    #[must_use]
+    pub fn max_context_bytes(mut self, max: u64) -> JsonLdEngineBuilder {
         self.max_context_bytes = max;
         self
     }
 
-    /// Replace the context registry.
-    #[allow(dead_code)]
-    pub fn with_registry(mut self, registry: Arc<ContextRegistry>) -> Self {
-        self.registry = registry;
-        self
-    }
-
     /// Attach an L2 context cache (e.g. database-backed).
-    pub fn with_l2_cache(mut self, cache: Arc<dyn ContextCache>) -> Self {
+    #[must_use]
+    pub fn with_l2_cache(mut self, cache: Arc<dyn ContextCache>) -> JsonLdEngineBuilder {
         self.l2_cache = Some(cache);
         self
     }
 
-    /// Register a single context document at build time.
-    #[allow(dead_code)]
-    pub fn register_context(self, url: impl Into<String>, value: json_syntax::Value) -> Self {
-        self.registry.register(url.into(), value);
-        self
-    }
-
     /// Supply a map of `URL → file-path` for contexts to preload from disk.
-    pub fn preload_contexts(mut self, contexts: HashMap<String, String>) -> Self {
+    #[must_use]
+    pub fn preload_contexts(mut self, contexts: HashMap<String, String>) -> JsonLdEngineBuilder {
         self.preload_contexts = Some(contexts);
         self
     }
 
     /// Build the engine.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error`] if embedded core contexts cannot be parsed or if
+    /// preloaded context files are missing / invalid.
     pub fn build(self) -> Result<JsonLdEngine, Error> {
         for url in NGSI_LD_CORE_CONTEXT_URL_LIST {
             let embedded_core = load_embedded_core_context(url)?;
@@ -426,8 +498,8 @@ impl JsonLdEngineBuilder {
 }
 
 impl Default for JsonLdEngineBuilder {
-    fn default() -> Self {
-        Self::new()
+    fn default() -> JsonLdEngineBuilder {
+        JsonLdEngineBuilder::new()
     }
 }
 
@@ -440,7 +512,7 @@ fn load_embedded_core_context(url: &str) -> Result<json_syntax::Value, Error> {
         .get(url)
         .ok_or(Error::EmbeddedContextInvalid("Unable to obtain embedded context".to_string()))?;
 
-    let (value, _) = json_syntax::Value::parse_str(context.value()).map_err(|e| Error::EmbeddedContextInvalid(e.to_string()))?;
+    let (value, _) = json_syntax::Value::parse_str(context).map_err(|e| Error::EmbeddedContextInvalid(e.to_string()))?;
     Ok(value)
 }
 
@@ -500,13 +572,18 @@ fn strip_context(value: &mut serde_json::Value) {
                 }
             }
         }
-        _ => {}
+        serde_json::Value::Null | serde_json::Value::Bool(_) | serde_json::Value::Number(_) | serde_json::Value::String(_) => {}
     }
 }
 
 fn term_cache_key(prefix: &str, term: &str, context: &ContextSpec) -> String {
-    let ctx_str = context::resolve_context_value(None, context).map(|v| v.to_string()).unwrap_or_default();
-    format!("{prefix}:{term}:{ctx_str}")
+    use std::hash::Hasher;
+    let ctx_hash = context::resolve_context_value(None, context).map_or(0u64, |v| {
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        v.to_string().hash(&mut hasher);
+        hasher.finish()
+    });
+    format!("{prefix}:{term}:{ctx_hash:x}")
 }
 
 fn is_full_iri(term: &str) -> bool {
@@ -527,7 +604,7 @@ fn extract_context_urls(document: &serde_json::Value) -> Vec<String> {
                     collect(ctx, out);
                 }
             }
-            _ => {}
+            serde_json::Value::Null | serde_json::Value::Bool(_) | serde_json::Value::Number(_) => {}
         }
     }
 
@@ -552,7 +629,7 @@ fn extract_applied_context(document: &serde_json::Value) -> Option<serde_json::V
                 Some(serde_json::Value::Array(contexts))
             }
         }
-        _ => None,
+        serde_json::Value::Null | serde_json::Value::Bool(_) | serde_json::Value::Number(_) | serde_json::Value::String(_) => None,
     }
 }
 
@@ -575,7 +652,7 @@ fn context_value_contains_core_url(value: &serde_json::Value) -> bool {
         serde_json::Value::String(url) => is_ngsi_ld_core_context_url(url),
         serde_json::Value::Array(items) => items.iter().any(context_value_contains_core_url),
         serde_json::Value::Object(map) => map.get("@context").is_some_and(context_value_contains_core_url),
-        _ => false,
+        serde_json::Value::Null | serde_json::Value::Bool(_) | serde_json::Value::Number(_) => false,
     }
 }
 
@@ -833,13 +910,6 @@ mod tests {
         let result = JsonLdEngine::builder().preload_contexts(preloads).build();
         assert!(matches!(result, Err(Error::ContextInvalid { .. })));
         let _ = fs::remove_file(path);
-    }
-
-    #[tokio::test]
-    async fn test_expand_types_comma_separated() {
-        let engine = test_engine();
-        let types = engine.expand_types("Vehicle, Building", &ContextSpec::none()).await.unwrap();
-        assert_eq!(types.len(), 2);
     }
 
     #[tokio::test]

@@ -30,6 +30,7 @@ geo = "0.32.0"
 geojson = "1.0.0"
 indexmap = { version = "2.13.0", features = ["serde"] }
 iref = { version = "4.0.0", features = ["serde"] }
+# Alias required: json-ld 0.21.x depends on iref v3, while we use iref v4 elsewhere.
 iref3 = { package = "iref", version = "3.2.2" }
 json-ld = "0.21.4"
 json-ld-expandable = { path = "json-ld-expandable" }

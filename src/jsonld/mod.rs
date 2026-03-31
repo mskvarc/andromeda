@@ -13,7 +13,7 @@ mod loader;
 pub mod term_resolver;
 
 pub use context::{ContextSpec, CoreContextPolicy, default_core_context_url, set_default_core_context_url};
-pub use engine::{CompactOptions, JsonLdEngine};
+pub use engine::{CompactOptions, ContextStripping, JsonLdEngine};
 pub use error::Error;
 pub use expandable::JsonLdExpandable;
 pub use loader::ContextCache;
@@ -21,6 +21,11 @@ pub use loader::ContextCache;
 pub use json_ld_expandable::JsonLdExpandable as JsonLdExpandableMacro;
 
 /// Build a [`JsonLdEngine`] from application config and an L2 context cache.
+///
+/// # Errors
+///
+/// Returns [`Error`] if the engine cannot be constructed (e.g. embedded
+/// contexts fail to parse, or preloaded context files are missing).
 pub fn build_engine(config: &crate::core::config::JsonLdConfig, l2_cache: std::sync::Arc<impl ContextCache + 'static>) -> Result<JsonLdEngine, Error> {
     let mut builder = JsonLdEngine::builder()
         .allow_remote(config.allow_remote_contexts)
@@ -30,8 +35,8 @@ pub fn build_engine(config: &crate::core::config::JsonLdConfig, l2_cache: std::s
         .cache_ttl_seconds(config.cache_ttl_seconds)
         .max_context_bytes(config.max_context_bytes)
         .with_l2_cache(l2_cache);
-    if let Some(preloads) = config.preload_contexts.clone() {
-        builder = builder.preload_contexts(preloads);
+    if let Some(ref preloads) = config.preload_contexts {
+        builder = builder.preload_contexts(preloads.clone());
     }
     builder.build()
 }

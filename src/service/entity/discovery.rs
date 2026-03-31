@@ -4,7 +4,7 @@ use crate::{
         uri::NGSI_LD_URN_NID,
     },
     error::AndromedaError,
-    jsonld::{CompactOptions, ContextSpec, JsonLdEngine, JsonLdExpandable},
+    jsonld::{CompactOptions, ContextSpec, ContextStripping, JsonLdEngine, JsonLdExpandable},
     repository::entity::EntityRepository,
 };
 use serde_json::Value;
@@ -38,7 +38,17 @@ impl EntityDiscoveryService {
                 "@id": "urn:ngsi-ld:_:dummy",
                 "@type": [iri]
             });
-            let name = match self.engine.compact(doc, context, CompactOptions { strip_context: true }).await {
+            let name = match self
+                .engine
+                .compact(
+                    doc,
+                    context,
+                    CompactOptions {
+                        strip_context: ContextStripping::Strip,
+                    },
+                )
+                .await
+            {
                 Ok(compacted) => compacted.get("type").and_then(|t| t.as_str()).map(String::from).unwrap_or_else(|| iri.clone()),
                 Err(_) => iri.clone(),
             };
@@ -216,7 +226,17 @@ impl EntityDiscoveryService {
                     "@id": "urn:ngsi-ld:_:dummy",
                     iri: [{"@value": "dummy"}]
                 }]);
-                let name = match self.engine.compact(doc, context, CompactOptions { strip_context: true }).await {
+                let name = match self
+                    .engine
+                    .compact(
+                        doc,
+                        context,
+                        CompactOptions {
+                            strip_context: ContextStripping::Strip,
+                        },
+                    )
+                    .await
+                {
                     Ok(compacted) => {
                         if let Some(obj) = compacted.as_object() {
                             obj.keys()

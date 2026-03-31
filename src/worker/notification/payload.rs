@@ -7,7 +7,7 @@ use crate::{
         iri,
         notification::{CompiledSubscription, TriggerReason},
     },
-    jsonld::{CompactOptions, ContextSpec, JsonLdEngine},
+    jsonld::{CompactOptions, ContextSpec, ContextStripping, JsonLdEngine},
     response::entity::{apply_inline_join, simplify_value},
     service::entity::{EntityQueryService, expanded_entity_object_mut, inject_attr_sys_attrs},
 };
@@ -99,7 +99,7 @@ pub async fn build_notification_data(params: NotificationBuildParams<'_>) -> Vec
             entity.clone(),
             &context,
             CompactOptions {
-                strip_context: !include_context,
+                strip_context: if include_context { ContextStripping::Keep } else { ContextStripping::Strip },
             },
         )
         .await
@@ -112,7 +112,7 @@ pub async fn build_notification_data(params: NotificationBuildParams<'_>) -> Vec
                     entity,
                     &ContextSpec::core_only(),
                     CompactOptions {
-                        strip_context: !include_context,
+                        strip_context: if include_context { ContextStripping::Keep } else { ContextStripping::Strip },
                     },
                 )
                 .await
@@ -153,7 +153,16 @@ pub async fn build_notification_data(params: NotificationBuildParams<'_>) -> Vec
             Value::Array(arr) => arr.first().cloned().unwrap_or(Value::Null),
             other => other.clone(),
         };
-        if let Ok(prev_compacted) = engine.compact(prev_entity, &context, CompactOptions { strip_context: true }).await {
+        if let Ok(prev_compacted) = engine
+            .compact(
+                prev_entity,
+                &context,
+                CompactOptions {
+                    strip_context: ContextStripping::Strip,
+                },
+            )
+            .await
+        {
             let prev_compacted = normalize_compacted_entity(prev_compacted);
             inject_previous_values(&mut compacted, &prev_compacted, changed_attributes, engine, &context).await;
         }

@@ -1,6 +1,6 @@
 use crate::{
     domain::{entity::Entity, notification::Notification, subscription::Subscription},
-    jsonld::{CompactOptions, ContextSpec, JsonLdEngine},
+    jsonld::{CompactOptions, ContextSpec, ContextStripping, JsonLdEngine},
     query::q,
     repository::{entity::EntityRepository, subscription::SubscriptionRepository, subscription_store::SubscriptionStore},
     service::entity::inject_sys_attrs,
@@ -258,7 +258,7 @@ impl IntervalWorker {
                     filtered.clone(),
                     &context,
                     CompactOptions {
-                        strip_context: !include_context,
+                        strip_context: if include_context { ContextStripping::Keep } else { ContextStripping::Strip },
                     },
                 )
                 .await
@@ -271,7 +271,7 @@ impl IntervalWorker {
                             filtered,
                             &ContextSpec::core_only(),
                             CompactOptions {
-                                strip_context: !include_context,
+                                strip_context: if include_context { ContextStripping::Keep } else { ContextStripping::Strip },
                             },
                         )
                         .await
