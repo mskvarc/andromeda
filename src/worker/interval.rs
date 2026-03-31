@@ -1,14 +1,17 @@
 use crate::{
     domain::{
         entity::Entity,
-        notification::{EndpointTransport, Notification, parse_endpoint_transport},
+        notification::Notification,
         subscription::Subscription,
     },
     jsonld::{CompactOptions, ContextSpec, JsonLdEngine},
     query::q,
     repository::{entity::EntityRepository, subscription::SubscriptionRepository, subscription_store::SubscriptionStore},
     service::entity::inject_sys_attrs,
-    transport::mqtt::MqttConnectionManager,
+    transport::{
+        endpoint::{EndpointTransport, parse_endpoint_transport},
+        mqtt::MqttConnectionManager,
+    },
 };
 use chrono::Utc;
 use serde_json::Value;

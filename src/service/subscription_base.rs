@@ -5,14 +5,12 @@
 //! delegated to the [`SubscriptionVariant`] trait.
 
 use crate::{
-    domain::{
-        notification::parse_endpoint_transport,
-        subscription::{Subscription, SubscriptionStatus},
-    },
+    domain::subscription::{Subscription, SubscriptionStatus},
     error::AndromedaError,
     jsonld::{ContextSpec, JsonLdEngine},
     repository::subscription_store::{StatusUpdateFields, SubscriptionStore, compute_updated_status},
     service::subscription_core,
+    transport::endpoint::parse_endpoint_transport,
 };
 use async_trait::async_trait;
 use serde_json::Value;

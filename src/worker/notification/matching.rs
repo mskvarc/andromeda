@@ -277,9 +277,12 @@ pub fn matches_scope_filter(scope_q: &str, entity_data: &Value) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::{
-        notification::{ChangeEvent, CompiledSubscription, EndpointTransport, TriggerReason},
-        subscription::SubscriptionStatus,
+    use crate::{
+        domain::{
+            notification::{ChangeEvent, CompiledSubscription, TriggerReason},
+            subscription::SubscriptionStatus,
+        },
+        transport::endpoint::EndpointTransport,
     };
 
     fn make_sub() -> CompiledSubscription {

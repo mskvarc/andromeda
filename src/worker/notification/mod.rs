@@ -7,11 +7,9 @@ use crate::{
             ChangeEvent,
             CompiledSelector,
             CompiledSubscription,
-            EndpointTransport,
             Notification,
             SubscriptionChange,
             TriggerReason,
-            parse_endpoint_transport,
         },
         subscription::{EntitySelector, Subscription, SubscriptionStatus},
     },
@@ -19,7 +17,10 @@ use crate::{
     query::q,
     repository::{entity::EntityRepository, subscription::SubscriptionRepository, subscription_store::SubscriptionStore},
     service::entity::{EntityQueryService, inject_sys_attrs},
-    transport::mqtt::MqttConnectionManager,
+    transport::{
+        endpoint::{EndpointTransport, parse_endpoint_transport},
+        mqtt::MqttConnectionManager,
+    },
 };
 use chrono::{SecondsFormat, Utc};
 use regex::Regex;

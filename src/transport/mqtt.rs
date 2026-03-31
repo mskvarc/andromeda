@@ -1,6 +1,6 @@
 use crate::{
     api::header::{jsonld_context_link, link_header_string},
-    domain::notification::{MqttEndpointConfig, MqttQoS, MqttVersion},
+    transport::endpoint::{MqttEndpointConfig, MqttQoS, MqttVersion},
 };
 use serde_json::Value;
 use std::{

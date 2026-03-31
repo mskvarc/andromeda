@@ -7,8 +7,6 @@ use crate::{
             CsourceSubscriptionChange,
             CsrChangeEvent,
             CsrTriggerReason,
-            EndpointTransport,
-            parse_endpoint_transport,
         },
         subscription::{Subscription, SubscriptionStatus},
     },
@@ -18,7 +16,10 @@ use crate::{
         csource_subscription::CsourceSubscriptionRepository,
         subscription_store::SubscriptionStore,
     },
-    transport::mqtt::MqttConnectionManager,
+    transport::{
+        endpoint::{EndpointTransport, parse_endpoint_transport},
+        mqtt::MqttConnectionManager,
+    },
 };
 use chrono::Utc;
 use regex::Regex;

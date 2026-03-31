@@ -1,6 +1,6 @@
 use crate::{
     domain::{
-        notification::{CsourceNotification, EndpointTransport, parse_endpoint_transport},
+        notification::CsourceNotification,
         subscription::Subscription,
     },
     repository::{
@@ -8,7 +8,10 @@ use crate::{
         csource_subscription::CsourceSubscriptionRepository,
         subscription_store::SubscriptionStore,
     },
-    transport::mqtt::MqttConnectionManager,
+    transport::{
+        endpoint::{EndpointTransport, parse_endpoint_transport},
+        mqtt::MqttConnectionManager,
+    },
 };
 use chrono::Utc;
 use serde_json::Value;
