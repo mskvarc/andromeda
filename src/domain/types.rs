@@ -2,15 +2,22 @@ use crate::jsonld::JsonLdExpandableMacro;
 use serde::{Deserialize, Serialize};
 use urn::Urn;
 
+/// NGSI-LD EntityTypeList representation (ETSI GS CIM 009 clause 5.2.24).
+///
+/// Lists all entity types known to the broker.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Types {
     pub id: Urn,
     #[serde(rename = "type")]
     pub type_: String,
-    #[serde(rename = "typeList")]
     pub type_list: Vec<String>,
 }
 
+/// Detailed information about an entity type (ETSI GS CIM 009 clause 5.2.26).
+///
+/// Provides the type name, entity count, and details of all attributes
+/// associated with entities of this type.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonLdExpandableMacro)]
 #[serde(rename_all = "camelCase")]
 #[jsonld(type = "https://uri.etsi.org/ngsi-ld/EntityTypeInfo")]
@@ -28,6 +35,7 @@ pub struct EntityTypeInfo {
     pub attribute_details: Vec<AttributeDetail>,
 }
 
+/// Detail record for a single attribute within an EntityTypeInfo (ETSI GS CIM 009 clause 5.2.26).
 #[derive(Debug, Clone, Serialize, Deserialize, JsonLdExpandableMacro)]
 #[serde(rename_all = "camelCase")]
 #[jsonld(type = "https://uri.etsi.org/ngsi-ld/Attribute")]
@@ -43,6 +51,10 @@ pub struct AttributeDetail {
     pub attribute_types: Vec<String>,
 }
 
+/// Summary of an entity type (ETSI GS CIM 009 clause 5.2.25).
+///
+/// Provides the type name and all attribute names associated with entities
+/// of this type.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonLdExpandableMacro)]
 #[serde(rename_all = "camelCase")]
 #[jsonld(type = "https://uri.etsi.org/ngsi-ld/EntityType")]
@@ -58,15 +70,22 @@ pub struct EntityType {
     pub attribute_names: Vec<String>,
 }
 
+/// NGSI-LD AttributeList representation (ETSI GS CIM 009 clause 5.2.27).
+///
+/// Lists all attributes known to the broker.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AttributeList {
     pub id: Urn,
     #[serde(rename = "type")]
     pub type_: String,
-    #[serde(rename = "attributeList")]
     pub attribute_list: Vec<String>,
 }
 
+/// Detailed information about a single attribute (ETSI GS CIM 009 clause 5.2.28).
+///
+/// Provides the attribute name, types, usage count, and associated entity
+/// type names.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonLdExpandableMacro)]
 #[serde(rename_all = "camelCase")]
 #[jsonld(type = "https://uri.etsi.org/ngsi-ld/Attribute")]

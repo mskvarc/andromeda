@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use strum::{Display, EnumString};
 
+/// Status of a snapshot operation (ETSI GS CIM 009 clause 5.2.41, status member).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Display, EnumString)]
 #[serde(rename_all = "camelCase")]
 #[strum(serialize_all = "camelCase")]
@@ -14,6 +15,11 @@ pub enum SnapshotStatus {
     Failure,
 }
 
+/// NGSI-LD Snapshot representation (ETSI GS CIM 009 clause 5.2.41).
+///
+/// A Snapshot captures the results of one or more entity queries and/or
+/// temporal queries at a point in time. Used for offline access and
+/// bulk data export.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Snapshot {
@@ -41,6 +47,7 @@ pub struct Snapshot {
     pub last_used_at: Option<DateTime<Utc>>,
 }
 
+/// Per-query execution result within a snapshot (ETSI GS CIM 009 clause 5.2.42).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ExecutionResultDetails {
@@ -51,7 +58,7 @@ pub struct ExecutionResultDetails {
     pub error: Option<String>,
 }
 
-/// Input for POST /snapshots
+/// Input for POST /snapshots.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SnapshotInput {
@@ -71,7 +78,7 @@ pub struct SnapshotInput {
     pub receiver_info: Option<Vec<Value>>,
 }
 
-/// Input for PATCH /snapshots/{id}
+/// Input for PATCH /snapshots/{id}.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SnapshotPatch {

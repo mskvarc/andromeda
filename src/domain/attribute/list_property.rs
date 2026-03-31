@@ -4,15 +4,19 @@ use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-/// NGSI-LD ListProperty (spec 5.2.36)
+/// NGSI-LD ListProperty representation (ETSI GS CIM 009 clause 5.2.36).
+///
+/// A ListProperty represents an attribute whose value is an ordered list
+/// of JSON values. Contains the value list, optional metadata
+/// (observedAt, datasetId), and optional sub-attributes.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ListProperty {
-    #[serde(rename = "valueList")]
     pub value_list: Vec<Value>,
-    #[serde(rename = "observedAt", skip_serializing_if = "Option::is_none", with = "serde_helpers::rfc3339_option", default)]
+    #[serde(skip_serializing_if = "Option::is_none", with = "serde_helpers::rfc3339_option", default)]
     pub observed_at: Option<DateTime<Utc>>,
 
-    #[serde(rename = "datasetId", skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub dataset_id: Option<Uri>,
     #[serde(flatten)]
     pub sub_attributes: IndexMap<String, AttributeValue>,

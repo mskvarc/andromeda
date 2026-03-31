@@ -3,14 +3,7 @@ pub(crate) mod payload;
 
 use crate::{
     domain::{
-        notification::{
-            ChangeEvent,
-            CompiledSelector,
-            CompiledSubscription,
-            Notification,
-            SubscriptionChange,
-            TriggerReason,
-        },
+        notification::{ChangeEvent, CompiledSelector, CompiledSubscription, Notification, SubscriptionChange, TriggerReason},
         subscription::{EntitySelector, Subscription, SubscriptionStatus},
     },
     jsonld::JsonLdEngine,

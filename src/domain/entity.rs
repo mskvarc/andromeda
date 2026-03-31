@@ -2,6 +2,7 @@ use crate::domain::{attribute::AttributeValue, uri::Uri};
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 
+/// Single or multiple entity type values.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum EntityTypeValue {
@@ -9,6 +10,7 @@ pub enum EntityTypeValue {
     Multiple(Vec<String>),
 }
 
+/// Single or multiple scope values.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum Scope {
@@ -16,6 +18,11 @@ pub enum Scope {
     Multiple(Vec<String>),
 }
 
+/// NGSI-LD Entity representation (ETSI GS CIM 009 clause 5.2.4).
+///
+/// An Entity is the core informational unit in NGSI-LD, representing a
+/// real-world object or concept. It has an identifier, one or more types,
+/// optional scope, and a set of attributes (Properties, Relationships, etc.).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Entity {
     pub id: Uri,

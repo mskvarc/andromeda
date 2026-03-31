@@ -1,8 +1,5 @@
 use crate::{
-    domain::{
-        notification::CsourceNotification,
-        subscription::Subscription,
-    },
+    domain::{notification::CsourceNotification, subscription::Subscription},
     repository::{
         context_source_registration::ContextSourceRegistrationRepository,
         csource_subscription::CsourceSubscriptionRepository,

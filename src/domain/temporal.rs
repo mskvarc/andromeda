@@ -1,4 +1,4 @@
-//! NGSI-LD temporal types (ETSI GS CIM 009 clause 5.2.4).
+//! NGSI-LD temporal types (ETSI GS CIM 009 clause 5.2.21).
 //!
 //! Types supporting the temporal entity API, which provides access to the
 //! history of attribute values over time.
@@ -86,7 +86,7 @@ pub enum ValueType {
     Uri,
 }
 
-/// Aggregation methods (clause 4.5.19).
+/// Aggregation methods for temporal queries (clause 4.5.19).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Display, EnumString)]
 #[strum(serialize_all = "camelCase")]
 pub enum AggrMethod {

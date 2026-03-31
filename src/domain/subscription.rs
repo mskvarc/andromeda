@@ -1,4 +1,4 @@
-//! NGSI-LD subscription types (ETSI GS CIM 009 clause 5.2.8).
+//! NGSI-LD subscription types (ETSI GS CIM 009 clause 5.2.12).
 
 use crate::domain::{
     response_format::{JoinMode, ResponseFormat},
@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use strum::{Display, EnumString};
 
-/// Trigger conditions that cause a notification to be sent.
+/// Trigger conditions that cause a notification to be sent (ETSI GS CIM 009 clause 5.3.3).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Display, EnumString)]
 #[serde(rename_all = "camelCase")]
 #[strum(serialize_all = "camelCase")]
@@ -28,7 +28,7 @@ pub enum NotificationTrigger {
     AttributeDeleted,
 }
 
-/// Lifecycle status of a subscription.
+/// Lifecycle status of a subscription (ETSI GS CIM 009 clause 5.2.12, status member).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Display, EnumString)]
 #[serde(rename_all = "camelCase")]
 #[strum(serialize_all = "camelCase")]
@@ -52,22 +52,26 @@ pub enum NotificationStatus {
     Failed,
 }
 
-/// Selects entities by type and optionally by id or id pattern (clause 5.2.8).
+/// Entity selector for subscriptions (ETSI GS CIM 009 clause 5.2.33).
+///
+/// Selects entities by type and optionally by id or id pattern.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct EntitySelector {
     /// Exact entity id to match.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub id: Option<String>,
     /// Regex pattern to match entity ids.
-    #[serde(skip_serializing_if = "Option::is_none", rename = "idPattern")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub id_pattern: Option<String>,
     /// Entity type to match (required).
     #[serde(rename = "type")]
     pub type_: String,
 }
 
-/// Notification delivery endpoint configuration.
+/// Notification delivery endpoint configuration (ETSI GS CIM 009 clause 5.2.15).
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Endpoint {
     /// The notification target URI (HTTP or MQTT).
     pub uri: String,
@@ -75,15 +79,16 @@ pub struct Endpoint {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub accept: Option<String>,
     /// Additional headers to include in HTTP notifications.
-    #[serde(skip_serializing_if = "Option::is_none", rename = "receiverInfo")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub receiver_info: Option<Vec<Value>>,
     /// MQTT-specific configuration (version, QoS).
-    #[serde(skip_serializing_if = "Option::is_none", rename = "notifierInfo")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub notifier_info: Option<Vec<Value>>,
 }
 
-/// Notification delivery parameters for a subscription.
+/// Notification delivery parameters for a subscription (ETSI GS CIM 009 clause 5.2.14).
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct NotificationParams {
     /// Attributes to include in notifications (empty means all).
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -94,10 +99,10 @@ pub struct NotificationParams {
     /// Target endpoint for notification delivery.
     pub endpoint: Endpoint,
     /// Whether to include system-generated attributes (createdAt, modifiedAt).
-    #[serde(skip_serializing_if = "Option::is_none", rename = "sysAttrs")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub sys_attrs: Option<bool>,
     /// Whether to include previous attribute values in notifications.
-    #[serde(skip_serializing_if = "Option::is_none", rename = "showChanges")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub show_changes: Option<bool>,
     /// Attributes to include (allowlist filter).
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -109,24 +114,19 @@ pub struct NotificationParams {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub join: Option<JoinMode>,
     /// Maximum depth for linked entity joins.
-    #[serde(skip_serializing_if = "Option::is_none", rename = "joinLevel")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub join_level: Option<u32>,
     /// Timestamp of the last notification sent.
-    #[serde(
-        skip_serializing_if = "Option::is_none",
-        rename = "lastNotification",
-        with = "serde_helpers::rfc3339_option",
-        default
-    )]
+    #[serde(skip_serializing_if = "Option::is_none", with = "serde_helpers::rfc3339_option", default)]
     pub last_notification: Option<DateTime<Utc>>,
     /// Timestamp of the last successful notification delivery.
-    #[serde(skip_serializing_if = "Option::is_none", rename = "lastSuccess", with = "serde_helpers::rfc3339_option", default)]
+    #[serde(skip_serializing_if = "Option::is_none", with = "serde_helpers::rfc3339_option", default)]
     pub last_success: Option<DateTime<Utc>>,
     /// Timestamp of the last failed notification delivery.
-    #[serde(skip_serializing_if = "Option::is_none", rename = "lastFailure", with = "serde_helpers::rfc3339_option", default)]
+    #[serde(skip_serializing_if = "Option::is_none", with = "serde_helpers::rfc3339_option", default)]
     pub last_failure: Option<DateTime<Utc>>,
     /// Total number of notification delivery attempts.
-    #[serde(skip_serializing_if = "Option::is_none", rename = "timesSent")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub times_sent: Option<i32>,
     /// Status of the last notification delivery attempt.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -137,8 +137,14 @@ fn default_subscription_type() -> String {
     "Subscription".to_string()
 }
 
-/// A full NGSI-LD Subscription (clause 5.2.8).
+/// NGSI-LD Subscription (ETSI GS CIM 009 clause 5.2.12).
+///
+/// A Subscription defines the conditions under which notifications are sent
+/// and the delivery parameters for those notifications. Supports entity
+/// filtering by type, id pattern, attribute watches, geo-queries, and
+/// temporal queries.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Subscription {
     /// Subscription identifier.
     pub id: String,
@@ -146,7 +152,7 @@ pub struct Subscription {
     #[serde(rename = "type", default = "default_subscription_type")]
     pub type_: String,
     /// Human-readable subscription name.
-    #[serde(skip_serializing_if = "Option::is_none", rename = "subscriptionName")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub subscription_name: Option<String>,
     /// Human-readable description of the subscription purpose.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -155,59 +161,59 @@ pub struct Subscription {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub entities: Option<Vec<EntitySelector>>,
     /// Attribute names to watch for changes.
-    #[serde(skip_serializing_if = "Option::is_none", rename = "watchedAttributes")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub watched_attributes: Option<Vec<String>>,
     /// Conditions that trigger a notification.
-    #[serde(skip_serializing_if = "Option::is_none", rename = "notificationTrigger")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub notification_trigger: Option<Vec<NotificationTrigger>>,
     /// Periodic notification interval in seconds (alternative to watched attributes).
-    #[serde(skip_serializing_if = "Option::is_none", rename = "timeInterval")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub time_interval: Option<f64>,
     /// NGSI-LD query expression to filter matching entities.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub q: Option<String>,
-    /// Geo-spatial query expression.
-    #[serde(skip_serializing_if = "Option::is_none", rename = "geoQ")]
+    /// Geo-spatial query expression (clause 5.2.13).
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub geo_q: Option<Value>,
     /// Scope query expression.
-    #[serde(skip_serializing_if = "Option::is_none", rename = "scopeQ")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub scope_q: Option<String>,
     /// Context source filter expression.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub csf: Option<String>,
     /// Dataset ids to subscribe to.
-    #[serde(skip_serializing_if = "Option::is_none", rename = "datasetId")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub dataset_id: Option<Vec<String>>,
     /// Whether the subscription is currently active.
-    #[serde(skip_serializing_if = "Option::is_none", rename = "isActive")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub is_active: Option<bool>,
     /// Notification delivery configuration.
     pub notification: NotificationParams,
     /// Expiration timestamp after which the subscription becomes inactive.
-    #[serde(skip_serializing_if = "Option::is_none", rename = "expiresAt", with = "serde_helpers::rfc3339_option", default)]
+    #[serde(skip_serializing_if = "Option::is_none", with = "serde_helpers::rfc3339_option", default)]
     pub expires_at: Option<DateTime<Utc>>,
-    /// Minimum interval in seconds between consecutive notifications.
+    /// Minimum interval in seconds between consecutive notifications (clause 5.2.12).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub throttling: Option<f64>,
-    /// Temporal query expression.
-    #[serde(skip_serializing_if = "Option::is_none", rename = "temporalQ")]
+    /// Temporal query expression (clause 5.2.21).
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub temporal_q: Option<Value>,
     /// Preferred language for multi-language properties.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub lang: Option<String>,
     /// JSON-LD context for term expansion.
-    #[serde(skip_serializing_if = "Option::is_none", rename = "jsonldContext")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub jsonld_context: Option<String>,
     /// Whether to restrict matching to local entities only (clause 5.5.13).
-    #[serde(skip_serializing_if = "Option::is_none", rename = "localOnly")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub local_only: Option<bool>,
     /// Current lifecycle status of the subscription.
     pub status: SubscriptionStatus,
     /// Timestamp when the subscription was created.
-    #[serde(rename = "createdAt", with = "serde_helpers::rfc3339")]
+    #[serde(with = "serde_helpers::rfc3339")]
     pub created_at: DateTime<Utc>,
     /// Timestamp when the subscription was last modified.
-    #[serde(rename = "modifiedAt", with = "serde_helpers::rfc3339")]
+    #[serde(with = "serde_helpers::rfc3339")]
     pub modified_at: DateTime<Utc>,
 }
 

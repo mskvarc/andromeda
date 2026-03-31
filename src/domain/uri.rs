@@ -1,29 +1,24 @@
-use derive_more::From;
+use derive_more::{Display, From};
 use serde::{Deserialize, Serialize};
-use std::fmt;
 use url::Url;
 use urn::Urn;
 
 /// The Namespace Identifier for NGSI-LD URNs.
 pub const NGSI_LD_URN_NID: &str = "ngsi-ld";
 
-/// An NGSI-LD entity identifier — either a URN or a URL.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, From)]
+/// NGSI-LD entity identifier (ETSI GS CIM 009 clause 4.6.2).
+///
+/// An entity identifier is either a URN (e.g., `urn:ngsi-ld:Building:001`)
+/// or a URL (e.g., `https://example.com/entity/1`).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, From, Display)]
 #[serde(untagged)]
 pub enum Uri {
     /// A URN identifier (e.g., `urn:ngsi-ld:Building:001`).
+    #[display("{_0}")]
     Urn(Urn),
     /// A URL identifier (e.g., `https://example.com/entity/1`).
+    #[display("{_0}")]
     Url(Url),
-}
-
-impl fmt::Display for Uri {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Uri::Urn(urn) => write!(f, "{}", urn),
-            Uri::Url(url) => write!(f, "{}", url),
-        }
-    }
 }
 
 #[cfg(test)]

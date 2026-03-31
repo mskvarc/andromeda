@@ -1,9 +1,5 @@
 use crate::{
-    domain::{
-        entity::Entity,
-        notification::Notification,
-        subscription::Subscription,
-    },
+    domain::{entity::Entity, notification::Notification, subscription::Subscription},
     jsonld::{CompactOptions, ContextSpec, JsonLdEngine},
     query::q,
     repository::{entity::EntityRepository, subscription::SubscriptionRepository, subscription_store::SubscriptionStore},

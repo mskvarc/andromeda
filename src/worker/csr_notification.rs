@@ -1,13 +1,6 @@
 use crate::{
     domain::{
-        notification::{
-            CompiledCsrSubscription,
-            CompiledSelector,
-            CsourceNotification,
-            CsourceSubscriptionChange,
-            CsrChangeEvent,
-            CsrTriggerReason,
-        },
+        notification::{CompiledCsrSubscription, CompiledSelector, CsourceNotification, CsourceSubscriptionChange, CsrChangeEvent, CsrTriggerReason},
         subscription::{Subscription, SubscriptionStatus},
     },
     query::q,

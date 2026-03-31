@@ -1,4 +1,4 @@
-//! Operations on expanded JSON-LD entities following NGSI-LD semantics.
+//! Operations on expanded JSON-LD entities following NGSI-LD semantics (ETSI GS CIM 009 clause 4.6.2).
 //!
 //! All functions in this module operate on the **expanded** form of JSON-LD
 //! (full IRIs, array-wrapped values) as stored in the database.  They are pure

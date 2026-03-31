@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use strum::{Display, EnumString};
 
-/// Forwarding mode for distributed operations (clause 4.18).
+/// Forwarding mode for distributed operations (ETSI GS CIM 009 clause 4.3.6 / 5.2.9).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize, Display, EnumString)]
 #[serde(rename_all = "camelCase")]
 #[strum(serialize_all = "camelCase")]
@@ -22,11 +22,12 @@ pub enum ForwardingMode {
     Auxiliary,
 }
 
-/// CSR operation type (ETSI GS CIM 009 clause 5.2.9).
+/// CSR operation type (ETSI GS CIM 009 clause 4.20 / 5.2.9).
 ///
 /// Known operations get typed variants; unknown/future operations are preserved
 /// via `Other(String)` so the broker never silently drops unrecognised values.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Display, EnumString)]
+#[strum(serialize_all = "camelCase")]
 pub enum CsrOperation {
     RetrieveEntity,
     QueryEntity,
@@ -47,73 +48,13 @@ pub enum CsrOperation {
     FederationOps,
     RedirectionOps,
     /// Any operation string not covered by a known variant.
+    #[strum(default)]
     Other(String),
-}
-
-impl CsrOperation {
-    /// Returns the camelCase string for this operation.
-    pub fn as_str(&self) -> &str {
-        match self {
-            Self::RetrieveEntity => "retrieveEntity",
-            Self::QueryEntity => "queryEntity",
-            Self::QueryBatch => "queryBatch",
-            Self::CreateEntity => "createEntity",
-            Self::DeleteEntity => "deleteEntity",
-            Self::MergeEntity => "mergeEntity",
-            Self::ReplaceEntity => "replaceEntity",
-            Self::AppendAttrs => "appendAttrs",
-            Self::UpdateAttrs => "updateAttrs",
-            Self::PartialAttrUpdate => "partialAttrUpdate",
-            Self::DeleteAttrs => "deleteAttrs",
-            Self::CreateBatch => "createBatch",
-            Self::UpsertBatch => "upsertBatch",
-            Self::UpdateBatch => "updateBatch",
-            Self::DeleteBatch => "deleteBatch",
-            Self::MergeBatch => "mergeBatch",
-            Self::FederationOps => "federationOps",
-            Self::RedirectionOps => "redirectionOps",
-            Self::Other(s) => s.as_str(),
-        }
-    }
-}
-
-impl std::fmt::Display for CsrOperation {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(self.as_str())
-    }
-}
-
-impl std::str::FromStr for CsrOperation {
-    type Err = std::convert::Infallible;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        Ok(match s {
-            "retrieveEntity" => Self::RetrieveEntity,
-            "queryEntity" => Self::QueryEntity,
-            "queryBatch" => Self::QueryBatch,
-            "createEntity" => Self::CreateEntity,
-            "deleteEntity" => Self::DeleteEntity,
-            "mergeEntity" => Self::MergeEntity,
-            "replaceEntity" => Self::ReplaceEntity,
-            "appendAttrs" => Self::AppendAttrs,
-            "updateAttrs" => Self::UpdateAttrs,
-            "partialAttrUpdate" => Self::PartialAttrUpdate,
-            "deleteAttrs" => Self::DeleteAttrs,
-            "createBatch" => Self::CreateBatch,
-            "upsertBatch" => Self::UpsertBatch,
-            "updateBatch" => Self::UpdateBatch,
-            "deleteBatch" => Self::DeleteBatch,
-            "mergeBatch" => Self::MergeBatch,
-            "federationOps" => Self::FederationOps,
-            "redirectionOps" => Self::RedirectionOps,
-            other => Self::Other(other.to_string()),
-        })
-    }
 }
 
 impl Serialize for CsrOperation {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        serializer.serialize_str(self.as_str())
+        serializer.serialize_str(&self.to_string())
     }
 }
 
@@ -124,7 +65,7 @@ impl<'de> Deserialize<'de> for CsrOperation {
     }
 }
 
-/// Health status of a context source registration.
+/// Health status of a context source registration (ETSI GS CIM 009 clause 5.2.9, status member).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Display, EnumString)]
 #[serde(rename_all = "camelCase")]
 #[strum(serialize_all = "camelCase")]
@@ -135,17 +76,18 @@ pub enum CsrStatus {
     Failed,
 }
 
-/// Information block describing what a context source provides (clause 5.2.9).
+/// Information block describing what a context source provides (ETSI GS CIM 009 clause 5.2.10).
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct RegistrationInfo {
     /// Entity type/id selectors this registration covers.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub entities: Option<Vec<EntitySelector>>,
     /// Property names provided by this context source.
-    #[serde(skip_serializing_if = "Option::is_none", rename = "propertyNames")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub property_names: Option<Vec<String>>,
     /// Relationship names provided by this context source.
-    #[serde(skip_serializing_if = "Option::is_none", rename = "relationshipNames")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub relationship_names: Option<Vec<String>>,
 }
 
@@ -153,8 +95,13 @@ fn default_csr_type() -> String {
     "ContextSourceRegistration".to_string()
 }
 
-/// A full context source registration (clause 5.2.9).
+/// NGSI-LD Context Source Registration (ETSI GS CIM 009 clause 5.2.9).
+///
+/// Describes an external context source and the entity types, attributes,
+/// and operations it provides. Used by the broker for distributed/federated
+/// query routing.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ContextSourceRegistration {
     /// Registration identifier.
     pub id: String,
@@ -162,7 +109,7 @@ pub struct ContextSourceRegistration {
     #[serde(rename = "type", default = "default_csr_type")]
     pub type_: String,
     /// Human-readable name.
-    #[serde(skip_serializing_if = "Option::is_none", rename = "registrationName")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub registration_name: Option<String>,
     /// Human-readable description.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -173,22 +120,22 @@ pub struct ContextSourceRegistration {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tenant: Option<String>,
     /// Observation interval.
-    #[serde(skip_serializing_if = "Option::is_none", rename = "observationInterval")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub observation_interval: Option<Value>,
     /// Management interval.
-    #[serde(skip_serializing_if = "Option::is_none", rename = "managementInterval")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub management_interval: Option<Value>,
     /// Location geometry.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub location: Option<Value>,
     /// Observation space geometry.
-    #[serde(skip_serializing_if = "Option::is_none", rename = "observationSpace")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub observation_space: Option<Value>,
     /// Operation space geometry.
-    #[serde(skip_serializing_if = "Option::is_none", rename = "operationSpace")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub operation_space: Option<Value>,
     /// Registration expiration timestamp.
-    #[serde(skip_serializing_if = "Option::is_none", rename = "expiresAt", with = "serde_helpers::rfc3339_option", default)]
+    #[serde(skip_serializing_if = "Option::is_none", with = "serde_helpers::rfc3339_option", default)]
     pub expires_at: Option<DateTime<Utc>>,
     /// The context source endpoint URL.
     pub endpoint: String,
@@ -205,36 +152,36 @@ pub struct ContextSourceRegistration {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub scope: Option<Vec<String>>,
     /// Refresh rate.
-    #[serde(skip_serializing_if = "Option::is_none", rename = "refreshRate")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub refresh_rate: Option<String>,
     /// Management metadata.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub management: Option<Value>,
     /// Context source info.
-    #[serde(skip_serializing_if = "Option::is_none", rename = "contextSourceInfo")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub context_source_info: Option<Value>,
     /// JSON-LD context for term expansion.
-    #[serde(skip_serializing_if = "Option::is_none", rename = "jsonldContext")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub jsonld_context: Option<String>,
     /// Health status of the context source.
     pub status: CsrStatus,
     /// Number of successful notifications.
-    #[serde(skip_serializing_if = "Option::is_none", rename = "timesSent")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub times_sent: Option<i32>,
     /// Number of failed notifications.
-    #[serde(skip_serializing_if = "Option::is_none", rename = "timesFailed")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub times_failed: Option<i32>,
     /// Timestamp of last successful notification.
-    #[serde(skip_serializing_if = "Option::is_none", rename = "lastSuccess", with = "serde_helpers::rfc3339_option", default)]
+    #[serde(skip_serializing_if = "Option::is_none", with = "serde_helpers::rfc3339_option", default)]
     pub last_success: Option<DateTime<Utc>>,
     /// Timestamp of last failed notification.
-    #[serde(skip_serializing_if = "Option::is_none", rename = "lastFailure", with = "serde_helpers::rfc3339_option", default)]
+    #[serde(skip_serializing_if = "Option::is_none", with = "serde_helpers::rfc3339_option", default)]
     pub last_failure: Option<DateTime<Utc>>,
     /// Timestamp when the registration was created.
-    #[serde(rename = "createdAt", with = "serde_helpers::rfc3339")]
+    #[serde(with = "serde_helpers::rfc3339")]
     pub created_at: DateTime<Utc>,
     /// Timestamp when the registration was last modified.
-    #[serde(rename = "modifiedAt", with = "serde_helpers::rfc3339")]
+    #[serde(with = "serde_helpers::rfc3339")]
     pub modified_at: DateTime<Utc>,
     /// Non-standard properties from the original CSR payload.
     #[serde(flatten, skip_serializing_if = "Option::is_none")]

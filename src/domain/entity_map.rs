@@ -2,18 +2,21 @@ use chrono::{DateTime, Utc};
 use indexmap::IndexMap;
 use serde::Serialize;
 
+/// NGSI-LD EntityMap representation (ETSI GS CIM 009 clause 5.2.39).
+///
+/// Maps entity identifiers to their dataset IDs for distributed query results.
+/// Used by the broker to track which entities were retrieved from which
+/// context sources and to support linked entity map navigation.
 #[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct EntityMap {
     pub id: String,
     #[serde(rename = "type")]
     pub type_: &'static str,
-    #[serde(rename = "expiresAt")]
     pub expires_at: DateTime<Utc>,
     #[serde(skip)]
     pub entity_ids: Vec<String>,
-    #[serde(rename = "entityMap")]
     pub entity_map: IndexMap<String, Vec<String>>,
-    #[serde(rename = "linkedMaps")]
     pub linked_maps: IndexMap<String, String>,
 }
 

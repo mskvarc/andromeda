@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 use strum::{Display, EnumString};
 
-/// Response format for entity queries (ETSI GS CIM 009 clause 4.5.3).
+/// Response format for entity queries (ETSI GS CIM 009 clause 4.5.1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize, Display, EnumString)]
 #[serde(rename_all = "camelCase")]
 #[strum(serialize_all = "camelCase")]

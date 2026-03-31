@@ -4,16 +4,21 @@ use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-/// NGSI-LD Property
+/// NGSI-LD Property representation (ETSI GS CIM 009 clause 5.2.5).
+///
+/// A Property represents an attribute whose value is any JSON value.
+/// Contains the value, optional metadata (observedAt, unitCode, datasetId),
+/// and optional sub-attributes.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Property {
     pub value: Value,
-    #[serde(rename = "unitCode", skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub unit_code: Option<String>,
-    #[serde(rename = "observedAt", skip_serializing_if = "Option::is_none", with = "serde_helpers::rfc3339_option", default)]
+    #[serde(skip_serializing_if = "Option::is_none", with = "serde_helpers::rfc3339_option", default)]
     pub observed_at: Option<DateTime<Utc>>,
 
-    #[serde(rename = "datasetId", skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub dataset_id: Option<Uri>,
     #[serde(flatten)]
     pub sub_attributes: IndexMap<String, AttributeValue>,

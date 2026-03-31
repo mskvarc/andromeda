@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use strum::{Display, EnumString};
 
+/// Kind of JSON-LD @context managed by the broker (ETSI GS CIM 009 clause 5.13).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Display, EnumString, sqlx::Type)]
 #[sqlx(type_name = "text")]
 #[sqlx(rename_all = "PascalCase")]
@@ -14,7 +15,7 @@ pub enum ContextKind {
     ImplicitlyCreated,
 }
 
-/// Detailed metadata response (for details=true)
+/// Detailed @context metadata response (for details=true).
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ContextMetadata {

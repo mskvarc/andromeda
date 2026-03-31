@@ -22,6 +22,8 @@ pub struct SysAttrsSnapshot {
 // Notification types from NGSI-LD spec (ETSI GS CIM 009 clause 5.3.1)
 // ---------------------------------------------------------------------------
 
+/// Trigger reason for entity notifications (ETSI GS CIM 009 clause 5.3.3).
+///
 /// Maps NGSI-LD entity mutation operations to spec trigger reasons.
 #[derive(Clone, Debug, Display, EnumString)]
 #[strum(serialize_all = "camelCase")]
@@ -108,24 +110,28 @@ fn default_notification_type() -> String {
     "Notification".to_string()
 }
 
-/// The NGSI-LD Notification payload structure (clause 5.3.1).
+/// NGSI-LD Notification payload (ETSI GS CIM 009 clause 5.3.1).
+///
+/// Represents a notification sent to a subscriber when matching entity
+/// changes occur. Contains the subscription reference, timestamp, and
+/// the entity data that triggered the notification.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Notification {
     pub id: String,
 
     #[serde(rename = "type", default = "default_notification_type")]
     pub type_: String,
 
-    #[serde(rename = "subscriptionId")]
     pub subscription_id: String,
 
-    #[serde(rename = "notifiedAt", with = "serde_helpers::rfc3339")]
+    #[serde(with = "serde_helpers::rfc3339")]
     pub notified_at: DateTime<Utc>,
 
     pub data: Vec<Value>,
 }
 
-/// Trigger reasons for CSR notifications (spec clause 5.3.2).
+/// Trigger reason for CSR notifications (ETSI GS CIM 009 clause 5.3.2).
 #[derive(Clone, Debug, PartialEq, Display, EnumString)]
 #[strum(serialize_all = "camelCase")]
 pub enum CsrTriggerReason {
@@ -147,23 +153,27 @@ fn default_csource_notification_type() -> String {
     "CsourceNotification".to_string()
 }
 
-/// The NGSI-LD CsourceNotification payload structure (clause 5.3.2).
+/// NGSI-LD CsourceNotification payload (ETSI GS CIM 009 clause 5.3.2).
+///
+/// Represents a notification sent to a subscriber when context source
+/// registration changes occur. Contains the subscription reference,
+/// timestamp, CSR data, and the trigger reason.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CsourceNotification {
     pub id: String,
 
     #[serde(rename = "type", default = "default_csource_notification_type")]
     pub type_: String,
 
-    #[serde(rename = "subscriptionId")]
     pub subscription_id: String,
 
-    #[serde(rename = "notifiedAt", with = "serde_helpers::rfc3339")]
+    #[serde(with = "serde_helpers::rfc3339")]
     pub notified_at: DateTime<Utc>,
 
     pub data: Vec<Value>,
 
-    #[serde(skip_serializing_if = "Option::is_none", rename = "triggerReason")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub trigger_reason: Option<String>,
 }
 
@@ -240,4 +250,3 @@ pub struct CompiledSubscription {
     pub notification_join_level: u32,
     pub compiled_csf: Option<Expr>,
 }
-

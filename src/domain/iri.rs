@@ -1,4 +1,4 @@
-//! NGSI-LD vocabulary IRI constants (ETSI GS CIM 009 clause 4.6).
+//! NGSI-LD vocabulary IRI constants (ETSI GS CIM 009 clause 4.6.2).
 //!
 //! Compile-time validated IRI constants for the NGSI-LD expanded vocabulary.
 //! All constants are `&'static iref::Iri` produced via `static_iref::iri!()`.
