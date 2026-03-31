@@ -1,5 +1,5 @@
 use crate::{
-    domain::snapshot::{ExecutionResultDetails, Snapshot, SnapshotInput, SnapshotPatch, SnapshotStatus},
+    domain::snapshot::{Snapshot, SnapshotInput, SnapshotPatch, SnapshotStatus},
     error::AndromedaError,
     repository::snapshot::SnapshotRepository,
     service::entity_map::parse_iso8601_duration,
@@ -129,23 +129,5 @@ impl SnapshotService {
             .map_err(AndromedaError::from)?;
 
         Ok(cloned)
-    }
-
-    pub async fn update_status(
-        &self,
-        id: &str,
-        status: SnapshotStatus,
-        queries_details: Option<Vec<ExecutionResultDetails>>,
-        temporal_queries_details: Option<Vec<ExecutionResultDetails>>,
-    ) -> Result<(), AndromedaError> {
-        self.repo
-            .update_status(id, &status, queries_details.as_deref(), temporal_queries_details.as_deref())
-            .await
-            .map_err(AndromedaError::from)?;
-        Ok(())
-    }
-
-    pub fn repo(&self) -> &SnapshotRepository {
-        &self.repo
     }
 }

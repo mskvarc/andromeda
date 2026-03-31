@@ -3,7 +3,6 @@
 /// Verifies that containedBy excludes specified entity IDs from linked entity
 /// resolution, and prevents cycles in join traversal.
 use crate::harness::{
-    self,
     client::{QueryParams, RequestHeaders},
     fixtures,
     trial::trial,

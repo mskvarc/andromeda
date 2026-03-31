@@ -27,6 +27,7 @@ async fn main() -> Result<(), AndromedaError> {
 
     // Set the default core context URL to v1.8 (ETSI test suite expectation)
     crate::jsonld::set_default_core_context_url(crate::jsonld::core_context::NGSI_LD_CORE_CONTEXT_V18_URL);
+    info!("JSON-LD core context URL: {}", crate::jsonld::default_core_context_url());
 
     info!("Starting Andromeda...");
 

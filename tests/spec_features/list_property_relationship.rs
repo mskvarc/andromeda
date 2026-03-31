@@ -3,7 +3,6 @@
 /// Verifies that ListProperty/ListRelationship attribute types are correctly
 /// handled through create, retrieve, simplify, and join operations.
 use crate::harness::{
-    self,
     client::{NgsiLdOption, QueryParams, RequestHeaders},
     fixtures,
     trial::trial,

@@ -55,23 +55,6 @@ impl SnapshotRepository {
         Ok(row.is_some())
     }
 
-    pub async fn update_status(
-        &self,
-        id: &str,
-        status: &SnapshotStatus,
-        queries_details: Option<&[ExecutionResultDetails]>,
-        temporal_queries_details: Option<&[ExecutionResultDetails]>,
-    ) -> Result<bool, sqlx::Error> {
-        let result = sqlx::query("UPDATE snapshots SET status = $2, queries_details = $3, temporal_queries_details = $4, modified_at = NOW() WHERE id = $1")
-            .bind(id)
-            .bind(status.as_str())
-            .bind(serde_json::to_value(queries_details).ok())
-            .bind(serde_json::to_value(temporal_queries_details).ok())
-            .execute(&self.pool)
-            .await?;
-        Ok(result.rows_affected() > 0)
-    }
-
     pub async fn update_lifetime_priority(
         &self,
         id: &str,
@@ -137,45 +120,12 @@ impl SnapshotRepository {
         self.get(new_id).await?.ok_or_else(|| sqlx::Error::RowNotFound)
     }
 
-    pub async fn store_entity(&self, snapshot_id: &str, entity_id: &str, entity_data: &Value) -> Result<(), sqlx::Error> {
-        sqlx::query(
-            "INSERT INTO snapshot_entities (snapshot_id, entity_id, entity_data)
-             VALUES ($1, $2, $3)
-             ON CONFLICT (snapshot_id, entity_id) DO UPDATE SET entity_data = $3",
-        )
-        .bind(snapshot_id)
-        .bind(entity_id)
-        .bind(entity_data)
-        .execute(&self.pool)
-        .await?;
-        Ok(())
-    }
-
-    pub async fn store_temporal_entity(&self, snapshot_id: &str, entity_id: &str, temporal_data: &Value) -> Result<(), sqlx::Error> {
-        sqlx::query(
-            "INSERT INTO snapshot_temporal_entities (snapshot_id, entity_id, temporal_data)
-             VALUES ($1, $2, $3)
-             ON CONFLICT (snapshot_id, entity_id) DO UPDATE SET temporal_data = $3",
-        )
-        .bind(snapshot_id)
-        .bind(entity_id)
-        .bind(temporal_data)
-        .execute(&self.pool)
-        .await?;
-        Ok(())
-    }
-
     pub async fn touch_last_used(&self, id: &str) -> Result<(), sqlx::Error> {
         sqlx::query("UPDATE snapshots SET last_used_at = NOW() WHERE id = $1")
             .bind(id)
             .execute(&self.pool)
             .await?;
         Ok(())
-    }
-
-    pub async fn delete_expired(&self) -> Result<u64, sqlx::Error> {
-        let result = sqlx::query("DELETE FROM snapshots WHERE expires_at < NOW()").execute(&self.pool).await?;
-        Ok(result.rows_affected())
     }
 }
 

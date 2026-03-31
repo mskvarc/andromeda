@@ -11,7 +11,7 @@ use crate::{
     },
     error::AndromedaError,
     jsonld::ContextSpec,
-    service::context_source_forwarding::{ForwardingOperation, merge_query_results, merge_retrieve_results},
+    service::context_source_forwarding::{ForwardingOperation, collect_warnings, merge_query_results, merge_retrieve_results},
 };
 use axum::{
     Json,
@@ -319,6 +319,9 @@ pub async fn get(
             .forward_retrieve(id.as_ref(), query_string, context_url, ForwardingOperation::RetrieveEntity)
             .await
             .unwrap_or_default();
+        for warning in collect_warnings(&forwarded) {
+            tracing::debug!("Context source forwarding warning: {}", warning);
+        }
 
         let local_value = match local_result {
             Ok(e) => Some(serde_json::to_value(&e).unwrap_or_default()),
@@ -614,6 +617,9 @@ pub async fn query(
             .forward_query(entity_type, entity_ids_ref, context_url, &context, ForwardingOperation::QueryEntity)
             .await
             .unwrap_or_default();
+        for warning in collect_warnings(&forwarded) {
+            tracing::debug!("Context source forwarding warning: {}", warning);
+        }
 
         if forwarded.is_empty() {
             local_entities

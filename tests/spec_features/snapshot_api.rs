@@ -2,7 +2,7 @@
 ///
 /// Verifies the full Snapshot lifecycle: create, retrieve status, update,
 /// clone, delete, and purge.
-use crate::harness::{self, trial::trial};
+use crate::harness::trial::trial;
 use libtest_mimic::Trial;
 use reqwest::StatusCode;
 

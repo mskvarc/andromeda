@@ -71,6 +71,7 @@ pub enum TemporalFormat {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Display, EnumString)]
 #[serde(rename_all = "PascalCase")]
 #[strum(serialize_all = "PascalCase")]
+#[allow(dead_code)]
 pub enum ValueType {
     Number,
     String,

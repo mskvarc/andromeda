@@ -458,7 +458,6 @@ fn compile_subscription(sub: &Subscription) -> Option<CompiledSubscription> {
         notification_join: sub.notification.join.map(|j| j.to_string()),
         notification_join_level: sub.notification.join_level.unwrap_or(1).min(5),
         compiled_csf,
-        local_only: sub.local_only.unwrap_or(false),
     })
 }
 
@@ -541,7 +540,6 @@ mod tests {
             notification_join: None,
             notification_join_level: 1,
             compiled_csf: None,
-            local_only: false,
         }
     }
 

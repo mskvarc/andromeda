@@ -55,7 +55,9 @@ pub struct TemporalReadResult {
 /// Warning collected when a per-entity temporal query step fails non-fatally.
 #[derive(Debug)]
 pub struct TemporalQueryWarning {
+    #[allow(dead_code)]
     pub entity_id: String,
+    #[allow(dead_code)]
     pub message: String,
 }
 

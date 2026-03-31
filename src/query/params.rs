@@ -5,6 +5,7 @@
 /// This trait provides a uniform interface with default parsing implementations.
 pub trait SharedQueryParams {
     fn raw_id(&self) -> Option<&str>;
+    #[allow(dead_code)]
     fn raw_entity_type(&self) -> Option<&str>;
     fn raw_attrs(&self) -> Option<&str>;
     fn raw_pick(&self) -> Option<&str>;
@@ -17,6 +18,7 @@ pub trait SharedQueryParams {
         self.raw_id().map(|s| s.split(',').map(|id| id.trim().to_string()).collect())
     }
 
+    #[allow(dead_code)]
     fn parse_types(&self) -> Vec<String> {
         self.raw_entity_type()
             .map(|s| s.split(',').map(|t| t.trim().to_string()).collect())

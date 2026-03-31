@@ -36,15 +36,18 @@ impl AttributeType {
     /// Returns the expanded IRI of the value container for this attribute type.
     pub fn value_key(self) -> &'static Iri {
         match self {
-            Self::Property | Self::GeoProperty | Self::ListProperty => iri::HAS_VALUE,
-            Self::Relationship | Self::ListRelationship => iri::HAS_OBJECT,
+            Self::Property | Self::GeoProperty => iri::HAS_VALUE,
+            Self::Relationship => iri::HAS_OBJECT,
             Self::VocabProperty => iri::HAS_VOCAB,
             Self::LanguageProperty => iri::HAS_LANGUAGE_MAP,
             Self::JsonProperty => iri::HAS_JSON,
+            Self::ListProperty => iri::HAS_VALUE_LIST,
+            Self::ListRelationship => iri::HAS_OBJECT_LIST,
         }
     }
 
     /// Returns the compacted (short) value key for this attribute type.
+    #[allow(dead_code)]
     pub fn compacted_value_key(self) -> &'static str {
         match self {
             Self::Property | Self::GeoProperty => "value",

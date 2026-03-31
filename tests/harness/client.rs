@@ -308,6 +308,7 @@ impl QueryParams {
         self
     }
 
+    #[allow(dead_code)]
     pub fn split_entities(mut self, v: bool) -> Self {
         self.split_entities = Some(v);
         self

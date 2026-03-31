@@ -14,6 +14,7 @@ pub enum AndromedaErrorKind {
     BadRequestData,
     NotFound,
     AlreadyExists,
+    #[allow(dead_code)]
     Conflict,
     LdContextNotAvailable,
     NonexistentTenant,
@@ -108,6 +109,7 @@ impl AndromedaError {
         Self::new(AndromedaErrorKind::AlreadyExists, format!("Entity {} already exists", entity_id)).with_entity_id(entity_id)
     }
 
+    #[allow(dead_code)]
     pub fn conflict(message: impl Into<String>) -> Self {
         Self::new(AndromedaErrorKind::Conflict, message)
     }

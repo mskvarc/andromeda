@@ -203,7 +203,6 @@ impl ContextSourceRegistrationService {
         self.emit_csr_change(CsrChangeEvent {
             csr_id: id.clone(),
             trigger_reason: CsrTriggerReason::NewlyMatching,
-            occurred_at: Utc::now(),
             csr_snapshot: None,
         });
 
@@ -371,7 +370,6 @@ impl ContextSourceRegistrationService {
         self.emit_csr_change(CsrChangeEvent {
             csr_id: id.to_string(),
             trigger_reason: CsrTriggerReason::Updated,
-            occurred_at: Utc::now(),
             csr_snapshot: pre_update_snapshot,
         });
 
@@ -397,7 +395,6 @@ impl ContextSourceRegistrationService {
         self.emit_csr_change(CsrChangeEvent {
             csr_id: id.to_string(),
             trigger_reason: CsrTriggerReason::NoLongerMatching,
-            occurred_at: Utc::now(),
             csr_snapshot: snapshot,
         });
 

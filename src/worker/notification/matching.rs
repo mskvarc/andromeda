@@ -282,7 +282,7 @@ mod tests {
         subscription::SubscriptionStatus,
     };
 
-    fn make_sub(local_only: bool) -> CompiledSubscription {
+    fn make_sub() -> CompiledSubscription {
         CompiledSubscription {
             id: "urn:ngsi-ld:Subscription:test".to_string(),
             status: SubscriptionStatus::Active,
@@ -308,7 +308,6 @@ mod tests {
             notification_join: None,
             notification_join_level: 1,
             compiled_csf: None,
-            local_only,
         }
     }
 
@@ -319,23 +318,21 @@ mod tests {
 
     #[test]
     fn subscription_matches_without_local_only() {
-        let sub = make_sub(false);
+        let sub = make_sub();
         let event = make_event();
         assert!(matches_subscription(&sub, &event));
     }
 
     #[test]
-    fn subscription_matches_with_local_only() {
-        // local_only is just a flag stored on the subscription;
-        // current notification matching is always local, so it should still match.
-        let sub = make_sub(true);
+    fn subscription_matches_against_local_event() {
+        let sub = make_sub();
         let event = make_event();
         assert!(matches_subscription(&sub, &event));
     }
 
     #[test]
     fn subscription_skips_when_paused() {
-        let mut sub = make_sub(false);
+        let mut sub = make_sub();
         sub.status = SubscriptionStatus::Paused;
         let event = make_event();
         assert!(!matches_subscription(&sub, &event));
@@ -343,7 +340,7 @@ mod tests {
 
     #[test]
     fn subscription_skips_wrong_trigger() {
-        let sub = make_sub(false);
+        let sub = make_sub();
         let event = ChangeEvent::new("urn:ngsi-ld:Entity:001".to_string(), vec!["Building".to_string()], TriggerReason::EntityDeleted);
         assert!(!matches_subscription(&sub, &event));
     }

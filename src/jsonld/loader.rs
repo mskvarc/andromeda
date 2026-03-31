@@ -120,11 +120,13 @@ impl HttpContextLoader {
     }
 
     /// Reference to the underlying registry.
+    #[allow(dead_code)]
     pub fn registry(&self) -> &Arc<ContextRegistry> {
         &self.registry
     }
 
     /// Number of entries currently in the L1 cache.
+    #[allow(dead_code)]
     pub fn cache_size(&self) -> u64 {
         self.cache.entry_count()
     }

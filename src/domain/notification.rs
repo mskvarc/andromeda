@@ -146,7 +146,6 @@ impl CsrTriggerReason {
 pub struct CsrChangeEvent {
     pub csr_id: String,
     pub trigger_reason: CsrTriggerReason,
-    pub occurred_at: DateTime<Utc>,
     /// For delete events, a snapshot of the CSR before deletion.
     pub csr_snapshot: Option<Value>,
 }
@@ -338,8 +337,6 @@ pub struct CompiledSubscription {
     pub notification_join: Option<String>,
     pub notification_join_level: u32,
     pub compiled_csf: Option<Expr>,
-    /// When true, only match locally stored entities, not those from CSRs (§5.5.13).
-    pub local_only: bool,
 }
 
 #[cfg(test)]

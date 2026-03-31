@@ -12,7 +12,7 @@ mod expandable;
 mod loader;
 pub mod term_resolver;
 
-pub use context::{ContextSpec, CoreContextPolicy, set_default_core_context_url};
+pub use context::{ContextSpec, CoreContextPolicy, default_core_context_url, set_default_core_context_url};
 pub use engine::{CompactOptions, JsonLdEngine};
 pub use error::Error;
 pub use expandable::JsonLdExpandable;

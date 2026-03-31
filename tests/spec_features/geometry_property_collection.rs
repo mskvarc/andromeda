@@ -3,7 +3,6 @@
 /// Verifies that geometryProperty is respected in collection queries with
 /// GeoJSON Accept, not just single-entity GET.
 use crate::harness::{
-    self,
     client::{QueryParams, RequestHeaders},
     fixtures,
     trial::trial,
@@ -15,10 +14,6 @@ const PREFIX: &str = "spec_features::geometry_property_collection";
 
 fn geo_headers() -> RequestHeaders {
     RequestHeaders::new().accept_geo_json().link_context(fixtures::test_suite_context_url())
-}
-
-fn ctx_headers() -> RequestHeaders {
-    RequestHeaders::new().accept_ld_json().link_context(fixtures::test_suite_context_url())
 }
 
 pub fn tests(trials: &mut Vec<Trial>) {

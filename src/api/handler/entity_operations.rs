@@ -219,6 +219,9 @@ pub async fn query(
             )
             .await
             .unwrap_or_default();
+        for warning in crate::service::context_source_forwarding::collect_warnings(&forwarded) {
+            tracing::debug!("Context source forwarding warning: {}", warning);
+        }
 
         if forwarded.is_empty() {
             local_entities

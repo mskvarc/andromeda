@@ -90,6 +90,7 @@ pub enum NgsiLdWarning {
     /// 199: No response within timeout or registration loop detected.
     MiscellaneousWarning(String),
     /// 299: Error response from registration endpoint (e.g., 403).
+    #[allow(dead_code)]
     MiscellaneousPersistentWarning(String),
 }
 
@@ -500,6 +501,7 @@ impl ContextSourceForwardingService {
 
     /// Check if forwarding to a context source would create a loop.
     /// Returns true if our source identity is already in the Via header chain.
+    #[allow(dead_code)]
     pub fn is_loop_detected(&self, incoming_via: Option<&str>) -> bool {
         is_via_loop(incoming_via, &self.source_identity)
     }
@@ -726,6 +728,7 @@ pub fn collect_warnings(results: &[ForwardedEntities]) -> Vec<String> {
 }
 
 /// Check if the incoming Via header chain already contains our identity (loop detection).
+#[allow(dead_code)]
 pub fn is_via_loop(incoming_via: Option<&str>, source_identity: &str) -> bool {
     match incoming_via {
         Some(via) => via.contains(source_identity),

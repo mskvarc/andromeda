@@ -34,6 +34,7 @@ pub enum ContextMerge {
     /// Document context first, then Link contexts.
     PreferLink,
     /// Link contexts first, then document context.
+    #[allow(dead_code)]
     PreferDocument,
 }
 
@@ -45,6 +46,7 @@ pub enum CoreContextPolicy {
     /// Append only when no explicit (link / body) context is present.
     AppendIfNoExplicit,
     /// Do not add the core context.
+    #[allow(dead_code)]
     Omit,
     /// Use only the core context; discard all others.
     Only,
@@ -110,6 +112,7 @@ impl ContextSpec {
     }
 
     /// Append a Link-header context URL.
+    #[allow(dead_code)]
     pub fn push_link(&mut self, url: impl Into<String>) {
         self.link_contexts.push(url.into());
     }
@@ -120,6 +123,7 @@ impl ContextSpec {
     }
 
     /// Set the merge strategy.
+    #[allow(dead_code)]
     pub fn with_merge(mut self, merge: ContextMerge) -> Self {
         self.merge = merge;
         self
@@ -142,6 +146,7 @@ impl ContextSpec {
     }
 
     /// Set the default core context URL override.
+    #[allow(dead_code)]
     pub fn with_default_core_url(mut self, url: impl Into<String>) -> Self {
         self.default_core_url = Some(url.into());
         self

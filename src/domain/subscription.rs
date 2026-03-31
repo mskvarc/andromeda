@@ -207,68 +207,6 @@ pub struct Subscription {
     pub modified_at: DateTime<Utc>,
 }
 
-/// Partial subscription for PATCH update operations.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SubscriptionFragment {
-    /// Subscription identifier.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub id: Option<String>,
-    /// JSON-LD type.
-    #[serde(skip_serializing_if = "Option::is_none", rename = "type")]
-    pub type_: Option<String>,
-    /// Human-readable subscription name.
-    #[serde(skip_serializing_if = "Option::is_none", rename = "subscriptionName")]
-    pub subscription_name: Option<String>,
-    /// Human-readable description.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub description: Option<String>,
-    /// Entity selectors.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub entities: Option<Vec<EntitySelector>>,
-    /// Attribute names to watch for changes.
-    #[serde(skip_serializing_if = "Option::is_none", rename = "watchedAttributes")]
-    pub watched_attributes: Option<Vec<String>>,
-    /// Conditions that trigger a notification.
-    #[serde(skip_serializing_if = "Option::is_none", rename = "notificationTrigger")]
-    pub notification_trigger: Option<Vec<NotificationTrigger>>,
-    /// Periodic notification interval in seconds.
-    #[serde(skip_serializing_if = "Option::is_none", rename = "timeInterval")]
-    pub time_interval: Option<f64>,
-    /// NGSI-LD query expression.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub q: Option<String>,
-    /// Geo-spatial query expression.
-    #[serde(skip_serializing_if = "Option::is_none", rename = "geoQ")]
-    pub geo_q: Option<Value>,
-    /// Scope query expression.
-    #[serde(skip_serializing_if = "Option::is_none", rename = "scopeQ")]
-    pub scope_q: Option<String>,
-    /// Context source filter expression.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub csf: Option<String>,
-    /// Dataset ids to subscribe to.
-    #[serde(skip_serializing_if = "Option::is_none", rename = "datasetId")]
-    pub dataset_id: Option<Vec<String>>,
-    /// Whether the subscription is currently active.
-    #[serde(skip_serializing_if = "Option::is_none", rename = "isActive")]
-    pub is_active: Option<bool>,
-    /// Notification delivery configuration.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub notification: Option<NotificationParams>,
-    /// Expiration timestamp.
-    #[serde(skip_serializing_if = "Option::is_none", rename = "expiresAt", with = "serde_helpers::rfc3339_option", default)]
-    pub expires_at: Option<DateTime<Utc>>,
-    /// Minimum interval in seconds between notifications.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub throttling: Option<f64>,
-    /// Preferred language for multi-language properties.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub lang: Option<String>,
-    /// JSON-LD context for term expansion.
-    #[serde(skip_serializing_if = "Option::is_none", rename = "jsonldContext")]
-    pub jsonld_context: Option<String>,
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

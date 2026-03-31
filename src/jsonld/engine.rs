@@ -67,6 +67,7 @@ pub struct JsonLdEngine {
 impl JsonLdEngine {
     /// Create an engine with default settings (remote contexts enabled, no L2
     /// cache, no preloaded contexts).
+    #[allow(dead_code)]
     pub fn new() -> Result<Self, Error> {
         Self::builder().build()
     }
@@ -208,6 +209,7 @@ impl JsonLdEngine {
     }
 
     /// Expand a comma-separated list of type terms to their full IRIs.
+    #[allow(dead_code)]
     pub async fn expand_types(&self, types: &str, context: &ContextSpec) -> Result<Vec<String>, Error> {
         let mut result = Vec::new();
         for type_term in types.split(',').map(str::trim) {
@@ -258,6 +260,7 @@ impl JsonLdEngine {
     }
 
     /// Reference to the underlying loader (for advanced use).
+    #[allow(dead_code)]
     pub fn loader(&self) -> &Arc<HttpContextLoader> {
         &self.loader
     }
@@ -355,6 +358,7 @@ impl JsonLdEngineBuilder {
     }
 
     /// Replace the context registry.
+    #[allow(dead_code)]
     pub fn with_registry(mut self, registry: Arc<ContextRegistry>) -> Self {
         self.registry = registry;
         self
@@ -367,6 +371,7 @@ impl JsonLdEngineBuilder {
     }
 
     /// Register a single context document at build time.
+    #[allow(dead_code)]
     pub fn register_context(self, url: impl Into<String>, value: json_syntax::Value) -> Self {
         self.registry.register(url.into(), value);
         self

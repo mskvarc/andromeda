@@ -237,68 +237,6 @@ pub struct ContextSourceRegistration {
     pub additional_properties: Option<Value>,
 }
 
-/// Partial context source registration for PATCH update operations.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CsrFragment {
-    /// Human-readable name.
-    #[serde(skip_serializing_if = "Option::is_none", rename = "registrationName")]
-    pub registration_name: Option<String>,
-    /// Human-readable description.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub description: Option<String>,
-    /// Information blocks.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub information: Option<Vec<RegistrationInfo>>,
-    /// Tenant identifier.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub tenant: Option<String>,
-    /// Observation interval.
-    #[serde(skip_serializing_if = "Option::is_none", rename = "observationInterval")]
-    pub observation_interval: Option<Value>,
-    /// Management interval.
-    #[serde(skip_serializing_if = "Option::is_none", rename = "managementInterval")]
-    pub management_interval: Option<Value>,
-    /// Location geometry.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub location: Option<Value>,
-    /// Observation space geometry.
-    #[serde(skip_serializing_if = "Option::is_none", rename = "observationSpace")]
-    pub observation_space: Option<Value>,
-    /// Operation space geometry.
-    #[serde(skip_serializing_if = "Option::is_none", rename = "operationSpace")]
-    pub operation_space: Option<Value>,
-    /// Registration expiration timestamp.
-    #[serde(skip_serializing_if = "Option::is_none", rename = "expiresAt", with = "serde_helpers::rfc3339_option", default)]
-    pub expires_at: Option<DateTime<Utc>>,
-    /// The context source endpoint URL.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub endpoint: Option<String>,
-    /// Preferred accept media type.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub accept: Option<String>,
-    /// Forwarding mode.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub mode: Option<ForwardingMode>,
-    /// Operations.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub operations: Option<Vec<CsrOperation>>,
-    /// Scope values.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub scope: Option<Vec<String>>,
-    /// Refresh rate.
-    #[serde(skip_serializing_if = "Option::is_none", rename = "refreshRate")]
-    pub refresh_rate: Option<String>,
-    /// Management metadata.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub management: Option<Value>,
-    /// Context source info.
-    #[serde(skip_serializing_if = "Option::is_none", rename = "contextSourceInfo")]
-    pub context_source_info: Option<Value>,
-    /// JSON-LD context for term expansion.
-    #[serde(skip_serializing_if = "Option::is_none", rename = "jsonldContext")]
-    pub jsonld_context: Option<String>,
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

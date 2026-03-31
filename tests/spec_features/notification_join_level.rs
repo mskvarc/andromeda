@@ -2,7 +2,7 @@
 ///
 /// Verifies that subscription notification.joinLevel is honoured instead of
 /// being hardcoded to 1.
-use crate::harness::{self, fixtures, notification_receiver::NotificationReceiver, trial::trial};
+use crate::harness::{fixtures, notification_receiver::NotificationReceiver, trial::trial};
 use libtest_mimic::Trial;
 use reqwest::StatusCode;
 use std::time::Duration;
