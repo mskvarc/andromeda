@@ -279,6 +279,10 @@ fn detect_attribute_type(instance: &Value) -> &'static str {
                 return iri::LANGUAGE_PROPERTY_SHORT;
             } else if s == iri::JSON_PROPERTY.as_str() {
                 return iri::JSON_PROPERTY_SHORT;
+            } else if s == iri::LIST_PROPERTY.as_str() {
+                return iri::LIST_PROPERTY_SHORT;
+            } else if s == iri::LIST_RELATIONSHIP.as_str() {
+                return iri::LIST_RELATIONSHIP_SHORT;
             }
         }
     }
@@ -406,6 +410,30 @@ fn extract_typed_value(instance: &Value, attribute_type: &str) -> Result<TypedVa
                 .and_then(|obj| obj.get("@value"))
                 .ok_or_else(|| AndromedaError::bad_request_data("JsonProperty missing json value"))?;
             Ok(TypedValue::Object(json_val.clone()))
+        }
+        iri::LIST_PROPERTY_SHORT => {
+            // ListProperty uses hasValueList — store as JSON array
+            let list = instance
+                .get(iri::HAS_VALUE_LIST.as_str())
+                .and_then(|v| v.as_array())
+                .and_then(|arr| arr.first())
+                .and_then(|obj| obj.get("@list"))
+                .ok_or_else(|| AndromedaError::bad_request_data("ListProperty missing valueList"))?;
+            Ok(TypedValue::Object(list.clone()))
+        }
+        iri::LIST_RELATIONSHIP_SHORT => {
+            // ListRelationship uses hasObjectList — collect @id values
+            let list = instance
+                .get(iri::HAS_OBJECT_LIST.as_str())
+                .and_then(|v| v.as_array())
+                .and_then(|arr| arr.first())
+                .and_then(|obj| obj.get("@list"))
+                .ok_or_else(|| AndromedaError::bad_request_data("ListRelationship missing objectList"))?;
+            let uris: Vec<Value> = list
+                .as_array()
+                .map(|arr| arr.iter().filter_map(|obj| obj.get("@id").cloned()).collect())
+                .unwrap_or_default();
+            Ok(TypedValue::Object(Value::Array(uris)))
         }
         _ => {
             // Property — uses hasValue

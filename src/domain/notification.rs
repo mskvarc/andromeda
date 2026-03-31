@@ -6,17 +6,25 @@ use chrono::{DateTime, Utc};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::HashSet;
+use std::{collections::HashSet, fmt};
+use strum::{Display, EnumString};
 use url::Url;
 
-pub type SysAttrsSnapshot = (DateTime<Utc>, DateTime<Utc>, Option<DateTime<Utc>>);
+/// System attribute timestamps captured before entity deletion.
+#[derive(Clone, Debug)]
+pub struct SysAttrsSnapshot {
+    pub created_at: DateTime<Utc>,
+    pub modified_at: DateTime<Utc>,
+    pub expires_at: Option<DateTime<Utc>>,
+}
 
 // ---------------------------------------------------------------------------
 // Notification types from NGSI-LD spec (ETSI GS CIM 009 clause 5.3.1)
 // ---------------------------------------------------------------------------
 
 /// Maps NGSI-LD entity mutation operations to spec trigger reasons.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Display, EnumString)]
+#[strum(serialize_all = "camelCase")]
 pub enum TriggerReason {
     EntityCreated,
     EntityUpdated,
@@ -27,21 +35,9 @@ pub enum TriggerReason {
 }
 
 impl TriggerReason {
-    /// Returns the NGSI-LD notificationTrigger string for this reason.
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::EntityCreated => "entityCreated",
-            Self::EntityUpdated => "entityUpdated",
-            Self::EntityDeleted => "entityDeleted",
-            Self::AttributeCreated => "attributeCreated",
-            Self::AttributeUpdated => "attributeUpdated",
-            Self::AttributeDeleted => "attributeDeleted",
-        }
-    }
-
     /// Default triggers per NGSI-LD spec.
-    pub fn defaults() -> Vec<&'static str> {
-        vec![
+    pub fn defaults() -> &'static [&'static str] {
+        &[
             "entityCreated",
             "entityUpdated",
             "entityDeleted",
@@ -108,12 +104,16 @@ impl ChangeEvent {
     }
 }
 
+fn default_notification_type() -> String {
+    "Notification".to_string()
+}
+
 /// The NGSI-LD Notification payload structure (clause 5.3.1).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Notification {
     pub id: String,
 
-    #[serde(rename = "type")]
+    #[serde(rename = "type", default = "default_notification_type")]
     pub type_: String,
 
     #[serde(rename = "subscriptionId")]
@@ -126,21 +126,12 @@ pub struct Notification {
 }
 
 /// Trigger reasons for CSR notifications (spec clause 5.3.2).
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Display, EnumString)]
+#[strum(serialize_all = "camelCase")]
 pub enum CsrTriggerReason {
     NewlyMatching,
     Updated,
     NoLongerMatching,
-}
-
-impl CsrTriggerReason {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::NewlyMatching => "newlyMatching",
-            Self::Updated => "updated",
-            Self::NoLongerMatching => "noLongerMatching",
-        }
-    }
 }
 
 /// Represents a CSR mutation that may trigger CSR subscription notifications.
@@ -152,12 +143,16 @@ pub struct CsrChangeEvent {
     pub csr_snapshot: Option<Value>,
 }
 
+fn default_csource_notification_type() -> String {
+    "CsourceNotification".to_string()
+}
+
 /// The NGSI-LD CsourceNotification payload structure (clause 5.3.2).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CsourceNotification {
     pub id: String,
 
-    #[serde(rename = "type")]
+    #[serde(rename = "type", default = "default_csource_notification_type")]
     pub type_: String,
 
     #[serde(rename = "subscriptionId")]
@@ -189,7 +184,7 @@ pub enum MqttQoS {
     Exactly,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct MqttEndpointConfig {
     pub host: String,
     pub port: u16,
@@ -199,6 +194,21 @@ pub struct MqttEndpointConfig {
     pub qos: MqttQoS,
     pub username: Option<String>,
     pub password: Option<String>,
+}
+
+impl fmt::Debug for MqttEndpointConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("MqttEndpointConfig")
+            .field("host", &self.host)
+            .field("port", &self.port)
+            .field("topic", &self.topic)
+            .field("use_tls", &self.use_tls)
+            .field("version", &self.version)
+            .field("qos", &self.qos)
+            .field("username", &self.username)
+            .field("password", &self.password.as_ref().map(|_| "[REDACTED]"))
+            .finish()
+    }
 }
 
 #[derive(Debug, Clone)]

@@ -538,8 +538,8 @@ pub async fn batch_create(
     // Per spec 5.6.7: iterate CSRs, forward matching entities
     let context_url = context.link_contexts().first().map(|s| s.as_str());
     let entity_type = entities.first().map(|e| match &e.type_ {
-        crate::domain::entity::EntityType::Single(s) => s.as_str(),
-        crate::domain::entity::EntityType::Multiple(v) => v.first().map(|s| s.as_str()).unwrap_or(""),
+        crate::domain::entity::EntityTypeValue::Single(s) => s.as_str(),
+        crate::domain::entity::EntityTypeValue::Multiple(v) => v.first().map(|s| s.as_str()).unwrap_or(""),
     });
     let forwarded = state
         .forwarding
@@ -607,8 +607,8 @@ pub async fn batch_upsert(
     // Per spec 5.6.8: iterate CSRs, forward matching entities
     let context_url = context.link_contexts().first().map(|s| s.as_str());
     let entity_type = entities.first().map(|e| match &e.type_ {
-        crate::domain::entity::EntityType::Single(s) => s.as_str(),
-        crate::domain::entity::EntityType::Multiple(v) => v.first().map(|s| s.as_str()).unwrap_or(""),
+        crate::domain::entity::EntityTypeValue::Single(s) => s.as_str(),
+        crate::domain::entity::EntityTypeValue::Multiple(v) => v.first().map(|s| s.as_str()).unwrap_or(""),
     });
     let qs = params.options.as_deref().map(|o| format!("options={o}"));
     let forwarded = state
@@ -682,8 +682,8 @@ pub async fn batch_update(
     // Distributed forwarding per spec 5.6.9
     let context_url = context.link_contexts().first().map(|s| s.as_str());
     let entity_type = entities.first().map(|e| match &e.type_ {
-        crate::domain::entity::EntityType::Single(s) => s.as_str(),
-        crate::domain::entity::EntityType::Multiple(v) => v.first().map(|s| s.as_str()).unwrap_or(""),
+        crate::domain::entity::EntityTypeValue::Single(s) => s.as_str(),
+        crate::domain::entity::EntityTypeValue::Multiple(v) => v.first().map(|s| s.as_str()).unwrap_or(""),
     });
     let qs = params.options.as_deref().map(|o| format!("options={o}"));
     let forwarded = state
@@ -749,8 +749,8 @@ pub async fn batch_merge(
     // Distributed forwarding per spec 5.6.20
     let context_url = context.link_contexts().first().map(|s| s.as_str());
     let entity_type = entities.first().map(|e| match &e.type_ {
-        crate::domain::entity::EntityType::Single(s) => s.as_str(),
-        crate::domain::entity::EntityType::Multiple(v) => v.first().map(|s| s.as_str()).unwrap_or(""),
+        crate::domain::entity::EntityTypeValue::Single(s) => s.as_str(),
+        crate::domain::entity::EntityTypeValue::Multiple(v) => v.first().map(|s| s.as_str()).unwrap_or(""),
     });
     let forwarded = state
         .forwarding

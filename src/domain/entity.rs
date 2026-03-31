@@ -1,11 +1,10 @@
 use crate::domain::{attribute::AttributeValue, uri::Uri};
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
-pub enum EntityType {
+pub enum EntityTypeValue {
     Single(String),
     Multiple(Vec<String>),
 }
@@ -21,7 +20,7 @@ pub enum Scope {
 pub struct Entity {
     pub id: Uri,
     #[serde(rename = "type")]
-    pub type_: EntityType,
+    pub type_: EntityTypeValue,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub scope: Option<Scope>,
     #[serde(flatten)]
@@ -88,24 +87,11 @@ pub struct EntityPatch {
     pub id: Option<Uri>,
     #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(rename = "type")]
-    pub type_: Option<EntityType>,
+    pub type_: Option<EntityTypeValue>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub scope: Option<Scope>,
     #[serde(flatten)]
-    pub attrs: HashMap<String, AttributeValue>,
-}
-
-/// Extract `@type` strings from an expanded JSON-LD entity value.
-///
-/// Handles both array-wrapped (`[{"@type": [...]}]`) and direct object forms.
-pub fn extract_entity_types(payload: &serde_json::Value) -> Vec<String> {
-    payload
-        .as_array()
-        .and_then(|arr| arr.first())
-        .and_then(|obj| obj.get("@type"))
-        .and_then(|t| t.as_array())
-        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
-        .unwrap_or_default()
+    pub attrs: IndexMap<String, AttributeValue>,
 }
 
 #[cfg(test)]

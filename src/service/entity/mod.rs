@@ -191,7 +191,7 @@ impl EntityService {
                     .with_changed_attributes(attr_keys)
                     .with_snapshot(entity_snapshot.clone())
                     .with_previous(entity_snapshot.clone())
-                    .with_sys_attrs(sys_attrs_snapshot),
+                    .with_sys_attrs(sys_attrs_snapshot.clone()),
             );
         }
 
@@ -216,7 +216,7 @@ impl EntityService {
 // Shared helpers (used across submodules)
 // ---------------------------------------------------------------------------
 
-pub(crate) use crate::domain::entity::extract_entity_types;
+pub(crate) use crate::domain::expanded::extract_types as extract_entity_types;
 
 pub(crate) fn extract_scopes(expanded: &Value) -> Vec<String> {
     let obj = match expanded {

@@ -133,13 +133,17 @@ pub struct NotificationParams {
     pub status: Option<NotificationStatus>,
 }
 
+fn default_subscription_type() -> String {
+    "Subscription".to_string()
+}
+
 /// A full NGSI-LD Subscription (clause 5.2.8).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Subscription {
     /// Subscription identifier.
     pub id: String,
     /// JSON-LD type (always "Subscription").
-    #[serde(rename = "type")]
+    #[serde(rename = "type", default = "default_subscription_type")]
     pub type_: String,
     /// Human-readable subscription name.
     #[serde(skip_serializing_if = "Option::is_none", rename = "subscriptionName")]

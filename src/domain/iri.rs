@@ -77,11 +77,17 @@ pub const VOCAB_PROPERTY_SHORT: &str = "VocabProperty";
 pub const LANGUAGE_PROPERTY_SHORT: &str = "LanguageProperty";
 /// Short name for JsonProperty.
 pub const JSON_PROPERTY_SHORT: &str = "JsonProperty";
+/// Short name for ListProperty.
+pub const LIST_PROPERTY_SHORT: &str = "ListProperty";
+/// Short name for ListRelationship.
+pub const LIST_RELATIONSHIP_SHORT: &str = "ListRelationship";
 
 // -- Sentinel values --
 
 /// A null/placeholder URI used when no meaningful IRI is available.
 pub const NULL_URI: &Iri = iri!("urn:ngsi-ld:null");
+/// The expanded IRI form of the null sentinel.
+pub const NULL_IRI: &Iri = iri!("https://uri.etsi.org/ngsi-ld/null");
 
 #[cfg(test)]
 mod tests {

@@ -12,9 +12,6 @@ use serde_json::{Map, Value};
 // Null sentinel detection
 // ---------------------------------------------------------------------------
 
-const NULL_SENTINEL: &str = "urn:ngsi-ld:null";
-const NULL_SENTINEL_IRI: &str = "https://uri.etsi.org/ngsi-ld/null";
-
 /// Returns `true` if the expanded attribute instance is a deletion sentinel
 /// (`urn:ngsi-ld:null` or its expanded IRI form in hasValue, hasObject, or
 /// hasLanguageMap).
@@ -30,7 +27,7 @@ pub fn instance_is_null_sentinel(instance: &Value) -> bool {
             .and_then(|v| v.as_object())
             .and_then(|o| o.get(value_key))
             .and_then(|v| v.as_str())
-            .is_some_and(|s| s == NULL_SENTINEL || s == NULL_SENTINEL_IRI)
+            .is_some_and(|s| s == iri::NULL_URI.as_str() || s == iri::NULL_IRI.as_str())
     };
 
     check_value_null(iri::HAS_VALUE.as_str(), "@value")
@@ -208,11 +205,14 @@ pub fn extract_coordinates(value: &Value) -> Value {
 // JSON merge
 // ---------------------------------------------------------------------------
 
-/// Deep-merge `patch` into `base` following NGSI-LD expanded form conventions.
+/// Merge `patch` into `base` following NGSI-LD expanded form conventions.
 ///
+/// - Arrays are merged element-by-element (recursively).
+/// - An object patch on an array-wrapped base merges into the first element.
 /// - Object keys starting with `@` are never overwritten.
-/// - Array + Object: merges into the first element.
-/// - Scalar: replaced entirely.
+/// - Object members are replaced (not recursively merged), matching NGSI-LD
+///   partial update semantics where attribute instance members are top-level atomic units.
+/// - Scalars: replaced entirely.
 pub fn merge_json(base: &mut Value, patch: &Value) {
     match (base, patch) {
         (Value::Array(base_arr), Value::Array(patch_arr)) => {
@@ -589,7 +589,7 @@ pub fn partial_update_attr(entity: &mut Value, attr_iri: &str, dataset_id: Optio
         let Some(Value::Array(instances)) = entity_obj.get_mut(attr_iri) else {
             let attr_value = entity_obj.get_mut(attr_iri).unwrap();
             if !fragment_types.is_empty() {
-                validate_type_match_value(&fragment_types, attr_value, attr_iri)?;
+                validate_type_match(&fragment_types, attr_value, attr_iri)?;
             }
             merge_json(attr_value, fragment);
             return Ok(());
@@ -630,10 +630,6 @@ fn validate_type_match(fragment_types: &[&str], instance: &Value, attr_iri: &str
     } else {
         Err(format!("Attribute type mismatch for {}", attr_iri))
     }
-}
-
-fn validate_type_match_value(fragment_types: &[&str], value: &Value, attr_iri: &str) -> Result<(), String> {
-    validate_type_match(fragment_types, value, attr_iri)
 }
 
 /// Delete a single attribute (§5.6.5).

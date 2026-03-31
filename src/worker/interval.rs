@@ -240,9 +240,9 @@ impl IntervalWorker {
         for mut entity in entities {
             if sub.notification.sys_attrs.unwrap_or(false)
                 && let Some(id) = extract_entity_id(&entity)
-                && let Ok(Some((created_at, modified_at, expires_at))) = self.entity_repo.get_sys_attrs(&id).await
+                && let Ok(Some(sa)) = self.entity_repo.get_sys_attrs(&id).await
             {
-                inject_sys_attrs(&mut entity, created_at, modified_at, expires_at);
+                inject_sys_attrs(&mut entity, sa.created_at, sa.modified_at, sa.expires_at);
             }
 
             let filtered = if let Some(ref attrs) = sub.notification.attributes {

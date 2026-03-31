@@ -1,5 +1,5 @@
 use crate::{
-    domain::expanded,
+    domain::{expanded, notification::SysAttrsSnapshot},
     error::AndromedaError,
     query::{
         compiled::CompiledEntityQuery,
@@ -60,13 +60,17 @@ impl EntityRepository {
         Ok(result)
     }
 
-    pub async fn get_sys_attrs(&self, id: &str) -> Result<Option<(DateTime<Utc>, DateTime<Utc>, Option<DateTime<Utc>>)>, AndromedaError> {
+    pub async fn get_sys_attrs(&self, id: &str) -> Result<Option<SysAttrsSnapshot>, AndromedaError> {
         let row = sqlx::query("SELECT created_at, modified_at, expires_at FROM entities WHERE id = $1")
             .bind(id)
             .fetch_optional(&self.pool)
             .await?;
 
-        Ok(row.map(|row| (row.get("created_at"), row.get("modified_at"), row.get("expires_at"))))
+        Ok(row.map(|row| SysAttrsSnapshot {
+            created_at: row.get("created_at"),
+            modified_at: row.get("modified_at"),
+            expires_at: row.get("expires_at"),
+        }))
     }
 
     /// Delete entities whose expires_at has passed. Returns the IDs of deleted entities.
@@ -165,7 +169,7 @@ impl EntityRepository {
     }
 
     /// Fetch sys_attrs (created_at, modified_at, expires_at) for multiple entities in one query.
-    pub async fn get_sys_attrs_batch(&self, ids: &[String]) -> Result<HashMap<String, (DateTime<Utc>, DateTime<Utc>, Option<DateTime<Utc>>)>, AndromedaError> {
+    pub async fn get_sys_attrs_batch(&self, ids: &[String]) -> Result<HashMap<String, SysAttrsSnapshot>, AndromedaError> {
         if ids.is_empty() {
             return Ok(HashMap::new());
         }
@@ -177,10 +181,14 @@ impl EntityRepository {
         let mut result = HashMap::new();
         for row in rows {
             let id: String = row.get("id");
-            let created_at: DateTime<Utc> = row.get("created_at");
-            let modified_at: DateTime<Utc> = row.get("modified_at");
-            let expires_at: Option<DateTime<Utc>> = row.get("expires_at");
-            result.insert(id, (created_at, modified_at, expires_at));
+            result.insert(
+                id,
+                SysAttrsSnapshot {
+                    created_at: row.get("created_at"),
+                    modified_at: row.get("modified_at"),
+                    expires_at: row.get("expires_at"),
+                },
+            );
         }
         Ok(result)
     }

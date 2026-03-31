@@ -169,10 +169,7 @@ impl NotificationWorker {
     async fn handle_change_event(&self, event: ChangeEvent) {
         debug!(
             "Change event received: id={}, trigger={}, types={:?}, attrs={:?}",
-            event.entity_id,
-            event.trigger_reason.as_str(),
-            event.entity_types,
-            event.changed_attributes
+            event.entity_id, event.trigger_reason, event.entity_types, event.changed_attributes
         );
         let matching = {
             let cache = self.cache.read().await;
@@ -180,11 +177,7 @@ impl NotificationWorker {
         };
 
         if matching.is_empty() {
-            debug!(
-                "No matching subscriptions for event {} (trigger={})",
-                event.entity_id,
-                event.trigger_reason.as_str()
-            );
+            debug!("No matching subscriptions for event {} (trigger={})", event.entity_id, event.trigger_reason);
             return;
         }
         debug!("Found {} matching subscriptions for event {}", matching.len(), event.entity_id);
@@ -300,9 +293,9 @@ impl NotificationWorker {
             }
 
             if compiled_sub.notification_sys_attrs
-                && let (Some(ref mut data), Some((created_at, modified_at, expires_at))) = (entity_data.as_mut(), sys_attrs)
+                && let (Some(ref mut data), Some(sa)) = (entity_data.as_mut(), &sys_attrs)
             {
-                inject_sys_attrs(data, created_at, modified_at, expires_at);
+                inject_sys_attrs(data, sa.created_at, sa.modified_at, sa.expires_at);
             }
 
             let data = match entity_data {
@@ -405,7 +398,7 @@ fn compile_subscription(sub: &Subscription) -> Option<CompiledSubscription> {
         .notification_trigger
         .as_ref()
         .map(|t| t.iter().map(|nt| nt.to_string()).collect())
-        .unwrap_or_else(|| TriggerReason::defaults().into_iter().map(String::from).collect());
+        .unwrap_or_else(|| TriggerReason::defaults().iter().map(|s| String::from(*s)).collect());
 
     let watched_attrs = sub.watched_attributes.as_ref().map(|attrs| attrs.iter().cloned().collect::<HashSet<String>>());
 

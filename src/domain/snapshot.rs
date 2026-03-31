@@ -1,38 +1,17 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use strum::{Display, EnumString};
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Display, EnumString)]
 #[serde(rename_all = "camelCase")]
+#[strum(serialize_all = "camelCase")]
 pub enum SnapshotStatus {
     Preparing,
     Success,
     Partial,
     Empty,
     Failure,
-}
-
-impl SnapshotStatus {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::Preparing => "preparing",
-            Self::Success => "success",
-            Self::Partial => "partial",
-            Self::Empty => "empty",
-            Self::Failure => "failure",
-        }
-    }
-
-    pub fn from_str(s: &str) -> Option<Self> {
-        match s {
-            "preparing" => Some(Self::Preparing),
-            "success" => Some(Self::Success),
-            "partial" => Some(Self::Partial),
-            "empty" => Some(Self::Empty),
-            "failure" => Some(Self::Failure),
-            _ => None,
-        }
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -34,8 +34,8 @@ pub fn matches_subscription(sub: &CompiledSubscription, event: &ChangeEvent) -> 
         return false;
     }
 
-    let trigger_str = event.trigger_reason.as_str();
-    if !sub.triggers.iter().any(|t| t == trigger_str) {
+    let trigger_str = event.trigger_reason.to_string();
+    if !sub.triggers.iter().any(|t| t == &trigger_str) {
         debug!("Subscription {} skipped: trigger '{}' not in {:?}", sub.id, trigger_str, sub.triggers);
         return false;
     }

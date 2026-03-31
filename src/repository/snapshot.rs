@@ -24,7 +24,7 @@ impl SnapshotRepository {
         .bind(snapshot.snapshot_priority)
         .bind(&snapshot.endpoint)
         .bind(serde_json::to_value(&snapshot.receiver_info).ok())
-        .bind(snapshot.status.as_str())
+        .bind(snapshot.status.to_string())
         .bind(serde_json::to_value(&snapshot.queries_details).ok())
         .bind(serde_json::to_value(&snapshot.temporal_queries_details).ok())
         .bind(snapshot.created_at)
@@ -131,7 +131,7 @@ impl SnapshotRepository {
 
 fn row_to_snapshot(row: &sqlx::postgres::PgRow) -> Result<Snapshot, sqlx::Error> {
     let status_str: String = row.try_get("status")?;
-    let status = SnapshotStatus::from_str(&status_str).unwrap_or(SnapshotStatus::Preparing);
+    let status = status_str.parse::<SnapshotStatus>().unwrap_or(SnapshotStatus::Preparing);
 
     let queries_details_val: Option<Value> = row.try_get("queries_details")?;
     let queries_details: Option<Vec<ExecutionResultDetails>> = queries_details_val.and_then(|v| serde_json::from_value(v).ok());

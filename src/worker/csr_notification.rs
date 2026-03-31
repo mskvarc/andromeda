@@ -352,7 +352,7 @@ impl CsrNotificationWorker {
                 subscription_id: sub_id.clone(),
                 notified_at: Utc::now(),
                 data: vec![filtered_csr],
-                trigger_reason: Some(event.trigger_reason.as_str().to_string()),
+                trigger_reason: Some(event.trigger_reason.to_string()),
             };
 
             let payload = match serde_json::to_value(&notification) {

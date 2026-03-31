@@ -2,38 +2,16 @@ use crate::domain::serde_helpers;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::fmt;
+use strum::{Display, EnumString};
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, sqlx::Type)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Display, EnumString, sqlx::Type)]
 #[sqlx(type_name = "text")]
 #[sqlx(rename_all = "PascalCase")]
+#[strum(serialize_all = "PascalCase")]
 pub enum ContextKind {
     Cached,
     Hosted,
     ImplicitlyCreated,
-}
-
-impl fmt::Display for ContextKind {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            ContextKind::Cached => write!(f, "Cached"),
-            ContextKind::Hosted => write!(f, "Hosted"),
-            ContextKind::ImplicitlyCreated => write!(f, "ImplicitlyCreated"),
-        }
-    }
-}
-
-impl std::str::FromStr for ContextKind {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "Cached" => Ok(ContextKind::Cached),
-            "Hosted" => Ok(ContextKind::Hosted),
-            "ImplicitlyCreated" => Ok(ContextKind::ImplicitlyCreated),
-            _ => Err(format!("Invalid context kind: {}", s)),
-        }
-    }
 }
 
 /// Detailed metadata response (for details=true)

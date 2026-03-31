@@ -149,13 +149,17 @@ pub struct RegistrationInfo {
     pub relationship_names: Option<Vec<String>>,
 }
 
+fn default_csr_type() -> String {
+    "ContextSourceRegistration".to_string()
+}
+
 /// A full context source registration (clause 5.2.9).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ContextSourceRegistration {
     /// Registration identifier.
     pub id: String,
     /// JSON-LD type (always "ContextSourceRegistration").
-    #[serde(rename = "type")]
+    #[serde(rename = "type", default = "default_csr_type")]
     pub type_: String,
     /// Human-readable name.
     #[serde(skip_serializing_if = "Option::is_none", rename = "registrationName")]

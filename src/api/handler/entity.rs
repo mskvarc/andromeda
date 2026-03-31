@@ -145,8 +145,8 @@ pub async fn create(
     let entity_body = serde_json::to_vec(&entity_value).unwrap_or_default();
     let entity_id = entity.id.to_string();
     let entity_type_str = match &entity.type_ {
-        crate::domain::entity::EntityType::Single(s) => s.clone(),
-        crate::domain::entity::EntityType::Multiple(v) => v.first().cloned().unwrap_or_default(),
+        crate::domain::entity::EntityTypeValue::Single(s) => s.clone(),
+        crate::domain::entity::EntityTypeValue::Multiple(v) => v.first().cloned().unwrap_or_default(),
     };
 
     let (forwarded, _) = state
@@ -874,7 +874,7 @@ pub async fn merge(
     if !exclusive_attrs.is_empty() {
         let mut filtered_patch = patch.clone();
         for attr in &exclusive_attrs {
-            filtered_patch.attrs.remove(attr);
+            filtered_patch.attrs.shift_remove(attr);
         }
         if filtered_patch.attrs.is_empty() {
             // All attributes are exclusive — nothing to merge locally
@@ -947,7 +947,7 @@ pub async fn update(
     if !exclusive_attrs.is_empty() {
         let mut filtered_patch = patch.clone();
         for attr in &exclusive_attrs {
-            filtered_patch.attrs.remove(attr);
+            filtered_patch.attrs.shift_remove(attr);
         }
         let _ = service.replace_entity(&id, &filtered_patch, &context).await;
     } else {
