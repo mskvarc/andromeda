@@ -31,7 +31,7 @@ json-ld-expandable = { path = "lib/json-ld-expandable" }
 json-syntax = { version = "0.12.5", features = ["serde_json"] }
 mediatype = "0.21.0"
 mime = "0.3.17"
-moka = { version = "0.12.14", features = ["future"] }
+moka = { version = "0.12.15", features = ["future"] }
 parse_link_header = "0.4.0"
 percent-encoding = "2.3.2"
 problem_details = { version = "0.9.0", features = ["axum"] }
@@ -45,7 +45,7 @@ serde_urlencoded = "0.7.1"
 shadow-rs = "1.7.1"
 sqlx = { version = "0.8.6", features = ["runtime-tokio", "postgres", "json", "chrono", "uuid"] }
 static-iref = "3.0.0"
-strum = { version = "0.27.1", features = ["derive"] }
+strum = { version = "0.28.0", features = ["derive"] }
 thiserror = "2.0.18"
 tokio = { version = "1.50.0", features = ["full"] }
 tower-http = { version = "0.6.8", features = ["normalize-path"] }
@@ -54,7 +54,7 @@ tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["json", "env-filter"] }
 url = { version = "2.5.8", features = ["serde"] }
 urn = { version = "0.7.0", features = ["serde"] }
-uuid = { version = "1.22.0", features = ["serde", "v4"] }
+uuid = { version = "1.23.0", features = ["serde", "v4"] }
 
 [build-dependencies]
 shadow-rs = "1.7.1"
