@@ -521,7 +521,7 @@ pub fn update_entity_attrs(entity: &mut Value, attrs: &Value) -> Result<Vec<Stri
                     let dataset_id = get_instance_dataset_id(patch_instance);
                     remove_instances_by_dataset(entity_obj, key, dataset_id.as_deref());
                 } else {
-                    deep_merge_attribute(entity_obj, key, &[patch_instance.clone()]);
+                    deep_merge_attribute(entity_obj, key, std::slice::from_ref(patch_instance));
                 }
             }
         } else {

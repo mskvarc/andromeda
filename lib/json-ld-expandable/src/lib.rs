@@ -56,7 +56,7 @@ use syn::{Data, DeriveInput, Fields, parse_macro_input, spanned::Spanned};
 ///
 /// - `type = "IRI"` - The JSON-LD @type IRI for this struct (required)
 /// - `crate = "path"` - Custom path to the crate containing JsonLdExpandable trait
-///                      (defaults to `crate::jsonld`)
+///   (defaults to `crate::jsonld`)
 ///
 /// ## Field attributes (`#[jsonld(...)]` on fields)
 ///
@@ -216,10 +216,10 @@ fn derive_impl(input: DeriveInput) -> Result<proc_macro2::TokenStream, syn::Erro
 
 /// Check whether a type is `Option<_>`.
 fn is_option_type(ty: &syn::Type) -> bool {
-    if let syn::Type::Path(type_path) = ty {
-        if let Some(segment) = type_path.path.segments.last() {
-            return segment.ident == "Option";
-        }
+    if let syn::Type::Path(type_path) = ty
+        && let Some(segment) = type_path.path.segments.last()
+    {
+        return segment.ident == "Option";
     }
     false
 }

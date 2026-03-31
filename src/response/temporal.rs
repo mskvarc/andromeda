@@ -16,6 +16,11 @@ use indexmap::IndexMap;
 use serde_json::{Value, json};
 use sqlx::Row;
 
+type TimeRange = (DateTime<Utc>, DateTime<Utc>);
+type TemporalAttributeInstances = Vec<(Option<DateTime<Utc>>, Value)>;
+type TemporalAttrMap = IndexMap<String, TemporalAttributeInstances>;
+type BuildEntityTemporalResult = (Value, bool, Option<TimeRange>, Option<i64>);
+
 /// After JSON-LD compaction, single-element arrays may be collapsed into plain objects.
 /// NGSI-LD temporal attributes must always be arrays, so re-wrap them.
 pub fn ensure_temporal_attrs_are_arrays(compacted: &mut Value) {
@@ -38,7 +43,7 @@ pub fn ensure_temporal_attrs_are_arrays(compacted: &mut Value) {
 
 pub fn build_content_range(
     compiled: &CompiledTemporalQuery,
-    time_range: Option<(DateTime<Utc>, DateTime<Utc>)>,
+    time_range: Option<TimeRange>,
     partition_total: Option<i64>,
     user_specified_last_n: bool,
 ) -> Option<String> {
@@ -72,8 +77,8 @@ pub fn build_entity_temporal(
     entity_types: &[String],
     rows: &[sqlx::postgres::PgRow],
     compiled: &CompiledTemporalQuery,
-) -> Result<(Value, bool, Option<(DateTime<Utc>, DateTime<Utc>)>, Option<i64>), AndromedaError> {
-    let mut attrs: IndexMap<String, Vec<(Option<DateTime<Utc>>, Value)>> = IndexMap::new();
+) -> Result<BuildEntityTemporalResult, AndromedaError> {
+    let mut attrs: TemporalAttrMap = IndexMap::new();
     let mut truncated = false;
     let mut min_time: Option<DateTime<Utc>> = None;
     let mut max_time: Option<DateTime<Utc>> = None;

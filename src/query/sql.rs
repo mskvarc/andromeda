@@ -483,16 +483,29 @@ fn single_scope_to_sql(scope: &str, binds: &mut Vec<BindValue>, param_idx: &mut 
 
 /// Build entity filter conditions for use in a JOIN (e.g. temporal Stage 1).
 /// Uses `table_prefix` for column references (e.g. "e" → "e.id", "e.types", "e.payload").
-pub fn build_entity_filter_conditions(
-    ids: Option<&[String]>,
-    id_pattern: Option<&str>,
-    types: Option<&[String]>,
-    q_expr: Option<&Expr>,
-    geo: Option<&GeoQuery>,
-    table_prefix: &str,
-    binds: &mut Vec<BindValue>,
-    param_idx: &mut usize,
-) -> Result<Vec<String>, AndromedaError> {
+pub struct EntityFilterConditionsInput<'a> {
+    pub ids: Option<&'a [String]>,
+    pub id_pattern: Option<&'a str>,
+    pub types: Option<&'a [String]>,
+    pub q_expr: Option<&'a Expr>,
+    pub geo: Option<&'a GeoQuery>,
+    pub table_prefix: &'a str,
+    pub binds: &'a mut Vec<BindValue>,
+    pub param_idx: &'a mut usize,
+}
+
+pub fn build_entity_filter_conditions(input: EntityFilterConditionsInput<'_>) -> Result<Vec<String>, AndromedaError> {
+    let EntityFilterConditionsInput {
+        ids,
+        id_pattern,
+        types,
+        q_expr,
+        geo,
+        table_prefix,
+        binds,
+        param_idx,
+    } = input;
+
     let mut conditions = Vec::new();
     let id_col = format!("{}.id", table_prefix);
     let types_col = format!("{}.types", table_prefix);

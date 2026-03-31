@@ -21,7 +21,10 @@ pub fn apply_language_negotiation(entity: &mut Entity, lang: &str) {
     let mut replacements = Vec::new();
     for (key, attr_val) in entity.attrs.iter() {
         match attr_val {
-            AttributeValue::Single(Attribute::LanguageProperty(lp)) => {
+            AttributeValue::Single(attr) => {
+                let Attribute::LanguageProperty(lp) = attr.as_ref() else {
+                    continue;
+                };
                 if let Some((matched_value, matched_tag)) = negotiate_language_map(&lp.language_map, &preferences) {
                     let mut prop = serde_json::Map::new();
                     prop.insert("type".to_string(), Value::String("Property".to_string()));

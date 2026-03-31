@@ -63,7 +63,7 @@ impl Attribute {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum AttributeValue {
-    Single(Attribute),
+    Single(Box<Attribute>),
     Multiple(Vec<Attribute>),
     Raw(serde_json::Value),
 }

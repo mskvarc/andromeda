@@ -2,7 +2,11 @@
 //!
 //! Records attribute history whenever entities are created or modified.
 
-use crate::{domain::iri, error::AndromedaError, repository::temporal::TemporalRepository};
+use crate::{
+    domain::iri,
+    error::AndromedaError,
+    repository::temporal::{HistoryValues, InsertHistoryParams, TemporalRepository, UpdateInstanceParams},
+};
 use chrono::{DateTime, Utc};
 use serde_json::Value;
 use std::sync::Arc;
@@ -143,23 +147,25 @@ impl TemporalRecorder {
             .upsert_tea(entity_id, attr_name, attribute_type, dataset_id.as_deref(), value_type)
             .await?;
 
-        let p = typed_value.to_db_params();
+        let p = typed_value.into_db_params();
 
         self.repo
-            .insert_history(
+            .insert_history(InsertHistoryParams {
                 time,
                 tea_id,
-                p.value_number,
-                p.value_string.as_deref(),
-                p.value_bool,
-                p.value_geo.as_deref(),
-                p.value_object.as_ref(),
-                p.value_datetime,
-                p.value_uri.as_deref(),
-                &instance_id,
+                values: HistoryValues {
+                    value_number: p.value_number,
+                    value_string: p.value_string.as_deref(),
+                    value_bool: p.value_bool,
+                    value_geo: p.value_geo.as_deref(),
+                    value_object: p.value_object.as_ref(),
+                    value_datetime: p.value_datetime,
+                    value_uri: p.value_uri.as_deref(),
+                    metadata: metadata.as_ref(),
+                },
+                instance_id: &instance_id,
                 observed_at,
-                metadata.as_ref(),
-            )
+            })
             .await?;
 
         Ok(())
@@ -182,20 +188,22 @@ impl TemporalRecorder {
         let instance_id = format!("urn:ngsi-ld:attribute:instance:{}", uuid::Uuid::new_v4());
 
         self.repo
-            .insert_history(
-                now,
+            .insert_history(InsertHistoryParams {
+                time: now,
                 tea_id,
-                None,
-                Some("urn:ngsi-ld:null"),
-                None,
-                None,
-                None,
-                None,
-                None,
-                &instance_id,
-                None,
-                None,
-            )
+                values: HistoryValues {
+                    value_number: None,
+                    value_string: Some("urn:ngsi-ld:null"),
+                    value_bool: None,
+                    value_geo: None,
+                    value_object: None,
+                    value_datetime: None,
+                    value_uri: None,
+                    metadata: None,
+                },
+                instance_id: &instance_id,
+                observed_at: None,
+            })
             .await?;
 
         Ok(())
@@ -208,23 +216,25 @@ impl TemporalRecorder {
         let observed_at = extract_observed_at(instance).and_then(|s| DateTime::parse_from_rfc3339(&s).map(|dt| dt.with_timezone(&Utc)).ok());
         let metadata = collect_metadata(instance);
 
-        let p = typed_value.to_db_params();
+        let p = typed_value.into_db_params();
 
         self.repo
-            .update_instance(
+            .update_instance(UpdateInstanceParams {
                 instance_id,
                 entity_id,
-                attr_name,
-                p.value_number,
-                p.value_string.as_deref(),
-                p.value_bool,
-                p.value_geo.as_deref(),
-                p.value_object.as_ref(),
-                p.value_datetime,
-                p.value_uri.as_deref(),
+                attribute_name: attr_name,
+                values: HistoryValues {
+                    value_number: p.value_number,
+                    value_string: p.value_string.as_deref(),
+                    value_bool: p.value_bool,
+                    value_geo: p.value_geo.as_deref(),
+                    value_object: p.value_object.as_ref(),
+                    value_datetime: p.value_datetime,
+                    value_uri: p.value_uri.as_deref(),
+                    metadata: metadata.as_ref(),
+                },
                 observed_at,
-                metadata.as_ref(),
-            )
+            })
             .await
     }
 }
@@ -299,7 +309,7 @@ impl TypedValue {
         }
     }
 
-    fn to_db_params(self) -> DbValueParams {
+    fn into_db_params(self) -> DbValueParams {
         let mut p = DbValueParams {
             value_number: None,
             value_string: None,

@@ -39,6 +39,11 @@ pub struct ErrorContext {
 
 #[derive(Debug)]
 pub struct AndromedaError {
+    inner: Box<AndromedaErrorInner>,
+}
+
+#[derive(Debug)]
+struct AndromedaErrorInner {
     kind: AndromedaErrorKind,
     message: String,
     source: Option<Box<dyn StdError + Send + Sync>>,
@@ -48,46 +53,48 @@ pub struct AndromedaError {
 impl AndromedaError {
     pub fn new(kind: AndromedaErrorKind, message: impl Into<String>) -> Self {
         Self {
-            kind,
-            message: message.into(),
-            source: None,
-            context: ErrorContext::default(),
+            inner: Box::new(AndromedaErrorInner {
+                kind,
+                message: message.into(),
+                source: None,
+                context: ErrorContext::default(),
+            }),
         }
     }
 
     pub fn kind(&self) -> AndromedaErrorKind {
-        self.kind
+        self.inner.kind
     }
 
     pub fn message(&self) -> &str {
-        &self.message
+        &self.inner.message
     }
 
     pub fn context(&self) -> &ErrorContext {
-        &self.context
+        &self.inner.context
     }
 
     pub fn with_source<E>(mut self, source: E) -> Self
     where
         E: StdError + Send + Sync + 'static,
     {
-        self.source = Some(Box::new(source));
+        self.inner.source = Some(Box::new(source));
         self
     }
 
     pub fn with_instance(mut self, instance: Uri) -> Self {
-        self.context.instance = Some(instance);
+        self.inner.context.instance = Some(instance);
         self
     }
 
     pub fn with_entity_id(mut self, entity_id: impl Into<String>) -> Self {
-        self.context.entity_id = Some(entity_id.into());
+        self.inner.context.entity_id = Some(entity_id.into());
         self
     }
 
     #[allow(unused)]
     pub fn with_query(mut self, query: impl Into<String>) -> Self {
-        self.context.query = Some(query.into());
+        self.inner.context.query = Some(query.into());
         self
     }
 
@@ -155,13 +162,13 @@ impl AndromedaError {
 
 impl fmt::Display for AndromedaError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.message)
+        write!(f, "{}", self.inner.message)
     }
 }
 
 impl StdError for AndromedaError {
     fn source(&self) -> Option<&(dyn StdError + 'static)> {
-        self.source.as_deref().map(|err| err as &(dyn StdError + 'static))
+        self.inner.source.as_deref().map(|err| err as &(dyn StdError + 'static))
     }
 }
 
@@ -227,8 +234,8 @@ impl From<JsonLdError> for AndromedaError {
             }
             JsonLdError::ContextInvalid { url, message } => AndromedaError::ld_context_not_available(format!("Invalid context {}: {}", url, message)),
             JsonLdError::EmbeddedContextInvalid(message) => AndromedaError::internal(format!("Embedded context invalid: {}", message)),
-            JsonLdError::ExpansionError(_) | JsonLdError::CompactionError(_) => AndromedaError::bad_request_data(error.to_string()),
-            JsonLdError::InvalidIri(_) | JsonLdError::InvalidDocument(_) | JsonLdError::JsonError(_) => AndromedaError::bad_request_data(error.to_string()),
+            JsonLdError::Expansion(_) | JsonLdError::Compaction(_) => AndromedaError::bad_request_data(error.to_string()),
+            JsonLdError::InvalidIri(_) | JsonLdError::InvalidDocument(_) | JsonLdError::Json(_) => AndromedaError::bad_request_data(error.to_string()),
         }
     }
 }

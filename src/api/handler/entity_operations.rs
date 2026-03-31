@@ -13,6 +13,7 @@ use crate::{
     error::AndromedaError,
     jsonld::ContextSpec,
     query::entity::EntityQueryParameters,
+    service::context_source_forwarding::ForwardBatchProvisionRequest,
 };
 use axum::{
     Json,
@@ -509,11 +510,14 @@ fn make_batch_parse_error(entity_id: &str, error_type: NgsiLdErrorType, detail: 
     }
 }
 
-fn require_json_content_type(headers: &HeaderMap) -> Result<(), Response> {
-    if classify_batch_content_type(headers.get(CONTENT_TYPE).and_then(|v| v.to_str().ok()).unwrap_or("")).is_none() {
-        return Err(StatusCode::UNSUPPORTED_MEDIA_TYPE.into_response());
-    }
-    Ok(())
+fn has_supported_json_content_type(headers: &HeaderMap) -> bool {
+    classify_batch_content_type(
+        headers
+            .get(CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or(""),
+    )
+    .is_some()
 }
 
 pub async fn batch_create(
@@ -523,8 +527,8 @@ pub async fn batch_create(
     headers: HeaderMap,
     body: Bytes,
 ) -> Result<Response, ApiError> {
-    if let Err(r) = require_json_content_type(&headers) {
-        return Ok(r);
+    if !has_supported_json_content_type(&headers) {
+        return Ok(StatusCode::UNSUPPORTED_MEDIA_TYPE.into_response());
     }
     let service = &state.entities;
     let (entities, context, mut parse_errors) = parse_batch_entities(&body, &headers, &context, &uri)?;
@@ -545,15 +549,15 @@ pub async fn batch_create(
     });
     let forwarded = state
         .forwarding
-        .forward_batch_provision(
-            entity_type,
-            &body,
+        .forward_batch_provision(ForwardBatchProvisionRequest {
+            entity_type_compact: entity_type,
+            body: &body,
             context_url,
-            &context,
-            crate::service::context_source_forwarding::ForwardingOperation::CreateBatch,
-            "/entityOperations/create",
-            None,
-        )
+            context: &context,
+            operation: crate::service::context_source_forwarding::ForwardingOperation::CreateBatch,
+            batch_path: "/entityOperations/create",
+            query_string: None,
+        })
         .await
         .unwrap_or_default();
 
@@ -590,8 +594,8 @@ pub async fn batch_upsert(
     headers: HeaderMap,
     body: Bytes,
 ) -> Result<Response, ApiError> {
-    if let Err(r) = require_json_content_type(&headers) {
-        return Ok(r);
+    if !has_supported_json_content_type(&headers) {
+        return Ok(StatusCode::UNSUPPORTED_MEDIA_TYPE.into_response());
     }
     let service = &state.entities;
     let (entities, context, mut parse_errors) = parse_batch_entities(&body, &headers, &context, &uri)?;
@@ -615,15 +619,15 @@ pub async fn batch_upsert(
     let qs = params.options.as_deref().map(|o| format!("options={o}"));
     let forwarded = state
         .forwarding
-        .forward_batch_provision(
-            entity_type,
-            &body,
+        .forward_batch_provision(ForwardBatchProvisionRequest {
+            entity_type_compact: entity_type,
+            body: &body,
             context_url,
-            &context,
-            crate::service::context_source_forwarding::ForwardingOperation::UpsertBatch,
-            "/entityOperations/upsert",
-            qs.as_deref(),
-        )
+            context: &context,
+            operation: crate::service::context_source_forwarding::ForwardingOperation::UpsertBatch,
+            batch_path: "/entityOperations/upsert",
+            query_string: qs.as_deref(),
+        })
         .await
         .unwrap_or_default();
 
@@ -666,8 +670,8 @@ pub async fn batch_update(
     headers: HeaderMap,
     body: Bytes,
 ) -> Result<Response, ApiError> {
-    if let Err(r) = require_json_content_type(&headers) {
-        return Ok(r);
+    if !has_supported_json_content_type(&headers) {
+        return Ok(StatusCode::UNSUPPORTED_MEDIA_TYPE.into_response());
     }
     let service = &state.entities;
     let (entities, context, mut parse_errors) = parse_batch_entities(&body, &headers, &context, &uri)?;
@@ -690,15 +694,15 @@ pub async fn batch_update(
     let qs = params.options.as_deref().map(|o| format!("options={o}"));
     let forwarded = state
         .forwarding
-        .forward_batch_provision(
-            entity_type,
-            &body,
+        .forward_batch_provision(ForwardBatchProvisionRequest {
+            entity_type_compact: entity_type,
+            body: &body,
             context_url,
-            &context,
-            crate::service::context_source_forwarding::ForwardingOperation::UpdateBatch,
-            "/entityOperations/update",
-            qs.as_deref(),
-        )
+            context: &context,
+            operation: crate::service::context_source_forwarding::ForwardingOperation::UpdateBatch,
+            batch_path: "/entityOperations/update",
+            query_string: qs.as_deref(),
+        })
         .await
         .unwrap_or_default();
 
@@ -735,8 +739,8 @@ pub async fn batch_merge(
     headers: HeaderMap,
     body: Bytes,
 ) -> Result<Response, ApiError> {
-    if let Err(r) = require_json_content_type(&headers) {
-        return Ok(r);
+    if !has_supported_json_content_type(&headers) {
+        return Ok(StatusCode::UNSUPPORTED_MEDIA_TYPE.into_response());
     }
     let service = &state.entities;
     let (entities, context, mut parse_errors) = parse_batch_entities(&body, &headers, &context, &uri)?;
@@ -756,15 +760,15 @@ pub async fn batch_merge(
     });
     let forwarded = state
         .forwarding
-        .forward_batch_provision(
-            entity_type,
-            &body,
+        .forward_batch_provision(ForwardBatchProvisionRequest {
+            entity_type_compact: entity_type,
+            body: &body,
             context_url,
-            &context,
-            crate::service::context_source_forwarding::ForwardingOperation::MergeBatch,
-            "/entityOperations/merge",
-            None,
-        )
+            context: &context,
+            operation: crate::service::context_source_forwarding::ForwardingOperation::MergeBatch,
+            batch_path: "/entityOperations/merge",
+            query_string: None,
+        })
         .await
         .unwrap_or_default();
 
@@ -812,15 +816,15 @@ pub async fn batch_delete(TenantState(state): TenantState, OriginalUri(uri): Ori
     let context_url = context.link_contexts().first().map(|s| s.as_str());
     let forwarded = state
         .forwarding
-        .forward_batch_provision(
-            None, // delete doesn't have entity type in payload
-            &body,
+        .forward_batch_provision(ForwardBatchProvisionRequest {
+            entity_type_compact: None, // delete doesn't have entity type in payload
+            body: &body,
             context_url,
-            &context,
-            crate::service::context_source_forwarding::ForwardingOperation::DeleteBatch,
-            "/entityOperations/delete",
-            None,
-        )
+            context: &context,
+            operation: crate::service::context_source_forwarding::ForwardingOperation::DeleteBatch,
+            batch_path: "/entityOperations/delete",
+            query_string: None,
+        })
         .await
         .unwrap_or_default();
 

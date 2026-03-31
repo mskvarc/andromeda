@@ -1,7 +1,11 @@
 use crate::{core::cli::Cli, error::AndromedaError};
 use clap::{Args, Parser};
 use confique::Config;
-use std::{collections::HashMap, net::IpAddr, path::PathBuf};
+use std::{
+    collections::HashMap,
+    net::IpAddr,
+    path::{Path, PathBuf},
+};
 
 #[derive(Config, Debug, Clone)]
 #[config(layer_attr(derive(Args, Clone)))]
@@ -143,7 +147,7 @@ impl Configuration {
     }
 }
 
-fn normalize_preload_context_paths(config: &mut Configuration, config_file: &PathBuf) {
+fn normalize_preload_context_paths(config: &mut Configuration, config_file: &Path) {
     let Some(preloads) = config.jsonld.preload_contexts.as_mut() else {
         return;
     };

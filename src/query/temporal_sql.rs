@@ -7,15 +7,15 @@ use crate::{
     },
     error::AndromedaError,
     query::{
-        sql::{BindValue, build_entity_filter_conditions},
+        sql::{BindValue, EntityFilterConditionsInput, build_entity_filter_conditions},
         temporal::CompiledTemporalQuery,
     },
 };
 
 fn time_column_expr_stage1(timeproperty: TimeProp) -> &'static str {
     match timeproperty {
-        TimeProp::ObservedAt => "COALESCE(ah.observed_at, ah.time)",
-        TimeProp::CreatedAt | TimeProp::ModifiedAt | TimeProp::DeletedAt => "ah.time",
+        TimeProp::Observed => "COALESCE(ah.observed_at, ah.time)",
+        TimeProp::Created | TimeProp::Modified | TimeProp::Deleted => "ah.time",
     }
 }
 
@@ -33,16 +33,16 @@ pub fn build_stage1_entity_ids(
     binds: &mut Vec<BindValue>,
     param_idx: &mut usize,
 ) -> Result<TemporalStage1Result, AndromedaError> {
-    let mut conditions = build_entity_filter_conditions(
-        compiled.ids.as_deref(),
-        compiled.id_pattern.as_deref(),
-        compiled.types.as_deref(),
-        compiled.q_expr.as_ref(),
-        compiled.geo.as_ref(),
-        "e",
+    let mut conditions = build_entity_filter_conditions(EntityFilterConditionsInput {
+        ids: compiled.ids.as_deref(),
+        id_pattern: compiled.id_pattern.as_deref(),
+        types: compiled.types.as_deref(),
+        q_expr: compiled.q_expr.as_ref(),
+        geo: compiled.geo.as_ref(),
+        table_prefix: "e",
         binds,
         param_idx,
-    )?;
+    })?;
 
     // Attribute filter: tea.attribute_name = ANY($N)
     if !compiled.attr_filter.is_empty() {
@@ -143,8 +143,8 @@ pub struct TemporalStage2Result {
 /// Time column expression based on timeproperty.
 fn time_column_expr(timeproperty: TimeProp) -> &'static str {
     match timeproperty {
-        TimeProp::ObservedAt => "COALESCE(ah.observed_at, ah.time)",
-        TimeProp::CreatedAt | TimeProp::ModifiedAt | TimeProp::DeletedAt => "ah.time",
+        TimeProp::Observed => "COALESCE(ah.observed_at, ah.time)",
+        TimeProp::Created | TimeProp::Modified | TimeProp::Deleted => "ah.time",
     }
 }
 
@@ -160,7 +160,7 @@ pub fn build_temporal_history_query(
     let mut conditions = vec![format!("tea.entity_id = ${}", entity_id_param)];
 
     // When timeproperty=deletedAt, only return tombstone instances
-    if compiled.timeproperty == TimeProp::DeletedAt {
+    if compiled.timeproperty == TimeProp::Deleted {
         conditions.push("ah.value_string = 'urn:ngsi-ld:null'".to_string());
     }
 
@@ -235,8 +235,8 @@ fn build_history_query(
     let time_col = time_column_expr(compiled.timeproperty);
     // Unprefixed version for use in CTE outer query where table aliases aren't available
     let time_col_unprefixed = match compiled.timeproperty {
-        TimeProp::ObservedAt => "COALESCE(observed_at, time)",
-        TimeProp::CreatedAt | TimeProp::ModifiedAt | TimeProp::DeletedAt => "time",
+        TimeProp::Observed => "COALESCE(observed_at, time)",
+        TimeProp::Created | TimeProp::Modified | TimeProp::Deleted => "time",
     };
     let base_cols = "ah.time, ah.tea_id,
        ah.value_number, ah.value_string, ah.value_bool,
@@ -394,7 +394,7 @@ mod tests {
             timerel: None,
             time_at: None,
             end_time_at: None,
-            timeproperty: TimeProp::ObservedAt,
+            timeproperty: TimeProp::Observed,
             attr_filter: Vec::new(),
             dataset_id_filter: Vec::new(),
             last_n: None,

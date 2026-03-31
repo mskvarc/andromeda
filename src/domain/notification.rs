@@ -9,6 +9,8 @@ use serde_json::Value;
 use std::collections::HashSet;
 use url::Url;
 
+pub type SysAttrsSnapshot = (DateTime<Utc>, DateTime<Utc>, Option<DateTime<Utc>>);
+
 // ---------------------------------------------------------------------------
 // Notification types from NGSI-LD spec (ETSI GS CIM 009 clause 5.3.1)
 // ---------------------------------------------------------------------------
@@ -63,7 +65,7 @@ pub struct ChangeEvent {
     /// Entity state before the mutation (expanded form), for showChanges support.
     pub previous_attributes: Option<Value>,
     /// For EntityDeleted events, a snapshot of (createdAt, modifiedAt, expiresAt) captured before deletion.
-    pub sys_attrs_snapshot: Option<(DateTime<Utc>, DateTime<Utc>, Option<DateTime<Utc>>)>,
+    pub sys_attrs_snapshot: Option<SysAttrsSnapshot>,
 }
 
 impl ChangeEvent {
@@ -100,7 +102,7 @@ impl ChangeEvent {
         self
     }
 
-    pub fn with_sys_attrs(mut self, sys_attrs: Option<(DateTime<Utc>, DateTime<Utc>, Option<DateTime<Utc>>)>) -> ChangeEvent {
+    pub fn with_sys_attrs(mut self, sys_attrs: Option<SysAttrsSnapshot>) -> ChangeEvent {
         self.sys_attrs_snapshot = sys_attrs;
         self
     }
@@ -182,9 +184,9 @@ pub enum MqttVersion {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MqttQoS {
-    AtMostOnce,
-    AtLeastOnce,
-    ExactlyOnce,
+    AtMost,
+    AtLeast,
+    Exactly,
 }
 
 #[derive(Debug, Clone)]
@@ -227,7 +229,7 @@ pub fn parse_endpoint_transport(uri: &str, notifier_info: Option<&[Value]>) -> R
             let password = parsed.password().map(String::from);
 
             let mut version = MqttVersion::V5;
-            let mut qos = MqttQoS::AtMostOnce;
+            let mut qos = MqttQoS::AtMost;
 
             if let Some(infos) = notifier_info {
                 for info in infos {
@@ -242,9 +244,9 @@ pub fn parse_endpoint_transport(uri: &str, notifier_info: Option<&[Value]>) -> R
                             }
                             "MQTT-QoS" => {
                                 qos = match value {
-                                    "0" => MqttQoS::AtMostOnce,
-                                    "1" => MqttQoS::AtLeastOnce,
-                                    "2" => MqttQoS::ExactlyOnce,
+                                    "0" => MqttQoS::AtMost,
+                                    "1" => MqttQoS::AtLeast,
+                                    "2" => MqttQoS::Exactly,
                                     _ => return Err(format!("Unsupported MQTT-QoS: {value}")),
                                 };
                             }
@@ -365,7 +367,7 @@ mod tests {
                 assert_eq!(config.topic, "test/topic");
                 assert!(!config.use_tls);
                 assert_eq!(config.version, MqttVersion::V5);
-                assert_eq!(config.qos, MqttQoS::AtMostOnce);
+                assert_eq!(config.qos, MqttQoS::AtMost);
             }
             _ => panic!("Expected Mqtt transport"),
         }
@@ -406,7 +408,7 @@ mod tests {
         match result {
             EndpointTransport::Mqtt(config) => {
                 assert_eq!(config.version, MqttVersion::V311);
-                assert_eq!(config.qos, MqttQoS::ExactlyOnce);
+                assert_eq!(config.qos, MqttQoS::Exactly);
             }
             _ => panic!("Expected Mqtt transport"),
         }
@@ -418,7 +420,7 @@ mod tests {
         let result = parse_endpoint_transport("mqtt://broker:1883/topic", Some(&notifier_info)).unwrap();
         match result {
             EndpointTransport::Mqtt(config) => {
-                assert_eq!(config.qos, MqttQoS::AtLeastOnce);
+                assert_eq!(config.qos, MqttQoS::AtLeast);
             }
             _ => panic!("Expected Mqtt transport"),
         }

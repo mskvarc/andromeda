@@ -11,7 +11,14 @@ use crate::{
     },
     error::AndromedaError,
     jsonld::ContextSpec,
-    service::context_source_forwarding::{ForwardingOperation, collect_warnings, merge_query_results, merge_retrieve_results},
+    service::context_source_forwarding::{
+        ForwardBatchProvisionRequest,
+        ForwardProvisionRequest,
+        ForwardingOperation,
+        collect_warnings,
+        merge_query_results,
+        merge_retrieve_results,
+    },
 };
 use axum::{
     Json,
@@ -144,17 +151,17 @@ pub async fn create(
 
     let (forwarded, _) = state
         .forwarding
-        .forward_provision(
-            Some(&entity_id),
-            Some(&entity_type_str),
-            reqwest::Method::POST,
-            Some(&entity_body),
+        .forward_provision(ForwardProvisionRequest {
+            entity_id: Some(&entity_id),
+            entity_type_compact: Some(&entity_type_str),
+            method: reqwest::Method::POST,
+            body: Some(&entity_body),
             context_url,
-            &context,
-            ForwardingOperation::CreateEntity,
-            None,
-            None,
-        )
+            context: &context,
+            operation: ForwardingOperation::CreateEntity,
+            path_suffix: None,
+            query_string: None,
+        })
         .await
         .unwrap_or_default();
 
@@ -438,17 +445,17 @@ pub async fn delete(
 
     let (forwarded, unforwardable_exclusive) = state
         .forwarding
-        .forward_provision(
-            Some(&entity_id),
-            None,
-            reqwest::Method::DELETE,
-            None,
+        .forward_provision(ForwardProvisionRequest {
+            entity_id: Some(&entity_id),
+            entity_type_compact: None,
+            method: reqwest::Method::DELETE,
+            body: None,
             context_url,
-            &context,
-            ForwardingOperation::DeleteEntity,
-            None,
-            None,
-        )
+            context: &context,
+            operation: ForwardingOperation::DeleteEntity,
+            path_suffix: None,
+            query_string: None,
+        })
         .await
         .unwrap_or_default();
 
@@ -834,17 +841,17 @@ pub async fn merge(
 
     let (forwarded, _) = state
         .forwarding
-        .forward_provision(
-            Some(&entity_id),
-            None,
-            reqwest::Method::PATCH,
-            Some(&patch_body),
+        .forward_provision(ForwardProvisionRequest {
+            entity_id: Some(&entity_id),
+            entity_type_compact: None,
+            method: reqwest::Method::PATCH,
+            body: Some(&patch_body),
             context_url,
-            &context,
-            ForwardingOperation::MergeEntity,
-            None,
-            None,
-        )
+            context: &context,
+            operation: ForwardingOperation::MergeEntity,
+            path_suffix: None,
+            query_string: None,
+        })
         .await
         .unwrap_or_default();
 
@@ -908,17 +915,17 @@ pub async fn update(
 
     let (forwarded, _) = state
         .forwarding
-        .forward_provision(
-            Some(&entity_id),
-            None,
-            reqwest::Method::PUT,
-            Some(&patch_body),
+        .forward_provision(ForwardProvisionRequest {
+            entity_id: Some(&entity_id),
+            entity_type_compact: None,
+            method: reqwest::Method::PUT,
+            body: Some(&patch_body),
             context_url,
-            &context,
-            ForwardingOperation::ReplaceEntity,
-            None,
-            None,
-        )
+            context: &context,
+            operation: ForwardingOperation::ReplaceEntity,
+            path_suffix: None,
+            query_string: None,
+        })
         .await
         .unwrap_or_default();
 
@@ -973,17 +980,17 @@ pub async fn append_attrs(
 
     let (forwarded, _) = state
         .forwarding
-        .forward_provision(
-            Some(&entity_id),
-            None,
-            reqwest::Method::POST,
-            Some(&fragment_body),
+        .forward_provision(ForwardProvisionRequest {
+            entity_id: Some(&entity_id),
+            entity_type_compact: None,
+            method: reqwest::Method::POST,
+            body: Some(&fragment_body),
             context_url,
-            &context,
-            ForwardingOperation::AppendEntityAttributes,
-            Some("/attrs"),
-            if qs.is_empty() { None } else { Some(qs) },
-        )
+            context: &context,
+            operation: ForwardingOperation::AppendEntityAttributes,
+            path_suffix: Some("/attrs"),
+            query_string: if qs.is_empty() { None } else { Some(qs) },
+        })
         .await
         .unwrap_or_default();
 
@@ -1077,17 +1084,17 @@ pub async fn update_attrs(
 
     let (forwarded, _) = state
         .forwarding
-        .forward_provision(
-            Some(&entity_id),
-            None,
-            reqwest::Method::PATCH,
-            Some(&fragment_body),
+        .forward_provision(ForwardProvisionRequest {
+            entity_id: Some(&entity_id),
+            entity_type_compact: None,
+            method: reqwest::Method::PATCH,
+            body: Some(&fragment_body),
             context_url,
-            &context,
-            ForwardingOperation::UpdateEntityAttributes,
-            Some("/attrs"),
-            None,
-        )
+            context: &context,
+            operation: ForwardingOperation::UpdateEntityAttributes,
+            path_suffix: Some("/attrs"),
+            query_string: None,
+        })
         .await
         .unwrap_or_default();
 
@@ -1174,17 +1181,17 @@ pub async fn partial_update_attr(
 
     let (forwarded, _) = state
         .forwarding
-        .forward_provision(
-            Some(&entity_id),
-            None,
-            reqwest::Method::PATCH,
-            Some(&fragment_body),
+        .forward_provision(ForwardProvisionRequest {
+            entity_id: Some(&entity_id),
+            entity_type_compact: None,
+            method: reqwest::Method::PATCH,
+            body: Some(&fragment_body),
             context_url,
-            &context,
-            ForwardingOperation::PartialUpdateAttribute,
-            Some(&path_suffix),
-            qs.as_deref(),
-        )
+            context: &context,
+            operation: ForwardingOperation::PartialUpdateAttribute,
+            path_suffix: Some(&path_suffix),
+            query_string: qs.as_deref(),
+        })
         .await
         .unwrap_or_default();
 
@@ -1246,17 +1253,17 @@ pub async fn delete_attr(
 
     let (forwarded, _) = state
         .forwarding
-        .forward_provision(
-            Some(&entity_id),
-            None,
-            reqwest::Method::DELETE,
-            None,
+        .forward_provision(ForwardProvisionRequest {
+            entity_id: Some(&entity_id),
+            entity_type_compact: None,
+            method: reqwest::Method::DELETE,
+            body: None,
             context_url,
-            &context,
-            ForwardingOperation::DeleteEntityAttribute,
-            Some(&path_suffix),
-            qs.as_deref(),
-        )
+            context: &context,
+            operation: ForwardingOperation::DeleteEntityAttribute,
+            path_suffix: Some(&path_suffix),
+            query_string: qs.as_deref(),
+        })
         .await
         .unwrap_or_default();
 
@@ -1349,15 +1356,15 @@ pub async fn delete_by_query(
         let context_url = context.link_contexts().first().map(|s| s.as_str());
         let forwarded = state
             .forwarding
-            .forward_batch_provision(
-                None,
-                &body,
+            .forward_batch_provision(ForwardBatchProvisionRequest {
+                entity_type_compact: None,
+                body: &body,
                 context_url,
-                &context,
-                ForwardingOperation::DeleteBatch,
-                "/entityOperations/delete",
-                None,
-            )
+                context: &context,
+                operation: ForwardingOperation::DeleteBatch,
+                batch_path: "/entityOperations/delete",
+                query_string: None,
+            })
             .await
             .unwrap_or_default();
 

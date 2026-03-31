@@ -273,13 +273,13 @@ mod tests {
     #[test]
     fn parse_timeproperty_default_is_observed_at() {
         let p = params_from_query("");
-        assert_eq!(p.parse_timeproperty(), TimeProp::ObservedAt);
+        assert_eq!(p.parse_timeproperty(), TimeProp::Observed);
     }
 
     #[test]
     fn parse_timeproperty_created_at() {
         let p = params_from_query("timeproperty=createdAt");
-        assert_eq!(p.parse_timeproperty(), TimeProp::CreatedAt);
+        assert_eq!(p.parse_timeproperty(), TimeProp::Created);
     }
 
     #[test]

@@ -36,11 +36,11 @@ pub enum Error {
 
     /// JSON-LD expansion failed.
     #[error("Failed to expand document")]
-    ExpansionError(#[source] ExpandError),
+    Expansion(#[source] ExpandError),
 
     /// JSON-LD compaction failed.
     #[error("Failed to compact document")]
-    CompactionError(#[source] CompactError),
+    Compaction(#[source] CompactError),
 
     /// An IRI could not be parsed or resolved.
     #[error("Invalid IRI: {0}")]
@@ -52,7 +52,7 @@ pub enum Error {
 
     /// JSON serialisation / deserialisation error.
     #[error("JSON error: {0}")]
-    JsonError(#[from] serde_json::Error),
+    Json(#[from] serde_json::Error),
 }
 
 impl From<ExpandError> for Error {
@@ -63,7 +63,7 @@ impl From<ExpandError> for Error {
         if let Some(context_error) = extract_context_error_from_expand_error(&e) {
             return context_error;
         }
-        Self::ExpansionError(e)
+        Self::Expansion(e)
     }
 }
 
@@ -75,7 +75,7 @@ impl From<CompactError> for Error {
         if let Some(context_error) = extract_context_error_from_compact_error(&e) {
             return context_error;
         }
-        Self::CompactionError(e)
+        Self::Compaction(e)
     }
 }
 

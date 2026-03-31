@@ -14,13 +14,20 @@ use crate::{
 };
 use serde_json::Value;
 use sqlx::postgres::PgPool;
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{HashMap, HashSet},
+    future::Future,
+    pin::Pin,
+};
 use urn::Urn;
 
 pub struct EntityQueryService {
     repo: EntityRepository,
     engine: JsonLdEngine,
 }
+
+type ResolveLinkedResult = Result<HashMap<String, Entity>, AndromedaError>;
+type ResolveLinkedFuture<'a> = Pin<Box<dyn Future<Output = ResolveLinkedResult> + Send + 'a>>;
 
 impl EntityQueryService {
     pub fn new(pool: &PgPool, engine: JsonLdEngine) -> Self {
@@ -162,7 +169,7 @@ impl EntityQueryService {
         sys_attrs: bool,
         context: &'a ContextSpec,
         contained_by: &'a HashSet<String>,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<HashMap<String, Entity>, AndromedaError>> + Send + 'a>> {
+    ) -> ResolveLinkedFuture<'a> {
         const MAX_JOIN_LEVEL: u32 = 5;
         let join_level = join_level.min(MAX_JOIN_LEVEL);
 
@@ -425,14 +432,17 @@ impl EntityQueryService {
 fn collect_relationship_objects(entity: &Entity, ids: &mut HashSet<String>) {
     for attr_val in entity.attrs.values() {
         match attr_val {
-            AttributeValue::Single(Attribute::Relationship(r)) => {
-                ids.insert(r.object.to_string());
-            }
-            AttributeValue::Single(Attribute::ListRelationship(lr)) => {
-                for obj in &lr.object_list {
-                    ids.insert(obj.to_string());
+            AttributeValue::Single(attr) => match attr.as_ref() {
+                Attribute::Relationship(r) => {
+                    ids.insert(r.object.to_string());
                 }
-            }
+                Attribute::ListRelationship(lr) => {
+                    for obj in &lr.object_list {
+                        ids.insert(obj.to_string());
+                    }
+                }
+                _ => {}
+            },
             AttributeValue::Multiple(list) => {
                 for attr in list {
                     match attr {
@@ -458,7 +468,7 @@ fn filter_entity_by_dataset_id(entity: &mut Entity, dataset_ids: &[String]) {
     for (key, attr_val) in entity.attrs.iter_mut() {
         match attr_val {
             AttributeValue::Single(attr) => {
-                let ds = attr.dataset_id_string();
+                let ds = attr.as_ref().dataset_id_string();
                 let matches = dataset_ids.iter().any(|wanted| {
                     if wanted == "@none" {
                         ds.is_none()
@@ -484,7 +494,7 @@ fn filter_entity_by_dataset_id(entity: &mut Entity, dataset_ids: &[String]) {
                 if list.is_empty() {
                     keys_to_remove.push(key.clone());
                 } else if list.len() == 1 {
-                    *attr_val = AttributeValue::Single(list.remove(0));
+                    *attr_val = AttributeValue::Single(Box::new(list.remove(0)));
                 }
             }
             AttributeValue::Raw(_) => {}

@@ -550,7 +550,7 @@ fn compile_csr_subscription(sub: &Subscription) -> Option<CompiledCsrSubscriptio
         .map(|entities| {
             entities
                 .iter()
-                .filter_map(|e| {
+                .map(|e| {
                     let id_pattern = e.id_pattern.as_ref().and_then(|p| match Regex::new(p) {
                         Ok(r) => Some(r),
                         Err(err) => {
@@ -558,12 +558,12 @@ fn compile_csr_subscription(sub: &Subscription) -> Option<CompiledCsrSubscriptio
                             None
                         }
                     });
-                    Some(CompiledSelector {
+                    CompiledSelector {
                         id: e.id.clone(),
                         id_pattern,
                         type_: e.type_.clone(),
                         type_pattern: None,
-                    })
+                    }
                 })
                 .collect()
         })

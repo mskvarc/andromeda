@@ -202,12 +202,14 @@ pub async fn build_tenant_state(config: &Configuration, db_url: &str, tenant: Te
     let notification_worker = NotificationWorker::new(
         change_tx.subscribe(),
         sub_change_tx.subscribe(),
-        SubscriptionRepository::new(&pool),
-        EntityRepository::new(&pool),
-        notification_entity_query,
-        engine.clone(),
-        mqtt_manager.clone(),
-        tenant.clone(),
+        crate::worker::notification::NotificationWorkerDeps {
+            sub_repo: SubscriptionRepository::new(&pool),
+            entity_repo: EntityRepository::new(&pool),
+            entity_query: notification_entity_query,
+            engine: engine.clone(),
+            mqtt_manager: mqtt_manager.clone(),
+            tenant: tenant.clone(),
+        },
     );
     worker_handles.push(tokio::spawn(notification_worker.run()));
 

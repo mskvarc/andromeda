@@ -16,16 +16,29 @@ use serde_json::Value;
 use std::collections::HashSet;
 use tracing::debug;
 
-pub async fn build_notification_data(
-    engine: &JsonLdEngine,
-    entity_data: &Value,
-    previous_attributes: Option<&Value>,
-    sub: &CompiledSubscription,
-    trigger_reason: &TriggerReason,
-    changed_attributes: &[String],
-    occurred_at: DateTime<Utc>,
-    entity_query: &EntityQueryService,
-) -> Vec<Value> {
+pub struct NotificationBuildParams<'a> {
+    pub engine: &'a JsonLdEngine,
+    pub entity_data: &'a Value,
+    pub previous_attributes: Option<&'a Value>,
+    pub sub: &'a CompiledSubscription,
+    pub trigger_reason: &'a TriggerReason,
+    pub changed_attributes: &'a [String],
+    pub occurred_at: DateTime<Utc>,
+    pub entity_query: &'a EntityQueryService,
+}
+
+pub async fn build_notification_data(params: NotificationBuildParams<'_>) -> Vec<Value> {
+    let NotificationBuildParams {
+        engine,
+        entity_data,
+        previous_attributes,
+        sub,
+        trigger_reason,
+        changed_attributes,
+        occurred_at,
+        entity_query,
+    } = params;
+
     let mut entity = match entity_data {
         Value::Array(arr) => arr.first().cloned().unwrap_or(Value::Null),
         other => other.clone(),

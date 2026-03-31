@@ -7,6 +7,33 @@ use chrono::{DateTime, Utc};
 use serde_json::Value;
 use sqlx::postgres::PgPool;
 
+pub struct HistoryValues<'a> {
+    pub value_number: Option<f64>,
+    pub value_string: Option<&'a str>,
+    pub value_bool: Option<bool>,
+    pub value_geo: Option<&'a str>,
+    pub value_object: Option<&'a Value>,
+    pub value_datetime: Option<DateTime<Utc>>,
+    pub value_uri: Option<&'a str>,
+    pub metadata: Option<&'a Value>,
+}
+
+pub struct InsertHistoryParams<'a> {
+    pub time: DateTime<Utc>,
+    pub tea_id: uuid::Uuid,
+    pub values: HistoryValues<'a>,
+    pub instance_id: &'a str,
+    pub observed_at: Option<DateTime<Utc>>,
+}
+
+pub struct UpdateInstanceParams<'a> {
+    pub instance_id: &'a str,
+    pub entity_id: &'a str,
+    pub attribute_name: &'a str,
+    pub values: HistoryValues<'a>,
+    pub observed_at: Option<DateTime<Utc>>,
+}
+
 pub struct TemporalRepository {
     pool: PgPool,
 }
@@ -137,37 +164,23 @@ impl TemporalRepository {
 
     /// Insert one observation into attribute_history.
     /// Only one value column should be non-NULL, determined by the TEA's value_type.
-    pub async fn insert_history(
-        &self,
-        time: DateTime<Utc>,
-        tea_id: uuid::Uuid,
-        value_number: Option<f64>,
-        value_string: Option<&str>,
-        value_bool: Option<bool>,
-        value_geo: Option<&str>,
-        value_object: Option<&Value>,
-        value_datetime: Option<DateTime<Utc>>,
-        value_uri: Option<&str>,
-        instance_id: &str,
-        observed_at: Option<DateTime<Utc>>,
-        metadata: Option<&Value>,
-    ) -> Result<(), AndromedaError> {
+    pub async fn insert_history(&self, params: InsertHistoryParams<'_>) -> Result<(), AndromedaError> {
         let mut tx = self.pool.begin().await?;
 
         // Remove any existing row with the same (tea_id, instance_id) to avoid
         // duplicates when an entity update re-records the same attribute instance.
         sqlx::query("DELETE FROM attribute_history WHERE tea_id = $1 AND instance_id = $2")
-            .bind(tea_id)
-            .bind(instance_id)
+            .bind(params.tea_id)
+            .bind(params.instance_id)
             .execute(&mut *tx)
             .await?;
 
         // Also remove any existing row with the same (tea_id, observed_at) to handle
         // temporal entity updates where the same time instant gets a new instance_id.
         // Per NGSI-LD spec, create_or_update should merge/replace instances at the same time.
-        if let Some(obs) = observed_at {
+        if let Some(obs) = params.observed_at {
             sqlx::query("DELETE FROM attribute_history WHERE tea_id = $1 AND observed_at = $2")
-                .bind(tea_id)
+                .bind(params.tea_id)
                 .bind(obs)
                 .execute(&mut *tx)
                 .await?;
@@ -181,18 +194,18 @@ impl TemporalRepository {
                 ($1, $2, $3, $4, $5, ST_SetSRID(ST_GeomFromGeoJSON($6), 4326), $7, $8, $9, $10, $11, $12)
             "#,
         )
-        .bind(time)
-        .bind(tea_id)
-        .bind(value_number)
-        .bind(value_string)
-        .bind(value_bool)
-        .bind(value_geo)
-        .bind(value_object)
-        .bind(value_datetime)
-        .bind(value_uri)
-        .bind(instance_id)
-        .bind(observed_at)
-        .bind(metadata)
+        .bind(params.time)
+        .bind(params.tea_id)
+        .bind(params.values.value_number)
+        .bind(params.values.value_string)
+        .bind(params.values.value_bool)
+        .bind(params.values.value_geo)
+        .bind(params.values.value_object)
+        .bind(params.values.value_datetime)
+        .bind(params.values.value_uri)
+        .bind(params.instance_id)
+        .bind(params.observed_at)
+        .bind(params.values.metadata)
         .execute(&mut *tx)
         .await?;
 
@@ -243,21 +256,7 @@ impl TemporalRepository {
     }
 
     /// Modify a specific attribute instance.
-    pub async fn update_instance(
-        &self,
-        instance_id: &str,
-        entity_id: &str,
-        attribute_name: &str,
-        value_number: Option<f64>,
-        value_string: Option<&str>,
-        value_bool: Option<bool>,
-        value_geo: Option<&str>,
-        value_object: Option<&Value>,
-        value_datetime: Option<DateTime<Utc>>,
-        value_uri: Option<&str>,
-        observed_at: Option<DateTime<Utc>>,
-        metadata: Option<&Value>,
-    ) -> Result<(), AndromedaError> {
+    pub async fn update_instance(&self, params: UpdateInstanceParams<'_>) -> Result<(), AndromedaError> {
         let result = sqlx::query(
             r#"
             UPDATE attribute_history
@@ -273,23 +272,26 @@ impl TemporalRepository {
             RETURNING instance_id
             "#,
         )
-        .bind(instance_id)
-        .bind(entity_id)
-        .bind(attribute_name)
-        .bind(value_number)
-        .bind(value_string)
-        .bind(value_bool)
-        .bind(value_geo)
-        .bind(value_object)
-        .bind(value_datetime)
-        .bind(value_uri)
-        .bind(observed_at)
-        .bind(metadata)
+        .bind(params.instance_id)
+        .bind(params.entity_id)
+        .bind(params.attribute_name)
+        .bind(params.values.value_number)
+        .bind(params.values.value_string)
+        .bind(params.values.value_bool)
+        .bind(params.values.value_geo)
+        .bind(params.values.value_object)
+        .bind(params.values.value_datetime)
+        .bind(params.values.value_uri)
+        .bind(params.observed_at)
+        .bind(params.values.metadata)
         .fetch_optional(&self.pool)
         .await?;
 
         if result.is_none() {
-            return Err(AndromedaError::not_found(format!("Attribute instance {} not found", instance_id)));
+            return Err(AndromedaError::not_found(format!(
+                "Attribute instance {} not found",
+                params.instance_id
+            )));
         }
 
         Ok(())

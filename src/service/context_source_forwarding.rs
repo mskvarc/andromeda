@@ -121,6 +121,28 @@ pub struct ForwardedWriteResult {
     pub exclusive_attrs: Vec<String>,
 }
 
+pub struct ForwardProvisionRequest<'a> {
+    pub entity_id: Option<&'a str>,
+    pub entity_type_compact: Option<&'a str>,
+    pub method: reqwest::Method,
+    pub body: Option<&'a [u8]>,
+    pub context_url: Option<&'a str>,
+    pub context: &'a ContextSpec,
+    pub operation: ForwardingOperation,
+    pub path_suffix: Option<&'a str>,
+    pub query_string: Option<&'a str>,
+}
+
+pub struct ForwardBatchProvisionRequest<'a> {
+    pub entity_type_compact: Option<&'a str>,
+    pub body: &'a [u8],
+    pub context_url: Option<&'a str>,
+    pub context: &'a ContextSpec,
+    pub operation: ForwardingOperation,
+    pub batch_path: &'a str,
+    pub query_string: Option<&'a str>,
+}
+
 /// Marker indicating an exclusive CSR matched the entity but not the requested operation.
 /// Used to detect when exclusive data exists but can't be forwarded (e.g. no redirectionOps).
 pub struct UnforwardableExclusiveCsr;
@@ -274,29 +296,24 @@ impl ContextSourceForwardingService {
     /// `query_string` appends query params to the forwarded URL (e.g., "options=noOverwrite").
     pub async fn forward_provision(
         &self,
-        entity_id: Option<&str>,
-        entity_type_compact: Option<&str>,
-        method: reqwest::Method,
-        body: Option<&[u8]>,
-        context_url: Option<&str>,
-        context: &ContextSpec,
-        operation: ForwardingOperation,
-        path_suffix: Option<&str>,
-        query_string: Option<&str>,
+        request: ForwardProvisionRequest<'_>,
     ) -> Result<(Vec<ForwardedWriteResult>, Vec<UnforwardableExclusiveCsr>), AndromedaError> {
-        let expanded_type = if let Some(t) = entity_type_compact {
-            Some(self.engine.expand_type(t, context).await?)
+        let expanded_type = if let Some(t) = request.entity_type_compact {
+            Some(self.engine.expand_type(t, request.context).await?)
         } else {
             None
         };
 
-        let csrs = self.csr_repo.find_matching(expanded_type.as_deref(), entity_id).await?;
+        let csrs = self
+            .csr_repo
+            .find_matching(expanded_type.as_deref(), request.entity_id)
+            .await?;
 
         // Separate CSRs into those that match the operation and exclusive ones that don't
         let mut matching_csrs = Vec::new();
         let mut unforwardable = Vec::new();
         for csr in csrs {
-            if operation.matches(&csr) {
+            if request.operation.matches(&csr) {
                 matching_csrs.push(csr);
             } else if csr.mode == Some(ForwardingMode::Exclusive) {
                 // Per spec 4.3.6.3: exclusive CSR exists but doesn't support this operation
@@ -310,20 +327,20 @@ impl ContextSourceForwardingService {
 
         let mut results = Vec::new();
         for csr in matching_csrs {
-            let url = if method == reqwest::Method::POST && path_suffix.is_none() {
+            let url = if request.method == reqwest::Method::POST && request.path_suffix.is_none() {
                 // Entity create: POST /entities (no entity ID in path)
                 build_create_url(&csr.endpoint)
             } else {
-                let id = entity_id.unwrap_or("");
+                let id = request.entity_id.unwrap_or("");
                 let encoded_id = percent_encoding::utf8_percent_encode(id, PATH_ENCODE_SET).to_string();
                 let base = csr.endpoint.trim_end_matches('/');
-                let suffix = path_suffix.unwrap_or("");
-                match query_string {
+                let suffix = request.path_suffix.unwrap_or("");
+                match request.query_string {
                     Some(qs) if !qs.is_empty() => format!("{base}/ngsi-ld/v1/entities/{encoded_id}{suffix}?{qs}"),
                     _ => format!("{base}/ngsi-ld/v1/entities/{encoded_id}{suffix}"),
                 }
             };
-            debug!("Forwarding {} to context source {}: {}", method, csr.id, url);
+            debug!("Forwarding {} to context source {}: {}", request.method, csr.id, url);
 
             let exclusive_attrs = if csr.mode == Some(ForwardingMode::Exclusive) {
                 collect_exclusive_attrs(&csr)
@@ -331,7 +348,16 @@ impl ContextSourceForwardingService {
                 Vec::new()
             };
 
-            match self.forward_write(&url, method.clone(), body, context_url, csr.tenant.as_deref()).await {
+            match self
+                .forward_write(
+                    &url,
+                    request.method.clone(),
+                    request.body,
+                    request.context_url,
+                    csr.tenant.as_deref(),
+                )
+                .await
+            {
                 Ok((status, response_body)) => {
                     let mode = csr.mode.unwrap_or_default();
                     results.push(ForwardedWriteResult {
@@ -342,7 +368,10 @@ impl ContextSourceForwardingService {
                     });
                 }
                 Err(e) => {
-                    warn!("Failed to forward {} to context source {}: {}", method, csr.id, e);
+                    warn!(
+                        "Failed to forward {} to context source {}: {}",
+                        request.method, csr.id, e
+                    );
                 }
             }
         }
@@ -357,22 +386,19 @@ impl ContextSourceForwardingService {
     /// `batch_path` is the operation endpoint (e.g., "/entityOperations/create").
     pub async fn forward_batch_provision(
         &self,
-        entity_type_compact: Option<&str>,
-        body: &[u8],
-        context_url: Option<&str>,
-        context: &ContextSpec,
-        operation: ForwardingOperation,
-        batch_path: &str,
-        query_string: Option<&str>,
+        request: ForwardBatchProvisionRequest<'_>,
     ) -> Result<Vec<ForwardedWriteResult>, AndromedaError> {
-        let expanded_type = if let Some(t) = entity_type_compact {
-            Some(self.engine.expand_type(t, context).await?)
+        let expanded_type = if let Some(t) = request.entity_type_compact {
+            Some(self.engine.expand_type(t, request.context).await?)
         } else {
             None
         };
 
         let csrs = self.csr_repo.find_matching(expanded_type.as_deref(), None).await?;
-        let matching_csrs: Vec<_> = csrs.into_iter().filter(|csr| operation.matches(csr)).collect();
+        let matching_csrs: Vec<_> = csrs
+            .into_iter()
+            .filter(|csr| request.operation.matches(csr))
+            .collect();
 
         if matching_csrs.is_empty() {
             return Ok(Vec::new());
@@ -381,11 +407,14 @@ impl ContextSourceForwardingService {
         let mut results = Vec::new();
         for csr in matching_csrs {
             let base = csr.endpoint.trim_end_matches('/');
-            let url = match query_string {
-                Some(qs) if !qs.is_empty() => format!("{base}/ngsi-ld/v1{batch_path}?{qs}"),
-                _ => format!("{base}/ngsi-ld/v1{batch_path}"),
+            let url = match request.query_string {
+                Some(qs) if !qs.is_empty() => format!("{base}/ngsi-ld/v1{}?{qs}", request.batch_path),
+                _ => format!("{base}/ngsi-ld/v1{}", request.batch_path),
             };
-            debug!("Forwarding batch {} to context source {}: {}", batch_path, csr.id, url);
+            debug!(
+                "Forwarding batch {} to context source {}: {}",
+                request.batch_path, csr.id, url
+            );
 
             let exclusive_attrs = if csr.mode == Some(ForwardingMode::Exclusive) {
                 collect_exclusive_attrs(&csr)
@@ -394,7 +423,13 @@ impl ContextSourceForwardingService {
             };
 
             match self
-                .forward_write(&url, reqwest::Method::POST, Some(body), context_url, csr.tenant.as_deref())
+                .forward_write(
+                    &url,
+                    reqwest::Method::POST,
+                    Some(request.body),
+                    request.context_url,
+                    csr.tenant.as_deref(),
+                )
                 .await
             {
                 Ok((status, response_body)) => {

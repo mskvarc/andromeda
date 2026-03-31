@@ -143,15 +143,17 @@ impl MqttConnectionManager {
         let envelope = with_tenant_metadata(build_envelope(payload, content_type, receiver_info, jsonld_context), tenant);
 
         let qos = match config.qos {
-            MqttQoS::AtMostOnce => 0,
-            MqttQoS::AtLeastOnce => 1,
-            MqttQoS::ExactlyOnce => 2,
+            MqttQoS::AtMost => 0,
+            MqttQoS::AtLeast => 1,
+            MqttQoS::Exactly => 2,
         };
 
         match &handle.inner {
             MqttClientInner::V5 { client, .. } => {
-                let mut properties = rumqttc::v5::mqttbytes::v5::PublishProperties::default();
-                properties.content_type = Some(content_type.to_string());
+                let mut properties = rumqttc::v5::mqttbytes::v5::PublishProperties {
+                    content_type: Some(content_type.to_string()),
+                    ..Default::default()
+                };
 
                 if let Some(infos) = receiver_info {
                     for info in infos {

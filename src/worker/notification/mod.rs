@@ -33,7 +33,7 @@ use tracing::{debug, error, info};
 use uuid::Uuid;
 
 use matching::{find_matching_subscriptions, matches_entity_filters};
-use payload::build_notification_data;
+use payload::{NotificationBuildParams, build_notification_data};
 
 #[async_trait::async_trait]
 impl super::Worker for NotificationWorker {
@@ -56,28 +56,32 @@ pub struct NotificationWorker {
     tenant: crate::tenancy::TenantRef,
 }
 
+pub struct NotificationWorkerDeps {
+    pub sub_repo: SubscriptionRepository,
+    pub entity_repo: EntityRepository,
+    pub entity_query: EntityQueryService,
+    pub engine: JsonLdEngine,
+    pub mqtt_manager: Arc<MqttConnectionManager>,
+    pub tenant: crate::tenancy::TenantRef,
+}
+
 impl NotificationWorker {
     pub fn new(
         change_rx: broadcast::Receiver<ChangeEvent>,
         sub_change_rx: broadcast::Receiver<SubscriptionChange>,
-        sub_repo: SubscriptionRepository,
-        entity_repo: EntityRepository,
-        entity_query: EntityQueryService,
-        engine: JsonLdEngine,
-        mqtt_manager: Arc<MqttConnectionManager>,
-        tenant: crate::tenancy::TenantRef,
+        deps: NotificationWorkerDeps,
     ) -> Self {
         Self {
             change_rx,
             sub_change_rx,
-            sub_repo,
-            entity_repo,
-            entity_query,
+            sub_repo: deps.sub_repo,
+            entity_repo: deps.entity_repo,
+            entity_query: deps.entity_query,
             cache: Arc::new(RwLock::new(HashMap::new())),
             http_client: reqwest::ClientBuilder::new().http1_title_case_headers().build().unwrap(),
-            mqtt_manager,
-            engine,
-            tenant,
+            mqtt_manager: deps.mqtt_manager,
+            engine: deps.engine,
+            tenant: deps.tenant,
         }
     }
 
@@ -307,16 +311,16 @@ impl NotificationWorker {
 
             let data = match entity_data {
                 Some(ref d) => {
-                    build_notification_data(
-                        &self.engine,
-                        d,
-                        event.previous_attributes.as_ref(),
-                        &compiled_sub,
-                        &event.trigger_reason,
-                        &event.changed_attributes,
-                        event.occurred_at,
-                        &self.entity_query,
-                    )
+                    build_notification_data(NotificationBuildParams {
+                        engine: &self.engine,
+                        entity_data: d,
+                        previous_attributes: event.previous_attributes.as_ref(),
+                        sub: &compiled_sub,
+                        trigger_reason: &event.trigger_reason,
+                        changed_attributes: &event.changed_attributes,
+                        occurred_at: event.occurred_at,
+                        entity_query: &self.entity_query,
+                    })
                     .await
                 }
                 None => continue,

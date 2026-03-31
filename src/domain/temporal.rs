@@ -45,13 +45,17 @@ pub enum TimeRel {
 pub enum TimeProp {
     /// Select by observedAt timestamp (default).
     #[default]
-    ObservedAt,
+    #[strum(serialize = "observedAt")]
+    Observed,
     /// Select by createdAt timestamp.
-    CreatedAt,
+    #[strum(serialize = "createdAt")]
+    Created,
     /// Select by modifiedAt timestamp.
-    ModifiedAt,
+    #[strum(serialize = "modifiedAt")]
+    Modified,
     /// Select by deletedAt timestamp.
-    DeletedAt,
+    #[strum(serialize = "deletedAt")]
+    Deleted,
 }
 
 /// Response format for temporal queries (clause 6.3.12).
@@ -122,12 +126,12 @@ mod tests {
 
     #[test]
     fn time_prop_default_is_observed_at() {
-        assert_eq!(TimeProp::default(), TimeProp::ObservedAt);
+        assert_eq!(TimeProp::default(), TimeProp::Observed);
     }
 
     #[test]
     fn time_prop_display_and_parse_round_trip() {
-        for variant in [TimeProp::ObservedAt, TimeProp::CreatedAt, TimeProp::ModifiedAt, TimeProp::DeletedAt] {
+        for variant in [TimeProp::Observed, TimeProp::Created, TimeProp::Modified, TimeProp::Deleted] {
             let s = variant.to_string();
             let parsed = TimeProp::from_str(&s).unwrap();
             assert_eq!(parsed, variant, "round-trip failed for {variant}");
