@@ -3,7 +3,7 @@ use crate::{
     core::config::{Configuration, MultitenancyConfig},
     error::AndromedaError,
 };
-use sqlx::{Connection, Executor, PgConnection, Row, migrate::MigrateError, postgres::PgPoolOptions};
+use sqlx::{Connection, Executor, PgConnection, Row, postgres::PgPoolOptions};
 use std::{
     collections::{HashMap, hash_map::Entry},
     hash::{Hash, Hasher},
@@ -82,7 +82,7 @@ impl TenantRuntimeManager {
             default_db_name: db_name_from_url(&config.database.url)?,
         });
 
-        run_migrations_with_recovery(&manager.main_pool, true).await?;
+        migrate_main_db(&manager.main_pool).await?;
         manager.ensure_default_tenant_registry_row().await?;
 
         if manager.multitenancy.enabled {
@@ -241,36 +241,29 @@ impl TenantRuntimeManager {
             .max_connections(self.config.database.max_connections)
             .connect(&tenant_url)
             .await?;
-        sqlx::migrate!("./src/repository/sql").run(&pool).await?;
+        migrate_tenant_db(&pool).await?;
         pool.close().await;
 
         Ok(db_name)
     }
 }
 
-pub(crate) async fn run_migrations_with_recovery(pool: &sqlx::PgPool, is_main_db: bool) -> Result<(), AndromedaError> {
-    match sqlx::migrate!("./src/repository/sql").run(pool).await {
-        Ok(()) => Ok(()),
-        Err(MigrateError::VersionMissing(10001)) if is_main_db => {
-            let has_tenants: bool = sqlx::query_scalar("SELECT to_regclass('public.tenants') IS NOT NULL").fetch_one(pool).await?;
-            if has_tenants {
-                return Err(MigrateError::VersionMissing(10001).into());
-            }
-            sqlx::query("DELETE FROM _sqlx_migrations WHERE version = 10001").execute(pool).await?;
-            sqlx::migrate!("./src/repository/sql").run(pool).await?;
-            Ok(())
-        }
-        Err(MigrateError::VersionMismatch(1)) => {
-            let has_entities: bool = sqlx::query_scalar("SELECT to_regclass('public.entities') IS NOT NULL").fetch_one(pool).await?;
-            if has_entities {
-                return Err(MigrateError::VersionMismatch(1).into());
-            }
-            sqlx::query("DELETE FROM _sqlx_migrations WHERE version = 1").execute(pool).await?;
-            sqlx::migrate!("./src/repository/sql").run(pool).await?;
-            Ok(())
-        }
-        Err(err) => Err(err.into()),
-    }
+pub(crate) async fn migrate_main_db(pool: &sqlx::PgPool) -> Result<(), AndromedaError> {
+    let mut tenant_migrator = sqlx::migrate!("./migrations/tenant");
+    tenant_migrator.set_ignore_missing(true);
+    tenant_migrator.run(pool).await?;
+
+    let mut platform_migrator = sqlx::migrate!("./migrations/platform");
+    platform_migrator.set_ignore_missing(true);
+    platform_migrator.run(pool).await?;
+    Ok(())
+}
+
+pub(crate) async fn migrate_tenant_db(pool: &sqlx::PgPool) -> Result<(), AndromedaError> {
+    let mut tenant_migrator = sqlx::migrate!("./migrations/tenant");
+    tenant_migrator.set_ignore_missing(true);
+    tenant_migrator.run(pool).await?;
+    Ok(())
 }
 
 fn trim_oldest(runtimes: &mut HashMap<TenantRef, TenantRuntime>, max_cached: usize) -> usize {

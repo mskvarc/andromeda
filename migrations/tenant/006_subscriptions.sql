@@ -67,6 +67,9 @@ CREATE TABLE subscriptions (
     -- Context source filter query string
     csf TEXT,
 
+    -- When true, match only local entities (no distributed federation match).
+    local_only BOOLEAN NOT NULL DEFAULT FALSE,
+
     -- Dataset IDs to filter notifications by
     dataset_id TEXT[],
 

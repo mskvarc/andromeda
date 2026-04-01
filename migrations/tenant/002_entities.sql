@@ -37,6 +37,10 @@ CREATE TABLE entities (
     -- attribute data. Rust maps this via sqlx::types::Json<Value>.
     payload JSONB NOT NULL,
 
+    -- Transient storage support (NGSI-LD §4.22).
+    -- When set, the entity becomes invalid after this timestamp.
+    expires_at TIMESTAMPTZ,
+
     -- System-managed temporal properties (sysAttrs)
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     modified_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -53,3 +57,6 @@ CREATE INDEX idx_entities_location ON entities USING GIST (location);
 
 -- Ad-hoc JSONB queries via the q parameter (JSONPath / @> operators)
 CREATE INDEX idx_entities_payload ON entities USING GIN (payload);
+
+-- Efficient expiration worker lookup
+CREATE INDEX idx_entities_expires_at ON entities(expires_at) WHERE expires_at IS NOT NULL;

@@ -98,6 +98,9 @@ CREATE TABLE context_source_registrations (
     -- Arbitrary key-value metadata about the Context Source
     context_source_info JSONB,
 
+    -- Non-standard CSR properties (for response passthrough and q filtering)
+    additional_properties JSONB,
+
     -- The @context URI associated with this registration
     jsonld_context TEXT,
 

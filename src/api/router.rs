@@ -178,7 +178,7 @@ fn build_v1_router() -> Router<AppState> {
 pub async fn build_tenant_state(config: &Configuration, db_url: &str, tenant: TenantRef) -> Result<(AndromedaState, Vec<JoinHandle<()>>), AndromedaError> {
     let pool = PgPoolOptions::new().max_connections(config.database.max_connections).connect(db_url).await?;
 
-    crate::tenancy::run_migrations_with_recovery(&pool, false).await?;
+    crate::tenancy::migrate_tenant_db(&pool).await?;
 
     let (change_tx, _) = tokio::sync::broadcast::channel::<ChangeEvent>(4096);
     let (sub_change_tx, _) = tokio::sync::broadcast::channel::<SubscriptionChange>(256);
