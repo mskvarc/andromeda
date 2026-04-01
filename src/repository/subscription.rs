@@ -16,13 +16,13 @@ impl SubscriptionRepository {
         sqlx::query(
             r#"
             INSERT INTO subscriptions (
-                id, type, subscription_name, description, entities,
+                id, kind, type, subscription_name, description, entities,
                 watched_attributes, notification_trigger, time_interval,
                 q, geo_q, scope_q, csf, dataset_id, is_active, notification,
                 expires_at, throttling, status, temporal_q, lang,
                 jsonld_context, local_only, created_at, modified_at
             ) VALUES (
-                $1, 'Subscription', $2, $3, $4,
+                $1, 'entity', 'Subscription', $2, $3, $4,
                 $5, $6, $7,
                 $8, $9, $10, $11, $12, $13, $14,
                 $15, $16, $17, $18, $19,
@@ -83,7 +83,7 @@ impl SubscriptionRepository {
                 jsonld_context = $19,
                 local_only = $20,
                 modified_at = NOW()
-            WHERE id = $1
+            WHERE id = $1 AND kind = 'entity'
             "#,
         )
         .bind(id)
@@ -115,7 +115,7 @@ impl SubscriptionRepository {
 
 crate::impl_subscription_store!(
     SubscriptionRepository,
-    table: "subscriptions",
+    kind: "entity",
     columns: "id, type, subscription_name, description, entities, \
               watched_attributes, notification_trigger, time_interval, \
               q, geo_q, scope_q, csf, dataset_id, is_active, notification, \

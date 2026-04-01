@@ -58,7 +58,19 @@ CREATE TABLE attribute_history (
     metadata JSONB,
 
     -- Uniqueness: one observation per attribute per timestamp per instance
-    UNIQUE (tea_id, time, instance_id)
+    UNIQUE (tea_id, time, instance_id),
+
+    -- Exactly one typed value column must be populated per row.
+    -- The application layer determines which column based on TEA's value_type.
+    CHECK (
+        (CASE WHEN value_number IS NOT NULL THEN 1 ELSE 0 END +
+         CASE WHEN value_string IS NOT NULL THEN 1 ELSE 0 END +
+         CASE WHEN value_bool IS NOT NULL THEN 1 ELSE 0 END +
+         CASE WHEN value_geo IS NOT NULL THEN 1 ELSE 0 END +
+         CASE WHEN value_object IS NOT NULL THEN 1 ELSE 0 END +
+         CASE WHEN value_datetime IS NOT NULL THEN 1 ELSE 0 END +
+         CASE WHEN value_uri IS NOT NULL THEN 1 ELSE 0 END) = 1
+    )
 );
 
 -- Convert to a TimescaleDB hypertable, partitioned by time in 1-day chunks.
@@ -78,3 +90,8 @@ SELECT add_compression_policy('attribute_history', INTERVAL '7 days');
 
 -- Primary lookup pattern: retrieve history for a specific attribute, newest first.
 CREATE INDEX idx_attribute_history_tea_time ON attribute_history(tea_id, time DESC);
+
+-- Temporal queries commonly filter by observedAt range (NGSI-LD timerel queries).
+-- Without this, range queries on observed_at would require sequential scans within chunks.
+CREATE INDEX idx_attribute_history_observed_at ON attribute_history(tea_id, observed_at DESC)
+    WHERE observed_at IS NOT NULL;

@@ -9,7 +9,7 @@ CREATE TABLE jsonld_contexts (
     url TEXT UNIQUE,
 
     -- "Cached", "Hosted", or "ImplicitlyCreated"
-    kind TEXT NOT NULL,
+    kind TEXT NOT NULL CHECK (kind IN ('Cached', 'Hosted', 'ImplicitlyCreated')),
 
     -- The actual JSON-LD payload
     payload JSONB NOT NULL,
@@ -17,7 +17,7 @@ CREATE TABLE jsonld_contexts (
     -- Metadata required by Spec
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     last_usage TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    number_of_hits INTEGER NOT NULL DEFAULT 0,
+    number_of_hits BIGINT NOT NULL DEFAULT 0,
     expires_at TIMESTAMPTZ, -- Optional: for cache invalidation logic
 
     -- Optional: Custom extra info (e.g., headers from the source)

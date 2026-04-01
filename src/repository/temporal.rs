@@ -164,24 +164,30 @@ impl TemporalRepository {
 
     /// Insert one observation into attribute_history.
     /// Only one value column should be non-NULL, determined by the TEA's value_type.
+    ///
+    /// Deduplication: removes conflicting rows before insertion. Two dedup axes:
+    ///   1. Same (tea_id, instance_id) — entity update re-records the same attribute instance
+    ///   2. Same (tea_id, observed_at) — temporal create_or_update merges at the same timestamp
+    ///
+    /// Note: INSERT ON CONFLICT is not viable here because TimescaleDB requires
+    /// the partitioning column (`time`) in all unique constraints, but dedup keys
+    /// do not include `time` (instance_id may appear at a new timestamp, observed_at
+    /// may differ from `time`).
     pub async fn insert_history(&self, params: InsertHistoryParams<'_>) -> Result<(), AndromedaError> {
         let mut tx = self.pool.begin().await?;
 
-        // Remove any existing row with the same (tea_id, instance_id) to avoid
-        // duplicates when an entity update re-records the same attribute instance.
-        sqlx::query("DELETE FROM attribute_history WHERE tea_id = $1 AND instance_id = $2")
-            .bind(params.tea_id)
-            .bind(params.instance_id)
-            .execute(&mut *tx)
-            .await?;
-
-        // Also remove any existing row with the same (tea_id, observed_at) to handle
-        // temporal entity updates where the same time instant gets a new instance_id.
-        // Per NGSI-LD spec, create_or_update should merge/replace instances at the same time.
+        // Single DELETE covering both dedup axes in one round-trip.
         if let Some(obs) = params.observed_at {
-            sqlx::query("DELETE FROM attribute_history WHERE tea_id = $1 AND observed_at = $2")
+            sqlx::query("DELETE FROM attribute_history WHERE tea_id = $1 AND (instance_id = $2 OR observed_at = $3)")
                 .bind(params.tea_id)
+                .bind(params.instance_id)
                 .bind(obs)
+                .execute(&mut *tx)
+                .await?;
+        } else {
+            sqlx::query("DELETE FROM attribute_history WHERE tea_id = $1 AND instance_id = $2")
+                .bind(params.tea_id)
+                .bind(params.instance_id)
                 .execute(&mut *tx)
                 .await?;
         }

@@ -28,8 +28,12 @@ CREATE TABLE temporal_entity_attributes (
     attribute_name TEXT NOT NULL,
 
     -- NGSI-LD attribute meta-type:
-    -- "Property", "Relationship", "GeoProperty", "VocabProperty", "LanguageProperty"
-    attribute_type TEXT NOT NULL,
+    -- "Property", "Relationship", "GeoProperty", "VocabProperty", "LanguageProperty",
+    -- "JsonProperty", "ListProperty", "ListRelationship"
+    attribute_type TEXT NOT NULL CHECK (attribute_type IN (
+        'Property', 'Relationship', 'GeoProperty', 'VocabProperty',
+        'LanguageProperty', 'JsonProperty', 'ListProperty', 'ListRelationship'
+    )),
 
     -- Multi-attribute discriminator (clause 4.5.5).
     -- NULL means the default (un-named) instance.
@@ -38,7 +42,9 @@ CREATE TABLE temporal_entity_attributes (
     -- Describes the runtime type of the value stored in attribute_history,
     -- so the Rust layer knows which column to read/write:
     -- "Number", "String", "Boolean", "Geometry", "Object", "DateTime", "Uri"
-    value_type TEXT NOT NULL,
+    value_type TEXT NOT NULL CHECK (value_type IN (
+        'Number', 'String', 'Boolean', 'Geometry', 'Object', 'DateTime', 'Uri'
+    )),
 
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 

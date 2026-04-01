@@ -9,7 +9,6 @@ const TRUNCATE_ALL: &str = "\
         attribute_history, \
         subscriptions, \
         context_source_registrations, \
-        csource_subscriptions, \
         snapshots \
     CASCADE";
 

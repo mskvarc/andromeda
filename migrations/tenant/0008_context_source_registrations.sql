@@ -80,7 +80,7 @@ CREATE TABLE context_source_registrations (
     -- "exclusive"  — only this source provides matching entities
     -- "redirect"   — redirect the client to this source
     -- "auxiliary"   — supplementary data, lower priority
-    mode TEXT NOT NULL DEFAULT 'inclusive',
+    mode TEXT NOT NULL DEFAULT 'inclusive' CHECK (mode IN ('inclusive', 'exclusive', 'redirect', 'auxiliary')),
 
     -- Subset of API operations the source supports (clause 4.20).
     -- NULL means the default "federationOps" set.
@@ -105,7 +105,7 @@ CREATE TABLE context_source_registrations (
     jsonld_context TEXT,
 
     -- Health status: "ok" or "failed"
-    status TEXT NOT NULL DEFAULT 'ok',
+    status TEXT NOT NULL DEFAULT 'ok' CHECK (status IN ('ok', 'failed')),
 
     -- Forwarding statistics
     times_sent INTEGER NOT NULL DEFAULT 0,

@@ -53,18 +53,20 @@ pub trait SubscriptionStore: Send + Sync {
 
 /// Generates a `SubscriptionStore` implementation for the given type using static SQL strings.
 ///
+/// All subscription types share the `subscriptions` table, discriminated by the `kind` column.
+///
 /// Parameters:
 /// - `$type`: the struct to impl `SubscriptionStore` for
-/// - `table`: SQL table name (literal string)
+/// - `kind`: discriminator value ("entity" or "csource")
 /// - `columns`: comma-separated column list (literal string)
-/// - `has_dataset_id`: whether the table has a `dataset_id` column (bool expression)
+/// - `has_dataset_id`: whether to read the `dataset_id` column from rows (bool expression)
 #[macro_export]
 macro_rules! impl_subscription_store {
-    ($type:ty, table: $table:literal, columns: $columns:literal, has_dataset_id: $hdi:expr) => {
+    ($type:ty, kind: $kind:literal, columns: $columns:literal, has_dataset_id: $hdi:expr) => {
         #[async_trait::async_trait]
         impl $crate::repository::subscription_store::SubscriptionStore for $type {
             async fn get(&self, id: &str) -> Result<Option<$crate::domain::subscription::Subscription>, $crate::error::AndromedaError> {
-                let row = sqlx::query(concat!("SELECT ", $columns, " FROM ", $table, " WHERE id = $1"))
+                let row = sqlx::query(concat!("SELECT ", $columns, " FROM subscriptions WHERE id = $1 AND kind = '", $kind, "'"))
                     .bind(id)
                     .fetch_optional(&self.pool)
                     .await?;
@@ -83,13 +85,17 @@ macro_rules! impl_subscription_store {
                 let limit = limit.unwrap_or(100);
                 let offset = offset.unwrap_or(0);
 
-                let count_row: (i64,) = sqlx::query_as(concat!("SELECT COUNT(*) FROM ", $table)).fetch_one(&self.pool).await?;
+                let count_row: (i64,) = sqlx::query_as(concat!("SELECT COUNT(*) FROM subscriptions WHERE kind = '", $kind, "'"))
+                    .fetch_one(&self.pool)
+                    .await?;
 
                 let rows = sqlx::query(concat!(
                     "SELECT ",
                     $columns,
-                    " FROM ",
-                    $table,
+                    " FROM subscriptions",
+                    " WHERE kind = '",
+                    $kind,
+                    "'",
                     " ORDER BY created_at ASC LIMIT $1 OFFSET $2"
                 ))
                 .bind(limit)
@@ -106,7 +112,7 @@ macro_rules! impl_subscription_store {
             }
 
             async fn delete(&self, id: &str) -> Result<bool, $crate::error::AndromedaError> {
-                let result = sqlx::query(concat!("DELETE FROM ", $table, " WHERE id = $1"))
+                let result = sqlx::query(concat!("DELETE FROM subscriptions WHERE id = $1 AND kind = '", $kind, "'"))
                     .bind(id)
                     .execute(&self.pool)
                     .await?;
@@ -115,17 +121,27 @@ macro_rules! impl_subscription_store {
             }
 
             async fn exists(&self, id: &str) -> Result<bool, $crate::error::AndromedaError> {
-                let row: (bool,) = sqlx::query_as(concat!("SELECT EXISTS(SELECT 1 FROM ", $table, " WHERE id = $1)"))
-                    .bind(id)
-                    .fetch_one(&self.pool)
-                    .await?;
+                let row: (bool,) = sqlx::query_as(concat!(
+                    "SELECT EXISTS(SELECT 1 FROM subscriptions WHERE id = $1 AND kind = '",
+                    $kind,
+                    "')"
+                ))
+                .bind(id)
+                .fetch_one(&self.pool)
+                .await?;
                 Ok(row.0)
             }
 
             async fn list_active(&self) -> Result<Vec<$crate::domain::subscription::Subscription>, $crate::error::AndromedaError> {
-                let rows = sqlx::query(concat!("SELECT ", $columns, " FROM ", $table, " WHERE status = 'active'"))
-                    .fetch_all(&self.pool)
-                    .await?;
+                let rows = sqlx::query(concat!(
+                    "SELECT ",
+                    $columns,
+                    " FROM subscriptions WHERE status = 'active' AND kind = '",
+                    $kind,
+                    "'"
+                ))
+                .fetch_all(&self.pool)
+                .await?;
 
                 rows.iter()
                     .map(|row| $crate::repository::subscription_store::build_subscription_from_row(row, $hdi))
@@ -135,10 +151,11 @@ macro_rules! impl_subscription_store {
             async fn claim_notification_slot(&self, id: &str, throttling_secs: Option<f64>) -> Result<bool, $crate::error::AndromedaError> {
                 let result = if let Some(throttle) = throttling_secs {
                     sqlx::query(concat!(
-                        "UPDATE ",
-                        $table,
+                        "UPDATE subscriptions",
                         " SET times_sent = times_sent + 1, last_notification = NOW(), modified_at = NOW()",
-                        " WHERE id = $1 AND status = 'active'",
+                        " WHERE id = $1 AND status = 'active' AND kind = '",
+                        $kind,
+                        "'",
                         " AND (last_notification IS NULL",
                         "      OR last_notification <= NOW() - make_interval(secs => $2))"
                     ))
@@ -148,10 +165,11 @@ macro_rules! impl_subscription_store {
                     .await?
                 } else {
                     sqlx::query(concat!(
-                        "UPDATE ",
-                        $table,
+                        "UPDATE subscriptions",
                         " SET times_sent = times_sent + 1, last_notification = NOW(), modified_at = NOW()",
-                        " WHERE id = $1 AND status = 'active'"
+                        " WHERE id = $1 AND status = 'active' AND kind = '",
+                        $kind,
+                        "'"
                     ))
                     .bind(id)
                     .execute(&self.pool)
@@ -162,27 +180,37 @@ macro_rules! impl_subscription_store {
             }
 
             async fn mark_success(&self, id: &str) -> Result<(), $crate::error::AndromedaError> {
-                sqlx::query(concat!("UPDATE ", $table, " SET last_success = NOW(), modified_at = NOW() WHERE id = $1"))
-                    .bind(id)
-                    .execute(&self.pool)
-                    .await?;
+                sqlx::query(concat!(
+                    "UPDATE subscriptions SET last_success = NOW(), modified_at = NOW() WHERE id = $1 AND kind = '",
+                    $kind,
+                    "'"
+                ))
+                .bind(id)
+                .execute(&self.pool)
+                .await?;
                 Ok(())
             }
 
             async fn mark_failure(&self, id: &str) -> Result<(), $crate::error::AndromedaError> {
-                sqlx::query(concat!("UPDATE ", $table, " SET last_failure = NOW(), modified_at = NOW() WHERE id = $1"))
-                    .bind(id)
-                    .execute(&self.pool)
-                    .await?;
+                sqlx::query(concat!(
+                    "UPDATE subscriptions SET last_failure = NOW(), modified_at = NOW() WHERE id = $1 AND kind = '",
+                    $kind,
+                    "'"
+                ))
+                .bind(id)
+                .execute(&self.pool)
+                .await?;
                 Ok(())
             }
 
             async fn expire_due(&self) -> Result<Vec<String>, $crate::error::AndromedaError> {
                 let rows = sqlx::query(concat!(
-                    "UPDATE ",
-                    $table,
+                    "UPDATE subscriptions",
                     " SET status = 'expired', is_active = false, modified_at = NOW()",
                     " WHERE status != 'expired' AND expires_at IS NOT NULL AND expires_at <= NOW()",
+                    " AND kind = '",
+                    $kind,
+                    "'",
                     " RETURNING id"
                 ))
                 .fetch_all(&self.pool)
@@ -213,9 +241,10 @@ macro_rules! impl_subscription_store {
                 let rows = sqlx::query(concat!(
                     "SELECT ",
                     $columns,
-                    " FROM ",
-                    $table,
-                    " WHERE status = 'active'",
+                    " FROM subscriptions",
+                    " WHERE status = 'active' AND kind = '",
+                    $kind,
+                    "'",
                     " AND time_interval IS NOT NULL",
                     " AND (",
                     "       (last_notification IS NULL",

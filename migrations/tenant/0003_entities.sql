@@ -60,3 +60,6 @@ CREATE INDEX idx_entities_payload ON entities USING GIN (payload);
 
 -- Efficient expiration worker lookup
 CREATE INDEX idx_entities_expires_at ON entities(expires_at) WHERE expires_at IS NOT NULL;
+
+-- Temporal system-attribute queries (timerel on modifiedAt)
+CREATE INDEX idx_entities_modified_at ON entities(modified_at);

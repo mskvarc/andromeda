@@ -29,6 +29,6 @@ pub struct ContextMetadata {
     pub expires_at: Option<DateTime<Utc>>,
     #[serde(with = "serde_helpers::rfc3339")]
     pub last_usage: DateTime<Utc>,
-    pub number_of_hits: i32,
+    pub number_of_hits: i64,
     pub extra_info: Option<Value>,
 }

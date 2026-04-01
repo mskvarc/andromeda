@@ -28,6 +28,11 @@ CREATE TABLE subscriptions (
     -- Subscription URI, e.g. "urn:ngsi-ld:Subscription:mySubscription"
     id TEXT NOT NULL PRIMARY KEY,
 
+    -- Discriminator: "entity" for entity subscriptions, "csource" for CSR subscriptions.
+    -- Both types share the same schema; csource subscriptions leave dataset_id
+    -- and local_only at their defaults (NULL / FALSE).
+    kind TEXT NOT NULL CHECK (kind IN ('entity', 'csource')),
+
     -- Always "Subscription" per spec
     type TEXT NOT NULL DEFAULT 'Subscription',
 
@@ -89,7 +94,7 @@ CREATE TABLE subscriptions (
     throttling DOUBLE PRECISION,
 
     -- Subscription lifecycle state: "active", "paused", "expired"
-    status TEXT NOT NULL DEFAULT 'active',
+    status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'paused', 'expired')),
 
     -- Temporal query — only used for Context Source Registration Subscriptions
     temporal_q JSONB,
@@ -112,8 +117,8 @@ CREATE TABLE subscriptions (
     modified_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- Lookup active subscriptions for notification matching
-CREATE INDEX idx_subscriptions_status ON subscriptions(status);
+-- Lookup active subscriptions for notification matching (partitioned by kind)
+CREATE INDEX idx_subscriptions_kind_status ON subscriptions(kind, status);
 
 -- Efficiently find and expire subscriptions past their expiry
 CREATE INDEX idx_subscriptions_expires_at ON subscriptions(expires_at);

@@ -15,14 +15,14 @@ impl CsourceSubscriptionRepository {
     pub async fn create(&self, id: &str, fields: &SubscriptionFields<'_>, status: SubscriptionStatus) -> Result<(), AndromedaError> {
         sqlx::query(
             r#"
-            INSERT INTO csource_subscriptions (
-                id, type, subscription_name, description, entities,
+            INSERT INTO subscriptions (
+                id, kind, type, subscription_name, description, entities,
                 watched_attributes, notification_trigger, time_interval,
                 q, geo_q, scope_q, csf, is_active, notification,
                 expires_at, throttling, status, temporal_q, lang,
                 jsonld_context, created_at, modified_at
             ) VALUES (
-                $1, 'Subscription', $2, $3, $4,
+                $1, 'csource', 'Subscription', $2, $3, $4,
                 $5, $6, $7,
                 $8, $9, $10, $11, $12, $13,
                 $14, $15, $16, $17, $18,
@@ -60,7 +60,7 @@ impl CsourceSubscriptionRepository {
     pub async fn update(&self, id: &str, fields: &SubscriptionFields<'_>, status: SubscriptionStatus) -> Result<bool, AndromedaError> {
         let result = sqlx::query(
             r#"
-            UPDATE csource_subscriptions SET
+            UPDATE subscriptions SET
                 subscription_name = $2,
                 description = $3,
                 entities = $4,
@@ -79,7 +79,7 @@ impl CsourceSubscriptionRepository {
                 lang = $17,
                 jsonld_context = $18,
                 modified_at = NOW()
-            WHERE id = $1
+            WHERE id = $1 AND kind = 'csource'
             "#,
         )
         .bind(id)
@@ -109,12 +109,12 @@ impl CsourceSubscriptionRepository {
 
 crate::impl_subscription_store!(
     CsourceSubscriptionRepository,
-    table: "csource_subscriptions",
+    kind: "csource",
     columns: "id, type, subscription_name, description, entities, \
               watched_attributes, notification_trigger, time_interval, \
               q, geo_q, scope_q, csf, is_active, notification, \
               expires_at, throttling, status, temporal_q, lang, \
-              jsonld_context, times_sent, last_notification, \
+              jsonld_context, local_only, times_sent, last_notification, \
               last_success, last_failure, created_at, modified_at",
     has_dataset_id: false
 );
