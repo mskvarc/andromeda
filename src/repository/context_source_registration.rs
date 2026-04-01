@@ -279,7 +279,7 @@ impl ContextSourceRegistrationRepository {
         };
         let information: Value = match &fragment.information {
             Some(v) => v.clone(),
-            None => serde_json::to_value(&existing.information).unwrap(),
+            None => serde_json::to_value(&existing.information)?,
         };
         let tenant: Option<String> = match &fragment.tenant {
             Some(v) => v.clone(),
@@ -394,7 +394,7 @@ impl ContextSourceRegistrationRepository {
         .bind(id)
         .bind(registration_name)
         .bind(description)
-        .bind(serde_json::to_value(&information).unwrap())
+        .bind(serde_json::to_value(&information)?)
         .bind(tenant.as_deref())
         .bind(observation_interval)
         .bind(management_interval)
@@ -500,7 +500,9 @@ fn row_to_csr(row: &sqlx::postgres::PgRow) -> Result<ContextSourceRegistration, 
     let endpoint: String = row.get("endpoint");
     let accept: Option<String> = row.get("accept");
     let mode_str: String = row.get("mode");
-    let mode: ForwardingMode = mode_str.parse().unwrap_or_default();
+    let mode: ForwardingMode = mode_str
+        .parse()
+        .map_err(|e: strum::ParseError| AndromedaError::internal(format!("Invalid forwarding mode '{}': {}", mode_str, e)))?;
     let operations: Option<Vec<CsrOperation>> = row
         .get::<Option<Vec<String>>, _>("operations")
         .or_else(|| Some(vec!["federationOps".to_string()]))

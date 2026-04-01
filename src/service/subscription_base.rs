@@ -108,8 +108,14 @@ where
 
         self.variant.expand_terms(&mut payload, context, base_url).await?;
 
-        let watched_attributes_vec: Option<Vec<String>> = payload.get("watchedAttributes").and_then(|v| serde_json::from_value(v.clone()).ok());
-        let notification_trigger_vec: Option<Vec<String>> = payload.get("notificationTrigger").and_then(|v| serde_json::from_value(v.clone()).ok());
+        let watched_attributes_vec: Option<Vec<String>> = payload
+            .get("watchedAttributes")
+            .map(|v| serde_json::from_value(v.clone()).map_err(|e| AndromedaError::bad_request_data(format!("Invalid 'watchedAttributes' value: {}", e))))
+            .transpose()?;
+        let notification_trigger_vec: Option<Vec<String>> = payload
+            .get("notificationTrigger")
+            .map(|v| serde_json::from_value(v.clone()).map_err(|e| AndromedaError::bad_request_data(format!("Invalid 'notificationTrigger' value: {}", e))))
+            .transpose()?;
         let dataset_id_vec: Option<Vec<String>> = if self.variant.use_dataset_id() {
             payload.get("datasetId").and_then(|v| serde_json::from_value(v.clone()).ok())
         } else {

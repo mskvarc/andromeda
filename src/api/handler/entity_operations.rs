@@ -1,16 +1,16 @@
 use crate::{
     api::{
-        error::{
-            ApiError,
-            batch::{BatchEntityError, BatchProblemDetail},
-            ngsi_ld::NgsiLdErrorType,
-        },
         extractor::{accept::AcceptFormat, context::ContextUrl, jsonld::JsonLd, params::ValidatedQuery},
         response::ngsild::NgsiLdCollectionResponse,
         tenant::TenantState,
     },
     domain::{entity::Entity, registration::ForwardingMode},
-    error::AndromedaError,
+    error::{
+        AndromedaError,
+        api::ApiError,
+        batch::{BatchEntityError, BatchProblemDetail},
+        ngsi_ld::NgsiLdErrorType,
+    },
     jsonld::ContextSpec,
     query::entity::EntityQueryParameters,
     service::context_source_forwarding::ForwardBatchProvisionRequest,
@@ -553,7 +553,7 @@ pub async fn batch_create(
             query_string: None,
         })
         .await
-        .unwrap_or_default();
+        .map_err(|e| ApiError::from_error(e.with_instance(uri.clone()), uri.clone()))?;
 
     let has_exclusive = forwarded.iter().any(|r| r.mode == ForwardingMode::Exclusive);
     let has_redirect = forwarded.iter().any(|r| r.mode == ForwardingMode::Redirect);
@@ -623,7 +623,7 @@ pub async fn batch_upsert(
             query_string: qs.as_deref(),
         })
         .await
-        .unwrap_or_default();
+        .map_err(|e| ApiError::from_error(e.with_instance(uri.clone()), uri.clone()))?;
 
     let has_exclusive = forwarded.iter().any(|r| r.mode == ForwardingMode::Exclusive);
     let has_redirect = forwarded.iter().any(|r| r.mode == ForwardingMode::Redirect);
@@ -698,7 +698,7 @@ pub async fn batch_update(
             query_string: qs.as_deref(),
         })
         .await
-        .unwrap_or_default();
+        .map_err(|e| ApiError::from_error(e.with_instance(uri.clone()), uri.clone()))?;
 
     let has_exclusive = forwarded.iter().any(|r| r.mode == ForwardingMode::Exclusive);
     let has_redirect = forwarded.iter().any(|r| r.mode == ForwardingMode::Redirect);
@@ -764,7 +764,7 @@ pub async fn batch_merge(
             query_string: None,
         })
         .await
-        .unwrap_or_default();
+        .map_err(|e| ApiError::from_error(e.with_instance(uri.clone()), uri.clone()))?;
 
     let has_exclusive = forwarded.iter().any(|r| r.mode == ForwardingMode::Exclusive);
     let has_redirect = forwarded.iter().any(|r| r.mode == ForwardingMode::Redirect);
@@ -820,7 +820,7 @@ pub async fn batch_delete(TenantState(state): TenantState, OriginalUri(uri): Ori
             query_string: None,
         })
         .await
-        .unwrap_or_default();
+        .map_err(|e| ApiError::from_error(e.with_instance(uri.clone()), uri.clone()))?;
 
     let has_exclusive = forwarded.iter().any(|r| r.mode == ForwardingMode::Exclusive);
     let has_redirect = forwarded.iter().any(|r| r.mode == ForwardingMode::Redirect);

@@ -15,8 +15,8 @@ use sqlx::postgres::PgPool;
 use tokio::sync::broadcast;
 use tracing::debug;
 
-fn extract_create_params(payload: &Value) -> CreateCsrParams<'_> {
-    CreateCsrParams {
+fn extract_create_params(payload: &Value) -> Result<CreateCsrParams<'_>, AndromedaError> {
+    Ok(CreateCsrParams {
         registration_name: payload.get("registrationName").and_then(|v| v.as_str()),
         description: payload.get("description").and_then(|v| v.as_str()),
         information: payload.get("information"),
@@ -33,18 +33,24 @@ fn extract_create_params(payload: &Value) -> CreateCsrParams<'_> {
         endpoint: payload.get("endpoint").and_then(|v| v.as_str()),
         accept: payload.get("accept").and_then(|v| v.as_str()),
         mode: payload.get("mode").and_then(|v| v.as_str()).unwrap_or("inclusive"),
-        operations: payload.get("operations").and_then(|v| serde_json::from_value(v.clone()).ok()),
-        scope: payload.get("scope").and_then(|v| serde_json::from_value(v.clone()).ok()),
+        operations: payload
+            .get("operations")
+            .map(|v| serde_json::from_value(v.clone()).map_err(|e| AndromedaError::bad_request_data(format!("Invalid 'operations' value: {}", e))))
+            .transpose()?,
+        scope: payload
+            .get("scope")
+            .map(|v| serde_json::from_value(v.clone()).map_err(|e| AndromedaError::bad_request_data(format!("Invalid 'scope' value: {}", e))))
+            .transpose()?,
         refresh_rate: payload.get("refreshRate").and_then(|v| v.as_str()),
         management: payload.get("management"),
         context_source_info: payload.get("contextSourceInfo"),
         jsonld_context: payload.get("jsonldContext").and_then(|v| v.as_str()),
         additional_properties: extract_additional_properties(payload),
-    }
+    })
 }
 
-fn extract_update_fragment(fragment: &Value) -> CsrUpdateFragment {
-    CsrUpdateFragment {
+fn extract_update_fragment(fragment: &Value) -> Result<CsrUpdateFragment, AndromedaError> {
+    Ok(CsrUpdateFragment {
         registration_name: extract_optional_string(fragment, "registrationName"),
         description: extract_optional_string(fragment, "description"),
         information: fragment.get("information").cloned(),
@@ -72,16 +78,34 @@ fn extract_update_fragment(fragment: &Value) -> CsrUpdateFragment {
         mode: fragment.get("mode").and_then(|v| v.as_str()).map(|s| s.to_string()),
         operations: fragment
             .get("operations")
-            .map(|v| if v.is_null() { None } else { serde_json::from_value(v.clone()).ok() }),
+            .map(|v| {
+                if v.is_null() {
+                    Ok(None)
+                } else {
+                    serde_json::from_value(v.clone())
+                        .map(Some)
+                        .map_err(|e| AndromedaError::bad_request_data(format!("Invalid 'operations' value: {}", e)))
+                }
+            })
+            .transpose()?,
         scope: fragment
             .get("scope")
-            .map(|v| if v.is_null() { None } else { serde_json::from_value(v.clone()).ok() }),
+            .map(|v| {
+                if v.is_null() {
+                    Ok(None)
+                } else {
+                    serde_json::from_value(v.clone())
+                        .map(Some)
+                        .map_err(|e| AndromedaError::bad_request_data(format!("Invalid 'scope' value: {}", e)))
+                }
+            })
+            .transpose()?,
         refresh_rate: extract_optional_string(fragment, "refreshRate"),
         management: extract_optional_value(fragment, "management"),
         context_source_info: extract_optional_value(fragment, "contextSourceInfo"),
         jsonld_context: extract_optional_string(fragment, "jsonldContext"),
         additional_properties: extract_additional_properties(fragment),
-    }
+    })
 }
 
 /// For nullable string fields: absent -> None, null -> Some(None), value -> Some(Some(s))
@@ -197,7 +221,7 @@ impl ContextSourceRegistrationService {
             self.expand_information(information, context).await?;
         }
 
-        let params = extract_create_params(&payload);
+        let params = extract_create_params(&payload)?;
         self.repo.create(&id, &params).await?;
 
         self.emit_csr_change(CsrChangeEvent {
@@ -360,7 +384,7 @@ impl ContextSourceRegistrationService {
         // Take a pre-update snapshot so the notification worker can detect noLongerMatching
         let pre_update_snapshot = self.repo.get(id).await?.map(|csr| serde_json::to_value(&csr).unwrap_or(Value::Null));
 
-        let fragment = extract_update_fragment(&payload);
+        let fragment = extract_update_fragment(&payload)?;
         let updated = self.repo.update(id, &fragment).await?;
 
         if !updated {

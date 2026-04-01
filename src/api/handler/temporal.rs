@@ -2,13 +2,12 @@
 
 use crate::{
     api::{
-        error::ApiError,
         extractor::{accept::AcceptFormatNoGeo, context::ContextUrl, jsonld::JsonLd, params::ValidatedQuery},
         response::ngsild::{NgsiLdCollectionResponse, NgsiLdResponse},
         tenant::TenantState,
     },
     domain::entity::Entity,
-    error::AndromedaError,
+    error::{AndromedaError, api::ApiError},
     jsonld::ContextSpec,
     query::temporal::TemporalQueryParameters,
     service::temporal::CreateOrUpdateResult,
@@ -135,8 +134,10 @@ pub async fn get(
             .with_context(context)
             .with_format(accept.format())
             .into_response();
-        if let Some(cr) = content_range {
-            response.headers_mut().insert("Content-Range", cr.parse().unwrap());
+        if let Some(cr) = content_range
+            && let Ok(val) = cr.parse()
+        {
+            response.headers_mut().insert("Content-Range", val);
         }
         Ok(response)
     } else {
@@ -144,8 +145,10 @@ pub async fn get(
             .with_context(context)
             .with_format(accept.format())
             .into_response();
-        if let Some(cr) = content_range {
-            response.headers_mut().insert("Content-Range", cr.parse().unwrap());
+        if let Some(cr) = content_range
+            && let Ok(val) = cr.parse()
+        {
+            response.headers_mut().insert("Content-Range", val);
         }
         Ok(response)
     }

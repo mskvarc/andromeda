@@ -192,7 +192,7 @@ pub async fn expand_common_subscription_terms(engine: &JsonLdEngine, payload: &m
                     }
                     Err(e) => {
                         if e.is_context_not_available() {
-                            return Err(AndromedaError::from(e));
+                            return Err(AndromedaError::map_jsonld(e, "expand_subscription"));
                         }
                         warn!("Failed to expand entity selector type '{}': {}", type_val, e);
                     }
@@ -213,7 +213,7 @@ pub async fn expand_common_subscription_terms(engine: &JsonLdEngine, payload: &m
                     }
                     Err(e) => {
                         if e.is_context_not_available() {
-                            return Err(AndromedaError::from(e));
+                            return Err(AndromedaError::map_jsonld(e, "expand_subscription"));
                         }
                         warn!("Failed to expand watchedAttribute '{}': {}", term, e);
                     }
@@ -235,7 +235,7 @@ pub async fn expand_common_subscription_terms(engine: &JsonLdEngine, payload: &m
                     }
                     Err(e) => {
                         if e.is_context_not_available() {
-                            return Err(AndromedaError::from(e));
+                            return Err(AndromedaError::map_jsonld(e, "expand_subscription"));
                         }
                         warn!("Failed to expand notification attribute '{}': {}", term, e);
                     }
@@ -267,7 +267,7 @@ pub async fn expand_common_subscription_terms(engine: &JsonLdEngine, payload: &m
             }
             Err(e) => {
                 if e.is_context_not_available() {
-                    return Err(AndromedaError::from(e));
+                    return Err(AndromedaError::map_jsonld(e, "expand_subscription"));
                 }
                 warn!("Failed to expand geoQ.geoproperty '{}': {}", geoprop, e);
             }

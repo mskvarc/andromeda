@@ -7,10 +7,8 @@ use axum::{
 };
 
 use crate::{
-    api::{
-        error::ApiError,
-        state::{AndromedaState, AppState},
-    },
+    api::state::{AndromedaState, AppState},
+    error::api::ApiError,
     tenancy::TenantRef,
 };
 

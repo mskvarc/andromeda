@@ -105,23 +105,23 @@ pub fn build_query(query: &CompiledEntityQuery) -> Result<BuiltQuery, AndromedaE
                     // Requires a geo query to provide the reference geometry
                     if let Some(geo) = &query.geo {
                         let geo_extract = build_geo_extract(&geo.geoproperty_iri, "payload");
-                        let ref_geom = format!(
-                            "ST_SetSRID(ST_GeomFromGeoJSON('{}'), 4326)",
-                            build_geojson(&geo.geometry, &geo.coordinates).unwrap_or_default()
-                        );
-                        format!("ST_Distance({}::geography, {}::geography) {} NULLS LAST", geo_extract, ref_geom, dir)
+                        let ref_geom = format!("ST_SetSRID(ST_GeomFromGeoJSON('{}'), 4326)", build_geojson(&geo.geometry, &geo.coordinates)?);
+                        Ok(format!("ST_Distance({}::geography, {}::geography) {} NULLS LAST", geo_extract, ref_geom, dir))
                     } else {
                         // Fallback: no geo query, treat as regular ordering
                         let json_path = property_value_jsonpath(&term.attr_iri);
-                        format!("jsonb_path_query_first(payload, '{}') {} NULLS LAST", json_path, dir)
+                        Ok(format!("jsonb_path_query_first(payload, '{}') {} NULLS LAST", json_path, dir))
                     }
                 } else {
                     let json_path = property_value_jsonpath(&term.attr_iri);
                     let collation_clause = term.collation.as_ref().map(|c| format!(" COLLATE \"{}\"", c)).unwrap_or_default();
-                    format!("jsonb_path_query_first(payload, '{}'){} {} NULLS LAST", json_path, collation_clause, dir)
+                    Ok(format!(
+                        "jsonb_path_query_first(payload, '{}'){} {} NULLS LAST",
+                        json_path, collation_clause, dir
+                    ))
                 }
             })
-            .collect();
+            .collect::<Result<Vec<_>, AndromedaError>>()?;
         format!(" ORDER BY {}, id ASC", order_parts.join(", "))
     };
 
@@ -632,22 +632,22 @@ pub fn build_ids_query(query: &CompiledEntityQuery) -> Result<BuiltQuery, Androm
                 if term.direction.is_distance() {
                     if let Some(geo) = &query.geo {
                         let geo_extract = build_geo_extract(&geo.geoproperty_iri, "payload");
-                        let ref_geom = format!(
-                            "ST_SetSRID(ST_GeomFromGeoJSON('{}'), 4326)",
-                            build_geojson(&geo.geometry, &geo.coordinates).unwrap_or_default()
-                        );
-                        format!("ST_Distance({}::geography, {}::geography) {} NULLS LAST", geo_extract, ref_geom, dir)
+                        let ref_geom = format!("ST_SetSRID(ST_GeomFromGeoJSON('{}'), 4326)", build_geojson(&geo.geometry, &geo.coordinates)?);
+                        Ok(format!("ST_Distance({}::geography, {}::geography) {} NULLS LAST", geo_extract, ref_geom, dir))
                     } else {
                         let json_path = property_value_jsonpath(&term.attr_iri);
-                        format!("jsonb_path_query_first(payload, '{}') {} NULLS LAST", json_path, dir)
+                        Ok(format!("jsonb_path_query_first(payload, '{}') {} NULLS LAST", json_path, dir))
                     }
                 } else {
                     let json_path = property_value_jsonpath(&term.attr_iri);
                     let collation_clause = term.collation.as_ref().map(|c| format!(" COLLATE \"{}\"", c)).unwrap_or_default();
-                    format!("jsonb_path_query_first(payload, '{}'){} {} NULLS LAST", json_path, collation_clause, dir)
+                    Ok(format!(
+                        "jsonb_path_query_first(payload, '{}'){} {} NULLS LAST",
+                        json_path, collation_clause, dir
+                    ))
                 }
             })
-            .collect();
+            .collect::<Result<Vec<_>, AndromedaError>>()?;
         format!(" ORDER BY {}, id ASC", order_parts.join(", "))
     };
 

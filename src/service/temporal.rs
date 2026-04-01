@@ -286,7 +286,7 @@ impl TemporalService {
             .engine
             .compact(response, context, CompactOptions::default())
             .await
-            .map_err(AndromedaError::from)?;
+            .map_err(|e| AndromedaError::map_jsonld(e, "temporal_compact"))?;
         ensure_temporal_attrs_are_arrays(&mut compacted);
 
         let value = if format == TemporalFormat::TemporalValues {
@@ -326,7 +326,7 @@ impl TemporalService {
         };
 
         // Batch-fetch entity payloads to extract types (avoids N+1 queries)
-        let entity_payloads = self.entity_repo.get_batch(&entity_ids).await.unwrap_or_default();
+        let entity_payloads = self.entity_repo.get_batch(&entity_ids).await?;
         let entity_types_map: std::collections::HashMap<String, Vec<String>> = entity_payloads
             .iter()
             .map(|(id, payload)| (id.clone(), extract_entity_types(payload)))

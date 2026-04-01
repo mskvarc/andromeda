@@ -73,7 +73,13 @@ fn build_envelope(body: &[u8], content_type: &str, receiver_info: Option<&[Value
         "body": body_value,
     });
 
-    serde_json::to_vec(&envelope).unwrap_or_default()
+    match serde_json::to_vec(&envelope) {
+        Ok(bytes) => bytes,
+        Err(e) => {
+            tracing::error!(error = %e, "Failed to serialize MQTT notification envelope");
+            Vec::new()
+        }
+    }
 }
 
 fn with_tenant_metadata(mut envelope: Vec<u8>, tenant: Option<&str>) -> Vec<u8> {

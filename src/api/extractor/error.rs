@@ -4,7 +4,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 
-use crate::api::error::ngsi_ld::{NgsiLdError, NgsiLdErrorType};
+use crate::error::ngsi_ld::{NgsiLdError, NgsiLdErrorType};
 
 #[derive(Debug)]
 pub enum ExtractorRejection {

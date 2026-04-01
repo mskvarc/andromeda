@@ -21,7 +21,7 @@ impl SnapshotService {
     pub async fn create(&self, input: SnapshotInput) -> Result<Snapshot, AndromedaError> {
         let id = input.id.unwrap_or_else(|| format!("urn:ngsi-ld:Snapshot:{}", uuid::Uuid::new_v4()));
 
-        if self.repo.exists(&id).await.map_err(AndromedaError::from)? {
+        if self.repo.exists(&id).await.map_err(|e| AndromedaError::map_sqlx(e, "snapshot"))? {
             return Err(AndromedaError::already_exists(format!("Snapshot {} already exists", id)));
         }
 
@@ -52,7 +52,7 @@ impl SnapshotService {
             last_used_at: None,
         };
 
-        self.repo.create(&snapshot).await.map_err(AndromedaError::from)?;
+        self.repo.create(&snapshot).await.map_err(|e| AndromedaError::map_sqlx(e, "snapshot"))?;
 
         Ok(snapshot)
     }
@@ -62,16 +62,20 @@ impl SnapshotService {
             .repo
             .get(id)
             .await
-            .map_err(AndromedaError::from)?
+            .map_err(|e| AndromedaError::map_sqlx(e, "snapshot"))?
             .ok_or_else(|| AndromedaError::not_found(format!("Snapshot {} not found", id)))?;
 
         if snapshot.expires_at < Utc::now() {
-            let _ = self.repo.delete(id).await;
+            if let Err(e) = self.repo.delete(id).await {
+                tracing::error!(error = %e, snapshot_id = %id, "Failed to delete expired snapshot");
+            }
             return Err(AndromedaError::not_found(format!("Snapshot {} not found", id)));
         }
 
         // Touch last_used_at
-        let _ = self.repo.touch_last_used(id).await;
+        if let Err(e) = self.repo.touch_last_used(id).await {
+            tracing::warn!(error = %e, snapshot_id = %id, "Failed to update snapshot last_used_at");
+        }
 
         Ok(snapshot)
     }
@@ -96,13 +100,13 @@ impl SnapshotService {
         self.repo
             .update_lifetime_priority(id, patch.snapshot_lifetime.as_deref(), patch.snapshot_priority, new_expires_at)
             .await
-            .map_err(AndromedaError::from)?;
+            .map_err(|e| AndromedaError::map_sqlx(e, "snapshot"))?;
 
         self.get(id).await
     }
 
     pub async fn delete(&self, id: &str) -> Result<(), AndromedaError> {
-        let deleted = self.repo.delete(id).await.map_err(AndromedaError::from)?;
+        let deleted = self.repo.delete(id).await.map_err(|e| AndromedaError::map_sqlx(e, "snapshot"))?;
         if !deleted {
             return Err(AndromedaError::not_found(format!("Snapshot {} not found", id)));
         }
@@ -110,7 +114,7 @@ impl SnapshotService {
     }
 
     pub async fn purge(&self) -> Result<u64, AndromedaError> {
-        self.repo.delete_all().await.map_err(AndromedaError::from)
+        self.repo.delete_all().await.map_err(|e| AndromedaError::map_sqlx(e, "snapshot"))
     }
 
     pub async fn clone_snapshot(&self, source_id: &str) -> Result<Snapshot, AndromedaError> {
@@ -126,7 +130,7 @@ impl SnapshotService {
             .repo
             .clone_snapshot(source_id, &new_id, new_expires_at)
             .await
-            .map_err(AndromedaError::from)?;
+            .map_err(|e| AndromedaError::map_sqlx(e, "snapshot"))?;
 
         Ok(cloned)
     }

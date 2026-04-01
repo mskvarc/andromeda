@@ -1,14 +1,13 @@
 use super::{EntityService, extract_attribute_keys, normalize_entity_attributes, unwrap_expanded, validate_attribute_envelopes};
 use crate::{
-    api::error::{
-        batch::{BatchEntityError, BatchOperationResult, BatchProblemDetail},
-        ngsi_ld::NgsiLdErrorType,
-    },
     domain::{
         entity::Entity,
         notification::{ChangeEvent, TriggerReason},
     },
-    error::{AndromedaError, AndromedaErrorKind},
+    error::{
+        AndromedaError,
+        batch::{BatchEntityError, BatchOperationResult, BatchProblemDetail},
+    },
     jsonld::ContextSpec,
 };
 use futures::{StreamExt, stream};
@@ -295,20 +294,7 @@ fn has_overlapping_attrs(entity: &Value, attrs: &Value) -> bool {
 }
 
 fn to_batch_error(entity_id: &str, err: &AndromedaError) -> BatchEntityError {
-    let error_type = match err.kind() {
-        AndromedaErrorKind::AlreadyExists => NgsiLdErrorType::AlreadyExists,
-        AndromedaErrorKind::NotFound => NgsiLdErrorType::ResourceNotFound,
-        AndromedaErrorKind::BadRequestData => NgsiLdErrorType::BadRequestData,
-        AndromedaErrorKind::InvalidRequest => NgsiLdErrorType::InvalidRequest,
-        AndromedaErrorKind::LdContextNotAvailable => NgsiLdErrorType::LdContextNotAvailable,
-        AndromedaErrorKind::Conflict => NgsiLdErrorType::Conflict,
-        AndromedaErrorKind::NoMultiTenantSupport => NgsiLdErrorType::NoMultiTenantSupport,
-        AndromedaErrorKind::NonexistentTenant => NgsiLdErrorType::NonexistentTenant,
-        AndromedaErrorKind::OperationNotSupported => NgsiLdErrorType::OperationNotSupported,
-        AndromedaErrorKind::Repository | AndromedaErrorKind::Json | AndromedaErrorKind::Io | AndromedaErrorKind::Config | AndromedaErrorKind::Internal => {
-            NgsiLdErrorType::InternalError
-        }
-    };
+    let error_type = err.kind().to_ngsi_ld_error_type();
 
     BatchEntityError {
         entity_id: entity_id.to_string(),

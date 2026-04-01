@@ -516,17 +516,11 @@ impl ContextSourceForwardingService {
 
     /// Send a request and return the status and raw bytes.
     async fn send_request(&self, request: reqwest::RequestBuilder) -> Result<(reqwest::StatusCode, Vec<u8>), AndromedaError> {
-        let response = request
-            .send()
-            .await
-            .map_err(|e| AndromedaError::internal(format!("Context source request failed: {}", e)))?;
+        let response = request.send().await.map_err(|e| AndromedaError::map_reqwest(e, "context_source_forward"))?;
 
         let status = response.status();
 
-        let bytes = response
-            .bytes()
-            .await
-            .map_err(|e| AndromedaError::internal(format!("Failed to read context source response: {}", e)))?;
+        let bytes = response.bytes().await.map_err(|e| AndromedaError::map_reqwest(e, "context_source_read_body"))?;
 
         Ok((status, bytes.to_vec()))
     }

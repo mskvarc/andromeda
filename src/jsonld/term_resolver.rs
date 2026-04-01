@@ -315,7 +315,10 @@ pub async fn validate_jsonld_context_value(engine: &JsonLdEngine, value: &Value)
         "type": "Subscription"
     });
 
-    engine.expand(doc, &ContextSpec::none()).await.map_err(AndromedaError::from)?;
+    engine
+        .expand(doc, &ContextSpec::none())
+        .await
+        .map_err(|e| AndromedaError::map_jsonld(e, "validate_context"))?;
     Ok(())
 }
 

@@ -2,11 +2,11 @@
 
 use crate::{
     api::{
-        error::ApiError,
         extractor::{accept::AcceptFormat, context::ContextUrl, jsonld::JsonLd},
         response::ngsild::NgsiLdCollectionResponse,
         tenant::TenantState,
     },
+    error::api::ApiError,
     query::temporal::TemporalQueryParameters,
 };
 use axum::{

@@ -297,16 +297,16 @@ fn advisory_lock_key(tenant_name: &str) -> i64 {
 }
 
 fn db_name_from_url(url: &str) -> Result<String, AndromedaError> {
-    let parsed = Url::parse(url).map_err(|e| AndromedaError::config(format!("Invalid database URL: {e}")))?;
+    let parsed = Url::parse(url).map_err(|e| AndromedaError::internal(format!("Invalid database URL: {e}")))?;
     let path = parsed.path().trim_start_matches('/');
     if path.is_empty() {
-        return Err(AndromedaError::config("Database URL must include database name"));
+        return Err(AndromedaError::internal("Database URL must include database name"));
     }
     Ok(path.to_string())
 }
 
 fn with_db_name(url: &str, db_name: &str) -> Result<String, AndromedaError> {
-    let mut parsed = Url::parse(url).map_err(|e| AndromedaError::config(format!("Invalid database URL: {e}")))?;
+    let mut parsed = Url::parse(url).map_err(|e| AndromedaError::internal(format!("Invalid database URL: {e}")))?;
     parsed.set_path(&format!("/{db_name}"));
     Ok(parsed.to_string())
 }

@@ -131,22 +131,63 @@ impl SnapshotRepository {
 
 fn row_to_snapshot(row: &sqlx::postgres::PgRow) -> Result<Snapshot, sqlx::Error> {
     let status_str: String = row.try_get("status")?;
-    let status = status_str.parse::<SnapshotStatus>().unwrap_or(SnapshotStatus::Preparing);
+    let status = status_str.parse::<SnapshotStatus>().map_err(|e| sqlx::Error::ColumnDecode {
+        index: "status".to_string(),
+        source: Box::new(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("Invalid snapshot status '{}': {}", status_str, e),
+        )),
+    })?;
 
     let queries_details_val: Option<Value> = row.try_get("queries_details")?;
-    let queries_details: Option<Vec<ExecutionResultDetails>> = queries_details_val.and_then(|v| serde_json::from_value(v).ok());
+    let queries_details: Option<Vec<ExecutionResultDetails>> = queries_details_val
+        .map(|v| {
+            serde_json::from_value(v).map_err(|e| sqlx::Error::ColumnDecode {
+                index: "queries_details".to_string(),
+                source: Box::new(e),
+            })
+        })
+        .transpose()?;
 
     let temporal_queries_details_val: Option<Value> = row.try_get("temporal_queries_details")?;
-    let temporal_queries_details: Option<Vec<ExecutionResultDetails>> = temporal_queries_details_val.and_then(|v| serde_json::from_value(v).ok());
+    let temporal_queries_details: Option<Vec<ExecutionResultDetails>> = temporal_queries_details_val
+        .map(|v| {
+            serde_json::from_value(v).map_err(|e| sqlx::Error::ColumnDecode {
+                index: "temporal_queries_details".to_string(),
+                source: Box::new(e),
+            })
+        })
+        .transpose()?;
 
     let snapshot_queries_val: Option<Value> = row.try_get("snapshot_queries")?;
-    let snapshot_queries: Option<Vec<Value>> = snapshot_queries_val.and_then(|v| serde_json::from_value(v).ok());
+    let snapshot_queries: Option<Vec<Value>> = snapshot_queries_val
+        .map(|v| {
+            serde_json::from_value(v).map_err(|e| sqlx::Error::ColumnDecode {
+                index: "snapshot_queries".to_string(),
+                source: Box::new(e),
+            })
+        })
+        .transpose()?;
 
     let snapshot_temporal_queries_val: Option<Value> = row.try_get("snapshot_temporal_queries")?;
-    let snapshot_temporal_queries: Option<Vec<Value>> = snapshot_temporal_queries_val.and_then(|v| serde_json::from_value(v).ok());
+    let snapshot_temporal_queries: Option<Vec<Value>> = snapshot_temporal_queries_val
+        .map(|v| {
+            serde_json::from_value(v).map_err(|e| sqlx::Error::ColumnDecode {
+                index: "snapshot_temporal_queries".to_string(),
+                source: Box::new(e),
+            })
+        })
+        .transpose()?;
 
     let receiver_info_val: Option<Value> = row.try_get("receiver_info")?;
-    let receiver_info: Option<Vec<Value>> = receiver_info_val.and_then(|v| serde_json::from_value(v).ok());
+    let receiver_info: Option<Vec<Value>> = receiver_info_val
+        .map(|v| {
+            serde_json::from_value(v).map_err(|e| sqlx::Error::ColumnDecode {
+                index: "receiver_info".to_string(),
+                source: Box::new(e),
+            })
+        })
+        .transpose()?;
 
     Ok(Snapshot {
         id: row.try_get("id")?,

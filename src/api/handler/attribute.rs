@@ -1,10 +1,10 @@
 use crate::{
     api::{
-        error::ApiError,
         extractor::{accept::AcceptFormat, context::ContextUrl, params::ValidatedQuery},
         response::ngsild::NgsiLdResponse,
         tenant::TenantState,
     },
+    error::api::ApiError,
     jsonld::ContextSpec,
 };
 use axum::{

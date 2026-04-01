@@ -16,6 +16,39 @@ use axum::{
 use problem_details::ProblemDetails;
 use strum::Display;
 
+use crate::error::AndromedaError;
+
+/// Converts an error into an RFC 7807 Problem Details response.
+pub trait ToProblem {
+    /// Returns the HTTP status code and a `ProblemDetails` value ready for
+    /// serialisation into a JSON response body.
+    fn to_problem(&self) -> (StatusCode, ProblemDetails);
+}
+
+impl ToProblem for AndromedaError {
+    fn to_problem(&self) -> (StatusCode, ProblemDetails) {
+        let error_type = self.kind().to_ngsi_ld_error_type();
+        let status = error_type.status_code();
+
+        let detail = if self.kind().is_internal() {
+            "Internal error".to_string()
+        } else {
+            self.message().to_string()
+        };
+
+        let instance = self.context().instance.clone().unwrap_or_else(|| Uri::from_static("/"));
+
+        let problem = ProblemDetails::new()
+            .with_type(Uri::from_static(error_type.type_uri()))
+            .with_title(error_type.title())
+            .with_status(status)
+            .with_detail(detail)
+            .with_instance(instance);
+
+        (status, problem)
+    }
+}
+
 /// NGSI-LD error categories as defined in ETSI GS CIM 009 v1.9.1, clause 5.5.2.
 ///
 /// Each variant maps to a canonical `https://uri.etsi.org/ngsi-ld/errors/...` type
@@ -148,7 +181,7 @@ impl NgsiLdErrorType {
 ///
 /// ```ignore
 /// use axum::http::Uri;
-/// use crate::api::error::ngsi_ld::{NgsiLdError, NgsiLdErrorType};
+/// use crate::error::ngsi_ld::{NgsiLdError, NgsiLdErrorType};
 ///
 /// let error = NgsiLdError::new(
 ///     NgsiLdErrorType::ResourceNotFound,

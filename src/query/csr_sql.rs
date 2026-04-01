@@ -189,7 +189,11 @@ fn build_geojson(geometry: &str, coordinates: &str) -> Result<String, AndromedaE
     let coords_value = match geometry {
         "Polygon" => {
             if let Some(arr) = coords_value.as_array() {
-                if !arr.is_empty() && arr[0].is_array() && !arr[0].as_array().unwrap()[0].is_array() {
+                if let Some(first) = arr.first()
+                    && let Some(inner) = first.as_array()
+                    && !inner.is_empty()
+                    && !inner[0].is_array()
+                {
                     let mut ring = arr.clone();
                     if ring.first() != ring.last() {
                         ring.push(ring[0].clone());
