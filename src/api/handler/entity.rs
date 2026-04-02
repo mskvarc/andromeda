@@ -496,7 +496,9 @@ pub async fn delete(
 
     if has_exclusive {
         // Delete locally AND forward (already forwarded)
-        let _ = service.delete(&id).await;
+        if let Err(e) = service.delete(&id).await {
+            tracing::warn!(error = %e, entity_id = %id, "Failed to delete local entity during exclusive forwarding");
+        }
         return Ok(StatusCode::NO_CONTENT.into_response());
     }
 
@@ -1227,8 +1229,8 @@ pub async fn partial_update_attr(
     if has_redirect || has_exclusive {
         // Per spec 4.3.6.3: exclusive attributes shall not be held locally.
         // Strip the exclusive attribute from the local entity if it exists.
-        if has_exclusive {
-            let _ = service.delete_attr(&id, &attr_id, None, true, &context).await;
+        if has_exclusive && let Err(e) = service.delete_attr(&id, &attr_id, None, true, &context).await {
+            tracing::warn!(error = %e, entity_id = %id, attr_id = %attr_id, "Failed to delete exclusive attribute locally");
         }
         let first_status = forwarded.first().map(|r| r.status).unwrap_or(204);
         return Ok(StatusCode::from_u16(first_status).unwrap_or(StatusCode::NO_CONTENT).into_response());
@@ -1391,7 +1393,9 @@ pub async fn delete_by_query(
         let has_exclusive = forwarded.iter().any(|r| r.mode == ForwardingMode::Exclusive);
 
         if has_redirect {
-            let first = forwarded.first().unwrap();
+            let Some(first) = forwarded.first() else {
+                return Err(ApiError::from_error(AndromedaError::internal("Expected forwarded result"), uri));
+            };
             let status = StatusCode::from_u16(first.status).unwrap_or(StatusCode::NO_CONTENT);
             if let Some(ref resp_body) = first.body {
                 return Ok((status, Json(resp_body.clone())).into_response());
@@ -1400,7 +1404,9 @@ pub async fn delete_by_query(
         }
 
         if has_exclusive {
-            let _ = state.entities.batch_delete(&entity_ids).await;
+            if let Err(e) = state.entities.batch_delete(&entity_ids).await {
+                tracing::warn!(error = %e, "Failed to delete local entities during exclusive batch delete");
+            }
             return Ok(StatusCode::NO_CONTENT.into_response());
         }
     }

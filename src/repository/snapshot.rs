@@ -15,7 +15,7 @@ impl SnapshotRepository {
     pub async fn create(&self, snapshot: &Snapshot) -> Result<(), sqlx::Error> {
         sqlx::query(
             "INSERT INTO snapshots (id, snapshot_queries, snapshot_temporal_queries, snapshot_lifetime, snapshot_priority, endpoint, receiver_info, status, queries_details, temporal_queries_details, created_at, modified_at, expires_at, last_used_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)"
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)",
         )
         .bind(&snapshot.id)
         .bind(serde_json::to_value(&snapshot.snapshot_queries).ok())

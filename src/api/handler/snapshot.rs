@@ -17,8 +17,11 @@ pub async fn create(TenantState(state): TenantState, OriginalUri(uri): OriginalU
     let mut headers = HeaderMap::new();
     headers.insert(
         "Location",
-        HeaderValue::from_str(&location)
-            .map_err(|_| AndromedaError::internal(format!("Invalid snapshot ID for header: {}", snapshot.id)).with_instance(uri.clone()))?,
+        HeaderValue::from_str(&location).map_err(|e| {
+            AndromedaError::internal(format!("Invalid snapshot ID for header: {}", snapshot.id))
+                .with_source(e)
+                .with_instance(uri.clone())
+        })?,
     );
 
     let body = serde_json::to_value(&snapshot).map_err(|e| AndromedaError::internal("Failed to serialize snapshot").with_source(e).with_instance(uri))?;
@@ -63,8 +66,11 @@ pub async fn clone_snapshot(TenantState(state): TenantState, OriginalUri(uri): O
     let mut headers = HeaderMap::new();
     headers.insert(
         "Location",
-        HeaderValue::from_str(&location)
-            .map_err(|_| AndromedaError::internal(format!("Invalid snapshot ID for header: {}", cloned.id)).with_instance(uri.clone()))?,
+        HeaderValue::from_str(&location).map_err(|e| {
+            AndromedaError::internal(format!("Invalid snapshot ID for header: {}", cloned.id))
+                .with_source(e)
+                .with_instance(uri.clone())
+        })?,
     );
 
     let body = serde_json::to_value(&cloned).map_err(|e| AndromedaError::internal("Failed to serialize snapshot").with_source(e).with_instance(uri))?;

@@ -219,7 +219,10 @@ pub async fn query(
                 crate::service::context_source_forwarding::ForwardingOperation::QueryBatch,
             )
             .await
-            .unwrap_or_default();
+            .unwrap_or_else(|e| {
+                tracing::warn!(error = %e, "Context source forwarding failed during batch query");
+                Vec::new()
+            });
         for warning in crate::service::context_source_forwarding::collect_warnings(&forwarded) {
             tracing::debug!("Context source forwarding warning: {}", warning);
         }
@@ -227,7 +230,11 @@ pub async fn query(
         if forwarded.is_empty() {
             local_entities
         } else {
-            let local_values: Vec<serde_json::Value> = local_entities.iter().map(|e| serde_json::to_value(e).unwrap_or_default()).collect();
+            let local_values: Vec<serde_json::Value> = local_entities
+                .iter()
+                .map(|e| serde_json::to_value(e).map_err(|e| AndromedaError::internal("Failed to serialize entity").with_source(e)))
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|e| e.with_instance(uri.clone()))?;
             let merged_values = crate::service::context_source_forwarding::merge_query_results(local_values, forwarded);
             let mut result = Vec::new();
             for val in merged_values {
@@ -261,14 +268,21 @@ pub async fn query(
                 if opts.key_values {
                     all_values.push(entity.simplify());
                 } else {
-                    all_values.push(serde_json::to_value(entity).unwrap_or_default());
+                    all_values.push(
+                        serde_json::to_value(entity)
+                            .map_err(|e| AndromedaError::internal("Failed to serialize entity").with_source(e).with_instance(uri.clone()))?,
+                    );
                 }
             }
             for linked_entity in linked.values() {
                 if opts.key_values {
                     all_values.push(linked_entity.simplify());
                 } else {
-                    all_values.push(serde_json::to_value(linked_entity).unwrap_or_default());
+                    all_values.push(serde_json::to_value(linked_entity).map_err(|e| {
+                        AndromedaError::internal("Failed to serialize linked entity")
+                            .with_source(e)
+                            .with_instance(uri.clone())
+                    })?);
                 }
             }
             let mut response = NgsiLdCollectionResponse::ok(all_values);
@@ -284,7 +298,8 @@ pub async fn query(
             // Inline: serialize normalized, apply join, then simplify if needed
             let mut entity_values: Vec<serde_json::Value> = Vec::new();
             for entity in &entities {
-                let mut val = serde_json::to_value(entity).unwrap_or_default();
+                let mut val = serde_json::to_value(entity)
+                    .map_err(|e| AndromedaError::internal("Failed to serialize entity").with_source(e).with_instance(uri.clone()))?;
                 crate::response::entity::apply_inline_join(&mut val, &linked);
                 if opts.key_values {
                     val = crate::response::entity::simplify_value(&val);
@@ -437,10 +452,9 @@ fn parse_batch_entities(
             }
         }
         if !merged_ctx_values.is_empty() {
-            let ctx_value = if merged_ctx_values.len() == 1 {
-                merged_ctx_values.into_iter().next().unwrap()
-            } else {
-                Value::Array(merged_ctx_values)
+            let ctx_value = match merged_ctx_values.len() {
+                1 => merged_ctx_values.into_iter().next().unwrap_or(Value::Null),
+                _ => Value::Array(merged_ctx_values),
             };
             merged_context = merged_context.with_body_context(Some(ctx_value));
         }
@@ -560,7 +574,10 @@ pub async fn batch_create(
 
     if has_exclusive || has_redirect {
         // Per spec 4.3.6.3: exclusive/redirect — don't create locally, return CS result
-        let first = forwarded.first().unwrap();
+        // SAFETY: guarded by has_exclusive/has_redirect which require non-empty forwarded
+        let Some(first) = forwarded.first() else {
+            return Err(ApiError::from_error(AndromedaError::internal("Expected forwarded result"), uri));
+        };
         let status = StatusCode::from_u16(first.status).unwrap_or(StatusCode::CREATED);
         if let Some(ref resp_body) = first.body {
             return Ok((status, Json(resp_body.clone())).into_response());
@@ -629,7 +646,10 @@ pub async fn batch_upsert(
     let has_redirect = forwarded.iter().any(|r| r.mode == ForwardingMode::Redirect);
 
     if has_exclusive || has_redirect {
-        let first = forwarded.first().unwrap();
+        // SAFETY: guarded by has_exclusive/has_redirect which require non-empty forwarded
+        let Some(first) = forwarded.first() else {
+            return Err(ApiError::from_error(AndromedaError::internal("Expected forwarded result"), uri));
+        };
         let status = StatusCode::from_u16(first.status).unwrap_or(StatusCode::NO_CONTENT);
         if let Some(ref resp_body) = first.body {
             return Ok((status, Json(resp_body.clone())).into_response());
@@ -704,7 +724,10 @@ pub async fn batch_update(
     let has_redirect = forwarded.iter().any(|r| r.mode == ForwardingMode::Redirect);
 
     if has_exclusive || has_redirect {
-        let first = forwarded.first().unwrap();
+        // SAFETY: guarded by has_exclusive/has_redirect which require non-empty forwarded
+        let Some(first) = forwarded.first() else {
+            return Err(ApiError::from_error(AndromedaError::internal("Expected forwarded result"), uri));
+        };
         let status = StatusCode::from_u16(first.status).unwrap_or(StatusCode::NO_CONTENT);
         if let Some(ref resp_body) = first.body {
             return Ok((status, Json(resp_body.clone())).into_response());
@@ -770,7 +793,10 @@ pub async fn batch_merge(
     let has_redirect = forwarded.iter().any(|r| r.mode == ForwardingMode::Redirect);
 
     if has_exclusive || has_redirect {
-        let first = forwarded.first().unwrap();
+        // SAFETY: guarded by has_exclusive/has_redirect which require non-empty forwarded
+        let Some(first) = forwarded.first() else {
+            return Err(ApiError::from_error(AndromedaError::internal("Expected forwarded result"), uri));
+        };
         let status = StatusCode::from_u16(first.status).unwrap_or(StatusCode::NO_CONTENT);
         if let Some(ref resp_body) = first.body {
             return Ok((status, Json(resp_body.clone())).into_response());
@@ -827,7 +853,10 @@ pub async fn batch_delete(TenantState(state): TenantState, OriginalUri(uri): Ori
 
     if has_redirect {
         // Redirect: don't delete locally, return CS result
-        let first = forwarded.first().unwrap();
+        // SAFETY: guarded by has_exclusive/has_redirect which require non-empty forwarded
+        let Some(first) = forwarded.first() else {
+            return Err(ApiError::from_error(AndromedaError::internal("Expected forwarded result"), uri));
+        };
         let status = StatusCode::from_u16(first.status).unwrap_or(StatusCode::NO_CONTENT);
         if let Some(ref resp_body) = first.body {
             return Ok((status, Json(resp_body.clone())).into_response());
@@ -837,7 +866,9 @@ pub async fn batch_delete(TenantState(state): TenantState, OriginalUri(uri): Ori
 
     if has_exclusive {
         // Exclusive: delete locally AND forwarded (already done)
-        let _ = service.batch_delete(&entity_ids).await;
+        if let Err(e) = service.batch_delete(&entity_ids).await {
+            tracing::warn!(error = %e, "Failed to delete local entities during exclusive batch delete");
+        }
         return Ok(StatusCode::NO_CONTENT.into_response());
     }
 

@@ -506,7 +506,15 @@ fn row_to_csr(row: &sqlx::postgres::PgRow) -> Result<ContextSourceRegistration, 
     let operations: Option<Vec<CsrOperation>> = row
         .get::<Option<Vec<String>>, _>("operations")
         .or_else(|| Some(vec!["federationOps".to_string()]))
-        .map(|v| v.into_iter().map(|s| s.parse().unwrap()).collect());
+        .map(|v| {
+            v.into_iter()
+                .map(|s| {
+                    s.parse::<CsrOperation>()
+                        .map_err(|_| AndromedaError::internal(format!("Invalid CSR operation '{}'", s)))
+                })
+                .collect::<Result<Vec<_>, _>>()
+        })
+        .transpose()?;
     let scope: Option<Vec<String>> = row.get("scope");
     let refresh_rate: Option<String> = row.get("refresh_rate");
     let management: Option<Value> = row.get("management");

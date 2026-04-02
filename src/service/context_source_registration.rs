@@ -29,7 +29,12 @@ fn extract_create_params(payload: &Value) -> Result<CreateCsrParams<'_>, Androme
         expires_at: payload
             .get("expiresAt")
             .and_then(|v| v.as_str())
-            .and_then(|s| DateTime::parse_from_rfc3339(s).map(|dt| dt.with_timezone(&Utc)).ok()),
+            .map(|s| {
+                DateTime::parse_from_rfc3339(s)
+                    .map(|dt| dt.with_timezone(&Utc))
+                    .map_err(|e| AndromedaError::bad_request_data(format!("Invalid 'expiresAt' value '{}': {}", s, e)))
+            })
+            .transpose()?,
         endpoint: payload.get("endpoint").and_then(|v| v.as_str()),
         accept: payload.get("accept").and_then(|v| v.as_str()),
         mode: payload.get("mode").and_then(|v| v.as_str()).unwrap_or("inclusive"),
@@ -66,13 +71,22 @@ fn extract_update_fragment(fragment: &Value) -> Result<CsrUpdateFragment, Androm
         operation_space: fragment
             .get("operationSpace")
             .map(|v| if v.is_null() { None } else { Some(unwrap_geo_property_to_string(v)) }),
-        expires_at: fragment.get("expiresAt").map(|v| {
-            if v.is_null() {
-                None
-            } else {
-                v.as_str().and_then(|s| DateTime::parse_from_rfc3339(s).map(|dt| dt.with_timezone(&Utc)).ok())
-            }
-        }),
+        expires_at: fragment
+            .get("expiresAt")
+            .map(|v| {
+                if v.is_null() {
+                    Ok(None)
+                } else {
+                    v.as_str()
+                        .ok_or_else(|| AndromedaError::bad_request_data("'expiresAt' must be a string"))
+                        .and_then(|s| {
+                            DateTime::parse_from_rfc3339(s)
+                                .map(|dt| Some(dt.with_timezone(&Utc)))
+                                .map_err(|e| AndromedaError::bad_request_data(format!("Invalid 'expiresAt' value '{}': {}", s, e)))
+                        })
+                }
+            })
+            .transpose()?,
         endpoint: fragment.get("endpoint").and_then(|v| v.as_str()).map(|s| s.to_string()),
         accept: extract_optional_string(fragment, "accept"),
         mode: fragment.get("mode").and_then(|v| v.as_str()).map(|s| s.to_string()),

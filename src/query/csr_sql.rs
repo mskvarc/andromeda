@@ -184,7 +184,7 @@ pub fn build_csr_query(query: &CompiledCsrQuery) -> Result<BuiltQuery, Andromeda
 /// Handles Polygon coordinate wrapping (flat point list → ring array + close).
 fn build_geojson(geometry: &str, coordinates: &str) -> Result<String, AndromedaError> {
     let coords_value: serde_json::Value =
-        serde_json::from_str(coordinates).map_err(|_| AndromedaError::bad_request_data(format!("Invalid coordinates: {}", coordinates)))?;
+        serde_json::from_str(coordinates).map_err(|e| AndromedaError::bad_request_data(format!("Invalid coordinates: {}", coordinates)).with_source(e))?;
 
     let coords_value = match geometry {
         "Polygon" => {

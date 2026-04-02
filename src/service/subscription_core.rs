@@ -473,8 +473,13 @@ impl MergedUpdateFields {
 }
 
 /// Merge payload fragment with existing subscription, returning owned intermediate values.
-pub fn merge_update_fields(payload: &Value, existing: &Subscription, existing_value: &Value, use_dataset_id: bool) -> MergedUpdateFields {
-    MergedUpdateFields {
+pub fn merge_update_fields(
+    payload: &Value,
+    existing: &Subscription,
+    existing_value: &Value,
+    use_dataset_id: bool,
+) -> Result<MergedUpdateFields, AndromedaError> {
+    Ok(MergedUpdateFields {
         subscription_name: payload
             .get("subscriptionName")
             .and_then(|v| v.as_str())
@@ -492,11 +497,15 @@ pub fn merge_update_fields(payload: &Value, existing: &Subscription, existing_va
             .filter(|v| !v.is_null()),
         watched_attributes: payload
             .get("watchedAttributes")
-            .and_then(|v| serde_json::from_value(v.clone()).ok())
+            .map(|v| serde_json::from_value(v.clone()).map_err(|e| AndromedaError::bad_request_data(format!("Invalid 'watchedAttributes': {}", e))))
+            .transpose()?
             .or_else(|| existing.watched_attributes.clone()),
         notification_trigger: payload
             .get("notificationTrigger")
-            .and_then(|v| serde_json::from_value::<Vec<String>>(v.clone()).ok())
+            .map(|v| {
+                serde_json::from_value::<Vec<String>>(v.clone()).map_err(|e| AndromedaError::bad_request_data(format!("Invalid 'notificationTrigger': {}", e)))
+            })
+            .transpose()?
             .or_else(|| existing.notification_trigger.as_ref().map(|t| t.iter().map(|nt| nt.to_string()).collect())),
         time_interval: payload.get("timeInterval").and_then(|v| v.as_f64()).or(existing.time_interval),
         q: payload.get("q").and_then(|v| v.as_str()).map(String::from).or_else(|| existing.q.clone()),
@@ -510,7 +519,8 @@ pub fn merge_update_fields(payload: &Value, existing: &Subscription, existing_va
         dataset_id: if use_dataset_id {
             payload
                 .get("datasetId")
-                .and_then(|v| serde_json::from_value(v.clone()).ok())
+                .map(|v| serde_json::from_value(v.clone()).map_err(|e| AndromedaError::bad_request_data(format!("Invalid 'datasetId': {}", e))))
+                .transpose()?
                 .or_else(|| existing.dataset_id.clone())
         } else {
             None
@@ -519,13 +529,21 @@ pub fn merge_update_fields(payload: &Value, existing: &Subscription, existing_va
         notification: payload
             .get("notification")
             .cloned()
-            .or_else(|| serde_json::to_value(&existing.notification).ok())
+            .or_else(|| {
+                serde_json::to_value(&existing.notification)
+                    .map_err(|e| tracing::warn!("Failed to serialize existing notification: {}", e))
+                    .ok()
+            })
             .filter(|v| !v.is_null()),
         expires_at: payload
             .get("expiresAt")
             .and_then(|v| v.as_str())
-            .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
-            .map(|dt| dt.with_timezone(&Utc))
+            .map(|s| {
+                chrono::DateTime::parse_from_rfc3339(s)
+                    .map(|dt| dt.with_timezone(&Utc))
+                    .map_err(|e| AndromedaError::bad_request_data(format!("Invalid 'expiresAt' value '{}': {}", s, e)))
+            })
+            .transpose()?
             .or(existing.expires_at),
         throttling: payload.get("throttling").and_then(|v| v.as_f64()).or(existing.throttling),
         temporal_q: payload
@@ -540,5 +558,5 @@ pub fn merge_update_fields(payload: &Value, existing: &Subscription, existing_va
             .map(String::from)
             .or_else(|| existing.jsonld_context.clone()),
         local_only: payload.get("localOnly").and_then(|v| v.as_bool()).or(existing.local_only).unwrap_or(false),
-    }
+    })
 }

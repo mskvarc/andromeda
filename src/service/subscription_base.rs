@@ -117,7 +117,10 @@ where
             .map(|v| serde_json::from_value(v.clone()).map_err(|e| AndromedaError::bad_request_data(format!("Invalid 'notificationTrigger' value: {}", e))))
             .transpose()?;
         let dataset_id_vec: Option<Vec<String>> = if self.variant.use_dataset_id() {
-            payload.get("datasetId").and_then(|v| serde_json::from_value(v.clone()).ok())
+            payload
+                .get("datasetId")
+                .map(|v| serde_json::from_value(v.clone()).map_err(|e| AndromedaError::bad_request_data(format!("Invalid 'datasetId' value: {}", e))))
+                .transpose()?
         } else {
             None
         };
@@ -195,7 +198,7 @@ where
         let existing_value =
             serde_json::to_value(&existing).map_err(|e| AndromedaError::internal(format!("Failed to serialize existing subscription: {}", e)))?;
 
-        let merged = subscription_core::merge_update_fields(&payload, &existing, &existing_value, self.variant.use_entity_sub_merge_mode());
+        let merged = subscription_core::merge_update_fields(&payload, &existing, &existing_value, self.variant.use_entity_sub_merge_mode())?;
         let fields = merged.to_fields();
 
         let status = compute_updated_status(
