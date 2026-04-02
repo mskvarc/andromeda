@@ -1237,10 +1237,13 @@ pub async fn partial_update_attr(
     }
 
     // Inclusive: apply locally and return 204.
-    service
+    // Local errors are non-fatal — the remote already succeeded.
+    if let Err(e) = service
         .partial_update_attr(&id, &attr_id, params.dataset_id.as_deref(), fragment, &context)
         .await
-        .map_err(|e| e.with_instance(uri.clone()))?;
+    {
+        tracing::warn!(error = %e, entity_id = %id, attr_id = %attr_id, "Failed to apply inclusive partial_update_attr locally");
+    }
     Ok(StatusCode::NO_CONTENT.into_response())
 }
 

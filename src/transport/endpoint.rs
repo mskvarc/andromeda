@@ -99,19 +99,13 @@ pub fn extract_key_value_pairs(infos: Option<&[Value]>) -> Vec<(String, String)>
 }
 
 /// Parse an endpoint URI (with optional notifierInfo) into an [`EndpointTransport`].
-pub fn parse_endpoint_transport(
-    uri: &str,
-    notifier_info: Option<&[Value]>,
-) -> Result<EndpointTransport, EndpointParseError> {
+pub fn parse_endpoint_transport(uri: &str, notifier_info: Option<&[Value]>) -> Result<EndpointTransport, EndpointParseError> {
     let parsed = Url::parse(uri)?;
     match parsed.scheme() {
         "http" | "https" => Ok(EndpointTransport::Http),
         "mqtt" | "mqtts" => {
             let use_tls = parsed.scheme() == "mqtts";
-            let host = parsed
-                .host_str()
-                .ok_or(EndpointParseError::MissingHost)?
-                .to_string();
+            let host = parsed.host_str().ok_or(EndpointParseError::MissingHost)?.to_string();
             let default_port = if use_tls { 8883 } else { 1883 };
             let port = parsed.port().unwrap_or(default_port);
             let topic = parsed.path().trim_start_matches('/').to_string();
@@ -131,19 +125,14 @@ pub fn parse_endpoint_transport(
 
             if let Some(infos) = notifier_info {
                 for info in infos {
-                    if let (Some(key), Some(value)) = (
-                        info.get("key").and_then(|v| v.as_str()),
-                        info.get("value").and_then(|v| v.as_str()),
-                    ) {
+                    if let (Some(key), Some(value)) = (info.get("key").and_then(|v| v.as_str()), info.get("value").and_then(|v| v.as_str())) {
                         match key {
                             "MQTT-Version" => {
                                 version = match value {
                                     "mqtt5.0" => MqttVersion::V5,
                                     "mqtt3.1.1" => MqttVersion::V311,
                                     _ => {
-                                        return Err(EndpointParseError::UnsupportedMqttVersion {
-                                            value: value.to_string(),
-                                        });
+                                        return Err(EndpointParseError::UnsupportedMqttVersion { value: value.to_string() });
                                     }
                                 };
                             }
@@ -153,9 +142,7 @@ pub fn parse_endpoint_transport(
                                     "1" => MqttQoS::AtLeast,
                                     "2" => MqttQoS::Exactly,
                                     _ => {
-                                        return Err(EndpointParseError::UnsupportedMqttQos {
-                                            value: value.to_string(),
-                                        });
+                                        return Err(EndpointParseError::UnsupportedMqttQos { value: value.to_string() });
                                     }
                                 };
                             }
@@ -176,9 +163,7 @@ pub fn parse_endpoint_transport(
                 password,
             }))
         }
-        other => Err(EndpointParseError::UnsupportedScheme {
-            scheme: other.to_string(),
-        }),
+        other => Err(EndpointParseError::UnsupportedScheme { scheme: other.to_string() }),
     }
 }
 
@@ -200,8 +185,7 @@ mod tests {
 
     #[test]
     fn parse_mqtt_basic() {
-        let result =
-            parse_endpoint_transport("mqtt://broker.example.com:1883/test/topic", None).unwrap();
+        let result = parse_endpoint_transport("mqtt://broker.example.com:1883/test/topic", None).unwrap();
         match result {
             EndpointTransport::Mqtt(config) => {
                 assert_eq!(config.host, "broker.example.com");
@@ -217,8 +201,7 @@ mod tests {
 
     #[test]
     fn parse_mqtts_default_port() {
-        let result =
-            parse_endpoint_transport("mqtts://broker.example.com/secure/topic", None).unwrap();
+        let result = parse_endpoint_transport("mqtts://broker.example.com/secure/topic", None).unwrap();
         match result {
             EndpointTransport::Mqtt(config) => {
                 assert_eq!(config.port, 8883);
@@ -247,8 +230,7 @@ mod tests {
             serde_json::json!({"key": "MQTT-Version", "value": "mqtt3.1.1"}),
             serde_json::json!({"key": "MQTT-QoS", "value": "2"}),
         ];
-        let result =
-            parse_endpoint_transport("mqtt://broker:1883/topic", Some(&notifier_info)).unwrap();
+        let result = parse_endpoint_transport("mqtt://broker:1883/topic", Some(&notifier_info)).unwrap();
         match result {
             EndpointTransport::Mqtt(config) => {
                 assert_eq!(config.version, MqttVersion::V311);
@@ -261,8 +243,7 @@ mod tests {
     #[test]
     fn parse_mqtt_qos_1() {
         let notifier_info = vec![serde_json::json!({"key": "MQTT-QoS", "value": "1"})];
-        let result =
-            parse_endpoint_transport("mqtt://broker:1883/topic", Some(&notifier_info)).unwrap();
+        let result = parse_endpoint_transport("mqtt://broker:1883/topic", Some(&notifier_info)).unwrap();
         match result {
             EndpointTransport::Mqtt(config) => {
                 assert_eq!(config.qos, MqttQoS::AtLeast);
@@ -274,10 +255,7 @@ mod tests {
     #[test]
     fn parse_mqtt_no_topic_rejected() {
         let result = parse_endpoint_transport("mqtt://broker:1883", None);
-        assert!(matches!(
-            result,
-            Err(EndpointParseError::MissingTopic | EndpointParseError::InvalidUri { .. })
-        ));
+        assert!(matches!(result, Err(EndpointParseError::MissingTopic | EndpointParseError::InvalidUri { .. })));
     }
 
     #[test]
@@ -289,39 +267,26 @@ mod tests {
     #[test]
     fn parse_unsupported_scheme_rejected() {
         let result = parse_endpoint_transport("ftp://example.com/path", None);
-        assert!(matches!(
-            result,
-            Err(EndpointParseError::UnsupportedScheme { .. })
-        ));
+        assert!(matches!(result, Err(EndpointParseError::UnsupportedScheme { .. })));
     }
 
     #[test]
     fn parse_invalid_mqtt_version_rejected() {
-        let notifier_info =
-            vec![serde_json::json!({"key": "MQTT-Version", "value": "mqtt4.0"})];
-        let result =
-            parse_endpoint_transport("mqtt://broker:1883/topic", Some(&notifier_info));
-        assert!(matches!(
-            result,
-            Err(EndpointParseError::UnsupportedMqttVersion { .. })
-        ));
+        let notifier_info = vec![serde_json::json!({"key": "MQTT-Version", "value": "mqtt4.0"})];
+        let result = parse_endpoint_transport("mqtt://broker:1883/topic", Some(&notifier_info));
+        assert!(matches!(result, Err(EndpointParseError::UnsupportedMqttVersion { .. })));
     }
 
     #[test]
     fn parse_invalid_mqtt_qos_rejected() {
         let notifier_info = vec![serde_json::json!({"key": "MQTT-QoS", "value": "3"})];
-        let result =
-            parse_endpoint_transport("mqtt://broker:1883/topic", Some(&notifier_info));
-        assert!(matches!(
-            result,
-            Err(EndpointParseError::UnsupportedMqttQos { .. })
-        ));
+        let result = parse_endpoint_transport("mqtt://broker:1883/topic", Some(&notifier_info));
+        assert!(matches!(result, Err(EndpointParseError::UnsupportedMqttQos { .. })));
     }
 
     #[test]
     fn parse_mqtt_with_credentials() {
-        let result =
-            parse_endpoint_transport("mqtt://myuser:mypass@broker:1883/topic", None).unwrap();
+        let result = parse_endpoint_transport("mqtt://myuser:mypass@broker:1883/topic", None).unwrap();
         match result {
             EndpointTransport::Mqtt(config) => {
                 assert_eq!(config.username.as_deref(), Some("myuser"));

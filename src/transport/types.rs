@@ -11,8 +11,7 @@ use bytes::Bytes;
 use mediatype::{MediaType, MediaTypeBuf};
 
 /// `application/json`
-pub const APPLICATION_JSON: MediaType<'static> =
-    MediaType::new(mediatype::names::APPLICATION, mediatype::names::JSON);
+pub const APPLICATION_JSON: MediaType<'static> = MediaType::new(mediatype::names::APPLICATION, mediatype::names::JSON);
 
 /// `application/ld+json`
 pub const APPLICATION_LD_JSON: MediaType<'static> = MediaType::from_parts(
@@ -57,15 +56,9 @@ pub struct DeliveryRequest {
 #[derive(Debug)]
 pub enum DeliveryOutcome {
     /// The endpoint accepted the notification.
-    Success {
-        status_code: Option<u16>,
-        duration: Duration,
-    },
+    Success { status_code: Option<u16>, duration: Duration },
     /// The endpoint explicitly rejected the notification.
-    Rejected {
-        reason: String,
-        retryable: bool,
-    },
+    Rejected { reason: String, retryable: bool },
 }
 
 /// Transport-level errors that prevent delivery from completing.

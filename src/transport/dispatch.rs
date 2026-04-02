@@ -10,12 +10,11 @@ use bytes::Bytes;
 use serde_json::Value;
 use tracing::{debug, warn};
 
-use crate::transport::endpoint::{EndpointTransport, extract_key_value_pairs};
-use crate::transport::http::{HttpTransport, HttpTransportConfig};
-use crate::transport::mqtt::{MqttPoolConfig, MqttTransportHandle, MqttTransportPool};
-use crate::transport::types::{
-    DeliveryOutcome, DeliveryRequest, NotificationTransport, TransportError,
-    content_type_for_accept,
+use crate::transport::{
+    endpoint::{EndpointTransport, extract_key_value_pairs},
+    http::{HttpTransport, HttpTransportConfig},
+    mqtt::{MqttPoolConfig, MqttTransportHandle, MqttTransportPool},
+    types::{DeliveryOutcome, DeliveryRequest, NotificationTransport, TransportError, content_type_for_accept},
 };
 
 /// Unified transport dispatcher routing to HTTP or MQTT.
@@ -33,10 +32,7 @@ pub enum DeliveryResult {
 }
 
 impl TransportDispatcher {
-    pub fn new(
-        http_config: HttpTransportConfig,
-        mqtt_config: MqttPoolConfig,
-    ) -> Result<TransportDispatcher, TransportError> {
+    pub fn new(http_config: HttpTransportConfig, mqtt_config: MqttPoolConfig) -> Result<TransportDispatcher, TransportError> {
         let http = HttpTransport::new(http_config)?;
         let mqtt_pool = Arc::new(MqttTransportPool::new(mqtt_config));
         Ok(TransportDispatcher { http, mqtt_pool })
@@ -46,9 +42,7 @@ impl TransportDispatcher {
     fn transport_for(&self, endpoint: &EndpointTransport) -> TransportHandle<'_> {
         match endpoint {
             EndpointTransport::Http => TransportHandle::Http(&self.http),
-            EndpointTransport::Mqtt(config) => {
-                TransportHandle::Mqtt(self.mqtt_pool.transport_for(config))
-            }
+            EndpointTransport::Mqtt(config) => TransportHandle::Mqtt(self.mqtt_pool.transport_for(config)),
         }
     }
 
@@ -57,11 +51,7 @@ impl TransportDispatcher {
     /// This is the primary entry point for all worker delivery. It resolves
     /// the transport, enforces payload limits, delivers, and logs the
     /// outcome including duration and status details.
-    pub async fn deliver(
-        &self,
-        endpoint: &EndpointTransport,
-        request: &DeliveryRequest,
-    ) -> DeliveryResult {
+    pub async fn deliver(&self, endpoint: &EndpointTransport, request: &DeliveryRequest) -> DeliveryResult {
         let max_payload = self.http.max_payload_size();
         if request.payload.len() > max_payload {
             warn!(
@@ -76,10 +66,7 @@ impl TransportDispatcher {
         let handle = self.transport_for(endpoint);
 
         match handle.deliver(request).await {
-            Ok(DeliveryOutcome::Success {
-                status_code,
-                duration,
-            }) => {
+            Ok(DeliveryOutcome::Success { status_code, duration }) => {
                 debug!(
                     subscription_id = %request.subscription_id,
                     endpoint = %request.endpoint_uri,
@@ -90,10 +77,7 @@ impl TransportDispatcher {
                 );
                 DeliveryResult::Delivered
             }
-            Ok(DeliveryOutcome::Rejected {
-                reason,
-                retryable,
-            }) => {
+            Ok(DeliveryOutcome::Rejected { reason, retryable }) => {
                 warn!(
                     subscription_id = %request.subscription_id,
                     endpoint = %request.endpoint_uri,
@@ -138,10 +122,7 @@ enum TransportHandle<'a> {
 
 #[async_trait]
 impl NotificationTransport for TransportHandle<'_> {
-    async fn deliver(
-        &self,
-        delivery: &DeliveryRequest,
-    ) -> Result<DeliveryOutcome, TransportError> {
+    async fn deliver(&self, delivery: &DeliveryRequest) -> Result<DeliveryOutcome, TransportError> {
         match self {
             TransportHandle::Http(t) => t.deliver(delivery).await,
             TransportHandle::Mqtt(t) => t.deliver(delivery).await,
@@ -170,11 +151,9 @@ pub fn build_delivery_request(
     subscription_id: &str,
 ) -> Result<DeliveryRequest, TransportError> {
     let content_type = content_type_for_accept(accept);
-    let payload = serde_json::to_vec(notification_payload).map_err(|e| {
-        TransportError::ConnectionFailed {
-            endpoint: endpoint_uri.to_string(),
-            detail: format!("failed to serialize notification payload: {e}"),
-        }
+    let payload = serde_json::to_vec(notification_payload).map_err(|e| TransportError::ConnectionFailed {
+        endpoint: endpoint_uri.to_string(),
+        detail: format!("failed to serialize notification payload: {e}"),
     })?;
 
     Ok(DeliveryRequest {

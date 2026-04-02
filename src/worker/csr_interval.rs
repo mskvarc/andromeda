@@ -137,10 +137,7 @@ impl CsrIntervalWorker {
                     }
                 };
 
-                let success = matches!(
-                    self.transport.deliver(&endpoint_transport, &request).await,
-                    DeliveryResult::Delivered
-                );
+                let success = matches!(self.transport.deliver(&endpoint_transport, &request).await, DeliveryResult::Delivered);
 
                 if success {
                     if let Err(e) = self.sub_repo.mark_success(&sub.id).await {

@@ -36,11 +36,7 @@ use crate::{
         temporal::TemporalService,
     },
     tenancy::{TenantRef, TenantRuntimeManager},
-    transport::{
-        dispatch::TransportDispatcher,
-        http::HttpTransportConfig,
-        mqtt::MqttPoolConfig,
-    },
+    transport::{dispatch::TransportDispatcher, http::HttpTransportConfig, mqtt::MqttPoolConfig},
     worker::{
         csr_interval::CsrIntervalWorker,
         csr_notification::CsrNotificationWorker,

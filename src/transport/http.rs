@@ -9,9 +9,9 @@ use std::time::{Duration, Instant};
 use async_trait::async_trait;
 use tracing::{debug, warn};
 
-use crate::api::header::{jsonld_context_link, link_header_value};
-use crate::transport::types::{
-    self, DeliveryOutcome, DeliveryRequest, NotificationTransport, TransportError,
+use crate::{
+    api::header::{jsonld_context_link, link_header_value},
+    transport::types::{self, DeliveryOutcome, DeliveryRequest, NotificationTransport, TransportError},
 };
 
 /// Configuration for the HTTP notification transport.
@@ -68,10 +68,7 @@ impl HttpTransport {
 
 #[async_trait]
 impl NotificationTransport for HttpTransport {
-    async fn deliver(
-        &self,
-        req: &DeliveryRequest,
-    ) -> Result<DeliveryOutcome, TransportError> {
+    async fn deliver(&self, req: &DeliveryRequest) -> Result<DeliveryOutcome, TransportError> {
         if req.payload.len() > self.config.max_payload_size {
             return Err(TransportError::PayloadTooLarge {
                 size: req.payload.len(),
@@ -106,10 +103,7 @@ impl NotificationTransport for HttpTransport {
 
         // Add Link header for application/json notifications (NGSI-LD spec requirement).
         if req.content_type == types::APPLICATION_JSON {
-            let ctx_url = req
-                .context_url
-                .as_deref()
-                .unwrap_or(crate::jsonld::core_context::NGSI_LD_CORE_CONTEXT_URL);
+            let ctx_url = req.context_url.as_deref().unwrap_or(crate::jsonld::core_context::NGSI_LD_CORE_CONTEXT_URL);
             let link = jsonld_context_link(ctx_url);
             if let Some(value) = link_header_value(&link) {
                 request = request.header("Link", value);

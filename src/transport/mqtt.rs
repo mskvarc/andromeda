@@ -17,16 +17,15 @@ use async_trait::async_trait;
 use backon::BackoffBuilder;
 use dashmap::DashMap;
 use serde_json::Value;
-use tokio::{
-    sync::RwLock,
-    time::Instant,
-};
+use tokio::{sync::RwLock, time::Instant};
 use tracing::{debug, error, info, warn};
 
-use crate::api::header::{jsonld_context_link, link_header_string};
-use crate::transport::endpoint::{MqttEndpointConfig, MqttQoS, MqttVersion};
-use crate::transport::types::{
-    self, DeliveryOutcome, DeliveryRequest, NotificationTransport, TransportError,
+use crate::{
+    api::header::{jsonld_context_link, link_header_string},
+    transport::{
+        endpoint::{MqttEndpointConfig, MqttQoS, MqttVersion},
+        types::{self, DeliveryOutcome, DeliveryRequest, NotificationTransport, TransportError},
+    },
 };
 
 // Health state constants.
@@ -187,10 +186,7 @@ impl MqttTransportPool {
         })
     }
 
-    async fn get_or_create_connection(
-        &self,
-        config: &MqttEndpointConfig,
-    ) -> Result<Arc<MqttConnection>, TransportError> {
+    async fn get_or_create_connection(&self, config: &MqttEndpointConfig) -> Result<Arc<MqttConnection>, TransportError> {
         let key = MqttConnectionKey::from_config(config);
 
         // Fast path: existing healthy connection.
@@ -233,10 +229,7 @@ impl MqttTransportPool {
                 // respect backoff instead of hammering the broker.
                 if let Some(entry) = self.connections.get(&key) {
                     let mut state = entry.value().reconnect_state.lock().await;
-                    let delay = state
-                        .backoff_iter
-                        .next()
-                        .unwrap_or(Duration::from_secs(60));
+                    let delay = state.backoff_iter.next().unwrap_or(Duration::from_secs(60));
                     state.next_attempt_at = Instant::now() + delay;
                 }
                 Err(e)
@@ -275,11 +268,7 @@ impl MqttTransportPool {
         }
     }
 
-    async fn create_connection(
-        &self,
-        key: &MqttConnectionKey,
-        config: &MqttEndpointConfig,
-    ) -> Result<MqttConnection, TransportError> {
+    async fn create_connection(&self, key: &MqttConnectionKey, config: &MqttEndpointConfig) -> Result<MqttConnection, TransportError> {
         let client_id = format!("andromeda-{}", uuid::Uuid::new_v4());
         let healthy = Arc::new(AtomicU8::new(HEALTH_HEALTHY));
         let last_healthy = Arc::new(RwLock::new(Instant::now()));
@@ -289,17 +278,13 @@ impl MqttTransportPool {
 
         match key.version {
             MqttVersion::V5 => {
-                let mut options =
-                    rumqttc::v5::MqttOptions::new(&client_id, &key.host, key.port);
+                let mut options = rumqttc::v5::MqttOptions::new(&client_id, &key.host, key.port);
                 options.set_keep_alive(self.config.keepalive);
                 if key.use_tls {
                     options.set_transport(rumqttc::Transport::tls_with_default_config());
                 }
                 if let Some(ref username) = config.username {
-                    options.set_credentials(
-                        username.clone(),
-                        config.password.clone().unwrap_or_default(),
-                    );
+                    options.set_credentials(username.clone(), config.password.clone().unwrap_or_default());
                 }
 
                 let (client, mut eventloop) = rumqttc::v5::AsyncClient::new(options, 64);
@@ -363,17 +348,13 @@ impl MqttTransportPool {
                 })
             }
             MqttVersion::V311 => {
-                let mut options =
-                    rumqttc::MqttOptions::new(&client_id, &key.host, key.port);
+                let mut options = rumqttc::MqttOptions::new(&client_id, &key.host, key.port);
                 options.set_keep_alive(self.config.keepalive);
                 if key.use_tls {
                     options.set_transport(rumqttc::Transport::tls_with_default_config());
                 }
                 if let Some(ref username) = config.username {
-                    options.set_credentials(
-                        username.clone(),
-                        config.password.clone().unwrap_or_default(),
-                    );
+                    options.set_credentials(username.clone(), config.password.clone().unwrap_or_default());
                 }
 
                 let (client, mut eventloop) = rumqttc::AsyncClient::new(options, 64);
@@ -466,24 +447,14 @@ pub struct MqttTransportHandle {
 /// The metadata object carries the same information that HTTP notifications
 /// transport via headers (Content-Type, Link, receiverInfo key-value pairs,
 /// tenant). Used by both V5 and V3.1.1 paths.
-fn build_envelope(
-    body: &[u8],
-    content_type: &str,
-    receiver_info: &[(String, String)],
-    context_url: Option<&str>,
-    tenant: Option<&str>,
-) -> Vec<u8> {
+fn build_envelope(body: &[u8], content_type: &str, receiver_info: &[(String, String)], context_url: Option<&str>, tenant: Option<&str>) -> Vec<u8> {
     let body_value: Value = serde_json::from_slice(body).unwrap_or(Value::Null);
 
     let mut metadata = serde_json::Map::new();
-    metadata.insert(
-        "Content-Type".to_string(),
-        Value::String(content_type.to_string()),
-    );
+    metadata.insert("Content-Type".to_string(), Value::String(content_type.to_string()));
 
     if content_type == "application/json" {
-        let ctx_url =
-            context_url.unwrap_or(crate::jsonld::core_context::NGSI_LD_CORE_CONTEXT_URL);
+        let ctx_url = context_url.unwrap_or(crate::jsonld::core_context::NGSI_LD_CORE_CONTEXT_URL);
         let link = jsonld_context_link(ctx_url);
         if let Some(value) = link_header_string(&link) {
             metadata.insert("Link".to_string(), Value::String(value));
@@ -495,10 +466,7 @@ fn build_envelope(
     }
 
     if let Some(tenant) = tenant {
-        metadata.insert(
-            "NGSILD-Tenant".to_string(),
-            Value::String(tenant.to_string()),
-        );
+        metadata.insert("NGSILD-Tenant".to_string(), Value::String(tenant.to_string()));
     }
 
     let envelope = serde_json::json!({
@@ -517,10 +485,7 @@ fn build_envelope(
 
 #[async_trait]
 impl NotificationTransport for MqttTransportHandle {
-    async fn deliver(
-        &self,
-        req: &DeliveryRequest,
-    ) -> Result<DeliveryOutcome, TransportError> {
+    async fn deliver(&self, req: &DeliveryRequest) -> Result<DeliveryOutcome, TransportError> {
         let conn = self.pool.get_or_create_connection(&self.config).await?;
         let content_type_str = req.content_type.as_str();
         let start = std::time::Instant::now();
@@ -534,10 +499,7 @@ impl NotificationTransport for MqttTransportHandle {
             req.context_url.as_deref(),
             req.tenant.as_deref(),
         );
-        let mqtt_endpoint = format!(
-            "{}:{}/{}",
-            self.config.host, self.config.port, self.config.topic
-        );
+        let mqtt_endpoint = format!("{}:{}/{}", self.config.host, self.config.port, self.config.topic);
 
         match &conn.client {
             MqttClientVariant::V5 { client } => {
@@ -551,10 +513,7 @@ impl NotificationTransport for MqttTransportHandle {
                 }
 
                 if req.content_type == types::APPLICATION_JSON {
-                    let ctx_url = req
-                        .context_url
-                        .as_deref()
-                        .unwrap_or(crate::jsonld::core_context::NGSI_LD_CORE_CONTEXT_URL);
+                    let ctx_url = req.context_url.as_deref().unwrap_or(crate::jsonld::core_context::NGSI_LD_CORE_CONTEXT_URL);
                     let link = jsonld_context_link(ctx_url);
                     if let Some(value) = link_header_string(&link) {
                         properties.user_properties.push(("Link".to_string(), value));
@@ -562,9 +521,7 @@ impl NotificationTransport for MqttTransportHandle {
                 }
 
                 if let Some(ref tenant) = req.tenant {
-                    properties
-                        .user_properties
-                        .push(("NGSILD-Tenant".to_string(), tenant.clone()));
+                    properties.user_properties.push(("NGSILD-Tenant".to_string(), tenant.clone()));
                 }
 
                 let v5_qos = match qos {
@@ -575,13 +532,7 @@ impl NotificationTransport for MqttTransportHandle {
 
                 // V5: envelope body + user properties for metadata.
                 client
-                    .publish_with_properties(
-                        &self.config.topic,
-                        v5_qos,
-                        false,
-                        envelope,
-                        properties,
-                    )
+                    .publish_with_properties(&self.config.topic, v5_qos, false, envelope, properties)
                     .await
                     .map_err(|e| {
                         conn.mark_unhealthy();
@@ -599,16 +550,13 @@ impl NotificationTransport for MqttTransportHandle {
                 };
 
                 // V3.1.1: envelope only (no user properties available).
-                client
-                    .publish(&self.config.topic, v4_qos, false, envelope)
-                    .await
-                    .map_err(|e| {
-                        conn.mark_unhealthy();
-                        TransportError::ConnectionFailed {
-                            endpoint: mqtt_endpoint,
-                            detail: e.to_string(),
-                        }
-                    })?;
+                client.publish(&self.config.topic, v4_qos, false, envelope).await.map_err(|e| {
+                    conn.mark_unhealthy();
+                    TransportError::ConnectionFailed {
+                        endpoint: mqtt_endpoint,
+                        detail: e.to_string(),
+                    }
+                })?;
             }
         }
 
@@ -623,10 +571,7 @@ impl NotificationTransport for MqttTransportHandle {
             "MQTT publish succeeded"
         );
 
-        Ok(DeliveryOutcome::Success {
-            status_code: None,
-            duration,
-        })
+        Ok(DeliveryOutcome::Success { status_code: None, duration })
     }
 
     async fn shutdown(&self) {
