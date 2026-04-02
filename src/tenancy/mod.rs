@@ -2,6 +2,7 @@ use crate::{
     api::state::AndromedaState,
     core::config::{Configuration, MultitenancyConfig},
     error::AndromedaError,
+    transport::dispatch::TransportDispatcher,
 };
 use sqlx::{Connection, Executor, PgConnection, Row, postgres::PgPoolOptions};
 use std::{
@@ -44,6 +45,7 @@ impl TenantRef {
 struct TenantRuntime {
     state: Arc<AndromedaState>,
     worker_handles: Vec<JoinHandle<()>>,
+    transport: Arc<TransportDispatcher>,
     last_used: AtomicU64,
 }
 
@@ -124,7 +126,7 @@ impl TenantRuntimeManager {
         };
 
         let db_url = with_db_name(&self.config.database.url, &db_name)?;
-        let (state, handles) = crate::api::router::build_tenant_state(&self.config, &db_url, tenant.clone()).await?;
+        let (state, handles, transport) = crate::api::router::build_tenant_state(&self.config, &db_url, tenant.clone()).await?;
         let state = Arc::new(state);
 
         let mut guard = self.runtimes.write().await;
@@ -134,12 +136,14 @@ impl TenantRuntimeManager {
                 for handle in handles {
                     handle.abort();
                 }
+                transport.shutdown().await;
                 Ok(Arc::clone(&entry.get().state))
             }
             Entry::Vacant(vacant) => {
                 vacant.insert(TenantRuntime {
                     state: Arc::clone(&state),
                     worker_handles: handles,
+                    transport,
                     last_used: AtomicU64::new(EPOCH.elapsed().as_millis() as u64),
                 });
                 Ok(state)
@@ -172,6 +176,7 @@ impl TenantRuntimeManager {
             let evict_count = keys_to_evict.len();
             for key in keys_to_evict {
                 if let Some(runtime) = guard.remove(&key) {
+                    runtime.transport.shutdown().await;
                     for handle in runtime.worker_handles {
                         handle.abort();
                     }

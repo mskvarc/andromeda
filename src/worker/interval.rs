@@ -5,8 +5,8 @@ use crate::{
     repository::{entity::EntityRepository, subscription::SubscriptionRepository, subscription_store::SubscriptionStore},
     service::entity::inject_sys_attrs,
     transport::{
-        endpoint::{EndpointTransport, parse_endpoint_transport},
-        mqtt::MqttConnectionManager,
+        dispatch::{DeliveryResult, TransportDispatcher, build_delivery_request},
+        endpoint::parse_endpoint_transport,
     },
 };
 use chrono::Utc;
@@ -30,8 +30,7 @@ impl super::Worker for IntervalWorker {
 pub struct IntervalWorker {
     sub_repo: SubscriptionRepository,
     entity_repo: EntityRepository,
-    http_client: reqwest::Client,
-    mqtt_manager: Arc<MqttConnectionManager>,
+    transport: Arc<TransportDispatcher>,
     poll_interval: Duration,
     engine: JsonLdEngine,
     tenant: crate::tenancy::TenantRef,
@@ -42,14 +41,13 @@ impl IntervalWorker {
         sub_repo: SubscriptionRepository,
         entity_repo: EntityRepository,
         engine: JsonLdEngine,
-        mqtt_manager: Arc<MqttConnectionManager>,
+        transport: Arc<TransportDispatcher>,
         tenant: crate::tenancy::TenantRef,
     ) -> Self {
         Self {
             sub_repo,
             entity_repo,
-            http_client: reqwest::ClientBuilder::new().http1_title_case_headers().build().unwrap(),
-            mqtt_manager,
+            transport,
             poll_interval: Duration::from_secs(1),
             engine,
             tenant,
@@ -138,46 +136,34 @@ impl IntervalWorker {
                 let accept = sub.notification.endpoint.accept.as_deref();
                 let jsonld_context = sub.jsonld_context.as_deref();
 
-                let transport = parse_endpoint_transport(endpoint_uri, sub.notification.endpoint.notifier_info.as_deref());
-
-                let success = match transport {
-                    Ok(EndpointTransport::Mqtt(ref config)) => {
-                        let content_type = match accept {
-                            Some("application/ld+json") => "application/ld+json",
-                            Some("application/geo+json") => "application/geo+json",
-                            _ => "application/json",
-                        };
-                        let body = match serde_json::to_vec(&payload) {
-                            Ok(b) => b,
-                            Err(e) => {
-                                debug!("Failed to serialize MQTT payload: {}", e);
-                                continue;
-                            }
-                        };
-                        self.mqtt_manager
-                            .publish(
-                                config,
-                                &body,
-                                content_type,
-                                sub.notification.endpoint.receiver_info.as_deref(),
-                                jsonld_context,
-                                self.tenant.response_header_value(),
-                            )
-                            .await
-                    }
-                    _ => {
-                        crate::transport::http::deliver_http(
-                            &self.http_client,
-                            endpoint_uri,
-                            accept,
-                            None,
-                            jsonld_context,
-                            self.tenant.response_header_value(),
-                            &payload,
-                        )
-                        .await
+                let endpoint_transport = match parse_endpoint_transport(endpoint_uri, sub.notification.endpoint.notifier_info.as_deref()) {
+                    Ok(t) => t,
+                    Err(e) => {
+                        debug!("IntervalWorker: invalid endpoint URI for {}: {}", sub.id, e);
+                        continue;
                     }
                 };
+
+                let request = match build_delivery_request(
+                    &payload,
+                    endpoint_uri,
+                    accept,
+                    sub.notification.endpoint.receiver_info.as_deref(),
+                    jsonld_context,
+                    self.tenant.response_header_value(),
+                    &sub.id,
+                ) {
+                    Ok(r) => r,
+                    Err(e) => {
+                        debug!("IntervalWorker: failed to build delivery request for {}: {}", sub.id, e);
+                        continue;
+                    }
+                };
+
+                let success = matches!(
+                    self.transport.deliver(&endpoint_transport, &request).await,
+                    DeliveryResult::Delivered
+                );
 
                 if success {
                     if let Err(e) = self.sub_repo.mark_success(&sub.id).await {

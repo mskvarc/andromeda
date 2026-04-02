@@ -11,8 +11,8 @@ use crate::{
     repository::{entity::EntityRepository, subscription::SubscriptionRepository, subscription_store::SubscriptionStore},
     service::entity::{EntityQueryService, inject_sys_attrs},
     transport::{
-        endpoint::{EndpointTransport, parse_endpoint_transport},
-        mqtt::MqttConnectionManager,
+        dispatch::{DeliveryResult, TransportDispatcher, build_delivery_request},
+        endpoint::parse_endpoint_transport,
     },
 };
 use chrono::{SecondsFormat, Utc};
@@ -44,8 +44,7 @@ pub struct NotificationWorker {
     entity_repo: EntityRepository,
     entity_query: EntityQueryService,
     cache: Arc<RwLock<HashMap<String, Arc<CompiledSubscription>>>>,
-    http_client: reqwest::Client,
-    mqtt_manager: Arc<MqttConnectionManager>,
+    transport: Arc<TransportDispatcher>,
     engine: JsonLdEngine,
     tenant: crate::tenancy::TenantRef,
 }
@@ -55,7 +54,7 @@ pub struct NotificationWorkerDeps {
     pub entity_repo: EntityRepository,
     pub entity_query: EntityQueryService,
     pub engine: JsonLdEngine,
-    pub mqtt_manager: Arc<MqttConnectionManager>,
+    pub transport: Arc<TransportDispatcher>,
     pub tenant: crate::tenancy::TenantRef,
 }
 
@@ -68,8 +67,7 @@ impl NotificationWorker {
             entity_repo: deps.entity_repo,
             entity_query: deps.entity_query,
             cache: Arc::new(RwLock::new(HashMap::new())),
-            http_client: reqwest::ClientBuilder::new().http1_title_case_headers().build().unwrap(),
-            mqtt_manager: deps.mqtt_manager,
+            transport: deps.transport,
             engine: deps.engine,
             tenant: deps.tenant,
         }
@@ -329,44 +327,25 @@ impl NotificationWorker {
                 }
             };
 
-            let success = match &compiled_sub.endpoint_transport {
-                EndpointTransport::Http => {
-                    crate::transport::http::deliver_http(
-                        &self.http_client,
-                        &compiled_sub.endpoint_uri,
-                        compiled_sub.endpoint_accept.as_deref(),
-                        compiled_sub.endpoint_receiver_info.as_deref(),
-                        compiled_sub.jsonld_context.as_deref(),
-                        self.tenant.response_header_value(),
-                        &notification_payload,
-                    )
-                    .await
-                }
-                EndpointTransport::Mqtt(config) => {
-                    let content_type = match compiled_sub.endpoint_accept.as_deref() {
-                        Some("application/ld+json") => "application/ld+json",
-                        Some("application/geo+json") => "application/geo+json",
-                        _ => "application/json",
-                    };
-                    let body = match serde_json::to_vec(&notification_payload) {
-                        Ok(b) => b,
-                        Err(e) => {
-                            debug!("Failed to serialize MQTT payload: {}", e);
-                            continue;
-                        }
-                    };
-                    self.mqtt_manager
-                        .publish(
-                            config,
-                            &body,
-                            content_type,
-                            compiled_sub.endpoint_receiver_info.as_deref(),
-                            compiled_sub.jsonld_context.as_deref(),
-                            self.tenant.response_header_value(),
-                        )
-                        .await
+            let request = match build_delivery_request(
+                &notification_payload,
+                &compiled_sub.endpoint_uri,
+                compiled_sub.endpoint_accept.as_deref(),
+                compiled_sub.endpoint_receiver_info.as_deref(),
+                compiled_sub.jsonld_context.as_deref(),
+                self.tenant.response_header_value(),
+                &sub_id,
+            ) {
+                Ok(r) => r,
+                Err(e) => {
+                    debug!("Failed to build delivery request for {}: {}", sub_id, e);
+                    continue;
                 }
             };
+            let success = matches!(
+                self.transport.deliver(&compiled_sub.endpoint_transport, &request).await,
+                DeliveryResult::Delivered
+            );
 
             if success {
                 if let Err(e) = self.sub_repo.mark_success(&sub_id).await {
@@ -485,6 +464,7 @@ fn compile_selector(selector: &EntitySelector) -> Option<CompiledSelector> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::transport::endpoint::EndpointTransport;
     use matching::matches_subscription;
     use payload::filter_entity_attributes;
 

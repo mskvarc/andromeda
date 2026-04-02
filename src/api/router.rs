@@ -36,7 +36,11 @@ use crate::{
         temporal::TemporalService,
     },
     tenancy::{TenantRef, TenantRuntimeManager},
-    transport::mqtt::MqttConnectionManager,
+    transport::{
+        dispatch::TransportDispatcher,
+        http::HttpTransportConfig,
+        mqtt::MqttPoolConfig,
+    },
     worker::{
         csr_interval::CsrIntervalWorker,
         csr_notification::CsrNotificationWorker,
@@ -175,7 +179,11 @@ fn build_v1_router() -> Router<AppState> {
         .nest("/info", info_routes)
 }
 
-pub async fn build_tenant_state(config: &Configuration, db_url: &str, tenant: TenantRef) -> Result<(AndromedaState, Vec<JoinHandle<()>>), AndromedaError> {
+pub async fn build_tenant_state(
+    config: &Configuration,
+    db_url: &str,
+    tenant: TenantRef,
+) -> Result<(AndromedaState, Vec<JoinHandle<()>>, Arc<TransportDispatcher>), AndromedaError> {
     let pool = PgPoolOptions::new().max_connections(config.database.max_connections).connect(db_url).await?;
 
     crate::tenancy::migrate_tenant_db(&pool).await?;
@@ -195,8 +203,20 @@ pub async fn build_tenant_state(config: &Configuration, db_url: &str, tenant: Te
     let csr_service = Arc::new(ContextSourceRegistrationService::new(&pool, engine.clone(), Some(csr_change_tx.clone())));
     let csr_subscription_service = Arc::new(CsourceSubscriptionService::new(&pool, engine.clone(), Some(csr_sub_change_tx.clone())));
 
-    let mqtt_manager = Arc::new(MqttConnectionManager::new());
+    let transport = Arc::new(
+        TransportDispatcher::new(HttpTransportConfig::default(), MqttPoolConfig::default())
+            .map_err(|e| crate::error::AndromedaError::internal(format!("Failed to create transport dispatcher: {e}")))?,
+    );
+
+    let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
     let mut worker_handles = Vec::new();
+
+    // MQTT health probe background task
+    worker_handles.push(transport.mqtt_pool().spawn_health_probe(shutdown_rx));
+
+    // Keep shutdown sender alive so the health probe can be stopped on drop.
+    // In a future graceful shutdown implementation, call `shutdown_tx.send(true)`.
+    let _shutdown_tx = shutdown_tx;
 
     let notification_entity_query = crate::service::entity::EntityQueryService::new(&pool, engine.clone());
     let notification_worker = NotificationWorker::new(
@@ -207,7 +227,7 @@ pub async fn build_tenant_state(config: &Configuration, db_url: &str, tenant: Te
             entity_repo: EntityRepository::new(&pool),
             entity_query: notification_entity_query,
             engine: engine.clone(),
-            mqtt_manager: mqtt_manager.clone(),
+            transport: transport.clone(),
             tenant: tenant.clone(),
         },
     );
@@ -227,7 +247,7 @@ pub async fn build_tenant_state(config: &Configuration, db_url: &str, tenant: Te
         SubscriptionRepository::new(&pool),
         EntityRepository::new(&pool),
         engine.clone(),
-        mqtt_manager.clone(),
+        transport.clone(),
         tenant.clone(),
     );
     worker_handles.push(tokio::spawn(interval_worker.run()));
@@ -237,7 +257,7 @@ pub async fn build_tenant_state(config: &Configuration, db_url: &str, tenant: Te
         csr_sub_change_tx.subscribe(),
         CsourceSubscriptionRepository::new(&pool),
         ContextSourceRegistrationRepository::new(&pool),
-        mqtt_manager.clone(),
+        transport.clone(),
         tenant.clone(),
     );
     worker_handles.push(tokio::spawn(csr_notification_worker.run()));
@@ -256,10 +276,11 @@ pub async fn build_tenant_state(config: &Configuration, db_url: &str, tenant: Te
         crate::worker::entity_expiration::EntityExpirationWorker::new(EntityRepository::new(&pool), Some(change_tx.clone()), expiration_interval);
     worker_handles.push(tokio::spawn(entity_expiration_worker.run()));
 
+    let transport_handle = transport.clone();
     let csr_interval_worker = CsrIntervalWorker::new(
         CsourceSubscriptionRepository::new(&pool),
         ContextSourceRegistrationRepository::new(&pool),
-        mqtt_manager,
+        transport,
         tenant,
     );
     worker_handles.push(tokio::spawn(csr_interval_worker.run()));
@@ -293,5 +314,6 @@ pub async fn build_tenant_state(config: &Configuration, db_url: &str, tenant: Te
             snapshots: snapshot_service,
         },
         worker_handles,
+        transport_handle,
     ))
 }

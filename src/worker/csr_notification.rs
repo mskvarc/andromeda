@@ -10,8 +10,8 @@ use crate::{
         subscription_store::SubscriptionStore,
     },
     transport::{
-        endpoint::{EndpointTransport, parse_endpoint_transport},
-        mqtt::MqttConnectionManager,
+        dispatch::{DeliveryResult, TransportDispatcher, build_delivery_request},
+        endpoint::parse_endpoint_transport,
     },
 };
 use chrono::Utc;
@@ -38,8 +38,7 @@ pub struct CsrNotificationWorker {
     sub_repo: CsourceSubscriptionRepository,
     csr_repo: ContextSourceRegistrationRepository,
     cache: Arc<RwLock<HashMap<String, Arc<CompiledCsrSubscription>>>>,
-    http_client: reqwest::Client,
-    mqtt_manager: Arc<MqttConnectionManager>,
+    transport: Arc<TransportDispatcher>,
     tenant: crate::tenancy::TenantRef,
 }
 
@@ -49,7 +48,7 @@ impl CsrNotificationWorker {
         sub_change_rx: broadcast::Receiver<CsourceSubscriptionChange>,
         sub_repo: CsourceSubscriptionRepository,
         csr_repo: ContextSourceRegistrationRepository,
-        mqtt_manager: Arc<MqttConnectionManager>,
+        transport: Arc<TransportDispatcher>,
         tenant: crate::tenancy::TenantRef,
     ) -> Self {
         Self {
@@ -58,8 +57,7 @@ impl CsrNotificationWorker {
             sub_repo,
             csr_repo,
             cache: Arc::new(RwLock::new(HashMap::new())),
-            http_client: reqwest::ClientBuilder::new().http1_title_case_headers().build().unwrap(),
-            mqtt_manager,
+            transport,
             tenant,
         }
     }
@@ -235,44 +233,25 @@ impl CsrNotificationWorker {
             }
         };
 
-        let success = match &compiled_sub.endpoint_transport {
-            EndpointTransport::Http => {
-                crate::transport::http::deliver_http(
-                    &self.http_client,
-                    &compiled_sub.endpoint_uri,
-                    compiled_sub.endpoint_accept.as_deref(),
-                    compiled_sub.endpoint_receiver_info.as_deref(),
-                    compiled_sub.jsonld_context.as_deref(),
-                    self.tenant.response_header_value(),
-                    &payload,
-                )
-                .await
-            }
-            EndpointTransport::Mqtt(config) => {
-                let content_type = match compiled_sub.endpoint_accept.as_deref() {
-                    Some("application/ld+json") => "application/ld+json",
-                    Some("application/geo+json") => "application/geo+json",
-                    _ => "application/json",
-                };
-                let body = match serde_json::to_vec(&payload) {
-                    Ok(b) => b,
-                    Err(e) => {
-                        debug!("Failed to serialize MQTT payload: {}", e);
-                        return;
-                    }
-                };
-                self.mqtt_manager
-                    .publish(
-                        config,
-                        &body,
-                        content_type,
-                        compiled_sub.endpoint_receiver_info.as_deref(),
-                        compiled_sub.jsonld_context.as_deref(),
-                        self.tenant.response_header_value(),
-                    )
-                    .await
+        let request = match build_delivery_request(
+            &payload,
+            &compiled_sub.endpoint_uri,
+            compiled_sub.endpoint_accept.as_deref(),
+            compiled_sub.endpoint_receiver_info.as_deref(),
+            compiled_sub.jsonld_context.as_deref(),
+            self.tenant.response_header_value(),
+            sub_id,
+        ) {
+            Ok(r) => r,
+            Err(e) => {
+                debug!("Failed to build delivery request for CSR sub {}: {}", sub_id, e);
+                return;
             }
         };
+        let success = matches!(
+            self.transport.deliver(&compiled_sub.endpoint_transport, &request).await,
+            DeliveryResult::Delivered
+        );
 
         if success {
             if let Err(e) = self.sub_repo.mark_success(sub_id).await {
@@ -357,44 +336,25 @@ impl CsrNotificationWorker {
                 }
             };
 
-            let success = match &compiled_sub.endpoint_transport {
-                EndpointTransport::Http => {
-                    crate::transport::http::deliver_http(
-                        &self.http_client,
-                        &compiled_sub.endpoint_uri,
-                        compiled_sub.endpoint_accept.as_deref(),
-                        compiled_sub.endpoint_receiver_info.as_deref(),
-                        compiled_sub.jsonld_context.as_deref(),
-                        self.tenant.response_header_value(),
-                        &payload,
-                    )
-                    .await
-                }
-                EndpointTransport::Mqtt(config) => {
-                    let content_type = match compiled_sub.endpoint_accept.as_deref() {
-                        Some("application/ld+json") => "application/ld+json",
-                        Some("application/geo+json") => "application/geo+json",
-                        _ => "application/json",
-                    };
-                    let body = match serde_json::to_vec(&payload) {
-                        Ok(b) => b,
-                        Err(e) => {
-                            debug!("Failed to serialize MQTT payload: {}", e);
-                            continue;
-                        }
-                    };
-                    self.mqtt_manager
-                        .publish(
-                            config,
-                            &body,
-                            content_type,
-                            compiled_sub.endpoint_receiver_info.as_deref(),
-                            compiled_sub.jsonld_context.as_deref(),
-                            self.tenant.response_header_value(),
-                        )
-                        .await
+            let request = match build_delivery_request(
+                &payload,
+                &compiled_sub.endpoint_uri,
+                compiled_sub.endpoint_accept.as_deref(),
+                compiled_sub.endpoint_receiver_info.as_deref(),
+                compiled_sub.jsonld_context.as_deref(),
+                self.tenant.response_header_value(),
+                &sub_id,
+            ) {
+                Ok(r) => r,
+                Err(e) => {
+                    debug!("Failed to build delivery request for CSR sub {}: {}", sub_id, e);
+                    continue;
                 }
             };
+            let success = matches!(
+                self.transport.deliver(&compiled_sub.endpoint_transport, &request).await,
+                DeliveryResult::Delivered
+            );
 
             if success {
                 if let Err(e) = self.sub_repo.mark_success(&sub_id).await {
@@ -486,44 +446,25 @@ impl CsrNotificationWorker {
             }
         };
 
-        let success = match &compiled_sub.endpoint_transport {
-            EndpointTransport::Http => {
-                crate::transport::http::deliver_http(
-                    &self.http_client,
-                    &compiled_sub.endpoint_uri,
-                    compiled_sub.endpoint_accept.as_deref(),
-                    compiled_sub.endpoint_receiver_info.as_deref(),
-                    compiled_sub.jsonld_context.as_deref(),
-                    self.tenant.response_header_value(),
-                    &payload,
-                )
-                .await
-            }
-            EndpointTransport::Mqtt(config) => {
-                let content_type = match compiled_sub.endpoint_accept.as_deref() {
-                    Some("application/ld+json") => "application/ld+json",
-                    Some("application/geo+json") => "application/geo+json",
-                    _ => "application/json",
-                };
-                let body = match serde_json::to_vec(&payload) {
-                    Ok(b) => b,
-                    Err(e) => {
-                        debug!("Failed to serialize MQTT payload: {}", e);
-                        return;
-                    }
-                };
-                self.mqtt_manager
-                    .publish(
-                        config,
-                        &body,
-                        content_type,
-                        compiled_sub.endpoint_receiver_info.as_deref(),
-                        compiled_sub.jsonld_context.as_deref(),
-                        self.tenant.response_header_value(),
-                    )
-                    .await
+        let request = match build_delivery_request(
+            &payload,
+            &compiled_sub.endpoint_uri,
+            compiled_sub.endpoint_accept.as_deref(),
+            compiled_sub.endpoint_receiver_info.as_deref(),
+            compiled_sub.jsonld_context.as_deref(),
+            self.tenant.response_header_value(),
+            sub_id,
+        ) {
+            Ok(r) => r,
+            Err(e) => {
+                debug!("Failed to build delivery request for CSR sub {}: {}", sub_id, e);
+                return;
             }
         };
+        let success = matches!(
+            self.transport.deliver(&compiled_sub.endpoint_transport, &request).await,
+            DeliveryResult::Delivered
+        );
 
         if success {
             if let Err(e) = self.sub_repo.mark_success(sub_id).await {

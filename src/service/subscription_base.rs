@@ -85,7 +85,7 @@ where
                 .and_then(|v| v.as_array());
             let notifier_info_slice: Option<Vec<Value>> = notifier_info.cloned();
             if let Err(e) = parse_endpoint_transport(endpoint_uri, notifier_info_slice.as_deref()) {
-                return Err(AndromedaError::bad_request_data(e));
+                return Err(AndromedaError::bad_request_data(e.to_string()));
             }
         }
 
@@ -180,7 +180,7 @@ where
                 .and_then(|v| v.as_array());
             let notifier_info_slice: Option<Vec<Value>> = notifier_info.cloned();
             if let Err(e) = parse_endpoint_transport(endpoint_uri, notifier_info_slice.as_deref()) {
-                return Err(AndromedaError::bad_request_data(e));
+                return Err(AndromedaError::bad_request_data(e.to_string()));
             }
         }
 
