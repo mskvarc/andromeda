@@ -7,7 +7,7 @@
 use crate::{
     error::AndromedaError,
     jsonld::{CompactOptions, ContextSpec, ContextStripping, JsonLdEngine},
-    query::q,
+    query::q::ast,
 };
 use serde_json::Value;
 use std::collections::HashSet;
@@ -16,46 +16,46 @@ use std::collections::HashSet;
 // Generic async q-expression walker
 // ---------------------------------------------------------------------------
 
-/// Recursively walk a [`q::Expr`] tree, applying an async handler to each
-/// [`q::Predicate`] leaf.
+/// Recursively walk a [`ast::Expr`] tree, applying an async handler to each
+/// [`ast::Predicate`] leaf.
 ///
 /// `And` / `Or` branches are traversed recursively; `Pred` leaves are
 /// transformed by `handler`.
-async fn walk_q_expr<F, Fut>(expr: q::Expr, handler: &F) -> Result<q::Expr, AndromedaError>
+async fn walk_q_expr<F, Fut>(expr: ast::Expr, handler: &F) -> Result<ast::Expr, AndromedaError>
 where
-    F: Fn(q::Predicate) -> Fut + Sync,
-    Fut: std::future::Future<Output = Result<q::Predicate, AndromedaError>> + Send,
+    F: Fn(ast::Predicate) -> Fut + Sync,
+    Fut: std::future::Future<Output = Result<ast::Predicate, AndromedaError>> + Send,
 {
     match expr {
-        q::Expr::And(terms) => {
+        ast::Expr::And(terms) => {
             let mut expanded = Vec::with_capacity(terms.len());
             for t in terms {
                 expanded.push(walk_q_expr_boxed(t, handler).await?);
             }
-            Ok(q::Expr::And(expanded))
+            Ok(ast::Expr::And(expanded))
         }
-        q::Expr::Or(terms) => {
+        ast::Expr::Or(terms) => {
             let mut expanded = Vec::with_capacity(terms.len());
             for t in terms {
                 expanded.push(walk_q_expr_boxed(t, handler).await?);
             }
-            Ok(q::Expr::Or(expanded))
+            Ok(ast::Expr::Or(expanded))
         }
-        q::Expr::Pred(pred) => {
+        ast::Expr::Pred(pred) => {
             let expanded = handler(pred).await?;
-            Ok(q::Expr::Pred(expanded))
+            Ok(ast::Expr::Pred(expanded))
         }
     }
 }
 
 /// Box-pinned wrapper for recursive async calls.
 fn walk_q_expr_boxed<'a, F, Fut>(
-    expr: q::Expr,
+    expr: ast::Expr,
     handler: &'a F,
-) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<q::Expr, AndromedaError>> + Send + 'a>>
+) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<ast::Expr, AndromedaError>> + Send + 'a>>
 where
-    F: Fn(q::Predicate) -> Fut + Sync,
-    Fut: std::future::Future<Output = Result<q::Predicate, AndromedaError>> + Send + 'a,
+    F: Fn(ast::Predicate) -> Fut + Sync,
+    Fut: std::future::Future<Output = Result<ast::Predicate, AndromedaError>> + Send + 'a,
 {
     Box::pin(walk_q_expr(expr, handler))
 }
@@ -70,9 +70,9 @@ where
 /// is expanded to its full IRI form using the provided context.
 pub fn expand_q_expr<'a>(
     engine: &'a JsonLdEngine,
-    expr: q::Expr,
+    expr: ast::Expr,
     context: &'a ContextSpec,
-) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<q::Expr, AndromedaError>> + Send + 'a>> {
+) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<ast::Expr, AndromedaError>> + Send + 'a>> {
     Box::pin(async move { walk_q_expr(expr, &|pred| expand_pred_terms(engine, pred, context)).await })
 }
 
@@ -80,23 +80,23 @@ pub fn expand_q_expr<'a>(
 ///
 /// The main attribute and all sub-attributes in the predicate's path are
 /// expanded to full IRIs.
-pub async fn expand_pred_terms(engine: &JsonLdEngine, pred: q::Predicate, context: &ContextSpec) -> Result<q::Predicate, AndromedaError> {
+pub async fn expand_pred_terms(engine: &JsonLdEngine, pred: ast::Predicate, context: &ContextSpec) -> Result<ast::Predicate, AndromedaError> {
     match pred {
-        q::Predicate::Exists(path) => {
+        ast::Predicate::Exists(path) => {
             let path = expand_attr_path(engine, path, context).await?;
-            Ok(q::Predicate::Exists(path))
+            Ok(ast::Predicate::Exists(path))
         }
-        q::Predicate::Compare { path, op, rhs } => {
+        ast::Predicate::Compare { path, op, rhs } => {
             let path = expand_attr_path(engine, path, context).await?;
-            Ok(q::Predicate::Compare { path, op, rhs })
+            Ok(ast::Predicate::Compare { path, op, rhs })
         }
-        q::Predicate::MatchPattern { path, pattern } => {
+        ast::Predicate::MatchPattern { path, pattern } => {
             let path = expand_attr_path(engine, path, context).await?;
-            Ok(q::Predicate::MatchPattern { path, pattern })
+            Ok(ast::Predicate::MatchPattern { path, pattern })
         }
-        q::Predicate::NotMatchPattern { path, pattern } => {
+        ast::Predicate::NotMatchPattern { path, pattern } => {
             let path = expand_attr_path(engine, path, context).await?;
-            Ok(q::Predicate::NotMatchPattern { path, pattern })
+            Ok(ast::Predicate::NotMatchPattern { path, pattern })
         }
     }
 }
@@ -105,48 +105,50 @@ pub async fn expand_pred_terms(engine: &JsonLdEngine, pred: q::Predicate, contex
 /// `expand_attrs`, expand string scalar RHS values via the @context (spec 6.4.3.2).
 pub fn apply_expand_values<'a>(
     engine: &'a JsonLdEngine,
-    expr: q::Expr,
+    expr: ast::Expr,
     expand_attrs: &'a HashSet<String>,
     context: &'a ContextSpec,
-) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<q::Expr, AndromedaError>> + Send + 'a>> {
+) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<ast::Expr, AndromedaError>> + Send + 'a>> {
     Box::pin(async move { walk_q_expr(expr, &|pred| expand_compare_values(engine, pred, expand_attrs, context)).await })
 }
 
 async fn expand_compare_values(
     engine: &JsonLdEngine,
-    pred: q::Predicate,
+    pred: ast::Predicate,
     expand_attrs: &HashSet<String>,
     context: &ContextSpec,
-) -> Result<q::Predicate, AndromedaError> {
+) -> Result<ast::Predicate, AndromedaError> {
     match pred {
-        q::Predicate::Compare { path, op, rhs } if expand_attrs.contains(&path.attr) => {
+        ast::Predicate::Compare { path, op, rhs } if expand_attrs.contains(&path.attr) => {
             let rhs = expand_rhs_values(engine, rhs, context).await?;
-            Ok(q::Predicate::Compare { path, op, rhs })
+            Ok(ast::Predicate::Compare { path, op, rhs })
         }
-        q::Predicate::Exists(_) | q::Predicate::Compare { .. } | q::Predicate::MatchPattern { .. } | q::Predicate::NotMatchPattern { .. } => Ok(pred),
+        ast::Predicate::Exists(_) | ast::Predicate::Compare { .. } | ast::Predicate::MatchPattern { .. } | ast::Predicate::NotMatchPattern { .. } => Ok(pred),
     }
 }
 
-async fn expand_rhs_values(engine: &JsonLdEngine, rhs: q::CompareValue, context: &ContextSpec) -> Result<q::CompareValue, AndromedaError> {
+async fn expand_rhs_values(engine: &JsonLdEngine, rhs: ast::CompareValue, context: &ContextSpec) -> Result<ast::CompareValue, AndromedaError> {
     match rhs {
-        q::CompareValue::Scalar(q::Scalar::Str(s)) => {
+        ast::CompareValue::Scalar(ast::Scalar::Str(s)) => {
             let expanded = engine.expand_term(&s, context).await?;
-            Ok(q::CompareValue::Scalar(q::Scalar::Str(expanded)))
+            Ok(ast::CompareValue::Scalar(ast::Scalar::Str(expanded)))
         }
-        q::CompareValue::ValueList(values) => {
+        ast::CompareValue::ValueList(values) => {
             let mut expanded = Vec::new();
             for v in values {
-                if let q::Scalar::Str(s) = v {
+                if let ast::Scalar::Str(s) = v {
                     let e = engine.expand_term(&s, context).await?;
-                    expanded.push(q::Scalar::Str(e));
+                    expanded.push(ast::Scalar::Str(e));
                 } else {
                     expanded.push(v);
                 }
             }
-            Ok(q::CompareValue::ValueList(expanded))
+            Ok(ast::CompareValue::ValueList(expanded))
         }
-        q::CompareValue::Scalar(q::Scalar::Number(_) | q::Scalar::Bool(_) | q::Scalar::DateTime(_) | q::Scalar::Date(_) | q::Scalar::Time(_)) => Ok(rhs),
-        q::CompareValue::Range { .. } => Ok(rhs),
+        ast::CompareValue::Scalar(ast::Scalar::Number(_) | ast::Scalar::Bool(_) | ast::Scalar::DateTime(_) | ast::Scalar::Date(_) | ast::Scalar::Time(_)) => {
+            Ok(rhs)
+        }
+        ast::CompareValue::Range { .. } => Ok(rhs),
     }
 }
 
@@ -154,41 +156,41 @@ async fn expand_rhs_values(engine: &JsonLdEngine, rhs: q::CompareValue, context:
 /// `json_keys_attrs`, expand sub-path keys (sub_attrs) via the @context (spec 6.4.3.2).
 pub fn apply_json_keys<'a>(
     engine: &'a JsonLdEngine,
-    expr: q::Expr,
+    expr: ast::Expr,
     json_keys_attrs: &'a HashSet<String>,
     context: &'a ContextSpec,
-) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<q::Expr, AndromedaError>> + Send + 'a>> {
+) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<ast::Expr, AndromedaError>> + Send + 'a>> {
     Box::pin(async move { walk_q_expr(expr, &|pred| expand_json_keys_sub_attrs(engine, pred, json_keys_attrs, context)).await })
 }
 
 async fn expand_json_keys_sub_attrs(
     engine: &JsonLdEngine,
-    pred: q::Predicate,
+    pred: ast::Predicate,
     json_keys_attrs: &HashSet<String>,
     context: &ContextSpec,
-) -> Result<q::Predicate, AndromedaError> {
+) -> Result<ast::Predicate, AndromedaError> {
     match pred {
-        q::Predicate::Exists(path) if json_keys_attrs.contains(&path.attr) => {
+        ast::Predicate::Exists(path) if json_keys_attrs.contains(&path.attr) => {
             let path = expand_sub_attrs(engine, path, context).await?;
-            Ok(q::Predicate::Exists(path))
+            Ok(ast::Predicate::Exists(path))
         }
-        q::Predicate::Compare { path, op, rhs } if json_keys_attrs.contains(&path.attr) => {
+        ast::Predicate::Compare { path, op, rhs } if json_keys_attrs.contains(&path.attr) => {
             let path = expand_sub_attrs(engine, path, context).await?;
-            Ok(q::Predicate::Compare { path, op, rhs })
+            Ok(ast::Predicate::Compare { path, op, rhs })
         }
-        q::Predicate::MatchPattern { path, pattern } if json_keys_attrs.contains(&path.attr) => {
+        ast::Predicate::MatchPattern { path, pattern } if json_keys_attrs.contains(&path.attr) => {
             let path = expand_sub_attrs(engine, path, context).await?;
-            Ok(q::Predicate::MatchPattern { path, pattern })
+            Ok(ast::Predicate::MatchPattern { path, pattern })
         }
-        q::Predicate::NotMatchPattern { path, pattern } if json_keys_attrs.contains(&path.attr) => {
+        ast::Predicate::NotMatchPattern { path, pattern } if json_keys_attrs.contains(&path.attr) => {
             let path = expand_sub_attrs(engine, path, context).await?;
-            Ok(q::Predicate::NotMatchPattern { path, pattern })
+            Ok(ast::Predicate::NotMatchPattern { path, pattern })
         }
-        q::Predicate::Exists(_) | q::Predicate::Compare { .. } | q::Predicate::MatchPattern { .. } | q::Predicate::NotMatchPattern { .. } => Ok(pred),
+        ast::Predicate::Exists(_) | ast::Predicate::Compare { .. } | ast::Predicate::MatchPattern { .. } | ast::Predicate::NotMatchPattern { .. } => Ok(pred),
     }
 }
 
-async fn expand_sub_attrs(engine: &JsonLdEngine, mut path: q::AttrPath, context: &ContextSpec) -> Result<q::AttrPath, AndromedaError> {
+async fn expand_sub_attrs(engine: &JsonLdEngine, mut path: ast::AttrPath, context: &ContextSpec) -> Result<ast::AttrPath, AndromedaError> {
     let mut expanded = Vec::new();
     for sub in &path.sub_attrs {
         expanded.push(engine.expand_term(sub, context).await?);
@@ -198,7 +200,7 @@ async fn expand_sub_attrs(engine: &JsonLdEngine, mut path: q::AttrPath, context:
 }
 
 /// Expand an attribute path (main attr + sub-attrs) to full IRIs.
-pub async fn expand_attr_path(engine: &JsonLdEngine, mut path: q::AttrPath, context: &ContextSpec) -> Result<q::AttrPath, AndromedaError> {
+pub async fn expand_attr_path(engine: &JsonLdEngine, mut path: ast::AttrPath, context: &ContextSpec) -> Result<ast::AttrPath, AndromedaError> {
     path.attr = engine.expand_term(&path.attr, context).await?;
     let mut expanded_sub = Vec::new();
     for sub in &path.sub_attrs {

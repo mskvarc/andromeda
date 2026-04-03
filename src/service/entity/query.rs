@@ -6,7 +6,7 @@ use crate::{
     error::AndromedaError,
     jsonld::{CompactOptions, ContextSpec, JsonLdEngine},
     query::{
-        compiled::{CompiledEntityQuery, CompiledOrderTerm, GeoQuery},
+        compiled::{CompiledEntityQuery, CompiledOrderTerm, GeoQuery, IcuCollation, IdPattern, ScopeQuery},
         entity::EntityQueryParameters,
         params::SharedQueryParams,
     },
@@ -260,11 +260,12 @@ impl EntityQueryService {
 
     async fn compile_query(&self, params: &EntityQueryParameters, context: &ContextSpec, cap_limit: bool) -> Result<CompiledEntityQuery, AndromedaError> {
         let ids = params.parse_ids();
-        let id_pattern = params.id_pattern.clone(); // clone: owned value for CompiledEntityQuery struct
-
-        if let Some(ref pattern) = id_pattern {
-            crate::query::compile::validate_id_pattern(pattern)?;
-        }
+        let id_pattern = params
+            .id_pattern
+            .as_deref()
+            .map(IdPattern::new)
+            .transpose()
+            .map_err(|e| AndromedaError::bad_request_data(e.to_string()))?;
 
         let (types, type_match_all) = if let Some(raw_types) = params.entity_type.as_deref() {
             let raw_types = raw_types.trim();
@@ -336,7 +337,7 @@ impl EntityQueryService {
                 compiled.push(CompiledOrderTerm {
                     attr_iri,
                     direction: term.direction,
-                    collation: params.collation.clone(), // clone: owned value for each CompiledOrderTerm in loop
+                    collation: params.collation.as_ref().map(|c| IcuCollation::new(c.clone())), // clone: owned value for each CompiledOrderTerm in loop
                 });
             }
             compiled
@@ -359,7 +360,7 @@ impl EntityQueryService {
             pick,
             omit,
             order_by,
-            scope_q: params.scope_q.clone(), // clone: owned value for CompiledEntityQuery struct
+            scope_q: params.scope_q.as_ref().map(|s| ScopeQuery::new(s.clone())), // clone: owned value for CompiledEntityQuery struct
             type_match_all,
         };
 

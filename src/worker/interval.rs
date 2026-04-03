@@ -300,7 +300,7 @@ fn extract_entity_id(entity: &Value) -> Option<String> {
 
 /// Apply q, geoQ, and scopeQ filters from a subscription to a list of expanded entities.
 fn apply_subscription_filters(sub: &Subscription, entities: Vec<Value>) -> Vec<Value> {
-    let compiled_q = sub.q.as_ref().and_then(|q_str| match q::parse(q_str) {
+    let compiled_q = sub.q.as_ref().and_then(|q_str| match q::parser::parse(q_str) {
         Ok(expr) => Some(expr),
         Err(e) => {
             debug!("IntervalWorker: failed to parse q filter '{}' for subscription {}: {}", q_str, sub.id, e);
@@ -317,7 +317,7 @@ fn apply_subscription_filters(sub: &Subscription, entities: Vec<Value>) -> Vec<V
         .into_iter()
         .filter(|entity| {
             if let Some(ref expr) = compiled_q
-                && !q::evaluate(expr, entity)
+                && !q::eval::evaluate(expr, entity)
             {
                 return false;
             }

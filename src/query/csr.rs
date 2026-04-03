@@ -1,11 +1,14 @@
-use crate::query::{error::QueryError, params::SharedQueryParams};
-use serde::Deserialize;
-use url::Url;
-use urn::Urn;
+//! Query parameters for the NGSI-LD Context Source Registration discovery API.
 
+use crate::query::{error::QueryError, params::is_valid_uri};
+use serde::Deserialize;
+
+/// Raw HTTP query parameters for Context Source Registration discovery.
+///
+/// Corresponds to the query parameters defined in NGSI-LD 6.3.14 (Discover CSRs).
+/// All values are in their raw (compact) form before context expansion.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-#[allow(dead_code)]
 pub struct CsrQueryParameters {
     pub id: Option<String>,
     #[serde(rename = "type")]
@@ -17,7 +20,8 @@ pub struct CsrQueryParameters {
     pub georel: Option<String>,
     pub geometry: Option<String>,
     pub coordinates: Option<String>,
-    pub geoproperty: Option<String>,
+    #[serde(rename = "geoproperty")]
+    pub _geoproperty: Option<String>,
     pub timerel: Option<String>,
     #[serde(rename = "timeAt")]
     pub time_at: Option<String>,
@@ -29,34 +33,14 @@ pub struct CsrQueryParameters {
     pub options: Option<String>,
 }
 
-impl SharedQueryParams for CsrQueryParameters {
-    fn raw_id(&self) -> Option<&str> {
-        self.id.as_deref()
-    }
-    fn raw_entity_type(&self) -> Option<&str> {
-        self.entity_type.as_deref()
-    }
-    fn raw_attrs(&self) -> Option<&str> {
-        self.attrs.as_deref()
-    }
-    fn raw_pick(&self) -> Option<&str> {
-        None
-    }
-    fn raw_omit(&self) -> Option<&str> {
-        None
-    }
-    fn raw_dataset_id(&self) -> Option<&str> {
-        None
-    }
-    fn raw_limit(&self) -> Option<u32> {
-        self.limit
-    }
-    fn raw_offset(&self) -> Option<u32> {
-        self.offset
-    }
-}
+impl_shared_query_params!(CsrQueryParameters {
+    id: id, attrs: attrs,
+    pick: , omit: ,
+    dataset_id: , limit: limit, offset: offset
+});
 
 impl CsrQueryParameters {
+    /// Parses the `options` parameter into structured flags.
     pub fn parse_options(&self) -> CsrQueryParametersOptions {
         let opts = self.options.as_deref().unwrap_or("");
         CsrQueryParametersOptions {
@@ -64,6 +48,10 @@ impl CsrQueryParameters {
         }
     }
 
+    /// Validates the CSR query parameters for completeness and correctness.
+    ///
+    /// At least one filtering parameter must be present. Geo and temporal
+    /// parameter groups must be complete when any member is specified.
     pub fn validate(&self) -> Result<(), QueryError> {
         // At least one filtering parameter is required
         let has_filter =
@@ -108,24 +96,20 @@ impl CsrQueryParameters {
     }
 }
 
-fn is_valid_uri(id: &str) -> bool {
-    if id.starts_with("urn:") {
-        return id.parse::<Urn>().is_ok();
-    }
-    Url::parse(id).is_ok()
-}
-
+/// Parsed response shaping options from the CSR `options` parameter.
 #[derive(Debug, Default)]
 pub struct CsrQueryParametersOptions {
+    /// When true, include system-generated attributes (`createdAt`, `modifiedAt`).
     pub sys_attrs: bool,
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::query::params::SharedQueryParams;
 
     fn params_from_query(query: &str) -> CsrQueryParameters {
-        serde_urlencoded::from_str(query).unwrap()
+        params_from_query!(query, CsrQueryParameters)
     }
 
     #[test]

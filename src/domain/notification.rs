@@ -1,6 +1,6 @@
 use crate::{
     domain::{serde_helpers, subscription::SubscriptionStatus},
-    query::q::Expr,
+    query::q::ast::Expr,
     transport::endpoint::EndpointTransport,
 };
 use chrono::{DateTime, Utc};

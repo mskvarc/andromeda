@@ -10,6 +10,7 @@ use crate::{
     },
     error::{AndromedaError, api::ApiError},
     jsonld::ContextSpec,
+    query::q::eval::evaluate,
     service::context_source_forwarding::{
         ForwardBatchProvisionRequest,
         ForwardProvisionRequest,
@@ -690,7 +691,7 @@ pub async fn query(
         {
             entities.retain(|e| {
                 let val = serde_json::to_value(e).unwrap_or_default();
-                crate::query::q::evaluate(&q_expr, &val)
+                evaluate(&q_expr, &val)
             });
         }
         if let (Some(georel), Some(geometry), Some(coordinates)) = (&deferred_georel, &deferred_geometry, &deferred_coordinates) {

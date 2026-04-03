@@ -389,7 +389,7 @@ fn compile_subscription(sub: &Subscription) -> Option<CompiledSubscription> {
 
     let watched_attrs = sub.watched_attributes.as_ref().map(|attrs| attrs.iter().cloned().collect::<HashSet<String>>());
 
-    let compiled_q = sub.q.as_ref().and_then(|q_str| match q::parse(q_str) {
+    let compiled_q = sub.q.as_ref().and_then(|q_str| match q::parser::parse(q_str) {
         Ok(expr) => Some(expr),
         Err(e) => {
             debug!("Failed to parse q filter '{}' for subscription {}: {}", q_str, sub.id, e);
@@ -397,7 +397,7 @@ fn compile_subscription(sub: &Subscription) -> Option<CompiledSubscription> {
         }
     });
 
-    let compiled_csf = sub.csf.as_ref().and_then(|csf_str| match q::parse(csf_str) {
+    let compiled_csf = sub.csf.as_ref().and_then(|csf_str| match q::parser::parse(csf_str) {
         Ok(expr) => Some(expr),
         Err(e) => {
             debug!("Failed to parse csf filter '{}' for subscription {}: {}", csf_str, sub.id, e);
@@ -478,7 +478,7 @@ fn compile_selector(selector: &EntitySelector) -> Option<CompiledSelector> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::transport::endpoint::EndpointTransport;
+    use crate::{query::q::parser, transport::endpoint::EndpointTransport};
     use matching::matches_subscription;
     use payload::filter_entity_attributes;
 
@@ -753,14 +753,14 @@ mod tests {
     #[test]
     fn matches_entity_filters_q_match() {
         let mut sub = make_sub("sub1", vec![], vec!["attributeUpdated"], None);
-        sub.compiled_q = Some(crate::query::q::parse("\"https://example.com/speed\">50").unwrap());
+        sub.compiled_q = Some(parser::parse("\"https://example.com/speed\">50").unwrap());
         assert!(matches_entity_filters(&sub, &entity_with_geo_and_scope()));
     }
 
     #[test]
     fn matches_entity_filters_q_no_match() {
         let mut sub = make_sub("sub1", vec![], vec!["attributeUpdated"], None);
-        sub.compiled_q = Some(crate::query::q::parse("\"https://example.com/speed\">100").unwrap());
+        sub.compiled_q = Some(parser::parse("\"https://example.com/speed\">100").unwrap());
         assert!(!matches_entity_filters(&sub, &entity_with_geo_and_scope()));
     }
 

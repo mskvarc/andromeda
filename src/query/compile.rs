@@ -1,7 +1,7 @@
 use crate::{
     error::AndromedaError,
-    jsonld::{ContextSpec, JsonLdEngine},
-    query::q::Expr,
+    jsonld::{ContextSpec, JsonLdEngine, term_resolver},
+    query::q::{ast::Expr, parser},
 };
 
 /// Expand a list of short attribute names to their full IRIs.
@@ -21,8 +21,8 @@ pub async fn expand_q_expression(q: Option<&str>, engine: &JsonLdEngine, context
         Some(s) if !s.trim().is_empty() => s.trim(),
         _ => return Ok(None),
     };
-    let expr = crate::query::q::parse(q_str)?;
-    let expanded = crate::jsonld::term_resolver::expand_q_expr(engine, expr, context).await?;
+    let expr = parser::parse(q_str)?;
+    let expanded = term_resolver::expand_q_expr(engine, expr, context).await?;
     Ok(Some(expanded))
 }
 
@@ -37,12 +37,6 @@ pub async fn expand_projection_terms(raw: &[String], engine: &JsonLdEngine, cont
         }
     }
     Ok(expanded)
-}
-
-/// Validate an idPattern is a valid regex.
-pub fn validate_id_pattern(pattern: &str) -> Result<(), AndromedaError> {
-    regex::Regex::new(pattern).map_err(|_| AndromedaError::bad_request_data(format!("Invalid idPattern regex: {pattern}")))?;
-    Ok(())
 }
 
 /// Expand a comma-separated list of entity type short names to IRIs.

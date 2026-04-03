@@ -541,7 +541,7 @@ fn compile_csr_subscription(sub: &Subscription) -> Option<CompiledCsrSubscriptio
         }
     };
 
-    let compiled_csf = sub.csf.as_ref().and_then(|csf_str| match q::parse(csf_str) {
+    let compiled_csf = sub.csf.as_ref().and_then(|csf_str| match q::parser::parse(csf_str) {
         Ok(expr) => Some(expr),
         Err(e) => {
             debug!("Failed to parse csf filter '{}' for CSR subscription {}: {}", csf_str, sub.id, e);
@@ -655,7 +655,7 @@ fn matches_csr_subscription(sub: &CompiledCsrSubscription, csr_data: &Value) -> 
 
     // Evaluate csf (Context Source Filter) against the CSR data
     if let Some(ref csf_expr) = sub.compiled_csf
-        && !q::evaluate(csf_expr, csr_data)
+        && !q::eval::evaluate(csf_expr, csr_data)
     {
         return false;
     }

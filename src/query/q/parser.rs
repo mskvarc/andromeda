@@ -1,6 +1,13 @@
 use crate::query::{error::QueryError, q::ast::*};
 use serde_json::Number;
 
+/// Parses an NGSI-LD `q` filter expression string into an AST.
+///
+/// The grammar follows NGSI-LD 4.9, supporting boolean combinators (`;` for AND,
+/// `|` for OR), comparison operators, range/list values, regex patterns, and
+/// nested attribute paths.
+///
+/// Returns a `QueryError::BadRequestData` if the input is syntactically invalid.
 pub fn parse(input: &str) -> Result<Expr, QueryError> {
     let tokens = tokenize(input)?;
     let mut parser = Parser::new(&tokens);

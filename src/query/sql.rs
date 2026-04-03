@@ -1,90 +1,56 @@
 use crate::{
     error::AndromedaError,
     query::{
-        compiled::{CompiledEntityQuery, GeoQuery, GeoRel},
-        q::{CmpOp, CompareValue, Expr, Predicate, Scalar},
+        compiled::{CompiledEntityQuery, CompiledOrderTerm, GeoQuery, GeoRel},
+        q::ast::{AttrPath, CmpOp, CompareValue, Expr, Predicate, Scalar},
     },
 };
 use serde_json::Value;
 use std::borrow::Cow;
 
+/// The result of SQL query generation: a parameterized SQL string plus bind values.
 #[derive(Debug)]
 pub struct BuiltQuery<'a> {
+    /// The parameterized SQL query string with `$N` placeholders.
     pub sql: String,
+    /// Optional count query for pagination (when `count=true`).
     pub count_sql: Option<String>,
+    /// Bind values corresponding to the `$N` placeholders in order.
     pub bind_values: Vec<BindValue<'a>>,
 }
 
+/// A typed bind value for parameterized SQL queries.
 #[derive(Debug, Clone)]
 pub enum BindValue<'a> {
+    /// A single string or text value.
     String(Cow<'a, str>),
+    /// An array of strings (for `= ANY($N)` conditions).
     StringVec(Cow<'a, [String]>),
+    /// A 64-bit integer value.
     I64(i64),
 }
 
+/// Builds a parameterized SQL query to retrieve entity payloads from the `entities` table.
+///
+/// Generates filter conditions from the compiled query (IDs, types, attrs, q expression,
+/// geo filter, scope query), ordering, and pagination clauses.
 pub fn build_query<'a>(query: &'a CompiledEntityQuery) -> Result<BuiltQuery<'a>, AndromedaError> {
-    let mut conditions: Vec<String> = Vec::with_capacity(8);
     let mut binds: Vec<BindValue<'a>> = Vec::with_capacity(8);
     let mut param_idx = 1usize;
 
-    if let Some(ids) = &query.ids {
-        conditions.push(format!("id = ANY(${})", param_idx));
-        binds.push(BindValue::StringVec(Cow::Borrowed(ids.as_slice())));
-        param_idx += 1;
-    }
-
-    if let Some(pattern) = &query.id_pattern {
-        conditions.push(format!("id ~ ${}", param_idx));
-        binds.push(BindValue::String(Cow::Borrowed(pattern.as_str())));
-        param_idx += 1;
-    }
-
-    if let Some(types) = &query.types {
-        if types.len() == 1 {
-            conditions.push(format!("${} = ANY(types)", param_idx));
-            binds.push(BindValue::String(Cow::Borrowed(&types[0])));
-            param_idx += 1;
-        } else if query.type_match_all {
-            for t in types {
-                conditions.push(format!("${} = ANY(types)", param_idx));
-                binds.push(BindValue::String(Cow::Borrowed(t.as_str())));
-                param_idx += 1;
-            }
-        } else {
-            conditions.push(format!("types && ${}", param_idx));
-            binds.push(BindValue::StringVec(Cow::Borrowed(types.as_slice())));
-            param_idx += 1;
-        }
-    }
-
-    if !query.attrs.is_empty() {
-        let attr_conditions: Vec<String> = query
-            .attrs
-            .iter()
-            .map(|attr| {
-                let cond = format!("payload->0 ? ${}", param_idx);
-                binds.push(BindValue::String(Cow::Borrowed(attr.as_str())));
-                param_idx += 1;
-                cond
-            })
-            .collect();
-        conditions.push(format!("({})", attr_conditions.join(" OR ")));
-    }
-
-    if let Some(expr) = &query.q_expr {
-        let q_sql = expr_to_sql(expr, &mut binds, &mut param_idx, "payload")?;
-        conditions.push(q_sql);
-    }
-
-    if let Some(geo) = &query.geo {
-        let geo_sql = geo_to_sql(geo, &mut binds, &mut param_idx, "payload")?;
-        conditions.push(geo_sql);
-    }
-
-    if let Some(scope_q) = &query.scope_q {
-        let scope_sql = scope_q_to_sql(scope_q, &mut binds, &mut param_idx)?;
-        conditions.push(scope_sql);
-    }
+    let conditions = build_entity_filter_conditions(EntityFilterConditionsInput {
+        ids: query.ids.as_deref(),
+        id_pattern: query.id_pattern.as_ref().map(|p| p.as_str()),
+        types: query.types.as_deref(),
+        q_expr: query.q_expr.as_ref(),
+        geo: query.geo.as_ref(),
+        attrs: &query.attrs,
+        scope_q: query.scope_q.as_ref().map(|s| s.as_str()),
+        type_match_all: query.type_match_all,
+        table_prefix: "",
+        binds: &mut binds,
+        param_idx: &mut param_idx,
+    })?;
 
     let where_clause = if conditions.is_empty() {
         String::new()
@@ -92,39 +58,7 @@ pub fn build_query<'a>(query: &'a CompiledEntityQuery) -> Result<BuiltQuery<'a>,
         format!(" WHERE {}", conditions.join(" AND "))
     };
 
-    let order_clause = if query.order_by.is_empty() {
-        String::new()
-    } else {
-        let order_parts: Vec<String> = query
-            .order_by
-            .iter()
-            .map(|term| {
-                let dir = term.direction.sql_dir();
-                if term.direction.is_distance() {
-                    // Distance-based ordering using ST_Distance with Haversine (geography type)
-                    // Requires a geo query to provide the reference geometry
-                    if let Some(geo) = &query.geo {
-                        let geo_extract = build_geo_extract(&geo.geoproperty_iri, "payload");
-                        let ref_geom = format!("ST_SetSRID(ST_GeomFromGeoJSON('{}'), 4326)", build_geojson(&geo.geometry, &geo.coordinates)?);
-                        Ok(format!("ST_Distance({}::geography, {}::geography) {} NULLS LAST", geo_extract, ref_geom, dir))
-                    } else {
-                        // Fallback: no geo query, treat as regular ordering
-                        let json_path = property_value_jsonpath(&term.attr_iri);
-                        Ok(format!("jsonb_path_query_first(payload, '{}') {} NULLS LAST", json_path, dir))
-                    }
-                } else {
-                    let json_path = property_value_jsonpath(&term.attr_iri);
-                    let collation_clause = term.collation.as_ref().map(|c| format!(" COLLATE \"{}\"", c)).unwrap_or_default();
-                    Ok(format!(
-                        "jsonb_path_query_first(payload, '{}'){} {} NULLS LAST",
-                        json_path, collation_clause, dir
-                    ))
-                }
-            })
-            .collect::<Result<Vec<_>, AndromedaError>>()?;
-        format!(" ORDER BY {}, id ASC", order_parts.join(", "))
-    };
-
+    let order_clause = build_order_clause(&query.order_by, query.geo.as_ref())?;
     let pagination = format!(" LIMIT {} OFFSET {}", query.limit, query.offset);
 
     let sql = format!("SELECT payload FROM entities{}{}{}", where_clause, order_clause, pagination);
@@ -190,7 +124,7 @@ fn pred_to_sql(pred: &Predicate, binds: &mut Vec<BindValue<'_>>, param_idx: &mut
 }
 
 fn compare_to_sql(
-    path: &crate::query::q::AttrPath,
+    path: &AttrPath,
     op: CmpOp,
     rhs: &CompareValue,
     binds: &mut Vec<BindValue<'_>>,
@@ -283,7 +217,8 @@ fn compare_to_sql(
     }
 }
 
-fn cmp_op_sql(op: CmpOp) -> &'static str {
+/// Returns the SQL operator string for a comparison operator.
+pub(crate) fn cmp_op_sql(op: CmpOp) -> &'static str {
     match op {
         CmpOp::Equal => "=",
         CmpOp::Unequal => "!=",
@@ -294,7 +229,8 @@ fn cmp_op_sql(op: CmpOp) -> &'static str {
     }
 }
 
-fn scalar_to_sql_bind(scalar: &Scalar) -> (&'static str, BindValue<'static>) {
+/// Converts a scalar value to its SQL cast suffix and bind value.
+pub(crate) fn scalar_to_sql_bind(scalar: &Scalar) -> (&'static str, BindValue<'static>) {
     match scalar {
         Scalar::Number(_n) => ("::numeric", BindValue::String(Cow::Owned(_n.to_string()))),
         Scalar::Bool(b) => ("::boolean", BindValue::String(Cow::Owned(b.to_string()))),
@@ -341,12 +277,7 @@ fn value_extraction_jsonpath_with_predicate(attr_iri: &str, sub_attrs: &[String]
     path
 }
 
-fn geo_to_sql(
-    geo: &crate::query::compiled::GeoQuery,
-    binds: &mut Vec<BindValue<'_>>,
-    param_idx: &mut usize,
-    payload_column: &str,
-) -> Result<String, AndromedaError> {
+fn geo_to_sql(geo: &GeoQuery, binds: &mut Vec<BindValue<'_>>, param_idx: &mut usize, payload_column: &str) -> Result<String, AndromedaError> {
     // Use materialized location column for default geoproperty to leverage GIST index
     let is_default_location = geo.geoproperty_iri == "https://uri.etsi.org/ngsi-ld/location";
     let geo_extract = if is_default_location {
@@ -395,13 +326,10 @@ fn geo_to_sql(
     Ok(sql)
 }
 
-fn build_geojson(geometry: &str, coordinates: &str) -> Result<String, AndromedaError> {
-    let coords_value: Value =
-        serde_json::from_str(coordinates).map_err(|_| AndromedaError::bad_request_data(format!("Invalid coordinates: {}", coordinates)))?;
-
+fn build_geojson(geometry: &str, coordinates: &Value) -> Result<String, AndromedaError> {
     let geojson = serde_json::json!({
         "type": geometry,
-        "coordinates": coords_value
+        "coordinates": coordinates
     });
 
     Ok(geojson.to_string())
@@ -431,7 +359,7 @@ fn build_geo_extract(geoproperty_iri: &str, payload_column: &str) -> String {
     }
 }
 
-fn scope_q_to_sql(scope_q: &str, binds: &mut Vec<BindValue<'_>>, param_idx: &mut usize) -> Result<String, AndromedaError> {
+fn scope_q_to_sql(scope_q: &str, binds: &mut Vec<BindValue<'_>>, param_idx: &mut usize, scopes_col: &str) -> Result<String, AndromedaError> {
     // NGSI-LD: comma is OR, semicolon is AND (higher precedence)
     // e.g. "/A;/B,/C" → (/A AND /B) OR /C
     let or_terms: Vec<&str> = scope_q.split(',').map(str::trim).collect();
@@ -439,61 +367,128 @@ fn scope_q_to_sql(scope_q: &str, binds: &mut Vec<BindValue<'_>>, param_idx: &mut
     for or_term in &or_terms {
         let and_terms: Vec<&str> = or_term.split(';').map(str::trim).collect();
         if and_terms.len() == 1 {
-            let part = single_scope_to_sql(and_terms[0], binds, param_idx)?;
+            let part = single_scope_to_sql(and_terms[0], binds, param_idx, scopes_col)?;
             or_parts.push(part);
         } else {
             let mut and_parts = Vec::new();
             for and_term in &and_terms {
-                let part = single_scope_to_sql(and_term, binds, param_idx)?;
+                let part = single_scope_to_sql(and_term, binds, param_idx, scopes_col)?;
                 and_parts.push(part);
             }
             or_parts.push(format!("({})", and_parts.join(" AND ")));
         }
     }
     if or_parts.len() == 1 {
-        Ok(or_parts.into_iter().next().unwrap())
+        // Safety: length is checked above; unwrap_or_default as a defensive fallback.
+        Ok(or_parts.into_iter().next().unwrap_or_default())
     } else {
         Ok(format!("({})", or_parts.join(" OR ")))
     }
 }
 
-fn single_scope_to_sql(scope: &str, binds: &mut Vec<BindValue<'_>>, param_idx: &mut usize) -> Result<String, AndromedaError> {
+fn single_scope_to_sql(scope: &str, binds: &mut Vec<BindValue<'_>>, param_idx: &mut usize, scopes_col: &str) -> Result<String, AndromedaError> {
     if let Some(prefix) = scope.strip_suffix("/#") {
         // Hash wildcard: match one or more levels below the prefix
         let regex = format!("^{}/.+$", regex::escape(prefix));
-        let sql = format!("EXISTS(SELECT 1 FROM unnest(scopes) s WHERE s ~ ${})", *param_idx);
+        let sql = format!("EXISTS(SELECT 1 FROM unnest({}) s WHERE s ~ ${})", scopes_col, *param_idx);
         binds.push(BindValue::String(Cow::Owned(regex)));
         *param_idx += 1;
         Ok(sql)
     } else if scope.contains("/+") {
         // Plus wildcard: match any single component at that position
         let regex = format!("^{}$", scope.replace("/+", "/[^/]+"));
-        let sql = format!("EXISTS(SELECT 1 FROM unnest(scopes) s WHERE s ~ ${})", *param_idx);
+        let sql = format!("EXISTS(SELECT 1 FROM unnest({}) s WHERE s ~ ${})", scopes_col, *param_idx);
         binds.push(BindValue::String(Cow::Owned(regex)));
         *param_idx += 1;
         Ok(sql)
     } else {
         // Exact match
-        let sql = format!("${} = ANY(scopes)", *param_idx);
+        let sql = format!("${} = ANY({})", *param_idx, scopes_col);
         binds.push(BindValue::String(Cow::Owned(scope.to_string())));
         *param_idx += 1;
         Ok(sql)
     }
 }
 
-/// Build entity filter conditions for use in a JOIN (e.g. temporal Stage 1).
-/// Uses `table_prefix` for column references (e.g. "e" → "e.id", "e.types", "e.payload").
+/// Builds the ORDER BY clause for entity queries.
+///
+/// Generates ordering expressions from compiled order terms, including support
+/// for distance-based ordering (when a geo query is provided), collation, and
+/// standard attribute-value ordering. Returns a complete ` ORDER BY ...` clause
+/// string, or an empty string when no ordering terms are specified.
+fn build_order_clause(order_by: &[CompiledOrderTerm], geo: Option<&GeoQuery>) -> Result<String, AndromedaError> {
+    if order_by.is_empty() {
+        return Ok(String::new());
+    }
+
+    let order_parts: Vec<String> = order_by
+        .iter()
+        .map(|term| {
+            let dir = term.direction.sql_dir();
+            if term.direction.is_distance() {
+                // Distance-based ordering using ST_Distance with Haversine (geography type)
+                // Requires a geo query to provide the reference geometry
+                if let Some(geo) = geo {
+                    let geo_extract = build_geo_extract(&geo.geoproperty_iri, "payload");
+                    let ref_geom = format!("ST_SetSRID(ST_GeomFromGeoJSON('{}'), 4326)", build_geojson(&geo.geometry, &geo.coordinates)?);
+                    Ok(format!("ST_Distance({}::geography, {}::geography) {} NULLS LAST", geo_extract, ref_geom, dir))
+                } else {
+                    // Fallback: no geo query, treat as regular ordering
+                    let json_path = property_value_jsonpath(&term.attr_iri);
+                    Ok(format!("jsonb_path_query_first(payload, '{}') {} NULLS LAST", json_path, dir))
+                }
+            } else {
+                let json_path = property_value_jsonpath(&term.attr_iri);
+                let collation_clause = term.collation.as_ref().map(|c| format!(" COLLATE \"{}\"", c.as_str())).unwrap_or_default();
+                Ok(format!(
+                    "jsonb_path_query_first(payload, '{}'){} {} NULLS LAST",
+                    json_path, collation_clause, dir
+                ))
+            }
+        })
+        .collect::<Result<Vec<_>, AndromedaError>>()?;
+    Ok(format!(" ORDER BY {}, id ASC", order_parts.join(", ")))
+}
+
+/// Input parameters for building shared entity filter SQL conditions.
+///
+/// Used by the entity query builder, the entity IDs query builder, and the
+/// temporal Stage 1 query builder to generate WHERE clause conditions for
+/// entity-level filtering (IDs, types, attrs, q expression, geo filter,
+/// scope query). The `table_prefix` controls column qualification: when
+/// non-empty (e.g. `"e"`), columns are qualified as `e.id`, `e.types`,
+/// `e.payload`, `e.scopes`; when empty, bare column names are used.
 pub struct EntityFilterConditionsInput<'q, 'b> {
+    /// Entity IDs to filter by.
     pub ids: Option<&'q [String]>,
+    /// Regex pattern for matching entity IDs.
     pub id_pattern: Option<&'q str>,
+    /// Entity type IRIs to filter by.
     pub types: Option<&'q [String]>,
+    /// Parsed `q` expression for property-level filtering.
     pub q_expr: Option<&'q Expr>,
+    /// Geo-spatial query filter.
     pub geo: Option<&'q GeoQuery>,
+    /// Expanded attribute IRIs to filter by (checks payload key existence).
+    pub attrs: &'q [String],
+    /// Scope query string (comma = OR, semicolon = AND).
+    pub scope_q: Option<&'q str>,
+    /// When `true`, all listed types must be present (AND semantics).
+    pub type_match_all: bool,
+    /// SQL table alias prefix for column references (empty for bare columns).
     pub table_prefix: &'q str,
+    /// Mutable reference to the bind values vector (appended to during condition building).
     pub binds: &'b mut Vec<BindValue<'q>>,
+    /// Mutable reference to the current parameter index (incremented for each bind).
     pub param_idx: &'b mut usize,
 }
 
+/// Builds shared entity filter SQL conditions from the given input parameters.
+///
+/// Returns a vector of SQL condition strings that can be joined with `AND`
+/// for a WHERE clause. Bind values and parameter indices are updated in-place.
+/// When `table_prefix` is empty, bare column names (`id`, `types`, `payload`,
+/// `scopes`) are used; otherwise they are qualified (e.g. `e.id`).
 pub fn build_entity_filter_conditions(input: EntityFilterConditionsInput<'_, '_>) -> Result<Vec<String>, AndromedaError> {
     let EntityFilterConditionsInput {
         ids,
@@ -501,15 +496,26 @@ pub fn build_entity_filter_conditions(input: EntityFilterConditionsInput<'_, '_>
         types,
         q_expr,
         geo,
+        attrs,
+        scope_q,
+        type_match_all,
         table_prefix,
         binds,
         param_idx,
     } = input;
 
-    let mut conditions = Vec::with_capacity(5);
-    let id_col = format!("{}.id", table_prefix);
-    let types_col = format!("{}.types", table_prefix);
-    let payload_col = format!("{}.payload", table_prefix);
+    let mut conditions = Vec::with_capacity(8);
+
+    let (id_col, types_col, payload_col, scopes_col) = if table_prefix.is_empty() {
+        ("id".to_string(), "types".to_string(), "payload".to_string(), "scopes".to_string())
+    } else {
+        (
+            format!("{}.id", table_prefix),
+            format!("{}.types", table_prefix),
+            format!("{}.payload", table_prefix),
+            format!("{}.scopes", table_prefix),
+        )
+    };
 
     if let Some(ids) = ids
         && !ids.is_empty()
@@ -531,11 +537,31 @@ pub fn build_entity_filter_conditions(input: EntityFilterConditionsInput<'_, '_>
         if types.len() == 1 {
             conditions.push(format!("${} = ANY({})", *param_idx, types_col));
             binds.push(BindValue::String(Cow::Borrowed(&types[0])));
+            *param_idx += 1;
+        } else if type_match_all {
+            for t in types {
+                conditions.push(format!("${} = ANY({})", *param_idx, types_col));
+                binds.push(BindValue::String(Cow::Borrowed(t.as_str())));
+                *param_idx += 1;
+            }
         } else {
             conditions.push(format!("{} && ${}", types_col, *param_idx));
             binds.push(BindValue::StringVec(Cow::Borrowed(types)));
+            *param_idx += 1;
         }
-        *param_idx += 1;
+    }
+
+    if !attrs.is_empty() {
+        let attr_conditions: Vec<String> = attrs
+            .iter()
+            .map(|attr| {
+                let cond = format!("{}->0 ? ${}", payload_col, *param_idx);
+                binds.push(BindValue::String(Cow::Borrowed(attr.as_str())));
+                *param_idx += 1;
+                cond
+            })
+            .collect();
+        conditions.push(format!("({})", attr_conditions.join(" OR ")));
     }
 
     if let Some(expr) = q_expr {
@@ -548,72 +574,35 @@ pub fn build_entity_filter_conditions(input: EntityFilterConditionsInput<'_, '_>
         conditions.push(geo_sql);
     }
 
+    if let Some(scope_q) = scope_q {
+        let scope_sql = scope_q_to_sql(scope_q, binds, param_idx, &scopes_col)?;
+        conditions.push(scope_sql);
+    }
+
     Ok(conditions)
 }
 
+/// Builds a parameterized SQL query to retrieve only entity IDs from the `entities` table.
+///
+/// Similar to [`build_query`] but selects `id` instead of `payload`, used for
+/// operations that only need to identify matching entities.
 pub fn build_ids_query<'a>(query: &'a CompiledEntityQuery) -> Result<BuiltQuery<'a>, AndromedaError> {
-    let mut conditions: Vec<String> = Vec::with_capacity(8);
     let mut binds: Vec<BindValue<'a>> = Vec::with_capacity(8);
     let mut param_idx = 1usize;
 
-    if let Some(ids) = &query.ids {
-        conditions.push(format!("id = ANY(${})", param_idx));
-        binds.push(BindValue::StringVec(Cow::Borrowed(ids.as_slice())));
-        param_idx += 1;
-    }
-
-    if let Some(pattern) = &query.id_pattern {
-        conditions.push(format!("id ~ ${}", param_idx));
-        binds.push(BindValue::String(Cow::Borrowed(pattern.as_str())));
-        param_idx += 1;
-    }
-
-    if let Some(types) = &query.types {
-        if types.len() == 1 {
-            conditions.push(format!("${} = ANY(types)", param_idx));
-            binds.push(BindValue::String(Cow::Borrowed(&types[0])));
-            param_idx += 1;
-        } else if query.type_match_all {
-            for t in types {
-                conditions.push(format!("${} = ANY(types)", param_idx));
-                binds.push(BindValue::String(Cow::Borrowed(t.as_str())));
-                param_idx += 1;
-            }
-        } else {
-            conditions.push(format!("types && ${}", param_idx));
-            binds.push(BindValue::StringVec(Cow::Borrowed(types.as_slice())));
-            param_idx += 1;
-        }
-    }
-
-    if !query.attrs.is_empty() {
-        let attr_conditions: Vec<String> = query
-            .attrs
-            .iter()
-            .map(|attr| {
-                let cond = format!("payload->0 ? ${}", param_idx);
-                binds.push(BindValue::String(Cow::Borrowed(attr.as_str())));
-                param_idx += 1;
-                cond
-            })
-            .collect();
-        conditions.push(format!("({})", attr_conditions.join(" OR ")));
-    }
-
-    if let Some(expr) = &query.q_expr {
-        let q_sql = expr_to_sql(expr, &mut binds, &mut param_idx, "payload")?;
-        conditions.push(q_sql);
-    }
-
-    if let Some(geo) = &query.geo {
-        let geo_sql = geo_to_sql(geo, &mut binds, &mut param_idx, "payload")?;
-        conditions.push(geo_sql);
-    }
-
-    if let Some(scope_q) = &query.scope_q {
-        let scope_sql = scope_q_to_sql(scope_q, &mut binds, &mut param_idx)?;
-        conditions.push(scope_sql);
-    }
+    let conditions = build_entity_filter_conditions(EntityFilterConditionsInput {
+        ids: query.ids.as_deref(),
+        id_pattern: query.id_pattern.as_ref().map(|p| p.as_str()),
+        types: query.types.as_deref(),
+        q_expr: query.q_expr.as_ref(),
+        geo: query.geo.as_ref(),
+        attrs: &query.attrs,
+        scope_q: query.scope_q.as_ref().map(|s| s.as_str()),
+        type_match_all: query.type_match_all,
+        table_prefix: "",
+        binds: &mut binds,
+        param_idx: &mut param_idx,
+    })?;
 
     let where_clause = if conditions.is_empty() {
         String::new()
@@ -624,31 +613,8 @@ pub fn build_ids_query<'a>(query: &'a CompiledEntityQuery) -> Result<BuiltQuery<
     let order_clause = if query.order_by.is_empty() {
         " ORDER BY id ASC".to_string()
     } else {
-        let order_parts: Vec<String> = query
-            .order_by
-            .iter()
-            .map(|term| {
-                let dir = term.direction.sql_dir();
-                if term.direction.is_distance() {
-                    if let Some(geo) = &query.geo {
-                        let geo_extract = build_geo_extract(&geo.geoproperty_iri, "payload");
-                        let ref_geom = format!("ST_SetSRID(ST_GeomFromGeoJSON('{}'), 4326)", build_geojson(&geo.geometry, &geo.coordinates)?);
-                        Ok(format!("ST_Distance({}::geography, {}::geography) {} NULLS LAST", geo_extract, ref_geom, dir))
-                    } else {
-                        let json_path = property_value_jsonpath(&term.attr_iri);
-                        Ok(format!("jsonb_path_query_first(payload, '{}') {} NULLS LAST", json_path, dir))
-                    }
-                } else {
-                    let json_path = property_value_jsonpath(&term.attr_iri);
-                    let collation_clause = term.collation.as_ref().map(|c| format!(" COLLATE \"{}\"", c)).unwrap_or_default();
-                    Ok(format!(
-                        "jsonb_path_query_first(payload, '{}'){} {} NULLS LAST",
-                        json_path, collation_clause, dir
-                    ))
-                }
-            })
-            .collect::<Result<Vec<_>, AndromedaError>>()?;
-        format!(" ORDER BY {}, id ASC", order_parts.join(", "))
+        let base = build_order_clause(&query.order_by, query.geo.as_ref())?;
+        if base.is_empty() { " ORDER BY id ASC".to_string() } else { base }
     };
 
     let pagination = format!(" LIMIT {} OFFSET {}", query.limit, query.offset);
@@ -666,8 +632,9 @@ pub fn build_ids_query<'a>(query: &'a CompiledEntityQuery) -> Result<BuiltQuery<
 mod tests {
     use super::*;
     use crate::query::{
-        compiled::{CompiledEntityQuery, CompiledOrderTerm},
+        compiled::{CompiledEntityQuery, CompiledOrderTerm, IcuCollation, IdPattern},
         entity::OrderDirection,
+        q::parser,
     };
 
     fn empty_query() -> CompiledEntityQuery {
@@ -708,7 +675,7 @@ mod tests {
     #[test]
     fn build_with_id_pattern() {
         let mut q = empty_query();
-        q.id_pattern = Some("urn:ngsi-ld:Vehicle:.*".to_string());
+        q.id_pattern = Some(IdPattern::new("urn:ngsi-ld:Vehicle:.*").unwrap());
         let built = build_query(&q).unwrap();
         assert!(built.sql.contains("id ~ $1"));
     }
@@ -742,7 +709,7 @@ mod tests {
     #[test]
     fn build_with_q_existence() {
         let mut q = empty_query();
-        q.q_expr = Some(crate::query::q::parse("temperature").unwrap());
+        q.q_expr = Some(parser::parse("temperature").unwrap());
         let built = build_query(&q).unwrap();
         assert!(built.sql.contains("payload->0 ? $1"));
     }
@@ -751,7 +718,7 @@ mod tests {
     fn build_with_q_comparison() {
         let mut cq = empty_query();
         let expr = Expr::Pred(Predicate::Compare {
-            path: crate::query::q::AttrPath::simple("https://example.com/temperature"),
+            path: AttrPath::simple("https://example.com/temperature"),
             op: CmpOp::Greater,
             rhs: CompareValue::Scalar(Scalar::Number(50.into())),
         });
@@ -790,7 +757,7 @@ mod tests {
         q.order_by = vec![CompiledOrderTerm {
             attr_iri: "https://example.com/name".to_string(),
             direction: OrderDirection::Asc,
-            collation: Some("und-u-ks-identic".to_string()),
+            collation: Some(IcuCollation::new("und-u-ks-identic".to_string())),
         }];
         let built = build_query(&q).unwrap();
         assert!(built.sql.contains("COLLATE \"und-u-ks-identic\""));
@@ -807,7 +774,7 @@ mod tests {
                 min_distance: None,
             },
             geometry: "Point".to_string(),
-            coordinates: "[13.4,52.5]".to_string(),
+            coordinates: serde_json::json!([13.4, 52.5]),
             geoproperty_iri: "https://uri.etsi.org/ngsi-ld/location".to_string(),
         });
         q.order_by = vec![CompiledOrderTerm {
@@ -830,7 +797,7 @@ mod tests {
                 min_distance: None,
             },
             geometry: "Point".to_string(),
-            coordinates: "[2.3,48.8]".to_string(),
+            coordinates: serde_json::json!([2.3, 48.8]),
             geoproperty_iri: "https://uri.etsi.org/ngsi-ld/location".to_string(),
         });
         q.order_by = vec![CompiledOrderTerm {

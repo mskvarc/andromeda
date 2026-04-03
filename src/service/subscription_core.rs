@@ -17,10 +17,10 @@ use tracing::warn;
 // ---------------------------------------------------------------------------
 
 /// Check if a q expression contains at least one comparison (not just existence checks).
-fn q_has_comparison(expr: &q::Expr) -> bool {
+fn q_has_comparison(expr: &q::ast::Expr) -> bool {
     match expr {
-        q::Expr::Pred(pred) => !matches!(pred, q::Predicate::Exists(_)),
-        q::Expr::And(terms) | q::Expr::Or(terms) => terms.iter().any(q_has_comparison),
+        q::ast::Expr::Pred(pred) => !matches!(pred, q::ast::Predicate::Exists(_)),
+        q::ast::Expr::And(terms) | q::ast::Expr::Or(terms) => terms.iter().any(q_has_comparison),
     }
 }
 
@@ -108,7 +108,7 @@ pub fn validate_common_fields(payload: &Value) -> Result<(), AndromedaError> {
     }
 
     if let Some(q_str) = payload.get("q").and_then(|v| v.as_str()) {
-        let expr = q::parse(q_str).map_err(|e| AndromedaError::bad_request_data(format!("Invalid q expression: {}", e)))?;
+        let expr = q::parser::parse(q_str).map_err(|e| AndromedaError::bad_request_data(format!("Invalid q expression: {}", e)))?;
         if !q_has_comparison(&expr) {
             return Err(AndromedaError::bad_request_data(
                 "Invalid q expression: must contain at least one comparison operator",
@@ -246,10 +246,10 @@ pub async fn expand_common_subscription_terms(engine: &JsonLdEngine, payload: &m
 
     // Expand q expression attribute terms
     if let Some(q_str) = payload.get("q").and_then(|v| v.as_str()).map(String::from)
-        && let Ok(expr) = q::parse(&q_str)
+        && let Ok(expr) = q::parser::parse(&q_str)
         && let Ok(expanded) = crate::jsonld::term_resolver::expand_q_expr(engine, expr, context).await
     {
-        let expanded_str = q::serialize(&expanded);
+        let expanded_str = q::serialize::serialize(&expanded);
         if let Some(obj) = payload.as_object_mut() {
             obj.insert("q".to_string(), Value::String(expanded_str));
         }

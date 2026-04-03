@@ -33,10 +33,13 @@ pub fn build_stage1_entity_ids<'a>(
 ) -> Result<TemporalStage1Result<'a>, AndromedaError> {
     let mut conditions = build_entity_filter_conditions(EntityFilterConditionsInput {
         ids: compiled.ids.as_deref(),
-        id_pattern: compiled.id_pattern.as_deref(),
+        id_pattern: compiled.id_pattern.as_ref().map(|p| p.as_str()),
         types: compiled.types.as_deref(),
         q_expr: compiled.q_expr.as_ref(),
         geo: compiled.geo.as_ref(),
+        attrs: &[],
+        scope_q: None,
+        type_match_all: false,
         table_prefix: "e",
         binds,
         param_idx,
@@ -44,9 +47,13 @@ pub fn build_stage1_entity_ids<'a>(
 
     // Attribute filter: tea.attribute_name = ANY($N)
     if !compiled.attr_filter.is_empty() {
-        conditions.push(format!("tea.attribute_name = ANY(${})", *param_idx));
-        binds.push(BindValue::StringVec(Cow::Borrowed(compiled.attr_filter.as_slice())));
-        *param_idx += 1;
+        bind_condition!(
+            conditions,
+            binds,
+            param_idx,
+            "tea.attribute_name = ANY(${})",
+            BindValue::StringVec(Cow::Borrowed(compiled.attr_filter.as_slice()))
+        );
     }
 
     // datasetId filter: handle @none for default instance
@@ -74,21 +81,21 @@ pub fn build_stage1_entity_ids<'a>(
         match timerel {
             TimeRel::Before => {
                 tc.push(format!("{} < ${}::timestamptz", time_col, *param_idx));
-                binds.push(BindValue::String(Cow::Borrowed(time_at.as_str())));
+                binds.push(BindValue::String(Cow::Owned(time_at.to_rfc3339())));
                 *param_idx += 1;
             }
             TimeRel::After => {
                 tc.push(format!("{} >= ${}::timestamptz", time_col, *param_idx));
-                binds.push(BindValue::String(Cow::Borrowed(time_at.as_str())));
+                binds.push(BindValue::String(Cow::Owned(time_at.to_rfc3339())));
                 *param_idx += 1;
             }
             TimeRel::Between => {
                 if let Some(end_time) = &compiled.end_time_at {
                     tc.push(format!("{} >= ${}::timestamptz", time_col, *param_idx));
-                    binds.push(BindValue::String(Cow::Borrowed(time_at.as_str())));
+                    binds.push(BindValue::String(Cow::Owned(time_at.to_rfc3339())));
                     *param_idx += 1;
                     tc.push(format!("{} < ${}::timestamptz", time_col, *param_idx));
-                    binds.push(BindValue::String(Cow::Borrowed(end_time.as_str())));
+                    binds.push(BindValue::String(Cow::Owned(end_time.to_rfc3339())));
                     *param_idx += 1;
                 }
             }
@@ -167,12 +174,12 @@ pub fn build_temporal_history_query<'a>(
         match timerel {
             TimeRel::Before => {
                 conditions.push(format!("{} < ${}::timestamptz", time_col, *param_idx));
-                binds.push(BindValue::String(Cow::Borrowed(time_at.as_str())));
+                binds.push(BindValue::String(Cow::Owned(time_at.to_rfc3339())));
                 *param_idx += 1;
             }
             TimeRel::After => {
                 conditions.push(format!("{} >= ${}::timestamptz", time_col, *param_idx));
-                binds.push(BindValue::String(Cow::Borrowed(time_at.as_str())));
+                binds.push(BindValue::String(Cow::Owned(time_at.to_rfc3339())));
                 *param_idx += 1;
             }
             TimeRel::Between => {
@@ -181,10 +188,10 @@ pub fn build_temporal_history_query<'a>(
                     .as_ref()
                     .ok_or_else(|| AndromedaError::bad_request_data("endTimeAt required for between"))?;
                 conditions.push(format!("{} >= ${}::timestamptz", time_col, *param_idx));
-                binds.push(BindValue::String(Cow::Borrowed(time_at.as_str())));
+                binds.push(BindValue::String(Cow::Owned(time_at.to_rfc3339())));
                 *param_idx += 1;
                 conditions.push(format!("{} < ${}::timestamptz", time_col, *param_idx));
-                binds.push(BindValue::String(Cow::Borrowed(end_time.as_str())));
+                binds.push(BindValue::String(Cow::Owned(end_time.to_rfc3339())));
                 *param_idx += 1;
             }
         }
@@ -192,9 +199,13 @@ pub fn build_temporal_history_query<'a>(
 
     // Attribute filter
     if !compiled.attr_filter.is_empty() {
-        conditions.push(format!("tea.attribute_name = ANY(${})", *param_idx));
-        binds.push(BindValue::StringVec(Cow::Borrowed(compiled.attr_filter.as_slice())));
-        *param_idx += 1;
+        bind_condition!(
+            conditions,
+            binds,
+            param_idx,
+            "tea.attribute_name = ANY(${})",
+            BindValue::StringVec(Cow::Borrowed(compiled.attr_filter.as_slice()))
+        );
     }
 
     // datasetId filter
@@ -302,7 +313,7 @@ fn build_aggregation_query<'a>(
         // data point so buckets align to the actual data range (not epoch).
         let bucket_expr = if let Some(time_at) = &compiled.time_at {
             let origin_param = *param_idx;
-            binds.push(BindValue::String(Cow::Borrowed(time_at.as_str())));
+            binds.push(BindValue::String(Cow::Owned(time_at.to_rfc3339())));
             *param_idx += 1;
             format!("time_bucket(${}::interval, ah.time, ${}::timestamptz)", period_param, origin_param)
         } else {
@@ -380,7 +391,8 @@ ORDER BY {}"#,
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::query::temporal::CompiledTemporalQuery;
+    use crate::query::temporal::{CompiledTemporalQuery, LastNOrigin};
+    use chrono::{DateTime, Utc};
 
     fn minimal_compiled() -> CompiledTemporalQuery {
         CompiledTemporalQuery {
@@ -396,16 +408,13 @@ mod tests {
             attr_filter: Vec::new(),
             dataset_id_filter: Vec::new(),
             last_n: None,
-            system_last_n: false,
-            user_specified_last_n: false,
+            last_n_origin: LastNOrigin::None,
             format: TemporalFormat::Normalized,
             aggr_methods: Vec::new(),
             aggr_period_duration: None,
             limit: 20,
             offset: 0,
             count: false,
-            pick: Vec::new(),
-            omit: Vec::new(),
             sys_attrs: false,
         }
     }
@@ -425,7 +434,7 @@ mod tests {
     fn build_temporal_history_before() {
         let mut compiled = minimal_compiled();
         compiled.timerel = Some(TimeRel::Before);
-        compiled.time_at = Some("2024-01-15T10:00:00Z".to_string());
+        compiled.time_at = Some(DateTime::parse_from_rfc3339("2024-01-15T10:00:00Z").unwrap().with_timezone(&Utc));
         let mut binds = vec![BindValue::String(Cow::Borrowed("urn:ngsi-ld:Vehicle:A1"))];
         let mut param_idx = 2;
         let result = build_temporal_history_query(1, &compiled, &mut binds, &mut param_idx).unwrap();
@@ -436,7 +445,7 @@ mod tests {
     fn build_temporal_history_after() {
         let mut compiled = minimal_compiled();
         compiled.timerel = Some(TimeRel::After);
-        compiled.time_at = Some("2024-01-15T10:00:00Z".to_string());
+        compiled.time_at = Some(DateTime::parse_from_rfc3339("2024-01-15T10:00:00Z").unwrap().with_timezone(&Utc));
         let mut binds = vec![BindValue::String(Cow::Borrowed("urn:ngsi-ld:Vehicle:A1"))];
         let mut param_idx = 2;
         let result = build_temporal_history_query(1, &compiled, &mut binds, &mut param_idx).unwrap();
@@ -447,8 +456,8 @@ mod tests {
     fn build_temporal_history_between() {
         let mut compiled = minimal_compiled();
         compiled.timerel = Some(TimeRel::Between);
-        compiled.time_at = Some("2024-01-15T10:00:00Z".to_string());
-        compiled.end_time_at = Some("2024-01-15T12:00:00Z".to_string());
+        compiled.time_at = Some(DateTime::parse_from_rfc3339("2024-01-15T10:00:00Z").unwrap().with_timezone(&Utc));
+        compiled.end_time_at = Some(DateTime::parse_from_rfc3339("2024-01-15T12:00:00Z").unwrap().with_timezone(&Utc));
         let mut binds = vec![BindValue::String(Cow::Borrowed("urn:ngsi-ld:Vehicle:A1"))];
         let mut param_idx = 2;
         let result = build_temporal_history_query(1, &compiled, &mut binds, &mut param_idx).unwrap();

@@ -29,10 +29,13 @@ pub async fn compile_geo_query(
     let geoproperty = geoproperty.unwrap_or("location");
     let geoproperty_iri = engine.expand_term(geoproperty, context).await?;
 
+    let coordinates_value: serde_json::Value =
+        serde_json::from_str(coordinates_str).map_err(|e| AndromedaError::bad_request_data(format!("Invalid coordinates JSON: {}", e)))?;
+
     Ok(Some(GeoQuery {
         georel: GeoRel::parse(georel_str)?,
         geometry: geometry_str.to_string(),
-        coordinates: coordinates_str.to_string(),
+        coordinates: coordinates_value,
         geoproperty_iri,
     }))
 }

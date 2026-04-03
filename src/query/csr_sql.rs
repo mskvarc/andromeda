@@ -1,13 +1,20 @@
 use crate::{
+    domain::temporal::{TimeProp, TimeRel},
     error::AndromedaError,
     query::{
         compiled::{CompiledCsrQuery, GeoRel},
-        q::{CmpOp, CompareValue, Expr, Predicate, Scalar},
-        sql::{BindValue, BuiltQuery},
+        q::ast::{AttrPath, CmpOp, CompareValue, Expr, Predicate},
+        sql::{BindValue, BuiltQuery, cmp_op_sql, scalar_to_sql_bind},
     },
 };
 use std::borrow::Cow;
 
+/// Builds a parameterized SQL query to discover Context Source Registrations.
+///
+/// Generates filter conditions for entity type, IDs, ID patterns, attributes,
+/// `q` expressions, geo location, and temporal intervals. CSR-specific semantics
+/// apply: registrations without a location or temporal interval still match
+/// geo/temporal filters (per NGSI-LD 5.10.2).
 pub fn build_csr_query<'a>(query: &'a CompiledCsrQuery) -> Result<BuiltQuery<'a>, AndromedaError> {
     let mut conditions: Vec<String> = Vec::new();
     let mut binds: Vec<BindValue<'a>> = Vec::new();
@@ -15,35 +22,41 @@ pub fn build_csr_query<'a>(query: &'a CompiledCsrQuery) -> Result<BuiltQuery<'a>
 
     // Entity type filter: match against information[].entities[].type
     if let Some(ref entity_type) = query.entity_type {
-        conditions.push(format!(
+        bind_condition!(
+            conditions,
+            binds,
+            &mut param_idx,
             "EXISTS (SELECT 1 FROM jsonb_array_elements(information) AS info \
              WHERE NOT jsonb_exists(info, 'entities') \
                 OR info->'entities' = '[]'::jsonb \
                 OR EXISTS (SELECT 1 FROM jsonb_array_elements(info->'entities') AS ent WHERE ent->>'type' = ${}))",
-            param_idx
-        ));
-        binds.push(BindValue::String(Cow::Borrowed(entity_type.as_str())));
-        param_idx += 1;
+            BindValue::String(Cow::Borrowed(entity_type.as_str()))
+        );
     }
 
     // ID filter
     if let Some(ref ids) = query.ids {
-        conditions.push(format!("id = ANY(${})", param_idx));
-        binds.push(BindValue::StringVec(Cow::Borrowed(ids.as_slice())));
-        param_idx += 1;
+        bind_condition!(
+            conditions,
+            binds,
+            &mut param_idx,
+            "id = ANY(${})",
+            BindValue::StringVec(Cow::Borrowed(ids.as_slice()))
+        );
     }
 
     // ID pattern filter: match against information[].entities[].idPattern
     if let Some(ref id_pattern) = query.id_pattern {
-        conditions.push(format!(
+        bind_condition!(
+            conditions,
+            binds,
+            &mut param_idx,
             "EXISTS (SELECT 1 FROM jsonb_array_elements(information) AS info \
              WHERE NOT jsonb_exists(info, 'entities') \
                 OR info->'entities' = '[]'::jsonb \
                 OR EXISTS (SELECT 1 FROM jsonb_array_elements(info->'entities') AS ent WHERE ent->>'idPattern' = ${}))",
-            param_idx
-        ));
-        binds.push(BindValue::String(Cow::Borrowed(id_pattern.as_str())));
-        param_idx += 1;
+            BindValue::String(Cow::Borrowed(id_pattern.as_str()))
+        );
     }
 
     // Attrs filter: match against information[].propertyNames / relationshipNames
@@ -101,31 +114,31 @@ pub fn build_csr_query<'a>(query: &'a CompiledCsrQuery) -> Result<BuiltQuery<'a>
 
     // Temporal filter: CSRs without the relevant interval still match (per spec)
     if let Some(ref temporal) = query.temporal {
-        let timeprop = temporal.timeproperty.as_deref().unwrap_or("observedAt");
+        let timeprop = temporal.timeproperty.unwrap_or(TimeProp::Observed);
         let interval_col = match timeprop {
-            "createdAt" | "modifiedAt" => "management_interval",
-            _ => "observation_interval",
+            TimeProp::Created | TimeProp::Modified => "management_interval",
+            TimeProp::Observed | TimeProp::Deleted => "observation_interval",
         };
-        match temporal.timerel.as_str() {
-            "before" => {
+        match temporal.timerel {
+            TimeRel::Before => {
                 conditions.push(format!(
                     "({col} IS NULL OR ({col}->>'startAt')::timestamptz < ${}::timestamptz)",
                     param_idx,
                     col = interval_col,
                 ));
-                binds.push(BindValue::String(Cow::Borrowed(temporal.time_at.as_str())));
+                binds.push(BindValue::String(Cow::Owned(temporal.time_at.to_rfc3339())));
                 param_idx += 1;
             }
-            "after" => {
+            TimeRel::After => {
                 conditions.push(format!(
                     "({col} IS NULL OR ({col}->>'endAt')::timestamptz > ${}::timestamptz)",
                     param_idx,
                     col = interval_col,
                 ));
-                binds.push(BindValue::String(Cow::Borrowed(temporal.time_at.as_str())));
+                binds.push(BindValue::String(Cow::Owned(temporal.time_at.to_rfc3339())));
                 param_idx += 1;
             }
-            "between" => {
+            TimeRel::Between => {
                 let end_time = temporal
                     .end_time_at
                     .as_ref()
@@ -136,12 +149,9 @@ pub fn build_csr_query<'a>(query: &'a CompiledCsrQuery) -> Result<BuiltQuery<'a>
                     param_idx,
                     col = interval_col,
                 ));
-                binds.push(BindValue::String(Cow::Borrowed(temporal.time_at.as_str())));
-                binds.push(BindValue::String(Cow::Borrowed(end_time.as_str())));
+                binds.push(BindValue::String(Cow::Owned(temporal.time_at.to_rfc3339())));
+                binds.push(BindValue::String(Cow::Owned(end_time.to_rfc3339())));
                 param_idx += 2;
-            }
-            other => {
-                return Err(AndromedaError::bad_request_data(format!("Invalid timerel: {}", other)));
             }
         }
     }
@@ -183,36 +193,34 @@ pub fn build_csr_query<'a>(query: &'a CompiledCsrQuery) -> Result<BuiltQuery<'a>
 
 /// Build a GeoJSON string from NGSI-LD geometry type and coordinates.
 /// Handles Polygon coordinate wrapping (flat point list → ring array + close).
-fn build_geojson(geometry: &str, coordinates: &str) -> Result<String, AndromedaError> {
-    let coords_value: serde_json::Value =
-        serde_json::from_str(coordinates).map_err(|e| AndromedaError::bad_request_data(format!("Invalid coordinates: {}", coordinates)).with_source(e))?;
-
+fn build_geojson(geometry: &str, coordinates: &serde_json::Value) -> Result<String, AndromedaError> {
     let coords_value = match geometry {
         "Polygon" => {
-            if let Some(arr) = coords_value.as_array() {
+            if let Some(arr) = coordinates.as_array() {
                 if let Some(first) = arr.first()
                     && let Some(inner) = first.as_array()
                     && !inner.is_empty()
                     && !inner[0].is_array()
                 {
+                    // Clone needed: wrapping flat point list into a ring array for GeoJSON Polygon format
                     let mut ring = arr.clone();
                     if ring.first() != ring.last() {
                         ring.push(ring[0].clone());
                     }
-                    serde_json::Value::Array(vec![serde_json::Value::Array(ring)])
+                    Cow::Owned(serde_json::Value::Array(vec![serde_json::Value::Array(ring)]))
                 } else {
-                    coords_value
+                    Cow::Borrowed(coordinates)
                 }
             } else {
-                coords_value
+                Cow::Borrowed(coordinates)
             }
         }
-        _ => coords_value,
+        _ => Cow::Borrowed(coordinates),
     };
 
     let geojson = serde_json::json!({
         "type": geometry,
-        "coordinates": coords_value
+        "coordinates": *coords_value
     });
     Ok(geojson.to_string())
 }
@@ -264,7 +272,7 @@ fn csr_pred_to_sql(pred: &Predicate, binds: &mut Vec<BindValue<'_>>, param_idx: 
 /// Build a SQL expression that extracts the value of a CSR property from additional_properties.
 /// Handles Property wrapper: if the property has {"type":"Property","value":X}, extract X.
 /// For sub-attributes, navigates through nested objects.
-fn csr_value_extract(path: &crate::query::q::AttrPath, _binds: &mut Vec<BindValue<'_>>, _param_idx: &mut usize) -> String {
+fn csr_value_extract(path: &AttrPath, _binds: &mut Vec<BindValue<'_>>, _param_idx: &mut usize) -> String {
     let mut json_path = format!("additional_properties->'{}'", escape_sql_string(&path.attr));
 
     // Unwrap Property wrapper: use ->'value' if it's a Property
@@ -280,13 +288,7 @@ fn csr_value_extract(path: &crate::query::q::AttrPath, _binds: &mut Vec<BindValu
     json_path
 }
 
-fn csr_compare_to_sql(
-    path: &crate::query::q::AttrPath,
-    op: CmpOp,
-    rhs: &CompareValue,
-    binds: &mut Vec<BindValue<'_>>,
-    param_idx: &mut usize,
-) -> Result<String, AndromedaError> {
+fn csr_compare_to_sql(path: &AttrPath, op: CmpOp, rhs: &CompareValue, binds: &mut Vec<BindValue<'_>>, param_idx: &mut usize) -> Result<String, AndromedaError> {
     let extract = csr_value_extract(path, binds, param_idx);
 
     match rhs {
@@ -359,26 +361,6 @@ fn csr_compare_to_sql(
     }
 }
 
-fn cmp_op_sql(op: CmpOp) -> &'static str {
-    match op {
-        CmpOp::Equal => "=",
-        CmpOp::Unequal => "!=",
-        CmpOp::Greater => ">",
-        CmpOp::GreaterEq => ">=",
-        CmpOp::Less => "<",
-        CmpOp::LessEq => "<=",
-    }
-}
-
-fn scalar_to_sql_bind(scalar: &Scalar) -> (&'static str, BindValue<'static>) {
-    match scalar {
-        Scalar::Number(n) => ("::numeric", BindValue::String(Cow::Owned(n.to_string()))),
-        Scalar::Bool(b) => ("::boolean", BindValue::String(Cow::Owned(b.to_string()))),
-        Scalar::Str(s) => ("", BindValue::String(Cow::Owned(s.clone()))),
-        Scalar::DateTime(s) | Scalar::Date(s) | Scalar::Time(s) => ("", BindValue::String(Cow::Owned(s.clone()))),
-    }
-}
-
 fn escape_sql_string(s: &str) -> String {
     s.replace('\'', "''")
 }
@@ -386,7 +368,18 @@ fn escape_sql_string(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::query::compiled::{CompiledCsrQuery, CompiledCsrTemporalFilter, GeoQuery};
+    use crate::{
+        domain::temporal::{TimeProp, TimeRel},
+        query::{
+            compiled::{CompiledCsrQuery, CompiledCsrTemporalFilter, GeoQuery, IdPattern},
+            q::parser,
+        },
+    };
+    use chrono::{DateTime, Utc};
+
+    fn dt(s: &str) -> DateTime<Utc> {
+        DateTime::parse_from_rfc3339(s).unwrap().with_timezone(&Utc)
+    }
 
     fn empty_query() -> CompiledCsrQuery {
         CompiledCsrQuery {
@@ -431,7 +424,7 @@ mod tests {
     #[test]
     fn build_with_id_pattern() {
         let mut q = empty_query();
-        q.id_pattern = Some("urn:ngsi-ld:.*".to_string());
+        q.id_pattern = Some(IdPattern::new("urn:ngsi-ld:.*").unwrap());
         let built = build_csr_query(&q).unwrap();
         assert!(built.sql.contains("ent->>'idPattern' = $1"));
     }
@@ -452,7 +445,7 @@ mod tests {
         q.geo = Some(GeoQuery {
             georel: GeoRel::Within,
             geometry: "Point".to_string(),
-            coordinates: "[1.0, 2.0]".to_string(),
+            coordinates: serde_json::json!([1.0, 2.0]),
             geoproperty_iri: "https://uri.etsi.org/ngsi-ld/location".to_string(),
         });
         let built = build_csr_query(&q).unwrap();
@@ -464,8 +457,8 @@ mod tests {
     fn build_with_temporal_before() {
         let mut q = empty_query();
         q.temporal = Some(CompiledCsrTemporalFilter {
-            timerel: "before".to_string(),
-            time_at: "2024-01-01T00:00:00Z".to_string(),
+            timerel: TimeRel::Before,
+            time_at: dt("2024-01-01T00:00:00Z"),
             end_time_at: None,
             timeproperty: None,
         });
@@ -479,10 +472,10 @@ mod tests {
     fn build_with_temporal_after() {
         let mut q = empty_query();
         q.temporal = Some(CompiledCsrTemporalFilter {
-            timerel: "after".to_string(),
-            time_at: "2024-01-01T00:00:00Z".to_string(),
+            timerel: TimeRel::After,
+            time_at: dt("2024-01-01T00:00:00Z"),
             end_time_at: None,
-            timeproperty: Some("createdAt".to_string()),
+            timeproperty: Some(TimeProp::Created),
         });
         let built = build_csr_query(&q).unwrap();
         assert!(built.sql.contains("management_interval IS NULL"));
@@ -493,9 +486,9 @@ mod tests {
     fn build_with_temporal_between() {
         let mut q = empty_query();
         q.temporal = Some(CompiledCsrTemporalFilter {
-            timerel: "between".to_string(),
-            time_at: "2024-01-01T00:00:00Z".to_string(),
-            end_time_at: Some("2024-02-01T00:00:00Z".to_string()),
+            timerel: TimeRel::Between,
+            time_at: dt("2024-01-01T00:00:00Z"),
+            end_time_at: Some(dt("2024-02-01T00:00:00Z")),
             timeproperty: None,
         });
         let built = build_csr_query(&q).unwrap();
@@ -507,7 +500,7 @@ mod tests {
     #[test]
     fn build_with_q_existence() {
         let mut q = empty_query();
-        q.q_expr = Some(crate::query::q::parse("temperature").unwrap());
+        q.q_expr = Some(parser::parse("temperature").unwrap());
         let built = build_csr_query(&q).unwrap();
         assert!(built.sql.contains("additional_properties ? $1"));
     }

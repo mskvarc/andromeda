@@ -1,11 +1,15 @@
-use crate::query::{error::QueryError, params::SharedQueryParams};
-use serde::Deserialize;
-use url::Url;
-use urn::Urn;
+//! Query parameters for the NGSI-LD Entity query API (5.7.2).
 
+use crate::query::{error::QueryError, params::is_valid_uri};
+use serde::Deserialize;
+
+/// Raw HTTP query parameters for entity queries, deserialized from the request URL.
+///
+/// Corresponds to the query parameters defined in NGSI-LD 6.3.5 (Query Entities)
+/// and related operations. All values are in their raw (compact) form before
+/// context expansion.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-#[allow(dead_code)]
 pub struct EntityQueryParameters {
     pub id: Option<String>,
     #[serde(rename = "type")]
@@ -55,34 +59,25 @@ pub struct EntityQueryParameters {
     pub collation: Option<String>,
 }
 
-impl SharedQueryParams for EntityQueryParameters {
-    fn raw_id(&self) -> Option<&str> {
-        self.id.as_deref()
-    }
-    fn raw_entity_type(&self) -> Option<&str> {
-        self.entity_type.as_deref()
-    }
-    fn raw_attrs(&self) -> Option<&str> {
-        self.attrs.as_deref()
-    }
-    fn raw_pick(&self) -> Option<&str> {
-        self.pick.as_deref()
-    }
-    fn raw_omit(&self) -> Option<&str> {
-        self.omit.as_deref()
-    }
-    fn raw_dataset_id(&self) -> Option<&str> {
-        self.dataset_id.as_deref()
-    }
-    fn raw_limit(&self) -> Option<u32> {
-        self.limit
-    }
-    fn raw_offset(&self) -> Option<u32> {
-        self.offset
-    }
-}
+impl_shared_query_params!(EntityQueryParameters {
+    id: id,
+    attrs: attrs,
+    pick: pick,
+    omit: omit,
+    dataset_id: dataset_id,
+    limit: limit,
+    offset: offset
+});
 
 impl EntityQueryParameters {
+    /// Parses the `orderBy` parameter into a list of ordering terms.
+    ///
+    /// Supports two syntaxes per NGSI-LD S4.23:
+    /// - Semicolon-delimited: `"attrName;desc"`, `"location;dist-asc"`
+    /// - Legacy bang prefix: `"!attrName"` (equivalent to desc)
+    ///
+    /// Terms with unrecognized direction values are silently skipped.
+    /// Defaults to ascending when no direction is specified.
     pub fn parse_order_by(&self) -> Vec<OrderTerm> {
         self.order_by
             .as_deref()
@@ -126,6 +121,11 @@ impl EntityQueryParameters {
             .unwrap_or_default()
     }
 
+    /// Parses the `options` and `format` parameters into structured flags.
+    ///
+    /// Handles both the legacy `options` parameter (e.g. `"keyValues,sysAttrs"`)
+    /// and the newer `format` parameter, with `format` taking precedence where
+    /// both are provided.
     pub fn parse_options(&self) -> EntityQueryParametersOptions {
         let opts = self.options.as_deref().unwrap_or("");
         let fmt = self.format.as_deref().unwrap_or("");
@@ -159,7 +159,7 @@ impl EntityQueryParameters {
                 if id.is_empty() {
                     return Err(QueryError::InvalidRequest("Invalid id: empty value in comma-separated list".to_string()));
                 }
-                if !is_valid_entity_id(id) {
+                if !is_valid_uri(id) {
                     return Err(QueryError::BadRequestData(format!("Invalid id value: '{}'", id)));
                 }
             }
@@ -169,29 +169,30 @@ impl EntityQueryParameters {
             if pattern.trim().is_empty() {
                 return Err(QueryError::BadRequestData("Invalid idPattern: empty value".to_string()));
             }
-            regex::Regex::new(pattern).map_err(|e| QueryError::BadRequestData(format!("Invalid idPattern regex: {}", e)))?;
         }
 
         Ok(())
     }
 }
 
-fn is_valid_entity_id(id: &str) -> bool {
-    if id.starts_with("urn:") {
-        return id.parse::<Urn>().is_ok();
-    }
-    Url::parse(id).is_ok()
-}
-
+/// A single parsed ordering term from the `orderBy` parameter.
+///
+/// Contains the compact (pre-expansion) attribute name and the requested
+/// sort direction. Will be expanded to a `CompiledOrderTerm` during compilation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OrderTerm {
+    /// The compact attribute name to sort by.
     pub attr: String,
+    /// The sort direction.
     pub direction: OrderDirection,
 }
 
+/// Sort direction for `orderBy` terms per NGSI-LD S4.23.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OrderDirection {
+    /// Sort in ascending order.
     Asc,
+    /// Sort in descending order.
     Desc,
     /// Sort by distance in ascending order from the geo query reference geometry (S4.23).
     DistAsc,
@@ -214,20 +215,31 @@ impl OrderDirection {
     }
 }
 
+/// Parsed response shaping options from the `options` and `format` parameters.
 #[derive(Debug, Default)]
-#[allow(dead_code)]
 pub struct EntityQueryParametersOptions {
+    /// When true, return entities in simplified key-values representation.
     pub key_values: bool,
+    /// When true, include system-generated attributes (`createdAt`, `modifiedAt`).
     pub sys_attrs: bool,
+    /// When true, include a total count of matching entities in the response.
     pub count: bool,
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::query::params::SharedQueryParams;
 
     fn params_from_query(query: &str) -> EntityQueryParameters {
-        serde_urlencoded::from_str(query).unwrap()
+        params_from_query!(query, EntityQueryParameters)
+    }
+
+    fn parse_types(p: &EntityQueryParameters) -> Vec<String> {
+        p.entity_type
+            .as_deref()
+            .map(|s| s.split(',').map(|t| t.trim().to_string()).collect())
+            .unwrap_or_default()
     }
 
     #[test]
@@ -240,14 +252,14 @@ mod tests {
     #[test]
     fn parse_types_splits_comma_separated() {
         let p = params_from_query("type=Vehicle,Building");
-        let types = p.parse_types();
+        let types = parse_types(&p);
         assert_eq!(types, vec!["Vehicle", "Building"]);
     }
 
     #[test]
     fn parse_types_empty_when_absent() {
         let p = params_from_query("");
-        assert!(p.parse_types().is_empty());
+        assert!(parse_types(&p).is_empty());
     }
 
     #[test]
@@ -381,9 +393,9 @@ mod tests {
     }
 
     #[test]
-    fn validate_rejects_invalid_id_pattern() {
-        let p = params_from_query("idPattern=(");
+    fn validate_rejects_empty_id_pattern() {
+        let p = params_from_query("idPattern=%20");
         let err = p.validate().expect_err("expected invalid idPattern error");
-        assert!(err.to_string().contains("Invalid idPattern regex"));
+        assert!(err.to_string().contains("Invalid idPattern: empty value"));
     }
 }

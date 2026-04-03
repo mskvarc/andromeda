@@ -5,9 +5,9 @@ use crate::{
     error::AndromedaError,
     jsonld::{CompactOptions, ContextSpec, JsonLdEngine},
     query::{
-        compiled::GeoQuery,
+        compiled::{GeoQuery, IdPattern},
         params::SharedQueryParams,
-        temporal::{CompiledTemporalQuery, TemporalQueryParameters},
+        temporal::{CompiledTemporalQuery, LastNOrigin, TemporalQueryParameters},
         temporal_sql::{build_stage1_entity_ids, build_temporal_history_query},
     },
     repository::{entity::EntityRepository, temporal::TemporalRepository},
@@ -313,7 +313,7 @@ impl TemporalService {
         };
 
         let content_range = if truncated {
-            build_content_range(&compiled, time_range, partition_total, compiled.user_specified_last_n)
+            build_content_range(&compiled, time_range, partition_total, compiled.last_n_origin.is_user_specified())
         } else {
             None
         };
@@ -440,7 +440,12 @@ impl TemporalService {
         }
 
         let content_range = if any_truncated {
-            build_content_range(&compiled, overall_min.zip(overall_max), overall_partition_total, compiled.user_specified_last_n)
+            build_content_range(
+                &compiled,
+                overall_min.zip(overall_max),
+                overall_partition_total,
+                compiled.last_n_origin.is_user_specified(),
+            )
         } else {
             None
         };
@@ -507,9 +512,12 @@ impl TemporalService {
     }
 
     async fn compile_temporal_query(&self, params: &TemporalQueryParameters, context: &ContextSpec) -> Result<CompiledTemporalQuery, AndromedaError> {
-        if let Some(ref pattern) = params.id_pattern {
-            crate::query::compile::validate_id_pattern(pattern)?;
-        }
+        let id_pattern = params
+            .id_pattern
+            .as_deref()
+            .map(IdPattern::new)
+            .transpose()
+            .map_err(|e| AndromedaError::bad_request_data(e.to_string()))?;
 
         let attr_filter = crate::query::compile::expand_attrs(&params.parse_attrs(), &self.engine, context).await?;
 
@@ -557,10 +565,21 @@ impl TemporalService {
 
         let format = params.parse_format();
         let last_n_cap = self.default_last_n;
-        // last_n_cap is a system cap: user's lastN is honoured up to this limit.
-        // system_last_n is true when the cap is active (user didn't specify, or specified > cap).
-        let system_last_n = format != TemporalFormat::AggregatedValues && params.last_n.is_none_or(|n| n > last_n_cap);
-        let effective_last_n = if format != TemporalFormat::AggregatedValues {
+        let is_aggregated = format == TemporalFormat::AggregatedValues;
+        let last_n_origin = if is_aggregated {
+            if params.last_n.is_some() {
+                LastNOrigin::UserSpecified
+            } else {
+                LastNOrigin::None
+            }
+        } else {
+            match params.last_n {
+                Some(n) if n > last_n_cap => LastNOrigin::UserSpecifiedCapped,
+                Some(_) => LastNOrigin::UserSpecified,
+                Option::None => LastNOrigin::SystemCapped,
+            }
+        };
+        let effective_last_n = if !is_aggregated {
             Some(params.last_n.map_or(last_n_cap, |n| n.min(last_n_cap)))
         } else {
             params.last_n
@@ -568,27 +587,40 @@ impl TemporalService {
 
         Ok(CompiledTemporalQuery {
             ids: params.parse_ids(),
-            id_pattern: params.id_pattern.clone(), // clone: owned value for compiled query struct
+            id_pattern,
             types,
             q_expr,
             geo,
             timerel,
-            time_at: params.time_at.clone(),         // clone: owned value for compiled query struct
-            end_time_at: params.end_time_at.clone(), // clone: owned value for compiled query struct
+            time_at: params
+                .time_at
+                .as_deref()
+                .map(|s| {
+                    DateTime::parse_from_rfc3339(s)
+                        .map(|dt| dt.with_timezone(&Utc))
+                        .map_err(|e| AndromedaError::bad_request_data(format!("Invalid timeAt: {}", e)))
+                })
+                .transpose()?,
+            end_time_at: params
+                .end_time_at
+                .as_deref()
+                .map(|s| {
+                    DateTime::parse_from_rfc3339(s)
+                        .map(|dt| dt.with_timezone(&Utc))
+                        .map_err(|e| AndromedaError::bad_request_data(format!("Invalid endTimeAt: {}", e)))
+                })
+                .transpose()?,
             timeproperty: params.parse_timeproperty(),
             attr_filter,
             dataset_id_filter,
             last_n: effective_last_n,
-            system_last_n,
-            user_specified_last_n: params.last_n.is_some(),
+            last_n_origin,
             format,
             aggr_methods: params.parse_aggr_methods()?,
             aggr_period_duration: params.aggr_period_duration.clone(), // clone: owned value for compiled query struct
             limit: params.effective_limit(),
             offset: params.effective_offset(),
             count: params.count.unwrap_or(false),
-            pick: crate::query::compile::expand_projection_terms(&params.parse_pick(), &self.engine, context).await?,
-            omit: crate::query::compile::expand_projection_terms(&params.parse_omit(), &self.engine, context).await?,
             sys_attrs: params.has_sys_attrs(),
         })
     }

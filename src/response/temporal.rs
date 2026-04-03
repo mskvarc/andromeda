@@ -53,8 +53,8 @@ pub fn build_content_range(
 
     let (start, end, size) = if user_specified_last_n {
         let upper = match compiled.timerel {
-            Some(TimeRel::Before) => compiled.time_at.clone().unwrap_or_else(|| mrt.clone()),
-            Some(TimeRel::Between) => compiled.end_time_at.clone().unwrap_or_else(|| mrt.clone()),
+            Some(TimeRel::Before) => compiled.time_at.map(format_datetime).unwrap_or_else(|| mrt.clone()),
+            Some(TimeRel::Between) => compiled.end_time_at.map(format_datetime).unwrap_or_else(|| mrt.clone()),
             Some(TimeRel::After) => mrt.clone(),
             None => mrt.clone(),
         };
@@ -62,7 +62,7 @@ pub fn build_content_range(
         (upper, lrt, size)
     } else {
         let lower = match compiled.timerel {
-            Some(_) => compiled.time_at.clone().unwrap_or(lrt),
+            Some(_) => compiled.time_at.map(format_datetime).unwrap_or(lrt),
             None => lrt,
         };
         (lower, mrt, "*".to_string())
@@ -90,7 +90,7 @@ pub fn build_entity_temporal(
         let dataset_id: Option<String> = row.try_get("dataset_id")?;
         let value_type: String = row.try_get("value_type")?;
 
-        if compiled.system_last_n
+        if compiled.last_n_origin.is_system_capped()
             && let Some(last_n) = compiled.last_n
             && let Ok(total) = row.try_get::<i64, _>("partition_total")
         {
@@ -142,7 +142,7 @@ pub fn build_entity_temporal(
                 let has_gap = attr_ranges.iter().any(|(_, a_min, _)| attr_ranges.iter().any(|(_, _, b_max)| *b_max < *a_min));
 
                 if has_gap {
-                    let cut_max = if compiled.user_specified_last_n { g_max } else { g_min };
+                    let cut_max = if compiled.last_n_origin.is_user_specified() { g_max } else { g_min };
                     let keep_range = attr_ranges.iter().find(|(_, min, max)| *min <= cut_max && cut_max <= *max);
 
                     if let Some((_, keep_min, keep_max)) = keep_range {

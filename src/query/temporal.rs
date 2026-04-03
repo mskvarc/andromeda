@@ -2,10 +2,20 @@
 
 use crate::{
     domain::temporal::{AggrMethod, TemporalFormat, TimeProp, TimeRel},
-    query::{compiled::GeoQuery, error::QueryError, params::SharedQueryParams, q::Expr},
+    query::{
+        compiled::{GeoQuery, IdPattern},
+        error::QueryError,
+        q::ast::Expr,
+    },
 };
+use chrono::{DateTime, Utc};
 use serde::Deserialize;
 
+/// Raw HTTP query parameters for temporal entity queries.
+///
+/// Corresponds to the query parameters defined in NGSI-LD 6.3.10 (Query Temporal
+/// Evolution of Entities) and 5.7.3 (Retrieve Temporal Representation of an Entity).
+/// All values are in their raw (compact) form before context expansion.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TemporalQueryParameters {
@@ -45,8 +55,7 @@ pub struct TemporalQueryParameters {
     pub offset: Option<u32>,
     pub count: Option<bool>,
     #[serde(rename = "orderBy")]
-    #[allow(dead_code)]
-    pub order_by: Option<String>,
+    pub _order_by: Option<String>,
 
     // --- Projection ---
     pub pick: Option<String>,
@@ -55,58 +64,53 @@ pub struct TemporalQueryParameters {
     // --- Other ---
     #[serde(rename = "datasetId")]
     pub dataset_id: Option<String>,
-    #[allow(dead_code)]
-    pub lang: Option<String>,
-    #[allow(dead_code)]
-    pub local: Option<bool>,
+    #[serde(rename = "lang")]
+    pub _lang: Option<String>,
+    #[serde(rename = "local")]
+    pub _local: Option<bool>,
 
     #[serde(rename = "scopeQ")]
-    #[allow(dead_code)]
-    pub scope_q: Option<String>,
+    pub _scope_q: Option<String>,
     #[serde(rename = "expandValues")]
     pub expand_values: Option<String>,
     #[serde(rename = "jsonKeys")]
     pub json_keys: Option<String>,
 }
 
-impl SharedQueryParams for TemporalQueryParameters {
-    fn raw_id(&self) -> Option<&str> {
-        self.id.as_deref()
-    }
-    fn raw_entity_type(&self) -> Option<&str> {
-        self.entity_type.as_deref()
-    }
-    fn raw_attrs(&self) -> Option<&str> {
-        self.attrs.as_deref()
-    }
-    fn raw_pick(&self) -> Option<&str> {
-        self.pick.as_deref()
-    }
-    fn raw_omit(&self) -> Option<&str> {
-        self.omit.as_deref()
-    }
-    fn raw_dataset_id(&self) -> Option<&str> {
-        self.dataset_id.as_deref()
-    }
-    fn raw_limit(&self) -> Option<u32> {
-        self.limit
-    }
-    fn raw_offset(&self) -> Option<u32> {
-        self.offset
-    }
-}
+impl_shared_query_params!(TemporalQueryParameters {
+    id: id,
+    attrs: attrs,
+    pick: pick,
+    omit: omit,
+    dataset_id: dataset_id,
+    limit: limit,
+    offset: offset
+});
 
 impl TemporalQueryParameters {
+    /// Parses the `timerel` parameter into a `TimeRel` enum value.
+    ///
+    /// Returns `None` if `timerel` is absent, or `Some(Result)` with the parsed
+    /// temporal relationship (`before`, `after`, `between`).
     pub fn parse_timerel(&self) -> Option<Result<TimeRel, QueryError>> {
         self.timerel
             .as_deref()
             .map(|s| s.parse::<TimeRel>().map_err(|e| QueryError::BadRequestData(e.to_string())))
     }
 
+    /// Parses the `timeproperty` parameter into a `TimeProp` enum value.
+    ///
+    /// Defaults to `TimeProp::Observed` (`observedAt`) when the parameter is absent
+    /// or contains an unrecognized value.
     pub fn parse_timeproperty(&self) -> TimeProp {
         self.timeproperty.as_deref().and_then(|s| s.parse::<TimeProp>().ok()).unwrap_or_default()
     }
 
+    /// Parses the temporal response format from `format` and `options` parameters.
+    ///
+    /// The `format` parameter takes precedence over `options`. Recognized values
+    /// are `"temporalValues"` and `"aggregatedValues"`. Defaults to
+    /// `TemporalFormat::Normalized`.
     pub fn parse_format(&self) -> TemporalFormat {
         if let Some(f) = &self.format {
             match f.as_str() {
@@ -126,6 +130,10 @@ impl TemporalQueryParameters {
         TemporalFormat::Normalized
     }
 
+    /// Parses the `aggrMethods` parameter as a comma-separated list of aggregation methods.
+    ///
+    /// Returns an empty vector when the parameter is absent.
+    /// Returns an error if any method name is unrecognized.
     pub fn parse_aggr_methods(&self) -> Result<Vec<AggrMethod>, QueryError> {
         self.aggr_methods
             .as_deref()
@@ -137,6 +145,7 @@ impl TemporalQueryParameters {
             .unwrap_or(Ok(Vec::new()))
     }
 
+    /// Returns whether the `sysAttrs` option is present in the `options` parameter.
     pub fn has_sys_attrs(&self) -> bool {
         self.options.as_deref().map(|o| o.contains("sysAttrs")).unwrap_or(false)
     }
@@ -190,59 +199,106 @@ impl TemporalQueryParameters {
     }
 }
 
+/// Indicates the origin of the `lastN` limit in a temporal query.
+///
+/// Indicates the origin of the `lastN` limit in a temporal query.
+///
+/// This enum replaces two boolean fields (`system_last_n` and
+/// `user_specified_last_n`) to clearly distinguish between the four possible
+/// states of lastN handling.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LastNOrigin {
+    /// The user explicitly specified a `lastN` parameter within the system cap.
+    /// No truncation detection needed -- the user gets exactly what they asked for.
+    UserSpecified,
+    /// The user specified `lastN` but it exceeded the system cap, so the system
+    /// reduced it. Triggers truncation detection (206 Partial Content) but uses
+    /// user-specified direction for Content-Range.
+    UserSpecifiedCapped,
+    /// No user `lastN` was specified; the system applied DEFAULT_LAST_N as a cap.
+    /// Triggers truncation detection (206 Partial Content) with system direction
+    /// for Content-Range.
+    SystemCapped,
+    /// No `lastN` limit is active (e.g. aggregated queries without lastN).
+    None,
+}
+
+impl LastNOrigin {
+    /// Returns true when the system cap is active and truncation may occur.
+    /// This is the case for both `SystemCapped` and `UserSpecifiedCapped`.
+    pub fn is_system_capped(self) -> bool {
+        matches!(self, LastNOrigin::SystemCapped | LastNOrigin::UserSpecifiedCapped)
+    }
+
+    /// Returns true when the user explicitly provided a `lastN` parameter,
+    /// regardless of whether it was further capped by the system.
+    pub fn is_user_specified(self) -> bool {
+        matches!(self, LastNOrigin::UserSpecified | LastNOrigin::UserSpecifiedCapped)
+    }
+}
+
 /// Compiled temporal query ready for SQL building.
-#[derive(Debug)]
+///
+/// Produced by expanding and validating `TemporalQueryParameters` against the
+/// active JSON-LD context. Contains both entity-level filters and temporal-specific
+/// parameters needed to query the `temporal_entity_attributes` and `attribute_history` tables.
+#[derive(Debug, Clone)]
 pub struct CompiledTemporalQuery {
-    // Entity-level filters
+    /// Optional set of entity IDs to filter by (expanded URIs/URNs).
     pub ids: Option<Vec<String>>,
-    pub id_pattern: Option<String>,
+    /// Optional regex pattern for matching entity IDs.
+    pub id_pattern: Option<IdPattern>,
+    /// Optional set of entity type IRIs to filter by.
     pub types: Option<Vec<String>>,
+    /// Parsed `q` expression for property-level filtering.
     pub q_expr: Option<Expr>,
+    /// Geo-spatial query filter, if specified.
     pub geo: Option<GeoQuery>,
 
-    // Temporal filters
+    /// Temporal relationship operator (`before`, `after`, `between`).
     pub timerel: Option<TimeRel>,
-    pub time_at: Option<String>,
-    pub end_time_at: Option<String>,
+    /// Reference time point for the temporal filter.
+    pub time_at: Option<DateTime<Utc>>,
+    /// End time point for `between` queries.
+    pub end_time_at: Option<DateTime<Utc>>,
+    /// The time property to filter on (`observedAt`, `createdAt`, `modifiedAt`, `deletedAt`).
     pub timeproperty: TimeProp,
 
-    // Attribute/dataset filtering (expanded IRIs)
+    /// Expanded attribute IRIs to filter temporal data by.
     pub attr_filter: Vec<String>,
+    /// Dataset IDs to filter temporal data by. `"@none"` matches the default (null) dataset.
     pub dataset_id_filter: Vec<String>,
 
-    // Result shaping
+    /// Maximum number of temporal instances per attribute to return.
     pub last_n: Option<u32>,
-    /// True when the system's DEFAULT_LAST_N cap caused last_n to be set or reduced.
-    /// Only system-caused truncation triggers 206 Partial Content + Content-Range.
-    pub system_last_n: bool,
-    /// True when the user explicitly specified a lastN parameter.
-    pub user_specified_last_n: bool,
+    /// The origin of the `lastN` limit, distinguishing user-specified values
+    /// from system-imposed caps (which trigger 206 Partial Content).
+    pub last_n_origin: LastNOrigin,
+    /// The temporal response format (normalized, temporalValues, or aggregatedValues).
     pub format: TemporalFormat,
+    /// Aggregation methods to apply when `format` is `aggregatedValues`.
     pub aggr_methods: Vec<AggrMethod>,
+    /// ISO 8601 duration for aggregation bucket size (e.g. `"PT1H"`).
     pub aggr_period_duration: Option<String>,
 
-    // Pagination
+    /// Maximum number of entities to return.
     pub limit: u32,
+    /// Number of entities to skip for pagination.
     pub offset: u32,
+    /// Whether to include a total count of matching entities in the response.
     pub count: bool,
 
-    // Projection
-    #[allow(dead_code)]
-    pub pick: Vec<String>,
-    #[allow(dead_code)]
-    pub omit: Vec<String>,
-
-    // Response options
+    /// When true, include system-generated attributes (`createdAt`, `modifiedAt`).
     pub sys_attrs: bool,
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::temporal::{AggrMethod, TemporalFormat, TimeProp, TimeRel};
+    use crate::query::params::SharedQueryParams;
 
     fn params_from_query(query: &str) -> TemporalQueryParameters {
-        serde_urlencoded::from_str(query).unwrap()
+        params_from_query!(query, TemporalQueryParameters)
     }
 
     #[test]

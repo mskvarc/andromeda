@@ -1,11 +1,15 @@
 use crate::{
-    domain::notification::{CsrChangeEvent, CsrTriggerReason},
+    domain::{
+        notification::{CsrChangeEvent, CsrTriggerReason},
+        temporal::{TimeProp, TimeRel},
+    },
     error::AndromedaError,
     jsonld::{ContextSpec, JsonLdEngine},
     query::{
-        compiled::{CompiledCsrQuery, CompiledCsrTemporalFilter},
+        compiled::{CompiledCsrQuery, CompiledCsrTemporalFilter, IdPattern},
         csr::CsrQueryParameters,
         params::SharedQueryParams,
+        q::parser,
     },
     repository::context_source_registration::{ContextSourceRegistrationRepository, CreateCsrParams, CsrUpdateFragment, unwrap_geo_property_to_string},
 };
@@ -313,16 +317,32 @@ impl ContextSourceRegistrationService {
 
         // Parse temporal filter
         let temporal = if let (Some(timerel), Some(time_at)) = (&params.timerel, &params.time_at) {
-            // Validate time_at is a valid ISO 8601 datetime
-            chrono::DateTime::parse_from_rfc3339(time_at).map_err(|_| AndromedaError::bad_request_data("Invalid timeAt: must be ISO 8601 date-time"))?;
-            if let Some(ref end) = params.end_time_at {
-                chrono::DateTime::parse_from_rfc3339(end).map_err(|_| AndromedaError::bad_request_data("Invalid endTimeAt: must be ISO 8601 date-time"))?;
-            }
+            let parsed_time_at = chrono::DateTime::parse_from_rfc3339(time_at)
+                .map(|dt| dt.with_timezone(&chrono::Utc))
+                .map_err(|_| AndromedaError::bad_request_data("Invalid timeAt: must be ISO 8601 date-time"))?;
+            let parsed_end_time_at = params
+                .end_time_at
+                .as_deref()
+                .map(|s| {
+                    chrono::DateTime::parse_from_rfc3339(s)
+                        .map(|dt| dt.with_timezone(&chrono::Utc))
+                        .map_err(|_| AndromedaError::bad_request_data("Invalid endTimeAt: must be ISO 8601 date-time"))
+                })
+                .transpose()?;
+            let parsed_timerel = timerel
+                .parse::<TimeRel>()
+                .map_err(|e| AndromedaError::bad_request_data(format!("Invalid timerel: {}", e)))?;
+            let parsed_timeprop = params
+                .timeproperty
+                .as_deref()
+                .map(|s| s.parse::<TimeProp>())
+                .transpose()
+                .map_err(|e| AndromedaError::bad_request_data(format!("Invalid timeproperty: {}", e)))?;
             Some(CompiledCsrTemporalFilter {
-                timerel: timerel.clone(),                  // clone: owned value for compiled query struct
-                time_at: time_at.clone(),                  // clone: owned value for compiled query struct
-                end_time_at: params.end_time_at.clone(),   // clone: owned value for compiled query struct
-                timeproperty: params.timeproperty.clone(), // clone: owned value for compiled query struct
+                timerel: parsed_timerel,
+                time_at: parsed_time_at,
+                end_time_at: parsed_end_time_at,
+                timeproperty: parsed_timeprop,
             })
         } else {
             None
@@ -331,7 +351,7 @@ impl ContextSourceRegistrationService {
         // Parse q expression
         let q_expr = if let Some(ref q) = params.q {
             if !q.is_empty() {
-                Some(crate::query::q::parse(q).map_err(|e| AndromedaError::bad_request_data(format!("Invalid q parameter: {}", e)))?)
+                Some(parser::parse(q).map_err(|e| AndromedaError::bad_request_data(format!("Invalid q parameter: {}", e)))?)
             } else {
                 None
             }
@@ -342,7 +362,12 @@ impl ContextSourceRegistrationService {
         Ok(CompiledCsrQuery {
             ids: params.parse_ids(),
             entity_type: expanded_type,
-            id_pattern: params.id_pattern.clone(), // clone: owned value for compiled query struct
+            id_pattern: params
+                .id_pattern
+                .as_deref()
+                .map(IdPattern::new)
+                .transpose()
+                .map_err(|e| AndromedaError::bad_request_data(e.to_string()))?,
             attrs: expanded_attrs,
             q_expr,
             geo,

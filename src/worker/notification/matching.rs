@@ -103,7 +103,7 @@ pub fn matches_subscription(sub: &CompiledSubscription, event: &ChangeEvent) -> 
 /// Evaluate q, geoQ, and scopeQ filters against the fetched entity data.
 pub fn matches_entity_filters(sub: &CompiledSubscription, entity_data: &Value) -> bool {
     if let Some(ref expr) = sub.compiled_q
-        && !q::evaluate(expr, entity_data)
+        && !q::eval::evaluate(expr, entity_data)
     {
         debug!("Subscription {} skipped: q filter did not match entity", sub.id);
         return false;
@@ -124,7 +124,7 @@ pub fn matches_entity_filters(sub: &CompiledSubscription, entity_data: &Value) -
     }
 
     if let Some(ref csf_expr) = sub.compiled_csf
-        && !q::evaluate(csf_expr, entity_data)
+        && !q::eval::evaluate(csf_expr, entity_data)
     {
         debug!("Subscription {} skipped: csf filter did not match entity", sub.id);
         return false;

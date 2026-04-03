@@ -1,6 +1,6 @@
 //! In-memory evaluation of parsed `q` filter expressions against expanded JSON-LD entities.
 
-use crate::query::q::ast::*;
+use crate::query::q::ast::{AttrPath, CmpOp, CompareValue, Expr, Predicate, Scalar};
 use regex::Regex;
 use serde_json::Value;
 
@@ -189,7 +189,7 @@ fn entity_val_to_string(val: &Value) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::query::q::parse;
+    use crate::query::q::parser::parse;
 
     fn vehicle_entity() -> Value {
         serde_json::json!([{
