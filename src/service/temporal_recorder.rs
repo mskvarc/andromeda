@@ -26,22 +26,31 @@ const NGSI_LD_SYSTEM_ATTRS: &[&str] = &[
 
 /// Named parameters for temporal value storage, replacing the 7-element tuple.
 pub(crate) struct DbValueParams {
+    /// Numeric value for number-typed properties.
     pub value_number: Option<f64>,
+    /// String value for string-typed properties.
     pub value_string: Option<String>,
+    /// Boolean value for boolean-typed properties.
     pub value_bool: Option<bool>,
+    /// GeoJSON string for geo-typed properties.
     pub value_geo: Option<String>,
+    /// Arbitrary JSON value for object-typed or complex properties.
     pub value_object: Option<Value>,
+    /// Datetime value for datetime-typed properties.
     pub value_datetime: Option<DateTime<Utc>>,
+    /// URI string for relationship objects.
     pub value_uri: Option<String>,
 }
 
+/// Records attribute history into temporal tables when entities are created or modified.
 pub struct TemporalRecorder {
     repo: Arc<TemporalRepository>,
 }
 
 impl TemporalRecorder {
-    pub fn new(repo: Arc<TemporalRepository>) -> Self {
-        Self { repo }
+    /// Create a new temporal recorder backed by the given repository.
+    pub fn new(repo: Arc<TemporalRepository>) -> TemporalRecorder {
+        TemporalRecorder { repo }
     }
 
     /// Look up TEA entries for a given entity + attribute IRI.
@@ -58,7 +67,7 @@ impl TemporalRecorder {
         let obj = match expanded {
             Value::Array(arr) => arr.first().and_then(|v| v.as_object()),
             Value::Object(obj) => Some(obj),
-            _ => None,
+            _other => None,
         };
 
         let Some(obj) = obj else {
@@ -99,7 +108,7 @@ impl TemporalRecorder {
 
             let instances = match attr_value {
                 Value::Array(arr) => arr,
-                _ => continue,
+                _other => continue,
             };
 
             for instance in instances {
@@ -111,6 +120,7 @@ impl TemporalRecorder {
                     }
 
                     match self.record_attribute_instance(entity_id, attr_name, &Value::Object(inst_obj.clone())).await {
+                        // clone: method requires owned Value; inst_obj is borrowed from instances iterator
                         Ok(()) => {}
                         Err(e) => {
                             tracing::warn!("Failed to record temporal data for entity {}: {}", entity_id, e.message());
@@ -364,10 +374,9 @@ fn extract_typed_value(instance: &Value, attribute_type: &str) -> Result<TypedVa
             //           "https://purl.org/geojson/vocab#coordinates": [{"@list": [...]}]}
             let geo_str = if let Some(val) = geo_node.get("@value") {
                 // Case 1: literal value
-                if val.is_string() {
-                    val.as_str().unwrap().to_string()
-                } else {
-                    val.to_string()
+                match val.as_str() {
+                    Some(s) => s.to_string(),
+                    None => val.to_string(),
                 }
             } else {
                 // Case 2: expanded GeoJSON node — reconstruct compact GeoJSON
@@ -383,7 +392,7 @@ fn extract_typed_value(instance: &Value, attribute_type: &str) -> Result<TypedVa
                 .ok_or_else(|| AndromedaError::bad_request_data("VocabProperty missing vocab value"))?;
             if arr.len() > 1 {
                 // Multi-value vocab: collect all @id values into a JSON array
-                let values: Vec<Value> = arr.iter().filter_map(|obj| obj.get("@id").or(obj.get("@value")).cloned()).collect();
+                let values: Vec<Value> = arr.iter().filter_map(|obj| obj.get("@id").or(obj.get("@value")).cloned()).collect(); // clone: need owned Values for collected Vec
                 Ok(TypedValue::Object(Value::Array(values)))
             } else {
                 let vocab = arr
@@ -399,7 +408,7 @@ fn extract_typed_value(instance: &Value, attribute_type: &str) -> Result<TypedVa
             let lang_map = instance
                 .get(iri::HAS_LANGUAGE_MAP.as_str())
                 .ok_or_else(|| AndromedaError::bad_request_data("LanguageProperty missing languageMap"))?;
-            Ok(TypedValue::Object(lang_map.clone()))
+            Ok(TypedValue::Object(lang_map.clone())) // clone: need owned Value for TypedValue enum; lang_map is borrowed from instance
         }
         iri::JSON_PROPERTY_SHORT => {
             // JsonProperty uses hasJSON with @json typed value
@@ -409,7 +418,7 @@ fn extract_typed_value(instance: &Value, attribute_type: &str) -> Result<TypedVa
                 .and_then(|arr| arr.first())
                 .and_then(|obj| obj.get("@value"))
                 .ok_or_else(|| AndromedaError::bad_request_data("JsonProperty missing json value"))?;
-            Ok(TypedValue::Object(json_val.clone()))
+            Ok(TypedValue::Object(json_val.clone())) // clone: need owned Value for TypedValue enum; json_val is borrowed from instance
         }
         iri::LIST_PROPERTY_SHORT => {
             // ListProperty uses hasValueList — store as JSON array
@@ -419,7 +428,7 @@ fn extract_typed_value(instance: &Value, attribute_type: &str) -> Result<TypedVa
                 .and_then(|arr| arr.first())
                 .and_then(|obj| obj.get("@list"))
                 .ok_or_else(|| AndromedaError::bad_request_data("ListProperty missing valueList"))?;
-            Ok(TypedValue::Object(list.clone()))
+            Ok(TypedValue::Object(list.clone())) // clone: need owned Value for TypedValue enum; list is borrowed from instance
         }
         iri::LIST_RELATIONSHIP_SHORT => {
             // ListRelationship uses hasObjectList — collect @id values
@@ -431,11 +440,11 @@ fn extract_typed_value(instance: &Value, attribute_type: &str) -> Result<TypedVa
                 .ok_or_else(|| AndromedaError::bad_request_data("ListRelationship missing objectList"))?;
             let uris: Vec<Value> = list
                 .as_array()
-                .map(|arr| arr.iter().filter_map(|obj| obj.get("@id").cloned()).collect())
+                .map(|arr| arr.iter().filter_map(|obj| obj.get("@id").cloned()).collect()) // clone: need owned Values for collected Vec
                 .unwrap_or_default();
             Ok(TypedValue::Object(Value::Array(uris)))
         }
-        _ => {
+        _other => {
             // Property — uses hasValue
             let has_value = instance
                 .get(iri::HAS_VALUE.as_str())
@@ -456,13 +465,13 @@ fn extract_typed_value(instance: &Value, attribute_type: &str) -> Result<TypedVa
                 match value {
                     Value::Number(n) => Ok(TypedValue::Number(n.as_f64().unwrap_or(0.0))),
                     Value::Bool(b) => Ok(TypedValue::Boolean(*b)),
-                    Value::String(s) => Ok(TypedValue::String(s.clone())),
-                    Value::Object(_) | Value::Array(_) => Ok(TypedValue::Object(value.clone())),
+                    Value::String(s) => Ok(TypedValue::String(s.clone())), // clone: need owned String for TypedValue enum; s is borrowed from JSON
+                    Value::Object(_) | Value::Array(_) => Ok(TypedValue::Object(value.clone())), // clone: need owned Value for TypedValue enum; value is borrowed from JSON
                     Value::Null => Ok(TypedValue::String("null".to_string())),
                 }
             } else {
                 // Expanded JSON-LD node without @value — store as Object
-                Ok(TypedValue::Object(has_value.clone()))
+                Ok(TypedValue::Object(has_value.clone())) // clone: need owned Value for TypedValue enum; has_value is borrowed from instance
             }
         }
     }
@@ -520,14 +529,14 @@ pub(crate) fn extract_coordinates(value: &Value) -> Value {
         }
         Value::Object(obj) => {
             if let Some(val) = obj.get("@value") {
-                val.clone()
+                val.clone() // clone: need owned Value for recursive coordinate extraction
             } else if let Some(list) = obj.get("@list") {
                 extract_coordinates(list)
             } else {
-                value.clone()
+                value.clone() // clone: need owned Value; unrecognized object passed through as-is
             }
         }
-        _ => value.clone(),
+        _other => value.clone(), // clone: need owned Value for return; primitives don't implement Copy for serde_json::Value
     }
 }
 
@@ -586,7 +595,7 @@ fn collect_metadata(instance: &Value) -> Option<Value> {
     let metadata: serde_json::Map<String, Value> = obj
         .iter()
         .filter(|(k, _)| METADATA_SKIP_KEYS.binary_search(&k.as_str()).is_err())
-        .map(|(k, v)| (k.clone(), v.clone()))
+        .map(|(k, v)| (k.clone(), v.clone())) // clone: owned key-value pairs for new metadata Map
         .collect();
 
     if metadata.is_empty() { None } else { Some(Value::Object(metadata)) }
@@ -594,7 +603,7 @@ fn collect_metadata(instance: &Value) -> Option<Value> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{METADATA_SKIP_KEYS, NGSI_LD_SYSTEM_ATTRS};
 
     #[test]
     fn metadata_skip_keys_is_sorted() {

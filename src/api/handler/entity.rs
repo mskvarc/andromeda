@@ -124,6 +124,7 @@ pub async fn create(
     OriginalUri(uri): OriginalUri,
     ValidatedQuery(params): ValidatedQuery<CreateParams>,
     context: ContextUrl,
+    headers: HeaderMap,
     JsonLd {
         value: entity,
         context: body_context,
@@ -132,6 +133,7 @@ pub async fn create(
     let service = &state.entities;
     let context = context.merge(body_context);
     let is_local = params.local.unwrap_or(false);
+    let incoming_via = headers.get("via").and_then(|v| v.to_str().ok());
 
     if is_local {
         let id = service.create(&entity, &context).await.map_err(|e| e.with_instance(uri.clone()))?;
@@ -162,6 +164,7 @@ pub async fn create(
             operation: ForwardingOperation::CreateEntity,
             path_suffix: None,
             query_string: None,
+            incoming_via,
         })
         .await
         .map_err(|e| ApiError::from_error(e.with_instance(uri.clone()), uri.clone()))?;
@@ -273,10 +276,12 @@ pub async fn get(
     context: ContextUrl,
     Path(id): Path<String>,
     ValidatedQuery(params): ValidatedQuery<GetEntityParams>,
+    headers: HeaderMap,
 ) -> Result<Response, ApiError> {
     let service = &state.entity_query;
     let id = parse_entity_id(&id, &uri)?;
     let context: ContextSpec = context.into_inner();
+    let incoming_via = headers.get("via").and_then(|v| v.to_str().ok());
 
     // Validate options before entity lookup so invalid options return 400, not 404
     let options = params.options.as_deref().unwrap_or("");
@@ -324,7 +329,7 @@ pub async fn get(
         let query_string = uri.query().unwrap_or("");
         let forwarded = state
             .forwarding
-            .forward_retrieve(id.as_ref(), query_string, context_url, ForwardingOperation::RetrieveEntity)
+            .forward_retrieve(id.as_ref(), query_string, context_url, ForwardingOperation::RetrieveEntity, incoming_via)
             .await
             .unwrap_or_default(); // Retrieve forwarding: best-effort — missing CSR data is not fatal
         for warning in collect_warnings(&forwarded) {
@@ -432,6 +437,7 @@ pub async fn delete(
     context: ContextUrl,
     Path(id): Path<String>,
     ValidatedQuery(params): ValidatedQuery<DeleteParams>,
+    headers: HeaderMap,
 ) -> Result<Response, ApiError> {
     let service = &state.entities;
     let id: Urn = id.parse().map_err(|_| {
@@ -441,6 +447,7 @@ pub async fn delete(
         )
     })?;
     let is_local = params.local.unwrap_or(false);
+    let incoming_via = headers.get("via").and_then(|v| v.to_str().ok());
 
     if is_local {
         service.delete(&id).await.map_err(|e| e.with_instance(uri.clone()))?;
@@ -463,6 +470,7 @@ pub async fn delete(
             operation: ForwardingOperation::DeleteEntity,
             path_suffix: None,
             query_string: None,
+            incoming_via,
         })
         .await
         .map_err(|e| ApiError::from_error(e.with_instance(uri.clone()), uri.clone()))?;
@@ -571,6 +579,8 @@ pub async fn query(
     let service = &state.entity_query;
     let context: ContextSpec = context.into_inner();
 
+    let incoming_via = headers.get("via").and_then(|v| v.to_str().ok());
+
     // §5.5.9.3: If NGSILD-EntityMap header present, scope query to that map's entity IDs
     let entity_map_header = headers.get("NGSILD-EntityMap").and_then(|v| v.to_str().ok()).map(|s| s.to_string());
 
@@ -631,7 +641,14 @@ pub async fn query(
 
         let forwarded = state
             .forwarding
-            .forward_query(entity_type, entity_ids_ref, context_url, &context, ForwardingOperation::QueryEntity)
+            .forward_query(
+                entity_type,
+                entity_ids_ref,
+                context_url,
+                &context,
+                ForwardingOperation::QueryEntity,
+                incoming_via,
+            )
             .await
             .unwrap_or_default();
         for warning in collect_warnings(&forwarded) {
@@ -829,6 +846,7 @@ pub async fn merge(
     context: ContextUrl,
     Path(id): Path<String>,
     ValidatedQuery(params): ValidatedQuery<MergeParams>,
+    headers: HeaderMap,
     JsonLd {
         value: patch,
         context: body_context,
@@ -838,6 +856,7 @@ pub async fn merge(
     let id = parse_entity_id(&id, &uri)?;
     let context = context.merge(body_context);
     let is_local = params.local.unwrap_or(false);
+    let incoming_via = headers.get("via").and_then(|v| v.to_str().ok());
 
     if is_local {
         service.merge(&id, &patch, &context).await.map_err(|e| e.with_instance(uri.clone()))?;
@@ -863,6 +882,7 @@ pub async fn merge(
             operation: ForwardingOperation::MergeEntity,
             path_suffix: None,
             query_string: None,
+            incoming_via,
         })
         .await
         .map_err(|e| ApiError::from_error(e.with_instance(uri.clone()), uri.clone()))?;
@@ -905,6 +925,7 @@ pub async fn update(
     context: ContextUrl,
     Path(id): Path<String>,
     ValidatedQuery(params): ValidatedQuery<UpdateParams>,
+    headers: HeaderMap,
     JsonLd {
         value: patch,
         context: body_context,
@@ -914,6 +935,7 @@ pub async fn update(
     let id = parse_entity_id(&id, &uri)?;
     let context = context.merge(body_context);
     let is_local = params.local.unwrap_or(false);
+    let incoming_via = headers.get("via").and_then(|v| v.to_str().ok());
 
     if is_local {
         service.replace_entity(&id, &patch, &context).await.map_err(|e| e.with_instance(uri.clone()))?;
@@ -939,6 +961,7 @@ pub async fn update(
             operation: ForwardingOperation::ReplaceEntity,
             path_suffix: None,
             query_string: None,
+            incoming_via,
         })
         .await
         .map_err(|e| ApiError::from_error(e.with_instance(uri.clone()), uri.clone()))?;
@@ -979,6 +1002,7 @@ pub async fn append_attrs(
     context: ContextUrl,
     Path(id): Path<String>,
     ValidatedQuery(params): ValidatedQuery<AppendParams>,
+    headers: HeaderMap,
     JsonLd {
         value: fragment,
         context: body_context,
@@ -988,6 +1012,7 @@ pub async fn append_attrs(
     let id = parse_entity_id(&id, &uri)?;
     let context = context.merge(body_context);
     let no_overwrite = params.options.as_deref().map(|o: &str| o.contains("noOverwrite")).unwrap_or(false);
+    let incoming_via = headers.get("via").and_then(|v| v.to_str().ok());
 
     // Forward to matching context sources
     let context_url = context.link_contexts().first().map(|s| s.as_str());
@@ -1008,6 +1033,7 @@ pub async fn append_attrs(
             operation: ForwardingOperation::AppendEntityAttributes,
             path_suffix: Some("/attrs"),
             query_string: if qs.is_empty() { None } else { Some(qs) },
+            incoming_via,
         })
         .await
         .map_err(|e| ApiError::from_error(e.with_instance(uri.clone()), uri.clone()))?;
@@ -1086,6 +1112,7 @@ pub async fn update_attrs(
     OriginalUri(uri): OriginalUri,
     context: ContextUrl,
     Path(id): Path<String>,
+    headers: HeaderMap,
     JsonLd {
         value: fragment,
         context: body_context,
@@ -1094,6 +1121,7 @@ pub async fn update_attrs(
     let service = &state.entities;
     let id = parse_entity_id(&id, &uri)?;
     let context = context.merge(body_context);
+    let incoming_via = headers.get("via").and_then(|v| v.to_str().ok());
 
     // Forward to matching context sources
     let context_url = context.link_contexts().first().map(|s| s.as_str());
@@ -1113,6 +1141,7 @@ pub async fn update_attrs(
             operation: ForwardingOperation::UpdateEntityAttributes,
             path_suffix: Some("/attrs"),
             query_string: None,
+            incoming_via,
         })
         .await
         .map_err(|e| ApiError::from_error(e.with_instance(uri.clone()), uri.clone()))?;
@@ -1182,6 +1211,7 @@ pub async fn partial_update_attr(
     context: ContextUrl,
     Path((id, attr_id)): Path<(String, String)>,
     ValidatedQuery(params): ValidatedQuery<PartialUpdateAttrParams>,
+    headers: HeaderMap,
     JsonLd {
         value: fragment,
         context: body_context,
@@ -1190,6 +1220,7 @@ pub async fn partial_update_attr(
     let service = &state.entities;
     let id = parse_entity_id(&id, &uri)?;
     let context = context.merge(body_context);
+    let incoming_via = headers.get("via").and_then(|v| v.to_str().ok());
 
     // Forward to matching context sources
     let context_url = context.link_contexts().first().map(|s| s.as_str());
@@ -1211,6 +1242,7 @@ pub async fn partial_update_attr(
             operation: ForwardingOperation::PartialUpdateAttribute,
             path_suffix: Some(&path_suffix),
             query_string: qs.as_deref(),
+            incoming_via,
         })
         .await
         .map_err(|e| ApiError::from_error(e.with_instance(uri.clone()), uri.clone()))?;
@@ -1253,11 +1285,13 @@ pub async fn delete_attr(
     context: ContextUrl,
     Path((id, attr_id)): Path<(String, String)>,
     ValidatedQuery(params): ValidatedQuery<DeleteAttrParams>,
+    headers: HeaderMap,
 ) -> Result<Response, ApiError> {
     let service = &state.entities;
     let id = parse_entity_id(&id, &uri)?;
     let context: ContextSpec = context.into_inner();
     let delete_all = params.delete_all.unwrap_or(false);
+    let incoming_via = headers.get("via").and_then(|v| v.to_str().ok());
 
     // Forward to matching context sources
     let context_url = context.link_contexts().first().map(|s| s.as_str());
@@ -1286,6 +1320,7 @@ pub async fn delete_attr(
             operation: ForwardingOperation::DeleteEntityAttribute,
             path_suffix: Some(&path_suffix),
             query_string: qs.as_deref(),
+            incoming_via,
         })
         .await
         .map_err(|e| ApiError::from_error(e.with_instance(uri.clone()), uri.clone()))?;
@@ -1358,10 +1393,12 @@ pub async fn delete_by_query(
     TenantState(state): TenantState,
     OriginalUri(uri): OriginalUri,
     context: ContextUrl,
+    headers: HeaderMap,
     EntityQuery(query): EntityQuery,
 ) -> Result<Response, ApiError> {
     let is_local = query.local.unwrap_or(false);
     let context: ContextSpec = context.into_inner();
+    let incoming_via = headers.get("via").and_then(|v| v.to_str().ok());
 
     let compiled = state
         .entity_query
@@ -1388,6 +1425,7 @@ pub async fn delete_by_query(
                 operation: ForwardingOperation::DeleteBatch,
                 batch_path: "/entityOperations/delete",
                 query_string: None,
+                incoming_via,
             })
             .await
             .map_err(|e| ApiError::from_error(e.with_instance(uri.clone()), uri.clone()))?;

@@ -1,10 +1,9 @@
 mod attrs;
 mod batch;
-mod discovery;
-mod query;
-
-pub use discovery::EntityDiscoveryService;
-pub use query::EntityQueryService;
+/// Entity type and attribute discovery operations.
+pub mod discovery;
+/// Entity query and retrieval operations.
+pub mod query;
 
 use crate::{
     domain::{
@@ -24,6 +23,7 @@ use tokio::sync::broadcast;
 use tracing::debug;
 use urn::Urn;
 
+/// Service layer for NGSI-LD entity CRUD operations.
 pub struct EntityService {
     repo: EntityRepository,
     temporal_recorder: TemporalRecorder,
@@ -33,6 +33,7 @@ pub struct EntityService {
 }
 
 impl EntityService {
+    /// Create a new entity service backed by the given connection pool.
     pub fn new(pool: &PgPool, engine: JsonLdEngine, change_tx: Option<broadcast::Sender<ChangeEvent>>, batch_concurrency: usize) -> EntityService {
         let repo = EntityRepository::new(pool);
         let temporal_repo = Arc::new(TemporalRepository::new(pool));
@@ -66,7 +67,7 @@ impl EntityService {
     async fn fetch_entity_types(&self, id: &str) -> Vec<String> {
         match self.repo.get(id).await {
             Ok(Some(stored)) => extract_entity_types(&stored),
-            _ => vec![],
+            _other => vec![],
         }
     }
 
@@ -74,6 +75,7 @@ impl EntityService {
     // CRUD (write operations)
     // -------------------------------------------------------------------------
 
+    /// Create a new NGSI-LD entity, returning its URN on success.
     pub async fn create(&self, entity: &Entity, context: &ContextSpec) -> Result<Urn, AndromedaError> {
         let id = entity.id.to_string();
 
@@ -97,12 +99,13 @@ impl EntityService {
         Ok(urn)
     }
 
+    /// Merge a partial update into an existing entity (NGSI-LD 5.6.1).
     pub async fn merge(&self, id: &Urn, patch: &EntityPatch, context: &ContextSpec) -> Result<(), AndromedaError> {
         let id = id.to_string();
 
         let mut existing = self.repo.get(&id).await?.ok_or_else(|| AndromedaError::not_found(&id))?;
         let attrs_before: HashSet<String> = extract_attribute_keys(&existing).into_iter().collect();
-        let previous_attributes = self.change_tx.as_ref().map(|_| existing.clone());
+        let previous_attributes = self.change_tx.as_ref().map(|_| existing.clone()); // clone: snapshot before mutation for showChanges diff
 
         let mut patch_json = serde_json::to_value(patch).map_err(|err| AndromedaError::bad_request_data(format!("Invalid patch payload: {}", err)))?;
         normalize_entity_attributes(&mut patch_json);
@@ -118,7 +121,7 @@ impl EntityService {
         let types = self.fetch_entity_types(&id).await;
 
         let attrs_after: HashSet<String> = extract_attribute_keys(&existing).into_iter().collect();
-        let deleted_attrs: Vec<String> = attrs_before.difference(&attrs_after).cloned().collect();
+        let deleted_attrs: Vec<String> = attrs_before.difference(&attrs_after).cloned().collect(); // clone: owned strings from set difference
 
         // Record temporal tombstones for deleted attributes
         for deleted_attr in &deleted_attrs {
@@ -127,11 +130,11 @@ impl EntityService {
 
         for deleted_attr in &deleted_attrs {
             self.emit_attr_change(
-                id.clone(),
-                types.clone(),
+                id.clone(),    // clone: value needed by subsequent loop iterations and final emit
+                types.clone(), // clone: value needed by subsequent loop iterations and final emit
                 TriggerReason::AttributeDeleted,
-                vec![deleted_attr.clone()],
-                previous_attributes.clone(),
+                vec![deleted_attr.clone()],  // clone: owned copy from borrowed iterator
+                previous_attributes.clone(), // clone: value needed by subsequent loop iterations and final emit
             );
         }
 
@@ -140,6 +143,7 @@ impl EntityService {
         Ok(())
     }
 
+    /// Replace an entire entity with the given patch payload.
     pub async fn replace_entity(&self, id: &Urn, patch: &EntityPatch, context: &ContextSpec) -> Result<(), AndromedaError> {
         let id = id.to_string();
 
@@ -163,6 +167,7 @@ impl EntityService {
         Ok(())
     }
 
+    /// Delete an entity by its URN.
     pub async fn delete(&self, id: &Urn) -> Result<(), AndromedaError> {
         let id = id.to_string();
 
@@ -189,17 +194,17 @@ impl EntityService {
         let attr_keys = extract_attribute_keys(&entity_snapshot);
         if !attr_keys.is_empty() {
             self.emit_change(
-                ChangeEvent::new(id.clone(), entity_types.clone(), TriggerReason::AttributeDeleted)
+                ChangeEvent::new(id.clone(), entity_types.clone(), TriggerReason::AttributeDeleted) // clone: value also needed by subsequent EntityDeleted emit
                     .with_changed_attributes(attr_keys)
-                    .with_snapshot(entity_snapshot.clone())
-                    .with_previous(entity_snapshot.clone())
-                    .with_sys_attrs(sys_attrs_snapshot.clone()),
+                    .with_snapshot(entity_snapshot.clone()) // clone: value also needed by subsequent EntityDeleted emit
+                    .with_previous(entity_snapshot.clone()) // clone: value also needed by subsequent EntityDeleted emit
+                    .with_sys_attrs(sys_attrs_snapshot.clone()), // clone: value also needed by subsequent EntityDeleted emit
             );
         }
 
         self.emit_change(
             ChangeEvent::new(id, entity_types, TriggerReason::EntityDeleted)
-                .with_snapshot(entity_snapshot.clone())
+                .with_snapshot(entity_snapshot.clone()) // clone: separate ownership for snapshot and previous fields
                 .with_previous(entity_snapshot)
                 .with_sys_attrs(sys_attrs_snapshot),
         );
@@ -207,6 +212,7 @@ impl EntityService {
         Ok(())
     }
 
+    /// Check whether an entity with the given URN exists.
     #[allow(dead_code)]
     pub async fn exists(&self, id: &Urn) -> Result<bool, AndromedaError> {
         let id = id.to_string();
@@ -218,13 +224,15 @@ impl EntityService {
 // Shared helpers (used across submodules)
 // ---------------------------------------------------------------------------
 
+/// Re-export of type extraction for expanded JSON-LD entities.
 pub(crate) use crate::domain::expanded::extract_types as extract_entity_types;
 
+/// Extract scope values from an expanded JSON-LD entity.
 pub(crate) fn extract_scopes(expanded: &Value) -> Vec<String> {
     let obj = match expanded {
         Value::Array(arr) => arr.first().and_then(|v| v.as_object()),
         Value::Object(obj) => Some(obj),
-        _ => None,
+        _other => None,
     };
 
     let Some(obj) = obj else {
@@ -242,8 +250,8 @@ pub(crate) fn extract_scopes(expanded: &Value) -> Vec<String> {
             .iter()
             .filter_map(|v| v.as_object().and_then(|obj| obj.get("@value")).and_then(|v| v.as_str()).map(String::from))
             .collect(),
-        Value::String(s) => vec![s.clone()],
-        _ => Vec::new(),
+        Value::String(s) => vec![s.clone()], // clone: owned String needed for return value from borrowed JSON
+        _other => Vec::new(),
     }
 }
 
@@ -251,10 +259,11 @@ fn extract_attribute_keys(expanded: &Value) -> Vec<String> {
     let obj = match expanded {
         Value::Array(arr) => arr.first().and_then(|v| v.as_object()),
         Value::Object(obj) => Some(obj),
-        _ => None,
+        _other => None,
     };
 
-    obj.map(|o| o.keys().filter(|k| !k.starts_with('@')).cloned().collect()).unwrap_or_default()
+    obj.map(|o| o.keys().filter(|k| !k.starts_with('@')).cloned().collect()) // clone: owned keys from borrowed JSON map
+        .unwrap_or_default()
 }
 
 fn unwrap_expanded_ref(value: &Value) -> &Value {
@@ -289,7 +298,7 @@ fn normalize_attribute_value(value: &mut Value) {
                 }
             }
         }
-        _ => {
+        ref _other => {
             let raw = std::mem::take(value);
             *value = wrap_raw_as_property(raw);
         }
@@ -332,6 +341,7 @@ fn wrap_raw_as_property(raw: Value) -> Value {
     Value::Object(property)
 }
 
+/// Decode percent-encoded URIs in Relationship `object` fields.
 pub(crate) fn decode_percent_encoded_uris(value: &mut Value) {
     match value {
         Value::Object(obj) => {
@@ -351,7 +361,7 @@ pub(crate) fn decode_percent_encoded_uris(value: &mut Value) {
                 decode_percent_encoded_uris(v);
             }
         }
-        _ => {}
+        _other => {}
     }
 }
 
@@ -360,7 +370,7 @@ use crate::domain::iri;
 fn validate_attribute_envelopes(expanded: &Value) -> Result<(), AndromedaError> {
     let entities = match expanded {
         Value::Array(arr) => arr.as_slice(),
-        _ => std::slice::from_ref(expanded),
+        _other => std::slice::from_ref(expanded),
     };
 
     for entity in entities {
@@ -380,7 +390,7 @@ fn validate_attribute_envelopes(expanded: &Value) -> Result<(), AndromedaError> 
 fn validate_attr_instances(attr_name: &str, value: &Value) -> Result<(), AndromedaError> {
     let instances = match value {
         Value::Array(arr) => arr.as_slice(),
-        _ => return Ok(()),
+        _other => return Ok(()),
     };
 
     for instance in instances {
@@ -420,14 +430,16 @@ fn validate_attr_instances(attr_name: &str, value: &Value) -> Result<(), Androme
 // Shared sysAttrs injection helpers (used by query + notification_worker)
 // ---------------------------------------------------------------------------
 
+/// Return a mutable reference to the top-level JSON object of an expanded entity.
 pub(crate) fn expanded_entity_object_mut(entity: &mut Value) -> Option<&mut Map<String, Value>> {
     match entity {
         Value::Array(arr) => arr.first_mut().and_then(|v| v.as_object_mut()),
         Value::Object(obj) => Some(obj),
-        _ => None,
+        _other => None,
     }
 }
 
+/// Inject system attributes (createdAt, modifiedAt, expiresAt) into an expanded entity.
 pub(crate) fn inject_sys_attrs(entity: &mut Value, created_at: DateTime<Utc>, modified_at: DateTime<Utc>, expires_at: impl Into<Option<DateTime<Utc>>>) {
     let Some(obj) = expanded_entity_object_mut(entity) else {
         return;
@@ -443,9 +455,9 @@ pub(crate) fn inject_sys_attrs(entity: &mut Value, created_at: DateTime<Utc>, mo
     }]);
 
     obj.entry("https://uri.etsi.org/ngsi-ld/createdAt".to_string())
-        .or_insert(created_at_value.clone());
+        .or_insert(created_at_value.clone()); // clone: value also passed to inject_attr_sys_attrs below
     obj.entry("https://uri.etsi.org/ngsi-ld/modifiedAt".to_string())
-        .or_insert(modified_at_value.clone());
+        .or_insert(modified_at_value.clone()); // clone: value also passed to inject_attr_sys_attrs below
 
     if let Some(expires_at) = expires_at.into() {
         let expires_at_value = serde_json::json!([{
@@ -458,11 +470,12 @@ pub(crate) fn inject_sys_attrs(entity: &mut Value, created_at: DateTime<Utc>, mo
     inject_attr_sys_attrs(obj, &created_at_value, &modified_at_value);
 }
 
+/// Inject system attributes into each attribute instance within an entity object.
 pub(crate) fn inject_attr_sys_attrs(obj: &mut Map<String, Value>, created_at_value: &Value, modified_at_value: &Value) {
     let attr_keys: Vec<String> = obj
         .keys()
         .filter(|k| !k.starts_with('@') && (!k.starts_with("https://uri.etsi.org/ngsi-ld/") || k.starts_with("https://uri.etsi.org/ngsi-ld/default-context/")))
-        .cloned()
+        .cloned() // clone: owned keys needed to avoid borrowing obj during mutation below
         .collect();
 
     for key in attr_keys {
@@ -475,17 +488,17 @@ pub(crate) fn inject_attr_sys_attrs(obj: &mut Map<String, Value>, created_at_val
             };
             inst_obj
                 .entry("https://uri.etsi.org/ngsi-ld/createdAt".to_string())
-                .or_insert(created_at_value.clone());
+                .or_insert(created_at_value.clone()); // clone: or_insert requires owned value, reused across loop iterations
             inst_obj
                 .entry("https://uri.etsi.org/ngsi-ld/modifiedAt".to_string())
-                .or_insert(modified_at_value.clone());
+                .or_insert(modified_at_value.clone()); // clone: or_insert requires owned value, reused across loop iterations
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::normalize_entity_attributes;
 
     #[test]
     fn normalize_entity_attributes_wraps_concise_values_as_property() {

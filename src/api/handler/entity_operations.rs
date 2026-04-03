@@ -123,6 +123,7 @@ pub async fn query(
     OriginalUri(uri): OriginalUri,
     accept: AcceptFormat,
     context: ContextUrl,
+    headers: HeaderMap,
     ValidatedQuery(qparams): ValidatedQuery<PostQueryParams>,
     JsonLd {
         value: request,
@@ -131,6 +132,7 @@ pub async fn query(
 ) -> Result<Response, ApiError> {
     let service = &state.entity_query;
     let context = context.merge(body_context);
+    let incoming_via = headers.get("via").and_then(|v| v.to_str().ok());
 
     // Map QueryRequest to EntityQueryParameters
     let mut ids = Vec::new();
@@ -217,6 +219,7 @@ pub async fn query(
                 context_url,
                 &context,
                 crate::service::context_source_forwarding::ForwardingOperation::QueryBatch,
+                incoming_via,
             )
             .await
             .unwrap_or_else(|e| {
@@ -539,6 +542,7 @@ pub async fn batch_create(
         return Ok(StatusCode::UNSUPPORTED_MEDIA_TYPE.into_response());
     }
     let service = &state.entities;
+    let incoming_via = headers.get("via").and_then(|v| v.to_str().ok());
     let (entities, context, mut parse_errors) = parse_batch_entities(&body, &headers, &context, &uri)?;
 
     if entities.is_empty() && parse_errors.is_empty() {
@@ -565,6 +569,7 @@ pub async fn batch_create(
             operation: crate::service::context_source_forwarding::ForwardingOperation::CreateBatch,
             batch_path: "/entityOperations/create",
             query_string: None,
+            incoming_via,
         })
         .await
         .map_err(|e| ApiError::from_error(e.with_instance(uri.clone()), uri.clone()))?;
@@ -609,6 +614,7 @@ pub async fn batch_upsert(
         return Ok(StatusCode::UNSUPPORTED_MEDIA_TYPE.into_response());
     }
     let service = &state.entities;
+    let incoming_via = headers.get("via").and_then(|v| v.to_str().ok());
     let (entities, context, mut parse_errors) = parse_batch_entities(&body, &headers, &context, &uri)?;
 
     if entities.is_empty() && parse_errors.is_empty() {
@@ -638,6 +644,7 @@ pub async fn batch_upsert(
             operation: crate::service::context_source_forwarding::ForwardingOperation::UpsertBatch,
             batch_path: "/entityOperations/upsert",
             query_string: qs.as_deref(),
+            incoming_via,
         })
         .await
         .map_err(|e| ApiError::from_error(e.with_instance(uri.clone()), uri.clone()))?;
@@ -688,6 +695,7 @@ pub async fn batch_update(
         return Ok(StatusCode::UNSUPPORTED_MEDIA_TYPE.into_response());
     }
     let service = &state.entities;
+    let incoming_via = headers.get("via").and_then(|v| v.to_str().ok());
     let (entities, context, mut parse_errors) = parse_batch_entities(&body, &headers, &context, &uri)?;
 
     if entities.is_empty() && parse_errors.is_empty() {
@@ -716,6 +724,7 @@ pub async fn batch_update(
             operation: crate::service::context_source_forwarding::ForwardingOperation::UpdateBatch,
             batch_path: "/entityOperations/update",
             query_string: qs.as_deref(),
+            incoming_via,
         })
         .await
         .map_err(|e| ApiError::from_error(e.with_instance(uri.clone()), uri.clone()))?;
@@ -760,6 +769,7 @@ pub async fn batch_merge(
         return Ok(StatusCode::UNSUPPORTED_MEDIA_TYPE.into_response());
     }
     let service = &state.entities;
+    let incoming_via = headers.get("via").and_then(|v| v.to_str().ok());
     let (entities, context, mut parse_errors) = parse_batch_entities(&body, &headers, &context, &uri)?;
 
     if entities.is_empty() && parse_errors.is_empty() {
@@ -785,6 +795,7 @@ pub async fn batch_merge(
             operation: crate::service::context_source_forwarding::ForwardingOperation::MergeBatch,
             batch_path: "/entityOperations/merge",
             query_string: None,
+            incoming_via,
         })
         .await
         .map_err(|e| ApiError::from_error(e.with_instance(uri.clone()), uri.clone()))?;
@@ -815,8 +826,15 @@ pub async fn batch_merge(
     }
 }
 
-pub async fn batch_delete(TenantState(state): TenantState, OriginalUri(uri): OriginalUri, context: ContextUrl, body: Bytes) -> Result<Response, ApiError> {
+pub async fn batch_delete(
+    TenantState(state): TenantState,
+    OriginalUri(uri): OriginalUri,
+    context: ContextUrl,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Result<Response, ApiError> {
     let service = &state.entities;
+    let incoming_via = headers.get("via").and_then(|v| v.to_str().ok());
     let entity_ids: Vec<String> = serde_json::from_slice(&body).map_err(|e| {
         ApiError::from_error(
             AndromedaError::invalid_request(format!("Request body must be a JSON array of entity IDs: {}", e)),
@@ -844,6 +862,7 @@ pub async fn batch_delete(TenantState(state): TenantState, OriginalUri(uri): Ori
             operation: crate::service::context_source_forwarding::ForwardingOperation::DeleteBatch,
             batch_path: "/entityOperations/delete",
             query_string: None,
+            incoming_via,
         })
         .await
         .map_err(|e| ApiError::from_error(e.with_instance(uri.clone()), uri.clone()))?;

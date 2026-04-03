@@ -2,7 +2,7 @@ use crate::service::{
     context_source_forwarding::ContextSourceForwardingService,
     context_source_registration::ContextSourceRegistrationService,
     csource_subscription::CsourceSubscriptionService,
-    entity::{EntityDiscoveryService, EntityQueryService, EntityService},
+    entity::{EntityService, discovery::EntityDiscoveryService, query::EntityQueryService},
     entity_map::EntityMapService,
     jsonld_context::JsonLdContextService,
     snapshot::SnapshotService,

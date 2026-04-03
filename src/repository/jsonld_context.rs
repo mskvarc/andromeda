@@ -12,25 +12,34 @@ use sqlx::{postgres::PgPool, types::Json};
 use urn::{Urn, UrnBuilder};
 use uuid::Uuid;
 
+/// Result of listing JSON-LD contexts, either as URLs or full metadata.
 pub enum ContextListResult {
+    /// List of context URLs or IDs.
     Urls(Vec<String>),
+    /// List of context metadata records with full details.
     Detailed(Vec<ContextMetadata>),
 }
 
+/// Result of fetching a single JSON-LD context, either its payload or metadata.
 pub enum ContextGetResult {
+    /// The raw JSON-LD context payload.
     Payload(Value),
+    /// Full context metadata including usage statistics.
     Detailed(ContextMetadata),
 }
 
+/// PostgreSQL-backed repository for JSON-LD context documents.
 pub struct JsonLdContextRepository {
     pool: PgPool,
 }
 
 impl JsonLdContextRepository {
-    pub fn new(pool: &PgPool) -> Self {
-        Self { pool: pool.clone() }
+    /// Creates a new repository backed by the given connection pool.
+    pub fn new(pool: &PgPool) -> JsonLdContextRepository {
+        JsonLdContextRepository { pool: pool.clone() } // clone: Arc ref-count bump (PgPool is Arc-based)
     }
 
+    /// Stores a user-provided hosted JSON-LD context and returns its URN.
     pub async fn create_hosted(&self, payload: Value, base_url: Option<&str>) -> Result<Urn, AndromedaError> {
         let local_id = UrnBuilder::new(NGSI_LD_URN_NID, &format!("Context:{}", Uuid::new_v4())).build()?;
 
@@ -48,6 +57,7 @@ impl JsonLdContextRepository {
         Ok(local_id)
     }
 
+    /// Stores an implicitly created JSON-LD context and returns its URN.
     pub async fn create_implicitly(&self, payload: Value, base_url: Option<&str>) -> Result<Urn, AndromedaError> {
         let local_id = UrnBuilder::new(NGSI_LD_URN_NID, &format!("Context:{}", Uuid::new_v4())).build()?;
 
@@ -65,6 +75,7 @@ impl JsonLdContextRepository {
         Ok(local_id)
     }
 
+    /// Inserts a cached context or increments its hit count if already present.
     pub async fn ensure_cached(&self, url: &str, payload: Value) -> Result<Urn, AndromedaError> {
         let local_id = UrnBuilder::new(NGSI_LD_URN_NID, &format!("Context:{}", Uuid::new_v4())).build()?;
 
@@ -80,6 +91,7 @@ impl JsonLdContextRepository {
         Ok(row.0.parse::<Urn>()?)
     }
 
+    /// Lists JSON-LD contexts, optionally filtered by kind, as URLs or detailed metadata.
     pub async fn list(&self, kind: Option<ContextKind>, details: bool) -> Result<ContextListResult, AndromedaError> {
         let kind_str = kind.map(|k| k.to_string());
 
@@ -150,6 +162,7 @@ impl JsonLdContextRepository {
         }
     }
 
+    /// Fetches a JSON-LD context by ID or URL, returning its payload or metadata.
     pub async fn get(&self, identifier: &str, details: bool) -> Result<Option<ContextGetResult>, AndromedaError> {
         if details {
             // details=true: SELECT only, no hit increment
@@ -211,6 +224,7 @@ impl JsonLdContextRepository {
         Ok(())
     }
 
+    /// Deletes a JSON-LD context by ID or URL. Returns `true` if a row was removed.
     pub async fn delete(&self, identifier: &str) -> Result<bool, AndromedaError> {
         let result = sqlx::query("DELETE FROM jsonld_contexts WHERE id = $1 OR url = $1")
             .bind(identifier)
@@ -220,6 +234,7 @@ impl JsonLdContextRepository {
         Ok(result.rows_affected() > 0)
     }
 
+    /// Looks up the internal ID, kind, and optional URL for a context by ID or URL.
     pub async fn get_kind_and_url(&self, identifier: &str) -> Result<Option<(String, ContextKind, Option<String>)>, AndromedaError> {
         let row_opt = sqlx::query(
             r#"
@@ -243,6 +258,7 @@ impl JsonLdContextRepository {
         }
     }
 
+    /// Replaces the JSON-LD payload for a context identified by its internal ID.
     pub async fn replace_payload(&self, identifier: &str, payload: Value) -> Result<(), AndromedaError> {
         sqlx::query(
             r#"

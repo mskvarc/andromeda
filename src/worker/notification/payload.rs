@@ -9,7 +9,7 @@ use crate::{
     },
     jsonld::{CompactOptions, ContextSpec, ContextStripping, JsonLdEngine},
     response::entity::{apply_inline_join, simplify_value},
-    service::entity::{EntityQueryService, expanded_entity_object_mut, inject_attr_sys_attrs},
+    service::entity::{expanded_entity_object_mut, inject_attr_sys_attrs, query::EntityQueryService},
 };
 use chrono::{DateTime, SecondsFormat, Utc};
 use serde_json::Value;

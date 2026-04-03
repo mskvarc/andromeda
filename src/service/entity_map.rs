@@ -1,28 +1,33 @@
 use crate::{domain::entity_map::EntityMap, error::AndromedaError, repository::entity_map::EntityMapStore};
 use chrono::{DateTime, Duration, Utc};
 
+/// Service for managing NGSI-LD entity maps.
 pub struct EntityMapService {
     store: EntityMapStore,
 }
 
 impl EntityMapService {
-    pub fn new(store: EntityMapStore) -> Self {
-        Self { store }
+    /// Create a new entity map service backed by the given store.
+    pub fn new(store: EntityMapStore) -> EntityMapService {
+        EntityMapService { store }
     }
 
+    /// Create a new entity map from the given entity IDs with an optional ISO 8601 lifetime.
     pub async fn create(&self, entity_ids: Vec<String>, lifetime: Option<&str>) -> Result<EntityMap, AndromedaError> {
         let id = format!("urn:ngsi-ld:EntityMap:{}", uuid::Uuid::new_v4());
         let duration = parse_iso8601_duration(lifetime)?;
         let expires_at = Utc::now() + duration;
         let map = EntityMap::new(id, expires_at, entity_ids);
-        self.store.insert(map.clone()).await;
+        self.store.insert(map.clone()).await; // clone: store takes ownership, caller needs return value
         Ok(map)
     }
 
+    /// Retrieve an entity map by its identifier.
     pub async fn retrieve(&self, id: &str) -> Result<EntityMap, AndromedaError> {
         self.store.get(id).await.ok_or_else(|| AndromedaError::not_found(id))
     }
 
+    /// Update the expiration time of an existing entity map.
     pub async fn update(&self, id: &str, expires_at: DateTime<Utc>) -> Result<(), AndromedaError> {
         if self.store.update(id, expires_at).await {
             Ok(())
@@ -31,6 +36,7 @@ impl EntityMapService {
         }
     }
 
+    /// Delete an entity map by its identifier.
     pub async fn delete(&self, id: &str) -> Result<(), AndromedaError> {
         if self.store.delete(id).await {
             Ok(())
@@ -40,6 +46,9 @@ impl EntityMapService {
     }
 }
 
+/// Parse an ISO 8601 duration string (e.g. `PT5M`, `P1D`) into a `chrono::Duration`.
+///
+/// Returns a default of 1 hour when `input` is `None` or empty.
 pub fn parse_iso8601_duration(input: Option<&str>) -> Result<Duration, AndromedaError> {
     let Some(s) = input else {
         return Ok(Duration::hours(1));
@@ -77,7 +86,7 @@ pub fn parse_iso8601_duration(input: Option<&str>) -> Result<Duration, Andromeda
                 num_buf.clear();
                 match c {
                     'D' => total_seconds += val * 86400,
-                    _ => {
+                    _other => {
                         return Err(AndromedaError::bad_request_data(format!("Invalid ISO 8601 duration: {}", s)));
                     }
                 }
@@ -100,7 +109,7 @@ pub fn parse_iso8601_duration(input: Option<&str>) -> Result<Duration, Andromeda
                     'H' => total_seconds += (val * 3600.0) as i64,
                     'M' => total_seconds += (val * 60.0) as i64,
                     'S' => total_seconds += val as i64,
-                    _ => {
+                    _other => {
                         return Err(AndromedaError::bad_request_data(format!("Invalid ISO 8601 duration: {}", s)));
                     }
                 }
@@ -117,7 +126,7 @@ pub fn parse_iso8601_duration(input: Option<&str>) -> Result<Duration, Andromeda
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::service::entity_map::parse_iso8601_duration;
 
     #[test]
     fn parse_pt5m() {

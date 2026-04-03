@@ -9,7 +9,7 @@ use crate::{
     jsonld::JsonLdEngine,
     query::q,
     repository::{entity::EntityRepository, subscription::SubscriptionRepository, subscription_store::SubscriptionStore},
-    service::entity::{EntityQueryService, inject_sys_attrs},
+    service::entity::{inject_sys_attrs, query::EntityQueryService},
     transport::{
         dispatch::{DeliveryResult, TransportDispatcher, build_delivery_request},
         endpoint::parse_endpoint_transport,

@@ -13,17 +13,20 @@ use std::collections::{HashMap, HashSet};
 use urn::UrnBuilder;
 use uuid::Uuid;
 
+/// Service for NGSI-LD entity type and attribute discovery operations.
 pub struct EntityDiscoveryService {
     repo: EntityRepository,
     engine: JsonLdEngine,
 }
 
 impl EntityDiscoveryService {
-    pub fn new(pool: &PgPool, engine: JsonLdEngine) -> Self {
+    /// Create a new entity discovery service backed by the given connection pool.
+    pub fn new(pool: &PgPool, engine: JsonLdEngine) -> EntityDiscoveryService {
         let repo = EntityRepository::new(pool);
-        Self { repo, engine }
+        EntityDiscoveryService { repo, engine }
     }
 
+    /// List all known entity types as a compacted `EntityTypeList`.
     pub async fn types(&self, context: &ContextSpec) -> Result<Types, AndromedaError> {
         const TYPE: &str = "EntityTypeList";
 
@@ -49,8 +52,8 @@ impl EntityDiscoveryService {
                 )
                 .await
             {
-                Ok(compacted) => compacted.get("type").and_then(|t| t.as_str()).map(String::from).unwrap_or_else(|| iri.clone()),
-                Err(_) => iri.clone(),
+                Ok(compacted) => compacted.get("type").and_then(|t| t.as_str()).map(String::from).unwrap_or_else(|| iri.clone()), // clone: fallback owned copy when compaction lacks type
+                Err(_) => iri.clone(), // clone: fallback owned copy when compaction fails
             };
             type_list.push(name);
         }
@@ -65,13 +68,14 @@ impl EntityDiscoveryService {
         Ok(result)
     }
 
+    /// Return detailed information for all entity types, including their attribute names.
     pub async fn type_details(&self, context: &ContextSpec) -> Result<Value, AndromedaError> {
         let summaries = self.repo.get_entity_type_summaries().await?;
 
         let entity_types: Vec<EntityType> = summaries
             .into_iter()
             .map(|(type_iri, attrs)| EntityType {
-                id: type_iri.clone(),
+                id: type_iri.clone(), // clone: value also needed for type_name field below
                 type_: "EntityType".to_string(),
                 type_name: type_iri,
                 attribute_names: attrs,
@@ -83,7 +87,7 @@ impl EntityDiscoveryService {
         let mut compacted = self.engine.compact(expanded, context, CompactOptions::default()).await?;
 
         // Extract the @graph array (compaction wraps multiple items in @graph)
-        if let Some(graph) = compacted.get("@graph").cloned() {
+        if let Some(graph) = compacted.as_object_mut().and_then(|obj| obj.remove("@graph")) {
             compacted = graph;
         }
 
@@ -92,6 +96,7 @@ impl EntityDiscoveryService {
         Ok(compacted)
     }
 
+    /// Return detailed information for a single entity type, including attribute details and entity count.
     pub async fn type_info(&self, type_name: &str, context: &ContextSpec) -> Result<Value, AndromedaError> {
         // Expand the type name first — DB stores expanded IRIs
         let type_iri = self.engine.expand_type(type_name, context).await?;
@@ -112,7 +117,7 @@ impl EntityDiscoveryService {
             let entity_obj = match entity {
                 Value::Array(arr) => arr.first().and_then(|v| v.as_object()),
                 Value::Object(obj) => Some(obj),
-                _ => None,
+                _other => None,
             };
 
             if let Some(map) = entity_obj {
@@ -123,7 +128,7 @@ impl EntityDiscoveryService {
                     }
                     // Extract attribute type from @type field
                     if let Some(attr_types) = extract_attribute_types(value) {
-                        attributes.entry(key.clone()).or_default().extend(attr_types);
+                        attributes.entry(key.clone()).or_default().extend(attr_types); // clone: owned key for HashMap entry
                     }
                 }
             }
@@ -133,10 +138,10 @@ impl EntityDiscoveryService {
         let mut attribute_details: Vec<AttributeDetail> = Vec::new();
         for (uri, types) in &attributes {
             attribute_details.push(AttributeDetail {
-                id: uri.clone(),
+                id: uri.clone(), // clone: value also needed for attribute_name field
                 type_: "Attribute".to_string(),
-                attribute_name: uri.clone(),
-                attribute_types: types.iter().cloned().collect(),
+                attribute_name: uri.clone(),                      // clone: separate owned field from borrowed iterator
+                attribute_types: types.iter().cloned().collect(), // clone: owned strings from HashSet references
             });
         }
 
@@ -162,6 +167,7 @@ impl EntityDiscoveryService {
         Ok(compacted)
     }
 
+    /// List all known attributes, optionally including per-attribute detail.
     pub async fn attributes(&self, details: bool, context: &ContextSpec) -> Result<Value, AndromedaError> {
         let summary_rows = self.repo.get_attribute_summary().await?;
 
@@ -169,9 +175,9 @@ impl EntityDiscoveryService {
         let mut attr_data: HashMap<String, AttributeMetadata> = HashMap::with_capacity(summary_rows.len());
         for row in &summary_rows {
             attr_data.insert(
-                row.attr_iri.clone(),
+                row.attr_iri.clone(), // clone: owned key for HashMap entry
                 AttributeMetadata {
-                    entity_types: row.entity_types.iter().cloned().collect(),
+                    entity_types: row.entity_types.iter().cloned().collect(), // clone: owned strings from borrowed Vec
                 },
             );
         }
@@ -183,9 +189,9 @@ impl EntityDiscoveryService {
             for (iri, meta) in attr_data {
                 let iri: String = iri;
                 attributes.push(crate::domain::types::Attribute {
-                    id: iri.clone(),
+                    id: iri.clone(), // clone: value also needed for attribute_name field
                     type_: "Attribute".to_string(),
-                    attribute_name: iri.clone(),
+                    attribute_name: iri.clone(), // clone: separate owned field, iri consumed by later field would not suffice
                     attribute_types: Vec::new(),
                     attribute_count: None,
                     type_names: Some(meta.entity_types.into_iter().collect()),
@@ -201,7 +207,7 @@ impl EntityDiscoveryService {
                         if let Some(obj) = val.as_object_mut() {
                             obj.retain(|_, v| match v {
                                 Value::Array(arr) => !arr.is_empty(),
-                                _ => true,
+                                _other => true,
                             });
                         }
                         val
@@ -210,7 +216,7 @@ impl EntityDiscoveryService {
             );
             let mut compacted = self.engine.compact(expanded, context, CompactOptions::default()).await?;
             // Extract @graph array (compaction wraps multiple items)
-            if let Some(graph) = compacted.get("@graph").cloned() {
+            if let Some(graph) = compacted.as_object_mut().and_then(|obj| obj.remove("@graph")) {
                 compacted = graph;
             }
             strip_ngsild_prefix(&mut compacted);
@@ -241,13 +247,13 @@ impl EntityDiscoveryService {
                         if let Some(obj) = compacted.as_object() {
                             obj.keys()
                                 .find(|k| k.as_str() != "id" && k.as_str() != "type" && !k.starts_with('@'))
-                                .cloned()
-                                .unwrap_or_else(|| iri.clone())
+                                .cloned() // clone: owned String from borrowed map key
+                                .unwrap_or_else(|| iri.clone()) // clone: fallback owned copy when no matching key found
                         } else {
-                            iri.clone()
+                            iri.clone() // clone: fallback owned copy when compacted is not an object
                         }
                     }
-                    Err(_) => iri.clone(),
+                    Err(_) => iri.clone(), // clone: fallback owned copy when compaction fails
                 };
                 compacted_names.push(name);
             }
@@ -265,6 +271,7 @@ impl EntityDiscoveryService {
         }
     }
 
+    /// Return detailed information for a single attribute, including its types and entity count.
     pub async fn attribute_info(&self, attr_id: &str, context: &ContextSpec) -> Result<Value, AndromedaError> {
         let attr_iri = self.engine.expand_term(attr_id, context).await?;
 
@@ -275,7 +282,7 @@ impl EntityDiscoveryService {
             .ok_or_else(|| AndromedaError::not_found(attr_id))?;
 
         let attr = crate::domain::types::Attribute {
-            id: attr_iri.clone(),
+            id: attr_iri.clone(), // clone: value also needed for attribute_name field below
             type_: "Attribute".to_string(),
             attribute_name: attr_iri,
             attribute_types: row.attribute_types,
@@ -287,7 +294,7 @@ impl EntityDiscoveryService {
         if let Some(obj) = expanded_obj.as_object_mut() {
             obj.retain(|_, v| match v {
                 Value::Array(arr) => !arr.is_empty(),
-                _ => true,
+                _other => true,
             });
         }
 
@@ -312,7 +319,7 @@ struct AttributeMetadata {
 fn strip_ngsild_prefix(value: &mut Value) {
     match value {
         Value::Object(obj) => {
-            let keys: Vec<String> = obj.keys().cloned().collect();
+            let keys: Vec<String> = obj.keys().cloned().collect(); // clone: owned keys to avoid borrowing obj during mutation below
             for key in keys {
                 if let Some(short) = key.strip_prefix("ngsi-ld:")
                     && let Some(val) = obj.remove(&key)
@@ -329,7 +336,7 @@ fn strip_ngsild_prefix(value: &mut Value) {
                 strip_ngsild_prefix(item);
             }
         }
-        _ => {}
+        _other => {}
     }
 }
 
@@ -358,7 +365,7 @@ fn ensure_array_fields(value: &mut Value, fields: &[&str]) {
                 ensure_array_fields(item, fields);
             }
         }
-        _ => {}
+        _other => {}
     }
 }
 
@@ -367,7 +374,7 @@ fn extract_attribute_types(value: &Value) -> Option<Vec<String>> {
     let obj = match value {
         Value::Array(arr) => arr.first()?.as_object()?,
         Value::Object(obj) => obj,
-        _ => return None,
+        _other => return None,
     };
 
     obj.get("@type").and_then(|t| match t {
@@ -379,6 +386,6 @@ fn extract_attribute_types(value: &Value) -> Option<Vec<String>> {
                 .collect();
             if types.is_empty() { None } else { Some(types) }
         }
-        _ => None,
+        _other => None,
     })
 }

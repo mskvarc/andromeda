@@ -3,15 +3,18 @@ use chrono::{DateTime, Utc};
 use serde_json::Value;
 use sqlx::{Row, postgres::PgPool};
 
+/// Repository for persisting and querying snapshot records.
 pub struct SnapshotRepository {
     pool: PgPool,
 }
 
 impl SnapshotRepository {
-    pub fn new(pool: &PgPool) -> Self {
-        Self { pool: pool.clone() }
+    /// Create a new snapshot repository backed by the given connection pool.
+    pub fn new(pool: &PgPool) -> SnapshotRepository {
+        SnapshotRepository { pool: pool.clone() } // clone: Arc ref-count bump (PgPool is Arc-based)
     }
 
+    /// Insert a new snapshot into the database.
     pub async fn create(&self, snapshot: &Snapshot) -> Result<(), sqlx::Error> {
         sqlx::query(
             "INSERT INTO snapshots (id, snapshot_queries, snapshot_temporal_queries, snapshot_lifetime, snapshot_priority, endpoint, receiver_info, status, queries_details, temporal_queries_details, created_at, modified_at, expires_at, last_used_at)
@@ -36,6 +39,7 @@ impl SnapshotRepository {
         Ok(())
     }
 
+    /// Retrieve a snapshot by its identifier, returning `None` if not found.
     pub async fn get(&self, id: &str) -> Result<Option<Snapshot>, sqlx::Error> {
         let row = sqlx::query(
             "SELECT id, snapshot_queries, snapshot_temporal_queries, snapshot_lifetime, snapshot_priority, endpoint, receiver_info, status, queries_details, temporal_queries_details, created_at, modified_at, expires_at, last_used_at FROM snapshots WHERE id = $1",
@@ -50,11 +54,13 @@ impl SnapshotRepository {
         }
     }
 
+    /// Check whether a snapshot with the given identifier exists.
     pub async fn exists(&self, id: &str) -> Result<bool, sqlx::Error> {
         let row = sqlx::query("SELECT 1 FROM snapshots WHERE id = $1").bind(id).fetch_optional(&self.pool).await?;
         Ok(row.is_some())
     }
 
+    /// Update the lifetime, priority, and expiration of an existing snapshot.
     pub async fn update_lifetime_priority(
         &self,
         id: &str,
@@ -74,16 +80,19 @@ impl SnapshotRepository {
         Ok(result.rows_affected() > 0)
     }
 
+    /// Delete a snapshot by its identifier. Returns `true` if a row was removed.
     pub async fn delete(&self, id: &str) -> Result<bool, sqlx::Error> {
         let result = sqlx::query("DELETE FROM snapshots WHERE id = $1").bind(id).execute(&self.pool).await?;
         Ok(result.rows_affected() > 0)
     }
 
+    /// Delete all snapshots and return the number of rows removed.
     pub async fn delete_all(&self) -> Result<u64, sqlx::Error> {
         let result = sqlx::query("DELETE FROM snapshots").execute(&self.pool).await?;
         Ok(result.rows_affected())
     }
 
+    /// Duplicate a snapshot (metadata, entities, and temporal data) under a new identifier and expiration.
     pub async fn clone_snapshot(&self, source_id: &str, new_id: &str, new_expires_at: DateTime<Utc>) -> Result<Snapshot, sqlx::Error> {
         // Copy the snapshot metadata
         sqlx::query(
@@ -120,6 +129,7 @@ impl SnapshotRepository {
         self.get(new_id).await?.ok_or_else(|| sqlx::Error::RowNotFound)
     }
 
+    /// Update the `last_used_at` timestamp to the current time.
     pub async fn touch_last_used(&self, id: &str) -> Result<(), sqlx::Error> {
         sqlx::query("UPDATE snapshots SET last_used_at = NOW() WHERE id = $1")
             .bind(id)

@@ -7,40 +7,63 @@ use chrono::{DateTime, Utc};
 use serde_json::Value;
 use sqlx::postgres::PgPool;
 
+/// Typed value columns for an attribute history row (exactly one should be set).
 pub struct HistoryValues<'a> {
+    /// Numeric attribute value.
     pub value_number: Option<f64>,
+    /// String attribute value.
     pub value_string: Option<&'a str>,
+    /// Boolean attribute value.
     pub value_bool: Option<bool>,
+    /// GeoJSON geometry as a serialized string.
     pub value_geo: Option<&'a str>,
+    /// JSON object attribute value.
     pub value_object: Option<&'a Value>,
+    /// DateTime attribute value.
     pub value_datetime: Option<DateTime<Utc>>,
+    /// URI attribute value.
     pub value_uri: Option<&'a str>,
+    /// Additional metadata associated with the attribute instance.
     pub metadata: Option<&'a Value>,
 }
 
+/// Parameters for inserting a single observation into attribute history.
 pub struct InsertHistoryParams<'a> {
+    /// Timestamp used for the TimescaleDB partition key.
     pub time: DateTime<Utc>,
+    /// Foreign key referencing the temporal entity attribute catalog entry.
     pub tea_id: uuid::Uuid,
+    /// Typed value columns for this observation.
     pub values: HistoryValues<'a>,
+    /// Unique identifier for this attribute instance.
     pub instance_id: &'a str,
+    /// Application-level observation timestamp, if provided.
     pub observed_at: Option<DateTime<Utc>>,
 }
 
+/// Parameters for modifying an existing attribute instance in history.
 pub struct UpdateInstanceParams<'a> {
+    /// Identifier of the attribute instance to update.
     pub instance_id: &'a str,
+    /// Entity that owns the attribute.
     pub entity_id: &'a str,
+    /// Expanded attribute name.
     pub attribute_name: &'a str,
+    /// New typed value columns for this instance.
     pub values: HistoryValues<'a>,
+    /// Updated observation timestamp, if provided.
     pub observed_at: Option<DateTime<Utc>>,
 }
 
+/// PostgreSQL/TimescaleDB-backed repository for NGSI-LD temporal entity data.
 pub struct TemporalRepository {
     pool: PgPool,
 }
 
 impl TemporalRepository {
-    pub fn new(pool: &PgPool) -> Self {
-        Self { pool: pool.clone() }
+    /// Creates a new repository backed by the given connection pool.
+    pub fn new(pool: &PgPool) -> TemporalRepository {
+        TemporalRepository { pool: pool.clone() } // clone: Arc ref-count bump (PgPool is Arc-based)
     }
 
     // -------------------------------------------------------------------------

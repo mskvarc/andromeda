@@ -7,17 +7,20 @@ use crate::{
 use chrono::Utc;
 use sqlx::postgres::PgPool;
 
+/// Service for managing NGSI-LD entity snapshots.
 pub struct SnapshotService {
     repo: SnapshotRepository,
 }
 
 impl SnapshotService {
-    pub fn new(pool: &PgPool) -> Self {
-        Self {
+    /// Create a new snapshot service backed by the given connection pool.
+    pub fn new(pool: &PgPool) -> SnapshotService {
+        SnapshotService {
             repo: SnapshotRepository::new(pool),
         }
     }
 
+    /// Create a new snapshot from the given input parameters.
     pub async fn create(&self, input: SnapshotInput) -> Result<Snapshot, AndromedaError> {
         let id = input.id.unwrap_or_else(|| format!("urn:ngsi-ld:Snapshot:{}", uuid::Uuid::new_v4()));
 
@@ -57,6 +60,7 @@ impl SnapshotService {
         Ok(snapshot)
     }
 
+    /// Retrieve a snapshot by its identifier, returning 404 if expired.
     pub async fn get(&self, id: &str) -> Result<Snapshot, AndromedaError> {
         let snapshot = self
             .repo
@@ -80,6 +84,7 @@ impl SnapshotService {
         Ok(snapshot)
     }
 
+    /// Partially update a snapshot's lifetime or priority.
     pub async fn update(&self, id: &str, patch: SnapshotPatch) -> Result<Snapshot, AndromedaError> {
         let existing = self.get(id).await?;
 
@@ -105,6 +110,7 @@ impl SnapshotService {
         self.get(id).await
     }
 
+    /// Delete a snapshot by its identifier.
     pub async fn delete(&self, id: &str) -> Result<(), AndromedaError> {
         let deleted = self.repo.delete(id).await.map_err(|e| AndromedaError::map_sqlx(e, "snapshot"))?;
         if !deleted {
@@ -113,10 +119,12 @@ impl SnapshotService {
         Ok(())
     }
 
+    /// Delete all snapshots and return the number of rows removed.
     pub async fn purge(&self) -> Result<u64, AndromedaError> {
         self.repo.delete_all().await.map_err(|e| AndromedaError::map_sqlx(e, "snapshot"))
     }
 
+    /// Clone an existing snapshot, producing a new snapshot with a fresh ID and expiration.
     pub async fn clone_snapshot(&self, source_id: &str) -> Result<Snapshot, AndromedaError> {
         let source = self.get(source_id).await?;
 

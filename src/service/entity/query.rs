@@ -21,6 +21,7 @@ use std::{
 };
 use urn::Urn;
 
+/// Service for querying and retrieving NGSI-LD entities.
 pub struct EntityQueryService {
     repo: EntityRepository,
     engine: JsonLdEngine,
@@ -30,11 +31,13 @@ type ResolveLinkedResult = Result<HashMap<String, Entity>, AndromedaError>;
 type ResolveLinkedFuture<'a> = Pin<Box<dyn Future<Output = ResolveLinkedResult> + Send + 'a>>;
 
 impl EntityQueryService {
-    pub fn new(pool: &PgPool, engine: JsonLdEngine) -> Self {
+    /// Create a new entity query service backed by the given connection pool.
+    pub fn new(pool: &PgPool, engine: JsonLdEngine) -> EntityQueryService {
         let repo = EntityRepository::new(pool);
-        Self { repo, engine }
+        EntityQueryService { repo, engine }
     }
 
+    /// Return a reference to the underlying JSON-LD engine.
     pub fn engine(&self) -> &JsonLdEngine {
         &self.engine
     }
@@ -43,9 +46,12 @@ impl EntityQueryService {
         let compacted = self.engine.compact(expanded, context, CompactOptions::default()).await?;
 
         let mut obj = match compacted {
-            Value::Array(ref arr) => arr.first().and_then(|v| v.as_object()).cloned(),
-            Value::Object(ref map) => Some(map.clone()),
-            _ => None,
+            Value::Array(mut arr) if !arr.is_empty() => match arr.swap_remove(0) {
+                Value::Object(map) => Some(map),
+                _other => None,
+            },
+            Value::Object(map) => Some(map),
+            _other => None,
         }
         .ok_or_else(|| AndromedaError::bad_request_data("Entity data is not a JSON object"))?;
 
@@ -71,6 +77,7 @@ impl EntityQueryService {
     // Read operations
     // -------------------------------------------------------------------------
 
+    /// Retrieve a single entity by URN, optionally filtering attributes and dataset IDs.
     pub async fn get_inner(
         &self,
         id: &Urn,
@@ -111,6 +118,7 @@ impl EntityQueryService {
         Err(AndromedaError::not_found(id_str))
     }
 
+    /// Execute a parameterized entity query, returning matching entities and an optional total count.
     pub async fn query(&self, query: &EntityQueryParameters, context: &ContextSpec) -> Result<(Vec<Entity>, Option<i64>), AndromedaError> {
         let compiled = self.compile_query(query, context, true).await?;
         let query_result = self.repo.query_compiled(&compiled).await?;
@@ -125,7 +133,7 @@ impl EntityQueryService {
                     let obj = match v {
                         serde_json::Value::Array(arr) => arr.first().and_then(|v| v.as_object()),
                         serde_json::Value::Object(obj) => Some(obj),
-                        _ => None,
+                        _other => None,
                     };
                     obj.and_then(|o| o.get("@id").and_then(|v| v.as_str()).map(String::from))
                 })
@@ -162,6 +170,7 @@ impl EntityQueryService {
         Ok((entities, query_result.total_count))
     }
 
+    /// Recursively resolve linked entities up to the given join level.
     pub fn resolve_linked_entities<'a>(
         &'a self,
         entities: &'a [Entity],
@@ -187,7 +196,7 @@ impl EntityQueryService {
             linked_ids.retain(|id| !entity_ids.contains(id) && !contained_by.contains(id));
 
             // Batch-fetch all linked entities in one query instead of N+1
-            let linked_id_vec: Vec<String> = linked_ids.iter().cloned().collect();
+            let linked_id_vec: Vec<String> = linked_ids.iter().cloned().collect(); // clone: owned strings from HashSet for batch query API
             let batch_payloads = self.repo.get_batch(&linked_id_vec).await?;
 
             let batch_sys_attrs = if sys_attrs {
@@ -212,10 +221,10 @@ impl EntityQueryService {
             }
 
             if join_level > 1 && !linked_map.is_empty() {
-                let level2_entities: Vec<Entity> = linked_map.values().cloned().collect();
-                let mut next_contained_by: HashSet<String> = contained_by.clone();
+                let level2_entities: Vec<Entity> = linked_map.values().cloned().collect(); // clone: owned entities for recursive resolution
+                let mut next_contained_by: HashSet<String> = contained_by.clone(); // clone: owned set for recursive call, caller retains original
                 next_contained_by.extend(entity_ids);
-                next_contained_by.extend(linked_map.keys().cloned());
+                next_contained_by.extend(linked_map.keys().cloned()); // clone: owned keys for extending set
                 let level2_linked = self
                     .resolve_linked_entities(&level2_entities, join_level - 1, sys_attrs, context, &next_contained_by)
                     .await?;
@@ -230,14 +239,17 @@ impl EntityQueryService {
     // ID-only query (for EntityMap creation)
     // -------------------------------------------------------------------------
 
+    /// Compile an entity query with the default limit cap applied.
     pub async fn compile_query_public(&self, params: &EntityQueryParameters, context: &ContextSpec) -> Result<CompiledEntityQuery, AndromedaError> {
         self.compile_query(params, context, true).await
     }
 
+    /// Compile an entity query without applying a limit cap.
     pub async fn compile_query_uncapped(&self, params: &EntityQueryParameters, context: &ContextSpec) -> Result<CompiledEntityQuery, AndromedaError> {
         self.compile_query(params, context, false).await
     }
 
+    /// Execute a compiled query returning only entity IDs.
     pub async fn query_ids(&self, compiled: &CompiledEntityQuery) -> Result<Vec<String>, AndromedaError> {
         self.repo.query_ids(compiled).await
     }
@@ -248,7 +260,7 @@ impl EntityQueryService {
 
     async fn compile_query(&self, params: &EntityQueryParameters, context: &ContextSpec, cap_limit: bool) -> Result<CompiledEntityQuery, AndromedaError> {
         let ids = params.parse_ids();
-        let id_pattern = params.id_pattern.clone();
+        let id_pattern = params.id_pattern.clone(); // clone: owned value for CompiledEntityQuery struct
 
         if let Some(ref pattern) = id_pattern {
             crate::query::compile::validate_id_pattern(pattern)?;
@@ -317,14 +329,14 @@ impl EntityQueryService {
             let mut compiled = Vec::new();
             for term in &raw {
                 let attr_iri = if term.attr == "id" || term.attr == "type" || term.direction.is_distance() {
-                    term.attr.clone()
+                    term.attr.clone() // clone: owned value for CompiledOrderTerm struct
                 } else {
                     self.engine.expand_term(&term.attr, context).await?
                 };
                 compiled.push(CompiledOrderTerm {
                     attr_iri,
                     direction: term.direction,
-                    collation: params.collation.clone(),
+                    collation: params.collation.clone(), // clone: owned value for each CompiledOrderTerm in loop
                 });
             }
             compiled
@@ -347,7 +359,7 @@ impl EntityQueryService {
             pick,
             omit,
             order_by,
-            scope_q: params.scope_q.clone(),
+            scope_q: params.scope_q.clone(), // clone: owned value for CompiledEntityQuery struct
             type_match_all,
         };
 
@@ -384,7 +396,7 @@ impl EntityQueryService {
                 for key in entity.attrs.keys() {
                     let iri = self.engine.expand_term(key, context).await?;
                     if !query.pick.contains(&iri) && !query.pick.contains(key) {
-                        keys_to_remove.push(key.clone());
+                        keys_to_remove.push(key.clone()); // clone: owned key to avoid borrowing entity.attrs during removal
                     }
                 }
                 for k in keys_to_remove {
@@ -397,7 +409,7 @@ impl EntityQueryService {
                 for key in entity.attrs.keys() {
                     let iri = self.engine.expand_term(key, context).await?;
                     if query.omit.contains(&iri) || query.omit.contains(key) {
-                        keys_to_remove.push(key.clone());
+                        keys_to_remove.push(key.clone()); // clone: owned key to avoid borrowing entity.attrs during removal
                     }
                 }
                 for k in keys_to_remove {
@@ -415,7 +427,7 @@ impl EntityQueryService {
         for key in entity.attrs.keys() {
             let iri = self.engine.expand_term(key, context).await?;
             if !wanted_iris.contains(&iri) {
-                keys_to_remove.push(key.clone());
+                keys_to_remove.push(key.clone()); // clone: owned key to avoid borrowing entity.attrs during removal
             }
         }
         for k in keys_to_remove {
@@ -441,7 +453,7 @@ fn collect_relationship_objects(entity: &Entity, ids: &mut HashSet<String>) {
                         ids.insert(obj.to_string());
                     }
                 }
-                _ => {}
+                _other => {}
             },
             AttributeValue::Multiple(list) => {
                 for attr in list {
@@ -454,11 +466,11 @@ fn collect_relationship_objects(entity: &Entity, ids: &mut HashSet<String>) {
                                 ids.insert(obj.to_string());
                             }
                         }
-                        _ => {}
+                        _other => {}
                     }
                 }
             }
-            _ => {}
+            _other => {}
         }
     }
 }
@@ -477,7 +489,7 @@ fn filter_entity_by_dataset_id(entity: &mut Entity, dataset_ids: &[String]) {
                     }
                 });
                 if !matches {
-                    keys_to_remove.push(key.clone());
+                    keys_to_remove.push(key.clone()); // clone: owned key to avoid borrowing entity.attrs during removal
                 }
             }
             AttributeValue::Multiple(list) => {
@@ -492,7 +504,7 @@ fn filter_entity_by_dataset_id(entity: &mut Entity, dataset_ids: &[String]) {
                     })
                 });
                 if list.is_empty() {
-                    keys_to_remove.push(key.clone());
+                    keys_to_remove.push(key.clone()); // clone: owned key to avoid borrowing entity.attrs during removal
                 } else if list.len() == 1 {
                     *attr_val = AttributeValue::Single(Box::new(list.remove(0)));
                 }

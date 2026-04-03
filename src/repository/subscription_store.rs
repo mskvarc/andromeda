@@ -12,42 +12,83 @@ use sqlx::Row;
 use urn::UrnBuilder;
 use uuid::Uuid;
 
+/// Whether the subscription table includes a `dataset_id` column.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DatasetIdPresence {
+    /// The `dataset_id` column exists and should be read.
+    Present,
+    /// The `dataset_id` column does not exist in this table.
+    Absent,
+}
+
+/// Borrowed field values used when creating or updating a subscription.
 pub struct SubscriptionFields<'a> {
+    /// Human-readable name of the subscription.
     pub subscription_name: Option<&'a str>,
+    /// Free-text description of the subscription.
     pub description: Option<&'a str>,
+    /// Entity selector information as a JSON value.
     pub entities: Option<&'a Value>,
+    /// Attribute IRIs that trigger notifications when changed.
     pub watched_attributes: Option<&'a [String]>,
+    /// Events that trigger a notification (e.g., entityCreated).
     pub notification_trigger: Option<&'a [String]>,
+    /// Periodic notification interval in seconds.
     pub time_interval: Option<f64>,
+    /// NGSI-LD query expression for filtering entities.
     pub q: Option<&'a str>,
+    /// Geo-spatial query as a JSON value.
     pub geo_q: Option<&'a Value>,
+    /// Scope query expression.
     pub scope_q: Option<&'a str>,
+    /// Context source filter expression.
     pub csf: Option<&'a str>,
+    /// Dataset identifiers to restrict matching.
     pub dataset_id: Option<&'a [String]>,
+    /// Whether the subscription is currently active.
     pub is_active: bool,
+    /// Notification endpoint and format configuration as a JSON value.
     pub notification: Option<&'a Value>,
+    /// Timestamp after which the subscription expires.
     pub expires_at: Option<DateTime<Utc>>,
+    /// Minimum interval in seconds between consecutive notifications.
     pub throttling: Option<f64>,
+    /// Temporal query specification as a JSON value.
     pub temporal_q: Option<&'a Value>,
+    /// Preferred language for notifications.
     pub lang: Option<&'a str>,
+    /// JSON-LD context URI associated with the subscription.
     pub jsonld_context: Option<&'a str>,
     /// When true, subscription only matches locally stored entities (§5.5.13).
     pub local_only: bool,
 }
 
+/// Trait for subscription persistence operations shared across entity and context source subscriptions.
 #[async_trait]
 pub trait SubscriptionStore: Send + Sync {
+    /// Retrieve a subscription by identifier.
     async fn get(&self, id: &str) -> Result<Option<Subscription>, AndromedaError>;
+    /// List subscriptions with pagination, returning the items and total count.
     async fn list(&self, limit: Option<i64>, offset: Option<i64>) -> Result<(Vec<Subscription>, i64), AndromedaError>;
+    /// Delete a subscription by identifier. Returns `true` if a row was removed.
     async fn delete(&self, id: &str) -> Result<bool, AndromedaError>;
+    /// Check whether a subscription with the given identifier exists.
     async fn exists(&self, id: &str) -> Result<bool, AndromedaError>;
+    /// List all subscriptions with active status.
     async fn list_active(&self) -> Result<Vec<Subscription>, AndromedaError>;
+    /// Atomically claim a notification slot, respecting throttling. Returns `true` if claimed.
     async fn claim_notification_slot(&self, id: &str, throttling_secs: Option<f64>) -> Result<bool, AndromedaError>;
+    /// Record a successful notification delivery for the given subscription.
     async fn mark_success(&self, id: &str) -> Result<(), AndromedaError>;
+    /// Record a failed notification delivery for the given subscription.
     async fn mark_failure(&self, id: &str) -> Result<(), AndromedaError>;
+    /// Expire subscriptions whose `expires_at` has passed. Returns the IDs of expired subscriptions.
     async fn expire_due(&self) -> Result<Vec<String>, AndromedaError>;
+    /// Find active interval-based subscriptions that are due for their next notification.
     async fn find_due_interval_subscriptions(&self) -> Result<Vec<Subscription>, AndromedaError>;
+    /// Create a new subscription with the given fields and status.
     async fn create_subscription(&self, id: &str, fields: &SubscriptionFields<'_>, status: SubscriptionStatus) -> Result<(), AndromedaError>;
+    /// Update an existing subscription. Returns `true` if a row was modified.
     async fn update_subscription(&self, id: &str, fields: &SubscriptionFields<'_>, status: SubscriptionStatus) -> Result<bool, AndromedaError>;
 }
 
@@ -59,7 +100,7 @@ pub trait SubscriptionStore: Send + Sync {
 /// - `$type`: the struct to impl `SubscriptionStore` for
 /// - `kind`: discriminator value ("entity" or "csource")
 /// - `columns`: comma-separated column list (literal string)
-/// - `has_dataset_id`: whether to read the `dataset_id` column from rows (bool expression)
+/// - `has_dataset_id`: whether to read the `dataset_id` column from rows (`DatasetIdPresence`)
 #[macro_export]
 macro_rules! impl_subscription_store {
     ($type:ty, kind: $kind:literal, columns: $columns:literal, has_dataset_id: $hdi:expr) => {
@@ -268,10 +309,13 @@ macro_rules! impl_subscription_store {
 /// Fields that may be present in a subscription update request.
 /// Uses `Option<Option<T>>` to distinguish "not provided" (`None`) from "provided" (`Some`).
 pub struct StatusUpdateFields {
+    /// New active/paused flag, if provided in the update request.
     pub is_active: Option<bool>,
+    /// New expiration timestamp; outer `None` means not provided, inner `None` means cleared.
     pub expires_at: Option<Option<DateTime<Utc>>>,
 }
 
+/// Derive the new subscription status based on the current status and the update fields provided.
 pub fn compute_updated_status(current_status: SubscriptionStatus, fields: &StatusUpdateFields) -> SubscriptionStatus {
     let now = Utc::now();
 
@@ -288,19 +332,20 @@ pub fn compute_updated_status(current_status: SubscriptionStatus, fields: &Statu
         (Some(true), true) => SubscriptionStatus::Active,
         (Some(false), true) => SubscriptionStatus::Paused,
         (None, true) if current_status == SubscriptionStatus::Expired => SubscriptionStatus::Active,
-        _ => current_status,
+        (Some(true) | Some(false) | None, true | false) => current_status,
     }
 }
 
+/// Generate a new random NGSI-LD subscription URN identifier.
 pub fn generate_subscription_id() -> Result<String, AndromedaError> {
     let urn = UrnBuilder::new(NGSI_LD_URN_NID, &format!("Subscription:{}", Uuid::new_v4())).build()?;
     Ok(urn.to_string())
 }
 
 /// Shared row-to-subscription builder used by both `SubscriptionRepository` and
-/// `CsourceSubscriptionRepository`. The `has_dataset_id` flag controls whether the
+/// `CsourceSubscriptionRepository`. The `dataset_id_presence` parameter controls whether the
 /// `dataset_id` column is read from the row.
-pub fn build_subscription_from_row(row: &sqlx::postgres::PgRow, has_dataset_id: bool) -> Result<Subscription, AndromedaError> {
+pub fn build_subscription_from_row(row: &sqlx::postgres::PgRow, dataset_id_presence: DatasetIdPresence) -> Result<Subscription, AndromedaError> {
     let id: String = row.get("id");
     let type_: String = row.get("type");
     let subscription_name: Option<String> = row.get("subscription_name");
@@ -315,7 +360,10 @@ pub fn build_subscription_from_row(row: &sqlx::postgres::PgRow, has_dataset_id: 
     let geo_q: Option<Value> = row.get("geo_q");
     let scope_q: Option<String> = row.get("scope_q");
     let csf: Option<String> = row.get("csf");
-    let dataset_id: Option<Vec<String>> = if has_dataset_id { row.get("dataset_id") } else { None };
+    let dataset_id: Option<Vec<String>> = match dataset_id_presence {
+        DatasetIdPresence::Present => row.get("dataset_id"),
+        DatasetIdPresence::Absent => None,
+    };
     let is_active: bool = row.get("is_active");
     let notification_json: Value = row.get("notification");
     let expires_at: Option<DateTime<Utc>> = row.get("expires_at");

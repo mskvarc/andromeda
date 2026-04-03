@@ -25,30 +25,52 @@ const COLUMNS: &str = "\
     last_success, last_failure, created_at, modified_at, \
     additional_properties";
 
+/// Parameters for creating a new context source registration.
 pub struct CreateCsrParams<'a> {
+    /// Human-readable name of the registration.
     pub registration_name: Option<&'a str>,
+    /// Free-text description of the registration.
     pub description: Option<&'a str>,
+    /// Registration information entries describing provided entities/attributes.
     pub information: Option<&'a Value>,
+    /// Tenant identifier for multi-tenancy.
     pub tenant: Option<&'a str>,
+    /// Expected interval between observations.
     pub observation_interval: Option<&'a Value>,
+    /// Expected interval between management interactions.
     pub management_interval: Option<&'a Value>,
+    /// GeoJSON location of the context source.
     pub location: Option<&'a Value>,
+    /// GeoJSON observation space of the context source.
     pub observation_space: Option<&'a Value>,
+    /// GeoJSON operation space of the context source.
     pub operation_space: Option<&'a Value>,
+    /// Expiration timestamp for the registration.
     pub expires_at: Option<DateTime<Utc>>,
+    /// Base endpoint URL of the context source.
     pub endpoint: Option<&'a str>,
+    /// Preferred MIME type for responses from the context source.
     pub accept: Option<&'a str>,
+    /// Forwarding mode (e.g. "auxiliary", "inclusive", "redirect", "exclusive").
     pub mode: &'a str,
+    /// NGSI-LD operations supported by the context source.
     pub operations: Option<Vec<String>>,
+    /// Scope values for the registration.
     pub scope: Option<Vec<String>>,
+    /// ISO 8601 duration between context source refreshes.
     pub refresh_rate: Option<&'a str>,
+    /// Management information for the registration.
     pub management: Option<&'a Value>,
+    /// Additional context source metadata entries.
     pub context_source_info: Option<&'a Value>,
+    /// JSON-LD context associated with this registration.
     pub jsonld_context: Option<&'a str>,
+    /// Non-standard properties preserved from the original request.
     pub additional_properties: Option<Value>,
 }
 
 impl CreateCsrParams<'_> {
+    /// Keys recognized as standard NGSI-LD CSR properties (used to separate additional properties).
     pub const STANDARD_KEYS: &'static [&'static str] = &[
         "id",
         "type",
@@ -85,42 +107,66 @@ impl CreateCsrParams<'_> {
 /// Typed fragment for CSR updates. `None` = field not provided (keep existing).
 /// `Some(None)` = explicitly null (clear field). `Some(Some(v))` = new value.
 pub struct CsrUpdateFragment {
+    /// Updated registration name.
     pub registration_name: Option<Option<String>>,
+    /// Updated description.
     pub description: Option<Option<String>>,
+    /// Updated registration information entries.
     pub information: Option<Value>,
+    /// Updated tenant identifier.
     pub tenant: Option<Option<String>>,
+    /// Updated observation interval.
     pub observation_interval: Option<Option<Value>>,
+    /// Updated management interval.
     pub management_interval: Option<Option<Value>>,
+    /// Updated GeoJSON location (as serialized string).
     pub location: Option<Option<String>>,
+    /// Updated GeoJSON observation space (as serialized string).
     pub observation_space: Option<Option<String>>,
+    /// Updated GeoJSON operation space (as serialized string).
     pub operation_space: Option<Option<String>>,
+    /// Updated expiration timestamp.
     pub expires_at: Option<Option<DateTime<Utc>>>,
+    /// Updated endpoint URL.
     pub endpoint: Option<String>,
+    /// Updated accepted MIME type.
     pub accept: Option<Option<String>>,
+    /// Updated forwarding mode.
     pub mode: Option<String>,
+    /// Updated supported operations.
     pub operations: Option<Option<Vec<String>>>,
+    /// Updated scope values.
     pub scope: Option<Option<Vec<String>>>,
+    /// Updated refresh rate duration.
     pub refresh_rate: Option<Option<String>>,
+    /// Updated management information.
     pub management: Option<Option<Value>>,
+    /// Updated context source metadata entries.
     pub context_source_info: Option<Option<Value>>,
+    /// Updated JSON-LD context reference.
     pub jsonld_context: Option<Option<String>>,
+    /// Updated non-standard properties.
     pub additional_properties: Option<Value>,
 }
 
+/// PostgreSQL-backed repository for NGSI-LD context source registrations.
 pub struct ContextSourceRegistrationRepository {
     pool: PgPool,
 }
 
 impl ContextSourceRegistrationRepository {
-    pub fn new(pool: &PgPool) -> Self {
-        Self { pool: pool.clone() }
+    /// Creates a new repository backed by the given connection pool.
+    pub fn new(pool: &PgPool) -> ContextSourceRegistrationRepository {
+        ContextSourceRegistrationRepository { pool: pool.clone() } // clone: Arc ref-count bump (PgPool is Arc-based)
     }
 
+    /// Generates a new unique URN identifier for a context source registration.
     pub fn generate_id() -> Result<String, AndromedaError> {
         let urn = UrnBuilder::new(NGSI_LD_URN_NID, &format!("ContextSourceRegistration:{}", Uuid::new_v4())).build()?;
         Ok(urn.to_string())
     }
 
+    /// Checks whether a context source registration with the given ID exists.
     pub async fn exists(&self, id: &str) -> Result<bool, AndromedaError> {
         let row: (bool,) = sqlx::query_as("SELECT EXISTS(SELECT 1 FROM context_source_registrations WHERE id = $1)")
             .bind(id)
@@ -129,6 +175,7 @@ impl ContextSourceRegistrationRepository {
         Ok(row.0)
     }
 
+    /// Persists a new context source registration with the given ID and parameters.
     pub async fn create(&self, id: &str, params: &CreateCsrParams<'_>) -> Result<(), AndromedaError> {
         let location_geojson = params.location.map(unwrap_geo_property_to_string);
         let observation_space_geojson = params.observation_space.map(unwrap_geo_property_to_string);
@@ -162,10 +209,10 @@ impl ContextSourceRegistrationRepository {
         .bind(id)
         .bind(params.registration_name)
         .bind(params.description)
-        .bind(params.information.cloned())
+        .bind(params.information.cloned()) // clone: sqlx bind requires owned Value
         .bind(params.tenant)
-        .bind(params.observation_interval.cloned())
-        .bind(params.management_interval.cloned())
+        .bind(params.observation_interval.cloned()) // clone: sqlx bind requires owned Value
+        .bind(params.management_interval.cloned()) // clone: sqlx bind requires owned Value
         .bind(location_geojson.as_deref())
         .bind(observation_space_geojson.as_deref())
         .bind(operation_space_geojson.as_deref())
@@ -176,8 +223,8 @@ impl ContextSourceRegistrationRepository {
         .bind(params.operations.as_deref())
         .bind(params.scope.as_deref())
         .bind(params.refresh_rate)
-        .bind(params.management.cloned())
-        .bind(params.context_source_info.cloned())
+        .bind(params.management.cloned()) // clone: sqlx bind requires owned Value
+        .bind(params.context_source_info.cloned()) // clone: sqlx bind requires owned Value
         .bind(params.jsonld_context)
         .bind(&params.additional_properties)
         .execute(&self.pool)
@@ -186,6 +233,7 @@ impl ContextSourceRegistrationRepository {
         Ok(())
     }
 
+    /// Retrieves a context source registration by ID.
     pub async fn get(&self, id: &str) -> Result<Option<ContextSourceRegistration>, AndromedaError> {
         let row = sqlx::query(&format!("SELECT {} FROM context_source_registrations WHERE id = $1", COLUMNS))
             .bind(id)
@@ -198,6 +246,7 @@ impl ContextSourceRegistrationRepository {
         }
     }
 
+    /// Lists context source registrations with pagination. Returns entries and total count.
     pub async fn list(&self, limit: Option<i64>, offset: Option<i64>) -> Result<(Vec<ContextSourceRegistration>, i64), AndromedaError> {
         let limit = limit.unwrap_or(100);
         let offset = offset.unwrap_or(0);
@@ -220,6 +269,7 @@ impl ContextSourceRegistrationRepository {
         Ok((csrs, count_row.0))
     }
 
+    /// Executes a pre-compiled CSR query and returns matching registrations with total count.
     pub async fn query_compiled(&self, compiled: &CompiledCsrQuery) -> Result<(Vec<ContextSourceRegistration>, i64), AndromedaError> {
         let built = csr_sql::build_csr_query(compiled)?;
 
@@ -255,6 +305,7 @@ impl ContextSourceRegistrationRepository {
         Ok((csrs, total))
     }
 
+    /// Applies a partial update to an existing CSR. Returns `false` if the ID was not found.
     pub async fn update(&self, id: &str, fragment: &CsrUpdateFragment) -> Result<bool, AndromedaError> {
         let mut tx = self.pool.begin().await?;
 
@@ -278,19 +329,19 @@ impl ContextSourceRegistrationRepository {
             None => existing.description.as_deref(),
         };
         let information: Value = match &fragment.information {
-            Some(v) => v.clone(),
+            Some(v) => v.clone(), // clone: conditional ownership -- fragment or existing
             None => serde_json::to_value(&existing.information)?,
         };
         let tenant: Option<String> = match &fragment.tenant {
-            Some(v) => v.clone(),
+            Some(v) => v.clone(), // clone: conditional ownership -- fragment or existing
             None => existing.tenant,
         };
         let observation_interval: Option<Value> = match &fragment.observation_interval {
-            Some(v) => v.clone(),
+            Some(v) => v.clone(), // clone: conditional ownership -- fragment or existing
             None => existing.observation_interval,
         };
         let management_interval: Option<Value> = match &fragment.management_interval {
-            Some(v) => v.clone(),
+            Some(v) => v.clone(), // clone: conditional ownership -- fragment or existing
             None => existing.management_interval,
         };
         let expires_at: Option<DateTime<Utc>> = match &fragment.expires_at {
@@ -302,35 +353,35 @@ impl ContextSourceRegistrationRepository {
             None => &existing.endpoint,
         };
         let accept: Option<String> = match &fragment.accept {
-            Some(v) => v.clone(),
+            Some(v) => v.clone(), // clone: conditional ownership -- fragment or existing
             None => existing.accept,
         };
         let mode_str = match &fragment.mode {
-            Some(v) => v.clone(),
+            Some(v) => v.clone(), // clone: conditional ownership -- fragment or existing
             None => existing.mode.unwrap_or_default().to_string(),
         };
         let operations: Option<Vec<String>> = match &fragment.operations {
-            Some(v) => v.clone(),
+            Some(v) => v.clone(), // clone: conditional ownership -- fragment or existing
             None => existing.operations.map(|ops| ops.into_iter().map(|op| op.to_string()).collect()),
         };
         let scope: Option<Vec<String>> = match &fragment.scope {
-            Some(v) => v.clone(),
+            Some(v) => v.clone(), // clone: conditional ownership -- fragment or existing
             None => existing.scope,
         };
         let refresh_rate: Option<String> = match &fragment.refresh_rate {
-            Some(v) => v.clone(),
+            Some(v) => v.clone(), // clone: conditional ownership -- fragment or existing
             None => existing.refresh_rate,
         };
         let management: Option<Value> = match &fragment.management {
-            Some(v) => v.clone(),
+            Some(v) => v.clone(), // clone: conditional ownership -- fragment or existing
             None => existing.management,
         };
         let context_source_info: Option<Value> = match &fragment.context_source_info {
-            Some(v) => v.clone(),
+            Some(v) => v.clone(), // clone: conditional ownership -- fragment or existing
             None => existing.context_source_info,
         };
         let jsonld_context: Option<String> = match &fragment.jsonld_context {
-            Some(v) => v.clone(),
+            Some(v) => v.clone(), // clone: conditional ownership -- fragment or existing
             None => existing.jsonld_context,
         };
 
@@ -340,27 +391,27 @@ impl ContextSourceRegistrationRepository {
                 let mut merged = existing_val;
                 if let (Some(m), Some(n)) = (merged.as_object_mut(), new_val.as_object()) {
                     for (k, v) in n {
-                        m.insert(k.clone(), v.clone());
+                        m.insert(k.clone(), v.clone()); // clone: owned key/value for map insertion
                     }
                 }
                 Some(merged)
             }
-            (None, Some(new_val)) => Some(new_val.clone()),
+            (None, Some(new_val)) => Some(new_val.clone()), // clone: owned value from borrowed fragment
             (Some(existing_val), None) => Some(existing_val),
             (None, None) => None,
         };
 
         // Geometry: use new value if provided, else keep existing (as GeoJSON text).
         let location_geojson = match &fragment.location {
-            Some(v) => v.clone(),
+            Some(v) => v.clone(), // clone: conditional ownership -- fragment or existing
             None => existing.location.map(|v| v.to_string()),
         };
         let observation_space_geojson = match &fragment.observation_space {
-            Some(v) => v.clone(),
+            Some(v) => v.clone(), // clone: conditional ownership -- fragment or existing
             None => existing.observation_space.map(|v| v.to_string()),
         };
         let operation_space_geojson = match &fragment.operation_space {
-            Some(v) => v.clone(),
+            Some(v) => v.clone(), // clone: conditional ownership -- fragment or existing
             None => existing.operation_space.map(|v| v.to_string()),
         };
 
@@ -474,6 +525,7 @@ impl ContextSourceRegistrationRepository {
         rows.iter().map(row_to_csr).collect()
     }
 
+    /// Deletes a context source registration by ID. Returns `true` if a row was removed.
     pub async fn delete(&self, id: &str) -> Result<bool, AndromedaError> {
         let result = sqlx::query("DELETE FROM context_source_registrations WHERE id = $1")
             .bind(id)

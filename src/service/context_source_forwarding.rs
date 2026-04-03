@@ -9,6 +9,7 @@ use serde_json::Value;
 use sqlx::postgres::PgPool;
 use tracing::{debug, warn};
 
+/// Service for forwarding NGSI-LD operations to registered context sources.
 pub struct ContextSourceForwardingService {
     http_client: reqwest::Client,
     csr_repo: ContextSourceRegistrationRepository,
@@ -20,22 +21,37 @@ pub struct ContextSourceForwardingService {
 /// The NGSI-LD operation being performed, used to filter CSRs by their `operations` field.
 #[derive(Debug, Clone, Copy)]
 pub enum ForwardingOperation {
+    /// Retrieve a single entity by ID.
     RetrieveEntity,
+    /// Query entities matching filter criteria.
     QueryEntity,
+    /// Batch query for entities.
     QueryBatch,
+    /// Create a new entity.
     CreateEntity,
+    /// Delete an entity by ID.
     DeleteEntity,
+    /// Merge-patch an entity.
     MergeEntity,
+    /// Replace an entity entirely.
     ReplaceEntity,
+    /// Append attributes to an entity.
     AppendEntityAttributes,
+    /// Update existing attributes of an entity.
     UpdateEntityAttributes,
+    /// Partially update a single attribute.
     PartialUpdateAttribute,
+    /// Delete a single attribute from an entity.
     DeleteEntityAttribute,
-    // Batch provision operations (per spec 5.6.7-5.6.10, 5.6.20)
+    /// Batch create entities (per spec 5.6.7-5.6.10, 5.6.20).
     CreateBatch,
+    /// Batch upsert entities.
     UpsertBatch,
+    /// Batch update entities.
     UpdateBatch,
+    /// Batch delete entities.
     DeleteBatch,
+    /// Batch merge-patch entities.
     MergeBatch,
 }
 
@@ -90,7 +106,6 @@ pub enum NgsiLdWarning {
     /// 199: No response within timeout or registration loop detected.
     MiscellaneousWarning(String),
     /// 299: Error response from registration endpoint (e.g., 403).
-    #[allow(dead_code)]
     MiscellaneousPersistentWarning(String),
 }
 
@@ -106,41 +121,69 @@ impl NgsiLdWarning {
 
 /// Result from a single context source forwarding attempt.
 pub struct ForwardedEntities {
+    /// The forwarding mode of the matched context source registration.
     pub mode: ForwardingMode,
+    /// Entities returned by the context source.
     pub entities: Vec<Value>,
+    /// Warnings generated during the forwarding attempt.
     pub warnings: Vec<NgsiLdWarning>,
 }
 
 /// Result from a single context source provision (write) forwarding attempt.
 pub struct ForwardedWriteResult {
+    /// The forwarding mode of the matched context source registration.
     pub mode: ForwardingMode,
+    /// HTTP status code returned by the context source.
     pub status: u16,
+    /// Optional response body from the context source.
     pub body: Option<Value>,
     /// Property/relationship names covered by this exclusive registration.
     /// Empty for non-exclusive registrations.
     pub exclusive_attrs: Vec<String>,
 }
 
+/// Parameters for forwarding a single-entity provision (write) operation.
 pub struct ForwardProvisionRequest<'a> {
+    /// Entity ID to target, if applicable.
     pub entity_id: Option<&'a str>,
+    /// Compact entity type for CSR matching.
     pub entity_type_compact: Option<&'a str>,
+    /// HTTP method to use for the forwarded request.
     pub method: reqwest::Method,
+    /// Optional request body bytes.
     pub body: Option<&'a [u8]>,
+    /// JSON-LD context URL for the Link header.
     pub context_url: Option<&'a str>,
+    /// JSON-LD context specification for term expansion.
     pub context: &'a ContextSpec,
+    /// The NGSI-LD operation being forwarded.
     pub operation: ForwardingOperation,
+    /// Path suffix appended to the entity URL (e.g. "/attrs").
     pub path_suffix: Option<&'a str>,
+    /// Query string appended to the forwarded URL.
     pub query_string: Option<&'a str>,
+    /// Incoming Via header for loop detection (section 6.3.18).
+    pub incoming_via: Option<&'a str>,
 }
 
+/// Parameters for forwarding a batch provision operation.
 pub struct ForwardBatchProvisionRequest<'a> {
+    /// Compact entity type for CSR matching.
     pub entity_type_compact: Option<&'a str>,
+    /// Request body bytes containing the batch payload.
     pub body: &'a [u8],
+    /// JSON-LD context URL for the Link header.
     pub context_url: Option<&'a str>,
+    /// JSON-LD context specification for term expansion.
     pub context: &'a ContextSpec,
+    /// The NGSI-LD batch operation being forwarded.
     pub operation: ForwardingOperation,
+    /// Batch operation endpoint path (e.g. "/entityOperations/create").
     pub batch_path: &'a str,
+    /// Query string appended to the forwarded URL.
     pub query_string: Option<&'a str>,
+    /// Incoming Via header for loop detection (section 6.3.18).
+    pub incoming_via: Option<&'a str>,
 }
 
 /// Marker indicating an exclusive CSR matched the entity but not the requested operation.
@@ -148,7 +191,8 @@ pub struct ForwardBatchProvisionRequest<'a> {
 pub struct UnforwardableExclusiveCsr;
 
 impl ContextSourceForwardingService {
-    pub fn new(pool: &PgPool, engine: JsonLdEngine, source_identity: String) -> Self {
+    /// Create a new context source forwarding service with the given source identity for Via headers.
+    pub fn new(pool: &PgPool, engine: JsonLdEngine, source_identity: String) -> Result<ContextSourceForwardingService, AndromedaError> {
         let http_client = reqwest::ClientBuilder::new()
             .http1_title_case_headers()
             .no_gzip()
@@ -158,14 +202,14 @@ impl ContextSourceForwardingService {
             .connect_timeout(std::time::Duration::from_secs(3))
             .timeout(std::time::Duration::from_secs(5))
             .build()
-            .expect("Failed to create HTTP client for context source forwarding");
+            .map_err(|e| AndromedaError::internal(format!("Failed to create HTTP client for context source forwarding: {}", e)))?;
         let csr_repo = ContextSourceRegistrationRepository::new(pool);
-        Self {
+        Ok(ContextSourceForwardingService {
             http_client,
             csr_repo,
             engine,
             source_identity,
-        }
+        })
     }
 
     /// Forward an entity query to matching context sources.
@@ -180,7 +224,14 @@ impl ContextSourceForwardingService {
         context_url: Option<&str>,
         context: &ContextSpec,
         operation: ForwardingOperation,
+        incoming_via: Option<&str>,
     ) -> Result<Vec<ForwardedEntities>, AndromedaError> {
+        // Loop detection: if our identity is already in the Via chain, skip forwarding (section 6.3.18)
+        if self.is_loop_detected(incoming_via) {
+            debug!("Loop detected in Via header chain, skipping forwarding");
+            return Ok(Vec::new());
+        }
+
         // Expand entity type for CSR matching (CSRs store expanded IRIs)
         let expanded_type = if let Some(t) = entity_type_compact {
             Some(self.engine.expand_type(t, context).await?)
@@ -206,12 +257,12 @@ impl ContextSourceForwardingService {
             let url = build_query_url(&csr.endpoint, &forwarding_qs);
             debug!("Forwarding entity query to context source {}: {}", csr.id, url);
 
-            match self.forward_get(&url, context_url, csr.tenant.as_deref()).await {
+            match self.forward_get(&url, context_url, csr.tenant.as_deref(), incoming_via).await {
                 Ok(body) => {
                     let entities = match body {
                         Value::Array(arr) => arr,
                         obj @ Value::Object(_) => vec![obj], // Single entity response
-                        _ => {
+                        _other => {
                             warn!("Context source {} returned unexpected response type", csr.id);
                             continue;
                         }
@@ -250,7 +301,13 @@ impl ContextSourceForwardingService {
         query_string: &str,
         context_url: Option<&str>,
         operation: ForwardingOperation,
+        incoming_via: Option<&str>,
     ) -> Result<Vec<ForwardedEntities>, AndromedaError> {
+        if self.is_loop_detected(incoming_via) {
+            debug!("Loop detected in Via header chain, skipping retrieve forwarding");
+            return Ok(Vec::new());
+        }
+
         let csrs = self.csr_repo.find_matching(None, Some(entity_id)).await?;
         let matching_csrs: Vec<_> = csrs.into_iter().filter(|csr| operation.matches(csr)).collect();
 
@@ -263,7 +320,7 @@ impl ContextSourceForwardingService {
             let url = build_retrieve_url(&csr.endpoint, entity_id, query_string);
             debug!("Forwarding entity retrieve to context source {}: {}", csr.id, url);
 
-            match self.forward_get(&url, context_url, csr.tenant.as_deref()).await {
+            match self.forward_get(&url, context_url, csr.tenant.as_deref(), incoming_via).await {
                 Ok(body) => {
                     // Single entity response — wrap in array for uniform handling
                     if body.is_object() {
@@ -278,6 +335,15 @@ impl ContextSourceForwardingService {
                 }
                 Err(e) => {
                     debug!("Forward retrieve to context source {} failed (may be 404): {}", csr.id, e);
+                    let mode = csr.mode.unwrap_or_default();
+                    results.push(ForwardedEntities {
+                        mode,
+                        entities: Vec::new(),
+                        warnings: vec![NgsiLdWarning::MiscellaneousPersistentWarning(format!(
+                            "Context source {} returned error: {}",
+                            csr.id, e
+                        ))],
+                    });
                 }
             }
         }
@@ -298,6 +364,11 @@ impl ContextSourceForwardingService {
         &self,
         request: ForwardProvisionRequest<'_>,
     ) -> Result<(Vec<ForwardedWriteResult>, Vec<UnforwardableExclusiveCsr>), AndromedaError> {
+        if self.is_loop_detected(request.incoming_via) {
+            debug!("Loop detected in Via header chain, skipping provision forwarding");
+            return Ok((Vec::new(), Vec::new()));
+        }
+
         let expanded_type = if let Some(t) = request.entity_type_compact {
             Some(self.engine.expand_type(t, request.context).await?)
         } else {
@@ -346,7 +417,14 @@ impl ContextSourceForwardingService {
             };
 
             match self
-                .forward_write(&url, request.method.clone(), request.body, request.context_url, csr.tenant.as_deref())
+                .forward_write(
+                    &url,
+                    request.method.clone(), // clone: reqwest::Method is reused across loop iterations
+                    request.body,
+                    request.context_url,
+                    csr.tenant.as_deref(),
+                    request.incoming_via,
+                )
                 .await
             {
                 Ok((status, response_body)) => {
@@ -373,6 +451,11 @@ impl ContextSourceForwardingService {
     /// filter the input array per CSR, and forward matching entities.
     /// `batch_path` is the operation endpoint (e.g., "/entityOperations/create").
     pub async fn forward_batch_provision(&self, request: ForwardBatchProvisionRequest<'_>) -> Result<Vec<ForwardedWriteResult>, AndromedaError> {
+        if self.is_loop_detected(request.incoming_via) {
+            debug!("Loop detected in Via header chain, skipping batch provision forwarding");
+            return Ok(Vec::new());
+        }
+
         let expanded_type = if let Some(t) = request.entity_type_compact {
             Some(self.engine.expand_type(t, request.context).await?)
         } else {
@@ -402,7 +485,14 @@ impl ContextSourceForwardingService {
             };
 
             match self
-                .forward_write(&url, reqwest::Method::POST, Some(request.body), request.context_url, csr.tenant.as_deref())
+                .forward_write(
+                    &url,
+                    reqwest::Method::POST,
+                    Some(request.body),
+                    request.context_url,
+                    csr.tenant.as_deref(),
+                    request.incoming_via,
+                )
                 .await
             {
                 Ok((status, response_body)) => {
@@ -431,10 +521,11 @@ impl ContextSourceForwardingService {
         body: Option<&[u8]>,
         context_url: Option<&str>,
         tenant: Option<&str>,
+        incoming_via: Option<&str>,
     ) -> Result<(u16, Option<Value>), AndromedaError> {
         debug!("CS forwarding {} {}", method, url);
 
-        let mut request = self.build_request(method, url, context_url, tenant, None);
+        let mut request = self.build_request(method, url, context_url, tenant, incoming_via);
 
         if let Some(body_bytes) = body {
             request = request.header("Content-Type", "application/ld+json").body(body_bytes.to_vec());
@@ -453,11 +544,11 @@ impl ContextSourceForwardingService {
     }
 
     /// Make a GET request to a context source endpoint.
-    async fn forward_get(&self, url: &str, context_url: Option<&str>, tenant: Option<&str>) -> Result<Value, AndromedaError> {
+    async fn forward_get(&self, url: &str, context_url: Option<&str>, tenant: Option<&str>, incoming_via: Option<&str>) -> Result<Value, AndromedaError> {
         debug!("CS forwarding GET {}", url);
 
         let request = self
-            .build_request(reqwest::Method::GET, url, context_url, tenant, None)
+            .build_request(reqwest::Method::GET, url, context_url, tenant, incoming_via)
             .header("Accept", "application/json");
 
         let (status, bytes) = self.send_request(request).await?;
@@ -507,9 +598,7 @@ impl ContextSourceForwardingService {
         request
     }
 
-    /// Check if forwarding to a context source would create a loop.
-    /// Returns true if our source identity is already in the Via header chain.
-    #[allow(dead_code)]
+    /// Check whether forwarding would create a loop based on the Via header chain.
     pub fn is_loop_detected(&self, incoming_via: Option<&str>) -> bool {
         is_via_loop(incoming_via, &self.source_identity)
     }
@@ -595,7 +684,7 @@ fn collect_exclusive_attrs(csr: &ContextSourceRegistration) -> Vec<String> {
     for info in &csr.information {
         if let Some(ref props) = info.property_names {
             for prop in props {
-                attrs.push(prop.clone());
+                attrs.push(prop.clone()); // clone: owned value for collected attrs Vec
                 // Also add compacted form (last path/fragment segment) for matching
                 // against deserialized EntityPatch attr keys which are compacted
                 if let Some(short) = compact_iri(prop)
@@ -607,7 +696,7 @@ fn collect_exclusive_attrs(csr: &ContextSourceRegistration) -> Vec<String> {
         }
         if let Some(ref rels) = info.relationship_names {
             for rel in rels {
-                attrs.push(rel.clone());
+                attrs.push(rel.clone()); // clone: owned value for collected attrs Vec
                 if let Some(short) = compact_iri(rel)
                     && short != *rel
                 {
@@ -664,7 +753,7 @@ pub fn merge_query_results(local_entities: Vec<Value>, remote_results: Vec<Forwa
                     // Don't add new entities in auxiliary mode
                 }
             }
-            _ => {
+            ForwardingMode::Inclusive | ForwardingMode::Exclusive | ForwardingMode::Redirect => {
                 // inclusive, redirect, exclusive: add/merge remote entities
                 for remote_entity in forwarded.entities {
                     if let Some(remote_id) = remote_entity.get("id").and_then(|v| v.as_str()) {
@@ -694,7 +783,7 @@ fn merge_entity_attributes(local: &mut Value, remote: &Value) {
             }
             // Only add attributes that don't exist locally
             if !local_obj.contains_key(key) {
-                local_obj.insert(key.clone(), value.clone());
+                local_obj.insert(key.clone(), value.clone()); // clone: owned key-value pair for merging remote attributes into local entity
             }
         }
     }
@@ -730,7 +819,6 @@ pub fn collect_warnings(results: &[ForwardedEntities]) -> Vec<String> {
 }
 
 /// Check if the incoming Via header chain already contains our identity (loop detection).
-#[allow(dead_code)]
 pub fn is_via_loop(incoming_via: Option<&str>, source_identity: &str) -> bool {
     match incoming_via {
         Some(via) => via.contains(source_identity),
@@ -740,7 +828,10 @@ pub fn is_via_loop(incoming_via: Option<&str>, source_identity: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::{
+        domain::registration::ForwardingMode,
+        service::context_source_forwarding::{ForwardedEntities, NgsiLdWarning, collect_warnings, is_via_loop, merge_query_results},
+    };
 
     const ID: &str = "urn:ngsi-ld:ContextSourceIdentity:broker1";
 

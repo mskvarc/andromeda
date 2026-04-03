@@ -1,4 +1,3 @@
-use super::{EntityService, extract_attribute_keys, normalize_entity_attributes, unwrap_expanded_ref, validate_attribute_envelopes};
 use crate::{
     domain::{
         entity::Entity,
@@ -9,6 +8,7 @@ use crate::{
         batch::{BatchEntityError, BatchOperationResult, BatchProblemDetail},
     },
     jsonld::ContextSpec,
+    service::entity::{EntityService, extract_attribute_keys, normalize_entity_attributes, unwrap_expanded_ref, validate_attribute_envelopes},
 };
 use futures::{StreamExt, stream};
 use serde_json::Value;
@@ -16,6 +16,7 @@ use std::collections::HashSet;
 use urn::Urn;
 
 impl EntityService {
+    /// Create multiple entities in a single batch operation (NGSI-LD 5.6.7).
     pub async fn batch_create(&self, entities: &[Entity], context: &ContextSpec) -> Result<BatchOperationResult, AndromedaError> {
         let results: Vec<_> = stream::iter(entities)
             .map(|entity| async {
@@ -41,6 +42,7 @@ impl EntityService {
         Ok(BatchOperationResult { success, errors })
     }
 
+    /// Create or update multiple entities in a single batch operation (NGSI-LD 5.6.8).
     pub async fn batch_upsert(
         &self,
         entities: &[Entity],
@@ -71,7 +73,7 @@ impl EntityService {
             match result {
                 Ok((id, was_created)) => {
                     if was_created {
-                        created.push(id.clone());
+                        created.push(id.clone()); // clone: value also needed for success list below
                     }
                     success.push(id);
                 }
@@ -101,8 +103,7 @@ impl EntityService {
         })?;
 
         if update_mode {
-            // Safe to unwrap: we checked `existing.is_some()` above.
-            let mut existing = existing.unwrap();
+            let mut existing = existing.ok_or_else(|| to_batch_error(&id, &AndromedaError::internal("Expected existing entity but found none")))?;
             crate::domain::expanded::merge_entity(&mut existing, &expanded).map_err(|msg| to_batch_error(&id, &AndromedaError::internal(msg)))?;
             self.repo.save(&id, &existing).await.map_err(|e| to_batch_error(&id, &e))?;
         } else {
@@ -113,10 +114,11 @@ impl EntityService {
             tracing::warn!(error = %e, entity_id = %id, event = "temporal_recording_failed");
         }
         let types = self.fetch_entity_types(&id).await;
-        self.emit_change(ChangeEvent::new(id.clone(), types, TriggerReason::EntityUpdated).with_changed_attributes(extract_attribute_keys(&expanded)));
+        self.emit_change(ChangeEvent::new(id.clone(), types, TriggerReason::EntityUpdated).with_changed_attributes(extract_attribute_keys(&expanded))); // clone: value also returned in Ok tuple below
         Ok((id, false))
     }
 
+    /// Update attributes of multiple entities in a single batch operation (NGSI-LD 5.6.9).
     pub async fn batch_update(&self, entities: &[Entity], context: &ContextSpec, no_overwrite: bool) -> Result<BatchOperationResult, AndromedaError> {
         let results: Vec<_> = stream::iter(entities)
             .map(|entity| async move { self.update_one(entity, context, no_overwrite).await })
@@ -160,8 +162,8 @@ impl EntityService {
 
         if no_overwrite {
             let mut existing = existing;
-            let skipped = has_overlapping_attrs(&existing, &attrs);
-            crate::domain::expanded::append_entity_attrs(&mut existing, &attrs, true).map_err(|msg| to_batch_error(&id, &AndromedaError::internal(msg)))?;
+            let skipped = has_overlapping_attrs(&existing, attrs);
+            crate::domain::expanded::append_entity_attrs(&mut existing, attrs, true).map_err(|msg| to_batch_error(&id, &AndromedaError::internal(msg)))?;
             self.repo.save(&id, &existing).await.map_err(|e| to_batch_error(&id, &e))?;
             if skipped {
                 return Err(to_batch_error(
@@ -171,8 +173,8 @@ impl EntityService {
             }
         } else {
             let mut existing = existing;
-            crate::domain::expanded::update_entity_attrs(&mut existing, &attrs).map_err(|msg| to_batch_error(&id, &AndromedaError::internal(msg)))?;
-            crate::domain::expanded::append_entity_attrs(&mut existing, &attrs, false).map_err(|msg| to_batch_error(&id, &AndromedaError::internal(msg)))?;
+            crate::domain::expanded::update_entity_attrs(&mut existing, attrs).map_err(|msg| to_batch_error(&id, &AndromedaError::internal(msg)))?;
+            crate::domain::expanded::append_entity_attrs(&mut existing, attrs, false).map_err(|msg| to_batch_error(&id, &AndromedaError::internal(msg)))?;
             self.repo.save(&id, &existing).await.map_err(|e| to_batch_error(&id, &e))?;
         }
 
@@ -180,10 +182,11 @@ impl EntityService {
             tracing::warn!(error = %e, entity_id = %id, event = "temporal_recording_failed");
         }
         let types = self.fetch_entity_types(&id).await;
-        self.emit_change(ChangeEvent::new(id.clone(), types, TriggerReason::EntityUpdated).with_changed_attributes(extract_attribute_keys(&expanded)));
+        self.emit_change(ChangeEvent::new(id.clone(), types, TriggerReason::EntityUpdated).with_changed_attributes(extract_attribute_keys(&expanded))); // clone: value also returned in Ok below
         Ok(id)
     }
 
+    /// Merge partial updates into multiple entities in a single batch operation.
     pub async fn batch_merge(&self, entities: &[Entity], context: &ContextSpec) -> Result<BatchOperationResult, AndromedaError> {
         let results: Vec<_> = stream::iter(entities)
             .map(|entity| async move { self.merge_one(entity, context).await })
@@ -230,10 +233,11 @@ impl EntityService {
             tracing::warn!(error = %e, entity_id = %id, event = "temporal_recording_failed");
         }
         let types = self.fetch_entity_types(&id).await;
-        self.emit_change(ChangeEvent::new(id.clone(), types, TriggerReason::EntityUpdated).with_changed_attributes(extract_attribute_keys(&expanded)));
+        self.emit_change(ChangeEvent::new(id.clone(), types, TriggerReason::EntityUpdated).with_changed_attributes(extract_attribute_keys(&expanded))); // clone: value also returned in Ok below
         Ok(id)
     }
 
+    /// Delete multiple entities by ID in a single batch operation (NGSI-LD 5.6.10).
     pub async fn batch_delete(&self, entity_ids: &[String]) -> Result<BatchOperationResult, AndromedaError> {
         // Deduplicate IDs: first occurrence is processed, duplicates get ResourceNotFound errors
         let mut seen = HashSet::new();
@@ -279,7 +283,7 @@ fn has_overlapping_attrs(entity: &Value, attrs: &Value) -> bool {
     let entity_obj = match entity {
         Value::Array(arr) => arr.first().and_then(Value::as_object),
         Value::Object(obj) => Some(obj),
-        _ => None,
+        _other => None,
     };
     let attrs_obj = attrs.as_object();
 
@@ -306,7 +310,8 @@ fn to_batch_error(entity_id: &str, err: &AndromedaError) -> BatchEntityError {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::to_batch_error;
+    use crate::error::AndromedaError;
 
     #[test]
     fn to_batch_error_already_exists() {

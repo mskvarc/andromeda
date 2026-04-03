@@ -12,27 +12,38 @@ use sqlx::{Row, postgres::PgPool};
 use std::collections::HashMap;
 use urn::Urn;
 
+/// Result of an entity query containing matched rows and an optional total count.
 pub struct QueryResult {
+    /// The matched entity payloads.
     pub rows: Vec<Value>,
+    /// Total number of matching entities, present when a count was requested.
     pub total_count: Option<i64>,
 }
 
+/// Aggregated metadata for a single attribute across all entities.
 pub struct AttributeSummaryRow {
+    /// The expanded IRI of the attribute.
     pub attr_iri: String,
+    /// Number of distinct entities that carry this attribute.
     pub entity_count: i64,
+    /// Entity type IRIs that contain this attribute.
     pub entity_types: Vec<String>,
+    /// NGSI-LD attribute types (Property, Relationship, etc.) observed for this attribute.
     pub attribute_types: Vec<String>,
 }
 
+/// Repository for persisting and querying NGSI-LD entities.
 pub struct EntityRepository {
     pool: PgPool,
 }
 
 impl EntityRepository {
-    pub fn new(pool: &PgPool) -> Self {
-        Self { pool: pool.clone() }
+    /// Create a new entity repository backed by the given connection pool.
+    pub fn new(pool: &PgPool) -> EntityRepository {
+        EntityRepository { pool: pool.clone() } // clone: Arc ref-count bump (PgPool is Arc-based)
     }
 
+    /// Insert a new entity and return its URN identifier.
     pub async fn create(&self, id: &str, type_: &[&str], scopes: &[String], entity: &Value, expires_at: Option<DateTime<Utc>>) -> Result<Urn, AndromedaError> {
         tracing::info!("Storing entity {} with types: {:?}", id, type_);
         let location_geojson = expanded::extract_location_geojson(entity);
@@ -51,6 +62,7 @@ impl EntityRepository {
         Ok(id.parse::<Urn>()?)
     }
 
+    /// Retrieve an entity's expanded payload by identifier, returning `None` if not found.
     pub async fn get(&self, id: &str) -> Result<Option<Value>, AndromedaError> {
         let result: Option<Value> = sqlx::query_scalar("SELECT payload FROM entities WHERE id = $1")
             .bind(id)
@@ -60,6 +72,7 @@ impl EntityRepository {
         Ok(result)
     }
 
+    /// Retrieve system attributes (created_at, modified_at, expires_at) for a single entity.
     pub async fn get_sys_attrs(&self, id: &str) -> Result<Option<SysAttrsSnapshot>, AndromedaError> {
         let row = sqlx::query("SELECT created_at, modified_at, expires_at FROM entities WHERE id = $1")
             .bind(id)
@@ -112,12 +125,14 @@ impl EntityRepository {
         Ok(result.rows_affected() > 0)
     }
 
+    /// Delete an entity by its identifier. Returns `true` if a row was removed.
     pub async fn delete(&self, id: &str) -> Result<bool, AndromedaError> {
         let result = sqlx::query("DELETE FROM entities WHERE id = $1").bind(id).execute(&self.pool).await?;
 
         Ok(result.rows_affected() > 0)
     }
 
+    /// Execute a compiled entity query and return matching payloads with an optional total count.
     pub async fn query_compiled(&self, compiled: &CompiledEntityQuery) -> Result<QueryResult, AndromedaError> {
         let built = sql::build_query(compiled)?;
 
@@ -212,6 +227,7 @@ impl EntityRepository {
         Ok(result)
     }
 
+    /// Check whether an entity with the given identifier exists.
     pub async fn exists(&self, id: &str) -> Result<bool, AndromedaError> {
         let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM entities WHERE id = $1)")
             .bind(id)
@@ -221,10 +237,12 @@ impl EntityRepository {
         Ok(exists)
     }
 
+    /// Return all distinct entity type IRIs present in the store.
     pub async fn types(&self) -> Result<Vec<String>, AndromedaError> {
         Ok(sqlx::query_scalar("SELECT DISTINCT unnest(types) FROM entities").fetch_all(&self.pool).await?)
     }
 
+    /// Retrieve entity payloads filtered by type with optional pagination.
     pub async fn get_entities_by_type(&self, type_: &str, limit: Option<i64>, offset: Option<i64>) -> Result<Vec<Value>, AndromedaError> {
         Ok(
             sqlx::query_scalar("SELECT payload FROM entities WHERE $1 = ANY(types) ORDER BY id LIMIT $2 OFFSET $3")
@@ -236,6 +254,7 @@ impl EntityRepository {
         )
     }
 
+    /// Retrieve all entity payloads with optional pagination.
     pub async fn get_all_entities(&self, limit: Option<i64>, offset: Option<i64>) -> Result<Vec<Value>, AndromedaError> {
         Ok(sqlx::query_scalar("SELECT payload FROM entities ORDER BY id LIMIT $1 OFFSET $2")
             .bind(limit)
@@ -351,6 +370,7 @@ impl EntityRepository {
         }
     }
 
+    /// Execute a compiled query and return only the matching entity identifiers.
     pub async fn query_ids(&self, compiled: &CompiledEntityQuery) -> Result<Vec<String>, AndromedaError> {
         let built = sql::build_ids_query(compiled)?;
 
@@ -370,6 +390,7 @@ impl EntityRepository {
         Ok(ids)
     }
 
+    /// Count entities that have the given type IRI.
     pub async fn count_by_type(&self, type_: &str) -> Result<i64, AndromedaError> {
         Ok(sqlx::query_scalar("SELECT COUNT(*) FROM entities WHERE $1 = ANY(types)")
             .bind(type_)
@@ -384,7 +405,7 @@ pub fn extract_expires_at(entity: &Value) -> Option<DateTime<Utc>> {
     let obj = match entity {
         Value::Array(arr) => arr.first().and_then(|v| v.as_object()),
         Value::Object(obj) => Some(obj),
-        _ => return None,
+        _other => return None,
     }?;
 
     let expires_at_val = obj.get("https://uri.etsi.org/ngsi-ld/expiresAt")?;

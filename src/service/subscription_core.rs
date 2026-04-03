@@ -148,17 +148,17 @@ pub fn validate_notification_fragment(payload: &Value) -> Result<(), AndromedaEr
                                     Value::String(s) if s.trim().is_empty() => {
                                         return Err(AndromedaError::bad_request_data("notification.endpoint.uri must be a non-empty string"));
                                     }
-                                    _ => {}
+                                    _other => {}
                                 }
                             }
                         }
-                        _ => {}
+                        _other => {}
                     }
                 } else {
                     return Err(AndromedaError::bad_request_data("notification.endpoint is required"));
                 }
             }
-            _ => {
+            _other => {
                 return Err(AndromedaError::bad_request_data("notification must be an object"));
             }
         }
@@ -422,31 +422,50 @@ pub fn extract_create_fields<'a>(
     }
 }
 
-/// Merge update fragment fields with existing subscription values.
-/// Returns the merged SubscriptionFields and all intermediate owned values.
+/// Owned intermediate values produced by merging an update fragment with an existing subscription.
 pub struct MergedUpdateFields {
+    /// Optional subscription name.
     pub subscription_name: Option<String>,
+    /// Optional human-readable description.
     pub description: Option<String>,
+    /// Entity selector array.
     pub entities: Option<Value>,
+    /// Attributes that trigger notifications on change.
     pub watched_attributes: Option<Vec<String>>,
+    /// Events that trigger notifications.
     pub notification_trigger: Option<Vec<String>>,
+    /// Periodic notification interval in seconds.
     pub time_interval: Option<f64>,
+    /// NGSI-LD query expression.
     pub q: Option<String>,
+    /// Geo-spatial query object.
     pub geo_q: Option<Value>,
+    /// Scope query expression.
     pub scope_q: Option<String>,
+    /// Context source filter expression.
     pub csf: Option<String>,
+    /// Dataset IDs to subscribe to.
     pub dataset_id: Option<Vec<String>>,
+    /// Whether the subscription is active.
     pub is_active: bool,
+    /// Notification configuration object.
     pub notification: Option<Value>,
+    /// Expiration timestamp for the subscription.
     pub expires_at: Option<chrono::DateTime<Utc>>,
+    /// Minimum interval between notifications in seconds.
     pub throttling: Option<f64>,
+    /// Temporal query object.
     pub temporal_q: Option<Value>,
+    /// Language filter for notifications.
     pub lang: Option<String>,
+    /// JSON-LD context reference for notifications.
     pub jsonld_context: Option<String>,
+    /// Whether the subscription applies only to local entities.
     pub local_only: bool,
 }
 
 impl MergedUpdateFields {
+    /// Convert the merged values into borrowed `SubscriptionFields` for persistence.
     pub fn to_fields(&self) -> SubscriptionFields<'_> {
         SubscriptionFields {
             subscription_name: self.subscription_name.as_deref(),
@@ -484,51 +503,51 @@ pub fn merge_update_fields(
             .get("subscriptionName")
             .and_then(|v| v.as_str())
             .map(String::from)
-            .or_else(|| existing.subscription_name.clone()),
+            .or_else(|| existing.subscription_name.clone()), // clone: fallback to existing owned value
         description: payload
             .get("description")
             .and_then(|v| v.as_str())
             .map(String::from)
-            .or_else(|| existing.description.clone()),
+            .or_else(|| existing.description.clone()), // clone: fallback to existing owned value
         entities: payload
             .get("entities")
-            .cloned()
-            .or_else(|| existing_value.get("entities").cloned())
+            .cloned() // clone: need owned Value from borrowed payload
+            .or_else(|| existing_value.get("entities").cloned()) // clone: fallback to existing owned value
             .filter(|v| !v.is_null()),
         watched_attributes: payload
             .get("watchedAttributes")
-            .map(|v| serde_json::from_value(v.clone()).map_err(|e| AndromedaError::bad_request_data(format!("Invalid 'watchedAttributes': {}", e))))
+            .map(|v| serde_json::from_value(v.clone()).map_err(|e| AndromedaError::bad_request_data(format!("Invalid 'watchedAttributes': {}", e)))) // clone: serde_json::from_value consumes the Value
             .transpose()?
-            .or_else(|| existing.watched_attributes.clone()),
+            .or_else(|| existing.watched_attributes.clone()), // clone: fallback to existing owned value
         notification_trigger: payload
             .get("notificationTrigger")
             .map(|v| {
-                serde_json::from_value::<Vec<String>>(v.clone()).map_err(|e| AndromedaError::bad_request_data(format!("Invalid 'notificationTrigger': {}", e)))
+                serde_json::from_value::<Vec<String>>(v.clone()).map_err(|e| AndromedaError::bad_request_data(format!("Invalid 'notificationTrigger': {}", e))) // clone: serde_json::from_value consumes the Value
             })
             .transpose()?
             .or_else(|| existing.notification_trigger.as_ref().map(|t| t.iter().map(|nt| nt.to_string()).collect())),
         time_interval: payload.get("timeInterval").and_then(|v| v.as_f64()).or(existing.time_interval),
-        q: payload.get("q").and_then(|v| v.as_str()).map(String::from).or_else(|| existing.q.clone()),
-        geo_q: payload.get("geoQ").cloned().or_else(|| existing.geo_q.clone()).filter(|v| !v.is_null()),
+        q: payload.get("q").and_then(|v| v.as_str()).map(String::from).or_else(|| existing.q.clone()), // clone: fallback to existing owned value
+        geo_q: payload.get("geoQ").cloned().or_else(|| existing.geo_q.clone()).filter(|v| !v.is_null()), // clone: need owned Values from borrowed sources
         scope_q: payload
             .get("scopeQ")
             .and_then(|v| v.as_str())
             .map(String::from)
-            .or_else(|| existing.scope_q.clone()),
-        csf: payload.get("csf").and_then(|v| v.as_str()).map(String::from).or_else(|| existing.csf.clone()),
+            .or_else(|| existing.scope_q.clone()), // clone: fallback to existing owned value
+        csf: payload.get("csf").and_then(|v| v.as_str()).map(String::from).or_else(|| existing.csf.clone()), // clone: fallback to existing owned value
         dataset_id: if use_dataset_id {
             payload
                 .get("datasetId")
-                .map(|v| serde_json::from_value(v.clone()).map_err(|e| AndromedaError::bad_request_data(format!("Invalid 'datasetId': {}", e))))
+                .map(|v| serde_json::from_value(v.clone()).map_err(|e| AndromedaError::bad_request_data(format!("Invalid 'datasetId': {}", e)))) // clone: serde_json::from_value consumes the Value
                 .transpose()?
-                .or_else(|| existing.dataset_id.clone())
+                .or_else(|| existing.dataset_id.clone()) // clone: fallback to existing owned value
         } else {
             None
         },
         is_active: payload.get("isActive").and_then(|v| v.as_bool()).or(existing.is_active).unwrap_or(true),
         notification: payload
             .get("notification")
-            .cloned()
+            .cloned() // clone: need owned Value from borrowed payload
             .or_else(|| {
                 serde_json::to_value(&existing.notification)
                     .map_err(|e| tracing::warn!("Failed to serialize existing notification: {}", e))
@@ -548,15 +567,15 @@ pub fn merge_update_fields(
         throttling: payload.get("throttling").and_then(|v| v.as_f64()).or(existing.throttling),
         temporal_q: payload
             .get("temporalQ")
-            .cloned()
-            .or_else(|| existing.temporal_q.clone())
+            .cloned() // clone: need owned Value from borrowed payload
+            .or_else(|| existing.temporal_q.clone()) // clone: fallback to existing owned value
             .filter(|v| !v.is_null()),
-        lang: payload.get("lang").and_then(|v| v.as_str()).map(String::from).or_else(|| existing.lang.clone()),
+        lang: payload.get("lang").and_then(|v| v.as_str()).map(String::from).or_else(|| existing.lang.clone()), // clone: fallback to existing owned value
         jsonld_context: payload
             .get("jsonldContext")
             .and_then(|v| v.as_str())
             .map(String::from)
-            .or_else(|| existing.jsonld_context.clone()),
+            .or_else(|| existing.jsonld_context.clone()), // clone: fallback to existing owned value
         local_only: payload.get("localOnly").and_then(|v| v.as_bool()).or(existing.local_only).unwrap_or(false),
     })
 }

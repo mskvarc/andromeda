@@ -168,15 +168,15 @@ pub async fn query(
     let key_values = options.contains("keyValues") || options.contains("simplified");
 
     let result = service.query(&params, &context).await.map_err(|e| e.with_instance(uri.clone()))?;
-    if !result.warnings.is_empty() {
-        tracing::debug!(count = result.warnings.len(), "Temporal query completed with warnings");
+    for warning in &result.warnings {
+        tracing::debug!(entity_id = %warning.entity_id, message = %warning.message, "Temporal query warning");
     }
     let crate::service::temporal::TemporalQueryResult {
         entities,
         total_count,
         any_truncated,
         content_range,
-        ..
+        warnings: _,
     } = result;
 
     let returned = entities.len();

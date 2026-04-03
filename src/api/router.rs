@@ -219,7 +219,7 @@ pub async fn build_tenant_state(
     // In a future graceful shutdown implementation, call `shutdown_tx.send(true)`.
     let _shutdown_tx = shutdown_tx;
 
-    let notification_entity_query = crate::service::entity::EntityQueryService::new(&pool, engine.clone());
+    let notification_entity_query = crate::service::entity::query::EntityQueryService::new(&pool, engine.clone());
     let notification_worker = NotificationWorker::new(
         change_tx.subscribe(),
         sub_change_tx.subscribe(),
@@ -286,14 +286,14 @@ pub async fn build_tenant_state(
     );
     worker_handles.push(tokio::spawn(csr_interval_worker.run()));
 
-    let entity_query_service = Arc::new(crate::service::entity::EntityQueryService::new(&pool, engine.clone()));
-    let entity_discovery_service = Arc::new(crate::service::entity::EntityDiscoveryService::new(&pool, engine.clone()));
+    let entity_query_service = Arc::new(crate::service::entity::query::EntityQueryService::new(&pool, engine.clone()));
+    let entity_discovery_service = Arc::new(crate::service::entity::discovery::EntityDiscoveryService::new(&pool, engine.clone()));
 
     let forwarding_service = Arc::new(crate::service::context_source_forwarding::ContextSourceForwardingService::new(
         &pool,
         engine.clone(),
         config.info.source_identity.clone(),
-    ));
+    )?);
 
     let entity_map_store = crate::repository::entity_map::EntityMapStore::new();
     let entity_map_service = Arc::new(crate::service::entity_map::EntityMapService::new(entity_map_store));

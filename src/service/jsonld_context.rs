@@ -13,18 +13,21 @@ use sqlx::postgres::PgPool;
 use tracing::debug;
 use urn::Urn;
 
+/// Service for managing hosted and cached JSON-LD contexts.
 pub struct JsonLdContextService {
     repo: JsonLdContextRepository,
     engine: JsonLdEngine,
 }
 
 impl JsonLdContextService {
-    pub fn new(pool: &PgPool, engine: JsonLdEngine) -> Self {
+    /// Create a new JSON-LD context service backed by the given connection pool and engine.
+    pub fn new(pool: &PgPool, engine: JsonLdEngine) -> JsonLdContextService {
         let repo = JsonLdContextRepository::new(pool);
         debug!("JSON-LD Context repository created!");
-        Self { repo, engine }
+        JsonLdContextService { repo, engine }
     }
 
+    /// Create a new hosted JSON-LD context from the given payload.
     pub async fn create(&self, payload: Value, base_url: Option<&str>) -> Result<Urn, AndromedaError> {
         if payload.get("@context").is_none() {
             return Err(AndromedaError::invalid_request("Payload must contain a top-level @context field"));
@@ -33,30 +36,32 @@ impl JsonLdContextService {
         self.repo.create_hosted(payload, base_url).await
     }
 
+    /// List available JSON-LD contexts, optionally filtered by kind and with detailed metadata.
     pub async fn list(&self, kind: Option<ContextKind>, details: bool) -> Result<Value, AndromedaError> {
-        let result = self.repo.list(kind.clone(), details).await?;
         let include_core = kind.is_none() || kind == Some(ContextKind::ImplicitlyCreated);
+        let result = self.repo.list(kind, details).await?;
 
         match result {
             ContextListResult::Detailed(mut metas) => {
                 if include_core {
                     metas.push(build_core_context_metadata(NGSI_LD_CORE_CONTEXT_URL));
                 }
-                Ok(serde_json::to_value(metas).unwrap())
+                Ok(serde_json::to_value(metas)?)
             }
             ContextListResult::Urls(mut urls) => {
                 if include_core {
                     urls.push(NGSI_LD_CORE_CONTEXT_URL.to_string());
                 }
-                Ok(serde_json::to_value(urls).unwrap())
+                Ok(serde_json::to_value(urls)?)
             }
         }
     }
 
+    /// Retrieve a JSON-LD context by its identifier, returning either the payload or metadata.
     pub async fn get(&self, identifier: &str, details: bool) -> Result<Value, AndromedaError> {
         if is_core_context_url(identifier) {
             return if details {
-                Ok(serde_json::to_value(build_core_context_metadata(identifier)).unwrap())
+                Ok(serde_json::to_value(build_core_context_metadata(identifier))?)
             } else {
                 core_context_payload()
             };
@@ -74,11 +79,12 @@ impl JsonLdContextService {
         }
 
         match result {
-            ContextGetResult::Detailed(meta) => Ok(serde_json::to_value(meta).unwrap()),
+            ContextGetResult::Detailed(meta) => Ok(serde_json::to_value(meta)?),
             ContextGetResult::Payload(value) => Ok(value),
         }
     }
 
+    /// Delete a JSON-LD context, or reload it from its source URL when `reload` is true.
     pub async fn delete(&self, identifier: &str, reload: bool) -> Result<(), AndromedaError> {
         if reload {
             let row = self
@@ -139,7 +145,8 @@ fn build_core_context_metadata(identifier: &str) -> ContextMetadata {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{build_core_context_metadata, core_context_payload, is_core_context_url};
+    use crate::domain::jsonld_context::ContextKind;
 
     #[test]
     fn core_context_url_is_recognized() {

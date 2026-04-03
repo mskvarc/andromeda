@@ -29,9 +29,9 @@ impl SubscriptionVariant for CsrSubscriptionVariant {
             && let Some(ctx_val) = payload.get("@context")
         {
             let jsonld_context_value = match ctx_val {
-                Value::String(s) => Value::String(s.clone()),
-                Value::Array(_) | Value::Object(_) => ctx_val.clone(),
-                _ => Value::Null,
+                Value::String(s) => Value::String(s.clone()), // clone: need owned String for new Value; original is borrowed from payload
+                Value::Array(_) | Value::Object(_) => ctx_val.clone(), // clone: need owned copy to insert into payload as jsonldContext
+                _other => Value::Null,
             };
 
             if jsonld_context_value != Value::Null
@@ -81,15 +81,17 @@ impl SubscriptionVariant for CsrSubscriptionVariant {
 // Public type alias — callers continue to use `CsourceSubscriptionService`
 // ---------------------------------------------------------------------------
 
+/// Context source subscription service combining shared CRUD logic with CSR-specific behaviour.
 pub type CsourceSubscriptionService = SubscriptionServiceCore<CsourceSubscriptionRepository, CsrSubscriptionVariant>;
 
 impl CsourceSubscriptionService {
-    pub fn new(pool: &PgPool, engine: JsonLdEngine, sub_change_tx: Option<broadcast::Sender<CsourceSubscriptionChange>>) -> Self {
+    /// Create a new context source subscription service backed by the given database pool.
+    pub fn new(pool: &PgPool, engine: JsonLdEngine, sub_change_tx: Option<broadcast::Sender<CsourceSubscriptionChange>>) -> CsourceSubscriptionService {
         let repo = CsourceSubscriptionRepository::new(pool);
         debug!("CSR subscription service created!");
-        Self {
+        CsourceSubscriptionService {
             repo,
-            engine: engine.clone(),
+            engine: engine.clone(), // clone: engine is shared between service and variant
             variant: CsrSubscriptionVariant { engine },
             change_tx: sub_change_tx,
         }

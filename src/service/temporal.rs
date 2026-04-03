@@ -30,6 +30,7 @@ pub(crate) fn format_datetime(dt: DateTime<Utc>) -> String {
     dt.to_rfc3339_opts(SecondsFormat::Secs, true)
 }
 
+/// Service layer for NGSI-LD Temporal Entity operations (read and write).
 pub struct TemporalService {
     repo: Arc<TemporalRepository>,
     recorder: TemporalRecorder,
@@ -41,12 +42,15 @@ pub struct TemporalService {
 /// Result of create_or_update operation.
 #[derive(Debug)]
 pub enum CreateOrUpdateResult {
+    /// A new temporal entity was created, carrying the assigned entity ID.
     Created(String),
+    /// Attributes were appended to an existing temporal entity.
     Updated,
 }
 
 /// Result of a temporal read operation.
 pub struct TemporalReadResult {
+    /// The compacted temporal entity JSON payload.
     pub value: Value,
     /// Pre-built Content-Range header value, present when system truncation occurred.
     pub content_range: Option<String>,
@@ -55,28 +59,34 @@ pub struct TemporalReadResult {
 /// Warning collected when a per-entity temporal query step fails non-fatally.
 #[derive(Debug)]
 pub struct TemporalQueryWarning {
-    #[allow(dead_code)]
+    /// The entity that triggered the warning.
     pub entity_id: String,
-    #[allow(dead_code)]
+    /// Human-readable description of the problem.
     pub message: String,
 }
 
 /// Result of a temporal query operation.
 pub struct TemporalQueryResult {
+    /// Temporal entity representations matching the query.
     pub entities: Vec<Value>,
+    /// Total entity count when the `count` option was requested.
     pub total_count: Option<i64>,
+    /// Whether any entity's history was truncated by the system lastN cap.
     pub any_truncated: bool,
+    /// Pre-built Content-Range header value when truncation occurred.
     pub content_range: Option<String>,
+    /// Non-fatal warnings encountered during per-entity processing.
     pub warnings: Vec<TemporalQueryWarning>,
 }
 
 impl TemporalService {
-    pub fn new(pool: &sqlx::postgres::PgPool, engine: JsonLdEngine, default_last_n: u32) -> Self {
+    /// Create a new temporal service with the given connection pool, JSON-LD engine, and default lastN cap.
+    pub fn new(pool: &sqlx::postgres::PgPool, engine: JsonLdEngine, default_last_n: u32) -> TemporalService {
         let repo = Arc::new(TemporalRepository::new(pool));
-        let recorder = TemporalRecorder::new(repo.clone());
+        let recorder = TemporalRecorder::new(repo.clone()); // clone: Arc ref-count bump; repo is shared between service and recorder
         let entity_repo = EntityRepository::new(pool);
 
-        Self {
+        TemporalService {
             repo,
             recorder,
             entity_repo,
@@ -89,8 +99,9 @@ impl TemporalService {
     // Write operations
     // -------------------------------------------------------------------------
 
+    /// Create a new temporal entity or append attributes to an existing one.
     pub async fn create_or_update(&self, payload: Value, context: &ContextSpec) -> Result<CreateOrUpdateResult, AndromedaError> {
-        let expanded = self.engine.expand(payload.clone(), context).await?;
+        let expanded = self.engine.expand(payload.clone(), context).await?; // clone: expand() consumes the Value; payload is still used below for type extraction
         let entity_obj = expanded
             .as_array()
             .and_then(|arr| arr.first())
@@ -143,6 +154,7 @@ impl TemporalService {
         }
     }
 
+    /// Add temporal attributes to an existing temporal entity.
     pub async fn add_attrs(&self, entity_id: &str, payload: Value, context: &ContextSpec) -> Result<(), AndromedaError> {
         if !self.repo.tea_exists_for_entity(entity_id).await? {
             return Err(AndromedaError::not_found(entity_id.to_string()));
@@ -157,6 +169,7 @@ impl TemporalService {
         self.recorder.record_entity_attributes(entity_id, expanded).await
     }
 
+    /// Delete all temporal data for an entity.
     pub async fn delete(&self, entity_id: &str) -> Result<(), AndromedaError> {
         if !self.repo.tea_exists_for_entity(entity_id).await? {
             return Err(AndromedaError::not_found(entity_id.to_string()));
@@ -165,6 +178,7 @@ impl TemporalService {
         Ok(())
     }
 
+    /// Delete a specific temporal attribute (optionally filtered by dataset ID).
     pub async fn delete_attr(
         &self,
         entity_id: &str,
@@ -188,6 +202,7 @@ impl TemporalService {
         Ok(())
     }
 
+    /// Replace an existing attribute instance with new data.
     pub async fn modify_attr_instance(
         &self,
         entity_id: &str,
@@ -212,13 +227,14 @@ impl TemporalService {
         }
 
         let expanded = self.engine.expand(payload, context).await?;
-        let instance_value = expanded.as_array().and_then(|arr| arr.first()).cloned().unwrap_or(expanded);
+        let instance_value = expanded.as_array().and_then(|arr| arr.first()).cloned().unwrap_or(expanded); // clone: extracting first element from array requires owned value; original consumed by unwrap_or
 
         self.recorder
             .update_attribute_instance(entity_id, &attr_iri, instance_id, &instance_value)
             .await
     }
 
+    /// Delete a specific attribute instance by its instance ID.
     pub async fn delete_attr_instance(&self, entity_id: &str, attr_id: &str, instance_id: &str, context: &ContextSpec) -> Result<(), AndromedaError> {
         let attr_iri = self.engine.expand_term(attr_id, context).await?;
 
@@ -242,6 +258,7 @@ impl TemporalService {
     // Read operations
     // -------------------------------------------------------------------------
 
+    /// Retrieve the temporal representation of a single entity.
     pub async fn get(&self, entity_id: &str, params: &TemporalQueryParameters, context: &ContextSpec) -> Result<TemporalReadResult, AndromedaError> {
         params.validate(false)?;
 
@@ -304,6 +321,7 @@ impl TemporalService {
         Ok(TemporalReadResult { value, content_range })
     }
 
+    /// Query temporal entities matching the given filter and temporal parameters.
     pub async fn query(&self, params: &TemporalQueryParameters, context: &ContextSpec) -> Result<TemporalQueryResult, AndromedaError> {
         params.validate(true)?;
 
@@ -329,7 +347,7 @@ impl TemporalService {
         let entity_payloads = self.entity_repo.get_batch(&entity_ids).await?;
         let entity_types_map: std::collections::HashMap<String, Vec<String>> = entity_payloads
             .iter()
-            .map(|(id, payload)| (id.clone(), extract_entity_types(payload)))
+            .map(|(id, payload)| (id.clone(), extract_entity_types(payload))) // clone: owned key for HashMap entry
             .collect();
 
         let mut entities = Vec::new();
@@ -340,15 +358,15 @@ impl TemporalService {
         let mut overall_partition_total: Option<i64> = None;
         let is_aggregated = compiled.format == TemporalFormat::AggregatedValues;
         for entity_id in entity_ids {
-            let entity_types = entity_types_map.get(&entity_id).cloned().unwrap_or_default();
-            let mut binds = vec![crate::query::sql::BindValue::String(Cow::Owned(entity_id.clone()))];
+            let entity_types = entity_types_map.get(&entity_id).cloned().unwrap_or_default(); // clone: owned copy needed; map is borrowed while loop continues
+            let mut binds = vec![crate::query::sql::BindValue::String(Cow::Owned(entity_id.clone()))]; // clone: entity_id used later in warnings and result building
             let mut param_idx = 2;
             let stage2 = match build_temporal_history_query(1, &compiled, &mut binds, &mut param_idx) {
                 Ok(s) => s,
                 Err(e) => {
                     tracing::warn!(error = %e, entity_id = %entity_id, "Failed to build temporal history query");
                     warnings.push(TemporalQueryWarning {
-                        entity_id: entity_id.clone(),
+                        entity_id: entity_id.clone(), // clone: entity_id is used by subsequent loop iterations
                         message: e.to_string(),
                     });
                     continue;
@@ -359,7 +377,7 @@ impl TemporalService {
                 Err(e) => {
                     tracing::warn!(error = %e, entity_id = %entity_id, "Failed to execute temporal query");
                     warnings.push(TemporalQueryWarning {
-                        entity_id: entity_id.clone(),
+                        entity_id: entity_id.clone(), // clone: entity_id is used by subsequent loop iterations
                         message: e.to_string(),
                     });
                     continue;
@@ -372,7 +390,7 @@ impl TemporalService {
                         Err(e) => {
                             tracing::warn!(error = %e, entity_id = %entity_id, "Failed to build aggregated temporal result");
                             warnings.push(TemporalQueryWarning {
-                                entity_id: entity_id.clone(),
+                                entity_id: entity_id.clone(), // clone: entity_id is used by subsequent loop iterations
                                 message: e.to_string(),
                             });
                         }
@@ -403,7 +421,7 @@ impl TemporalService {
                                 Err(e) => {
                                     tracing::warn!(error = %e, entity_id = %entity_id, "Failed to compact temporal entity");
                                     warnings.push(TemporalQueryWarning {
-                                        entity_id: entity_id.clone(),
+                                        entity_id: entity_id.clone(), // clone: entity_id is used by subsequent loop iterations
                                         message: e.to_string(),
                                     });
                                 }
@@ -412,7 +430,7 @@ impl TemporalService {
                         Err(e) => {
                             tracing::warn!(error = %e, entity_id = %entity_id, "Failed to build temporal entity response");
                             warnings.push(TemporalQueryWarning {
-                                entity_id: entity_id.clone(),
+                                entity_id: entity_id.clone(), // clone: entity_id is used by subsequent loop iterations
                                 message: e.to_string(),
                             });
                         }
@@ -454,13 +472,13 @@ impl TemporalService {
         for attr_iri in aggr_data.keys() {
             let mut skeleton = serde_json::Map::new();
             skeleton.insert("@id".to_string(), json!(entity_id));
-            skeleton.insert(attr_iri.clone(), json!([{"@type": [crate::domain::iri::PROPERTY.as_str()]}]));
+            skeleton.insert(attr_iri.clone(), json!([{"@type": [crate::domain::iri::PROPERTY.as_str()]}])); // clone: owned key for JSON map insertion
             if let Ok(compacted) = self.engine.compact(Value::Object(skeleton), context, CompactOptions::default()).await
                 && let Some(obj) = compacted.as_object()
             {
                 for key in obj.keys() {
                     if !["id", "type", "@context"].contains(&key.as_str()) {
-                        iri_to_short.insert(attr_iri.clone(), key.clone());
+                        iri_to_short.insert(attr_iri.clone(), key.clone()); // clone: owned keys for HashMap entry; originals are borrowed
                         break;
                     }
                 }
@@ -470,7 +488,7 @@ impl TemporalService {
         // Compact entity type by compacting a minimal type skeleton
         let type_skeleton = json!({"@id": entity_id, "@type": entity_types});
         let compacted_type = if let Ok(compacted) = self.engine.compact(type_skeleton, context, CompactOptions::default()).await {
-            compacted.as_object().and_then(|o| o.get("type")).cloned().unwrap_or(json!(entity_types))
+            compacted.as_object().and_then(|o| o.get("type")).cloned().unwrap_or(json!(entity_types)) // clone: need owned Value from borrowed compacted object
         } else {
             json!(entity_types)
         };
@@ -481,7 +499,7 @@ impl TemporalService {
         result.insert("type".to_string(), compacted_type);
 
         for (attr_iri, attr_obj) in aggr_data {
-            let short_name = iri_to_short.get(&attr_iri).cloned().unwrap_or(attr_iri);
+            let short_name = iri_to_short.get(&attr_iri).cloned().unwrap_or(attr_iri); // clone: need owned String for map insertion; attr_iri consumed by unwrap_or
             result.insert(short_name, attr_obj);
         }
 
@@ -550,13 +568,13 @@ impl TemporalService {
 
         Ok(CompiledTemporalQuery {
             ids: params.parse_ids(),
-            id_pattern: params.id_pattern.clone(),
+            id_pattern: params.id_pattern.clone(), // clone: owned value for compiled query struct
             types,
             q_expr,
             geo,
             timerel,
-            time_at: params.time_at.clone(),
-            end_time_at: params.end_time_at.clone(),
+            time_at: params.time_at.clone(),         // clone: owned value for compiled query struct
+            end_time_at: params.end_time_at.clone(), // clone: owned value for compiled query struct
             timeproperty: params.parse_timeproperty(),
             attr_filter,
             dataset_id_filter,
@@ -565,7 +583,7 @@ impl TemporalService {
             user_specified_last_n: params.last_n.is_some(),
             format,
             aggr_methods: params.parse_aggr_methods()?,
-            aggr_period_duration: params.aggr_period_duration.clone(),
+            aggr_period_duration: params.aggr_period_duration.clone(), // clone: owned value for compiled query struct
             limit: params.effective_limit(),
             offset: params.effective_offset(),
             count: params.count.unwrap_or(false),

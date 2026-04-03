@@ -28,12 +28,13 @@ impl SubscriptionVariant for EntitySubscriptionVariant {
         // Preserve @context as jsonldContext — entity subs host compound contexts
         if payload.get("jsonldContext").is_none()
             && let Some(ctx_val) = payload.get("@context").cloned()
+        // clone: need owned Value; payload is mutably borrowed later
         {
             self.ensure_context_urls_cached(&ctx_val).await;
 
             let stored = match &ctx_val {
-                Value::String(s) => Some(Value::String(s.clone())),
-                Value::Array(arr) if arr.len() == 1 && arr[0].is_string() => Some(arr[0].clone()),
+                Value::String(s) => Some(Value::String(s.clone())), // clone: need owned String for new Value; s is borrowed from ctx_val
+                Value::Array(arr) if arr.len() == 1 && arr[0].is_string() => Some(arr[0].clone()), // clone: extracting single element from array as owned Value
                 Value::Array(_) | Value::Object(_) => {
                     let hosted_payload = serde_json::json!({ "@context": ctx_val });
                     match self.context_repo.create_implicitly(hosted_payload, base_url).await {
@@ -50,7 +51,7 @@ impl SubscriptionVariant for EntitySubscriptionVariant {
                         }
                     }
                 }
-                _ => None,
+                _other => None,
             };
 
             if let Some(stored) = stored
@@ -101,7 +102,7 @@ impl EntitySubscriptionVariant {
         let urls: Vec<&str> = match ctx_val {
             Value::String(s) => vec![s.as_str()],
             Value::Array(arr) => arr.iter().filter_map(|v| v.as_str()).collect(),
-            _ => vec![],
+            _other => vec![],
         };
 
         for url in urls {
@@ -126,16 +127,18 @@ impl EntitySubscriptionVariant {
 // Public type alias — callers continue to use `SubscriptionService`
 // ---------------------------------------------------------------------------
 
+/// Entity subscription service combining shared CRUD logic with entity-specific behaviour.
 pub type SubscriptionService = SubscriptionServiceCore<SubscriptionRepository, EntitySubscriptionVariant>;
 
 impl SubscriptionService {
-    pub fn new(pool: &PgPool, engine: JsonLdEngine, sub_change_tx: Option<broadcast::Sender<SubscriptionChange>>) -> Self {
+    /// Create a new entity subscription service backed by the given database pool.
+    pub fn new(pool: &PgPool, engine: JsonLdEngine, sub_change_tx: Option<broadcast::Sender<SubscriptionChange>>) -> SubscriptionService {
         let repo = SubscriptionRepository::new(pool);
         let context_repo = JsonLdContextRepository::new(pool);
         debug!("Subscription service created!");
-        Self {
+        SubscriptionService {
             repo,
-            engine: engine.clone(),
+            engine: engine.clone(), // clone: engine is shared between service and variant
             variant: EntitySubscriptionVariant { engine, context_repo },
             change_tx: sub_change_tx,
         }

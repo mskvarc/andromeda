@@ -124,15 +124,15 @@ pub async fn query(
     };
 
     let result = service.query(&params, &context).await.map_err(|e| e.with_instance(uri.clone()))?;
-    if !result.warnings.is_empty() {
-        tracing::debug!(count = result.warnings.len(), "Temporal batch query completed with warnings");
+    for warning in &result.warnings {
+        tracing::debug!(entity_id = %warning.entity_id, message = %warning.message, "Temporal batch query warning");
     }
     let crate::service::temporal::TemporalQueryResult {
         entities,
         total_count,
         any_truncated,
         content_range,
-        ..
+        warnings: _,
     } = result;
 
     let mut response = NgsiLdCollectionResponse::ok(entities);

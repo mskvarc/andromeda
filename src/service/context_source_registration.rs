@@ -40,11 +40,11 @@ fn extract_create_params(payload: &Value) -> Result<CreateCsrParams<'_>, Androme
         mode: payload.get("mode").and_then(|v| v.as_str()).unwrap_or("inclusive"),
         operations: payload
             .get("operations")
-            .map(|v| serde_json::from_value(v.clone()).map_err(|e| AndromedaError::bad_request_data(format!("Invalid 'operations' value: {}", e))))
+            .map(|v| serde_json::from_value(v.clone()).map_err(|e| AndromedaError::bad_request_data(format!("Invalid 'operations' value: {}", e)))) // clone: serde_json::from_value consumes the Value
             .transpose()?,
         scope: payload
             .get("scope")
-            .map(|v| serde_json::from_value(v.clone()).map_err(|e| AndromedaError::bad_request_data(format!("Invalid 'scope' value: {}", e))))
+            .map(|v| serde_json::from_value(v.clone()).map_err(|e| AndromedaError::bad_request_data(format!("Invalid 'scope' value: {}", e)))) // clone: serde_json::from_value consumes the Value
             .transpose()?,
         refresh_rate: payload.get("refreshRate").and_then(|v| v.as_str()),
         management: payload.get("management"),
@@ -58,7 +58,7 @@ fn extract_update_fragment(fragment: &Value) -> Result<CsrUpdateFragment, Androm
     Ok(CsrUpdateFragment {
         registration_name: extract_optional_string(fragment, "registrationName"),
         description: extract_optional_string(fragment, "description"),
-        information: fragment.get("information").cloned(),
+        information: fragment.get("information").cloned(), // clone: need owned Value for update fragment struct
         tenant: extract_optional_string(fragment, "tenant"),
         observation_interval: extract_optional_value(fragment, "observationInterval"),
         management_interval: extract_optional_value(fragment, "managementInterval"),
@@ -96,7 +96,7 @@ fn extract_update_fragment(fragment: &Value) -> Result<CsrUpdateFragment, Androm
                 if v.is_null() {
                     Ok(None)
                 } else {
-                    serde_json::from_value(v.clone())
+                    serde_json::from_value(v.clone()) // clone: serde_json::from_value consumes the Value
                         .map(Some)
                         .map_err(|e| AndromedaError::bad_request_data(format!("Invalid 'operations' value: {}", e)))
                 }
@@ -108,7 +108,7 @@ fn extract_update_fragment(fragment: &Value) -> Result<CsrUpdateFragment, Androm
                 if v.is_null() {
                     Ok(None)
                 } else {
-                    serde_json::from_value(v.clone())
+                    serde_json::from_value(v.clone()) // clone: serde_json::from_value consumes the Value
                         .map(Some)
                         .map_err(|e| AndromedaError::bad_request_data(format!("Invalid 'scope' value: {}", e)))
                 }
@@ -129,7 +129,7 @@ fn extract_optional_string(payload: &Value, key: &str) -> Option<Option<String>>
 
 /// For nullable Value fields: absent -> None, null -> Some(None), value -> Some(Some(v))
 fn extract_optional_value(payload: &Value, key: &str) -> Option<Option<Value>> {
-    payload.get(key).map(|v| if v.is_null() { None } else { Some(v.clone()) })
+    payload.get(key).map(|v| if v.is_null() { None } else { Some(v.clone()) }) // clone: need owned Value; v is borrowed from payload
 }
 
 fn extract_additional_properties(payload: &Value) -> Option<Value> {
@@ -137,12 +137,13 @@ fn extract_additional_properties(payload: &Value) -> Option<Value> {
     let mut additional = serde_json::Map::new();
     for (key, value) in obj {
         if !CreateCsrParams::STANDARD_KEYS.contains(&key.as_str()) {
-            additional.insert(key.clone(), value.clone());
+            additional.insert(key.clone(), value.clone()); // clone: owned key-value pairs for new additional properties Map
         }
     }
     if additional.is_empty() { None } else { Some(Value::Object(additional)) }
 }
 
+/// Service for managing NGSI-LD context source registrations.
 pub struct ContextSourceRegistrationService {
     repo: ContextSourceRegistrationRepository,
     engine: JsonLdEngine,
@@ -150,10 +151,11 @@ pub struct ContextSourceRegistrationService {
 }
 
 impl ContextSourceRegistrationService {
-    pub fn new(pool: &PgPool, engine: JsonLdEngine, csr_change_tx: Option<broadcast::Sender<CsrChangeEvent>>) -> Self {
+    /// Create a new context source registration service backed by the given database pool.
+    pub fn new(pool: &PgPool, engine: JsonLdEngine, csr_change_tx: Option<broadcast::Sender<CsrChangeEvent>>) -> ContextSourceRegistrationService {
         let repo = ContextSourceRegistrationRepository::new(pool);
         debug!("Context source registration service created!");
-        Self { repo, engine, csr_change_tx }
+        ContextSourceRegistrationService { repo, engine, csr_change_tx }
     }
 
     fn emit_csr_change(&self, event: CsrChangeEvent) {
@@ -166,6 +168,7 @@ impl ContextSourceRegistrationService {
         crate::jsonld::term_resolver::is_valid_uri(id)
     }
 
+    /// Create a new context source registration from the given JSON payload.
     pub async fn create(&self, payload: Value, context: &ContextSpec) -> Result<String, AndromedaError> {
         // Validate type
         if let Some(type_val) = payload.get("type")
@@ -239,7 +242,7 @@ impl ContextSourceRegistrationService {
         self.repo.create(&id, &params).await?;
 
         self.emit_csr_change(CsrChangeEvent {
-            csr_id: id.clone(),
+            csr_id: id.clone(), // clone: id is also returned via Ok(id) below
             trigger_reason: CsrTriggerReason::NewlyMatching,
             csr_snapshot: None,
         });
@@ -247,6 +250,7 @@ impl ContextSourceRegistrationService {
         Ok(id)
     }
 
+    /// Retrieve a single context source registration by its identifier.
     pub async fn get(&self, id: &str, context: &ContextSpec) -> Result<Value, AndromedaError> {
         let csr = self.repo.get(id).await?.ok_or_else(|| AndromedaError::not_found(id))?;
 
@@ -260,6 +264,7 @@ impl ContextSourceRegistrationService {
         Ok(value)
     }
 
+    /// Query context source registrations matching the given parameters.
     pub async fn query(&self, params: &CsrQueryParameters, context: &ContextSpec) -> Result<(Vec<Value>, i64), AndromedaError> {
         params.validate().map_err(|e| AndromedaError::bad_request_data(e.to_string()))?;
 
@@ -314,10 +319,10 @@ impl ContextSourceRegistrationService {
                 chrono::DateTime::parse_from_rfc3339(end).map_err(|_| AndromedaError::bad_request_data("Invalid endTimeAt: must be ISO 8601 date-time"))?;
             }
             Some(CompiledCsrTemporalFilter {
-                timerel: timerel.clone(),
-                time_at: time_at.clone(),
-                end_time_at: params.end_time_at.clone(),
-                timeproperty: params.timeproperty.clone(),
+                timerel: timerel.clone(),                  // clone: owned value for compiled query struct
+                time_at: time_at.clone(),                  // clone: owned value for compiled query struct
+                end_time_at: params.end_time_at.clone(),   // clone: owned value for compiled query struct
+                timeproperty: params.timeproperty.clone(), // clone: owned value for compiled query struct
             })
         } else {
             None
@@ -337,7 +342,7 @@ impl ContextSourceRegistrationService {
         Ok(CompiledCsrQuery {
             ids: params.parse_ids(),
             entity_type: expanded_type,
-            id_pattern: params.id_pattern.clone(),
+            id_pattern: params.id_pattern.clone(), // clone: owned value for compiled query struct
             attrs: expanded_attrs,
             q_expr,
             geo,
@@ -347,6 +352,7 @@ impl ContextSourceRegistrationService {
         })
     }
 
+    /// Update an existing context source registration with the given fragment.
     pub async fn update(&self, id: &str, payload: Value, context: &ContextSpec) -> Result<(), AndromedaError> {
         if !Self::is_valid_uri(id) {
             return Err(AndromedaError::bad_request_data(
@@ -414,6 +420,7 @@ impl ContextSourceRegistrationService {
         Ok(())
     }
 
+    /// Delete a context source registration by its identifier.
     pub async fn delete(&self, id: &str) -> Result<(), AndromedaError> {
         if !Self::is_valid_uri(id) {
             return Err(AndromedaError::bad_request_data(

@@ -1,8 +1,15 @@
-use super::{EntityService, extract_attribute_keys, extract_entity_types, normalize_entity_attributes, unwrap_expanded_ref, validate_attribute_envelopes};
 use crate::{
     domain::notification::{ChangeEvent, TriggerReason},
     error::AndromedaError,
     jsonld::ContextSpec,
+    service::entity::{
+        EntityService,
+        extract_attribute_keys,
+        extract_entity_types,
+        normalize_entity_attributes,
+        unwrap_expanded_ref,
+        validate_attribute_envelopes,
+    },
 };
 use serde_json::Value;
 use urn::Urn;
@@ -30,7 +37,7 @@ impl EntityService {
 
         // Load existing entity, apply append, save back
         let mut existing = self.repo.get(&id).await?.ok_or_else(|| AndromedaError::not_found(&id))?;
-        let not_appended = crate::domain::expanded::append_entity_attrs(&mut existing, &attrs, no_overwrite).map_err(AndromedaError::bad_request_data)?;
+        let not_appended = crate::domain::expanded::append_entity_attrs(&mut existing, attrs, no_overwrite).map_err(AndromedaError::bad_request_data)?;
         self.repo.save(&id, &existing).await?;
 
         if let Err(e) = self.temporal_recorder.record_entity_attributes(&id, &expanded).await {
@@ -59,9 +66,9 @@ impl EntityService {
 
         // Single fetch: used for deletion detection, showChanges, and update
         let mut existing = self.repo.get(&id).await?.ok_or_else(|| AndromedaError::not_found(&id))?;
-        let previous_attributes = self.change_tx.as_ref().map(|_| existing.clone());
+        let previous_attributes = self.change_tx.as_ref().map(|_| existing.clone()); // clone: snapshot before mutation for showChanges diff
         let attrs_before: std::collections::HashSet<String> = extract_attribute_keys(&existing).into_iter().collect();
-        let not_updated = crate::domain::expanded::update_entity_attrs(&mut existing, &attrs).map_err(AndromedaError::bad_request_data)?;
+        let not_updated = crate::domain::expanded::update_entity_attrs(&mut existing, attrs).map_err(AndromedaError::bad_request_data)?;
         self.repo.save(&id, &existing).await?;
 
         if let Err(e) = self.temporal_recorder.record_entity_attributes(&id, &expanded).await {
@@ -72,7 +79,7 @@ impl EntityService {
 
         // Detect which attributes were deleted
         let attrs_after: std::collections::HashSet<String> = extract_attribute_keys(&existing).into_iter().collect();
-        let deleted_attrs: Vec<String> = attrs_before.difference(&attrs_after).cloned().collect();
+        let deleted_attrs: Vec<String> = attrs_before.difference(&attrs_after).cloned().collect(); // clone: owned strings from set difference
 
         // Record temporal tombstones for deleted attributes
         for deleted_attr in &deleted_attrs {
@@ -81,25 +88,25 @@ impl EntityService {
 
         for deleted_attr in &deleted_attrs {
             self.emit_attr_change(
-                id.clone(),
-                entity_types.clone(),
+                id.clone(),           // clone: value needed by subsequent loop iterations and final emit
+                entity_types.clone(), // clone: value needed by subsequent loop iterations and final emit
                 TriggerReason::AttributeDeleted,
-                vec![deleted_attr.clone()],
-                previous_attributes.clone(),
+                vec![deleted_attr.clone()],  // clone: owned copy from borrowed iterator
+                previous_attributes.clone(), // clone: value needed by subsequent loop iterations and final emit
             );
         }
 
         let all_changed = extract_attribute_keys(&expanded);
-        let created_attrs: Vec<String> = all_changed.iter().filter(|a| !attrs_before.contains(a.as_str())).cloned().collect();
-        let updated_attrs: Vec<String> = all_changed.iter().filter(|a| attrs_before.contains(a.as_str())).cloned().collect();
+        let created_attrs: Vec<String> = all_changed.iter().filter(|a| !attrs_before.contains(a.as_str())).cloned().collect(); // clone: owned strings from filtered references
+        let updated_attrs: Vec<String> = all_changed.iter().filter(|a| attrs_before.contains(a.as_str())).cloned().collect(); // clone: owned strings from filtered references
 
         if !created_attrs.is_empty() {
             self.emit_attr_change(
-                id.clone(),
-                entity_types.clone(),
+                id.clone(),           // clone: value also needed by subsequent AttributeUpdated emit
+                entity_types.clone(), // clone: value also needed by subsequent AttributeUpdated emit
                 TriggerReason::AttributeCreated,
                 created_attrs,
-                previous_attributes.clone(),
+                previous_attributes.clone(), // clone: value also needed by subsequent AttributeUpdated emit
             );
         }
 
@@ -129,10 +136,10 @@ impl EntityService {
 
         // Single fetch: used for showChanges, deletion detection, and partial update
         let mut existing = self.repo.get(&id).await?.ok_or_else(|| AndromedaError::not_found(&id))?;
-        let previous_attributes = self.change_tx.as_ref().map(|_| existing.clone());
+        let previous_attributes = self.change_tx.as_ref().map(|_| existing.clone()); // clone: snapshot before mutation for showChanges diff
         let attrs_before: std::collections::HashSet<String> = extract_attribute_keys(&existing).into_iter().collect();
 
-        crate::domain::expanded::partial_update_attr(&mut existing, &attr_iri, dataset_id, &attr_value).map_err(|msg| {
+        crate::domain::expanded::partial_update_attr(&mut existing, &attr_iri, dataset_id, attr_value).map_err(|msg| {
             if msg.contains("type mismatch") {
                 AndromedaError::bad_request_data(msg)
             } else {
@@ -178,7 +185,7 @@ impl EntityService {
 
         // Single fetch: used for showChanges and deletion
         let mut existing = self.repo.get(&id).await?.ok_or_else(|| AndromedaError::not_found(&id))?;
-        let previous_attributes = self.change_tx.as_ref().map(|_| existing.clone());
+        let previous_attributes = self.change_tx.as_ref().map(|_| existing.clone()); // clone: snapshot before mutation for showChanges diff
 
         // Record temporal tombstones before the actual deletion
         if delete_all {
@@ -224,8 +231,8 @@ impl EntityService {
 
         // Single fetch: used for showChanges and replacement
         let mut existing = self.repo.get(&id).await?.ok_or_else(|| AndromedaError::not_found(&id))?;
-        let previous_attributes = self.change_tx.as_ref().map(|_| existing.clone());
-        crate::domain::expanded::replace_attr(&mut existing, &attr_iri, &attr_value).map_err(AndromedaError::not_found)?;
+        let previous_attributes = self.change_tx.as_ref().map(|_| existing.clone()); // clone: snapshot before mutation for showChanges diff
+        crate::domain::expanded::replace_attr(&mut existing, &attr_iri, attr_value).map_err(AndromedaError::not_found)?;
         self.repo.save(&id, &existing).await?;
 
         if let Err(e) = self.temporal_recorder.record_entity_attributes(&id, &expanded).await {

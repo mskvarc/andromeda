@@ -19,6 +19,7 @@ use serde_json::Value;
 // Variant trait
 // ---------------------------------------------------------------------------
 
+/// Trait for variant-specific subscription behaviour (entity vs. CSR subscriptions).
 #[async_trait]
 pub trait SubscriptionVariant: Send + Sync {
     /// The change-event type emitted over the broadcast channel.
@@ -50,10 +51,15 @@ pub trait SubscriptionVariant: Send + Sync {
 // Core service
 // ---------------------------------------------------------------------------
 
+/// Generic subscription service providing CRUD operations shared by entity and CSR subscriptions.
 pub struct SubscriptionServiceCore<R, V: SubscriptionVariant> {
+    /// Subscription persistence backend.
     pub(crate) repo: R,
+    /// JSON-LD processing engine for term expansion and compaction.
     pub(crate) engine: JsonLdEngine,
+    /// Variant-specific behaviour delegate.
     pub(crate) variant: V,
+    /// Optional broadcast channel for subscription change events.
     pub(crate) change_tx: Option<tokio::sync::broadcast::Sender<V::Change>>,
 }
 
@@ -68,6 +74,7 @@ where
         }
     }
 
+    /// Create a new subscription from the given JSON payload.
     pub async fn create(&self, mut payload: Value, context: &ContextSpec, base_url: Option<&str>) -> Result<String, AndromedaError> {
         subscription_core::validate_create_payload(&payload)?;
 
@@ -83,7 +90,7 @@ where
                 .and_then(|n| n.get("endpoint"))
                 .and_then(|e| e.get("notifierInfo"))
                 .and_then(|v| v.as_array());
-            let notifier_info_slice: Option<Vec<Value>> = notifier_info.cloned();
+            let notifier_info_slice: Option<Vec<Value>> = notifier_info.cloned(); // clone: serde_json::Value has no Copy; need owned Vec for slice conversion
             if let Err(e) = parse_endpoint_transport(endpoint_uri, notifier_info_slice.as_deref()) {
                 return Err(AndromedaError::bad_request_data(e.to_string()));
             }
@@ -110,16 +117,16 @@ where
 
         let watched_attributes_vec: Option<Vec<String>> = payload
             .get("watchedAttributes")
-            .map(|v| serde_json::from_value(v.clone()).map_err(|e| AndromedaError::bad_request_data(format!("Invalid 'watchedAttributes' value: {}", e))))
+            .map(|v| serde_json::from_value(v.clone()).map_err(|e| AndromedaError::bad_request_data(format!("Invalid 'watchedAttributes' value: {}", e)))) // clone: serde_json::from_value consumes the Value
             .transpose()?;
         let notification_trigger_vec: Option<Vec<String>> = payload
             .get("notificationTrigger")
-            .map(|v| serde_json::from_value(v.clone()).map_err(|e| AndromedaError::bad_request_data(format!("Invalid 'notificationTrigger' value: {}", e))))
+            .map(|v| serde_json::from_value(v.clone()).map_err(|e| AndromedaError::bad_request_data(format!("Invalid 'notificationTrigger' value: {}", e)))) // clone: serde_json::from_value consumes the Value
             .transpose()?;
         let dataset_id_vec: Option<Vec<String>> = if self.variant.use_dataset_id() {
             payload
                 .get("datasetId")
-                .map(|v| serde_json::from_value(v.clone()).map_err(|e| AndromedaError::bad_request_data(format!("Invalid 'datasetId' value: {}", e))))
+                .map(|v| serde_json::from_value(v.clone()).map_err(|e| AndromedaError::bad_request_data(format!("Invalid 'datasetId' value: {}", e)))) // clone: serde_json::from_value consumes the Value
                 .transpose()?
         } else {
             None
@@ -136,10 +143,11 @@ where
         );
 
         self.repo.create_subscription(&id, &fields, status).await?;
-        self.emit_change(self.variant.make_upserted(id.clone()));
+        self.emit_change(self.variant.make_upserted(id.clone())); // clone: id is also returned via Ok(id) below
         Ok(id)
     }
 
+    /// Retrieve a subscription by its identifier.
     pub async fn get(&self, id: &str) -> Result<Subscription, AndromedaError> {
         if id.is_empty() || !crate::jsonld::term_resolver::is_valid_uri(id) {
             return Err(AndromedaError::bad_request_data("Subscription id must be a valid URI"));
@@ -147,11 +155,13 @@ where
         self.repo.get(id).await?.ok_or_else(|| AndromedaError::not_found(id))
     }
 
+    /// Retrieve a subscription and serialize it for an HTTP response.
     pub async fn get_for_response(&self, id: &str, context: &ContextSpec) -> Result<Value, AndromedaError> {
         let subscription = self.get(id).await?;
         self.variant.serialize_for_response(&subscription, context).await
     }
 
+    /// List subscriptions with pagination and serialize them for an HTTP response.
     pub async fn list_for_response(&self, limit: Option<i64>, offset: Option<i64>, context: &ContextSpec) -> Result<(Vec<Value>, i64), AndromedaError> {
         let (subscriptions, total) = self.repo.list(limit, offset).await?;
         let mut compacted = Vec::with_capacity(subscriptions.len());
@@ -161,6 +171,7 @@ where
         Ok((compacted, total))
     }
 
+    /// Update an existing subscription with the given fragment payload.
     pub async fn update(&self, id: &str, mut payload: Value, context: &ContextSpec, base_url: Option<&str>) -> Result<(), AndromedaError> {
         if id.is_empty() || !crate::jsonld::term_resolver::is_valid_uri(id) {
             return Err(AndromedaError::bad_request_data("Subscription id must be present and a valid URI"));
@@ -178,7 +189,7 @@ where
                 .and_then(|n| n.get("endpoint"))
                 .and_then(|e| e.get("notifierInfo"))
                 .and_then(|v| v.as_array());
-            let notifier_info_slice: Option<Vec<Value>> = notifier_info.cloned();
+            let notifier_info_slice: Option<Vec<Value>> = notifier_info.cloned(); // clone: serde_json::Value has no Copy; need owned Vec for slice conversion
             if let Err(e) = parse_endpoint_transport(endpoint_uri, notifier_info_slice.as_deref()) {
                 return Err(AndromedaError::bad_request_data(e.to_string()));
             }
@@ -218,6 +229,7 @@ where
         Ok(())
     }
 
+    /// Delete a subscription by its identifier.
     pub async fn delete(&self, id: &str) -> Result<(), AndromedaError> {
         if id.is_empty() || !crate::jsonld::term_resolver::is_valid_uri(id) {
             return Err(AndromedaError::bad_request_data("Subscription id must be present and a valid URI"));

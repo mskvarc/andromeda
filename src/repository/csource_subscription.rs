@@ -1,17 +1,19 @@
-use super::subscription_store::SubscriptionFields;
-use crate::{domain::subscription::SubscriptionStatus, error::AndromedaError};
+use crate::{domain::subscription::SubscriptionStatus, error::AndromedaError, repository::subscription_store::SubscriptionFields};
 use sqlx::postgres::PgPool;
 use tracing::info;
 
+/// Repository for persisting and querying context source subscriptions.
 pub struct CsourceSubscriptionRepository {
     pool: PgPool,
 }
 
 impl CsourceSubscriptionRepository {
-    pub fn new(pool: &PgPool) -> Self {
-        Self { pool: pool.clone() }
+    /// Create a new context source subscription repository backed by the given connection pool.
+    pub fn new(pool: &PgPool) -> CsourceSubscriptionRepository {
+        CsourceSubscriptionRepository { pool: pool.clone() } // clone: Arc ref-count bump (PgPool is Arc-based)
     }
 
+    /// Insert a new context source subscription into the database.
     pub async fn create(&self, id: &str, fields: &SubscriptionFields<'_>, status: SubscriptionStatus) -> Result<(), AndromedaError> {
         sqlx::query(
             r#"
@@ -33,20 +35,20 @@ impl CsourceSubscriptionRepository {
         .bind(id)
         .bind(fields.subscription_name)
         .bind(fields.description)
-        .bind(fields.entities.cloned())
+        .bind(fields.entities.cloned()) // clone: sqlx bind requires owned Value
         .bind(fields.watched_attributes)
         .bind(fields.notification_trigger)
         .bind(fields.time_interval)
         .bind(fields.q)
-        .bind(fields.geo_q.cloned())
+        .bind(fields.geo_q.cloned()) // clone: sqlx bind requires owned Value
         .bind(fields.scope_q)
         .bind(fields.csf)
         .bind(fields.is_active)
-        .bind(fields.notification.cloned())
+        .bind(fields.notification.cloned()) // clone: sqlx bind requires owned Value
         .bind(fields.expires_at)
         .bind(fields.throttling)
         .bind(status.to_string())
-        .bind(fields.temporal_q.cloned())
+        .bind(fields.temporal_q.cloned()) // clone: sqlx bind requires owned Value
         .bind(fields.lang)
         .bind(fields.jsonld_context)
         .execute(&self.pool)
@@ -57,6 +59,7 @@ impl CsourceSubscriptionRepository {
         Ok(())
     }
 
+    /// Update an existing context source subscription. Returns `true` if a row was modified.
     pub async fn update(&self, id: &str, fields: &SubscriptionFields<'_>, status: SubscriptionStatus) -> Result<bool, AndromedaError> {
         let result = sqlx::query(
             r#"
@@ -85,16 +88,16 @@ impl CsourceSubscriptionRepository {
         .bind(id)
         .bind(fields.subscription_name)
         .bind(fields.description)
-        .bind(fields.entities.cloned())
+        .bind(fields.entities.cloned()) // clone: sqlx bind requires owned Value
         .bind(fields.watched_attributes)
         .bind(fields.notification_trigger)
         .bind(fields.time_interval)
         .bind(fields.q)
-        .bind(fields.geo_q.cloned())
+        .bind(fields.geo_q.cloned()) // clone: sqlx bind requires owned Value
         .bind(fields.scope_q)
         .bind(fields.csf)
         .bind(fields.is_active)
-        .bind(fields.notification.cloned())
+        .bind(fields.notification.cloned()) // clone: sqlx bind requires owned Value
         .bind(fields.expires_at)
         .bind(fields.throttling)
         .bind(status.to_string())
@@ -116,5 +119,5 @@ crate::impl_subscription_store!(
               expires_at, throttling, status, temporal_q, lang, \
               jsonld_context, local_only, times_sent, last_notification, \
               last_success, last_failure, created_at, modified_at",
-    has_dataset_id: false
+    has_dataset_id: crate::repository::subscription_store::DatasetIdPresence::Absent
 );
