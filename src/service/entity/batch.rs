@@ -1,4 +1,4 @@
-use super::{EntityService, extract_attribute_keys, normalize_entity_attributes, unwrap_expanded, validate_attribute_envelopes};
+use super::{EntityService, extract_attribute_keys, normalize_entity_attributes, unwrap_expanded_ref, validate_attribute_envelopes};
 use crate::{
     domain::{
         entity::Entity,
@@ -15,9 +15,6 @@ use serde_json::Value;
 use std::collections::HashSet;
 use urn::Urn;
 
-/// Maximum number of entities processed concurrently in batch operations.
-const BATCH_CONCURRENCY: usize = 10;
-
 impl EntityService {
     pub async fn batch_create(&self, entities: &[Entity], context: &ContextSpec) -> Result<BatchOperationResult, AndromedaError> {
         let results: Vec<_> = stream::iter(entities)
@@ -28,7 +25,7 @@ impl EntityService {
                     Err(err) => Err(to_batch_error(&id, &err)),
                 }
             })
-            .buffer_unordered(BATCH_CONCURRENCY)
+            .buffer_unordered(self.batch_concurrency)
             .collect()
             .await;
 
@@ -63,7 +60,7 @@ impl EntityService {
 
         let results: Vec<_> = stream::iter(deduped)
             .map(|entity| async move { self.upsert_one(entity, context, update_mode).await })
-            .buffer_unordered(BATCH_CONCURRENCY)
+            .buffer_unordered(self.batch_concurrency)
             .collect()
             .await;
 
@@ -123,7 +120,7 @@ impl EntityService {
     pub async fn batch_update(&self, entities: &[Entity], context: &ContextSpec, no_overwrite: bool) -> Result<BatchOperationResult, AndromedaError> {
         let results: Vec<_> = stream::iter(entities)
             .map(|entity| async move { self.update_one(entity, context, no_overwrite).await })
-            .buffer_unordered(BATCH_CONCURRENCY)
+            .buffer_unordered(self.batch_concurrency)
             .collect()
             .await;
 
@@ -159,7 +156,7 @@ impl EntityService {
             .map_err(|e| to_batch_error(&id, &e))?
             .ok_or_else(|| to_batch_error(&id, &AndromedaError::not_found(&id)))?;
 
-        let attrs = unwrap_expanded(expanded.clone());
+        let attrs = unwrap_expanded_ref(&expanded);
 
         if no_overwrite {
             let mut existing = existing;
@@ -190,7 +187,7 @@ impl EntityService {
     pub async fn batch_merge(&self, entities: &[Entity], context: &ContextSpec) -> Result<BatchOperationResult, AndromedaError> {
         let results: Vec<_> = stream::iter(entities)
             .map(|entity| async move { self.merge_one(entity, context).await })
-            .buffer_unordered(BATCH_CONCURRENCY)
+            .buffer_unordered(self.batch_concurrency)
             .collect()
             .await;
 
@@ -252,7 +249,7 @@ impl EntityService {
 
         let results: Vec<_> = stream::iter(unique_ids)
             .map(|id| async move { self.delete_one(id).await })
-            .buffer_unordered(BATCH_CONCURRENCY)
+            .buffer_unordered(self.batch_concurrency)
             .collect()
             .await;
 

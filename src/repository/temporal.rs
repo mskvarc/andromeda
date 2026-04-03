@@ -221,12 +221,12 @@ impl TemporalRepository {
     }
 
     /// Execute a dynamically-built temporal query. Returns raw rows for the service to map.
-    pub async fn execute_temporal_query(&self, sql: &str, binds: &[BindValue]) -> Result<Vec<sqlx::postgres::PgRow>, AndromedaError> {
+    pub async fn execute_temporal_query(&self, sql: &str, binds: &[BindValue<'_>]) -> Result<Vec<sqlx::postgres::PgRow>, AndromedaError> {
         let mut query = sqlx::query(sql);
         for bind in binds {
             query = match bind {
-                BindValue::String(s) => query.bind(s),
-                BindValue::StringVec(v) => query.bind(v),
+                BindValue::String(s) => query.bind(s.as_ref()),
+                BindValue::StringVec(v) => query.bind(v.as_ref()),
                 BindValue::I64(i) => query.bind(i),
             };
         }

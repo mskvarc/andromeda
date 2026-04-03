@@ -13,7 +13,11 @@ use crate::{
 };
 use chrono::{DateTime, SecondsFormat, Utc};
 use serde_json::Value;
-use std::collections::HashSet;
+use std::{
+    collections::HashSet,
+    hash::{Hash, Hasher},
+};
+use tokio::sync::Mutex;
 use tracing::debug;
 
 pub struct NotificationBuildParams<'a> {
@@ -25,6 +29,12 @@ pub struct NotificationBuildParams<'a> {
     pub changed_attributes: &'a [String],
     pub occurred_at: DateTime<Utc>,
     pub entity_query: &'a EntityQueryService,
+    pub compaction_cache: Option<&'a NotificationCompactionCache>,
+}
+
+#[derive(Default)]
+pub struct NotificationCompactionCache {
+    entries: Mutex<std::collections::HashMap<u64, Value>>,
 }
 
 pub async fn build_notification_data(params: NotificationBuildParams<'_>) -> Vec<Value> {
@@ -37,6 +47,7 @@ pub async fn build_notification_data(params: NotificationBuildParams<'_>) -> Vec
         changed_attributes,
         occurred_at,
         entity_query,
+        compaction_cache,
     } = params;
 
     let mut entity = match entity_data {
@@ -94,28 +105,26 @@ pub async fn build_notification_data(params: NotificationBuildParams<'_>) -> Vec
     let context = context_for_subscription(sub);
     let include_context = sub.endpoint_accept.as_deref().is_some_and(|v| v == "application/ld+json");
 
-    let compacted = match engine
-        .compact(
-            entity.clone(),
-            &context,
-            CompactOptions {
-                strip_context: if include_context { ContextStripping::Keep } else { ContextStripping::Strip },
-            },
-        )
-        .await
+    let compacted = match compact_entity_with_cache(
+        engine,
+        &entity,
+        &context,
+        if include_context { ContextStripping::Keep } else { ContextStripping::Strip },
+        compaction_cache,
+    )
+    .await
     {
         Ok(value) => value,
         Err(e) => {
             debug!("Failed to compact notification entity with subscription context: {}", e);
-            match engine
-                .compact(
-                    entity,
-                    &ContextSpec::core_only(),
-                    CompactOptions {
-                        strip_context: if include_context { ContextStripping::Keep } else { ContextStripping::Strip },
-                    },
-                )
-                .await
+            match compact_entity_with_cache(
+                engine,
+                &entity,
+                &ContextSpec::core_only(),
+                if include_context { ContextStripping::Keep } else { ContextStripping::Strip },
+                compaction_cache,
+            )
+            .await
             {
                 Ok(value) => value,
                 Err(e) => {
@@ -244,6 +253,87 @@ pub async fn build_notification_data(params: NotificationBuildParams<'_>) -> Vec
     }
 
     result
+}
+
+async fn compact_entity_with_cache(
+    engine: &JsonLdEngine,
+    entity: &Value,
+    context: &ContextSpec,
+    strip_context: ContextStripping,
+    cache: Option<&NotificationCompactionCache>,
+) -> Result<Value, crate::jsonld::Error> {
+    let Some(cache) = cache else {
+        return engine.compact(entity.clone(), context, CompactOptions { strip_context }).await;
+    };
+
+    let key = compaction_cache_key(entity, context, strip_context);
+    {
+        let cache_guard = cache.entries.lock().await;
+        if let Some(hit) = cache_guard.get(&key) {
+            return Ok(hit.clone());
+        }
+    }
+
+    let compacted = engine.compact(entity.clone(), context, CompactOptions { strip_context }).await?;
+    let mut entries = cache.entries.lock().await;
+    let cached = entries.entry(key).or_insert(compacted);
+    Ok(cached.clone())
+}
+
+fn compaction_cache_key(entity: &Value, context: &ContextSpec, strip_context: ContextStripping) -> u64 {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    hash_json_value(entity, &mut hasher);
+    match context.to_context_value() {
+        Some(ctx_val) => {
+            hasher.write_u8(1);
+            hash_json_value(&ctx_val, &mut hasher);
+        }
+        None => hasher.write_u8(0),
+    }
+    strip_context.hash(&mut hasher);
+    hasher.finish()
+}
+
+/// Structural hash of a `serde_json::Value` without allocating a string representation.
+fn hash_json_value(value: &Value, hasher: &mut impl Hasher) {
+    match value {
+        Value::Null => hasher.write_u8(0),
+        Value::Bool(b) => {
+            hasher.write_u8(1);
+            hasher.write_u8(*b as u8);
+        }
+        Value::Number(n) => {
+            hasher.write_u8(2);
+            if let Some(i) = n.as_i64() {
+                hasher.write_i64(i);
+            } else if let Some(u) = n.as_u64() {
+                hasher.write_u64(u);
+            } else if let Some(f) = n.as_f64() {
+                hasher.write_u64(f.to_bits());
+            }
+        }
+        Value::String(s) => {
+            hasher.write_u8(3);
+            hasher.write(s.as_bytes());
+            hasher.write_u8(0xFF);
+        }
+        Value::Array(arr) => {
+            hasher.write_u8(4);
+            hasher.write_usize(arr.len());
+            for v in arr {
+                hash_json_value(v, hasher);
+            }
+        }
+        Value::Object(obj) => {
+            hasher.write_u8(5);
+            hasher.write_usize(obj.len());
+            for (k, v) in obj {
+                hasher.write(k.as_bytes());
+                hasher.write_u8(0xFF);
+                hash_json_value(v, hasher);
+            }
+        }
+    }
 }
 
 pub fn context_for_subscription(sub: &CompiledSubscription) -> ContextSpec {

@@ -6,53 +6,53 @@ use crate::{
     },
 };
 use serde_json::Value;
+use std::borrow::Cow;
 
 #[derive(Debug)]
-pub struct BuiltQuery {
+pub struct BuiltQuery<'a> {
     pub sql: String,
     pub count_sql: Option<String>,
-    pub bind_values: Vec<BindValue>,
+    pub bind_values: Vec<BindValue<'a>>,
 }
 
 #[derive(Debug, Clone)]
-pub enum BindValue {
-    String(String),
-    StringVec(Vec<String>),
-    #[allow(dead_code)]
+pub enum BindValue<'a> {
+    String(Cow<'a, str>),
+    StringVec(Cow<'a, [String]>),
     I64(i64),
 }
 
-pub fn build_query(query: &CompiledEntityQuery) -> Result<BuiltQuery, AndromedaError> {
-    let mut conditions: Vec<String> = Vec::new();
-    let mut binds: Vec<BindValue> = Vec::new();
+pub fn build_query<'a>(query: &'a CompiledEntityQuery) -> Result<BuiltQuery<'a>, AndromedaError> {
+    let mut conditions: Vec<String> = Vec::with_capacity(8);
+    let mut binds: Vec<BindValue<'a>> = Vec::with_capacity(8);
     let mut param_idx = 1usize;
 
     if let Some(ids) = &query.ids {
         conditions.push(format!("id = ANY(${})", param_idx));
-        binds.push(BindValue::StringVec(ids.clone()));
+        binds.push(BindValue::StringVec(Cow::Borrowed(ids.as_slice())));
         param_idx += 1;
     }
 
     if let Some(pattern) = &query.id_pattern {
         conditions.push(format!("id ~ ${}", param_idx));
-        binds.push(BindValue::String(pattern.clone()));
+        binds.push(BindValue::String(Cow::Borrowed(pattern.as_str())));
         param_idx += 1;
     }
 
     if let Some(types) = &query.types {
         if types.len() == 1 {
             conditions.push(format!("${} = ANY(types)", param_idx));
-            binds.push(BindValue::String(types[0].clone()));
+            binds.push(BindValue::String(Cow::Borrowed(&types[0])));
             param_idx += 1;
         } else if query.type_match_all {
             for t in types {
                 conditions.push(format!("${} = ANY(types)", param_idx));
-                binds.push(BindValue::String(t.clone()));
+                binds.push(BindValue::String(Cow::Borrowed(t.as_str())));
                 param_idx += 1;
             }
         } else {
             conditions.push(format!("types && ${}", param_idx));
-            binds.push(BindValue::StringVec(types.clone()));
+            binds.push(BindValue::StringVec(Cow::Borrowed(types.as_slice())));
             param_idx += 1;
         }
     }
@@ -63,7 +63,7 @@ pub fn build_query(query: &CompiledEntityQuery) -> Result<BuiltQuery, AndromedaE
             .iter()
             .map(|attr| {
                 let cond = format!("payload->0 ? ${}", param_idx);
-                binds.push(BindValue::String(attr.clone()));
+                binds.push(BindValue::String(Cow::Borrowed(attr.as_str())));
                 param_idx += 1;
                 cond
             })
@@ -142,7 +142,7 @@ pub fn build_query(query: &CompiledEntityQuery) -> Result<BuiltQuery, AndromedaE
     })
 }
 
-fn expr_to_sql(expr: &Expr, binds: &mut Vec<BindValue>, param_idx: &mut usize, payload_column: &str) -> Result<String, AndromedaError> {
+fn expr_to_sql(expr: &Expr, binds: &mut Vec<BindValue<'_>>, param_idx: &mut usize, payload_column: &str) -> Result<String, AndromedaError> {
     match expr {
         Expr::And(terms) => {
             let parts: Result<Vec<String>, _> = terms.iter().map(|t| expr_to_sql(t, binds, param_idx, payload_column)).collect();
@@ -156,12 +156,12 @@ fn expr_to_sql(expr: &Expr, binds: &mut Vec<BindValue>, param_idx: &mut usize, p
     }
 }
 
-fn pred_to_sql(pred: &Predicate, binds: &mut Vec<BindValue>, param_idx: &mut usize, payload_column: &str) -> Result<String, AndromedaError> {
+fn pred_to_sql(pred: &Predicate, binds: &mut Vec<BindValue<'_>>, param_idx: &mut usize, payload_column: &str) -> Result<String, AndromedaError> {
     match pred {
         Predicate::Exists(path) => {
             let attr_iri = &path.attr;
             let sql = format!("{}->0 ? ${}", payload_column, *param_idx);
-            binds.push(BindValue::String(attr_iri.clone()));
+            binds.push(BindValue::String(Cow::Owned(attr_iri.clone())));
             *param_idx += 1;
             Ok(sql)
         }
@@ -172,7 +172,7 @@ fn pred_to_sql(pred: &Predicate, binds: &mut Vec<BindValue>, param_idx: &mut usi
                 "jsonb_path_exists({}, '{}') AND (jsonb_path_query_first({}, '{}')#>>'{{}}')::text ~ ${}",
                 payload_column, jsonpath, payload_column, jsonpath, *param_idx
             );
-            binds.push(BindValue::String(pattern.clone()));
+            binds.push(BindValue::String(Cow::Owned(pattern.clone())));
             *param_idx += 1;
             Ok(sql)
         }
@@ -182,7 +182,7 @@ fn pred_to_sql(pred: &Predicate, binds: &mut Vec<BindValue>, param_idx: &mut usi
                 "NOT (jsonb_path_exists({}, '{}') AND (jsonb_path_query_first({}, '{}')#>>'{{}}')::text ~ ${})",
                 payload_column, jsonpath, payload_column, jsonpath, *param_idx
             );
-            binds.push(BindValue::String(pattern.clone()));
+            binds.push(BindValue::String(Cow::Owned(pattern.clone())));
             *param_idx += 1;
             Ok(sql)
         }
@@ -193,7 +193,7 @@ fn compare_to_sql(
     path: &crate::query::q::AttrPath,
     op: CmpOp,
     rhs: &CompareValue,
-    binds: &mut Vec<BindValue>,
+    binds: &mut Vec<BindValue<'_>>,
     param_idx: &mut usize,
     payload_column: &str,
 ) -> Result<String, AndromedaError> {
@@ -294,12 +294,12 @@ fn cmp_op_sql(op: CmpOp) -> &'static str {
     }
 }
 
-fn scalar_to_sql_bind(scalar: &Scalar) -> (&'static str, BindValue) {
+fn scalar_to_sql_bind(scalar: &Scalar) -> (&'static str, BindValue<'static>) {
     match scalar {
-        Scalar::Number(_n) => ("::numeric", BindValue::String(_n.to_string())),
-        Scalar::Bool(b) => ("::boolean", BindValue::String(b.to_string())),
-        Scalar::Str(s) => ("", BindValue::String(s.clone())),
-        Scalar::DateTime(s) | Scalar::Date(s) | Scalar::Time(s) => ("", BindValue::String(s.clone())),
+        Scalar::Number(_n) => ("::numeric", BindValue::String(Cow::Owned(_n.to_string()))),
+        Scalar::Bool(b) => ("::boolean", BindValue::String(Cow::Owned(b.to_string()))),
+        Scalar::Str(s) => ("", BindValue::String(Cow::Owned(s.clone()))),
+        Scalar::DateTime(s) | Scalar::Date(s) | Scalar::Time(s) => ("", BindValue::String(Cow::Owned(s.clone()))),
     }
 }
 
@@ -343,7 +343,7 @@ fn value_extraction_jsonpath_with_predicate(attr_iri: &str, sub_attrs: &[String]
 
 fn geo_to_sql(
     geo: &crate::query::compiled::GeoQuery,
-    binds: &mut Vec<BindValue>,
+    binds: &mut Vec<BindValue<'_>>,
     param_idx: &mut usize,
     payload_column: &str,
 ) -> Result<String, AndromedaError> {
@@ -367,7 +367,7 @@ fn geo_to_sql(
     let geojson = build_geojson(&geo.geometry, &geo.coordinates)?;
 
     let ref_geom = format!("ST_SetSRID(ST_GeomFromGeoJSON(${}), 4326)", *param_idx);
-    binds.push(BindValue::String(geojson));
+    binds.push(BindValue::String(Cow::Owned(geojson)));
     *param_idx += 1;
 
     let sql = match &geo.georel {
@@ -431,7 +431,7 @@ fn build_geo_extract(geoproperty_iri: &str, payload_column: &str) -> String {
     }
 }
 
-fn scope_q_to_sql(scope_q: &str, binds: &mut Vec<BindValue>, param_idx: &mut usize) -> Result<String, AndromedaError> {
+fn scope_q_to_sql(scope_q: &str, binds: &mut Vec<BindValue<'_>>, param_idx: &mut usize) -> Result<String, AndromedaError> {
     // NGSI-LD: comma is OR, semicolon is AND (higher precedence)
     // e.g. "/A;/B,/C" → (/A AND /B) OR /C
     let or_terms: Vec<&str> = scope_q.split(',').map(str::trim).collect();
@@ -457,25 +457,25 @@ fn scope_q_to_sql(scope_q: &str, binds: &mut Vec<BindValue>, param_idx: &mut usi
     }
 }
 
-fn single_scope_to_sql(scope: &str, binds: &mut Vec<BindValue>, param_idx: &mut usize) -> Result<String, AndromedaError> {
+fn single_scope_to_sql(scope: &str, binds: &mut Vec<BindValue<'_>>, param_idx: &mut usize) -> Result<String, AndromedaError> {
     if let Some(prefix) = scope.strip_suffix("/#") {
         // Hash wildcard: match one or more levels below the prefix
         let regex = format!("^{}/.+$", regex::escape(prefix));
         let sql = format!("EXISTS(SELECT 1 FROM unnest(scopes) s WHERE s ~ ${})", *param_idx);
-        binds.push(BindValue::String(regex));
+        binds.push(BindValue::String(Cow::Owned(regex)));
         *param_idx += 1;
         Ok(sql)
     } else if scope.contains("/+") {
         // Plus wildcard: match any single component at that position
         let regex = format!("^{}$", scope.replace("/+", "/[^/]+"));
         let sql = format!("EXISTS(SELECT 1 FROM unnest(scopes) s WHERE s ~ ${})", *param_idx);
-        binds.push(BindValue::String(regex));
+        binds.push(BindValue::String(Cow::Owned(regex)));
         *param_idx += 1;
         Ok(sql)
     } else {
         // Exact match
         let sql = format!("${} = ANY(scopes)", *param_idx);
-        binds.push(BindValue::String(scope.to_string()));
+        binds.push(BindValue::String(Cow::Owned(scope.to_string())));
         *param_idx += 1;
         Ok(sql)
     }
@@ -483,18 +483,18 @@ fn single_scope_to_sql(scope: &str, binds: &mut Vec<BindValue>, param_idx: &mut 
 
 /// Build entity filter conditions for use in a JOIN (e.g. temporal Stage 1).
 /// Uses `table_prefix` for column references (e.g. "e" → "e.id", "e.types", "e.payload").
-pub struct EntityFilterConditionsInput<'a> {
-    pub ids: Option<&'a [String]>,
-    pub id_pattern: Option<&'a str>,
-    pub types: Option<&'a [String]>,
-    pub q_expr: Option<&'a Expr>,
-    pub geo: Option<&'a GeoQuery>,
-    pub table_prefix: &'a str,
-    pub binds: &'a mut Vec<BindValue>,
-    pub param_idx: &'a mut usize,
+pub struct EntityFilterConditionsInput<'q, 'b> {
+    pub ids: Option<&'q [String]>,
+    pub id_pattern: Option<&'q str>,
+    pub types: Option<&'q [String]>,
+    pub q_expr: Option<&'q Expr>,
+    pub geo: Option<&'q GeoQuery>,
+    pub table_prefix: &'q str,
+    pub binds: &'b mut Vec<BindValue<'q>>,
+    pub param_idx: &'b mut usize,
 }
 
-pub fn build_entity_filter_conditions(input: EntityFilterConditionsInput<'_>) -> Result<Vec<String>, AndromedaError> {
+pub fn build_entity_filter_conditions(input: EntityFilterConditionsInput<'_, '_>) -> Result<Vec<String>, AndromedaError> {
     let EntityFilterConditionsInput {
         ids,
         id_pattern,
@@ -506,7 +506,7 @@ pub fn build_entity_filter_conditions(input: EntityFilterConditionsInput<'_>) ->
         param_idx,
     } = input;
 
-    let mut conditions = Vec::new();
+    let mut conditions = Vec::with_capacity(5);
     let id_col = format!("{}.id", table_prefix);
     let types_col = format!("{}.types", table_prefix);
     let payload_col = format!("{}.payload", table_prefix);
@@ -515,13 +515,13 @@ pub fn build_entity_filter_conditions(input: EntityFilterConditionsInput<'_>) ->
         && !ids.is_empty()
     {
         conditions.push(format!("{} = ANY(${})", id_col, *param_idx));
-        binds.push(BindValue::StringVec(ids.to_vec()));
+        binds.push(BindValue::StringVec(Cow::Borrowed(ids)));
         *param_idx += 1;
     }
 
     if let Some(pattern) = id_pattern {
         conditions.push(format!("{} ~ ${}", id_col, *param_idx));
-        binds.push(BindValue::String(pattern.to_string()));
+        binds.push(BindValue::String(Cow::Borrowed(pattern)));
         *param_idx += 1;
     }
 
@@ -530,10 +530,10 @@ pub fn build_entity_filter_conditions(input: EntityFilterConditionsInput<'_>) ->
     {
         if types.len() == 1 {
             conditions.push(format!("${} = ANY({})", *param_idx, types_col));
-            binds.push(BindValue::String(types[0].clone()));
+            binds.push(BindValue::String(Cow::Borrowed(&types[0])));
         } else {
             conditions.push(format!("{} && ${}", types_col, *param_idx));
-            binds.push(BindValue::StringVec(types.to_vec()));
+            binds.push(BindValue::StringVec(Cow::Borrowed(types)));
         }
         *param_idx += 1;
     }
@@ -551,37 +551,37 @@ pub fn build_entity_filter_conditions(input: EntityFilterConditionsInput<'_>) ->
     Ok(conditions)
 }
 
-pub fn build_ids_query(query: &CompiledEntityQuery) -> Result<BuiltQuery, AndromedaError> {
-    let mut conditions: Vec<String> = Vec::new();
-    let mut binds: Vec<BindValue> = Vec::new();
+pub fn build_ids_query<'a>(query: &'a CompiledEntityQuery) -> Result<BuiltQuery<'a>, AndromedaError> {
+    let mut conditions: Vec<String> = Vec::with_capacity(8);
+    let mut binds: Vec<BindValue<'a>> = Vec::with_capacity(8);
     let mut param_idx = 1usize;
 
     if let Some(ids) = &query.ids {
         conditions.push(format!("id = ANY(${})", param_idx));
-        binds.push(BindValue::StringVec(ids.clone()));
+        binds.push(BindValue::StringVec(Cow::Borrowed(ids.as_slice())));
         param_idx += 1;
     }
 
     if let Some(pattern) = &query.id_pattern {
         conditions.push(format!("id ~ ${}", param_idx));
-        binds.push(BindValue::String(pattern.clone()));
+        binds.push(BindValue::String(Cow::Borrowed(pattern.as_str())));
         param_idx += 1;
     }
 
     if let Some(types) = &query.types {
         if types.len() == 1 {
             conditions.push(format!("${} = ANY(types)", param_idx));
-            binds.push(BindValue::String(types[0].clone()));
+            binds.push(BindValue::String(Cow::Borrowed(&types[0])));
             param_idx += 1;
         } else if query.type_match_all {
             for t in types {
                 conditions.push(format!("${} = ANY(types)", param_idx));
-                binds.push(BindValue::String(t.clone()));
+                binds.push(BindValue::String(Cow::Borrowed(t.as_str())));
                 param_idx += 1;
             }
         } else {
             conditions.push(format!("types && ${}", param_idx));
-            binds.push(BindValue::StringVec(types.clone()));
+            binds.push(BindValue::StringVec(Cow::Borrowed(types.as_slice())));
             param_idx += 1;
         }
     }
@@ -592,7 +592,7 @@ pub fn build_ids_query(query: &CompiledEntityQuery) -> Result<BuiltQuery, Androm
             .iter()
             .map(|attr| {
                 let cond = format!("payload->0 ? ${}", param_idx);
-                binds.push(BindValue::String(attr.clone()));
+                binds.push(BindValue::String(Cow::Borrowed(attr.as_str())));
                 param_idx += 1;
                 cond
             })

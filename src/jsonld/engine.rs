@@ -27,7 +27,17 @@ use json_ld::{
 use json_syntax::Parse;
 use moka::future::Cache;
 use rdf_types::vocabulary::{BlankIdIndex, IndexVocabulary, IriIndex};
-use std::{collections::HashMap, fmt, fs, hash::Hash, sync::Arc, time::Duration};
+use std::{
+    collections::HashMap,
+    fmt,
+    fs,
+    hash::Hash,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
+    time::Duration,
+};
 use tracing::info;
 
 // ---------------------------------------------------------------------------
@@ -35,7 +45,7 @@ use tracing::info;
 // ---------------------------------------------------------------------------
 
 /// Controls whether `@context` is stripped from compacted output.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ContextStripping {
     /// Remove `@context` from the compacted output.
     Strip,
@@ -117,6 +127,8 @@ pub struct JsonLdEngine {
     /// Cache for expanded type/term IRIs to avoid creating synthetic documents
     /// on every call.  Keyed by `"{type|term}:{short_name}:{context_hash}"`.
     term_cache: Cache<String, String>,
+    term_cache_hits: Arc<AtomicU64>,
+    term_cache_misses: Arc<AtomicU64>,
 }
 
 impl JsonLdEngine {
@@ -193,15 +205,25 @@ impl JsonLdEngine {
     /// Returns [`Error::Compaction`] on compaction failure, or a
     /// context-loading error if a required context could not be fetched.
     pub async fn compact(&self, document: serde_json::Value, context: &ContextSpec, options: CompactOptions) -> Result<serde_json::Value, Error> {
-        // Convert once; clone the json_syntax value (not the serde_json value)
-        // so the original is available for the rare error/retry path.
-        let syntax_value = json_syntax::Value::from_serde_json(document);
-        let remote_doc: RemoteDocument<IriIndex> = RemoteDocument::new(None, None, syntax_value.clone());
-
         let mut vocabulary: IndexVocabulary<IriIndex, BlankIdIndex> = IndexVocabulary::new();
         let context_ref = build_context_reference(context)?;
 
-        let compacted = match remote_doc.compact_with(&mut vocabulary, context_ref.clone(), &*self.loader).await {
+        // Extract doc_id before conversion — used only for error logging on the
+        // non-protected-term error path, avoiding the need to keep the full
+        // document alive just for diagnostics.
+        let doc_id_for_logging = document
+            .as_object()
+            .and_then(|o| o.get("@id").or(o.get("id")))
+            .and_then(|v| v.as_str())
+            .map(str::to_owned);
+
+        // One clone is unavoidable: compact_with consumes RemoteDocument, but
+        // the protected-term fallback path needs the original document to retry
+        // with the core context.
+        let syntax_value = json_syntax::Value::from_serde_json(document.clone());
+        let remote_doc: RemoteDocument<IriIndex> = RemoteDocument::new(None, None, syntax_value);
+
+        let compacted = match remote_doc.compact_with(&mut vocabulary, context_ref, &*self.loader).await {
             Ok(result) => result,
             Err(e) => {
                 if Error::is_protected_term_error(&e) {
@@ -214,23 +236,22 @@ impl JsonLdEngine {
                     );
                     let core_context = ContextSpec::core_only();
                     let core_context_ref = build_context_reference(&core_context)?;
-                    let mut vocabulary2: IndexVocabulary<IriIndex, BlankIdIndex> = IndexVocabulary::new();
-
-                    let remote_doc2: RemoteDocument<IriIndex> = RemoteDocument::new(None, None, syntax_value);
-
-                    remote_doc2.compact_with(&mut vocabulary2, core_context_ref, &*self.loader).await.map_err(|e| {
-                        tracing::error!("Compaction failed even with core context: {}", e);
-                        e
-                    })?
+                    let mut fallback_vocabulary: IndexVocabulary<IriIndex, BlankIdIndex> = IndexVocabulary::new();
+                    // Consume the original document here — no further clones needed.
+                    let fallback_remote_doc: RemoteDocument<IriIndex> = RemoteDocument::new(None, None, json_syntax::Value::from_serde_json(document));
+                    fallback_remote_doc
+                        .compact_with(&mut fallback_vocabulary, core_context_ref, &*self.loader)
+                        .await
+                        .map_err(|e| {
+                            tracing::error!("Compaction failed even with core context: {}", e);
+                            e
+                        })?
                 } else {
-                    let document = json_syntax::Value::into_serde_json(syntax_value);
-                    let doc_id = document.as_object().and_then(|o| o.get("@id").or(o.get("id"))).and_then(|v| v.as_str());
                     tracing::error!(
                         error = %e,
-                        document_id = doc_id.unwrap_or("<unknown>"),
+                        document_id = doc_id_for_logging.as_deref().unwrap_or("<unknown>"),
                         "Compaction failed"
                     );
-                    tracing::debug!(document = %document, "Full document that failed compaction");
                     return Err(e.into());
                 }
             }
@@ -260,8 +281,10 @@ impl JsonLdEngine {
 
         let cache_key = term_cache_key("type", type_term, context);
         if let Some(cached) = self.term_cache.get(&cache_key).await {
+            self.record_term_cache_hit();
             return Ok(cached);
         }
+        self.record_term_cache_miss();
 
         let mut doc = serde_json::json!({
             "id": "urn:ngsi-ld:_:temp",
@@ -305,8 +328,10 @@ impl JsonLdEngine {
 
         let cache_key = term_cache_key("term", term, context);
         if let Some(cached) = self.term_cache.get(&cache_key).await {
+            self.record_term_cache_hit();
             return Ok(cached);
         }
+        self.record_term_cache_miss();
 
         let mut doc = serde_json::json!({
             term: {"@id": "urn:dummy"}
@@ -328,6 +353,31 @@ impl JsonLdEngine {
 
         self.term_cache.insert(cache_key, iri.clone()).await;
         Ok(iri)
+    }
+
+    fn record_term_cache_hit(&self) {
+        let hits = self.term_cache_hits.fetch_add(1, Ordering::Relaxed) + 1;
+        if hits % 1000 == 0 {
+            self.log_term_cache_stats();
+        }
+    }
+
+    fn record_term_cache_miss(&self) {
+        let misses = self.term_cache_misses.fetch_add(1, Ordering::Relaxed) + 1;
+        if misses % 1000 == 0 {
+            self.log_term_cache_stats();
+        }
+    }
+
+    fn log_term_cache_stats(&self) {
+        let hits = self.term_cache_hits.load(Ordering::Relaxed);
+        let misses = self.term_cache_misses.load(Ordering::Relaxed);
+        let total = hits + misses;
+        if total == 0 {
+            return;
+        }
+        let hit_rate = (hits as f64 / total as f64) * 100.0;
+        tracing::debug!(hits, misses, total, hit_rate = format_args!("{hit_rate:.2}%"), "JSON-LD term cache statistics");
     }
 
     /// Resolve a context URL and return its payload as a `serde_json::Value`.
@@ -493,6 +543,8 @@ impl JsonLdEngineBuilder {
         Ok(JsonLdEngine {
             loader: Arc::new(loader),
             term_cache,
+            term_cache_hits: Arc::new(AtomicU64::new(0)),
+            term_cache_misses: Arc::new(AtomicU64::new(0)),
         })
     }
 }

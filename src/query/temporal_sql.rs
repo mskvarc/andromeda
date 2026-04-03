@@ -8,6 +8,7 @@ use crate::{
         temporal::CompiledTemporalQuery,
     },
 };
+use std::borrow::Cow;
 
 fn time_column_expr_stage1(timeproperty: TimeProp) -> &'static str {
     match timeproperty {
@@ -18,18 +19,18 @@ fn time_column_expr_stage1(timeproperty: TimeProp) -> &'static str {
 
 /// Result of Stage 1: entity IDs that match the filters.
 #[derive(Debug)]
-pub struct TemporalStage1Result {
+pub struct TemporalStage1Result<'a> {
     pub sql: String,
     pub count_sql: Option<String>,
-    pub bind_values: Vec<BindValue>,
+    pub bind_values: Vec<BindValue<'a>>,
 }
 
 /// Build Stage 1 query: find entity IDs matching entity-level filters.
-pub fn build_stage1_entity_ids(
-    compiled: &CompiledTemporalQuery,
-    binds: &mut Vec<BindValue>,
+pub fn build_stage1_entity_ids<'a>(
+    compiled: &'a CompiledTemporalQuery,
+    binds: &mut Vec<BindValue<'a>>,
     param_idx: &mut usize,
-) -> Result<TemporalStage1Result, AndromedaError> {
+) -> Result<TemporalStage1Result<'a>, AndromedaError> {
     let mut conditions = build_entity_filter_conditions(EntityFilterConditionsInput {
         ids: compiled.ids.as_deref(),
         id_pattern: compiled.id_pattern.as_deref(),
@@ -44,7 +45,7 @@ pub fn build_stage1_entity_ids(
     // Attribute filter: tea.attribute_name = ANY($N)
     if !compiled.attr_filter.is_empty() {
         conditions.push(format!("tea.attribute_name = ANY(${})", *param_idx));
-        binds.push(BindValue::StringVec(compiled.attr_filter.clone()));
+        binds.push(BindValue::StringVec(Cow::Borrowed(compiled.attr_filter.as_slice())));
         *param_idx += 1;
     }
 
@@ -57,11 +58,11 @@ pub fn build_stage1_entity_ids(
             conditions.push("tea.dataset_id IS NULL".to_string());
         } else if has_none && !non_none.is_empty() {
             conditions.push(format!("(tea.dataset_id = ANY(${}) OR tea.dataset_id IS NULL)", *param_idx));
-            binds.push(BindValue::StringVec(non_none));
+            binds.push(BindValue::StringVec(Cow::Owned(non_none)));
             *param_idx += 1;
         } else {
             conditions.push(format!("tea.dataset_id = ANY(${})", *param_idx));
-            binds.push(BindValue::StringVec(non_none));
+            binds.push(BindValue::StringVec(Cow::Owned(non_none)));
             *param_idx += 1;
         }
     }
@@ -73,21 +74,21 @@ pub fn build_stage1_entity_ids(
         match timerel {
             TimeRel::Before => {
                 tc.push(format!("{} < ${}::timestamptz", time_col, *param_idx));
-                binds.push(BindValue::String(time_at.clone()));
+                binds.push(BindValue::String(Cow::Borrowed(time_at.as_str())));
                 *param_idx += 1;
             }
             TimeRel::After => {
                 tc.push(format!("{} >= ${}::timestamptz", time_col, *param_idx));
-                binds.push(BindValue::String(time_at.clone()));
+                binds.push(BindValue::String(Cow::Borrowed(time_at.as_str())));
                 *param_idx += 1;
             }
             TimeRel::Between => {
                 if let Some(end_time) = &compiled.end_time_at {
                     tc.push(format!("{} >= ${}::timestamptz", time_col, *param_idx));
-                    binds.push(BindValue::String(time_at.clone()));
+                    binds.push(BindValue::String(Cow::Borrowed(time_at.as_str())));
                     *param_idx += 1;
                     tc.push(format!("{} < ${}::timestamptz", time_col, *param_idx));
-                    binds.push(BindValue::String(end_time.clone()));
+                    binds.push(BindValue::String(Cow::Borrowed(end_time.as_str())));
                     *param_idx += 1;
                 }
             }
@@ -132,9 +133,9 @@ pub fn build_stage1_entity_ids(
 
 /// Result of Stage 2: history query for a single entity.
 #[derive(Debug)]
-pub struct TemporalStage2Result {
+pub struct TemporalStage2Result<'a> {
     pub sql: String,
-    pub bind_values: Vec<BindValue>,
+    pub bind_values: Vec<BindValue<'a>>,
 }
 
 /// Time column expression based on timeproperty.
@@ -146,12 +147,12 @@ fn time_column_expr(timeproperty: TimeProp) -> &'static str {
 }
 
 /// Build Stage 2 query: temporal history for a single entity.
-pub fn build_temporal_history_query(
+pub fn build_temporal_history_query<'a>(
     entity_id_param: usize,
-    compiled: &CompiledTemporalQuery,
-    binds: &mut Vec<BindValue>,
+    compiled: &'a CompiledTemporalQuery,
+    binds: &mut Vec<BindValue<'a>>,
     param_idx: &mut usize,
-) -> Result<TemporalStage2Result, AndromedaError> {
+) -> Result<TemporalStage2Result<'a>, AndromedaError> {
     let time_col = time_column_expr(compiled.timeproperty);
 
     let mut conditions = vec![format!("tea.entity_id = ${}", entity_id_param)];
@@ -166,12 +167,12 @@ pub fn build_temporal_history_query(
         match timerel {
             TimeRel::Before => {
                 conditions.push(format!("{} < ${}::timestamptz", time_col, *param_idx));
-                binds.push(BindValue::String(time_at.clone()));
+                binds.push(BindValue::String(Cow::Borrowed(time_at.as_str())));
                 *param_idx += 1;
             }
             TimeRel::After => {
                 conditions.push(format!("{} >= ${}::timestamptz", time_col, *param_idx));
-                binds.push(BindValue::String(time_at.clone()));
+                binds.push(BindValue::String(Cow::Borrowed(time_at.as_str())));
                 *param_idx += 1;
             }
             TimeRel::Between => {
@@ -180,10 +181,10 @@ pub fn build_temporal_history_query(
                     .as_ref()
                     .ok_or_else(|| AndromedaError::bad_request_data("endTimeAt required for between"))?;
                 conditions.push(format!("{} >= ${}::timestamptz", time_col, *param_idx));
-                binds.push(BindValue::String(time_at.clone()));
+                binds.push(BindValue::String(Cow::Borrowed(time_at.as_str())));
                 *param_idx += 1;
                 conditions.push(format!("{} < ${}::timestamptz", time_col, *param_idx));
-                binds.push(BindValue::String(end_time.clone()));
+                binds.push(BindValue::String(Cow::Borrowed(end_time.as_str())));
                 *param_idx += 1;
             }
         }
@@ -192,7 +193,7 @@ pub fn build_temporal_history_query(
     // Attribute filter
     if !compiled.attr_filter.is_empty() {
         conditions.push(format!("tea.attribute_name = ANY(${})", *param_idx));
-        binds.push(BindValue::StringVec(compiled.attr_filter.clone()));
+        binds.push(BindValue::StringVec(Cow::Borrowed(compiled.attr_filter.as_slice())));
         *param_idx += 1;
     }
 
@@ -205,11 +206,11 @@ pub fn build_temporal_history_query(
             conditions.push("tea.dataset_id IS NULL".to_string());
         } else if has_none && !non_none.is_empty() {
             conditions.push(format!("(tea.dataset_id = ANY(${}) OR tea.dataset_id IS NULL)", *param_idx));
-            binds.push(BindValue::StringVec(non_none));
+            binds.push(BindValue::StringVec(Cow::Owned(non_none)));
             *param_idx += 1;
         } else {
             conditions.push(format!("tea.dataset_id = ANY(${})", *param_idx));
-            binds.push(BindValue::StringVec(non_none));
+            binds.push(BindValue::StringVec(Cow::Owned(non_none)));
             *param_idx += 1;
         }
     }
@@ -222,13 +223,13 @@ pub fn build_temporal_history_query(
     }
 }
 
-fn build_history_query(
+fn build_history_query<'a>(
     _entity_id_param: usize,
-    compiled: &CompiledTemporalQuery,
+    compiled: &'a CompiledTemporalQuery,
     where_clause: &str,
-    binds: &mut Vec<BindValue>,
+    binds: &mut Vec<BindValue<'a>>,
     param_idx: &mut usize,
-) -> Result<TemporalStage2Result, AndromedaError> {
+) -> Result<TemporalStage2Result<'a>, AndromedaError> {
     let time_col = time_column_expr(compiled.timeproperty);
     // Unprefixed version for use in CTE outer query where table aliases aren't available
     let time_col_unprefixed = match compiled.timeproperty {
@@ -280,13 +281,13 @@ ORDER BY tea.attribute_name, {time_col} ASC"#,
     })
 }
 
-fn build_aggregation_query(
+fn build_aggregation_query<'a>(
     _entity_id_param: usize,
-    compiled: &CompiledTemporalQuery,
+    compiled: &'a CompiledTemporalQuery,
     where_clause: &str,
-    binds: &mut Vec<BindValue>,
+    binds: &mut Vec<BindValue<'a>>,
     param_idx: &mut usize,
-) -> Result<TemporalStage2Result, AndromedaError> {
+) -> Result<TemporalStage2Result<'a>, AndromedaError> {
     let period = compiled
         .aggr_period_duration
         .as_deref()
@@ -294,14 +295,14 @@ fn build_aggregation_query(
 
     let (group_expr, order_expr) = if let Some(p) = period {
         let period_param = *param_idx;
-        binds.push(BindValue::String(p.to_string()));
+        binds.push(BindValue::String(Cow::Owned(p.to_string())));
         *param_idx += 1;
 
         // Use time_at as bucket origin when provided; otherwise use the earliest
         // data point so buckets align to the actual data range (not epoch).
         let bucket_expr = if let Some(time_at) = &compiled.time_at {
             let origin_param = *param_idx;
-            binds.push(BindValue::String(time_at.clone()));
+            binds.push(BindValue::String(Cow::Borrowed(time_at.as_str())));
             *param_idx += 1;
             format!("time_bucket(${}::interval, ah.time, ${}::timestamptz)", period_param, origin_param)
         } else {
@@ -412,7 +413,7 @@ mod tests {
     #[test]
     fn build_temporal_history_no_filters() {
         let compiled = minimal_compiled();
-        let mut binds = vec![BindValue::String("urn:ngsi-ld:Vehicle:A1".to_string())];
+        let mut binds = vec![BindValue::String(Cow::Borrowed("urn:ngsi-ld:Vehicle:A1"))];
         let mut param_idx = 2;
         let result = build_temporal_history_query(1, &compiled, &mut binds, &mut param_idx).unwrap();
         assert!(result.sql.contains("tea.entity_id = $1"));
@@ -425,7 +426,7 @@ mod tests {
         let mut compiled = minimal_compiled();
         compiled.timerel = Some(TimeRel::Before);
         compiled.time_at = Some("2024-01-15T10:00:00Z".to_string());
-        let mut binds = vec![BindValue::String("urn:ngsi-ld:Vehicle:A1".to_string())];
+        let mut binds = vec![BindValue::String(Cow::Borrowed("urn:ngsi-ld:Vehicle:A1"))];
         let mut param_idx = 2;
         let result = build_temporal_history_query(1, &compiled, &mut binds, &mut param_idx).unwrap();
         assert!(result.sql.contains("COALESCE(ah.observed_at, ah.time) < $2::timestamptz"));
@@ -436,7 +437,7 @@ mod tests {
         let mut compiled = minimal_compiled();
         compiled.timerel = Some(TimeRel::After);
         compiled.time_at = Some("2024-01-15T10:00:00Z".to_string());
-        let mut binds = vec![BindValue::String("urn:ngsi-ld:Vehicle:A1".to_string())];
+        let mut binds = vec![BindValue::String(Cow::Borrowed("urn:ngsi-ld:Vehicle:A1"))];
         let mut param_idx = 2;
         let result = build_temporal_history_query(1, &compiled, &mut binds, &mut param_idx).unwrap();
         assert!(result.sql.contains("COALESCE(ah.observed_at, ah.time) >= $2::timestamptz"));
@@ -448,7 +449,7 @@ mod tests {
         compiled.timerel = Some(TimeRel::Between);
         compiled.time_at = Some("2024-01-15T10:00:00Z".to_string());
         compiled.end_time_at = Some("2024-01-15T12:00:00Z".to_string());
-        let mut binds = vec![BindValue::String("urn:ngsi-ld:Vehicle:A1".to_string())];
+        let mut binds = vec![BindValue::String(Cow::Borrowed("urn:ngsi-ld:Vehicle:A1"))];
         let mut param_idx = 2;
         let result = build_temporal_history_query(1, &compiled, &mut binds, &mut param_idx).unwrap();
         assert!(result.sql.contains(">="));
@@ -459,7 +460,7 @@ mod tests {
     fn build_temporal_history_with_attrs() {
         let mut compiled = minimal_compiled();
         compiled.attr_filter = vec!["https://uri.etsi.org/ngsi-ld/default-context/speed".to_string()];
-        let mut binds = vec![BindValue::String("urn:ngsi-ld:Vehicle:A1".to_string())];
+        let mut binds = vec![BindValue::String(Cow::Borrowed("urn:ngsi-ld:Vehicle:A1"))];
         let mut param_idx = 2;
         let result = build_temporal_history_query(1, &compiled, &mut binds, &mut param_idx).unwrap();
         assert!(result.sql.contains("tea.attribute_name = ANY($2)"));
@@ -469,7 +470,7 @@ mod tests {
     fn build_temporal_history_with_last_n() {
         let mut compiled = minimal_compiled();
         compiled.last_n = Some(5);
-        let mut binds = vec![BindValue::String("urn:ngsi-ld:Vehicle:A1".to_string())];
+        let mut binds = vec![BindValue::String(Cow::Borrowed("urn:ngsi-ld:Vehicle:A1"))];
         let mut param_idx = 2;
         let result = build_temporal_history_query(1, &compiled, &mut binds, &mut param_idx).unwrap();
         assert!(result.sql.contains("WITH ranked"));
@@ -483,7 +484,7 @@ mod tests {
         compiled.format = TemporalFormat::AggregatedValues;
         compiled.aggr_methods = vec![AggrMethod::Avg, AggrMethod::Min, AggrMethod::Max];
         compiled.aggr_period_duration = Some("PT1H".to_string());
-        let mut binds = vec![BindValue::String("urn:ngsi-ld:Vehicle:A1".to_string())];
+        let mut binds = vec![BindValue::String(Cow::Borrowed("urn:ngsi-ld:Vehicle:A1"))];
         let mut param_idx = 2;
         let result = build_temporal_history_query(1, &compiled, &mut binds, &mut param_idx).unwrap();
         assert!(result.sql.contains("time_bucket"));
@@ -496,7 +497,7 @@ mod tests {
         let mut compiled = minimal_compiled();
         compiled.format = TemporalFormat::AggregatedValues;
         compiled.aggr_methods = vec![AggrMethod::TotalCount];
-        let mut binds = vec![BindValue::String("urn:ngsi-ld:Vehicle:A1".to_string())];
+        let mut binds = vec![BindValue::String(Cow::Borrowed("urn:ngsi-ld:Vehicle:A1"))];
         let mut param_idx = 2;
         let result = build_temporal_history_query(1, &compiled, &mut binds, &mut param_idx).unwrap();
         assert!(result.sql.contains("agg_total_count"));

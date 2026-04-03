@@ -16,6 +16,7 @@ use crate::{
     },
 };
 use chrono::{SecondsFormat, Utc};
+use futures::{StreamExt, stream};
 use regex::Regex;
 use serde_json::Value;
 use std::{
@@ -27,7 +28,9 @@ use tracing::{debug, error, info};
 use uuid::Uuid;
 
 use matching::{find_matching_subscriptions, matches_entity_filters};
-use payload::{NotificationBuildParams, build_notification_data};
+use payload::{NotificationBuildParams, NotificationCompactionCache, build_notification_data};
+
+const NOTIFICATION_CONCURRENCY: usize = 20;
 
 #[async_trait::async_trait]
 impl super::Worker for NotificationWorker {
@@ -193,8 +196,8 @@ impl NotificationWorker {
                 _ => {
                     if let Some(ref snapshot) = event.entity_snapshot {
                         let mut bare = payload::strip_to_structural_keys(
-                            &match snapshot {
-                                Value::Array(arr) => arr.first().cloned().unwrap_or(snapshot.clone()),
+                            &match snapshot.as_ref() {
+                                Value::Array(arr) => arr.first().cloned().unwrap_or_else(|| snapshot.as_ref().clone()),
                                 other => other.clone(),
                             },
                             false,
@@ -214,14 +217,14 @@ impl NotificationWorker {
                     }
                 }
             }
-        } else if let Some(snapshot) = event.entity_snapshot.clone() {
+        } else if let Some(snapshot) = event.entity_snapshot.as_deref() {
             let deleted_at_value = serde_json::json!([{
                 "@type": "https://uri.etsi.org/ngsi-ld/DateTime",
                 "@value": event.occurred_at.to_rfc3339_opts(SecondsFormat::Millis, true)
             }]);
             let mut data = match snapshot {
-                Value::Array(ref arr) => arr.first().cloned().unwrap_or(snapshot.clone()),
-                other => other,
+                Value::Array(arr) => arr.first().cloned().unwrap_or_else(|| snapshot.clone()),
+                other => other.clone(),
             };
             if let Some(obj) = data.as_object_mut() {
                 obj.insert("https://uri.etsi.org/ngsi-ld/deletedAt".to_string(), deleted_at_value);
@@ -255,15 +258,16 @@ impl NotificationWorker {
         let need_sys_attrs = matching.iter().any(|sub| sub.notification_sys_attrs);
 
         let sys_attrs = if need_sys_attrs {
+            let fallback_sys_attrs = event.sys_attrs_snapshot.clone();
             if matches!(event.trigger_reason, TriggerReason::EntityDeleted) {
-                event.sys_attrs_snapshot
+                fallback_sys_attrs
             } else {
                 match self.entity_repo.get_sys_attrs(&event.entity_id).await {
                     Ok(Some(attrs)) => Some(attrs),
-                    Ok(None) => event.sys_attrs_snapshot,
+                    Ok(None) => fallback_sys_attrs,
                     Err(e) => {
                         debug!("Failed to fetch sysAttrs for {}: {}", event.entity_id, e);
-                        event.sys_attrs_snapshot
+                        fallback_sys_attrs
                     }
                 }
             }
@@ -271,92 +275,102 @@ impl NotificationWorker {
             None
         };
 
-        for compiled_sub in matching {
-            let mut entity_data = entity_data.clone();
-            let sub_id = compiled_sub.id.clone();
+        let event = Arc::new(event);
+        let compaction_cache = NotificationCompactionCache::default();
+        let _results: Vec<()> = stream::iter(matching)
+            .map(|compiled_sub| {
+                let event = Arc::clone(&event);
+                let mut entity_data = entity_data.clone();
+                let sys_attrs = sys_attrs.clone();
+                let compaction_cache = &compaction_cache;
+                async move {
+                    let sub_id = compiled_sub.id.clone();
 
-            match self.sub_repo.claim_notification_slot(&sub_id, compiled_sub.throttling_secs).await {
-                Ok(true) => {}
-                Ok(false) => continue,
-                Err(e) => {
-                    debug!("Failed to claim notification slot for {}: {}", sub_id, e);
-                    continue;
+                    match self.sub_repo.claim_notification_slot(&sub_id, compiled_sub.throttling_secs).await {
+                        Ok(true) => {}
+                        Ok(false) => return,
+                        Err(e) => {
+                            debug!("Failed to claim notification slot for {}: {}", sub_id, e);
+                            return;
+                        }
+                    }
+
+                    if compiled_sub.notification_sys_attrs
+                        && let (Some(ref mut data), Some(sa)) = (entity_data.as_mut(), &sys_attrs)
+                    {
+                        inject_sys_attrs(data, sa.created_at, sa.modified_at, sa.expires_at);
+                    }
+
+                    let data = match entity_data {
+                        Some(ref d) => {
+                            build_notification_data(NotificationBuildParams {
+                                engine: &self.engine,
+                                entity_data: d,
+                                previous_attributes: event.previous_attributes.as_deref(),
+                                sub: &compiled_sub,
+                                trigger_reason: &event.trigger_reason,
+                                changed_attributes: &event.changed_attributes,
+                                occurred_at: event.occurred_at,
+                                entity_query: &self.entity_query,
+                                compaction_cache: Some(compaction_cache),
+                            })
+                            .await
+                        }
+                        None => return,
+                    };
+                    if data.is_empty() {
+                        debug!("Subscription {} produced empty notification data for entity {}", sub_id, event.entity_id);
+                        return;
+                    }
+
+                    let notification = Notification {
+                        id: format!("urn:ngsi-ld:Notification:{}", Uuid::new_v4()),
+                        type_: "Notification".to_string(),
+                        subscription_id: sub_id.clone(),
+                        notified_at: Utc::now(),
+                        data,
+                    };
+
+                    let notification_payload = match serde_json::to_value(&notification) {
+                        Ok(v) => v,
+                        Err(e) => {
+                            error!("Failed to serialize notification for {}: {}", sub_id, e);
+                            return;
+                        }
+                    };
+
+                    let request = match build_delivery_request(
+                        &notification_payload,
+                        &compiled_sub.endpoint_uri,
+                        compiled_sub.endpoint_accept.as_deref(),
+                        compiled_sub.endpoint_receiver_info.as_deref(),
+                        compiled_sub.jsonld_context.as_deref(),
+                        self.tenant.response_header_value(),
+                        &sub_id,
+                    ) {
+                        Ok(r) => r,
+                        Err(e) => {
+                            debug!("Failed to build delivery request for {}: {}", sub_id, e);
+                            return;
+                        }
+                    };
+                    let success = matches!(
+                        self.transport.deliver(&compiled_sub.endpoint_transport, &request).await,
+                        DeliveryResult::Delivered
+                    );
+
+                    if success {
+                        if let Err(e) = self.sub_repo.mark_success(&sub_id).await {
+                            debug!("Failed to mark notification success for {}: {}", sub_id, e);
+                        }
+                    } else if let Err(e) = self.sub_repo.mark_failure(&sub_id).await {
+                        debug!("Failed to mark notification failure for {}: {}", sub_id, e);
+                    }
                 }
-            }
-
-            if compiled_sub.notification_sys_attrs
-                && let (Some(ref mut data), Some(sa)) = (entity_data.as_mut(), &sys_attrs)
-            {
-                inject_sys_attrs(data, sa.created_at, sa.modified_at, sa.expires_at);
-            }
-
-            let data = match entity_data {
-                Some(ref d) => {
-                    build_notification_data(NotificationBuildParams {
-                        engine: &self.engine,
-                        entity_data: d,
-                        previous_attributes: event.previous_attributes.as_ref(),
-                        sub: &compiled_sub,
-                        trigger_reason: &event.trigger_reason,
-                        changed_attributes: &event.changed_attributes,
-                        occurred_at: event.occurred_at,
-                        entity_query: &self.entity_query,
-                    })
-                    .await
-                }
-                None => continue,
-            };
-            if data.is_empty() {
-                debug!("Subscription {} produced empty notification data for entity {}", sub_id, event.entity_id);
-                continue;
-            }
-
-            let notification = Notification {
-                id: format!("urn:ngsi-ld:Notification:{}", Uuid::new_v4()),
-                type_: "Notification".to_string(),
-                subscription_id: sub_id.clone(),
-                notified_at: Utc::now(),
-                data,
-            };
-
-            let notification_payload = match serde_json::to_value(&notification) {
-                Ok(v) => v,
-                Err(e) => {
-                    error!("Failed to serialize notification for {}: {}", sub_id, e);
-                    continue;
-                }
-            };
-
-            let request = match build_delivery_request(
-                &notification_payload,
-                &compiled_sub.endpoint_uri,
-                compiled_sub.endpoint_accept.as_deref(),
-                compiled_sub.endpoint_receiver_info.as_deref(),
-                compiled_sub.jsonld_context.as_deref(),
-                self.tenant.response_header_value(),
-                &sub_id,
-            ) {
-                Ok(r) => r,
-                Err(e) => {
-                    debug!("Failed to build delivery request for {}: {}", sub_id, e);
-                    continue;
-                }
-            };
-            let success = matches!(
-                self.transport.deliver(&compiled_sub.endpoint_transport, &request).await,
-                DeliveryResult::Delivered
-            );
-
-            if success {
-                if let Err(e) = self.sub_repo.mark_success(&sub_id).await {
-                    debug!("Failed to mark notification success for {}: {}", sub_id, e);
-                }
-            } else {
-                if let Err(e) = self.sub_repo.mark_failure(&sub_id).await {
-                    debug!("Failed to mark notification failure for {}: {}", sub_id, e);
-                }
-            }
-        }
+            })
+            .buffer_unordered(NOTIFICATION_CONCURRENCY)
+            .collect()
+            .await;
     }
 }
 

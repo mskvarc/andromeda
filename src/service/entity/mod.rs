@@ -29,10 +29,11 @@ pub struct EntityService {
     temporal_recorder: TemporalRecorder,
     engine: JsonLdEngine,
     change_tx: Option<broadcast::Sender<ChangeEvent>>,
+    batch_concurrency: usize,
 }
 
 impl EntityService {
-    pub fn new(pool: &PgPool, engine: JsonLdEngine, change_tx: Option<broadcast::Sender<ChangeEvent>>) -> EntityService {
+    pub fn new(pool: &PgPool, engine: JsonLdEngine, change_tx: Option<broadcast::Sender<ChangeEvent>>, batch_concurrency: usize) -> EntityService {
         let repo = EntityRepository::new(pool);
         let temporal_repo = Arc::new(TemporalRepository::new(pool));
         let temporal_recorder = TemporalRecorder::new(temporal_repo);
@@ -44,6 +45,7 @@ impl EntityService {
             temporal_recorder,
             engine,
             change_tx,
+            batch_concurrency: batch_concurrency.max(1),
         }
     }
 
@@ -100,7 +102,7 @@ impl EntityService {
 
         let mut existing = self.repo.get(&id).await?.ok_or_else(|| AndromedaError::not_found(&id))?;
         let attrs_before: HashSet<String> = extract_attribute_keys(&existing).into_iter().collect();
-        let previous_attributes = Some(existing.clone());
+        let previous_attributes = self.change_tx.as_ref().map(|_| existing.clone());
 
         let mut patch_json = serde_json::to_value(patch).map_err(|err| AndromedaError::bad_request_data(format!("Invalid patch payload: {}", err)))?;
         normalize_entity_attributes(&mut patch_json);
@@ -255,9 +257,9 @@ fn extract_attribute_keys(expanded: &Value) -> Vec<String> {
     obj.map(|o| o.keys().filter(|k| !k.starts_with('@')).cloned().collect()).unwrap_or_default()
 }
 
-fn unwrap_expanded(value: Value) -> Value {
+fn unwrap_expanded_ref(value: &Value) -> &Value {
     match value {
-        Value::Array(ref arr) if !arr.is_empty() => arr[0].clone(),
+        Value::Array(arr) if !arr.is_empty() => &arr[0],
         other => other,
     }
 }

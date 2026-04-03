@@ -7,7 +7,7 @@ use chrono::{DateTime, Utc};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::HashSet;
+use std::{collections::HashSet, sync::Arc};
 use strum::{Display, EnumString};
 
 /// System attribute timestamps captured before entity deletion.
@@ -59,9 +59,9 @@ pub struct ChangeEvent {
     pub changed_attributes: Vec<String>,
     pub occurred_at: DateTime<Utc>,
     /// For EntityDeleted events, a snapshot of the entity before deletion (expanded form).
-    pub entity_snapshot: Option<Value>,
+    pub entity_snapshot: Option<Arc<Value>>,
     /// Entity state before the mutation (expanded form), for showChanges support.
-    pub previous_attributes: Option<Value>,
+    pub previous_attributes: Option<Arc<Value>>,
     /// For EntityDeleted events, a snapshot of (createdAt, modifiedAt, expiresAt) captured before deletion.
     pub sys_attrs_snapshot: Option<SysAttrsSnapshot>,
 }
@@ -86,17 +86,17 @@ impl ChangeEvent {
     }
 
     pub fn with_snapshot(mut self, snapshot: Value) -> ChangeEvent {
-        self.entity_snapshot = Some(snapshot);
+        self.entity_snapshot = Some(Arc::new(snapshot));
         self
     }
 
     pub fn with_previous(mut self, previous: Value) -> ChangeEvent {
-        self.previous_attributes = Some(previous);
+        self.previous_attributes = Some(Arc::new(previous));
         self
     }
 
     pub fn with_optional_previous(mut self, previous: Option<Value>) -> ChangeEvent {
-        self.previous_attributes = previous;
+        self.previous_attributes = previous.map(Arc::new);
         self
     }
 

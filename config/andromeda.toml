@@ -24,3 +24,7 @@ tenant_db_prefix = "andromeda_tenant"
 runtime_idle_ttl_seconds = 900
 runtime_max_cached = 64
 janitor_interval_seconds = 30
+
+[performance]
+# If omitted, defaults to min(database.max_connections, 25)
+# batch_concurrency = 5

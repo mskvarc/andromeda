@@ -228,8 +228,8 @@ impl ContextSourceRegistrationRepository {
             let mut count_query = sqlx::query_as::<_, (i64,)>(count_sql);
             for bind in &built.bind_values {
                 count_query = match bind {
-                    BindValue::String(s) => count_query.bind(s.clone()),
-                    BindValue::StringVec(v) => count_query.bind(v.clone()),
+                    BindValue::String(s) => count_query.bind(s.as_ref()),
+                    BindValue::StringVec(v) => count_query.bind(v.as_ref()),
                     BindValue::I64(i) => count_query.bind(*i),
                 };
             }
@@ -243,8 +243,8 @@ impl ContextSourceRegistrationRepository {
         let mut main_query = sqlx::query(&built.sql);
         for bind in &built.bind_values {
             main_query = match bind {
-                BindValue::String(s) => main_query.bind(s.clone()),
-                BindValue::StringVec(v) => main_query.bind(v.clone()),
+                BindValue::String(s) => main_query.bind(s.as_ref()),
+                BindValue::StringVec(v) => main_query.bind(v.as_ref()),
                 BindValue::I64(i) => main_query.bind(*i),
             };
         }

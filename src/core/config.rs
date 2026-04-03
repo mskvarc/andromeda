@@ -87,6 +87,10 @@ pub struct Configuration {
     #[config(nested)]
     #[config(layer_attr(clap(flatten)))]
     pub info: InfoConfig,
+
+    #[config(nested)]
+    #[config(layer_attr(clap(flatten)))]
+    pub performance: PerformanceConfig,
 }
 
 #[derive(Config, Debug, Clone)]
@@ -133,6 +137,15 @@ pub struct MultitenancyConfig {
     #[config(default = 30)]
     #[config(layer_attr(arg(long = "multitenancy-janitor-interval-seconds")))]
     pub janitor_interval_seconds: u64,
+}
+
+#[derive(Config, Debug, Clone)]
+#[config(layer_attr(derive(Args)))]
+pub struct PerformanceConfig {
+    /// Maximum concurrent entities processed in batch operations.
+    /// If omitted, the runtime uses `min(database.max_connections, 25)`.
+    #[config(layer_attr(arg(long = "batch-concurrency")))]
+    pub batch_concurrency: Option<usize>,
 }
 
 impl Configuration {
@@ -190,6 +203,12 @@ impl Default for MultitenancyConfig {
     }
 }
 
+impl Default for PerformanceConfig {
+    fn default() -> Self {
+        Self { batch_concurrency: None }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -218,6 +237,7 @@ mod tests {
             info: InfoConfig {
                 source_identity: "urn:ngsi-ld:ContextSourceIdentity:andromeda".to_string(),
             },
+            performance: PerformanceConfig::default(),
         }
     }
 

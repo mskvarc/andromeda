@@ -78,7 +78,7 @@ pub fn build_entity_temporal(
     rows: &[sqlx::postgres::PgRow],
     compiled: &CompiledTemporalQuery,
 ) -> Result<BuildEntityTemporalResult, AndromedaError> {
-    let mut attrs: TemporalAttrMap = IndexMap::new();
+    let mut attrs: TemporalAttrMap = IndexMap::with_capacity(rows.len().min(64));
     let mut truncated = false;
     let mut min_time: Option<DateTime<Utc>> = None;
     let mut max_time: Option<DateTime<Utc>> = None;
@@ -158,7 +158,7 @@ pub fn build_entity_temporal(
         }
     }
 
-    let mut entity = serde_json::Map::new();
+    let mut entity = serde_json::Map::with_capacity(attrs.len() + 2);
     entity.insert("@id".to_string(), json!(entity_id));
     entity.insert("@type".to_string(), json!(entity_types));
 
@@ -176,7 +176,7 @@ pub fn build_entity_temporal_aggregated_data(
     compiled: &CompiledTemporalQuery,
 ) -> Result<IndexMap<String, Value>, AndromedaError> {
     type GroupKey = (String, Option<String>);
-    let mut groups: IndexMap<GroupKey, Vec<&sqlx::postgres::PgRow>> = IndexMap::new();
+    let mut groups: IndexMap<GroupKey, Vec<&sqlx::postgres::PgRow>> = IndexMap::with_capacity(rows.len().min(64));
 
     for row in rows {
         let attr_name: String = row.try_get("attribute_name")?;
@@ -184,10 +184,10 @@ pub fn build_entity_temporal_aggregated_data(
         groups.entry((attr_name, dataset_id)).or_default().push(row);
     }
 
-    let mut attrs: IndexMap<String, Vec<Value>> = IndexMap::new();
+    let mut attrs: IndexMap<String, Vec<Value>> = IndexMap::with_capacity(groups.len());
 
     for ((attr_name, dataset_id), bucket_rows) in &groups {
-        let mut instance = serde_json::Map::new();
+        let mut instance = serde_json::Map::with_capacity(2 + compiled.aggr_methods.len());
         instance.insert("type".to_string(), json!("Property"));
 
         if let Some(ds_id) = dataset_id {
@@ -206,7 +206,7 @@ pub fn build_entity_temporal_aggregated_data(
                 AggrMethod::DistinctCount => ("distinctCount", "agg_distinct_count_num"),
             };
 
-            let mut triples: Vec<Value> = Vec::new();
+            let mut triples: Vec<Value> = Vec::with_capacity(bucket_rows.len());
             for row in bucket_rows {
                 let val: Value = if *method == AggrMethod::TotalCount || *method == AggrMethod::DistinctCount {
                     row.try_get::<i64, _>(pg_col).map(|v| json!(v)).unwrap_or(Value::Null)
@@ -232,7 +232,7 @@ pub fn build_entity_temporal_aggregated_data(
         attrs.entry(attr_name.clone()).or_default().push(Value::Object(instance));
     }
 
-    let mut result: IndexMap<String, Value> = IndexMap::new();
+    let mut result: IndexMap<String, Value> = IndexMap::with_capacity(attrs.len());
     for (attr_name, instances) in attrs {
         if instances.len() == 1 {
             result.insert(attr_name, instances.into_iter().next().unwrap());

@@ -10,6 +10,7 @@ use crate::{
     },
 };
 use chrono::Utc;
+use futures::{StreamExt, stream};
 use serde_json::Value;
 use std::{sync::Arc, time::Duration};
 use tracing::{debug, error, info};
@@ -19,6 +20,8 @@ use super::notification::{
     matching::{matches_geo_filter, matches_scope_filter},
     payload::{context_for_subscription_raw, filter_entity_attributes, normalize_compacted_entity},
 };
+
+const INTERVAL_NOTIFICATION_CONCURRENCY: usize = 20;
 
 #[async_trait::async_trait]
 impl super::Worker for IntervalWorker {
@@ -70,108 +73,111 @@ impl IntervalWorker {
                 }
             };
 
-            for sub in due_subs {
-                // Fetch entities matching the subscription's entity selectors
-                let entities = match self.fetch_matching_entities(&sub).await {
-                    Ok(e) => e,
-                    Err(e) => {
-                        error!("IntervalWorker failed to fetch entities for {}: {}", sub.id, e);
-                        if let Err(e) = self.sub_repo.mark_failure(&sub.id).await {
-                            debug!("Failed to mark failure for {}: {}", sub.id, e);
+            let this = &self;
+            let _results: Vec<()> = stream::iter(due_subs)
+                .map(|sub| async move {
+                    // Fetch entities matching the subscription's entity selectors
+                    let entities = match this.fetch_matching_entities(&sub).await {
+                        Ok(e) => e,
+                        Err(e) => {
+                            error!("IntervalWorker failed to fetch entities for {}: {}", sub.id, e);
+                            if let Err(e) = this.sub_repo.mark_failure(&sub.id).await {
+                                debug!("Failed to mark failure for {}: {}", sub.id, e);
+                            }
+                            return;
                         }
-                        continue;
+                    };
+
+                    // Apply q/geoQ/scopeQ filters
+                    let entities = apply_subscription_filters(&sub, entities);
+
+                    if entities.is_empty() {
+                        // Per spec: if no matching entities, no notification is sent
+                        return;
                     }
-                };
 
-                // Apply q/geoQ/scopeQ filters
-                let entities = apply_subscription_filters(&sub, entities);
+                    let data = match this.prepare_notification_entities(&sub, entities).await {
+                        Ok(d) => d,
+                        Err(e) => {
+                            error!("IntervalWorker failed to build notification payload for {}: {}", sub.id, e);
+                            return;
+                        }
+                    };
 
-                if entities.is_empty() {
-                    // Per spec: if no matching entities, no notification is sent
-                    continue;
-                }
-
-                let data = match self.prepare_notification_entities(&sub, entities).await {
-                    Ok(d) => d,
-                    Err(e) => {
-                        error!("IntervalWorker failed to build notification payload for {}: {}", sub.id, e);
-                        continue;
+                    if data.is_empty() {
+                        return;
                     }
-                };
 
-                if data.is_empty() {
-                    continue;
-                }
+                    // Claim slot only once we know we are actually going to send a notification.
+                    let claimed = match this.sub_repo.claim_notification_slot(&sub.id, None).await {
+                        Ok(c) => c,
+                        Err(e) => {
+                            debug!("IntervalWorker failed to claim slot for {}: {}", sub.id, e);
+                            return;
+                        }
+                    };
 
-                // Claim slot only once we know we are actually going to send a notification.
-                let claimed = match self.sub_repo.claim_notification_slot(&sub.id, None).await {
-                    Ok(c) => c,
-                    Err(e) => {
-                        debug!("IntervalWorker failed to claim slot for {}: {}", sub.id, e);
-                        continue;
+                    if !claimed {
+                        return;
                     }
-                };
 
-                if !claimed {
-                    continue;
-                }
+                    let notification = Notification {
+                        id: format!("urn:ngsi-ld:Notification:{}", Uuid::new_v4()),
+                        type_: "Notification".to_string(),
+                        subscription_id: sub.id.clone(),
+                        notified_at: Utc::now(),
+                        data,
+                    };
 
-                let notification = Notification {
-                    id: format!("urn:ngsi-ld:Notification:{}", Uuid::new_v4()),
-                    type_: "Notification".to_string(),
-                    subscription_id: sub.id.clone(),
-                    notified_at: Utc::now(),
-                    data,
-                };
+                    let payload = match serde_json::to_value(&notification) {
+                        Ok(v) => v,
+                        Err(e) => {
+                            error!("Failed to serialize notification for {}: {}", sub.id, e);
+                            return;
+                        }
+                    };
 
-                let payload = match serde_json::to_value(&notification) {
-                    Ok(v) => v,
-                    Err(e) => {
-                        error!("Failed to serialize notification for {}: {}", sub.id, e);
-                        continue;
-                    }
-                };
+                    let endpoint_uri = &sub.notification.endpoint.uri;
+                    let accept = sub.notification.endpoint.accept.as_deref();
+                    let jsonld_context = sub.jsonld_context.as_deref();
 
-                let endpoint_uri = &sub.notification.endpoint.uri;
-                let accept = sub.notification.endpoint.accept.as_deref();
-                let jsonld_context = sub.jsonld_context.as_deref();
+                    let endpoint_transport = match parse_endpoint_transport(endpoint_uri, sub.notification.endpoint.notifier_info.as_deref()) {
+                        Ok(t) => t,
+                        Err(e) => {
+                            debug!("IntervalWorker: invalid endpoint URI for {}: {}", sub.id, e);
+                            return;
+                        }
+                    };
 
-                let endpoint_transport = match parse_endpoint_transport(endpoint_uri, sub.notification.endpoint.notifier_info.as_deref()) {
-                    Ok(t) => t,
-                    Err(e) => {
-                        debug!("IntervalWorker: invalid endpoint URI for {}: {}", sub.id, e);
-                        continue;
-                    }
-                };
+                    let request = match build_delivery_request(
+                        &payload,
+                        endpoint_uri,
+                        accept,
+                        sub.notification.endpoint.receiver_info.as_deref(),
+                        jsonld_context,
+                        this.tenant.response_header_value(),
+                        &sub.id,
+                    ) {
+                        Ok(r) => r,
+                        Err(e) => {
+                            debug!("IntervalWorker: failed to build delivery request for {}: {}", sub.id, e);
+                            return;
+                        }
+                    };
 
-                let request = match build_delivery_request(
-                    &payload,
-                    endpoint_uri,
-                    accept,
-                    sub.notification.endpoint.receiver_info.as_deref(),
-                    jsonld_context,
-                    self.tenant.response_header_value(),
-                    &sub.id,
-                ) {
-                    Ok(r) => r,
-                    Err(e) => {
-                        debug!("IntervalWorker: failed to build delivery request for {}: {}", sub.id, e);
-                        continue;
-                    }
-                };
+                    let success = matches!(this.transport.deliver(&endpoint_transport, &request).await, DeliveryResult::Delivered);
 
-                let success = matches!(self.transport.deliver(&endpoint_transport, &request).await, DeliveryResult::Delivered);
-
-                if success {
-                    if let Err(e) = self.sub_repo.mark_success(&sub.id).await {
-                        debug!("Failed to mark success for {}: {}", sub.id, e);
-                    }
-                } else {
-                    if let Err(e) = self.sub_repo.mark_failure(&sub.id).await {
+                    if success {
+                        if let Err(e) = this.sub_repo.mark_success(&sub.id).await {
+                            debug!("Failed to mark success for {}: {}", sub.id, e);
+                        }
+                    } else if let Err(e) = this.sub_repo.mark_failure(&sub.id).await {
                         debug!("Failed to mark failure for {}: {}", sub.id, e);
                     }
-                }
-            }
+                })
+                .buffer_unordered(INTERVAL_NOTIFICATION_CONCURRENCY)
+                .collect()
+                .await;
         }
     }
 

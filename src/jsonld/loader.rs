@@ -63,7 +63,7 @@ pub trait ContextCache: Send + Sync {
 /// without network access.
 #[derive(Debug, Default, Clone)]
 pub struct ContextRegistry {
-    contexts: Arc<DashMap<String, json_syntax::Value>>,
+    contexts: Arc<DashMap<String, Arc<json_syntax::Value>>>,
 }
 
 impl ContextRegistry {
@@ -73,13 +73,19 @@ impl ContextRegistry {
     }
 
     /// Register a context document for a URL.
+    ///
+    /// The document is normalized at registration time (embedded core context
+    /// aliases are stripped for non-core URLs) so that lookups return
+    /// ready-to-use values without per-access normalization.
     pub fn register(&self, url: impl Into<String>, value: json_syntax::Value) {
-        self.contexts.insert(url.into(), value);
+        let url = url.into();
+        let normalized = normalize_loaded_context_document(&url, value);
+        self.contexts.insert(url, Arc::new(normalized));
     }
 
     /// Retrieve a previously registered context.
-    pub fn get(&self, url: &str) -> Option<json_syntax::Value> {
-        self.contexts.get(url).map(|v| v.clone())
+    pub fn get(&self, url: &str) -> Option<Arc<json_syntax::Value>> {
+        self.contexts.get(url).map(|v| Arc::clone(v.value()))
     }
 }
 
@@ -167,8 +173,7 @@ impl HttpContextLoader {
             .try_get_with(url_string.clone(), async move {
                 // 1. Registry
                 if let Some(value) = registry.get(&url_string) {
-                    let normalized = normalize_loaded_context_document(&url_string, value);
-                    return Ok(Arc::new(normalized));
+                    return Ok(value);
                 }
 
                 // 2. L2 cache
@@ -212,8 +217,7 @@ impl HttpContextLoader {
                     }
                     Err(err) => {
                         if let Some(value) = registry.get(&url_string) {
-                            let normalized = normalize_loaded_context_document(&url_string, value);
-                            Ok(Arc::new(normalized))
+                            Ok(value)
                         } else {
                             Err(err)
                         }

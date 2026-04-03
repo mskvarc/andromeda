@@ -105,7 +105,7 @@ impl EntityDiscoveryService {
 
         // Extract unique attributes from all entities
         // Key: expanded IRI, Value: set of attribute types (Property, Relationship, etc.)
-        let mut attributes: HashMap<String, HashSet<String>> = HashMap::new();
+        let mut attributes: HashMap<String, HashSet<String>> = HashMap::with_capacity(entities.len().saturating_mul(4));
 
         for entity in &entities {
             // Handle array wrapper from expanded JSON-LD (expand always returns an array)
@@ -166,7 +166,7 @@ impl EntityDiscoveryService {
         let summary_rows = self.repo.get_attribute_summary().await?;
 
         // Build the same HashMap structure from SQL aggregation results
-        let mut attr_data: HashMap<String, AttributeMetadata> = HashMap::new();
+        let mut attr_data: HashMap<String, AttributeMetadata> = HashMap::with_capacity(summary_rows.len());
         for row in &summary_rows {
             attr_data.insert(
                 row.attr_iri.clone(),

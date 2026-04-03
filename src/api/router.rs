@@ -192,7 +192,12 @@ pub async fn build_tenant_state(
     let context_repo = Arc::new(JsonLdContextRepository::new(&pool));
     let engine = crate::jsonld::build_engine(&config.jsonld, context_repo)?;
 
-    let entity_service = Arc::new(EntityService::new(&pool, engine.clone(), Some(change_tx.clone())));
+    let batch_concurrency = config
+        .performance
+        .batch_concurrency
+        .unwrap_or_else(|| usize::min(config.database.max_connections as usize, 25))
+        .max(1);
+    let entity_service = Arc::new(EntityService::new(&pool, engine.clone(), Some(change_tx.clone()), batch_concurrency));
     let temporal_service = Arc::new(TemporalService::new(&pool, engine.clone(), config.temporal.default_last_n));
     let context_service = Arc::new(JsonLdContextService::new(&pool, engine.clone()));
     let subscription_service = Arc::new(SubscriptionService::new(&pool, engine.clone(), Some(sub_change_tx.clone())));

@@ -6,10 +6,11 @@ use crate::{
         sql::{BindValue, BuiltQuery},
     },
 };
+use std::borrow::Cow;
 
-pub fn build_csr_query(query: &CompiledCsrQuery) -> Result<BuiltQuery, AndromedaError> {
+pub fn build_csr_query<'a>(query: &'a CompiledCsrQuery) -> Result<BuiltQuery<'a>, AndromedaError> {
     let mut conditions: Vec<String> = Vec::new();
-    let mut binds: Vec<BindValue> = Vec::new();
+    let mut binds: Vec<BindValue<'a>> = Vec::new();
     let mut param_idx = 1usize;
 
     // Entity type filter: match against information[].entities[].type
@@ -21,14 +22,14 @@ pub fn build_csr_query(query: &CompiledCsrQuery) -> Result<BuiltQuery, Andromeda
                 OR EXISTS (SELECT 1 FROM jsonb_array_elements(info->'entities') AS ent WHERE ent->>'type' = ${}))",
             param_idx
         ));
-        binds.push(BindValue::String(entity_type.clone()));
+        binds.push(BindValue::String(Cow::Borrowed(entity_type.as_str())));
         param_idx += 1;
     }
 
     // ID filter
     if let Some(ref ids) = query.ids {
         conditions.push(format!("id = ANY(${})", param_idx));
-        binds.push(BindValue::StringVec(ids.clone()));
+        binds.push(BindValue::StringVec(Cow::Borrowed(ids.as_slice())));
         param_idx += 1;
     }
 
@@ -41,7 +42,7 @@ pub fn build_csr_query(query: &CompiledCsrQuery) -> Result<BuiltQuery, Andromeda
                 OR EXISTS (SELECT 1 FROM jsonb_array_elements(info->'entities') AS ent WHERE ent->>'idPattern' = ${}))",
             param_idx
         ));
-        binds.push(BindValue::String(id_pattern.clone()));
+        binds.push(BindValue::String(Cow::Borrowed(id_pattern.as_str())));
         param_idx += 1;
     }
 
@@ -57,7 +58,7 @@ pub fn build_csr_query(query: &CompiledCsrQuery) -> Result<BuiltQuery, Andromeda
                  EXISTS (SELECT 1 FROM jsonb_array_elements_text(COALESCE(info->'relationshipNames', '[]'::jsonb)) AS rn WHERE rn IN ({any_list})))"
         ));
         for attr in attrs {
-            binds.push(BindValue::String(attr.clone()));
+            binds.push(BindValue::String(Cow::Borrowed(attr.as_str())));
         }
         param_idx += attrs.len();
     }
@@ -72,7 +73,7 @@ pub fn build_csr_query(query: &CompiledCsrQuery) -> Result<BuiltQuery, Andromeda
     if let Some(ref geo) = query.geo {
         let geojson = build_geojson(&geo.geometry, &geo.coordinates)?;
         let ref_geom = format!("ST_SetSRID(ST_GeomFromGeoJSON(${}), 4326)", param_idx);
-        binds.push(BindValue::String(geojson));
+        binds.push(BindValue::String(Cow::Owned(geojson)));
         let spatial_cond = match &geo.georel {
             GeoRel::Within => format!("ST_Within(location, {})", ref_geom),
             GeoRel::Contains => format!("ST_Contains(location, {})", ref_geom),
@@ -112,7 +113,7 @@ pub fn build_csr_query(query: &CompiledCsrQuery) -> Result<BuiltQuery, Andromeda
                     param_idx,
                     col = interval_col,
                 ));
-                binds.push(BindValue::String(temporal.time_at.clone()));
+                binds.push(BindValue::String(Cow::Borrowed(temporal.time_at.as_str())));
                 param_idx += 1;
             }
             "after" => {
@@ -121,7 +122,7 @@ pub fn build_csr_query(query: &CompiledCsrQuery) -> Result<BuiltQuery, Andromeda
                     param_idx,
                     col = interval_col,
                 ));
-                binds.push(BindValue::String(temporal.time_at.clone()));
+                binds.push(BindValue::String(Cow::Borrowed(temporal.time_at.as_str())));
                 param_idx += 1;
             }
             "between" => {
@@ -135,8 +136,8 @@ pub fn build_csr_query(query: &CompiledCsrQuery) -> Result<BuiltQuery, Andromeda
                     param_idx,
                     col = interval_col,
                 ));
-                binds.push(BindValue::String(temporal.time_at.clone()));
-                binds.push(BindValue::String(end_time.clone()));
+                binds.push(BindValue::String(Cow::Borrowed(temporal.time_at.as_str())));
+                binds.push(BindValue::String(Cow::Borrowed(end_time.as_str())));
                 param_idx += 2;
             }
             other => {
@@ -220,7 +221,7 @@ fn build_geojson(geometry: &str, coordinates: &str) -> Result<String, AndromedaE
 // CSR properties are stored in compact form in additional_properties JSONB column.
 // Properties may be wrapped as {"type":"Property","value":...}.
 
-fn csr_expr_to_sql(expr: &Expr, binds: &mut Vec<BindValue>, param_idx: &mut usize) -> Result<String, AndromedaError> {
+fn csr_expr_to_sql(expr: &Expr, binds: &mut Vec<BindValue<'_>>, param_idx: &mut usize) -> Result<String, AndromedaError> {
     match expr {
         Expr::And(terms) => {
             let parts: Result<Vec<String>, _> = terms.iter().map(|t| csr_expr_to_sql(t, binds, param_idx)).collect();
@@ -234,11 +235,11 @@ fn csr_expr_to_sql(expr: &Expr, binds: &mut Vec<BindValue>, param_idx: &mut usiz
     }
 }
 
-fn csr_pred_to_sql(pred: &Predicate, binds: &mut Vec<BindValue>, param_idx: &mut usize) -> Result<String, AndromedaError> {
+fn csr_pred_to_sql(pred: &Predicate, binds: &mut Vec<BindValue<'_>>, param_idx: &mut usize) -> Result<String, AndromedaError> {
     match pred {
         Predicate::Exists(path) => {
             let sql = format!("additional_properties ? ${}", *param_idx);
-            binds.push(BindValue::String(path.attr.clone()));
+            binds.push(BindValue::String(Cow::Owned(path.attr.clone())));
             *param_idx += 1;
             Ok(sql)
         }
@@ -246,14 +247,14 @@ fn csr_pred_to_sql(pred: &Predicate, binds: &mut Vec<BindValue>, param_idx: &mut
         Predicate::MatchPattern { path, pattern } => {
             let extract = csr_value_extract(path, binds, param_idx);
             let sql = format!("({} IS NOT NULL AND ({})::text ~ ${})", extract, extract, *param_idx);
-            binds.push(BindValue::String(pattern.clone()));
+            binds.push(BindValue::String(Cow::Owned(pattern.clone())));
             *param_idx += 1;
             Ok(sql)
         }
         Predicate::NotMatchPattern { path, pattern } => {
             let extract = csr_value_extract(path, binds, param_idx);
             let sql = format!("({} IS NULL OR NOT ({})::text ~ ${})", extract, extract, *param_idx);
-            binds.push(BindValue::String(pattern.clone()));
+            binds.push(BindValue::String(Cow::Owned(pattern.clone())));
             *param_idx += 1;
             Ok(sql)
         }
@@ -263,7 +264,7 @@ fn csr_pred_to_sql(pred: &Predicate, binds: &mut Vec<BindValue>, param_idx: &mut
 /// Build a SQL expression that extracts the value of a CSR property from additional_properties.
 /// Handles Property wrapper: if the property has {"type":"Property","value":X}, extract X.
 /// For sub-attributes, navigates through nested objects.
-fn csr_value_extract(path: &crate::query::q::AttrPath, _binds: &mut Vec<BindValue>, _param_idx: &mut usize) -> String {
+fn csr_value_extract(path: &crate::query::q::AttrPath, _binds: &mut Vec<BindValue<'_>>, _param_idx: &mut usize) -> String {
     let mut json_path = format!("additional_properties->'{}'", escape_sql_string(&path.attr));
 
     // Unwrap Property wrapper: use ->'value' if it's a Property
@@ -283,7 +284,7 @@ fn csr_compare_to_sql(
     path: &crate::query::q::AttrPath,
     op: CmpOp,
     rhs: &CompareValue,
-    binds: &mut Vec<BindValue>,
+    binds: &mut Vec<BindValue<'_>>,
     param_idx: &mut usize,
 ) -> Result<String, AndromedaError> {
     let extract = csr_value_extract(path, binds, param_idx);
@@ -369,12 +370,12 @@ fn cmp_op_sql(op: CmpOp) -> &'static str {
     }
 }
 
-fn scalar_to_sql_bind(scalar: &Scalar) -> (&'static str, BindValue) {
+fn scalar_to_sql_bind(scalar: &Scalar) -> (&'static str, BindValue<'static>) {
     match scalar {
-        Scalar::Number(n) => ("::numeric", BindValue::String(n.to_string())),
-        Scalar::Bool(b) => ("::boolean", BindValue::String(b.to_string())),
-        Scalar::Str(s) => ("", BindValue::String(s.clone())),
-        Scalar::DateTime(s) | Scalar::Date(s) | Scalar::Time(s) => ("", BindValue::String(s.clone())),
+        Scalar::Number(n) => ("::numeric", BindValue::String(Cow::Owned(n.to_string()))),
+        Scalar::Bool(b) => ("::boolean", BindValue::String(Cow::Owned(b.to_string()))),
+        Scalar::Str(s) => ("", BindValue::String(Cow::Owned(s.clone()))),
+        Scalar::DateTime(s) | Scalar::Date(s) | Scalar::Time(s) => ("", BindValue::String(Cow::Owned(s.clone()))),
     }
 }
 

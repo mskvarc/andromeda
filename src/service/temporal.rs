@@ -23,7 +23,7 @@ use crate::{
 use chrono::{DateTime, SecondsFormat, Utc};
 use serde_json::{Value, json};
 use sqlx::Row;
-use std::sync::Arc;
+use std::{borrow::Cow, sync::Arc};
 
 /// Format a DateTime<Utc> as ISO 8601 with second precision.
 pub(crate) fn format_datetime(dt: DateTime<Utc>) -> String {
@@ -257,7 +257,7 @@ impl TemporalService {
 
         let compiled = self.compile_temporal_query(params, context).await?;
 
-        let mut binds = vec![crate::query::sql::BindValue::String(entity_id.to_string())];
+        let mut binds = vec![crate::query::sql::BindValue::String(Cow::Owned(entity_id.to_string()))];
         let mut param_idx = 2;
         let stage2 = build_temporal_history_query(1, &compiled, &mut binds, &mut param_idx)?;
 
@@ -341,7 +341,7 @@ impl TemporalService {
         let is_aggregated = compiled.format == TemporalFormat::AggregatedValues;
         for entity_id in entity_ids {
             let entity_types = entity_types_map.get(&entity_id).cloned().unwrap_or_default();
-            let mut binds = vec![crate::query::sql::BindValue::String(entity_id.clone())];
+            let mut binds = vec![crate::query::sql::BindValue::String(Cow::Owned(entity_id.clone()))];
             let mut param_idx = 2;
             let stage2 = match build_temporal_history_query(1, &compiled, &mut binds, &mut param_idx) {
                 Ok(s) => s,

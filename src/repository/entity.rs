@@ -135,18 +135,18 @@ impl EntityRepository {
         Ok(QueryResult { rows, total_count })
     }
 
-    async fn execute_dynamic_query(&self, sql: &str, binds: &[BindValue]) -> Result<Vec<Value>, AndromedaError> {
+    async fn execute_dynamic_query(&self, sql: &str, binds: &[BindValue<'_>]) -> Result<Vec<Value>, AndromedaError> {
         let mut query = sqlx::query(sql);
         for bind in binds {
             query = match bind {
-                BindValue::String(s) => query.bind(s),
-                BindValue::StringVec(v) => query.bind(v),
+                BindValue::String(s) => query.bind(s.as_ref()),
+                BindValue::StringVec(v) => query.bind(v.as_ref()),
                 BindValue::I64(i) => query.bind(i),
             };
         }
 
         let rows = query.fetch_all(&self.pool).await?;
-        let mut results = Vec::new();
+        let mut results = Vec::with_capacity(rows.len());
         for row in rows {
             let data: Value = row.try_get("payload")?;
             results.push(data);
@@ -154,12 +154,12 @@ impl EntityRepository {
         Ok(results)
     }
 
-    async fn execute_count_query(&self, sql: &str, binds: &[BindValue]) -> Result<i64, AndromedaError> {
+    async fn execute_count_query(&self, sql: &str, binds: &[BindValue<'_>]) -> Result<i64, AndromedaError> {
         let mut query = sqlx::query_scalar(sql);
         for bind in binds {
             query = match bind {
-                BindValue::String(s) => query.bind(s),
-                BindValue::StringVec(v) => query.bind(v),
+                BindValue::String(s) => query.bind(s.as_ref()),
+                BindValue::StringVec(v) => query.bind(v.as_ref()),
                 BindValue::I64(i) => query.bind(i),
             };
         }
@@ -178,7 +178,7 @@ impl EntityRepository {
             .fetch_all(&self.pool)
             .await?;
 
-        let mut result = HashMap::new();
+        let mut result = HashMap::with_capacity(ids.len());
         for row in rows {
             let id: String = row.get("id");
             result.insert(
@@ -203,7 +203,7 @@ impl EntityRepository {
             .fetch_all(&self.pool)
             .await?;
 
-        let mut result = HashMap::new();
+        let mut result = HashMap::with_capacity(ids.len());
         for row in rows {
             let id: String = row.get("id");
             let payload: Value = row.get("payload");
@@ -359,8 +359,8 @@ impl EntityRepository {
         let mut query = sqlx::query(&built.sql);
         for bind in &built.bind_values {
             query = match bind {
-                BindValue::String(s) => query.bind(s),
-                BindValue::StringVec(v) => query.bind(v),
+                BindValue::String(s) => query.bind(s.as_ref()),
+                BindValue::StringVec(v) => query.bind(v.as_ref()),
                 BindValue::I64(i) => query.bind(i),
             };
         }
