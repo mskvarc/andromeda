@@ -7,6 +7,7 @@ use crate::{
             jsonld::JsonLd,
             language::LanguageNegotiation,
             params::ValidatedQuery,
+            prefer::PreferHeader,
         },
         response::ngsild::{NgsiLdCollectionResponse, NgsiLdResponse},
         tenant::{TenantState, TenantStateOrCreate},
@@ -279,6 +280,7 @@ pub async fn get(
     Path(id): Path<String>,
     ValidatedQuery(params): ValidatedQuery<GetEntityParams>,
     LanguageNegotiation(language_filter): LanguageNegotiation,
+    prefer: PreferHeader,
     headers: HeaderMap,
 ) -> Result<Response, ApiError> {
     let service = &state.entity_query;
@@ -399,6 +401,7 @@ pub async fn get(
                 .with_context(context)
                 .with_format(accept.format())
                 .with_warnings(warnings)
+                .with_prefer(prefer)
                 .into_response());
         } else {
             // Inline: add entity sub-property to Relationships
@@ -413,6 +416,7 @@ pub async fn get(
                 .with_format(accept.format())
                 .with_geometry_property(params.geometry_property.clone())
                 .with_warnings(warnings)
+                .with_prefer(prefer)
                 .into_response());
         }
     }
@@ -425,6 +429,7 @@ pub async fn get(
                 .with_format(accept.format())
                 .with_geometry_property(params.geometry_property.clone())
                 .with_warnings(warnings)
+                .with_prefer(prefer)
                 .into_response(),
         )
     } else {
@@ -433,6 +438,7 @@ pub async fn get(
             .with_format(accept.format())
             .with_geometry_property(params.geometry_property.clone())
             .with_warnings(warnings)
+            .with_prefer(prefer)
             .into_response())
     }
 }
@@ -577,6 +583,7 @@ pub async fn query(
     accept: AcceptFormat,
     context: ContextUrl,
     LanguageNegotiation(language_filter): LanguageNegotiation,
+    prefer: PreferHeader,
     headers: HeaderMap,
     EntityQuery(mut query): EntityQuery,
 ) -> Result<Response, ApiError> {
@@ -771,7 +778,8 @@ pub async fn query(
                 .with_context(context)
                 .with_format(accept.format())
                 .with_geometry_property(query.geometry_property.clone())
-                .with_warnings(warnings);
+                .with_warnings(warnings)
+                .with_prefer(prefer);
             if let Some(count) = total_count {
                 response = response.with_total_count(count as usize);
             }
@@ -795,7 +803,8 @@ pub async fn query(
                 .with_context(context)
                 .with_format(accept.format())
                 .with_geometry_property(query.geometry_property.clone())
-                .with_warnings(warnings);
+                .with_warnings(warnings)
+                .with_prefer(prefer);
             if let Some(count) = total_count {
                 response = response.with_total_count(count as usize);
             }
@@ -818,7 +827,8 @@ pub async fn query(
             .with_context(context)
             .with_format(accept.format())
             .with_geometry_property(query.geometry_property.clone())
-            .with_warnings(warnings);
+            .with_warnings(warnings)
+            .with_prefer(prefer);
         if let Some(count) = total_count {
             response = response.with_total_count(count as usize);
         }
@@ -837,7 +847,8 @@ pub async fn query(
             .with_context(context)
             .with_format(accept.format())
             .with_geometry_property(query.geometry_property.clone())
-            .with_warnings(warnings);
+            .with_warnings(warnings)
+            .with_prefer(prefer);
         if let Some(count) = total_count {
             response = response.with_total_count(count as usize);
         }

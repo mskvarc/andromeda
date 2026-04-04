@@ -5,7 +5,14 @@
 //! - `application/ld+json`: @context as URL in response body
 
 use crate::{
-    api::{extractor::accept::ResponseFormat, header::insert_jsonld_contexts},
+    api::{
+        extractor::{
+            accept::ResponseFormat,
+            prefer::{GeoJsonBodyPreference, NgsiLdVersion, PreferHeader},
+        },
+        header::insert_jsonld_contexts,
+        response::version_compat::adapt_payload_for_version,
+    },
     jsonld::ContextSpec,
     service::{context_source_forwarding::NgsiLdWarning, entity::decode_percent_encoded_uris},
 };
@@ -45,6 +52,7 @@ pub struct NgsiLdResponse<T> {
     location: Option<String>,
     entity_map_uri: Option<String>,
     warnings: Vec<NgsiLdWarning>,
+    prefer: PreferHeader,
 }
 
 impl<T> NgsiLdResponse<T> {
@@ -59,6 +67,7 @@ impl<T> NgsiLdResponse<T> {
             location: None,
             entity_map_uri: None,
             warnings: Vec::new(),
+            prefer: PreferHeader::default(),
         }
     }
 
@@ -109,6 +118,12 @@ impl<T> NgsiLdResponse<T> {
         self.warnings = warnings;
         self
     }
+
+    /// Set the Prefer header preferences (clause 6.3.6).
+    pub fn with_prefer(mut self, prefer: PreferHeader) -> Self {
+        self.prefer = prefer;
+        self
+    }
 }
 
 impl<T: Serialize> IntoResponse for NgsiLdResponse<T> {
@@ -116,8 +131,23 @@ impl<T: Serialize> IntoResponse for NgsiLdResponse<T> {
         let context_spec = self.context.map(|c| c.for_presentation()).unwrap_or_else(ContextSpec::none);
         let context_value = context_spec.to_context_value();
 
+        // Determine effective status: 203 if version preference is present
+        let status = if self.prefer.requested_version.is_some() {
+            StatusCode::NON_AUTHORITATIVE_INFORMATION
+        } else {
+            self.status
+        };
+
         let mut headers = HeaderMap::new();
         headers.insert(CONTENT_TYPE, HeaderValue::from_static(self.format.content_type()));
+
+        // Insert Preference-Applied header when version preference is present
+        if self.prefer.requested_version.is_some() {
+            let conformant = NgsiLdVersion::CONFORMANT;
+            if let Ok(val) = HeaderValue::from_str(&format!("ngsi-ld={}", conformant)) {
+                headers.insert("Preference-Applied", val);
+            }
+        }
 
         if let Some(ref loc) = self.location
             && let Ok(val) = HeaderValue::from_str(loc)
@@ -146,7 +176,10 @@ impl<T: Serialize> IntoResponse for NgsiLdResponse<T> {
                 match serde_json::to_value(&self.data) {
                     Ok(mut value) => {
                         decode_percent_encoded_uris(&mut value);
-                        (self.status, headers, Json(value)).into_response()
+                        if let Some(target) = self.prefer.requested_version {
+                            adapt_payload_for_version(&mut value, target);
+                        }
+                        (status, headers, Json(value)).into_response()
                     }
                     Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
                 }
@@ -156,18 +189,32 @@ impl<T: Serialize> IntoResponse for NgsiLdResponse<T> {
                 match serde_json::to_value(&self.data) {
                     Ok(mut value) => {
                         decode_percent_encoded_uris(&mut value);
+                        if let Some(target) = self.prefer.requested_version {
+                            adapt_payload_for_version(&mut value, target);
+                        }
                         if let (Some(obj), Some(context_value)) = (value.as_object_mut(), context_value.clone()) {
                             obj.insert("@context".to_string(), format_context(context_value));
                         }
-                        (self.status, headers, Json(value)).into_response()
+                        (status, headers, Json(value)).into_response()
                     }
                     Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
                 }
             }
             ResponseFormat::GeoJson => match serde_json::to_value(&self.data) {
-                Ok(value) => {
-                    let geojson = entity_to_feature(value, context_value, self.geometry_property.as_deref());
-                    (self.status, headers, Json(geojson)).into_response()
+                Ok(mut value) => {
+                    if let Some(target) = self.prefer.requested_version {
+                        adapt_payload_for_version(&mut value, target);
+                    }
+                    // GeoJSON body preference: body=json means @context in Link header
+                    let geojson_context = if self.prefer.geo_json_body == GeoJsonBodyPreference::Json {
+                        let urls = context_spec.to_link_headers();
+                        insert_jsonld_contexts(&mut headers, &urls);
+                        None
+                    } else {
+                        context_value
+                    };
+                    let geojson = entity_to_feature(value, geojson_context, self.geometry_property.as_deref());
+                    (status, headers, Json(geojson)).into_response()
                 }
                 Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
             },
@@ -189,6 +236,7 @@ pub struct NgsiLdCollectionResponse<T> {
     content_range: Option<String>,
     entity_map_uri: Option<String>,
     warnings: Vec<NgsiLdWarning>,
+    prefer: PreferHeader,
 }
 
 impl<T> NgsiLdCollectionResponse<T> {
@@ -204,6 +252,7 @@ impl<T> NgsiLdCollectionResponse<T> {
             content_range: None,
             entity_map_uri: None,
             warnings: Vec::new(),
+            prefer: PreferHeader::default(),
         }
     }
 
@@ -255,6 +304,12 @@ impl<T> NgsiLdCollectionResponse<T> {
         self.warnings = warnings;
         self
     }
+
+    /// Set the Prefer header preferences (clause 6.3.6).
+    pub fn with_prefer(mut self, prefer: PreferHeader) -> Self {
+        self.prefer = prefer;
+        self
+    }
 }
 
 impl<T: Serialize> IntoResponse for NgsiLdCollectionResponse<T> {
@@ -262,8 +317,23 @@ impl<T: Serialize> IntoResponse for NgsiLdCollectionResponse<T> {
         let context_spec = self.context.map(|c| c.for_presentation()).unwrap_or_else(ContextSpec::none);
         let context_value = context_spec.to_context_value();
 
+        // Determine effective status: 203 if version preference is present
+        let status = if self.prefer.requested_version.is_some() {
+            StatusCode::NON_AUTHORITATIVE_INFORMATION
+        } else {
+            self.status
+        };
+
         let mut headers = HeaderMap::new();
         headers.insert(CONTENT_TYPE, HeaderValue::from_static(self.format.content_type()));
+
+        // Insert Preference-Applied header when version preference is present
+        if self.prefer.requested_version.is_some() {
+            let conformant = NgsiLdVersion::CONFORMANT;
+            if let Ok(val) = HeaderValue::from_str(&format!("ngsi-ld={}", conformant)) {
+                headers.insert("Preference-Applied", val);
+            }
+        }
 
         // Add NGSILD-Results-Count if provided
         if let Some(count) = self.total_count
@@ -304,7 +374,10 @@ impl<T: Serialize> IntoResponse for NgsiLdCollectionResponse<T> {
                 match serde_json::to_value(&self.data) {
                     Ok(mut value) => {
                         decode_percent_encoded_uris(&mut value);
-                        (self.status, headers, Json(value)).into_response()
+                        if let Some(target) = self.prefer.requested_version {
+                            adapt_payload_for_version(&mut value, target);
+                        }
+                        (status, headers, Json(value)).into_response()
                     }
                     Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
                 }
@@ -315,20 +388,34 @@ impl<T: Serialize> IntoResponse for NgsiLdCollectionResponse<T> {
                     Ok(serde_json::Value::Array(mut items)) => {
                         for item in &mut items {
                             decode_percent_encoded_uris(item);
+                            if let Some(target) = self.prefer.requested_version {
+                                adapt_payload_for_version(item, target);
+                            }
                             if let (Some(obj), Some(context_value)) = (item.as_object_mut(), context_value.clone()) {
                                 obj.insert("@context".to_string(), format_context(context_value));
                             }
                         }
-                        (self.status, headers, Json(items)).into_response()
+                        (status, headers, Json(items)).into_response()
                     }
-                    Ok(other) => (self.status, headers, Json(other)).into_response(),
+                    Ok(other) => (status, headers, Json(other)).into_response(),
                     Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
                 }
             }
             ResponseFormat::GeoJson => match serde_json::to_value(&self.data) {
-                Ok(value) => {
-                    let geojson = entities_to_feature_collection(value, context_value, self.geometry_property.as_deref());
-                    (self.status, headers, Json(geojson)).into_response()
+                Ok(mut value) => {
+                    if let Some(target) = self.prefer.requested_version {
+                        adapt_payload_for_version(&mut value, target);
+                    }
+                    // GeoJSON body preference: body=json means @context in Link header
+                    let geojson_context = if self.prefer.geo_json_body == GeoJsonBodyPreference::Json {
+                        let urls = context_spec.to_link_headers();
+                        insert_jsonld_contexts(&mut headers, &urls);
+                        None
+                    } else {
+                        context_value
+                    };
+                    let geojson = entities_to_feature_collection(value, geojson_context, self.geometry_property.as_deref());
+                    (status, headers, Json(geojson)).into_response()
                 }
                 Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
             },
@@ -515,5 +602,63 @@ mod tests {
         let response = NgsiLdResponse::ok(serde_json::json!({"id": "urn:a", "type": "T"})).into_response();
         let warning_values: Vec<&str> = response.headers().get_all("NGSILD-Warning").iter().filter_map(|v| v.to_str().ok()).collect();
         assert!(warning_values.is_empty());
+    }
+
+    #[test]
+    fn geojson_body_json_preference_uses_link_header() {
+        use crate::api::extractor::prefer::GeoJsonBodyPreference;
+        use axum::response::IntoResponse;
+
+        let prefer = PreferHeader {
+            geo_json_body: GeoJsonBodyPreference::Json,
+            requested_version: None,
+        };
+        let entity = serde_json::json!({
+            "id": "urn:ngsi-ld:Building:1",
+            "type": "Building",
+            "location": {
+                "type": "GeoProperty",
+                "value": {
+                    "type": "Point",
+                    "coordinates": [13.3986, 52.5547]
+                }
+            }
+        });
+        let response = NgsiLdResponse::ok(entity)
+            .with_format(ResponseFormat::GeoJson)
+            .with_context(ContextSpec::from_links(vec!["https://example.com/ctx.jsonld".to_string()]))
+            .with_prefer(prefer)
+            .into_response();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        // Link header should be present (context moved there)
+        assert!(response.headers().get("link").is_some());
+    }
+
+    #[test]
+    fn version_preference_returns_203_with_preference_applied() {
+        use crate::api::extractor::prefer::NgsiLdVersion;
+        use axum::response::IntoResponse;
+
+        let prefer = PreferHeader {
+            geo_json_body: GeoJsonBodyPreference::default(),
+            requested_version: Some(NgsiLdVersion::V1_3),
+        };
+        let response = NgsiLdResponse::ok(serde_json::json!({"id": "urn:a", "type": "T"}))
+            .with_prefer(prefer)
+            .into_response();
+
+        assert_eq!(response.status(), StatusCode::NON_AUTHORITATIVE_INFORMATION);
+        let pref_applied = response.headers().get("Preference-Applied").and_then(|v| v.to_str().ok());
+        assert_eq!(pref_applied, Some("ngsi-ld=1.9"));
+    }
+
+    #[test]
+    fn no_prefer_returns_200_without_preference_applied() {
+        use axum::response::IntoResponse;
+        let response = NgsiLdResponse::ok(serde_json::json!({"id": "urn:a", "type": "T"})).into_response();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(response.headers().get("Preference-Applied").is_none());
     }
 }

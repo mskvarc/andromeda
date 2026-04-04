@@ -39,6 +39,11 @@ impl RequestHeaders {
         self
     }
 
+    pub fn prefer(mut self, value: &str) -> Self {
+        self.0.insert("Prefer", HeaderValue::from_str(value).unwrap());
+        self
+    }
+
     pub fn tenant(mut self, tenant: &str) -> Self {
         self.0.insert("NGSILD-Tenant", HeaderValue::from_str(tenant).unwrap());
         self
