@@ -1,4 +1,5 @@
 pub mod contained_by;
+pub mod entity_ordering;
 pub mod geometry_property_collection;
 pub mod lang;
 pub mod list_property_relationship;
@@ -14,4 +15,5 @@ pub fn tests(trials: &mut Vec<Trial>) {
     list_property_relationship::tests(trials);
     snapshot_api::tests(trials);
     lang::tests(trials);
+    entity_ordering::tests(trials);
 }

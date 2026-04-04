@@ -60,6 +60,12 @@ pub struct EntityQueryParameters {
     pub geometry_property: Option<String>,
     /// ICU collation identifier for orderBy string sorting (S4.23).
     pub collation: Option<String>,
+    /// Reference coordinates for distance-based ordering (S5.2.43).
+    #[serde(rename = "orderFrom")]
+    pub order_from: Option<String>,
+    /// Geometry type for orderFrom coordinates (S5.2.43). Defaults to "Point".
+    #[serde(rename = "orderGeometry")]
+    pub order_geometry: Option<String>,
 }
 
 impl_shared_query_params!(EntityQueryParameters {
@@ -172,6 +178,25 @@ impl EntityQueryParameters {
             if pattern.trim().is_empty() {
                 return Err(QueryError::BadRequestData("Invalid idPattern: empty value".to_string()));
             }
+        }
+
+        // Validate orderGeometry: must be a valid GeoJSON geometry type, not GeometryCollection (S5.2.43)
+        if let Some(ref order_geometry) = self.order_geometry {
+            match order_geometry.as_str() {
+                "Point" | "MultiPoint" | "LineString" | "MultiLineString" | "Polygon" | "MultiPolygon" => {}
+                "GeometryCollection" => {
+                    return Err(QueryError::BadRequestData("orderGeometry does not support GeometryCollection".to_string()));
+                }
+                other => {
+                    return Err(QueryError::BadRequestData(format!("Invalid orderGeometry value: '{}'", other)));
+                }
+            }
+        }
+
+        // Validate orderFrom: must be valid JSON coordinates (S5.2.43)
+        if let Some(ref order_from) = self.order_from {
+            serde_json::from_str::<serde_json::Value>(order_from)
+                .map_err(|_| QueryError::BadRequestData(format!("Invalid orderFrom value: '{}' is not valid JSON", order_from)))?;
         }
 
         Ok(())
@@ -400,5 +425,44 @@ mod tests {
         let p = params_from_query("idPattern=%20");
         let err = p.validate().expect_err("expected invalid idPattern error");
         assert!(err.to_string().contains("Invalid idPattern: empty value"));
+    }
+
+    #[test]
+    fn parse_order_from_accepted() {
+        let p = params_from_query("orderFrom=%5B13.3986%2C52.5547%5D");
+        assert_eq!(p.order_from.as_deref(), Some("[13.3986,52.5547]"));
+        assert!(p.validate().is_ok());
+    }
+
+    #[test]
+    fn parse_order_from_with_geometry() {
+        let p = params_from_query("orderFrom=%5B%5B2.3%2C48.8%5D%2C%5B2.4%2C48.9%5D%5D&orderGeometry=LineString");
+        assert_eq!(p.order_from.as_deref(), Some("[[2.3,48.8],[2.4,48.9]]"));
+        assert_eq!(p.order_geometry.as_deref(), Some("LineString"));
+        assert!(p.validate().is_ok());
+    }
+
+    #[test]
+    fn validate_rejects_geometry_collection() {
+        let p = params_from_query("orderFrom=%5B8%2C40%5D&orderGeometry=GeometryCollection");
+        let err = p.validate().expect_err("expected GeometryCollection rejection");
+        assert!(matches!(err, QueryError::BadRequestData(_)));
+        assert!(err.to_string().contains("GeometryCollection"));
+    }
+
+    #[test]
+    fn validate_rejects_invalid_order_geometry() {
+        let p = params_from_query("orderFrom=%5B8%2C40%5D&orderGeometry=Hexagon");
+        let err = p.validate().expect_err("expected invalid geometry rejection");
+        assert!(matches!(err, QueryError::BadRequestData(_)));
+        assert!(err.to_string().contains("Hexagon"));
+    }
+
+    #[test]
+    fn validate_rejects_invalid_order_from_json() {
+        let p = params_from_query("orderFrom=notjson");
+        let err = p.validate().expect_err("expected invalid JSON rejection");
+        assert!(matches!(err, QueryError::BadRequestData(_)));
+        assert!(err.to_string().contains("orderFrom"));
     }
 }

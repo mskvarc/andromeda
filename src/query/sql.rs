@@ -1,7 +1,7 @@
 use crate::{
     error::AndromedaError,
     query::{
-        compiled::{CompiledEntityQuery, CompiledOrderTerm, GeoQuery, GeoRel},
+        compiled::{CompiledEntityQuery, CompiledOrderTerm, GeoQuery, GeoRel, OrderingGeometry},
         q::ast::{AttrPath, CmpOp, CompareValue, Expr, Predicate, Scalar},
     },
 };
@@ -58,7 +58,7 @@ pub fn build_query<'a>(query: &'a CompiledEntityQuery) -> Result<BuiltQuery<'a>,
         format!(" WHERE {}", conditions.join(" AND "))
     };
 
-    let order_clause = build_order_clause(&query.order_by, query.geo.as_ref())?;
+    let order_clause = build_order_clause(&query.order_by, query.geo.as_ref(), query.ordering_geometry.as_ref())?;
     let pagination = format!(" LIMIT {} OFFSET {}", query.limit, query.offset);
 
     let sql = format!("SELECT payload FROM entities{}{}{}", where_clause, order_clause, pagination);
@@ -416,7 +416,7 @@ fn single_scope_to_sql(scope: &str, binds: &mut Vec<BindValue<'_>>, param_idx: &
 /// for distance-based ordering (when a geo query is provided), collation, and
 /// standard attribute-value ordering. Returns a complete ` ORDER BY ...` clause
 /// string, or an empty string when no ordering terms are specified.
-fn build_order_clause(order_by: &[CompiledOrderTerm], geo: Option<&GeoQuery>) -> Result<String, AndromedaError> {
+fn build_order_clause(order_by: &[CompiledOrderTerm], geo: Option<&GeoQuery>, ordering_geometry: Option<&OrderingGeometry>) -> Result<String, AndromedaError> {
     if order_by.is_empty() {
         return Ok(String::new());
     }
@@ -427,15 +427,24 @@ fn build_order_clause(order_by: &[CompiledOrderTerm], geo: Option<&GeoQuery>) ->
             let dir = term.direction.sql_dir();
             if term.direction.is_distance() {
                 // Distance-based ordering using ST_Distance with Haversine (geography type)
-                // Requires a geo query to provide the reference geometry
-                if let Some(geo) = geo {
-                    let geo_extract = build_geo_extract(&geo.geoproperty_iri, "payload");
+                // Three-tier precedence: orderFrom > geo query > error (S5.2.43)
+                if let Some(og) = ordering_geometry {
+                    // orderFrom takes precedence: use the ordering geometry as reference
+                    let geo_extract = build_geo_extract(&term.attr_iri, "payload");
+                    let geojson_str = serde_json::to_string(&og.geometry)
+                        .map_err(|e| AndromedaError::bad_request_data(format!("Failed to serialize ordering geometry: {}", e)))?;
+                    let ref_geom = format!("ST_SetSRID(ST_GeomFromGeoJSON('{}'), 4326)", geojson_str);
+                    Ok(format!("ST_Distance({}::geography, {}::geography) {} NULLS LAST", geo_extract, ref_geom, dir))
+                } else if let Some(geo) = geo {
+                    // Fallback to geo query reference geometry
+                    let geo_extract = build_geo_extract(&term.attr_iri, "payload");
                     let ref_geom = format!("ST_SetSRID(ST_GeomFromGeoJSON('{}'), 4326)", build_geojson(&geo.geometry, &geo.coordinates)?);
                     Ok(format!("ST_Distance({}::geography, {}::geography) {} NULLS LAST", geo_extract, ref_geom, dir))
                 } else {
-                    // Fallback: no geo query, treat as regular ordering
-                    let json_path = property_value_jsonpath(&term.attr_iri);
-                    Ok(format!("jsonb_path_query_first(payload, '{}') {} NULLS LAST", json_path, dir))
+                    // Defensive: should have been caught during compilation (S5.7.2.4)
+                    Err(AndromedaError::bad_request_data(
+                        "Distance-based ordering requires either a geo-query or orderFrom parameter".to_string(),
+                    ))
                 }
             } else {
                 let json_path = property_value_jsonpath(&term.attr_iri);
@@ -613,7 +622,7 @@ pub fn build_ids_query<'a>(query: &'a CompiledEntityQuery) -> Result<BuiltQuery<
     let order_clause = if query.order_by.is_empty() {
         " ORDER BY id ASC".to_string()
     } else {
-        let base = build_order_clause(&query.order_by, query.geo.as_ref())?;
+        let base = build_order_clause(&query.order_by, query.geo.as_ref(), query.ordering_geometry.as_ref())?;
         if base.is_empty() { " ORDER BY id ASC".to_string() } else { base }
     };
 
@@ -645,6 +654,7 @@ mod tests {
             attrs: Vec::new(),
             q_expr: None,
             geo: None,
+            ordering_geometry: None,
             limit: 20,
             offset: 0,
             count: false,
@@ -778,7 +788,7 @@ mod tests {
             geoproperty_iri: "https://uri.etsi.org/ngsi-ld/location".to_string(),
         });
         q.order_by = vec![CompiledOrderTerm {
-            attr_iri: "location".to_string(),
+            attr_iri: "https://uri.etsi.org/ngsi-ld/location".to_string(),
             direction: OrderDirection::DistAsc,
             collation: None,
         }];
@@ -801,7 +811,7 @@ mod tests {
             geoproperty_iri: "https://uri.etsi.org/ngsi-ld/location".to_string(),
         });
         q.order_by = vec![CompiledOrderTerm {
-            attr_iri: "location".to_string(),
+            attr_iri: "https://uri.etsi.org/ngsi-ld/location".to_string(),
             direction: OrderDirection::DistDesc,
             collation: None,
         }];
@@ -811,17 +821,65 @@ mod tests {
     }
 
     #[test]
-    fn build_with_order_by_dist_without_geo_fallback() {
+    fn build_with_order_by_dist_without_geo_returns_error() {
         let mut q = empty_query();
         q.order_by = vec![CompiledOrderTerm {
-            attr_iri: "location".to_string(),
+            attr_iri: "https://uri.etsi.org/ngsi-ld/location".to_string(),
             direction: OrderDirection::DistAsc,
             collation: None,
         }];
-        // No geo query: falls back to regular attribute ordering
+        // No geo query and no ordering geometry: must return error (S5.7.2.4)
+        let result = build_query(&q);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn build_with_order_by_dist_with_ordering_geometry() {
+        use crate::query::compiled::OrderingGeometry;
+        let mut q = empty_query();
+        q.ordering_geometry = Some(OrderingGeometry {
+            geometry: geojson::Geometry::new(geojson::GeometryValue::Point {
+                coordinates: vec![13.3986, 52.5547].into(),
+            }),
+        });
+        q.order_by = vec![CompiledOrderTerm {
+            attr_iri: "https://uri.etsi.org/ngsi-ld/location".to_string(),
+            direction: OrderDirection::DistAsc,
+            collation: None,
+        }];
         let built = build_query(&q).unwrap();
-        assert!(built.sql.contains("jsonb_path_query_first"));
-        assert!(!built.sql.contains("ST_Distance"));
+        assert!(built.sql.contains("ST_Distance"));
+        assert!(built.sql.contains("ASC NULLS LAST"));
+        assert!(built.sql.contains("13.3986"));
+    }
+
+    #[test]
+    fn build_with_order_by_dist_ordering_geometry_takes_precedence() {
+        use crate::query::compiled::{GeoQuery, GeoRel, OrderingGeometry};
+        let mut q = empty_query();
+        q.geo = Some(GeoQuery {
+            georel: GeoRel::Near {
+                max_distance: Some(1000000.0),
+                min_distance: None,
+            },
+            geometry: "Point".to_string(),
+            coordinates: serde_json::json!([2.3522, 48.8566]),
+            geoproperty_iri: "https://uri.etsi.org/ngsi-ld/location".to_string(),
+        });
+        q.ordering_geometry = Some(OrderingGeometry {
+            geometry: geojson::Geometry::new(geojson::GeometryValue::Point {
+                coordinates: vec![13.3986, 52.5547].into(),
+            }),
+        });
+        q.order_by = vec![CompiledOrderTerm {
+            attr_iri: "https://uri.etsi.org/ngsi-ld/location".to_string(),
+            direction: OrderDirection::DistAsc,
+            collation: None,
+        }];
+        let built = build_query(&q).unwrap();
+        assert!(built.sql.contains("ST_Distance"));
+        // Should use the ordering geometry (Berlin), not the geo query (Paris)
+        assert!(built.sql.contains("13.3986"));
     }
 
     #[test]

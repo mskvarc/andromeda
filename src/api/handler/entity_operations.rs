@@ -200,6 +200,8 @@ pub async fn query(
         split_entities: None,
         geometry_property: qparams.geometry_property,
         collation: None,
+        order_from: None,
+        order_geometry: None,
     };
 
     let opts = params.parse_options();

@@ -6,7 +6,7 @@ use crate::{
     error::AndromedaError,
     jsonld::{CompactOptions, ContextSpec, JsonLdEngine},
     query::{
-        compiled::{CompiledEntityQuery, CompiledOrderTerm, GeoQuery, IcuCollation, IdPattern, ScopeQuery},
+        compiled::{CompiledEntityQuery, CompiledOrderTerm, GeoQuery, IcuCollation, IdPattern, OrderingGeometry, ScopeQuery},
         entity::EntityQueryParameters,
         params::SharedQueryParams,
     },
@@ -337,7 +337,7 @@ impl EntityQueryService {
             let raw = params.parse_order_by();
             let mut compiled = Vec::new();
             for term in &raw {
-                let attr_iri = if term.attr == "id" || term.attr == "type" || term.direction.is_distance() {
+                let attr_iri = if term.attr == "id" || term.attr == "type" {
                     term.attr.clone() // clone: owned value for CompiledOrderTerm struct
                 } else {
                     self.engine.expand_term(&term.attr, context).await?
@@ -351,6 +351,30 @@ impl EntityQueryService {
             compiled
         };
 
+        // Compile orderFrom/orderGeometry into OrderingGeometry (S5.2.43)
+        let ordering_geometry = if let Some(ref order_from) = params.order_from {
+            let coordinates: serde_json::Value = serde_json::from_str(order_from)
+                .map_err(|_| AndromedaError::bad_request_data(format!("Invalid orderFrom value: '{}' is not valid JSON", order_from)))?;
+            let geometry_type = params.order_geometry.as_deref().unwrap_or("Point");
+            let geojson_value = serde_json::json!({
+                "type": geometry_type,
+                "coordinates": coordinates
+            });
+            let geometry: geojson::Geometry = serde_json::from_value(geojson_value)
+                .map_err(|e| AndromedaError::bad_request_data(format!("Invalid orderFrom/orderGeometry combination: {}", e)))?;
+            Some(OrderingGeometry { geometry })
+        } else {
+            None
+        };
+
+        // Validate: distance ordering requires a reference geometry (S5.7.2.4)
+        let has_distance_term = order_by.iter().any(|t| t.direction.is_distance());
+        if has_distance_term && geo.is_none() && ordering_geometry.is_none() {
+            return Err(AndromedaError::bad_request_data(
+                "Distance-based ordering requires either a geo-query or orderFrom parameter".to_string(),
+            ));
+        }
+
         let compiled = CompiledEntityQuery {
             ids,
             id_pattern,
@@ -358,6 +382,7 @@ impl EntityQueryService {
             attrs,
             q_expr,
             geo,
+            ordering_geometry,
             limit: if cap_limit {
                 params.effective_limit()
             } else {

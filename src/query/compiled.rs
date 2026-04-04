@@ -94,6 +94,8 @@ pub struct CompiledEntityQuery {
     pub q_expr: Option<Expr>,
     /// Geo-spatial query filter, if specified.
     pub geo: Option<GeoQuery>,
+    /// Reference geometry for distance-based ordering (orderFrom/orderGeometry, S5.2.43).
+    pub ordering_geometry: Option<OrderingGeometry>,
     /// Maximum number of results to return.
     pub limit: u32,
     /// Number of results to skip for pagination.
@@ -122,6 +124,17 @@ pub struct CompiledOrderTerm {
     pub direction: OrderDirection,
     /// ICU collation identifier for string sorting (S4.23).
     pub collation: Option<IcuCollation>,
+}
+
+/// A reference geometry for distance-based ordering (NGSI-LD S4.23, S5.2.43).
+///
+/// Constructed from the `orderFrom` and `orderGeometry` query parameters.
+/// When present, distance-based `orderBy` terms use this geometry as the
+/// reference point instead of the geo-query geometry.
+#[derive(Debug, Clone, PartialEq)]
+pub struct OrderingGeometry {
+    /// The parsed GeoJSON geometry combining type and coordinates.
+    pub geometry: geojson::Geometry,
 }
 
 /// A compiled geo-spatial query, per NGSI-LD 4.10.

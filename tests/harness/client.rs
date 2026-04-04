@@ -146,6 +146,9 @@ pub struct QueryParams {
     entity_map_lifetime: Option<String>,
     contained_by: Option<String>,
     split_entities: Option<bool>,
+    order_by: Option<String>,
+    order_from: Option<String>,
+    order_geometry: Option<String>,
 }
 
 impl QueryParams {
@@ -319,6 +322,21 @@ impl QueryParams {
         self
     }
 
+    pub fn order_by(mut self, v: impl Into<String>) -> Self {
+        self.order_by = Some(v.into());
+        self
+    }
+
+    pub fn order_from(mut self, v: impl Into<String>) -> Self {
+        self.order_from = Some(v.into());
+        self
+    }
+
+    pub fn order_geometry(mut self, v: impl Into<String>) -> Self {
+        self.order_geometry = Some(v.into());
+        self
+    }
+
     fn enc(v: &str) -> String {
         urlencoding::encode(v).into_owned()
     }
@@ -424,6 +442,15 @@ impl QueryParams {
         }
         if let Some(v) = self.split_entities {
             pairs.push(format!("splitEntities={v}"));
+        }
+        if let Some(ref v) = self.order_by {
+            pairs.push(format!("orderBy={}", Self::enc(v)));
+        }
+        if let Some(ref v) = self.order_from {
+            pairs.push(format!("orderFrom={}", Self::enc(v)));
+        }
+        if let Some(ref v) = self.order_geometry {
+            pairs.push(format!("orderGeometry={}", Self::enc(v)));
         }
         if pairs.is_empty() { String::new() } else { format!("?{}", pairs.join("&")) }
     }
