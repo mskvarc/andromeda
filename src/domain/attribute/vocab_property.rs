@@ -17,6 +17,8 @@ pub struct VocabProperty {
     pub previous_vocab: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none", with = "serde_helpers::rfc3339_option", default)]
     pub observed_at: Option<DateTime<Utc>>,
+    #[serde(skip_serializing_if = "Option::is_none", with = "serde_helpers::rfc3339_option", default)]
+    pub expires_at: Option<DateTime<Utc>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub dataset_id: Option<Uri>,
     #[serde(flatten)]

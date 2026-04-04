@@ -106,6 +106,57 @@ impl EntityRepository {
         Ok(rows.into_iter().map(|(id,)| id).collect())
     }
 
+    /// Remove expired attribute instances from entity payloads and return IDs of affected entities.
+    ///
+    /// Uses the `remove_expired_attribute_instances` SQL function to atomically
+    /// filter out attribute instances whose `expiresAt` has passed (ETSI GS CIM 009
+    /// clause 4.22). Also re-extracts hoisted geometry columns (`location`,
+    /// `observation_space`, `operation_space`) from the cleaned payload, nulling
+    /// them if the corresponding GeoProperty was entirely removed.
+    pub async fn expire_due_attributes(&self) -> Result<Vec<String>, AndromedaError> {
+        let location_iri = crate::jsonld::vocab::LOCATION.as_str();
+        let observation_space_iri = crate::jsonld::vocab::OBSERVATION_SPACE.as_str();
+        let operation_space_iri = crate::jsonld::vocab::OPERATION_SPACE.as_str();
+
+        let rows: Vec<(String,)> = sqlx::query_as(
+            r#"
+            UPDATE entities
+            SET payload = remove_expired_attribute_instances(payload, NOW()),
+                modified_at = NOW(),
+                location = CASE
+                    WHEN remove_expired_attribute_instances(payload, NOW())->0 ? $1
+                    THEN location
+                    ELSE NULL
+                END,
+                observation_space = CASE
+                    WHEN remove_expired_attribute_instances(payload, NOW())->0 ? $2
+                    THEN observation_space
+                    ELSE NULL
+                END,
+                operation_space = CASE
+                    WHEN remove_expired_attribute_instances(payload, NOW())->0 ? $3
+                    THEN operation_space
+                    ELSE NULL
+                END
+            WHERE EXISTS (
+                SELECT 1
+                FROM jsonb_each(payload->0) AS kv(key, val),
+                     LATERAL jsonb_array_elements(val) AS inst(elem)
+                WHERE kv.key NOT LIKE '@%'
+                  AND (inst.elem #>>'{https://uri.etsi.org/ngsi-ld/expiresAt,0,@value}')::timestamptz <= NOW()
+            )
+            RETURNING id
+            "#,
+        )
+        .bind(location_iri)
+        .bind(observation_space_iri)
+        .bind(operation_space_iri)
+        .fetch_all(&self.pool)
+        .await?;
+
+        Ok(rows.into_iter().map(|(id,)| id).collect())
+    }
+
     /// Save (overwrite) the expanded payload for an existing entity.
     /// Automatically re-extracts types, scopes, location, and geo spaces from the payload.
     /// Preserves existing expires_at unless the payload contains a new expiresAt value.

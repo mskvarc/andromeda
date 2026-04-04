@@ -277,6 +277,11 @@ pub async fn build_tenant_state(
         crate::worker::entity_expiration::EntityExpirationWorker::new(EntityRepository::new(&pool), Some(change_tx.clone()), expiration_interval);
     worker_handles.push(tokio::spawn(entity_expiration_worker.run()));
 
+    // Attribute-level expiration worker (§4.22 attribute expiresAt)
+    let attr_expiration_worker =
+        crate::worker::attribute_expiration::AttributeExpirationWorker::new(EntityRepository::new(&pool), Some(change_tx.clone()), expiration_interval);
+    worker_handles.push(tokio::spawn(attr_expiration_worker.run()));
+
     let transport_handle = transport.clone();
     let csr_interval_worker = CsrIntervalWorker::new(
         CsourceSubscriptionRepository::new(&pool),

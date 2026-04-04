@@ -96,14 +96,60 @@ impl AttributeType {
     /// Returns the reserved compacted field names for this attribute type.
     pub fn reserved_fields(self) -> &'static [&'static str] {
         match self {
-            Self::Property => &["value", "unitCode", "observedAt", "datasetId", "instanceId", "createdAt", "modifiedAt", "name"],
-            Self::Relationship => &["object", "observedAt", "datasetId", "instanceId", "createdAt", "modifiedAt", "name"],
-            Self::GeoProperty => &["value", "observedAt", "datasetId", "instanceId", "createdAt", "modifiedAt", "name"],
-            Self::VocabProperty => &["vocab", "observedAt", "datasetId", "instanceId", "createdAt", "modifiedAt", "name"],
-            Self::LanguageProperty => &["languageMap", "observedAt", "datasetId", "instanceId", "createdAt", "modifiedAt", "name"],
-            Self::JsonProperty => &["json", "observedAt", "datasetId", "instanceId", "createdAt", "modifiedAt", "name"],
-            Self::ListProperty => &["valueList", "observedAt", "datasetId", "instanceId", "createdAt", "modifiedAt", "name"],
-            Self::ListRelationship => &["objectList", "observedAt", "datasetId", "instanceId", "createdAt", "modifiedAt", "name"],
+            Self::Property => &[
+                "value",
+                "unitCode",
+                "observedAt",
+                "expiresAt",
+                "datasetId",
+                "instanceId",
+                "createdAt",
+                "modifiedAt",
+                "name",
+            ],
+            Self::Relationship => &[
+                "object",
+                "observedAt",
+                "expiresAt",
+                "datasetId",
+                "instanceId",
+                "createdAt",
+                "modifiedAt",
+                "name",
+            ],
+            Self::GeoProperty => &["value", "observedAt", "expiresAt", "datasetId", "instanceId", "createdAt", "modifiedAt", "name"],
+            Self::VocabProperty => &["vocab", "observedAt", "expiresAt", "datasetId", "instanceId", "createdAt", "modifiedAt", "name"],
+            Self::LanguageProperty => &[
+                "languageMap",
+                "observedAt",
+                "expiresAt",
+                "datasetId",
+                "instanceId",
+                "createdAt",
+                "modifiedAt",
+                "name",
+            ],
+            Self::JsonProperty => &["json", "observedAt", "expiresAt", "datasetId", "instanceId", "createdAt", "modifiedAt", "name"],
+            Self::ListProperty => &[
+                "valueList",
+                "observedAt",
+                "expiresAt",
+                "datasetId",
+                "instanceId",
+                "createdAt",
+                "modifiedAt",
+                "name",
+            ],
+            Self::ListRelationship => &[
+                "objectList",
+                "observedAt",
+                "expiresAt",
+                "datasetId",
+                "instanceId",
+                "createdAt",
+                "modifiedAt",
+                "name",
+            ],
         }
     }
 
@@ -203,6 +249,16 @@ mod tests {
         assert_eq!(AttributeType::VocabProperty.value_key(), vocab::VOCAB);
         assert_eq!(AttributeType::LanguageProperty.value_key(), vocab::LANGUAGE_MAP);
         assert_eq!(AttributeType::JsonProperty.value_key(), vocab::JSON);
+    }
+
+    #[test]
+    fn reserved_fields_includes_expires_at_for_all_types() {
+        for variant in AttributeType::ALL {
+            assert!(
+                variant.reserved_fields().contains(&"expiresAt"),
+                "reserved_fields for {variant} should include expiresAt"
+            );
+        }
     }
 
     #[test]

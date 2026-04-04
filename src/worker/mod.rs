@@ -1,3 +1,4 @@
+pub mod attribute_expiration;
 pub mod csr_interval;
 pub mod csr_notification;
 pub mod entity_expiration;

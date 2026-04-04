@@ -1,3 +1,4 @@
+pub mod attribute_expiration;
 pub mod contained_by;
 pub mod entity_ordering;
 pub mod geometry_property_collection;
@@ -20,4 +21,5 @@ pub fn tests(trials: &mut Vec<Trial>) {
     lang::tests(trials);
     entity_ordering::tests(trials);
     prefer_header::tests(trials);
+    attribute_expiration::tests(trials);
 }
