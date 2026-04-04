@@ -44,6 +44,11 @@ impl RequestHeaders {
         self
     }
 
+    pub fn language(mut self, lang: &str) -> Self {
+        self.0.insert("NGSILD-Language", HeaderValue::from_str(lang).unwrap());
+        self
+    }
+
     fn into_header_map(self) -> HeaderMap {
         self.0
     }

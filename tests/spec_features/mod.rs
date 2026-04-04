@@ -1,5 +1,6 @@
 pub mod contained_by;
 pub mod geometry_property_collection;
+pub mod lang;
 pub mod list_property_relationship;
 pub mod notification_join_level;
 pub mod snapshot_api;
@@ -12,4 +13,5 @@ pub fn tests(trials: &mut Vec<Trial>) {
     contained_by::tests(trials);
     list_property_relationship::tests(trials);
     snapshot_api::tests(trials);
+    lang::tests(trials);
 }

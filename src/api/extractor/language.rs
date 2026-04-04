@@ -35,12 +35,23 @@ where
         });
 
         // 2. Try NGSILD-Language header as fallback
-        let lang_from_header = parts
-            .headers
-            .get(NGSILD_LANGUAGE_HEADER)
-            .and_then(|value| value.to_str().ok())
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty());
+        let lang_from_header = if lang_from_query.is_none() {
+            match parts.headers.get(NGSILD_LANGUAGE_HEADER) {
+                Some(value) => {
+                    let s = value
+                        .to_str()
+                        .map_err(|_| ExtractorRejection::bad_request_data("Invalid NGSILD-Language header encoding", uri.clone()))?
+                        .trim();
+                    if s.is_empty() {
+                        return Err(ExtractorRejection::bad_request_data("NGSILD-Language header must not be empty", uri));
+                    }
+                    Some(s.to_string())
+                }
+                None => None,
+            }
+        } else {
+            None
+        };
 
         let raw = lang_from_query.or(lang_from_header);
 
@@ -117,6 +128,18 @@ mod tests {
     #[tokio::test]
     async fn rejects_invalid_language_filter() {
         let (mut parts, _) = Request::builder().uri("/entities?lang=").body(()).unwrap().into_parts();
+        let result = LanguageNegotiation::from_request_parts(&mut parts, &()).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn rejects_empty_header() {
+        let (mut parts, _) = Request::builder()
+            .uri("/entities")
+            .header(NGSILD_LANGUAGE_HEADER, "")
+            .body(())
+            .unwrap()
+            .into_parts();
         let result = LanguageNegotiation::from_request_parts(&mut parts, &()).await;
         assert!(result.is_err());
     }
