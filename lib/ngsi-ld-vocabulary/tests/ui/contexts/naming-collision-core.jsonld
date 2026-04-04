@@ -1,0 +1,6 @@
+{
+    "@context": {
+        "fooBar": "https://example.com/fooBar",
+        "foo_bar": "https://example.com/foo_bar"
+    }
+}

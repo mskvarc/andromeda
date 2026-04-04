@@ -36,11 +36,11 @@ iref = { version = "4.0.0", features = ["serde"] }
 iref3 = { package = "iref", version = "3.2.2" }
 json-ld = "0.21.4"
 json-ld-expandable = { path = "lib/json-ld-expandable" }
-ngsi-ld-vocabulary = { path = "lib/ngsi-ld-vocabulary" }
 json-syntax = { version = "0.12.5", features = ["serde_json"] }
 mediatype = "0.21.0"
 mime = "0.3.17"
 moka = { version = "0.12.15", features = ["future"] }
+ngsi-ld-vocabulary = { path = "lib/ngsi-ld-vocabulary" }
 parse_link_header = "0.4.0"
 percent-encoding = "2.3.2"
 problem_details = { version = "0.9.0", features = ["axum"] }
@@ -83,3 +83,6 @@ harness = false
 lto = "fat"
 codegen-units = 1
 opt-level = 3
+
+[package.metadata.cargo-machete]
+ignored = ["static-iref"]

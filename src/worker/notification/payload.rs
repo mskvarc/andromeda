@@ -83,10 +83,11 @@ pub async fn build_notification_data(params: NotificationBuildParams<'_>) -> Vec
         if sub.notification_sys_attrs
             && let Some(obj) = expanded_entity_object_mut(&mut entity)
         {
-            let ca = obj.get("https://uri.etsi.org/ngsi-ld/createdAt").cloned();
-            let ma = obj.get("https://uri.etsi.org/ngsi-ld/modifiedAt").cloned();
+            let ca = obj.get(vocab::CREATED_AT.as_str()).cloned();
+            let ma = obj.get(vocab::MODIFIED_AT.as_str()).cloned();
             if let (Some(ca), Some(ma)) = (ca, ma) {
-                inject_attr_sys_attrs(obj, &ca, &ma);
+                let default_context_prefix = format!("{}default-context/", vocab::prefix::NGSI_LD.as_str());
+                inject_attr_sys_attrs(obj, &ca, &ma, &default_context_prefix);
             }
         }
     }
@@ -408,8 +409,8 @@ pub fn strip_to_structural_keys(entity: &Value, include_sys_attrs: bool) -> Valu
     for (key, value) in obj {
         let keep = key == "@id"
             || key == "@type"
-            || key == "https://uri.etsi.org/ngsi-ld/deletedAt"
-            || (include_sys_attrs && (key == "https://uri.etsi.org/ngsi-ld/createdAt" || key == "https://uri.etsi.org/ngsi-ld/modifiedAt"));
+            || key == vocab::DELETED_AT.as_str()
+            || (include_sys_attrs && (key == vocab::CREATED_AT.as_str() || key == vocab::MODIFIED_AT.as_str()));
         if keep {
             stripped.insert(key.clone(), value.clone());
         }
@@ -419,15 +420,15 @@ pub fn strip_to_structural_keys(entity: &Value, include_sys_attrs: bool) -> Valu
 
 fn nullify_entity_attributes(entity: &mut Value) {
     let Some(obj) = entity.as_object_mut() else { return };
-    const STRUCTURAL_KEYS: &[&str] = &[
-        "https://uri.etsi.org/ngsi-ld/createdAt",
-        "https://uri.etsi.org/ngsi-ld/modifiedAt",
-        "https://uri.etsi.org/ngsi-ld/deletedAt",
-        "https://uri.etsi.org/ngsi-ld/scope",
-    ];
     let attr_keys: Vec<String> = obj
         .keys()
-        .filter(|k| !k.starts_with('@') && !STRUCTURAL_KEYS.contains(&k.as_str()))
+        .filter(|k| {
+            !k.starts_with('@')
+                && *k != vocab::CREATED_AT.as_str()
+                && *k != vocab::MODIFIED_AT.as_str()
+                && *k != vocab::DELETED_AT.as_str()
+                && *k != vocab::SCOPE.as_str()
+        })
         .cloned()
         .collect();
     for key in attr_keys {
@@ -447,16 +448,16 @@ fn nullify_attribute_instance(instance: &mut Value) {
     let null_json = serde_json::json!([{"@value": vocab::NULL_URI, "@type": "@json"}]);
     let null_vocab = serde_json::json!([{"@id": vocab::NULL_URI}]);
 
-    if obj.contains_key(vocab::HAS_OBJECT) {
-        obj.insert(vocab::HAS_OBJECT.to_string(), null_object);
-    } else if obj.contains_key(vocab::HAS_LANGUAGE_MAP) {
-        obj.insert(vocab::HAS_LANGUAGE_MAP.to_string(), null_value);
-    } else if obj.contains_key(vocab::HAS_JSON) {
-        obj.insert(vocab::HAS_JSON.to_string(), null_json);
-    } else if obj.contains_key(vocab::HAS_VOCAB) {
-        obj.insert(vocab::HAS_VOCAB.to_string(), null_vocab);
+    if obj.contains_key(vocab::OBJECT.as_str()) {
+        obj.insert(vocab::OBJECT.as_str().to_string(), null_object);
+    } else if obj.contains_key(vocab::LANGUAGE_MAP.as_str()) {
+        obj.insert(vocab::LANGUAGE_MAP.as_str().to_string(), null_value);
+    } else if obj.contains_key(vocab::JSON.as_str()) {
+        obj.insert(vocab::JSON.as_str().to_string(), null_json);
+    } else if obj.contains_key(vocab::VOCAB.as_str()) {
+        obj.insert(vocab::VOCAB.as_str().to_string(), null_vocab);
     } else {
-        obj.insert(vocab::HAS_VALUE.to_string(), null_value);
+        obj.insert(vocab::VALUE.as_str().to_string(), null_value);
     }
 }
 
@@ -476,7 +477,7 @@ fn fix_null_language_maps(entity: &mut Value) {
             })
             == Some(vocab::NULL_URI);
         if is_null_lang_map && let Some(attr) = value.as_object_mut() {
-            attr.insert("languageMap".to_string(), Value::String(vocab::NULL_URI.to_string()));
+            attr.insert("languageMap".to_string(), Value::String(vocab::NULL_URI.as_str().to_string()));
         }
     }
 }
@@ -504,7 +505,7 @@ fn inject_deleted_attributes(entity: &mut Value, changed_attributes: &[String], 
             if let Some(mut instance) = first_instance {
                 nullify_attribute_instance(&mut instance);
                 if let Some(obj) = instance.as_object_mut() {
-                    obj.remove("https://uri.etsi.org/ngsi-ld/datasetId");
+                    obj.remove(vocab::DATASET_ID.as_str());
                 }
                 if let Some(ts) = deleted_at {
                     inject_deleted_at_on_instance(&mut instance, ts);
@@ -521,8 +522,6 @@ fn inject_deleted_instances(
     prev_obj: &serde_json::Map<String, Value>,
     deleted_at: Option<DateTime<Utc>>,
 ) {
-    const DATASET_ID_IRI: &str = "https://uri.etsi.org/ngsi-ld/datasetId";
-
     let Some(prev_attr) = prev_obj.get(attr_iri) else { return };
     let Some(prev_arr) = prev_attr.as_array() else { return };
     let Some(cur_arr) = entity_obj.get(attr_iri).and_then(|v| v.as_array()) else {
@@ -533,7 +532,7 @@ fn inject_deleted_instances(
         .iter()
         .map(|inst| {
             inst.as_object()
-                .and_then(|o| o.get(DATASET_ID_IRI))
+                .and_then(|o| o.get(vocab::DATASET_ID.as_str()))
                 .and_then(|v| v.as_array())
                 .and_then(|a| a.first())
                 .and_then(|v| v.as_object())
@@ -547,7 +546,7 @@ fn inject_deleted_instances(
     for prev_inst in prev_arr {
         let prev_ds_id = prev_inst
             .as_object()
-            .and_then(|o| o.get(DATASET_ID_IRI))
+            .and_then(|o| o.get(vocab::DATASET_ID.as_str()))
             .and_then(|v| v.as_array())
             .and_then(|a| a.first())
             .and_then(|v| v.as_object())
@@ -575,9 +574,9 @@ fn inject_deleted_instances(
 fn inject_deleted_at_on_instance(instance: &mut Value, ts: DateTime<Utc>) {
     if let Some(obj) = instance.as_object_mut() {
         obj.insert(
-            "https://uri.etsi.org/ngsi-ld/deletedAt".to_string(),
+            vocab::DELETED_AT.as_str().to_string(),
             serde_json::json!([{
-                "@type": "https://uri.etsi.org/ngsi-ld/DateTime",
+                "@type": vocab::DATE_TIME.as_str(),
                 "@value": ts.to_rfc3339_opts(SecondsFormat::Millis, true)
             }]),
         );
@@ -598,11 +597,11 @@ pub fn filter_entity_attributes(entity: &Value, attrs: &[String]) -> Value {
 
 fn filter_entity_by_dataset_id(entity: &mut Value, dataset_ids: &[String]) {
     let Some(obj) = expanded_entity_object_mut(entity) else { return };
-    const DATASET_ID_IRI: &str = "https://uri.etsi.org/ngsi-ld/datasetId";
+    let default_context_prefix = format!("{}default-context/", vocab::prefix::NGSI_LD.as_str());
 
     let attr_keys: Vec<String> = obj
         .keys()
-        .filter(|k| !k.starts_with('@') && (!k.starts_with("https://uri.etsi.org/ngsi-ld/") || k.starts_with("https://uri.etsi.org/ngsi-ld/default-context/")))
+        .filter(|k| !k.starts_with('@') && (!k.starts_with(vocab::prefix::NGSI_LD.as_str()) || k.starts_with(&default_context_prefix)))
         .cloned()
         .collect();
 
@@ -616,7 +615,7 @@ fn filter_entity_by_dataset_id(entity: &mut Value, dataset_ids: &[String]) {
             .filter(|instance| {
                 let instance_dataset_id = instance
                     .as_object()
-                    .and_then(|o| o.get(DATASET_ID_IRI))
+                    .and_then(|o| o.get(vocab::DATASET_ID.as_str()))
                     .and_then(|v| v.as_array())
                     .and_then(|a| a.first())
                     .and_then(|v| v.as_object())

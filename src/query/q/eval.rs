@@ -61,8 +61,8 @@ fn eval_predicate(pred: &Predicate, obj: &serde_json::Map<String, Value>) -> boo
 /// then optional value_path for compound values.
 fn resolve_value(obj: &serde_json::Map<String, Value>, path: &AttrPath) -> Option<Value> {
     use crate::jsonld::vocab;
-    let has_value = vocab::HAS_VALUE;
-    let has_object = vocab::HAS_OBJECT;
+    let has_value = vocab::VALUE.as_str();
+    let has_object = vocab::OBJECT.as_str();
 
     // Navigate to the attribute instance: obj[attr][0]
     let attr_instances = obj.get(&path.attr)?;

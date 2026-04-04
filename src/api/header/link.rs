@@ -13,7 +13,9 @@ use mime::Mime;
 /// Well-known link relation types used in NGSI-LD.
 pub mod rel {
     /// JSON-LD context relation (used for @context in Link header)
-    pub const JSON_LD_CONTEXT: &str = crate::jsonld::vocab::JSONLD_CONTEXT_REL;
+    pub fn json_ld_context() -> &'static str {
+        crate::jsonld::vocab::JSONLD_CONTEXT_REL.as_str()
+    }
 }
 
 /// Well-known media types for Link header type parameter.
@@ -49,14 +51,18 @@ pub fn link_from_values(values: Vec<LinkValue>) -> Option<Link> {
 
 /// Create a single-value JSON-LD context Link header.
 pub fn jsonld_context_link(context_url: &str) -> Link {
-    Link::new(vec![link_value_with_params(context_url, Some(rel::JSON_LD_CONTEXT), Some(media_type::JSON_LD))])
+    Link::new(vec![link_value_with_params(
+        context_url,
+        Some(rel::json_ld_context()),
+        Some(media_type::JSON_LD),
+    )])
 }
 
 /// Create a multi-value JSON-LD context Link header from an ordered URL list.
 pub fn jsonld_context_links(urls: &[String]) -> Option<Link> {
     let values = urls
         .iter()
-        .map(|url| link_value_with_params(url, Some(rel::JSON_LD_CONTEXT), Some(media_type::JSON_LD)))
+        .map(|url| link_value_with_params(url, Some(rel::json_ld_context()), Some(media_type::JSON_LD)))
         .collect::<Vec<_>>();
     link_from_values(values)
 }

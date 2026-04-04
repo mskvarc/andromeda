@@ -1,0 +1,9 @@
+{
+    "@context": {
+        "andromeda": "https://andromeda.internal/vocab/",
+        "jsonldContextRel": "http://www.w3.org/ns/json-ld#context",
+        "nullIri": "https://uri.etsi.org/ngsi-ld/null",
+        "nullUri": "urn:ngsi-ld:null",
+        "xsdDatetime": "http://www.w3.org/2001/XMLSchema#dateTime"
+    }
+}

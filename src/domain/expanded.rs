@@ -6,6 +6,7 @@
 //! the entity.
 
 use crate::jsonld::vocab;
+use iref::Iri;
 use serde_json::{Map, Value};
 
 // ---------------------------------------------------------------------------
@@ -27,10 +28,12 @@ pub fn instance_is_null_sentinel(instance: &Value) -> bool {
             .and_then(|v| v.as_object())
             .and_then(|o| o.get(value_key))
             .and_then(|v| v.as_str())
-            .is_some_and(|s| s == vocab::NULL_URI || s == vocab::NULL_IRI)
+            .is_some_and(|s| s == vocab::NULL_URI.as_str() || s == vocab::NULL_IRI.as_str())
     };
 
-    check_value_null(vocab::HAS_VALUE, "@value") || check_value_null(vocab::HAS_OBJECT, "@id") || check_value_null(vocab::HAS_LANGUAGE_MAP, "@value")
+    check_value_null(vocab::VALUE.as_str(), "@value")
+        || check_value_null(vocab::OBJECT.as_str(), "@id")
+        || check_value_null(vocab::LANGUAGE_MAP.as_str(), "@value")
 }
 
 // ---------------------------------------------------------------------------
@@ -40,7 +43,7 @@ pub fn instance_is_null_sentinel(instance: &Value) -> bool {
 /// Extract the `datasetId` (`@id` value) from an expanded attribute instance.
 pub fn get_instance_dataset_id(instance: &Value) -> Option<String> {
     instance
-        .get(vocab::DATASET_ID)
+        .get(vocab::DATASET_ID.as_str())
         .and_then(|v| v.as_array())
         .and_then(|arr| arr.first())
         .and_then(|v| v.as_object())
@@ -96,7 +99,7 @@ pub fn extract_scopes(expanded: &Value) -> Vec<String> {
     let Some(obj) = expanded_object_ref(expanded) else {
         return Vec::new();
     };
-    let Some(scope_value) = obj.get(vocab::SCOPE) else {
+    let Some(scope_value) = obj.get(vocab::SCOPE.as_str()) else {
         return Vec::new();
     };
     match scope_value {
@@ -117,7 +120,7 @@ pub fn extract_scopes(expanded: &Value) -> Vec<String> {
 pub fn extract_expires_at(expanded: &Value) -> Option<chrono::DateTime<chrono::Utc>> {
     let obj = expanded_object_ref(expanded)?;
     let dt_str = obj
-        .get(vocab::EXPIRES_AT)?
+        .get(vocab::EXPIRES_AT.as_str())?
         .as_array()
         .and_then(|arr| arr.first())
         .and_then(|v| v.get("@value"))
@@ -148,14 +151,14 @@ pub fn extract_operation_space_geojson(expanded: &Value) -> Option<String> {
 }
 
 /// Generic GeoProperty GeoJSON extraction for a given IRI key.
-fn extract_geo_property_geojson(expanded: &Value, iri: &str) -> Option<String> {
+fn extract_geo_property_geojson(expanded: &Value, iri: &'static Iri) -> Option<String> {
     let obj = expanded_object_ref(expanded)?;
-    let prop = obj.get(iri)?;
+    let prop = obj.get(iri.as_str())?;
 
     let geo_node = prop
         .as_array()
         .and_then(|arr| arr.last())
-        .and_then(|inst| inst.get(vocab::HAS_VALUE))
+        .and_then(|inst| inst.get(vocab::VALUE.as_str()))
         .and_then(|v| v.as_array())
         .and_then(|arr| arr.first())?;
 
@@ -171,7 +174,7 @@ fn extract_geo_property_geojson(expanded: &Value, iri: &str) -> Option<String> {
     // Case 2: expanded JSON-LD GeoJSON node (purl.org/geojson/vocab# IRIs)
     if geo_node
         .as_object()
-        .is_some_and(|o| o.contains_key("@type") || o.contains_key(vocab::COORDINATES))
+        .is_some_and(|o| o.contains_key("@type") || o.contains_key(vocab::COORDINATES.as_str()))
     {
         return Some(reconstruct_geojson(geo_node));
     }
@@ -190,11 +193,11 @@ pub fn reconstruct_geojson(node: &Value) -> String {
         .and_then(|t| t.as_array())
         .and_then(|arr| arr.first())
         .and_then(|v| v.as_str())
-        .and_then(|s| s.strip_prefix(vocab::prefix::GEOJSON))
+        .and_then(|s| s.strip_prefix(vocab::prefix::GEOJSON.as_str()))
         .unwrap_or("Point");
 
     let coordinates = obj
-        .get(vocab::COORDINATES)
+        .get(vocab::COORDINATES.as_str())
         .and_then(|v| v.as_array())
         .and_then(|arr| arr.first())
         .and_then(|v| v.get("@list").or(Some(v)))
@@ -423,7 +426,7 @@ pub fn append_entity_attrs(entity: &mut Value, attrs: &Value, no_overwrite: bool
         }
 
         // Scope: merge arrays with deduplication
-        if key == vocab::SCOPE {
+        if key == vocab::SCOPE.as_str() {
             if let (Some(Value::Array(existing_scopes)), Some(new_scopes)) = (entity_obj.get_mut(key), value.as_array()) {
                 if no_overwrite {
                     // noOverwrite: add scope values that don't already exist
@@ -519,7 +522,7 @@ pub fn update_entity_attrs(entity: &mut Value, attrs: &Value) -> Result<Vec<Stri
         }
 
         // Scope: only update if already present, otherwise report as not updated
-        if key == vocab::SCOPE {
+        if key == vocab::SCOPE.as_str() {
             if entity_obj.contains_key(key) {
                 entity_obj.insert(key.clone(), value.clone());
             } else {
@@ -594,7 +597,7 @@ pub fn partial_update_attr(entity: &mut Value, attr_iri: &str, dataset_id: Optio
 
         let found = instances.iter_mut().find(|instance| {
             instance
-                .get(vocab::DATASET_ID)
+                .get(vocab::DATASET_ID.as_str())
                 .and_then(|v| v.as_array())
                 .and_then(|arr| arr.first())
                 .and_then(|obj| obj.get("@id"))

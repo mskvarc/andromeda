@@ -2567,10 +2567,13 @@ name = "ngsi-ld-vocabulary"
 version = "0.1.0"
 dependencies = [
  "heck",
+ "iref 4.0.0",
  "proc-macro2",
  "quote",
  "serde_json",
+ "static-iref",
  "syn 2.0.117",
+ "trybuild",
 ]
 
 [[package]]

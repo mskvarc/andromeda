@@ -1,6 +1,7 @@
 //! NGSI-LD Attribute type enum (ETSI GS CIM 009 clause 5.2.4).
 
 use crate::jsonld::vocab;
+use iref::Iri;
 use serde::{Deserialize, Serialize};
 use strum::{Display, EnumString};
 
@@ -18,8 +19,8 @@ pub enum AttributeType {
 }
 
 impl AttributeType {
-    /// Returns the expanded IRI string for this attribute type.
-    pub fn iri_str(self) -> &'static str {
+    /// Returns the expanded IRI for this attribute type.
+    pub fn iri(self) -> &'static Iri {
         match self {
             Self::Property => vocab::PROPERTY,
             Self::Relationship => vocab::RELATIONSHIP,
@@ -32,16 +33,16 @@ impl AttributeType {
         }
     }
 
-    /// Returns the expanded IRI string of the value container for this attribute type.
-    pub fn value_key_str(self) -> &'static str {
+    /// Returns the expanded IRI of the value container for this attribute type.
+    pub fn value_key(self) -> &'static Iri {
         match self {
-            Self::Property | Self::GeoProperty => vocab::HAS_VALUE,
-            Self::Relationship => vocab::HAS_OBJECT,
-            Self::VocabProperty => vocab::HAS_VOCAB,
-            Self::LanguageProperty => vocab::HAS_LANGUAGE_MAP,
-            Self::JsonProperty => vocab::HAS_JSON,
-            Self::ListProperty => vocab::HAS_VALUE_LIST,
-            Self::ListRelationship => vocab::HAS_OBJECT_LIST,
+            Self::Property | Self::GeoProperty => vocab::VALUE,
+            Self::Relationship => vocab::OBJECT,
+            Self::VocabProperty => vocab::VOCAB,
+            Self::LanguageProperty => vocab::LANGUAGE_MAP,
+            Self::JsonProperty => vocab::JSON,
+            Self::ListProperty => vocab::VALUE_LIST,
+            Self::ListRelationship => vocab::OBJECT_LIST,
         }
     }
 
@@ -115,7 +116,7 @@ impl AttributeType {
 
     /// Try to parse an expanded IRI string into an `AttributeType`.
     pub fn from_expanded_iri(iri: &str) -> Option<AttributeType> {
-        Self::ALL.iter().find(|v| v.iri_str() == iri).copied()
+        Self::ALL.iter().find(|v| v.iri().as_str() == iri).copied()
     }
 
     /// All eight NGSI-LD attribute type variants.
@@ -148,8 +149,8 @@ mod tests {
     #[test]
     fn iri_matches_display_name() {
         for variant in AttributeType::ALL {
-            let iri = variant.iri_str();
-            assert!(iri.ends_with(&variant.to_string()), "IRI {iri} should end with {variant}");
+            let iri = variant.iri();
+            assert!(iri.as_str().ends_with(&variant.to_string()), "IRI {iri} should end with {variant}");
         }
     }
 
@@ -177,7 +178,7 @@ mod tests {
     #[test]
     fn attribute_type_iri_roundtrip() {
         for variant in AttributeType::ALL {
-            let iri = variant.iri_str();
+            let iri = variant.iri().as_str();
             let parsed = AttributeType::from_expanded_iri(iri);
             assert_eq!(parsed, Some(variant), "roundtrip failed for {variant}");
         }
@@ -186,20 +187,22 @@ mod tests {
     #[test]
     fn value_key_roundtrip() {
         for variant in AttributeType::ALL {
-            let key = variant.value_key_str();
+            let key = variant.value_key();
             assert!(!key.is_empty(), "value_key_str for {variant} is empty");
-            // Verify it's a valid expanded IRI
-            assert!(key.starts_with("https://"), "value_key_str for {variant} should be an expanded IRI, got {key}");
+            assert!(
+                key.as_str().starts_with("https://"),
+                "value_key_str for {variant} should be an expanded IRI, got {key}"
+            );
         }
     }
 
     #[test]
     fn value_key_mapping() {
-        assert_eq!(AttributeType::Property.value_key_str(), vocab::HAS_VALUE);
-        assert_eq!(AttributeType::Relationship.value_key_str(), vocab::HAS_OBJECT);
-        assert_eq!(AttributeType::VocabProperty.value_key_str(), vocab::HAS_VOCAB);
-        assert_eq!(AttributeType::LanguageProperty.value_key_str(), vocab::HAS_LANGUAGE_MAP);
-        assert_eq!(AttributeType::JsonProperty.value_key_str(), vocab::HAS_JSON);
+        assert_eq!(AttributeType::Property.value_key(), vocab::VALUE);
+        assert_eq!(AttributeType::Relationship.value_key(), vocab::OBJECT);
+        assert_eq!(AttributeType::VocabProperty.value_key(), vocab::VOCAB);
+        assert_eq!(AttributeType::LanguageProperty.value_key(), vocab::LANGUAGE_MAP);
+        assert_eq!(AttributeType::JsonProperty.value_key(), vocab::JSON);
     }
 
     #[test]

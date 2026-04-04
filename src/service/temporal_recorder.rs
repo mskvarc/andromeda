@@ -12,18 +12,19 @@ use chrono::{DateTime, Utc};
 use serde_json::Value;
 use std::sync::Arc;
 
-/// NGSI-LD system-level expanded IRIs that should NOT be treated as user attributes.
-///
-/// IMPORTANT: This slice MUST be sorted by string value for `binary_search`.
-const NGSI_LD_SYSTEM_ATTRS: &[&str] = &[
-    vocab::CREATED_AT,
-    vocab::DATASET_ID,
-    vocab::DELETED_AT,
-    vocab::INSTANCE_ID,
-    vocab::MODIFIED_AT,
-    vocab::OBSERVED_AT,
-    vocab::UNIT_CODE,
-];
+/// Returns whether the given expanded IRI is an NGSI-LD system attribute.
+fn is_system_attribute(attr_name: &str) -> bool {
+    matches!(
+        attr_name,
+        value if value == vocab::CREATED_AT.as_str()
+            || value == vocab::DATASET_ID.as_str()
+            || value == vocab::DELETED_AT.as_str()
+            || value == vocab::INSTANCE_ID.as_str()
+            || value == vocab::MODIFIED_AT.as_str()
+            || value == vocab::OBSERVED_AT.as_str()
+            || value == vocab::UNIT_CODE.as_str()
+    )
+}
 
 /// Named parameters for temporal value storage, replacing the 7-element tuple.
 pub(crate) struct DbValueParams {
@@ -81,19 +82,19 @@ impl TemporalRecorder {
             }
 
             // Skip NGSI-LD system-level attributes (observedAt, createdAt, etc.)
-            if NGSI_LD_SYSTEM_ATTRS.binary_search(&attr_name.as_str()).is_ok() {
+            if is_system_attribute(attr_name) {
                 continue;
             }
 
             // Handle scope specially: scope entries are @value nodes, not typed attribute instances
-            if attr_name == vocab::SCOPE {
+            if attr_name == vocab::SCOPE.as_str() {
                 if let Some(scope_arr) = attr_value.as_array() {
                     for scope_entry in scope_arr {
                         if let Some(scope_val) = scope_entry.as_object().and_then(|o| o.get("@value")).and_then(|v| v.as_str()) {
                             // Record as a synthetic Property-like entry
                             let synthetic = serde_json::json!({
-                                "@type": [vocab::PROPERTY],
-                                vocab::HAS_VALUE: [{"@value": scope_val}]
+                                "@type": [vocab::PROPERTY.as_str()],
+                                vocab::VALUE.as_str(): [{"@value": scope_val}]
                             });
                             match self.record_attribute_instance(entity_id, attr_name, &synthetic).await {
                                 Ok(()) => {}
@@ -204,7 +205,7 @@ impl TemporalRecorder {
                 tea_id,
                 values: HistoryValues {
                     value_number: None,
-                    value_string: Some("urn:ngsi-ld:null"),
+                    value_string: Some(vocab::NULL_URI.as_str()),
                     value_bool: None,
                     value_geo: None,
                     value_object: None,
@@ -330,7 +331,7 @@ fn extract_typed_value(instance: &Value, attribute_type: &str) -> Result<TypedVa
     match attribute_type {
         x if x == AttributeType::Relationship.short_name() => {
             let uri = instance
-                .get(vocab::HAS_OBJECT)
+                .get(vocab::OBJECT.as_str())
                 .and_then(|v| v.as_array())
                 .and_then(|arr| arr.first())
                 .and_then(|obj| obj.get("@id"))
@@ -340,7 +341,7 @@ fn extract_typed_value(instance: &Value, attribute_type: &str) -> Result<TypedVa
         }
         x if x == AttributeType::GeoProperty.short_name() => {
             let geo_node = instance
-                .get(vocab::HAS_VALUE)
+                .get(vocab::VALUE.as_str())
                 .and_then(|v| v.as_array())
                 .and_then(|arr| arr.first())
                 .ok_or_else(|| AndromedaError::bad_request_data("GeoProperty missing value"))?;
@@ -357,7 +358,7 @@ fn extract_typed_value(instance: &Value, attribute_type: &str) -> Result<TypedVa
         }
         x if x == AttributeType::VocabProperty.short_name() => {
             let arr = instance
-                .get(vocab::HAS_VOCAB)
+                .get(vocab::VOCAB.as_str())
                 .and_then(|v| v.as_array())
                 .ok_or_else(|| AndromedaError::bad_request_data("VocabProperty missing vocab value"))?;
             if arr.len() > 1 {
@@ -374,13 +375,13 @@ fn extract_typed_value(instance: &Value, attribute_type: &str) -> Result<TypedVa
         }
         x if x == AttributeType::LanguageProperty.short_name() => {
             let lang_map = instance
-                .get(vocab::HAS_LANGUAGE_MAP)
+                .get(vocab::LANGUAGE_MAP.as_str())
                 .ok_or_else(|| AndromedaError::bad_request_data("LanguageProperty missing languageMap"))?;
             Ok(TypedValue::Object(lang_map.clone())) // clone: need owned Value for TypedValue enum; lang_map is borrowed from instance
         }
         x if x == AttributeType::JsonProperty.short_name() => {
             let json_val = instance
-                .get(vocab::HAS_JSON)
+                .get(vocab::JSON.as_str())
                 .and_then(|v| v.as_array())
                 .and_then(|arr| arr.first())
                 .and_then(|obj| obj.get("@value"))
@@ -389,7 +390,7 @@ fn extract_typed_value(instance: &Value, attribute_type: &str) -> Result<TypedVa
         }
         x if x == AttributeType::ListProperty.short_name() => {
             let list = instance
-                .get(vocab::HAS_VALUE_LIST)
+                .get(vocab::VALUE_LIST.as_str())
                 .and_then(|v| v.as_array())
                 .and_then(|arr| arr.first())
                 .and_then(|obj| obj.get("@list"))
@@ -398,7 +399,7 @@ fn extract_typed_value(instance: &Value, attribute_type: &str) -> Result<TypedVa
         }
         x if x == AttributeType::ListRelationship.short_name() => {
             let list = instance
-                .get(vocab::HAS_OBJECT_LIST)
+                .get(vocab::OBJECT_LIST.as_str())
                 .and_then(|v| v.as_array())
                 .and_then(|arr| arr.first())
                 .and_then(|obj| obj.get("@list"))
@@ -412,7 +413,7 @@ fn extract_typed_value(instance: &Value, attribute_type: &str) -> Result<TypedVa
         _other => {
             // Property -- uses hasValue
             let has_value = instance
-                .get(vocab::HAS_VALUE)
+                .get(vocab::VALUE.as_str())
                 .and_then(|v| v.as_array())
                 .and_then(|arr| arr.first())
                 .ok_or_else(|| AndromedaError::bad_request_data("Property missing value"))?;
@@ -420,7 +421,7 @@ fn extract_typed_value(instance: &Value, attribute_type: &str) -> Result<TypedVa
             if let Some(value) = has_value.get("@value") {
                 let type_hint = has_value.get("@type").and_then(|t| t.as_str());
 
-                if (type_hint == Some(vocab::DATE_TIME) || type_hint == Some(vocab::XSD_DATETIME))
+                if (type_hint == Some(vocab::DATE_TIME.as_str()) || type_hint == Some(vocab::XSD_DATETIME.as_str()))
                     && let Some(s) = value.as_str()
                 {
                     return Ok(TypedValue::DateTime(s.to_string()));
@@ -462,12 +463,12 @@ pub(crate) fn reconstruct_geojson(node: &Value) -> String {
         .and_then(|t| t.as_array())
         .and_then(|arr| arr.first())
         .and_then(|v| v.as_str())
-        .and_then(|s| s.strip_prefix(vocab::prefix::GEOJSON))
+        .and_then(|s| s.strip_prefix(vocab::prefix::GEOJSON.as_str()))
         .unwrap_or("Point");
 
     // Extract coordinates from the expanded form
     let coordinates = obj
-        .get(vocab::COORDINATES)
+        .get(vocab::COORDINATES.as_str())
         .and_then(|v| v.as_array())
         .and_then(|arr| arr.first())
         .and_then(|v| v.get("@list").or(Some(v)))
@@ -503,7 +504,7 @@ pub(crate) fn extract_coordinates(value: &Value) -> Value {
 
 fn extract_observed_at(instance: &Value) -> Option<String> {
     instance
-        .get(vocab::OBSERVED_AT)
+        .get(vocab::OBSERVED_AT.as_str())
         .and_then(|v| v.as_array())
         .and_then(|arr| arr.first())
         .and_then(|obj| obj.get("@value"))
@@ -513,7 +514,7 @@ fn extract_observed_at(instance: &Value) -> Option<String> {
 
 fn extract_dataset_id(instance: &Value) -> Option<String> {
     instance
-        .get(vocab::DATASET_ID)
+        .get(vocab::DATASET_ID.as_str())
         .and_then(|v| v.as_array())
         .and_then(|arr| arr.first())
         .and_then(|obj| obj.get("@id"))
@@ -523,7 +524,7 @@ fn extract_dataset_id(instance: &Value) -> Option<String> {
 
 fn extract_or_generate_instance_id(instance: &Value) -> String {
     instance
-        .get(vocab::INSTANCE_ID)
+        .get(vocab::INSTANCE_ID.as_str())
         .and_then(|v| v.as_array())
         .and_then(|arr| arr.first())
         .and_then(|obj| obj.get("@id"))
@@ -532,30 +533,26 @@ fn extract_or_generate_instance_id(instance: &Value) -> String {
         .unwrap_or_else(|| format!("urn:ngsi-ld:attribute:instance:{}", uuid::Uuid::new_v4()))
 }
 
-/// Keys to skip when collecting sub-attribute metadata from an expanded instance.
-/// These are either JSON-LD keywords or NGSI-LD value/system properties that are
-/// stored in dedicated columns rather than the metadata blob.
-///
-/// IMPORTANT: This slice MUST be sorted by string value for `binary_search`.
-const METADATA_SKIP_KEYS: &[&str] = &[
-    "@id",
-    "@type",
-    vocab::DATASET_ID,
-    vocab::HAS_JSON,
-    vocab::HAS_LANGUAGE_MAP,
-    vocab::HAS_OBJECT,
-    vocab::HAS_VALUE,
-    vocab::HAS_VOCAB,
-    vocab::INSTANCE_ID,
-    vocab::OBSERVED_AT,
-];
+/// Returns whether the metadata key is stored in dedicated columns instead.
+fn is_metadata_skip_key(key: &str) -> bool {
+    key == "@id"
+        || key == "@type"
+        || key == vocab::DATASET_ID.as_str()
+        || key == vocab::JSON.as_str()
+        || key == vocab::LANGUAGE_MAP.as_str()
+        || key == vocab::OBJECT.as_str()
+        || key == vocab::VALUE.as_str()
+        || key == vocab::VOCAB.as_str()
+        || key == vocab::INSTANCE_ID.as_str()
+        || key == vocab::OBSERVED_AT.as_str()
+}
 
 fn collect_metadata(instance: &Value) -> Option<Value> {
     let obj = instance.as_object()?;
 
     let metadata: serde_json::Map<String, Value> = obj
         .iter()
-        .filter(|(k, _)| METADATA_SKIP_KEYS.binary_search(&k.as_str()).is_err())
+        .filter(|(k, _)| !is_metadata_skip_key(k))
         .map(|(k, v)| (k.clone(), v.clone())) // clone: owned key-value pairs for new metadata Map
         .collect();
 
@@ -567,16 +564,17 @@ mod tests {
     use super::*;
 
     #[test]
-    fn metadata_skip_keys_is_sorted() {
-        for window in METADATA_SKIP_KEYS.windows(2) {
-            assert!(window[0] < window[1], "METADATA_SKIP_KEYS must be sorted: {:?} >= {:?}", window[0], window[1]);
-        }
+    fn metadata_skip_key_matches_known_values() {
+        assert!(is_metadata_skip_key("@id"));
+        assert!(is_metadata_skip_key(vocab::DATASET_ID.as_str()));
+        assert!(is_metadata_skip_key(vocab::VALUE.as_str()));
+        assert!(!is_metadata_skip_key("https://example.com/custom"));
     }
 
     #[test]
-    fn ngsi_ld_system_attrs_is_sorted() {
-        for window in NGSI_LD_SYSTEM_ATTRS.windows(2) {
-            assert!(window[0] < window[1], "NGSI_LD_SYSTEM_ATTRS must be sorted: {:?} >= {:?}", window[0], window[1]);
-        }
+    fn system_attribute_matches_known_values() {
+        assert!(is_system_attribute(vocab::CREATED_AT.as_str()));
+        assert!(is_system_attribute(vocab::UNIT_CODE.as_str()));
+        assert!(!is_system_attribute("https://example.com/custom"));
     }
 }
