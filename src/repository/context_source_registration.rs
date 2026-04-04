@@ -525,6 +525,19 @@ impl ContextSourceRegistrationRepository {
         rows.iter().map(row_to_csr).collect()
     }
 
+    /// Returns all non-expired CSRs without entity type/id filtering.
+    ///
+    /// Used for discovery forwarding (types, attributes) where the broker needs to
+    /// query all registered context sources regardless of entity coverage.
+    pub async fn find_all_active(&self) -> Result<Vec<ContextSourceRegistration>, AndromedaError> {
+        let sql = format!(
+            "SELECT {} FROM context_source_registrations WHERE (expires_at IS NULL OR expires_at > NOW()) ORDER BY created_at ASC",
+            COLUMNS
+        );
+        let rows = sqlx::query(&sql).fetch_all(&self.pool).await?;
+        rows.iter().map(row_to_csr).collect()
+    }
+
     /// Deletes a context source registration by ID. Returns `true` if a row was removed.
     pub async fn delete(&self, id: &str) -> Result<bool, AndromedaError> {
         let result = sqlx::query("DELETE FROM context_source_registrations WHERE id = $1")

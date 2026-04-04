@@ -66,8 +66,7 @@ pub struct TemporalQueryParameters {
     pub dataset_id: Option<String>,
     #[serde(rename = "lang")]
     pub _lang: Option<String>,
-    #[serde(rename = "local")]
-    pub _local: Option<bool>,
+    pub local: Option<bool>,
 
     #[serde(rename = "scopeQ")]
     pub _scope_q: Option<String>,
@@ -88,6 +87,18 @@ impl_shared_query_params!(TemporalQueryParameters {
 });
 
 impl TemporalQueryParameters {
+    /// Returns whether the query should be local-only (no distributed forwarding).
+    ///
+    /// Per NGSI-LD Table 6.18.3.2-1, `type=*` implies `local=true` since wildcard
+    /// type queries are undefined across federated sources.
+    pub fn is_local(&self) -> bool {
+        if self.local == Some(true) {
+            return true;
+        }
+        // type=* implies local=true per spec Table 6.18.3.2-1
+        self.entity_type.as_deref() == Some("*")
+    }
+
     /// Parses the `timerel` parameter into a `TimeRel` enum value.
     ///
     /// Returns `None` if `timerel` is absent, or `Some(Result)` with the parsed
@@ -403,5 +414,35 @@ mod tests {
     fn effective_limit_caps_at_1000() {
         let p = params_from_query("limit=5000");
         assert_eq!(p.effective_limit(), 1000);
+    }
+
+    #[test]
+    fn is_local_defaults_to_false() {
+        let p = params_from_query("");
+        assert!(!p.is_local());
+    }
+
+    #[test]
+    fn is_local_true_when_explicitly_set() {
+        let p = params_from_query("local=true");
+        assert!(p.is_local());
+    }
+
+    #[test]
+    fn is_local_false_when_explicitly_set() {
+        let p = params_from_query("local=false");
+        assert!(!p.is_local());
+    }
+
+    #[test]
+    fn is_local_true_when_type_is_wildcard() {
+        let p = params_from_query("type=*");
+        assert!(p.is_local());
+    }
+
+    #[test]
+    fn is_local_false_with_specific_type() {
+        let p = params_from_query("type=Vehicle");
+        assert!(!p.is_local());
     }
 }

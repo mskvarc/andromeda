@@ -45,6 +45,8 @@ pub enum CsrOperation {
     UpdateBatch,
     DeleteBatch,
     MergeBatch,
+    RetrieveTemporalEntity,
+    QueryTemporalEntity,
     FederationOps,
     RedirectionOps,
     /// Any operation string not covered by a known variant.
@@ -226,6 +228,20 @@ mod tests {
         let op = CsrOperation::RetrieveEntity;
         assert_eq!(op.to_string(), "retrieveEntity");
         assert_eq!("retrieveEntity".parse::<CsrOperation>().unwrap(), op);
+    }
+
+    #[test]
+    fn csr_operation_retrieve_temporal_entity_round_trip() {
+        let op = CsrOperation::RetrieveTemporalEntity;
+        assert_eq!(op.to_string(), "retrieveTemporalEntity");
+        assert_eq!("retrieveTemporalEntity".parse::<CsrOperation>().unwrap(), op);
+    }
+
+    #[test]
+    fn csr_operation_query_temporal_entity_round_trip() {
+        let op = CsrOperation::QueryTemporalEntity;
+        assert_eq!(op.to_string(), "queryTemporalEntity");
+        assert_eq!("queryTemporalEntity".parse::<CsrOperation>().unwrap(), op);
     }
 
     #[test]

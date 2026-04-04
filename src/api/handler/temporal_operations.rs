@@ -3,19 +3,20 @@
 use crate::{
     api::{
         extractor::{accept::AcceptFormat, context::ContextUrl, jsonld::JsonLd},
+        handler::entity_operations::{EntitySelection, GeoQueryRequest},
         response::ngsild::NgsiLdCollectionResponse,
         tenant::TenantState,
     },
     error::api::ApiError,
     query::temporal::TemporalQueryParameters,
+    service::context_source_forwarding::{ForwardingOperation, collect_warnings, merge_temporal_query_results},
 };
 use axum::{
     extract::OriginalUri,
+    http::HeaderMap,
     response::{IntoResponse, Response},
 };
 use serde::Deserialize;
-
-use crate::api::handler::entity_operations::{EntitySelection, GeoQueryRequest};
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -32,6 +33,7 @@ pub struct TemporalQueryRequest {
     pub count: Option<bool>,
     pub format: Option<String>,
     pub last_n: Option<u32>,
+    pub local: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -51,6 +53,7 @@ pub async fn query(
     OriginalUri(uri): OriginalUri,
     accept: AcceptFormat,
     context: ContextUrl,
+    headers: HeaderMap,
     JsonLd {
         value: request,
         context: body_context,
@@ -117,26 +120,60 @@ pub async fn query(
         omit: None,
         dataset_id: None,
         _lang: None,
-        _local: None,
+        local: request.local,
         _scope_q: None,
         expand_values: None,
         json_keys: None,
     };
+
+    let is_local = params.is_local();
 
     let result = service.query(&params, &context).await.map_err(|e| e.with_instance(uri.clone()))?;
     for warning in &result.warnings {
         tracing::debug!(entity_id = %warning.entity_id, message = %warning.message, "Temporal batch query warning");
     }
     let crate::service::temporal::TemporalQueryResult {
-        entities,
+        entities: local_entities,
         total_count,
         any_truncated,
         content_range,
         warnings: _,
     } = result;
 
+    let (entities, forwarding_warnings) = if is_local {
+        (local_entities, Vec::new())
+    } else {
+        let incoming_via = headers.get("via").and_then(|v| v.to_str().ok());
+        let context_url = context.link_contexts().first().map(|s| s.as_str());
+        let entity_type = params.entity_type.as_deref();
+        let entity_ids: Option<Vec<String>> = params.id.as_deref().map(|s| s.split(',').map(|id| id.trim().to_string()).collect());
+        let entity_ids_ref = entity_ids.as_deref();
+
+        let forwarded = state
+            .forwarding
+            .forward_temporal_query(
+                entity_type,
+                entity_ids_ref,
+                "",
+                context_url,
+                &context,
+                ForwardingOperation::QueryTemporalEntity,
+                incoming_via,
+            )
+            .await
+            .unwrap_or_default();
+        let warnings = collect_warnings(&forwarded);
+
+        if forwarded.is_empty() {
+            (local_entities, warnings)
+        } else {
+            let merged = merge_temporal_query_results(local_entities, forwarded);
+            (merged, warnings)
+        }
+    };
+
     let mut response = NgsiLdCollectionResponse::ok(entities);
-    response = response.with_context(context).with_format(accept.format());
+    response = response.with_context(context).with_format(accept.format()).with_warnings(forwarding_warnings);
     if let Some(count) = total_count {
         response = response.with_total_count(count as usize);
     }

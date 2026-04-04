@@ -7,14 +7,17 @@ use crate::{
         tenant::TenantState,
     },
     domain::entity::Entity,
-    error::{AndromedaError, api::ApiError},
+    error::{AndromedaError, api::ApiError, core::AndromedaErrorKind},
     jsonld::ContextSpec,
     query::temporal::TemporalQueryParameters,
-    service::temporal::CreateOrUpdateResult,
+    service::{
+        context_source_forwarding::{ForwardingOperation, collect_warnings, merge_temporal_query_results, merge_temporal_retrieve_results},
+        temporal::CreateOrUpdateResult,
+    },
 };
 use axum::{
     extract::{OriginalUri, Path},
-    http::StatusCode,
+    http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
 };
 use serde::{Deserialize, Deserializer};
@@ -101,26 +104,65 @@ pub async fn get(
     OriginalUri(uri): OriginalUri,
     accept: AcceptFormatNoGeo,
     context: ContextUrl,
+    headers: HeaderMap,
     Path(id): Path<String>,
     ValidatedQuery(params): ValidatedQuery<TemporalQueryParameters>,
 ) -> Result<Response, ApiError> {
     let service = &state.temporal;
     let id = parse_entity_id(&id, &uri)?;
     let context: ContextSpec = context.into_inner();
+    let is_local = params.is_local();
 
-    let result = service.get(id.as_ref(), &params, &context).await.map_err(|e| e.with_instance(uri.clone()))?;
+    let local_result = service.get(id.as_ref(), &params, &context).await;
+
+    let (entity_value, content_range, warnings) = if is_local {
+        let result = local_result.map_err(|e| e.with_instance(uri.clone()))?;
+        (result.value, result.content_range, Vec::new())
+    } else {
+        let incoming_via = headers.get("via").and_then(|v| v.to_str().ok());
+        let context_url = context.link_contexts().first().map(|s| s.as_str());
+        let query_string = uri.query().unwrap_or("");
+        let forwarded = state
+            .forwarding
+            .forward_temporal_retrieve(
+                id.as_ref(),
+                query_string,
+                context_url,
+                ForwardingOperation::RetrieveTemporalEntity,
+                incoming_via,
+            )
+            .await
+            .unwrap_or_default();
+        let warnings = collect_warnings(&forwarded);
+
+        let local_value = match local_result {
+            Ok(result) => Some((result.value, result.content_range)),
+            Err(ref e) if e.kind() == AndromedaErrorKind::NotFound => None,
+            Err(e) => return Err(e.with_instance(uri.clone()).into()),
+        };
+
+        let (local_entity, content_range) = match local_value {
+            Some((value, cr)) => (Some(value), cr),
+            None => (None, None),
+        };
+
+        let merged = merge_temporal_retrieve_results(local_entity, forwarded);
+        match merged {
+            Some(value) => (value, content_range, warnings),
+            None => {
+                return Err(ApiError::from_error(AndromedaError::not_found(id.to_string()), uri.clone()));
+            }
+        }
+    };
 
     let options = params.options.as_deref().unwrap_or("");
     let key_values = options.contains("keyValues") || options.contains("simplified");
 
-    let status = if result.content_range.is_some() {
+    let status = if content_range.is_some() {
         StatusCode::PARTIAL_CONTENT
     } else {
         StatusCode::OK
     };
-
-    let content_range = result.content_range;
-    let entity_value = result.value;
 
     if key_values {
         let entity: Entity = serde_json::from_value(entity_value.clone()).map_err(|e| {
@@ -133,6 +175,7 @@ pub async fn get(
         let mut response = NgsiLdResponse::new(status, entity.simplify())
             .with_context(context)
             .with_format(accept.format())
+            .with_warnings(warnings)
             .into_response();
         if let Some(cr) = content_range
             && let Ok(val) = cr.parse()
@@ -144,6 +187,7 @@ pub async fn get(
         let mut response = NgsiLdResponse::new(status, entity_value)
             .with_context(context)
             .with_format(accept.format())
+            .with_warnings(warnings)
             .into_response();
         if let Some(cr) = content_range
             && let Ok(val) = cr.parse()
@@ -160,10 +204,12 @@ pub async fn query(
     OriginalUri(uri): OriginalUri,
     accept: AcceptFormatNoGeo,
     context: ContextUrl,
+    headers: HeaderMap,
     ValidatedQuery(params): ValidatedQuery<TemporalQueryParameters>,
 ) -> Result<Response, ApiError> {
     let service = &state.temporal;
     let context: ContextSpec = context.into_inner();
+    let is_local = params.is_local();
     let options = params.options.as_deref().unwrap_or("");
     let key_values = options.contains("keyValues") || options.contains("simplified");
 
@@ -172,12 +218,46 @@ pub async fn query(
         tracing::debug!(entity_id = %warning.entity_id, message = %warning.message, "Temporal query warning");
     }
     let crate::service::temporal::TemporalQueryResult {
-        entities,
+        entities: local_entities,
         total_count,
         any_truncated,
         content_range,
         warnings: _,
     } = result;
+
+    // Distributed forwarding: query matching context sources unless local=true
+    let (entities, forwarding_warnings) = if is_local {
+        (local_entities, Vec::new())
+    } else {
+        let incoming_via = headers.get("via").and_then(|v| v.to_str().ok());
+        let context_url = context.link_contexts().first().map(|s| s.as_str());
+        let entity_type = params.entity_type.as_deref();
+        let entity_ids: Option<Vec<String>> = params.id.as_deref().map(|s| s.split(',').map(|id| id.trim().to_string()).collect());
+        let entity_ids_ref = entity_ids.as_deref();
+        let query_string = uri.query().unwrap_or("");
+
+        let forwarded = state
+            .forwarding
+            .forward_temporal_query(
+                entity_type,
+                entity_ids_ref,
+                query_string,
+                context_url,
+                &context,
+                ForwardingOperation::QueryTemporalEntity,
+                incoming_via,
+            )
+            .await
+            .unwrap_or_default();
+        let warnings = collect_warnings(&forwarded);
+
+        if forwarded.is_empty() {
+            (local_entities, warnings)
+        } else {
+            let merged = merge_temporal_query_results(local_entities, forwarded);
+            (merged, warnings)
+        }
+    };
 
     let returned = entities.len();
 
@@ -194,7 +274,7 @@ pub async fn query(
         }
 
         let mut response = NgsiLdCollectionResponse::ok(simplified);
-        response = response.with_context(context).with_format(accept.format());
+        response = response.with_context(context).with_format(accept.format()).with_warnings(forwarding_warnings);
         if let Some(count) = total_count {
             response = response.with_total_count(count as usize);
             if (count as usize) > returned {
@@ -210,7 +290,7 @@ pub async fn query(
         Ok(response.into_response())
     } else {
         let mut response = NgsiLdCollectionResponse::ok(entities);
-        response = response.with_context(context).with_format(accept.format());
+        response = response.with_context(context).with_format(accept.format()).with_warnings(forwarding_warnings);
         if let Some(count) = total_count {
             response = response.with_total_count(count as usize);
             if (count as usize) > returned {

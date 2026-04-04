@@ -53,6 +53,10 @@ pub enum ForwardingOperation {
     DeleteBatch,
     /// Batch merge-patch entities.
     MergeBatch,
+    /// Retrieve a single temporal entity by ID.
+    RetrieveTemporalEntity,
+    /// Query temporal entities matching filter criteria.
+    QueryTemporalEntity,
 }
 
 impl ForwardingOperation {
@@ -96,6 +100,16 @@ impl ForwardingOperation {
             ForwardingOperation::UpdateBatch => ops.iter().any(|op| matches!(op, CsrOperation::RedirectionOps | CsrOperation::UpdateBatch)),
             ForwardingOperation::DeleteBatch => ops.iter().any(|op| matches!(op, CsrOperation::RedirectionOps | CsrOperation::DeleteBatch)),
             ForwardingOperation::MergeBatch => ops.iter().any(|op| matches!(op, CsrOperation::RedirectionOps | CsrOperation::MergeBatch)),
+            ForwardingOperation::RetrieveTemporalEntity => ops.iter().any(|op| {
+                matches!(
+                    op,
+                    CsrOperation::RetrieveTemporalEntity | CsrOperation::QueryTemporalEntity | CsrOperation::FederationOps
+                ) || (mode == ForwardingMode::Redirect && *op == CsrOperation::RedirectionOps)
+            }),
+            ForwardingOperation::QueryTemporalEntity => ops.iter().any(|op| {
+                matches!(op, CsrOperation::QueryTemporalEntity | CsrOperation::FederationOps)
+                    || (mode == ForwardingMode::Redirect && *op == CsrOperation::RedirectionOps)
+            }),
         }
     }
 }
@@ -204,6 +218,14 @@ pub struct ForwardBatchProvisionRequest<'a> {
     pub query_string: Option<&'a str>,
     /// Incoming Via header for loop detection (section 6.3.18).
     pub incoming_via: Option<&'a str>,
+}
+
+/// Result from a single context source discovery forwarding attempt (types/attributes).
+pub struct ForwardedDiscoveryResult {
+    /// Response body from the context source, if the request succeeded.
+    pub body: Option<Value>,
+    /// Warnings generated during the forwarding attempt.
+    pub warnings: Vec<NgsiLdWarning>,
 }
 
 /// Marker indicating an exclusive CSR matched the entity but not the requested operation.
@@ -693,6 +715,278 @@ impl ContextSourceForwardingService {
         request
     }
 
+    /// Forward a discovery query (types or attributes) to all active context sources.
+    ///
+    /// Discovery queries have no entity type/id filtering -- all non-expired CSRs are
+    /// queried because types/attributes are system-wide metadata (clause 5.7.11).
+    pub async fn forward_discovery_query(
+        &self,
+        path: &str,
+        query_string: &str,
+        context_url: Option<&str>,
+        incoming_via: Option<&str>,
+    ) -> Vec<ForwardedDiscoveryResult> {
+        if self.is_loop_detected(incoming_via) {
+            debug!("Loop detected in Via header chain, skipping discovery forwarding");
+            return Vec::new();
+        }
+
+        let csrs = match self.csr_repo.find_all_active().await {
+            Ok(csrs) => csrs,
+            Err(e) => {
+                warn!("Failed to load active CSRs for discovery forwarding: {}", e);
+                return Vec::new();
+            }
+        };
+
+        if csrs.is_empty() {
+            return Vec::new();
+        }
+
+        let mut results = Vec::new();
+        for csr in csrs {
+            let url = build_discovery_url(&csr.endpoint, path, query_string);
+            debug!("Forwarding discovery query to context source {}: {}", csr.id, url);
+
+            match self.forward_get(&url, context_url, csr.tenant.as_deref(), incoming_via).await {
+                ForwardGetOutcome::Success(body) => {
+                    results.push(ForwardedDiscoveryResult {
+                        body: Some(body),
+                        warnings: Vec::new(),
+                    });
+                }
+                ForwardGetOutcome::NotFound => {
+                    // 404 is not abnormal per spec clause 6.3.17
+                }
+                ForwardGetOutcome::InvalidPayload(msg) => {
+                    warn!("Context source {} returned invalid discovery payload: {}", csr.id, msg);
+                    results.push(ForwardedDiscoveryResult {
+                        body: None,
+                        warnings: vec![NgsiLdWarning::RevalidationFailed(format!(
+                            "Context source {} returned invalid payload: {}",
+                            csr.id, msg
+                        ))],
+                    });
+                }
+                ForwardGetOutcome::ErrorStatus(status) => {
+                    warn!("Context source {} returned HTTP {} for discovery", csr.id, status);
+                    results.push(ForwardedDiscoveryResult {
+                        body: None,
+                        warnings: vec![NgsiLdWarning::MiscellaneousPersistentWarning(format!(
+                            "Context source {} returned HTTP {}",
+                            csr.id, status
+                        ))],
+                    });
+                }
+                ForwardGetOutcome::NetworkError(msg) => {
+                    warn!("Failed to forward discovery to context source {}: {}", csr.id, msg);
+                    results.push(ForwardedDiscoveryResult {
+                        body: None,
+                        warnings: vec![NgsiLdWarning::MiscellaneousWarning(format!(
+                            "Context source {} did not respond: {}",
+                            csr.id, msg
+                        ))],
+                    });
+                }
+            }
+        }
+
+        results
+    }
+
+    /// Forward a temporal entity query to matching context sources.
+    ///
+    /// Same pattern as `forward_query()` but targets `/ngsi-ld/v1/temporal/entities`
+    /// and passes through the full query string (temporal params included).
+    pub async fn forward_temporal_query(
+        &self,
+        entity_type_compact: Option<&str>,
+        entity_ids: Option<&[String]>,
+        query_string: &str,
+        context_url: Option<&str>,
+        context: &ContextSpec,
+        operation: ForwardingOperation,
+        incoming_via: Option<&str>,
+    ) -> Result<Vec<ForwardedEntities>, AndromedaError> {
+        if self.is_loop_detected(incoming_via) {
+            debug!("Loop detected in Via header chain, skipping temporal query forwarding");
+            return Ok(Vec::new());
+        }
+
+        let expanded_type = if let Some(t) = entity_type_compact {
+            Some(self.engine.expand_type(t, context).await?)
+        } else {
+            None
+        };
+
+        let first_id = entity_ids.and_then(|ids| ids.first().map(|s| s.as_str()));
+        let csrs = self.csr_repo.find_matching(expanded_type.as_deref(), first_id).await?;
+        let matching_csrs: Vec<_> = csrs.into_iter().filter(|csr| operation.matches(csr)).collect();
+
+        if matching_csrs.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let mut results = Vec::new();
+        for csr in matching_csrs {
+            let url = build_temporal_query_url(&csr.endpoint, query_string);
+            debug!("Forwarding temporal query to context source {}: {}", csr.id, url);
+
+            let mode = csr.mode.unwrap_or_default();
+            match self.forward_get(&url, context_url, csr.tenant.as_deref(), incoming_via).await {
+                ForwardGetOutcome::Success(Value::Array(arr)) => {
+                    results.push(ForwardedEntities {
+                        mode,
+                        entities: arr,
+                        warnings: Vec::new(),
+                    });
+                }
+                ForwardGetOutcome::Success(obj @ Value::Object(_)) => {
+                    results.push(ForwardedEntities {
+                        mode,
+                        entities: vec![obj],
+                        warnings: Vec::new(),
+                    });
+                }
+                ForwardGetOutcome::Success(_other) => {
+                    warn!("Context source {} returned unexpected temporal response type", csr.id);
+                    results.push(ForwardedEntities {
+                        mode,
+                        entities: Vec::new(),
+                        warnings: vec![NgsiLdWarning::RevalidationFailed(format!(
+                            "Context source {} returned unexpected response type",
+                            csr.id
+                        ))],
+                    });
+                }
+                ForwardGetOutcome::NotFound => {}
+                ForwardGetOutcome::InvalidPayload(msg) => {
+                    warn!("Context source {} returned invalid temporal payload: {}", csr.id, msg);
+                    results.push(ForwardedEntities {
+                        mode,
+                        entities: Vec::new(),
+                        warnings: vec![NgsiLdWarning::RevalidationFailed(format!(
+                            "Context source {} returned invalid payload: {}",
+                            csr.id, msg
+                        ))],
+                    });
+                }
+                ForwardGetOutcome::ErrorStatus(status) => {
+                    warn!("Context source {} returned HTTP {} for temporal query", csr.id, status);
+                    results.push(ForwardedEntities {
+                        mode,
+                        entities: Vec::new(),
+                        warnings: vec![NgsiLdWarning::MiscellaneousPersistentWarning(format!(
+                            "Context source {} returned HTTP {}",
+                            csr.id, status
+                        ))],
+                    });
+                }
+                ForwardGetOutcome::NetworkError(msg) => {
+                    warn!("Failed to forward temporal query to context source {}: {}", csr.id, msg);
+                    results.push(ForwardedEntities {
+                        mode,
+                        entities: Vec::new(),
+                        warnings: vec![NgsiLdWarning::MiscellaneousWarning(format!(
+                            "Context source {} did not respond: {}",
+                            csr.id, msg
+                        ))],
+                    });
+                }
+            }
+        }
+
+        Ok(results)
+    }
+
+    /// Forward a temporal entity retrieval to matching context sources.
+    ///
+    /// Same pattern as `forward_retrieve()` but targets `/ngsi-ld/v1/temporal/entities/{id}`.
+    pub async fn forward_temporal_retrieve(
+        &self,
+        entity_id: &str,
+        query_string: &str,
+        context_url: Option<&str>,
+        operation: ForwardingOperation,
+        incoming_via: Option<&str>,
+    ) -> Result<Vec<ForwardedEntities>, AndromedaError> {
+        if self.is_loop_detected(incoming_via) {
+            debug!("Loop detected in Via header chain, skipping temporal retrieve forwarding");
+            return Ok(Vec::new());
+        }
+
+        let csrs = self.csr_repo.find_matching(None, Some(entity_id)).await?;
+        let matching_csrs: Vec<_> = csrs.into_iter().filter(|csr| operation.matches(csr)).collect();
+
+        if matching_csrs.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let mut results = Vec::new();
+        for csr in matching_csrs {
+            let url = build_temporal_retrieve_url(&csr.endpoint, entity_id, query_string);
+            debug!("Forwarding temporal retrieve to context source {}: {}", csr.id, url);
+
+            let mode = csr.mode.unwrap_or_default();
+            match self.forward_get(&url, context_url, csr.tenant.as_deref(), incoming_via).await {
+                ForwardGetOutcome::Success(obj @ Value::Object(_)) => {
+                    results.push(ForwardedEntities {
+                        mode,
+                        entities: vec![obj],
+                        warnings: Vec::new(),
+                    });
+                }
+                ForwardGetOutcome::Success(_other) => {
+                    warn!("Context source {} returned non-object for temporal retrieve", csr.id);
+                    results.push(ForwardedEntities {
+                        mode,
+                        entities: Vec::new(),
+                        warnings: vec![NgsiLdWarning::RevalidationFailed(format!(
+                            "Context source {} returned non-object for temporal entity retrieve",
+                            csr.id
+                        ))],
+                    });
+                }
+                ForwardGetOutcome::NotFound => {}
+                ForwardGetOutcome::InvalidPayload(msg) => {
+                    warn!("Context source {} returned invalid temporal payload: {}", csr.id, msg);
+                    results.push(ForwardedEntities {
+                        mode,
+                        entities: Vec::new(),
+                        warnings: vec![NgsiLdWarning::RevalidationFailed(format!(
+                            "Context source {} returned invalid payload: {}",
+                            csr.id, msg
+                        ))],
+                    });
+                }
+                ForwardGetOutcome::ErrorStatus(status) => {
+                    warn!("Context source {} returned HTTP {} for temporal retrieve", csr.id, status);
+                    results.push(ForwardedEntities {
+                        mode,
+                        entities: Vec::new(),
+                        warnings: vec![NgsiLdWarning::MiscellaneousPersistentWarning(format!(
+                            "Context source {} returned HTTP {}",
+                            csr.id, status
+                        ))],
+                    });
+                }
+                ForwardGetOutcome::NetworkError(msg) => {
+                    warn!("Failed to forward temporal retrieve to context source {}: {}", csr.id, msg);
+                    results.push(ForwardedEntities {
+                        mode,
+                        entities: Vec::new(),
+                        warnings: vec![NgsiLdWarning::MiscellaneousWarning(format!(
+                            "Context source {} did not respond: {}",
+                            csr.id, msg
+                        ))],
+                    });
+                }
+            }
+        }
+
+        Ok(results)
+    }
+
     /// Check whether forwarding would create a loop based on the Via header chain.
     pub fn is_loop_detected(&self, incoming_via: Option<&str>) -> bool {
         is_via_loop(incoming_via, &self.source_identity)
@@ -768,6 +1062,37 @@ fn build_retrieve_url(endpoint: &str, entity_id: &str, query_string: &str) -> St
         format!("{}/ngsi-ld/v1/entities/{}", base, encoded_id)
     } else {
         format!("{}/ngsi-ld/v1/entities/{}?{}", base, encoded_id, query_string)
+    }
+}
+
+/// Build a forwarding URL for discovery queries (types, attributes).
+pub(crate) fn build_discovery_url(endpoint: &str, path: &str, query_string: &str) -> String {
+    let base = endpoint.trim_end_matches('/');
+    if query_string.is_empty() {
+        format!("{}/ngsi-ld/v1{}", base, path)
+    } else {
+        format!("{}/ngsi-ld/v1{}?{}", base, path, query_string)
+    }
+}
+
+/// Build a forwarding URL for temporal entity queries.
+pub(crate) fn build_temporal_query_url(endpoint: &str, query_string: &str) -> String {
+    let base = endpoint.trim_end_matches('/');
+    if query_string.is_empty() {
+        format!("{}/ngsi-ld/v1/temporal/entities", base)
+    } else {
+        format!("{}/ngsi-ld/v1/temporal/entities?{}", base, query_string)
+    }
+}
+
+/// Build a forwarding URL for temporal entity retrieval by ID.
+pub(crate) fn build_temporal_retrieve_url(endpoint: &str, entity_id: &str, query_string: &str) -> String {
+    let base = endpoint.trim_end_matches('/');
+    let encoded_id = percent_encoding::utf8_percent_encode(entity_id, PATH_ENCODE_SET).to_string();
+    if query_string.is_empty() {
+        format!("{}/ngsi-ld/v1/temporal/entities/{}", base, encoded_id)
+    } else {
+        format!("{}/ngsi-ld/v1/temporal/entities/{}?{}", base, encoded_id, query_string)
     }
 }
 
@@ -914,6 +1239,376 @@ pub fn collect_warnings(results: &[ForwardedEntities]) -> Vec<NgsiLdWarning> {
     results.iter().flat_map(|r| r.warnings.iter().cloned()).collect()
 }
 
+/// Collect all warnings from discovery forwarding results.
+pub fn collect_discovery_warnings(results: &[ForwardedDiscoveryResult]) -> Vec<NgsiLdWarning> {
+    results.iter().flat_map(|r| r.warnings.iter().cloned()).collect()
+}
+
+/// Merge local types result with forwarded discovery results.
+///
+/// For simple types list (`typeList`): union of type IRIs, deduplicated.
+/// For detailed types (`details=true`): merge by type name, union attribute names per type.
+/// For type info (single type): merge attribute details from all sources.
+pub fn merge_types_results(local: Value, remote: Vec<ForwardedDiscoveryResult>, details: bool) -> Value {
+    let bodies: Vec<&Value> = remote.iter().filter_map(|r| r.body.as_ref()).collect();
+    if bodies.is_empty() {
+        return local;
+    }
+
+    if details {
+        merge_detailed_types(local, &bodies)
+    } else {
+        merge_simple_types(local, &bodies)
+    }
+}
+
+/// Merge simple type lists by unioning `typeList` arrays and deduplicating.
+fn merge_simple_types(mut local: Value, remote_bodies: &[&Value]) -> Value {
+    let local_list = local.get_mut("typeList").and_then(|v| v.as_array_mut());
+    let Some(local_list) = local_list else {
+        return local;
+    };
+
+    let mut seen: std::collections::HashSet<String> = local_list.iter().filter_map(|v| v.as_str().map(String::from)).collect();
+
+    for body in remote_bodies {
+        if let Some(arr) = body.get("typeList").and_then(|v| v.as_array()) {
+            for item in arr {
+                if let Some(s) = item.as_str()
+                    && seen.insert(s.to_string())
+                {
+                    local_list.push(item.clone()); // clone: adding remote type IRI to merged list
+                }
+            }
+        }
+        // Also handle bare arrays (some brokers may return array directly)
+        if let Some(arr) = body.as_array() {
+            for item in arr {
+                if let Some(s) = item.as_str()
+                    && seen.insert(s.to_string())
+                {
+                    local_list.push(item.clone()); // clone: adding remote type IRI from bare array
+                }
+            }
+        }
+    }
+
+    local
+}
+
+/// Merge detailed type lists by type name, unioning attribute names per type.
+fn merge_detailed_types(local: Value, remote_bodies: &[&Value]) -> Value {
+    let mut type_map: indexmap::IndexMap<String, Value> = indexmap::IndexMap::new();
+
+    // Collect local types
+    if let Some(arr) = local.as_array() {
+        for entry in arr {
+            if let Some(id) = entry.get("id").and_then(|v| v.as_str()) {
+                type_map.insert(id.to_string(), entry.clone()); // clone: local type entry for merge map
+            }
+        }
+    }
+
+    // Merge remote types
+    for body in remote_bodies {
+        let entries = if let Some(arr) = body.as_array() {
+            arr.as_slice()
+        } else {
+            continue;
+        };
+        for entry in entries {
+            let Some(id) = entry.get("id").and_then(|v| v.as_str()) else {
+                continue;
+            };
+            if let Some(existing) = type_map.get_mut(id) {
+                merge_type_attribute_names(existing, entry);
+            } else {
+                type_map.insert(id.to_string(), entry.clone()); // clone: remote type entry not present locally
+            }
+        }
+    }
+
+    Value::Array(type_map.into_values().collect())
+}
+
+/// Merge attribute names within a type detail entry (union of attributeNames arrays).
+fn merge_type_attribute_names(local: &mut Value, remote: &Value) {
+    if let Some(local_attrs) = local.get_mut("attributeNames").and_then(|v| v.as_array_mut())
+        && let Some(remote_attrs) = remote.get("attributeNames").and_then(|v| v.as_array())
+    {
+        let existing: std::collections::HashSet<String> = local_attrs.iter().filter_map(|v| v.as_str().map(String::from)).collect();
+        for attr in remote_attrs {
+            if let Some(s) = attr.as_str()
+                && !existing.contains(s)
+            {
+                local_attrs.push(attr.clone()); // clone: adding remote attribute name to merged set
+            }
+        }
+    }
+}
+
+/// Merge type info result (single type) with forwarded discovery results.
+///
+/// Merges attribute details from all sources, unioning attribute names.
+pub fn merge_type_info_results(local: Value, remote: Vec<ForwardedDiscoveryResult>) -> Value {
+    let bodies: Vec<&Value> = remote.iter().filter_map(|r| r.body.as_ref()).collect();
+    if bodies.is_empty() {
+        return local;
+    }
+
+    let mut result = local;
+    for body in &bodies {
+        merge_type_attribute_names(&mut result, body);
+    }
+    result
+}
+
+/// Merge local attributes result with forwarded discovery results.
+///
+/// For simple attribute list (`attributeList`): union of attribute IRIs, deduplicated.
+/// For detailed attributes (`details=true`): merge by attribute name, union type names per attribute.
+pub fn merge_attributes_results(local: Value, remote: Vec<ForwardedDiscoveryResult>, details: bool) -> Value {
+    let bodies: Vec<&Value> = remote.iter().filter_map(|r| r.body.as_ref()).collect();
+    if bodies.is_empty() {
+        return local;
+    }
+
+    if details {
+        merge_detailed_attributes(local, &bodies)
+    } else {
+        merge_simple_attributes(local, &bodies)
+    }
+}
+
+/// Merge simple attribute lists by unioning `attributeList` arrays and deduplicating.
+fn merge_simple_attributes(mut local: Value, remote_bodies: &[&Value]) -> Value {
+    let local_list = local.get_mut("attributeList").and_then(|v| v.as_array_mut());
+    let Some(local_list) = local_list else {
+        return local;
+    };
+
+    let mut seen: std::collections::HashSet<String> = local_list.iter().filter_map(|v| v.as_str().map(String::from)).collect();
+
+    for body in remote_bodies {
+        if let Some(arr) = body.get("attributeList").and_then(|v| v.as_array()) {
+            for item in arr {
+                if let Some(s) = item.as_str()
+                    && seen.insert(s.to_string())
+                {
+                    local_list.push(item.clone()); // clone: adding remote attribute IRI to merged list
+                }
+            }
+        }
+        if let Some(arr) = body.as_array() {
+            for item in arr {
+                if let Some(s) = item.as_str()
+                    && seen.insert(s.to_string())
+                {
+                    local_list.push(item.clone()); // clone: adding remote attribute IRI from bare array
+                }
+            }
+        }
+    }
+
+    local
+}
+
+/// Merge detailed attribute lists by attribute name, unioning type names per attribute.
+fn merge_detailed_attributes(local: Value, remote_bodies: &[&Value]) -> Value {
+    let mut attr_map: indexmap::IndexMap<String, Value> = indexmap::IndexMap::new();
+
+    if let Some(arr) = local.as_array() {
+        for entry in arr {
+            if let Some(id) = entry.get("id").and_then(|v| v.as_str()) {
+                attr_map.insert(id.to_string(), entry.clone()); // clone: local attribute entry for merge map
+            }
+        }
+    }
+
+    for body in remote_bodies {
+        let entries = if let Some(arr) = body.as_array() {
+            arr.as_slice()
+        } else {
+            continue;
+        };
+        for entry in entries {
+            let Some(id) = entry.get("id").and_then(|v| v.as_str()) else {
+                continue;
+            };
+            if let Some(existing) = attr_map.get_mut(id) {
+                merge_attribute_type_names(existing, entry);
+            } else {
+                attr_map.insert(id.to_string(), entry.clone()); // clone: remote attribute entry not present locally
+            }
+        }
+    }
+
+    Value::Array(attr_map.into_values().collect())
+}
+
+/// Merge type names within an attribute detail entry (union of typeNames arrays).
+fn merge_attribute_type_names(local: &mut Value, remote: &Value) {
+    if let Some(local_types) = local.get_mut("typeNames").and_then(|v| v.as_array_mut())
+        && let Some(remote_types) = remote.get("typeNames").and_then(|v| v.as_array())
+    {
+        let existing: std::collections::HashSet<String> = local_types.iter().filter_map(|v| v.as_str().map(String::from)).collect();
+        for t in remote_types {
+            if let Some(s) = t.as_str()
+                && !existing.contains(s)
+            {
+                local_types.push(t.clone()); // clone: adding remote type name to merged set
+            }
+        }
+    }
+}
+
+/// Merge attribute info result (single attribute) with forwarded discovery results.
+///
+/// Merges type name lists from all sources.
+pub fn merge_attribute_info_results(local: Value, remote: Vec<ForwardedDiscoveryResult>) -> Value {
+    let bodies: Vec<&Value> = remote.iter().filter_map(|r| r.body.as_ref()).collect();
+    if bodies.is_empty() {
+        return local;
+    }
+
+    let mut result = local;
+    for body in &bodies {
+        merge_attribute_type_names(&mut result, body);
+    }
+    result
+}
+
+/// Merge local and remote temporal entity query results.
+///
+/// Same mode-based logic as `merge_query_results` but for temporal entities.
+/// For same-entity merges, temporal attribute instance arrays are unioned
+/// rather than replaced (temporal entities carry attribute history).
+pub fn merge_temporal_query_results(local_entities: Vec<Value>, remote_results: Vec<ForwardedEntities>) -> Vec<Value> {
+    if remote_results.is_empty() {
+        return local_entities;
+    }
+
+    let mut entity_map: indexmap::IndexMap<String, Value> = indexmap::IndexMap::new();
+
+    for entity in local_entities {
+        if let Some(id) = entity.get("id").and_then(|v| v.as_str()) {
+            entity_map.insert(id.to_string(), entity);
+        }
+    }
+
+    for forwarded in remote_results {
+        match forwarded.mode {
+            ForwardingMode::Auxiliary => {
+                for remote_entity in forwarded.entities {
+                    if let Some(remote_id) = remote_entity.get("id").and_then(|v| v.as_str())
+                        && let Some(local_entity) = entity_map.get_mut(remote_id)
+                    {
+                        merge_temporal_entity_attributes(local_entity, &remote_entity);
+                    }
+                }
+            }
+            ForwardingMode::Inclusive | ForwardingMode::Exclusive | ForwardingMode::Redirect => {
+                for remote_entity in forwarded.entities {
+                    if let Some(remote_id) = remote_entity.get("id").and_then(|v| v.as_str()) {
+                        if let Some(local_entity) = entity_map.get_mut(remote_id) {
+                            merge_temporal_entity_attributes(local_entity, &remote_entity);
+                        } else {
+                            entity_map.insert(remote_id.to_string(), remote_entity);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    entity_map.into_values().collect()
+}
+
+/// Merge temporal entity attributes by unioning attribute instance arrays.
+///
+/// Unlike regular entity merging (which skips existing attributes), temporal merging
+/// unions instance arrays for attributes that exist in both entities, since temporal
+/// entities carry historical attribute instances.
+fn merge_temporal_entity_attributes(local: &mut Value, remote: &Value) {
+    if let (Some(local_obj), Some(remote_obj)) = (local.as_object_mut(), remote.as_object()) {
+        for (key, remote_value) in remote_obj {
+            if key == "id" || key == "type" || key == "@context" {
+                continue;
+            }
+            match local_obj.get_mut(key) {
+                Some(local_value) => {
+                    // Merge instance arrays for same attribute
+                    merge_temporal_instances(local_value, remote_value);
+                }
+                None => {
+                    local_obj.insert(key.clone(), remote_value.clone()); // clone: adding remote temporal attribute not present locally
+                }
+            }
+        }
+    }
+}
+
+/// Merge temporal attribute instances from remote into local.
+///
+/// Handles both single-instance (object) and multi-instance (array) forms.
+/// Deduplicates by `instanceId` if present.
+fn merge_temporal_instances(local: &mut Value, remote: &Value) {
+    // Normalize both to arrays for uniform handling
+    let local_arr = match local {
+        Value::Array(arr) => arr,
+        Value::Object(_) => {
+            let obj = std::mem::replace(local, Value::Null);
+            *local = Value::Array(vec![obj]);
+            local.as_array_mut().expect("just created array") // infallible: we just set it to Array
+        }
+        _ => return,
+    };
+
+    let remote_items = match remote {
+        Value::Array(arr) => arr.as_slice(),
+        Value::Object(_) => std::slice::from_ref(remote),
+        _ => return,
+    };
+
+    // Collect existing instanceIds for deduplication
+    let existing_ids: std::collections::HashSet<String> = local_arr
+        .iter()
+        .filter_map(|v| v.get("instanceId").and_then(|id| id.as_str()).map(String::from))
+        .collect();
+
+    for item in remote_items {
+        let dominated = item.get("instanceId").and_then(|id| id.as_str()).is_some_and(|id| existing_ids.contains(id));
+        if !dominated {
+            local_arr.push(item.clone()); // clone: adding remote temporal instance to merged array
+        }
+    }
+}
+
+/// Merge remote temporal entity results for a single entity retrieval.
+///
+/// Returns the merged temporal entity or None if no entity found from any source.
+pub fn merge_temporal_retrieve_results(local_entity: Option<Value>, remote_results: Vec<ForwardedEntities>) -> Option<Value> {
+    let mut result = local_entity;
+
+    for forwarded in remote_results {
+        let is_auxiliary = forwarded.mode == ForwardingMode::Auxiliary;
+        for remote_entity in forwarded.entities {
+            match &mut result {
+                Some(existing) => {
+                    merge_temporal_entity_attributes(existing, &remote_entity);
+                }
+                None => {
+                    if !is_auxiliary {
+                        result = Some(remote_entity);
+                    }
+                }
+            }
+        }
+    }
+
+    result
+}
+
 /// Check if the incoming Via header chain already contains our identity (loop detection).
 pub fn is_via_loop(incoming_via: Option<&str>, source_identity: &str) -> bool {
     match incoming_via {
@@ -1018,5 +1713,238 @@ mod tests {
         }];
         let result = merge_query_results(local, remote);
         assert_eq!(result.len(), 2);
+    }
+
+    #[test]
+    fn merge_simple_types_deduplicates() {
+        use crate::service::context_source_forwarding::{ForwardedDiscoveryResult, merge_types_results};
+
+        let local = serde_json::json!({"id": "urn:types", "type": "EntityTypeList", "typeList": ["Vehicle", "Sensor"]});
+        let remote = vec![ForwardedDiscoveryResult {
+            body: Some(serde_json::json!({"typeList": ["Vehicle", "Drone"]})),
+            warnings: Vec::new(),
+        }];
+        let result = merge_types_results(local, remote, false);
+        let list = result.get("typeList").unwrap().as_array().unwrap();
+        assert_eq!(list.len(), 3);
+        assert!(list.contains(&serde_json::json!("Vehicle")));
+        assert!(list.contains(&serde_json::json!("Sensor")));
+        assert!(list.contains(&serde_json::json!("Drone")));
+    }
+
+    #[test]
+    fn merge_simple_types_no_remote_returns_local() {
+        use crate::service::context_source_forwarding::merge_types_results;
+
+        let local = serde_json::json!({"typeList": ["Vehicle"]});
+        let result = merge_types_results(local.clone(), Vec::new(), false);
+        assert_eq!(result, local);
+    }
+
+    #[test]
+    fn merge_detailed_types_unions_attribute_names() {
+        use crate::service::context_source_forwarding::{ForwardedDiscoveryResult, merge_types_results};
+
+        let local = serde_json::json!([
+            {"id": "Vehicle", "type": "EntityType", "attributeNames": ["speed", "location"]}
+        ]);
+        let remote = vec![ForwardedDiscoveryResult {
+            body: Some(serde_json::json!([
+                {"id": "Vehicle", "type": "EntityType", "attributeNames": ["speed", "fuel"]},
+                {"id": "Drone", "type": "EntityType", "attributeNames": ["altitude"]}
+            ])),
+            warnings: Vec::new(),
+        }];
+        let result = merge_types_results(local, remote, true);
+        let arr = result.as_array().unwrap();
+        assert_eq!(arr.len(), 2);
+
+        let vehicle = arr.iter().find(|v| v.get("id").unwrap() == "Vehicle").unwrap();
+        let attrs = vehicle.get("attributeNames").unwrap().as_array().unwrap();
+        assert_eq!(attrs.len(), 3);
+        assert!(attrs.contains(&serde_json::json!("fuel")));
+    }
+
+    #[test]
+    fn merge_simple_attributes_deduplicates() {
+        use crate::service::context_source_forwarding::{ForwardedDiscoveryResult, merge_attributes_results};
+
+        let local = serde_json::json!({"id": "urn:attrs", "type": "AttributeList", "attributeList": ["speed"]});
+        let remote = vec![ForwardedDiscoveryResult {
+            body: Some(serde_json::json!({"attributeList": ["speed", "fuel"]})),
+            warnings: Vec::new(),
+        }];
+        let result = merge_attributes_results(local, remote, false);
+        let list = result.get("attributeList").unwrap().as_array().unwrap();
+        assert_eq!(list.len(), 2);
+    }
+
+    #[test]
+    fn merge_temporal_query_unions_instances_for_same_entity() {
+        use crate::service::context_source_forwarding::merge_temporal_query_results;
+
+        let local = vec![serde_json::json!({
+            "id": "urn:a",
+            "type": "T",
+            "speed": [
+                {"type": "Property", "value": 10, "instanceId": "urn:i1", "observedAt": "2024-01-01T00:00:00Z"}
+            ]
+        })];
+        let remote = vec![ForwardedEntities {
+            mode: ForwardingMode::Inclusive,
+            entities: vec![serde_json::json!({
+                "id": "urn:a",
+                "type": "T",
+                "speed": [
+                    {"type": "Property", "value": 20, "instanceId": "urn:i2", "observedAt": "2024-01-02T00:00:00Z"}
+                ]
+            })],
+            warnings: Vec::new(),
+        }];
+        let result = merge_temporal_query_results(local, remote);
+        assert_eq!(result.len(), 1);
+        let speed = result[0].get("speed").unwrap().as_array().unwrap();
+        assert_eq!(speed.len(), 2);
+    }
+
+    #[test]
+    fn merge_temporal_query_deduplicates_by_instance_id() {
+        use crate::service::context_source_forwarding::merge_temporal_query_results;
+
+        let local = vec![serde_json::json!({
+            "id": "urn:a",
+            "type": "T",
+            "speed": [
+                {"type": "Property", "value": 10, "instanceId": "urn:i1"}
+            ]
+        })];
+        let remote = vec![ForwardedEntities {
+            mode: ForwardingMode::Inclusive,
+            entities: vec![serde_json::json!({
+                "id": "urn:a",
+                "type": "T",
+                "speed": [
+                    {"type": "Property", "value": 10, "instanceId": "urn:i1"}
+                ]
+            })],
+            warnings: Vec::new(),
+        }];
+        let result = merge_temporal_query_results(local, remote);
+        let speed = result[0].get("speed").unwrap().as_array().unwrap();
+        assert_eq!(speed.len(), 1);
+    }
+
+    #[test]
+    fn merge_temporal_query_auxiliary_only_supplements_existing() {
+        use crate::service::context_source_forwarding::merge_temporal_query_results;
+
+        let local = vec![serde_json::json!({"id": "urn:a", "type": "T", "speed": [{"value": 10}]})];
+        let remote = vec![ForwardedEntities {
+            mode: ForwardingMode::Auxiliary,
+            entities: vec![
+                serde_json::json!({"id": "urn:a", "type": "T", "fuel": [{"value": 50}]}),
+                serde_json::json!({"id": "urn:b", "type": "T", "speed": [{"value": 20}]}),
+            ],
+            warnings: Vec::new(),
+        }];
+        let result = merge_temporal_query_results(local, remote);
+        // Only urn:a should be present; urn:b is not added in auxiliary mode
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].get("id").unwrap(), "urn:a");
+        // fuel should be added to urn:a
+        assert!(result[0].get("fuel").is_some());
+    }
+
+    #[test]
+    fn merge_temporal_retrieve_combines_remote_attributes() {
+        use crate::service::context_source_forwarding::merge_temporal_retrieve_results;
+
+        let local = Some(serde_json::json!({
+            "id": "urn:a",
+            "type": "T",
+            "speed": [{"value": 10, "instanceId": "urn:i1"}]
+        }));
+        let remote = vec![ForwardedEntities {
+            mode: ForwardingMode::Inclusive,
+            entities: vec![serde_json::json!({
+                "id": "urn:a",
+                "type": "T",
+                "fuel": [{"value": 50}]
+            })],
+            warnings: Vec::new(),
+        }];
+        let result = merge_temporal_retrieve_results(local, remote);
+        let entity = result.unwrap();
+        assert!(entity.get("speed").is_some());
+        assert!(entity.get("fuel").is_some());
+    }
+
+    #[test]
+    fn merge_temporal_retrieve_remote_only() {
+        use crate::service::context_source_forwarding::merge_temporal_retrieve_results;
+
+        let remote = vec![ForwardedEntities {
+            mode: ForwardingMode::Inclusive,
+            entities: vec![serde_json::json!({"id": "urn:a", "type": "T", "speed": [{"value": 10}]})],
+            warnings: Vec::new(),
+        }];
+        let result = merge_temporal_retrieve_results(None, remote);
+        assert!(result.is_some());
+    }
+
+    #[test]
+    fn build_discovery_url_with_query_string() {
+        use crate::service::context_source_forwarding::build_discovery_url;
+
+        let url = build_discovery_url("http://cs1.example.com", "/types", "details=true");
+        assert_eq!(url, "http://cs1.example.com/ngsi-ld/v1/types?details=true");
+    }
+
+    #[test]
+    fn build_discovery_url_without_query_string() {
+        use crate::service::context_source_forwarding::build_discovery_url;
+
+        let url = build_discovery_url("http://cs1.example.com/", "/attributes", "");
+        assert_eq!(url, "http://cs1.example.com/ngsi-ld/v1/attributes");
+    }
+
+    #[test]
+    fn build_temporal_query_url_with_params() {
+        use crate::service::context_source_forwarding::build_temporal_query_url;
+
+        let url = build_temporal_query_url("http://cs1.example.com", "type=Vehicle&timerel=after&timeAt=2024-01-01T00:00:00Z");
+        assert_eq!(
+            url,
+            "http://cs1.example.com/ngsi-ld/v1/temporal/entities?type=Vehicle&timerel=after&timeAt=2024-01-01T00:00:00Z"
+        );
+    }
+
+    #[test]
+    fn build_temporal_retrieve_url_with_id() {
+        use crate::service::context_source_forwarding::build_temporal_retrieve_url;
+
+        let url = build_temporal_retrieve_url("http://cs1.example.com", "urn:ngsi-ld:Vehicle:1", "timerel=after&timeAt=2024-01-01T00:00:00Z");
+        assert_eq!(
+            url,
+            "http://cs1.example.com/ngsi-ld/v1/temporal/entities/urn:ngsi-ld:Vehicle:1?timerel=after&timeAt=2024-01-01T00:00:00Z"
+        );
+    }
+
+    #[test]
+    fn collect_discovery_warnings_aggregates() {
+        use crate::service::context_source_forwarding::{ForwardedDiscoveryResult, collect_discovery_warnings};
+
+        let results = vec![
+            ForwardedDiscoveryResult {
+                body: None,
+                warnings: vec![NgsiLdWarning::MiscellaneousWarning("timeout".to_string())],
+            },
+            ForwardedDiscoveryResult {
+                body: Some(serde_json::json!({})),
+                warnings: Vec::new(),
+            },
+        ];
+        let warnings = collect_discovery_warnings(&results);
+        assert_eq!(warnings.len(), 1);
     }
 }
