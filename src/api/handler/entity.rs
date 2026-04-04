@@ -1,16 +1,24 @@
 use crate::{
     api::{
-        extractor::{accept::AcceptFormat, context::ContextUrl, entity_query::EntityQuery, jsonld::JsonLd, params::ValidatedQuery},
+        extractor::{
+            accept::AcceptFormat,
+            context::ContextUrl,
+            entity_query::EntityQuery,
+            jsonld::JsonLd,
+            language::LanguageNegotiation,
+            params::ValidatedQuery,
+        },
         response::ngsild::{NgsiLdCollectionResponse, NgsiLdResponse},
-        tenant::TenantState,
+        tenant::{TenantState, TenantStateOrCreate},
     },
     domain::{
-        entity::{Entity, EntityPatch},
+        entity::{Entity, EntityPatch, EntityTypeValue},
         registration::ForwardingMode,
     },
     error::{AndromedaError, api::ApiError},
     jsonld::ContextSpec,
-    query::q::eval::evaluate,
+    query::{compile::expand_q_expression, q::eval::evaluate},
+    response::entity::{apply_inline_join, render_entity, simplify_entity, simplify_value},
     service::context_source_forwarding::{
         ForwardBatchProvisionRequest,
         ForwardProvisionRequest,
@@ -19,6 +27,7 @@ use crate::{
         merge_query_results,
         merge_retrieve_results,
     },
+    worker::notification::matching::{matches_geo_filter, matches_scope_filter},
 };
 use axum::{
     Json,
@@ -47,12 +56,8 @@ where
 }
 
 fn parse_entity_id(id: &str, uri: &axum::http::Uri) -> Result<Urn, ApiError> {
-    id.parse::<Urn>().map_err(|_| {
-        ApiError::from_error(
-            crate::error::AndromedaError::bad_request_data("Invalid entity id: not a valid URI"),
-            uri.clone(),
-        )
-    })
+    id.parse::<Urn>()
+        .map_err(|_| ApiError::from_error(AndromedaError::bad_request_data("Invalid entity id: not a valid URI"), uri.clone()))
 }
 
 #[derive(Debug, Deserialize)]
@@ -99,17 +104,11 @@ pub struct UpdateParams {
 }
 
 pub async fn patch_no_id(OriginalUri(uri): OriginalUri) -> Result<Response, ApiError> {
-    Err(ApiError::from_error(
-        crate::error::AndromedaError::bad_request_data("Entity id is required"),
-        uri,
-    ))
+    Err(ApiError::from_error(AndromedaError::bad_request_data("Entity id is required"), uri))
 }
 
 pub async fn put_no_id(OriginalUri(uri): OriginalUri) -> Result<Response, ApiError> {
-    Err(ApiError::from_error(
-        crate::error::AndromedaError::bad_request_data("Entity id is required"),
-        uri,
-    ))
+    Err(ApiError::from_error(AndromedaError::bad_request_data("Entity id is required"), uri))
 }
 
 #[derive(Debug, Deserialize)]
@@ -121,7 +120,7 @@ pub struct CreateParams {
 }
 
 pub async fn create(
-    crate::api::tenant::TenantStateOrCreate(state): crate::api::tenant::TenantStateOrCreate,
+    TenantStateOrCreate(state): TenantStateOrCreate,
     OriginalUri(uri): OriginalUri,
     ValidatedQuery(params): ValidatedQuery<CreateParams>,
     context: ContextUrl,
@@ -149,8 +148,8 @@ pub async fn create(
         .map_err(|e| ApiError::from_error(AndromedaError::internal("Failed to serialize entity").with_source(e), uri.clone()))?;
     let entity_id = entity.id.to_string();
     let entity_type_str = match &entity.type_ {
-        crate::domain::entity::EntityTypeValue::Single(s) => s.clone(),
-        crate::domain::entity::EntityTypeValue::Multiple(v) => v.first().cloned().unwrap_or_default(),
+        EntityTypeValue::Single(s) => s.clone(),
+        EntityTypeValue::Multiple(v) => v.first().cloned().unwrap_or_default(),
     };
 
     let (forwarded, _) = state
@@ -254,6 +253,8 @@ pub struct GetEntityParams {
     pub format: Option<String>,
     pub pick: Option<String>,
     pub omit: Option<String>,
+    /// Retained for `deny_unknown_fields` acceptance; actual parsing handled by
+    /// the [`LanguageNegotiation`] extractor.
     pub lang: Option<String>,
     #[serde(rename = "datasetId")]
     pub dataset_id: Option<String>,
@@ -277,6 +278,7 @@ pub async fn get(
     context: ContextUrl,
     Path(id): Path<String>,
     ValidatedQuery(params): ValidatedQuery<GetEntityParams>,
+    LanguageNegotiation(language_filter): LanguageNegotiation,
     headers: HeaderMap,
 ) -> Result<Response, ApiError> {
     let service = &state.entity_query;
@@ -289,7 +291,7 @@ pub async fn get(
     for opt in options.split(',').map(str::trim) {
         if !opt.is_empty() && !matches!(opt, "keyValues" | "simplified" | "sysAttrs" | "concise" | "normalized") {
             return Err(ApiError::from_error(
-                crate::error::AndromedaError::invalid_request(format!("Invalid options value: '{}'", opt)),
+                AndromedaError::invalid_request(format!("Invalid options value: '{}'", opt)),
                 uri.clone(),
             ));
         }
@@ -300,7 +302,7 @@ pub async fn get(
         && !matches!(fmt.as_str(), "normalized" | "keyValues" | "simplified" | "concise")
     {
         return Err(ApiError::from_error(
-            crate::error::AndromedaError::invalid_request(format!("Invalid format value: '{}'", fmt)),
+            AndromedaError::invalid_request(format!("Invalid format value: '{}'", fmt)),
             uri.clone(),
         ));
     }
@@ -322,7 +324,7 @@ pub async fn get(
     let is_local = params.local.unwrap_or(false);
 
     // If local=true, skip distributed forwarding
-    let mut entity = if is_local {
+    let entity = if is_local {
         local_result.map_err(|e| e.with_instance(uri.clone()))?
     } else {
         // Forward to context sources
@@ -359,10 +361,6 @@ pub async fn get(
         }
     };
 
-    if let Some(ref lang) = params.lang {
-        crate::response::entity::apply_language_negotiation(&mut entity, lang);
-    }
-
     let options = params.options.as_deref().unwrap_or("");
     let format_param = params.format.as_deref().unwrap_or("");
     let key_values = format_param == "keyValues" || format_param == "simplified" || options.contains("keyValues") || options.contains("simplified");
@@ -387,14 +385,14 @@ pub async fn get(
             // Flat: always return array of [root, ...linked] per NGSI-LD spec
             let mut all_entities: Vec<Value> = Vec::new();
             if key_values {
-                all_entities.push(entity.simplify());
+                all_entities.push(simplify_entity(&entity, language_filter.as_ref()).map_err(|e| e.with_instance(uri.clone()))?);
                 for linked_entity in linked.values() {
-                    all_entities.push(linked_entity.simplify());
+                    all_entities.push(simplify_entity(linked_entity, language_filter.as_ref()).map_err(|e| e.with_instance(uri.clone()))?);
                 }
             } else {
-                all_entities.push(serde_json::to_value(&entity).unwrap_or_default());
+                all_entities.push(render_entity(&entity, language_filter.as_ref()).map_err(|e| e.with_instance(uri.clone()))?);
                 for linked_entity in linked.values() {
-                    all_entities.push(serde_json::to_value(linked_entity).unwrap_or_default());
+                    all_entities.push(render_entity(linked_entity, language_filter.as_ref()).map_err(|e| e.with_instance(uri.clone()))?);
                 }
             }
             return Ok(NgsiLdCollectionResponse::ok(all_entities)
@@ -404,10 +402,10 @@ pub async fn get(
         } else {
             // Inline: add entity sub-property to Relationships
             // Always serialize normalized first, apply join, then simplify if needed
-            let mut entity_value = serde_json::to_value(&entity).unwrap_or_default();
-            crate::response::entity::apply_inline_join(&mut entity_value, &linked);
+            let mut entity_value = render_entity(&entity, language_filter.as_ref()).map_err(|e| e.with_instance(uri.clone()))?;
+            apply_inline_join(&mut entity_value, &linked, language_filter.as_ref()).map_err(|e| e.with_instance(uri.clone()))?;
             if key_values {
-                entity_value = crate::response::entity::simplify_value(&entity_value);
+                entity_value = simplify_value(&entity_value);
             }
             return Ok(NgsiLdResponse::ok(entity_value)
                 .with_context(context)
@@ -417,14 +415,17 @@ pub async fn get(
         }
     }
 
+    let entity_value = render_entity(&entity, language_filter.as_ref()).map_err(|e| e.with_instance(uri.clone()))?;
     if key_values {
-        Ok(NgsiLdResponse::ok(entity.simplify())
-            .with_context(context)
-            .with_format(accept.format())
-            .with_geometry_property(params.geometry_property.clone())
-            .into_response())
+        Ok(
+            NgsiLdResponse::ok(simplify_entity(&entity, language_filter.as_ref()).map_err(|e| e.with_instance(uri.clone()))?)
+                .with_context(context)
+                .with_format(accept.format())
+                .with_geometry_property(params.geometry_property.clone())
+                .into_response(),
+        )
     } else {
-        Ok(NgsiLdResponse::ok(entity)
+        Ok(NgsiLdResponse::ok(entity_value)
             .with_context(context)
             .with_format(accept.format())
             .with_geometry_property(params.geometry_property.clone())
@@ -441,12 +442,9 @@ pub async fn delete(
     headers: HeaderMap,
 ) -> Result<Response, ApiError> {
     let service = &state.entities;
-    let id: Urn = id.parse().map_err(|_| {
-        ApiError::from_error(
-            crate::error::AndromedaError::bad_request_data("Invalid entity id: not a valid URI".to_string()),
-            uri.clone(),
-        )
-    })?;
+    let id: Urn = id
+        .parse()
+        .map_err(|_| ApiError::from_error(AndromedaError::bad_request_data("Invalid entity id: not a valid URI".to_string()), uri.clone()))?;
     let is_local = params.local.unwrap_or(false);
     let incoming_via = headers.get("via").and_then(|v| v.to_str().ok());
 
@@ -574,6 +572,7 @@ pub async fn query(
     OriginalUri(uri): OriginalUri,
     accept: AcceptFormat,
     context: ContextUrl,
+    LanguageNegotiation(language_filter): LanguageNegotiation,
     headers: HeaderMap,
     EntityQuery(mut query): EntityQuery,
 ) -> Result<Response, ApiError> {
@@ -601,7 +600,6 @@ pub async fn query(
     }
 
     let opts = query.parse_options();
-    let lang = query.lang.clone();
     let is_local = query.local.unwrap_or(false);
     let entity_map_requested = query.entity_map.unwrap_or(false);
     let split_entities = query.split_entities.unwrap_or(false) && !is_local;
@@ -687,7 +685,7 @@ pub async fn query(
     // splitEntities post-merge filtering: apply deferred q/geoQ/scopeQ (spec 5.7.2.4)
     if split_entities {
         if let Some(ref q_str) = deferred_q
-            && let Ok(Some(q_expr)) = crate::query::compile::expand_q_expression(Some(q_str), service.engine(), &context).await
+            && let Ok(Some(q_expr)) = expand_q_expression(Some(q_str), service.engine(), &context).await
         {
             entities.retain(|e| {
                 let val = serde_json::to_value(e).unwrap_or_default();
@@ -705,13 +703,13 @@ pub async fn query(
             }
             entities.retain(|e| {
                 let val = serde_json::to_value(e).unwrap_or_default();
-                crate::worker::notification::matching::matches_geo_filter(&geo_val, &val)
+                matches_geo_filter(&geo_val, &val)
             });
         }
         if let Some(ref scope_q) = deferred_scope_q {
             entities.retain(|e| {
                 let val = serde_json::to_value(e).unwrap_or_default();
-                crate::worker::notification::matching::matches_scope_filter(scope_q, &val)
+                matches_scope_filter(scope_q, &val)
             });
         }
     }
@@ -735,12 +733,6 @@ pub async fn query(
 
     let status = if entity_map_requested { StatusCode::CREATED } else { StatusCode::OK };
 
-    if let Some(ref lang) = lang {
-        for entity in &mut entities {
-            crate::response::entity::apply_language_negotiation(entity, lang);
-        }
-    }
-
     // Handle join
     let join_mode = query.join.as_deref();
     let join_level = query.join_level.unwrap_or(1);
@@ -760,16 +752,16 @@ pub async fn query(
             let mut all_values: Vec<Value> = Vec::new();
             for entity in &entities {
                 if opts.key_values {
-                    all_values.push(entity.simplify());
+                    all_values.push(simplify_entity(entity, language_filter.as_ref()).map_err(|e| e.with_instance(uri.clone()))?);
                 } else {
-                    all_values.push(serde_json::to_value(entity).unwrap_or_default());
+                    all_values.push(render_entity(entity, language_filter.as_ref()).map_err(|e| e.with_instance(uri.clone()))?);
                 }
             }
             for linked_entity in linked.values() {
                 if opts.key_values {
-                    all_values.push(linked_entity.simplify());
+                    all_values.push(simplify_entity(linked_entity, language_filter.as_ref()).map_err(|e| e.with_instance(uri.clone()))?);
                 } else {
-                    all_values.push(serde_json::to_value(linked_entity).unwrap_or_default());
+                    all_values.push(render_entity(linked_entity, language_filter.as_ref()).map_err(|e| e.with_instance(uri.clone()))?);
                 }
             }
             let mut response = NgsiLdCollectionResponse::ok(all_values).with_status(status);
@@ -788,10 +780,10 @@ pub async fn query(
             // Inline: serialize normalized, apply join, then simplify if needed
             let mut entity_values: Vec<Value> = Vec::new();
             for entity in &entities {
-                let mut val = serde_json::to_value(entity).unwrap_or_default();
-                crate::response::entity::apply_inline_join(&mut val, &linked);
+                let mut val = render_entity(entity, language_filter.as_ref()).map_err(|e| e.with_instance(uri.clone()))?;
+                apply_inline_join(&mut val, &linked, language_filter.as_ref()).map_err(|e| e.with_instance(uri.clone()))?;
                 if opts.key_values {
-                    val = crate::response::entity::simplify_value(&val);
+                    val = simplify_value(&val);
                 }
                 entity_values.push(val);
             }
@@ -812,7 +804,11 @@ pub async fn query(
 
     // Handle keyValues
     if opts.key_values {
-        let simplified: Vec<Value> = entities.iter().map(|e| e.simplify()).collect();
+        let simplified: Vec<Value> = entities
+            .iter()
+            .map(|entity| simplify_entity(entity, language_filter.as_ref()))
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.with_instance(uri.clone()))?;
         let mut response = NgsiLdCollectionResponse::ok(simplified).with_status(status);
         response = response
             .with_context(context)
@@ -826,7 +822,12 @@ pub async fn query(
         }
         Ok(response.into_response())
     } else {
-        let mut response = NgsiLdCollectionResponse::ok(entities).with_status(status);
+        let rendered = entities
+            .iter()
+            .map(|entity| render_entity(entity, language_filter.as_ref()))
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.with_instance(uri.clone()))?;
+        let mut response = NgsiLdCollectionResponse::ok(rendered).with_status(status);
         response = response
             .with_context(context)
             .with_format(accept.format())

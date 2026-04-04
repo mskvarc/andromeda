@@ -34,6 +34,9 @@ pub struct EntityQueryParameters {
     pub order_by: Option<String>,
     #[serde(rename = "scopeQ")]
     pub scope_q: Option<String>,
+    /// Parsed by the [`LanguageNegotiation`] extractor at the HTTP layer; retained
+    /// here so `deny_unknown_fields` accepts `?lang=...` in the query string.
+    #[allow(dead_code)]
     pub lang: Option<String>,
     #[serde(rename = "datasetId")]
     pub dataset_id: Option<String>,

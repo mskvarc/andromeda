@@ -1,153 +1,279 @@
 //! Presentation / response-formatting logic for entity queries:
 //! language negotiation, inline joins, keyValues simplification.
 
-use crate::domain::{
-    attribute::{Attribute, AttributeValue},
-    entity::Entity,
+use crate::{
+    domain::{
+        attribute::{Attribute, AttributeValue, LanguageProperty},
+        entity::Entity,
+        serde_helpers,
+        uri::Uri,
+    },
+    error::AndromedaError,
+    query::lang::{LanguageFilter, LanguageFilterError, LanguageRange},
 };
-use serde_json::Value;
-use std::collections::HashMap;
+use chrono::{DateTime, SecondsFormat, Utc};
+use indexmap::IndexMap;
+use language_tags::LanguageTag;
+use serde::Serialize;
+use serde_json::{Map, Value};
+use std::{collections::HashMap, ops::Deref, str::FromStr};
 
-// ---------------------------------------------------------------------------
-// Language negotiation
-// ---------------------------------------------------------------------------
-
-pub fn apply_language_negotiation(entity: &mut Entity, lang: &str) {
-    let preferences = parse_lang_preferences(lang);
-    if preferences.is_empty() {
-        return;
+/// Render an entity to a response value, applying the optional NGSI-LD `lang`
+/// filter only at the presentation boundary.
+pub fn render_entity(entity: &Entity, language_filter: Option<&LanguageFilter>) -> Result<Value, AndromedaError> {
+    if language_filter.is_none() {
+        return serialize_value(entity);
     }
 
-    let mut replacements = Vec::new();
-    for (key, attr_val) in entity.attrs.iter() {
-        match attr_val {
-            AttributeValue::Single(attr) => {
-                let Attribute::LanguageProperty(lp) = attr.as_ref() else {
-                    continue;
-                };
-                if let Some((matched_value, matched_tag)) = negotiate_language_map(&lp.language_map, &preferences) {
-                    let mut prop = serde_json::Map::new();
-                    prop.insert("type".to_string(), Value::String("Property".to_string()));
-                    prop.insert("value".to_string(), Value::String(matched_value));
-                    prop.insert("lang".to_string(), Value::String(matched_tag));
-                    replacements.push((key.clone(), AttributeValue::Raw(Value::Object(prop))));
-                }
-            }
-            AttributeValue::Multiple(list) => {
-                let mut new_list_values = Vec::new();
-                let mut any_changed = false;
-                for attr in list {
-                    if let Attribute::LanguageProperty(lp) = attr {
-                        if let Some((matched_value, matched_tag)) = negotiate_language_map(&lp.language_map, &preferences) {
-                            let mut prop = serde_json::Map::new();
-                            prop.insert("type".to_string(), Value::String("Property".to_string()));
-                            prop.insert("value".to_string(), Value::String(matched_value));
-                            prop.insert("lang".to_string(), Value::String(matched_tag));
-                            new_list_values.push(Value::Object(prop));
-                            any_changed = true;
-                        } else {
-                            new_list_values.push(serde_json::to_value(attr).unwrap_or_default());
-                        }
-                    } else {
-                        new_list_values.push(serde_json::to_value(attr).unwrap_or_default());
-                    }
-                }
-                if any_changed {
-                    replacements.push((key.clone(), AttributeValue::Raw(Value::Array(new_list_values))));
-                }
-            }
-            _ => {}
-        }
+    let mut map = Map::new();
+    map.insert("id".to_string(), serialize_value(&entity.id)?);
+    map.insert("type".to_string(), serialize_value(&entity.type_)?);
+
+    if let Some(scope) = &entity.scope {
+        map.insert("scope".to_string(), serialize_value(scope)?);
+    }
+    if let Some(expires_at) = &entity.expires_at {
+        map.insert("expiresAt".to_string(), Value::String(expires_at.to_rfc3339_opts(SecondsFormat::Secs, true)));
+    }
+    if let Some(location) = &entity.location {
+        map.insert("location".to_string(), render_attribute_value(location, language_filter)?);
+    }
+    if let Some(observation_space) = &entity.observation_space {
+        map.insert("observationSpace".to_string(), render_attribute_value(observation_space, language_filter)?);
+    }
+    if let Some(operation_space) = &entity.operation_space {
+        map.insert("operationSpace".to_string(), render_attribute_value(operation_space, language_filter)?);
+    }
+    if let Some(created_at) = &entity.created_at {
+        map.insert("createdAt".to_string(), Value::String(created_at.to_rfc3339_opts(SecondsFormat::Secs, true)));
+    }
+    if let Some(modified_at) = &entity.modified_at {
+        map.insert("modifiedAt".to_string(), Value::String(modified_at.to_rfc3339_opts(SecondsFormat::Secs, true)));
+    }
+    if let Some(deleted_at) = &entity.deleted_at {
+        map.insert("deletedAt".to_string(), Value::String(deleted_at.to_rfc3339_opts(SecondsFormat::Secs, true)));
     }
 
-    for (key, val) in replacements {
-        entity.attrs.insert(key, val);
+    for (key, attr) in &entity.attrs {
+        map.insert(key.clone(), render_attribute_value(attr, language_filter)?);
+    }
+
+    Ok(Value::Object(map))
+}
+
+/// Convert an entity to simplified/keyValues form while preserving the legacy
+/// serialization path whenever no `lang` negotiation is active.
+pub fn simplify_entity(entity: &Entity, language_filter: Option<&LanguageFilter>) -> Result<Value, AndromedaError> {
+    match language_filter {
+        Some(filter) => render_entity(entity, Some(filter)).map(|value| simplify_value(&value)),
+        None => Ok(entity.simplify()),
     }
 }
 
-struct LangPreference {
-    tag: String,
-    q: f64,
-}
-
-fn parse_lang_preferences(lang: &str) -> Vec<LangPreference> {
-    let mut prefs = Vec::new();
-    for part in lang.split(',') {
-        let part = part.trim();
-        if part.is_empty() {
-            continue;
-        }
-        let mut tag = part;
-        let mut q = 1.0f64;
-        if let Some(idx) = part.find(";q=") {
-            tag = part[..idx].trim();
-            if let Ok(qv) = part[idx + 3..].trim().parse::<f64>() {
-                q = qv;
-            }
-        } else if let Some(idx) = part.find(";") {
-            tag = part[..idx].trim();
-        }
-        prefs.push(LangPreference { tag: tag.to_string(), q });
+fn render_attribute_value(attr: &AttributeValue, language_filter: Option<&LanguageFilter>) -> Result<Value, AndromedaError> {
+    match attr {
+        AttributeValue::Single(attribute) => render_attribute(attribute.deref(), language_filter),
+        AttributeValue::Multiple(attributes) => attributes
+            .iter()
+            .map(|attribute| render_attribute(attribute, language_filter))
+            .collect::<Result<Vec<_>, _>>()
+            .map(Value::Array),
+        AttributeValue::Raw(value) => Ok(value.clone()),
     }
-    prefs.sort_by(|a, b| b.q.partial_cmp(&a.q).unwrap_or(std::cmp::Ordering::Equal));
-    prefs
 }
 
-fn negotiate_language_map(language_map: &Value, preferences: &[LangPreference]) -> Option<(String, String)> {
-    let map = language_map.as_object()?;
+fn render_attribute(attribute: &Attribute, language_filter: Option<&LanguageFilter>) -> Result<Value, AndromedaError> {
+    match attribute {
+        Attribute::LanguageProperty(language_property) => render_language_property(language_property, language_filter),
+        _ => serialize_value(attribute),
+    }
+}
 
-    for pref in preferences {
-        if pref.tag == "*" {
-            if let Some((tag, val)) = map.iter().next() {
-                return Some((val.as_str().unwrap_or("").to_string(), tag.clone()));
+fn render_language_property(language_property: &LanguageProperty, language_filter: Option<&LanguageFilter>) -> Result<Value, AndromedaError> {
+    if let Some(filter) = language_filter
+        && let Some(negotiated) = negotiate_language_property(language_property, filter)?
+    {
+        return serialize_value(&negotiated);
+    }
+
+    // Clone required: Attribute's #[serde(tag = "type")] adds the "type" discriminant during serialization.
+    // Serializing LanguageProperty directly would omit the type tag.
+    serialize_value(&Attribute::LanguageProperty(language_property.clone()))
+}
+
+fn negotiate_language_property<'a>(language_property: &'a LanguageProperty, filter: &LanguageFilter) -> Result<Option<NegotiatedProperty<'a>>, AndromedaError> {
+    let available = language_entries(&language_property.language_map)?;
+
+    for preference in filter.ordered() {
+        match preference.range() {
+            LanguageRange::Wildcard => {
+                if let Some(entry) = available.iter().find(|entry| matches!(entry.range, AvailableLanguageRange::Tag(_))) {
+                    return Ok(Some(NegotiatedProperty::from_language_property(language_property, entry)));
+                }
+                if let Some(entry) = available.iter().find(|entry| matches!(entry.range, AvailableLanguageRange::Default)) {
+                    return Ok(Some(NegotiatedProperty::from_language_property(language_property, entry)));
+                }
             }
+            LanguageRange::Tag(requested) => {
+                if let Some(entry) = available.iter().find(|entry| entry.exact_matches(requested)) {
+                    return Ok(Some(NegotiatedProperty::from_language_property(language_property, entry)));
+                }
+                if requested.is_language_range()
+                    && let Some(entry) = available.iter().find(|entry| entry.range_matches(requested))
+                {
+                    return Ok(Some(NegotiatedProperty::from_language_property(language_property, entry)));
+                }
+            }
+        }
+    }
+
+    Ok(None)
+}
+
+fn language_entries(language_map: &Value) -> Result<Vec<AvailableLanguage<'_>>, AndromedaError> {
+    let map = language_map
+        .as_object()
+        .ok_or_else(|| AndromedaError::internal("LanguageProperty languageMap must be a JSON object"))?;
+
+    map.iter()
+        .filter_map(|(tag, value)| extract_language_value(value).map(|val| (tag, val)))
+        .map(|(tag, value)| AvailableLanguage::new(tag, value))
+        .collect()
+}
+
+/// Extract a language map value, preserving both strings and non-empty arrays.
+///
+/// Per NGSI-LD spec clause 5.7.2.5, language map values can be arrays of strings.
+fn extract_language_value(value: &Value) -> Option<&Value> {
+    match value {
+        Value::String(_) => Some(value),
+        Value::Array(items) if !items.is_empty() => Some(value),
+        Value::Array(_) | Value::Null | Value::Bool(_) | Value::Number(_) | Value::Object(_) => None,
+    }
+}
+
+fn serialize_value<T>(value: &T) -> Result<Value, AndromedaError>
+where
+    T: Serialize,
+{
+    serde_json::to_value(value).map_err(|error| AndromedaError::internal("Failed to serialize response value").with_source(error))
+}
+
+#[derive(Debug)]
+struct AvailableLanguage<'a> {
+    range: AvailableLanguageRange,
+    value: &'a Value,
+}
+
+impl<'a> AvailableLanguage<'a> {
+    fn new(tag: &str, value: &'a Value) -> Result<AvailableLanguage<'a>, AndromedaError> {
+        let range = if tag == "@none" {
+            AvailableLanguageRange::Default
         } else {
-            if let Some(val) = map.get(&pref.tag) {
-                return Some((val.as_str().unwrap_or("").to_string(), pref.tag.clone()));
-            }
-            let prefix = format!("{}-", pref.tag);
-            for (tag, val) in map {
-                if tag.starts_with(&prefix) || tag == &pref.tag {
-                    return Some((val.as_str().unwrap_or("").to_string(), tag.clone()));
-                }
-            }
+            let parsed = LanguageTag::from_str(tag).map_err(|error| {
+                AndromedaError::bad_request_data(
+                    LanguageFilterError::InvalidLanguageTag {
+                        value: tag.to_string(),
+                        source: error,
+                    }
+                    .to_string(),
+                )
+            })?;
+            let canonical = parsed.canonicalize().map_err(|error| {
+                AndromedaError::bad_request_data(
+                    LanguageFilterError::InvalidStoredLanguageTag {
+                        value: tag.to_string(),
+                        source: error,
+                    }
+                    .to_string(),
+                )
+            })?;
+            AvailableLanguageRange::Tag(canonical)
+        };
+
+        Ok(AvailableLanguage { range, value })
+    }
+
+    fn exact_matches(&self, requested: &LanguageTag) -> bool {
+        match &self.range {
+            AvailableLanguageRange::Tag(tag) => tag == requested,
+            AvailableLanguageRange::Default => false,
         }
     }
-    None
+
+    fn range_matches(&self, requested: &LanguageTag) -> bool {
+        match &self.range {
+            AvailableLanguageRange::Tag(tag) => requested.matches(tag),
+            AvailableLanguageRange::Default => false,
+        }
+    }
 }
 
-// ---------------------------------------------------------------------------
-// Inline join (join=inline)
-// ---------------------------------------------------------------------------
+#[derive(Debug, Clone)]
+enum AvailableLanguageRange {
+    Default,
+    Tag(LanguageTag),
+}
 
-pub fn apply_inline_join(entity: &mut Value, linked: &HashMap<String, Entity>) {
-    let Some(obj) = entity.as_object_mut() else { return };
-    for (_key, attr_val) in obj.iter_mut() {
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct NegotiatedProperty<'a> {
+    #[serde(rename = "type")]
+    type_: &'static str,
+    value: &'a Value,
+    lang: String,
+    #[serde(skip_serializing_if = "Option::is_none", with = "serde_helpers::rfc3339_option", default)]
+    observed_at: Option<DateTime<Utc>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    dataset_id: &'a Option<Uri>,
+    #[serde(flatten)]
+    sub_attributes: &'a IndexMap<String, AttributeValue>,
+}
+
+impl<'a> NegotiatedProperty<'a> {
+    fn from_language_property(language_property: &'a LanguageProperty, selected: &AvailableLanguage<'a>) -> NegotiatedProperty<'a> {
+        NegotiatedProperty {
+            type_: "Property",
+            value: selected.value,
+            lang: match &selected.range {
+                AvailableLanguageRange::Default => "@none".to_string(),
+                AvailableLanguageRange::Tag(tag) => tag.to_string(),
+            },
+            observed_at: language_property.observed_at,
+            dataset_id: &language_property.dataset_id,
+            sub_attributes: &language_property.sub_attributes,
+        }
+    }
+}
+
+/// Apply `join=inline` expansion to an already-rendered entity response.
+pub fn apply_inline_join(entity: &mut Value, linked: &HashMap<String, Entity>, language_filter: Option<&LanguageFilter>) -> Result<(), AndromedaError> {
+    let Some(obj) = entity.as_object_mut() else { return Ok(()) };
+    for attr_val in obj.values_mut() {
         match attr_val {
             Value::Object(attr_obj) => {
-                let attr_type = attr_obj.get("type").and_then(|t| t.as_str()).map(String::from);
+                let attr_type = attr_obj.get("type").and_then(Value::as_str).map(ToOwned::to_owned);
                 if attr_type.as_deref() == Some("Relationship") {
-                    if let Some(object_uri) = attr_obj.get("object").and_then(|o| o.as_str()).map(String::from)
+                    if let Some(object_uri) = attr_obj.get("object").and_then(Value::as_str).map(ToOwned::to_owned)
                         && let Some(linked_entity) = linked.get(&object_uri)
-                        && let Ok(mut linked_val) = serde_json::to_value(linked_entity)
                     {
-                        apply_inline_join(&mut linked_val, linked);
+                        let mut linked_val = render_entity(linked_entity, language_filter)?;
+                        apply_inline_join(&mut linked_val, linked, language_filter)?;
                         attr_obj.insert("entity".to_string(), linked_val);
                     }
                 } else if attr_type.as_deref() == Some("ListRelationship")
-                    && let Some(object_list) = attr_obj.get("objectList").and_then(|o| o.as_array())
+                    && let Some(object_list) = attr_obj.get("objectList").and_then(Value::as_array)
                 {
-                    let entity_list: Vec<Value> = object_list
+                    let entity_list = object_list
                         .iter()
-                        .filter_map(|uri_val| uri_val.as_str())
+                        .filter_map(Value::as_str)
                         .filter_map(|uri| linked.get(uri))
-                        .filter_map(|e| {
-                            serde_json::to_value(e).ok().map(|mut v| {
-                                apply_inline_join(&mut v, linked);
-                                v
-                            })
+                        .map(|linked_entity| {
+                            let mut linked_val = render_entity(linked_entity, language_filter)?;
+                            apply_inline_join(&mut linked_val, linked, language_filter)?;
+                            Ok(linked_val)
                         })
-                        .collect();
+                        .collect::<Result<Vec<_>, AndromedaError>>()?;
                     if !entity_list.is_empty() {
                         attr_obj.insert("entityList".to_string(), Value::Array(entity_list));
                     }
@@ -156,29 +282,28 @@ pub fn apply_inline_join(entity: &mut Value, linked: &HashMap<String, Entity>) {
             Value::Array(items) => {
                 for item in items.iter_mut() {
                     if let Value::Object(attr_obj) = item {
-                        let attr_type = attr_obj.get("type").and_then(|t| t.as_str()).map(String::from);
+                        let attr_type = attr_obj.get("type").and_then(Value::as_str).map(ToOwned::to_owned);
                         if attr_type.as_deref() == Some("Relationship") {
-                            if let Some(object_uri) = attr_obj.get("object").and_then(|o| o.as_str()).map(String::from)
+                            if let Some(object_uri) = attr_obj.get("object").and_then(Value::as_str).map(ToOwned::to_owned)
                                 && let Some(linked_entity) = linked.get(&object_uri)
-                                && let Ok(mut linked_val) = serde_json::to_value(linked_entity)
                             {
-                                apply_inline_join(&mut linked_val, linked);
+                                let mut linked_val = render_entity(linked_entity, language_filter)?;
+                                apply_inline_join(&mut linked_val, linked, language_filter)?;
                                 attr_obj.insert("entity".to_string(), linked_val);
                             }
                         } else if attr_type.as_deref() == Some("ListRelationship")
-                            && let Some(object_list) = attr_obj.get("objectList").and_then(|o| o.as_array())
+                            && let Some(object_list) = attr_obj.get("objectList").and_then(Value::as_array)
                         {
-                            let entity_list: Vec<Value> = object_list
+                            let entity_list = object_list
                                 .iter()
-                                .filter_map(|uri_val| uri_val.as_str())
+                                .filter_map(Value::as_str)
                                 .filter_map(|uri| linked.get(uri))
-                                .filter_map(|e| {
-                                    serde_json::to_value(e).ok().map(|mut v| {
-                                        apply_inline_join(&mut v, linked);
-                                        v
-                                    })
+                                .map(|linked_entity| {
+                                    let mut linked_val = render_entity(linked_entity, language_filter)?;
+                                    apply_inline_join(&mut linked_val, linked, language_filter)?;
+                                    Ok(linked_val)
                                 })
-                                .collect();
+                                .collect::<Result<Vec<_>, AndromedaError>>()?;
                             if !entity_list.is_empty() {
                                 attr_obj.insert("entityList".to_string(), Value::Array(entity_list));
                             }
@@ -186,35 +311,33 @@ pub fn apply_inline_join(entity: &mut Value, linked: &HashMap<String, Entity>) {
                     }
                 }
             }
-            _ => {}
+            Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => {}
         }
     }
+    Ok(())
 }
 
-// ---------------------------------------------------------------------------
-// keyValues / simplified format
-// ---------------------------------------------------------------------------
-
+/// Convert a normalized rendered entity value into simplified/keyValues form.
 pub fn simplify_value(val: &Value) -> Value {
     let Some(obj) = val.as_object() else { return val.clone() };
 
-    let mut map = serde_json::Map::new();
-    for (key, v) in obj {
+    let mut map = Map::new();
+    for (key, value) in obj {
         match key.as_str() {
             "id" | "type" | "scope" | "@context" => {
-                map.insert(key.clone(), v.clone());
+                map.insert(key.clone(), value.clone());
             }
             _ => {
-                map.insert(key.clone(), simplify_attr_value(v));
+                map.insert(key.clone(), simplify_attr_value(value));
             }
         }
     }
     Value::Object(map)
 }
 
-fn simplify_attr_value(v: &Value) -> Value {
-    match v {
-        Value::Object(attr_obj) => match attr_obj.get("type").and_then(|t| t.as_str()) {
+fn simplify_attr_value(value: &Value) -> Value {
+    match value {
+        Value::Object(attr_obj) => match attr_obj.get("type").and_then(Value::as_str) {
             Some("Relationship") => {
                 if let Some(entity) = attr_obj.get("entity") {
                     simplify_value(entity)
@@ -228,14 +351,138 @@ fn simplify_attr_value(v: &Value) -> Value {
             Some("ListProperty") => attr_obj.get("valueList").cloned().unwrap_or_else(|| Value::Object(attr_obj.clone())),
             Some("ListRelationship") => {
                 if let Some(entity_list) = attr_obj.get("entityList") {
-                    Value::Array(entity_list.as_array().map(|arr| arr.iter().map(simplify_value).collect()).unwrap_or_default())
+                    Value::Array(
+                        entity_list
+                            .as_array()
+                            .map(|items| items.iter().map(simplify_value).collect())
+                            .unwrap_or_default(),
+                    )
                 } else {
                     attr_obj.get("objectList").cloned().unwrap_or_else(|| Value::Object(attr_obj.clone()))
                 }
             }
-            _ => Value::Object(attr_obj.clone()),
+            Some(_) | None => Value::Object(attr_obj.clone()),
         },
         Value::Array(items) => Value::Array(items.iter().map(simplify_attr_value).collect()),
-        _ => v.clone(),
+        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => value.clone(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{render_entity, simplify_entity, simplify_value};
+    use crate::{domain::entity::Entity, query::lang::LanguageFilter};
+    use serde_json::{Value, json};
+
+    fn parse_entity(value: Value) -> Entity {
+        serde_json::from_value(value).expect("entity")
+    }
+
+    #[test]
+    fn rendering_without_language_filter_matches_entity_serialization() {
+        let entity = parse_entity(json!({
+            "id": "urn:ngsi-ld:Building:000",
+            "type": "Building",
+            "name": {
+                "type": "Property",
+                "value": "Eiffel Tower"
+            },
+            "street": {
+                "type": "LanguageProperty",
+                "languageMap": {
+                    "fr": "Grand Place",
+                    "nl": "Grote Markt"
+                }
+            }
+        }));
+
+        let rendered = render_entity(&entity, None).expect("rendered entity");
+        let serialized = serde_json::to_value(&entity).expect("serialized entity");
+
+        assert_eq!(rendered, serialized);
+    }
+
+    #[test]
+    fn simplifying_without_language_filter_matches_entity_simplification() {
+        let entity = parse_entity(json!({
+            "id": "urn:ngsi-ld:Building:004",
+            "type": "Building",
+            "street": {
+                "type": "LanguageProperty",
+                "languageMap": {
+                    "fr": "Grand Place",
+                    "nl": "Grote Markt"
+                }
+            }
+        }));
+
+        let simplified = simplify_entity(&entity, None).expect("simplified entity");
+
+        assert_eq!(simplified, entity.simplify());
+    }
+
+    #[test]
+    fn language_filter_returns_exact_match_before_broader_match() {
+        let entity = parse_entity(json!({
+            "id": "urn:ngsi-ld:Building:001",
+            "type": "Building",
+            "street": {
+                "type": "LanguageProperty",
+                "languageMap": {
+                    "fr-CA": "Rue Principale",
+                    "fr": "Grand Place"
+                }
+            }
+        }));
+        let filter = LanguageFilter::parse("fr").expect("language filter");
+
+        let rendered = render_entity(&entity, Some(&filter)).expect("rendered entity");
+
+        assert_eq!(rendered["street"]["type"], "Property");
+        assert_eq!(rendered["street"]["value"], "Grand Place");
+        assert_eq!(rendered["street"]["lang"], "fr");
+    }
+
+    #[test]
+    fn language_filter_uses_wildcard_when_no_specific_match_exists() {
+        let entity = parse_entity(json!({
+            "id": "urn:ngsi-ld:Building:002",
+            "type": "Building",
+            "street": {
+                "type": "LanguageProperty",
+                "languageMap": {
+                    "fr": "Grand Place",
+                    "nl": "Grote Markt"
+                }
+            }
+        }));
+        let filter = LanguageFilter::parse("*").expect("language filter");
+
+        let rendered = render_entity(&entity, Some(&filter)).expect("rendered entity");
+
+        assert_eq!(rendered["street"]["type"], "Property");
+        assert_eq!(rendered["street"]["value"], "Grand Place");
+        assert_eq!(rendered["street"]["lang"], "fr");
+    }
+
+    #[test]
+    fn key_values_simplification_returns_scalar_after_language_negotiation() {
+        let entity = parse_entity(json!({
+            "id": "urn:ngsi-ld:Building:003",
+            "type": "Building",
+            "street": {
+                "type": "LanguageProperty",
+                "languageMap": {
+                    "fr": "Grand Place",
+                    "nl": "Grote Markt"
+                }
+            }
+        }));
+        let filter = LanguageFilter::parse("fr").expect("language filter");
+
+        let rendered = render_entity(&entity, Some(&filter)).expect("rendered entity");
+        let simplified = simplify_value(&rendered);
+
+        assert_eq!(simplified["street"], "Grand Place");
     }
 }

@@ -219,7 +219,9 @@ pub async fn build_notification_data(params: NotificationBuildParams<'_>) -> Vec
                 .await
             {
                 Ok(linked_map) => {
-                    apply_inline_join(&mut all_compacted[0], &linked_map);
+                    if let Err(error) = apply_inline_join(&mut all_compacted[0], &linked_map, None) {
+                        debug!("Failed to apply join=inline to notification payload: {}", error);
+                    }
                 }
                 Err(e) => {
                     debug!("Failed to resolve linked entities for join=inline: {}", e);

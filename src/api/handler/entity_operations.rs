@@ -1,10 +1,13 @@
 use crate::{
     api::{
-        extractor::{accept::AcceptFormat, context::ContextUrl, jsonld::JsonLd, params::ValidatedQuery},
+        extractor::{accept::AcceptFormat, context::ContextUrl, jsonld::JsonLd, language::LanguageNegotiation, params::ValidatedQuery},
         response::ngsild::NgsiLdCollectionResponse,
-        tenant::TenantState,
+        tenant::{TenantState, TenantStateOrCreate},
     },
-    domain::{entity::Entity, registration::ForwardingMode},
+    domain::{
+        entity::{Entity, EntityTypeValue},
+        registration::ForwardingMode,
+    },
     error::{
         AndromedaError,
         api::ApiError,
@@ -13,7 +16,8 @@ use crate::{
     },
     jsonld::ContextSpec,
     query::entity::EntityQueryParameters,
-    service::context_source_forwarding::ForwardBatchProvisionRequest,
+    response::entity::{apply_inline_join, render_entity, simplify_entity, simplify_value},
+    service::context_source_forwarding::{ForwardBatchProvisionRequest, ForwardingOperation, collect_warnings, merge_query_results},
 };
 use axum::{
     Json,
@@ -25,6 +29,7 @@ use axum::{
 use mediatype::{MediaTypeBuf, names};
 use serde::Deserialize;
 use serde_json::Value;
+use std::collections::HashSet;
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -105,6 +110,9 @@ pub struct GeoQueryRequest {
 pub struct PostQueryParams {
     pub options: Option<String>,
     pub format: Option<String>,
+    /// Retained for `deny_unknown_fields` acceptance; actual parsing handled by
+    /// the [`LanguageNegotiation`] extractor.
+    #[allow(dead_code)]
     pub lang: Option<String>,
     pub join: Option<String>,
     #[serde(rename = "joinLevel")]
@@ -123,6 +131,7 @@ pub async fn query(
     OriginalUri(uri): OriginalUri,
     accept: AcceptFormat,
     context: ContextUrl,
+    LanguageNegotiation(language_filter): LanguageNegotiation,
     headers: HeaderMap,
     ValidatedQuery(qparams): ValidatedQuery<PostQueryParams>,
     JsonLd {
@@ -178,7 +187,7 @@ pub async fn query(
         omit: qparams.omit,
         order_by: None,
         scope_q: None,
-        lang: qparams.lang,
+        lang: None,
         dataset_id: qparams.dataset_id,
         expand_values: None,
         json_keys: None,
@@ -194,7 +203,6 @@ pub async fn query(
     };
 
     let opts = params.parse_options();
-    let lang = params.lang.clone();
     let join_mode = params.join.clone();
     let join_level = params.join_level.unwrap_or(1);
     let geometry_property = params.geometry_property.clone();
@@ -203,7 +211,7 @@ pub async fn query(
     let (local_entities, total_count) = service.query(&params, &context).await.map_err(|e| e.with_instance(uri.clone()))?;
 
     // Distributed forwarding: query matching context sources unless local=true
-    let mut entities = if is_local {
+    let entities = if is_local {
         local_entities
     } else {
         let context_url = context.link_contexts().first().map(|s| s.as_str());
@@ -218,7 +226,7 @@ pub async fn query(
                 entity_ids_ref,
                 context_url,
                 &context,
-                crate::service::context_source_forwarding::ForwardingOperation::QueryBatch,
+                ForwardingOperation::QueryBatch,
                 incoming_via,
             )
             .await
@@ -226,19 +234,19 @@ pub async fn query(
                 tracing::warn!(error = %e, "Context source forwarding failed during batch query");
                 Vec::new()
             });
-        for warning in crate::service::context_source_forwarding::collect_warnings(&forwarded) {
+        for warning in collect_warnings(&forwarded) {
             tracing::debug!("Context source forwarding warning: {}", warning);
         }
 
         if forwarded.is_empty() {
             local_entities
         } else {
-            let local_values: Vec<serde_json::Value> = local_entities
+            let local_values: Vec<Value> = local_entities
                 .iter()
                 .map(|e| serde_json::to_value(e).map_err(|e| AndromedaError::internal("Failed to serialize entity").with_source(e)))
                 .collect::<Result<Vec<_>, _>>()
                 .map_err(|e| e.with_instance(uri.clone()))?;
-            let merged_values = crate::service::context_source_forwarding::merge_query_results(local_values, forwarded);
+            let merged_values = merge_query_results(local_values, forwarded);
             let mut result = Vec::new();
             for val in merged_values {
                 match serde_json::from_value::<Entity>(val) {
@@ -252,40 +260,27 @@ pub async fn query(
         }
     };
 
-    if let Some(ref lang) = lang {
-        for entity in &mut entities {
-            crate::response::entity::apply_language_negotiation(entity, lang);
-        }
-    }
-
     // Handle join
     if matches!(join_mode.as_deref(), Some("inline") | Some("flat")) {
         let linked = service
-            .resolve_linked_entities(&entities, join_level, opts.sys_attrs, &context, &std::collections::HashSet::new())
+            .resolve_linked_entities(&entities, join_level, opts.sys_attrs, &context, &HashSet::new())
             .await
             .map_err(|e| e.with_instance(uri.clone()))?;
 
         if join_mode.as_deref() == Some("flat") {
-            let mut all_values: Vec<serde_json::Value> = Vec::new();
+            let mut all_values: Vec<Value> = Vec::new();
             for entity in &entities {
                 if opts.key_values {
-                    all_values.push(entity.simplify());
+                    all_values.push(simplify_entity(entity, language_filter.as_ref()).map_err(|e| e.with_instance(uri.clone()))?);
                 } else {
-                    all_values.push(
-                        serde_json::to_value(entity)
-                            .map_err(|e| AndromedaError::internal("Failed to serialize entity").with_source(e).with_instance(uri.clone()))?,
-                    );
+                    all_values.push(render_entity(entity, language_filter.as_ref()).map_err(|e| e.with_instance(uri.clone()))?);
                 }
             }
             for linked_entity in linked.values() {
                 if opts.key_values {
-                    all_values.push(linked_entity.simplify());
+                    all_values.push(simplify_entity(linked_entity, language_filter.as_ref()).map_err(|e| e.with_instance(uri.clone()))?);
                 } else {
-                    all_values.push(serde_json::to_value(linked_entity).map_err(|e| {
-                        AndromedaError::internal("Failed to serialize linked entity")
-                            .with_source(e)
-                            .with_instance(uri.clone())
-                    })?);
+                    all_values.push(render_entity(linked_entity, language_filter.as_ref()).map_err(|e| e.with_instance(uri.clone()))?);
                 }
             }
             let mut response = NgsiLdCollectionResponse::ok(all_values);
@@ -299,13 +294,12 @@ pub async fn query(
             return Ok(response.into_response());
         } else {
             // Inline: serialize normalized, apply join, then simplify if needed
-            let mut entity_values: Vec<serde_json::Value> = Vec::new();
+            let mut entity_values: Vec<Value> = Vec::new();
             for entity in &entities {
-                let mut val = serde_json::to_value(entity)
-                    .map_err(|e| AndromedaError::internal("Failed to serialize entity").with_source(e).with_instance(uri.clone()))?;
-                crate::response::entity::apply_inline_join(&mut val, &linked);
+                let mut val = render_entity(entity, language_filter.as_ref()).map_err(|e| e.with_instance(uri.clone()))?;
+                apply_inline_join(&mut val, &linked, language_filter.as_ref()).map_err(|e| e.with_instance(uri.clone()))?;
                 if opts.key_values {
-                    val = crate::response::entity::simplify_value(&val);
+                    val = simplify_value(&val);
                 }
                 entity_values.push(val);
             }
@@ -323,7 +317,11 @@ pub async fn query(
 
     // Handle keyValues
     if opts.key_values {
-        let simplified: Vec<serde_json::Value> = entities.iter().map(|e| e.simplify()).collect();
+        let simplified: Vec<Value> = entities
+            .iter()
+            .map(|entity| simplify_entity(entity, language_filter.as_ref()))
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.with_instance(uri.clone()))?;
         let mut response = NgsiLdCollectionResponse::ok(simplified);
         response = response
             .with_context(context)
@@ -334,7 +332,12 @@ pub async fn query(
         }
         Ok(response.into_response())
     } else {
-        let mut response = NgsiLdCollectionResponse::ok(entities);
+        let rendered = entities
+            .iter()
+            .map(|entity| render_entity(entity, language_filter.as_ref()))
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.with_instance(uri.clone()))?;
+        let mut response = NgsiLdCollectionResponse::ok(rendered);
         response = response
             .with_context(context)
             .with_format(accept.format())
@@ -432,7 +435,7 @@ fn parse_batch_entities(
     // Merge all @context values from all items for the overall context
     let mut merged_context = context.0.clone();
     if is_ld_json {
-        let mut seen = std::collections::HashSet::new();
+        let mut seen = HashSet::new();
         let mut merged_ctx_values = Vec::new();
         for item in &items {
             if let Some(ctx) = item.as_object().and_then(|o| o.get("@context")) {
@@ -532,7 +535,7 @@ fn has_supported_json_content_type(headers: &HeaderMap) -> bool {
 }
 
 pub async fn batch_create(
-    crate::api::tenant::TenantStateOrCreate(state): crate::api::tenant::TenantStateOrCreate,
+    TenantStateOrCreate(state): TenantStateOrCreate,
     OriginalUri(uri): OriginalUri,
     context: ContextUrl,
     headers: HeaderMap,
@@ -556,8 +559,8 @@ pub async fn batch_create(
     // Per spec 5.6.7: iterate CSRs, forward matching entities
     let context_url = context.link_contexts().first().map(|s| s.as_str());
     let entity_type = entities.first().map(|e| match &e.type_ {
-        crate::domain::entity::EntityTypeValue::Single(s) => s.as_str(),
-        crate::domain::entity::EntityTypeValue::Multiple(v) => v.first().map(|s| s.as_str()).unwrap_or(""),
+        EntityTypeValue::Single(s) => s.as_str(),
+        EntityTypeValue::Multiple(v) => v.first().map(|s| s.as_str()).unwrap_or(""),
     });
     let forwarded = state
         .forwarding
@@ -566,7 +569,7 @@ pub async fn batch_create(
             body: &body,
             context_url,
             context: &context,
-            operation: crate::service::context_source_forwarding::ForwardingOperation::CreateBatch,
+            operation: ForwardingOperation::CreateBatch,
             batch_path: "/entityOperations/create",
             query_string: None,
             incoming_via,
@@ -630,8 +633,8 @@ pub async fn batch_upsert(
     // Per spec 5.6.8: iterate CSRs, forward matching entities
     let context_url = context.link_contexts().first().map(|s| s.as_str());
     let entity_type = entities.first().map(|e| match &e.type_ {
-        crate::domain::entity::EntityTypeValue::Single(s) => s.as_str(),
-        crate::domain::entity::EntityTypeValue::Multiple(v) => v.first().map(|s| s.as_str()).unwrap_or(""),
+        EntityTypeValue::Single(s) => s.as_str(),
+        EntityTypeValue::Multiple(v) => v.first().map(|s| s.as_str()).unwrap_or(""),
     });
     let qs = params.options.as_deref().map(|o| format!("options={o}"));
     let forwarded = state
@@ -641,7 +644,7 @@ pub async fn batch_upsert(
             body: &body,
             context_url,
             context: &context,
-            operation: crate::service::context_source_forwarding::ForwardingOperation::UpsertBatch,
+            operation: ForwardingOperation::UpsertBatch,
             batch_path: "/entityOperations/upsert",
             query_string: qs.as_deref(),
             incoming_via,
@@ -710,8 +713,8 @@ pub async fn batch_update(
     // Distributed forwarding per spec 5.6.9
     let context_url = context.link_contexts().first().map(|s| s.as_str());
     let entity_type = entities.first().map(|e| match &e.type_ {
-        crate::domain::entity::EntityTypeValue::Single(s) => s.as_str(),
-        crate::domain::entity::EntityTypeValue::Multiple(v) => v.first().map(|s| s.as_str()).unwrap_or(""),
+        EntityTypeValue::Single(s) => s.as_str(),
+        EntityTypeValue::Multiple(v) => v.first().map(|s| s.as_str()).unwrap_or(""),
     });
     let qs = params.options.as_deref().map(|o| format!("options={o}"));
     let forwarded = state
@@ -721,7 +724,7 @@ pub async fn batch_update(
             body: &body,
             context_url,
             context: &context,
-            operation: crate::service::context_source_forwarding::ForwardingOperation::UpdateBatch,
+            operation: ForwardingOperation::UpdateBatch,
             batch_path: "/entityOperations/update",
             query_string: qs.as_deref(),
             incoming_via,
@@ -782,8 +785,8 @@ pub async fn batch_merge(
     // Distributed forwarding per spec 5.6.20
     let context_url = context.link_contexts().first().map(|s| s.as_str());
     let entity_type = entities.first().map(|e| match &e.type_ {
-        crate::domain::entity::EntityTypeValue::Single(s) => s.as_str(),
-        crate::domain::entity::EntityTypeValue::Multiple(v) => v.first().map(|s| s.as_str()).unwrap_or(""),
+        EntityTypeValue::Single(s) => s.as_str(),
+        EntityTypeValue::Multiple(v) => v.first().map(|s| s.as_str()).unwrap_or(""),
     });
     let forwarded = state
         .forwarding
@@ -792,7 +795,7 @@ pub async fn batch_merge(
             body: &body,
             context_url,
             context: &context,
-            operation: crate::service::context_source_forwarding::ForwardingOperation::MergeBatch,
+            operation: ForwardingOperation::MergeBatch,
             batch_path: "/entityOperations/merge",
             query_string: None,
             incoming_via,
@@ -859,7 +862,7 @@ pub async fn batch_delete(
             body: &body,
             context_url,
             context: &context,
-            operation: crate::service::context_source_forwarding::ForwardingOperation::DeleteBatch,
+            operation: ForwardingOperation::DeleteBatch,
             batch_path: "/entityOperations/delete",
             query_string: None,
             incoming_via,

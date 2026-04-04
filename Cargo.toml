@@ -37,6 +37,7 @@ iref3 = { package = "iref", version = "3.2.2" }
 json-ld = "0.21.4"
 json-ld-expandable = { path = "lib/json-ld-expandable" }
 json-syntax = { version = "0.12.5", features = ["serde_json"] }
+language-tags = "0.3.2"
 mediatype = "0.21.0"
 mime = "0.3.17"
 moka = { version = "0.12.15", features = ["future"] }
