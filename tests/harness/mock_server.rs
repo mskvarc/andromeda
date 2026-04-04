@@ -13,6 +13,7 @@ use tokio::sync::RwLock;
 struct StubEntry {
     status_code: u16,
     body: Option<String>,
+    content_type: String,
     count: AtomicUsize,
 }
 
@@ -51,7 +52,8 @@ impl MockServer {
                     entry.count.fetch_add(1, Ordering::Relaxed);
                     let status = axum::http::StatusCode::from_u16(entry.status_code).unwrap_or(axum::http::StatusCode::INTERNAL_SERVER_ERROR);
                     if let Some(ref body) = entry.body {
-                        (status, [(axum::http::header::CONTENT_TYPE, "application/ld+json")], body.clone()).into_response()
+                        let ct = entry.content_type.clone();
+                        (status, [(axum::http::header::CONTENT_TYPE, ct)], body.clone()).into_response()
                     } else {
                         status.into_response()
                     }
@@ -87,6 +89,7 @@ impl MockServer {
             StubEntry {
                 status_code,
                 body: None,
+                content_type: "application/ld+json".to_string(),
                 count: AtomicUsize::new(0),
             },
         );
@@ -99,6 +102,21 @@ impl MockServer {
             StubEntry {
                 status_code,
                 body: Some(serde_json::to_string(body).unwrap()),
+                content_type: "application/ld+json".to_string(),
+                count: AtomicUsize::new(0),
+            },
+        );
+    }
+
+    /// Register a stub that returns a raw string body with a custom content type.
+    pub async fn set_stub_with_raw_body(&self, method: Method, path: &str, status_code: u16, body: &str, content_type: &str) {
+        let mut s = self.state.write().await;
+        s.stubs.insert(
+            (method.to_string(), path.to_string()),
+            StubEntry {
+                status_code,
+                body: Some(body.to_string()),
+                content_type: content_type.to_string(),
                 count: AtomicUsize::new(0),
             },
         );

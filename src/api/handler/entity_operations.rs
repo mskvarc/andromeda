@@ -211,8 +211,8 @@ pub async fn query(
     let (local_entities, total_count) = service.query(&params, &context).await.map_err(|e| e.with_instance(uri.clone()))?;
 
     // Distributed forwarding: query matching context sources unless local=true
-    let entities = if is_local {
-        local_entities
+    let (entities, warnings) = if is_local {
+        (local_entities, Vec::new())
     } else {
         let context_url = context.link_contexts().first().map(|s| s.as_str());
         let entity_type = params.entity_type.as_deref();
@@ -234,12 +234,10 @@ pub async fn query(
                 tracing::warn!(error = %e, "Context source forwarding failed during batch query");
                 Vec::new()
             });
-        for warning in collect_warnings(&forwarded) {
-            tracing::debug!("Context source forwarding warning: {}", warning);
-        }
+        let warnings = collect_warnings(&forwarded);
 
         if forwarded.is_empty() {
-            local_entities
+            (local_entities, warnings)
         } else {
             let local_values: Vec<Value> = local_entities
                 .iter()
@@ -256,7 +254,7 @@ pub async fn query(
                     }
                 }
             }
-            result
+            (result, warnings)
         }
     };
 
@@ -287,7 +285,8 @@ pub async fn query(
             response = response
                 .with_context(context)
                 .with_format(accept.format())
-                .with_geometry_property(geometry_property);
+                .with_geometry_property(geometry_property)
+                .with_warnings(warnings);
             if let Some(count) = total_count {
                 response = response.with_total_count(count as usize);
             }
@@ -307,7 +306,8 @@ pub async fn query(
             response = response
                 .with_context(context)
                 .with_format(accept.format())
-                .with_geometry_property(geometry_property);
+                .with_geometry_property(geometry_property)
+                .with_warnings(warnings);
             if let Some(count) = total_count {
                 response = response.with_total_count(count as usize);
             }
@@ -326,7 +326,8 @@ pub async fn query(
         response = response
             .with_context(context)
             .with_format(accept.format())
-            .with_geometry_property(geometry_property);
+            .with_geometry_property(geometry_property)
+            .with_warnings(warnings);
         if let Some(count) = total_count {
             response = response.with_total_count(count as usize);
         }
@@ -341,7 +342,8 @@ pub async fn query(
         response = response
             .with_context(context)
             .with_format(accept.format())
-            .with_geometry_property(geometry_property);
+            .with_geometry_property(geometry_property)
+            .with_warnings(warnings);
         if let Some(count) = total_count {
             response = response.with_total_count(count as usize);
         }

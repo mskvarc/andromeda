@@ -7,7 +7,7 @@
 use crate::{
     api::{extractor::accept::ResponseFormat, header::insert_jsonld_contexts},
     jsonld::ContextSpec,
-    service::entity::decode_percent_encoded_uris,
+    service::{context_source_forwarding::NgsiLdWarning, entity::decode_percent_encoded_uris},
 };
 use axum::{
     Json,
@@ -44,6 +44,7 @@ pub struct NgsiLdResponse<T> {
     geometry_property: Option<String>,
     location: Option<String>,
     entity_map_uri: Option<String>,
+    warnings: Vec<NgsiLdWarning>,
 }
 
 impl<T> NgsiLdResponse<T> {
@@ -57,6 +58,7 @@ impl<T> NgsiLdResponse<T> {
             geometry_property: None,
             location: None,
             entity_map_uri: None,
+            warnings: Vec::new(),
         }
     }
 
@@ -101,6 +103,12 @@ impl<T> NgsiLdResponse<T> {
         self.entity_map_uri = Some(uri);
         self
     }
+
+    /// Set NGSILD-Warning headers from distributed forwarding (clause 6.3.17).
+    pub fn with_warnings(mut self, warnings: Vec<NgsiLdWarning>) -> Self {
+        self.warnings = warnings;
+        self
+    }
 }
 
 impl<T: Serialize> IntoResponse for NgsiLdResponse<T> {
@@ -121,6 +129,12 @@ impl<T: Serialize> IntoResponse for NgsiLdResponse<T> {
             && let Ok(val) = HeaderValue::from_str(uri)
         {
             headers.insert("NGSILD-EntityMap", val);
+        }
+
+        for warning in &self.warnings {
+            if let Ok(val) = HeaderValue::from_str(&warning.header_value()) {
+                headers.append("NGSILD-Warning", val);
+            }
         }
 
         match self.format {
@@ -174,6 +188,7 @@ pub struct NgsiLdCollectionResponse<T> {
     geometry_property: Option<String>,
     content_range: Option<String>,
     entity_map_uri: Option<String>,
+    warnings: Vec<NgsiLdWarning>,
 }
 
 impl<T> NgsiLdCollectionResponse<T> {
@@ -188,6 +203,7 @@ impl<T> NgsiLdCollectionResponse<T> {
             geometry_property: None,
             content_range: None,
             entity_map_uri: None,
+            warnings: Vec::new(),
         }
     }
 
@@ -233,6 +249,12 @@ impl<T> NgsiLdCollectionResponse<T> {
         self.entity_map_uri = Some(uri);
         self
     }
+
+    /// Set NGSILD-Warning headers from distributed forwarding (clause 6.3.17).
+    pub fn with_warnings(mut self, warnings: Vec<NgsiLdWarning>) -> Self {
+        self.warnings = warnings;
+        self
+    }
 }
 
 impl<T: Serialize> IntoResponse for NgsiLdCollectionResponse<T> {
@@ -262,6 +284,12 @@ impl<T: Serialize> IntoResponse for NgsiLdCollectionResponse<T> {
             && let Ok(val) = HeaderValue::from_str(uri)
         {
             headers.insert("NGSILD-EntityMap", val);
+        }
+
+        for warning in &self.warnings {
+            if let Ok(val) = HeaderValue::from_str(&warning.header_value()) {
+                headers.append("NGSILD-Warning", val);
+            }
         }
 
         // Add Link header for application/json
@@ -451,5 +479,41 @@ mod tests {
                 .and_then(|v| v.get("location"))
                 .is_some()
         );
+    }
+
+    #[test]
+    fn ngsild_response_includes_warning_headers_per_clause_6_3_17() {
+        use axum::response::IntoResponse;
+        let warnings = vec![
+            NgsiLdWarning::MiscellaneousWarning("timeout reaching CS".to_string()),
+            NgsiLdWarning::RevalidationFailed("invalid payload".to_string()),
+        ];
+        let response = NgsiLdResponse::ok(serde_json::json!({"id": "urn:a", "type": "T"}))
+            .with_warnings(warnings)
+            .into_response();
+        let warning_values: Vec<&str> = response.headers().get_all("NGSILD-Warning").iter().filter_map(|v| v.to_str().ok()).collect();
+        assert_eq!(warning_values.len(), 2);
+        assert_eq!(warning_values[0], "199 - \"timeout reaching CS\"");
+        assert_eq!(warning_values[1], "111 - \"invalid payload\"");
+    }
+
+    #[test]
+    fn ngsild_collection_response_includes_warning_headers_per_clause_6_3_17() {
+        use axum::response::IntoResponse;
+        let warnings = vec![NgsiLdWarning::MiscellaneousPersistentWarning("CS returned HTTP 500".to_string())];
+        let response = NgsiLdCollectionResponse::ok(vec![serde_json::json!({"id": "urn:a", "type": "T"})])
+            .with_warnings(warnings)
+            .into_response();
+        let warning_values: Vec<&str> = response.headers().get_all("NGSILD-Warning").iter().filter_map(|v| v.to_str().ok()).collect();
+        assert_eq!(warning_values.len(), 1);
+        assert_eq!(warning_values[0], "299 - \"CS returned HTTP 500\"");
+    }
+
+    #[test]
+    fn ngsild_response_without_warnings_has_no_warning_header() {
+        use axum::response::IntoResponse;
+        let response = NgsiLdResponse::ok(serde_json::json!({"id": "urn:a", "type": "T"})).into_response();
+        let warning_values: Vec<&str> = response.headers().get_all("NGSILD-Warning").iter().filter_map(|v| v.to_str().ok()).collect();
+        assert!(warning_values.is_empty());
     }
 }

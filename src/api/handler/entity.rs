@@ -324,8 +324,9 @@ pub async fn get(
     let is_local = params.local.unwrap_or(false);
 
     // If local=true, skip distributed forwarding
-    let entity = if is_local {
-        local_result.map_err(|e| e.with_instance(uri.clone()))?
+    let (entity, warnings) = if is_local {
+        let entity = local_result.map_err(|e| e.with_instance(uri.clone()))?;
+        (entity, Vec::new())
     } else {
         // Forward to context sources
         let context_url = context.link_contexts().first().map(|s| s.as_str());
@@ -334,10 +335,8 @@ pub async fn get(
             .forwarding
             .forward_retrieve(id.as_ref(), query_string, context_url, ForwardingOperation::RetrieveEntity, incoming_via)
             .await
-            .unwrap_or_default(); // Retrieve forwarding: best-effort — missing CSR data is not fatal
-        for warning in collect_warnings(&forwarded) {
-            tracing::debug!("Context source forwarding warning: {}", warning);
-        }
+            .unwrap_or_default(); // Retrieve forwarding: best-effort -- missing CSR data is not fatal
+        let warnings = collect_warnings(&forwarded);
 
         let local_value = match local_result {
             Ok(e) => Some(
@@ -348,7 +347,7 @@ pub async fn get(
         };
 
         let merged = merge_retrieve_results(local_value, forwarded);
-        match merged {
+        let entity = match merged {
             Some(value) => serde_json::from_value::<Entity>(value).map_err(|e| {
                 ApiError::from_error(
                     AndromedaError::internal(format!("Failed to deserialize merged entity {}", id)).with_source(e),
@@ -358,7 +357,8 @@ pub async fn get(
             None => {
                 return Err(ApiError::from_error(AndromedaError::not_found(id.to_string()), uri.clone()));
             }
-        }
+        };
+        (entity, warnings)
     };
 
     let options = params.options.as_deref().unwrap_or("");
@@ -398,6 +398,7 @@ pub async fn get(
             return Ok(NgsiLdCollectionResponse::ok(all_entities)
                 .with_context(context)
                 .with_format(accept.format())
+                .with_warnings(warnings)
                 .into_response());
         } else {
             // Inline: add entity sub-property to Relationships
@@ -411,6 +412,7 @@ pub async fn get(
                 .with_context(context)
                 .with_format(accept.format())
                 .with_geometry_property(params.geometry_property.clone())
+                .with_warnings(warnings)
                 .into_response());
         }
     }
@@ -422,6 +424,7 @@ pub async fn get(
                 .with_context(context)
                 .with_format(accept.format())
                 .with_geometry_property(params.geometry_property.clone())
+                .with_warnings(warnings)
                 .into_response(),
         )
     } else {
@@ -429,6 +432,7 @@ pub async fn get(
             .with_context(context)
             .with_format(accept.format())
             .with_geometry_property(params.geometry_property.clone())
+            .with_warnings(warnings)
             .into_response())
     }
 }
@@ -630,8 +634,8 @@ pub async fn query(
     let (local_entities, total_count) = service.query(&query, &context).await.map_err(|e| e.with_instance(uri.clone()))?;
 
     // Distributed forwarding: query matching context sources unless local=true
-    let mut entities = if is_local {
-        local_entities
+    let (mut entities, warnings) = if is_local {
+        (local_entities, Vec::new())
     } else {
         let context_url = context.link_contexts().first().map(|s| s.as_str());
         let entity_type = query.entity_type.as_deref();
@@ -650,12 +654,10 @@ pub async fn query(
             )
             .await
             .unwrap_or_default();
-        for warning in collect_warnings(&forwarded) {
-            tracing::debug!("Context source forwarding warning: {}", warning);
-        }
+        let warnings = collect_warnings(&forwarded);
 
         if forwarded.is_empty() {
-            local_entities
+            (local_entities, warnings)
         } else {
             let local_values: Vec<Value> = local_entities.iter().map(|e| serde_json::to_value(e).unwrap_or_default()).collect();
             let merged_values = merge_query_results(local_values, forwarded);
@@ -669,7 +671,7 @@ pub async fn query(
                     }
                 }
             }
-            // Per spec 5.7.2: apply attrs filter to merged results — context sources
+            // Per spec 5.7.2: apply attrs filter to merged results -- context sources
             // return all attributes, so filtering must happen after merge
             if let Some(ref attrs_str) = query.attrs {
                 let requested: Vec<&str> = attrs_str.split(',').map(str::trim).collect();
@@ -678,7 +680,7 @@ pub async fn query(
                 }
                 result.retain(|e| !e.attrs.is_empty());
             }
-            result
+            (result, warnings)
         }
     };
 
@@ -768,7 +770,8 @@ pub async fn query(
             response = response
                 .with_context(context)
                 .with_format(accept.format())
-                .with_geometry_property(query.geometry_property.clone());
+                .with_geometry_property(query.geometry_property.clone())
+                .with_warnings(warnings);
             if let Some(count) = total_count {
                 response = response.with_total_count(count as usize);
             }
@@ -791,7 +794,8 @@ pub async fn query(
             response = response
                 .with_context(context)
                 .with_format(accept.format())
-                .with_geometry_property(query.geometry_property.clone());
+                .with_geometry_property(query.geometry_property.clone())
+                .with_warnings(warnings);
             if let Some(count) = total_count {
                 response = response.with_total_count(count as usize);
             }
@@ -813,7 +817,8 @@ pub async fn query(
         response = response
             .with_context(context)
             .with_format(accept.format())
-            .with_geometry_property(query.geometry_property.clone());
+            .with_geometry_property(query.geometry_property.clone())
+            .with_warnings(warnings);
         if let Some(count) = total_count {
             response = response.with_total_count(count as usize);
         }
@@ -831,7 +836,8 @@ pub async fn query(
         response = response
             .with_context(context)
             .with_format(accept.format())
-            .with_geometry_property(query.geometry_property.clone());
+            .with_geometry_property(query.geometry_property.clone())
+            .with_warnings(warnings);
         if let Some(count) = total_count {
             response = response.with_total_count(count as usize);
         }

@@ -100,23 +100,43 @@ impl ForwardingOperation {
     }
 }
 
-/// IANA warning codes for distributed operations (§6.3.17).
-#[derive(Debug, Clone)]
+/// IANA warning codes for distributed operations (clause 6.3.17).
+#[derive(Debug, Clone, derive_more::Display)]
 pub enum NgsiLdWarning {
+    /// 110: Cached data reused; context source responded but stale data was served.
+    #[display("110 - \"{_0}\"")]
+    ResponseIsStale(String),
+    /// 111: Context source responded but payload was invalid or non-NGSI-LD.
+    #[display("111 - \"{_0}\"")]
+    RevalidationFailed(String),
     /// 199: No response within timeout or registration loop detected.
+    #[display("199 - \"{_0}\"")]
     MiscellaneousWarning(String),
     /// 299: Error response from registration endpoint (e.g., 403).
+    #[display("299 - \"{_0}\"")]
     MiscellaneousPersistentWarning(String),
 }
 
 impl NgsiLdWarning {
     /// Format as NGSILD-Warning header value per IANA Warning specification.
     pub fn header_value(&self) -> String {
-        match self {
-            NgsiLdWarning::MiscellaneousWarning(msg) => format!("199 - \"{}\"", msg),
-            NgsiLdWarning::MiscellaneousPersistentWarning(msg) => format!("299 - \"{}\"", msg),
-        }
+        self.to_string()
     }
+}
+
+/// Outcome of a GET request to a context source, distinguishing conditions
+/// that map to different IANA warning codes (clause 6.3.17).
+enum ForwardGetOutcome {
+    /// HTTP success with valid JSON body.
+    Success(Value),
+    /// HTTP 404 -- not considered abnormal per spec.
+    NotFound,
+    /// HTTP success but response body was not valid JSON.
+    InvalidPayload(String),
+    /// HTTP non-success status other than 404.
+    ErrorStatus(u16),
+    /// Network-level failure (timeout, connection refused, etc.).
+    NetworkError(String),
 }
 
 /// Result from a single context source forwarding attempt.
@@ -257,32 +277,66 @@ impl ContextSourceForwardingService {
             let url = build_query_url(&csr.endpoint, &forwarding_qs);
             debug!("Forwarding entity query to context source {}: {}", csr.id, url);
 
+            let mode = csr.mode.unwrap_or_default();
             match self.forward_get(&url, context_url, csr.tenant.as_deref(), incoming_via).await {
-                Ok(body) => {
-                    let entities = match body {
-                        Value::Array(arr) => arr,
-                        obj @ Value::Object(_) => vec![obj], // Single entity response
-                        _other => {
-                            warn!("Context source {} returned unexpected response type", csr.id);
-                            continue;
-                        }
-                    };
-                    let mode = csr.mode.unwrap_or_default();
+                ForwardGetOutcome::Success(Value::Array(arr)) => {
                     results.push(ForwardedEntities {
                         mode,
-                        entities,
+                        entities: arr,
                         warnings: Vec::new(),
                     });
                 }
-                Err(e) => {
-                    warn!("Failed to forward query to context source {}: {}", csr.id, e);
-                    let mode = csr.mode.unwrap_or_default();
+                ForwardGetOutcome::Success(obj @ Value::Object(_)) => {
+                    results.push(ForwardedEntities {
+                        mode,
+                        entities: vec![obj],
+                        warnings: Vec::new(),
+                    });
+                }
+                ForwardGetOutcome::Success(_other) => {
+                    warn!("Context source {} returned unexpected response type", csr.id);
+                    results.push(ForwardedEntities {
+                        mode,
+                        entities: Vec::new(),
+                        warnings: vec![NgsiLdWarning::RevalidationFailed(format!(
+                            "Context source {} returned unexpected response type",
+                            csr.id
+                        ))],
+                    });
+                }
+                ForwardGetOutcome::NotFound => {
+                    // 404 is not abnormal per spec clause 6.3.17
+                }
+                ForwardGetOutcome::InvalidPayload(msg) => {
+                    warn!("Context source {} returned invalid payload: {}", csr.id, msg);
+                    results.push(ForwardedEntities {
+                        mode,
+                        entities: Vec::new(),
+                        warnings: vec![NgsiLdWarning::RevalidationFailed(format!(
+                            "Context source {} returned invalid payload: {}",
+                            csr.id, msg
+                        ))],
+                    });
+                }
+                ForwardGetOutcome::ErrorStatus(status) => {
+                    warn!("Context source {} returned HTTP {}", csr.id, status);
+                    results.push(ForwardedEntities {
+                        mode,
+                        entities: Vec::new(),
+                        warnings: vec![NgsiLdWarning::MiscellaneousPersistentWarning(format!(
+                            "Context source {} returned HTTP {}",
+                            csr.id, status
+                        ))],
+                    });
+                }
+                ForwardGetOutcome::NetworkError(msg) => {
+                    warn!("Failed to forward query to context source {}: {}", csr.id, msg);
                     results.push(ForwardedEntities {
                         mode,
                         entities: Vec::new(),
                         warnings: vec![NgsiLdWarning::MiscellaneousWarning(format!(
-                            "Context source {} did not respond in time",
-                            csr.id
+                            "Context source {} did not respond: {}",
+                            csr.id, msg
                         ))],
                     });
                 }
@@ -320,28 +374,60 @@ impl ContextSourceForwardingService {
             let url = build_retrieve_url(&csr.endpoint, entity_id, query_string);
             debug!("Forwarding entity retrieve to context source {}: {}", csr.id, url);
 
+            let mode = csr.mode.unwrap_or_default();
             match self.forward_get(&url, context_url, csr.tenant.as_deref(), incoming_via).await {
-                Ok(body) => {
-                    // Single entity response — wrap in array for uniform handling
-                    if body.is_object() {
-                        let mode = csr.mode.unwrap_or_default();
-                        results.push(ForwardedEntities {
-                            mode,
-                            entities: vec![body],
-                            warnings: Vec::new(),
-                        });
-                    }
-                    // 404 responses will have been caught as non-success status
+                ForwardGetOutcome::Success(obj @ Value::Object(_)) => {
+                    results.push(ForwardedEntities {
+                        mode,
+                        entities: vec![obj],
+                        warnings: Vec::new(),
+                    });
                 }
-                Err(e) => {
-                    debug!("Forward retrieve to context source {} failed (may be 404): {}", csr.id, e);
-                    let mode = csr.mode.unwrap_or_default();
+                ForwardGetOutcome::Success(_other) => {
+                    // Single entity retrieval expects an object; anything else is invalid
+                    warn!("Context source {} returned non-object for entity retrieve", csr.id);
+                    results.push(ForwardedEntities {
+                        mode,
+                        entities: Vec::new(),
+                        warnings: vec![NgsiLdWarning::RevalidationFailed(format!(
+                            "Context source {} returned non-object for entity retrieve",
+                            csr.id
+                        ))],
+                    });
+                }
+                ForwardGetOutcome::NotFound => {
+                    // 404 is not abnormal per spec clause 6.3.17
+                }
+                ForwardGetOutcome::InvalidPayload(msg) => {
+                    warn!("Context source {} returned invalid payload: {}", csr.id, msg);
+                    results.push(ForwardedEntities {
+                        mode,
+                        entities: Vec::new(),
+                        warnings: vec![NgsiLdWarning::RevalidationFailed(format!(
+                            "Context source {} returned invalid payload: {}",
+                            csr.id, msg
+                        ))],
+                    });
+                }
+                ForwardGetOutcome::ErrorStatus(status) => {
+                    warn!("Context source {} returned HTTP {}", csr.id, status);
                     results.push(ForwardedEntities {
                         mode,
                         entities: Vec::new(),
                         warnings: vec![NgsiLdWarning::MiscellaneousPersistentWarning(format!(
-                            "Context source {} returned error: {}",
-                            csr.id, e
+                            "Context source {} returned HTTP {}",
+                            csr.id, status
+                        ))],
+                    });
+                }
+                ForwardGetOutcome::NetworkError(msg) => {
+                    warn!("Failed to forward retrieve to context source {}: {}", csr.id, msg);
+                    results.push(ForwardedEntities {
+                        mode,
+                        entities: Vec::new(),
+                        warnings: vec![NgsiLdWarning::MiscellaneousWarning(format!(
+                            "Context source {} did not respond: {}",
+                            csr.id, msg
                         ))],
                     });
                 }
@@ -544,25 +630,34 @@ impl ContextSourceForwardingService {
     }
 
     /// Make a GET request to a context source endpoint.
-    async fn forward_get(&self, url: &str, context_url: Option<&str>, tenant: Option<&str>, incoming_via: Option<&str>) -> Result<Value, AndromedaError> {
+    async fn forward_get(&self, url: &str, context_url: Option<&str>, tenant: Option<&str>, incoming_via: Option<&str>) -> ForwardGetOutcome {
         debug!("CS forwarding GET {}", url);
 
         let request = self
             .build_request(reqwest::Method::GET, url, context_url, tenant, incoming_via)
             .header("Accept", "application/json");
 
-        let (status, bytes) = self.send_request(request).await?;
+        let (status, bytes) = match self.send_request(request).await {
+            Ok(result) => result,
+            Err(e) => return ForwardGetOutcome::NetworkError(e.to_string()),
+        };
+
+        if status.as_u16() == 404 {
+            return ForwardGetOutcome::NotFound;
+        }
 
         if !status.is_success() {
-            return Err(AndromedaError::internal(format!("Context source returned HTTP {}", status)));
+            return ForwardGetOutcome::ErrorStatus(status.as_u16());
         }
 
         let text = String::from_utf8_lossy(&bytes);
-
-        serde_json::from_str(&text).map_err(|e| {
-            warn!("Failed to parse CS response as JSON: {}. Body: {}", e, &text[..text.len().min(200)]);
-            AndromedaError::internal(format!("Failed to parse context source response as JSON: {}", e))
-        })
+        match serde_json::from_str(&text) {
+            Ok(value) => ForwardGetOutcome::Success(value),
+            Err(e) => {
+                warn!("Failed to parse CS response as JSON: {}. Body: {}", e, &text[..text.len().min(200)]);
+                ForwardGetOutcome::InvalidPayload(format!("Failed to parse context source response as JSON: {}", e))
+            }
+        }
     }
 
     /// Build a request with shared headers (Connection: close, Link context, Via).
@@ -813,9 +908,10 @@ pub fn merge_retrieve_results(local_entity: Option<Value>, remote_results: Vec<F
     result
 }
 
-/// Collect all warnings from forwarded results.
-pub fn collect_warnings(results: &[ForwardedEntities]) -> Vec<String> {
-    results.iter().flat_map(|r| r.warnings.iter().map(|w| w.header_value())).collect()
+/// Collect all warnings from forwarded results, preserving typed variants
+/// for header serialization in the response layer.
+pub fn collect_warnings(results: &[ForwardedEntities]) -> Vec<NgsiLdWarning> {
+    results.iter().flat_map(|r| r.warnings.iter().cloned()).collect()
 }
 
 /// Check if the incoming Via header chain already contains our identity (loop detection).
@@ -871,12 +967,27 @@ mod tests {
     }
 
     #[test]
+    fn warning_header_format_response_is_stale_per_clause_6_3_17() {
+        let w = NgsiLdWarning::ResponseIsStale("cached data".to_string());
+        assert_eq!(w.header_value(), "110 - \"cached data\"");
+    }
+
+    #[test]
+    fn warning_header_format_revalidation_failed_per_clause_6_3_17() {
+        let w = NgsiLdWarning::RevalidationFailed("invalid JSON".to_string());
+        assert_eq!(w.header_value(), "111 - \"invalid JSON\"");
+    }
+
+    #[test]
     fn collect_warnings_from_results() {
         let results = vec![
             ForwardedEntities {
                 mode: ForwardingMode::Inclusive,
                 entities: Vec::new(),
-                warnings: vec![NgsiLdWarning::MiscellaneousWarning("timeout".to_string())],
+                warnings: vec![
+                    NgsiLdWarning::MiscellaneousWarning("timeout".to_string()),
+                    NgsiLdWarning::RevalidationFailed("invalid JSON".to_string()),
+                ],
             },
             ForwardedEntities {
                 mode: ForwardingMode::Inclusive,
@@ -885,8 +996,9 @@ mod tests {
             },
         ];
         let warnings = collect_warnings(&results);
-        assert_eq!(warnings.len(), 1);
-        assert!(warnings[0].contains("199"));
+        assert_eq!(warnings.len(), 2);
+        assert!(matches!(warnings[0], NgsiLdWarning::MiscellaneousWarning(_)));
+        assert!(matches!(warnings[1], NgsiLdWarning::RevalidationFailed(_)));
     }
 
     #[test]
