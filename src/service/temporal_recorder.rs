@@ -3,8 +3,9 @@
 //! Records attribute history whenever entities are created or modified.
 
 use crate::{
-    domain::iri,
+    domain::attribute_type::AttributeType,
     error::AndromedaError,
+    jsonld::vocab,
     repository::temporal::{HistoryValues, InsertHistoryParams, TemporalRepository, UpdateInstanceParams},
 };
 use chrono::{DateTime, Utc};
@@ -13,15 +14,15 @@ use std::sync::Arc;
 
 /// NGSI-LD system-level expanded IRIs that should NOT be treated as user attributes.
 ///
-/// IMPORTANT: This array MUST be kept sorted for binary_search.
+/// IMPORTANT: This slice MUST be sorted by string value for `binary_search`.
 const NGSI_LD_SYSTEM_ATTRS: &[&str] = &[
-    iri::CREATED_AT.as_str(),
-    iri::DATASET_ID.as_str(),
-    iri::DELETED_AT.as_str(),
-    iri::INSTANCE_ID.as_str(),
-    iri::MODIFIED_AT.as_str(),
-    iri::OBSERVED_AT.as_str(),
-    iri::UNIT_CODE.as_str(),
+    vocab::CREATED_AT,
+    vocab::DATASET_ID,
+    vocab::DELETED_AT,
+    vocab::INSTANCE_ID,
+    vocab::MODIFIED_AT,
+    vocab::OBSERVED_AT,
+    vocab::UNIT_CODE,
 ];
 
 /// Named parameters for temporal value storage, replacing the 7-element tuple.
@@ -85,14 +86,14 @@ impl TemporalRecorder {
             }
 
             // Handle scope specially: scope entries are @value nodes, not typed attribute instances
-            if attr_name == iri::SCOPE.as_str() {
+            if attr_name == vocab::SCOPE {
                 if let Some(scope_arr) = attr_value.as_array() {
                     for scope_entry in scope_arr {
                         if let Some(scope_val) = scope_entry.as_object().and_then(|o| o.get("@value")).and_then(|v| v.as_str()) {
                             // Record as a synthetic Property-like entry
                             let synthetic = serde_json::json!({
-                                "@type": [iri::PROPERTY.as_str()],
-                                iri::HAS_VALUE.as_str(): [{"@value": scope_val}]
+                                "@type": [vocab::PROPERTY],
+                                vocab::HAS_VALUE: [{"@value": scope_val}]
                             });
                             match self.record_attribute_instance(entity_id, attr_name, &synthetic).await {
                                 Ok(()) => {}
@@ -190,7 +191,7 @@ impl TemporalRecorder {
             .find(|t| t.dataset_id.as_deref() == dataset_id)
             .or_else(|| teas.first())
             .map(|t| t.attribute_type.as_str())
-            .unwrap_or(iri::PROPERTY_SHORT);
+            .unwrap_or(AttributeType::Property.short_name());
 
         let tea_id = self.repo.upsert_tea(entity_id, attr_iri, attr_type, dataset_id, "String").await?;
 
@@ -259,16 +260,7 @@ fn is_ngsi_ld_attribute_instance(obj: &serde_json::Map<String, Value>) -> bool {
     let Some(types) = obj.get("@type").and_then(|v| v.as_array()) else {
         return false;
     };
-    types.iter().any(|t| {
-        t.as_str().is_some_and(|s| {
-            s == iri::PROPERTY.as_str()
-                || s == iri::RELATIONSHIP.as_str()
-                || s == iri::GEO_PROPERTY.as_str()
-                || s == iri::VOCAB_PROPERTY.as_str()
-                || s == iri::LANGUAGE_PROPERTY.as_str()
-                || s == iri::JSON_PROPERTY.as_str()
-        })
-    })
+    types.iter().filter_map(|t| t.as_str()).any(|s| AttributeType::from_expanded_iri(s).is_some())
 }
 
 fn detect_attribute_type(instance: &Value) -> &'static str {
@@ -276,27 +268,13 @@ fn detect_attribute_type(instance: &Value) -> &'static str {
     let types = instance.get("@type").and_then(|v| v.as_array()).unwrap_or(&empty);
 
     for t in types {
-        if let Some(s) = t.as_str() {
-            if s == iri::PROPERTY.as_str() {
-                return iri::PROPERTY_SHORT;
-            } else if s == iri::RELATIONSHIP.as_str() {
-                return iri::RELATIONSHIP_SHORT;
-            } else if s == iri::GEO_PROPERTY.as_str() {
-                return iri::GEO_PROPERTY_SHORT;
-            } else if s == iri::VOCAB_PROPERTY.as_str() {
-                return iri::VOCAB_PROPERTY_SHORT;
-            } else if s == iri::LANGUAGE_PROPERTY.as_str() {
-                return iri::LANGUAGE_PROPERTY_SHORT;
-            } else if s == iri::JSON_PROPERTY.as_str() {
-                return iri::JSON_PROPERTY_SHORT;
-            } else if s == iri::LIST_PROPERTY.as_str() {
-                return iri::LIST_PROPERTY_SHORT;
-            } else if s == iri::LIST_RELATIONSHIP.as_str() {
-                return iri::LIST_RELATIONSHIP_SHORT;
-            }
+        if let Some(s) = t.as_str()
+            && let Some(attr_type) = AttributeType::from_expanded_iri(s)
+        {
+            return attr_type.short_name();
         }
     }
-    iri::PROPERTY_SHORT
+    AttributeType::Property.short_name()
 }
 
 #[derive(Debug)]
@@ -350,9 +328,9 @@ impl TypedValue {
 
 fn extract_typed_value(instance: &Value, attribute_type: &str) -> Result<TypedValue, AndromedaError> {
     match attribute_type {
-        iri::RELATIONSHIP_SHORT => {
+        x if x == AttributeType::Relationship.short_name() => {
             let uri = instance
-                .get(iri::HAS_OBJECT.as_str())
+                .get(vocab::HAS_OBJECT)
                 .and_then(|v| v.as_array())
                 .and_then(|arr| arr.first())
                 .and_then(|obj| obj.get("@id"))
@@ -360,80 +338,67 @@ fn extract_typed_value(instance: &Value, attribute_type: &str) -> Result<TypedVa
                 .ok_or_else(|| AndromedaError::bad_request_data("Relationship missing object"))?;
             Ok(TypedValue::Uri(uri.to_string()))
         }
-        iri::GEO_PROPERTY_SHORT => {
+        x if x == AttributeType::GeoProperty.short_name() => {
             let geo_node = instance
-                .get(iri::HAS_VALUE.as_str())
+                .get(vocab::HAS_VALUE)
                 .and_then(|v| v.as_array())
                 .and_then(|arr| arr.first())
                 .ok_or_else(|| AndromedaError::bad_request_data("GeoProperty missing value"))?;
 
-            // In expanded JSON-LD, GeoJSON may appear as either:
-            // 1. A literal @value (string or object) — e.g. {"@value": "{\"type\":\"Point\",...}"}
-            // 2. An expanded JSON-LD node (GeoJSON gets expanded by the processor)
-            //    e.g. {"@type": ["https://purl.org/geojson/vocab#Point"],
-            //           "https://purl.org/geojson/vocab#coordinates": [{"@list": [...]}]}
             let geo_str = if let Some(val) = geo_node.get("@value") {
-                // Case 1: literal value
                 match val.as_str() {
                     Some(s) => s.to_string(),
                     None => val.to_string(),
                 }
             } else {
-                // Case 2: expanded GeoJSON node — reconstruct compact GeoJSON
                 reconstruct_geojson(geo_node)
             };
             Ok(TypedValue::Geometry(geo_str))
         }
-        iri::VOCAB_PROPERTY_SHORT => {
-            // VocabProperty uses hasVocab with @id nodes
+        x if x == AttributeType::VocabProperty.short_name() => {
             let arr = instance
-                .get(iri::HAS_VOCAB.as_str())
+                .get(vocab::HAS_VOCAB)
                 .and_then(|v| v.as_array())
                 .ok_or_else(|| AndromedaError::bad_request_data("VocabProperty missing vocab value"))?;
             if arr.len() > 1 {
-                // Multi-value vocab: collect all @id values into a JSON array
                 let values: Vec<Value> = arr.iter().filter_map(|obj| obj.get("@id").or(obj.get("@value")).cloned()).collect(); // clone: need owned Values for collected Vec
                 Ok(TypedValue::Object(Value::Array(values)))
             } else {
-                let vocab = arr
+                let vocab_val = arr
                     .first()
                     .and_then(|obj| obj.get("@id").or(obj.get("@value")))
                     .and_then(|v| v.as_str())
                     .ok_or_else(|| AndromedaError::bad_request_data("VocabProperty missing vocab value"))?;
-                Ok(TypedValue::String(vocab.to_string()))
+                Ok(TypedValue::String(vocab_val.to_string()))
             }
         }
-        iri::LANGUAGE_PROPERTY_SHORT => {
-            // LanguageProperty uses hasLanguageMap with @language containers
+        x if x == AttributeType::LanguageProperty.short_name() => {
             let lang_map = instance
-                .get(iri::HAS_LANGUAGE_MAP.as_str())
+                .get(vocab::HAS_LANGUAGE_MAP)
                 .ok_or_else(|| AndromedaError::bad_request_data("LanguageProperty missing languageMap"))?;
             Ok(TypedValue::Object(lang_map.clone())) // clone: need owned Value for TypedValue enum; lang_map is borrowed from instance
         }
-        iri::JSON_PROPERTY_SHORT => {
-            // JsonProperty uses hasJSON with @json typed value
+        x if x == AttributeType::JsonProperty.short_name() => {
             let json_val = instance
-                .get(iri::HAS_JSON.as_str())
+                .get(vocab::HAS_JSON)
                 .and_then(|v| v.as_array())
                 .and_then(|arr| arr.first())
                 .and_then(|obj| obj.get("@value"))
                 .ok_or_else(|| AndromedaError::bad_request_data("JsonProperty missing json value"))?;
             Ok(TypedValue::Object(json_val.clone())) // clone: need owned Value for TypedValue enum; json_val is borrowed from instance
         }
-        iri::LIST_PROPERTY_SHORT => {
-            // ListProperty uses hasValueList — store as JSON array
+        x if x == AttributeType::ListProperty.short_name() => {
             let list = instance
-                .get(iri::HAS_VALUE_LIST.as_str())
+                .get(vocab::HAS_VALUE_LIST)
                 .and_then(|v| v.as_array())
                 .and_then(|arr| arr.first())
                 .and_then(|obj| obj.get("@list"))
                 .ok_or_else(|| AndromedaError::bad_request_data("ListProperty missing valueList"))?;
             Ok(TypedValue::Object(list.clone())) // clone: need owned Value for TypedValue enum; list is borrowed from instance
         }
-        iri::LIST_RELATIONSHIP_SHORT => {
-            // ListRelationship uses hasObjectList — collect @id values
+        x if x == AttributeType::ListRelationship.short_name() => {
             let list = instance
-                .get(iri::HAS_OBJECT_LIST.as_str())
+                .get(vocab::HAS_OBJECT_LIST)
                 .and_then(|v| v.as_array())
                 .and_then(|arr| arr.first())
                 .and_then(|obj| obj.get("@list"))
@@ -445,18 +410,17 @@ fn extract_typed_value(instance: &Value, attribute_type: &str) -> Result<TypedVa
             Ok(TypedValue::Object(Value::Array(uris)))
         }
         _other => {
-            // Property — uses hasValue
+            // Property -- uses hasValue
             let has_value = instance
-                .get(iri::HAS_VALUE.as_str())
+                .get(vocab::HAS_VALUE)
                 .and_then(|v| v.as_array())
                 .and_then(|arr| arr.first())
                 .ok_or_else(|| AndromedaError::bad_request_data("Property missing value"))?;
 
-            // Value may be a literal (@value node) or an expanded JSON-LD node (object values)
             if let Some(value) = has_value.get("@value") {
                 let type_hint = has_value.get("@type").and_then(|t| t.as_str());
 
-                if (type_hint == Some(iri::DATETIME_TYPE.as_str()) || type_hint == Some("http://www.w3.org/2001/XMLSchema#dateTime"))
+                if (type_hint == Some(vocab::DATE_TIME) || type_hint == Some(vocab::XSD_DATETIME))
                     && let Some(s) = value.as_str()
                 {
                     return Ok(TypedValue::DateTime(s.to_string()));
@@ -470,7 +434,7 @@ fn extract_typed_value(instance: &Value, attribute_type: &str) -> Result<TypedVa
                     Value::Null => Ok(TypedValue::String("null".to_string())),
                 }
             } else {
-                // Expanded JSON-LD node without @value — store as Object
+                // Expanded JSON-LD node without @value -- store as Object
                 Ok(TypedValue::Object(has_value.clone())) // clone: need owned Value for TypedValue enum; has_value is borrowed from instance
             }
         }
@@ -488,9 +452,6 @@ fn extract_typed_value(instance: &Value, attribute_type: &str) -> Result<TypedVa
 /// ```
 /// We reconstruct: `{"type": "Point", "coordinates": [16.37, 48.20]}`
 pub(crate) fn reconstruct_geojson(node: &Value) -> String {
-    const GEOJSON_VOCAB: &str = "https://purl.org/geojson/vocab#";
-    const GEOJSON_COORDINATES: &str = "https://purl.org/geojson/vocab#coordinates";
-
     let Some(obj) = node.as_object() else {
         return node.to_string();
     };
@@ -501,12 +462,12 @@ pub(crate) fn reconstruct_geojson(node: &Value) -> String {
         .and_then(|t| t.as_array())
         .and_then(|arr| arr.first())
         .and_then(|v| v.as_str())
-        .and_then(|s| s.strip_prefix(GEOJSON_VOCAB))
+        .and_then(|s| s.strip_prefix(vocab::prefix::GEOJSON))
         .unwrap_or("Point");
 
     // Extract coordinates from the expanded form
     let coordinates = obj
-        .get(GEOJSON_COORDINATES)
+        .get(vocab::COORDINATES)
         .and_then(|v| v.as_array())
         .and_then(|arr| arr.first())
         .and_then(|v| v.get("@list").or(Some(v)))
@@ -542,7 +503,7 @@ pub(crate) fn extract_coordinates(value: &Value) -> Value {
 
 fn extract_observed_at(instance: &Value) -> Option<String> {
     instance
-        .get(iri::OBSERVED_AT.as_str())
+        .get(vocab::OBSERVED_AT)
         .and_then(|v| v.as_array())
         .and_then(|arr| arr.first())
         .and_then(|obj| obj.get("@value"))
@@ -552,7 +513,7 @@ fn extract_observed_at(instance: &Value) -> Option<String> {
 
 fn extract_dataset_id(instance: &Value) -> Option<String> {
     instance
-        .get(iri::DATASET_ID.as_str())
+        .get(vocab::DATASET_ID)
         .and_then(|v| v.as_array())
         .and_then(|arr| arr.first())
         .and_then(|obj| obj.get("@id"))
@@ -562,7 +523,7 @@ fn extract_dataset_id(instance: &Value) -> Option<String> {
 
 fn extract_or_generate_instance_id(instance: &Value) -> String {
     instance
-        .get(iri::INSTANCE_ID.as_str())
+        .get(vocab::INSTANCE_ID)
         .and_then(|v| v.as_array())
         .and_then(|arr| arr.first())
         .and_then(|obj| obj.get("@id"))
@@ -575,18 +536,18 @@ fn extract_or_generate_instance_id(instance: &Value) -> String {
 /// These are either JSON-LD keywords or NGSI-LD value/system properties that are
 /// stored in dedicated columns rather than the metadata blob.
 ///
-/// IMPORTANT: This array MUST be kept sorted for binary_search.
+/// IMPORTANT: This slice MUST be sorted by string value for `binary_search`.
 const METADATA_SKIP_KEYS: &[&str] = &[
     "@id",
     "@type",
-    iri::DATASET_ID.as_str(),
-    iri::HAS_JSON.as_str(),
-    iri::HAS_LANGUAGE_MAP.as_str(),
-    iri::HAS_OBJECT.as_str(),
-    iri::HAS_VALUE.as_str(),
-    iri::HAS_VOCAB.as_str(),
-    iri::INSTANCE_ID.as_str(),
-    iri::OBSERVED_AT.as_str(),
+    vocab::DATASET_ID,
+    vocab::HAS_JSON,
+    vocab::HAS_LANGUAGE_MAP,
+    vocab::HAS_OBJECT,
+    vocab::HAS_VALUE,
+    vocab::HAS_VOCAB,
+    vocab::INSTANCE_ID,
+    vocab::OBSERVED_AT,
 ];
 
 fn collect_metadata(instance: &Value) -> Option<Value> {
@@ -603,7 +564,7 @@ fn collect_metadata(instance: &Value) -> Option<Value> {
 
 #[cfg(test)]
 mod tests {
-    use super::{METADATA_SKIP_KEYS, NGSI_LD_SYSTEM_ATTRS};
+    use super::*;
 
     #[test]
     fn metadata_skip_keys_is_sorted() {

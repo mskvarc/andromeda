@@ -4,10 +4,9 @@
 use crate::{
     domain::{
         entity::Entity,
-        iri,
         notification::{CompiledSubscription, TriggerReason},
     },
-    jsonld::{CompactOptions, ContextSpec, ContextStripping, JsonLdEngine},
+    jsonld::{CompactOptions, ContextSpec, ContextStripping, JsonLdEngine, vocab},
     response::entity::{apply_inline_join, simplify_value},
     service::entity::{expanded_entity_object_mut, inject_attr_sys_attrs, query::EntityQueryService},
 };
@@ -443,21 +442,21 @@ fn nullify_entity_attributes(entity: &mut Value) {
 fn nullify_attribute_instance(instance: &mut Value) {
     let Some(obj) = instance.as_object_mut() else { return };
 
-    let null_value = serde_json::json!([{"@value": iri::NULL_URI.as_str()}]);
-    let null_object = serde_json::json!([{"@id": iri::NULL_URI.as_str()}]);
-    let null_json = serde_json::json!([{"@value": iri::NULL_URI.as_str(), "@type": "@json"}]);
-    let null_vocab = serde_json::json!([{"@id": iri::NULL_URI.as_str()}]);
+    let null_value = serde_json::json!([{"@value": vocab::NULL_URI}]);
+    let null_object = serde_json::json!([{"@id": vocab::NULL_URI}]);
+    let null_json = serde_json::json!([{"@value": vocab::NULL_URI, "@type": "@json"}]);
+    let null_vocab = serde_json::json!([{"@id": vocab::NULL_URI}]);
 
-    if obj.contains_key(iri::HAS_OBJECT.as_str()) {
-        obj.insert(iri::HAS_OBJECT.as_str().to_string(), null_object);
-    } else if obj.contains_key(iri::HAS_LANGUAGE_MAP.as_str()) {
-        obj.insert(iri::HAS_LANGUAGE_MAP.as_str().to_string(), null_value);
-    } else if obj.contains_key(iri::HAS_JSON.as_str()) {
-        obj.insert(iri::HAS_JSON.as_str().to_string(), null_json);
-    } else if obj.contains_key(iri::HAS_VOCAB.as_str()) {
-        obj.insert(iri::HAS_VOCAB.as_str().to_string(), null_vocab);
+    if obj.contains_key(vocab::HAS_OBJECT) {
+        obj.insert(vocab::HAS_OBJECT.to_string(), null_object);
+    } else if obj.contains_key(vocab::HAS_LANGUAGE_MAP) {
+        obj.insert(vocab::HAS_LANGUAGE_MAP.to_string(), null_value);
+    } else if obj.contains_key(vocab::HAS_JSON) {
+        obj.insert(vocab::HAS_JSON.to_string(), null_json);
+    } else if obj.contains_key(vocab::HAS_VOCAB) {
+        obj.insert(vocab::HAS_VOCAB.to_string(), null_vocab);
     } else {
-        obj.insert(iri::HAS_VALUE.as_str().to_string(), null_value);
+        obj.insert(vocab::HAS_VALUE.to_string(), null_value);
     }
 }
 
@@ -475,9 +474,9 @@ fn fix_null_language_maps(entity: &mut Value) {
                     None
                 }
             })
-            == Some(iri::NULL_URI.as_str());
+            == Some(vocab::NULL_URI);
         if is_null_lang_map && let Some(attr) = value.as_object_mut() {
-            attr.insert("languageMap".to_string(), Value::String(iri::NULL_URI.as_str().to_string()));
+            attr.insert("languageMap".to_string(), Value::String(vocab::NULL_URI.to_string()));
         }
     }
 }

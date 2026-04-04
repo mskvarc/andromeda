@@ -11,6 +11,7 @@ mod error;
 mod expandable;
 mod loader;
 pub mod term_resolver;
+pub mod vocab;
 
 pub use context::{ContextSpec, CoreContextPolicy, default_core_context_url, set_default_core_context_url};
 pub use engine::{CompactOptions, ContextStripping, JsonLdEngine};

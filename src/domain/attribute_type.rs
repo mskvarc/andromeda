@@ -1,12 +1,11 @@
 //! NGSI-LD Attribute type enum (ETSI GS CIM 009 clause 5.2.4).
 
-use crate::domain::iri;
-use iref::Iri;
+use crate::jsonld::vocab;
 use serde::{Deserialize, Serialize};
 use strum::{Display, EnumString};
 
 /// The eight NGSI-LD attribute types.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Display, EnumString)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Display, EnumString, strum::IntoStaticStr)]
 pub enum AttributeType {
     Property,
     Relationship,
@@ -19,30 +18,30 @@ pub enum AttributeType {
 }
 
 impl AttributeType {
-    /// Returns the expanded IRI for this attribute type.
-    pub fn iri(self) -> &'static Iri {
+    /// Returns the expanded IRI string for this attribute type.
+    pub fn iri_str(self) -> &'static str {
         match self {
-            Self::Property => iri::PROPERTY,
-            Self::Relationship => iri::RELATIONSHIP,
-            Self::GeoProperty => iri::GEO_PROPERTY,
-            Self::VocabProperty => iri::VOCAB_PROPERTY,
-            Self::LanguageProperty => iri::LANGUAGE_PROPERTY,
-            Self::JsonProperty => iri::JSON_PROPERTY,
-            Self::ListProperty => iri::LIST_PROPERTY,
-            Self::ListRelationship => iri::LIST_RELATIONSHIP,
+            Self::Property => vocab::PROPERTY,
+            Self::Relationship => vocab::RELATIONSHIP,
+            Self::GeoProperty => vocab::GEO_PROPERTY,
+            Self::VocabProperty => vocab::VOCAB_PROPERTY,
+            Self::LanguageProperty => vocab::LANGUAGE_PROPERTY,
+            Self::JsonProperty => vocab::JSON_PROPERTY,
+            Self::ListProperty => vocab::LIST_PROPERTY,
+            Self::ListRelationship => vocab::LIST_RELATIONSHIP,
         }
     }
 
-    /// Returns the expanded IRI of the value container for this attribute type.
-    pub fn value_key(self) -> &'static Iri {
+    /// Returns the expanded IRI string of the value container for this attribute type.
+    pub fn value_key_str(self) -> &'static str {
         match self {
-            Self::Property | Self::GeoProperty => iri::HAS_VALUE,
-            Self::Relationship => iri::HAS_OBJECT,
-            Self::VocabProperty => iri::HAS_VOCAB,
-            Self::LanguageProperty => iri::HAS_LANGUAGE_MAP,
-            Self::JsonProperty => iri::HAS_JSON,
-            Self::ListProperty => iri::HAS_VALUE_LIST,
-            Self::ListRelationship => iri::HAS_OBJECT_LIST,
+            Self::Property | Self::GeoProperty => vocab::HAS_VALUE,
+            Self::Relationship => vocab::HAS_OBJECT,
+            Self::VocabProperty => vocab::HAS_VOCAB,
+            Self::LanguageProperty => vocab::HAS_LANGUAGE_MAP,
+            Self::JsonProperty => vocab::HAS_JSON,
+            Self::ListProperty => vocab::HAS_VALUE_LIST,
+            Self::ListRelationship => vocab::HAS_OBJECT_LIST,
         }
     }
 
@@ -107,7 +106,20 @@ impl AttributeType {
         }
     }
 
-    const ALL: [AttributeType; 8] = [
+    /// Returns the short (compacted) name for this attribute type as a static string.
+    ///
+    /// Equivalent to `Display` / `IntoStaticStr` output (e.g. `"Property"`).
+    pub fn short_name(self) -> &'static str {
+        self.into()
+    }
+
+    /// Try to parse an expanded IRI string into an `AttributeType`.
+    pub fn from_expanded_iri(iri: &str) -> Option<AttributeType> {
+        Self::ALL.iter().find(|v| v.iri_str() == iri).copied()
+    }
+
+    /// All eight NGSI-LD attribute type variants.
+    pub const ALL: [AttributeType; 8] = [
         Self::Property,
         Self::Relationship,
         Self::GeoProperty,
@@ -136,8 +148,8 @@ mod tests {
     #[test]
     fn iri_matches_display_name() {
         for variant in AttributeType::ALL {
-            let iri_str = variant.iri().as_str();
-            assert!(iri_str.ends_with(&variant.to_string()), "IRI {iri_str} should end with {variant}");
+            let iri = variant.iri_str();
+            assert!(iri.ends_with(&variant.to_string()), "IRI {iri} should end with {variant}");
         }
     }
 
@@ -163,12 +175,31 @@ mod tests {
     }
 
     #[test]
+    fn attribute_type_iri_roundtrip() {
+        for variant in AttributeType::ALL {
+            let iri = variant.iri_str();
+            let parsed = AttributeType::from_expanded_iri(iri);
+            assert_eq!(parsed, Some(variant), "roundtrip failed for {variant}");
+        }
+    }
+
+    #[test]
+    fn value_key_roundtrip() {
+        for variant in AttributeType::ALL {
+            let key = variant.value_key_str();
+            assert!(!key.is_empty(), "value_key_str for {variant} is empty");
+            // Verify it's a valid expanded IRI
+            assert!(key.starts_with("https://"), "value_key_str for {variant} should be an expanded IRI, got {key}");
+        }
+    }
+
+    #[test]
     fn value_key_mapping() {
-        assert_eq!(AttributeType::Property.value_key(), iri::HAS_VALUE);
-        assert_eq!(AttributeType::Relationship.value_key(), iri::HAS_OBJECT);
-        assert_eq!(AttributeType::VocabProperty.value_key(), iri::HAS_VOCAB);
-        assert_eq!(AttributeType::LanguageProperty.value_key(), iri::HAS_LANGUAGE_MAP);
-        assert_eq!(AttributeType::JsonProperty.value_key(), iri::HAS_JSON);
+        assert_eq!(AttributeType::Property.value_key_str(), vocab::HAS_VALUE);
+        assert_eq!(AttributeType::Relationship.value_key_str(), vocab::HAS_OBJECT);
+        assert_eq!(AttributeType::VocabProperty.value_key_str(), vocab::HAS_VOCAB);
+        assert_eq!(AttributeType::LanguageProperty.value_key_str(), vocab::HAS_LANGUAGE_MAP);
+        assert_eq!(AttributeType::JsonProperty.value_key_str(), vocab::HAS_JSON);
     }
 
     #[test]

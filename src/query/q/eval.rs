@@ -60,8 +60,9 @@ fn eval_predicate(pred: &Predicate, obj: &serde_json::Map<String, Value>) -> boo
 /// Navigates: `obj[attr][0]` -> sub-attrs -> `hasValue[0].@value` or `hasObject[0].@id`,
 /// then optional value_path for compound values.
 fn resolve_value(obj: &serde_json::Map<String, Value>, path: &AttrPath) -> Option<Value> {
-    const HAS_VALUE: &str = "https://uri.etsi.org/ngsi-ld/hasValue";
-    const HAS_OBJECT: &str = "https://uri.etsi.org/ngsi-ld/hasObject";
+    use crate::jsonld::vocab;
+    let has_value = vocab::HAS_VALUE;
+    let has_object = vocab::HAS_OBJECT;
 
     // Navigate to the attribute instance: obj[attr][0]
     let attr_instances = obj.get(&path.attr)?;
@@ -74,10 +75,10 @@ fn resolve_value(obj: &serde_json::Map<String, Value>, path: &AttrPath) -> Optio
     }
 
     // Try hasValue first, then hasObject
-    let (terminal_value, is_object) = if let Some(has_value) = current.get(HAS_VALUE).and_then(|v| v.as_array()?.first()) {
-        (has_value, false)
-    } else if let Some(has_object) = current.get(HAS_OBJECT).and_then(|v| v.as_array()?.first()) {
-        (has_object, true)
+    let (terminal_value, is_object) = if let Some(hv) = current.get(has_value).and_then(|v| v.as_array()?.first()) {
+        (hv, false)
+    } else if let Some(ho) = current.get(has_object).and_then(|v| v.as_array()?.first()) {
+        (ho, true)
     } else {
         return None;
     };

@@ -1,0 +1,16 @@
+[package]
+name = "ngsi-ld-vocab-macros"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+description = "Proc-macro that generates NGSI-LD vocabulary constants from a core context JSON file"
+
+[lib]
+proc-macro = true
+
+[dependencies]
+heck = "0.5.0"
+proc-macro2 = "1.0.106"
+quote = "1.0.45"
+serde_json = "1.0.149"
+syn = "2.0.117"

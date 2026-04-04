@@ -368,7 +368,7 @@ pub(crate) fn decode_percent_encoded_uris(value: &mut Value) {
     }
 }
 
-use crate::domain::iri;
+use crate::jsonld::vocab;
 
 fn validate_attribute_envelopes(expanded: &Value) -> Result<(), AndromedaError> {
     let entities = match expanded {
@@ -407,11 +407,11 @@ fn validate_attr_instances(attr_name: &str, value: &Value) -> Result<(), Androme
             .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect())
             .unwrap_or_default();
 
-        let is_property = types.iter().any(|t| *t == iri::PROPERTY.as_str());
-        let is_geo_property = types.iter().any(|t| *t == iri::GEO_PROPERTY.as_str());
-        let is_relationship = types.iter().any(|t| *t == iri::RELATIONSHIP.as_str());
+        let is_property = types.iter().any(|t| *t == vocab::PROPERTY);
+        let is_geo_property = types.iter().any(|t| *t == vocab::GEO_PROPERTY);
+        let is_relationship = types.iter().any(|t| *t == vocab::RELATIONSHIP);
 
-        if (is_property || is_geo_property) && !obj.contains_key(iri::HAS_VALUE.as_str()) {
+        if (is_property || is_geo_property) && !obj.contains_key(vocab::HAS_VALUE) {
             let short_type = if is_geo_property { "GeoProperty" } else { "Property" };
             return Err(AndromedaError::bad_request_data(format!(
                 "{} '{}' is missing required field 'value'",
@@ -419,7 +419,7 @@ fn validate_attr_instances(attr_name: &str, value: &Value) -> Result<(), Androme
             )));
         }
 
-        if is_relationship && !obj.contains_key(iri::HAS_OBJECT.as_str()) {
+        if is_relationship && !obj.contains_key(vocab::HAS_OBJECT) {
             return Err(AndromedaError::bad_request_data(format!(
                 "Relationship '{}' is missing required field 'object'",
                 attr_name

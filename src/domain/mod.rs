@@ -3,7 +3,6 @@ pub mod attribute_type;
 pub mod entity;
 pub mod entity_map;
 pub mod expanded;
-pub mod iri;
 pub mod jsonld_context;
 pub mod notification;
 pub mod registration;

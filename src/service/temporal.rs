@@ -3,7 +3,7 @@
 use crate::{
     domain::temporal::TemporalFormat,
     error::AndromedaError,
-    jsonld::{CompactOptions, ContextSpec, JsonLdEngine},
+    jsonld::{CompactOptions, ContextSpec, JsonLdEngine, vocab},
     query::{
         compiled::{GeoQuery, IdPattern},
         params::SharedQueryParams,
@@ -18,7 +18,7 @@ use crate::{
         ensure_temporal_attrs_are_arrays,
         transform_to_temporal_values,
     },
-    service::temporal_recorder::TemporalRecorder,
+    service::{entity::extract_entity_types, temporal_recorder::TemporalRecorder},
 };
 use chrono::{DateTime, SecondsFormat, Utc};
 use serde_json::{Value, json};
@@ -477,7 +477,7 @@ impl TemporalService {
         for attr_iri in aggr_data.keys() {
             let mut skeleton = serde_json::Map::new();
             skeleton.insert("@id".to_string(), json!(entity_id));
-            skeleton.insert(attr_iri.clone(), json!([{"@type": [crate::domain::iri::PROPERTY.as_str()]}])); // clone: owned key for JSON map insertion
+            skeleton.insert(attr_iri.clone(), json!([{"@type": [vocab::PROPERTY]}])); // clone: owned key for JSON map insertion
             if let Ok(compacted) = self.engine.compact(Value::Object(skeleton), context, CompactOptions::default()).await
                 && let Some(obj) = compacted.as_object()
             {
@@ -637,5 +637,3 @@ impl TemporalService {
         .await
     }
 }
-
-use crate::service::entity::extract_entity_types;

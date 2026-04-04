@@ -5,7 +5,7 @@
 //! functions with no I/O — the caller is responsible for loading and persisting
 //! the entity.
 
-use crate::domain::iri;
+use crate::jsonld::vocab;
 use serde_json::{Map, Value};
 
 // ---------------------------------------------------------------------------
@@ -27,12 +27,10 @@ pub fn instance_is_null_sentinel(instance: &Value) -> bool {
             .and_then(|v| v.as_object())
             .and_then(|o| o.get(value_key))
             .and_then(|v| v.as_str())
-            .is_some_and(|s| s == iri::NULL_URI.as_str() || s == iri::NULL_IRI.as_str())
+            .is_some_and(|s| s == vocab::NULL_URI || s == vocab::NULL_IRI)
     };
 
-    check_value_null(iri::HAS_VALUE.as_str(), "@value")
-        || check_value_null(iri::HAS_OBJECT.as_str(), "@id")
-        || check_value_null(iri::HAS_LANGUAGE_MAP.as_str(), "@value")
+    check_value_null(vocab::HAS_VALUE, "@value") || check_value_null(vocab::HAS_OBJECT, "@id") || check_value_null(vocab::HAS_LANGUAGE_MAP, "@value")
 }
 
 // ---------------------------------------------------------------------------
@@ -42,7 +40,7 @@ pub fn instance_is_null_sentinel(instance: &Value) -> bool {
 /// Extract the `datasetId` (`@id` value) from an expanded attribute instance.
 pub fn get_instance_dataset_id(instance: &Value) -> Option<String> {
     instance
-        .get(iri::DATASET_ID.as_str())
+        .get(vocab::DATASET_ID)
         .and_then(|v| v.as_array())
         .and_then(|arr| arr.first())
         .and_then(|v| v.as_object())
@@ -98,7 +96,7 @@ pub fn extract_scopes(expanded: &Value) -> Vec<String> {
     let Some(obj) = expanded_object_ref(expanded) else {
         return Vec::new();
     };
-    let Some(scope_value) = obj.get(iri::SCOPE.as_str()) else {
+    let Some(scope_value) = obj.get(vocab::SCOPE) else {
         return Vec::new();
     };
     match scope_value {
@@ -114,14 +112,12 @@ pub fn extract_scopes(expanded: &Value) -> Vec<String> {
 // expiresAt extraction
 // ---------------------------------------------------------------------------
 
-const EXPIRES_AT_IRI: &str = "https://uri.etsi.org/ngsi-ld/expiresAt";
-
 /// Extract the `expiresAt` value from an expanded JSON-LD entity payload
 /// (ETSI GS CIM 009 clause 4.22).
 pub fn extract_expires_at(expanded: &Value) -> Option<chrono::DateTime<chrono::Utc>> {
     let obj = expanded_object_ref(expanded)?;
     let dt_str = obj
-        .get(EXPIRES_AT_IRI)?
+        .get(vocab::EXPIRES_AT)?
         .as_array()
         .and_then(|arr| arr.first())
         .and_then(|v| v.get("@value"))
@@ -133,28 +129,22 @@ pub fn extract_expires_at(expanded: &Value) -> Option<chrono::DateTime<chrono::U
 // Location GeoJSON extraction
 // ---------------------------------------------------------------------------
 
-const LOCATION_IRI: &str = "https://uri.etsi.org/ngsi-ld/location";
-const OBSERVATION_SPACE_IRI: &str = "https://uri.etsi.org/ngsi-ld/observationSpace";
-const OPERATION_SPACE_IRI: &str = "https://uri.etsi.org/ngsi-ld/operationSpace";
-const GEOJSON_VOCAB: &str = "https://purl.org/geojson/vocab#";
-const GEOJSON_COORDINATES: &str = "https://purl.org/geojson/vocab#coordinates";
-
 /// Extract the GeoJSON string from the entity's `location` GeoProperty
 /// (expanded form).  Returns `None` if no location attribute is present.
 pub fn extract_location_geojson(expanded: &Value) -> Option<String> {
-    extract_geo_property_geojson(expanded, LOCATION_IRI)
+    extract_geo_property_geojson(expanded, vocab::LOCATION)
 }
 
 /// Extract the GeoJSON string from the entity's `observationSpace` GeoProperty
 /// (expanded form, ETSI GS CIM 009 clause 5.2.4).
 pub fn extract_observation_space_geojson(expanded: &Value) -> Option<String> {
-    extract_geo_property_geojson(expanded, OBSERVATION_SPACE_IRI)
+    extract_geo_property_geojson(expanded, vocab::OBSERVATION_SPACE)
 }
 
 /// Extract the GeoJSON string from the entity's `operationSpace` GeoProperty
 /// (expanded form, ETSI GS CIM 009 clause 5.2.4).
 pub fn extract_operation_space_geojson(expanded: &Value) -> Option<String> {
-    extract_geo_property_geojson(expanded, OPERATION_SPACE_IRI)
+    extract_geo_property_geojson(expanded, vocab::OPERATION_SPACE)
 }
 
 /// Generic GeoProperty GeoJSON extraction for a given IRI key.
@@ -165,7 +155,7 @@ fn extract_geo_property_geojson(expanded: &Value, iri: &str) -> Option<String> {
     let geo_node = prop
         .as_array()
         .and_then(|arr| arr.last())
-        .and_then(|inst| inst.get(iri::HAS_VALUE.as_str()))
+        .and_then(|inst| inst.get(vocab::HAS_VALUE))
         .and_then(|v| v.as_array())
         .and_then(|arr| arr.first())?;
 
@@ -181,7 +171,7 @@ fn extract_geo_property_geojson(expanded: &Value, iri: &str) -> Option<String> {
     // Case 2: expanded JSON-LD GeoJSON node (purl.org/geojson/vocab# IRIs)
     if geo_node
         .as_object()
-        .is_some_and(|o| o.contains_key("@type") || o.contains_key(GEOJSON_COORDINATES))
+        .is_some_and(|o| o.contains_key("@type") || o.contains_key(vocab::COORDINATES))
     {
         return Some(reconstruct_geojson(geo_node));
     }
@@ -200,11 +190,11 @@ pub fn reconstruct_geojson(node: &Value) -> String {
         .and_then(|t| t.as_array())
         .and_then(|arr| arr.first())
         .and_then(|v| v.as_str())
-        .and_then(|s| s.strip_prefix(GEOJSON_VOCAB))
+        .and_then(|s| s.strip_prefix(vocab::prefix::GEOJSON))
         .unwrap_or("Point");
 
     let coordinates = obj
-        .get(GEOJSON_COORDINATES)
+        .get(vocab::COORDINATES)
         .and_then(|v| v.as_array())
         .and_then(|arr| arr.first())
         .and_then(|v| v.get("@list").or(Some(v)))
@@ -360,7 +350,7 @@ fn remove_instances_by_dataset(entity_obj: &mut Map<String, Value>, key: &str, d
 // Entity-level mutation operations
 // ---------------------------------------------------------------------------
 
-/// NGSI-LD Merge Patch (§5.6.1): deep-merge `patch` into `entity`, handling
+/// NGSI-LD Merge Patch (clause 5.6.1): deep-merge `patch` into `entity`, handling
 /// null sentinels for attribute deletion.
 pub fn merge_entity(entity: &mut Value, patch: &Value) -> Result<(), String> {
     let entity_obj = expanded_object_mut(entity).ok_or("Entity data is not a valid JSON-LD expanded value")?;
@@ -400,7 +390,7 @@ pub fn merge_entity(entity: &mut Value, patch: &Value) -> Result<(), String> {
             if instance_is_null_sentinel(patch_instance) {
                 let dataset_id = get_instance_dataset_id(patch_instance);
                 if dataset_id.is_none() {
-                    // No datasetId on null sentinel → delete ALL instances
+                    // No datasetId on null sentinel -> delete ALL instances
                     entity_obj.remove(key);
                     break;
                 } else {
@@ -413,12 +403,12 @@ pub fn merge_entity(entity: &mut Value, patch: &Value) -> Result<(), String> {
     Ok(())
 }
 
-/// Append attributes (§5.6.3): add attributes from `attrs` to `entity`.
+/// Append attributes (clause 5.6.3): add attributes from `attrs` to `entity`.
 /// With `no_overwrite`, existing instances (matched by datasetId) are kept;
 /// new instances with a different datasetId are still appended.
 /// Without `no_overwrite`, instances are merged by datasetId.
 ///
-/// Returns `(not_appended)` — a list of attribute IRIs where at least one
+/// Returns `(not_appended)` -- a list of attribute IRIs where at least one
 /// instance was NOT appended (because `no_overwrite` was set and the instance
 /// already existed).
 pub fn append_entity_attrs(entity: &mut Value, attrs: &Value, no_overwrite: bool) -> Result<Vec<String>, String> {
@@ -433,7 +423,7 @@ pub fn append_entity_attrs(entity: &mut Value, attrs: &Value, no_overwrite: bool
         }
 
         // Scope: merge arrays with deduplication
-        if key == iri::SCOPE.as_str() {
+        if key == vocab::SCOPE {
             if let (Some(Value::Array(existing_scopes)), Some(new_scopes)) = (entity_obj.get_mut(key), value.as_array()) {
                 if no_overwrite {
                     // noOverwrite: add scope values that don't already exist
@@ -453,12 +443,12 @@ pub fn append_entity_attrs(entity: &mut Value, attrs: &Value, no_overwrite: bool
         }
 
         if !entity_obj.contains_key(key) {
-            // Attribute doesn't exist yet — just add it
+            // Attribute doesn't exist yet -- just add it
             entity_obj.insert(key.clone(), value.clone());
             continue;
         }
 
-        // Attribute already exists — merge by datasetId
+        // Attribute already exists -- merge by datasetId
         let patch_instances = match value.as_array() {
             Some(arr) => arr,
             None => {
@@ -498,7 +488,7 @@ pub fn append_entity_attrs(entity: &mut Value, attrs: &Value, no_overwrite: bool
     Ok(not_appended)
 }
 
-/// Update entity attributes (§5.6.2).
+/// Update entity attributes (clause 5.6.2).
 ///
 /// For regular attributes: if the attribute exists, update by datasetId
 /// matching; if not, add it. For scope: if scope doesn't exist on the
@@ -529,7 +519,7 @@ pub fn update_entity_attrs(entity: &mut Value, attrs: &Value) -> Result<Vec<Stri
         }
 
         // Scope: only update if already present, otherwise report as not updated
-        if key == iri::SCOPE.as_str() {
+        if key == vocab::SCOPE {
             if entity_obj.contains_key(key) {
                 entity_obj.insert(key.clone(), value.clone());
             } else {
@@ -570,7 +560,7 @@ pub fn update_entity_attrs(entity: &mut Value, attrs: &Value) -> Result<Vec<Stri
     Ok(not_updated)
 }
 
-/// Partial update of a single attribute (§5.6.4): merge `fragment` into the
+/// Partial update of a single attribute (clause 5.6.4): merge `fragment` into the
 /// attribute identified by `attr_iri`, optionally targeting a specific
 /// `dataset_id`.
 pub fn partial_update_attr(entity: &mut Value, attr_iri: &str, dataset_id: Option<&str>, fragment: &Value) -> Result<(), String> {
@@ -604,7 +594,7 @@ pub fn partial_update_attr(entity: &mut Value, attr_iri: &str, dataset_id: Optio
 
         let found = instances.iter_mut().find(|instance| {
             instance
-                .get(iri::DATASET_ID.as_str())
+                .get(vocab::DATASET_ID)
                 .and_then(|v| v.as_array())
                 .and_then(|arr| arr.first())
                 .and_then(|obj| obj.get("@id"))
@@ -669,7 +659,7 @@ fn validate_type_match(fragment_types: &[&str], instance: &Value, attr_iri: &str
     }
 }
 
-/// Delete a single attribute (§5.6.5).
+/// Delete a single attribute (clause 5.6.5).
 ///
 /// - `delete_all`: remove the key entirely.
 /// - `dataset_id`: remove only the matching instance.
@@ -693,7 +683,7 @@ pub fn delete_attr(entity: &mut Value, attr_iri: &str, dataset_id: Option<&str>,
     Ok(())
 }
 
-/// Replace a single attribute (§5.6.19): fully replaces the attribute value.
+/// Replace a single attribute (clause 5.6.19): fully replaces the attribute value.
 pub fn replace_attr(entity: &mut Value, attr_iri: &str, value: &Value) -> Result<(), String> {
     let entity_obj = expanded_object_mut(entity).ok_or("Entity data is not a valid JSON-LD expanded value")?;
 
