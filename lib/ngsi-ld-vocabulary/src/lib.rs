@@ -7,7 +7,7 @@
 //! # Usage
 //!
 //! ```ignore
-//! ngsi_ld_vocab_macros::generate_vocabulary!("src/jsonld/context/ngsi-ld-core-context-v1.9.jsonld");
+//! ngsi_ld_vocabulary::generate!("src/jsonld/context/ngsi-ld-core-context-v1.9.jsonld");
 //! ```
 
 use heck::ToShoutySnakeCase;
@@ -52,7 +52,7 @@ struct Prefix {
 /// - `pub fn compact_to_expanded(compact: &str) -> Option<&'static str>`
 /// - `pub fn expanded_to_compact(expanded: &str) -> Option<&'static str>`
 #[proc_macro]
-pub fn generate_vocabulary(input: TokenStream) -> TokenStream {
+pub fn generate(input: TokenStream) -> TokenStream {
     let lit = parse_macro_input!(input as LitStr);
     let rel_path = lit.value();
 

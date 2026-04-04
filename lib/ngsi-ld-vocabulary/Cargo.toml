@@ -1,5 +1,5 @@
 [package]
-name = "ngsi-ld-vocab-macros"
+name = "ngsi-ld-vocabulary"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true

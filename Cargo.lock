@@ -97,7 +97,7 @@ dependencies = [
  "mediatype",
  "mime",
  "moka",
- "ngsi-ld-vocab-macros",
+ "ngsi-ld-vocabulary",
  "parse_link_header",
  "percent-encoding",
  "pretty_assertions",
@@ -2563,7 +2563,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e7627d8bbeb17edbf1c3f74b21488e4af680040da89713b4217d0010e9cbd97e"
 
 [[package]]
-name = "ngsi-ld-vocab-macros"
+name = "ngsi-ld-vocabulary"
 version = "0.1.0"
 dependencies = [
  "heck",
