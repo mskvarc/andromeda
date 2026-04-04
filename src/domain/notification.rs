@@ -10,6 +10,18 @@ use serde_json::Value;
 use std::{collections::HashSet, sync::Arc};
 use strum::{Display, EnumString};
 
+/// Origin of an entity change event (ETSI GS CIM 009 v1.9.1, clause 5.5.13).
+///
+/// Distinguishes whether an entity mutation originated from the local broker
+/// or was forwarded from a registered context source.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ChangeOrigin {
+    /// The entity is stored and managed by this broker instance.
+    Local,
+    /// The entity was forwarded from a registered context source.
+    Forwarded,
+}
+
 /// System attribute timestamps captured before entity deletion.
 #[derive(Clone, Debug)]
 pub struct SysAttrsSnapshot {
@@ -64,6 +76,8 @@ pub struct ChangeEvent {
     pub previous_attributes: Option<Arc<Value>>,
     /// For EntityDeleted events, a snapshot of (createdAt, modifiedAt, expiresAt) captured before deletion.
     pub sys_attrs_snapshot: Option<SysAttrsSnapshot>,
+    /// Whether this event originated locally or from a forwarded context source (clause 5.5.13).
+    pub origin: ChangeOrigin,
 }
 
 impl ChangeEvent {
@@ -77,6 +91,7 @@ impl ChangeEvent {
             entity_snapshot: None,
             previous_attributes: None,
             sys_attrs_snapshot: None,
+            origin: ChangeOrigin::Local,
         }
     }
 
@@ -249,4 +264,6 @@ pub struct CompiledSubscription {
     pub notification_join: Option<String>,
     pub notification_join_level: u32,
     pub compiled_csf: Option<Expr>,
+    /// When true, this subscription only matches locally-stored entities (clause 5.5.13).
+    pub local_only: bool,
 }

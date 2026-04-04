@@ -2,7 +2,7 @@
 
 use crate::{
     domain::{
-        notification::{ChangeEvent, CompiledSubscription},
+        notification::{ChangeEvent, ChangeOrigin, CompiledSubscription},
         subscription::SubscriptionStatus,
     },
     query::q,
@@ -31,6 +31,11 @@ pub fn matches_subscription(sub: &CompiledSubscription, event: &ChangeEvent) -> 
     }
 
     if sub.time_interval_secs.is_some() {
+        return false;
+    }
+
+    if sub.local_only && event.origin == ChangeOrigin::Forwarded {
+        debug!("Subscription {} skipped: localOnly=true but event origin is forwarded", sub.id);
         return false;
     }
 
@@ -279,7 +284,7 @@ mod tests {
     use super::*;
     use crate::{
         domain::{
-            notification::{ChangeEvent, CompiledSubscription, TriggerReason},
+            notification::{ChangeEvent, ChangeOrigin, CompiledSubscription, TriggerReason},
             subscription::SubscriptionStatus,
         },
         transport::endpoint::EndpointTransport,
@@ -311,6 +316,7 @@ mod tests {
             notification_join: None,
             notification_join_level: 1,
             compiled_csf: None,
+            local_only: false,
         }
     }
 
@@ -346,6 +352,42 @@ mod tests {
         let sub = make_sub();
         let event = ChangeEvent::new("urn:ngsi-ld:Entity:001".to_string(), vec!["Building".to_string()], TriggerReason::EntityDeleted);
         assert!(!matches_subscription(&sub, &event));
+    }
+
+    /// ETSI GS CIM 009 v1.9.1, clause 5.5.13: localOnly=true rejects forwarded events.
+    #[test]
+    fn local_only_subscription_rejects_forwarded_event() {
+        let mut sub = make_sub();
+        sub.local_only = true;
+        let mut event = make_event();
+        event.origin = ChangeOrigin::Forwarded;
+        assert!(!matches_subscription(&sub, &event));
+    }
+
+    /// ETSI GS CIM 009 v1.9.1, clause 5.5.13: localOnly=true still matches local events.
+    #[test]
+    fn local_only_subscription_accepts_local_event() {
+        let mut sub = make_sub();
+        sub.local_only = true;
+        let event = make_event();
+        assert!(matches_subscription(&sub, &event));
+    }
+
+    /// ETSI GS CIM 009 v1.9.1, clause 5.5.13: localOnly=false allows forwarded events.
+    #[test]
+    fn non_local_only_subscription_accepts_forwarded_event() {
+        let sub = make_sub();
+        let mut event = make_event();
+        event.origin = ChangeOrigin::Forwarded;
+        assert!(matches_subscription(&sub, &event));
+    }
+
+    /// ETSI GS CIM 009 v1.9.1, clause 5.5.13: localOnly=false allows local events (baseline).
+    #[test]
+    fn non_local_only_subscription_accepts_local_event() {
+        let sub = make_sub();
+        let event = make_event();
+        assert!(matches_subscription(&sub, &event));
     }
 }
 

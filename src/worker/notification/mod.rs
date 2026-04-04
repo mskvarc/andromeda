@@ -438,6 +438,7 @@ fn compile_subscription(sub: &Subscription) -> Option<CompiledSubscription> {
         notification_join: sub.notification.join.map(|j| j.to_string()),
         notification_join_level: sub.notification.join_level.unwrap_or(1).min(5),
         compiled_csf,
+        local_only: sub.local_only.unwrap_or(false),
     })
 }
 
@@ -478,7 +479,7 @@ fn compile_selector(selector: &EntitySelector) -> Option<CompiledSelector> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{query::q::parser, transport::endpoint::EndpointTransport};
+    use crate::{domain::notification::ChangeOrigin, query::q::parser, transport::endpoint::EndpointTransport};
     use matching::matches_subscription;
     use payload::filter_entity_attributes;
 
@@ -492,6 +493,7 @@ mod tests {
             entity_snapshot: None,
             previous_attributes: None,
             sys_attrs_snapshot: None,
+            origin: ChangeOrigin::Local,
         }
     }
 
@@ -521,6 +523,7 @@ mod tests {
             notification_join: None,
             notification_join_level: 1,
             compiled_csf: None,
+            local_only: false,
         }
     }
 
