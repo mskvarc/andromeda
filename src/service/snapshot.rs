@@ -5,6 +5,7 @@ use crate::{
     service::entity_map::parse_iso8601_duration,
 };
 use chrono::Utc;
+use serde_json::Value;
 use sqlx::postgres::PgPool;
 
 /// Service for managing NGSI-LD entity snapshots.
@@ -122,6 +123,88 @@ impl SnapshotService {
     /// Delete all snapshots and return the number of rows removed.
     pub async fn purge(&self) -> Result<u64, AndromedaError> {
         self.repo.delete_all().await.map_err(|e| AndromedaError::map_sqlx(e, "snapshot"))
+    }
+
+    /// Validate a snapshot for header-based scoping (ETSI GS CIM 009 clause 5.5.15).
+    ///
+    /// The snapshot must exist, not be expired, and have a queryable status
+    /// (`Success` or `Partial`). Touches `last_used_at` on success.
+    pub async fn validate_for_scoping(&self, id: &str) -> Result<Snapshot, AndromedaError> {
+        let snapshot = self
+            .repo
+            .get(id)
+            .await
+            .map_err(|e| AndromedaError::map_sqlx(e, "snapshot"))?
+            .ok_or_else(|| AndromedaError::not_found(format!("Snapshot {} not found", id)))?;
+
+        if snapshot.expires_at < Utc::now() {
+            if let Err(e) = self.repo.delete(id).await {
+                tracing::error!(error = %e, snapshot_id = %id, "Failed to delete expired snapshot");
+            }
+            return Err(AndromedaError::not_found(format!("Snapshot {} not found", id)));
+        }
+
+        match snapshot.status {
+            SnapshotStatus::Success | SnapshotStatus::Partial => {}
+            SnapshotStatus::Preparing | SnapshotStatus::Empty | SnapshotStatus::Failure => {
+                return Err(AndromedaError::not_found(format!(
+                    "Snapshot {} is not available for querying (status: {})",
+                    id, snapshot.status
+                )));
+            }
+        }
+
+        if let Err(e) = self.repo.touch_last_used(id).await {
+            tracing::warn!(error = %e, snapshot_id = %id, "Failed to update snapshot last_used_at");
+        }
+
+        Ok(snapshot)
+    }
+
+    /// Retrieve a single entity from a snapshot's frozen data.
+    pub async fn get_snapshot_entity(&self, snapshot_id: &str, entity_id: &str) -> Result<Option<Value>, AndromedaError> {
+        self.repo
+            .get_entity(snapshot_id, entity_id)
+            .await
+            .map_err(|e| AndromedaError::map_sqlx(e, "snapshot"))
+    }
+
+    /// Query entities from a snapshot's frozen data with optional filtering and pagination.
+    pub async fn query_snapshot_entities(
+        &self,
+        snapshot_id: &str,
+        entity_type: Option<&str>,
+        entity_ids: Option<&[String]>,
+        limit: i64,
+        offset: i64,
+    ) -> Result<(Vec<Value>, i64), AndromedaError> {
+        self.repo
+            .query_entities(snapshot_id, entity_type, entity_ids, limit, offset)
+            .await
+            .map_err(|e| AndromedaError::map_sqlx(e, "snapshot"))
+    }
+
+    /// Retrieve a single temporal entity from a snapshot's frozen data.
+    pub async fn get_snapshot_temporal_entity(&self, snapshot_id: &str, entity_id: &str) -> Result<Option<Value>, AndromedaError> {
+        self.repo
+            .get_temporal_entity(snapshot_id, entity_id)
+            .await
+            .map_err(|e| AndromedaError::map_sqlx(e, "snapshot"))
+    }
+
+    /// Query temporal entities from a snapshot's frozen data with optional filtering and pagination.
+    pub async fn query_snapshot_temporal_entities(
+        &self,
+        snapshot_id: &str,
+        entity_type: Option<&str>,
+        entity_ids: Option<&[String]>,
+        limit: i64,
+        offset: i64,
+    ) -> Result<(Vec<Value>, i64), AndromedaError> {
+        self.repo
+            .query_temporal_entities(snapshot_id, entity_type, entity_ids, limit, offset)
+            .await
+            .map_err(|e| AndromedaError::map_sqlx(e, "snapshot"))
     }
 
     /// Clone an existing snapshot, producing a new snapshot with a fresh ID and expiration.

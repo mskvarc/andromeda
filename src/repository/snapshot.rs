@@ -137,6 +137,169 @@ impl SnapshotRepository {
             .await?;
         Ok(())
     }
+
+    /// Retrieve a single entity from `snapshot_entities` by snapshot and entity identifiers.
+    pub async fn get_entity(&self, snapshot_id: &str, entity_id: &str) -> Result<Option<Value>, sqlx::Error> {
+        let row = sqlx::query("SELECT entity_data FROM snapshot_entities WHERE snapshot_id = $1 AND entity_id = $2")
+            .bind(snapshot_id)
+            .bind(entity_id)
+            .fetch_optional(&self.pool)
+            .await?;
+
+        match row {
+            Some(row) => {
+                let data: Value = row.try_get("entity_data")?;
+                Ok(Some(data))
+            }
+            None => Ok(None),
+        }
+    }
+
+    /// Query entities from `snapshot_entities` with optional type and ID filtering.
+    ///
+    /// Returns `(entities, total_count)` for pagination support.
+    pub async fn query_entities(
+        &self,
+        snapshot_id: &str,
+        entity_type: Option<&str>,
+        entity_ids: Option<&[String]>,
+        limit: i64,
+        offset: i64,
+    ) -> Result<(Vec<Value>, i64), sqlx::Error> {
+        // Build a dynamic query with optional filters
+        let mut conditions = vec!["snapshot_id = $1".to_string()];
+        let mut param_idx = 2u32;
+
+        if entity_type.is_some() {
+            conditions.push(format!("entity_data->>'type' LIKE '%' || ${param_idx} || '%'"));
+            param_idx += 1;
+        }
+
+        if let Some(ids) = entity_ids {
+            let placeholders: Vec<String> = ids.iter().enumerate().map(|(i, _)| format!("${}", param_idx + i as u32)).collect();
+            if !placeholders.is_empty() {
+                conditions.push(format!("entity_id IN ({})", placeholders.join(", ")));
+            }
+            param_idx += ids.len() as u32;
+        }
+
+        let where_clause = conditions.join(" AND ");
+
+        // Count query
+        let count_sql = format!("SELECT COUNT(*) as cnt FROM snapshot_entities WHERE {where_clause}");
+        let mut count_query = sqlx::query(&count_sql).bind(snapshot_id);
+        if let Some(t) = entity_type {
+            count_query = count_query.bind(t);
+        }
+        if let Some(ids) = entity_ids {
+            for id in ids {
+                count_query = count_query.bind(id);
+            }
+        }
+        let count_row = count_query.fetch_one(&self.pool).await?;
+        let total: i64 = count_row.try_get("cnt")?;
+
+        // Data query
+        let data_sql = format!(
+            "SELECT entity_data FROM snapshot_entities WHERE {where_clause} ORDER BY entity_id LIMIT ${param_idx} OFFSET ${}",
+            param_idx + 1
+        );
+        let mut data_query = sqlx::query(&data_sql).bind(snapshot_id);
+        if let Some(t) = entity_type {
+            data_query = data_query.bind(t);
+        }
+        if let Some(ids) = entity_ids {
+            for id in ids {
+                data_query = data_query.bind(id);
+            }
+        }
+        data_query = data_query.bind(limit).bind(offset);
+
+        let rows = data_query.fetch_all(&self.pool).await?;
+        let entities: Vec<Value> = rows.iter().map(|r| r.try_get("entity_data")).collect::<Result<Vec<_>, _>>()?;
+
+        Ok((entities, total))
+    }
+
+    /// Retrieve a single temporal entity from `snapshot_temporal_entities`.
+    pub async fn get_temporal_entity(&self, snapshot_id: &str, entity_id: &str) -> Result<Option<Value>, sqlx::Error> {
+        let row = sqlx::query("SELECT temporal_data FROM snapshot_temporal_entities WHERE snapshot_id = $1 AND entity_id = $2")
+            .bind(snapshot_id)
+            .bind(entity_id)
+            .fetch_optional(&self.pool)
+            .await?;
+
+        match row {
+            Some(row) => {
+                let data: Value = row.try_get("temporal_data")?;
+                Ok(Some(data))
+            }
+            None => Ok(None),
+        }
+    }
+
+    /// Query temporal entities from `snapshot_temporal_entities` with optional filtering.
+    ///
+    /// Returns `(entities, total_count)` for pagination support.
+    pub async fn query_temporal_entities(
+        &self,
+        snapshot_id: &str,
+        entity_type: Option<&str>,
+        entity_ids: Option<&[String]>,
+        limit: i64,
+        offset: i64,
+    ) -> Result<(Vec<Value>, i64), sqlx::Error> {
+        let mut conditions = vec!["snapshot_id = $1".to_string()];
+        let mut param_idx = 2u32;
+
+        if entity_type.is_some() {
+            conditions.push(format!("temporal_data->>'type' LIKE '%' || ${param_idx} || '%'"));
+            param_idx += 1;
+        }
+
+        if let Some(ids) = entity_ids {
+            let placeholders: Vec<String> = ids.iter().enumerate().map(|(i, _)| format!("${}", param_idx + i as u32)).collect();
+            if !placeholders.is_empty() {
+                conditions.push(format!("entity_id IN ({})", placeholders.join(", ")));
+            }
+            param_idx += ids.len() as u32;
+        }
+
+        let where_clause = conditions.join(" AND ");
+
+        let count_sql = format!("SELECT COUNT(*) as cnt FROM snapshot_temporal_entities WHERE {where_clause}");
+        let mut count_query = sqlx::query(&count_sql).bind(snapshot_id);
+        if let Some(t) = entity_type {
+            count_query = count_query.bind(t);
+        }
+        if let Some(ids) = entity_ids {
+            for id in ids {
+                count_query = count_query.bind(id);
+            }
+        }
+        let count_row = count_query.fetch_one(&self.pool).await?;
+        let total: i64 = count_row.try_get("cnt")?;
+
+        let data_sql = format!(
+            "SELECT temporal_data FROM snapshot_temporal_entities WHERE {where_clause} ORDER BY entity_id LIMIT ${param_idx} OFFSET ${}",
+            param_idx + 1
+        );
+        let mut data_query = sqlx::query(&data_sql).bind(snapshot_id);
+        if let Some(t) = entity_type {
+            data_query = data_query.bind(t);
+        }
+        if let Some(ids) = entity_ids {
+            for id in ids {
+                data_query = data_query.bind(id);
+            }
+        }
+        data_query = data_query.bind(limit).bind(offset);
+
+        let rows = data_query.fetch_all(&self.pool).await?;
+        let entities: Vec<Value> = rows.iter().map(|r| r.try_get("temporal_data")).collect::<Result<Vec<_>, _>>()?;
+
+        Ok((entities, total))
+    }
 }
 
 fn row_to_snapshot(row: &sqlx::postgres::PgRow) -> Result<Snapshot, sqlx::Error> {

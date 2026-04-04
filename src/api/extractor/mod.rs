@@ -6,4 +6,5 @@ pub mod jsonld;
 pub mod language;
 pub mod params;
 pub mod prefer;
+pub mod snapshot;
 pub mod tenant;

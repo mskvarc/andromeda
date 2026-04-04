@@ -8,6 +8,7 @@ use crate::{
             language::LanguageNegotiation,
             params::ValidatedQuery,
             prefer::PreferHeader,
+            snapshot::SnapshotHeader,
         },
         response::ngsild::{NgsiLdCollectionResponse, NgsiLdResponse},
         tenant::{TenantState, TenantStateOrCreate},
@@ -281,6 +282,7 @@ pub async fn get(
     ValidatedQuery(params): ValidatedQuery<GetEntityParams>,
     LanguageNegotiation(language_filter): LanguageNegotiation,
     prefer: PreferHeader,
+    snapshot: SnapshotHeader,
     headers: HeaderMap,
 ) -> Result<Response, ApiError> {
     let service = &state.entity_query;
@@ -307,6 +309,49 @@ pub async fn get(
             AndromedaError::invalid_request(format!("Invalid format value: '{}'", fmt)),
             uri.clone(),
         ));
+    }
+
+    // Snapshot scoping (ETSI GS CIM 009 clause 5.5.15, 6.3.22): if NGSILD-Snapshot header
+    // is present, retrieve entity from the snapshot's frozen data and return early.
+    if let Some(snapshot_id) = snapshot.into_inner() {
+        let _snap = state
+            .snapshots
+            .validate_for_scoping(&snapshot_id)
+            .await
+            .map_err(|e| e.with_instance(uri.clone()))?;
+
+        let entity_data = state
+            .snapshots
+            .get_snapshot_entity(&snapshot_id, id.as_ref())
+            .await
+            .map_err(|e| e.with_instance(uri.clone()))?
+            .ok_or_else(|| ApiError::from_error(AndromedaError::not_found(id.to_string()), uri.clone()))?;
+
+        let mut result = entity_data;
+
+        // Apply attrs filter by removing non-requested keys from the JSONB object
+        if let Some(ref attrs_str) = params.attrs {
+            let requested: Vec<&str> = attrs_str.split(',').map(str::trim).collect();
+            if let Some(obj) = result.as_object_mut() {
+                let keys_to_keep: HashSet<&str> = ["id", "type", "@context"].iter().copied().chain(requested.iter().copied()).collect();
+                obj.retain(|k, _| keys_to_keep.iter().any(|keep| k.ends_with(keep)));
+            }
+        }
+
+        // Apply keyValues/simplified by simplifying the Value
+        let format_param = params.format.as_deref().unwrap_or("");
+        let key_values = format_param == "keyValues" || format_param == "simplified" || options.contains("keyValues") || options.contains("simplified");
+        if key_values {
+            result = simplify_value(&result);
+        }
+
+        return Ok(NgsiLdResponse::ok(result)
+            .with_context(context)
+            .with_format(accept.format())
+            .with_geometry_property(params.geometry_property.clone())
+            .with_snapshot_uri(snapshot_id)
+            .with_prefer(prefer)
+            .into_response());
     }
 
     let attrs: Vec<String> = params
@@ -584,6 +629,7 @@ pub async fn query(
     context: ContextUrl,
     LanguageNegotiation(language_filter): LanguageNegotiation,
     prefer: PreferHeader,
+    snapshot: SnapshotHeader,
     headers: HeaderMap,
     EntityQuery(mut query): EntityQuery,
 ) -> Result<Response, ApiError> {
@@ -591,6 +637,55 @@ pub async fn query(
     let context: ContextSpec = context.into_inner();
 
     let incoming_via = headers.get("via").and_then(|v| v.to_str().ok());
+
+    // Snapshot scoping (ETSI GS CIM 009 clause 5.5.15, 6.3.22): if NGSILD-Snapshot header
+    // is present, query entities from the snapshot's frozen data and return early.
+    if let Some(snapshot_id) = snapshot.into_inner() {
+        let _snap = state
+            .snapshots
+            .validate_for_scoping(&snapshot_id)
+            .await
+            .map_err(|e| e.with_instance(uri.clone()))?;
+
+        let entity_type = query.entity_type.as_deref();
+        let entity_ids: Option<Vec<String>> = query.id.as_deref().map(|s| s.split(',').map(|id| id.trim().to_string()).collect());
+        let limit = query.limit.unwrap_or(100) as i64;
+        let offset = query.offset.unwrap_or(0) as i64;
+
+        let (entities, total) = state
+            .snapshots
+            .query_snapshot_entities(&snapshot_id, entity_type, entity_ids.as_deref(), limit, offset)
+            .await
+            .map_err(|e| e.with_instance(uri.clone()))?;
+
+        // Apply attrs filter to snapshot JSONB values
+        let mut filtered = entities;
+        if let Some(ref attrs_str) = query.attrs {
+            let requested: Vec<&str> = attrs_str.split(',').map(str::trim).collect();
+            for entity in &mut filtered {
+                if let Some(obj) = entity.as_object_mut() {
+                    let keys_to_keep: HashSet<&str> = ["id", "type", "@context"].iter().copied().chain(requested.iter().copied()).collect();
+                    obj.retain(|k, _| keys_to_keep.iter().any(|keep| k.ends_with(keep)));
+                }
+            }
+        }
+
+        // Apply keyValues/simplified
+        let opts = query.parse_options();
+        if opts.key_values {
+            filtered = filtered.into_iter().map(|v| simplify_value(&v)).collect();
+        }
+
+        let response = NgsiLdCollectionResponse::ok(filtered)
+            .with_context(context)
+            .with_format(accept.format())
+            .with_geometry_property(query.geometry_property.clone())
+            .with_snapshot_uri(snapshot_id)
+            .with_prefer(prefer)
+            .with_total_count(total as usize);
+
+        return Ok(response.into_response());
+    }
 
     // §5.5.9.3: If NGSILD-EntityMap header present, scope query to that map's entity IDs
     let entity_map_header = headers.get("NGSILD-EntityMap").and_then(|v| v.to_str().ok()).map(|s| s.to_string());

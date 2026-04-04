@@ -51,6 +51,7 @@ pub struct NgsiLdResponse<T> {
     geometry_property: Option<String>,
     location: Option<String>,
     entity_map_uri: Option<String>,
+    snapshot_uri: Option<String>,
     warnings: Vec<NgsiLdWarning>,
     prefer: PreferHeader,
 }
@@ -66,6 +67,7 @@ impl<T> NgsiLdResponse<T> {
             geometry_property: None,
             location: None,
             entity_map_uri: None,
+            snapshot_uri: None,
             warnings: Vec::new(),
             prefer: PreferHeader::default(),
         }
@@ -124,6 +126,12 @@ impl<T> NgsiLdResponse<T> {
         self.prefer = prefer;
         self
     }
+
+    /// Set the NGSILD-Snapshot header for snapshot-scoped responses (clause 6.3.22).
+    pub fn with_snapshot_uri(mut self, uri: String) -> Self {
+        self.snapshot_uri = Some(uri);
+        self
+    }
 }
 
 impl<T: Serialize> IntoResponse for NgsiLdResponse<T> {
@@ -159,6 +167,12 @@ impl<T: Serialize> IntoResponse for NgsiLdResponse<T> {
             && let Ok(val) = HeaderValue::from_str(uri)
         {
             headers.insert("NGSILD-EntityMap", val);
+        }
+
+        if let Some(ref snap_uri) = self.snapshot_uri
+            && let Ok(val) = HeaderValue::from_str(snap_uri)
+        {
+            headers.insert("NGSILD-Snapshot", val);
         }
 
         for warning in &self.warnings {
@@ -235,6 +249,7 @@ pub struct NgsiLdCollectionResponse<T> {
     geometry_property: Option<String>,
     content_range: Option<String>,
     entity_map_uri: Option<String>,
+    snapshot_uri: Option<String>,
     warnings: Vec<NgsiLdWarning>,
     prefer: PreferHeader,
 }
@@ -251,6 +266,7 @@ impl<T> NgsiLdCollectionResponse<T> {
             geometry_property: None,
             content_range: None,
             entity_map_uri: None,
+            snapshot_uri: None,
             warnings: Vec::new(),
             prefer: PreferHeader::default(),
         }
@@ -310,6 +326,12 @@ impl<T> NgsiLdCollectionResponse<T> {
         self.prefer = prefer;
         self
     }
+
+    /// Set the NGSILD-Snapshot header for snapshot-scoped responses (clause 6.3.22).
+    pub fn with_snapshot_uri(mut self, uri: String) -> Self {
+        self.snapshot_uri = Some(uri);
+        self
+    }
 }
 
 impl<T: Serialize> IntoResponse for NgsiLdCollectionResponse<T> {
@@ -354,6 +376,12 @@ impl<T: Serialize> IntoResponse for NgsiLdCollectionResponse<T> {
             && let Ok(val) = HeaderValue::from_str(uri)
         {
             headers.insert("NGSILD-EntityMap", val);
+        }
+
+        if let Some(ref snap_uri) = self.snapshot_uri
+            && let Ok(val) = HeaderValue::from_str(snap_uri)
+        {
+            headers.insert("NGSILD-Snapshot", val);
         }
 
         for warning in &self.warnings {

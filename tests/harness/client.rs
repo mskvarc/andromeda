@@ -54,6 +54,11 @@ impl RequestHeaders {
         self
     }
 
+    pub fn snapshot(mut self, id: &str) -> Self {
+        self.0.insert("NGSILD-Snapshot", HeaderValue::from_str(id).unwrap());
+        self
+    }
+
     fn into_header_map(self) -> HeaderMap {
         self.0
     }
