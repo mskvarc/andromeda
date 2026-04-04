@@ -89,12 +89,14 @@ impl EntityQueryService {
         let id_str = id.to_string();
         let result = self.repo.get(&id_str).await?;
 
-        if let Some(mut expanded_entity) = result {
-            if sys_attrs && let Some(sa) = self.repo.get_sys_attrs(&id_str).await? {
-                super::inject_sys_attrs(&mut expanded_entity, sa.created_at, sa.modified_at, sa.expires_at);
-            }
-
+        if let Some(expanded_entity) = result {
             let mut entity = self.compact_to_entity(expanded_entity, context, Some(&id_str)).await?;
+
+            if sys_attrs {
+                if let Some(sa) = self.repo.get_sys_attrs(&id_str).await? {
+                    entity = entity.with_sys_attrs(&sa);
+                }
+            }
 
             if !attrs.is_empty() {
                 let mut wanted_iris = Vec::new();
@@ -144,17 +146,21 @@ impl EntityQueryService {
         };
 
         let mut entities = Vec::new();
-        for mut value in query_result.rows {
+        for value in query_result.rows {
+            let id_str = super::unwrap_expanded_ref(&value)
+                .as_object()
+                .and_then(|o| o.get("@id").and_then(|v| v.as_str()).map(String::from));
+
+            let mut entity = self.compact_to_entity(value, context, None).await?;
+
             if sys_attrs {
-                let id_str = super::expanded_entity_object_mut(&mut value).and_then(|obj| obj.get("@id").and_then(|v| v.as_str()).map(String::from));
                 if let Some(ref id_str) = id_str
                     && let Some(sa) = sys_attrs_map.get(id_str)
                 {
-                    super::inject_sys_attrs(&mut value, sa.created_at, sa.modified_at, sa.expires_at);
+                    entity = entity.with_sys_attrs(sa);
                 }
             }
 
-            let entity = self.compact_to_entity(value, context, None).await?;
             entities.push(entity);
         }
 
@@ -206,12 +212,14 @@ impl EntityQueryService {
             };
 
             let mut linked_map = HashMap::new();
-            for (linked_id, mut expanded) in batch_payloads {
-                if sys_attrs && let Some(sa) = batch_sys_attrs.get(&linked_id) {
-                    super::inject_sys_attrs(&mut expanded, sa.created_at, sa.modified_at, sa.expires_at);
-                }
+            for (linked_id, expanded) in batch_payloads {
                 match self.compact_to_entity(expanded, context, Some(&linked_id)).await {
-                    Ok(entity) => {
+                    Ok(mut entity) => {
+                        if sys_attrs {
+                            if let Some(sa) = batch_sys_attrs.get(&linked_id) {
+                                entity = entity.with_sys_attrs(sa);
+                            }
+                        }
                         linked_map.insert(linked_id, entity);
                     }
                     Err(e) => {

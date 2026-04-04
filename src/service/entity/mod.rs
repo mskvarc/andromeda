@@ -88,7 +88,7 @@ impl EntityService {
         let types_refs: Vec<&str> = types.iter().map(String::as_str).collect();
         let scopes = extract_scopes(&expanded);
 
-        let expires_at = crate::repository::entity::extract_expires_at(&expanded);
+        let expires_at = crate::domain::expanded::extract_expires_at(&expanded);
         let urn = self.repo.create(&id, types_refs.as_ref(), &scopes, &expanded, expires_at).await?;
         if let Err(e) = self.temporal_recorder.record_entity_attributes(&id, &expanded).await {
             tracing::warn!(error = %e, entity_id = %id, event = "temporal_recording_failed");
@@ -279,7 +279,10 @@ fn normalize_entity_attributes(payload: &mut Value) {
     };
 
     for (key, value) in obj.iter_mut() {
-        if matches!(key.as_str(), "id" | "type" | "scope" | "@context" | "@id" | "@type") {
+        if matches!(
+            key.as_str(),
+            "id" | "type" | "scope" | "@context" | "@id" | "@type" | "expiresAt" | "createdAt" | "modifiedAt" | "deletedAt"
+        ) {
             continue;
         }
         normalize_attribute_value(value);

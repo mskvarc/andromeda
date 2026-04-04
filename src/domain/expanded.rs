@@ -111,21 +111,58 @@ pub fn extract_scopes(expanded: &Value) -> Vec<String> {
 }
 
 // ---------------------------------------------------------------------------
+// expiresAt extraction
+// ---------------------------------------------------------------------------
+
+const EXPIRES_AT_IRI: &str = "https://uri.etsi.org/ngsi-ld/expiresAt";
+
+/// Extract the `expiresAt` value from an expanded JSON-LD entity payload
+/// (ETSI GS CIM 009 clause 4.22).
+pub fn extract_expires_at(expanded: &Value) -> Option<chrono::DateTime<chrono::Utc>> {
+    let obj = expanded_object_ref(expanded)?;
+    let dt_str = obj
+        .get(EXPIRES_AT_IRI)?
+        .as_array()
+        .and_then(|arr| arr.first())
+        .and_then(|v| v.get("@value"))
+        .and_then(|v| v.as_str())?;
+    chrono::DateTime::parse_from_rfc3339(dt_str).ok().map(|dt| dt.with_timezone(&chrono::Utc))
+}
+
+// ---------------------------------------------------------------------------
 // Location GeoJSON extraction
 // ---------------------------------------------------------------------------
 
 const LOCATION_IRI: &str = "https://uri.etsi.org/ngsi-ld/location";
+const OBSERVATION_SPACE_IRI: &str = "https://uri.etsi.org/ngsi-ld/observationSpace";
+const OPERATION_SPACE_IRI: &str = "https://uri.etsi.org/ngsi-ld/operationSpace";
 const GEOJSON_VOCAB: &str = "https://purl.org/geojson/vocab#";
 const GEOJSON_COORDINATES: &str = "https://purl.org/geojson/vocab#coordinates";
 
 /// Extract the GeoJSON string from the entity's `location` GeoProperty
 /// (expanded form).  Returns `None` if no location attribute is present.
 pub fn extract_location_geojson(expanded: &Value) -> Option<String> {
-    let obj = expanded_object_ref(expanded)?;
-    let location = obj.get(LOCATION_IRI)?;
+    extract_geo_property_geojson(expanded, LOCATION_IRI)
+}
 
-    // Use the last instance (most recent for temporal entities with multiple location instances)
-    let geo_node = location
+/// Extract the GeoJSON string from the entity's `observationSpace` GeoProperty
+/// (expanded form, ETSI GS CIM 009 clause 5.2.4).
+pub fn extract_observation_space_geojson(expanded: &Value) -> Option<String> {
+    extract_geo_property_geojson(expanded, OBSERVATION_SPACE_IRI)
+}
+
+/// Extract the GeoJSON string from the entity's `operationSpace` GeoProperty
+/// (expanded form, ETSI GS CIM 009 clause 5.2.4).
+pub fn extract_operation_space_geojson(expanded: &Value) -> Option<String> {
+    extract_geo_property_geojson(expanded, OPERATION_SPACE_IRI)
+}
+
+/// Generic GeoProperty GeoJSON extraction for a given IRI key.
+fn extract_geo_property_geojson(expanded: &Value, iri: &str) -> Option<String> {
+    let obj = expanded_object_ref(expanded)?;
+    let prop = obj.get(iri)?;
+
+    let geo_node = prop
         .as_array()
         .and_then(|arr| arr.last())
         .and_then(|inst| inst.get(iri::HAS_VALUE.as_str()))
@@ -137,7 +174,7 @@ pub fn extract_location_geojson(expanded: &Value) -> Option<String> {
         return match val {
             Value::String(s) => Some(s.clone()),
             val if val.is_object() => Some(val.to_string()),
-            _ => None,
+            _other => None,
         };
     }
 
@@ -695,6 +732,7 @@ pub fn replace_attr(entity: &mut Value, attr_iri: &str, value: &Value) -> Result
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::Datelike;
     use serde_json::json;
 
     #[test]
@@ -774,5 +812,73 @@ mod tests {
         let mut entity = json!([{"https://example.com/a": [{"@value": 1}]}]);
         let result = delete_attr(&mut entity, "https://example.com/missing", None, true);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn extract_expires_at_from_expanded_entity() {
+        let entity = json!([{
+            "@id": "urn:ngsi-ld:Entity:001",
+            "@type": ["https://example.com/Building"],
+            "https://uri.etsi.org/ngsi-ld/expiresAt": [{
+                "@type": "https://uri.etsi.org/ngsi-ld/DateTime",
+                "@value": "2030-12-31T23:59:59.000Z"
+            }]
+        }]);
+        let result = extract_expires_at(&entity);
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().year(), 2030);
+    }
+
+    #[test]
+    fn extract_expires_at_missing() {
+        let entity = json!([{
+            "@id": "urn:ngsi-ld:Entity:001",
+            "@type": ["https://example.com/Building"]
+        }]);
+        assert!(extract_expires_at(&entity).is_none());
+    }
+
+    #[test]
+    fn extract_expires_at_invalid_date() {
+        let entity = json!([{
+            "@id": "urn:ngsi-ld:Entity:001",
+            "https://uri.etsi.org/ngsi-ld/expiresAt": [{
+                "@type": "https://uri.etsi.org/ngsi-ld/DateTime",
+                "@value": "not-a-date"
+            }]
+        }]);
+        assert!(extract_expires_at(&entity).is_none());
+    }
+
+    #[test]
+    fn extract_observation_space_geojson_from_expanded() {
+        let entity = json!([{
+            "@id": "urn:ngsi-ld:Entity:001",
+            "https://uri.etsi.org/ngsi-ld/observationSpace": [{
+                "@type": ["https://uri.etsi.org/ngsi-ld/GeoProperty"],
+                "https://uri.etsi.org/ngsi-ld/hasValue": [{
+                    "@value": "{\"type\":\"Point\",\"coordinates\":[1.0,2.0]}"
+                }]
+            }]
+        }]);
+        let result = extract_observation_space_geojson(&entity);
+        assert!(result.is_some());
+        assert!(result.unwrap().contains("Point"));
+    }
+
+    #[test]
+    fn extract_operation_space_geojson_from_expanded() {
+        let entity = json!([{
+            "@id": "urn:ngsi-ld:Entity:001",
+            "https://uri.etsi.org/ngsi-ld/operationSpace": [{
+                "@type": ["https://uri.etsi.org/ngsi-ld/GeoProperty"],
+                "https://uri.etsi.org/ngsi-ld/hasValue": [{
+                    "@value": "{\"type\":\"Polygon\",\"coordinates\":[[[0,0],[1,0],[1,1],[0,1],[0,0]]]}"
+                }]
+            }]
+        }]);
+        let result = extract_operation_space_geojson(&entity);
+        assert!(result.is_some());
+        assert!(result.unwrap().contains("Polygon"));
     }
 }

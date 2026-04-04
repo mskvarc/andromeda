@@ -47,17 +47,28 @@ impl EntityRepository {
     pub async fn create(&self, id: &str, type_: &[&str], scopes: &[String], entity: &Value, expires_at: Option<DateTime<Utc>>) -> Result<Urn, AndromedaError> {
         tracing::info!("Storing entity {} with types: {:?}", id, type_);
         let location_geojson = expanded::extract_location_geojson(entity);
+        let observation_space_geojson = expanded::extract_observation_space_geojson(entity);
+        let operation_space_geojson = expanded::extract_operation_space_geojson(entity);
         sqlx::query(
-            "INSERT INTO entities (id, types, scopes, payload, location, expires_at) VALUES ($1, $2, $3, $4, CASE WHEN $5 IS NOT NULL THEN ST_SetSRID(ST_GeomFromGeoJSON($5), 4326) ELSE NULL END, $6)",
+            r#"
+            INSERT INTO entities (id, types, scopes, payload, location, observation_space, operation_space, expires_at)
+            VALUES ($1, $2, $3, $4,
+                    CASE WHEN $5 IS NOT NULL THEN ST_SetSRID(ST_GeomFromGeoJSON($5), 4326) ELSE NULL END,
+                    CASE WHEN $6 IS NOT NULL THEN ST_SetSRID(ST_GeomFromGeoJSON($6), 4326) ELSE NULL END,
+                    CASE WHEN $7 IS NOT NULL THEN ST_SetSRID(ST_GeomFromGeoJSON($7), 4326) ELSE NULL END,
+                    $8)
+            "#,
         )
-            .bind(id)
-            .bind(type_)
-            .bind(scopes)
-            .bind(entity)
-            .bind(&location_geojson)
-            .bind(expires_at)
-            .execute(&self.pool)
-            .await?;
+        .bind(id)
+        .bind(type_)
+        .bind(scopes)
+        .bind(entity)
+        .bind(&location_geojson)
+        .bind(&observation_space_geojson)
+        .bind(&operation_space_geojson)
+        .bind(expires_at)
+        .execute(&self.pool)
+        .await?;
 
         Ok(id.parse::<Urn>()?)
     }
@@ -96,20 +107,24 @@ impl EntityRepository {
     }
 
     /// Save (overwrite) the expanded payload for an existing entity.
-    /// Automatically re-extracts types, scopes, and location from the payload.
+    /// Automatically re-extracts types, scopes, location, and geo spaces from the payload.
     /// Preserves existing expires_at unless the payload contains a new expiresAt value.
     pub async fn save(&self, id: &str, entity: &Value) -> Result<bool, AndromedaError> {
         let types = expanded::extract_types(entity);
         let scopes = expanded::extract_scopes(entity);
         let location_geojson = expanded::extract_location_geojson(entity);
-        let expires_at = extract_expires_at(entity);
+        let observation_space_geojson = expanded::extract_observation_space_geojson(entity);
+        let operation_space_geojson = expanded::extract_operation_space_geojson(entity);
+        let expires_at = expanded::extract_expires_at(entity);
         let result = sqlx::query(
             r#"
             UPDATE entities
             SET payload = $2, types = $3, scopes = $4,
                 location = CASE WHEN $5 IS NOT NULL THEN ST_SetSRID(ST_GeomFromGeoJSON($5), 4326) ELSE NULL END,
+                observation_space = CASE WHEN $6 IS NOT NULL THEN ST_SetSRID(ST_GeomFromGeoJSON($6), 4326) ELSE NULL END,
+                operation_space = CASE WHEN $7 IS NOT NULL THEN ST_SetSRID(ST_GeomFromGeoJSON($7), 4326) ELSE NULL END,
                 modified_at = NOW(),
-                expires_at = COALESCE($6, expires_at)
+                expires_at = COALESCE($8, expires_at)
             WHERE id = $1
             "#,
         )
@@ -118,6 +133,8 @@ impl EntityRepository {
         .bind(&types)
         .bind(&scopes)
         .bind(&location_geojson)
+        .bind(&observation_space_geojson)
+        .bind(&operation_space_geojson)
         .bind(expires_at)
         .execute(&self.pool)
         .await?;
@@ -396,67 +413,5 @@ impl EntityRepository {
             .bind(type_)
             .fetch_one(&self.pool)
             .await?)
-    }
-}
-
-/// Extract the expiresAt value from an expanded JSON-LD entity payload.
-/// The expanded IRI for expiresAt is `https://uri.etsi.org/ngsi-ld/expiresAt`.
-pub fn extract_expires_at(entity: &Value) -> Option<DateTime<Utc>> {
-    let obj = match entity {
-        Value::Array(arr) => arr.first().and_then(|v| v.as_object()),
-        Value::Object(obj) => Some(obj),
-        _other => return None,
-    }?;
-
-    let expires_at_val = obj.get("https://uri.etsi.org/ngsi-ld/expiresAt")?;
-    let dt_str = expires_at_val
-        .as_array()
-        .and_then(|arr| arr.first())
-        .and_then(|v| v.get("@value"))
-        .and_then(|v| v.as_str())?;
-
-    chrono::DateTime::parse_from_rfc3339(dt_str).ok().map(|dt| dt.with_timezone(&Utc))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use chrono::Datelike;
-    use serde_json::json;
-
-    #[test]
-    fn extract_expires_at_from_expanded_entity() {
-        let entity = json!([{
-            "@id": "urn:ngsi-ld:Entity:001",
-            "@type": ["https://example.com/Building"],
-            "https://uri.etsi.org/ngsi-ld/expiresAt": [{
-                "@type": "https://uri.etsi.org/ngsi-ld/DateTime",
-                "@value": "2030-12-31T23:59:59.000Z"
-            }]
-        }]);
-        let result = extract_expires_at(&entity);
-        assert!(result.is_some());
-        assert_eq!(result.unwrap().year(), 2030);
-    }
-
-    #[test]
-    fn extract_expires_at_missing() {
-        let entity = json!([{
-            "@id": "urn:ngsi-ld:Entity:001",
-            "@type": ["https://example.com/Building"]
-        }]);
-        assert!(extract_expires_at(&entity).is_none());
-    }
-
-    #[test]
-    fn extract_expires_at_invalid_date() {
-        let entity = json!([{
-            "@id": "urn:ngsi-ld:Entity:001",
-            "https://uri.etsi.org/ngsi-ld/expiresAt": [{
-                "@type": "https://uri.etsi.org/ngsi-ld/DateTime",
-                "@value": "not-a-date"
-            }]
-        }]);
-        assert!(extract_expires_at(&entity).is_none());
     }
 }

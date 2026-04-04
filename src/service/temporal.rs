@@ -145,7 +145,7 @@ impl TemporalService {
 
                 // Save initial base entity using the expanded payload so that
                 // extract_entity_types() can find @type in the stored JSON.
-                let expires_at = crate::repository::entity::extract_expires_at(&expanded);
+                let expires_at = crate::domain::expanded::extract_expires_at(&expanded);
                 let _ = self.entity_repo.create(entity_id, &types, &[], &expanded, expires_at).await;
             }
 
