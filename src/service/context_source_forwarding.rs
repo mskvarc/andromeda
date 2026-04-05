@@ -1,10 +1,11 @@
 use crate::{
     domain::registration::{ContextSourceRegistration, CsrOperation, ForwardingMode},
     error::AndromedaError,
-    header::{jsonld_context_link, link_header_value},
+    header::{NgsiLdTenant, NgsiLdWarning, Via, jsonld_context_link, link_header_value},
     jsonld::{ContextSpec, JsonLdEngine},
     repository::context_source_registration::ContextSourceRegistrationRepository,
 };
+use headers::Header;
 use serde_json::Value;
 use sqlx::postgres::PgPool;
 use tracing::{debug, warn};
@@ -114,30 +115,6 @@ impl ForwardingOperation {
     }
 }
 
-/// IANA warning codes for distributed operations (clause 6.3.17).
-#[derive(Debug, Clone, derive_more::Display)]
-pub enum NgsiLdWarning {
-    /// 110: Cached data reused; context source responded but stale data was served.
-    #[display("110 - \"{_0}\"")]
-    ResponseIsStale(String),
-    /// 111: Context source responded but payload was invalid or non-NGSI-LD.
-    #[display("111 - \"{_0}\"")]
-    RevalidationFailed(String),
-    /// 199: No response within timeout or registration loop detected.
-    #[display("199 - \"{_0}\"")]
-    MiscellaneousWarning(String),
-    /// 299: Error response from registration endpoint (e.g., 403).
-    #[display("299 - \"{_0}\"")]
-    MiscellaneousPersistentWarning(String),
-}
-
-impl NgsiLdWarning {
-    /// Format as NGSILD-Warning header value per IANA Warning specification.
-    pub fn header_value(&self) -> String {
-        self.to_string()
-    }
-}
-
 /// Outcome of a GET request to a context source, distinguishing conditions
 /// that map to different IANA warning codes (clause 6.3.17).
 enum ForwardGetOutcome {
@@ -197,7 +174,7 @@ pub struct ForwardProvisionRequest<'a> {
     /// Query string appended to the forwarded URL.
     pub query_string: Option<&'a str>,
     /// Incoming Via header for loop detection (section 6.3.18).
-    pub incoming_via: Option<&'a str>,
+    pub incoming_via: Option<&'a Via>,
 }
 
 /// Parameters for forwarding a batch provision operation.
@@ -217,7 +194,7 @@ pub struct ForwardBatchProvisionRequest<'a> {
     /// Query string appended to the forwarded URL.
     pub query_string: Option<&'a str>,
     /// Incoming Via header for loop detection (section 6.3.18).
-    pub incoming_via: Option<&'a str>,
+    pub incoming_via: Option<&'a Via>,
 }
 
 /// Parameters for forwarding a temporal entity query to matching context sources.
@@ -235,7 +212,7 @@ pub struct ForwardTemporalQueryRequest<'a> {
     /// The NGSI-LD operation being forwarded.
     pub operation: ForwardingOperation,
     /// Incoming Via header for loop detection (section 6.3.18).
-    pub incoming_via: Option<&'a str>,
+    pub incoming_via: Option<&'a Via>,
 }
 
 /// Result from a single context source discovery forwarding attempt (types/attributes).
@@ -284,7 +261,7 @@ impl ContextSourceForwardingService {
         context_url: Option<&str>,
         context: &ContextSpec,
         operation: ForwardingOperation,
-        incoming_via: Option<&str>,
+        incoming_via: Option<&Via>,
     ) -> Result<Vec<ForwardedEntities>, AndromedaError> {
         // Loop detection: if our identity is already in the Via chain, skip forwarding (section 6.3.18)
         if self.is_loop_detected(incoming_via) {
@@ -302,11 +279,13 @@ impl ContextSourceForwardingService {
         // For CSR matching, also pass entity IDs if available
         let first_id = entity_ids.and_then(|ids| ids.first().map(|s| s.as_str()));
         let csrs = self.csr_repo.find_matching(expanded_type.as_deref(), first_id).await?;
-        let via_pseudonyms = incoming_via.map(parse_via_pseudonyms).unwrap_or_default();
         let matching_csrs: Vec<_> = csrs
             .into_iter()
             .filter(|csr| operation.matches(csr))
-            .filter(|csr| !is_csr_in_via(csr, &via_pseudonyms))
+            .filter(|csr| match (&csr.context_source_alias, incoming_via) {
+                (Some(alias), Some(via)) => !via.has_alias(alias),
+                _ => true,
+            })
             .collect();
 
         if matching_csrs.is_empty() {
@@ -400,7 +379,7 @@ impl ContextSourceForwardingService {
         query_string: &str,
         context_url: Option<&str>,
         operation: ForwardingOperation,
-        incoming_via: Option<&str>,
+        incoming_via: Option<&Via>,
     ) -> Result<Vec<ForwardedEntities>, AndromedaError> {
         if self.is_loop_detected(incoming_via) {
             debug!("Loop detected in Via header chain, skipping retrieve forwarding");
@@ -408,11 +387,13 @@ impl ContextSourceForwardingService {
         }
 
         let csrs = self.csr_repo.find_matching(None, Some(entity_id)).await?;
-        let via_pseudonyms = incoming_via.map(parse_via_pseudonyms).unwrap_or_default();
         let matching_csrs: Vec<_> = csrs
             .into_iter()
             .filter(|csr| operation.matches(csr))
-            .filter(|csr| !is_csr_in_via(csr, &via_pseudonyms))
+            .filter(|csr| match (&csr.context_source_alias, incoming_via) {
+                (Some(alias), Some(via)) => !via.has_alias(alias),
+                _ => true,
+            })
             .collect();
 
         if matching_csrs.is_empty() {
@@ -512,13 +493,16 @@ impl ContextSourceForwardingService {
         };
 
         let csrs = self.csr_repo.find_matching(expanded_type.as_deref(), request.entity_id).await?;
-        let via_pseudonyms = request.incoming_via.map(parse_via_pseudonyms).unwrap_or_default();
 
         // Separate CSRs into those that match the operation and exclusive ones that don't
         let mut matching_csrs = Vec::new();
         let mut unforwardable = Vec::new();
         for csr in csrs {
-            if is_csr_in_via(&csr, &via_pseudonyms) {
+            let filtered = match (&csr.context_source_alias, request.incoming_via) {
+                (Some(alias), Some(via)) => via.has_alias(alias),
+                _ => false,
+            };
+            if filtered {
                 continue;
             }
             if request.operation.matches(&csr) {
@@ -603,11 +587,13 @@ impl ContextSourceForwardingService {
         };
 
         let csrs = self.csr_repo.find_matching(expanded_type.as_deref(), None).await?;
-        let via_pseudonyms = request.incoming_via.map(parse_via_pseudonyms).unwrap_or_default();
         let matching_csrs: Vec<_> = csrs
             .into_iter()
             .filter(|csr| request.operation.matches(csr))
-            .filter(|csr| !is_csr_in_via(csr, &via_pseudonyms))
+            .filter(|csr| match (&csr.context_source_alias, request.incoming_via) {
+                (Some(alias), Some(via)) => !via.has_alias(alias),
+                _ => true,
+            })
             .collect();
 
         if matching_csrs.is_empty() {
@@ -666,7 +652,7 @@ impl ContextSourceForwardingService {
         body: Option<&[u8]>,
         context_url: Option<&str>,
         tenant: Option<&str>,
-        incoming_via: Option<&str>,
+        incoming_via: Option<&Via>,
     ) -> Result<(u16, Option<Value>), AndromedaError> {
         debug!("CS forwarding {} {}", method, url);
 
@@ -689,7 +675,7 @@ impl ContextSourceForwardingService {
     }
 
     /// Make a GET request to a context source endpoint.
-    async fn forward_get(&self, url: &str, context_url: Option<&str>, tenant: Option<&str>, incoming_via: Option<&str>) -> ForwardGetOutcome {
+    async fn forward_get(&self, url: &str, context_url: Option<&str>, tenant: Option<&str>, incoming_via: Option<&Via>) -> ForwardGetOutcome {
         debug!("CS forwarding GET {}", url);
 
         let request = self
@@ -734,7 +720,7 @@ impl ContextSourceForwardingService {
         url: &str,
         context_url: Option<&str>,
         tenant: Option<&str>,
-        incoming_via: Option<&str>,
+        incoming_via: Option<&Via>,
     ) -> reqwest::RequestBuilder {
         let mut request = self.http_client.request(method, url).header("Connection", "close");
 
@@ -746,16 +732,20 @@ impl ContextSourceForwardingService {
         }
 
         if let Some(tenant) = tenant {
-            request = request.header("NGSILD-Tenant", tenant);
+            let tenant_header = NgsiLdTenant::new(tenant);
+            request = request.header(NgsiLdTenant::name().as_str(), tenant_header.as_str());
         }
 
-        // Append our identity to the Via header chain (§6.3.18)
-        let our_via = format!("1.1 {}", self.source_identity);
-        let via_value = match incoming_via {
-            Some(existing) => format!("{}, {}", existing, our_via),
-            None => our_via,
+        // Append our identity to the Via header chain (section 6.3.18)
+        let new_via = match incoming_via {
+            Some(existing) => existing.clone().append("1.1", &self.source_identity), // clone: need owned Via to append our identity
+            None => Via::with_entry("1.1", &self.source_identity),
         };
-        request = request.header("Via", via_value);
+        let mut via_values = Vec::new();
+        headers::Header::encode(&new_via, &mut via_values);
+        if let Some(val) = via_values.into_iter().next() {
+            request = request.header("via", val);
+        }
 
         request
     }
@@ -769,7 +759,7 @@ impl ContextSourceForwardingService {
         path: &str,
         query_string: &str,
         context_url: Option<&str>,
-        incoming_via: Option<&str>,
+        incoming_via: Option<&Via>,
     ) -> Vec<ForwardedDiscoveryResult> {
         if self.is_loop_detected(incoming_via) {
             debug!("Loop detected in Via header chain, skipping discovery forwarding");
@@ -788,10 +778,13 @@ impl ContextSourceForwardingService {
             return Vec::new();
         }
 
-        let via_pseudonyms = incoming_via.map(parse_via_pseudonyms).unwrap_or_default();
         let mut results = Vec::new();
         for csr in csrs {
-            if is_csr_in_via(&csr, &via_pseudonyms) {
+            let filtered = match (&csr.context_source_alias, incoming_via) {
+                (Some(alias), Some(via)) => via.has_alias(alias),
+                _ => false,
+            };
+            if filtered {
                 continue;
             }
             let url = build_discovery_url(&csr.endpoint, path, query_string);
@@ -868,11 +861,13 @@ impl ContextSourceForwardingService {
 
         let first_id = entity_ids.and_then(|ids| ids.first().map(|s| s.as_str()));
         let csrs = self.csr_repo.find_matching(expanded_type.as_deref(), first_id).await?;
-        let via_pseudonyms = incoming_via.map(parse_via_pseudonyms).unwrap_or_default();
         let matching_csrs: Vec<_> = csrs
             .into_iter()
             .filter(|csr| operation.matches(csr))
-            .filter(|csr| !is_csr_in_via(csr, &via_pseudonyms))
+            .filter(|csr| match (&csr.context_source_alias, incoming_via) {
+                (Some(alias), Some(via)) => !via.has_alias(alias),
+                _ => true,
+            })
             .collect();
 
         if matching_csrs.is_empty() {
@@ -960,7 +955,7 @@ impl ContextSourceForwardingService {
         query_string: &str,
         context_url: Option<&str>,
         operation: ForwardingOperation,
-        incoming_via: Option<&str>,
+        incoming_via: Option<&Via>,
     ) -> Result<Vec<ForwardedEntities>, AndromedaError> {
         if self.is_loop_detected(incoming_via) {
             debug!("Loop detected in Via header chain, skipping temporal retrieve forwarding");
@@ -968,11 +963,13 @@ impl ContextSourceForwardingService {
         }
 
         let csrs = self.csr_repo.find_matching(None, Some(entity_id)).await?;
-        let via_pseudonyms = incoming_via.map(parse_via_pseudonyms).unwrap_or_default();
         let matching_csrs: Vec<_> = csrs
             .into_iter()
             .filter(|csr| operation.matches(csr))
-            .filter(|csr| !is_csr_in_via(csr, &via_pseudonyms))
+            .filter(|csr| match (&csr.context_source_alias, incoming_via) {
+                (Some(alias), Some(via)) => !via.has_alias(alias),
+                _ => true,
+            })
             .collect();
 
         if matching_csrs.is_empty() {
@@ -1045,8 +1042,8 @@ impl ContextSourceForwardingService {
     }
 
     /// Check whether forwarding would create a loop based on the Via header chain.
-    pub fn is_loop_detected(&self, incoming_via: Option<&str>) -> bool {
-        is_via_loop(incoming_via, &self.source_identity)
+    pub fn is_loop_detected(&self, incoming_via: Option<&Via>) -> bool {
+        incoming_via.is_some_and(|v| v.contains_pseudonym(&self.source_identity))
     }
 
     /// Send a request and return the status and raw bytes.
@@ -1669,185 +1666,12 @@ pub fn merge_temporal_retrieve_results(local_entity: Option<Value>, remote_resul
     result
 }
 
-/// Parse pseudonyms from an RFC 7230 Via header value.
-///
-/// Each comma-separated entry has the form `"1.1 pseudonym"` or
-/// `"HTTP/1.1 pseudonym (optional comment)"`. Returns the `received-by`
-/// field (pseudonym) from each entry.
-fn parse_via_pseudonyms(via: &str) -> Vec<&str> {
-    via.split(',')
-        .filter_map(|entry| {
-            let trimmed = entry.trim();
-            let rest = trimmed.split_once(char::is_whitespace)?.1.trim();
-            let pseudonym = rest.split_once(char::is_whitespace).map_or(rest, |(p, _)| p);
-            if pseudonym.is_empty() { None } else { Some(pseudonym) }
-        })
-        .collect()
-}
-
-/// Check if the incoming Via header chain already contains our identity (loop detection).
-///
-/// Per spec clause 6.3.18: compares our `source_identity` against each discrete
-/// pseudonym in the Via header, not a substring match.
-pub fn is_via_loop(incoming_via: Option<&str>, source_identity: &str) -> bool {
-    match incoming_via {
-        Some(via) => parse_via_pseudonyms(via).contains(&source_identity),
-        None => false,
-    }
-}
-
-/// Check if a CSR's contextSourceAlias appears in the parsed Via pseudonym list.
-///
-/// Per spec clause 5.12: no registration shall match if its contextSourceAlias
-/// is found in the listing of previously encountered Context Sources.
-fn is_csr_in_via(csr: &ContextSourceRegistration, via_pseudonyms: &[&str]) -> bool {
-    match &csr.context_source_alias {
-        Some(alias) => via_pseudonyms.contains(&alias.as_str()),
-        None => false,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use crate::{
         domain::registration::ForwardingMode,
-        service::context_source_forwarding::{
-            ForwardedEntities,
-            NgsiLdWarning,
-            collect_warnings,
-            is_csr_in_via,
-            is_via_loop,
-            merge_query_results,
-            parse_via_pseudonyms,
-        },
+        service::context_source_forwarding::{ForwardedEntities, NgsiLdWarning, collect_warnings, merge_query_results},
     };
-
-    const ID: &str = "urn:ngsi-ld:ContextSourceIdentity:broker1";
-
-    #[test]
-    fn via_loop_no_header() {
-        assert!(!is_via_loop(None, ID));
-    }
-
-    #[test]
-    fn via_loop_not_in_chain() {
-        assert!(!is_via_loop(Some("1.1 urn:ngsi-ld:ContextSourceIdentity:broker2"), ID));
-    }
-
-    #[test]
-    fn via_loop_detected_single() {
-        assert!(is_via_loop(Some("1.1 urn:ngsi-ld:ContextSourceIdentity:broker1"), ID));
-    }
-
-    #[test]
-    fn via_loop_detected_multi_hop() {
-        assert!(is_via_loop(
-            Some("1.1 urn:ngsi-ld:ContextSourceIdentity:broker2, 1.1 urn:ngsi-ld:ContextSourceIdentity:broker1"),
-            ID,
-        ));
-    }
-
-    #[test]
-    fn via_loop_no_false_positive_on_prefix() {
-        assert!(!is_via_loop(Some("1.1 broker10"), "broker1"));
-    }
-
-    #[test]
-    fn via_loop_no_false_positive_on_suffix() {
-        assert!(!is_via_loop(Some("1.1 my-broker1"), "broker1"));
-    }
-
-    #[test]
-    fn parse_via_single_entry() {
-        assert_eq!(parse_via_pseudonyms("1.1 broker-a"), vec!["broker-a"]);
-    }
-
-    #[test]
-    fn parse_via_multiple_entries() {
-        assert_eq!(parse_via_pseudonyms("1.1 broker-a, 1.1 broker-b"), vec!["broker-a", "broker-b"]);
-    }
-
-    #[test]
-    fn parse_via_with_protocol_name() {
-        assert_eq!(parse_via_pseudonyms("HTTP/1.1 proxy"), vec!["proxy"]);
-    }
-
-    #[test]
-    fn parse_via_with_comment() {
-        assert_eq!(parse_via_pseudonyms("1.1 proxy (Apache)"), vec!["proxy"]);
-    }
-
-    #[test]
-    fn parse_via_empty() {
-        assert!(parse_via_pseudonyms("").is_empty());
-    }
-
-    #[test]
-    fn csr_without_alias_never_filtered() {
-        let csr = make_csr(None);
-        assert!(!is_csr_in_via(&csr, &["broker-a"]));
-    }
-
-    #[test]
-    fn csr_alias_in_via_is_filtered() {
-        let csr = make_csr(Some("broker-a"));
-        assert!(is_csr_in_via(&csr, &["broker-a", "broker-b"]));
-    }
-
-    #[test]
-    fn csr_alias_not_in_via_passes() {
-        let csr = make_csr(Some("broker-c"));
-        assert!(!is_csr_in_via(&csr, &["broker-a", "broker-b"]));
-    }
-
-    #[test]
-    fn csr_alias_no_substring_match() {
-        let csr = make_csr(Some("broker1"));
-        assert!(!is_csr_in_via(&csr, &["broker10"]));
-    }
-
-    /// Helper to build a minimal `ContextSourceRegistration` for tests.
-    fn make_csr(alias: Option<&str>) -> crate::domain::registration::ContextSourceRegistration {
-        use crate::domain::registration::{CsrStatus, RegistrationInfo};
-        use chrono::Utc;
-
-        crate::domain::registration::ContextSourceRegistration {
-            id: "urn:ngsi-ld:ContextSourceRegistration:test".to_string(),
-            type_: "ContextSourceRegistration".to_string(),
-            registration_name: None,
-            description: None,
-            information: vec![RegistrationInfo {
-                entities: None,
-                property_names: None,
-                relationship_names: None,
-            }],
-            tenant: None,
-            observation_interval: None,
-            management_interval: None,
-            location: None,
-            observation_space: None,
-            operation_space: None,
-            expires_at: None,
-            endpoint: "http://localhost:1234".to_string(),
-            accept: None,
-            mode: None,
-            operations: None,
-            scope: None,
-            refresh_rate: None,
-            management: None,
-            context_source_info: None,
-            jsonld_context: None,
-            context_source_alias: alias.map(|s| s.to_string()),
-            status: CsrStatus::Ok,
-            times_sent: None,
-            times_failed: None,
-            last_success: None,
-            last_failure: None,
-            created_at: Utc::now(),
-            modified_at: Utc::now(),
-            additional_properties: None,
-        }
-    }
 
     #[test]
     fn warning_header_format_miscellaneous() {

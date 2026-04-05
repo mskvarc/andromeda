@@ -1,10 +1,11 @@
-use crate::api::extractor::tenant::{NGSILD_TENANT_HEADER, TenantHeader};
+use crate::{api::extractor::tenant::TenantHeader, header::NgsiLdTenant};
 use axum::{
     body::Body,
     extract::FromRequestParts,
-    http::{HeaderValue, Request, Response, request::Parts},
+    http::{Request, Response, request::Parts},
     middleware::Next,
 };
+use headers::{Header, HeaderMapExt};
 
 use crate::{
     api::state::{AndromedaState, AppState},
@@ -50,14 +51,15 @@ impl FromRequestParts<AppState> for TenantStateOrCreate {
 }
 
 pub async fn echo_tenant_header_middleware(request: Request<Body>, next: Next) -> Response<Body> {
-    let tenant = request.headers().get(NGSILD_TENANT_HEADER).and_then(|v| v.to_str().ok()).map(str::to_string);
+    let tenant: Option<NgsiLdTenant> = {
+        let mut values = request.headers().get_all(NgsiLdTenant::name()).iter();
+        headers::Header::decode(&mut values).ok()
+    };
 
     let mut response = next.run(request).await;
 
-    if let Some(value) = tenant
-        && let Ok(header) = HeaderValue::from_str(&value)
-    {
-        response.headers_mut().insert(NGSILD_TENANT_HEADER, header);
+    if let Some(tenant) = tenant {
+        response.headers_mut().typed_insert(tenant);
     }
 
     response

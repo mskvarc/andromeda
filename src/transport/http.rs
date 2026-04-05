@@ -10,9 +10,10 @@ use async_trait::async_trait;
 use tracing::{debug, warn};
 
 use crate::{
-    header::{jsonld_context_link, link_header_value},
+    header::{NgsiLdTenant, jsonld_context_link, link_header_value},
     transport::types::{self, DeliveryOutcome, DeliveryRequest, NotificationTransport, TransportError},
 };
+use headers::Header;
 
 /// Configuration for the HTTP notification transport.
 #[derive(Debug, Clone)]
@@ -111,7 +112,7 @@ impl NotificationTransport for HttpTransport {
         }
 
         if let Some(ref tenant) = req.tenant {
-            request = request.header("NGSILD-Tenant", tenant.as_str());
+            request = request.header(NgsiLdTenant::name().as_str(), tenant.as_str());
         }
 
         for (key, value) in &req.receiver_info {

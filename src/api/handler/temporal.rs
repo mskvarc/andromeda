@@ -112,8 +112,7 @@ pub async fn get(
     let id = parse_entity_id(&id, &uri)?;
     let context: ContextSpec = context.into_inner();
     let snapshot = protocol.snapshot;
-    let via_owned = protocol.incoming_via;
-    let incoming_via = via_owned.as_deref();
+    let incoming_via = protocol.incoming_via;
     let entity_map_header = protocol.entity_map;
 
     // Snapshot scoping (ETSI GS CIM 009 clause 5.5.15, 6.3.22): if NGSILD-Snapshot header
@@ -159,7 +158,7 @@ pub async fn get(
     // EntityMap scoping (spec 5.7.3.4): if NGSILD-EntityMap header is present,
     // only entities in the map are accessible. Return 404 if not in the map.
     if let Some(ref map_id) = entity_map_header {
-        let map = state.entity_maps.retrieve(map_id).await.map_err(|e| e.with_instance(uri.clone()))?;
+        let map = state.entity_maps.retrieve(map_id.as_str()).await.map_err(|e| e.with_instance(uri.clone()))?;
         if !map.entity_ids.contains(&id.to_string()) {
             return Err(ApiError::from_error(AndromedaError::not_found(id.to_string()), uri.clone()));
         }
@@ -182,7 +181,7 @@ pub async fn get(
                 query_string,
                 context_url,
                 ForwardingOperation::RetrieveTemporalEntity,
-                incoming_via,
+                incoming_via.as_ref(),
             )
             .await
             .unwrap_or_default();
@@ -229,8 +228,8 @@ pub async fn get(
             .with_context(context)
             .with_format(accept.format())
             .with_warnings(warnings);
-        if let Some(map_uri) = entity_map_header {
-            builder = builder.with_entity_map_uri(map_uri);
+        if let Some(map_header) = entity_map_header {
+            builder = builder.with_entity_map_uri(map_header.into_inner());
         }
         let mut response = builder.into_response();
         if let Some(cr) = content_range
@@ -244,8 +243,8 @@ pub async fn get(
             .with_context(context)
             .with_format(accept.format())
             .with_warnings(warnings);
-        if let Some(map_uri) = entity_map_header {
-            builder = builder.with_entity_map_uri(map_uri);
+        if let Some(map_header) = entity_map_header {
+            builder = builder.with_entity_map_uri(map_header.into_inner());
         }
         let mut response = builder.into_response();
         if let Some(cr) = content_range
@@ -269,8 +268,7 @@ pub async fn query(
     let service = &state.temporal;
     let context: ContextSpec = context.into_inner();
     let snapshot = protocol.snapshot;
-    let via_owned = protocol.incoming_via;
-    let incoming_via = via_owned.as_deref();
+    let incoming_via = protocol.incoming_via;
     let entity_map_header = protocol.entity_map;
     let options = params.options.as_deref().unwrap_or("");
     let key_values = options.contains("keyValues") || options.contains("simplified");
@@ -325,7 +323,7 @@ pub async fn query(
     // EntityMap scoping (spec 5.5.14): if NGSILD-EntityMap header is present,
     // scope the query to only the entity IDs in the map.
     if let Some(ref map_id) = entity_map_header {
-        let map = state.entity_maps.retrieve(map_id).await.map_err(|e| e.with_instance(uri.clone()))?;
+        let map = state.entity_maps.retrieve(map_id.as_str()).await.map_err(|e| e.with_instance(uri.clone()))?;
         let ids_csv = map.entity_ids.join(",");
         if let Some(ref existing_ids) = params.id {
             // Intersect: keep only IDs that are in both the query and the map
@@ -371,7 +369,7 @@ pub async fn query(
                 context_url,
                 context: &context,
                 operation: ForwardingOperation::QueryTemporalEntity,
-                incoming_via,
+                incoming_via: incoming_via.as_ref(),
             })
             .await
             .unwrap_or_default();
@@ -400,7 +398,7 @@ pub async fn query(
             .map_err(|e| e.with_instance(uri.clone()))?;
         Some(map.id)
     } else if entity_map_header.is_some() {
-        entity_map_header
+        entity_map_header.map(|h| h.into_inner())
     } else {
         None
     };

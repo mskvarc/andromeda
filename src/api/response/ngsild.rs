@@ -6,9 +6,19 @@
 
 use crate::{
     api::{extractor::prefer::PreferHeader, response::version_compat::adapt_payload_for_version},
-    header::{GeoJsonBodyPreference, PreferenceApplied, ResponseFormat, insert_jsonld_contexts},
+    header::{
+        GeoJsonBodyPreference,
+        NgsiLdEntityMap,
+        NgsiLdResultsCount,
+        NgsiLdSnapshot,
+        NgsiLdWarning,
+        NgsiLdWarningHeader,
+        PreferenceApplied,
+        ResponseFormat,
+        insert_jsonld_contexts,
+    },
     jsonld::ContextSpec,
-    service::{context_source_forwarding::NgsiLdWarning, entity::decode_percent_encoded_uris},
+    service::entity::decode_percent_encoded_uris,
 };
 use axum::{
     Json,
@@ -155,22 +165,16 @@ impl<T: Serialize> IntoResponse for NgsiLdResponse<T> {
             headers.insert("Location", val);
         }
 
-        if let Some(ref uri) = self.entity_map_uri
-            && let Ok(val) = HeaderValue::from_str(uri)
-        {
-            headers.insert("NGSILD-EntityMap", val);
+        if let Some(ref uri) = self.entity_map_uri {
+            headers.typed_insert(NgsiLdEntityMap::new(uri));
         }
 
-        if let Some(ref snap_uri) = self.snapshot_uri
-            && let Ok(val) = HeaderValue::from_str(snap_uri)
-        {
-            headers.insert("NGSILD-Snapshot", val);
+        if let Some(ref snap_uri) = self.snapshot_uri {
+            headers.typed_insert(NgsiLdSnapshot::new(snap_uri));
         }
 
-        for warning in &self.warnings {
-            if let Ok(val) = HeaderValue::from_str(&warning.header_value()) {
-                headers.append("NGSILD-Warning", val);
-            }
+        if !self.warnings.is_empty() {
+            headers.typed_insert(NgsiLdWarningHeader::new(self.warnings));
         }
 
         match self.format {
@@ -347,10 +351,8 @@ impl<T: Serialize> IntoResponse for NgsiLdCollectionResponse<T> {
         }
 
         // Add NGSILD-Results-Count if provided
-        if let Some(count) = self.total_count
-            && let Ok(val) = HeaderValue::from_str(&count.to_string())
-        {
-            headers.insert("NGSILD-Results-Count", val);
+        if let Some(count) = self.total_count {
+            headers.typed_insert(NgsiLdResultsCount::new(count));
         }
 
         // Add Content-Range if provided (temporal pagination)
@@ -361,22 +363,16 @@ impl<T: Serialize> IntoResponse for NgsiLdCollectionResponse<T> {
         }
 
         // Add NGSILD-EntityMap header if provided
-        if let Some(ref uri) = self.entity_map_uri
-            && let Ok(val) = HeaderValue::from_str(uri)
-        {
-            headers.insert("NGSILD-EntityMap", val);
+        if let Some(ref uri) = self.entity_map_uri {
+            headers.typed_insert(NgsiLdEntityMap::new(uri));
         }
 
-        if let Some(ref snap_uri) = self.snapshot_uri
-            && let Ok(val) = HeaderValue::from_str(snap_uri)
-        {
-            headers.insert("NGSILD-Snapshot", val);
+        if let Some(ref snap_uri) = self.snapshot_uri {
+            headers.typed_insert(NgsiLdSnapshot::new(snap_uri));
         }
 
-        for warning in &self.warnings {
-            if let Ok(val) = HeaderValue::from_str(&warning.header_value()) {
-                headers.append("NGSILD-Warning", val);
-            }
+        if !self.warnings.is_empty() {
+            headers.typed_insert(NgsiLdWarningHeader::new(self.warnings));
         }
 
         // Add Link header for application/json

@@ -6,6 +6,7 @@
 
 use crate::{
     api::extractor::{error::ExtractorRejection, language::LanguageNegotiation, prefer::PreferHeader, snapshot::SnapshotHeader},
+    header::{NgsiLdEntityMap, Via},
     query::lang::LanguageFilter,
 };
 use axum::{extract::FromRequestParts, http::request::Parts};
@@ -22,9 +23,9 @@ pub struct NgsiLdProtocolHeaders {
     /// Optional snapshot identifier from `NGSILD-Snapshot` header.
     pub snapshot: SnapshotHeader,
     /// Incoming `Via` header value for forwarding loop detection (clause 6.3.18).
-    pub incoming_via: Option<String>,
+    pub incoming_via: Option<Via>,
     /// Optional entity map identifier from `NGSILD-EntityMap` header (clause 5.5.9.3).
-    pub entity_map: Option<String>,
+    pub entity_map: Option<NgsiLdEntityMap>,
 }
 
 impl<S> FromRequestParts<S> for NgsiLdProtocolHeaders
@@ -41,8 +42,14 @@ where
             Err(never) => match never {},
         };
         let snapshot = SnapshotHeader::from_request_parts(parts, state).await?;
-        let incoming_via = parts.headers.get("via").and_then(|v| v.to_str().ok()).map(String::from);
-        let entity_map = parts.headers.get("NGSILD-EntityMap").and_then(|v| v.to_str().ok()).map(String::from);
+        let incoming_via = {
+            let mut via_values = parts.headers.get_all("via").iter();
+            headers::Header::decode(&mut via_values).ok()
+        };
+        let entity_map: Option<NgsiLdEntityMap> = {
+            let mut values = parts.headers.get_all("ngsild-entitymap").iter();
+            headers::Header::decode(&mut values).ok()
+        };
 
         Ok(NgsiLdProtocolHeaders {
             language_filter,

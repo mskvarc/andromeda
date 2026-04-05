@@ -8,6 +8,7 @@ use crate::{
         tenant::TenantState,
     },
     error::api::ApiError,
+    header::Via,
     query::temporal::TemporalQueryParameters,
     service::context_source_forwarding::{ForwardingOperation, collect_warnings, merge_temporal_query_results},
 };
@@ -146,7 +147,10 @@ pub async fn query(
     let (entities, forwarding_warnings) = if is_local {
         (local_entities, Vec::new())
     } else {
-        let incoming_via = headers.get("via").and_then(|v| v.to_str().ok());
+        let incoming_via: Option<Via> = {
+            let mut via_values = headers.get_all("via").iter();
+            headers::Header::decode(&mut via_values).ok()
+        };
         let context_url = context.link_contexts().first().map(|s| s.as_str());
         let entity_type = params.entity_type.as_deref();
         let entity_ids: Option<Vec<String>> = params.id.as_deref().map(|s| s.split(',').map(|id| id.trim().to_string()).collect());
@@ -161,7 +165,7 @@ pub async fn query(
                 context_url,
                 context: &context,
                 operation: ForwardingOperation::QueryTemporalEntity,
-                incoming_via,
+                incoming_via: incoming_via.as_ref(),
             })
             .await
             .unwrap_or_default();

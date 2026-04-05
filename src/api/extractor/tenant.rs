@@ -1,7 +1,6 @@
-use crate::api::extractor::error::ExtractorRejection;
+use crate::{api::extractor::error::ExtractorRejection, header::NgsiLdTenant};
 use axum::{extract::FromRequestParts, http::request::Parts};
-
-pub const NGSILD_TENANT_HEADER: &str = "NGSILD-Tenant";
+use headers::HeaderMapExt;
 
 #[derive(Clone, Debug, Default)]
 pub struct TenantHeader(pub Option<String>);
@@ -20,19 +19,11 @@ where
 
     async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
         let uri = parts.uri.clone();
-        let Some(raw) = parts.headers.get(NGSILD_TENANT_HEADER) else {
-            return Ok(Self(None));
-        };
 
-        let value = raw
-            .to_str()
-            .map_err(|_| ExtractorRejection::bad_request_data("Invalid NGSILD-Tenant header", uri.clone()))?
-            .trim();
-
-        if value.is_empty() {
-            return Err(ExtractorRejection::bad_request_data("NGSILD-Tenant header must not be empty", uri));
+        match parts.headers.typed_try_get::<NgsiLdTenant>() {
+            Ok(Some(tenant)) => Ok(Self(Some(tenant.into_inner()))),
+            Ok(None) => Ok(Self(None)),
+            Err(_) => Err(ExtractorRejection::bad_request_data("NGSILD-Tenant header must not be empty", uri)),
         }
-
-        Ok(Self(Some(value.to_string())))
     }
 }

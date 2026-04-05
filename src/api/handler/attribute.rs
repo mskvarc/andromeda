@@ -5,6 +5,7 @@ use crate::{
         tenant::TenantState,
     },
     error::api::ApiError,
+    header::Via,
     jsonld::ContextSpec,
     service::context_source_forwarding::{collect_discovery_warnings, merge_attribute_info_results, merge_attributes_results},
 };
@@ -63,12 +64,15 @@ pub async fn list(
     let (result, warnings) = if is_local {
         (local_result, Vec::new())
     } else {
-        let incoming_via = headers.get("via").and_then(|v| v.to_str().ok());
+        let incoming_via: Option<Via> = {
+            let mut via_values = headers.get_all("via").iter();
+            headers::Header::decode(&mut via_values).ok()
+        };
         let context_url = context.link_contexts().first().map(|s| s.as_str());
         let query_string = uri.query().unwrap_or("");
         let forwarded = state
             .forwarding
-            .forward_discovery_query("/attributes", query_string, context_url, incoming_via)
+            .forward_discovery_query("/attributes", query_string, context_url, incoming_via.as_ref())
             .await;
         let warnings = collect_discovery_warnings(&forwarded);
         let merged = merge_attributes_results(local_result, forwarded, params.details);
@@ -100,11 +104,17 @@ pub async fn get(
     let (result, warnings) = if is_local {
         (local_result, Vec::new())
     } else {
-        let incoming_via = headers.get("via").and_then(|v| v.to_str().ok());
+        let incoming_via: Option<Via> = {
+            let mut via_values = headers.get_all("via").iter();
+            headers::Header::decode(&mut via_values).ok()
+        };
         let context_url = context.link_contexts().first().map(|s| s.as_str());
         let query_string = uri.query().unwrap_or("");
         let path = format!("/attributes/{}", attr_id);
-        let forwarded = state.forwarding.forward_discovery_query(&path, query_string, context_url, incoming_via).await;
+        let forwarded = state
+            .forwarding
+            .forward_discovery_query(&path, query_string, context_url, incoming_via.as_ref())
+            .await;
         let warnings = collect_discovery_warnings(&forwarded);
         let merged = merge_attribute_info_results(local_result, forwarded);
         (merged, warnings)
