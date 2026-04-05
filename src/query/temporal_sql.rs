@@ -10,7 +10,7 @@ use crate::{
 };
 use std::borrow::Cow;
 
-fn time_column_expr_stage1(timeproperty: TimeProp) -> &'static str {
+const fn time_column_expr_stage1(timeproperty: TimeProp) -> &'static str {
     match timeproperty {
         TimeProp::Observed => "COALESCE(ah.observed_at, ah.time)",
         TimeProp::Created | TimeProp::Modified | TimeProp::Deleted => "ah.time",
@@ -146,7 +146,7 @@ pub struct TemporalStage2Result<'a> {
 }
 
 /// Time column expression based on timeproperty.
-fn time_column_expr(timeproperty: TimeProp) -> &'static str {
+const fn time_column_expr(timeproperty: TimeProp) -> &'static str {
     match timeproperty {
         TimeProp::Observed => "COALESCE(ah.observed_at, ah.time)",
         TimeProp::Created | TimeProp::Modified | TimeProp::Deleted => "ah.time",

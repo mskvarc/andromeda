@@ -77,7 +77,7 @@ impl LanguagePreference {
     }
 
     /// Return the requested language range.
-    pub fn range(&self) -> &LanguageRange {
+    pub const fn range(&self) -> &LanguageRange {
         &self.range
     }
 }
@@ -145,7 +145,7 @@ impl QualityValue {
         Ok(QualityValue((whole * 1000) + fractional))
     }
 
-    fn as_millis(self) -> u16 {
+    const fn as_millis(self) -> u16 {
         self.0
     }
 }

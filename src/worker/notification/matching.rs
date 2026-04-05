@@ -400,7 +400,7 @@ fn scope_matches(pattern: &str, scope: &str) -> bool {
         }
     } else if pattern.contains("/+") {
         let regex_pattern = format!("^{}$", pattern.replace("/+", "/[^/]+"));
-        Regex::new(&regex_pattern).map(|re| re.is_match(scope)).unwrap_or(false)
+        Regex::new(&regex_pattern).is_ok_and(|re| re.is_match(scope))
     } else {
         pattern == scope
     }

@@ -147,7 +147,7 @@ fn eval_cmp_scalar_inner(entity_val: &Value, op: CmpOp, scalar: &Scalar) -> Opti
     }
 }
 
-fn cmp_op(ord: std::cmp::Ordering, op: CmpOp) -> bool {
+const fn cmp_op(ord: std::cmp::Ordering, op: CmpOp) -> bool {
     match op {
         CmpOp::Equal => ord.is_eq(),
         CmpOp::Unequal => !ord.is_eq(),

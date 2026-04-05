@@ -80,7 +80,7 @@ impl<T> NgsiLdResponse<T> {
 
     /// Create a response with custom status code.
     #[allow(dead_code)]
-    pub fn with_status(mut self, status: StatusCode) -> Self {
+    pub const fn with_status(mut self, status: StatusCode) -> Self {
         self.status = status;
         self
     }
@@ -92,7 +92,7 @@ impl<T> NgsiLdResponse<T> {
     }
 
     /// Set the response format (from Accept header).
-    pub fn with_format(mut self, format: ResponseFormat) -> Self {
+    pub const fn with_format(mut self, format: ResponseFormat) -> Self {
         self.format = format;
         self
     }
@@ -122,7 +122,7 @@ impl<T> NgsiLdResponse<T> {
     }
 
     /// Set the Prefer header preferences (clause 6.3.6).
-    pub fn with_prefer(mut self, prefer: PreferHeader) -> Self {
+    pub const fn with_prefer(mut self, prefer: PreferHeader) -> Self {
         self.prefer = prefer;
         self
     }
@@ -136,7 +136,7 @@ impl<T> NgsiLdResponse<T> {
 
 impl<T: Serialize> IntoResponse for NgsiLdResponse<T> {
     fn into_response(self) -> Response {
-        let context_spec = self.context.map(|c| c.for_presentation()).unwrap_or_else(ContextSpec::none);
+        let context_spec = self.context.map_or_else(ContextSpec::none, |c| c.for_presentation());
         let context_value = context_spec.to_context_value();
 
         // Determine effective status: 203 if version preference is present
@@ -206,7 +206,7 @@ impl<T: Serialize> IntoResponse for NgsiLdResponse<T> {
                         if let Some(target) = self.prefer.requested_version {
                             adapt_payload_for_version(&mut value, target);
                         }
-                        if let (Some(obj), Some(context_value)) = (value.as_object_mut(), context_value.clone()) {
+                        if let (Some(obj), Some(context_value)) = (value.as_object_mut(), context_value) {
                             obj.insert("@context".to_string(), format_context(context_value));
                         }
                         (status, headers, Json(value)).into_response()
@@ -279,20 +279,20 @@ impl<T> NgsiLdCollectionResponse<T> {
     }
 
     /// Set the response format (from Accept header).
-    pub fn with_format(mut self, format: ResponseFormat) -> Self {
+    pub const fn with_format(mut self, format: ResponseFormat) -> Self {
         self.format = format;
         self
     }
 
     /// Set the total count for pagination (NGSILD-Results-Count header).
     #[allow(dead_code)]
-    pub fn with_total_count(mut self, count: usize) -> Self {
+    pub const fn with_total_count(mut self, count: usize) -> Self {
         self.total_count = Some(count);
         self
     }
 
     /// Override the HTTP status code.
-    pub fn with_status(mut self, status: StatusCode) -> Self {
+    pub const fn with_status(mut self, status: StatusCode) -> Self {
         self.status = status;
         self
     }
@@ -322,7 +322,7 @@ impl<T> NgsiLdCollectionResponse<T> {
     }
 
     /// Set the Prefer header preferences (clause 6.3.6).
-    pub fn with_prefer(mut self, prefer: PreferHeader) -> Self {
+    pub const fn with_prefer(mut self, prefer: PreferHeader) -> Self {
         self.prefer = prefer;
         self
     }
@@ -336,7 +336,7 @@ impl<T> NgsiLdCollectionResponse<T> {
 
 impl<T: Serialize> IntoResponse for NgsiLdCollectionResponse<T> {
     fn into_response(self) -> Response {
-        let context_spec = self.context.map(|c| c.for_presentation()).unwrap_or_else(ContextSpec::none);
+        let context_spec = self.context.map_or_else(ContextSpec::none, |c| c.for_presentation());
         let context_value = context_spec.to_context_value();
 
         // Determine effective status: 203 if version preference is present

@@ -182,7 +182,7 @@ pub async fn create(
 
     if has_exclusive || has_redirect {
         // Exclusive/redirect: don't create locally, return CS result
-        let first_status = forwarded.first().map(|r| r.status).unwrap_or(201);
+        let first_status = forwarded.first().map_or(201, |r| r.status);
         let status = StatusCode::from_u16(first_status).unwrap_or(StatusCode::CREATED);
         if status == StatusCode::CREATED {
             return Ok((status, [("Location", format!("/ngsi-ld/v1/entities/{}", entity_id))]).into_response());
@@ -196,9 +196,9 @@ pub async fn create(
         let local_ok = local_result.is_ok();
         let local_error = local_result.err();
 
-        let remote_errors: Vec<_> = forwarded.iter().filter(|r| r.status >= 400).collect();
+        let has_remote_errors = forwarded.iter().any(|r| r.status >= 400);
 
-        if local_ok && remote_errors.is_empty() {
+        if local_ok && !has_remote_errors {
             return Ok((StatusCode::CREATED, [("Location", format!("/ngsi-ld/v1/entities/{}", entity_id))]).into_response());
         }
 
@@ -573,9 +573,9 @@ pub async fn delete(
         let local_ok = local_result.is_ok();
         let local_error = local_result.err();
 
-        let remote_errors: Vec<_> = forwarded.iter().filter(|r| r.status >= 400).collect();
+        let has_remote_errors = forwarded.iter().any(|r| r.status >= 400);
 
-        if local_ok && remote_errors.is_empty() {
+        if local_ok && !has_remote_errors {
             return Ok(StatusCode::NO_CONTENT.into_response());
         }
 
@@ -692,9 +692,9 @@ pub async fn query(
         let map = state.entity_maps.retrieve(map_id).await.map_err(|e| e.with_instance(uri.clone()))?;
         // Inject entity map IDs as the id filter (scopes the query to the frozen set)
         let ids_csv = map.entity_ids.join(",");
-        if query.id.is_some() {
+        if let Some(ref existing_ids) = query.id {
             // Intersect: keep only IDs that are in both the query and the map
-            let query_ids: std::collections::HashSet<String> = query.id.as_ref().unwrap().split(',').map(|s| s.trim().to_string()).collect();
+            let query_ids: std::collections::HashSet<String> = existing_ids.split(',').map(|s| s.trim().to_string()).collect();
             let map_ids: std::collections::HashSet<String> = map.entity_ids.into_iter().collect();
             let intersection: Vec<String> = query_ids.intersection(&map_ids).cloned().collect();
             query.id = Some(intersection.join(","));
@@ -1008,7 +1008,7 @@ pub async fn merge(
 
     if has_redirect {
         // Redirect: return CS status
-        let first_status = forwarded.first().map(|r| r.status).unwrap_or(204);
+        let first_status = forwarded.first().map_or(204, |r| r.status);
         return Ok(StatusCode::from_u16(first_status).unwrap_or(StatusCode::NO_CONTENT).into_response());
     }
 
@@ -1086,7 +1086,7 @@ pub async fn update(
     let has_redirect = forwarded.iter().any(|r| r.mode == ForwardingMode::Redirect);
 
     if has_redirect {
-        let first_status = forwarded.first().map(|r| r.status).unwrap_or(204);
+        let first_status = forwarded.first().map_or(204, |r| r.status);
         return Ok(StatusCode::from_u16(first_status).unwrap_or(StatusCode::NO_CONTENT).into_response());
     }
 
@@ -1123,7 +1123,7 @@ pub async fn append_attrs(
     let service = &state.entities;
     let id = parse_entity_id(&id, &uri)?;
     let context = context.merge(body_context);
-    let no_overwrite = params.options.as_deref().map(|o: &str| o.contains("noOverwrite")).unwrap_or(false);
+    let no_overwrite = params.options.as_deref().is_some_and(|o: &str| o.contains("noOverwrite"));
     let incoming_via = headers.get("via").and_then(|v| v.to_str().ok());
 
     // Forward to matching context sources
@@ -1171,7 +1171,7 @@ pub async fn append_attrs(
 
     let has_redirect = forwarded.iter().any(|r| r.mode == ForwardingMode::Redirect);
     if has_redirect {
-        let first_status = forwarded.first().map(|r| r.status).unwrap_or(204);
+        let first_status = forwarded.first().map_or(204, |r| r.status);
         return Ok(StatusCode::from_u16(first_status).unwrap_or(StatusCode::NO_CONTENT).into_response());
     }
 
@@ -1192,13 +1192,13 @@ pub async fn append_attrs(
 
     // Apply locally (ignore errors for inclusive — remote already succeeded)
     let local_result = service.append_attrs(&id, local_fragment, no_overwrite, &context).await;
-    let remote_errors: Vec<_> = forwarded.iter().filter(|r| r.status >= 400).collect();
+    let has_remote_errors = forwarded.iter().any(|r| r.status >= 400);
 
-    match (&local_result, remote_errors.is_empty()) {
-        (Ok((_, not_appended)), true) if not_appended.is_empty() => {
-            return Ok(StatusCode::NO_CONTENT.into_response());
-        }
-        _ => {}
+    if let Ok((_, not_appended)) = &local_result
+        && !has_remote_errors
+        && not_appended.is_empty()
+    {
+        return Ok(StatusCode::NO_CONTENT.into_response());
     }
 
     // 207 Multi-Status for mixed results
@@ -1274,7 +1274,7 @@ pub async fn update_attrs(
 
     let has_redirect = forwarded.iter().any(|r| r.mode == ForwardingMode::Redirect);
     if has_redirect {
-        let first_status = forwarded.first().map(|r| r.status).unwrap_or(204);
+        let first_status = forwarded.first().map_or(204, |r| r.status);
         return Ok(StatusCode::from_u16(first_status).unwrap_or(StatusCode::NO_CONTENT).into_response());
     }
 
@@ -1293,9 +1293,9 @@ pub async fn update_attrs(
     };
 
     let local_result = service.update_attrs(&id, local_fragment, &context).await;
-    let remote_errors: Vec<_> = forwarded.iter().filter(|r| r.status >= 400).collect();
+    let has_remote_errors = forwarded.iter().any(|r| r.status >= 400);
 
-    if local_result.is_ok() && remote_errors.is_empty() {
+    if local_result.is_ok() && !has_remote_errors {
         return Ok(StatusCode::NO_CONTENT.into_response());
     }
 
@@ -1376,7 +1376,7 @@ pub async fn partial_update_attr(
         if has_exclusive && let Err(e) = service.delete_attr(&id, &attr_id, None, true, &context).await {
             tracing::warn!(error = %e, entity_id = %id, attr_id = %attr_id, "Failed to delete exclusive attribute locally");
         }
-        let first_status = forwarded.first().map(|r| r.status).unwrap_or(204);
+        let first_status = forwarded.first().map_or(204, |r| r.status);
         return Ok(StatusCode::from_u16(first_status).unwrap_or(StatusCode::NO_CONTENT).into_response());
     }
 
@@ -1449,15 +1449,15 @@ pub async fn delete_attr(
     let has_redirect = forwarded.iter().any(|r| r.mode == ForwardingMode::Redirect);
     let has_exclusive = forwarded.iter().any(|r| r.mode == ForwardingMode::Exclusive);
     if has_redirect || has_exclusive {
-        let first_status = forwarded.first().map(|r| r.status).unwrap_or(204);
+        let first_status = forwarded.first().map_or(204, |r| r.status);
         return Ok(StatusCode::from_u16(first_status).unwrap_or(StatusCode::NO_CONTENT).into_response());
     }
 
     // Inclusive: delete locally and combine results
     let local_result = service.delete_attr(&id, &attr_id, params.dataset_id.as_deref(), delete_all, &context).await;
-    let remote_errors: Vec<_> = forwarded.iter().filter(|r| r.status >= 400).collect();
+    let has_remote_errors = forwarded.iter().any(|r| r.status >= 400);
 
-    if local_result.is_ok() && remote_errors.is_empty() {
+    if local_result.is_ok() && !has_remote_errors {
         return Ok(StatusCode::NO_CONTENT.into_response());
     }
 

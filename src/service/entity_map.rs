@@ -8,7 +8,7 @@ pub struct EntityMapService {
 
 impl EntityMapService {
     /// Create a new entity map service backed by the given store.
-    pub fn new(store: EntityMapStore) -> EntityMapService {
+    pub const fn new(store: EntityMapStore) -> EntityMapService {
         EntityMapService { store }
     }
 

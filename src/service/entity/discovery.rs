@@ -52,7 +52,7 @@ impl EntityDiscoveryService {
                 )
                 .await
             {
-                Ok(compacted) => compacted.get("type").and_then(|t| t.as_str()).map(String::from).unwrap_or_else(|| iri.clone()), // clone: fallback owned copy when compaction lacks type
+                Ok(compacted) => compacted.get("type").and_then(|t| t.as_str()).map_or_else(|| iri.clone(), String::from), // clone: fallback owned copy when compaction lacks type
                 Err(_) => iri.clone(), // clone: fallback owned copy when compaction fails
             };
             type_list.push(name);

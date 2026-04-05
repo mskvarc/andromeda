@@ -154,7 +154,7 @@ where
                 .headers()
                 .get_all(LINK)
                 .iter()
-                .any(|v| v.to_str().ok().map(|s| s.contains("http://www.w3.org/ns/json-ld#context")).unwrap_or(false));
+                .any(|v| v.to_str().ok().is_some_and(|s| s.contains("http://www.w3.org/ns/json-ld#context")));
             if has_context_link {
                 return Err(ExtractorRejection::bad_request_data(
                     "application/ld+json must not be combined with a Link context header",

@@ -248,7 +248,7 @@ pub async fn build_tenant_state(
     let expiration_interval = config.temporal.expiration_check_interval_secs;
     let expiration_worker = ExpirationWorker::new(
         SubscriptionRepository::new(&pool),
-        sub_change_tx.clone(),
+        sub_change_tx,
         SubscriptionChange::Deleted,
         "",
         expiration_interval,
@@ -276,7 +276,7 @@ pub async fn build_tenant_state(
 
     let csr_expiration_worker = ExpirationWorker::new(
         CsourceSubscriptionRepository::new(&pool),
-        csr_sub_change_tx.clone(),
+        csr_sub_change_tx,
         CsourceSubscriptionChange::Deleted,
         "CSR ",
         expiration_interval,
@@ -290,7 +290,7 @@ pub async fn build_tenant_state(
 
     // Attribute-level expiration worker (§4.22 attribute expiresAt)
     let attr_expiration_worker =
-        crate::worker::attribute_expiration::AttributeExpirationWorker::new(EntityRepository::new(&pool), Some(change_tx.clone()), expiration_interval);
+        crate::worker::attribute_expiration::AttributeExpirationWorker::new(EntityRepository::new(&pool), Some(change_tx), expiration_interval);
     worker_handles.push(tokio::spawn(attr_expiration_worker.run()));
 
     let snapshot_transport = transport.clone();
@@ -308,7 +308,7 @@ pub async fn build_tenant_state(
 
     let forwarding_service = Arc::new(crate::service::context_source_forwarding::ContextSourceForwardingService::new(
         &pool,
-        engine.clone(),
+        engine,
         config.info.source_identity.clone(),
     )?);
 

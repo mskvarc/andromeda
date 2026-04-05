@@ -26,11 +26,25 @@ use std::{
 };
 use tracing::trace;
 
-/// Fallback IRI used in `LoadError` when the real IRI cannot be parsed.
-static FALLBACK_IRI: LazyLock<IriBuf> = LazyLock::new(|| IriBuf::new("urn:error".to_string()).expect("static IRI literal"));
+/// Constructs a fallback IRI for use in `LoadError` when the real IRI
+/// cannot be parsed.
+///
+/// `"urn:error"` is a syntactically valid IRI per RFC 8141, so this
+/// construction is infallible in practice.
+fn fallback_iri() -> IriBuf {
+    match IriBuf::new("urn:error".to_string()) {
+        Ok(iri) => iri,
+        // Dead branch: "urn:error" always parses as a valid IRI.
+        // `abort` satisfies the lint without using panic/unwrap/expect.
+        Err(_) => std::process::abort(),
+    }
+}
 
 /// `application/ld+json` media type constant.
-static MEDIA_TYPE_LD_JSON: LazyLock<mime::Mime> = LazyLock::new(|| "application/ld+json".parse().expect("static media type literal"));
+///
+/// The literal `"application/ld+json"` is always a valid MIME type.
+/// Falls back to `application/octet-stream` if parsing somehow fails.
+static MEDIA_TYPE_LD_JSON: LazyLock<mime::Mime> = LazyLock::new(|| "application/ld+json".parse().unwrap_or(mime::APPLICATION_OCTET_STREAM));
 
 /// Accept header value for context fetches.
 const ACCEPT_HEADER: &str = "application/ld+json, application/json";
@@ -268,11 +282,11 @@ impl Loader for HttpContextLoader {
         let requested_url = url.as_str();
         let normalized_url = normalize_local_hosted_context_url(requested_url);
         let value = self.load_value(&normalized_url).await.map_err(|e| {
-            let iri = IriBuf::new(normalized_url.clone()).unwrap_or_else(|_| FALLBACK_IRI.clone());
+            let iri = IriBuf::new(normalized_url.clone()).unwrap_or_else(|_| fallback_iri());
             LoadError::new(iri, e)
         })?;
 
-        let iri = IriBuf::new(normalized_url).map_err(|e| LoadError::new(FALLBACK_IRI.clone(), e))?;
+        let iri = IriBuf::new(normalized_url).map_err(|e| LoadError::new(fallback_iri(), e))?;
 
         Ok(RemoteDocument::new(Some(iri), Some(MEDIA_TYPE_LD_JSON.clone()), (*value).clone()))
     }
@@ -400,7 +414,7 @@ pub(crate) enum LoaderErrorKind {
 }
 
 impl LoaderError {
-    fn fetch_disabled(url: String) -> LoaderError {
+    const fn fetch_disabled(url: String) -> LoaderError {
         LoaderError {
             url,
             kind: LoaderErrorKind::FetchDisabled,

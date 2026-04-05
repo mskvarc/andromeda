@@ -84,7 +84,7 @@ fn needs_quoting(s: &str) -> bool {
     s.contains('.') || s.contains(' ') || s.contains('"')
 }
 
-fn op_str(op: CmpOp) -> &'static str {
+const fn op_str(op: CmpOp) -> &'static str {
     match op {
         CmpOp::Equal => "==",
         CmpOp::Unequal => "!=",

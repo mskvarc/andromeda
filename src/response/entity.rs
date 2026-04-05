@@ -144,7 +144,7 @@ fn language_entries(language_map: &Value) -> Result<Vec<AvailableLanguage<'_>>, 
 /// Extract a language map value, preserving both strings and non-empty arrays.
 ///
 /// Per NGSI-LD spec clause 5.7.2.5, language map values can be arrays of strings.
-fn extract_language_value(value: &Value) -> Option<&Value> {
+const fn extract_language_value(value: &Value) -> Option<&Value> {
     match value {
         Value::String(_) => Some(value),
         Value::Array(items) if !items.is_empty() => Some(value),

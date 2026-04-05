@@ -20,7 +20,7 @@ pub struct ScopeQuery(String);
 
 impl ScopeQuery {
     /// Creates a new `ScopeQuery` from a raw scope query string.
-    pub fn new(s: String) -> ScopeQuery {
+    pub const fn new(s: String) -> ScopeQuery {
         ScopeQuery(s)
     }
 
@@ -38,7 +38,7 @@ pub struct IcuCollation(String);
 
 impl IcuCollation {
     /// Creates a new `IcuCollation` from a raw collation identifier string.
-    pub fn new(s: String) -> IcuCollation {
+    pub const fn new(s: String) -> IcuCollation {
         IcuCollation(s)
     }
 

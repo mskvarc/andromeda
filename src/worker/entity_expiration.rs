@@ -22,7 +22,7 @@ impl super::Worker for EntityExpirationWorker {
 }
 
 impl EntityExpirationWorker {
-    pub fn new(entity_repo: EntityRepository, change_tx: Option<broadcast::Sender<ChangeEvent>>, interval_secs: u64) -> Self {
+    pub const fn new(entity_repo: EntityRepository, change_tx: Option<broadcast::Sender<ChangeEvent>>, interval_secs: u64) -> Self {
         Self {
             entity_repo,
             change_tx,

@@ -168,9 +168,15 @@ impl NgsiLdErrorType {
     }
 
     /// Returns the HTTP [`StatusCode`] associated with this error category.
-    pub fn status_code(self) -> StatusCode {
-        // SAFETY: all values are hardcoded valid HTTP status codes.
-        StatusCode::from_u16(self.status_u16()).expect("hardcoded valid HTTP status code")
+    ///
+    /// All status codes are hardcoded valid HTTP values, so the conversion is
+    /// infallible in practice. Returns `500 Internal Server Error` in the
+    /// unreachable case of an invalid code.
+    pub const fn status_code(self) -> StatusCode {
+        match StatusCode::from_u16(self.status_u16()) {
+            Ok(code) => code,
+            Err(_) => StatusCode::INTERNAL_SERVER_ERROR,
+        }
     }
 }
 

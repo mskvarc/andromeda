@@ -50,7 +50,7 @@ pub enum TriggerReason {
 
 impl TriggerReason {
     /// Default triggers per NGSI-LD spec.
-    pub fn defaults() -> &'static [&'static str] {
+    pub const fn defaults() -> &'static [&'static str] {
         &[
             "entityCreated",
             "entityUpdated",
@@ -115,7 +115,7 @@ impl ChangeEvent {
         self
     }
 
-    pub fn with_sys_attrs(mut self, sys_attrs: Option<SysAttrsSnapshot>) -> ChangeEvent {
+    pub const fn with_sys_attrs(mut self, sys_attrs: Option<SysAttrsSnapshot>) -> ChangeEvent {
         self.sys_attrs_snapshot = sys_attrs;
         self
     }

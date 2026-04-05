@@ -381,11 +381,10 @@ fn compile_subscription(sub: &Subscription) -> Option<CompiledSubscription> {
         .map(|entities| entities.iter().filter_map(compile_selector).collect())
         .unwrap_or_default();
 
-    let triggers: Vec<String> = sub
-        .notification_trigger
-        .as_ref()
-        .map(|t| t.iter().map(|nt| nt.to_string()).collect())
-        .unwrap_or_else(|| TriggerReason::defaults().iter().map(|s| String::from(*s)).collect());
+    let triggers: Vec<String> = sub.notification_trigger.as_ref().map_or_else(
+        || TriggerReason::defaults().iter().map(|s| String::from(*s)).collect(),
+        |t| t.iter().map(|nt| nt.to_string()).collect(),
+    );
 
     let watched_attrs = sub.watched_attributes.as_ref().map(|attrs| attrs.iter().cloned().collect::<HashSet<String>>());
 

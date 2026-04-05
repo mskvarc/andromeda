@@ -1,4 +1,7 @@
-use crate::query::{error::QueryError, q::ast::*};
+use crate::query::{
+    error::QueryError,
+    q::ast::{AttrPath, CmpOp, CompareValue, Expr, Predicate, Scalar},
+};
 use serde_json::Number;
 
 /// Parses an NGSI-LD `q` filter expression string into an AST.
@@ -254,7 +257,7 @@ struct Parser<'a> {
 }
 
 impl<'a> Parser<'a> {
-    fn new(tokens: &'a [Token]) -> Self {
+    const fn new(tokens: &'a [Token]) -> Self {
         Self { tokens, pos: 0 }
     }
 

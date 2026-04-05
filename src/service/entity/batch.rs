@@ -160,8 +160,8 @@ impl EntityService {
 
         let attrs = unwrap_expanded_ref(&expanded);
 
+        let mut existing = existing;
         if no_overwrite {
-            let mut existing = existing;
             let skipped = has_overlapping_attrs(&existing, attrs);
             crate::domain::expanded::append_entity_attrs(&mut existing, attrs, true).map_err(|msg| to_batch_error(&id, &AndromedaError::internal(msg)))?;
             self.repo.save(&id, &existing).await.map_err(|e| to_batch_error(&id, &e))?;
@@ -172,7 +172,6 @@ impl EntityService {
                 ));
             }
         } else {
-            let mut existing = existing;
             crate::domain::expanded::update_entity_attrs(&mut existing, attrs).map_err(|msg| to_batch_error(&id, &AndromedaError::internal(msg)))?;
             crate::domain::expanded::append_entity_attrs(&mut existing, attrs, false).map_err(|msg| to_batch_error(&id, &AndromedaError::internal(msg)))?;
             self.repo.save(&id, &existing).await.map_err(|e| to_batch_error(&id, &e))?;

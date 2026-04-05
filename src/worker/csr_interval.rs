@@ -32,7 +32,7 @@ pub struct CsrIntervalWorker {
 }
 
 impl CsrIntervalWorker {
-    pub fn new(
+    pub const fn new(
         sub_repo: CsourceSubscriptionRepository,
         csr_repo: ContextSourceRegistrationRepository,
         transport: Arc<TransportDispatcher>,

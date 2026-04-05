@@ -30,7 +30,7 @@ pub enum ResponseFormat {
 
 impl ResponseFormat {
     /// Get the Content-Type header value for this format.
-    pub fn content_type(&self) -> &'static str {
+    pub const fn content_type(&self) -> &'static str {
         match self {
             Self::Json => "application/json",
             Self::JsonLd => "application/ld+json",
@@ -40,7 +40,7 @@ impl ResponseFormat {
 
     /// Whether @context should be included in the response body.
     #[allow(dead_code)]
-    pub fn include_context_in_body(&self) -> bool {
+    pub const fn include_context_in_body(&self) -> bool {
         matches!(self, Self::JsonLd)
     }
 }
@@ -144,7 +144,7 @@ fn parse_accept(parts: &Parts, allow_geo_json: bool) -> Result<ResponseFormat, E
 pub struct AcceptFormat(pub ResponseFormat);
 
 impl AcceptFormat {
-    pub fn format(&self) -> ResponseFormat {
+    pub const fn format(&self) -> ResponseFormat {
         self.0
     }
 }
@@ -154,7 +154,7 @@ impl AcceptFormat {
 pub struct AcceptFormatNoGeo(pub ResponseFormat);
 
 impl AcceptFormatNoGeo {
-    pub fn format(&self) -> ResponseFormat {
+    pub const fn format(&self) -> ResponseFormat {
         self.0
     }
 }

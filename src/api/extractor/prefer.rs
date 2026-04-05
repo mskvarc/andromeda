@@ -40,7 +40,7 @@ impl NgsiLdVersion {
     pub const CONFORMANT: NgsiLdVersion = NgsiLdVersion::V1_9;
 
     /// Return the version string as it appears in the Prefer/Preference-Applied header.
-    pub fn as_str(&self) -> &'static str {
+    pub const fn as_str(&self) -> &'static str {
         match self {
             NgsiLdVersion::V1_0 => "1.0",
             NgsiLdVersion::V1_3 => "1.3",

@@ -53,12 +53,12 @@ pub fn build_content_range(
 
     let (start, end, size) = if user_specified_last_n {
         let upper = match compiled.timerel {
-            Some(TimeRel::Before) => compiled.time_at.map(format_datetime).unwrap_or_else(|| mrt.clone()),
-            Some(TimeRel::Between) => compiled.end_time_at.map(format_datetime).unwrap_or_else(|| mrt.clone()),
-            Some(TimeRel::After) => mrt.clone(),
-            None => mrt.clone(),
+            Some(TimeRel::Before) => compiled.time_at.map_or_else(|| mrt.clone(), format_datetime),
+            Some(TimeRel::Between) => compiled.end_time_at.map_or_else(|| mrt.clone(), format_datetime),
+            Some(TimeRel::After) => mrt,
+            None => mrt,
         };
-        let size = partition_total.map(|n| n.to_string()).unwrap_or_else(|| "*".to_string());
+        let size = partition_total.map_or_else(|| "*".to_string(), |n| n.to_string());
         (upper, lrt, size)
     } else {
         let lower = match compiled.timerel {
@@ -209,19 +209,17 @@ pub fn build_entity_temporal_aggregated_data(
             let mut triples: Vec<Value> = Vec::with_capacity(bucket_rows.len());
             for row in bucket_rows {
                 let val: Value = if *method == AggrMethod::TotalCount || *method == AggrMethod::DistinctCount {
-                    row.try_get::<i64, _>(pg_col).map(|v| json!(v)).unwrap_or(Value::Null)
+                    row.try_get::<i64, _>(pg_col).map_or(Value::Null, |v| json!(v))
                 } else {
-                    row.try_get::<f64, _>(pg_col).map(|v| json!(v)).unwrap_or(Value::Null)
+                    row.try_get::<f64, _>(pg_col).map_or(Value::Null, |v| json!(v))
                 };
 
                 let bucket_start: Value = row
                     .try_get::<DateTime<Utc>, _>("bucket_start")
-                    .map(|dt| json!(format_datetime(dt)))
-                    .unwrap_or(Value::Null);
+                    .map_or(Value::Null, |dt| json!(format_datetime(dt)));
                 let bucket_end: Value = row
                     .try_get::<DateTime<Utc>, _>("bucket_end")
-                    .map(|dt| json!(format_datetime(dt)))
-                    .unwrap_or(Value::Null);
+                    .map_or(Value::Null, |dt| json!(format_datetime(dt)));
 
                 triples.push(json!([val, bucket_start, bucket_end]));
             }
@@ -235,7 +233,9 @@ pub fn build_entity_temporal_aggregated_data(
     let mut result: IndexMap<String, Value> = IndexMap::with_capacity(attrs.len());
     for (attr_name, instances) in attrs {
         if instances.len() == 1 {
-            result.insert(attr_name, instances.into_iter().next().unwrap());
+            if let Some(single) = instances.into_iter().next() {
+                result.insert(attr_name, single);
+            }
         } else {
             result.insert(attr_name, Value::Array(instances));
         }
@@ -248,10 +248,10 @@ fn history_row_to_expanded_instance(row: &sqlx::postgres::PgRow, tea: &TeaEntry,
     let mut instance = serde_json::Map::new();
 
     let attr_type: Option<AttributeType> = tea.attribute_type.parse().ok();
-    let type_iri = attr_type.map(|t| t.iri().as_str()).unwrap_or(tea.attribute_type.as_str());
+    let type_iri = attr_type.map_or(tea.attribute_type.as_str(), |t| t.iri().as_str());
     instance.insert("@type".to_string(), json!([type_iri]));
 
-    let value_key = attr_type.map(|t| t.value_key().as_str()).unwrap_or(vocab::VALUE.as_str());
+    let value_key = attr_type.map_or(vocab::VALUE.as_str(), |t| t.value_key().as_str());
 
     let is_tombstone = row.try_get::<Option<String>, _>("value_string").ok().flatten().as_deref() == Some(vocab::NULL_URI.as_str());
 
@@ -478,7 +478,7 @@ pub fn transform_to_temporal_values(compacted: Value) -> Value {
             let attr_type = first.get("type").and_then(|v| v.as_str()).unwrap_or("Property");
 
             let parsed_attr_type: Option<AttributeType> = attr_type.parse().ok();
-            let (value_key, extract_key) = parsed_attr_type.map(|t| t.temporal_values_keys()).unwrap_or(("values", "value"));
+            let (value_key, extract_key) = parsed_attr_type.map_or(("values", "value"), |t| t.temporal_values_keys());
 
             let mut pairs: Vec<Value> = Vec::new();
             for inst in insts {
@@ -505,7 +505,9 @@ pub fn transform_to_temporal_values(compacted: Value) -> Value {
         }
 
         if tv_objects.len() == 1 {
-            result.insert(key.clone(), tv_objects.into_iter().next().unwrap());
+            if let Some(single) = tv_objects.into_iter().next() {
+                result.insert(key.clone(), single);
+            }
         } else {
             result.insert(key.clone(), Value::Array(tv_objects));
         }

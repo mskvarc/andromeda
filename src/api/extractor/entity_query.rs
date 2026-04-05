@@ -22,7 +22,7 @@ where
 
         // Validate at least one filter is present, UNLESS local=true
         // Per NGSI-LD spec 5.7.2.4: At least one filter OR local scope must be provided
-        let q_is_empty = params.q.as_ref().map(|s| s.trim().is_empty()).unwrap_or(false);
+        let q_is_empty = params.q.as_ref().is_some_and(|s| s.trim().is_empty());
 
         // Allow empty query if local=true (per NGSI-LD spec 5.7.2.4)
         let has_local_scope = params.local.unwrap_or(false);
@@ -49,7 +49,7 @@ where
 
 #[allow(dead_code)]
 impl EntityQuery {
-    pub fn inner(&self) -> &EntityQueryParameters {
+    pub const fn inner(&self) -> &EntityQueryParameters {
         &self.0
     }
 }

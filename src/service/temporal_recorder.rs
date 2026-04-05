@@ -51,7 +51,7 @@ pub struct TemporalRecorder {
 
 impl TemporalRecorder {
     /// Create a new temporal recorder backed by the given repository.
-    pub fn new(repo: Arc<TemporalRepository>) -> TemporalRecorder {
+    pub const fn new(repo: Arc<TemporalRepository>) -> TemporalRecorder {
         TemporalRecorder { repo }
     }
 
@@ -191,8 +191,7 @@ impl TemporalRecorder {
             .iter()
             .find(|t| t.dataset_id.as_deref() == dataset_id)
             .or_else(|| teas.first())
-            .map(|t| t.attribute_type.as_str())
-            .unwrap_or(AttributeType::Property.short_name());
+            .map_or(AttributeType::Property.short_name(), |t| t.attribute_type.as_str());
 
         let tea_id = self.repo.upsert_tea(entity_id, attr_iri, attr_type, dataset_id, "String").await?;
 
@@ -290,7 +289,7 @@ enum TypedValue {
 }
 
 impl TypedValue {
-    fn value_type(&self) -> &'static str {
+    const fn value_type(&self) -> &'static str {
         match self {
             Self::Number(_) => "Number",
             Self::String(_) => "String",
@@ -472,8 +471,7 @@ pub(crate) fn reconstruct_geojson(node: &Value) -> String {
         .and_then(|v| v.as_array())
         .and_then(|arr| arr.first())
         .and_then(|v| v.get("@list").or(Some(v)))
-        .map(extract_coordinates)
-        .unwrap_or(Value::Array(vec![]));
+        .map_or(Value::Array(vec![]), extract_coordinates);
 
     let result = serde_json::json!({
         "type": geo_type,
@@ -529,8 +527,7 @@ fn extract_or_generate_instance_id(instance: &Value) -> String {
         .and_then(|arr| arr.first())
         .and_then(|obj| obj.get("@id"))
         .and_then(|v| v.as_str())
-        .map(String::from)
-        .unwrap_or_else(|| format!("urn:ngsi-ld:attribute:instance:{}", uuid::Uuid::new_v4()))
+        .map_or_else(|| format!("urn:ngsi-ld:attribute:instance:{}", uuid::Uuid::new_v4()), String::from)
 }
 
 /// Returns whether the metadata key is stored in dedicated columns instead.

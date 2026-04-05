@@ -146,7 +146,7 @@ pub async fn create_from_query_post(
 ) -> Result<Response, ApiError> {
     let context_spec: ContextSpec = context.into_inner();
 
-    let query = query_body_to_params(&body);
+    let query = query_body_to_params(&body).map_err(|e| ApiError::from(AndromedaError::bad_request_data(e.to_string())))?;
     query.validate().map_err(|e| ApiError::from(AndromedaError::from(e)))?;
     validate_has_filter(&query, &uri)?;
 
@@ -217,7 +217,7 @@ pub async fn create_temporal_from_query_post(
 ) -> Result<Response, ApiError> {
     let context_spec: ContextSpec = context.into_inner();
 
-    let query = query_body_to_params(&body);
+    let query = query_body_to_params(&body).map_err(|e| ApiError::from(AndromedaError::bad_request_data(e.to_string())))?;
     query.validate().map_err(|e| ApiError::from(AndromedaError::from(e)))?;
     validate_has_filter(&query, &uri)?;
 
@@ -268,15 +268,14 @@ pub struct EntitySelector {
     pub type_: Option<String>,
 }
 
-fn query_body_to_params(body: &QueryRequestBody) -> crate::query::entity::EntityQueryParameters {
+fn query_body_to_params(body: &QueryRequestBody) -> Result<crate::query::entity::EntityQueryParameters, serde_urlencoded::de::Error> {
     let (id, entity_type, id_pattern) = if let Some(entities) = &body.entities {
         let ids: Vec<String> = entities.iter().filter_map(|e| e.id.clone()).flatten().collect();
         let types: Vec<String> = entities.iter().filter_map(|e| e.type_.clone()).collect();
-        let patterns: Vec<String> = entities.iter().filter_map(|e| e.id_pattern.clone()).collect();
         (
             if ids.is_empty() { None } else { Some(ids.join(",")) },
             if types.is_empty() { None } else { Some(types.join(",")) },
-            patterns.into_iter().next(),
+            entities.iter().filter_map(|e| e.id_pattern.clone()).next(),
         )
     } else {
         (None, None, None)
@@ -318,9 +317,9 @@ fn query_body_to_params(body: &QueryRequestBody) -> crate::query::entity::Entity
     pairs.push(("local".to_string(), "true".to_string()));
 
     let qs = serde_urlencoded::to_string(&pairs).unwrap_or_default();
-    serde_urlencoded::from_str(&qs).unwrap_or_else(|_| {
-        // Fallback: construct manually with defaults via empty query string
-        serde_urlencoded::from_str("local=true").unwrap()
+    serde_urlencoded::from_str(&qs).or_else(|_| {
+        // Fallback: construct with defaults via minimal query string
+        serde_urlencoded::from_str("local=true")
     })
 }
 

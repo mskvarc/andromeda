@@ -1617,7 +1617,9 @@ fn merge_temporal_instances(local: &mut Value, remote: &Value) {
         Value::Object(_) => {
             let obj = std::mem::replace(local, Value::Null);
             *local = Value::Array(vec![obj]);
-            local.as_array_mut().expect("just created array") // infallible: we just set it to Array
+            // Infallible: we just set `local` to `Value::Array` above.
+            let Some(arr) = local.as_array_mut() else { return };
+            arr
         }
         _ => return,
     };

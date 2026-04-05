@@ -22,7 +22,7 @@ pub fn set_default_core_context_url(url: impl Into<String>) {
     if DEFAULT_CORE_CONTEXT_URL.set(url.into()).is_err() {
         tracing::warn!(
             "set_default_core_context_url called more than once; keeping the original value '{}'",
-            DEFAULT_CORE_CONTEXT_URL.get().map(String::as_str).unwrap_or("<unknown>")
+            DEFAULT_CORE_CONTEXT_URL.get().map_or("<unknown>", String::as_str)
         );
     }
 }
@@ -32,7 +32,7 @@ pub fn set_default_core_context_url(url: impl Into<String>) {
 /// Returns the value set via [`set_default_core_context_url`], or the
 /// version-less [`NGSI_LD_CORE_CONTEXT_URL`] if none was configured.
 pub fn default_core_context_url() -> &'static str {
-    DEFAULT_CORE_CONTEXT_URL.get().map(String::as_str).unwrap_or(NGSI_LD_CORE_CONTEXT_URL)
+    DEFAULT_CORE_CONTEXT_URL.get().map_or(NGSI_LD_CORE_CONTEXT_URL, String::as_str)
 }
 
 /// Retrieve the global default core context URL override, if set.
@@ -114,7 +114,7 @@ impl ContextSpec {
     }
 
     /// Get the body context, if any.
-    pub fn body_context(&self) -> Option<&Value> {
+    pub const fn body_context(&self) -> Option<&Value> {
         self.body_context.as_ref()
     }
 
@@ -125,13 +125,13 @@ impl ContextSpec {
 
     /// Set the core-context policy.
     #[must_use]
-    pub fn with_core_policy(mut self, policy: CoreContextPolicy) -> Self {
+    pub const fn with_core_policy(mut self, policy: CoreContextPolicy) -> Self {
         self.core_policy = policy;
         self
     }
 
     /// Current core-context policy.
-    pub fn core_policy(&self) -> CoreContextPolicy {
+    pub const fn core_policy(&self) -> CoreContextPolicy {
         self.core_policy
     }
 

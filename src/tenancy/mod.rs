@@ -34,7 +34,7 @@ impl TenantRef {
         }
     }
 
-    pub fn response_header_value(&self) -> Option<&str> {
+    pub const fn response_header_value(&self) -> Option<&str> {
         match self {
             Self::UnnamedDefault => None,
             Self::Named(value) => Some(value.as_str()),

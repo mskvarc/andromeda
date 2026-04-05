@@ -23,7 +23,7 @@ pub enum ResponseFormat {
 
 impl ResponseFormat {
     /// Whether this format uses a simplified (flat) structure.
-    pub fn is_simplified(self) -> bool {
+    pub const fn is_simplified(self) -> bool {
         matches!(self, Self::KeyValues | Self::Simplified)
     }
 }

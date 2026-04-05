@@ -402,7 +402,7 @@ fn parse_batch_entities(
         let has_context_link = headers
             .get_all("Link")
             .iter()
-            .any(|v| v.to_str().ok().map(|s| s.contains("http://www.w3.org/ns/json-ld#context")).unwrap_or(false));
+            .any(|v| v.to_str().ok().is_some_and(|s| s.contains("http://www.w3.org/ns/json-ld#context")));
         if has_context_link {
             return Err(ApiError::from_error(
                 AndromedaError::bad_request_data("application/ld+json must not be combined with a Link context header"),
@@ -565,7 +565,7 @@ pub async fn batch_create(
     let context_url = context.link_contexts().first().map(|s| s.as_str());
     let entity_type = entities.first().map(|e| match &e.type_ {
         EntityTypeValue::Single(s) => s.as_str(),
-        EntityTypeValue::Multiple(v) => v.first().map(|s| s.as_str()).unwrap_or(""),
+        EntityTypeValue::Multiple(v) => v.first().map_or("", |s| s.as_str()),
     });
     let forwarded = state
         .forwarding
@@ -639,7 +639,7 @@ pub async fn batch_upsert(
     let context_url = context.link_contexts().first().map(|s| s.as_str());
     let entity_type = entities.first().map(|e| match &e.type_ {
         EntityTypeValue::Single(s) => s.as_str(),
-        EntityTypeValue::Multiple(v) => v.first().map(|s| s.as_str()).unwrap_or(""),
+        EntityTypeValue::Multiple(v) => v.first().map_or("", |s| s.as_str()),
     });
     let qs = params.options.as_deref().map(|o| format!("options={o}"));
     let forwarded = state
@@ -713,13 +713,13 @@ pub async fn batch_update(
         ));
     }
 
-    let no_overwrite = params.options.as_deref().map(|o| o.contains("noOverwrite")).unwrap_or(false);
+    let no_overwrite = params.options.as_deref().is_some_and(|o| o.contains("noOverwrite"));
 
     // Distributed forwarding per spec 5.6.9
     let context_url = context.link_contexts().first().map(|s| s.as_str());
     let entity_type = entities.first().map(|e| match &e.type_ {
         EntityTypeValue::Single(s) => s.as_str(),
-        EntityTypeValue::Multiple(v) => v.first().map(|s| s.as_str()).unwrap_or(""),
+        EntityTypeValue::Multiple(v) => v.first().map_or("", |s| s.as_str()),
     });
     let qs = params.options.as_deref().map(|o| format!("options={o}"));
     let forwarded = state
@@ -791,7 +791,7 @@ pub async fn batch_merge(
     let context_url = context.link_contexts().first().map(|s| s.as_str());
     let entity_type = entities.first().map(|e| match &e.type_ {
         EntityTypeValue::Single(s) => s.as_str(),
-        EntityTypeValue::Multiple(v) => v.first().map(|s| s.as_str()).unwrap_or(""),
+        EntityTypeValue::Multiple(v) => v.first().map_or("", |s| s.as_str()),
     });
     let forwarded = state
         .forwarding

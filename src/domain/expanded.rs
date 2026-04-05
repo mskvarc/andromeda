@@ -201,8 +201,7 @@ pub fn reconstruct_geojson(node: &Value) -> String {
         .and_then(|v| v.as_array())
         .and_then(|arr| arr.first())
         .and_then(|v| v.get("@list").or(Some(v)))
-        .map(extract_coordinates)
-        .unwrap_or(Value::Array(vec![]));
+        .map_or(Value::Array(vec![]), extract_coordinates);
 
     let result = serde_json::json!({
         "type": geo_type,
@@ -617,7 +616,9 @@ pub fn partial_update_attr(entity: &mut Value, attr_iri: &str, dataset_id: Optio
     } else {
         // No datasetId: target the default instance (the one without datasetId)
         let Some(Value::Array(instances)) = entity_obj.get_mut(attr_iri) else {
-            let attr_value = entity_obj.get_mut(attr_iri).unwrap();
+            let Some(attr_value) = entity_obj.get_mut(attr_iri) else {
+                return Err(format!("Attribute {} not found", attr_iri));
+            };
             if !fragment_types.is_empty() {
                 validate_type_match(&fragment_types, attr_value, attr_iri)?;
             }

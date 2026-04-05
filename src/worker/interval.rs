@@ -40,7 +40,7 @@ pub struct IntervalWorker {
 }
 
 impl IntervalWorker {
-    pub fn new(
+    pub const fn new(
         sub_repo: SubscriptionRepository,
         entity_repo: EntityRepository,
         engine: JsonLdEngine,

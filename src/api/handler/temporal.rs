@@ -218,7 +218,7 @@ pub async fn get(
     };
 
     if key_values {
-        let entity: Entity = serde_json::from_value(entity_value.clone()).map_err(|e| {
+        let entity: Entity = serde_json::from_value(entity_value).map_err(|e| {
             ApiError::from(AndromedaError::bad_request_data(format!(
                 "Failed to parse temporal entity for simplification: {}",
                 e
@@ -327,9 +327,9 @@ pub async fn query(
     if let Some(ref map_id) = entity_map_header {
         let map = state.entity_maps.retrieve(map_id).await.map_err(|e| e.with_instance(uri.clone()))?;
         let ids_csv = map.entity_ids.join(",");
-        if params.id.is_some() {
+        if let Some(ref existing_ids) = params.id {
             // Intersect: keep only IDs that are in both the query and the map
-            let query_ids: std::collections::HashSet<String> = params.id.as_ref().unwrap().split(',').map(|s| s.trim().to_string()).collect();
+            let query_ids: std::collections::HashSet<String> = existing_ids.split(',').map(|s| s.trim().to_string()).collect();
             let map_ids: std::collections::HashSet<String> = map.entity_ids.into_iter().collect();
             let intersection: Vec<String> = query_ids.intersection(&map_ids).cloned().collect();
             params.id = Some(intersection.join(","));

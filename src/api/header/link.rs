@@ -13,7 +13,7 @@ use mime::Mime;
 /// Well-known link relation types used in NGSI-LD.
 pub mod rel {
     /// JSON-LD context relation (used for @context in Link header)
-    pub fn json_ld_context() -> &'static str {
+    pub const fn json_ld_context() -> &'static str {
         crate::jsonld::vocab::JSONLD_CONTEXT_REL.as_str()
     }
 }

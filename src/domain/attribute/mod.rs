@@ -47,7 +47,7 @@ impl Attribute {
     }
 
     /// Returns the `expiresAt` value of the underlying attribute instance, if set.
-    pub fn expires_at(&self) -> Option<DateTime<Utc>> {
+    pub const fn expires_at(&self) -> Option<DateTime<Utc>> {
         match self {
             Attribute::Property(p) => p.expires_at,
             Attribute::Relationship(r) => r.expires_at,

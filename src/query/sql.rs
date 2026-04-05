@@ -218,7 +218,7 @@ fn compare_to_sql(
 }
 
 /// Returns the SQL operator string for a comparison operator.
-pub(crate) fn cmp_op_sql(op: CmpOp) -> &'static str {
+pub(crate) const fn cmp_op_sql(op: CmpOp) -> &'static str {
     match op {
         CmpOp::Equal => "=",
         CmpOp::Unequal => "!=",
@@ -232,7 +232,7 @@ pub(crate) fn cmp_op_sql(op: CmpOp) -> &'static str {
 /// Converts a scalar value to its SQL cast suffix and bind value.
 pub(crate) fn scalar_to_sql_bind(scalar: &Scalar) -> (&'static str, BindValue<'static>) {
     match scalar {
-        Scalar::Number(_n) => ("::numeric", BindValue::String(Cow::Owned(_n.to_string()))),
+        Scalar::Number(n) => ("::numeric", BindValue::String(Cow::Owned(n.to_string()))),
         Scalar::Bool(b) => ("::boolean", BindValue::String(Cow::Owned(b.to_string()))),
         Scalar::Str(s) => ("", BindValue::String(Cow::Owned(s.clone()))),
         Scalar::DateTime(s) | Scalar::Date(s) | Scalar::Time(s) => ("", BindValue::String(Cow::Owned(s.clone()))),
@@ -265,13 +265,9 @@ fn value_extraction_jsonpath_with_predicate(attr_iri: &str, sub_attrs: &[String]
         "@value"
     };
 
-    if value_path.is_empty() {
-        path.push_str(&format!(".\"{}\"", value_key));
-    } else {
-        path.push_str(&format!(".\"{}\"", value_key));
-        for key in value_path {
-            path.push_str(&format!(".\"{}\"", escape_jsonpath_key(key)));
-        }
+    path.push_str(&format!(".\"{}\"", value_key));
+    for key in value_path {
+        path.push_str(&format!(".\"{}\"", escape_jsonpath_key(key)));
     }
 
     path

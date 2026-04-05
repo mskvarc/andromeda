@@ -25,7 +25,7 @@ impl super::Worker for AttributeExpirationWorker {
 
 impl AttributeExpirationWorker {
     /// Create a new attribute expiration worker.
-    pub fn new(entity_repo: EntityRepository, change_tx: Option<broadcast::Sender<ChangeEvent>>, interval_secs: u64) -> AttributeExpirationWorker {
+    pub const fn new(entity_repo: EntityRepository, change_tx: Option<broadcast::Sender<ChangeEvent>>, interval_secs: u64) -> AttributeExpirationWorker {
         AttributeExpirationWorker {
             entity_repo,
             change_tx,

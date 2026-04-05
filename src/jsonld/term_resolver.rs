@@ -232,11 +232,7 @@ pub async fn compact_type_iri(engine: &JsonLdEngine, iri: &str, context: &Contex
         )
         .await
     {
-        Ok(compacted) => compacted
-            .get("type")
-            .and_then(|t| t.as_str())
-            .map(String::from)
-            .unwrap_or_else(|| iri.to_string()),
+        Ok(compacted) => compacted.get("type").and_then(|t| t.as_str()).map_or_else(|| iri.to_string(), String::from),
         Err(e) => {
             tracing::debug!(error = %e, iri = iri, "compact_type_iri fallback to raw IRI");
             iri.to_string()

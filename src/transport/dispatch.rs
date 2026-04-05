@@ -102,7 +102,7 @@ impl TransportDispatcher {
     }
 
     /// Access the MQTT pool for health probe spawning.
-    pub fn mqtt_pool(&self) -> &Arc<MqttTransportPool> {
+    pub const fn mqtt_pool(&self) -> &Arc<MqttTransportPool> {
         &self.mqtt_pool
     }
 

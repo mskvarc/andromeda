@@ -165,7 +165,7 @@ fn normalize_preload_context_paths(config: &mut Configuration, config_file: &Pat
         return;
     };
 
-    let config_dir = config_file.parent().map(PathBuf::from).unwrap_or_else(|| PathBuf::from("."));
+    let config_dir = config_file.parent().map_or_else(|| PathBuf::from("."), PathBuf::from);
 
     for path in preloads.values_mut() {
         let candidate = PathBuf::from(path.as_str());

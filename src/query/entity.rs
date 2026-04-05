@@ -230,12 +230,12 @@ pub enum OrderDirection {
 
 impl OrderDirection {
     /// Whether this is a distance-based ordering direction.
-    pub fn is_distance(&self) -> bool {
+    pub const fn is_distance(&self) -> bool {
         matches!(self, OrderDirection::DistAsc | OrderDirection::DistDesc)
     }
 
     /// SQL direction keyword.
-    pub fn sql_dir(&self) -> &'static str {
+    pub const fn sql_dir(&self) -> &'static str {
         match self {
             OrderDirection::Asc | OrderDirection::DistAsc => "ASC",
             OrderDirection::Desc | OrderDirection::DistDesc => "DESC",

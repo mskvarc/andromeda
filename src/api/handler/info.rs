@@ -21,7 +21,7 @@ pub struct ContextSourceIdentity {
 
 pub async fn source_identity(State(state): State<AppState>, accept: AcceptFormat, context: ContextUrl) -> Result<Response, ApiError> {
     let identity = ContextSourceIdentity {
-        id: state.source_identity.clone(),
+        id: state.source_identity,
         type_: "ContextSourceIdentity",
     };
     let context = context.into_inner();

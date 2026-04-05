@@ -453,35 +453,35 @@ impl JsonLdEngineBuilder {
 
     /// HTTP request timeout in seconds.
     #[must_use]
-    pub fn timeout_seconds(mut self, seconds: u64) -> JsonLdEngineBuilder {
+    pub const fn timeout_seconds(mut self, seconds: u64) -> JsonLdEngineBuilder {
         self.timeout_seconds = seconds;
         self
     }
 
     /// Maximum number of HTTP redirects to follow.
     #[must_use]
-    pub fn max_redirects(mut self, max: u32) -> JsonLdEngineBuilder {
+    pub const fn max_redirects(mut self, max: u32) -> JsonLdEngineBuilder {
         self.max_redirects = max;
         self
     }
 
     /// Maximum number of entries in the in-memory (L1) context cache.
     #[must_use]
-    pub fn cache_capacity(mut self, capacity: u64) -> JsonLdEngineBuilder {
+    pub const fn cache_capacity(mut self, capacity: u64) -> JsonLdEngineBuilder {
         self.cache_capacity = capacity;
         self
     }
 
     /// Time-to-live for L1 cache entries, in seconds.
     #[must_use]
-    pub fn cache_ttl_seconds(mut self, ttl: u64) -> JsonLdEngineBuilder {
+    pub const fn cache_ttl_seconds(mut self, ttl: u64) -> JsonLdEngineBuilder {
         self.cache_ttl_seconds = ttl;
         self
     }
 
     /// Maximum size (in bytes) of a single remote context document.
     #[must_use]
-    pub fn max_context_bytes(mut self, max: u64) -> JsonLdEngineBuilder {
+    pub const fn max_context_bytes(mut self, max: u64) -> JsonLdEngineBuilder {
         self.max_context_bytes = max;
         self
     }

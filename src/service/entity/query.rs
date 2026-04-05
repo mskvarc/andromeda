@@ -38,7 +38,7 @@ impl EntityQueryService {
     }
 
     /// Return a reference to the underlying JSON-LD engine.
-    pub fn engine(&self) -> &JsonLdEngine {
+    pub const fn engine(&self) -> &JsonLdEngine {
         &self.engine
     }
 

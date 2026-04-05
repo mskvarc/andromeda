@@ -73,7 +73,7 @@ impl Entity {
     /// Sets `created_at` and `modified_at` unconditionally. Sets `expires_at`
     /// only if the field is not already populated (user-provided value takes
     /// precedence).
-    pub fn with_sys_attrs(mut self, snapshot: &SysAttrsSnapshot) -> Entity {
+    pub const fn with_sys_attrs(mut self, snapshot: &SysAttrsSnapshot) -> Entity {
         self.created_at = Some(snapshot.created_at);
         self.modified_at = Some(snapshot.modified_at);
         if self.expires_at.is_none() {

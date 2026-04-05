@@ -371,7 +371,7 @@ pub fn normalize_compacted_entity(mut entity: Value) -> Value {
             && let Some(t) = obj.remove("@type")
         {
             let normalized = match t {
-                Value::Array(arr) if arr.len() == 1 => arr.into_iter().next().unwrap(),
+                Value::Array(arr) if arr.len() == 1 => arr.into_iter().next().unwrap_or(Value::Null),
                 other => other,
             };
             obj.insert("type".to_string(), normalized);
@@ -633,8 +633,8 @@ fn filter_entity_by_dataset_id(entity: &mut Value, dataset_ids: &[String]) {
 
         if filtered.is_empty() {
             obj.remove(&key);
-        } else {
-            *obj.get_mut(&key).unwrap() = Value::Array(filtered);
+        } else if let Some(entry) = obj.get_mut(&key) {
+            *entry = Value::Array(filtered);
         }
     }
 }
@@ -674,8 +674,7 @@ fn previous_key_for_attr(val: &Value) -> &'static str {
         .and_then(|o| o.get("type"))
         .and_then(|t| t.as_str())
         .and_then(|s| s.parse::<crate::domain::attribute_type::AttributeType>().ok())
-        .map(|t| t.previous_key())
-        .unwrap_or("previousValue")
+        .map_or("previousValue", |t| t.previous_key())
 }
 
 fn extract_previous_value(val: &Value, previous_key: &str) -> Value {

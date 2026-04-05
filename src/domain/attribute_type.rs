@@ -20,7 +20,7 @@ pub enum AttributeType {
 
 impl AttributeType {
     /// Returns the expanded IRI for this attribute type.
-    pub fn iri(self) -> &'static Iri {
+    pub const fn iri(self) -> &'static Iri {
         match self {
             Self::Property => vocab::PROPERTY,
             Self::Relationship => vocab::RELATIONSHIP,
@@ -34,7 +34,7 @@ impl AttributeType {
     }
 
     /// Returns the expanded IRI of the value container for this attribute type.
-    pub fn value_key(self) -> &'static Iri {
+    pub const fn value_key(self) -> &'static Iri {
         match self {
             Self::Property | Self::GeoProperty => vocab::VALUE,
             Self::Relationship => vocab::OBJECT,
@@ -48,7 +48,7 @@ impl AttributeType {
 
     /// Returns the compacted (short) value key for this attribute type.
     #[allow(dead_code)]
-    pub fn compacted_value_key(self) -> &'static str {
+    pub const fn compacted_value_key(self) -> &'static str {
         match self {
             Self::Property | Self::GeoProperty => "value",
             Self::Relationship => "object",
@@ -61,7 +61,7 @@ impl AttributeType {
     }
 
     /// Returns the compacted previous-value key for showChanges support.
-    pub fn previous_key(self) -> &'static str {
+    pub const fn previous_key(self) -> &'static str {
         match self {
             Self::Relationship | Self::ListRelationship => "previousObject",
             Self::LanguageProperty => "previousLanguageMap",
@@ -72,7 +72,7 @@ impl AttributeType {
     }
 
     /// Returns (plural_key, singular_key) for temporal values format.
-    pub fn temporal_values_keys(self) -> (&'static str, &'static str) {
+    pub const fn temporal_values_keys(self) -> (&'static str, &'static str) {
         match self {
             Self::Relationship | Self::ListRelationship => ("objects", "object"),
             Self::LanguageProperty => ("languageMaps", "languageMap"),
@@ -94,7 +94,7 @@ impl AttributeType {
     }
 
     /// Returns the reserved compacted field names for this attribute type.
-    pub fn reserved_fields(self) -> &'static [&'static str] {
+    pub const fn reserved_fields(self) -> &'static [&'static str] {
         match self {
             Self::Property => &[
                 "value",

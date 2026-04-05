@@ -28,7 +28,7 @@ pub enum AndromedaErrorKind {
 
 impl AndromedaErrorKind {
     /// Maps this error kind to its corresponding NGSI-LD error type.
-    pub fn to_ngsi_ld_error_type(self) -> NgsiLdErrorType {
+    pub const fn to_ngsi_ld_error_type(self) -> NgsiLdErrorType {
         match self {
             AndromedaErrorKind::InvalidRequest => NgsiLdErrorType::InvalidRequest,
             AndromedaErrorKind::BadRequestData => NgsiLdErrorType::BadRequestData,
@@ -45,7 +45,7 @@ impl AndromedaErrorKind {
 
     /// Returns `true` if this error kind represents an internal/infrastructure failure
     /// whose details should be sanitized before sending to clients.
-    pub fn is_internal(self) -> bool {
+    pub const fn is_internal(self) -> bool {
         matches!(
             self,
             AndromedaErrorKind::Repository | AndromedaErrorKind::ExternalDependency | AndromedaErrorKind::Internal

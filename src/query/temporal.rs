@@ -153,19 +153,18 @@ impl TemporalQueryParameters {
     /// Returns an empty vector when the parameter is absent.
     /// Returns an error if any method name is unrecognized.
     pub fn parse_aggr_methods(&self) -> Result<Vec<AggrMethod>, QueryError> {
-        self.aggr_methods
-            .as_deref()
-            .map(|s| {
-                s.split(',')
-                    .map(|m| m.trim().parse::<AggrMethod>().map_err(|e| QueryError::BadRequestData(e.to_string())))
-                    .collect()
-            })
-            .unwrap_or(Ok(Vec::new()))
+        match self.aggr_methods.as_deref() {
+            Some(s) => s
+                .split(',')
+                .map(|m| m.trim().parse::<AggrMethod>().map_err(|e| QueryError::BadRequestData(e.to_string())))
+                .collect(),
+            None => Ok(Vec::new()),
+        }
     }
 
     /// Returns whether the `sysAttrs` option is present in the `options` parameter.
     pub fn has_sys_attrs(&self) -> bool {
-        self.options.as_deref().map(|o| o.contains("sysAttrs")).unwrap_or(false)
+        self.options.as_deref().is_some_and(|o| o.contains("sysAttrs"))
     }
 
     /// Validate parameters.
@@ -244,13 +243,13 @@ pub enum LastNOrigin {
 impl LastNOrigin {
     /// Returns true when the system cap is active and truncation may occur.
     /// This is the case for both `SystemCapped` and `UserSpecifiedCapped`.
-    pub fn is_system_capped(self) -> bool {
+    pub const fn is_system_capped(self) -> bool {
         matches!(self, LastNOrigin::SystemCapped | LastNOrigin::UserSpecifiedCapped)
     }
 
     /// Returns true when the user explicitly provided a `lastN` parameter,
     /// regardless of whether it was further capped by the system.
-    pub fn is_user_specified(self) -> bool {
+    pub const fn is_user_specified(self) -> bool {
         matches!(self, LastNOrigin::UserSpecified | LastNOrigin::UserSpecifiedCapped)
     }
 }

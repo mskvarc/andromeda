@@ -125,7 +125,7 @@ impl Error {
     ///
     /// These variants carry enough detail for a Problem Detail response
     /// (URL, status code, message) and should be surfaced directly.
-    pub fn is_explicit_context_load_error(&self) -> bool {
+    pub const fn is_explicit_context_load_error(&self) -> bool {
         matches!(
             self,
             Self::ContextFetchDisabled { .. }
@@ -137,7 +137,7 @@ impl Error {
     }
 
     /// Returns `true` when the error indicates a context is unavailable.
-    pub fn is_context_not_available(&self) -> bool {
+    pub const fn is_context_not_available(&self) -> bool {
         self.is_explicit_context_load_error()
     }
 
@@ -146,7 +146,7 @@ impl Error {
     ///
     /// This is used to decide whether a fallback to core-only compaction
     /// is appropriate.
-    pub fn is_protected_term_error(e: &CompactError) -> bool {
+    pub const fn is_protected_term_error(e: &CompactError) -> bool {
         match e {
             CompactError::ContextProcessing(cpe) => is_protected_term_redefinition(cpe),
             CompactError::Expand(ExpandError::ContextProcessing(cpe)) => is_protected_term_redefinition(cpe),
@@ -164,7 +164,7 @@ impl Error {
 
 /// Check whether a context-processing error is specifically a
 /// protected-term redefinition.
-fn is_protected_term_redefinition(cpe: &json_ld::context_processing::Error) -> bool {
+const fn is_protected_term_redefinition(cpe: &json_ld::context_processing::Error) -> bool {
     matches!(cpe, json_ld::context_processing::Error::ProtectedTermRedefinition)
 }
 

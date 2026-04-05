@@ -61,7 +61,7 @@ impl HttpTransport {
     }
 
     /// Maximum payload size this transport will accept for delivery.
-    pub fn max_payload_size(&self) -> usize {
+    pub const fn max_payload_size(&self) -> usize {
         self.config.max_payload_size
     }
 }
