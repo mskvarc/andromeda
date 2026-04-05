@@ -47,6 +47,8 @@ use crate::{
 };
 use axum::{
     Router,
+    http::{StatusCode, header},
+    response::IntoResponse,
     routing::{delete, get, patch, post, put},
 };
 use sqlx::postgres::PgPoolOptions;
@@ -67,6 +69,14 @@ pub async fn create_router(config: &Configuration) -> Result<Router, AndromedaEr
     };
     let router = Router::new().nest("/ngsi-ld/v1", build_v1_router()).with_state(app_state);
     Ok(router)
+}
+
+async fn favicon() -> impl IntoResponse {
+    (
+        StatusCode::OK,
+        [(header::CONTENT_TYPE, "image/x-icon")],
+        include_bytes!("favicon.ico").as_slice(),
+    )
 }
 
 fn build_v1_router() -> Router<AppState> {
@@ -173,6 +183,7 @@ fn build_v1_router() -> Router<AppState> {
         .nest("/csourceSubscriptions", csr_subscription_routes)
         .nest("/snapshots", snapshot_routes)
         .nest("/info", info_routes)
+        .route("/favicon.ico", get(favicon))
 }
 
 pub async fn build_tenant_state(
