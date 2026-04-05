@@ -68,6 +68,13 @@ pub struct TemporalQueryParameters {
     pub _lang: Option<String>,
     pub local: Option<bool>,
 
+    #[serde(rename = "entityMap")]
+    pub entity_map: Option<bool>,
+    #[serde(rename = "entityMapLifetime")]
+    pub entity_map_lifetime: Option<String>,
+    #[serde(rename = "splitEntities")]
+    pub split_entities: Option<bool>,
+
     #[serde(rename = "scopeQ")]
     pub _scope_q: Option<String>,
     #[serde(rename = "expandValues")]

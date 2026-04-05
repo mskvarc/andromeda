@@ -511,7 +511,27 @@ impl TemporalService {
         Ok(Value::Object(result))
     }
 
-    async fn compile_temporal_query(&self, params: &TemporalQueryParameters, context: &ContextSpec) -> Result<CompiledTemporalQuery, AndromedaError> {
+    /// Execute stage 1 entity ID resolution without fetching temporal history.
+    ///
+    /// Used to build EntityMaps that represent the full result set (spec 5.5.14).
+    /// Runs only the lightweight stage 1 SQL (entity ID resolution) without fetching
+    /// temporal history, ensuring the EntityMap captures ALL matching IDs, not just the
+    /// current page.
+    pub async fn query_ids(&self, params: &TemporalQueryParameters, context: &ContextSpec) -> Result<Vec<String>, AndromedaError> {
+        params.validate(true)?;
+        let compiled = self.compile_temporal_query(params, context).await?;
+        let mut binds = Vec::new();
+        let mut param_idx = 1;
+        let stage1 = build_stage1_entity_ids(&compiled, &mut binds, &mut param_idx)?;
+        let entity_id_rows = self.repo.execute_temporal_query(&stage1.sql, &stage1.bind_values).await?;
+        Ok(entity_id_rows.iter().filter_map(|r| r.try_get("entity_id").ok()).collect())
+    }
+
+    /// Compile raw temporal query parameters into a validated, expanded query structure.
+    ///
+    /// Expands terms, resolves IRIs, parses temporal/geo/q filters, and computes
+    /// effective lastN and pagination values.
+    pub async fn compile_temporal_query(&self, params: &TemporalQueryParameters, context: &ContextSpec) -> Result<CompiledTemporalQuery, AndromedaError> {
         let id_pattern = params
             .id_pattern
             .as_deref()

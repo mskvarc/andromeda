@@ -114,6 +114,7 @@ pub async fn get(
     let snapshot = protocol.snapshot;
     let via_owned = protocol.incoming_via;
     let incoming_via = via_owned.as_deref();
+    let entity_map_header = protocol.entity_map;
 
     // Snapshot scoping (ETSI GS CIM 009 clause 5.5.15, 6.3.22): if NGSILD-Snapshot header
     // is present, retrieve temporal entity from the snapshot's frozen data and return early.
@@ -153,6 +154,15 @@ pub async fn get(
             .with_format(accept.format())
             .with_snapshot_uri(snapshot_id)
             .into_response());
+    }
+
+    // EntityMap scoping (spec 5.7.3.4): if NGSILD-EntityMap header is present,
+    // only entities in the map are accessible. Return 404 if not in the map.
+    if let Some(ref map_id) = entity_map_header {
+        let map = state.entity_maps.retrieve(map_id).await.map_err(|e| e.with_instance(uri.clone()))?;
+        if !map.entity_ids.contains(&id.to_string()) {
+            return Err(ApiError::from_error(AndromedaError::not_found(id.to_string()), uri.clone()));
+        }
     }
 
     let is_local = params.is_local();
@@ -215,11 +225,14 @@ pub async fn get(
             )))
         })?;
 
-        let mut response = NgsiLdResponse::new(status, entity.simplify())
+        let mut builder = NgsiLdResponse::new(status, entity.simplify())
             .with_context(context)
             .with_format(accept.format())
-            .with_warnings(warnings)
-            .into_response();
+            .with_warnings(warnings);
+        if let Some(map_uri) = entity_map_header {
+            builder = builder.with_entity_map_uri(map_uri);
+        }
+        let mut response = builder.into_response();
         if let Some(cr) = content_range
             && let Ok(val) = cr.parse()
         {
@@ -227,11 +240,14 @@ pub async fn get(
         }
         Ok(response)
     } else {
-        let mut response = NgsiLdResponse::new(status, entity_value)
+        let mut builder = NgsiLdResponse::new(status, entity_value)
             .with_context(context)
             .with_format(accept.format())
-            .with_warnings(warnings)
-            .into_response();
+            .with_warnings(warnings);
+        if let Some(map_uri) = entity_map_header {
+            builder = builder.with_entity_map_uri(map_uri);
+        }
+        let mut response = builder.into_response();
         if let Some(cr) = content_range
             && let Ok(val) = cr.parse()
         {
@@ -248,13 +264,14 @@ pub async fn query(
     accept: AcceptFormatNoGeo,
     context: ContextUrl,
     protocol: NgsiLdProtocolHeaders,
-    ValidatedQuery(params): ValidatedQuery<TemporalQueryParameters>,
+    ValidatedQuery(mut params): ValidatedQuery<TemporalQueryParameters>,
 ) -> Result<Response, ApiError> {
     let service = &state.temporal;
     let context: ContextSpec = context.into_inner();
     let snapshot = protocol.snapshot;
     let via_owned = protocol.incoming_via;
     let incoming_via = via_owned.as_deref();
+    let entity_map_header = protocol.entity_map;
     let options = params.options.as_deref().unwrap_or("");
     let key_values = options.contains("keyValues") || options.contains("simplified");
 
@@ -305,6 +322,22 @@ pub async fn query(
         return Ok(response.into_response());
     }
 
+    // EntityMap scoping (spec 5.5.14): if NGSILD-EntityMap header is present,
+    // scope the query to only the entity IDs in the map.
+    if let Some(ref map_id) = entity_map_header {
+        let map = state.entity_maps.retrieve(map_id).await.map_err(|e| e.with_instance(uri.clone()))?;
+        let ids_csv = map.entity_ids.join(",");
+        if params.id.is_some() {
+            // Intersect: keep only IDs that are in both the query and the map
+            let query_ids: std::collections::HashSet<String> = params.id.as_ref().unwrap().split(',').map(|s| s.trim().to_string()).collect();
+            let map_ids: std::collections::HashSet<String> = map.entity_ids.into_iter().collect();
+            let intersection: Vec<String> = query_ids.intersection(&map_ids).cloned().collect();
+            params.id = Some(intersection.join(","));
+        } else {
+            params.id = Some(ids_csv);
+        }
+    }
+
     let is_local = params.is_local();
 
     let result = service.query(&params, &context).await.map_err(|e| e.with_instance(uri.clone()))?;
@@ -352,6 +385,27 @@ pub async fn query(
         }
     };
 
+    // EntityMap creation (spec 5.5.14, 5.7.4.4): if entityMap=true was requested,
+    // create a new EntityMap from all matching IDs (not just the current page).
+    // splitEntities is accepted for API compatibility but not yet used for temporal
+    // post-merge filtering (the entity query handler implements this in full).
+    let _split_entities = params.split_entities;
+    let entity_map_requested = params.entity_map.unwrap_or(false);
+    let entity_map_uri = if entity_map_requested {
+        let all_ids = service.query_ids(&params, &context).await.map_err(|e| e.with_instance(uri.clone()))?;
+        let map = state
+            .entity_maps
+            .create(all_ids, params.entity_map_lifetime.as_deref())
+            .await
+            .map_err(|e| e.with_instance(uri.clone()))?;
+        Some(map.id)
+    } else if entity_map_header.is_some() {
+        entity_map_header
+    } else {
+        None
+    };
+
+    let status = if entity_map_requested { StatusCode::CREATED } else { StatusCode::OK };
     let returned = entities.len();
 
     if key_values {
@@ -366,7 +420,7 @@ pub async fn query(
             simplified.push(entity.simplify());
         }
 
-        let mut response = NgsiLdCollectionResponse::ok(simplified);
+        let mut response = NgsiLdCollectionResponse::ok(simplified).with_status(status);
         response = response.with_context(context).with_format(accept.format()).with_warnings(forwarding_warnings);
         if let Some(count) = total_count {
             response = response.with_total_count(count as usize);
@@ -379,10 +433,13 @@ pub async fn query(
         }
         if let Some(cr) = content_range {
             response = response.with_content_range(cr);
+        }
+        if let Some(ref map_uri) = entity_map_uri {
+            response = response.with_entity_map_uri(map_uri.clone()); // clone: owned String needed for response header; map_uri borrowed by ref pattern
         }
         Ok(response.into_response())
     } else {
-        let mut response = NgsiLdCollectionResponse::ok(entities);
+        let mut response = NgsiLdCollectionResponse::ok(entities).with_status(status);
         response = response.with_context(context).with_format(accept.format()).with_warnings(forwarding_warnings);
         if let Some(count) = total_count {
             response = response.with_total_count(count as usize);
@@ -395,6 +452,9 @@ pub async fn query(
         }
         if let Some(cr) = content_range {
             response = response.with_content_range(cr);
+        }
+        if let Some(ref map_uri) = entity_map_uri {
+            response = response.with_entity_map_uri(map_uri.clone()); // clone: owned String needed for response header; map_uri borrowed by ref pattern
         }
         Ok(response.into_response())
     }

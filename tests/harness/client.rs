@@ -761,6 +761,24 @@ impl NgsiLdClient {
         Self::send_response(resp).await
     }
 
+    pub async fn query_temporal_entities_with_entity_map(&self, params: &QueryParams, entity_map_id: &str, headers: RequestHeaders) -> NgsiLdResponse {
+        let mut req = self.inner.get(self.url_with_params("/temporal/entities", params));
+        let mut hm = headers.into_header_map();
+        hm.insert("NGSILD-EntityMap", HeaderValue::from_str(entity_map_id).unwrap());
+        req = req.headers(hm);
+        let resp = req.send().await.expect("query_temporal_entities_with_entity_map request failed");
+        Self::send_response(resp).await
+    }
+
+    pub async fn get_temporal_entity_with_entity_map(&self, id: &str, params: &QueryParams, entity_map_id: &str, headers: RequestHeaders) -> NgsiLdResponse {
+        let mut req = self.inner.get(self.url_with_params(&format!("/temporal/entities/{id}"), params));
+        let mut hm = headers.into_header_map();
+        hm.insert("NGSILD-EntityMap", HeaderValue::from_str(entity_map_id).unwrap());
+        req = req.headers(hm);
+        let resp = req.send().await.expect("get_temporal_entity_with_entity_map request failed");
+        Self::send_response(resp).await
+    }
+
     pub async fn delete_temporal_entity(&self, id: &str) -> NgsiLdResponse {
         let resp = self
             .inner
