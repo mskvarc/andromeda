@@ -8,6 +8,7 @@ use crate::{
     api::{extractor::prefer::PreferHeader, response::version_compat::adapt_payload_for_version},
     header::{
         GeoJsonBodyPreference,
+        Link,
         NgsiLdEntityMap,
         NgsiLdResultsCount,
         NgsiLdSnapshot,
@@ -15,7 +16,6 @@ use crate::{
         NgsiLdWarningHeader,
         PreferenceApplied,
         ResponseFormat,
-        insert_jsonld_contexts,
     },
     jsonld::ContextSpec,
     service::entity::decode_percent_encoded_uris,
@@ -181,7 +181,7 @@ impl<T: Serialize> IntoResponse for NgsiLdResponse<T> {
             ResponseFormat::Json => {
                 // application/json: @context in Link header, not in body
                 let urls = context_spec.to_link_headers();
-                insert_jsonld_contexts(&mut headers, &urls);
+                Link::insert_jsonld_contexts(&mut headers, &urls);
 
                 match serde_json::to_value(&self.data) {
                     Ok(mut value) => {
@@ -218,7 +218,7 @@ impl<T: Serialize> IntoResponse for NgsiLdResponse<T> {
                     // GeoJSON body preference: body=json means @context in Link header
                     let geojson_context = if self.prefer.geo_json_body == GeoJsonBodyPreference::Json {
                         let urls = context_spec.to_link_headers();
-                        insert_jsonld_contexts(&mut headers, &urls);
+                        Link::insert_jsonld_contexts(&mut headers, &urls);
                         None
                     } else {
                         context_value
@@ -378,7 +378,7 @@ impl<T: Serialize> IntoResponse for NgsiLdCollectionResponse<T> {
         // Add Link header for application/json
         if self.format == ResponseFormat::Json {
             let urls = context_spec.to_link_headers();
-            insert_jsonld_contexts(&mut headers, &urls);
+            Link::insert_jsonld_contexts(&mut headers, &urls);
         }
 
         match self.format {
@@ -422,7 +422,7 @@ impl<T: Serialize> IntoResponse for NgsiLdCollectionResponse<T> {
                     // GeoJSON body preference: body=json means @context in Link header
                     let geojson_context = if self.prefer.geo_json_body == GeoJsonBodyPreference::Json {
                         let urls = context_spec.to_link_headers();
-                        insert_jsonld_contexts(&mut headers, &urls);
+                        Link::insert_jsonld_contexts(&mut headers, &urls);
                         None
                     } else {
                         context_value

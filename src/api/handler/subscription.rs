@@ -5,7 +5,7 @@ use crate::{
         tenant::TenantState,
     },
     error::api::ApiError,
-    header::{link::media_type, link_from_values, link_header_value, link_value},
+    header::link::{Link, LinkValue},
     jsonld::ContextSpec,
 };
 use axum::{
@@ -110,10 +110,10 @@ fn append_pagination_links(response: &mut Response, uri: &axum::http::Uri, limit
 
     let values = links
         .into_iter()
-        .map(|(rel, target)| link_value(&target, Some(rel), Some(media_type::JSON_LD)))
+        .map(|(rel, target)| LinkValue::with_params(&target, Some(rel), Some(LinkValue::JSON_LD_MEDIA_TYPE)))
         .collect::<Vec<_>>();
-    if let Some(link) = link_from_values(values)
-        && let Some(value) = link_header_value(&link)
+    if let Some(link) = Link::from_values(values)
+        && let Some(value) = link.to_header_value()
     {
         response.headers_mut().append("Link", value);
     }

@@ -15,7 +15,7 @@ mod via;
 
 pub use self::{
     accept::{Accept, ResponseFormat},
-    link::{insert_jsonld_contexts, jsonld_context_link, link_from_values, link_header_string, link_header_value, link_value},
+    link::Link,
     ngsild_entity_map::NgsiLdEntityMap,
     ngsild_language::{LanguageRange, NgsiLdLanguage},
     ngsild_results_count::NgsiLdResultsCount,

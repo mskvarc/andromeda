@@ -25,24 +25,6 @@ use mediatype::MediaTypeBuf;
 use std::{borrow::Cow, fmt, str::FromStr};
 
 // ---------------------------------------------------------------------------
-// Well-known link relation types used in NGSI-LD
-// ---------------------------------------------------------------------------
-
-/// Well-known link relation types used in NGSI-LD.
-pub mod rel {
-    /// JSON-LD context relation (used for `@context` in Link header).
-    pub const fn json_ld_context() -> &'static str {
-        crate::jsonld::vocab::JSONLD_CONTEXT_REL.as_str()
-    }
-}
-
-/// Well-known media types for Link header `type` parameter.
-pub mod media_type {
-    /// `application/ld+json` media type.
-    pub const JSON_LD: &str = "application/ld+json";
-}
-
-// ---------------------------------------------------------------------------
 // Link
 // ---------------------------------------------------------------------------
 
@@ -64,6 +46,62 @@ impl Link {
     /// Return the contained `LinkValue`s.
     pub fn values(&self) -> &[LinkValue] {
         &self.values
+    }
+
+    /// Build a `Link` from a list of `LinkValue`s, returning `None` if empty.
+    pub fn from_values(values: Vec<LinkValue>) -> Option<Link> {
+        if values.is_empty() { None } else { Some(Link::new(values)) }
+    }
+
+    /// Create a single-value JSON-LD context `Link` header.
+    pub fn jsonld_context(context_url: &str) -> Link {
+        Link::new(vec![LinkValue::jsonld_context(context_url)])
+    }
+
+    /// Create a multi-value JSON-LD context `Link` header from an ordered URL list.
+    fn jsonld_contexts(urls: &[String]) -> Option<Link> {
+        let values = urls.iter().map(|url| LinkValue::jsonld_context(url)).collect::<Vec<_>>();
+        Link::from_values(values)
+    }
+
+    /// Insert JSON-LD context links into a header map as a single `Link` header.
+    pub fn insert_jsonld_contexts(headers: &mut HeaderMap, urls: &[String]) {
+        if let Some(link) = Link::jsonld_contexts(urls) {
+            headers.typed_insert(link);
+        }
+    }
+
+    /// Encode this `Link` header into a raw `HeaderValue`.
+    ///
+    /// Returns `None` if encoding yields no values.
+    pub fn to_header_value(&self) -> Option<HeaderValue> {
+        let mut values = Vec::new();
+        self.encode(&mut values);
+        if values.is_empty() {
+            return None;
+        }
+        if values.len() == 1 {
+            return values.into_iter().next();
+        }
+        let mut combined = String::new();
+        for (idx, value) in values.iter().enumerate() {
+            let part = value.to_str().ok()?;
+            if idx > 0 {
+                combined.push_str(", ");
+            }
+            combined.push_str(part);
+        }
+        HeaderValue::from_str(&combined).ok()
+    }
+
+    /// Encode this `Link` header into a string, if possible.
+    pub fn to_header_string(&self) -> Option<String> {
+        self.to_header_value().and_then(|v| v.to_str().ok().map(|s| s.to_string()))
+    }
+
+    /// Return target URIs of all JSON-LD context link-values.
+    pub fn context_urls(&self) -> impl Iterator<Item = &str> {
+        self.values().iter().filter(|lv| lv.is_context_link()).map(|lv| lv.link())
     }
 }
 
@@ -87,6 +125,9 @@ pub struct LinkValue {
 }
 
 impl LinkValue {
+    /// `application/ld+json` media type for Link header `type` parameter.
+    pub const JSON_LD_MEDIA_TYPE: &str = "application/ld+json";
+
     /// Create a `LinkValue` from a URI-Reference.
     pub fn new<T>(uri: T) -> LinkValue
     where
@@ -120,6 +161,38 @@ impl LinkValue {
         self.media_type = Some(media_type);
         self
     }
+
+    /// Build a typed `LinkValue` with optional `rel` and `type` parameters.
+    pub fn with_params(target: &str, rel: Option<&str>, media_type: Option<&str>) -> LinkValue {
+        let mut value = LinkValue::new(target.to_owned());
+        if let Some(rel) = rel {
+            // RelationType::from_str returns Infallible, so Ok is always produced.
+            match rel.parse::<RelationType>() {
+                Ok(rel) => value = value.push_rel(rel),
+                Err(infallible) => match infallible {},
+            }
+        }
+        if let Some(media_type) = media_type
+            && let Ok(parsed) = media_type.parse::<MediaTypeBuf>()
+        {
+            value = value.set_media_type(parsed);
+        }
+        value
+    }
+
+    /// Build a JSON-LD context link-value with the standard relation type and media type.
+    pub fn jsonld_context(target: &str) -> LinkValue {
+        let mut lv = LinkValue::new(target.to_owned()).push_rel(RelationType::jsonld_context());
+        if let Ok(mt) = Self::JSON_LD_MEDIA_TYPE.parse::<MediaTypeBuf>() {
+            lv = lv.set_media_type(mt);
+        }
+        lv
+    }
+
+    /// Returns true if this is a JSON-LD context link.
+    pub fn is_context_link(&self) -> bool {
+        self.rel().is_some_and(|rels| rels.iter().any(RelationType::is_jsonld_context))
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -145,6 +218,21 @@ pub enum RelationType {
     Prev,
     /// Any other relation type (registered name or extension URI).
     ExtRelType(String),
+}
+
+impl RelationType {
+    /// The JSON-LD context relation IRI.
+    pub const JSONLD_CONTEXT: &str = "http://www.w3.org/ns/json-ld#context";
+
+    /// Create the JSON-LD context relation type.
+    pub fn jsonld_context() -> RelationType {
+        RelationType::ExtRelType(Self::JSONLD_CONTEXT.to_owned())
+    }
+
+    /// Returns true if this is the JSON-LD context relation type.
+    pub fn is_jsonld_context(&self) -> bool {
+        matches!(self, RelationType::ExtRelType(uri) if uri == Self::JSONLD_CONTEXT)
+    }
 }
 
 impl fmt::Display for RelationType {
@@ -271,16 +359,9 @@ fn parse_relation_types(raw: Option<&str>) -> Result<Vec<RelationType>, LinkPars
 }
 
 /// Error returned when a `Link` header cannot be parsed.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, thiserror::Error)]
+#[error("invalid Link header")]
 pub struct LinkParseError;
-
-impl fmt::Display for LinkParseError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("invalid Link header")
-    }
-}
-
-impl std::error::Error for LinkParseError {}
 
 // ---------------------------------------------------------------------------
 // headers::Header impl
@@ -370,90 +451,6 @@ fn verify_and_trim(s: &str, open: u8, close: u8) -> Result<&str, LinkParseError>
 }
 
 // ---------------------------------------------------------------------------
-// NGSI-LD convenience functions
-// ---------------------------------------------------------------------------
-
-/// Build a typed `LinkValue` with optional `rel` and `type` parameters.
-pub fn link_value(target: &str, rel: Option<&str>, media_type: Option<&str>) -> LinkValue {
-    link_value_with_params(target, rel, media_type)
-}
-
-fn link_value_with_params(target: &str, rel: Option<&str>, media_type: Option<&str>) -> LinkValue {
-    let mut value = LinkValue::new(target.to_owned());
-    if let Some(rel) = rel {
-        // RelationType::from_str returns Infallible, so Ok is always produced.
-        match rel.parse::<RelationType>() {
-            Ok(rel) => value = value.push_rel(rel),
-            Err(infallible) => match infallible {},
-        }
-    }
-    if let Some(media_type) = media_type
-        && let Ok(parsed) = media_type.parse::<MediaTypeBuf>()
-    {
-        value = value.set_media_type(parsed);
-    }
-    value
-}
-
-/// Build a `Link` from a list of `LinkValue`s, returning `None` if empty.
-pub fn link_from_values(values: Vec<LinkValue>) -> Option<Link> {
-    if values.is_empty() { None } else { Some(Link::new(values)) }
-}
-
-/// Create a single-value JSON-LD context `Link` header.
-pub fn jsonld_context_link(context_url: &str) -> Link {
-    Link::new(vec![link_value_with_params(
-        context_url,
-        Some(rel::json_ld_context()),
-        Some(media_type::JSON_LD),
-    )])
-}
-
-/// Create a multi-value JSON-LD context `Link` header from an ordered URL list.
-fn jsonld_context_links(urls: &[String]) -> Option<Link> {
-    let values = urls
-        .iter()
-        .map(|url| link_value_with_params(url, Some(rel::json_ld_context()), Some(media_type::JSON_LD)))
-        .collect::<Vec<_>>();
-    link_from_values(values)
-}
-
-/// Insert JSON-LD context links into a header map as a single `Link` header.
-pub fn insert_jsonld_contexts(headers: &mut HeaderMap, urls: &[String]) {
-    if let Some(link) = jsonld_context_links(urls) {
-        headers.typed_insert(link);
-    }
-}
-
-/// Encode a typed `Link` header into a raw `HeaderValue`.
-///
-/// Returns `None` if encoding yields no values.
-pub fn link_header_value(link: &Link) -> Option<HeaderValue> {
-    let mut values = Vec::new();
-    link.encode(&mut values);
-    if values.is_empty() {
-        return None;
-    }
-    if values.len() == 1 {
-        return values.into_iter().next();
-    }
-    let mut combined = String::new();
-    for (idx, value) in values.iter().enumerate() {
-        let part = value.to_str().ok()?;
-        if idx > 0 {
-            combined.push_str(", ");
-        }
-        combined.push_str(part);
-    }
-    HeaderValue::from_str(&combined).ok()
-}
-
-/// Encode a typed `Link` header into a string, if possible.
-pub fn link_header_string(link: &Link) -> Option<String> {
-    link_header_value(link).and_then(|v| v.to_str().ok().map(|s| s.to_string()))
-}
-
-// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
@@ -462,6 +459,20 @@ mod tests {
     use std::fmt::Write;
 
     use super::*;
+
+    impl LinkValue {
+        /// Returns true if this link-value has the given relation type.
+        fn has_rel(&self, rel: &RelationType) -> bool {
+            self.rel().is_some_and(|rels| rels.contains(rel))
+        }
+    }
+
+    impl Link {
+        /// Return link-values matching a given relation type.
+        fn find_by_rel(&self, rel: RelationType) -> impl Iterator<Item = &LinkValue> {
+            self.values().iter().filter(move |lv| lv.has_rel(&rel))
+        }
+    }
     use headers::Header;
 
     /// Decode a `Link` from a raw header string using the `headers::Header` trait.
@@ -597,12 +608,12 @@ mod tests {
         assert!(result.is_err());
     }
 
-    // -- NGSI-LD convenience function tests --
+    // -- NGSI-LD associated method tests --
 
     #[test]
     fn jsonld_context_link_encodes() {
-        let link = jsonld_context_link("https://example.com/context.jsonld");
-        let raw = link_header_string(&link).expect("should encode");
+        let link = Link::jsonld_context("https://example.com/context.jsonld");
+        let raw = link.to_header_string().expect("should encode");
         assert!(raw.contains("<https://example.com/context.jsonld>"));
         assert!(raw.contains("rel=\"http://www.w3.org/ns/json-ld#context\""));
         assert!(raw.contains("type=\"application/ld+json\""));
@@ -611,23 +622,23 @@ mod tests {
     #[test]
     fn multi_value_link_encodes() {
         let values = vec![
-            link_value("https://example.com/one", Some("prev"), None),
-            link_value("https://example.com/two", Some("next"), None),
+            LinkValue::with_params("https://example.com/one", Some("prev"), None),
+            LinkValue::with_params("https://example.com/two", Some("next"), None),
         ];
-        let link = link_from_values(values).expect("non-empty vec should produce Some");
-        let raw = link_header_string(&link).expect("should encode");
+        let link = Link::from_values(values).expect("non-empty vec should produce Some");
+        let raw = link.to_header_string().expect("should encode");
         assert!(raw.contains("<https://example.com/one>"));
         assert!(raw.contains("<https://example.com/two>"));
     }
 
     #[test]
     fn empty_values_return_none() {
-        assert!(link_from_values(Vec::new()).is_none());
+        assert!(Link::from_values(Vec::new()).is_none());
     }
 
     #[test]
     fn header_trait_roundtrip() {
-        let link = jsonld_context_link("https://example.com/ctx.jsonld");
+        let link = Link::jsonld_context("https://example.com/ctx.jsonld");
 
         // Encode
         let mut values = Vec::new();
@@ -643,10 +654,77 @@ mod tests {
 
     #[test]
     fn pagination_link_with_type() {
-        let lv = link_value("/entities?offset=20&limit=10", Some("next"), Some("application/json"));
+        let lv = LinkValue::with_params("/entities?offset=20&limit=10", Some("next"), Some("application/json"));
         let link = Link::new(vec![lv]);
-        let raw = link_header_string(&link).expect("should encode");
+        let raw = link.to_header_string().expect("should encode");
         assert!(raw.contains("rel=\"next\""));
         assert!(raw.contains("type=\"application/json\""));
+    }
+
+    // -- RelationType tests --
+
+    #[test]
+    fn relation_type_jsonld_context_constructor() {
+        let rel = RelationType::jsonld_context();
+        assert_eq!(rel, RelationType::ExtRelType("http://www.w3.org/ns/json-ld#context".to_owned()));
+    }
+
+    #[test]
+    fn relation_type_is_jsonld_context_positive() {
+        assert!(RelationType::jsonld_context().is_jsonld_context());
+    }
+
+    #[test]
+    fn relation_type_is_jsonld_context_negative() {
+        assert!(!RelationType::Next.is_jsonld_context());
+    }
+
+    // -- LinkValue query method tests --
+
+    #[test]
+    fn link_value_has_rel_positive() {
+        let lv = LinkValue::new("/page").push_rel(RelationType::Next);
+        assert!(lv.has_rel(&RelationType::Next));
+    }
+
+    #[test]
+    fn link_value_has_rel_negative() {
+        let lv = LinkValue::new("/page").push_rel(RelationType::Next);
+        assert!(!lv.has_rel(&RelationType::Prev));
+    }
+
+    #[test]
+    fn link_value_is_context_link() {
+        let context_lv = LinkValue::new("https://example.com/ctx.jsonld").push_rel(RelationType::jsonld_context());
+        assert!(context_lv.is_context_link());
+
+        let pagination_lv = LinkValue::new("/page/2").push_rel(RelationType::Next);
+        assert!(!pagination_lv.is_context_link());
+    }
+
+    // -- Link query method tests --
+
+    #[test]
+    fn link_context_urls_filters_correctly() {
+        let link = Link::new(vec![
+            LinkValue::new("https://example.com/ctx.jsonld").push_rel(RelationType::jsonld_context()),
+            LinkValue::new("/page/2").push_rel(RelationType::Next),
+            LinkValue::new("https://example.com/other.jsonld").push_rel(RelationType::jsonld_context()),
+        ]);
+
+        let urls: Vec<&str> = link.context_urls().collect();
+        assert_eq!(urls, vec!["https://example.com/ctx.jsonld", "https://example.com/other.jsonld"]);
+    }
+
+    #[test]
+    fn link_find_by_rel_returns_matching() {
+        let link = Link::new(vec![
+            LinkValue::new("/page/2").push_rel(RelationType::Next),
+            LinkValue::new("https://example.com/ctx.jsonld").push_rel(RelationType::jsonld_context()),
+            LinkValue::new("/page/3").push_rel(RelationType::Next),
+        ]);
+
+        let next_values: Vec<&str> = link.find_by_rel(RelationType::Next).map(|lv| lv.link()).collect();
+        assert_eq!(next_values, vec!["/page/2", "/page/3"]);
     }
 }

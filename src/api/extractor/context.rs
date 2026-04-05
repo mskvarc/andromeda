@@ -23,9 +23,6 @@ impl ContextUrl {
     }
 }
 
-/// The JSON-LD context relation type IRI.
-const JSONLD_CONTEXT_REL: &str = "http://www.w3.org/ns/json-ld#context";
-
 impl<S> FromRequestParts<S> for ContextUrl
 where
     S: Send + Sync,
@@ -39,14 +36,7 @@ where
                 continue;
             };
             if let Ok(parsed) = Link::from_str(link_str) {
-                for lv in parsed.values() {
-                    if let Some(rels) = lv.rel() {
-                        let has_context_rel = rels.iter().any(|r| r.to_string() == JSONLD_CONTEXT_REL);
-                        if has_context_rel {
-                            links.push(lv.link().to_owned());
-                        }
-                    }
-                }
+                links.extend(parsed.context_urls().map(|url| url.to_owned()));
             }
         }
 
@@ -71,8 +61,7 @@ mod tests {
         let values = link.values();
         assert_eq!(values.len(), 1);
         assert_eq!(values[0].link(), "https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context.jsonld");
-        let rels = values[0].rel().expect("should have rel");
-        assert!(rels.iter().any(|r| r.to_string() == JSONLD_CONTEXT_REL));
+        assert!(values[0].is_context_link());
     }
 
     #[test]
@@ -81,8 +70,7 @@ mod tests {
         let link = Link::from_str(raw).expect("should parse");
         let values = link.values();
         assert_eq!(values.len(), 1);
-        let rels = values[0].rel().expect("should have rel");
-        assert!(!rels.iter().any(|r| r.to_string() == JSONLD_CONTEXT_REL));
+        assert!(!values[0].is_context_link());
     }
 
     #[tokio::test]

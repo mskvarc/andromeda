@@ -21,7 +21,7 @@ use tokio::{sync::RwLock, time::Instant};
 use tracing::{debug, error, info, warn};
 
 use crate::{
-    header::{jsonld_context_link, link_header_string},
+    header::link::Link,
     transport::{
         endpoint::{MqttEndpointConfig, MqttQoS, MqttVersion},
         types::{self, DeliveryOutcome, DeliveryRequest, NotificationTransport, TransportError},
@@ -455,8 +455,8 @@ fn build_envelope(body: &[u8], content_type: &str, receiver_info: &[(String, Str
 
     if content_type == "application/json" {
         let ctx_url = context_url.unwrap_or(crate::jsonld::core_context::NGSI_LD_CORE_CONTEXT_URL);
-        let link = jsonld_context_link(ctx_url);
-        if let Some(value) = link_header_string(&link) {
+        let link = Link::jsonld_context(ctx_url);
+        if let Some(value) = link.to_header_string() {
             metadata.insert("Link".to_string(), Value::String(value));
         }
     }
@@ -514,8 +514,8 @@ impl NotificationTransport for MqttTransportHandle {
 
                 if req.content_type == types::APPLICATION_JSON {
                     let ctx_url = req.context_url.as_deref().unwrap_or(crate::jsonld::core_context::NGSI_LD_CORE_CONTEXT_URL);
-                    let link = jsonld_context_link(ctx_url);
-                    if let Some(value) = link_header_string(&link) {
+                    let link = Link::jsonld_context(ctx_url);
+                    if let Some(value) = link.to_header_string() {
                         properties.user_properties.push(("Link".to_string(), value));
                     }
                 }

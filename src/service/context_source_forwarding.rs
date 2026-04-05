@@ -1,7 +1,7 @@
 use crate::{
     domain::registration::{ContextSourceRegistration, CsrOperation, ForwardingMode},
     error::AndromedaError,
-    header::{NgsiLdTenant, NgsiLdWarning, Via, jsonld_context_link, link_header_value},
+    header::{NgsiLdTenant, NgsiLdWarning, Via, link::Link},
     jsonld::{ContextSpec, JsonLdEngine},
     repository::context_source_registration::ContextSourceRegistrationRepository,
 };
@@ -725,8 +725,8 @@ impl ContextSourceForwardingService {
         let mut request = self.http_client.request(method, url).header("Connection", "close");
 
         if let Some(ctx) = context_url {
-            let link = jsonld_context_link(ctx);
-            if let Some(value) = link_header_value(&link) {
+            let link = Link::jsonld_context(ctx);
+            if let Some(value) = link.to_header_value() {
                 request = request.header("Link", value);
             }
         }
