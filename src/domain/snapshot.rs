@@ -1,7 +1,9 @@
+use crate::domain::serde_helpers;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use strum::{Display, EnumString};
+use uuid::Uuid;
 
 /// Status of a snapshot operation (ETSI GS CIM 009 clause 5.2.41, status member).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Display, EnumString)]
@@ -56,6 +58,56 @@ pub struct ExecutionResultDetails {
     pub entity_count: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+}
+
+/// Notification payload sent to a snapshot's endpoint on status changes
+/// (ETSI GS CIM 009 clause 5.3.4, Table 5.3.4-1).
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SnapshotNotification {
+    /// Unique identifier (`urn:ngsi-ld:SnapshotNotification:{uuid}`).
+    pub id: String,
+    /// Always `"SnapshotNotification"`.
+    #[serde(rename = "type")]
+    pub type_: String,
+    /// When the snapshot expires.
+    #[serde(with = "serde_helpers::rfc3339")]
+    pub expires_at: DateTime<Utc>,
+    /// When this notification was generated.
+    #[serde(with = "serde_helpers::rfc3339")]
+    pub notified_at: DateTime<Utc>,
+    /// Identifier of the snapshot this notification refers to.
+    pub snapshot_id: String,
+    /// Priority of the snapshot at the time of notification.
+    pub snapshot_priority: i16,
+    /// Per-query execution details, if available.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub snapshot_queries_details: Option<Vec<ExecutionResultDetails>>,
+    /// Current status of the snapshot.
+    pub snapshot_status: String,
+    /// Per-temporal-query execution details, if available.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub temporal_snapshot_queries_details: Option<Vec<ExecutionResultDetails>>,
+}
+
+impl Snapshot {
+    /// Build a [`SnapshotNotification`] from the snapshot's current state.
+    ///
+    /// Generates a fresh `urn:ngsi-ld:SnapshotNotification:{uuid}` identifier
+    /// and sets `notified_at` to the current time.
+    pub fn build_notification(&self) -> SnapshotNotification {
+        SnapshotNotification {
+            id: format!("urn:ngsi-ld:SnapshotNotification:{}", Uuid::new_v4()),
+            type_: "SnapshotNotification".to_string(),
+            expires_at: self.expires_at,
+            notified_at: Utc::now(),
+            snapshot_id: self.id.clone(),
+            snapshot_priority: self.snapshot_priority,
+            snapshot_queries_details: self.queries_details.clone(),
+            snapshot_status: self.status.to_string(),
+            temporal_snapshot_queries_details: self.temporal_queries_details.clone(),
+        }
+    }
 }
 
 /// Input for POST /snapshots.

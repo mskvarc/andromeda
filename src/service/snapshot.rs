@@ -3,21 +3,32 @@ use crate::{
     error::AndromedaError,
     repository::snapshot::SnapshotRepository,
     service::entity_map::parse_iso8601_duration,
+    transport::{
+        dispatch::{DeliveryResult, TransportDispatcher, build_delivery_request},
+        endpoint::EndpointTransport,
+    },
 };
 use chrono::Utc;
 use serde_json::Value;
 use sqlx::postgres::PgPool;
+use std::sync::Arc;
 
 /// Service for managing NGSI-LD entity snapshots.
 pub struct SnapshotService {
     repo: SnapshotRepository,
+    transport: Option<Arc<TransportDispatcher>>,
 }
 
 impl SnapshotService {
     /// Create a new snapshot service backed by the given connection pool.
-    pub fn new(pool: &PgPool) -> SnapshotService {
+    ///
+    /// When `transport` is provided, snapshot status notifications are
+    /// dispatched to snapshots that have an `endpoint` configured
+    /// (ETSI GS CIM 009 clause 5.16.6).
+    pub fn new(pool: &PgPool, transport: Option<Arc<TransportDispatcher>>) -> SnapshotService {
         SnapshotService {
             repo: SnapshotRepository::new(pool),
+            transport,
         }
     }
 
@@ -57,6 +68,7 @@ impl SnapshotService {
         };
 
         self.repo.create(&snapshot).await.map_err(|e| AndromedaError::map_sqlx(e, "snapshot"))?;
+        self.send_notification_if_configured(&snapshot).await;
 
         Ok(snapshot)
     }
@@ -108,7 +120,9 @@ impl SnapshotService {
             .await
             .map_err(|e| AndromedaError::map_sqlx(e, "snapshot"))?;
 
-        self.get(id).await
+        let updated = self.get(id).await?;
+        self.send_notification_if_configured(&updated).await;
+        Ok(updated)
     }
 
     /// Delete a snapshot by its identifier.
@@ -223,6 +237,59 @@ impl SnapshotService {
             .await
             .map_err(|e| AndromedaError::map_sqlx(e, "snapshot"))?;
 
+        self.send_notification_if_configured(&cloned).await;
+
         Ok(cloned)
+    }
+
+    /// Dispatch a [`SnapshotNotification`] to the snapshot's endpoint, if configured.
+    ///
+    /// Per ETSI GS CIM 009 clause 5.16.6, notifications are sent when the
+    /// `endpoint` member is present. Delivery is fire-and-forget: errors are
+    /// logged but never propagated.
+    async fn send_notification_if_configured(&self, snapshot: &Snapshot) {
+        let endpoint = match snapshot.endpoint.as_deref() {
+            Some(uri) => uri,
+            None => return,
+        };
+
+        let transport = match self.transport.as_ref() {
+            Some(t) => t,
+            None => return,
+        };
+
+        let notification = snapshot.build_notification();
+        let payload = match serde_json::to_value(&notification) {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::error!(
+                    error = %e,
+                    snapshot_id = %snapshot.id,
+                    "Failed to serialize snapshot notification"
+                );
+                return;
+            }
+        };
+
+        let request = match build_delivery_request(&payload, endpoint, None, snapshot.receiver_info.as_deref(), None, None, &snapshot.id) {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::error!(
+                    error = %e,
+                    snapshot_id = %snapshot.id,
+                    "Failed to build snapshot notification delivery request"
+                );
+                return;
+            }
+        };
+
+        match transport.deliver(&EndpointTransport::Http, &request).await {
+            DeliveryResult::Delivered => {
+                tracing::debug!(snapshot_id = %snapshot.id, "Snapshot notification delivered");
+            }
+            DeliveryResult::Failed => {
+                tracing::warn!(snapshot_id = %snapshot.id, "Snapshot notification delivery failed");
+            }
+        }
     }
 }

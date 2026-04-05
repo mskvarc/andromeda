@@ -282,6 +282,7 @@ pub async fn build_tenant_state(
         crate::worker::attribute_expiration::AttributeExpirationWorker::new(EntityRepository::new(&pool), Some(change_tx.clone()), expiration_interval);
     worker_handles.push(tokio::spawn(attr_expiration_worker.run()));
 
+    let snapshot_transport = transport.clone();
     let transport_handle = transport.clone();
     let csr_interval_worker = CsrIntervalWorker::new(
         CsourceSubscriptionRepository::new(&pool),
@@ -303,7 +304,7 @@ pub async fn build_tenant_state(
     let entity_map_store = crate::repository::entity_map::EntityMapStore::new();
     let entity_map_service = Arc::new(crate::service::entity_map::EntityMapService::new(entity_map_store));
 
-    let snapshot_service = Arc::new(crate::service::snapshot::SnapshotService::new(&pool));
+    let snapshot_service = Arc::new(crate::service::snapshot::SnapshotService::new(&pool, Some(snapshot_transport)));
 
     Ok((
         AndromedaState {
