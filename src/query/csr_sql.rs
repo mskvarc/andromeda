@@ -172,7 +172,7 @@ pub fn build_csr_query<'a>(query: &'a CompiledCsrQuery) -> Result<BuiltQuery<'a>
         ST_AsGeoJSON(operation_space)::JSONB AS operation_space, \
         expires_at, endpoint, accept, mode, \
         operations, scope, refresh_rate, \
-        management, context_source_info, jsonld_context, \
+        management, context_source_info, jsonld_context, context_source_alias, \
         status, times_sent, times_failed, \
         last_success, last_failure, created_at, modified_at, \
         additional_properties";

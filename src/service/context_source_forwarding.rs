@@ -302,7 +302,12 @@ impl ContextSourceForwardingService {
         // For CSR matching, also pass entity IDs if available
         let first_id = entity_ids.and_then(|ids| ids.first().map(|s| s.as_str()));
         let csrs = self.csr_repo.find_matching(expanded_type.as_deref(), first_id).await?;
-        let matching_csrs: Vec<_> = csrs.into_iter().filter(|csr| operation.matches(csr)).collect();
+        let via_pseudonyms = incoming_via.map(parse_via_pseudonyms).unwrap_or_default();
+        let matching_csrs: Vec<_> = csrs
+            .into_iter()
+            .filter(|csr| operation.matches(csr))
+            .filter(|csr| !is_csr_in_via(csr, &via_pseudonyms))
+            .collect();
 
         if matching_csrs.is_empty() {
             return Ok(Vec::new());
@@ -403,7 +408,12 @@ impl ContextSourceForwardingService {
         }
 
         let csrs = self.csr_repo.find_matching(None, Some(entity_id)).await?;
-        let matching_csrs: Vec<_> = csrs.into_iter().filter(|csr| operation.matches(csr)).collect();
+        let via_pseudonyms = incoming_via.map(parse_via_pseudonyms).unwrap_or_default();
+        let matching_csrs: Vec<_> = csrs
+            .into_iter()
+            .filter(|csr| operation.matches(csr))
+            .filter(|csr| !is_csr_in_via(csr, &via_pseudonyms))
+            .collect();
 
         if matching_csrs.is_empty() {
             return Ok(Vec::new());
@@ -502,11 +512,15 @@ impl ContextSourceForwardingService {
         };
 
         let csrs = self.csr_repo.find_matching(expanded_type.as_deref(), request.entity_id).await?;
+        let via_pseudonyms = request.incoming_via.map(parse_via_pseudonyms).unwrap_or_default();
 
         // Separate CSRs into those that match the operation and exclusive ones that don't
         let mut matching_csrs = Vec::new();
         let mut unforwardable = Vec::new();
         for csr in csrs {
+            if is_csr_in_via(&csr, &via_pseudonyms) {
+                continue;
+            }
             if request.operation.matches(&csr) {
                 matching_csrs.push(csr);
             } else if csr.mode == Some(ForwardingMode::Exclusive) {
@@ -589,7 +603,12 @@ impl ContextSourceForwardingService {
         };
 
         let csrs = self.csr_repo.find_matching(expanded_type.as_deref(), None).await?;
-        let matching_csrs: Vec<_> = csrs.into_iter().filter(|csr| request.operation.matches(csr)).collect();
+        let via_pseudonyms = request.incoming_via.map(parse_via_pseudonyms).unwrap_or_default();
+        let matching_csrs: Vec<_> = csrs
+            .into_iter()
+            .filter(|csr| request.operation.matches(csr))
+            .filter(|csr| !is_csr_in_via(csr, &via_pseudonyms))
+            .collect();
 
         if matching_csrs.is_empty() {
             return Ok(Vec::new());
@@ -769,8 +788,12 @@ impl ContextSourceForwardingService {
             return Vec::new();
         }
 
+        let via_pseudonyms = incoming_via.map(parse_via_pseudonyms).unwrap_or_default();
         let mut results = Vec::new();
         for csr in csrs {
+            if is_csr_in_via(&csr, &via_pseudonyms) {
+                continue;
+            }
             let url = build_discovery_url(&csr.endpoint, path, query_string);
             debug!("Forwarding discovery query to context source {}: {}", csr.id, url);
 
@@ -845,7 +868,12 @@ impl ContextSourceForwardingService {
 
         let first_id = entity_ids.and_then(|ids| ids.first().map(|s| s.as_str()));
         let csrs = self.csr_repo.find_matching(expanded_type.as_deref(), first_id).await?;
-        let matching_csrs: Vec<_> = csrs.into_iter().filter(|csr| operation.matches(csr)).collect();
+        let via_pseudonyms = incoming_via.map(parse_via_pseudonyms).unwrap_or_default();
+        let matching_csrs: Vec<_> = csrs
+            .into_iter()
+            .filter(|csr| operation.matches(csr))
+            .filter(|csr| !is_csr_in_via(csr, &via_pseudonyms))
+            .collect();
 
         if matching_csrs.is_empty() {
             return Ok(Vec::new());
@@ -940,7 +968,12 @@ impl ContextSourceForwardingService {
         }
 
         let csrs = self.csr_repo.find_matching(None, Some(entity_id)).await?;
-        let matching_csrs: Vec<_> = csrs.into_iter().filter(|csr| operation.matches(csr)).collect();
+        let via_pseudonyms = incoming_via.map(parse_via_pseudonyms).unwrap_or_default();
+        let matching_csrs: Vec<_> = csrs
+            .into_iter()
+            .filter(|csr| operation.matches(csr))
+            .filter(|csr| !is_csr_in_via(csr, &via_pseudonyms))
+            .collect();
 
         if matching_csrs.is_empty() {
             return Ok(Vec::new());
@@ -1634,10 +1667,40 @@ pub fn merge_temporal_retrieve_results(local_entity: Option<Value>, remote_resul
     result
 }
 
+/// Parse pseudonyms from an RFC 7230 Via header value.
+///
+/// Each comma-separated entry has the form `"1.1 pseudonym"` or
+/// `"HTTP/1.1 pseudonym (optional comment)"`. Returns the `received-by`
+/// field (pseudonym) from each entry.
+fn parse_via_pseudonyms(via: &str) -> Vec<&str> {
+    via.split(',')
+        .filter_map(|entry| {
+            let trimmed = entry.trim();
+            let rest = trimmed.split_once(char::is_whitespace)?.1.trim();
+            let pseudonym = rest.split_once(char::is_whitespace).map_or(rest, |(p, _)| p);
+            if pseudonym.is_empty() { None } else { Some(pseudonym) }
+        })
+        .collect()
+}
+
 /// Check if the incoming Via header chain already contains our identity (loop detection).
+///
+/// Per spec clause 6.3.18: compares our `source_identity` against each discrete
+/// pseudonym in the Via header, not a substring match.
 pub fn is_via_loop(incoming_via: Option<&str>, source_identity: &str) -> bool {
     match incoming_via {
-        Some(via) => via.contains(source_identity),
+        Some(via) => parse_via_pseudonyms(via).contains(&source_identity),
+        None => false,
+    }
+}
+
+/// Check if a CSR's contextSourceAlias appears in the parsed Via pseudonym list.
+///
+/// Per spec clause 5.12: no registration shall match if its contextSourceAlias
+/// is found in the listing of previously encountered Context Sources.
+fn is_csr_in_via(csr: &ContextSourceRegistration, via_pseudonyms: &[&str]) -> bool {
+    match &csr.context_source_alias {
+        Some(alias) => via_pseudonyms.contains(&alias.as_str()),
         None => false,
     }
 }
@@ -1646,7 +1709,15 @@ pub fn is_via_loop(incoming_via: Option<&str>, source_identity: &str) -> bool {
 mod tests {
     use crate::{
         domain::registration::ForwardingMode,
-        service::context_source_forwarding::{ForwardedEntities, NgsiLdWarning, collect_warnings, is_via_loop, merge_query_results},
+        service::context_source_forwarding::{
+            ForwardedEntities,
+            NgsiLdWarning,
+            collect_warnings,
+            is_csr_in_via,
+            is_via_loop,
+            merge_query_results,
+            parse_via_pseudonyms,
+        },
     };
 
     const ID: &str = "urn:ngsi-ld:ContextSourceIdentity:broker1";
@@ -1672,6 +1743,108 @@ mod tests {
             Some("1.1 urn:ngsi-ld:ContextSourceIdentity:broker2, 1.1 urn:ngsi-ld:ContextSourceIdentity:broker1"),
             ID,
         ));
+    }
+
+    #[test]
+    fn via_loop_no_false_positive_on_prefix() {
+        assert!(!is_via_loop(Some("1.1 broker10"), "broker1"));
+    }
+
+    #[test]
+    fn via_loop_no_false_positive_on_suffix() {
+        assert!(!is_via_loop(Some("1.1 my-broker1"), "broker1"));
+    }
+
+    #[test]
+    fn parse_via_single_entry() {
+        assert_eq!(parse_via_pseudonyms("1.1 broker-a"), vec!["broker-a"]);
+    }
+
+    #[test]
+    fn parse_via_multiple_entries() {
+        assert_eq!(parse_via_pseudonyms("1.1 broker-a, 1.1 broker-b"), vec!["broker-a", "broker-b"]);
+    }
+
+    #[test]
+    fn parse_via_with_protocol_name() {
+        assert_eq!(parse_via_pseudonyms("HTTP/1.1 proxy"), vec!["proxy"]);
+    }
+
+    #[test]
+    fn parse_via_with_comment() {
+        assert_eq!(parse_via_pseudonyms("1.1 proxy (Apache)"), vec!["proxy"]);
+    }
+
+    #[test]
+    fn parse_via_empty() {
+        assert!(parse_via_pseudonyms("").is_empty());
+    }
+
+    #[test]
+    fn csr_without_alias_never_filtered() {
+        let csr = make_csr(None);
+        assert!(!is_csr_in_via(&csr, &["broker-a"]));
+    }
+
+    #[test]
+    fn csr_alias_in_via_is_filtered() {
+        let csr = make_csr(Some("broker-a"));
+        assert!(is_csr_in_via(&csr, &["broker-a", "broker-b"]));
+    }
+
+    #[test]
+    fn csr_alias_not_in_via_passes() {
+        let csr = make_csr(Some("broker-c"));
+        assert!(!is_csr_in_via(&csr, &["broker-a", "broker-b"]));
+    }
+
+    #[test]
+    fn csr_alias_no_substring_match() {
+        let csr = make_csr(Some("broker1"));
+        assert!(!is_csr_in_via(&csr, &["broker10"]));
+    }
+
+    /// Helper to build a minimal `ContextSourceRegistration` for tests.
+    fn make_csr(alias: Option<&str>) -> crate::domain::registration::ContextSourceRegistration {
+        use crate::domain::registration::{CsrStatus, RegistrationInfo};
+        use chrono::Utc;
+
+        crate::domain::registration::ContextSourceRegistration {
+            id: "urn:ngsi-ld:ContextSourceRegistration:test".to_string(),
+            type_: "ContextSourceRegistration".to_string(),
+            registration_name: None,
+            description: None,
+            information: vec![RegistrationInfo {
+                entities: None,
+                property_names: None,
+                relationship_names: None,
+            }],
+            tenant: None,
+            observation_interval: None,
+            management_interval: None,
+            location: None,
+            observation_space: None,
+            operation_space: None,
+            expires_at: None,
+            endpoint: "http://localhost:1234".to_string(),
+            accept: None,
+            mode: None,
+            operations: None,
+            scope: None,
+            refresh_rate: None,
+            management: None,
+            context_source_info: None,
+            jsonld_context: None,
+            context_source_alias: alias.map(|s| s.to_string()),
+            status: CsrStatus::Ok,
+            times_sent: None,
+            times_failed: None,
+            last_success: None,
+            last_failure: None,
+            created_at: Utc::now(),
+            modified_at: Utc::now(),
+            additional_properties: None,
+        }
     }
 
     #[test]

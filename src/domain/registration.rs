@@ -165,6 +165,9 @@ pub struct ContextSourceRegistration {
     /// JSON-LD context for term expansion.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub jsonld_context: Option<String>,
+    /// Unique pseudonym for this context source, used for Via-based loop detection (clause 5.2.9).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub context_source_alias: Option<String>,
     /// Health status of the context source.
     pub status: CsrStatus,
     /// Number of successful notifications.

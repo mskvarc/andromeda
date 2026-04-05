@@ -24,7 +24,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
         let entity_id = ctx.entity_id("urn:ngsi-ld:Vehicle:attrs_local_skip");
         let reg_id = ctx.entity_id("urn:ngsi-ld:Registration:attrs_local_skip");
 
-        let reg = prepare_registration(REG_VEHICLE_COMPLETE, &reg_id, &entity_id, &mock.url(""), None, None);
+        let reg = prepare_registration(REG_VEHICLE_COMPLETE, &reg_id, &entity_id, &mock.url(""), None, None, None);
         let resp = ctx.client.create_registration(&reg).await;
         assert_eq!(resp.status, StatusCode::CREATED);
         ctx.track_registration(&reg_id);
@@ -62,7 +62,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
             .await;
         assert_eq!(resp.status, StatusCode::CREATED);
 
-        let reg = prepare_registration(REG_VEHICLE_COMPLETE, &reg_id, &entity_id, &mock.url(""), None, None);
+        let reg = prepare_registration(REG_VEHICLE_COMPLETE, &reg_id, &entity_id, &mock.url(""), None, None, None);
         let resp = ctx.client.create_registration(&reg).await;
         assert_eq!(resp.status, StatusCode::CREATED);
         ctx.track_registration(&reg_id);
@@ -106,7 +106,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
             .await;
         assert_eq!(resp.status, StatusCode::CREATED);
 
-        let reg = prepare_registration(REG_VEHICLE_COMPLETE, &reg_id, &entity_id, &mock.url(""), None, None);
+        let reg = prepare_registration(REG_VEHICLE_COMPLETE, &reg_id, &entity_id, &mock.url(""), None, None, None);
         let resp = ctx.client.create_registration(&reg).await;
         assert_eq!(resp.status, StatusCode::CREATED);
         ctx.track_registration(&reg_id);
@@ -150,7 +150,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
             .await;
         assert_eq!(resp.status, StatusCode::CREATED);
 
-        let reg = prepare_registration(REG_VEHICLE_COMPLETE, &reg_id, &entity_id, &mock.url(""), None, None);
+        let reg = prepare_registration(REG_VEHICLE_COMPLETE, &reg_id, &entity_id, &mock.url(""), None, None, None);
         let resp = ctx.client.create_registration(&reg).await;
         assert_eq!(resp.status, StatusCode::CREATED);
         ctx.track_registration(&reg_id);
@@ -180,7 +180,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
         let entity_id = ctx.entity_id("urn:ngsi-ld:Vehicle:attrs_warn");
         let reg_id = ctx.entity_id("urn:ngsi-ld:Registration:attrs_warn");
 
-        let reg = prepare_registration(REG_VEHICLE_COMPLETE, &reg_id, &entity_id, &mock.url(""), None, None);
+        let reg = prepare_registration(REG_VEHICLE_COMPLETE, &reg_id, &entity_id, &mock.url(""), None, None, None);
         let resp = ctx.client.create_registration(&reg).await;
         assert_eq!(resp.status, StatusCode::CREATED);
         ctx.track_registration(&reg_id);
@@ -218,7 +218,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
             .await;
         assert_eq!(resp.status, StatusCode::CREATED);
 
-        let reg = prepare_registration(REG_VEHICLE_COMPLETE, &reg_id, &entity_id, &mock.url(""), None, None);
+        let reg = prepare_registration(REG_VEHICLE_COMPLETE, &reg_id, &entity_id, &mock.url(""), None, None, None);
         let resp = ctx.client.create_registration(&reg).await;
         assert_eq!(resp.status, StatusCode::CREATED);
         ctx.track_registration(&reg_id);

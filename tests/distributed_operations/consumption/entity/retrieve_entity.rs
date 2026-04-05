@@ -48,7 +48,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
         assert_eq!(resp.status, StatusCode::CREATED);
 
         // Create auxiliary registration
-        let reg = prepare_registration(REG_VEHICLE_COMPLETE, &reg_id, &entity_id, &mock.url(""), Some("auxiliary"), None);
+        let reg = prepare_registration(REG_VEHICLE_COMPLETE, &reg_id, &entity_id, &mock.url(""), Some("auxiliary"), None, None);
         let resp = ctx.client.create_registration(&reg).await;
         assert_eq!(resp.status, StatusCode::CREATED);
         ctx.track_registration(&reg_id);
@@ -96,6 +96,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
             &mock.url("/broker1"),
             Some("exclusive"),
             Some(&["retrieveEntity"]),
+            None,
         );
         let resp = ctx.client.create_registration(&reg).await;
         assert_eq!(resp.status, StatusCode::CREATED);
@@ -130,7 +131,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
         let reg_id = ctx.entity_id("urn:ngsi-ld:Registration:D010_01_inc");
 
         // Create inclusive registration (no mode)
-        let reg = prepare_registration(REG_VEHICLE_COMPLETE, &reg_id, &entity_id, &mock.url(""), None, None);
+        let reg = prepare_registration(REG_VEHICLE_COMPLETE, &reg_id, &entity_id, &mock.url(""), None, None, None);
         let resp = ctx.client.create_registration(&reg).await;
         assert_eq!(resp.status, StatusCode::CREATED);
         ctx.track_registration(&reg_id);
@@ -157,12 +158,12 @@ pub fn tests(trials: &mut Vec<Trial>) {
             let reg_id2 = ctx.entity_id("urn:ngsi-ld:Registration:D010_01_red_2");
 
             // Create two redirect registrations
-            let reg1 = prepare_registration(REG_REDIRECTION_OPS, &reg_id1, &entity_id, &mock.url("/broker1"), Some("redirect"), None);
+            let reg1 = prepare_registration(REG_REDIRECTION_OPS, &reg_id1, &entity_id, &mock.url("/broker1"), Some("redirect"), None, None);
             let resp = ctx.client.create_registration(&reg1).await;
             assert_eq!(resp.status, StatusCode::CREATED);
             ctx.track_registration(&reg_id1);
 
-            let reg2 = prepare_registration(REG_REDIRECTION_OPS, &reg_id2, &entity_id, &mock.url("/broker2"), Some("redirect"), None);
+            let reg2 = prepare_registration(REG_REDIRECTION_OPS, &reg_id2, &entity_id, &mock.url("/broker2"), Some("redirect"), None, None);
             let resp = ctx.client.create_registration(&reg2).await;
             assert_eq!(resp.status, StatusCode::CREATED);
             ctx.track_registration(&reg_id2);
@@ -206,7 +207,15 @@ pub fn tests(trials: &mut Vec<Trial>) {
         assert_eq!(resp.status, StatusCode::CREATED);
 
         // Create exclusive registration
-        let reg = prepare_registration(REG_SPEED_REDIRECTION_OPS, &reg_id, &entity_id, &mock.url("/broker1"), Some("exclusive"), None);
+        let reg = prepare_registration(
+            REG_SPEED_REDIRECTION_OPS,
+            &reg_id,
+            &entity_id,
+            &mock.url("/broker1"),
+            Some("exclusive"),
+            None,
+            None,
+        );
         let resp = ctx.client.create_registration(&reg).await;
         assert_eq!(resp.status, StatusCode::CREATED);
         ctx.track_registration(&reg_id);
@@ -239,7 +248,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
             let reg_id = ctx.entity_id("urn:ngsi-ld:Registration:D010_02_inc");
 
             // Create inclusive registration (entity only on remote)
-            let reg = prepare_registration(REG_VEHICLE_COMPLETE, &reg_id, &entity_id, &mock.url(""), None, None);
+            let reg = prepare_registration(REG_VEHICLE_COMPLETE, &reg_id, &entity_id, &mock.url(""), None, None, None);
             let resp = ctx.client.create_registration(&reg).await;
             assert_eq!(resp.status, StatusCode::CREATED);
             ctx.track_registration(&reg_id);
@@ -272,12 +281,12 @@ pub fn tests(trials: &mut Vec<Trial>) {
         let reg_id2 = ctx.entity_id("urn:ngsi-ld:Registration:D010_02_red_2");
 
         // Create two redirect registrations
-        let reg1 = prepare_registration(REG_REDIRECTION_OPS, &reg_id1, &entity_id, &mock.url("/broker1"), Some("redirect"), None);
+        let reg1 = prepare_registration(REG_REDIRECTION_OPS, &reg_id1, &entity_id, &mock.url("/broker1"), Some("redirect"), None, None);
         let resp = ctx.client.create_registration(&reg1).await;
         assert_eq!(resp.status, StatusCode::CREATED);
         ctx.track_registration(&reg_id1);
 
-        let reg2 = prepare_registration(REG_REDIRECTION_OPS, &reg_id2, &entity_id, &mock.url("/broker2"), Some("redirect"), None);
+        let reg2 = prepare_registration(REG_REDIRECTION_OPS, &reg_id2, &entity_id, &mock.url("/broker2"), Some("redirect"), None, None);
         let resp = ctx.client.create_registration(&reg2).await;
         assert_eq!(resp.status, StatusCode::CREATED);
         ctx.track_registration(&reg_id2);
@@ -304,7 +313,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
         let reg_id = ctx.entity_id("urn:ngsi-ld:Registration:D010_03_01_inc");
 
         // Create inclusive registration with retrieveEntity operation
-        let reg = prepare_registration(REG_VEHICLE_COMPLETE, &reg_id, &entity_id, &mock.url(""), None, Some(&["retrieveEntity"]));
+        let reg = prepare_registration(REG_VEHICLE_COMPLETE, &reg_id, &entity_id, &mock.url(""), None, Some(&["retrieveEntity"]), None);
         let resp = ctx.client.create_registration(&reg).await;
         assert_eq!(resp.status, StatusCode::CREATED);
         ctx.track_registration(&reg_id);
@@ -328,7 +337,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
         let reg_id = ctx.entity_id("urn:ngsi-ld:Registration:D010_03_02_inc");
 
         // Create inclusive registration with queryEntity operation
-        let reg = prepare_registration(REG_VEHICLE_COMPLETE, &reg_id, &entity_id, &mock.url(""), None, Some(&["queryEntity"]));
+        let reg = prepare_registration(REG_VEHICLE_COMPLETE, &reg_id, &entity_id, &mock.url(""), None, Some(&["queryEntity"]), None);
         let resp = ctx.client.create_registration(&reg).await;
         assert_eq!(resp.status, StatusCode::CREATED);
         ctx.track_registration(&reg_id);
@@ -353,7 +362,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
         let reg_id = ctx.entity_id("urn:ngsi-ld:Registration:D010_03_03_inc");
 
         // Create inclusive registration with queryBatch operation
-        let reg = prepare_registration(REG_VEHICLE_COMPLETE, &reg_id, &entity_id, &mock.url(""), None, Some(&["queryBatch"]));
+        let reg = prepare_registration(REG_VEHICLE_COMPLETE, &reg_id, &entity_id, &mock.url(""), None, Some(&["queryBatch"]), None);
         let resp = ctx.client.create_registration(&reg).await;
         assert_eq!(resp.status, StatusCode::CREATED);
         ctx.track_registration(&reg_id);

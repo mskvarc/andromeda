@@ -25,7 +25,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
         let reg_id = ctx.entity_id("urn:ngsi-ld:Registration:types_local_skip");
 
         // Create a CSR pointing to mock
-        let reg = prepare_registration(REG_VEHICLE_COMPLETE, &reg_id, &entity_id, &mock.url(""), None, None);
+        let reg = prepare_registration(REG_VEHICLE_COMPLETE, &reg_id, &entity_id, &mock.url(""), None, None, None);
         let resp = ctx.client.create_registration(&reg).await;
         assert_eq!(resp.status, StatusCode::CREATED);
         ctx.track_registration(&reg_id);
@@ -67,7 +67,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
         assert_eq!(resp.status, StatusCode::CREATED);
 
         // Create CSR pointing to mock
-        let reg = prepare_registration(REG_VEHICLE_COMPLETE, &reg_id, &entity_id, &mock.url(""), None, None);
+        let reg = prepare_registration(REG_VEHICLE_COMPLETE, &reg_id, &entity_id, &mock.url(""), None, None, None);
         let resp = ctx.client.create_registration(&reg).await;
         assert_eq!(resp.status, StatusCode::CREATED);
         ctx.track_registration(&reg_id);
@@ -115,7 +115,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
         assert_eq!(resp.status, StatusCode::CREATED);
 
         // Create CSR
-        let reg = prepare_registration(REG_VEHICLE_COMPLETE, &reg_id, &entity_id, &mock.url(""), None, None);
+        let reg = prepare_registration(REG_VEHICLE_COMPLETE, &reg_id, &entity_id, &mock.url(""), None, None, None);
         let resp = ctx.client.create_registration(&reg).await;
         assert_eq!(resp.status, StatusCode::CREATED);
         ctx.track_registration(&reg_id);
@@ -154,7 +154,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
         assert_eq!(resp.status, StatusCode::CREATED);
 
         // Create CSR
-        let reg = prepare_registration(REG_VEHICLE_COMPLETE, &reg_id, &entity_id, &mock.url(""), None, None);
+        let reg = prepare_registration(REG_VEHICLE_COMPLETE, &reg_id, &entity_id, &mock.url(""), None, None, None);
         let resp = ctx.client.create_registration(&reg).await;
         assert_eq!(resp.status, StatusCode::CREATED);
         ctx.track_registration(&reg_id);
@@ -186,7 +186,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
         let reg_id = ctx.entity_id("urn:ngsi-ld:Registration:types_warn");
 
         // Create CSR
-        let reg = prepare_registration(REG_VEHICLE_COMPLETE, &reg_id, &entity_id, &mock.url(""), None, None);
+        let reg = prepare_registration(REG_VEHICLE_COMPLETE, &reg_id, &entity_id, &mock.url(""), None, None, None);
         let resp = ctx.client.create_registration(&reg).await;
         assert_eq!(resp.status, StatusCode::CREATED);
         ctx.track_registration(&reg_id);
@@ -214,7 +214,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
         let endpoint = mock.url("");
 
         // Create CSR pointing to mock, then stop mock to simulate unreachable
-        let reg = prepare_registration(REG_VEHICLE_COMPLETE, &reg_id, &entity_id, &endpoint, None, None);
+        let reg = prepare_registration(REG_VEHICLE_COMPLETE, &reg_id, &entity_id, &endpoint, None, None, None);
         let resp = ctx.client.create_registration(&reg).await;
         assert_eq!(resp.status, StatusCode::CREATED);
         ctx.track_registration(&reg_id);
@@ -251,7 +251,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
         assert_eq!(resp.status, StatusCode::CREATED);
 
         // Create CSR
-        let reg = prepare_registration(REG_VEHICLE_COMPLETE, &reg_id, &entity_id, &mock.url(""), None, None);
+        let reg = prepare_registration(REG_VEHICLE_COMPLETE, &reg_id, &entity_id, &mock.url(""), None, None, None);
         let resp = ctx.client.create_registration(&reg).await;
         assert_eq!(resp.status, StatusCode::CREATED);
         ctx.track_registration(&reg_id);

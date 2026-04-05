@@ -17,6 +17,7 @@ pub(crate) fn prepare_registration(
     endpoint: &str,
     mode: Option<&str>,
     operations: Option<&[&str]>,
+    context_source_alias: Option<&str>,
 ) -> serde_json::Value {
     let mut reg = fixtures::load_fixture(fixture_path, reg_id);
     let obj = reg.as_object_mut().unwrap();
@@ -46,6 +47,11 @@ pub(crate) fn prepare_registration(
     if let Some(ops) = operations {
         let ops_array: Vec<serde_json::Value> = ops.iter().map(|o| serde_json::Value::String(o.to_string())).collect();
         obj.insert("operations".to_string(), serde_json::Value::Array(ops_array));
+    }
+
+    // Set contextSourceAlias if provided
+    if let Some(alias) = context_source_alias {
+        obj.insert("contextSourceAlias".to_string(), serde_json::Value::String(alias.to_string()));
     }
 
     reg

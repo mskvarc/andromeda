@@ -39,7 +39,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
             let entity_id = ctx.entity_id("urn:ngsi-ld:Vehicle:D_WARN_01");
             let reg_id = ctx.entity_id("urn:ngsi-ld:Registration:D_WARN_01");
 
-            let reg = prepare_registration(REG_VEHICLE_COMPLETE, &reg_id, &entity_id, &mock.url(""), None, None);
+            let reg = prepare_registration(REG_VEHICLE_COMPLETE, &reg_id, &entity_id, &mock.url(""), None, None, None);
             let resp = ctx.client.create_registration(&reg).await;
             assert_eq!(resp.status, StatusCode::CREATED);
             ctx.track_registration(&reg_id);
@@ -69,7 +69,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
             let endpoint = mock.url("");
             mock.stop();
 
-            let reg = prepare_registration(REG_VEHICLE_COMPLETE, &reg_id, &entity_id, &endpoint, None, None);
+            let reg = prepare_registration(REG_VEHICLE_COMPLETE, &reg_id, &entity_id, &endpoint, None, None, None);
             let resp = ctx.client.create_registration(&reg).await;
             assert_eq!(resp.status, StatusCode::CREATED);
             ctx.track_registration(&reg_id);
@@ -91,7 +91,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
             let entity_id = ctx.entity_id("urn:ngsi-ld:Vehicle:D_WARN_03");
             let reg_id = ctx.entity_id("urn:ngsi-ld:Registration:D_WARN_03");
 
-            let reg = prepare_registration(REG_VEHICLE_COMPLETE, &reg_id, &entity_id, &mock.url(""), None, None);
+            let reg = prepare_registration(REG_VEHICLE_COMPLETE, &reg_id, &entity_id, &mock.url(""), None, None, None);
             let resp = ctx.client.create_registration(&reg).await;
             assert_eq!(resp.status, StatusCode::CREATED);
             ctx.track_registration(&reg_id);
@@ -118,7 +118,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
             let entity_id = ctx.entity_id("urn:ngsi-ld:Vehicle:D_WARN_04");
             let reg_id = ctx.entity_id("urn:ngsi-ld:Registration:D_WARN_04");
 
-            let reg = prepare_registration(REG_VEHICLE_COMPLETE, &reg_id, &entity_id, &mock.url(""), None, None);
+            let reg = prepare_registration(REG_VEHICLE_COMPLETE, &reg_id, &entity_id, &mock.url(""), None, None, None);
             let resp = ctx.client.create_registration(&reg).await;
             assert_eq!(resp.status, StatusCode::CREATED);
             ctx.track_registration(&reg_id);
@@ -151,7 +151,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
                 .await;
             assert_eq!(resp.status, StatusCode::CREATED);
 
-            let reg = prepare_registration(REG_VEHICLE_COMPLETE, &reg_id, &entity_id, &mock.url(""), None, None);
+            let reg = prepare_registration(REG_VEHICLE_COMPLETE, &reg_id, &entity_id, &mock.url(""), None, None, None);
             let resp = ctx.client.create_registration(&reg).await;
             assert_eq!(resp.status, StatusCode::CREATED);
             ctx.track_registration(&reg_id);
@@ -177,7 +177,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
             let entity_id = ctx.entity_id("urn:ngsi-ld:Vehicle:D_WARN_06");
             let reg_id = ctx.entity_id("urn:ngsi-ld:Registration:D_WARN_06");
 
-            let reg = prepare_registration(REG_VEHICLE_COMPLETE, &reg_id, &entity_id, &mock.url(""), None, None);
+            let reg = prepare_registration(REG_VEHICLE_COMPLETE, &reg_id, &entity_id, &mock.url(""), None, None, None);
             let resp = ctx.client.create_registration(&reg).await;
             assert_eq!(resp.status, StatusCode::CREATED);
             ctx.track_registration(&reg_id);
@@ -210,7 +210,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
             let reg_id2 = ctx.entity_id("urn:ngsi-ld:Registration:D_WARN_07_2");
 
             // First CSR: mock returns 500
-            let reg1 = prepare_registration(REG_VEHICLE_COMPLETE, &reg_id1, &entity_id, &mock1.url(""), None, None);
+            let reg1 = prepare_registration(REG_VEHICLE_COMPLETE, &reg_id1, &entity_id, &mock1.url(""), None, None, None);
             let resp = ctx.client.create_registration(&reg1).await;
             assert_eq!(resp.status, StatusCode::CREATED);
             ctx.track_registration(&reg_id1);
@@ -221,7 +221,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
             let endpoint2 = mock2.url("");
             mock2.stop();
 
-            let reg2 = prepare_registration(REG_VEHICLE_COMPLETE, &reg_id2, &entity_id, &endpoint2, None, None);
+            let reg2 = prepare_registration(REG_VEHICLE_COMPLETE, &reg_id2, &entity_id, &endpoint2, None, None, None);
             let resp = ctx.client.create_registration(&reg2).await;
             assert_eq!(resp.status, StatusCode::CREATED);
             ctx.track_registration(&reg_id2);
@@ -257,7 +257,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
             assert_eq!(resp.status, StatusCode::CREATED);
 
             // CSR points to mock returning 500 -- but local=true should skip forwarding
-            let reg = prepare_registration(REG_VEHICLE_COMPLETE, &reg_id, &entity_id, &mock.url(""), None, None);
+            let reg = prepare_registration(REG_VEHICLE_COMPLETE, &reg_id, &entity_id, &mock.url(""), None, None, None);
             let resp = ctx.client.create_registration(&reg).await;
             assert_eq!(resp.status, StatusCode::CREATED);
             ctx.track_registration(&reg_id);

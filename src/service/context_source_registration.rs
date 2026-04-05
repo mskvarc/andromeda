@@ -54,6 +54,7 @@ fn extract_create_params(payload: &Value) -> Result<CreateCsrParams<'_>, Androme
         management: payload.get("management"),
         context_source_info: payload.get("contextSourceInfo"),
         jsonld_context: payload.get("jsonldContext").and_then(|v| v.as_str()),
+        context_source_alias: payload.get("contextSourceAlias").and_then(|v| v.as_str()),
         additional_properties: extract_additional_properties(payload),
     })
 }
@@ -122,6 +123,7 @@ fn extract_update_fragment(fragment: &Value) -> Result<CsrUpdateFragment, Androm
         management: extract_optional_value(fragment, "management"),
         context_source_info: extract_optional_value(fragment, "contextSourceInfo"),
         jsonld_context: extract_optional_string(fragment, "jsonldContext"),
+        context_source_alias: extract_optional_string(fragment, "contextSourceAlias"),
         additional_properties: extract_additional_properties(fragment),
     })
 }

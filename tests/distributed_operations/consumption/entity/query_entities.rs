@@ -43,7 +43,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
         assert_eq!(resp.status, StatusCode::CREATED);
 
         // Create auxiliary registration
-        let reg = prepare_registration(REG_VEHICLE_COMPLETE, &reg_id, &entity_id, &mock.url(""), Some("auxiliary"), None);
+        let reg = prepare_registration(REG_VEHICLE_COMPLETE, &reg_id, &entity_id, &mock.url(""), Some("auxiliary"), None, None);
         let resp = ctx.client.create_registration(&reg).await;
         assert_eq!(resp.status, StatusCode::CREATED);
         ctx.track_registration(&reg_id);
@@ -92,6 +92,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
             &mock.url("/broker1"),
             Some("exclusive"),
             Some(&["queryEntity"]),
+            None,
         );
         let resp = ctx.client.create_registration(&reg).await;
         assert_eq!(resp.status, StatusCode::CREATED);
@@ -127,7 +128,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
         let reg_id = ctx.entity_id("urn:ngsi-ld:Registration:D011_01_red");
 
         // Create redirect registration
-        let reg = prepare_registration(REG_VEHICLE_COMPLETE, &reg_id, &entity_id, &mock.url("/broker1"), Some("redirect"), None);
+        let reg = prepare_registration(REG_VEHICLE_COMPLETE, &reg_id, &entity_id, &mock.url("/broker1"), Some("redirect"), None, None);
         let resp = ctx.client.create_registration(&reg).await;
         assert_eq!(resp.status, StatusCode::CREATED);
         ctx.track_registration(&reg_id);
@@ -154,7 +155,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
         let reg_id = ctx.entity_id("urn:ngsi-ld:Registration:D011_01_01_inc");
 
         // Create inclusive registration
-        let reg = prepare_registration(REG_VEHICLE_COMPLETE, &reg_id, &entity_id, &mock.url(""), None, None);
+        let reg = prepare_registration(REG_VEHICLE_COMPLETE, &reg_id, &entity_id, &mock.url(""), None, None, None);
         let resp = ctx.client.create_registration(&reg).await;
         assert_eq!(resp.status, StatusCode::CREATED);
         ctx.track_registration(&reg_id);
@@ -181,7 +182,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
         let reg_id = ctx.entity_id("urn:ngsi-ld:Registration:D011_01_02_inc");
 
         // Create inclusive registration
-        let reg = prepare_registration(REG_VEHICLE_COMPLETE, &reg_id, &entity_id, &mock.url(""), None, None);
+        let reg = prepare_registration(REG_VEHICLE_COMPLETE, &reg_id, &entity_id, &mock.url(""), None, None, None);
         let resp = ctx.client.create_registration(&reg).await;
         assert_eq!(resp.status, StatusCode::CREATED);
         ctx.track_registration(&reg_id);
@@ -220,7 +221,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
         assert_eq!(resp.status, StatusCode::CREATED);
 
         // Create inclusive registration
-        let reg = prepare_registration(REG_VEHICLE_ENTITIES, &reg_id, &entity_id_remote, &mock.url(""), None, None);
+        let reg = prepare_registration(REG_VEHICLE_ENTITIES, &reg_id, &entity_id_remote, &mock.url(""), None, None, None);
         let resp = ctx.client.create_registration(&reg).await;
         assert_eq!(resp.status, StatusCode::CREATED);
         ctx.track_registration(&reg_id);
@@ -259,7 +260,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
         assert_eq!(resp.status, StatusCode::CREATED);
 
         // Create inclusive registration
-        let reg = prepare_registration(REG_VEHICLE_COMPLETE, &reg_id, &entity_id_remote, &mock.url(""), None, None);
+        let reg = prepare_registration(REG_VEHICLE_COMPLETE, &reg_id, &entity_id_remote, &mock.url(""), None, None, None);
         let resp = ctx.client.create_registration(&reg).await;
         assert_eq!(resp.status, StatusCode::CREATED);
         ctx.track_registration(&reg_id);
@@ -297,7 +298,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
         assert_eq!(resp.status, StatusCode::CREATED);
 
         // Create inclusive registration
-        let reg = prepare_registration(REG_VEHICLE_COMPLETE, &reg_id, &entity_id, &mock.url(""), None, None);
+        let reg = prepare_registration(REG_VEHICLE_COMPLETE, &reg_id, &entity_id, &mock.url(""), None, None, None);
         let resp = ctx.client.create_registration(&reg).await;
         assert_eq!(resp.status, StatusCode::CREATED);
         ctx.track_registration(&reg_id);
@@ -346,6 +347,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
             &mock.url("/broker1"),
             Some("exclusive"),
             Some(&["queryEntity"]),
+            None,
         );
         let resp = ctx.client.create_registration(&reg).await;
         assert_eq!(resp.status, StatusCode::CREATED);
@@ -388,6 +390,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
             &mock.url("/broker1"),
             Some("exclusive"),
             Some(&["queryBatch"]),
+            None,
         );
         let resp = ctx.client.create_registration(&reg).await;
         assert_eq!(resp.status, StatusCode::CREATED);
@@ -415,7 +418,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
         let reg_id = ctx.entity_id("urn:ngsi-ld:Registration:D011_02_inc");
 
         // Create inclusive registration (no local entity)
-        let reg = prepare_registration(REG_VEHICLE_COMPLETE, &reg_id, &entity_id, &mock.url(""), None, None);
+        let reg = prepare_registration(REG_VEHICLE_COMPLETE, &reg_id, &entity_id, &mock.url(""), None, None, None);
         let resp = ctx.client.create_registration(&reg).await;
         assert_eq!(resp.status, StatusCode::CREATED);
         ctx.track_registration(&reg_id);
@@ -449,6 +452,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
             &mock.url("/broker1"),
             Some("redirect"),
             Some(&["queryEntity"]),
+            None,
         );
         let resp = ctx.client.create_registration(&reg).await;
         assert_eq!(resp.status, StatusCode::CREATED);
@@ -483,6 +487,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
             &mock.url("/broker1"),
             Some("redirect"),
             Some(&["queryBatch"]),
+            None,
         );
         let resp = ctx.client.create_registration(&reg).await;
         assert_eq!(resp.status, StatusCode::CREATED);
@@ -510,7 +515,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
         let reg_id = ctx.entity_id("urn:ngsi-ld:Registration:D011_03_01_inc");
 
         // Create inclusive registration with queryEntity operation
-        let reg = prepare_registration(REG_VEHICLE_COMPLETE, &reg_id, &entity_id, &mock.url(""), None, Some(&["queryEntity"]));
+        let reg = prepare_registration(REG_VEHICLE_COMPLETE, &reg_id, &entity_id, &mock.url(""), None, Some(&["queryEntity"]), None);
         let resp = ctx.client.create_registration(&reg).await;
         assert_eq!(resp.status, StatusCode::CREATED);
         ctx.track_registration(&reg_id);
@@ -540,7 +545,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
         let reg_id = ctx.entity_id("urn:ngsi-ld:Registration:D011_03_02_inc");
 
         // Create inclusive registration with queryBatch operation
-        let reg = prepare_registration(REG_VEHICLE_COMPLETE, &reg_id, &entity_id, &mock.url(""), None, Some(&["queryBatch"]));
+        let reg = prepare_registration(REG_VEHICLE_COMPLETE, &reg_id, &entity_id, &mock.url(""), None, Some(&["queryBatch"]), None);
         let resp = ctx.client.create_registration(&reg).await;
         assert_eq!(resp.status, StatusCode::CREATED);
         ctx.track_registration(&reg_id);
@@ -570,7 +575,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
         let reg_id = ctx.entity_id("urn:ngsi-ld:Registration:D011_04_01_inc");
 
         // Create inclusive registration with queryBatch operation
-        let reg = prepare_registration(REG_VEHICLE_COMPLETE, &reg_id, &entity_id, &mock.url(""), None, Some(&["queryBatch"]));
+        let reg = prepare_registration(REG_VEHICLE_COMPLETE, &reg_id, &entity_id, &mock.url(""), None, Some(&["queryBatch"]), None);
         let resp = ctx.client.create_registration(&reg).await;
         assert_eq!(resp.status, StatusCode::CREATED);
         ctx.track_registration(&reg_id);
@@ -611,7 +616,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
         let reg_id = ctx.entity_id("urn:ngsi-ld:Registration:D011_04_02_inc");
 
         // Create inclusive registration with queryEntity operation
-        let reg = prepare_registration(REG_VEHICLE_COMPLETE, &reg_id, &entity_id, &mock.url(""), None, Some(&["queryEntity"]));
+        let reg = prepare_registration(REG_VEHICLE_COMPLETE, &reg_id, &entity_id, &mock.url(""), None, Some(&["queryEntity"]), None);
         let resp = ctx.client.create_registration(&reg).await;
         assert_eq!(resp.status, StatusCode::CREATED);
         ctx.track_registration(&reg_id);

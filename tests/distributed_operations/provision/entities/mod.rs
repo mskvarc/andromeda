@@ -14,5 +14,5 @@ pub fn tests(trials: &mut Vec<Trial>) {
 
 /// Backwards-compatible wrapper around the shared prepare_registration.
 pub(crate) fn prepare_registration(fixture_path: &str, reg_id: &str, entity_id: &str, endpoint: &str, mode: Option<&str>) -> serde_json::Value {
-    crate::distributed_operations::prepare_registration(fixture_path, reg_id, entity_id, endpoint, mode, None)
+    crate::distributed_operations::prepare_registration(fixture_path, reg_id, entity_id, endpoint, mode, None, None)
 }

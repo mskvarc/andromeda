@@ -20,7 +20,7 @@ const COLUMNS: &str = "\
     ST_AsGeoJSON(operation_space)::JSONB AS operation_space, \
     expires_at, endpoint, accept, mode, \
     operations, scope, refresh_rate, \
-    management, context_source_info, jsonld_context, \
+    management, context_source_info, jsonld_context, context_source_alias, \
     status, times_sent, times_failed, \
     last_success, last_failure, created_at, modified_at, \
     additional_properties";
@@ -65,6 +65,8 @@ pub struct CreateCsrParams<'a> {
     pub context_source_info: Option<&'a Value>,
     /// JSON-LD context associated with this registration.
     pub jsonld_context: Option<&'a str>,
+    /// Unique pseudonym for Via-based loop detection (clause 5.2.9).
+    pub context_source_alias: Option<&'a str>,
     /// Non-standard properties preserved from the original request.
     pub additional_properties: Option<Value>,
 }
@@ -94,6 +96,7 @@ impl CreateCsrParams<'_> {
         "management",
         "contextSourceInfo",
         "jsonldContext",
+        "contextSourceAlias",
         "status",
         "timesSent",
         "timesFailed",
@@ -145,6 +148,8 @@ pub struct CsrUpdateFragment {
     pub context_source_info: Option<Option<Value>>,
     /// Updated JSON-LD context reference.
     pub jsonld_context: Option<Option<String>>,
+    /// Updated context source alias pseudonym.
+    pub context_source_alias: Option<Option<String>>,
     /// Updated non-standard properties.
     pub additional_properties: Option<Value>,
 }
@@ -190,7 +195,7 @@ impl ContextSourceRegistrationRepository {
                 expires_at, endpoint, accept, mode,
                 operations, scope, refresh_rate,
                 management, context_source_info, jsonld_context,
-                additional_properties,
+                context_source_alias, additional_properties,
                 created_at, modified_at
             ) VALUES (
                 $1, 'ContextSourceRegistration', $2, $3, $4,
@@ -201,7 +206,7 @@ impl ContextSourceRegistrationRepository {
                 $11, $12, $13, $14,
                 $15, $16, $17,
                 $18, $19, $20,
-                $21,
+                $21, $22,
                 NOW(), NOW()
             )
             "#,
@@ -226,6 +231,7 @@ impl ContextSourceRegistrationRepository {
         .bind(params.management.cloned()) // clone: sqlx bind requires owned Value
         .bind(params.context_source_info.cloned()) // clone: sqlx bind requires owned Value
         .bind(params.jsonld_context)
+        .bind(params.context_source_alias)
         .bind(&params.additional_properties)
         .execute(&self.pool)
         .await?;
@@ -384,6 +390,10 @@ impl ContextSourceRegistrationRepository {
             Some(v) => v.clone(), // clone: conditional ownership -- fragment or existing
             None => existing.jsonld_context,
         };
+        let context_source_alias: Option<String> = match &fragment.context_source_alias {
+            Some(v) => v.clone(), // clone: conditional ownership -- fragment or existing
+            None => existing.context_source_alias,
+        };
 
         // Merge additional properties: new fragment's extras override existing
         let additional_properties = match (existing.additional_properties, &fragment.additional_properties) {
@@ -437,7 +447,8 @@ impl ContextSourceRegistrationRepository {
                 management = $18,
                 context_source_info = $19,
                 jsonld_context = $20,
-                additional_properties = $21,
+                context_source_alias = $21,
+                additional_properties = $22,
                 modified_at = NOW()
             WHERE id = $1
             "#,
@@ -462,6 +473,7 @@ impl ContextSourceRegistrationRepository {
         .bind(management)
         .bind(context_source_info)
         .bind(jsonld_context.as_deref())
+        .bind(context_source_alias.as_deref())
         .bind(additional_properties)
         .execute(&mut *tx)
         .await?;
@@ -585,6 +597,7 @@ fn row_to_csr(row: &sqlx::postgres::PgRow) -> Result<ContextSourceRegistration, 
     let management: Option<Value> = row.get("management");
     let context_source_info: Option<Value> = row.get("context_source_info");
     let jsonld_context: Option<String> = row.get("jsonld_context");
+    let context_source_alias: Option<String> = row.try_get("context_source_alias").unwrap_or(None);
     let status_str: String = row.get("status");
     let status: CsrStatus = status_str.parse().map_err(|e: strum::ParseError| AndromedaError::internal(e.to_string()))?;
     let times_sent: i32 = row.get("times_sent");
@@ -619,6 +632,7 @@ fn row_to_csr(row: &sqlx::postgres::PgRow) -> Result<ContextSourceRegistration, 
         management,
         context_source_info,
         jsonld_context,
+        context_source_alias,
         status,
         times_sent: Some(times_sent),
         times_failed: Some(times_failed),

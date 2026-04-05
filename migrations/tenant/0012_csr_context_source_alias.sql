@@ -1,0 +1,1 @@
+ALTER TABLE context_source_registrations ADD COLUMN context_source_alias TEXT;

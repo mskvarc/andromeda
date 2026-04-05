@@ -40,7 +40,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
         ctx.track_temporal_entity(&entity_id);
 
         // Create CSR
-        let reg = prepare_registration(REG_VEHICLE_COMPLETE, &reg_id, &entity_id, &mock.url(""), None, None);
+        let reg = prepare_registration(REG_VEHICLE_COMPLETE, &reg_id, &entity_id, &mock.url(""), None, None, None);
         let resp = ctx.client.create_registration(&reg).await;
         assert_eq!(resp.status, StatusCode::CREATED);
         ctx.track_registration(&reg_id);
@@ -75,7 +75,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
         ctx.track_temporal_entity(&entity_id);
 
         // Create CSR
-        let reg = prepare_registration(REG_VEHICLE_COMPLETE, &reg_id, &entity_id, &mock.url(""), None, None);
+        let reg = prepare_registration(REG_VEHICLE_COMPLETE, &reg_id, &entity_id, &mock.url(""), None, None, None);
         let resp = ctx.client.create_registration(&reg).await;
         assert_eq!(resp.status, StatusCode::CREATED);
         ctx.track_registration(&reg_id);
@@ -106,7 +106,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
         let reg_id = ctx.entity_id("urn:ngsi-ld:Registration:tr_remote_only");
 
         // No local entity created -- only exists in remote
-        let reg = prepare_registration(REG_VEHICLE_COMPLETE, &reg_id, &entity_id, &mock.url(""), None, None);
+        let reg = prepare_registration(REG_VEHICLE_COMPLETE, &reg_id, &entity_id, &mock.url(""), None, None, None);
         let resp = ctx.client.create_registration(&reg).await;
         assert_eq!(resp.status, StatusCode::CREATED);
         ctx.track_registration(&reg_id);
@@ -140,7 +140,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
         assert_eq!(resp.status, StatusCode::CREATED);
         ctx.track_temporal_entity(&entity_id);
 
-        let reg = prepare_registration(REG_VEHICLE_COMPLETE, &reg_id, &entity_id, &mock.url(""), None, None);
+        let reg = prepare_registration(REG_VEHICLE_COMPLETE, &reg_id, &entity_id, &mock.url(""), None, None, None);
         let resp = ctx.client.create_registration(&reg).await;
         assert_eq!(resp.status, StatusCode::CREATED);
         ctx.track_registration(&reg_id);

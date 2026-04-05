@@ -287,7 +287,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
             ctx.track_temporal_entity(&local_entity_id);
 
             // Create CSR pointing to mock
-            let reg = prepare_registration(REG_VEHICLE_COMPLETE, &reg_id, &remote_entity_id, &mock.url(""), None, None);
+            let reg = prepare_registration(REG_VEHICLE_COMPLETE, &reg_id, &remote_entity_id, &mock.url(""), None, None, None);
             let resp = ctx.client.create_registration(&reg).await;
             assert_eq!(resp.status, StatusCode::CREATED);
             ctx.track_registration(&reg_id);

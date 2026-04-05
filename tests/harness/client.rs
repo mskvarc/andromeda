@@ -59,6 +59,12 @@ impl RequestHeaders {
         self
     }
 
+    /// Set the Via header for loop detection testing.
+    pub fn via(mut self, value: &str) -> Self {
+        self.0.insert("Via", HeaderValue::from_str(value).unwrap());
+        self
+    }
+
     fn into_header_map(self) -> HeaderMap {
         self.0
     }
