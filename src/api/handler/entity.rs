@@ -5,10 +5,8 @@ use crate::{
             context::ContextUrl,
             entity_query::EntityQuery,
             jsonld::JsonLd,
-            language::LanguageNegotiation,
             params::ValidatedQuery,
-            prefer::PreferHeader,
-            snapshot::SnapshotHeader,
+            protocol::NgsiLdProtocolHeaders,
         },
         response::ngsild::{NgsiLdCollectionResponse, NgsiLdResponse},
         tenant::{TenantState, TenantStateOrCreate},
@@ -280,15 +278,16 @@ pub async fn get(
     context: ContextUrl,
     Path(id): Path<String>,
     ValidatedQuery(params): ValidatedQuery<GetEntityParams>,
-    LanguageNegotiation(language_filter): LanguageNegotiation,
-    prefer: PreferHeader,
-    snapshot: SnapshotHeader,
-    headers: HeaderMap,
+    protocol: NgsiLdProtocolHeaders,
 ) -> Result<Response, ApiError> {
     let service = &state.entity_query;
     let id = parse_entity_id(&id, &uri)?;
     let context: ContextSpec = context.into_inner();
-    let incoming_via = headers.get("via").and_then(|v| v.to_str().ok());
+    let language_filter = protocol.language_filter;
+    let prefer = protocol.prefer;
+    let snapshot = protocol.snapshot;
+    let via_owned = protocol.incoming_via;
+    let incoming_via = via_owned.as_deref();
 
     // Validate options before entity lookup so invalid options return 400, not 404
     let options = params.options.as_deref().unwrap_or("");
@@ -424,7 +423,7 @@ pub async fn get(
 
     if matches!(join_mode, Some("inline") | Some("flat")) {
         let linked = service
-            .resolve_linked_entities(&[entity.clone()], join_level, sys_attrs, &context, &contained_by)
+            .resolve_linked_entities(std::slice::from_ref(&entity), join_level, sys_attrs, &context, &contained_by)
             .await
             .map_err(|e| e.with_instance(uri.clone()))?;
 
@@ -627,16 +626,17 @@ pub async fn query(
     OriginalUri(uri): OriginalUri,
     accept: AcceptFormat,
     context: ContextUrl,
-    LanguageNegotiation(language_filter): LanguageNegotiation,
-    prefer: PreferHeader,
-    snapshot: SnapshotHeader,
-    headers: HeaderMap,
+    protocol: NgsiLdProtocolHeaders,
     EntityQuery(mut query): EntityQuery,
 ) -> Result<Response, ApiError> {
     let service = &state.entity_query;
     let context: ContextSpec = context.into_inner();
-
-    let incoming_via = headers.get("via").and_then(|v| v.to_str().ok());
+    let language_filter = protocol.language_filter;
+    let prefer = protocol.prefer;
+    let snapshot = protocol.snapshot;
+    let via_owned = protocol.incoming_via;
+    let incoming_via = via_owned.as_deref();
+    let entity_map_header = protocol.entity_map;
 
     // Snapshot scoping (ETSI GS CIM 009 clause 5.5.15, 6.3.22): if NGSILD-Snapshot header
     // is present, query entities from the snapshot's frozen data and return early.
@@ -688,8 +688,6 @@ pub async fn query(
     }
 
     // §5.5.9.3: If NGSILD-EntityMap header present, scope query to that map's entity IDs
-    let entity_map_header = headers.get("NGSILD-EntityMap").and_then(|v| v.to_str().ok()).map(|s| s.to_string());
-
     if let Some(ref map_id) = entity_map_header {
         let map = state.entity_maps.retrieve(map_id).await.map_err(|e| e.with_instance(uri.clone()))?;
         // Inject entity map IDs as the id filter (scopes the query to the frozen set)

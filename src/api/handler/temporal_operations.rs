@@ -151,15 +151,15 @@ pub async fn query(
 
         let forwarded = state
             .forwarding
-            .forward_temporal_query(
-                entity_type,
-                entity_ids_ref,
-                "",
+            .forward_temporal_query(&crate::service::context_source_forwarding::ForwardTemporalQueryRequest {
+                entity_type_compact: entity_type,
+                entity_ids: entity_ids_ref,
+                query_string: "",
                 context_url,
-                &context,
-                ForwardingOperation::QueryTemporalEntity,
+                context: &context,
+                operation: ForwardingOperation::QueryTemporalEntity,
                 incoming_via,
-            )
+            })
             .await
             .unwrap_or_default();
         let warnings = collect_warnings(&forwarded);

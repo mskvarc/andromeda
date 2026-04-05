@@ -92,10 +92,10 @@ fn parse_prefer(header_value: &str) -> PreferHeader {
             result.geo_json_body = GeoJsonBodyPreference::Json;
         } else if token.eq_ignore_ascii_case("body=ld+json") {
             result.geo_json_body = GeoJsonBodyPreference::LdJson;
-        } else if let Some(version_str) = token.strip_prefix("ngsi-ld=") {
-            if let Some(version) = NgsiLdVersion::parse(version_str) {
-                result.requested_version = Some(version);
-            }
+        } else if let Some(version_str) = token.strip_prefix("ngsi-ld=")
+            && let Some(version) = NgsiLdVersion::parse(version_str)
+        {
+            result.requested_version = Some(version);
         }
     }
 

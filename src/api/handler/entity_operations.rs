@@ -1,6 +1,6 @@
 use crate::{
     api::{
-        extractor::{accept::AcceptFormat, context::ContextUrl, jsonld::JsonLd, language::LanguageNegotiation, params::ValidatedQuery},
+        extractor::{accept::AcceptFormat, context::ContextUrl, jsonld::JsonLd, params::ValidatedQuery, protocol::NgsiLdProtocolHeaders},
         response::ngsild::NgsiLdCollectionResponse,
         tenant::{TenantState, TenantStateOrCreate},
     },
@@ -131,8 +131,7 @@ pub async fn query(
     OriginalUri(uri): OriginalUri,
     accept: AcceptFormat,
     context: ContextUrl,
-    LanguageNegotiation(language_filter): LanguageNegotiation,
-    headers: HeaderMap,
+    protocol: NgsiLdProtocolHeaders,
     ValidatedQuery(qparams): ValidatedQuery<PostQueryParams>,
     JsonLd {
         value: request,
@@ -141,7 +140,9 @@ pub async fn query(
 ) -> Result<Response, ApiError> {
     let service = &state.entity_query;
     let context = context.merge(body_context);
-    let incoming_via = headers.get("via").and_then(|v| v.to_str().ok());
+    let language_filter = protocol.language_filter;
+    let via_owned = protocol.incoming_via;
+    let incoming_via = via_owned.as_deref();
 
     // Map QueryRequest to EntityQueryParameters
     let mut ids = Vec::new();

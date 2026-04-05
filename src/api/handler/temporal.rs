@@ -2,7 +2,7 @@
 
 use crate::{
     api::{
-        extractor::{accept::AcceptFormatNoGeo, context::ContextUrl, jsonld::JsonLd, params::ValidatedQuery, snapshot::SnapshotHeader},
+        extractor::{accept::AcceptFormatNoGeo, context::ContextUrl, jsonld::JsonLd, params::ValidatedQuery, protocol::NgsiLdProtocolHeaders},
         response::ngsild::{NgsiLdCollectionResponse, NgsiLdResponse},
         tenant::TenantState,
     },
@@ -17,7 +17,7 @@ use crate::{
 };
 use axum::{
     extract::{OriginalUri, Path},
-    http::{HeaderMap, StatusCode},
+    http::StatusCode,
     response::{IntoResponse, Response},
 };
 use serde::{Deserialize, Deserializer};
@@ -104,14 +104,16 @@ pub async fn get(
     OriginalUri(uri): OriginalUri,
     accept: AcceptFormatNoGeo,
     context: ContextUrl,
-    headers: HeaderMap,
+    protocol: NgsiLdProtocolHeaders,
     Path(id): Path<String>,
     ValidatedQuery(params): ValidatedQuery<TemporalQueryParameters>,
-    snapshot: SnapshotHeader,
 ) -> Result<Response, ApiError> {
     let service = &state.temporal;
     let id = parse_entity_id(&id, &uri)?;
     let context: ContextSpec = context.into_inner();
+    let snapshot = protocol.snapshot;
+    let via_owned = protocol.incoming_via;
+    let incoming_via = via_owned.as_deref();
 
     // Snapshot scoping (ETSI GS CIM 009 clause 5.5.15, 6.3.22): if NGSILD-Snapshot header
     // is present, retrieve temporal entity from the snapshot's frozen data and return early.
@@ -161,7 +163,6 @@ pub async fn get(
         let result = local_result.map_err(|e| e.with_instance(uri.clone()))?;
         (result.value, result.content_range, Vec::new())
     } else {
-        let incoming_via = headers.get("via").and_then(|v| v.to_str().ok());
         let context_url = context.link_contexts().first().map(|s| s.as_str());
         let query_string = uri.query().unwrap_or("");
         let forwarded = state
@@ -246,12 +247,14 @@ pub async fn query(
     OriginalUri(uri): OriginalUri,
     accept: AcceptFormatNoGeo,
     context: ContextUrl,
-    headers: HeaderMap,
+    protocol: NgsiLdProtocolHeaders,
     ValidatedQuery(params): ValidatedQuery<TemporalQueryParameters>,
-    snapshot: SnapshotHeader,
 ) -> Result<Response, ApiError> {
     let service = &state.temporal;
     let context: ContextSpec = context.into_inner();
+    let snapshot = protocol.snapshot;
+    let via_owned = protocol.incoming_via;
+    let incoming_via = via_owned.as_deref();
     let options = params.options.as_deref().unwrap_or("");
     let key_values = options.contains("keyValues") || options.contains("simplified");
 
@@ -320,7 +323,6 @@ pub async fn query(
     let (entities, forwarding_warnings) = if is_local {
         (local_entities, Vec::new())
     } else {
-        let incoming_via = headers.get("via").and_then(|v| v.to_str().ok());
         let context_url = context.link_contexts().first().map(|s| s.as_str());
         let entity_type = params.entity_type.as_deref();
         let entity_ids: Option<Vec<String>> = params.id.as_deref().map(|s| s.split(',').map(|id| id.trim().to_string()).collect());
@@ -329,15 +331,15 @@ pub async fn query(
 
         let forwarded = state
             .forwarding
-            .forward_temporal_query(
-                entity_type,
-                entity_ids_ref,
+            .forward_temporal_query(&crate::service::context_source_forwarding::ForwardTemporalQueryRequest {
+                entity_type_compact: entity_type,
+                entity_ids: entity_ids_ref,
                 query_string,
                 context_url,
-                &context,
-                ForwardingOperation::QueryTemporalEntity,
+                context: &context,
+                operation: ForwardingOperation::QueryTemporalEntity,
                 incoming_via,
-            )
+            })
             .await
             .unwrap_or_default();
         let warnings = collect_warnings(&forwarded);

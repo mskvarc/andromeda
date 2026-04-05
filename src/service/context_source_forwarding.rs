@@ -141,8 +141,8 @@ impl NgsiLdWarning {
 /// Outcome of a GET request to a context source, distinguishing conditions
 /// that map to different IANA warning codes (clause 6.3.17).
 enum ForwardGetOutcome {
-    /// HTTP success with valid JSON body.
-    Success(Value),
+    /// HTTP success with valid JSON body and optional protocol warnings.
+    Success(Value, Vec<NgsiLdWarning>),
     /// HTTP 404 -- not considered abnormal per spec.
     NotFound,
     /// HTTP success but response body was not valid JSON.
@@ -216,6 +216,24 @@ pub struct ForwardBatchProvisionRequest<'a> {
     pub batch_path: &'a str,
     /// Query string appended to the forwarded URL.
     pub query_string: Option<&'a str>,
+    /// Incoming Via header for loop detection (section 6.3.18).
+    pub incoming_via: Option<&'a str>,
+}
+
+/// Parameters for forwarding a temporal entity query to matching context sources.
+pub struct ForwardTemporalQueryRequest<'a> {
+    /// Compact entity type for CSR matching.
+    pub entity_type_compact: Option<&'a str>,
+    /// Entity IDs to filter by.
+    pub entity_ids: Option<&'a [String]>,
+    /// Full query string including temporal parameters.
+    pub query_string: &'a str,
+    /// JSON-LD context URL for the Link header.
+    pub context_url: Option<&'a str>,
+    /// JSON-LD context specification for term expansion.
+    pub context: &'a ContextSpec,
+    /// The NGSI-LD operation being forwarded.
+    pub operation: ForwardingOperation,
     /// Incoming Via header for loop detection (section 6.3.18).
     pub incoming_via: Option<&'a str>,
 }
@@ -301,21 +319,21 @@ impl ContextSourceForwardingService {
 
             let mode = csr.mode.unwrap_or_default();
             match self.forward_get(&url, context_url, csr.tenant.as_deref(), incoming_via).await {
-                ForwardGetOutcome::Success(Value::Array(arr)) => {
+                ForwardGetOutcome::Success(Value::Array(arr), cs_warnings) => {
                     results.push(ForwardedEntities {
                         mode,
                         entities: arr,
-                        warnings: Vec::new(),
+                        warnings: cs_warnings,
                     });
                 }
-                ForwardGetOutcome::Success(obj @ Value::Object(_)) => {
+                ForwardGetOutcome::Success(obj @ Value::Object(_), cs_warnings) => {
                     results.push(ForwardedEntities {
                         mode,
                         entities: vec![obj],
-                        warnings: Vec::new(),
+                        warnings: cs_warnings,
                     });
                 }
-                ForwardGetOutcome::Success(_other) => {
+                ForwardGetOutcome::Success(_other, _) => {
                     warn!("Context source {} returned unexpected response type", csr.id);
                     results.push(ForwardedEntities {
                         mode,
@@ -398,14 +416,14 @@ impl ContextSourceForwardingService {
 
             let mode = csr.mode.unwrap_or_default();
             match self.forward_get(&url, context_url, csr.tenant.as_deref(), incoming_via).await {
-                ForwardGetOutcome::Success(obj @ Value::Object(_)) => {
+                ForwardGetOutcome::Success(obj @ Value::Object(_), cs_warnings) => {
                     results.push(ForwardedEntities {
                         mode,
                         entities: vec![obj],
-                        warnings: Vec::new(),
+                        warnings: cs_warnings,
                     });
                 }
-                ForwardGetOutcome::Success(_other) => {
+                ForwardGetOutcome::Success(_other, _) => {
                     // Single entity retrieval expects an object; anything else is invalid
                     warn!("Context source {} returned non-object for entity retrieve", csr.id);
                     results.push(ForwardedEntities {
@@ -639,7 +657,7 @@ impl ContextSourceForwardingService {
             request = request.header("Content-Type", "application/ld+json").body(body_bytes.to_vec());
         }
 
-        let (status, bytes) = self.send_request(request).await?;
+        let (status, _warning, bytes) = self.send_request(request).await?;
 
         let response_body = if bytes.is_empty() {
             None
@@ -659,7 +677,7 @@ impl ContextSourceForwardingService {
             .build_request(reqwest::Method::GET, url, context_url, tenant, incoming_via)
             .header("Accept", "application/json");
 
-        let (status, bytes) = match self.send_request(request).await {
+        let (status, warning_header, bytes) = match self.send_request(request).await {
             Ok(result) => result,
             Err(e) => return ForwardGetOutcome::NetworkError(e.to_string()),
         };
@@ -672,9 +690,17 @@ impl ContextSourceForwardingService {
             return ForwardGetOutcome::ErrorStatus(status.as_u16());
         }
 
+        // Propagate IANA Warning 110 (Response is Stale) from the context source (clause 6.3.17).
+        let mut warnings = Vec::new();
+        if let Some(ref warning_value) = warning_header
+            && warning_value.starts_with("110")
+        {
+            warnings.push(NgsiLdWarning::ResponseIsStale(warning_value.clone()));
+        }
+
         let text = String::from_utf8_lossy(&bytes);
         match serde_json::from_str(&text) {
-            Ok(value) => ForwardGetOutcome::Success(value),
+            Ok(value) => ForwardGetOutcome::Success(value, warnings),
             Err(e) => {
                 warn!("Failed to parse CS response as JSON: {}. Body: {}", e, &text[..text.len().min(200)]);
                 ForwardGetOutcome::InvalidPayload(format!("Failed to parse context source response as JSON: {}", e))
@@ -749,10 +775,10 @@ impl ContextSourceForwardingService {
             debug!("Forwarding discovery query to context source {}: {}", csr.id, url);
 
             match self.forward_get(&url, context_url, csr.tenant.as_deref(), incoming_via).await {
-                ForwardGetOutcome::Success(body) => {
+                ForwardGetOutcome::Success(body, cs_warnings) => {
                     results.push(ForwardedDiscoveryResult {
                         body: Some(body),
-                        warnings: Vec::new(),
+                        warnings: cs_warnings,
                     });
                 }
                 ForwardGetOutcome::NotFound => {
@@ -798,16 +824,14 @@ impl ContextSourceForwardingService {
     ///
     /// Same pattern as `forward_query()` but targets `/ngsi-ld/v1/temporal/entities`
     /// and passes through the full query string (temporal params included).
-    pub async fn forward_temporal_query(
-        &self,
-        entity_type_compact: Option<&str>,
-        entity_ids: Option<&[String]>,
-        query_string: &str,
-        context_url: Option<&str>,
-        context: &ContextSpec,
-        operation: ForwardingOperation,
-        incoming_via: Option<&str>,
-    ) -> Result<Vec<ForwardedEntities>, AndromedaError> {
+    pub async fn forward_temporal_query(&self, req: &ForwardTemporalQueryRequest<'_>) -> Result<Vec<ForwardedEntities>, AndromedaError> {
+        let entity_type_compact = req.entity_type_compact;
+        let entity_ids = req.entity_ids;
+        let query_string = req.query_string;
+        let context_url = req.context_url;
+        let context = req.context;
+        let operation = req.operation;
+        let incoming_via = req.incoming_via;
         if self.is_loop_detected(incoming_via) {
             debug!("Loop detected in Via header chain, skipping temporal query forwarding");
             return Ok(Vec::new());
@@ -834,21 +858,21 @@ impl ContextSourceForwardingService {
 
             let mode = csr.mode.unwrap_or_default();
             match self.forward_get(&url, context_url, csr.tenant.as_deref(), incoming_via).await {
-                ForwardGetOutcome::Success(Value::Array(arr)) => {
+                ForwardGetOutcome::Success(Value::Array(arr), cs_warnings) => {
                     results.push(ForwardedEntities {
                         mode,
                         entities: arr,
-                        warnings: Vec::new(),
+                        warnings: cs_warnings,
                     });
                 }
-                ForwardGetOutcome::Success(obj @ Value::Object(_)) => {
+                ForwardGetOutcome::Success(obj @ Value::Object(_), cs_warnings) => {
                     results.push(ForwardedEntities {
                         mode,
                         entities: vec![obj],
-                        warnings: Vec::new(),
+                        warnings: cs_warnings,
                     });
                 }
-                ForwardGetOutcome::Success(_other) => {
+                ForwardGetOutcome::Success(_other, _) => {
                     warn!("Context source {} returned unexpected temporal response type", csr.id);
                     results.push(ForwardedEntities {
                         mode,
@@ -929,14 +953,14 @@ impl ContextSourceForwardingService {
 
             let mode = csr.mode.unwrap_or_default();
             match self.forward_get(&url, context_url, csr.tenant.as_deref(), incoming_via).await {
-                ForwardGetOutcome::Success(obj @ Value::Object(_)) => {
+                ForwardGetOutcome::Success(obj @ Value::Object(_), cs_warnings) => {
                     results.push(ForwardedEntities {
                         mode,
                         entities: vec![obj],
-                        warnings: Vec::new(),
+                        warnings: cs_warnings,
                     });
                 }
-                ForwardGetOutcome::Success(_other) => {
+                ForwardGetOutcome::Success(_other, _) => {
                     warn!("Context source {} returned non-object for temporal retrieve", csr.id);
                     results.push(ForwardedEntities {
                         mode,
@@ -993,14 +1017,15 @@ impl ContextSourceForwardingService {
     }
 
     /// Send a request and return the status and raw bytes.
-    async fn send_request(&self, request: reqwest::RequestBuilder) -> Result<(reqwest::StatusCode, Vec<u8>), AndromedaError> {
+    async fn send_request(&self, request: reqwest::RequestBuilder) -> Result<(reqwest::StatusCode, Option<String>, Vec<u8>), AndromedaError> {
         let response = request.send().await.map_err(|e| AndromedaError::map_reqwest(e, "context_source_forward"))?;
 
         let status = response.status();
+        let warning = response.headers().get("Warning").and_then(|v| v.to_str().ok()).map(String::from);
 
         let bytes = response.bytes().await.map_err(|e| AndromedaError::map_reqwest(e, "context_source_read_body"))?;
 
-        Ok((status, bytes.to_vec()))
+        Ok((status, warning, bytes.to_vec()))
     }
 }
 

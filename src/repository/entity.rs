@@ -140,10 +140,13 @@ impl EntityRepository {
                 END
             WHERE EXISTS (
                 SELECT 1
-                FROM jsonb_each(payload->0) AS kv(key, val),
-                     LATERAL jsonb_array_elements(val) AS inst(elem)
-                WHERE kv.key NOT LIKE '@%'
-                  AND (inst.elem #>>'{https://uri.etsi.org/ngsi-ld/expiresAt,0,@value}')::timestamptz <= NOW()
+                FROM (
+                    SELECT key, value
+                    FROM jsonb_each(payload->0)
+                    WHERE key NOT LIKE '@%' AND jsonb_typeof(value) = 'array'
+                ) AS kv(key, val),
+                LATERAL jsonb_array_elements(kv.val) AS inst(elem)
+                WHERE (inst.elem #>>'{https://uri.etsi.org/ngsi-ld/expiresAt,0,@value}')::timestamptz <= NOW()
             )
             RETURNING id
             "#,

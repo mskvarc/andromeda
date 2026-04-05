@@ -357,14 +357,14 @@ impl JsonLdEngine {
 
     fn record_term_cache_hit(&self) {
         let hits = self.term_cache_hits.fetch_add(1, Ordering::Relaxed) + 1;
-        if hits % 1000 == 0 {
+        if hits.is_multiple_of(1000) {
             self.log_term_cache_stats();
         }
     }
 
     fn record_term_cache_miss(&self) {
         let misses = self.term_cache_misses.fetch_add(1, Ordering::Relaxed) + 1;
-        if misses % 1000 == 0 {
+        if misses.is_multiple_of(1000) {
             self.log_term_cache_stats();
         }
     }

@@ -139,7 +139,7 @@ pub struct MultitenancyConfig {
     pub janitor_interval_seconds: u64,
 }
 
-#[derive(Config, Debug, Clone)]
+#[derive(Config, Debug, Clone, Default)]
 #[config(layer_attr(derive(Args)))]
 pub struct PerformanceConfig {
     /// Maximum concurrent entities processed in batch operations.
@@ -200,12 +200,6 @@ impl Default for MultitenancyConfig {
             runtime_max_cached: 64,
             janitor_interval_seconds: 30,
         }
-    }
-}
-
-impl Default for PerformanceConfig {
-    fn default() -> Self {
-        Self { batch_concurrency: None }
     }
 }
 

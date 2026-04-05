@@ -174,10 +174,10 @@ impl EntityQueryParameters {
             }
         }
 
-        if let Some(pattern) = &self.id_pattern {
-            if pattern.trim().is_empty() {
-                return Err(QueryError::BadRequestData("Invalid idPattern: empty value".to_string()));
-            }
+        if let Some(pattern) = &self.id_pattern
+            && pattern.trim().is_empty()
+        {
+            return Err(QueryError::BadRequestData("Invalid idPattern: empty value".to_string()));
         }
 
         // Validate orderGeometry: must be a valid GeoJSON geometry type, not GeometryCollection (S5.2.43)

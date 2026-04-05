@@ -95,9 +95,8 @@ fn collect_context_object(context: &Map<String, Value>, file: &InputContextFile,
             continue;
         }
 
-        match extract_term_target(compact, value)? {
-            Some(target) => insert_term(model, compact, target, file)?,
-            None => {}
+        if let Some(target) = extract_term_target(compact, value)? {
+            insert_term(model, compact, target, file)?;
         }
 
         collect_nested_contexts(value, file, inputs, model)?;

@@ -70,7 +70,14 @@ impl EntityQueryService {
 
         let val = Value::Object(obj);
 
-        serde_json::from_value(val).map_err(|err| AndromedaError::bad_request_data(format!("Invalid entity data: {}", err)))
+        let mut entity: Entity = serde_json::from_value(val).map_err(|err| AndromedaError::bad_request_data(format!("Invalid entity data: {}", err)))?;
+
+        // Filter out attribute instances whose expiresAt has passed (clause 4.22).
+        // The background worker handles DB cleanup, but this ensures clients never
+        // see stale expired instances between worker cycles.
+        entity.remove_expired_attributes(chrono::Utc::now());
+
+        Ok(entity)
     }
 
     // -------------------------------------------------------------------------
@@ -92,10 +99,8 @@ impl EntityQueryService {
         if let Some(expanded_entity) = result {
             let mut entity = self.compact_to_entity(expanded_entity, context, Some(&id_str)).await?;
 
-            if sys_attrs {
-                if let Some(sa) = self.repo.get_sys_attrs(&id_str).await? {
-                    entity = entity.with_sys_attrs(&sa);
-                }
+            if sys_attrs && let Some(sa) = self.repo.get_sys_attrs(&id_str).await? {
+                entity = entity.with_sys_attrs(&sa);
             }
 
             if !attrs.is_empty() {
@@ -153,12 +158,11 @@ impl EntityQueryService {
 
             let mut entity = self.compact_to_entity(value, context, None).await?;
 
-            if sys_attrs {
-                if let Some(ref id_str) = id_str
-                    && let Some(sa) = sys_attrs_map.get(id_str)
-                {
-                    entity = entity.with_sys_attrs(sa);
-                }
+            if sys_attrs
+                && let Some(ref id_str) = id_str
+                && let Some(sa) = sys_attrs_map.get(id_str)
+            {
+                entity = entity.with_sys_attrs(sa);
             }
 
             entities.push(entity);
@@ -215,10 +219,8 @@ impl EntityQueryService {
             for (linked_id, expanded) in batch_payloads {
                 match self.compact_to_entity(expanded, context, Some(&linked_id)).await {
                     Ok(mut entity) => {
-                        if sys_attrs {
-                            if let Some(sa) = batch_sys_attrs.get(&linked_id) {
-                                entity = entity.with_sys_attrs(sa);
-                            }
+                        if sys_attrs && let Some(sa) = batch_sys_attrs.get(&linked_id) {
+                            entity = entity.with_sys_attrs(sa);
                         }
                         linked_map.insert(linked_id, entity);
                     }

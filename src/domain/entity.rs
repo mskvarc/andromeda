@@ -82,6 +82,45 @@ impl Entity {
         self
     }
 
+    /// Remove attribute instances whose `expiresAt` has passed (clause 4.22).
+    ///
+    /// Filters out expired instances from both regular attributes and the
+    /// special geo-properties (location, observationSpace, operationSpace).
+    /// If a multi-instance attribute has all instances expired, the attribute
+    /// key is removed entirely.
+    pub fn remove_expired_attributes(&mut self, now: DateTime<Utc>) {
+        fn is_expired(attr: &crate::domain::attribute::Attribute, now: DateTime<Utc>) -> bool {
+            attr.expires_at().is_some_and(|exp| exp <= now)
+        }
+
+        fn filter_value(value: &mut Option<AttributeValue>, now: DateTime<Utc>) {
+            let should_remove = match value {
+                Some(AttributeValue::Single(attr)) => is_expired(attr, now),
+                Some(AttributeValue::Multiple(instances)) => {
+                    instances.retain(|attr| !is_expired(attr, now));
+                    instances.is_empty()
+                }
+                Some(AttributeValue::Raw(_)) | None => false,
+            };
+            if should_remove {
+                *value = None;
+            }
+        }
+
+        filter_value(&mut self.location, now);
+        filter_value(&mut self.observation_space, now);
+        filter_value(&mut self.operation_space, now);
+
+        self.attrs.retain(|_, value| match value {
+            AttributeValue::Single(attr) => !is_expired(attr, now),
+            AttributeValue::Multiple(instances) => {
+                instances.retain(|attr| !is_expired(attr, now));
+                !instances.is_empty()
+            }
+            AttributeValue::Raw(_) => true,
+        });
+    }
+
     /// Convert the entity to a simplified key-value representation.
     pub fn simplify(&self) -> serde_json::Value {
         let mut map = serde_json::Map::new();
