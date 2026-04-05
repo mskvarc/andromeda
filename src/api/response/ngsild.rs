@@ -6,13 +6,11 @@
 
 use crate::{
     api::{
-        extractor::{
-            accept::ResponseFormat,
-            prefer::{GeoJsonBodyPreference, NgsiLdVersion, PreferHeader},
-        },
+        extractor::{accept::ResponseFormat, prefer::PreferHeader},
         header::insert_jsonld_contexts,
         response::version_compat::adapt_payload_for_version,
     },
+    header::{GeoJsonBodyPreference, PreferenceApplied},
     jsonld::ContextSpec,
     service::{context_source_forwarding::NgsiLdWarning, entity::decode_percent_encoded_uris},
 };
@@ -21,6 +19,7 @@ use axum::{
     http::{HeaderMap, HeaderValue, StatusCode, header::CONTENT_TYPE},
     response::{IntoResponse, Response},
 };
+use headers::HeaderMapExt;
 use serde::Serialize;
 use serde_json::{Map, Value};
 
@@ -151,10 +150,7 @@ impl<T: Serialize> IntoResponse for NgsiLdResponse<T> {
 
         // Insert Preference-Applied header when version preference is present
         if self.prefer.requested_version.is_some() {
-            let conformant = NgsiLdVersion::CONFORMANT;
-            if let Ok(val) = HeaderValue::from_str(&format!("ngsi-ld={}", conformant)) {
-                headers.insert("Preference-Applied", val);
-            }
+            headers.typed_insert(PreferenceApplied::version_conformance());
         }
 
         if let Some(ref loc) = self.location
@@ -351,10 +347,7 @@ impl<T: Serialize> IntoResponse for NgsiLdCollectionResponse<T> {
 
         // Insert Preference-Applied header when version preference is present
         if self.prefer.requested_version.is_some() {
-            let conformant = NgsiLdVersion::CONFORMANT;
-            if let Ok(val) = HeaderValue::from_str(&format!("ngsi-ld={}", conformant)) {
-                headers.insert("Preference-Applied", val);
-            }
+            headers.typed_insert(PreferenceApplied::version_conformance());
         }
 
         // Add NGSILD-Results-Count if provided
@@ -634,7 +627,6 @@ mod tests {
 
     #[test]
     fn geojson_body_json_preference_uses_link_header() {
-        use crate::api::extractor::prefer::GeoJsonBodyPreference;
         use axum::response::IntoResponse;
 
         let prefer = PreferHeader {
@@ -665,7 +657,7 @@ mod tests {
 
     #[test]
     fn version_preference_returns_203_with_preference_applied() {
-        use crate::api::extractor::prefer::NgsiLdVersion;
+        use crate::header::NgsiLdVersion;
         use axum::response::IntoResponse;
 
         let prefer = PreferHeader {

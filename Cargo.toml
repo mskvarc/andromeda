@@ -30,6 +30,7 @@ derive_more = { version = "2.1.1", features = ["display", "from"] }
 futures = "0.3.32"
 geo = "0.32.0"
 geojson = "1.0.0"
+headers = "0.4.1"
 indexmap = { version = "2.13.1", features = ["serde"] }
 iref = { version = "4.0.0", features = ["serde"] }
 # Alias required: json-ld 0.21.x depends on iref v3, while we use iref v4 elsewhere.
