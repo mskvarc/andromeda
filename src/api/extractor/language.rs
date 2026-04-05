@@ -1,12 +1,14 @@
-use crate::{api::extractor::error::ExtractorRejection, query::lang::LanguageFilter};
-use axum::{extract::FromRequestParts, http::request::Parts};
-use url::form_urlencoded;
+//! Language negotiation extractor for NGSI-LD requests.
+//!
+//! Resolves an optional [`LanguageFilter`] from the request using two sources
+//! (in priority order):
+//! 1. The `lang` query parameter (spec-mandated, NGSI-LD clause 6.3.5)
+//! 2. The `NGSILD-Language` custom header (Andromeda-specific fallback)
 
-/// Custom HTTP header for language negotiation.
-///
-/// Acts as a fallback when the `lang` query parameter is absent. The query
-/// parameter always takes precedence per NGSI-LD convention.
-pub const NGSILD_LANGUAGE_HEADER: &str = "NGSILD-Language";
+use crate::{api::extractor::error::ExtractorRejection, header::NgsiLdLanguage, query::lang::LanguageFilter};
+use axum::{extract::FromRequestParts, http::request::Parts};
+use headers::HeaderMapExt;
+use url::form_urlencoded;
 
 /// Axum extractor that resolves an optional [`LanguageFilter`] from the request.
 ///
@@ -34,53 +36,36 @@ where
                 .map(|(_, value)| value.into_owned())
         });
 
-        // 2. Try NGSILD-Language header as fallback
-        let lang_from_header = if lang_from_query.is_none() {
-            match parts.headers.get(NGSILD_LANGUAGE_HEADER) {
-                Some(value) => {
-                    let s = value
-                        .to_str()
-                        .map_err(|_| ExtractorRejection::bad_request_data("Invalid NGSILD-Language header encoding", uri.clone()))?
-                        .trim();
-                    if s.is_empty() {
-                        return Err(ExtractorRejection::bad_request_data("NGSILD-Language header must not be empty", uri));
-                    }
-                    Some(s.to_string())
-                }
-                None => None,
-            }
-        } else {
-            None
-        };
-
-        let raw = lang_from_query.or(lang_from_header);
-
-        match raw {
-            Some(value) => {
-                let filter = LanguageFilter::parse(&value).map_err(|error| ExtractorRejection::bad_request_data(error.to_string(), uri))?;
-                Ok(LanguageNegotiation(Some(filter)))
-            }
-            None => Ok(LanguageNegotiation(None)),
+        if let Some(value) = lang_from_query {
+            let filter = LanguageFilter::parse(&value).map_err(|error| ExtractorRejection::bad_request_data(error.to_string(), uri))?;
+            return Ok(LanguageNegotiation(Some(filter)));
         }
+
+        // 2. Try NGSILD-Language header as fallback
+        if let Some(header) = parts.headers.typed_get::<NgsiLdLanguage>() {
+            return Ok(LanguageNegotiation(Some(LanguageFilter::from(header))));
+        }
+
+        Ok(LanguageNegotiation(None))
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{LanguageNegotiation, NGSILD_LANGUAGE_HEADER};
+    use super::LanguageNegotiation;
     use axum::{extract::FromRequestParts, http::Request};
 
     async fn extract_from_uri(uri: &str) -> LanguageNegotiation {
-        let (mut parts, _) = Request::builder().uri(uri).body(()).unwrap().into_parts();
+        let (mut parts, _) = Request::builder().uri(uri).body(()).expect("valid request").into_parts();
         LanguageNegotiation::from_request_parts(&mut parts, &()).await.expect("extraction")
     }
 
     async fn extract_with_header(header_value: &str) -> LanguageNegotiation {
         let (mut parts, _) = Request::builder()
             .uri("/entities")
-            .header(NGSILD_LANGUAGE_HEADER, header_value)
+            .header("NGSILD-Language", header_value)
             .body(())
-            .unwrap()
+            .expect("valid request")
             .into_parts();
         LanguageNegotiation::from_request_parts(&mut parts, &()).await.expect("extraction")
     }
@@ -95,7 +80,7 @@ mod tests {
 
     #[tokio::test]
     async fn extracts_language_filter_from_header() {
-        let LanguageNegotiation(filter) = extract_with_header("de,en;q=0.5").await;
+        let LanguageNegotiation(filter) = extract_with_header("de, en;q=0.5").await;
         let filter = filter.expect("language filter present");
         let ordered = filter.ordered();
         assert_eq!(ordered.len(), 2);
@@ -105,9 +90,9 @@ mod tests {
     async fn query_parameter_takes_precedence_over_header() {
         let (mut parts, _) = Request::builder()
             .uri("/entities?lang=fr")
-            .header(NGSILD_LANGUAGE_HEADER, "de")
+            .header("NGSILD-Language", "de")
             .body(())
-            .unwrap()
+            .expect("valid request")
             .into_parts();
         let LanguageNegotiation(filter) = LanguageNegotiation::from_request_parts(&mut parts, &()).await.expect("extraction");
         let filter = filter.expect("language filter present");
@@ -115,7 +100,7 @@ mod tests {
         assert_eq!(ordered.len(), 1);
         assert!(matches!(
             ordered[0].range(),
-            crate::query::lang::LanguageRange::Tag(tag) if tag.to_string() == "fr"
+            crate::header::LanguageRange::Tag(tag) if tag.to_string() == "fr"
         ));
     }
 
@@ -127,7 +112,7 @@ mod tests {
 
     #[tokio::test]
     async fn rejects_invalid_language_filter() {
-        let (mut parts, _) = Request::builder().uri("/entities?lang=").body(()).unwrap().into_parts();
+        let (mut parts, _) = Request::builder().uri("/entities?lang=").body(()).expect("valid request").into_parts();
         let result = LanguageNegotiation::from_request_parts(&mut parts, &()).await;
         assert!(result.is_err());
     }
@@ -136,11 +121,15 @@ mod tests {
     async fn rejects_empty_header() {
         let (mut parts, _) = Request::builder()
             .uri("/entities")
-            .header(NGSILD_LANGUAGE_HEADER, "")
+            .header("NGSILD-Language", "")
             .body(())
-            .unwrap()
+            .expect("valid request")
             .into_parts();
+        // Empty header should result in None (typed_get returns None for decode failure)
         let result = LanguageNegotiation::from_request_parts(&mut parts, &()).await;
-        assert!(result.is_err());
+        // With typed header, empty value fails decode -> typed_get returns None -> Ok(None)
+        assert!(result.is_ok());
+        let LanguageNegotiation(filter) = result.expect("ok");
+        assert!(filter.is_none());
     }
 }

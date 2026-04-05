@@ -5,12 +5,8 @@
 //! - `application/ld+json`: @context as URL in response body
 
 use crate::{
-    api::{
-        extractor::{accept::ResponseFormat, prefer::PreferHeader},
-        header::insert_jsonld_contexts,
-        response::version_compat::adapt_payload_for_version,
-    },
-    header::{GeoJsonBodyPreference, PreferenceApplied},
+    api::{extractor::prefer::PreferHeader, header::insert_jsonld_contexts, response::version_compat::adapt_payload_for_version},
+    header::{GeoJsonBodyPreference, PreferenceApplied, ResponseFormat},
     jsonld::ContextSpec,
     service::{context_source_forwarding::NgsiLdWarning, entity::decode_percent_encoded_uris},
 };

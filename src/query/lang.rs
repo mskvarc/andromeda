@@ -1,4 +1,7 @@
-use language_tags::{LanguageTag, ParseError, ValidationError};
+//! Parsing for the NGSI-LD `lang` query parameter (clause 6.3.5).
+
+use crate::header::{LanguageRange, NgsiLdLanguage, Quality};
+use langtag::LangTagBuf;
 use std::cmp::Reverse;
 use thiserror::Error;
 
@@ -27,13 +30,25 @@ impl LanguageFilter {
     /// Return preferences ordered by descending quality while preserving
     /// input order for equal-ranked entries.
     pub fn ordered(&self) -> Vec<&LanguagePreference> {
-        let mut preferences = self
-            .preferences
-            .iter()
-            .filter(|preference| preference.quality.as_millis() > 0)
-            .collect::<Vec<_>>();
-        preferences.sort_by_key(|preference| (Reverse(preference.quality.as_millis()), preference.ordinal));
+        let mut preferences = self.preferences.iter().filter(|preference| preference.quality.value() > 0).collect::<Vec<_>>();
+        preferences.sort_by_key(|preference| (Reverse(preference.quality), preference.ordinal));
         preferences
+    }
+}
+
+impl From<NgsiLdLanguage> for LanguageFilter {
+    fn from(header: NgsiLdLanguage) -> LanguageFilter {
+        let preferences = header
+            .preferences()
+            .iter()
+            .enumerate()
+            .map(|(ordinal, qv)| LanguagePreference {
+                range: qv.value().clone(),
+                quality: qv.quality(),
+                ordinal,
+            })
+            .collect();
+        LanguageFilter { preferences }
     }
 }
 
@@ -41,7 +56,7 @@ impl LanguageFilter {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LanguagePreference {
     range: LanguageRange,
-    quality: QualityValue,
+    quality: Quality,
     ordinal: usize,
 }
 
@@ -53,8 +68,9 @@ impl LanguagePreference {
         }
 
         let mut segments = trimmed.split(';');
-        let range = LanguageRange::parse(segments.next().ok_or(LanguageFilterError::EmptyPreference)?.trim())?;
-        let mut quality = QualityValue::preferred();
+        let range_str = segments.next().ok_or(LanguageFilterError::EmptyPreference)?.trim();
+        let range = parse_language_range(range_str)?;
+        let mut quality = Quality::default();
 
         for parameter in segments {
             let parameter = parameter.trim();
@@ -70,7 +86,7 @@ impl LanguagePreference {
                 return Err(LanguageFilterError::UnsupportedParameter(name.trim().to_string()));
             }
 
-            quality = QualityValue::parse(value.trim())?;
+            quality = parse_quality_value(value.trim())?;
         }
 
         Ok(LanguagePreference { range, quality, ordinal })
@@ -82,72 +98,49 @@ impl LanguagePreference {
     }
 }
 
-/// One NGSI-LD language range preference.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum LanguageRange {
-    /// Wildcard preference matching any available language.
-    Wildcard,
-    /// A typed BCP47 language range.
-    Tag(LanguageTag),
+/// Parse a language range string into a [`LanguageRange`].
+fn parse_language_range(raw: &str) -> Result<LanguageRange, LanguageFilterError> {
+    if raw == "*" {
+        return Ok(LanguageRange::Wildcard);
+    }
+
+    let tag = LangTagBuf::new(raw.to_string()).map_err(|error| LanguageFilterError::InvalidLanguageTag {
+        value: raw.to_string(),
+        source: error,
+    })?;
+
+    Ok(LanguageRange::Tag(tag))
 }
 
-impl LanguageRange {
-    fn parse(raw: &str) -> Result<LanguageRange, LanguageFilterError> {
-        if raw == "*" {
-            return Ok(LanguageRange::Wildcard);
-        }
-
-        let parsed = LanguageTag::parse(raw).map_err(|error| LanguageFilterError::InvalidLanguageTag {
-            value: raw.to_string(),
-            source: error,
-        })?;
-        let canonical = parsed.canonicalize().unwrap_or(parsed);
-
-        Ok(LanguageRange::Tag(canonical))
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-struct QualityValue(u16);
-
-impl QualityValue {
-    const fn preferred() -> QualityValue {
-        QualityValue(1000)
+/// Parse a quality value string like `0.9` into a [`Quality`].
+fn parse_quality_value(raw: &str) -> Result<Quality, LanguageFilterError> {
+    if raw.is_empty() {
+        return Err(LanguageFilterError::InvalidQuality(raw.to_string()));
     }
 
-    fn parse(raw: &str) -> Result<QualityValue, LanguageFilterError> {
-        if raw.is_empty() {
-            return Err(LanguageFilterError::InvalidQuality(raw.to_string()));
-        }
+    let (whole, fractional) = raw.split_once('.').map_or((raw, ""), |(whole, fractional)| (whole, fractional));
+    let whole = match whole {
+        "0" => 0_u16,
+        "1" => 1_u16,
+        _ => return Err(LanguageFilterError::InvalidQuality(raw.to_string())),
+    };
 
-        let (whole, fractional) = raw.split_once('.').map_or((raw, ""), |(whole, fractional)| (whole, fractional));
-        let whole = match whole {
-            "0" => 0_u16,
-            "1" => 1_u16,
-            _ => return Err(LanguageFilterError::InvalidQuality(raw.to_string())),
-        };
-
-        if fractional.len() > 3 || !fractional.chars().all(|character| character.is_ascii_digit()) {
-            return Err(LanguageFilterError::InvalidQuality(raw.to_string()));
-        }
-
-        let mut padded = fractional.to_string();
-        while padded.len() < 3 {
-            padded.push('0');
-        }
-
-        let fractional = padded.parse::<u16>().map_err(|_| LanguageFilterError::InvalidQuality(raw.to_string()))?;
-
-        if whole == 1 && fractional > 0 {
-            return Err(LanguageFilterError::InvalidQuality(raw.to_string()));
-        }
-
-        Ok(QualityValue((whole * 1000) + fractional))
+    if fractional.len() > 3 || !fractional.chars().all(|character| character.is_ascii_digit()) {
+        return Err(LanguageFilterError::InvalidQuality(raw.to_string()));
     }
 
-    const fn as_millis(self) -> u16 {
-        self.0
+    let mut padded = fractional.to_string();
+    while padded.len() < 3 {
+        padded.push('0');
     }
+
+    let fractional = padded.parse::<u16>().map_err(|_| LanguageFilterError::InvalidQuality(raw.to_string()))?;
+
+    if whole == 1 && fractional > 0 {
+        return Err(LanguageFilterError::InvalidQuality(raw.to_string()));
+    }
+
+    Quality::new((whole * 1000) + fractional).ok_or_else(|| LanguageFilterError::InvalidQuality(raw.to_string()))
 }
 
 /// Typed parse errors for the NGSI-LD `lang` filter.
@@ -175,22 +168,14 @@ pub enum LanguageFilterError {
         value: String,
         /// The source parser error.
         #[source]
-        source: ParseError,
-    },
-    /// A stored language tag could not be canonicalized.
-    #[error("Invalid language tag `{value}`")]
-    InvalidStoredLanguageTag {
-        /// The original invalid input.
-        value: String,
-        /// The source validator error.
-        #[source]
-        source: ValidationError,
+        source: langtag::InvalidLangTag<String>,
     },
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{LanguageFilter, LanguageFilterError, LanguageRange};
+    use super::{LanguageFilter, LanguageFilterError};
+    use crate::header::LanguageRange;
 
     #[test]
     fn parses_ranked_preferences_in_quality_order() {

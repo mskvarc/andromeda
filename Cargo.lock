@@ -94,7 +94,7 @@ dependencies = [
  "json-ld",
  "json-ld-expandable",
  "json-syntax",
- "language-tags",
+ "langtag 1.1.0",
  "libtest-mimic",
  "mediatype",
  "mime",
@@ -2092,7 +2092,7 @@ dependencies = [
  "json-ld-expansion",
  "json-ld-syntax",
  "json-syntax",
- "langtag",
+ "langtag 0.4.0",
  "mown",
  "rdf-types",
  "thiserror 1.0.69",
@@ -2128,7 +2128,7 @@ dependencies = [
  "iref 3.2.2",
  "json-ld-syntax",
  "json-syntax",
- "langtag",
+ "langtag 0.4.0",
  "linked-data",
  "log",
  "mime",
@@ -2168,7 +2168,7 @@ dependencies = [
  "json-ld-core",
  "json-ld-syntax",
  "json-syntax",
- "langtag",
+ "langtag 0.4.0",
  "mown",
  "rdf-types",
  "thiserror 1.0.69",
@@ -2203,7 +2203,7 @@ dependencies = [
  "indexmap 2.13.1",
  "iref 3.2.2",
  "json-syntax",
- "langtag",
+ "langtag 0.4.0",
  "locspan",
  "rdf-types",
  "smallvec",
@@ -2250,6 +2250,18 @@ checksum = "9ecb4c689a30e48ebeaa14237f34037e300dd072e6ad21a9ec72e810ff3c6600"
 dependencies = [
  "static-regular-grammar",
  "thiserror 1.0.69",
+]
+
+[[package]]
+name = "langtag"
+version = "1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "183070c6fb642bfa4b1c2d3113d0342e69a2f3f583bd3f43ed7772aea411d40c"
+dependencies = [
+ "serde",
+ "static-automata",
+ "str-newtype",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -3138,7 +3150,7 @@ dependencies = [
  "educe 0.5.11",
  "indexmap 2.13.1",
  "iref 3.2.2",
- "langtag",
+ "langtag 0.4.0",
  "raw-btree",
  "replace_with",
  "slab",

@@ -9,14 +9,15 @@ use crate::{
         uri::Uri,
     },
     error::AndromedaError,
-    query::lang::{LanguageFilter, LanguageFilterError, LanguageRange},
+    header::LanguageRange,
+    query::lang::{LanguageFilter, LanguageFilterError},
 };
 use chrono::{DateTime, SecondsFormat, Utc};
 use indexmap::IndexMap;
-use language_tags::LanguageTag;
+use langtag::LangTagBuf;
 use serde::Serialize;
 use serde_json::{Map, Value};
-use std::{collections::HashMap, ops::Deref, str::FromStr};
+use std::{collections::HashMap, ops::Deref};
 
 /// Render an entity to a response value, applying the optional NGSI-LD `lang`
 /// filter only at the presentation boundary.
@@ -105,7 +106,8 @@ fn negotiate_language_property<'a>(language_property: &'a LanguageProperty, filt
     let available = language_entries(&language_property.language_map)?;
 
     for preference in filter.ordered() {
-        match preference.range() {
+        let range = preference.range();
+        match range {
             LanguageRange::Wildcard => {
                 if let Some(entry) = available.iter().find(|entry| matches!(entry.range, AvailableLanguageRange::Tag(_))) {
                     return Ok(Some(NegotiatedProperty::from_language_property(language_property, entry)));
@@ -114,12 +116,14 @@ fn negotiate_language_property<'a>(language_property: &'a LanguageProperty, filt
                     return Ok(Some(NegotiatedProperty::from_language_property(language_property, entry)));
                 }
             }
-            LanguageRange::Tag(requested) => {
-                if let Some(entry) = available.iter().find(|entry| entry.exact_matches(requested)) {
+            LanguageRange::Tag(_) => {
+                // Exact match
+                if let Some(entry) = available.iter().find(|entry| entry.matches_exact(range)) {
                     return Ok(Some(NegotiatedProperty::from_language_property(language_property, entry)));
                 }
-                if requested.is_language_range()
-                    && let Some(entry) = available.iter().find(|entry| entry.range_matches(requested))
+                // Prefix match (only for basic ranges like "fr", not "fr-CA")
+                if range.is_basic_range()
+                    && let Some(entry) = available.iter().find(|entry| entry.matches_prefix(range))
                 {
                     return Ok(Some(NegotiatedProperty::from_language_property(language_property, entry)));
                 }
@@ -170,7 +174,7 @@ impl<'a> AvailableLanguage<'a> {
         let range = if tag == "@none" {
             AvailableLanguageRange::Default
         } else {
-            let parsed = LanguageTag::from_str(tag).map_err(|error| {
+            let parsed = LangTagBuf::new(tag.to_string()).map_err(|error| {
                 AndromedaError::bad_request_data(
                     LanguageFilterError::InvalidLanguageTag {
                         value: tag.to_string(),
@@ -179,31 +183,24 @@ impl<'a> AvailableLanguage<'a> {
                     .to_string(),
                 )
             })?;
-            let canonical = parsed.canonicalize().map_err(|error| {
-                AndromedaError::bad_request_data(
-                    LanguageFilterError::InvalidStoredLanguageTag {
-                        value: tag.to_string(),
-                        source: error,
-                    }
-                    .to_string(),
-                )
-            })?;
-            AvailableLanguageRange::Tag(canonical)
+            AvailableLanguageRange::Tag(parsed)
         };
 
         Ok(AvailableLanguage { range, value })
     }
 
-    fn exact_matches(&self, requested: &LanguageTag) -> bool {
+    /// Case-insensitive exact match using [`LanguageRange::exact_matches`].
+    fn matches_exact(&self, range: &LanguageRange) -> bool {
         match &self.range {
-            AvailableLanguageRange::Tag(tag) => tag == requested,
+            AvailableLanguageRange::Tag(tag) => range.exact_matches(tag),
             AvailableLanguageRange::Default => false,
         }
     }
 
-    fn range_matches(&self, requested: &LanguageTag) -> bool {
+    /// RFC 4647 basic filtering prefix match using [`LanguageRange::prefix_matches`].
+    fn matches_prefix(&self, range: &LanguageRange) -> bool {
         match &self.range {
-            AvailableLanguageRange::Tag(tag) => requested.matches(tag),
+            AvailableLanguageRange::Tag(tag) => range.prefix_matches(tag),
             AvailableLanguageRange::Default => false,
         }
     }
@@ -212,7 +209,7 @@ impl<'a> AvailableLanguage<'a> {
 #[derive(Debug, Clone)]
 enum AvailableLanguageRange {
     Default,
-    Tag(LanguageTag),
+    Tag(LangTagBuf),
 }
 
 #[derive(Debug, Serialize)]
