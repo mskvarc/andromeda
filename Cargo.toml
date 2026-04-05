@@ -25,7 +25,6 @@ clap-themes = "0.1.3"
 confique = { version = "0.4.0", features = ["toml"] }
 contextual = "0.1.6"
 dashmap = { version = "6.1.0", features = ["inline"] }
-demurgos_headers = "0.4.1"
 derive_more = { version = "2.1.1", features = ["display", "from"] }
 futures = "0.3.32"
 geo = "0.32.0"
@@ -43,7 +42,6 @@ mediatype = "0.21.0"
 mime = "0.3.17"
 moka = { version = "0.12.15", features = ["future"] }
 ngsi-ld-vocabulary = { path = "lib/ngsi-ld-vocabulary" }
-parse_link_header = "0.4.0"
 percent-encoding = "2.3.2"
 problem_details = { version = "0.9.0", features = ["axum"] }
 rdf-types = "0.22.5"

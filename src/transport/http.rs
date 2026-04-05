@@ -10,7 +10,7 @@ use async_trait::async_trait;
 use tracing::{debug, warn};
 
 use crate::{
-    api::header::{jsonld_context_link, link_header_value},
+    header::{jsonld_context_link, link_header_value},
     transport::types::{self, DeliveryOutcome, DeliveryRequest, NotificationTransport, TransportError},
 };
 

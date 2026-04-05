@@ -1,7 +1,8 @@
 //! JSON-LD context URL extraction from Link headers.
 
-use crate::jsonld::ContextSpec;
+use crate::{header::link::Link, jsonld::ContextSpec};
 use axum::{extract::FromRequestParts, http::request::Parts};
+use std::str::FromStr;
 
 /// JSON-LD context extracted from Link header.
 #[derive(Clone, Debug, Default)]
@@ -22,6 +23,9 @@ impl ContextUrl {
     }
 }
 
+/// The JSON-LD context relation type IRI.
+const JSONLD_CONTEXT_REL: &str = "http://www.w3.org/ns/json-ld#context";
+
 impl<S> FromRequestParts<S> for ContextUrl
 where
     S: Send + Sync,
@@ -34,22 +38,18 @@ where
             let Ok(link_str) = value.to_str() else {
                 continue;
             };
-            for segment in link_str.split(',') {
-                if let Ok(map) = parse_link_header::parse(segment) {
-                    for (rel, link) in map {
-                        if let Some(rel) = rel
-                            && rel.split_whitespace().any(|r| r == "http://www.w3.org/ns/json-ld#context")
-                        {
-                            links.push(link.raw_uri.clone());
+            if let Ok(parsed) = Link::from_str(link_str) {
+                for lv in parsed.values() {
+                    if let Some(rels) = lv.rel() {
+                        let has_context_rel = rels.iter().any(|r| r.to_string() == JSONLD_CONTEXT_REL);
+                        if has_context_rel {
+                            links.push(lv.link().to_owned());
                         }
                     }
                 }
             }
         }
 
-        // Keep request-provided Link contexts only.
-        // Core fallback is applied later by context_resolver when no explicit
-        // context exists from Link/document/body.
         let context = if links.is_empty() {
             ContextSpec::none()
         } else {
@@ -65,18 +65,24 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_parse_with_valid_context_link() {
-        let link = r#"<https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context.jsonld>; rel="http://www.w3.org/ns/json-ld#context""#;
-        let result = parse_link_header::parse_with_rel(link).unwrap();
-        let context_link = result.get("http://www.w3.org/ns/json-ld#context").unwrap();
-        assert_eq!(context_link.raw_uri, "https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context.jsonld");
+    fn parse_with_valid_context_link() {
+        let raw = r#"<https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context.jsonld>; rel="http://www.w3.org/ns/json-ld#context""#;
+        let link = Link::from_str(raw).expect("should parse");
+        let values = link.values();
+        assert_eq!(values.len(), 1);
+        assert_eq!(values[0].link(), "https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context.jsonld");
+        let rels = values[0].rel().expect("should have rel");
+        assert!(rels.iter().any(|r| r.to_string() == JSONLD_CONTEXT_REL));
     }
 
     #[test]
-    fn test_parse_with_wrong_rel() {
-        let link = r#"<https://example.com/other>; rel="stylesheet""#;
-        let result = parse_link_header::parse_with_rel(link).unwrap();
-        assert!(result.get("http://www.w3.org/ns/json-ld#context").is_none());
+    fn parse_with_wrong_rel() {
+        let raw = r#"<https://example.com/other>; rel="stylesheet""#;
+        let link = Link::from_str(raw).expect("should parse");
+        let values = link.values();
+        assert_eq!(values.len(), 1);
+        let rels = values[0].rel().expect("should have rel");
+        assert!(!rels.iter().any(|r| r.to_string() == JSONLD_CONTEXT_REL));
     }
 
     #[tokio::test]

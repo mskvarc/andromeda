@@ -1,7 +1,7 @@
 use crate::{
-    api::header::{jsonld_context_link, link_header_value},
     domain::registration::{ContextSourceRegistration, CsrOperation, ForwardingMode},
     error::AndromedaError,
+    header::{jsonld_context_link, link_header_value},
     jsonld::{ContextSpec, JsonLdEngine},
     repository::context_source_registration::ContextSourceRegistrationRepository,
 };

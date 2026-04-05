@@ -68,17 +68,17 @@ pub struct QualityValue<T> {
 
 impl<T> QualityValue<T> {
     /// Create a new quality value with an explicit quality.
-    pub fn new(value: T, quality: Quality) -> QualityValue<T> {
+    pub const fn new(value: T, quality: Quality) -> QualityValue<T> {
         QualityValue { value, quality }
     }
 
     /// Return a reference to the inner value.
-    pub fn value(&self) -> &T {
+    pub const fn value(&self) -> &T {
         &self.value
     }
 
     /// Return the quality factor.
-    pub fn quality(&self) -> Quality {
+    pub const fn quality(&self) -> Quality {
         self.quality
     }
 }

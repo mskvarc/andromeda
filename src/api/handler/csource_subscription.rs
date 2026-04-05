@@ -1,11 +1,11 @@
 use crate::{
     api::{
         extractor::{accept::AcceptFormatNoGeo, context::ContextUrl, params::ValidatedQuery},
-        header::{link_from_values, link_header_value, link_value, media_type},
         response::ngsild::{NgsiLdCollectionResponse, NgsiLdResponse},
         tenant::TenantState,
     },
     error::api::ApiError,
+    header::{link::media_type, link_from_values, link_header_value, link_value},
     jsonld::ContextSpec,
 };
 use axum::{

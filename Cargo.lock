@@ -82,7 +82,6 @@ dependencies = [
  "confique",
  "contextual",
  "dashmap",
- "demurgos_headers",
  "derive_more",
  "futures",
  "geo",
@@ -100,7 +99,6 @@ dependencies = [
  "mime",
  "moka",
  "ngsi-ld-vocabulary",
- "parse_link_header",
  "percent-encoding",
  "pretty_assertions",
  "problem_details",
@@ -784,22 +782,6 @@ name = "decoded-char"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5440d1dc8ea7cae44cda3c64568db29bfa2434aba51ae66a50c00488841a65a3"
-
-[[package]]
-name = "demurgos_headers"
-version = "0.4.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e7da9f40dc8c3be50a99b56495750da90355da485e073d24833774e4955d2e40"
-dependencies = [
- "base64",
- "bytes",
- "headers-core",
- "http",
- "httpdate",
- "language-tags",
- "mime",
- "sha1",
-]
 
 [[package]]
 name = "der"
@@ -2265,12 +2247,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "language-tags"
-version = "0.3.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d4345964bb142484797b161f473a503a434de77149dd8c7427788c6e13379388"
-
-[[package]]
 name = "lazy_static"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2760,17 +2736,6 @@ dependencies = [
  "redox_syscall 0.5.18",
  "smallvec",
  "windows-link",
-]
-
-[[package]]
-name = "parse_link_header"
-version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fbc23fdb8bbf668d582b0c17120bf6b7f91d85ccad3a5b39706f019a4efda005"
-dependencies = [
- "http",
- "lazy_static",
- "regex",
 ]
 
 [[package]]

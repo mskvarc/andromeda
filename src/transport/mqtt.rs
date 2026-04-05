@@ -21,7 +21,7 @@ use tokio::{sync::RwLock, time::Instant};
 use tracing::{debug, error, info, warn};
 
 use crate::{
-    api::header::{jsonld_context_link, link_header_string},
+    header::{jsonld_context_link, link_header_string},
     transport::{
         endpoint::{MqttEndpointConfig, MqttQoS, MqttVersion},
         types::{self, DeliveryOutcome, DeliveryRequest, NotificationTransport, TransportError},
