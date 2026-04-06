@@ -4,7 +4,7 @@
 //! a convenience `PreferHeader` struct for API handlers.
 
 use crate::http::{
-    header::Prefer,
+    header::prefer::Prefer,
     model::{preference::GeoJsonBodyPreference, version::NgsiLdVersion},
 };
 use axum::{extract::FromRequestParts, http::request::Parts};

@@ -342,7 +342,7 @@ mod tests {
 
     #[test]
     fn from_ngsild_language_header() {
-        use crate::http::header::NgsiLdLanguage;
+        use crate::http::header::ngsild_language::NgsiLdLanguage;
         use axum::http::HeaderValue;
         use headers::Header;
 

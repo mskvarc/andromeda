@@ -1,7 +1,7 @@
 use crate::{
     domain::registration::{ContextSourceRegistration, CsrOperation, ForwardingMode},
     error::AndromedaError,
-    http::header::{NgsiLdTenant, NgsiLdWarning, Via, link::Link},
+    http::header::{link::Link, ngsild_tenant::NgsiLdTenant, ngsild_warning::NgsiLdWarning, via::Via},
     jsonld::{ContextSpec, JsonLdEngine},
     repository::context_source_registration::ContextSourceRegistrationRepository,
 };
@@ -283,7 +283,7 @@ impl ContextSourceForwardingService {
             .into_iter()
             .filter(|csr| operation.matches(csr))
             .filter(|csr| match (&csr.context_source_alias, incoming_via) {
-                (Some(alias), Some(via)) => !via.has_alias(alias),
+                (Some(alias), Some(via)) => !via.contains_pseudonym(alias),
                 _ => true,
             })
             .collect();
@@ -391,7 +391,7 @@ impl ContextSourceForwardingService {
             .into_iter()
             .filter(|csr| operation.matches(csr))
             .filter(|csr| match (&csr.context_source_alias, incoming_via) {
-                (Some(alias), Some(via)) => !via.has_alias(alias),
+                (Some(alias), Some(via)) => !via.contains_pseudonym(alias),
                 _ => true,
             })
             .collect();
@@ -499,7 +499,7 @@ impl ContextSourceForwardingService {
         let mut unforwardable = Vec::new();
         for csr in csrs {
             let filtered = match (&csr.context_source_alias, request.incoming_via) {
-                (Some(alias), Some(via)) => via.has_alias(alias),
+                (Some(alias), Some(via)) => via.contains_pseudonym(alias),
                 _ => false,
             };
             if filtered {
@@ -591,7 +591,7 @@ impl ContextSourceForwardingService {
             .into_iter()
             .filter(|csr| request.operation.matches(csr))
             .filter(|csr| match (&csr.context_source_alias, request.incoming_via) {
-                (Some(alias), Some(via)) => !via.has_alias(alias),
+                (Some(alias), Some(via)) => !via.contains_pseudonym(alias),
                 _ => true,
             })
             .collect();
@@ -732,8 +732,12 @@ impl ContextSourceForwardingService {
         }
 
         if let Some(tenant) = tenant {
-            let tenant_header = NgsiLdTenant::new(tenant);
-            request = request.header(NgsiLdTenant::name().as_str(), tenant_header.as_str());
+            // Tenant string comes from a previously validated TenantRef; construct
+            // TenantName for type safety. If it fails (should not happen), skip the header.
+            if let Ok(name) = crate::tenancy::TenantName::new(tenant.to_string()) {
+                let tenant_header = NgsiLdTenant::new(name);
+                request = request.header(NgsiLdTenant::name().as_str(), tenant_header.as_str());
+            }
         }
 
         // Append our identity to the Via header chain (section 6.3.18)
@@ -781,7 +785,7 @@ impl ContextSourceForwardingService {
         let mut results = Vec::new();
         for csr in csrs {
             let filtered = match (&csr.context_source_alias, incoming_via) {
-                (Some(alias), Some(via)) => via.has_alias(alias),
+                (Some(alias), Some(via)) => via.contains_pseudonym(alias),
                 _ => false,
             };
             if filtered {
@@ -865,7 +869,7 @@ impl ContextSourceForwardingService {
             .into_iter()
             .filter(|csr| operation.matches(csr))
             .filter(|csr| match (&csr.context_source_alias, incoming_via) {
-                (Some(alias), Some(via)) => !via.has_alias(alias),
+                (Some(alias), Some(via)) => !via.contains_pseudonym(alias),
                 _ => true,
             })
             .collect();
@@ -967,7 +971,7 @@ impl ContextSourceForwardingService {
             .into_iter()
             .filter(|csr| operation.matches(csr))
             .filter(|csr| match (&csr.context_source_alias, incoming_via) {
-                (Some(alias), Some(via)) => !via.has_alias(alias),
+                (Some(alias), Some(via)) => !via.contains_pseudonym(alias),
                 _ => true,
             })
             .collect();
@@ -1676,25 +1680,25 @@ mod tests {
     #[test]
     fn warning_header_format_miscellaneous() {
         let w = NgsiLdWarning::MiscellaneousWarning("timeout".to_string());
-        assert_eq!(w.header_value(), "199 - \"timeout\"");
+        assert_eq!(w.to_string(), "199 - \"timeout\"");
     }
 
     #[test]
     fn warning_header_format_persistent() {
         let w = NgsiLdWarning::MiscellaneousPersistentWarning("403 Forbidden".to_string());
-        assert_eq!(w.header_value(), "299 - \"403 Forbidden\"");
+        assert_eq!(w.to_string(), "299 - \"403 Forbidden\"");
     }
 
     #[test]
     fn warning_header_format_response_is_stale_per_clause_6_3_17() {
         let w = NgsiLdWarning::ResponseIsStale("cached data".to_string());
-        assert_eq!(w.header_value(), "110 - \"cached data\"");
+        assert_eq!(w.to_string(), "110 - \"cached data\"");
     }
 
     #[test]
     fn warning_header_format_revalidation_failed_per_clause_6_3_17() {
         let w = NgsiLdWarning::RevalidationFailed("invalid JSON".to_string());
-        assert_eq!(w.header_value(), "111 - \"invalid JSON\"");
+        assert_eq!(w.to_string(), "111 - \"invalid JSON\"");
     }
 
     #[test]

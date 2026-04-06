@@ -84,8 +84,9 @@ impl headers::Header for Prefer {
 
     fn encode<E: Extend<HeaderValue>>(&self, values: &mut E) {
         let s: String = self.0.iter().map(|p| p.to_string()).collect::<Vec<_>>().join(", ");
-        if let Ok(val) = HeaderValue::from_str(&s) {
-            values.extend(std::iter::once(val));
+        match HeaderValue::from_str(&s) {
+            Ok(val) => values.extend(std::iter::once(val)),
+            Err(err) => tracing::warn!(error = %err, "failed to encode Prefer header"),
         }
     }
 }

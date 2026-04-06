@@ -3,10 +3,7 @@
 //! Maps extractor-level failures to the appropriate NGSI-LD error types
 //! (`InvalidRequest`, `BadRequestData`) as required by the specification.
 
-use crate::{
-    error::ngsi_ld::{NgsiLdError, NgsiLdErrorType},
-    query::error::QueryError,
-};
+use crate::error::ngsi_ld::{NgsiLdError, NgsiLdErrorType};
 use axum::{
     http::{StatusCode, Uri},
     response::{IntoResponse, Response},
@@ -50,14 +47,6 @@ impl ExtractorRejection {
         ExtractorRejection::BadRequestData {
             detail: detail.into(),
             instance,
-        }
-    }
-
-    /// Convert a [`QueryError`] into the appropriate rejection variant.
-    pub fn from_query_error(err: QueryError, instance: Uri) -> ExtractorRejection {
-        match err {
-            QueryError::BadRequestData(detail) => ExtractorRejection::BadRequestData { detail, instance },
-            QueryError::InvalidRequest(detail) => ExtractorRejection::InvalidRequest { detail, instance },
         }
     }
 }

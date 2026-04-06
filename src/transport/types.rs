@@ -8,26 +8,9 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use bytes::Bytes;
-use mediatype::{MediaType, MediaTypeBuf};
+use mediatype::MediaTypeBuf;
 
-/// `application/json`
-pub const APPLICATION_JSON: MediaType<'static> = MediaType::new(mediatype::names::APPLICATION, mediatype::names::JSON);
-
-/// `application/ld+json`
-pub const APPLICATION_LD_JSON: MediaType<'static> = MediaType::from_parts(
-    mediatype::names::APPLICATION,
-    mediatype::Name::new_unchecked("ld"),
-    Some(mediatype::names::JSON),
-    &[],
-);
-
-/// `application/geo+json`
-pub const APPLICATION_GEO_JSON: MediaType<'static> = MediaType::from_parts(
-    mediatype::names::APPLICATION,
-    mediatype::Name::new_unchecked("geo"),
-    Some(mediatype::names::JSON),
-    &[],
-);
+use crate::http::model::response_format::{APPLICATION_GEO_JSON, APPLICATION_JSON, APPLICATION_LD_JSON};
 
 /// Resolve the notification content type from the subscription's `accept`
 /// field, falling back to `application/json`.

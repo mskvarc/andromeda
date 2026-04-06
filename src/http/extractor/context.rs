@@ -1,7 +1,10 @@
 //! JSON-LD context URL extraction from Link headers.
 
 use crate::{http::header::link::Link, jsonld::ContextSpec};
-use axum::{extract::FromRequestParts, http::request::Parts};
+use axum::{
+    extract::FromRequestParts,
+    http::{header::LINK, request::Parts},
+};
 use std::str::FromStr;
 
 /// JSON-LD context extracted from Link header.
@@ -16,11 +19,7 @@ impl ContextUrl {
 
     /// Merge with another context spec (e.g. from body).
     pub fn merge(self, other: ContextSpec) -> ContextSpec {
-        let mut spec = self.0;
-        if let Some(body_ctx) = other.body_context() {
-            spec = spec.with_body_context(Some(body_ctx.clone()));
-        }
-        spec
+        self.0.with_body_context(other.into_body_context())
     }
 }
 
@@ -32,7 +31,7 @@ where
 
     async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
         let mut links = Vec::new();
-        for value in parts.headers.get_all("Link") {
+        for value in parts.headers.get_all(LINK) {
             let Ok(link_str) = value.to_str() else {
                 continue;
             };

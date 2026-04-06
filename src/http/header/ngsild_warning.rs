@@ -24,13 +24,6 @@ pub enum NgsiLdWarning {
     MiscellaneousPersistentWarning(String),
 }
 
-impl NgsiLdWarning {
-    /// Format as NGSILD-Warning header value per IANA Warning specification.
-    pub fn header_value(&self) -> String {
-        self.to_string()
-    }
-}
-
 /// Typed `NGSILD-Warning` response header (clause 6.3.17).
 ///
 /// Wraps multiple [`NgsiLdWarning`] values for multi-value header encoding.
@@ -39,7 +32,7 @@ pub struct NgsiLdWarningHeader(Vec<NgsiLdWarning>);
 
 impl NgsiLdWarningHeader {
     /// Create a new `NGSILD-Warning` header from the given warnings.
-    pub const fn new(warnings: Vec<NgsiLdWarning>) -> NgsiLdWarningHeader {
+    pub fn new(warnings: Vec<NgsiLdWarning>) -> NgsiLdWarningHeader {
         NgsiLdWarningHeader(warnings)
     }
 }
@@ -67,6 +60,29 @@ fn parse_warning(s: &str) -> Option<NgsiLdWarning> {
     }
 }
 
+/// Split a string on commas that are not inside double-quoted segments.
+///
+/// Warning values contain quoted text (e.g. `199 - "timeout"`) and commas
+/// inside quotes must not be treated as separators.
+fn split_unquoted_commas(s: &str) -> Vec<&str> {
+    let mut segments = Vec::new();
+    let mut start = 0;
+    let mut in_quotes = false;
+
+    for (i, c) in s.char_indices() {
+        match c {
+            '"' => in_quotes = !in_quotes,
+            ',' if !in_quotes => {
+                segments.push(&s[start..i]);
+                start = i + 1;
+            }
+            _ => {}
+        }
+    }
+    segments.push(&s[start..]);
+    segments
+}
+
 impl headers::Header for NgsiLdWarningHeader {
     fn name() -> &'static HeaderName {
         &NGSILD_WARNING
@@ -81,9 +97,10 @@ impl headers::Header for NgsiLdWarningHeader {
             let s = value.to_str().map_err(|_| headers::Error::invalid())?;
             // Each header value may contain multiple comma-separated warnings,
             // but warning text itself may contain commas inside quotes.
-            // Parse by splitting on the code pattern instead.
-            if let Some(w) = parse_warning(s) {
-                warnings.push(w);
+            for segment in split_unquoted_commas(s) {
+                if let Some(w) = parse_warning(segment) {
+                    warnings.push(w);
+                }
             }
         }
         if warnings.is_empty() {
@@ -94,8 +111,9 @@ impl headers::Header for NgsiLdWarningHeader {
 
     fn encode<E: Extend<HeaderValue>>(&self, values: &mut E) {
         for warning in &self.0 {
-            if let Ok(val) = HeaderValue::from_str(&warning.header_value()) {
-                values.extend(std::iter::once(val));
+            match HeaderValue::from_str(&warning.to_string()) {
+                Ok(val) => values.extend(std::iter::once(val)),
+                Err(err) => tracing::warn!(error = %err, "failed to encode NGSILD-Warning header value"),
             }
         }
     }
@@ -180,24 +198,45 @@ mod tests {
     #[test]
     fn warning_header_format_miscellaneous() {
         let w = NgsiLdWarning::MiscellaneousWarning("timeout".to_string());
-        assert_eq!(w.header_value(), "199 - \"timeout\"");
+        assert_eq!(w.to_string(), "199 - \"timeout\"");
     }
 
     #[test]
     fn warning_header_format_persistent() {
         let w = NgsiLdWarning::MiscellaneousPersistentWarning("403 Forbidden".to_string());
-        assert_eq!(w.header_value(), "299 - \"403 Forbidden\"");
+        assert_eq!(w.to_string(), "299 - \"403 Forbidden\"");
     }
 
     #[test]
     fn warning_header_format_response_is_stale() {
         let w = NgsiLdWarning::ResponseIsStale("cached data".to_string());
-        assert_eq!(w.header_value(), "110 - \"cached data\"");
+        assert_eq!(w.to_string(), "110 - \"cached data\"");
     }
 
     #[test]
     fn warning_header_format_revalidation_failed() {
         let w = NgsiLdWarning::RevalidationFailed("invalid JSON".to_string());
-        assert_eq!(w.header_value(), "111 - \"invalid JSON\"");
+        assert_eq!(w.to_string(), "111 - \"invalid JSON\"");
+    }
+
+    #[test]
+    fn decode_comma_separated_warnings_in_single_header_value() {
+        let combined = "199 - \"timeout\", 299 - \"forbidden\"";
+        let val = HeaderValue::from_str(combined).expect("valid header value");
+        let mut iter = std::iter::once(&val);
+        let header = NgsiLdWarningHeader::decode(&mut iter).expect("should decode multiple");
+        assert_eq!(header.0.len(), 2);
+        assert_eq!(header.0[0], NgsiLdWarning::MiscellaneousWarning("timeout".to_string()));
+        assert_eq!(header.0[1], NgsiLdWarning::MiscellaneousPersistentWarning("forbidden".to_string()));
+    }
+
+    #[test]
+    fn decode_warning_with_comma_in_quoted_text() {
+        let raw = "199 - \"timeout, retry later\"";
+        let val = HeaderValue::from_str(raw).expect("valid header value");
+        let mut iter = std::iter::once(&val);
+        let header = NgsiLdWarningHeader::decode(&mut iter).expect("should decode");
+        assert_eq!(header.0.len(), 1);
+        assert_eq!(header.0[0], NgsiLdWarning::MiscellaneousWarning("timeout, retry later".to_string()));
     }
 }

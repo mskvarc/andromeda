@@ -118,6 +118,11 @@ impl ContextSpec {
         self.body_context.as_ref()
     }
 
+    /// Consume the spec and return the body context, if any.
+    pub fn into_body_context(self) -> Option<Value> {
+        self.body_context
+    }
+
     /// Link-header context URLs in insertion order.
     pub fn link_contexts(&self) -> &[String] {
         &self.link_contexts

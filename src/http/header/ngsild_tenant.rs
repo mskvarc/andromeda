@@ -3,6 +3,7 @@
 //! Identifies the tenant scope for multi-tenant deployments.
 //! The value must be a non-empty string.
 
+use crate::tenancy::TenantName;
 use axum::http::{HeaderName, HeaderValue};
 
 static NGSILD_TENANT: HeaderName = HeaderName::from_static("ngsild-tenant");
@@ -12,27 +13,21 @@ static NGSILD_TENANT: HeaderName = HeaderName::from_static("ngsild-tenant");
 /// Carries the tenant identifier for multi-tenant deployments. The value
 /// must be a non-empty string after trimming whitespace.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct NgsiLdTenant(String);
+pub struct NgsiLdTenant(TenantName);
 
 impl NgsiLdTenant {
-    /// Create a new `NGSILD-Tenant` header from the given value.
-    ///
-    /// # Panics
-    ///
-    /// Panics in debug mode if `value` is empty after trimming.
-    pub fn new(value: impl Into<String>) -> NgsiLdTenant {
-        let s = value.into();
-        debug_assert!(!s.trim().is_empty(), "NGSILD-Tenant value must not be empty");
-        NgsiLdTenant(s)
+    /// Create a new `NGSILD-Tenant` header from a validated [`TenantName`].
+    pub fn new(value: TenantName) -> NgsiLdTenant {
+        NgsiLdTenant(value)
     }
 
     /// Return the tenant identifier as a string slice.
     pub fn as_str(&self) -> &str {
-        &self.0
+        self.0.as_str()
     }
 
-    /// Consume the header and return the inner string.
-    pub fn into_inner(self) -> String {
+    /// Consume the header and return the inner [`TenantName`].
+    pub fn into_inner(self) -> TenantName {
         self.0
     }
 }
@@ -49,15 +44,14 @@ impl headers::Header for NgsiLdTenant {
         let value = values.next().ok_or_else(headers::Error::invalid)?;
         let s = value.to_str().map_err(|_| headers::Error::invalid())?;
         let trimmed = s.trim();
-        if trimmed.is_empty() {
-            return Err(headers::Error::invalid());
-        }
-        Ok(NgsiLdTenant(trimmed.to_string()))
+        let name = TenantName::new(trimmed.to_string()).map_err(|_| headers::Error::invalid())?;
+        Ok(NgsiLdTenant(name))
     }
 
     fn encode<E: Extend<HeaderValue>>(&self, values: &mut E) {
-        if let Ok(val) = HeaderValue::from_str(&self.0) {
-            values.extend(std::iter::once(val));
+        match HeaderValue::from_str(self.0.as_str()) {
+            Ok(val) => values.extend(std::iter::once(val)),
+            Err(err) => tracing::warn!(error = %err, "failed to encode NGSILD-Tenant header"),
         }
     }
 }
@@ -97,7 +91,8 @@ mod tests {
 
     #[test]
     fn encode_roundtrip() {
-        let header = NgsiLdTenant::new("t1");
+        let name = TenantName::new("t1".to_string()).expect("valid tenant name");
+        let header = NgsiLdTenant::new(name);
         let mut encoded = Vec::new();
         header.encode(&mut encoded);
         assert_eq!(encoded.len(), 1);

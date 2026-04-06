@@ -24,7 +24,7 @@ use crate::{
     http::header::link::Link,
     transport::{
         endpoint::{MqttEndpointConfig, MqttQoS, MqttVersion},
-        types::{self, DeliveryOutcome, DeliveryRequest, NotificationTransport, TransportError},
+        types::{DeliveryOutcome, DeliveryRequest, NotificationTransport, TransportError},
     },
 };
 
@@ -512,7 +512,7 @@ impl NotificationTransport for MqttTransportHandle {
                     properties.user_properties.push((k.clone(), v.clone()));
                 }
 
-                if req.content_type == types::APPLICATION_JSON {
+                if req.content_type == crate::http::model::response_format::APPLICATION_JSON {
                     let ctx_url = req.context_url.as_deref().unwrap_or(crate::jsonld::core_context::NGSI_LD_CORE_CONTEXT_URL);
                     let link = Link::jsonld_context(ctx_url);
                     if let Some(value) = link.to_header_string() {

@@ -36,8 +36,9 @@ impl headers::Header for NgsiLdResultsCount {
     }
 
     fn encode<E: Extend<HeaderValue>>(&self, values: &mut E) {
-        if let Ok(val) = HeaderValue::from_str(&self.0.to_string()) {
-            values.extend(std::iter::once(val));
+        match HeaderValue::from_str(&self.0.to_string()) {
+            Ok(val) => values.extend(std::iter::once(val)),
+            Err(err) => tracing::warn!(error = %err, "failed to encode NGSILD-Results-Count header"),
         }
     }
 }

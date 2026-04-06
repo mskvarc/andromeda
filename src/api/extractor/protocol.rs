@@ -6,7 +6,7 @@
 
 use crate::http::{
     extractor::{error::ExtractorRejection, language::LanguageNegotiation, prefer::PreferHeader, snapshot::SnapshotHeader},
-    header::{NgsiLdEntityMap, Via},
+    header::{ngsild_entity_map::NgsiLdEntityMap, via::Via},
     model::language::LanguageFilter,
 };
 use axum::{extract::FromRequestParts, http::request::Parts};

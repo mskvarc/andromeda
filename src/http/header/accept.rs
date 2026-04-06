@@ -13,32 +13,27 @@
 //! - `application/geo+json`
 //! - `*/*` (wildcard, resolves to `application/json`)
 
-use crate::http::model::{
-    quality::{Quality, QualityValue},
-    response_format::ResponseFormat,
+use crate::http::{
+    extractor::accept::GeoJsonSupport,
+    model::{
+        quality::{Quality, QualityValue},
+        response_format::ResponseFormat,
+    },
 };
 use axum::http::{HeaderName, HeaderValue};
 use mediatype::{MediaTypeList, ReadParams, names};
 
-/// Which supported format a media type matched (internal).
-enum MatchedFormat {
-    Json,
-    JsonLd,
-    GeoJson,
-    Wildcard,
-}
-
-/// Parse a single media type into a matched format (if supported).
+/// Parse a single media type into a supported [`ResponseFormat`], if recognized.
 ///
 /// Matches:
-/// - `application/ld+json` -> JsonLd
-/// - `application/geo+json` -> GeoJson
-/// - `application/json` (exact, no suffix) -> Json
-/// - `*/*` -> Wildcard
-fn match_media_type(mt: &mediatype::MediaType) -> Option<MatchedFormat> {
+/// - `application/ld+json` -> `JsonLd`
+/// - `application/geo+json` -> `GeoJson`
+/// - `application/json` (exact, no suffix) -> `Json`
+/// - `*/*` -> `Json` (wildcard defaults to JSON per NGSI-LD convention)
+fn match_media_type(mt: &mediatype::MediaType) -> Option<ResponseFormat> {
     // */* wildcard
     if mt.ty == names::_STAR && mt.subty == names::_STAR {
-        return Some(MatchedFormat::Wildcard);
+        return Some(ResponseFormat::Json);
     }
 
     if mt.ty != names::APPLICATION {
@@ -47,17 +42,17 @@ fn match_media_type(mt: &mediatype::MediaType) -> Option<MatchedFormat> {
 
     // application/ld+json -- subtype=ld, suffix=json
     if mt.subty == names::LD && mt.suffix == Some(names::JSON) {
-        return Some(MatchedFormat::JsonLd);
+        return Some(ResponseFormat::JsonLd);
     }
 
     // application/geo+json -- subtype=geo, suffix=json
     if mt.subty == names::GEO && mt.suffix == Some(names::JSON) {
-        return Some(MatchedFormat::GeoJson);
+        return Some(ResponseFormat::GeoJson);
     }
 
     // application/json -- exact match, no suffix (prevents application/merge-patch+json)
     if mt.subty == names::JSON && mt.suffix.is_none() {
-        return Some(MatchedFormat::Json);
+        return Some(ResponseFormat::Json);
     }
 
     None
@@ -65,10 +60,7 @@ fn match_media_type(mt: &mediatype::MediaType) -> Option<MatchedFormat> {
 
 /// Extract the `q` quality parameter from a media type (defaults to 1.0 per RFC 7231).
 fn extract_quality(mt: &mediatype::MediaType) -> Quality {
-    mt.get_param(names::Q)
-        .and_then(|v| v.as_str().parse::<f32>().ok())
-        .and_then(|f| if (0.0..=1.0).contains(&f) { Quality::new((f * 1000.0) as u16) } else { None })
-        .unwrap_or_default()
+    mt.get_param(names::Q).and_then(|v| Quality::parse_decimal(v.as_str()).ok()).unwrap_or_default()
 }
 
 /// Typed `Accept` request header for NGSI-LD content negotiation.
@@ -85,12 +77,12 @@ pub struct Accept(Vec<QualityValue<ResponseFormat>>);
 impl Accept {
     /// Return the highest-quality supported format.
     ///
-    /// Filters out GeoJSON when `allow_geo_json` is false.
+    /// Filters out GeoJSON when `geo_json` is [`GeoJsonSupport::Disallowed`].
     /// Returns `None` when no supported format is found (caller maps this to 406).
-    pub fn best_format(&self, allow_geo_json: bool) -> Option<ResponseFormat> {
+    pub fn best_format(&self, geo_json: GeoJsonSupport) -> Option<ResponseFormat> {
         let mut best: Option<&QualityValue<ResponseFormat>> = None;
         for qv in &self.0 {
-            if !allow_geo_json && *qv.value() == ResponseFormat::GeoJson {
+            if geo_json == GeoJsonSupport::Disallowed && *qv.value() == ResponseFormat::GeoJson {
                 continue;
             }
             match best {
@@ -119,13 +111,8 @@ impl headers::Header for Accept {
             let s = value.to_str().map_err(|_| headers::Error::invalid())?;
             for result in MediaTypeList::new(s) {
                 let Ok(mt) = result else { continue };
-                if let Some(matched) = match_media_type(&mt) {
+                if let Some(format) = match_media_type(&mt) {
                     let quality = extract_quality(&mt);
-                    let format = match matched {
-                        MatchedFormat::JsonLd => ResponseFormat::JsonLd,
-                        MatchedFormat::GeoJson => ResponseFormat::GeoJson,
-                        MatchedFormat::Json | MatchedFormat::Wildcard => ResponseFormat::Json,
-                    };
                     formats.push(QualityValue::new(format, quality));
                 }
             }
@@ -138,8 +125,9 @@ impl headers::Header for Accept {
 
     fn encode<E: Extend<HeaderValue>>(&self, values: &mut E) {
         let s: String = self.0.iter().map(|qv| qv.to_string()).collect::<Vec<_>>().join(", ");
-        if let Ok(val) = HeaderValue::from_str(&s) {
-            values.extend(std::iter::once(val));
+        match HeaderValue::from_str(&s) {
+            Ok(val) => values.extend(std::iter::once(val)),
+            Err(err) => tracing::warn!(error = %err, "failed to encode Accept header"),
         }
     }
 }
@@ -181,26 +169,26 @@ mod tests {
     #[test]
     fn decode_wildcard_becomes_json() {
         let accept = decode_accept("*/*").expect("valid");
-        assert_eq!(accept.best_format(true), Some(ResponseFormat::Json));
+        assert_eq!(accept.best_format(GeoJsonSupport::Allowed), Some(ResponseFormat::Json));
     }
 
     #[test]
     fn decode_with_quality() {
         let accept = decode_accept("application/ld+json;q=0.9, application/json").expect("valid");
         // Json has q=1.0, JsonLd has q=0.9 -> Json wins
-        assert_eq!(accept.best_format(true), Some(ResponseFormat::Json));
+        assert_eq!(accept.best_format(GeoJsonSupport::Allowed), Some(ResponseFormat::Json));
     }
 
     #[test]
     fn decode_prefers_higher_quality() {
         let accept = decode_accept("application/json;q=0.5, application/ld+json;q=1.0").expect("valid");
-        assert_eq!(accept.best_format(true), Some(ResponseFormat::JsonLd));
+        assert_eq!(accept.best_format(GeoJsonSupport::Allowed), Some(ResponseFormat::JsonLd));
     }
 
     #[test]
     fn decode_ignores_unsupported() {
         let accept = decode_accept("application/xml, application/json").expect("valid");
-        assert_eq!(accept.best_format(true), Some(ResponseFormat::Json));
+        assert_eq!(accept.best_format(GeoJsonSupport::Allowed), Some(ResponseFormat::Json));
     }
 
     #[test]
@@ -218,13 +206,13 @@ mod tests {
     #[test]
     fn best_format_excludes_geojson_when_disallowed() {
         let accept = decode_accept("application/geo+json").expect("valid");
-        assert_eq!(accept.best_format(false), None);
+        assert_eq!(accept.best_format(GeoJsonSupport::Disallowed), None);
     }
 
     #[test]
     fn best_format_allows_geojson_when_allowed() {
         let accept = decode_accept("application/geo+json").expect("valid");
-        assert_eq!(accept.best_format(true), Some(ResponseFormat::GeoJson));
+        assert_eq!(accept.best_format(GeoJsonSupport::Allowed), Some(ResponseFormat::GeoJson));
     }
 
     #[test]

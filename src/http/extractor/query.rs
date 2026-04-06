@@ -52,3 +52,41 @@ fn classify_query_parse_error(error_str: &str, error_msg: String, uri: axum::htt
         ExtractorRejection::bad_request_data(error_msg, uri)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::{extract::FromRequestParts, http::Request};
+    use serde::Deserialize;
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct TestParams {
+        limit: Option<u32>,
+    }
+
+    #[tokio::test]
+    async fn valid_input_deserializes_correctly() {
+        let req = Request::builder().uri("/test?limit=10").body(()).expect("valid request");
+        let (mut parts, _) = req.into_parts();
+        let result = ValidatedQuery::<TestParams>::from_request_parts(&mut parts, &()).await;
+        let query = result.expect("should succeed");
+        assert_eq!(query.0.limit, Some(10));
+    }
+
+    #[tokio::test]
+    async fn unknown_field_produces_invalid_request() {
+        let req = Request::builder().uri("/test?unknown=42").body(()).expect("valid request");
+        let (mut parts, _) = req.into_parts();
+        let result = ValidatedQuery::<TestParams>::from_request_parts(&mut parts, &()).await;
+        assert!(matches!(result, Err(ExtractorRejection::InvalidRequest { .. })));
+    }
+
+    #[tokio::test]
+    async fn invalid_value_produces_bad_request_data() {
+        let req = Request::builder().uri("/test?limit=abc").body(()).expect("valid request");
+        let (mut parts, _) = req.into_parts();
+        let result = ValidatedQuery::<TestParams>::from_request_parts(&mut parts, &()).await;
+        assert!(matches!(result, Err(ExtractorRejection::BadRequestData { .. })));
+    }
+}

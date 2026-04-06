@@ -47,8 +47,9 @@ impl headers::Header for NgsiLdSnapshot {
     }
 
     fn encode<E: Extend<HeaderValue>>(&self, values: &mut E) {
-        if let Ok(val) = HeaderValue::from_str(self.0.as_str()) {
-            values.extend(std::iter::once(val));
+        match HeaderValue::from_str(self.0.as_str()) {
+            Ok(val) => values.extend(std::iter::once(val)),
+            Err(err) => tracing::warn!(error = %err, "failed to encode NGSILD-Snapshot header"),
         }
     }
 }

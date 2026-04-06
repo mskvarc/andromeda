@@ -5,7 +5,7 @@
 //! 1. The `lang` query parameter (spec-mandated, NGSI-LD clause 6.3.5)
 //! 2. The `NGSILD-Language` custom header (Andromeda-specific fallback)
 
-use crate::http::{extractor::error::ExtractorRejection, header::NgsiLdLanguage, model::language::LanguageFilter};
+use crate::http::{extractor::error::ExtractorRejection, header::ngsild_language::NgsiLdLanguage, model::language::LanguageFilter};
 use axum::{extract::FromRequestParts, http::request::Parts};
 use headers::HeaderMapExt;
 use url::form_urlencoded;

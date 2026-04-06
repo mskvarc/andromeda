@@ -1,4 +1,4 @@
-use crate::http::{extractor::tenant::TenantHeader, header::NgsiLdTenant};
+use crate::http::{extractor::tenant::TenantHeader, header::ngsild_tenant::NgsiLdTenant};
 use axum::{
     body::Body,
     extract::FromRequestParts,

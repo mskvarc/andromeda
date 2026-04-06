@@ -3,7 +3,7 @@ use crate::{
     error::api::ApiError,
     http::{
         extractor::{accept::AcceptFormat, context::ContextUrl, query::ValidatedQuery},
-        header::Via,
+        header::via::Via,
     },
     jsonld::ContextSpec,
     service::context_source_forwarding::{collect_discovery_warnings, merge_attribute_info_results, merge_attributes_results},

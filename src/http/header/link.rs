@@ -39,7 +39,7 @@ pub struct Link {
 
 impl Link {
     /// Create a `Link` from a `Vec<LinkValue>`.
-    pub const fn new(link_values: Vec<LinkValue>) -> Link {
+    pub fn new(link_values: Vec<LinkValue>) -> Link {
         Link { values: link_values }
     }
 
@@ -391,8 +391,9 @@ impl headers::Header for Link {
     }
 
     fn encode<E: Extend<HeaderValue>>(&self, values: &mut E) {
-        if let Ok(val) = HeaderValue::from_str(&self.to_string()) {
-            values.extend(std::iter::once(val));
+        match HeaderValue::from_str(&self.to_string()) {
+            Ok(val) => values.extend(std::iter::once(val)),
+            Err(err) => tracing::warn!(error = %err, "failed to encode Link header"),
         }
     }
 }

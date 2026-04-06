@@ -11,7 +11,7 @@ use crate::{
     error::{AndromedaError, api::ApiError},
     http::{
         extractor::{accept::AcceptFormat, context::ContextUrl, query::ValidatedQuery},
-        header::Via,
+        header::via::Via,
     },
     jsonld::ContextSpec,
     query::{compile::expand_q_expression, q::eval::evaluate},

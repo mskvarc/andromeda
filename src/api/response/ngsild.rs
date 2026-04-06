@@ -8,7 +8,14 @@ use crate::{
     api::response::version_compat::adapt_payload_for_version,
     http::{
         extractor::prefer::PreferHeader,
-        header::{Link, NgsiLdEntityMap, NgsiLdResultsCount, NgsiLdSnapshot, NgsiLdWarning, NgsiLdWarningHeader, PreferenceApplied},
+        header::{
+            link::Link,
+            ngsild_entity_map::NgsiLdEntityMap,
+            ngsild_results_count::NgsiLdResultsCount,
+            ngsild_snapshot::NgsiLdSnapshot,
+            ngsild_warning::{NgsiLdWarning, NgsiLdWarningHeader},
+            preference_applied::PreferenceApplied,
+        },
         model::{preference::GeoJsonBodyPreference, response_format::ResponseFormat},
     },
     jsonld::ContextSpec,
@@ -147,7 +154,7 @@ impl<T: Serialize> IntoResponse for NgsiLdResponse<T> {
         };
 
         let mut headers = HeaderMap::new();
-        headers.insert(CONTENT_TYPE, HeaderValue::from_static(self.format.content_type()));
+        headers.insert(CONTENT_TYPE, HeaderValue::from_static(self.format.content_type_str()));
 
         // Insert Preference-Applied header when version preference is present
         if self.prefer.requested_version.is_some() {
@@ -330,7 +337,7 @@ impl<T: Serialize> IntoResponse for NgsiLdCollectionResponse<T> {
         };
 
         let mut headers = HeaderMap::new();
-        headers.insert(CONTENT_TYPE, HeaderValue::from_static(self.format.content_type()));
+        headers.insert(CONTENT_TYPE, HeaderValue::from_static(self.format.content_type_str()));
 
         // Insert Preference-Applied header when version preference is present
         if self.prefer.requested_version.is_some() {

@@ -4,37 +4,24 @@
 //! parsing, preventing false positives like `application/json-patch+json`
 //! matching `application/json`.
 
-use crate::http::{extractor::error::ExtractorRejection, header::Accept, model::response_format::ResponseFormat};
+use crate::http::{extractor::error::ExtractorRejection, header::accept::Accept, model::response_format::ResponseFormat};
 use axum::{
     extract::FromRequestParts,
     http::{StatusCode, header::ACCEPT, request::Parts},
 };
 use headers::HeaderMapExt;
 
-/// Extractor for Accept header content negotiation.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct AcceptFormat(pub ResponseFormat);
-
-impl AcceptFormat {
-    /// Return the negotiated response format.
-    pub const fn format(&self) -> ResponseFormat {
-        self.0
-    }
-}
-
-/// Extractor variant for endpoints that do not support GeoJSON responses.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct AcceptFormatNoGeo(pub ResponseFormat);
-
-impl AcceptFormatNoGeo {
-    /// Return the negotiated response format.
-    pub const fn format(&self) -> ResponseFormat {
-        self.0
-    }
+/// Whether GeoJSON is an acceptable response format for a given endpoint.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GeoJsonSupport {
+    /// The endpoint supports `application/geo+json` responses.
+    Allowed,
+    /// The endpoint does not support GeoJSON responses.
+    Disallowed,
 }
 
 /// Parse the Accept header and select the best format.
-fn resolve_accept(parts: &Parts, allow_geo_json: bool) -> Result<ResponseFormat, ExtractorRejection> {
+fn resolve_accept(parts: &Parts, geo_json: GeoJsonSupport) -> Result<ResponseFormat, ExtractorRejection> {
     // No Accept header at all -> default to JSON per NGSI-LD convention
     if !parts.headers.contains_key(ACCEPT) {
         return Ok(ResponseFormat::Json);
@@ -45,30 +32,51 @@ fn resolve_accept(parts: &Parts, allow_geo_json: bool) -> Result<ResponseFormat,
         return Err(ExtractorRejection::Empty(StatusCode::NOT_ACCEPTABLE));
     };
 
-    accept.best_format(allow_geo_json).ok_or(ExtractorRejection::Empty(StatusCode::NOT_ACCEPTABLE))
+    accept.best_format(geo_json).ok_or(ExtractorRejection::Empty(StatusCode::NOT_ACCEPTABLE))
 }
 
-impl<S> FromRequestParts<S> for AcceptFormat
-where
-    S: Send + Sync,
-{
-    type Rejection = ExtractorRejection;
+/// Generate an Accept-header extractor struct with a `format()` accessor
+/// and a `FromRequestParts` impl that delegates to [`resolve_accept`].
+macro_rules! impl_accept_extractor {
+    (
+        $(#[$meta:meta])*
+        $name:ident, $geo:expr
+    ) => {
+        $(#[$meta])*
+        #[derive(Debug, Clone, Copy, Default)]
+        pub struct $name(pub ResponseFormat);
 
-    async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
-        resolve_accept(parts, true).map(AcceptFormat)
-    }
+        impl $name {
+            /// Return the negotiated response format.
+            pub const fn format(&self) -> ResponseFormat {
+                self.0
+            }
+        }
+
+        impl<S> FromRequestParts<S> for $name
+        where
+            S: Send + Sync,
+        {
+            type Rejection = ExtractorRejection;
+
+            async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
+                resolve_accept(parts, $geo).map($name)
+            }
+        }
+    };
 }
 
-impl<S> FromRequestParts<S> for AcceptFormatNoGeo
-where
-    S: Send + Sync,
-{
-    type Rejection = ExtractorRejection;
+impl_accept_extractor!(
+    /// Extractor for Accept header content negotiation (GeoJSON allowed).
+    AcceptFormat,
+    GeoJsonSupport::Allowed
+);
 
-    async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
-        resolve_accept(parts, false).map(AcceptFormatNoGeo)
-    }
-}
+impl_accept_extractor!(
+    /// Extractor variant for endpoints that do not support GeoJSON responses.
+    AcceptFormatNoGeo,
+    GeoJsonSupport::Disallowed
+);
 
 #[cfg(test)]
 mod tests {
@@ -77,71 +85,77 @@ mod tests {
 
     // --- Unit tests for format matching ---
 
-    fn parse_format(accept: &str, allow_geo: bool) -> Result<ResponseFormat, ()> {
+    fn parse_format(accept: &str, geo_json: GeoJsonSupport) -> Result<ResponseFormat, ()> {
         let req = Request::builder().uri("/test").header(ACCEPT, accept).body(()).expect("valid request");
         let (parts, _) = req.into_parts();
-        resolve_accept(&parts, allow_geo).map_err(|_| ())
+        resolve_accept(&parts, geo_json).map_err(|_| ())
     }
 
     #[test]
     fn exact_json() {
-        assert_eq!(parse_format("application/json", true), Ok(ResponseFormat::Json));
+        assert_eq!(parse_format("application/json", GeoJsonSupport::Allowed), Ok(ResponseFormat::Json));
     }
 
     #[test]
     fn exact_jsonld() {
-        assert_eq!(parse_format("application/ld+json", true), Ok(ResponseFormat::JsonLd));
+        assert_eq!(parse_format("application/ld+json", GeoJsonSupport::Allowed), Ok(ResponseFormat::JsonLd));
     }
 
     #[test]
     fn exact_geojson() {
-        assert_eq!(parse_format("application/geo+json", true), Ok(ResponseFormat::GeoJson));
+        assert_eq!(parse_format("application/geo+json", GeoJsonSupport::Allowed), Ok(ResponseFormat::GeoJson));
     }
 
     #[test]
     fn wildcard_defaults_to_json() {
-        assert_eq!(parse_format("*/*", true), Ok(ResponseFormat::Json));
+        assert_eq!(parse_format("*/*", GeoJsonSupport::Allowed), Ok(ResponseFormat::Json));
     }
 
     #[test]
     fn jsonld_with_params() {
-        assert_eq!(parse_format("application/ld+json; charset=utf-8", true), Ok(ResponseFormat::JsonLd));
+        assert_eq!(
+            parse_format("application/ld+json; charset=utf-8", GeoJsonSupport::Allowed),
+            Ok(ResponseFormat::JsonLd)
+        );
     }
 
     #[test]
     fn quality_prefers_higher() {
         // ld+json has q=0.9, json has q=1.0 (default) -> json wins
-        assert_eq!(parse_format("application/ld+json;q=0.9, application/json", true), Ok(ResponseFormat::Json));
+        assert_eq!(
+            parse_format("application/ld+json;q=0.9, application/json", GeoJsonSupport::Allowed),
+            Ok(ResponseFormat::Json)
+        );
     }
 
     #[test]
     fn quality_prefers_jsonld_when_higher() {
         assert_eq!(
-            parse_format("application/json;q=0.5, application/ld+json;q=1.0", true),
+            parse_format("application/json;q=0.5, application/ld+json;q=1.0", GeoJsonSupport::Allowed),
             Ok(ResponseFormat::JsonLd)
         );
     }
 
     #[test]
     fn json_patch_does_not_match_json() {
-        assert!(parse_format("application/json-patch+json", true).is_err());
+        assert!(parse_format("application/json-patch+json", GeoJsonSupport::Allowed).is_err());
     }
 
     #[test]
     fn merge_patch_json_does_not_match_json() {
-        assert!(parse_format("application/merge-patch+json", true).is_err());
+        assert!(parse_format("application/merge-patch+json", GeoJsonSupport::Allowed).is_err());
     }
 
     #[test]
     fn rejects_xml() {
-        assert!(parse_format("application/xml", true).is_err());
+        assert!(parse_format("application/xml", GeoJsonSupport::Allowed).is_err());
     }
 
     #[test]
     fn content_type_strings() {
-        assert_eq!(ResponseFormat::Json.content_type(), "application/json");
-        assert_eq!(ResponseFormat::JsonLd.content_type(), "application/ld+json");
-        assert_eq!(ResponseFormat::GeoJson.content_type(), "application/geo+json");
+        assert_eq!(ResponseFormat::Json.content_type_str(), "application/json");
+        assert_eq!(ResponseFormat::JsonLd.content_type_str(), "application/ld+json");
+        assert_eq!(ResponseFormat::GeoJson.content_type_str(), "application/geo+json");
     }
 
     #[test]

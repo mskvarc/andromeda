@@ -10,8 +10,8 @@ use async_trait::async_trait;
 use tracing::{debug, warn};
 
 use crate::{
-    http::header::{NgsiLdTenant, link::Link},
-    transport::types::{self, DeliveryOutcome, DeliveryRequest, NotificationTransport, TransportError},
+    http::header::{link::Link, ngsild_tenant::NgsiLdTenant},
+    transport::types::{DeliveryOutcome, DeliveryRequest, NotificationTransport, TransportError},
 };
 use headers::Header;
 
@@ -103,7 +103,7 @@ impl NotificationTransport for HttpTransport {
             .body(req.payload.clone());
 
         // Add Link header for application/json notifications (NGSI-LD spec requirement).
-        if req.content_type == types::APPLICATION_JSON {
+        if req.content_type == crate::http::model::response_format::APPLICATION_JSON {
             let ctx_url = req.context_url.as_deref().unwrap_or(crate::jsonld::core_context::NGSI_LD_CORE_CONTEXT_URL);
             let link = Link::jsonld_context(ctx_url);
             if let Some(value) = link.to_header_value() {

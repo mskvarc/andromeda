@@ -49,25 +49,12 @@ impl Via {
         self
     }
 
-    /// Iterate over the pseudonyms in the Via chain.
-    pub fn pseudonyms(&self) -> impl Iterator<Item = &str> {
-        self.0.iter().map(|e| e.pseudonym.as_str())
-    }
-
     /// Check if the Via chain contains the given pseudonym (exact match).
     ///
     /// Used for loop detection per clause 6.3.18: compares against each
     /// discrete pseudonym, not substring match.
     pub fn contains_pseudonym(&self, identity: &str) -> bool {
         self.0.iter().any(|e| e.pseudonym == identity)
-    }
-
-    /// Check if a context source alias appears in the Via pseudonym list.
-    ///
-    /// Per spec clause 5.12: no registration shall match if its
-    /// `contextSourceAlias` is found in the Via chain.
-    pub fn has_alias(&self, alias: &str) -> bool {
-        self.pseudonyms().any(|p| p == alias)
     }
 }
 
@@ -144,8 +131,9 @@ impl headers::Header for Via {
             })
             .collect::<Vec<_>>()
             .join(", ");
-        if let Ok(val) = HeaderValue::from_str(&s) {
-            values.extend(std::iter::once(val));
+        match HeaderValue::from_str(&s) {
+            Ok(val) => values.extend(std::iter::once(val)),
+            Err(err) => tracing::warn!(error = %err, "failed to encode Via header"),
         }
     }
 }
@@ -154,6 +142,13 @@ impl headers::Header for Via {
 mod tests {
     use super::*;
     use headers::Header;
+
+    impl Via {
+        /// Iterate over the pseudonyms in the Via chain (test-only).
+        fn pseudonyms(&self) -> impl Iterator<Item = &str> {
+            self.0.iter().map(|e| e.pseudonym.as_str())
+        }
+    }
 
     fn decode_from(raw: &str) -> Result<Via, headers::Error> {
         let val = HeaderValue::from_str(raw).expect("valid header value");
@@ -265,18 +260,5 @@ mod tests {
     fn via_loop_detected_multi_hop() {
         let via = decode_from("1.1 urn:ngsi-ld:ContextSourceIdentity:broker2, 1.1 urn:ngsi-ld:ContextSourceIdentity:broker1").expect("should decode");
         assert!(via.contains_pseudonym("urn:ngsi-ld:ContextSourceIdentity:broker1"));
-    }
-
-    #[test]
-    fn has_alias_matches() {
-        let via = decode_from("1.1 broker-a, 1.1 broker-b").expect("should decode");
-        assert!(via.has_alias("broker-a"));
-        assert!(!via.has_alias("broker-c"));
-    }
-
-    #[test]
-    fn has_alias_no_substring_match() {
-        let via = decode_from("1.1 broker10").expect("should decode");
-        assert!(!via.has_alias("broker1"));
     }
 }

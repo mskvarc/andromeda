@@ -20,21 +20,52 @@ use url::Url;
 
 static EPOCH: std::sync::LazyLock<Instant> = std::sync::LazyLock::new(Instant::now);
 
+/// Error returned when constructing a [`TenantName`] from an empty string.
+#[derive(Debug, Clone, thiserror::Error)]
+#[error("tenant name must not be empty")]
+pub struct EmptyTenantName;
+
+/// A validated, non-empty tenant identifier.
+///
+/// Wraps a `String` that is guaranteed to be non-empty after trimming.
+/// Used in `TenantRef::Named` and the `NGSILD-Tenant` header.
+#[derive(Clone, Debug, Eq, PartialEq, Hash, derive_more::Display)]
+pub struct TenantName(String);
+
+impl TenantName {
+    /// Create a new `TenantName` from a non-empty string.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EmptyTenantName`] if `s` is empty after trimming.
+    pub fn new(s: String) -> Result<TenantName, EmptyTenantName> {
+        if s.trim().is_empty() {
+            return Err(EmptyTenantName);
+        }
+        Ok(TenantName(s))
+    }
+
+    /// Return the tenant name as a string slice.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 pub enum TenantRef {
     UnnamedDefault,
-    Named(String),
+    Named(TenantName),
 }
 
 impl TenantRef {
-    pub fn from_header(header: Option<String>) -> Self {
+    pub fn from_header(header: Option<TenantName>) -> Self {
         match header {
             Some(value) => Self::Named(value),
             None => Self::UnnamedDefault,
         }
     }
 
-    pub const fn response_header_value(&self) -> Option<&str> {
+    pub fn response_header_value(&self) -> Option<&str> {
         match self {
             Self::UnnamedDefault => None,
             Self::Named(value) => Some(value.as_str()),
@@ -114,13 +145,13 @@ impl TenantRuntimeManager {
 
         let db_name = match tenant {
             TenantRef::UnnamedDefault => self.default_db_name.clone(),
-            TenantRef::Named(name) => match self.lookup_db_name(name).await? {
+            TenantRef::Named(name) => match self.lookup_db_name(name.as_str()).await? {
                 Some(db_name) => db_name,
                 None => {
                     if !allow_implicit_creation {
                         return Err(AndromedaError::nonexistent_tenant(format!("Tenant '{}' does not exist", name)));
                     }
-                    self.ensure_named_tenant_created(name).await?
+                    self.ensure_named_tenant_created(name.as_str()).await?
                 }
             },
         };

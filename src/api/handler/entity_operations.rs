@@ -16,7 +16,7 @@ use crate::{
     },
     http::{
         extractor::{accept::AcceptFormat, context::ContextUrl, query::ValidatedQuery},
-        header::Via,
+        header::via::Via,
     },
     jsonld::ContextSpec,
     query::entity::EntityQueryParameters,

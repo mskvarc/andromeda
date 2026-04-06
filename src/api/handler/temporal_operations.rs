@@ -10,7 +10,7 @@ use crate::{
     error::api::ApiError,
     http::{
         extractor::{accept::AcceptFormat, context::ContextUrl},
-        header::Via,
+        header::via::Via,
     },
     query::temporal::TemporalQueryParameters,
     service::context_source_forwarding::{ForwardingOperation, collect_warnings, merge_temporal_query_results},

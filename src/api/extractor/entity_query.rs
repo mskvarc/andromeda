@@ -1,4 +1,7 @@
-use crate::{http::extractor::error::ExtractorRejection, query::entity::EntityQueryParameters};
+use crate::{
+    http::extractor::error::ExtractorRejection,
+    query::{entity::EntityQueryParameters, error::QueryError},
+};
 use axum::{extract::FromRequestParts, http::request::Parts};
 
 #[derive(Debug)]
@@ -18,7 +21,10 @@ where
             .map_err(|error| ExtractorRejection::invalid_request(format!("Invalid query string: {}", error), uri.clone()))?;
 
         // Validate options and other parameter values
-        params.validate().map_err(|e| ExtractorRejection::from_query_error(e, uri.clone()))?;
+        params.validate().map_err(|e| match e {
+            QueryError::BadRequestData(d) => ExtractorRejection::bad_request_data(d, uri.clone()),
+            QueryError::InvalidRequest(d) => ExtractorRejection::invalid_request(d, uri.clone()),
+        })?;
 
         // Validate at least one filter is present, UNLESS local=true
         // Per NGSI-LD spec 5.7.2.4: At least one filter OR local scope must be provided
