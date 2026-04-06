@@ -20,7 +20,10 @@
 //! * `ngsi-ld=1.9` -- server conforms to NGSI-LD v1.9
 //! * `body=json` -- server applied JSON body preference
 
-use crate::header::prefer::{NgsiLdVersion, Preference, parse_preference};
+use crate::http::model::{
+    preference::{Preference, parse_preference},
+    version::NgsiLdVersion,
+};
 use axum::http::{HeaderName, HeaderValue};
 
 /// Typed `Preference-Applied` response header for NGSI-LD (RFC 7240, clause 6.3.6).
@@ -74,7 +77,7 @@ impl headers::Header for PreferenceApplied {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::header::prefer::NgsiLdVersion;
+    use crate::http::model::version::NgsiLdVersion;
     use headers::Header;
 
     /// Helper: decode a `PreferenceApplied` from a raw header string.

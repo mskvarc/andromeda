@@ -14,7 +14,7 @@ use crate::{
         batch::{BatchEntityError, BatchProblemDetail},
         ngsi_ld::NgsiLdErrorType,
     },
-    header::Via,
+    http::header::Via,
     jsonld::ContextSpec,
     query::entity::EntityQueryParameters,
     response::entity::{apply_inline_join, render_entity, simplify_entity, simplify_value},

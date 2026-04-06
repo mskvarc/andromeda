@@ -10,20 +10,18 @@ mod ngsild_tenant;
 mod ngsild_warning;
 mod prefer;
 mod preference_applied;
-mod util;
 mod via;
 
 pub use self::{
-    accept::{Accept, ResponseFormat},
+    accept::Accept,
     link::Link,
     ngsild_entity_map::NgsiLdEntityMap,
-    ngsild_language::{LanguageRange, NgsiLdLanguage},
+    ngsild_language::NgsiLdLanguage,
     ngsild_results_count::NgsiLdResultsCount,
     ngsild_snapshot::NgsiLdSnapshot,
     ngsild_tenant::NgsiLdTenant,
     ngsild_warning::{NgsiLdWarning, NgsiLdWarningHeader},
-    prefer::{GeoJsonBodyPreference, NgsiLdVersion, Prefer},
+    prefer::Prefer,
     preference_applied::PreferenceApplied,
-    util::quality::Quality,
     via::Via,
 };

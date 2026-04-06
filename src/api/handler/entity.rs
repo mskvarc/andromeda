@@ -16,7 +16,7 @@ use crate::{
         registration::ForwardingMode,
     },
     error::{AndromedaError, api::ApiError},
-    header::Via,
+    http::header::Via,
     jsonld::ContextSpec,
     query::{compile::expand_q_expression, q::eval::evaluate},
     response::entity::{apply_inline_join, render_entity, simplify_entity, simplify_value},

@@ -10,7 +10,7 @@ use async_trait::async_trait;
 use tracing::{debug, warn};
 
 use crate::{
-    header::{NgsiLdTenant, link::Link},
+    http::header::{NgsiLdTenant, link::Link},
     transport::types::{self, DeliveryOutcome, DeliveryRequest, NotificationTransport, TransportError},
 };
 use headers::Header;

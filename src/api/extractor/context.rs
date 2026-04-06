@@ -1,6 +1,6 @@
 //! JSON-LD context URL extraction from Link headers.
 
-use crate::{header::link::Link, jsonld::ContextSpec};
+use crate::{http::header::link::Link, jsonld::ContextSpec};
 use axum::{extract::FromRequestParts, http::request::Parts};
 use std::str::FromStr;
 

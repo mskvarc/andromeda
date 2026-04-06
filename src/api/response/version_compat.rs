@@ -4,7 +4,7 @@
 //! a 203 Non-Authoritative Information and adapts the payload to remove or
 //! reformat fields that did not exist in the requested version.
 
-use crate::header::NgsiLdVersion;
+use crate::http::model::version::NgsiLdVersion;
 use serde_json::Value;
 
 /// Adapt a serialized NGSI-LD entity payload to conform to an older spec version.

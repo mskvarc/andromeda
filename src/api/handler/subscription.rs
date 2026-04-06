@@ -5,7 +5,7 @@ use crate::{
         tenant::TenantState,
     },
     error::api::ApiError,
-    header::link::{Link, LinkValue},
+    http::header::link::{Link, LinkValue},
     jsonld::ContextSpec,
 };
 use axum::{

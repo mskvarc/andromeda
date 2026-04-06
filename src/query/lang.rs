@@ -1,6 +1,9 @@
 //! Parsing for the NGSI-LD `lang` query parameter (clause 6.3.5).
 
-use crate::header::{LanguageRange, NgsiLdLanguage, Quality};
+use crate::http::{
+    header::NgsiLdLanguage,
+    model::{language::LanguageRange, quality::Quality},
+};
 use langtag::LangTagBuf;
 use std::cmp::Reverse;
 use thiserror::Error;
@@ -175,7 +178,7 @@ pub enum LanguageFilterError {
 #[cfg(test)]
 mod tests {
     use super::{LanguageFilter, LanguageFilterError};
-    use crate::header::LanguageRange;
+    use crate::http::model::language::LanguageRange;
 
     #[test]
     fn parses_ranked_preferences_in_quality_order() {

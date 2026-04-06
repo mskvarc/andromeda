@@ -6,16 +6,9 @@
 
 use crate::{
     api::{extractor::prefer::PreferHeader, response::version_compat::adapt_payload_for_version},
-    header::{
-        GeoJsonBodyPreference,
-        Link,
-        NgsiLdEntityMap,
-        NgsiLdResultsCount,
-        NgsiLdSnapshot,
-        NgsiLdWarning,
-        NgsiLdWarningHeader,
-        PreferenceApplied,
-        ResponseFormat,
+    http::{
+        header::{Link, NgsiLdEntityMap, NgsiLdResultsCount, NgsiLdSnapshot, NgsiLdWarning, NgsiLdWarningHeader, PreferenceApplied},
+        model::{preference::GeoJsonBodyPreference, response_format::ResponseFormat},
     },
     jsonld::ContextSpec,
     service::entity::decode_percent_encoded_uris,
@@ -649,7 +642,7 @@ mod tests {
 
     #[test]
     fn version_preference_returns_203_with_preference_applied() {
-        use crate::header::NgsiLdVersion;
+        use crate::http::model::version::NgsiLdVersion;
         use axum::response::IntoResponse;
 
         let prefer = PreferHeader {

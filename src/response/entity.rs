@@ -9,7 +9,7 @@ use crate::{
         uri::Uri,
     },
     error::AndromedaError,
-    header::LanguageRange,
+    http::model::language::LanguageRange,
     query::lang::{LanguageFilter, LanguageFilterError},
 };
 use chrono::{DateTime, SecondsFormat, Utc};

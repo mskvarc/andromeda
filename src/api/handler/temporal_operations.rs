@@ -8,7 +8,7 @@ use crate::{
         tenant::TenantState,
     },
     error::api::ApiError,
-    header::Via,
+    http::header::Via,
     query::temporal::TemporalQueryParameters,
     service::context_source_forwarding::{ForwardingOperation, collect_warnings, merge_temporal_query_results},
 };

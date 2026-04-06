@@ -5,7 +5,7 @@ use crate::{
         tenant::TenantState,
     },
     error::api::ApiError,
-    header::Via,
+    http::header::Via,
     jsonld::ContextSpec,
     service::context_source_forwarding::{collect_discovery_warnings, merge_attribute_info_results, merge_attributes_results},
 };

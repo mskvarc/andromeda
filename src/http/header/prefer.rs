@@ -25,110 +25,11 @@
 //! * `body=ld+json` -- @context included in GeoJSON response body
 //! * `ngsi-ld=1.9` -- request version conformance (clause 4.3.6.8)
 
+use crate::http::model::{
+    preference::{GeoJsonBodyPreference, Preference, parse_preference},
+    version::NgsiLdVersion,
+};
 use axum::http::{HeaderName, HeaderValue};
-use std::fmt;
-
-/// Controls whether @context appears in GeoJSON body or Link header (clause 6.3.6).
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub enum GeoJsonBodyPreference {
-    /// `body=ld+json` or absent: @context included in response body.
-    #[default]
-    LdJson,
-    /// `body=json`: @context in Link header, omitted from body.
-    Json,
-}
-
-/// NGSI-LD specification version for backwards compatibility (clause 4.3.6.8).
-///
-/// Variant order encodes version ordering: earlier variants represent older versions.
-/// Derived `PartialOrd`/`Ord` compare by discriminant, so `V1_0 < V1_3 < V1_4 < V1_8 < V1_9`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub enum NgsiLdVersion {
-    /// NGSI-LD v1.0
-    V1_0,
-    /// NGSI-LD v1.3
-    V1_3,
-    /// NGSI-LD v1.4
-    V1_4,
-    /// NGSI-LD v1.8
-    V1_8,
-    /// NGSI-LD v1.9
-    V1_9,
-}
-
-impl NgsiLdVersion {
-    /// The version that Andromeda conforms to.
-    pub const CONFORMANT: NgsiLdVersion = NgsiLdVersion::V1_9;
-
-    /// Return the version string as it appears in the Prefer/Preference-Applied header.
-    pub const fn as_str(&self) -> &'static str {
-        match self {
-            NgsiLdVersion::V1_0 => "1.0",
-            NgsiLdVersion::V1_3 => "1.3",
-            NgsiLdVersion::V1_4 => "1.4",
-            NgsiLdVersion::V1_8 => "1.8",
-            NgsiLdVersion::V1_9 => "1.9",
-        }
-    }
-
-    /// Parse a version string from a header value.
-    ///
-    /// Returns `None` for unrecognized versions.
-    pub fn parse(s: &str) -> Option<NgsiLdVersion> {
-        match s {
-            "1.0" => Some(NgsiLdVersion::V1_0),
-            "1.3" => Some(NgsiLdVersion::V1_3),
-            "1.4" => Some(NgsiLdVersion::V1_4),
-            "1.8" => Some(NgsiLdVersion::V1_8),
-            "1.9" => Some(NgsiLdVersion::V1_9),
-            _ => None,
-        }
-    }
-}
-
-impl fmt::Display for NgsiLdVersion {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.as_str())
-    }
-}
-
-/// Individual NGSI-LD preference token (clause 6.3.6).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Preference {
-    /// `body=json` or `body=ld+json` -- GeoJSON @context placement (clause 6.3.6).
-    Body(GeoJsonBodyPreference),
-    /// `ngsi-ld=<version>` -- request version conformance (clause 4.3.6.8).
-    NgsiLdVersion(NgsiLdVersion),
-}
-
-// Manual Display impl: the format `body=json`, `ngsi-ld=1.9` does not map to
-// any strum serialization pattern, so derive is not applicable here.
-impl fmt::Display for Preference {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Preference::Body(GeoJsonBodyPreference::Json) => f.write_str("body=json"),
-            Preference::Body(GeoJsonBodyPreference::LdJson) => f.write_str("body=ld+json"),
-            Preference::NgsiLdVersion(version) => write!(f, "ngsi-ld={version}"),
-        }
-    }
-}
-
-/// Parse a single preference token from a trimmed header value segment.
-///
-/// Returns `None` for unrecognized tokens (per RFC 7240, preferences are advisory hints).
-pub(crate) fn parse_preference(token: &str) -> Option<Preference> {
-    if token.eq_ignore_ascii_case("body=json") {
-        Some(Preference::Body(GeoJsonBodyPreference::Json))
-    } else if token.eq_ignore_ascii_case("body=ld+json") {
-        Some(Preference::Body(GeoJsonBodyPreference::LdJson))
-    } else if let Some(version_str) = token.strip_prefix("ngsi-ld=")
-        && let Some(version) = NgsiLdVersion::parse(version_str)
-    {
-        Some(Preference::NgsiLdVersion(version))
-    } else {
-        None
-    }
-}
 
 /// Typed `Prefer` request header for NGSI-LD (RFC 7240, clause 6.3.6).
 ///
@@ -300,28 +201,5 @@ mod tests {
     fn requested_version_none_when_absent() {
         let prefer = Prefer(vec![Preference::Body(GeoJsonBodyPreference::Json)]);
         assert_eq!(prefer.requested_version(), None);
-    }
-
-    #[test]
-    fn ngsild_version_ordering() {
-        assert!(NgsiLdVersion::V1_0 < NgsiLdVersion::V1_3);
-        assert!(NgsiLdVersion::V1_3 < NgsiLdVersion::V1_4);
-        assert!(NgsiLdVersion::V1_4 < NgsiLdVersion::V1_8);
-        assert!(NgsiLdVersion::V1_8 < NgsiLdVersion::V1_9);
-    }
-
-    #[test]
-    fn ngsild_version_display() {
-        assert_eq!(NgsiLdVersion::V1_9.to_string(), "1.9");
-    }
-
-    #[test]
-    fn ngsild_version_parse() {
-        assert_eq!(NgsiLdVersion::parse("1.4"), Some(NgsiLdVersion::V1_4));
-    }
-
-    #[test]
-    fn ngsild_version_parse_unknown() {
-        assert_eq!(NgsiLdVersion::parse("2.0"), None);
     }
 }

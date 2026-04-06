@@ -2,7 +2,7 @@ mod api;
 mod core;
 mod domain;
 mod error;
-mod header;
+mod http;
 mod jsonld;
 mod query;
 mod repository;

@@ -1,7 +1,7 @@
 use crate::{
     domain::registration::{ContextSourceRegistration, CsrOperation, ForwardingMode},
     error::AndromedaError,
-    header::{NgsiLdTenant, NgsiLdWarning, Via, link::Link},
+    http::header::{NgsiLdTenant, NgsiLdWarning, Via, link::Link},
     jsonld::{ContextSpec, JsonLdEngine},
     repository::context_source_registration::ContextSourceRegistrationRepository,
 };

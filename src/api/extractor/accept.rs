@@ -1,12 +1,12 @@
 //! Accept header extraction for NGSI-LD content negotiation.
 //!
-//! Uses the typed `Accept` header from `crate::header` for structured media type
+//! Uses the typed `Accept` header from `crate::http::header` for structured media type
 //! parsing, preventing false positives like `application/json-patch+json`
 //! matching `application/json`.
 
 use crate::{
     api::extractor::error::ExtractorRejection,
-    header::{Accept, ResponseFormat},
+    http::{header::Accept, model::response_format::ResponseFormat},
 };
 use axum::{
     extract::FromRequestParts,
