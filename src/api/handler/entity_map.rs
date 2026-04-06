@@ -1,8 +1,12 @@
 use crate::{
-    api::{extractor::entity_query::EntityQuery, response::ngsild::NgsiLdResponse, tenant::TenantState},
+    api::{extractor::entity_query::EntityQuery, tenant::TenantState},
     error::{AndromedaError, api::ApiError},
-    http::extractor::{accept::AcceptFormat, context::ContextUrl},
+    http::{
+        extractor::{accept::AcceptFormat, context::ContextUrl, prefer::PreferHeader},
+        response::single::NgsiLdResponse,
+    },
     jsonld::ContextSpec,
+    renderer::response::ResponseRenderer,
 };
 use axum::{
     Json,
@@ -24,7 +28,7 @@ fn parse_entity_map_id(id: &str, uri: &axum::http::Uri) -> Result<(), ApiError> 
     Ok(())
 }
 
-/// GET /ngsi-ld/v1/entityMaps/{entityMapId} — Retrieve EntityMap (§5.14.1)
+/// GET /ngsi-ld/v1/entityMaps/{entityMapId} -- Retrieve EntityMap (section 5.14.1)
 pub async fn get(
     TenantState(state): TenantState,
     OriginalUri(uri): OriginalUri,
@@ -35,16 +39,18 @@ pub async fn get(
     parse_entity_map_id(&entity_map_id, &uri)?;
     let context: ContextSpec = context.into_inner();
 
-    let map = state.entity_maps.retrieve(&entity_map_id).await.map_err(|e| e.with_instance(uri))?;
+    let map = state.entity_maps.retrieve(&entity_map_id).await.map_err(|e| e.with_instance(uri.clone()))?;
 
-    Ok(NgsiLdResponse::ok(map).with_context(context).with_format(accept.format()).into_response())
+    let value = serde_json::to_value(&map).map_err(|e| ApiError::from_error(AndromedaError::internal("Failed to serialize entity map").with_source(e), uri))?;
+    let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default()).render_single(value);
+    Ok(NgsiLdResponse::ok(rendered).into_response())
 }
 
 #[derive(Debug, Deserialize)]
 pub struct UpdateEntityMapBody {
     #[serde(rename = "expiresAt")]
     pub expires_at: Option<String>,
-    // Output-only fields — accepted but ignored (§5.14.2.4)
+    // Output-only fields -- accepted but ignored (section 5.14.2.4)
     #[serde(rename = "entityMap")]
     #[allow(dead_code)]
     pub entity_map: Option<Value>,
@@ -58,7 +64,7 @@ pub struct UpdateEntityMapBody {
     pub id: Option<String>,
 }
 
-/// PATCH /ngsi-ld/v1/entityMaps/{entityMapId} — Update EntityMap (§5.14.2)
+/// PATCH /ngsi-ld/v1/entityMaps/{entityMapId} -- Update EntityMap (section 5.14.2)
 pub async fn update(
     TenantState(state): TenantState,
     OriginalUri(uri): OriginalUri,
@@ -89,14 +95,14 @@ pub async fn update(
     Ok(StatusCode::NO_CONTENT.into_response())
 }
 
-/// DELETE /ngsi-ld/v1/entityMaps/{entityMapId} — Delete EntityMap (§5.14.3)
+/// DELETE /ngsi-ld/v1/entityMaps/{entityMapId} -- Delete EntityMap (section 5.14.3)
 pub async fn delete(TenantState(state): TenantState, OriginalUri(uri): OriginalUri, Path(entity_map_id): Path<String>) -> Result<Response, ApiError> {
     state.entity_maps.delete(&entity_map_id).await.map_err(|e| e.with_instance(uri))?;
 
     Ok(StatusCode::NO_CONTENT.into_response())
 }
 
-/// GET /ngsi-ld/v1/entityMaps — Create EntityMap from Query Entities (§5.14.4, §6.34.3.1)
+/// GET /ngsi-ld/v1/entityMaps -- Create EntityMap from Query Entities (section 5.14.4, section 6.34.3.1)
 pub async fn create_from_query(
     TenantState(state): TenantState,
     OriginalUri(uri): OriginalUri,
@@ -104,7 +110,7 @@ pub async fn create_from_query(
     context: ContextUrl,
     EntityQuery(query): EntityQuery,
 ) -> Result<Response, ApiError> {
-    // §5.14.4.4: At least one filter must be provided for EntityMap creation
+    // section 5.14.4.4: At least one filter must be provided for EntityMap creation
     validate_has_filter(&query, &uri)?;
 
     let context: ContextSpec = context.into_inner();
@@ -120,20 +126,22 @@ pub async fn create_from_query(
         .entity_maps
         .create(ids, query.entity_map_lifetime.as_deref())
         .await
-        .map_err(|e| e.with_instance(uri))?;
+        .map_err(|e| e.with_instance(uri.clone()))?;
 
     let location = format!("/ngsi-ld/v1/entityMaps/{}", map.id);
+    // Clone id before converting map to Value
     let map_uri = map.id.clone();
 
-    Ok(NgsiLdResponse::new(StatusCode::CREATED, map)
-        .with_context(context)
-        .with_format(accept.format())
+    let value = serde_json::to_value(&map).map_err(|e| ApiError::from_error(AndromedaError::internal("Failed to serialize entity map").with_source(e), uri))?;
+    let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default()).render_single(value);
+
+    Ok(NgsiLdResponse::new(StatusCode::CREATED, rendered)
         .with_location(location)
         .with_entity_map_uri(map_uri)
         .into_response())
 }
 
-/// POST /ngsi-ld/v1/entityMaps — Create EntityMap from Query body (§5.14.4, §6.34.3.2)
+/// POST /ngsi-ld/v1/entityMaps -- Create EntityMap from Query body (section 5.14.4, section 6.34.3.2)
 pub async fn create_from_query_post(
     TenantState(state): TenantState,
     OriginalUri(uri): OriginalUri,
@@ -155,20 +163,21 @@ pub async fn create_from_query_post(
     let ids = state.entity_query.query_ids(&compiled).await.map_err(|e| e.with_instance(uri.clone()))?;
 
     let lifetime = body.entity_map_lifetime.as_deref();
-    let map = state.entity_maps.create(ids, lifetime).await.map_err(|e| e.with_instance(uri))?;
+    let map = state.entity_maps.create(ids, lifetime).await.map_err(|e| e.with_instance(uri.clone()))?;
 
     let location = format!("/ngsi-ld/v1/entityMaps/{}", map.id);
     let map_uri = map.id.clone();
 
-    Ok(NgsiLdResponse::new(StatusCode::CREATED, map)
-        .with_context(context_spec)
-        .with_format(accept.format())
+    let value = serde_json::to_value(&map).map_err(|e| ApiError::from_error(AndromedaError::internal("Failed to serialize entity map").with_source(e), uri))?;
+    let rendered = ResponseRenderer::new(accept.format(), context_spec, PreferHeader::default()).render_single(value);
+
+    Ok(NgsiLdResponse::new(StatusCode::CREATED, rendered)
         .with_location(location)
         .with_entity_map_uri(map_uri)
         .into_response())
 }
 
-/// GET /ngsi-ld/v1/temporal/entityMaps — Create EntityMap from Temporal Query (§5.14.5, §6.35.3.1)
+/// GET /ngsi-ld/v1/temporal/entityMaps -- Create EntityMap from Temporal Query (section 5.14.5, section 6.35.3.1)
 pub async fn create_temporal_from_query(
     TenantState(state): TenantState,
     OriginalUri(uri): OriginalUri,
@@ -191,20 +200,21 @@ pub async fn create_temporal_from_query(
         .entity_maps
         .create(ids, query.entity_map_lifetime.as_deref())
         .await
-        .map_err(|e| e.with_instance(uri))?;
+        .map_err(|e| e.with_instance(uri.clone()))?;
 
     let location = format!("/ngsi-ld/v1/temporal/entityMaps/{}", map.id);
     let map_uri = map.id.clone();
 
-    Ok(NgsiLdResponse::new(StatusCode::CREATED, map)
-        .with_context(context)
-        .with_format(accept.format())
+    let value = serde_json::to_value(&map).map_err(|e| ApiError::from_error(AndromedaError::internal("Failed to serialize entity map").with_source(e), uri))?;
+    let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default()).render_single(value);
+
+    Ok(NgsiLdResponse::new(StatusCode::CREATED, rendered)
         .with_location(location)
         .with_entity_map_uri(map_uri)
         .into_response())
 }
 
-/// POST /ngsi-ld/v1/temporal/entityMaps — Create EntityMap from Temporal Query body (§5.14.5, §6.35.3.2)
+/// POST /ngsi-ld/v1/temporal/entityMaps -- Create EntityMap from Temporal Query body (section 5.14.5, section 6.35.3.2)
 pub async fn create_temporal_from_query_post(
     TenantState(state): TenantState,
     OriginalUri(uri): OriginalUri,
@@ -226,20 +236,21 @@ pub async fn create_temporal_from_query_post(
     let ids = state.entity_query.query_ids(&compiled).await.map_err(|e| e.with_instance(uri.clone()))?;
 
     let lifetime = body.entity_map_lifetime.as_deref();
-    let map = state.entity_maps.create(ids, lifetime).await.map_err(|e| e.with_instance(uri))?;
+    let map = state.entity_maps.create(ids, lifetime).await.map_err(|e| e.with_instance(uri.clone()))?;
 
     let location = format!("/ngsi-ld/v1/temporal/entityMaps/{}", map.id);
     let map_uri = map.id.clone();
 
-    Ok(NgsiLdResponse::new(StatusCode::CREATED, map)
-        .with_context(context_spec)
-        .with_format(accept.format())
+    let value = serde_json::to_value(&map).map_err(|e| ApiError::from_error(AndromedaError::internal("Failed to serialize entity map").with_source(e), uri))?;
+    let rendered = ResponseRenderer::new(accept.format(), context_spec, PreferHeader::default()).render_single(value);
+
+    Ok(NgsiLdResponse::new(StatusCode::CREATED, rendered)
         .with_location(location)
         .with_entity_map_uri(map_uri)
         .into_response())
 }
 
-// ── Query body support ──────────────────────────────────────────────
+// -- Query body support --
 
 #[derive(Debug, Deserialize)]
 pub struct QueryRequestBody {

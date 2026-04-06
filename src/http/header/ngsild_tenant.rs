@@ -17,7 +17,7 @@ pub struct NgsiLdTenant(TenantName);
 
 impl NgsiLdTenant {
     /// Create a new `NGSILD-Tenant` header from a validated [`TenantName`].
-    pub fn new(value: TenantName) -> NgsiLdTenant {
+    pub const fn new(value: TenantName) -> NgsiLdTenant {
         NgsiLdTenant(value)
     }
 

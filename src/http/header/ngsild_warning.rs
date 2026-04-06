@@ -32,7 +32,7 @@ pub struct NgsiLdWarningHeader(Vec<NgsiLdWarning>);
 
 impl NgsiLdWarningHeader {
     /// Create a new `NGSILD-Warning` header from the given warnings.
-    pub fn new(warnings: Vec<NgsiLdWarning>) -> NgsiLdWarningHeader {
+    pub const fn new(warnings: Vec<NgsiLdWarning>) -> NgsiLdWarningHeader {
         NgsiLdWarningHeader(warnings)
     }
 }

@@ -17,7 +17,7 @@ pub struct NgsiLdSnapshot(Urn);
 
 impl NgsiLdSnapshot {
     /// Create a new `NGSILD-Snapshot` header from a validated URN.
-    pub fn new(value: Urn) -> NgsiLdSnapshot {
+    pub const fn new(value: Urn) -> NgsiLdSnapshot {
         NgsiLdSnapshot(value)
     }
 

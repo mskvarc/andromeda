@@ -7,7 +7,7 @@ use crate::{
         notification::{CompiledSubscription, TriggerReason},
     },
     jsonld::{CompactOptions, ContextSpec, ContextStripping, JsonLdEngine, vocab},
-    response::entity::{apply_inline_join, simplify_value},
+    renderer::entity::{apply_inline_join, simplify_value},
     service::entity::{expanded_entity_object_mut, inject_attr_sys_attrs, query::EntityQueryService},
 };
 use chrono::{DateTime, SecondsFormat, Utc};

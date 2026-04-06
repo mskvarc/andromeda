@@ -10,14 +10,14 @@ use crate::{
         temporal::{CompiledTemporalQuery, LastNOrigin, TemporalQueryParameters},
         temporal_sql::{build_stage1_entity_ids, build_temporal_history_query},
     },
-    repository::{entity::EntityRepository, temporal::TemporalRepository},
-    response::temporal::{
+    renderer::temporal::{
         build_content_range,
         build_entity_temporal,
         build_entity_temporal_aggregated_data,
         ensure_temporal_attrs_are_arrays,
         transform_to_temporal_values,
     },
+    repository::{entity::EntityRepository, temporal::TemporalRepository},
     service::{entity::extract_entity_types, temporal_recorder::TemporalRecorder},
 };
 use chrono::{DateTime, SecondsFormat, Utc};

@@ -342,30 +342,6 @@ fn wrap_raw_as_property(raw: Value) -> Value {
     Value::Object(property)
 }
 
-/// Decode percent-encoded URIs in Relationship `object` fields.
-pub(crate) fn decode_percent_encoded_uris(value: &mut Value) {
-    match value {
-        Value::Object(obj) => {
-            if obj.get("type").and_then(|t| t.as_str()) == Some("Relationship")
-                && let Some(Value::String(uri)) = obj.get_mut("object")
-                && uri.contains('%')
-                && let Ok(decoded) = percent_encoding::percent_decode_str(uri).decode_utf8()
-            {
-                *uri = decoded.into_owned();
-            }
-            for v in obj.values_mut() {
-                decode_percent_encoded_uris(v);
-            }
-        }
-        Value::Array(arr) => {
-            for v in arr {
-                decode_percent_encoded_uris(v);
-            }
-        }
-        _other => {}
-    }
-}
-
 use crate::jsonld::vocab;
 
 fn validate_attribute_envelopes(expanded: &Value) -> Result<(), AndromedaError> {

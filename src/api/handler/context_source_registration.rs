@@ -1,16 +1,17 @@
 use crate::{
-    api::{
-        extractor::jsonld::JsonLd,
-        response::ngsild::{NgsiLdCollectionResponse, NgsiLdResponse},
-        tenant::TenantState,
-    },
+    api::{extractor::jsonld::JsonLd, tenant::TenantState},
     error::api::ApiError,
     http::{
-        extractor::{accept::AcceptFormatNoGeo, context::ContextUrl, query::ValidatedQuery},
-        header::link::{Link, LinkValue},
+        extractor::{accept::AcceptFormatNoGeo, context::ContextUrl, prefer::PreferHeader, query::ValidatedQuery},
+        response::{
+            collection::NgsiLdCollectionResponse,
+            pagination::{PaginationMediaType, PaginationStyle, append_pagination_links},
+            single::NgsiLdResponse,
+        },
     },
     jsonld::ContextSpec,
     query::csr::CsrQueryParameters,
+    renderer::{registration::render_registration, response::ResponseRenderer},
 };
 use axum::{
     extract::{OriginalUri, Path},
@@ -18,7 +19,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use serde_json::Value;
-use url::{Url, form_urlencoded};
+use url::Url;
 use urn::Urn;
 
 fn parse_csr_id(id: &str, uri: &axum::http::Uri) -> Result<(), ApiError> {
@@ -38,19 +39,6 @@ fn parse_csr_id(id: &str, uri: &axum::http::Uri) -> Result<(), ApiError> {
         })?;
     }
     Ok(())
-}
-
-fn strip_csr_sys_attrs(mut value: Value) -> Value {
-    if let Some(obj) = value.as_object_mut() {
-        obj.remove("status");
-        obj.remove("timesSent");
-        obj.remove("timesFailed");
-        obj.remove("lastSuccess");
-        obj.remove("lastFailure");
-        obj.remove("createdAt");
-        obj.remove("modifiedAt");
-    }
-    value
 }
 
 pub async fn create(
@@ -84,11 +72,12 @@ pub async fn get(
     let context: ContextSpec = context.into_inner();
     let options = params.parse_options();
 
-    let csr = service.get(&registration_id, &context).await.map_err(|e| e.with_instance(uri.clone()))?;
+    let mut csr = service.get(&registration_id, &context).await.map_err(|e| e.with_instance(uri.clone()))?;
 
-    let csr = if options.sys_attrs { csr } else { strip_csr_sys_attrs(csr) };
+    render_registration(&mut csr, options.sys_attrs);
 
-    Ok(NgsiLdResponse::ok(csr).with_context(context).with_format(accept.format()).into_response())
+    let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default()).render_single(csr);
+    Ok(NgsiLdResponse::ok(rendered).into_response())
 }
 
 pub async fn query(
@@ -109,17 +98,23 @@ pub async fn query(
 
     let (mut csrs, total) = service.query(&params, &context).await.map_err(|e| e.with_instance(uri.clone()))?;
 
-    if !options.sys_attrs {
-        csrs = csrs.into_iter().map(strip_csr_sys_attrs).collect();
+    for csr in &mut csrs {
+        render_registration(csr, options.sys_attrs);
     }
 
-    let response = NgsiLdCollectionResponse::ok(csrs)
-        .with_context(context)
-        .with_format(accept.format())
-        .with_total_count(total as usize);
+    let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default()).render_collection(csrs);
+    let response = NgsiLdCollectionResponse::ok(rendered).with_total_count(total as usize);
 
     let mut response = response.into_response();
-    append_pagination_links(&mut response, &uri, limit, offset, total);
+    append_pagination_links(
+        &mut response,
+        &uri,
+        limit,
+        offset,
+        total,
+        PaginationStyle::OffsetFull,
+        PaginationMediaType::None,
+    );
     Ok(response)
 }
 
@@ -152,56 +147,4 @@ pub async fn delete(TenantState(state): TenantState, OriginalUri(uri): OriginalU
     service.delete(&registration_id).await.map_err(|e| e.with_instance(uri.clone()))?;
 
     Ok(StatusCode::NO_CONTENT.into_response())
-}
-
-fn build_page_link(uri: &axum::http::Uri, limit: i64, offset: i64) -> String {
-    let mut pairs: Vec<(String, String)> = Vec::new();
-    if let Some(query) = uri.query() {
-        for (k, v) in form_urlencoded::parse(query.as_bytes()) {
-            if k == "limit" || k == "offset" {
-                continue;
-            }
-            pairs.push((k.into_owned(), v.into_owned()));
-        }
-    }
-    pairs.push(("limit".to_string(), limit.to_string()));
-    pairs.push(("offset".to_string(), offset.to_string()));
-
-    let query = form_urlencoded::Serializer::new(String::new()).extend_pairs(pairs).finish();
-
-    if query.is_empty() {
-        uri.path().to_string()
-    } else {
-        format!("{}?{}", uri.path(), query)
-    }
-}
-
-fn append_pagination_links(response: &mut Response, uri: &axum::http::Uri, limit: i64, offset: i64, total: i64) {
-    if limit <= 0 || total <= 0 {
-        return;
-    }
-
-    let last_offset = ((total - 1) / limit) * limit;
-
-    let mut links = Vec::new();
-    links.push(("first", build_page_link(uri, limit, 0)));
-    links.push(("last", build_page_link(uri, limit, last_offset)));
-
-    if offset > 0 {
-        let prev_offset = (offset - limit).max(0);
-        links.push(("prev", build_page_link(uri, limit, prev_offset)));
-    }
-    if offset + limit < total {
-        links.push(("next", build_page_link(uri, limit, offset + limit)));
-    }
-
-    let values = links
-        .into_iter()
-        .map(|(rel, target)| LinkValue::with_params(&target, Some(rel), None))
-        .collect::<Vec<_>>();
-    if let Some(link) = Link::from_values(values)
-        && let Some(value) = link.to_header_value()
-    {
-        response.headers_mut().append("Link", value);
-    }
 }

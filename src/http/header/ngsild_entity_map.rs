@@ -17,7 +17,7 @@ pub struct NgsiLdEntityMap(Urn);
 
 impl NgsiLdEntityMap {
     /// Create a new `NGSILD-EntityMap` header from a validated URN.
-    pub fn new(value: Urn) -> NgsiLdEntityMap {
+    pub const fn new(value: Urn) -> NgsiLdEntityMap {
         NgsiLdEntityMap(value)
     }
 

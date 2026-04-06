@@ -1,7 +1,6 @@
 use crate::{
     api::{
         extractor::{jsonld::JsonLd, protocol::NgsiLdProtocolHeaders},
-        response::ngsild::NgsiLdCollectionResponse,
         tenant::{TenantState, TenantStateOrCreate},
     },
     domain::{
@@ -15,12 +14,13 @@ use crate::{
         ngsi_ld::NgsiLdErrorType,
     },
     http::{
-        extractor::{accept::AcceptFormat, context::ContextUrl, query::ValidatedQuery},
+        extractor::{accept::AcceptFormat, context::ContextUrl, prefer::PreferHeader, query::ValidatedQuery},
         header::via::Via,
+        response::{batch::NgsiLdBatchResponse, collection::NgsiLdCollectionResponse},
     },
     jsonld::ContextSpec,
     query::entity::EntityQueryParameters,
-    response::entity::{apply_inline_join, render_entity, simplify_entity, simplify_value},
+    renderer::{entity::EntityRenderer, response::ResponseRenderer},
     service::context_source_forwarding::{ForwardBatchProvisionRequest, ForwardingOperation, collect_warnings, merge_query_results},
 };
 use axum::{
@@ -274,46 +274,48 @@ pub async fn query(
         if join_mode.as_deref() == Some("flat") {
             let mut all_values: Vec<Value> = Vec::new();
             for entity in &entities {
-                if opts.key_values {
-                    all_values.push(simplify_entity(entity, language_filter.as_ref()).map_err(|e| e.with_instance(uri.clone()))?);
-                } else {
-                    all_values.push(render_entity(entity, language_filter.as_ref()).map_err(|e| e.with_instance(uri.clone()))?);
-                }
+                all_values.push(
+                    EntityRenderer::new(entity)
+                        .with_optional_language_filter(language_filter.as_ref())
+                        .with_mode(opts.render_mode)
+                        .render()
+                        .map_err(|e| e.with_instance(uri.clone()))?,
+                );
             }
             for linked_entity in linked.values() {
-                if opts.key_values {
-                    all_values.push(simplify_entity(linked_entity, language_filter.as_ref()).map_err(|e| e.with_instance(uri.clone()))?);
-                } else {
-                    all_values.push(render_entity(linked_entity, language_filter.as_ref()).map_err(|e| e.with_instance(uri.clone()))?);
-                }
+                all_values.push(
+                    EntityRenderer::new(linked_entity)
+                        .with_optional_language_filter(language_filter.as_ref())
+                        .with_mode(opts.render_mode)
+                        .render()
+                        .map_err(|e| e.with_instance(uri.clone()))?,
+                );
             }
-            let mut response = NgsiLdCollectionResponse::ok(all_values);
-            response = response
-                .with_context(context)
-                .with_format(accept.format())
+            let rendered = ResponseRenderer::new(accept.format(), context, protocol.prefer)
                 .with_geometry_property(geometry_property)
-                .with_warnings(warnings);
+                .render_collection(all_values);
+            let mut response = NgsiLdCollectionResponse::ok(rendered).with_warnings(warnings);
             if let Some(count) = total_count {
                 response = response.with_total_count(count as usize);
             }
             return Ok(response.into_response());
         } else {
-            // Inline: serialize normalized, apply join, then simplify if needed
+            // Inline: renderer handles join + mode transformation
             let mut entity_values: Vec<Value> = Vec::new();
             for entity in &entities {
-                let mut val = render_entity(entity, language_filter.as_ref()).map_err(|e| e.with_instance(uri.clone()))?;
-                apply_inline_join(&mut val, &linked, language_filter.as_ref()).map_err(|e| e.with_instance(uri.clone()))?;
-                if opts.key_values {
-                    val = simplify_value(&val);
-                }
-                entity_values.push(val);
+                entity_values.push(
+                    EntityRenderer::new(entity)
+                        .with_optional_language_filter(language_filter.as_ref())
+                        .with_inline_linked_entities(&linked)
+                        .with_mode(opts.render_mode)
+                        .render()
+                        .map_err(|e| e.with_instance(uri.clone()))?,
+                );
             }
-            let mut response = NgsiLdCollectionResponse::ok(entity_values);
-            response = response
-                .with_context(context)
-                .with_format(accept.format())
+            let rendered = ResponseRenderer::new(accept.format(), context, protocol.prefer)
                 .with_geometry_property(geometry_property)
-                .with_warnings(warnings);
+                .render_collection(entity_values);
+            let mut response = NgsiLdCollectionResponse::ok(rendered).with_warnings(warnings);
             if let Some(count) = total_count {
                 response = response.with_total_count(count as usize);
             }
@@ -321,40 +323,24 @@ pub async fn query(
         }
     }
 
-    // Handle keyValues
-    if opts.key_values {
-        let simplified: Vec<Value> = entities
-            .iter()
-            .map(|entity| simplify_entity(entity, language_filter.as_ref()))
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|e| e.with_instance(uri.clone()))?;
-        let mut response = NgsiLdCollectionResponse::ok(simplified);
-        response = response
-            .with_context(context)
-            .with_format(accept.format())
-            .with_geometry_property(geometry_property)
-            .with_warnings(warnings);
-        if let Some(count) = total_count {
-            response = response.with_total_count(count as usize);
-        }
-        Ok(response.into_response())
-    } else {
-        let rendered = entities
-            .iter()
-            .map(|entity| render_entity(entity, language_filter.as_ref()))
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|e| e.with_instance(uri.clone()))?;
-        let mut response = NgsiLdCollectionResponse::ok(rendered);
-        response = response
-            .with_context(context)
-            .with_format(accept.format())
-            .with_geometry_property(geometry_property)
-            .with_warnings(warnings);
-        if let Some(count) = total_count {
-            response = response.with_total_count(count as usize);
-        }
-        Ok(response.into_response())
+    let entity_values = entities
+        .iter()
+        .map(|entity| {
+            EntityRenderer::new(entity)
+                .with_optional_language_filter(language_filter.as_ref())
+                .with_mode(opts.render_mode)
+                .render()
+        })
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.with_instance(uri.clone()))?;
+    let rendered = ResponseRenderer::new(accept.format(), context, protocol.prefer)
+        .with_geometry_property(geometry_property)
+        .render_collection(entity_values);
+    let mut response = NgsiLdCollectionResponse::ok(rendered).with_warnings(warnings);
+    if let Some(count) = total_count {
+        response = response.with_total_count(count as usize);
     }
+    Ok(response.into_response())
 }
 
 /// Content-Type classification for batch entity parsing.
@@ -545,6 +531,7 @@ fn has_supported_json_content_type(headers: &HeaderMap) -> bool {
 pub async fn batch_create(
     TenantStateOrCreate(state): TenantStateOrCreate,
     OriginalUri(uri): OriginalUri,
+    accept: AcceptFormat,
     context: ContextUrl,
     headers: HeaderMap,
     body: Bytes,
@@ -610,15 +597,22 @@ pub async fn batch_create(
     result.errors.append(&mut parse_errors);
 
     if result.errors.is_empty() {
-        Ok((StatusCode::CREATED, Json(result.success)).into_response())
+        let value = serde_json::to_value(&result.success)
+            .map_err(|e| ApiError::from_error(AndromedaError::internal("Failed to serialize batch result").with_source(e), uri.clone()))?;
+        let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default()).render_batch(value);
+        Ok(NgsiLdBatchResponse::new(StatusCode::CREATED, rendered).into_response())
     } else {
-        Ok((StatusCode::MULTI_STATUS, Json(result)).into_response())
+        let value = serde_json::to_value(&result)
+            .map_err(|e| ApiError::from_error(AndromedaError::internal("Failed to serialize batch result").with_source(e), uri.clone()))?;
+        let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default()).render_batch(value);
+        Ok(NgsiLdBatchResponse::new(StatusCode::MULTI_STATUS, rendered).into_response())
     }
 }
 
 pub async fn batch_upsert(
     TenantState(state): TenantState,
     OriginalUri(uri): OriginalUri,
+    accept: AcceptFormat,
     context: ContextUrl,
     ValidatedQuery(params): ValidatedQuery<UpsertParams>,
     headers: HeaderMap,
@@ -693,16 +687,23 @@ pub async fn batch_upsert(
         if created_ids.is_empty() {
             Ok(StatusCode::NO_CONTENT.into_response())
         } else {
-            Ok((StatusCode::CREATED, Json(created_ids)).into_response())
+            let value = serde_json::to_value(&created_ids)
+                .map_err(|e| ApiError::from_error(AndromedaError::internal("Failed to serialize batch result").with_source(e), uri.clone()))?;
+            let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default()).render_batch(value);
+            Ok(NgsiLdBatchResponse::new(StatusCode::CREATED, rendered).into_response())
         }
     } else {
-        Ok((StatusCode::MULTI_STATUS, Json(result)).into_response())
+        let value = serde_json::to_value(&result)
+            .map_err(|e| ApiError::from_error(AndromedaError::internal("Failed to serialize batch result").with_source(e), uri.clone()))?;
+        let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default()).render_batch(value);
+        Ok(NgsiLdBatchResponse::new(StatusCode::MULTI_STATUS, rendered).into_response())
     }
 }
 
 pub async fn batch_update(
     TenantState(state): TenantState,
     OriginalUri(uri): OriginalUri,
+    accept: AcceptFormat,
     context: ContextUrl,
     ValidatedQuery(params): ValidatedQuery<UpdateParams>,
     headers: HeaderMap,
@@ -774,13 +775,17 @@ pub async fn batch_update(
     if result.errors.is_empty() {
         Ok(StatusCode::NO_CONTENT.into_response())
     } else {
-        Ok((StatusCode::MULTI_STATUS, Json(result)).into_response())
+        let value = serde_json::to_value(&result)
+            .map_err(|e| ApiError::from_error(AndromedaError::internal("Failed to serialize batch result").with_source(e), uri.clone()))?;
+        let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default()).render_batch(value);
+        Ok(NgsiLdBatchResponse::new(StatusCode::MULTI_STATUS, rendered).into_response())
     }
 }
 
 pub async fn batch_merge(
     TenantState(state): TenantState,
     OriginalUri(uri): OriginalUri,
+    accept: AcceptFormat,
     context: ContextUrl,
     headers: HeaderMap,
     body: Bytes,
@@ -845,13 +850,17 @@ pub async fn batch_merge(
     if result.errors.is_empty() {
         Ok(StatusCode::NO_CONTENT.into_response())
     } else {
-        Ok((StatusCode::MULTI_STATUS, Json(result)).into_response())
+        let value = serde_json::to_value(&result)
+            .map_err(|e| ApiError::from_error(AndromedaError::internal("Failed to serialize batch result").with_source(e), uri.clone()))?;
+        let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default()).render_batch(value);
+        Ok(NgsiLdBatchResponse::new(StatusCode::MULTI_STATUS, rendered).into_response())
     }
 }
 
 pub async fn batch_delete(
     TenantState(state): TenantState,
     OriginalUri(uri): OriginalUri,
+    accept: AcceptFormat,
     context: ContextUrl,
     headers: HeaderMap,
     body: Bytes,
@@ -923,6 +932,9 @@ pub async fn batch_delete(
     if result.errors.is_empty() {
         Ok(StatusCode::NO_CONTENT.into_response())
     } else {
-        Ok((StatusCode::MULTI_STATUS, Json(result)).into_response())
+        let value = serde_json::to_value(&result)
+            .map_err(|e| ApiError::from_error(AndromedaError::internal("Failed to serialize batch result").with_source(e), uri.clone()))?;
+        let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default()).render_batch(value);
+        Ok(NgsiLdBatchResponse::new(StatusCode::MULTI_STATUS, rendered).into_response())
     }
 }

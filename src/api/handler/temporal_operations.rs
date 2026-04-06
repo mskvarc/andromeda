@@ -4,15 +4,16 @@ use crate::{
     api::{
         extractor::jsonld::JsonLd,
         handler::entity_operations::{EntitySelection, GeoQueryRequest},
-        response::ngsild::NgsiLdCollectionResponse,
         tenant::TenantState,
     },
     error::api::ApiError,
     http::{
-        extractor::{accept::AcceptFormat, context::ContextUrl},
+        extractor::{accept::AcceptFormat, context::ContextUrl, prefer::PreferHeader},
         header::via::Via,
+        response::collection::NgsiLdCollectionResponse,
     },
     query::temporal::TemporalQueryParameters,
+    renderer::response::ResponseRenderer,
     service::context_source_forwarding::{ForwardingOperation, collect_warnings, merge_temporal_query_results},
 };
 use axum::{
@@ -182,8 +183,8 @@ pub async fn query(
         }
     };
 
-    let mut response = NgsiLdCollectionResponse::ok(entities);
-    response = response.with_context(context).with_format(accept.format()).with_warnings(forwarding_warnings);
+    let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default()).render_collection(entities);
+    let mut response = NgsiLdCollectionResponse::ok(rendered).with_warnings(forwarding_warnings);
     if let Some(count) = total_count {
         response = response.with_total_count(count as usize);
     }

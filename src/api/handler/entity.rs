@@ -1,7 +1,6 @@
 use crate::{
     api::{
         extractor::{entity_query::EntityQuery, jsonld::JsonLd, protocol::NgsiLdProtocolHeaders},
-        response::ngsild::{NgsiLdCollectionResponse, NgsiLdResponse},
         tenant::{TenantState, TenantStateOrCreate},
     },
     domain::{
@@ -12,10 +11,14 @@ use crate::{
     http::{
         extractor::{accept::AcceptFormat, context::ContextUrl, query::ValidatedQuery},
         header::via::Via,
+        response::{collection::NgsiLdCollectionResponse, single::NgsiLdResponse},
     },
     jsonld::ContextSpec,
     query::{compile::expand_q_expression, q::eval::evaluate},
-    response::entity::{apply_inline_join, render_entity, simplify_entity, simplify_value},
+    renderer::{
+        entity::{EntityRenderer, RenderMode, render_snapshot},
+        response::ResponseRenderer,
+    },
     service::context_source_forwarding::{
         ForwardBatchProvisionRequest,
         ForwardProvisionRequest,
@@ -55,6 +58,19 @@ where
 fn parse_entity_id(id: &str, uri: &axum::http::Uri) -> Result<Urn, ApiError> {
     id.parse::<Urn>()
         .map_err(|_| ApiError::from_error(AndromedaError::bad_request_data("Invalid entity id: not a valid URI"), uri.clone()))
+}
+
+/// Determine the [`RenderMode`] from the `format` and `options` query parameters.
+///
+/// `format` parameter takes precedence per NGSI-LD spec.
+fn resolve_render_mode(format_param: &str, options: &str) -> RenderMode {
+    if format_param == "keyValues" || format_param == "simplified" || options.contains("keyValues") || options.contains("simplified") {
+        RenderMode::Simplified
+    } else if format_param == "concise" || options.contains("concise") {
+        RenderMode::Concise
+    } else {
+        RenderMode::Normalized
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -325,31 +341,15 @@ pub async fn get(
             .map_err(|e| e.with_instance(uri.clone()))?
             .ok_or_else(|| ApiError::from_error(AndromedaError::not_found(id.to_string()), uri.clone()))?;
 
-        let mut result = entity_data;
-
-        // Apply attrs filter by removing non-requested keys from the JSONB object
-        if let Some(ref attrs_str) = params.attrs {
-            let requested: Vec<&str> = attrs_str.split(',').map(str::trim).collect();
-            if let Some(obj) = result.as_object_mut() {
-                let keys_to_keep: HashSet<&str> = ["id", "type", "@context"].iter().copied().chain(requested.iter().copied()).collect();
-                obj.retain(|k, _| keys_to_keep.iter().any(|keep| k.ends_with(keep)));
-            }
-        }
-
-        // Apply keyValues/simplified by simplifying the Value
         let format_param = params.format.as_deref().unwrap_or("");
-        let key_values = format_param == "keyValues" || format_param == "simplified" || options.contains("keyValues") || options.contains("simplified");
-        if key_values {
-            result = simplify_value(&result);
-        }
+        let mode = resolve_render_mode(format_param, options);
+        let attrs: Option<Vec<&str>> = params.attrs.as_deref().map(|s| s.split(',').map(str::trim).collect());
+        let result = render_snapshot(entity_data, attrs.as_deref(), mode);
 
-        return Ok(NgsiLdResponse::ok(result)
-            .with_context(context)
-            .with_format(accept.format())
+        let rendered = ResponseRenderer::new(accept.format(), context, prefer)
             .with_geometry_property(params.geometry_property.clone())
-            .with_snapshot_uri(snapshot_id)
-            .with_prefer(prefer)
-            .into_response());
+            .render_single(result);
+        return Ok(NgsiLdResponse::ok(rendered).with_snapshot_uri(snapshot_id).into_response());
     }
 
     let attrs: Vec<String> = params
@@ -414,7 +414,7 @@ pub async fn get(
 
     let options = params.options.as_deref().unwrap_or("");
     let format_param = params.format.as_deref().unwrap_or("");
-    let key_values = format_param == "keyValues" || format_param == "simplified" || options.contains("keyValues") || options.contains("simplified");
+    let mode = resolve_render_mode(format_param, options);
 
     // Handle join parameter
     let join_mode = params.join.as_deref();
@@ -435,61 +435,48 @@ pub async fn get(
         if join_mode == Some("flat") {
             // Flat: always return array of [root, ...linked] per NGSI-LD spec
             let mut all_entities: Vec<Value> = Vec::new();
-            if key_values {
-                all_entities.push(simplify_entity(&entity, language_filter.as_ref()).map_err(|e| e.with_instance(uri.clone()))?);
-                for linked_entity in linked.values() {
-                    all_entities.push(simplify_entity(linked_entity, language_filter.as_ref()).map_err(|e| e.with_instance(uri.clone()))?);
-                }
-            } else {
-                all_entities.push(render_entity(&entity, language_filter.as_ref()).map_err(|e| e.with_instance(uri.clone()))?);
-                for linked_entity in linked.values() {
-                    all_entities.push(render_entity(linked_entity, language_filter.as_ref()).map_err(|e| e.with_instance(uri.clone()))?);
-                }
+            all_entities.push(
+                EntityRenderer::new(&entity)
+                    .with_optional_language_filter(language_filter.as_ref())
+                    .with_mode(mode)
+                    .render()
+                    .map_err(|e| e.with_instance(uri.clone()))?,
+            );
+            for linked_entity in linked.values() {
+                all_entities.push(
+                    EntityRenderer::new(linked_entity)
+                        .with_optional_language_filter(language_filter.as_ref())
+                        .with_mode(mode)
+                        .render()
+                        .map_err(|e| e.with_instance(uri.clone()))?,
+                );
             }
-            return Ok(NgsiLdCollectionResponse::ok(all_entities)
-                .with_context(context)
-                .with_format(accept.format())
-                .with_warnings(warnings)
-                .with_prefer(prefer)
-                .into_response());
+            let rendered = ResponseRenderer::new(accept.format(), context, prefer).render_collection(all_entities);
+            return Ok(NgsiLdCollectionResponse::ok(rendered).with_warnings(warnings).into_response());
         } else {
-            // Inline: add entity sub-property to Relationships
-            // Always serialize normalized first, apply join, then simplify if needed
-            let mut entity_value = render_entity(&entity, language_filter.as_ref()).map_err(|e| e.with_instance(uri.clone()))?;
-            apply_inline_join(&mut entity_value, &linked, language_filter.as_ref()).map_err(|e| e.with_instance(uri.clone()))?;
-            if key_values {
-                entity_value = simplify_value(&entity_value);
-            }
-            return Ok(NgsiLdResponse::ok(entity_value)
-                .with_context(context)
-                .with_format(accept.format())
+            // Inline: renderer handles join + mode transformation
+            let entity_value = EntityRenderer::new(&entity)
+                .with_optional_language_filter(language_filter.as_ref())
+                .with_inline_linked_entities(&linked)
+                .with_mode(mode)
+                .render()
+                .map_err(|e| e.with_instance(uri.clone()))?;
+            let rendered = ResponseRenderer::new(accept.format(), context, prefer)
                 .with_geometry_property(params.geometry_property.clone())
-                .with_warnings(warnings)
-                .with_prefer(prefer)
-                .into_response());
+                .render_single(entity_value);
+            return Ok(NgsiLdResponse::ok(rendered).with_warnings(warnings).into_response());
         }
     }
 
-    let entity_value = render_entity(&entity, language_filter.as_ref()).map_err(|e| e.with_instance(uri.clone()))?;
-    if key_values {
-        Ok(
-            NgsiLdResponse::ok(simplify_entity(&entity, language_filter.as_ref()).map_err(|e| e.with_instance(uri.clone()))?)
-                .with_context(context)
-                .with_format(accept.format())
-                .with_geometry_property(params.geometry_property.clone())
-                .with_warnings(warnings)
-                .with_prefer(prefer)
-                .into_response(),
-        )
-    } else {
-        Ok(NgsiLdResponse::ok(entity_value)
-            .with_context(context)
-            .with_format(accept.format())
-            .with_geometry_property(params.geometry_property.clone())
-            .with_warnings(warnings)
-            .with_prefer(prefer)
-            .into_response())
-    }
+    let entity_value = EntityRenderer::new(&entity)
+        .with_optional_language_filter(language_filter.as_ref())
+        .with_mode(mode)
+        .render()
+        .map_err(|e| e.with_instance(uri.clone()))?;
+    let rendered = ResponseRenderer::new(accept.format(), context, prefer)
+        .with_geometry_property(params.geometry_property.clone())
+        .render_single(entity_value);
+    Ok(NgsiLdResponse::ok(rendered).with_warnings(warnings).into_response())
 }
 
 pub async fn delete(
@@ -665,30 +652,15 @@ pub async fn query(
             .await
             .map_err(|e| e.with_instance(uri.clone()))?;
 
-        // Apply attrs filter to snapshot JSONB values
-        let mut filtered = entities;
-        if let Some(ref attrs_str) = query.attrs {
-            let requested: Vec<&str> = attrs_str.split(',').map(str::trim).collect();
-            for entity in &mut filtered {
-                if let Some(obj) = entity.as_object_mut() {
-                    let keys_to_keep: HashSet<&str> = ["id", "type", "@context"].iter().copied().chain(requested.iter().copied()).collect();
-                    obj.retain(|k, _| keys_to_keep.iter().any(|keep| k.ends_with(keep)));
-                }
-            }
-        }
-
-        // Apply keyValues/simplified
         let opts = query.parse_options();
-        if opts.key_values {
-            filtered = filtered.into_iter().map(|v| simplify_value(&v)).collect();
-        }
+        let attrs: Option<Vec<&str>> = query.attrs.as_deref().map(|s| s.split(',').map(str::trim).collect());
+        let filtered: Vec<Value> = entities.into_iter().map(|v| render_snapshot(v, attrs.as_deref(), opts.render_mode)).collect();
 
-        let response = NgsiLdCollectionResponse::ok(filtered)
-            .with_context(context)
-            .with_format(accept.format())
+        let rendered = ResponseRenderer::new(accept.format(), context, prefer)
             .with_geometry_property(query.geometry_property.clone())
+            .render_collection(filtered);
+        let response = NgsiLdCollectionResponse::ok(rendered)
             .with_snapshot_uri(snapshot_id)
-            .with_prefer(prefer)
             .with_total_count(total as usize);
 
         return Ok(response.into_response());
@@ -860,26 +832,27 @@ pub async fn query(
         if join_mode == Some("flat") {
             let mut all_values: Vec<Value> = Vec::new();
             for entity in &entities {
-                if opts.key_values {
-                    all_values.push(simplify_entity(entity, language_filter.as_ref()).map_err(|e| e.with_instance(uri.clone()))?);
-                } else {
-                    all_values.push(render_entity(entity, language_filter.as_ref()).map_err(|e| e.with_instance(uri.clone()))?);
-                }
+                all_values.push(
+                    EntityRenderer::new(entity)
+                        .with_optional_language_filter(language_filter.as_ref())
+                        .with_mode(opts.render_mode)
+                        .render()
+                        .map_err(|e| e.with_instance(uri.clone()))?,
+                );
             }
             for linked_entity in linked.values() {
-                if opts.key_values {
-                    all_values.push(simplify_entity(linked_entity, language_filter.as_ref()).map_err(|e| e.with_instance(uri.clone()))?);
-                } else {
-                    all_values.push(render_entity(linked_entity, language_filter.as_ref()).map_err(|e| e.with_instance(uri.clone()))?);
-                }
+                all_values.push(
+                    EntityRenderer::new(linked_entity)
+                        .with_optional_language_filter(language_filter.as_ref())
+                        .with_mode(opts.render_mode)
+                        .render()
+                        .map_err(|e| e.with_instance(uri.clone()))?,
+                );
             }
-            let mut response = NgsiLdCollectionResponse::ok(all_values).with_status(status);
-            response = response
-                .with_context(context)
-                .with_format(accept.format())
+            let rendered = ResponseRenderer::new(accept.format(), context, prefer)
                 .with_geometry_property(query.geometry_property.clone())
-                .with_warnings(warnings)
-                .with_prefer(prefer);
+                .render_collection(all_values);
+            let mut response = NgsiLdCollectionResponse::ok(rendered).with_status(status).with_warnings(warnings);
             if let Some(count) = total_count {
                 response = response.with_total_count(count as usize);
             }
@@ -888,23 +861,22 @@ pub async fn query(
             }
             return Ok(response.into_response());
         } else {
-            // Inline: serialize normalized, apply join, then simplify if needed
+            // Inline: renderer handles join + mode transformation
             let mut entity_values: Vec<Value> = Vec::new();
             for entity in &entities {
-                let mut val = render_entity(entity, language_filter.as_ref()).map_err(|e| e.with_instance(uri.clone()))?;
-                apply_inline_join(&mut val, &linked, language_filter.as_ref()).map_err(|e| e.with_instance(uri.clone()))?;
-                if opts.key_values {
-                    val = simplify_value(&val);
-                }
-                entity_values.push(val);
+                entity_values.push(
+                    EntityRenderer::new(entity)
+                        .with_optional_language_filter(language_filter.as_ref())
+                        .with_inline_linked_entities(&linked)
+                        .with_mode(opts.render_mode)
+                        .render()
+                        .map_err(|e| e.with_instance(uri.clone()))?,
+                );
             }
-            let mut response = NgsiLdCollectionResponse::ok(entity_values).with_status(status);
-            response = response
-                .with_context(context)
-                .with_format(accept.format())
+            let rendered = ResponseRenderer::new(accept.format(), context, prefer)
                 .with_geometry_property(query.geometry_property.clone())
-                .with_warnings(warnings)
-                .with_prefer(prefer);
+                .render_collection(entity_values);
+            let mut response = NgsiLdCollectionResponse::ok(rendered).with_status(status).with_warnings(warnings);
             if let Some(count) = total_count {
                 response = response.with_total_count(count as usize);
             }
@@ -915,48 +887,27 @@ pub async fn query(
         }
     }
 
-    // Handle keyValues
-    if opts.key_values {
-        let simplified: Vec<Value> = entities
-            .iter()
-            .map(|entity| simplify_entity(entity, language_filter.as_ref()))
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|e| e.with_instance(uri.clone()))?;
-        let mut response = NgsiLdCollectionResponse::ok(simplified).with_status(status);
-        response = response
-            .with_context(context)
-            .with_format(accept.format())
-            .with_geometry_property(query.geometry_property.clone())
-            .with_warnings(warnings)
-            .with_prefer(prefer);
-        if let Some(count) = total_count {
-            response = response.with_total_count(count as usize);
-        }
-        if let Some(ref map_uri) = entity_map_uri {
-            response = response.with_entity_map_uri(map_uri.clone());
-        }
-        Ok(response.into_response())
-    } else {
-        let rendered = entities
-            .iter()
-            .map(|entity| render_entity(entity, language_filter.as_ref()))
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|e| e.with_instance(uri.clone()))?;
-        let mut response = NgsiLdCollectionResponse::ok(rendered).with_status(status);
-        response = response
-            .with_context(context)
-            .with_format(accept.format())
-            .with_geometry_property(query.geometry_property.clone())
-            .with_warnings(warnings)
-            .with_prefer(prefer);
-        if let Some(count) = total_count {
-            response = response.with_total_count(count as usize);
-        }
-        if let Some(ref map_uri) = entity_map_uri {
-            response = response.with_entity_map_uri(map_uri.clone());
-        }
-        Ok(response.into_response())
+    let rendered = entities
+        .iter()
+        .map(|entity| {
+            EntityRenderer::new(entity)
+                .with_optional_language_filter(language_filter.as_ref())
+                .with_mode(opts.render_mode)
+                .render()
+        })
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.with_instance(uri.clone()))?;
+    let rendered_output = ResponseRenderer::new(accept.format(), context, prefer)
+        .with_geometry_property(query.geometry_property.clone())
+        .render_collection(rendered);
+    let mut response = NgsiLdCollectionResponse::ok(rendered_output).with_status(status).with_warnings(warnings);
+    if let Some(count) = total_count {
+        response = response.with_total_count(count as usize);
     }
+    if let Some(ref map_uri) = entity_map_uri {
+        response = response.with_entity_map_uri(map_uri.clone());
+    }
+    Ok(response.into_response())
 }
 
 pub async fn merge(

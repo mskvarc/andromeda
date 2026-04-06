@@ -1,6 +1,9 @@
 //! Query parameters for the NGSI-LD Entity query API (5.7.2).
 
-use crate::query::{error::QueryError, params::is_valid_uri};
+use crate::{
+    query::{error::QueryError, params::is_valid_uri},
+    renderer::entity::RenderMode,
+};
 use serde::Deserialize;
 
 /// Raw HTTP query parameters for entity queries, deserialized from the request URL.
@@ -138,8 +141,15 @@ impl EntityQueryParameters {
     pub fn parse_options(&self) -> EntityQueryParametersOptions {
         let opts = self.options.as_deref().unwrap_or("");
         let fmt = self.format.as_deref().unwrap_or("");
+        let render_mode = if fmt == "keyValues" || fmt == "simplified" || opts.contains("keyValues") || opts.contains("simplified") {
+            RenderMode::Simplified
+        } else if fmt == "concise" || opts.contains("concise") {
+            RenderMode::Concise
+        } else {
+            RenderMode::Normalized
+        };
         EntityQueryParametersOptions {
-            key_values: fmt == "keyValues" || fmt == "simplified" || opts.contains("keyValues") || opts.contains("simplified"),
+            render_mode,
             sys_attrs: opts.contains("sysAttrs"),
             count: self.count.unwrap_or(false),
         }
@@ -244,10 +254,10 @@ impl OrderDirection {
 }
 
 /// Parsed response shaping options from the `options` and `format` parameters.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct EntityQueryParametersOptions {
-    /// When true, return entities in simplified key-values representation.
-    pub key_values: bool,
+    /// Output representation mode (normalized, concise, or simplified).
+    pub render_mode: RenderMode,
     /// When true, include system-generated attributes (`createdAt`, `modifiedAt`).
     pub sys_attrs: bool,
     /// When true, include a total count of matching entities in the response.

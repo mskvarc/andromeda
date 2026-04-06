@@ -3,14 +3,17 @@
 use crate::{
     api::{
         extractor::{jsonld::JsonLd, protocol::NgsiLdProtocolHeaders},
-        response::ngsild::{NgsiLdCollectionResponse, NgsiLdResponse},
         tenant::TenantState,
     },
     domain::entity::Entity,
     error::{AndromedaError, api::ApiError, core::AndromedaErrorKind},
-    http::extractor::{accept::AcceptFormatNoGeo, context::ContextUrl, query::ValidatedQuery},
+    http::{
+        extractor::{accept::AcceptFormatNoGeo, context::ContextUrl, prefer::PreferHeader, query::ValidatedQuery},
+        response::{collection::NgsiLdCollectionResponse, single::NgsiLdResponse},
+    },
     jsonld::ContextSpec,
     query::temporal::TemporalQueryParameters,
+    renderer::response::ResponseRenderer,
     service::{
         context_source_forwarding::{ForwardingOperation, collect_warnings, merge_temporal_query_results, merge_temporal_retrieve_results},
         temporal::CreateOrUpdateResult,
@@ -135,25 +138,19 @@ pub async fn get(
         let options = params.options.as_deref().unwrap_or("");
         let key_values = options.contains("keyValues") || options.contains("simplified");
 
-        if key_values {
+        let data = if key_values {
             let entity: Entity = serde_json::from_value(entity_data).map_err(|e| {
                 ApiError::from(AndromedaError::bad_request_data(format!(
                     "Failed to parse temporal entity for simplification: {}",
                     e
                 )))
             })?;
-            return Ok(NgsiLdResponse::ok(entity.simplify())
-                .with_context(context)
-                .with_format(accept.format())
-                .with_snapshot_uri(snapshot_id)
-                .into_response());
-        }
-
-        return Ok(NgsiLdResponse::ok(entity_data)
-            .with_context(context)
-            .with_format(accept.format())
-            .with_snapshot_uri(snapshot_id)
-            .into_response());
+            entity.simplify()
+        } else {
+            entity_data
+        };
+        let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default()).render_single(data);
+        return Ok(NgsiLdResponse::ok(rendered).with_snapshot_uri(snapshot_id).into_response());
     }
 
     // EntityMap scoping (spec 5.7.3.4): if NGSILD-EntityMap header is present,
@@ -217,44 +214,27 @@ pub async fn get(
         StatusCode::OK
     };
 
-    if key_values {
+    let data: Value = if key_values {
         let entity: Entity = serde_json::from_value(entity_value).map_err(|e| {
             ApiError::from(AndromedaError::bad_request_data(format!(
                 "Failed to parse temporal entity for simplification: {}",
                 e
             )))
         })?;
-
-        let mut builder = NgsiLdResponse::new(status, entity.simplify())
-            .with_context(context)
-            .with_format(accept.format())
-            .with_warnings(warnings);
-        if let Some(map_header) = entity_map_header {
-            builder = builder.with_entity_map_uri(map_header.into_inner().to_string());
-        }
-        let mut response = builder.into_response();
-        if let Some(cr) = content_range
-            && let Ok(val) = cr.parse()
-        {
-            response.headers_mut().insert("Content-Range", val);
-        }
-        Ok(response)
+        entity.simplify()
     } else {
-        let mut builder = NgsiLdResponse::new(status, entity_value)
-            .with_context(context)
-            .with_format(accept.format())
-            .with_warnings(warnings);
-        if let Some(map_header) = entity_map_header {
-            builder = builder.with_entity_map_uri(map_header.into_inner().to_string());
-        }
-        let mut response = builder.into_response();
-        if let Some(cr) = content_range
-            && let Ok(val) = cr.parse()
-        {
-            response.headers_mut().insert("Content-Range", val);
-        }
-        Ok(response)
+        entity_value
+    };
+
+    let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default()).render_single(data);
+    let mut builder = NgsiLdResponse::new(status, rendered).with_warnings(warnings);
+    if let Some(map_header) = entity_map_header {
+        builder = builder.with_entity_map_uri(map_header.into_inner().to_string());
     }
+    if let Some(cr) = content_range {
+        builder = builder.with_content_range(cr);
+    }
+    Ok(builder.into_response())
 }
 
 /// GET /ngsi-ld/v1/temporal/entities
@@ -294,7 +274,7 @@ pub async fn query(
             .await
             .map_err(|e| e.with_instance(uri.clone()))?;
 
-        if key_values {
+        let values = if key_values {
             let mut simplified = Vec::with_capacity(entities.len());
             for e_val in entities {
                 let entity: Entity = serde_json::from_value(e_val).map_err(|e| {
@@ -305,17 +285,12 @@ pub async fn query(
                 })?;
                 simplified.push(entity.simplify());
             }
-            let response = NgsiLdCollectionResponse::ok(simplified)
-                .with_context(context)
-                .with_format(accept.format())
-                .with_snapshot_uri(snapshot_id)
-                .with_total_count(total as usize);
-            return Ok(response.into_response());
-        }
-
-        let response = NgsiLdCollectionResponse::ok(entities)
-            .with_context(context)
-            .with_format(accept.format())
+            simplified
+        } else {
+            entities
+        };
+        let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default()).render_collection(values);
+        let response = NgsiLdCollectionResponse::ok(rendered)
             .with_snapshot_uri(snapshot_id)
             .with_total_count(total as usize);
         return Ok(response.into_response());
@@ -407,7 +382,7 @@ pub async fn query(
     let status = if entity_map_requested { StatusCode::CREATED } else { StatusCode::OK };
     let returned = entities.len();
 
-    if key_values {
+    let values = if key_values {
         let mut simplified = Vec::with_capacity(entities.len());
         for e_val in entities {
             let entity: Entity = serde_json::from_value(e_val).map_err(|e| {
@@ -418,45 +393,29 @@ pub async fn query(
             })?;
             simplified.push(entity.simplify());
         }
-
-        let mut response = NgsiLdCollectionResponse::ok(simplified).with_status(status);
-        response = response.with_context(context).with_format(accept.format()).with_warnings(forwarding_warnings);
-        if let Some(count) = total_count {
-            response = response.with_total_count(count as usize);
-            if (count as usize) > returned {
-                response = response.with_status(StatusCode::PARTIAL_CONTENT);
-            }
-        }
-        if any_truncated {
-            response = response.with_status(StatusCode::PARTIAL_CONTENT);
-        }
-        if let Some(cr) = content_range {
-            response = response.with_content_range(cr);
-        }
-        if let Some(ref map_uri) = entity_map_uri {
-            response = response.with_entity_map_uri(map_uri.clone()); // clone: owned String needed for response header; map_uri borrowed by ref pattern
-        }
-        Ok(response.into_response())
+        simplified
     } else {
-        let mut response = NgsiLdCollectionResponse::ok(entities).with_status(status);
-        response = response.with_context(context).with_format(accept.format()).with_warnings(forwarding_warnings);
-        if let Some(count) = total_count {
-            response = response.with_total_count(count as usize);
-            if (count as usize) > returned {
-                response = response.with_status(StatusCode::PARTIAL_CONTENT);
-            }
-        }
-        if any_truncated {
+        entities
+    };
+
+    let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default()).render_collection(values);
+    let mut response = NgsiLdCollectionResponse::ok(rendered).with_status(status).with_warnings(forwarding_warnings);
+    if let Some(count) = total_count {
+        response = response.with_total_count(count as usize);
+        if (count as usize) > returned {
             response = response.with_status(StatusCode::PARTIAL_CONTENT);
         }
-        if let Some(cr) = content_range {
-            response = response.with_content_range(cr);
-        }
-        if let Some(ref map_uri) = entity_map_uri {
-            response = response.with_entity_map_uri(map_uri.clone()); // clone: owned String needed for response header; map_uri borrowed by ref pattern
-        }
-        Ok(response.into_response())
     }
+    if any_truncated {
+        response = response.with_status(StatusCode::PARTIAL_CONTENT);
+    }
+    if let Some(cr) = content_range {
+        response = response.with_content_range(cr);
+    }
+    if let Some(ref map_uri) = entity_map_uri {
+        response = response.with_entity_map_uri(map_uri.clone()); // clone: owned String needed for response header; map_uri borrowed by ref pattern
+    }
+    Ok(response.into_response())
 }
 
 /// DELETE /ngsi-ld/v1/temporal/entities/{id}

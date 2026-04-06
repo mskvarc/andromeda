@@ -14,21 +14,31 @@ use serde_json::Value;
 /// - Table 4.3.6.8-2: property-level removals
 /// - Table 4.3.6.8-3: relationship-level removals
 ///
-/// This function modifies the value in place. It handles both single entities
+/// This modifies the value in place. It handles both single entities
 /// (JSON objects) and entity arrays.
-pub fn adapt_payload_for_version(value: &mut Value, target: NgsiLdVersion) {
-    if target >= NgsiLdVersion::CONFORMANT {
-        return;
+pub struct VersionRenderer {
+    target: NgsiLdVersion,
+}
+
+impl VersionRenderer {
+    pub const fn new(target: NgsiLdVersion) -> Self {
+        Self { target }
     }
 
-    match value {
-        Value::Object(_) => adapt_entity(value, target),
-        Value::Array(items) => {
-            for item in items {
-                adapt_entity(item, target);
-            }
+    pub fn render(&self, value: &mut Value) {
+        if self.target >= NgsiLdVersion::CONFORMANT {
+            return;
         }
-        _ => {}
+
+        match value {
+            Value::Object(_) => adapt_entity(value, self.target),
+            Value::Array(items) => {
+                for item in items {
+                    adapt_entity(item, self.target);
+                }
+            }
+            Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => {}
+        }
     }
 }
 
@@ -81,7 +91,7 @@ fn adapt_attribute(value: &mut Value, target: NgsiLdVersion) {
         Value::Object(_) => {
             adapt_attribute_instance(value, target);
         }
-        _ => {}
+        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => {}
     }
 }
 
@@ -151,7 +161,9 @@ fn adapt_attribute_instance(instance: &mut Value, target: NgsiLdVersion) {
             }
             adapt_relationship_fields(obj, target);
         }
-        _ => {}
+        // Unknown attribute type -- no adaptation needed
+        Some(_) => {}
+        None => {}
     }
 }
 
@@ -202,7 +214,7 @@ mod tests {
             }
         });
         let original = value.clone();
-        adapt_payload_for_version(&mut value, NgsiLdVersion::V1_9);
+        VersionRenderer::new(NgsiLdVersion::V1_9).render(&mut value);
         assert_eq!(value, original);
     }
 
@@ -217,7 +229,7 @@ mod tests {
                 "value": 25.0
             }
         });
-        adapt_payload_for_version(&mut value, NgsiLdVersion::V1_8);
+        VersionRenderer::new(NgsiLdVersion::V1_8).render(&mut value);
         assert!(value.get("expiresAt").is_none());
     }
 
@@ -232,7 +244,7 @@ mod tests {
                 "value": 25.0
             }
         });
-        adapt_payload_for_version(&mut value, NgsiLdVersion::V1_3);
+        VersionRenderer::new(NgsiLdVersion::V1_3).render(&mut value);
         assert!(value.get("scope").is_none());
     }
 
@@ -249,7 +261,7 @@ mod tests {
                 "unitCode": "CEL"
             }
         });
-        adapt_payload_for_version(&mut value, NgsiLdVersion::V1_0);
+        VersionRenderer::new(NgsiLdVersion::V1_0).render(&mut value);
         let temp = value.get("temperature").unwrap();
         assert!(temp.get("datasetId").is_none());
         assert!(temp.get("observedAt").is_none());
@@ -269,7 +281,7 @@ mod tests {
                 "objectType": "Building"
             }
         });
-        adapt_payload_for_version(&mut value, NgsiLdVersion::V1_0);
+        VersionRenderer::new(NgsiLdVersion::V1_0).render(&mut value);
         let rel = value.get("refBuilding").unwrap();
         assert!(rel.get("datasetId").is_none());
         assert!(rel.get("observedAt").is_none());
@@ -289,7 +301,7 @@ mod tests {
                 }
             }
         });
-        adapt_payload_for_version(&mut value, NgsiLdVersion::V1_3);
+        VersionRenderer::new(NgsiLdVersion::V1_3).render(&mut value);
         let name = value.get("name").unwrap();
         assert_eq!(name.get("type").and_then(|t| t.as_str()), Some("Property"));
         assert!(name.get("languageMap").is_none());
@@ -308,7 +320,7 @@ mod tests {
                 "valueType": "Number"
             }
         });
-        adapt_payload_for_version(&mut value, NgsiLdVersion::V1_4);
+        VersionRenderer::new(NgsiLdVersion::V1_4).render(&mut value);
         let temp = value.get("temperature").unwrap();
         assert!(temp.get("expiresAt").is_none());
         assert!(temp.get("valueType").is_none());
@@ -324,7 +336,7 @@ mod tests {
                 "vocab": "commercial"
             }
         });
-        adapt_payload_for_version(&mut value, NgsiLdVersion::V1_4);
+        VersionRenderer::new(NgsiLdVersion::V1_4).render(&mut value);
         let cat = value.get("category").unwrap();
         assert_eq!(cat.get("type").and_then(|t| t.as_str()), Some("Property"));
         assert!(cat.get("vocab").is_none());
@@ -341,7 +353,7 @@ mod tests {
                 "objectList": ["urn:ngsi-ld:Room:1", "urn:ngsi-ld:Room:2"]
             }
         });
-        adapt_payload_for_version(&mut value, NgsiLdVersion::V1_4);
+        VersionRenderer::new(NgsiLdVersion::V1_4).render(&mut value);
         let rel = value.get("refRooms").unwrap();
         assert_eq!(rel.get("type").and_then(|t| t.as_str()), Some("Relationship"));
         assert!(rel.get("objectList").is_none());
@@ -365,7 +377,7 @@ mod tests {
                 }
             ]
         });
-        adapt_payload_for_version(&mut value, NgsiLdVersion::V1_0);
+        VersionRenderer::new(NgsiLdVersion::V1_0).render(&mut value);
         let temp = value.get("temperature").unwrap();
         // Should be an array with only the default instance (no datasetId)
         let arr = temp.as_array().unwrap();
@@ -387,7 +399,7 @@ mod tests {
                 "scope": ["/A"]
             }
         ]);
-        adapt_payload_for_version(&mut value, NgsiLdVersion::V1_3);
+        VersionRenderer::new(NgsiLdVersion::V1_3).render(&mut value);
         let arr = value.as_array().unwrap();
         assert!(arr[0].get("expiresAt").is_none());
         assert!(arr[1].get("scope").is_none());
@@ -403,7 +415,7 @@ mod tests {
                 "json": {"key": "value"}
             }
         });
-        adapt_payload_for_version(&mut value, NgsiLdVersion::V1_4);
+        VersionRenderer::new(NgsiLdVersion::V1_4).render(&mut value);
         let config = value.get("config").unwrap();
         assert_eq!(config.get("type").and_then(|t| t.as_str()), Some("Property"));
         assert!(config.get("json").is_none());
@@ -420,7 +432,7 @@ mod tests {
                 "valueList": ["a", "b", "c"]
             }
         });
-        adapt_payload_for_version(&mut value, NgsiLdVersion::V1_4);
+        VersionRenderer::new(NgsiLdVersion::V1_4).render(&mut value);
         let tags = value.get("tags").unwrap();
         assert_eq!(tags.get("type").and_then(|t| t.as_str()), Some("Property"));
         assert!(tags.get("valueList").is_none());
@@ -438,7 +450,7 @@ mod tests {
                 "objectType": "Building"
             }
         });
-        adapt_payload_for_version(&mut value, NgsiLdVersion::V1_4);
+        VersionRenderer::new(NgsiLdVersion::V1_4).render(&mut value);
         let rel = value.get("refBuilding").unwrap();
         assert!(rel.get("objectType").is_none());
     }
@@ -454,7 +466,7 @@ mod tests {
                 "expiresAt": "2025-01-01T00:00:00Z"
             }
         });
-        adapt_payload_for_version(&mut value, NgsiLdVersion::V1_4);
+        VersionRenderer::new(NgsiLdVersion::V1_4).render(&mut value);
         let rel = value.get("refBuilding").unwrap();
         assert!(rel.get("expiresAt").is_none());
     }

@@ -1,0 +1,132 @@
+//! NGSI-LD response type for entity collections with pre-rendered payload.
+
+use crate::{
+    http::{
+        header::{ngsild_results_count::NgsiLdResultsCount, ngsild_warning::NgsiLdWarning, preference_applied::PreferenceApplied},
+        response::headers::{CommonHeadersOptions, apply_common_headers},
+    },
+    renderer::response::RenderedOutput,
+};
+use axum::{
+    Json,
+    http::{HeaderMap, HeaderValue, StatusCode, header::CONTENT_TYPE},
+    response::{IntoResponse, Response},
+};
+use headers::HeaderMapExt;
+use urn::Urn;
+
+/// NGSI-LD response wrapper for a collection of entities.
+///
+/// Constructed from a [`RenderedOutput`] produced by the rendering pipeline:
+///
+/// ```ignore
+/// let rendered = ResponseRenderer::new(format, context, prefer)
+///     .render_collection(entity_values);
+/// NgsiLdCollectionResponse::ok(rendered)
+///     .with_total_count(count)
+///     .into_response()
+/// ```
+pub struct NgsiLdCollectionResponse {
+    status: StatusCode,
+    rendered: RenderedOutput,
+    total_count: Option<usize>,
+    content_range: Option<String>,
+    entity_map_uri: Option<String>,
+    snapshot_uri: Option<Urn>,
+    warnings: Vec<NgsiLdWarning>,
+}
+
+impl NgsiLdCollectionResponse {
+    /// Create a 200 OK response for a collection.
+    pub fn ok(rendered: RenderedOutput) -> NgsiLdCollectionResponse {
+        NgsiLdCollectionResponse {
+            status: StatusCode::OK,
+            rendered,
+            total_count: None,
+            content_range: None,
+            entity_map_uri: None,
+            snapshot_uri: None,
+            warnings: Vec::new(),
+        }
+    }
+
+    /// Override the HTTP status code.
+    pub const fn with_status(mut self, status: StatusCode) -> Self {
+        self.status = status;
+        self
+    }
+
+    /// Set the total count for pagination (NGSILD-Results-Count header).
+    pub const fn with_total_count(mut self, count: usize) -> Self {
+        self.total_count = Some(count);
+        self
+    }
+
+    /// Set the Content-Range header value for temporal pagination.
+    pub fn with_content_range(mut self, content_range: String) -> Self {
+        self.content_range = Some(content_range);
+        self
+    }
+
+    /// Set the NGSILD-EntityMap header URI.
+    pub fn with_entity_map_uri(mut self, uri: String) -> Self {
+        self.entity_map_uri = Some(uri);
+        self
+    }
+
+    /// Set NGSILD-Warning headers from distributed forwarding (clause 6.3.17).
+    pub fn with_warnings(mut self, warnings: Vec<NgsiLdWarning>) -> Self {
+        self.warnings = warnings;
+        self
+    }
+
+    /// Set the NGSILD-Snapshot header for snapshot-scoped responses (clause 6.3.22).
+    pub fn with_snapshot_uri(mut self, uri: Urn) -> Self {
+        self.snapshot_uri = Some(uri);
+        self
+    }
+}
+
+impl IntoResponse for NgsiLdCollectionResponse {
+    fn into_response(self) -> Response {
+        // 203 Non-Authoritative Information when version adaptation was applied
+        let status = if self.rendered.version_adapted {
+            StatusCode::NON_AUTHORITATIVE_INFORMATION
+        } else {
+            self.status
+        };
+
+        let mut headers = HeaderMap::new();
+        if let Ok(ct) = self.rendered.content_type.parse() {
+            headers.insert(CONTENT_TYPE, ct);
+        }
+
+        if let Some(count) = self.total_count {
+            headers.typed_insert(NgsiLdResultsCount::new(count));
+        }
+
+        if let Some(ref cr) = self.content_range
+            && let Ok(val) = HeaderValue::from_str(cr)
+        {
+            headers.insert("Content-Range", val);
+        }
+
+        if self.rendered.version_adapted {
+            headers.typed_insert(PreferenceApplied::version_conformance());
+        }
+
+        apply_common_headers(
+            &mut headers,
+            &self.rendered.context,
+            CommonHeadersOptions {
+                location: None,
+                entity_map_uri: self.entity_map_uri.as_deref(),
+                snapshot_uri: self.snapshot_uri.as_ref(),
+                warnings: &self.warnings,
+                include_context_in_link: self.rendered.include_context_in_link,
+            },
+        );
+
+        (status, headers, Json(self.rendered.value)).into_response()
+    }
+}

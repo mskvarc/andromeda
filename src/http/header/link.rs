@@ -39,7 +39,7 @@ pub struct Link {
 
 impl Link {
     /// Create a `Link` from a `Vec<LinkValue>`.
-    pub fn new(link_values: Vec<LinkValue>) -> Link {
+    pub const fn new(link_values: Vec<LinkValue>) -> Link {
         Link { values: link_values }
     }
 

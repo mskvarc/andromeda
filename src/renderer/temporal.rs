@@ -41,6 +41,11 @@ pub fn ensure_temporal_attrs_are_arrays(compacted: &mut Value) {
     }
 }
 
+/// Build a `Content-Range` header value for temporal pagination (NGSI-LD clause 6.3.10).
+///
+/// Returns `None` when no time range is available (empty result set).
+/// The format is `date-time <start>-<end>/<size>` where size is `*` when the
+/// total is unknown.
 pub fn build_content_range(
     compiled: &CompiledTemporalQuery,
     time_range: Option<TimeRange>,
@@ -71,7 +76,13 @@ pub fn build_content_range(
     Some(format!("date-time {}-{}/{}", start, end, size))
 }
 
-/// Returns (entity_json, truncated, time_range, max_partition_total).
+/// Build a temporal entity representation from database rows.
+///
+/// Assembles attribute instances grouped by attribute name, applies time range
+/// cutting for unsynchronized attributes (NGSI-LD clause 6.3.10), and returns
+/// the entity JSON along with truncation/pagination metadata.
+///
+/// Returns `(entity_json, truncated, time_range, max_partition_total)`.
 pub fn build_entity_temporal(
     entity_id: &str,
     entity_types: &[String],
@@ -171,6 +182,11 @@ pub fn build_entity_temporal(
     Ok((Value::Object(entity), truncated, time_range, max_partition_total))
 }
 
+/// Build aggregated temporal data from database rows.
+///
+/// Groups rows by `(attribute_name, dataset_id)` and extracts aggregation
+/// method values (avg, min, max, sum, etc.) with their bucket time ranges.
+/// Returns an ordered map of attribute name to aggregated instance(s).
 pub fn build_entity_temporal_aggregated_data(
     rows: &[sqlx::postgres::PgRow],
     compiled: &CompiledTemporalQuery,
@@ -325,7 +341,8 @@ fn history_row_to_expanded_instance(row: &sqlx::postgres::PgRow, tea: &TeaEntry,
         }
         "Geometry" => {
             if let Ok(v) = row.try_get::<String, _>("value_geo_json") {
-                let geo: Value = serde_json::from_str(&v).unwrap_or(Value::Null);
+                let geo: Value =
+                    serde_json::from_str(&v).map_err(|e| AndromedaError::internal("Failed to parse GeoJSON from temporal value").with_source(e))?;
                 let expanded = expand_geojson(&geo);
                 instance.insert(value_key.to_string(), json!([expanded]));
             }
@@ -361,7 +378,8 @@ fn history_row_to_expanded_instance(row: &sqlx::postgres::PgRow, tea: &TeaEntry,
                 instance.insert(value_key.to_string(), json!([{"@id": v}]));
             }
         }
-        _ => {}
+        // Value type from DB is genuinely unbounded (user-defined strings)
+        _other => {}
     }
 
     if let Ok(Some(observed_at)) = row.try_get::<Option<DateTime<Utc>>, _>("observed_at") {
@@ -432,6 +450,12 @@ fn expand_coordinates(value: &Value) -> Value {
 // Simplified temporal representation (temporalValues format)
 // ---------------------------------------------------------------------------
 
+/// Transform a compacted temporal entity into the `temporalValues` simplified
+/// representation (NGSI-LD clause 4.5.5).
+///
+/// Each attribute is collapsed into `[value, observedAt]` pairs grouped by
+/// dataset ID. Reserved entity-level keys (`id`, `type`, `@context`, timestamps)
+/// pass through unchanged.
 pub fn transform_to_temporal_values(compacted: Value) -> Value {
     let obj = match compacted {
         Value::Object(m) => m,

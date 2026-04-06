@@ -1,11 +1,13 @@
 use crate::{
-    api::{response::ngsild::NgsiLdResponse, tenant::TenantState},
+    api::tenant::TenantState,
     error::api::ApiError,
     http::{
-        extractor::{accept::AcceptFormat, context::ContextUrl, query::ValidatedQuery},
+        extractor::{accept::AcceptFormat, context::ContextUrl, prefer::PreferHeader, query::ValidatedQuery},
         header::via::Via,
+        response::single::NgsiLdResponse,
     },
     jsonld::ContextSpec,
+    renderer::response::ResponseRenderer,
     service::context_source_forwarding::{collect_discovery_warnings, merge_attribute_info_results, merge_attributes_results},
 };
 use axum::{
@@ -78,11 +80,8 @@ pub async fn list(
         (merged, warnings)
     };
 
-    Ok(NgsiLdResponse::ok(result)
-        .with_context(context)
-        .with_format(accept.format())
-        .with_warnings(warnings)
-        .into_response())
+    let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default()).render_single(result);
+    Ok(NgsiLdResponse::ok(rendered).with_warnings(warnings).into_response())
 }
 
 pub async fn get(
@@ -119,9 +118,6 @@ pub async fn get(
         (merged, warnings)
     };
 
-    Ok(NgsiLdResponse::ok(result)
-        .with_context(context)
-        .with_format(accept.format())
-        .with_warnings(warnings)
-        .into_response())
+    let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default()).render_single(result);
+    Ok(NgsiLdResponse::ok(rendered).with_warnings(warnings).into_response())
 }
