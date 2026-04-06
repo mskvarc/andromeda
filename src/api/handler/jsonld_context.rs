@@ -2,7 +2,10 @@ use crate::{
     api::tenant::TenantState,
     domain::jsonld_context::ContextKind,
     error::{AndromedaError, api::ApiError},
-    http::extractor::query::ValidatedQuery,
+    http::{
+        extractor::query::ValidatedQuery,
+        parameter::jsonld_context::{DeleteParams, ListParams, ServeParams},
+    },
 };
 use axum::{
     Json,
@@ -11,45 +14,7 @@ use axum::{
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
 };
-use serde::{Deserialize, Deserializer};
 use serde_json::Value;
-
-fn deserialize_case_insensitive_bool<'de, D>(deserializer: D) -> Result<Option<bool>, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let opt: Option<String> = Option::deserialize(deserializer)?;
-    match opt {
-        None => Ok(None),
-        Some(s) => match s.to_ascii_lowercase().as_str() {
-            "true" => Ok(Some(true)),
-            "false" => Ok(Some(false)),
-            _ => Err(serde::de::Error::custom(format!("Invalid boolean value: {}", s))),
-        },
-    }
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ListParams {
-    pub kind: Option<String>,
-    #[serde(default, deserialize_with = "deserialize_case_insensitive_bool")]
-    pub details: Option<bool>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ServeParams {
-    #[serde(default, deserialize_with = "deserialize_case_insensitive_bool")]
-    pub details: Option<bool>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct DeleteParams {
-    #[serde(default, deserialize_with = "deserialize_case_insensitive_bool")]
-    pub reload: Option<bool>,
-}
 
 pub async fn create(TenantState(state): TenantState, OriginalUri(uri): OriginalUri, headers: HeaderMap, body: Bytes) -> Result<Response, ApiError> {
     let service = &state.contexts;

@@ -4,6 +4,7 @@ use crate::{
     http::{
         extractor::{accept::AcceptFormat, context::ContextUrl, prefer::PreferHeader, query::ValidatedQuery},
         header::via::Via,
+        parameter::{DiscoveryListParams, LocalOnlyParams},
         response::single::NgsiLdResponse,
     },
     jsonld::ContextSpec,
@@ -15,38 +16,6 @@ use axum::{
     http::HeaderMap,
     response::{IntoResponse, Response},
 };
-use serde::{Deserialize, Deserializer};
-
-fn deserialize_bool_case_insensitive<'de, D>(deserializer: D) -> Result<Option<bool>, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let s: Option<String> = Option::deserialize(deserializer)?;
-    match s {
-        None => Ok(None),
-        Some(s) => match s.to_lowercase().as_str() {
-            "true" => Ok(Some(true)),
-            "false" => Ok(Some(false)),
-            other => Err(serde::de::Error::custom(format!("invalid boolean value: '{}'", other))),
-        },
-    }
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ListParams {
-    #[serde(default)]
-    pub details: bool,
-    #[serde(default, deserialize_with = "deserialize_bool_case_insensitive")]
-    pub local: Option<bool>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct GetAttributeParams {
-    #[serde(default, deserialize_with = "deserialize_bool_case_insensitive")]
-    pub local: Option<bool>,
-}
 
 pub async fn list(
     TenantState(state): TenantState,
@@ -54,7 +23,7 @@ pub async fn list(
     accept: AcceptFormat,
     context: ContextUrl,
     headers: HeaderMap,
-    ValidatedQuery(params): ValidatedQuery<ListParams>,
+    ValidatedQuery(params): ValidatedQuery<DiscoveryListParams>,
 ) -> Result<Response, ApiError> {
     let service = &state.entity_discovery;
     let context: ContextSpec = context.into_inner();
@@ -91,7 +60,7 @@ pub async fn get(
     context: ContextUrl,
     headers: HeaderMap,
     Path(attr_id): Path<String>,
-    ValidatedQuery(params): ValidatedQuery<GetAttributeParams>,
+    ValidatedQuery(params): ValidatedQuery<LocalOnlyParams>,
 ) -> Result<Response, ApiError> {
     let service = &state.entity_discovery;
     let context: ContextSpec = context.into_inner();

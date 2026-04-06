@@ -41,8 +41,14 @@ where
             return Ok(LanguageNegotiation(Some(filter)));
         }
 
-        // 2. Try NGSILD-Language header as fallback
-        if let Some(header) = parts.headers.typed_get::<NgsiLdLanguage>() {
+        // 2. Try NGSILD-Language header as fallback.
+        //    If the header is present but malformed, reject with 400 rather than
+        //    silently ignoring it (`typed_get` returns `None` on decode failure).
+        if parts.headers.contains_key("ngsild-language") {
+            let header = parts
+                .headers
+                .typed_get::<NgsiLdLanguage>()
+                .ok_or_else(|| ExtractorRejection::bad_request_data("Invalid NGSILD-Language header value", uri))?;
             return Ok(LanguageNegotiation(Some(LanguageFilter::from(header))));
         }
 
@@ -125,11 +131,8 @@ mod tests {
             .body(())
             .expect("valid request")
             .into_parts();
-        // Empty header should result in None (typed_get returns None for decode failure)
+        // Empty header is present but invalid — must reject with BadRequestData
         let result = LanguageNegotiation::from_request_parts(&mut parts, &()).await;
-        // With typed header, empty value fails decode -> typed_get returns None -> Ok(None)
-        assert!(result.is_ok());
-        let LanguageNegotiation(filter) = result.expect("ok");
-        assert!(filter.is_none());
+        assert!(result.is_err());
     }
 }

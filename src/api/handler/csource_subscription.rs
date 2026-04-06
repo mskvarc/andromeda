@@ -3,6 +3,7 @@ use crate::{
     error::api::ApiError,
     http::{
         extractor::{accept::AcceptFormatNoGeo, context::ContextUrl, prefer::PreferHeader, query::ValidatedQuery},
+        parameter::{EmptyParams, csource_subscription::ListParams},
         response::{
             collection::NgsiLdCollectionResponse,
             pagination::{PaginationMediaType, PaginationStyle, append_pagination_links},
@@ -19,17 +20,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use mediatype::{MediaTypeBuf, names};
-use serde::Deserialize;
 use serde_json::Value;
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ListParams {
-    pub limit: Option<i64>,
-    pub offset: Option<i64>,
-    pub page: Option<i64>,
-    pub options: Option<String>,
-}
 
 #[derive(Debug, Default, Clone, Copy)]
 struct ListOptions {
@@ -92,15 +83,11 @@ fn extract_body_context(payload: &Value) -> Option<Value> {
     payload.as_object().and_then(|obj| obj.get("@context")).cloned()
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct CreateParams {}
-
 pub async fn create(
     crate::api::tenant::TenantStateOrCreate(state): crate::api::tenant::TenantStateOrCreate,
     OriginalUri(uri): OriginalUri,
     headers: HeaderMap,
-    ValidatedQuery(_params): ValidatedQuery<CreateParams>,
+    ValidatedQuery(_params): ValidatedQuery<EmptyParams>,
     context: ContextUrl,
     body: Bytes,
 ) -> Result<Response, ApiError> {

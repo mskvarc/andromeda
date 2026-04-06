@@ -33,7 +33,6 @@ impl NgsiLdBatchResponse {
             warnings: Vec::new(),
         }
     }
-
 }
 
 impl IntoResponse for NgsiLdBatchResponse {

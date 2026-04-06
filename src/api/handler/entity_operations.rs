@@ -16,6 +16,7 @@ use crate::{
     http::{
         extractor::{accept::AcceptFormat, context::ContextUrl, prefer::PreferHeader, query::ValidatedQuery},
         header::via::Via,
+        parameter::entity_operations::{PostQueryParams, UpdateParams, UpsertParams},
         response::{batch::NgsiLdBatchResponse, collection::NgsiLdCollectionResponse},
     },
     jsonld::ContextSpec,
@@ -34,18 +35,6 @@ use mediatype::{MediaTypeBuf, names};
 use serde::Deserialize;
 use serde_json::Value;
 use std::collections::HashSet;
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct UpsertParams {
-    pub options: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct UpdateParams {
-    pub options: Option<String>,
-}
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -107,27 +96,6 @@ pub struct GeoQueryRequest {
     pub geometry: String,
     pub coordinates: Value,
     pub geoproperty: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct PostQueryParams {
-    pub options: Option<String>,
-    pub format: Option<String>,
-    /// Retained for `deny_unknown_fields` acceptance; actual parsing handled by
-    /// the [`LanguageNegotiation`] extractor.
-    #[allow(dead_code)]
-    pub lang: Option<String>,
-    pub join: Option<String>,
-    #[serde(rename = "joinLevel")]
-    pub join_level: Option<u32>,
-    #[serde(rename = "geometryProperty")]
-    pub geometry_property: Option<String>,
-    #[serde(rename = "datasetId")]
-    pub dataset_id: Option<String>,
-    pub pick: Option<String>,
-    pub omit: Option<String>,
-    pub local: Option<bool>,
 }
 
 pub async fn query(

@@ -9,6 +9,7 @@ use crate::{
     error::{AndromedaError, api::ApiError, core::AndromedaErrorKind},
     http::{
         extractor::{accept::AcceptFormatNoGeo, context::ContextUrl, prefer::PreferHeader, query::ValidatedQuery},
+        parameter::{DeleteAttrParams, EmptyParams},
         response::{collection::NgsiLdCollectionResponse, single::NgsiLdResponse},
     },
     jsonld::ContextSpec,
@@ -24,24 +25,8 @@ use axum::{
     http::StatusCode,
     response::{IntoResponse, Response},
 };
-use serde::{Deserialize, Deserializer};
 use serde_json::Value;
 use urn::Urn;
-
-fn deserialize_bool_case_insensitive<'de, D>(deserializer: D) -> Result<Option<bool>, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let s: Option<String> = Option::deserialize(deserializer)?;
-    match s {
-        None => Ok(None),
-        Some(s) => match s.to_lowercase().as_str() {
-            "true" => Ok(Some(true)),
-            "false" => Ok(Some(false)),
-            other => Err(serde::de::Error::custom(format!("invalid boolean value: '{}'", other))),
-        },
-    }
-}
 
 fn parse_entity_id(id: &str, uri: &axum::http::Uri) -> Result<Urn, ApiError> {
     id.parse::<Urn>().map_err(|_| {
@@ -72,21 +57,12 @@ fn validate_instance_id(id: &str, uri: &axum::http::Uri) -> Result<(), ApiError>
     Ok(())
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct DeleteTemporalAttrParams {
-    #[serde(rename = "datasetId")]
-    pub dataset_id: Option<String>,
-    #[serde(rename = "deleteAll", default, deserialize_with = "deserialize_bool_case_insensitive")]
-    pub delete_all: Option<bool>,
-}
-
 /// POST /ngsi-ld/v1/temporal/entities
 pub async fn create_or_update(
     crate::api::tenant::TenantStateOrCreate(state): crate::api::tenant::TenantStateOrCreate,
     OriginalUri(uri): OriginalUri,
     context: ContextUrl,
-    ValidatedQuery(_params): ValidatedQuery<crate::api::handler::types::EmptyParams>,
+    ValidatedQuery(_params): ValidatedQuery<EmptyParams>,
     JsonLd {
         value: payload,
         context: body_context,
@@ -453,7 +429,7 @@ pub async fn delete_attr(
     OriginalUri(uri): OriginalUri,
     context: ContextUrl,
     Path((id, attr_id)): Path<(String, String)>,
-    ValidatedQuery(params): ValidatedQuery<DeleteTemporalAttrParams>,
+    ValidatedQuery(params): ValidatedQuery<DeleteAttrParams>,
 ) -> Result<Response, ApiError> {
     let service = &state.temporal;
     let id = parse_entity_id(&id, &uri)?;
@@ -504,7 +480,7 @@ pub async fn delete_attr_instance(
     OriginalUri(uri): OriginalUri,
     context: ContextUrl,
     Path((id, attr_id, instance_id)): Path<(String, String, String)>,
-    ValidatedQuery(_params): ValidatedQuery<crate::api::handler::types::EmptyParams>,
+    ValidatedQuery(_params): ValidatedQuery<EmptyParams>,
 ) -> Result<Response, ApiError> {
     let service = &state.temporal;
     let id = parse_entity_id(&id, &uri)?;

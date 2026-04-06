@@ -11,6 +11,11 @@ use crate::{
     http::{
         extractor::{accept::AcceptFormat, context::ContextUrl, query::ValidatedQuery},
         header::via::Via,
+        parameter::{
+            DeleteAttrParams,
+            LocalOnlyParams,
+            entity::{AppendParams, GetEntityParams, PartialUpdateAttrParams},
+        },
         response::{collection::NgsiLdCollectionResponse, single::NgsiLdResponse},
     },
     jsonld::ContextSpec,
@@ -35,25 +40,9 @@ use axum::{
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
 };
-use serde::{Deserialize, Deserializer};
 use serde_json::Value;
 use std::collections::HashSet;
 use urn::Urn;
-
-fn deserialize_bool_case_insensitive<'de, D>(deserializer: D) -> Result<Option<bool>, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let s: Option<String> = Option::deserialize(deserializer)?;
-    match s {
-        None => Ok(None),
-        Some(s) => match s.to_lowercase().as_str() {
-            "true" => Ok(Some(true)),
-            "false" => Ok(Some(false)),
-            other => Err(serde::de::Error::custom(format!("invalid boolean value: '{}'", other))),
-        },
-    }
-}
 
 fn parse_entity_id(id: &str, uri: &axum::http::Uri) -> Result<Urn, ApiError> {
     id.parse::<Urn>()
@@ -73,49 +62,6 @@ fn resolve_render_mode(format_param: &str, options: &str) -> RenderMode {
     }
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct AppendParams {
-    pub options: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct PartialUpdateAttrParams {
-    #[serde(rename = "datasetId")]
-    pub dataset_id: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct DeleteAttrParams {
-    #[serde(rename = "datasetId")]
-    pub dataset_id: Option<String>,
-    #[serde(rename = "deleteAll", default, deserialize_with = "deserialize_bool_case_insensitive")]
-    pub delete_all: Option<bool>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct DeleteParams {
-    #[serde(default, deserialize_with = "deserialize_bool_case_insensitive")]
-    pub local: Option<bool>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct MergeParams {
-    #[serde(default, deserialize_with = "deserialize_bool_case_insensitive")]
-    pub local: Option<bool>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct UpdateParams {
-    #[serde(default, deserialize_with = "deserialize_bool_case_insensitive")]
-    pub local: Option<bool>,
-}
-
 pub async fn patch_no_id(OriginalUri(uri): OriginalUri) -> Result<Response, ApiError> {
     Err(ApiError::from_error(AndromedaError::bad_request_data("Entity id is required"), uri))
 }
@@ -124,18 +70,10 @@ pub async fn put_no_id(OriginalUri(uri): OriginalUri) -> Result<Response, ApiErr
     Err(ApiError::from_error(AndromedaError::bad_request_data("Entity id is required"), uri))
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-#[allow(dead_code)]
-pub struct CreateParams {
-    #[serde(default, deserialize_with = "deserialize_bool_case_insensitive")]
-    pub local: Option<bool>,
-}
-
 pub async fn create(
     TenantStateOrCreate(state): TenantStateOrCreate,
     OriginalUri(uri): OriginalUri,
-    ValidatedQuery(params): ValidatedQuery<CreateParams>,
+    ValidatedQuery(params): ValidatedQuery<LocalOnlyParams>,
     context: ContextUrl,
     headers: HeaderMap,
     JsonLd {
@@ -258,33 +196,6 @@ pub async fn create(
     // Fallback: create locally
     let id = service.create(&entity, &context).await.map_err(|e| e.with_instance(uri.clone()))?;
     Ok((StatusCode::CREATED, [("Location", format!("/ngsi-ld/v1/entities/{}", id))]).into_response())
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-#[allow(dead_code)]
-pub struct GetEntityParams {
-    pub attrs: Option<String>,
-    pub options: Option<String>,
-    pub format: Option<String>,
-    pub pick: Option<String>,
-    pub omit: Option<String>,
-    /// Retained for `deny_unknown_fields` acceptance; actual parsing handled by
-    /// the [`LanguageNegotiation`] extractor.
-    pub lang: Option<String>,
-    #[serde(rename = "datasetId")]
-    pub dataset_id: Option<String>,
-    #[serde(rename = "geometryProperty")]
-    pub geometry_property: Option<String>,
-    #[serde(default, deserialize_with = "deserialize_bool_case_insensitive")]
-    pub local: Option<bool>,
-    pub join: Option<String>,
-    #[serde(rename = "joinLevel")]
-    pub join_level: Option<u32>,
-    #[serde(rename = "containedBy")]
-    pub contained_by: Option<String>,
-    #[serde(rename = "entityMap")]
-    pub entity_map: Option<String>,
 }
 
 pub async fn get(
@@ -484,7 +395,7 @@ pub async fn delete(
     OriginalUri(uri): OriginalUri,
     context: ContextUrl,
     Path(id): Path<String>,
-    ValidatedQuery(params): ValidatedQuery<DeleteParams>,
+    ValidatedQuery(params): ValidatedQuery<LocalOnlyParams>,
     headers: HeaderMap,
 ) -> Result<Response, ApiError> {
     let service = &state.entities;
@@ -915,7 +826,7 @@ pub async fn merge(
     OriginalUri(uri): OriginalUri,
     context: ContextUrl,
     Path(id): Path<String>,
-    ValidatedQuery(params): ValidatedQuery<MergeParams>,
+    ValidatedQuery(params): ValidatedQuery<LocalOnlyParams>,
     headers: HeaderMap,
     JsonLd {
         value: patch,
@@ -997,7 +908,7 @@ pub async fn update(
     OriginalUri(uri): OriginalUri,
     context: ContextUrl,
     Path(id): Path<String>,
-    ValidatedQuery(params): ValidatedQuery<UpdateParams>,
+    ValidatedQuery(params): ValidatedQuery<LocalOnlyParams>,
     headers: HeaderMap,
     JsonLd {
         value: patch,
