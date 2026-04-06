@@ -121,13 +121,13 @@ pub async fn get(
     if let Some(snapshot_id) = snapshot.into_inner() {
         let _snap = state
             .snapshots
-            .validate_for_scoping(&snapshot_id)
+            .validate_for_scoping(snapshot_id.as_str())
             .await
             .map_err(|e| e.with_instance(uri.clone()))?;
 
         let entity_data = state
             .snapshots
-            .get_snapshot_temporal_entity(&snapshot_id, id.as_ref())
+            .get_snapshot_temporal_entity(snapshot_id.as_str(), id.as_ref())
             .await
             .map_err(|e| e.with_instance(uri.clone()))?
             .ok_or_else(|| ApiError::from_error(AndromedaError::not_found(id.to_string()), uri.clone()))?;
@@ -230,7 +230,7 @@ pub async fn get(
             .with_format(accept.format())
             .with_warnings(warnings);
         if let Some(map_header) = entity_map_header {
-            builder = builder.with_entity_map_uri(map_header.into_inner());
+            builder = builder.with_entity_map_uri(map_header.into_inner().to_string());
         }
         let mut response = builder.into_response();
         if let Some(cr) = content_range
@@ -245,7 +245,7 @@ pub async fn get(
             .with_format(accept.format())
             .with_warnings(warnings);
         if let Some(map_header) = entity_map_header {
-            builder = builder.with_entity_map_uri(map_header.into_inner());
+            builder = builder.with_entity_map_uri(map_header.into_inner().to_string());
         }
         let mut response = builder.into_response();
         if let Some(cr) = content_range
@@ -279,7 +279,7 @@ pub async fn query(
     if let Some(snapshot_id) = snapshot.into_inner() {
         let _snap = state
             .snapshots
-            .validate_for_scoping(&snapshot_id)
+            .validate_for_scoping(snapshot_id.as_str())
             .await
             .map_err(|e| e.with_instance(uri.clone()))?;
 
@@ -290,7 +290,7 @@ pub async fn query(
 
         let (entities, total) = state
             .snapshots
-            .query_snapshot_temporal_entities(&snapshot_id, entity_type, entity_ids.as_deref(), limit, offset)
+            .query_snapshot_temporal_entities(snapshot_id.as_str(), entity_type, entity_ids.as_deref(), limit, offset)
             .await
             .map_err(|e| e.with_instance(uri.clone()))?;
 
@@ -399,7 +399,7 @@ pub async fn query(
             .map_err(|e| e.with_instance(uri.clone()))?;
         Some(map.id)
     } else if entity_map_header.is_some() {
-        entity_map_header.map(|h| h.into_inner())
+        entity_map_header.map(|h| h.into_inner().to_string())
     } else {
         None
     };

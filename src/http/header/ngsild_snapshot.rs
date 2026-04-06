@@ -1,38 +1,28 @@
 //! Typed `NGSILD-Snapshot` request/response header (ETSI GS CIM 009 clause 6.3.22).
 //!
 //! Carries the snapshot identifier for snapshot-scoped requests and responses.
-//! The value must be a non-empty URI string.
+//! The value must be a valid URN (RFC 8141).
 
 use axum::http::{HeaderName, HeaderValue};
+use urn::Urn;
 
 static NGSILD_SNAPSHOT: HeaderName = HeaderName::from_static("ngsild-snapshot");
 
 /// Typed `NGSILD-Snapshot` header (clause 6.3.22).
 ///
-/// Carries the snapshot identifier URI that scopes a request to a frozen
+/// Carries the snapshot identifier URN that scopes a request to a frozen
 /// data snapshot, or indicates that a response is from a snapshot.
-///
-/// TODO: the inner type should be `urn::Urn` instead of `String` to enforce
-/// URN validation at the HTTP boundary. Blocked on `EntityMap.id` and snapshot
-/// IDs flowing through the service layer as `String`; once those are migrated
-/// to `urn::Urn`, this type should follow.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct NgsiLdSnapshot(String);
+pub struct NgsiLdSnapshot(Urn);
 
 impl NgsiLdSnapshot {
-    /// Create a new `NGSILD-Snapshot` header from the given URI value.
-    ///
-    /// # Panics
-    ///
-    /// Panics in debug mode if `value` is empty after trimming.
-    pub fn new(value: impl Into<String>) -> NgsiLdSnapshot {
-        let s = value.into();
-        debug_assert!(!s.trim().is_empty(), "NGSILD-Snapshot value must not be empty");
-        NgsiLdSnapshot(s)
+    /// Create a new `NGSILD-Snapshot` header from a validated URN.
+    pub fn new(value: Urn) -> NgsiLdSnapshot {
+        NgsiLdSnapshot(value)
     }
 
-    /// Consume the header and return the inner string.
-    pub fn into_inner(self) -> String {
+    /// Consume the header and return the inner URN.
+    pub fn into_inner(self) -> Urn {
         self.0
     }
 }
@@ -52,11 +42,12 @@ impl headers::Header for NgsiLdSnapshot {
         if trimmed.is_empty() {
             return Err(headers::Error::invalid());
         }
-        Ok(NgsiLdSnapshot(trimmed.to_string()))
+        let urn: Urn = trimmed.parse().map_err(|_| headers::Error::invalid())?;
+        Ok(NgsiLdSnapshot(urn))
     }
 
     fn encode<E: Extend<HeaderValue>>(&self, values: &mut E) {
-        if let Ok(val) = HeaderValue::from_str(&self.0) {
+        if let Ok(val) = HeaderValue::from_str(self.0.as_str()) {
             values.extend(std::iter::once(val));
         }
     }
@@ -74,15 +65,15 @@ mod tests {
     }
 
     #[test]
-    fn decode_valid_snapshot() {
+    fn decode_valid_snapshot_urn() {
         let header = decode_from("urn:ngsi-ld:Snapshot:abc").expect("should decode");
-        assert_eq!(header.into_inner(), "urn:ngsi-ld:Snapshot:abc");
+        assert_eq!(header.into_inner().as_str(), "urn:ngsi-ld:Snapshot:abc");
     }
 
     #[test]
     fn decode_trims_whitespace() {
-        let header = decode_from("  urn:snap:1  ").expect("should decode");
-        assert_eq!(header.into_inner(), "urn:snap:1");
+        let header = decode_from("  urn:ngsi-ld:Snapshot:1  ").expect("should decode");
+        assert_eq!(header.into_inner().as_str(), "urn:ngsi-ld:Snapshot:1");
     }
 
     #[test]
@@ -96,12 +87,23 @@ mod tests {
     }
 
     #[test]
+    fn decode_rejects_non_urn() {
+        assert!(decode_from("not-a-urn").is_err());
+    }
+
+    #[test]
+    fn decode_rejects_plain_url() {
+        assert!(decode_from("https://example.com/snapshot").is_err());
+    }
+
+    #[test]
     fn encode_roundtrip() {
-        let header = NgsiLdSnapshot::new("urn:snap:x");
+        let urn: Urn = "urn:ngsi-ld:Snapshot:x".parse().expect("valid URN");
+        let header = NgsiLdSnapshot::new(urn);
         let mut encoded = Vec::new();
         header.encode(&mut encoded);
         assert_eq!(encoded.len(), 1);
-        assert_eq!(encoded[0].to_str().expect("valid str"), "urn:snap:x");
+        assert_eq!(encoded[0].to_str().expect("valid str"), "urn:ngsi-ld:Snapshot:x");
 
         let mut iter = encoded.iter();
         let decoded = NgsiLdSnapshot::decode(&mut iter).expect("roundtrip decode");

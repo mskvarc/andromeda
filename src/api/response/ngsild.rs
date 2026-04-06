@@ -22,6 +22,7 @@ use axum::{
 use headers::HeaderMapExt;
 use serde::Serialize;
 use serde_json::{Map, Value};
+use urn::Urn;
 
 /// Format a @context value for ld+json responses.
 /// Per NGSI-LD conformance: a single context URL stays as a string,
@@ -50,7 +51,7 @@ pub struct NgsiLdResponse<T> {
     geometry_property: Option<String>,
     location: Option<String>,
     entity_map_uri: Option<String>,
-    snapshot_uri: Option<String>,
+    snapshot_uri: Option<Urn>,
     warnings: Vec<NgsiLdWarning>,
     prefer: PreferHeader,
 }
@@ -127,7 +128,7 @@ impl<T> NgsiLdResponse<T> {
     }
 
     /// Set the NGSILD-Snapshot header for snapshot-scoped responses (clause 6.3.22).
-    pub fn with_snapshot_uri(mut self, uri: String) -> Self {
+    pub fn with_snapshot_uri(mut self, uri: Urn) -> Self {
         self.snapshot_uri = Some(uri);
         self
     }
@@ -160,11 +161,13 @@ impl<T: Serialize> IntoResponse for NgsiLdResponse<T> {
         }
 
         if let Some(ref uri) = self.entity_map_uri {
-            headers.typed_insert(NgsiLdEntityMap::new(uri));
+            if let Ok(urn) = uri.parse::<Urn>() {
+                headers.typed_insert(NgsiLdEntityMap::new(urn));
+            }
         }
 
-        if let Some(ref snap_uri) = self.snapshot_uri {
-            headers.typed_insert(NgsiLdSnapshot::new(snap_uri));
+        if let Some(snap_urn) = self.snapshot_uri {
+            headers.typed_insert(NgsiLdSnapshot::new(snap_urn));
         }
 
         if !self.warnings.is_empty() {
@@ -172,10 +175,11 @@ impl<T: Serialize> IntoResponse for NgsiLdResponse<T> {
         }
 
         match self.format {
-            ResponseFormat::Json => {
-                // application/json: @context in Link header, not in body
-                let urls = context_spec.to_link_headers();
-                Link::insert_jsonld_contexts(&mut headers, &urls);
+            ResponseFormat::Json | ResponseFormat::JsonLd => {
+                if !self.format.include_context_in_body() {
+                    let urls = context_spec.to_link_headers();
+                    Link::insert_jsonld_contexts(&mut headers, &urls);
+                }
 
                 match serde_json::to_value(&self.data) {
                     Ok(mut value) => {
@@ -183,21 +187,10 @@ impl<T: Serialize> IntoResponse for NgsiLdResponse<T> {
                         if let Some(target) = self.prefer.requested_version {
                             adapt_payload_for_version(&mut value, target);
                         }
-                        (status, headers, Json(value)).into_response()
-                    }
-                    Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
-                }
-            }
-            ResponseFormat::JsonLd => {
-                // application/ld+json: @context as URL array in body
-                match serde_json::to_value(&self.data) {
-                    Ok(mut value) => {
-                        decode_percent_encoded_uris(&mut value);
-                        if let Some(target) = self.prefer.requested_version {
-                            adapt_payload_for_version(&mut value, target);
-                        }
-                        if let (Some(obj), Some(context_value)) = (value.as_object_mut(), context_value) {
-                            obj.insert("@context".to_string(), format_context(context_value));
+                        if self.format.include_context_in_body() {
+                            if let (Some(obj), Some(context_value)) = (value.as_object_mut(), context_value) {
+                                obj.insert("@context".to_string(), format_context(context_value));
+                            }
                         }
                         (status, headers, Json(value)).into_response()
                     }
@@ -239,7 +232,7 @@ pub struct NgsiLdCollectionResponse<T> {
     geometry_property: Option<String>,
     content_range: Option<String>,
     entity_map_uri: Option<String>,
-    snapshot_uri: Option<String>,
+    snapshot_uri: Option<Urn>,
     warnings: Vec<NgsiLdWarning>,
     prefer: PreferHeader,
 }
@@ -318,7 +311,7 @@ impl<T> NgsiLdCollectionResponse<T> {
     }
 
     /// Set the NGSILD-Snapshot header for snapshot-scoped responses (clause 6.3.22).
-    pub fn with_snapshot_uri(mut self, uri: String) -> Self {
+    pub fn with_snapshot_uri(mut self, uri: Urn) -> Self {
         self.snapshot_uri = Some(uri);
         self
     }
@@ -358,53 +351,43 @@ impl<T: Serialize> IntoResponse for NgsiLdCollectionResponse<T> {
 
         // Add NGSILD-EntityMap header if provided
         if let Some(ref uri) = self.entity_map_uri {
-            headers.typed_insert(NgsiLdEntityMap::new(uri));
+            if let Ok(urn) = uri.parse::<Urn>() {
+                headers.typed_insert(NgsiLdEntityMap::new(urn));
+            }
         }
 
-        if let Some(ref snap_uri) = self.snapshot_uri {
-            headers.typed_insert(NgsiLdSnapshot::new(snap_uri));
+        if let Some(snap_urn) = self.snapshot_uri {
+            headers.typed_insert(NgsiLdSnapshot::new(snap_urn));
         }
 
         if !self.warnings.is_empty() {
             headers.typed_insert(NgsiLdWarningHeader::new(self.warnings));
         }
 
-        // Add Link header for application/json
-        if self.format == ResponseFormat::Json {
-            let urls = context_spec.to_link_headers();
-            Link::insert_jsonld_contexts(&mut headers, &urls);
-        }
-
         match self.format {
-            ResponseFormat::Json => {
-                // Return array without @context
+            ResponseFormat::Json | ResponseFormat::JsonLd => {
+                if !self.format.include_context_in_body() {
+                    let urls = context_spec.to_link_headers();
+                    Link::insert_jsonld_contexts(&mut headers, &urls);
+                }
+
                 match serde_json::to_value(&self.data) {
                     Ok(mut value) => {
                         decode_percent_encoded_uris(&mut value);
                         if let Some(target) = self.prefer.requested_version {
                             adapt_payload_for_version(&mut value, target);
                         }
-                        (status, headers, Json(value)).into_response()
-                    }
-                    Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
-                }
-            }
-            ResponseFormat::JsonLd => {
-                // Add @context array to each item
-                match serde_json::to_value(&self.data) {
-                    Ok(serde_json::Value::Array(mut items)) => {
-                        for item in &mut items {
-                            decode_percent_encoded_uris(item);
-                            if let Some(target) = self.prefer.requested_version {
-                                adapt_payload_for_version(item, target);
-                            }
-                            if let (Some(obj), Some(context_value)) = (item.as_object_mut(), context_value.clone()) {
-                                obj.insert("@context".to_string(), format_context(context_value));
+                        if self.format.include_context_in_body() {
+                            if let Value::Array(ref mut items) = value {
+                                for item in items.iter_mut() {
+                                    if let (Some(obj), Some(cv)) = (item.as_object_mut(), context_value.clone()) {
+                                        obj.insert("@context".to_string(), format_context(cv));
+                                    }
+                                }
                             }
                         }
-                        (status, headers, Json(items)).into_response()
+                        (status, headers, Json(value)).into_response()
                     }
-                    Ok(other) => (status, headers, Json(other)).into_response(),
                     Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
                 }
             }

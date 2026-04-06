@@ -13,11 +13,10 @@
 //! request header instead of a query parameter.
 
 use crate::http::model::{
-    language::{LanguageFilter, LanguageRange},
-    quality::{Quality, QualityValue},
+    language::{LanguageFilter, LanguageRange, parse_preference},
+    quality::QualityValue,
 };
 use axum::http::{HeaderName, HeaderValue};
-use langtag::LangTagBuf;
 
 /// Typed `NGSILD-Language` request header.
 ///
@@ -58,7 +57,7 @@ impl headers::Header for NgsiLdLanguage {
                 if trimmed.is_empty() {
                     continue;
                 }
-                let qv = parse_language_preference(trimmed).ok_or_else(headers::Error::invalid)?;
+                let qv = parse_preference(trimmed).map_err(|_| headers::Error::invalid())?;
                 preferences.push(qv);
             }
         }
@@ -76,33 +75,6 @@ impl headers::Header for NgsiLdLanguage {
     }
 }
 
-/// Parse a single language preference from a trimmed segment like `fr;q=0.9`.
-fn parse_language_preference(raw: &str) -> Option<QualityValue<LanguageRange>> {
-    let mut segments = raw.splitn(2, ';');
-    let range_str = segments.next()?.trim();
-
-    let range = if range_str == "*" {
-        LanguageRange::Wildcard
-    } else {
-        let tag = LangTagBuf::new(range_str.to_string()).ok()?;
-        LanguageRange::Tag(tag)
-    };
-
-    let quality = if let Some(params) = segments.next() {
-        parse_quality_param(params.trim())?
-    } else {
-        Quality::default()
-    };
-
-    Some(QualityValue::new(range, quality))
-}
-
-/// Parse a `q=0.9` parameter string into a [`Quality`] value.
-fn parse_quality_param(param: &str) -> Option<Quality> {
-    let q_str = param.strip_prefix("q=").or_else(|| param.strip_prefix("Q="))?;
-    Quality::parse_decimal(q_str).ok()
-}
-
 impl From<NgsiLdLanguage> for LanguageFilter {
     fn from(header: NgsiLdLanguage) -> LanguageFilter {
         // NgsiLdLanguage always has at least one preference (decode rejects empty),
@@ -114,6 +86,7 @@ impl From<NgsiLdLanguage> for LanguageFilter {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::http::model::quality::Quality;
     use headers::Header;
 
     /// Helper: decode an `NgsiLdLanguage` from a raw header string.

@@ -1,43 +1,33 @@
 //! Typed `NGSILD-EntityMap` request/response header (ETSI GS CIM 009 clause 6.4.3.2).
 //!
 //! Carries the entity map URI for paginated distributed queries.
-//! The value must be a non-empty URI string.
+//! The value must be a valid URN (RFC 8141).
 
 use axum::http::{HeaderName, HeaderValue};
+use urn::Urn;
 
 static NGSILD_ENTITYMAP: HeaderName = HeaderName::from_static("ngsild-entitymap");
 
 /// Typed `NGSILD-EntityMap` header (clause 6.4.3.2, Table 6.4.3.2-2).
 ///
-/// Carries the URI of an entity map resource created during a distributed
+/// Carries the URN of an entity map resource created during a distributed
 /// query, used for stable pagination across context sources.
-///
-/// TODO: the inner type should be `urn::Urn` instead of `String` to enforce
-/// URN validation at the HTTP boundary. Blocked on `EntityMap.id` and the
-/// entity map service layer using `String`; once those are migrated to
-/// `urn::Urn`, this type should follow.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct NgsiLdEntityMap(String);
+pub struct NgsiLdEntityMap(Urn);
 
 impl NgsiLdEntityMap {
-    /// Create a new `NGSILD-EntityMap` header from the given URI value.
-    ///
-    /// # Panics
-    ///
-    /// Panics in debug mode if `value` is empty after trimming.
-    pub fn new(value: impl Into<String>) -> NgsiLdEntityMap {
-        let s = value.into();
-        debug_assert!(!s.trim().is_empty(), "NGSILD-EntityMap value must not be empty");
-        NgsiLdEntityMap(s)
+    /// Create a new `NGSILD-EntityMap` header from a validated URN.
+    pub fn new(value: Urn) -> NgsiLdEntityMap {
+        NgsiLdEntityMap(value)
     }
 
-    /// Return the entity map URI as a string slice.
+    /// Return the entity map URN as a string slice.
     pub fn as_str(&self) -> &str {
-        &self.0
+        self.0.as_str()
     }
 
-    /// Consume the header and return the inner string.
-    pub fn into_inner(self) -> String {
+    /// Consume the header and return the inner URN.
+    pub fn into_inner(self) -> Urn {
         self.0
     }
 }
@@ -57,11 +47,12 @@ impl headers::Header for NgsiLdEntityMap {
         if trimmed.is_empty() {
             return Err(headers::Error::invalid());
         }
-        Ok(NgsiLdEntityMap(trimmed.to_string()))
+        let urn: Urn = trimmed.parse().map_err(|_| headers::Error::invalid())?;
+        Ok(NgsiLdEntityMap(urn))
     }
 
     fn encode<E: Extend<HeaderValue>>(&self, values: &mut E) {
-        if let Ok(val) = HeaderValue::from_str(&self.0) {
+        if let Ok(val) = HeaderValue::from_str(self.0.as_str()) {
             values.extend(std::iter::once(val));
         }
     }
@@ -79,7 +70,7 @@ mod tests {
     }
 
     #[test]
-    fn decode_valid_entity_map() {
+    fn decode_valid_entity_map_urn() {
         let header = decode_from("urn:ngsi-ld:EntityMap:abc123").expect("should decode");
         assert_eq!(header.as_str(), "urn:ngsi-ld:EntityMap:abc123");
     }
@@ -101,8 +92,19 @@ mod tests {
     }
 
     #[test]
+    fn decode_rejects_non_urn() {
+        assert!(decode_from("not-a-urn").is_err());
+    }
+
+    #[test]
+    fn decode_rejects_plain_url() {
+        assert!(decode_from("https://example.com/entitymap").is_err());
+    }
+
+    #[test]
     fn encode_roundtrip() {
-        let header = NgsiLdEntityMap::new("urn:ngsi-ld:EntityMap:test");
+        let urn: Urn = "urn:ngsi-ld:EntityMap:test".parse().expect("valid URN");
+        let header = NgsiLdEntityMap::new(urn);
         let mut encoded = Vec::new();
         header.encode(&mut encoded);
         assert_eq!(encoded.len(), 1);

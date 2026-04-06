@@ -4,13 +4,10 @@
 //! extractor to reduce handler parameter counts (ETSI GS CIM 009 clauses
 //! 6.3.5, 6.3.6, 6.3.18, 6.3.22).
 
-use crate::{
-    api::extractor::snapshot::SnapshotHeader,
-    http::{
-        extractor::{error::ExtractorRejection, language::LanguageNegotiation, prefer::PreferHeader},
-        header::{NgsiLdEntityMap, Via},
-        model::language::LanguageFilter,
-    },
+use crate::http::{
+    extractor::{error::ExtractorRejection, language::LanguageNegotiation, prefer::PreferHeader, snapshot::SnapshotHeader},
+    header::{NgsiLdEntityMap, Via},
+    model::language::LanguageFilter,
 };
 use axum::{extract::FromRequestParts, http::request::Parts};
 

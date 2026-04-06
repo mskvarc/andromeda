@@ -367,7 +367,7 @@ fn simplify_attr_value(value: &Value) -> Value {
 #[cfg(test)]
 mod tests {
     use super::{render_entity, simplify_entity, simplify_value};
-    use crate::{domain::entity::Entity, http::parameter::language};
+    use crate::{domain::entity::Entity, http::model::language::LanguageFilter};
     use serde_json::{Value, json};
 
     fn parse_entity(value: Value) -> Entity {
@@ -430,7 +430,7 @@ mod tests {
                 }
             }
         }));
-        let filter = language::parse("fr").expect("language filter");
+        let filter = LanguageFilter::parse("fr").expect("language filter");
 
         let rendered = render_entity(&entity, Some(&filter)).expect("rendered entity");
 
@@ -452,7 +452,7 @@ mod tests {
                 }
             }
         }));
-        let filter = language::parse("*").expect("language filter");
+        let filter = LanguageFilter::parse("*").expect("language filter");
 
         let rendered = render_entity(&entity, Some(&filter)).expect("rendered entity");
 
@@ -474,7 +474,7 @@ mod tests {
                 }
             }
         }));
-        let filter = language::parse("fr").expect("language filter");
+        let filter = LanguageFilter::parse("fr").expect("language filter");
 
         let rendered = render_entity(&entity, Some(&filter)).expect("rendered entity");
         let simplified = simplify_value(&rendered);
