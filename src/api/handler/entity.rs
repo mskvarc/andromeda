@@ -1,13 +1,6 @@
 use crate::{
     api::{
-        extractor::{
-            accept::AcceptFormat,
-            context::ContextUrl,
-            entity_query::EntityQuery,
-            jsonld::JsonLd,
-            params::ValidatedQuery,
-            protocol::NgsiLdProtocolHeaders,
-        },
+        extractor::{entity_query::EntityQuery, jsonld::JsonLd, protocol::NgsiLdProtocolHeaders},
         response::ngsild::{NgsiLdCollectionResponse, NgsiLdResponse},
         tenant::{TenantState, TenantStateOrCreate},
     },
@@ -16,7 +9,10 @@ use crate::{
         registration::ForwardingMode,
     },
     error::{AndromedaError, api::ApiError},
-    http::header::Via,
+    http::{
+        extractor::{accept::AcceptFormat, context::ContextUrl, query::ValidatedQuery},
+        header::Via,
+    },
     jsonld::ContextSpec,
     query::{compile::expand_q_expression, q::eval::evaluate},
     response::entity::{apply_inline_join, render_entity, simplify_entity, simplify_value},

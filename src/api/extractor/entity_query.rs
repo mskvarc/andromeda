@@ -1,4 +1,4 @@
-use crate::{api::extractor::error::ExtractorRejection, query::entity::EntityQueryParameters};
+use crate::{http::extractor::error::ExtractorRejection, query::entity::EntityQueryParameters};
 use axum::{extract::FromRequestParts, http::request::Parts};
 
 #[derive(Debug)]

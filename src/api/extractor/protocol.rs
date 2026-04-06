@@ -5,9 +5,12 @@
 //! 6.3.5, 6.3.6, 6.3.18, 6.3.22).
 
 use crate::{
-    api::extractor::{error::ExtractorRejection, language::LanguageNegotiation, prefer::PreferHeader, snapshot::SnapshotHeader},
-    http::header::{NgsiLdEntityMap, Via},
-    query::lang::LanguageFilter,
+    api::extractor::snapshot::SnapshotHeader,
+    http::{
+        extractor::{error::ExtractorRejection, language::LanguageNegotiation, prefer::PreferHeader},
+        header::{NgsiLdEntityMap, Via},
+        model::language::LanguageFilter,
+    },
 };
 use axum::{extract::FromRequestParts, http::request::Parts};
 

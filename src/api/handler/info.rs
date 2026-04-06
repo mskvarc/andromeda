@@ -1,10 +1,7 @@
 use crate::{
-    api::{
-        extractor::{accept::AcceptFormat, context::ContextUrl},
-        response::ngsild::NgsiLdResponse,
-        state::AppState,
-    },
+    api::{response::ngsild::NgsiLdResponse, state::AppState},
     error::api::ApiError,
+    http::extractor::{accept::AcceptFormat, context::ContextUrl},
 };
 use axum::{
     extract::State,

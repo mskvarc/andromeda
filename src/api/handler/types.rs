@@ -1,11 +1,10 @@
 use crate::{
-    api::{
-        extractor::{accept::AcceptFormat, context::ContextUrl, params::ValidatedQuery},
-        response::ngsild::NgsiLdResponse,
-        tenant::TenantState,
-    },
+    api::{response::ngsild::NgsiLdResponse, tenant::TenantState},
     error::{AndromedaError, api::ApiError},
-    http::header::Via,
+    http::{
+        extractor::{accept::AcceptFormat, context::ContextUrl, query::ValidatedQuery},
+        header::Via,
+    },
     jsonld::ContextSpec,
     service::context_source_forwarding::{collect_discovery_warnings, merge_type_info_results, merge_types_results},
 };

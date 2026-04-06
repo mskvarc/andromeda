@@ -2,12 +2,13 @@
 
 use crate::{
     api::{
-        extractor::{accept::AcceptFormatNoGeo, context::ContextUrl, jsonld::JsonLd, params::ValidatedQuery, protocol::NgsiLdProtocolHeaders},
+        extractor::{jsonld::JsonLd, protocol::NgsiLdProtocolHeaders},
         response::ngsild::{NgsiLdCollectionResponse, NgsiLdResponse},
         tenant::TenantState,
     },
     domain::entity::Entity,
     error::{AndromedaError, api::ApiError, core::AndromedaErrorKind},
+    http::extractor::{accept::AcceptFormatNoGeo, context::ContextUrl, query::ValidatedQuery},
     jsonld::ContextSpec,
     query::temporal::TemporalQueryParameters,
     service::{

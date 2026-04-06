@@ -5,8 +5,9 @@
 //! - `application/ld+json`: @context as URL in response body
 
 use crate::{
-    api::{extractor::prefer::PreferHeader, response::version_compat::adapt_payload_for_version},
+    api::response::version_compat::adapt_payload_for_version,
     http::{
+        extractor::prefer::PreferHeader,
         header::{Link, NgsiLdEntityMap, NgsiLdResultsCount, NgsiLdSnapshot, NgsiLdWarning, NgsiLdWarningHeader, PreferenceApplied},
         model::{preference::GeoJsonBodyPreference, response_format::ResponseFormat},
     },

@@ -9,6 +9,7 @@
 //! (formerly [RFC 7231 Section 5.3.1](https://tools.ietf.org/html/rfc7231#section-5.3.1)).
 
 use std::{cmp::Ordering, fmt};
+use thiserror::Error;
 
 /// Quality factor as defined in RFC 9110 Section 12.4.2 (formerly RFC 7231 Section 5.3.1).
 ///
@@ -32,6 +33,60 @@ impl Quality {
     pub const fn value(&self) -> u16 {
         self.0
     }
+
+    /// Parse a decimal quality string like `"0.9"` into a [`Quality`].
+    ///
+    /// Accepts values in the range `0` to `1` with at most 3 decimal places.
+    /// Uses precise decimal arithmetic (no floating-point rounding).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`QualityParseError`] if the input is empty, non-numeric,
+    /// out of range, or has more than 3 decimal places.
+    pub fn parse_decimal(raw: &str) -> Result<Quality, QualityParseError> {
+        if raw.is_empty() {
+            return Err(QualityParseError::Empty);
+        }
+
+        let (whole, fractional) = raw.split_once('.').map_or((raw, ""), |(whole, fractional)| (whole, fractional));
+
+        let whole = match whole {
+            "0" => 0_u16,
+            "1" => 1_u16,
+            _ => return Err(QualityParseError::Invalid(raw.to_string())),
+        };
+
+        if fractional.len() > 3 || !fractional.chars().all(|c| c.is_ascii_digit()) {
+            return Err(QualityParseError::Invalid(raw.to_string()));
+        }
+
+        let fractional_value = if fractional.is_empty() {
+            0_u16
+        } else {
+            let mut padded = fractional.to_string();
+            while padded.len() < 3 {
+                padded.push('0');
+            }
+            padded.parse::<u16>().map_err(|_| QualityParseError::Invalid(raw.to_string()))?
+        };
+
+        if whole == 1 && fractional_value > 0 {
+            return Err(QualityParseError::Invalid(raw.to_string()));
+        }
+
+        Quality::new((whole * 1000) + fractional_value).ok_or_else(|| QualityParseError::Invalid(raw.to_string()))
+    }
+}
+
+/// Errors from parsing a quality value string.
+#[derive(Debug, Error, PartialEq, Eq)]
+pub enum QualityParseError {
+    /// The input string was empty.
+    #[error("quality value cannot be empty")]
+    Empty,
+    /// The input was not a valid quality value (out of range, too many decimals, non-numeric).
+    #[error("invalid quality value `{0}`")]
+    Invalid(String),
 }
 
 // Manual Default impl: the default quality per RFC 9110 is 1.0 (1000), not 0.
@@ -180,5 +235,50 @@ mod tests {
         let high = QualityValue::new("a", Quality(900));
         let low = QualityValue::new("b", Quality(100));
         assert!(high > low);
+    }
+
+    #[test]
+    fn parse_decimal_valid_half() {
+        assert_eq!(Quality::parse_decimal("0.5"), Ok(Quality(500)));
+    }
+
+    #[test]
+    fn parse_decimal_valid_zero() {
+        assert_eq!(Quality::parse_decimal("0"), Ok(Quality(0)));
+    }
+
+    #[test]
+    fn parse_decimal_valid_one() {
+        assert_eq!(Quality::parse_decimal("1"), Ok(Quality(1000)));
+    }
+
+    #[test]
+    fn parse_decimal_valid_one_dot_zero() {
+        assert_eq!(Quality::parse_decimal("1.0"), Ok(Quality(1000)));
+    }
+
+    #[test]
+    fn parse_decimal_valid_three_places() {
+        assert_eq!(Quality::parse_decimal("0.273"), Ok(Quality(273)));
+    }
+
+    #[test]
+    fn parse_decimal_rejects_above_one() {
+        assert_eq!(Quality::parse_decimal("1.1"), Err(QualityParseError::Invalid("1.1".to_string())));
+    }
+
+    #[test]
+    fn parse_decimal_rejects_four_places() {
+        assert_eq!(Quality::parse_decimal("0.1234"), Err(QualityParseError::Invalid("0.1234".to_string())));
+    }
+
+    #[test]
+    fn parse_decimal_rejects_empty() {
+        assert_eq!(Quality::parse_decimal(""), Err(QualityParseError::Empty));
+    }
+
+    #[test]
+    fn parse_decimal_rejects_non_numeric() {
+        assert_eq!(Quality::parse_decimal("abc"), Err(QualityParseError::Invalid("abc".to_string())));
     }
 }

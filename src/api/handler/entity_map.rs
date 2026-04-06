@@ -1,10 +1,7 @@
 use crate::{
-    api::{
-        extractor::{accept::AcceptFormat, context::ContextUrl, entity_query::EntityQuery},
-        response::ngsild::NgsiLdResponse,
-        tenant::TenantState,
-    },
+    api::{extractor::entity_query::EntityQuery, response::ngsild::NgsiLdResponse, tenant::TenantState},
     error::{AndromedaError, api::ApiError},
+    http::extractor::{accept::AcceptFormat, context::ContextUrl},
     jsonld::ContextSpec,
 };
 use axum::{

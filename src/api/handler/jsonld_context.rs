@@ -1,7 +1,8 @@
 use crate::{
-    api::{extractor::params::ValidatedQuery, tenant::TenantState},
+    api::tenant::TenantState,
     domain::jsonld_context::ContextKind,
     error::{AndromedaError, api::ApiError},
+    http::extractor::query::ValidatedQuery,
 };
 use axum::{
     Json,

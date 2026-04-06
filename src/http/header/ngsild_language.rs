@@ -13,7 +13,7 @@
 //! request header instead of a query parameter.
 
 use crate::http::model::{
-    language::LanguageRange,
+    language::{LanguageFilter, LanguageRange},
     quality::{Quality, QualityValue},
 };
 use axum::http::{HeaderName, HeaderValue};
@@ -33,9 +33,9 @@ use langtag::LangTagBuf;
 pub struct NgsiLdLanguage(Vec<QualityValue<LanguageRange>>);
 
 impl NgsiLdLanguage {
-    /// Return all parsed language preferences.
-    pub fn preferences(&self) -> &[QualityValue<LanguageRange>] {
-        &self.0
+    /// Consume the header and return the inner preference list.
+    pub fn into_preferences(self) -> Vec<QualityValue<LanguageRange>> {
+        self.0
     }
 }
 
@@ -100,12 +100,15 @@ fn parse_language_preference(raw: &str) -> Option<QualityValue<LanguageRange>> {
 /// Parse a `q=0.9` parameter string into a [`Quality`] value.
 fn parse_quality_param(param: &str) -> Option<Quality> {
     let q_str = param.strip_prefix("q=").or_else(|| param.strip_prefix("Q="))?;
+    Quality::parse_decimal(q_str).ok()
+}
 
-    let f: f32 = q_str.parse().ok()?;
-    if !(0.0..=1.0).contains(&f) {
-        return None;
+impl From<NgsiLdLanguage> for LanguageFilter {
+    fn from(header: NgsiLdLanguage) -> LanguageFilter {
+        // NgsiLdLanguage always has at least one preference (decode rejects empty),
+        // so bypassing LanguageFilter::new() validation is safe.
+        LanguageFilter::from_nonempty(header.into_preferences())
     }
-    Quality::new((f * 1000.0) as u16)
 }
 
 #[cfg(test)]
@@ -163,38 +166,38 @@ mod tests {
 
     #[test]
     fn ordered_via_language_filter() {
-        use crate::query::lang::LanguageFilter;
+        use crate::http::model::language::LanguageFilter;
 
         let header = decode_header("en;q=0.5, fr;q=0.9, de").expect("valid");
         let filter = LanguageFilter::from(header);
         let ordered = filter.ordered();
-        assert_eq!(ordered[0].range().to_string(), "de");
-        assert_eq!(ordered[1].range().to_string(), "fr");
-        assert_eq!(ordered[2].range().to_string(), "en");
+        assert_eq!(ordered[0].value().to_string(), "de");
+        assert_eq!(ordered[1].value().to_string(), "fr");
+        assert_eq!(ordered[2].value().to_string(), "en");
     }
 
     #[test]
     fn ordered_preserves_input_order_for_equal_quality() {
-        use crate::query::lang::LanguageFilter;
+        use crate::http::model::language::LanguageFilter;
 
         let header = decode_header("de, en, fr").expect("valid");
         let filter = LanguageFilter::from(header);
         let ordered = filter.ordered();
-        assert_eq!(ordered[0].range().to_string(), "de");
-        assert_eq!(ordered[1].range().to_string(), "en");
-        assert_eq!(ordered[2].range().to_string(), "fr");
+        assert_eq!(ordered[0].value().to_string(), "de");
+        assert_eq!(ordered[1].value().to_string(), "en");
+        assert_eq!(ordered[2].value().to_string(), "fr");
     }
 
     #[test]
     fn ordered_excludes_zero_quality() {
-        use crate::query::lang::LanguageFilter;
+        use crate::http::model::language::LanguageFilter;
 
         let header = decode_header("de;q=0, en;q=0.8, *;q=0.5").expect("valid");
         let filter = LanguageFilter::from(header);
         let ordered = filter.ordered();
         assert_eq!(ordered.len(), 2);
-        assert_eq!(ordered[0].range().to_string(), "en");
-        assert_eq!(ordered[1].range().to_string(), "*");
+        assert_eq!(ordered[0].value().to_string(), "en");
+        assert_eq!(ordered[1].value().to_string(), "*");
     }
 
     #[test]

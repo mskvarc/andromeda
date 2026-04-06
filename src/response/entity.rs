@@ -9,8 +9,7 @@ use crate::{
         uri::Uri,
     },
     error::AndromedaError,
-    http::model::language::LanguageRange,
-    query::lang::{LanguageFilter, LanguageFilterError},
+    http::model::language::{LanguageFilter, LanguageFilterError, LanguageRange},
 };
 use chrono::{DateTime, SecondsFormat, Utc};
 use indexmap::IndexMap;
@@ -106,7 +105,7 @@ fn negotiate_language_property<'a>(language_property: &'a LanguageProperty, filt
     let available = language_entries(&language_property.language_map)?;
 
     for preference in filter.ordered() {
-        let range = preference.range();
+        let range = preference.value();
         match range {
             LanguageRange::Wildcard => {
                 if let Some(entry) = available.iter().find(|entry| matches!(entry.range, AvailableLanguageRange::Tag(_))) {
@@ -368,7 +367,7 @@ fn simplify_attr_value(value: &Value) -> Value {
 #[cfg(test)]
 mod tests {
     use super::{render_entity, simplify_entity, simplify_value};
-    use crate::{domain::entity::Entity, query::lang::LanguageFilter};
+    use crate::{domain::entity::Entity, http::parameter::language};
     use serde_json::{Value, json};
 
     fn parse_entity(value: Value) -> Entity {
@@ -431,7 +430,7 @@ mod tests {
                 }
             }
         }));
-        let filter = LanguageFilter::parse("fr").expect("language filter");
+        let filter = language::parse("fr").expect("language filter");
 
         let rendered = render_entity(&entity, Some(&filter)).expect("rendered entity");
 
@@ -453,7 +452,7 @@ mod tests {
                 }
             }
         }));
-        let filter = LanguageFilter::parse("*").expect("language filter");
+        let filter = language::parse("*").expect("language filter");
 
         let rendered = render_entity(&entity, Some(&filter)).expect("rendered entity");
 
@@ -475,7 +474,7 @@ mod tests {
                 }
             }
         }));
-        let filter = LanguageFilter::parse("fr").expect("language filter");
+        let filter = language::parse("fr").expect("language filter");
 
         let rendered = render_entity(&entity, Some(&filter)).expect("rendered entity");
         let simplified = simplify_value(&rendered);

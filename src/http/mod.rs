@@ -1,4 +1,6 @@
-//! HTTP layer: typed headers and reusable HTTP model types for NGSI-LD.
+//! HTTP layer: typed headers, model types, parameter parsing, and extractors for NGSI-LD.
 
+pub mod extractor;
 pub mod header;
 pub mod model;
+pub mod parameter;

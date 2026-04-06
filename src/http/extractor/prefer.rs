@@ -12,7 +12,7 @@ use headers::HeaderMapExt;
 
 /// Parsed Prefer request header per RFC 7240 and NGSI-LD clause 6.3.6.
 ///
-/// This is an API-layer convenience type for axum extraction. The underlying
+/// This is an HTTP-layer convenience type for axum extraction. The underlying
 /// domain types (`GeoJsonBodyPreference`, `NgsiLdVersion`) live in `crate::http::model`.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct PreferHeader {

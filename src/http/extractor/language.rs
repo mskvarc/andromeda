@@ -5,7 +5,7 @@
 //! 1. The `lang` query parameter (spec-mandated, NGSI-LD clause 6.3.5)
 //! 2. The `NGSILD-Language` custom header (Andromeda-specific fallback)
 
-use crate::{api::extractor::error::ExtractorRejection, http::header::NgsiLdLanguage, query::lang::LanguageFilter};
+use crate::http::{extractor::error::ExtractorRejection, header::NgsiLdLanguage, model::language::LanguageFilter, parameter};
 use axum::{extract::FromRequestParts, http::request::Parts};
 use headers::HeaderMapExt;
 use url::form_urlencoded;
@@ -37,7 +37,7 @@ where
         });
 
         if let Some(value) = lang_from_query {
-            let filter = LanguageFilter::parse(&value).map_err(|error| ExtractorRejection::bad_request_data(error.to_string(), uri))?;
+            let filter = parameter::language::parse(&value).map_err(|error| ExtractorRejection::bad_request_data(error.to_string(), uri))?;
             return Ok(LanguageNegotiation(Some(filter)));
         }
 
@@ -99,7 +99,7 @@ mod tests {
         let ordered = filter.ordered();
         assert_eq!(ordered.len(), 1);
         assert!(matches!(
-            ordered[0].range(),
+            ordered[0].value(),
             crate::http::model::language::LanguageRange::Tag(tag) if tag.to_string() == "fr"
         ));
     }

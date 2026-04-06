@@ -30,7 +30,6 @@ impl ResponseFormat {
     }
 
     /// Whether @context should be included in the response body.
-    #[allow(dead_code)]
     pub const fn include_context_in_body(&self) -> bool {
         matches!(self, ResponseFormat::JsonLd)
     }

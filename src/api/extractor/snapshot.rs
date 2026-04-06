@@ -1,4 +1,4 @@
-use crate::{api::extractor::error::ExtractorRejection, http::header::NgsiLdSnapshot};
+use crate::http::{extractor::error::ExtractorRejection, header::NgsiLdSnapshot};
 use axum::{extract::FromRequestParts, http::request::Parts};
 use headers::HeaderMapExt;
 

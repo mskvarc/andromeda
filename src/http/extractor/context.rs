@@ -9,6 +9,7 @@ use std::str::FromStr;
 pub struct ContextUrl(pub ContextSpec);
 
 impl ContextUrl {
+    /// Consume the extractor and return the inner [`ContextSpec`].
     pub fn into_inner(self) -> ContextSpec {
         self.0
     }

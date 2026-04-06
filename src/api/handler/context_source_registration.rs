@@ -1,11 +1,14 @@
 use crate::{
     api::{
-        extractor::{accept::AcceptFormatNoGeo, context::ContextUrl, jsonld::JsonLd, params::ValidatedQuery},
+        extractor::jsonld::JsonLd,
         response::ngsild::{NgsiLdCollectionResponse, NgsiLdResponse},
         tenant::TenantState,
     },
     error::api::ApiError,
-    http::header::link::{Link, LinkValue},
+    http::{
+        extractor::{accept::AcceptFormatNoGeo, context::ContextUrl, query::ValidatedQuery},
+        header::link::{Link, LinkValue},
+    },
     jsonld::ContextSpec,
     query::csr::CsrQueryParameters,
 };

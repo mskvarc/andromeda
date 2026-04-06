@@ -2,13 +2,16 @@
 
 use crate::{
     api::{
-        extractor::{accept::AcceptFormat, context::ContextUrl, jsonld::JsonLd},
+        extractor::jsonld::JsonLd,
         handler::entity_operations::{EntitySelection, GeoQueryRequest},
         response::ngsild::NgsiLdCollectionResponse,
         tenant::TenantState,
     },
     error::api::ApiError,
-    http::header::Via,
+    http::{
+        extractor::{accept::AcceptFormat, context::ContextUrl},
+        header::Via,
+    },
     query::temporal::TemporalQueryParameters,
     service::context_source_forwarding::{ForwardingOperation, collect_warnings, merge_temporal_query_results},
 };

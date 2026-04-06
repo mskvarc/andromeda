@@ -1,6 +1,6 @@
 use crate::{
     api::{
-        extractor::{accept::AcceptFormat, context::ContextUrl, jsonld::JsonLd, params::ValidatedQuery, protocol::NgsiLdProtocolHeaders},
+        extractor::{jsonld::JsonLd, protocol::NgsiLdProtocolHeaders},
         response::ngsild::NgsiLdCollectionResponse,
         tenant::{TenantState, TenantStateOrCreate},
     },
@@ -14,7 +14,10 @@ use crate::{
         batch::{BatchEntityError, BatchProblemDetail},
         ngsi_ld::NgsiLdErrorType,
     },
-    http::header::Via,
+    http::{
+        extractor::{accept::AcceptFormat, context::ContextUrl, query::ValidatedQuery},
+        header::Via,
+    },
     jsonld::ContextSpec,
     query::entity::EntityQueryParameters,
     response::entity::{apply_inline_join, render_entity, simplify_entity, simplify_value},

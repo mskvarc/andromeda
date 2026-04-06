@@ -4,10 +4,7 @@
 //! parsing, preventing false positives like `application/json-patch+json`
 //! matching `application/json`.
 
-use crate::{
-    api::extractor::error::ExtractorRejection,
-    http::{header::Accept, model::response_format::ResponseFormat},
-};
+use crate::http::{extractor::error::ExtractorRejection, header::Accept, model::response_format::ResponseFormat};
 use axum::{
     extract::FromRequestParts,
     http::{StatusCode, header::ACCEPT, request::Parts},
