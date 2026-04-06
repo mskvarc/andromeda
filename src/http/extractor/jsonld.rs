@@ -17,8 +17,16 @@ use mediatype::{MediaTypeBuf, names};
 use serde::de::DeserializeOwned;
 use std::collections::HashSet;
 
+/// Axum extractor for NGSI-LD JSON-LD request bodies.
+///
+/// Validates the `Content-Type` header against the supported NGSI-LD media types
+/// (`application/json`, `application/ld+json`, `application/merge-patch+json`),
+/// extracts and merges `@context` values from the body when present, and
+/// deserializes the context-stripped payload into `T`.
 pub struct JsonLd<T> {
+    /// The deserialized request body with `@context` removed.
     pub value: T,
+    /// The extracted context specification from the body and/or Link header.
     pub context: ContextSpec,
 }
 

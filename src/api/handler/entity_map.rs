@@ -1,8 +1,8 @@
 use crate::{
-    api::{extractor::entity_query::EntityQuery, tenant::TenantState},
+    api::tenant::TenantState,
     error::{AndromedaError, api::ApiError},
     http::{
-        extractor::{accept::AcceptFormat, context::ContextUrl, prefer::PreferHeader},
+        extractor::{accept::AcceptFormat, context::ContextUrl, entity_query::EntityQuery, prefer::PreferHeader},
         response::single::NgsiLdResponse,
     },
     jsonld::ContextSpec,

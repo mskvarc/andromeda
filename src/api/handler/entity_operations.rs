@@ -1,8 +1,5 @@
 use crate::{
-    api::{
-        extractor::{jsonld::JsonLd, protocol::NgsiLdProtocolHeaders},
-        tenant::{TenantState, TenantStateOrCreate},
-    },
+    api::tenant::{TenantState, TenantStateOrCreate},
     domain::{
         entity::{Entity, EntityTypeValue},
         registration::ForwardingMode,
@@ -14,8 +11,15 @@ use crate::{
         ngsi_ld::NgsiLdErrorType,
     },
     http::{
-        extractor::{accept::AcceptFormat, context::ContextUrl, prefer::PreferHeader, query::ValidatedQuery},
-        header::via::Via,
+        extractor::{
+            accept::AcceptFormat,
+            context::ContextUrl,
+            jsonld::JsonLd,
+            prefer::PreferHeader,
+            protocol::NgsiLdProtocolHeaders,
+            query::ValidatedQuery,
+            via::IncomingVia,
+        },
         parameter::entity_operations::{PostQueryParams, UpdateParams, UpsertParams},
         response::{batch::NgsiLdBatchResponse, collection::NgsiLdCollectionResponse},
     },
@@ -27,7 +31,7 @@ use crate::{
 use axum::{
     Json,
     body::Bytes,
-    extract::OriginalUri,
+    extract::{FromRequest, OriginalUri, Request},
     http::{HeaderMap, StatusCode, Uri, header::CONTENT_TYPE},
     response::{IntoResponse, Response},
 };
@@ -496,22 +500,49 @@ fn has_supported_json_content_type(headers: &HeaderMap) -> bool {
     classify_batch_content_type(headers.get(CONTENT_TYPE).and_then(|v| v.to_str().ok()).unwrap_or("")).is_some()
 }
 
+/// Validated batch request body with associated headers.
+///
+/// Bundles the request headers and body bytes for batch entity operations,
+/// rejecting the request with 415 Unsupported Media Type if the Content-Type
+/// is not a supported JSON variant (`application/json` or `application/ld+json`).
+pub(crate) struct BatchBody {
+    /// Request headers, needed by [`parse_batch_entities`] for Content-Type
+    /// classification and Link header conflict detection.
+    pub(crate) headers: HeaderMap,
+    /// Raw request body bytes.
+    pub(crate) body: Bytes,
+}
+
+impl<S> FromRequest<S> for BatchBody
+where
+    S: Send + Sync,
+{
+    type Rejection = Response;
+
+    async fn from_request(req: Request, state: &S) -> Result<Self, Self::Rejection> {
+        let (mut parts, body) = req.into_parts();
+        if !has_supported_json_content_type(&parts.headers) {
+            return Err(StatusCode::UNSUPPORTED_MEDIA_TYPE.into_response());
+        }
+        // Move headers out before reassembling the request for body extraction.
+        // Bytes::from_request does not inspect headers, so empty headers are safe.
+        let headers = std::mem::take(&mut parts.headers);
+        let req = Request::from_parts(parts, body);
+        let body = Bytes::from_request(req, state).await.map_err(IntoResponse::into_response)?;
+        Ok(BatchBody { headers, body })
+    }
+}
+
 pub async fn batch_create(
     TenantStateOrCreate(state): TenantStateOrCreate,
     OriginalUri(uri): OriginalUri,
     accept: AcceptFormat,
     context: ContextUrl,
-    headers: HeaderMap,
-    body: Bytes,
+    IncomingVia(incoming_via): IncomingVia,
+    BatchBody { headers, body }: BatchBody,
 ) -> Result<Response, ApiError> {
-    if !has_supported_json_content_type(&headers) {
-        return Ok(StatusCode::UNSUPPORTED_MEDIA_TYPE.into_response());
-    }
     let service = &state.entities;
-    let incoming_via: Option<Via> = {
-        let mut via_values = headers.get_all("via").iter();
-        headers::Header::decode(&mut via_values).ok()
-    };
+
     let (entities, context, mut parse_errors) = parse_batch_entities(&body, &headers, &context, &uri)?;
 
     if entities.is_empty() && parse_errors.is_empty() {
@@ -583,17 +614,11 @@ pub async fn batch_upsert(
     accept: AcceptFormat,
     context: ContextUrl,
     ValidatedQuery(params): ValidatedQuery<UpsertParams>,
-    headers: HeaderMap,
-    body: Bytes,
+    IncomingVia(incoming_via): IncomingVia,
+    BatchBody { headers, body }: BatchBody,
 ) -> Result<Response, ApiError> {
-    if !has_supported_json_content_type(&headers) {
-        return Ok(StatusCode::UNSUPPORTED_MEDIA_TYPE.into_response());
-    }
     let service = &state.entities;
-    let incoming_via: Option<Via> = {
-        let mut via_values = headers.get_all("via").iter();
-        headers::Header::decode(&mut via_values).ok()
-    };
+
     let (entities, context, mut parse_errors) = parse_batch_entities(&body, &headers, &context, &uri)?;
 
     if entities.is_empty() && parse_errors.is_empty() {
@@ -674,17 +699,11 @@ pub async fn batch_update(
     accept: AcceptFormat,
     context: ContextUrl,
     ValidatedQuery(params): ValidatedQuery<UpdateParams>,
-    headers: HeaderMap,
-    body: Bytes,
+    IncomingVia(incoming_via): IncomingVia,
+    BatchBody { headers, body }: BatchBody,
 ) -> Result<Response, ApiError> {
-    if !has_supported_json_content_type(&headers) {
-        return Ok(StatusCode::UNSUPPORTED_MEDIA_TYPE.into_response());
-    }
     let service = &state.entities;
-    let incoming_via: Option<Via> = {
-        let mut via_values = headers.get_all("via").iter();
-        headers::Header::decode(&mut via_values).ok()
-    };
+
     let (entities, context, mut parse_errors) = parse_batch_entities(&body, &headers, &context, &uri)?;
 
     if entities.is_empty() && parse_errors.is_empty() {
@@ -755,17 +774,11 @@ pub async fn batch_merge(
     OriginalUri(uri): OriginalUri,
     accept: AcceptFormat,
     context: ContextUrl,
-    headers: HeaderMap,
-    body: Bytes,
+    IncomingVia(incoming_via): IncomingVia,
+    BatchBody { headers, body }: BatchBody,
 ) -> Result<Response, ApiError> {
-    if !has_supported_json_content_type(&headers) {
-        return Ok(StatusCode::UNSUPPORTED_MEDIA_TYPE.into_response());
-    }
     let service = &state.entities;
-    let incoming_via: Option<Via> = {
-        let mut via_values = headers.get_all("via").iter();
-        headers::Header::decode(&mut via_values).ok()
-    };
+
     let (entities, context, mut parse_errors) = parse_batch_entities(&body, &headers, &context, &uri)?;
 
     if entities.is_empty() && parse_errors.is_empty() {
@@ -830,14 +843,11 @@ pub async fn batch_delete(
     OriginalUri(uri): OriginalUri,
     accept: AcceptFormat,
     context: ContextUrl,
-    headers: HeaderMap,
+    IncomingVia(incoming_via): IncomingVia,
     body: Bytes,
 ) -> Result<Response, ApiError> {
     let service = &state.entities;
-    let incoming_via: Option<Via> = {
-        let mut via_values = headers.get_all("via").iter();
-        headers::Header::decode(&mut via_values).ok()
-    };
+
     let entity_ids: Vec<String> = serde_json::from_slice(&body).map_err(|e| {
         ApiError::from_error(
             AndromedaError::invalid_request(format!("Request body must be a JSON array of entity IDs: {}", e)),

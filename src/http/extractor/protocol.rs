@@ -5,7 +5,7 @@
 //! 6.3.5, 6.3.6, 6.3.18, 6.3.22).
 
 use crate::http::{
-    extractor::{error::ExtractorRejection, language::LanguageNegotiation, prefer::PreferHeader, snapshot::SnapshotHeader},
+    extractor::{error::ExtractorRejection, language::LanguageNegotiation, prefer::PreferHeader, snapshot::SnapshotHeader, via::IncomingVia},
     header::{ngsild_entity_map::NgsiLdEntityMap, via::Via},
     model::language::LanguageFilter,
 };
@@ -42,9 +42,10 @@ where
             Err(never) => match never {},
         };
         let snapshot = SnapshotHeader::from_request_parts(parts, state).await?;
-        let incoming_via = {
-            let mut via_values = parts.headers.get_all("via").iter();
-            headers::Header::decode(&mut via_values).ok()
+        // IncomingVia is infallible, so unwrap via match.
+        let incoming_via = match IncomingVia::from_request_parts(parts, state).await {
+            Ok(v) => v.into_inner(),
+            Err(never) => match never {},
         };
         let entity_map: Option<NgsiLdEntityMap> = {
             let mut values = parts.headers.get_all("ngsild-entitymap").iter();
@@ -58,5 +59,48 @@ where
             incoming_via,
             entity_map,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::http::Request;
+
+    #[tokio::test]
+    async fn extracts_defaults_with_no_headers() {
+        let req = Request::builder().uri("/ngsi-ld/v1/entities").body(()).unwrap();
+        let (mut parts, _) = req.into_parts();
+
+        let result = NgsiLdProtocolHeaders::from_request_parts(&mut parts, &()).await;
+        assert!(result.is_ok());
+        let headers = result.unwrap();
+        assert!(headers.language_filter.is_none());
+        assert!(headers.incoming_via.is_none());
+        assert!(headers.entity_map.is_none());
+    }
+
+    #[tokio::test]
+    async fn extracts_language_from_query_param() {
+        let req = Request::builder().uri("/ngsi-ld/v1/entities?lang=en").body(()).unwrap();
+        let (mut parts, _) = req.into_parts();
+
+        let result = NgsiLdProtocolHeaders::from_request_parts(&mut parts, &()).await;
+        assert!(result.is_ok());
+        let headers = result.unwrap();
+        assert!(headers.language_filter.is_some());
+    }
+
+    #[tokio::test]
+    async fn rejects_invalid_snapshot_header() {
+        let req = Request::builder()
+            .uri("/ngsi-ld/v1/entities")
+            .header("ngsild-snapshot", "not-a-valid-urn")
+            .body(())
+            .unwrap();
+        let (mut parts, _) = req.into_parts();
+
+        let result = NgsiLdProtocolHeaders::from_request_parts(&mut parts, &()).await;
+        assert!(matches!(result, Err(ExtractorRejection::BadRequestData { .. })));
     }
 }

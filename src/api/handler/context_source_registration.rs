@@ -1,8 +1,8 @@
 use crate::{
-    api::{extractor::jsonld::JsonLd, tenant::TenantState},
+    api::tenant::TenantState,
     error::api::ApiError,
     http::{
-        extractor::{accept::AcceptFormatNoGeo, context::ContextUrl, prefer::PreferHeader, query::ValidatedQuery},
+        extractor::{accept::AcceptFormatNoGeo, context::ContextUrl, jsonld::JsonLd, prefer::PreferHeader, query::ValidatedQuery},
         response::{
             collection::NgsiLdCollectionResponse,
             pagination::{PaginationMediaType, PaginationStyle, append_pagination_links},

@@ -1,16 +1,20 @@
 use crate::{
-    api::{
-        extractor::{entity_query::EntityQuery, jsonld::JsonLd, protocol::NgsiLdProtocolHeaders},
-        tenant::{TenantState, TenantStateOrCreate},
-    },
+    api::tenant::{TenantState, TenantStateOrCreate},
     domain::{
         entity::{Entity, EntityPatch, EntityTypeValue},
         registration::ForwardingMode,
     },
     error::{AndromedaError, api::ApiError},
     http::{
-        extractor::{accept::AcceptFormat, context::ContextUrl, query::ValidatedQuery},
-        header::via::Via,
+        extractor::{
+            accept::AcceptFormat,
+            context::ContextUrl,
+            entity_query::EntityQuery,
+            jsonld::JsonLd,
+            protocol::NgsiLdProtocolHeaders,
+            query::ValidatedQuery,
+            via::IncomingVia,
+        },
         parameter::{
             DeleteAttrParams,
             LocalOnlyParams,
@@ -37,7 +41,7 @@ use crate::{
 use axum::{
     Json,
     extract::{OriginalUri, Path},
-    http::{HeaderMap, StatusCode},
+    http::StatusCode,
     response::{IntoResponse, Response},
 };
 use serde_json::Value;
@@ -75,7 +79,7 @@ pub async fn create(
     OriginalUri(uri): OriginalUri,
     ValidatedQuery(params): ValidatedQuery<LocalOnlyParams>,
     context: ContextUrl,
-    headers: HeaderMap,
+    IncomingVia(incoming_via): IncomingVia,
     JsonLd {
         value: entity,
         context: body_context,
@@ -84,10 +88,6 @@ pub async fn create(
     let service = &state.entities;
     let context = context.merge(body_context);
     let is_local = params.local.unwrap_or(false);
-    let incoming_via: Option<Via> = {
-        let mut via_values = headers.get_all("via").iter();
-        headers::Header::decode(&mut via_values).ok()
-    };
 
     if is_local {
         let id = service.create(&entity, &context).await.map_err(|e| e.with_instance(uri.clone()))?;
@@ -396,17 +396,13 @@ pub async fn delete(
     context: ContextUrl,
     Path(id): Path<String>,
     ValidatedQuery(params): ValidatedQuery<LocalOnlyParams>,
-    headers: HeaderMap,
+    IncomingVia(incoming_via): IncomingVia,
 ) -> Result<Response, ApiError> {
     let service = &state.entities;
     let id: Urn = id
         .parse()
         .map_err(|_| ApiError::from_error(AndromedaError::bad_request_data("Invalid entity id: not a valid URI".to_string()), uri.clone()))?;
     let is_local = params.local.unwrap_or(false);
-    let incoming_via: Option<Via> = {
-        let mut via_values = headers.get_all("via").iter();
-        headers::Header::decode(&mut via_values).ok()
-    };
 
     if is_local {
         service.delete(&id).await.map_err(|e| e.with_instance(uri.clone()))?;
@@ -827,7 +823,7 @@ pub async fn merge(
     context: ContextUrl,
     Path(id): Path<String>,
     ValidatedQuery(params): ValidatedQuery<LocalOnlyParams>,
-    headers: HeaderMap,
+    IncomingVia(incoming_via): IncomingVia,
     JsonLd {
         value: patch,
         context: body_context,
@@ -837,10 +833,6 @@ pub async fn merge(
     let id = parse_entity_id(&id, &uri)?;
     let context = context.merge(body_context);
     let is_local = params.local.unwrap_or(false);
-    let incoming_via: Option<Via> = {
-        let mut via_values = headers.get_all("via").iter();
-        headers::Header::decode(&mut via_values).ok()
-    };
 
     if is_local {
         service.merge(&id, &patch, &context).await.map_err(|e| e.with_instance(uri.clone()))?;
@@ -909,7 +901,7 @@ pub async fn update(
     context: ContextUrl,
     Path(id): Path<String>,
     ValidatedQuery(params): ValidatedQuery<LocalOnlyParams>,
-    headers: HeaderMap,
+    IncomingVia(incoming_via): IncomingVia,
     JsonLd {
         value: patch,
         context: body_context,
@@ -919,10 +911,6 @@ pub async fn update(
     let id = parse_entity_id(&id, &uri)?;
     let context = context.merge(body_context);
     let is_local = params.local.unwrap_or(false);
-    let incoming_via: Option<Via> = {
-        let mut via_values = headers.get_all("via").iter();
-        headers::Header::decode(&mut via_values).ok()
-    };
 
     if is_local {
         service.replace_entity(&id, &patch, &context).await.map_err(|e| e.with_instance(uri.clone()))?;
@@ -989,7 +977,7 @@ pub async fn append_attrs(
     context: ContextUrl,
     Path(id): Path<String>,
     ValidatedQuery(params): ValidatedQuery<AppendParams>,
-    headers: HeaderMap,
+    IncomingVia(incoming_via): IncomingVia,
     JsonLd {
         value: fragment,
         context: body_context,
@@ -999,10 +987,6 @@ pub async fn append_attrs(
     let id = parse_entity_id(&id, &uri)?;
     let context = context.merge(body_context);
     let no_overwrite = params.options.as_deref().is_some_and(|o: &str| o.contains("noOverwrite"));
-    let incoming_via: Option<Via> = {
-        let mut via_values = headers.get_all("via").iter();
-        headers::Header::decode(&mut via_values).ok()
-    };
 
     // Forward to matching context sources
     let context_url = context.link_contexts().first().map(|s| s.as_str());
@@ -1102,7 +1086,7 @@ pub async fn update_attrs(
     OriginalUri(uri): OriginalUri,
     context: ContextUrl,
     Path(id): Path<String>,
-    headers: HeaderMap,
+    IncomingVia(incoming_via): IncomingVia,
     JsonLd {
         value: fragment,
         context: body_context,
@@ -1111,10 +1095,6 @@ pub async fn update_attrs(
     let service = &state.entities;
     let id = parse_entity_id(&id, &uri)?;
     let context = context.merge(body_context);
-    let incoming_via: Option<Via> = {
-        let mut via_values = headers.get_all("via").iter();
-        headers::Header::decode(&mut via_values).ok()
-    };
 
     // Forward to matching context sources
     let context_url = context.link_contexts().first().map(|s| s.as_str());
@@ -1204,7 +1184,7 @@ pub async fn partial_update_attr(
     context: ContextUrl,
     Path((id, attr_id)): Path<(String, String)>,
     ValidatedQuery(params): ValidatedQuery<PartialUpdateAttrParams>,
-    headers: HeaderMap,
+    IncomingVia(incoming_via): IncomingVia,
     JsonLd {
         value: fragment,
         context: body_context,
@@ -1213,10 +1193,6 @@ pub async fn partial_update_attr(
     let service = &state.entities;
     let id = parse_entity_id(&id, &uri)?;
     let context = context.merge(body_context);
-    let incoming_via: Option<Via> = {
-        let mut via_values = headers.get_all("via").iter();
-        headers::Header::decode(&mut via_values).ok()
-    };
 
     // Forward to matching context sources
     let context_url = context.link_contexts().first().map(|s| s.as_str());
@@ -1281,16 +1257,12 @@ pub async fn delete_attr(
     context: ContextUrl,
     Path((id, attr_id)): Path<(String, String)>,
     ValidatedQuery(params): ValidatedQuery<DeleteAttrParams>,
-    headers: HeaderMap,
+    IncomingVia(incoming_via): IncomingVia,
 ) -> Result<Response, ApiError> {
     let service = &state.entities;
     let id = parse_entity_id(&id, &uri)?;
     let context: ContextSpec = context.into_inner();
     let delete_all = params.delete_all.unwrap_or(false);
-    let incoming_via: Option<Via> = {
-        let mut via_values = headers.get_all("via").iter();
-        headers::Header::decode(&mut via_values).ok()
-    };
 
     // Forward to matching context sources
     let context_url = context.link_contexts().first().map(|s| s.as_str());
@@ -1392,15 +1364,11 @@ pub async fn delete_by_query(
     TenantState(state): TenantState,
     OriginalUri(uri): OriginalUri,
     context: ContextUrl,
-    headers: HeaderMap,
+    IncomingVia(incoming_via): IncomingVia,
     EntityQuery(query): EntityQuery,
 ) -> Result<Response, ApiError> {
     let is_local = query.local.unwrap_or(false);
     let context: ContextSpec = context.into_inner();
-    let incoming_via: Option<Via> = {
-        let mut via_values = headers.get_all("via").iter();
-        headers::Header::decode(&mut via_values).ok()
-    };
 
     let compiled = state
         .entity_query

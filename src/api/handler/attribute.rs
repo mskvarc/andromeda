@@ -2,8 +2,7 @@ use crate::{
     api::tenant::TenantState,
     error::api::ApiError,
     http::{
-        extractor::{accept::AcceptFormat, context::ContextUrl, prefer::PreferHeader, query::ValidatedQuery},
-        header::via::Via,
+        extractor::{accept::AcceptFormat, context::ContextUrl, prefer::PreferHeader, query::ValidatedQuery, via::IncomingVia},
         parameter::{DiscoveryListParams, LocalOnlyParams},
         response::single::NgsiLdResponse,
     },
@@ -13,7 +12,6 @@ use crate::{
 };
 use axum::{
     extract::{OriginalUri, Path},
-    http::HeaderMap,
     response::{IntoResponse, Response},
 };
 
@@ -22,7 +20,7 @@ pub async fn list(
     OriginalUri(uri): OriginalUri,
     accept: AcceptFormat,
     context: ContextUrl,
-    headers: HeaderMap,
+    IncomingVia(incoming_via): IncomingVia,
     ValidatedQuery(params): ValidatedQuery<DiscoveryListParams>,
 ) -> Result<Response, ApiError> {
     let service = &state.entity_discovery;
@@ -34,10 +32,6 @@ pub async fn list(
     let (result, warnings) = if is_local {
         (local_result, Vec::new())
     } else {
-        let incoming_via: Option<Via> = {
-            let mut via_values = headers.get_all("via").iter();
-            headers::Header::decode(&mut via_values).ok()
-        };
         let context_url = context.link_contexts().first().map(|s| s.as_str());
         let query_string = uri.query().unwrap_or("");
         let forwarded = state
@@ -58,7 +52,7 @@ pub async fn get(
     OriginalUri(uri): OriginalUri,
     accept: AcceptFormat,
     context: ContextUrl,
-    headers: HeaderMap,
+    IncomingVia(incoming_via): IncomingVia,
     Path(attr_id): Path<String>,
     ValidatedQuery(params): ValidatedQuery<LocalOnlyParams>,
 ) -> Result<Response, ApiError> {
@@ -71,10 +65,6 @@ pub async fn get(
     let (result, warnings) = if is_local {
         (local_result, Vec::new())
     } else {
-        let incoming_via: Option<Via> = {
-            let mut via_values = headers.get_all("via").iter();
-            headers::Header::decode(&mut via_values).ok()
-        };
         let context_url = context.link_contexts().first().map(|s| s.as_str());
         let query_string = uri.query().unwrap_or("");
         let path = format!("/attributes/{}", attr_id);

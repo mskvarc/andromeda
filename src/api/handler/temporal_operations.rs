@@ -2,14 +2,12 @@
 
 use crate::{
     api::{
-        extractor::jsonld::JsonLd,
         handler::entity_operations::{EntitySelection, GeoQueryRequest},
         tenant::TenantState,
     },
     error::api::ApiError,
     http::{
-        extractor::{accept::AcceptFormat, context::ContextUrl, prefer::PreferHeader},
-        header::via::Via,
+        extractor::{accept::AcceptFormat, context::ContextUrl, jsonld::JsonLd, prefer::PreferHeader, via::IncomingVia},
         response::collection::NgsiLdCollectionResponse,
     },
     query::temporal::TemporalQueryParameters,
@@ -18,7 +16,6 @@ use crate::{
 };
 use axum::{
     extract::OriginalUri,
-    http::HeaderMap,
     response::{IntoResponse, Response},
 };
 use serde::Deserialize;
@@ -58,7 +55,7 @@ pub async fn query(
     OriginalUri(uri): OriginalUri,
     accept: AcceptFormat,
     context: ContextUrl,
-    headers: HeaderMap,
+    IncomingVia(incoming_via): IncomingVia,
     JsonLd {
         value: request,
         context: body_context,
@@ -151,10 +148,6 @@ pub async fn query(
     let (entities, forwarding_warnings) = if is_local {
         (local_entities, Vec::new())
     } else {
-        let incoming_via: Option<Via> = {
-            let mut via_values = headers.get_all("via").iter();
-            headers::Header::decode(&mut via_values).ok()
-        };
         let context_url = context.link_contexts().first().map(|s| s.as_str());
         let entity_type = params.entity_type.as_deref();
         let entity_ids: Option<Vec<String>> = params.id.as_deref().map(|s| s.split(',').map(|id| id.trim().to_string()).collect());

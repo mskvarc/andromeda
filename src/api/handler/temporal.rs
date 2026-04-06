@@ -1,14 +1,18 @@
 //! API handlers for the NGSI-LD Temporal API.
 
 use crate::{
-    api::{
-        extractor::{jsonld::JsonLd, protocol::NgsiLdProtocolHeaders},
-        tenant::TenantState,
-    },
+    api::tenant::TenantState,
     domain::entity::Entity,
     error::{AndromedaError, api::ApiError, core::AndromedaErrorKind},
     http::{
-        extractor::{accept::AcceptFormatNoGeo, context::ContextUrl, prefer::PreferHeader, query::ValidatedQuery},
+        extractor::{
+            accept::AcceptFormatNoGeo,
+            context::ContextUrl,
+            jsonld::JsonLd,
+            prefer::PreferHeader,
+            protocol::NgsiLdProtocolHeaders,
+            query::ValidatedQuery,
+        },
         parameter::{DeleteAttrParams, EmptyParams},
         response::{collection::NgsiLdCollectionResponse, single::NgsiLdResponse},
     },

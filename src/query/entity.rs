@@ -155,6 +155,22 @@ impl EntityQueryParameters {
         }
     }
 
+    /// Whether any entity filter parameter is present.
+    ///
+    /// Per NGSI-LD 5.7.2.4, at least one filter (type, id, idPattern, q, attrs,
+    /// georel, scopeQ) must be provided unless `local=true`. A `q` parameter
+    /// that is present but empty/whitespace-only does not count as a filter.
+    pub fn has_any_filter(&self) -> bool {
+        let q_is_empty = self.q.as_ref().is_some_and(|s| s.trim().is_empty());
+        self.entity_type.is_some()
+            || self.id.is_some()
+            || self.id_pattern.is_some()
+            || self.attrs.is_some()
+            || self.georel.is_some()
+            || self.scope_q.is_some()
+            || (self.q.is_some() && !q_is_empty)
+    }
+
     /// Validate query parameters.
     pub fn validate(&self) -> Result<(), QueryError> {
         // Validate options parameter
@@ -474,5 +490,41 @@ mod tests {
         let err = p.validate().expect_err("expected invalid JSON rejection");
         assert!(matches!(err, QueryError::BadRequestData(_)));
         assert!(err.to_string().contains("orderFrom"));
+    }
+
+    #[test]
+    fn has_any_filter_with_type() {
+        let p = params_from_query("type=Vehicle");
+        assert!(p.has_any_filter());
+    }
+
+    #[test]
+    fn has_any_filter_with_id() {
+        let p = params_from_query("id=urn:ngsi-ld:T:1");
+        assert!(p.has_any_filter());
+    }
+
+    #[test]
+    fn has_any_filter_with_q() {
+        let p = params_from_query("q=speed%3E50");
+        assert!(p.has_any_filter());
+    }
+
+    #[test]
+    fn has_any_filter_empty_q_does_not_count() {
+        let p = params_from_query("q=%20");
+        assert!(!p.has_any_filter());
+    }
+
+    #[test]
+    fn has_any_filter_no_params() {
+        let p = params_from_query("");
+        assert!(!p.has_any_filter());
+    }
+
+    #[test]
+    fn has_any_filter_local_only_does_not_count() {
+        let p = params_from_query("local=true");
+        assert!(!p.has_any_filter());
     }
 }

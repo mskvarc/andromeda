@@ -1,9 +1,21 @@
+//! Entity query extractor with NGSI-LD filter validation.
+//!
+//! Parses and validates query parameters for entity listing endpoints,
+//! enforcing the filter requirement from ETSI GS CIM 009 clause 5.7.2.4:
+//! at least one filter or `local=true` must be present.
+
 use crate::{
     http::extractor::error::ExtractorRejection,
     query::{entity::EntityQueryParameters, error::QueryError},
 };
 use axum::{extract::FromRequestParts, http::request::Parts};
 
+/// Axum extractor for NGSI-LD entity query parameters.
+///
+/// Deserializes the query string into [`EntityQueryParameters`], validates
+/// option values and parameter constraints, and enforces the NGSI-LD 5.7.2.4
+/// requirement that at least one filter (type, id, idPattern, q, etc.) or
+/// `local=true` must be present.
 #[derive(Debug)]
 pub struct EntityQuery(pub EntityQueryParameters);
 
@@ -26,23 +38,8 @@ where
             QueryError::InvalidRequest(d) => ExtractorRejection::invalid_request(d, uri.clone()),
         })?;
 
-        // Validate at least one filter is present, UNLESS local=true
-        // Per NGSI-LD spec 5.7.2.4: At least one filter OR local scope must be provided
-        let q_is_empty = params.q.as_ref().is_some_and(|s| s.trim().is_empty());
-
-        // Allow empty query if local=true (per NGSI-LD spec 5.7.2.4)
-        let has_local_scope = params.local.unwrap_or(false);
-
-        let has_any_filter = params.entity_type.is_some()
-            || params.id.is_some()
-            || params.id_pattern.is_some()
-            || params.attrs.is_some()
-            || params.georel.is_some()
-            || params.scope_q.is_some()
-            || (params.q.is_some() && !q_is_empty);
-
-        // Only require filters if not in local scope
-        if !has_local_scope && !has_any_filter {
+        // Per NGSI-LD spec 5.7.2.4: at least one filter OR local=true must be provided
+        if !params.local.unwrap_or(false) && !params.has_any_filter() {
             return Err(ExtractorRejection::invalid_request(
                 "At least one of type, id, idPattern, q, or local=true must be provided",
                 uri,
@@ -50,13 +47,6 @@ where
         }
 
         Ok(EntityQuery(params))
-    }
-}
-
-#[allow(dead_code)]
-impl EntityQuery {
-    pub const fn inner(&self) -> &EntityQueryParameters {
-        &self.0
     }
 }
 
