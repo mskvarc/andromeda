@@ -14,7 +14,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use problem_details::ProblemDetails;
-use strum::Display;
+use strum::{Display, IntoStaticStr};
 
 use crate::error::core::{AndromedaError, AndromedaErrorKind};
 
@@ -25,7 +25,7 @@ use crate::error::core::{AndromedaError, AndromedaErrorKind};
 /// responses ([RFC 7807]).
 ///
 /// [RFC 7807]: https://www.rfc-editor.org/rfc/rfc7807
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Display)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Display, IntoStaticStr)]
 pub enum NgsiLdErrorType {
     /// The request was syntactically invalid (400).
     #[strum(to_string = "Invalid request")]
@@ -100,39 +100,24 @@ impl NgsiLdErrorType {
         }
     }
 
-    /// Returns the short human-readable title for this error category.
-    pub const fn title(self) -> &'static str {
-        match self {
-            Self::InvalidRequest => "Invalid request",
-            Self::BadRequestData => "Bad request data",
-            Self::AlreadyExists => "Already exists",
-            Self::Conflict => "Conflict",
-            Self::OperationNotSupported => "Operation not supported",
-            Self::ResourceNotFound => "Resource not found",
-            Self::InternalError => "Internal error",
-            Self::TooComplexQuery => "Too complex query",
-            Self::TooManyResults => "Too many results",
-            Self::LdContextNotAvailable => "LD context not available",
-            Self::NoMultiTenantSupport => "No multi-tenant support",
-            Self::NonexistentTenant => "Nonexistent tenant",
-        }
-    }
-
-    /// Returns the HTTP status code as a `u16` for this error category.
-    pub const fn status_u16(self) -> u16 {
-        match self {
-            Self::InvalidRequest => 400,
-            Self::BadRequestData => 400,
-            Self::AlreadyExists => 409,
-            Self::Conflict => 409,
-            Self::OperationNotSupported => 422,
-            Self::ResourceNotFound => 404,
-            Self::InternalError => 500,
-            Self::TooComplexQuery => 403,
-            Self::TooManyResults => 403,
-            Self::LdContextNotAvailable => 503,
-            Self::NoMultiTenantSupport => 501,
-            Self::NonexistentTenant => 404,
+    /// Resolves an ETSI type URI back to its [`NgsiLdErrorType`] variant.
+    ///
+    /// Returns `None` if the URI does not match any known error category.
+    pub fn from_type_uri(uri: &str) -> Option<NgsiLdErrorType> {
+        match uri {
+            Self::INVALID_REQUEST_URI => Some(NgsiLdErrorType::InvalidRequest),
+            Self::BAD_REQUEST_DATA_URI => Some(NgsiLdErrorType::BadRequestData),
+            Self::ALREADY_EXISTS_URI => Some(NgsiLdErrorType::AlreadyExists),
+            Self::CONFLICT_URI => Some(NgsiLdErrorType::Conflict),
+            Self::OPERATION_NOT_SUPPORTED_URI => Some(NgsiLdErrorType::OperationNotSupported),
+            Self::RESOURCE_NOT_FOUND_URI => Some(NgsiLdErrorType::ResourceNotFound),
+            Self::INTERNAL_ERROR_URI => Some(NgsiLdErrorType::InternalError),
+            Self::TOO_COMPLEX_QUERY_URI => Some(NgsiLdErrorType::TooComplexQuery),
+            Self::TOO_MANY_RESULTS_URI => Some(NgsiLdErrorType::TooManyResults),
+            Self::LD_CONTEXT_NOT_AVAILABLE_URI => Some(NgsiLdErrorType::LdContextNotAvailable),
+            Self::NO_MULTI_TENANT_SUPPORT_URI => Some(NgsiLdErrorType::NoMultiTenantSupport),
+            Self::NON_EXISTENT_TENANT_URI => Some(NgsiLdErrorType::NonexistentTenant),
+            _ => None,
         }
     }
 
@@ -142,7 +127,16 @@ impl NgsiLdErrorType {
     /// infallible in practice. Returns `500 Internal Server Error` in the
     /// unreachable case of an invalid code.
     pub const fn status_code(self) -> StatusCode {
-        match StatusCode::from_u16(self.status_u16()) {
+        match StatusCode::from_u16(match self {
+            Self::InvalidRequest | Self::BadRequestData => 400,
+            Self::AlreadyExists | Self::Conflict => 409,
+            Self::OperationNotSupported => 422,
+            Self::ResourceNotFound | Self::NonexistentTenant => 404,
+            Self::InternalError => 500,
+            Self::TooComplexQuery | Self::TooManyResults => 403,
+            Self::LdContextNotAvailable => 503,
+            Self::NoMultiTenantSupport => 501,
+        }) {
             Ok(code) => code,
             Err(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
@@ -229,7 +223,7 @@ impl IntoResponse for NgsiLdError {
 
         let problem = ProblemDetails::new()
             .with_type(Uri::from_static(self.error_type.type_uri()))
-            .with_title(self.error_type.title())
+            .with_title(Into::<&'static str>::into(self.error_type))
             .with_status(status)
             .with_detail(self.detail)
             .with_instance(self.instance);
@@ -262,7 +256,7 @@ mod tests {
         ];
         for v in &variants {
             assert!(v.type_uri().starts_with("https://uri.etsi.org/ngsi-ld/errors/"));
-            assert!(!v.title().is_empty());
+            assert!(!Into::<&'static str>::into(*v).is_empty());
         }
     }
 

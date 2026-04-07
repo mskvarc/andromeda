@@ -5,7 +5,15 @@
 //! expected by the NGSI-LD specification.
 
 use crate::{error::core::AndromedaError, http::error::problem::NgsiLdErrorType, service::entity::batch::BatchResult};
-use serde::{Deserialize, Serialize};
+use serde::{
+    Deserialize,
+    Deserializer,
+    Serialize,
+    Serializer,
+    de::{self, MapAccess, Visitor},
+    ser::SerializeStruct,
+};
+use std::fmt;
 
 /// Result of a batch operation (clause 6.17).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -23,55 +31,119 @@ pub struct BatchEntityError {
 }
 
 /// RFC 7807 Problem Detail within a batch error.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+///
+/// Stores the strongly-typed [`NgsiLdErrorType`] and a detail message.
+/// The `type` URI, `title`, and `status` fields are derived from the error
+/// type during serialisation to avoid redundant stringly-typed storage.
+#[derive(Debug, Clone, PartialEq)]
 pub struct BatchProblemDetail {
-    #[serde(rename = "type")]
-    pub type_: String,
-    pub title: String,
-    pub status: u16,
+    pub error_type: NgsiLdErrorType,
     pub detail: String,
 }
 
-impl From<BatchResult> for BatchOperationResult {
-    fn from(result: BatchResult) -> BatchOperationResult {
-        let errors = result.errors.iter().map(|(entity_id, err)| to_batch_error(entity_id, err)).collect();
-        BatchOperationResult {
-            success: result.success,
-            errors,
+impl Serialize for BatchProblemDetail {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let mut state = serializer.serialize_struct("BatchProblemDetail", 4)?;
+        state.serialize_field("type", self.error_type.type_uri())?;
+        state.serialize_field("title", Into::<&'static str>::into(self.error_type))?;
+        state.serialize_field("status", &self.error_type.status_code().as_u16())?;
+        state.serialize_field("detail", &self.detail)?;
+        state.end()
+    }
+}
+
+impl<'de> Deserialize<'de> for BatchProblemDetail {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<BatchProblemDetail, D::Error> {
+        deserializer.deserialize_struct("BatchProblemDetail", &["type", "title", "status", "detail"], BatchProblemDetailVisitor)
+    }
+}
+
+struct BatchProblemDetailVisitor;
+
+impl<'de> Visitor<'de> for BatchProblemDetailVisitor {
+    type Value = BatchProblemDetail;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("a BatchProblemDetail object with type, title, status, and detail fields")
+    }
+
+    fn visit_map<M: MapAccess<'de>>(self, mut map: M) -> Result<BatchProblemDetail, M::Error> {
+        let mut type_uri: Option<String> = None;
+        let mut detail: Option<String> = None;
+
+        while let Some(key) = map.next_key::<&str>()? {
+            match key {
+                "type" => type_uri = Some(map.next_value()?),
+                "detail" => detail = Some(map.next_value()?),
+                // title and status are derived from error_type; skip them
+                "title" | "status" => {
+                    let _ = map.next_value::<de::IgnoredAny>()?;
+                }
+                other => {
+                    return Err(de::Error::unknown_field(other, &["type", "title", "status", "detail"]));
+                }
+            }
+        }
+
+        let type_uri = type_uri.ok_or_else(|| de::Error::missing_field("type"))?;
+        let detail = detail.ok_or_else(|| de::Error::missing_field("detail"))?;
+        let error_type = NgsiLdErrorType::from_type_uri(&type_uri).ok_or_else(|| de::Error::custom(format!("unknown NGSI-LD error type URI: {type_uri}")))?;
+
+        Ok(BatchProblemDetail { error_type, detail })
+    }
+}
+
+impl BatchEntityError {
+    /// Creates a [`BatchEntityError`] from a domain error, mapping the
+    /// [`AndromedaErrorKind`] to its corresponding [`NgsiLdErrorType`].
+    ///
+    /// Internal errors are sanitised: the original detail is replaced with
+    /// `"Internal error"` and the full error is logged at `error` level.
+    pub fn from_domain_error(entity_id: &str, err: &AndromedaError) -> BatchEntityError {
+        let error_type: NgsiLdErrorType = err.kind().into();
+
+        let detail = if err.kind().is_internal() {
+            tracing::error!(
+                error = %err,
+                kind = ?err.kind(),
+                entity_id = %entity_id,
+                "Internal batch error (sanitized before sending to client)"
+            );
+            "Internal error".to_string()
+        } else {
+            err.message().to_string()
+        };
+
+        BatchEntityError {
+            entity_id: entity_id.to_string(),
+            error: BatchProblemDetail { error_type, detail },
+        }
+    }
+
+    /// Creates a [`BatchEntityError`] from a parse-level error where no
+    /// [`AndromedaError`] exists.
+    pub fn from_parse_error(entity_id: &str, error_type: NgsiLdErrorType, detail: &str) -> BatchEntityError {
+        BatchEntityError {
+            entity_id: entity_id.to_string(),
+            error: BatchProblemDetail {
+                error_type,
+                detail: detail.to_string(),
+            },
         }
     }
 }
 
-/// Converts a domain error into a [`BatchEntityError`] for the given entity.
-///
-/// Maps the [`AndromedaErrorKind`] to its corresponding [`NgsiLdErrorType`] to
-/// populate the RFC 7807 fields (type URI, title, status code).
-pub fn to_batch_error(entity_id: &str, err: &AndromedaError) -> BatchEntityError {
-    let error_type: NgsiLdErrorType = err.kind().into();
-
-    BatchEntityError {
-        entity_id: entity_id.to_string(),
-        error: BatchProblemDetail {
-            type_: error_type.type_uri().to_string(),
-            title: error_type.title().to_string(),
-            status: error_type.status_code().as_u16(),
-            detail: err.message().to_string(),
-        },
-    }
-}
-
-/// Converts a [`NgsiLdErrorType`] directly into a [`BatchEntityError`].
-///
-/// Used for parse-level errors where no [`AndromedaError`] exists.
-pub fn make_batch_parse_error(entity_id: &str, error_type: NgsiLdErrorType, detail: &str) -> BatchEntityError {
-    BatchEntityError {
-        entity_id: entity_id.to_string(),
-        error: BatchProblemDetail {
-            type_: error_type.type_uri().to_string(),
-            title: error_type.title().to_string(),
-            status: error_type.status_code().as_u16(),
-            detail: detail.to_string(),
-        },
+impl From<BatchResult> for BatchOperationResult {
+    fn from(result: BatchResult) -> BatchOperationResult {
+        let errors = result
+            .errors
+            .iter()
+            .map(|(entity_id, err)| BatchEntityError::from_domain_error(entity_id, err))
+            .collect();
+        BatchOperationResult {
+            success: result.success,
+            errors,
+        }
     }
 }
 
@@ -86,9 +158,7 @@ mod tests {
             errors: vec![BatchEntityError {
                 entity_id: "urn:ngsi-ld:Entity:2".to_string(),
                 error: BatchProblemDetail {
-                    type_: "https://uri.etsi.org/ngsi-ld/errors/AlreadyExists".to_string(),
-                    title: "Already exists".to_string(),
-                    status: 409,
+                    error_type: NgsiLdErrorType::AlreadyExists,
                     detail: "Entity already exists".to_string(),
                 },
             }],
@@ -105,9 +175,7 @@ mod tests {
         let error = BatchEntityError {
             entity_id: "urn:ngsi-ld:Entity:42".to_string(),
             error: BatchProblemDetail {
-                type_: "https://uri.etsi.org/ngsi-ld/errors/NotFound".to_string(),
-                title: "Not found".to_string(),
-                status: 404,
+                error_type: NgsiLdErrorType::ResourceNotFound,
                 detail: "Not found".to_string(),
             },
         };
@@ -118,17 +186,18 @@ mod tests {
     }
 
     #[test]
-    fn batch_problem_detail_renames_type() {
+    fn batch_problem_detail_serializes_rfc7807_fields() {
         let detail = BatchProblemDetail {
-            type_: "https://uri.etsi.org/ngsi-ld/errors/BadRequestData".to_string(),
-            title: "Bad request".to_string(),
-            status: 400,
+            error_type: NgsiLdErrorType::BadRequestData,
             detail: "Invalid payload".to_string(),
         };
 
         let json = serde_json::to_value(&detail).unwrap();
         assert_eq!(json["type"], "https://uri.etsi.org/ngsi-ld/errors/BadRequestData");
-        assert!(json.get("type_").is_none());
+        assert_eq!(json["title"], "Bad request data");
+        assert_eq!(json["status"], 400);
+        assert_eq!(json["detail"], "Invalid payload");
+        assert!(json.get("error_type").is_none());
     }
 
     #[test]
@@ -149,9 +218,7 @@ mod tests {
             errors: vec![BatchEntityError {
                 entity_id: "urn:ngsi-ld:Entity:C".to_string(),
                 error: BatchProblemDetail {
-                    type_: "https://uri.etsi.org/ngsi-ld/errors/InternalError".to_string(),
-                    title: "Internal error".to_string(),
-                    status: 500,
+                    error_type: NgsiLdErrorType::InternalError,
                     detail: "Something went wrong".to_string(),
                 },
             }],
@@ -163,82 +230,145 @@ mod tests {
     }
 
     #[test]
-    fn to_batch_error_already_exists() {
+    fn from_domain_error_already_exists() {
         let err = AndromedaError::already_exists("urn:ngsi-ld:Entity:1");
-        let result = to_batch_error("urn:ngsi-ld:Entity:1", &err);
+        let result = BatchEntityError::from_domain_error("urn:ngsi-ld:Entity:1", &err);
 
-        assert_eq!(result.error.status, 409);
-        assert_eq!(result.error.type_, "https://uri.etsi.org/ngsi-ld/errors/AlreadyExists");
+        assert_eq!(result.error.error_type, NgsiLdErrorType::AlreadyExists);
+        let json = serde_json::to_value(&result.error).unwrap();
+        assert_eq!(json["status"], 409);
+        assert_eq!(json["type"], "https://uri.etsi.org/ngsi-ld/errors/AlreadyExists");
     }
 
     #[test]
-    fn to_batch_error_not_found() {
+    fn from_domain_error_not_found() {
         let err = AndromedaError::not_found("urn:ngsi-ld:Entity:2");
-        let result = to_batch_error("urn:ngsi-ld:Entity:2", &err);
+        let result = BatchEntityError::from_domain_error("urn:ngsi-ld:Entity:2", &err);
 
-        assert_eq!(result.error.status, 404);
-        assert_eq!(result.error.type_, "https://uri.etsi.org/ngsi-ld/errors/ResourceNotFound");
+        assert_eq!(result.error.error_type, NgsiLdErrorType::ResourceNotFound);
+        let json = serde_json::to_value(&result.error).unwrap();
+        assert_eq!(json["status"], 404);
+        assert_eq!(json["type"], "https://uri.etsi.org/ngsi-ld/errors/ResourceNotFound");
     }
 
     #[test]
-    fn to_batch_error_bad_request_data() {
+    fn from_domain_error_bad_request_data() {
         let err = AndromedaError::bad_request_data("invalid payload");
-        let result = to_batch_error("urn:ngsi-ld:Entity:3", &err);
+        let result = BatchEntityError::from_domain_error("urn:ngsi-ld:Entity:3", &err);
 
-        assert_eq!(result.error.status, 400);
-        assert_eq!(result.error.type_, "https://uri.etsi.org/ngsi-ld/errors/BadRequestData");
+        assert_eq!(result.error.error_type, NgsiLdErrorType::BadRequestData);
+        let json = serde_json::to_value(&result.error).unwrap();
+        assert_eq!(json["status"], 400);
+        assert_eq!(json["type"], "https://uri.etsi.org/ngsi-ld/errors/BadRequestData");
     }
 
     #[test]
-    fn to_batch_error_invalid_request() {
+    fn from_domain_error_invalid_request() {
         let err = AndromedaError::invalid_request("invalid request");
-        let result = to_batch_error("urn:ngsi-ld:Entity:7", &err);
+        let result = BatchEntityError::from_domain_error("urn:ngsi-ld:Entity:7", &err);
 
-        assert_eq!(result.error.status, 400);
-        assert_eq!(result.error.type_, "https://uri.etsi.org/ngsi-ld/errors/InvalidRequest");
+        assert_eq!(result.error.error_type, NgsiLdErrorType::InvalidRequest);
+        let json = serde_json::to_value(&result.error).unwrap();
+        assert_eq!(json["status"], 400);
+        assert_eq!(json["type"], "https://uri.etsi.org/ngsi-ld/errors/InvalidRequest");
     }
 
     #[test]
-    fn to_batch_error_internal() {
+    fn from_domain_error_sanitizes_internal_errors() {
         let err = AndromedaError::internal("something broke");
-        let result = to_batch_error("urn:ngsi-ld:Entity:4", &err);
+        let result = BatchEntityError::from_domain_error("urn:ngsi-ld:Entity:4", &err);
 
-        assert_eq!(result.error.status, 500);
-        assert_eq!(result.error.type_, "https://uri.etsi.org/ngsi-ld/errors/InternalError");
+        assert_eq!(result.error.error_type, NgsiLdErrorType::InternalError);
+        assert_eq!(result.error.detail, "Internal error");
+        let json = serde_json::to_value(&result.error).unwrap();
+        assert_eq!(json["status"], 500);
+        assert_eq!(json["type"], "https://uri.etsi.org/ngsi-ld/errors/InternalError");
     }
 
     #[test]
-    fn to_batch_error_ld_context_not_available() {
+    fn from_domain_error_sanitizes_repository_errors() {
+        let err = AndromedaError::repository("connection refused");
+        let result = BatchEntityError::from_domain_error("urn:ngsi-ld:Entity:repo", &err);
+
+        assert_eq!(result.error.error_type, NgsiLdErrorType::InternalError);
+        assert_eq!(result.error.detail, "Internal error");
+    }
+
+    #[test]
+    fn from_domain_error_sanitizes_external_dependency_errors() {
+        let err = AndromedaError::external_dependency("upstream timeout");
+        let result = BatchEntityError::from_domain_error("urn:ngsi-ld:Entity:ext", &err);
+
+        assert_eq!(result.error.error_type, NgsiLdErrorType::InternalError);
+        assert_eq!(result.error.detail, "Internal error");
+    }
+
+    #[test]
+    fn from_domain_error_ld_context_not_available() {
         let err = AndromedaError::ld_context_not_available("context fetch failed");
-        let result = to_batch_error("urn:ngsi-ld:Entity:6", &err);
+        let result = BatchEntityError::from_domain_error("urn:ngsi-ld:Entity:6", &err);
 
-        assert_eq!(result.error.status, 503);
-        assert_eq!(result.error.type_, "https://uri.etsi.org/ngsi-ld/errors/LdContextNotAvailable");
+        assert_eq!(result.error.error_type, NgsiLdErrorType::LdContextNotAvailable);
+        let json = serde_json::to_value(&result.error).unwrap();
+        assert_eq!(json["status"], 503);
+        assert_eq!(json["type"], "https://uri.etsi.org/ngsi-ld/errors/LdContextNotAvailable");
     }
 
     #[test]
-    fn to_batch_error_preserves_entity_id() {
+    fn from_domain_error_preserves_entity_id() {
         let err = AndromedaError::not_found("urn:ngsi-ld:Entity:99");
-        let result = to_batch_error("urn:ngsi-ld:Entity:99", &err);
+        let result = BatchEntityError::from_domain_error("urn:ngsi-ld:Entity:99", &err);
 
         assert_eq!(result.entity_id, "urn:ngsi-ld:Entity:99");
     }
 
     #[test]
-    fn to_batch_error_preserves_detail_message() {
+    fn from_domain_error_preserves_detail_message() {
         let err = AndromedaError::bad_request_data("missing required attribute");
-        let result = to_batch_error("urn:ngsi-ld:Entity:5", &err);
+        let result = BatchEntityError::from_domain_error("urn:ngsi-ld:Entity:5", &err);
 
         assert_eq!(result.error.detail, "missing required attribute");
     }
 
     #[test]
-    fn make_batch_parse_error_populates_fields() {
-        let err = make_batch_parse_error("urn:ngsi-ld:Entity:1", NgsiLdErrorType::BadRequestData, "missing @context");
+    fn from_parse_error_populates_fields() {
+        let err = BatchEntityError::from_parse_error("urn:ngsi-ld:Entity:1", NgsiLdErrorType::BadRequestData, "missing @context");
         assert_eq!(err.entity_id, "urn:ngsi-ld:Entity:1");
-        assert_eq!(err.error.type_, NgsiLdErrorType::BAD_REQUEST_DATA_URI);
-        assert_eq!(err.error.title, "Bad request data");
-        assert_eq!(err.error.status, 400);
+        assert_eq!(err.error.error_type, NgsiLdErrorType::BadRequestData);
         assert_eq!(err.error.detail, "missing @context");
+
+        let json = serde_json::to_value(&err.error).unwrap();
+        assert_eq!(json["type"], NgsiLdErrorType::BAD_REQUEST_DATA_URI);
+        assert_eq!(json["title"], "Bad request data");
+        assert_eq!(json["status"], 400);
+        assert_eq!(json["detail"], "missing @context");
+    }
+
+    #[test]
+    fn from_type_uri_round_trips_all_variants() {
+        let variants = [
+            NgsiLdErrorType::InvalidRequest,
+            NgsiLdErrorType::BadRequestData,
+            NgsiLdErrorType::AlreadyExists,
+            NgsiLdErrorType::Conflict,
+            NgsiLdErrorType::OperationNotSupported,
+            NgsiLdErrorType::ResourceNotFound,
+            NgsiLdErrorType::InternalError,
+            NgsiLdErrorType::TooComplexQuery,
+            NgsiLdErrorType::TooManyResults,
+            NgsiLdErrorType::LdContextNotAvailable,
+            NgsiLdErrorType::NoMultiTenantSupport,
+            NgsiLdErrorType::NonexistentTenant,
+        ];
+        for v in variants {
+            let detail = BatchProblemDetail {
+                error_type: v,
+                detail: "test".to_string(),
+            };
+            let json_str = serde_json::to_string(&detail).unwrap();
+            let deserialized: BatchProblemDetail = serde_json::from_str(&json_str).unwrap();
+            assert_eq!(deserialized.error_type, v);
+            assert_eq!(deserialized.detail, "test");
+        }
     }
 }

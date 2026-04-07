@@ -9,7 +9,7 @@ use crate::{
     },
     error::AndromedaError,
     http::{
-        error::problem::{NgsiLdError, NgsiLdErrorType},
+        error::{batch::BatchEntityError, problem::NgsiLdError},
         extractor::{
             accept::AcceptFormat,
             context::ContextUrl,
@@ -150,7 +150,7 @@ pub async fn create(
         } else if let Some(err) = local_error {
             errors.push(serde_json::json!({
                 "entityId": entity_id,
-                "error": andromeda_error_to_json(err, &uri)
+                "error": serde_json::to_value(BatchEntityError::from_domain_error(&entity_id, &err).error).unwrap_or_default()
             }));
         }
 
@@ -419,7 +419,7 @@ pub async fn delete(
         } else if let Some(err) = local_result.err() {
             errors.push(serde_json::json!({
                 "entityId": entity_id,
-                "error": andromeda_error_to_json(err, &uri)
+                "error": serde_json::to_value(BatchEntityError::from_domain_error(&entity_id, &err).error).unwrap_or_default()
             }));
         }
         let body = serde_json::json!({ "success": success, "errors": errors });
@@ -468,7 +468,7 @@ pub async fn delete(
         } else if let Some(err) = local_error {
             errors.push(serde_json::json!({
                 "entityId": entity_id,
-                "error": andromeda_error_to_json(err, &uri)
+                "error": serde_json::to_value(BatchEntityError::from_domain_error(&entity_id, &err).error).unwrap_or_default()
             }));
         }
 
@@ -1047,7 +1047,7 @@ pub async fn append_attrs(
     // 207 Multi-Status for mixed results
     let mut errors = Vec::new();
     if let Err(err) = local_result {
-        errors.push(serde_json::json!({ "entityId": entity_id, "error": andromeda_error_to_json(err, &uri) }));
+        errors.push(serde_json::to_value(BatchEntityError::from_domain_error(&entity_id, &err)).unwrap_or_default());
     }
     for r in &forwarded {
         if r.status >= 400 {
@@ -1147,7 +1147,7 @@ pub async fn update_attrs(
     // 207 Multi-Status
     let mut errors = Vec::new();
     if let Err(err) = local_result {
-        errors.push(serde_json::json!({ "entityId": entity_id, "error": andromeda_error_to_json(err, &uri) }));
+        errors.push(serde_json::to_value(BatchEntityError::from_domain_error(&entity_id, &err)).unwrap_or_default());
     }
     for r in &forwarded {
         if r.status >= 400 {
@@ -1309,7 +1309,7 @@ pub async fn delete_attr(
 
     let mut errors = Vec::new();
     if let Err(err) = local_result {
-        errors.push(serde_json::json!({ "entityId": entity_id, "error": andromeda_error_to_json(err, &uri) }));
+        errors.push(serde_json::to_value(BatchEntityError::from_domain_error(&entity_id, &err)).unwrap_or_default());
     }
     for r in &forwarded {
         if r.status >= 400 {
@@ -1420,22 +1420,4 @@ pub async fn delete_by_query(
     } else {
         Ok((StatusCode::MULTI_STATUS, Json(result)).into_response())
     }
-}
-
-/// Convert an `AndromedaError` to a JSON problem detail value for use in 207 responses.
-fn andromeda_error_to_json(err: AndromedaError, uri: &axum::http::Uri) -> Value {
-    let error_type: NgsiLdErrorType = err.kind().into();
-    let detail = if err.kind().is_internal() {
-        "Internal error".to_string()
-    } else {
-        err.message().to_string()
-    };
-
-    serde_json::json!({
-        "type": error_type.type_uri(),
-        "status": error_type.status_code().as_u16(),
-        "title": error_type.title(),
-        "detail": detail,
-        "instance": uri.to_string()
-    })
 }
