@@ -12,6 +12,48 @@ use sqlx::{Row, postgres::PgPool};
 use std::collections::HashMap;
 use urn::Urn;
 
+/// Row data prepared for bulk entity SQL operations.
+///
+/// Each field corresponds to a column (or derived column) in the `entities`
+/// table.  The `types_json` and `scopes_json` fields are JSON arrays of strings
+/// because PostgreSQL `UNNEST` flattens `text[][]` into individual elements
+/// rather than per-row arrays.
+pub struct PreparedEntityRow {
+    /// Entity identifier (URN).
+    pub id: String,
+    /// JSON array of type IRIs (e.g. `["https://example.com/Vehicle"]`).
+    pub types_json: Value,
+    /// JSON array of scope strings (e.g. `["/Madrid", "/Traffic"]`).
+    pub scopes_json: Value,
+    /// Full expanded JSON-LD payload.
+    pub payload: Value,
+    /// GeoJSON string for the `location` GeoProperty, if present.
+    pub location: Option<String>,
+    /// GeoJSON string for the `observationSpace` GeoProperty, if present.
+    pub observation_space: Option<String>,
+    /// GeoJSON string for the `operationSpace` GeoProperty, if present.
+    pub operation_space: Option<String>,
+    /// Entity expiration timestamp (ETSI GS CIM 009 clause 4.22).
+    pub expires_at: Option<DateTime<Utc>>,
+}
+
+/// Entity data returned by `delete_batch` via the SQL `RETURNING` clause.
+///
+/// Contains the deleted entity's payload and system attributes so the caller
+/// can emit change events without additional queries.
+pub struct DeletedEntity {
+    /// Entity identifier.
+    pub id: String,
+    /// The expanded JSON-LD payload at the time of deletion.
+    pub payload: Value,
+    /// Timestamp when the entity was originally created.
+    pub created_at: DateTime<Utc>,
+    /// Timestamp of the last modification before deletion.
+    pub modified_at: DateTime<Utc>,
+    /// Optional expiration timestamp.
+    pub expires_at: Option<DateTime<Utc>>,
+}
+
 /// Result of an entity query containing matched rows and an optional total count.
 pub struct QueryResult {
     /// The matched entity payloads.
@@ -468,4 +510,218 @@ impl EntityRepository {
             .fetch_one(&self.pool)
             .await?)
     }
+
+    // -------------------------------------------------------------------------
+    // Bulk batch operations (UNNEST-based, single round-trip per batch)
+    // -------------------------------------------------------------------------
+
+    /// Insert multiple entities in a single SQL statement using `UNNEST`.
+    ///
+    /// Duplicate IDs (entities that already exist) are silently skipped via
+    /// `ON CONFLICT (id) DO NOTHING`.  Returns the IDs of successfully inserted
+    /// entities; the caller compares against the input to detect conflicts.
+    pub async fn create_batch(&self, entities: &[PreparedEntityRow]) -> Result<Vec<String>, AndromedaError> {
+        if entities.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let (ids, types_json, scopes_json, payloads, locations, obs_spaces, op_spaces, expires_ats) = decompose_rows(entities);
+
+        let rows: Vec<(String,)> = sqlx::query_as(
+            r#"
+            INSERT INTO entities (id, types, scopes, payload, location, observation_space, operation_space, expires_at)
+            SELECT
+                d.id,
+                ARRAY(SELECT jsonb_array_elements_text(d.types_json)),
+                ARRAY(SELECT jsonb_array_elements_text(d.scopes_json)),
+                d.payload,
+                CASE WHEN d.loc IS NOT NULL THEN ST_SetSRID(ST_GeomFromGeoJSON(d.loc), 4326) ELSE NULL END,
+                CASE WHEN d.obs IS NOT NULL THEN ST_SetSRID(ST_GeomFromGeoJSON(d.obs), 4326) ELSE NULL END,
+                CASE WHEN d.ops IS NOT NULL THEN ST_SetSRID(ST_GeomFromGeoJSON(d.ops), 4326) ELSE NULL END,
+                d.expires_at
+            FROM UNNEST($1::text[], $2::jsonb[], $3::jsonb[], $4::jsonb[], $5::text[], $6::text[], $7::text[], $8::timestamptz[])
+                AS d(id, types_json, scopes_json, payload, loc, obs, ops, expires_at)
+            ON CONFLICT (id) DO NOTHING
+            RETURNING id
+            "#,
+        )
+        .bind(&ids)
+        .bind(&types_json)
+        .bind(&scopes_json)
+        .bind(&payloads)
+        .bind(&locations)
+        .bind(&obs_spaces)
+        .bind(&op_spaces)
+        .bind(&expires_ats)
+        .fetch_all(&self.pool)
+        .await?;
+
+        Ok(rows.into_iter().map(|(id,)| id).collect())
+    }
+
+    /// Delete multiple entities in a single SQL statement.
+    ///
+    /// Returns full entity data (payload + timestamps) for each deleted row so
+    /// the caller can emit change events without additional queries.  Entities
+    /// not found are simply absent from the result.
+    pub async fn delete_batch(&self, ids: &[String]) -> Result<Vec<DeletedEntity>, AndromedaError> {
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let rows = sqlx::query("DELETE FROM entities WHERE id = ANY($1) RETURNING id, payload, created_at, modified_at, expires_at")
+            .bind(ids)
+            .fetch_all(&self.pool)
+            .await?;
+
+        let mut result = Vec::with_capacity(rows.len());
+        for row in rows {
+            result.push(DeletedEntity {
+                id: row.get("id"),
+                payload: row.get("payload"),
+                created_at: row.get("created_at"),
+                modified_at: row.get("modified_at"),
+                expires_at: row.get("expires_at"),
+            });
+        }
+        Ok(result)
+    }
+
+    /// Update multiple existing entities in a single SQL statement using `UNNEST`.
+    ///
+    /// Only rows where `entities.id = d.id` are updated; non-existent IDs are
+    /// silently skipped.  Returns the IDs of successfully updated entities.
+    pub async fn save_batch(&self, entities: &[PreparedEntityRow]) -> Result<Vec<String>, AndromedaError> {
+        if entities.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let (ids, types_json, scopes_json, payloads, locations, obs_spaces, op_spaces, expires_ats) = decompose_rows(entities);
+
+        let rows: Vec<(String,)> = sqlx::query_as(
+            r#"
+            UPDATE entities SET
+                payload = d.payload,
+                types = ARRAY(SELECT jsonb_array_elements_text(d.types_json)),
+                scopes = ARRAY(SELECT jsonb_array_elements_text(d.scopes_json)),
+                location = CASE WHEN d.loc IS NOT NULL THEN ST_SetSRID(ST_GeomFromGeoJSON(d.loc), 4326) ELSE NULL END,
+                observation_space = CASE WHEN d.obs IS NOT NULL THEN ST_SetSRID(ST_GeomFromGeoJSON(d.obs), 4326) ELSE NULL END,
+                operation_space = CASE WHEN d.ops IS NOT NULL THEN ST_SetSRID(ST_GeomFromGeoJSON(d.ops), 4326) ELSE NULL END,
+                modified_at = NOW(),
+                expires_at = COALESCE(d.expires_at, entities.expires_at)
+            FROM UNNEST($1::text[], $2::jsonb[], $3::jsonb[], $4::jsonb[], $5::text[], $6::text[], $7::text[], $8::timestamptz[])
+                AS d(id, types_json, scopes_json, payload, loc, obs, ops, expires_at)
+            WHERE entities.id = d.id
+            RETURNING entities.id
+            "#,
+        )
+        .bind(&ids)
+        .bind(&types_json)
+        .bind(&scopes_json)
+        .bind(&payloads)
+        .bind(&locations)
+        .bind(&obs_spaces)
+        .bind(&op_spaces)
+        .bind(&expires_ats)
+        .fetch_all(&self.pool)
+        .await?;
+
+        Ok(rows.into_iter().map(|(id,)| id).collect())
+    }
+
+    /// Insert or update multiple entities in a single SQL statement.
+    ///
+    /// Uses `ON CONFLICT (id) DO UPDATE` to upsert.  Returns `(id, was_created)`
+    /// pairs where `was_created` is `true` for newly inserted rows and `false`
+    /// for updated rows (determined via PostgreSQL's `xmax = 0` pattern).
+    pub async fn upsert_batch(&self, entities: &[PreparedEntityRow]) -> Result<Vec<(String, bool)>, AndromedaError> {
+        if entities.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let (ids, types_json, scopes_json, payloads, locations, obs_spaces, op_spaces, expires_ats) = decompose_rows(entities);
+
+        let rows = sqlx::query(
+            r#"
+            INSERT INTO entities (id, types, scopes, payload, location, observation_space, operation_space, expires_at)
+            SELECT
+                d.id,
+                ARRAY(SELECT jsonb_array_elements_text(d.types_json)),
+                ARRAY(SELECT jsonb_array_elements_text(d.scopes_json)),
+                d.payload,
+                CASE WHEN d.loc IS NOT NULL THEN ST_SetSRID(ST_GeomFromGeoJSON(d.loc), 4326) ELSE NULL END,
+                CASE WHEN d.obs IS NOT NULL THEN ST_SetSRID(ST_GeomFromGeoJSON(d.obs), 4326) ELSE NULL END,
+                CASE WHEN d.ops IS NOT NULL THEN ST_SetSRID(ST_GeomFromGeoJSON(d.ops), 4326) ELSE NULL END,
+                d.expires_at
+            FROM UNNEST($1::text[], $2::jsonb[], $3::jsonb[], $4::jsonb[], $5::text[], $6::text[], $7::text[], $8::timestamptz[])
+                AS d(id, types_json, scopes_json, payload, loc, obs, ops, expires_at)
+            ON CONFLICT (id) DO UPDATE SET
+                payload = EXCLUDED.payload,
+                types = EXCLUDED.types,
+                scopes = EXCLUDED.scopes,
+                location = EXCLUDED.location,
+                observation_space = EXCLUDED.observation_space,
+                operation_space = EXCLUDED.operation_space,
+                modified_at = NOW(),
+                expires_at = COALESCE(EXCLUDED.expires_at, entities.expires_at)
+            RETURNING id, (xmax = 0) AS was_created
+            "#,
+        )
+        .bind(&ids)
+        .bind(&types_json)
+        .bind(&scopes_json)
+        .bind(&payloads)
+        .bind(&locations)
+        .bind(&obs_spaces)
+        .bind(&op_spaces)
+        .bind(&expires_ats)
+        .fetch_all(&self.pool)
+        .await?;
+
+        let mut result = Vec::with_capacity(rows.len());
+        for row in rows {
+            let id: String = row.get("id");
+            let was_created: bool = row.get("was_created");
+            result.push((id, was_created));
+        }
+        Ok(result)
+    }
+}
+
+/// Decompose a slice of [`PreparedEntityRow`] into parallel column vectors for
+/// sqlx `UNNEST` binding.
+fn decompose_rows(
+    entities: &[PreparedEntityRow],
+) -> (
+    Vec<String>,
+    Vec<Value>,
+    Vec<Value>,
+    Vec<Value>,
+    Vec<Option<String>>,
+    Vec<Option<String>>,
+    Vec<Option<String>>,
+    Vec<Option<DateTime<Utc>>>,
+) {
+    let len = entities.len();
+    let mut ids = Vec::with_capacity(len);
+    let mut types_json = Vec::with_capacity(len);
+    let mut scopes_json = Vec::with_capacity(len);
+    let mut payloads = Vec::with_capacity(len);
+    let mut locations: Vec<Option<String>> = Vec::with_capacity(len);
+    let mut obs_spaces: Vec<Option<String>> = Vec::with_capacity(len);
+    let mut op_spaces: Vec<Option<String>> = Vec::with_capacity(len);
+    let mut expires_ats: Vec<Option<DateTime<Utc>>> = Vec::with_capacity(len);
+
+    for e in entities {
+        ids.push(e.id.clone()); // clone: owned String needed for sqlx bind vector
+        types_json.push(e.types_json.clone()); // clone: owned Value needed for sqlx bind vector
+        scopes_json.push(e.scopes_json.clone()); // clone: owned Value needed for sqlx bind vector
+        payloads.push(e.payload.clone()); // clone: owned Value needed for sqlx bind vector
+        locations.push(e.location.clone()); // clone: owned Option<String> needed for sqlx bind vector
+        obs_spaces.push(e.observation_space.clone()); // clone: owned Option<String> needed for sqlx bind vector
+        op_spaces.push(e.operation_space.clone()); // clone: owned Option<String> needed for sqlx bind vector
+        expires_ats.push(e.expires_at);
+    }
+
+    (ids, types_json, scopes_json, payloads, locations, obs_spaces, op_spaces, expires_ats)
 }
