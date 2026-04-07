@@ -6,8 +6,9 @@ use crate::{
         tenant::TenantState,
     },
     domain::entity::Entity,
-    error::{AndromedaError, api::ApiError, core::AndromedaErrorKind},
+    error::{AndromedaError, core::AndromedaErrorKind},
     http::{
+        error::problem::NgsiLdError,
         extractor::{
             accept::AcceptFormatNoGeo,
             context::ContextUrl,
@@ -44,7 +45,7 @@ pub async fn create_or_update(
         value: payload,
         context: body_context,
     }: JsonLd<Value>,
-) -> Result<Response, ApiError> {
+) -> Result<Response, NgsiLdError> {
     let service = &state.temporal;
     let context = context.merge(body_context);
     let result = service.create_or_update(payload, &context).await.map_err(|e| e.with_instance(uri.clone()))?;
@@ -64,7 +65,7 @@ pub async fn get(
     protocol: NgsiLdProtocolHeaders,
     Path(id): Path<String>,
     ValidatedQuery(params): ValidatedQuery<TemporalQueryParameters>,
-) -> Result<Response, ApiError> {
+) -> Result<Response, NgsiLdError> {
     let service = &state.temporal;
     let id = parse_entity_id(&id, &uri)?;
     let context: ContextSpec = context.into_inner();
@@ -86,13 +87,13 @@ pub async fn get(
             .get_snapshot_temporal_entity(snapshot_id.as_str(), id.as_ref())
             .await
             .map_err(|e| e.with_instance(uri.clone()))?
-            .ok_or_else(|| ApiError::from_error(AndromedaError::not_found(id.to_string()), uri.clone()))?;
+            .ok_or_else(|| NgsiLdError::from(AndromedaError::not_found(id.to_string()).with_instance(uri.clone())))?;
 
         let key_values = params.is_simplified();
 
         let data = if key_values {
             let entity: Entity = serde_json::from_value(entity_data).map_err(|e| {
-                ApiError::from(AndromedaError::bad_request_data(format!(
+                NgsiLdError::from(AndromedaError::bad_request_data(format!(
                     "Failed to parse temporal entity for simplification: {}",
                     e
                 )))
@@ -110,7 +111,7 @@ pub async fn get(
     if let Some(ref map_id) = entity_map_header {
         let map = state.entity_maps.retrieve(map_id.as_str()).await.map_err(|e| e.with_instance(uri.clone()))?;
         if !map.entity_ids.contains(&id.to_string()) {
-            return Err(ApiError::from_error(AndromedaError::not_found(id.to_string()), uri.clone()));
+            return Err(NgsiLdError::from(AndromedaError::not_found(id.to_string()).with_instance(uri.clone())));
         }
     }
 
@@ -152,7 +153,7 @@ pub async fn get(
         match merged {
             Some(value) => (value, content_range, warnings),
             None => {
-                return Err(ApiError::from_error(AndromedaError::not_found(id.to_string()), uri.clone()));
+                return Err(NgsiLdError::from(AndromedaError::not_found(id.to_string()).with_instance(uri.clone())));
             }
         }
     };
@@ -167,7 +168,7 @@ pub async fn get(
 
     let data: Value = if key_values {
         let entity: Entity = serde_json::from_value(entity_value).map_err(|e| {
-            ApiError::from(AndromedaError::bad_request_data(format!(
+            NgsiLdError::from(AndromedaError::bad_request_data(format!(
                 "Failed to parse temporal entity for simplification: {}",
                 e
             )))
@@ -196,7 +197,7 @@ pub async fn query(
     context: ContextUrl,
     protocol: NgsiLdProtocolHeaders,
     ValidatedQuery(mut params): ValidatedQuery<TemporalQueryParameters>,
-) -> Result<Response, ApiError> {
+) -> Result<Response, NgsiLdError> {
     let service = &state.temporal;
     let context: ContextSpec = context.into_inner();
     let snapshot = protocol.snapshot;
@@ -228,7 +229,7 @@ pub async fn query(
             let mut simplified = Vec::with_capacity(entities.len());
             for e_val in entities {
                 let entity: Entity = serde_json::from_value(e_val).map_err(|e| {
-                    ApiError::from(AndromedaError::bad_request_data(format!(
+                    NgsiLdError::from(AndromedaError::bad_request_data(format!(
                         "Failed to parse temporal entity for simplification: {}",
                         e
                     )))
@@ -336,7 +337,7 @@ pub async fn query(
         let mut simplified = Vec::with_capacity(entities.len());
         for e_val in entities {
             let entity: Entity = serde_json::from_value(e_val).map_err(|e| {
-                ApiError::from(AndromedaError::bad_request_data(format!(
+                NgsiLdError::from(AndromedaError::bad_request_data(format!(
                     "Failed to parse temporal entity for simplification: {}",
                     e
                 )))
@@ -369,7 +370,7 @@ pub async fn query(
 }
 
 /// DELETE /ngsi-ld/v1/temporal/entities/{id}
-pub async fn delete(TenantState(state): TenantState, OriginalUri(uri): OriginalUri, Path(id): Path<String>) -> Result<Response, ApiError> {
+pub async fn delete(TenantState(state): TenantState, OriginalUri(uri): OriginalUri, Path(id): Path<String>) -> Result<Response, NgsiLdError> {
     let service = &state.temporal;
     let id = parse_entity_id(&id, &uri)?;
     service.delete(id.as_ref()).await.map_err(|e| e.with_instance(uri.clone()))?;
@@ -386,7 +387,7 @@ pub async fn add_attrs(
         value: payload,
         context: body_context,
     }: JsonLd<Value>,
-) -> Result<Response, ApiError> {
+) -> Result<Response, NgsiLdError> {
     let service = &state.temporal;
     let id = parse_entity_id(&id, &uri)?;
     let context = context.merge(body_context);
@@ -404,7 +405,7 @@ pub async fn delete_attr(
     context: ContextUrl,
     Path((id, attr_id)): Path<(String, String)>,
     ValidatedQuery(params): ValidatedQuery<DeleteAttrParams>,
-) -> Result<Response, ApiError> {
+) -> Result<Response, NgsiLdError> {
     let service = &state.temporal;
     let id = parse_entity_id(&id, &uri)?;
     validate_attr_name(&attr_id, &uri)?;
@@ -432,7 +433,7 @@ pub async fn modify_attr_instance(
         value: payload,
         context: body_context,
     }: JsonLd<Value>,
-) -> Result<Response, ApiError> {
+) -> Result<Response, NgsiLdError> {
     let service = &state.temporal;
     let id = parse_entity_id(&id, &uri)?;
     if attr_id.is_empty() {
@@ -455,7 +456,7 @@ pub async fn delete_attr_instance(
     context: ContextUrl,
     Path((id, attr_id, instance_id)): Path<(String, String, String)>,
     ValidatedQuery(_params): ValidatedQuery<EmptyParams>,
-) -> Result<Response, ApiError> {
+) -> Result<Response, NgsiLdError> {
     let service = &state.temporal;
     let id = parse_entity_id(&id, &uri)?;
     validate_attr_name(&attr_id, &uri)?;

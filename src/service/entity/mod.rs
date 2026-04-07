@@ -1,5 +1,5 @@
 mod attrs;
-mod batch;
+pub mod batch;
 /// Entity type and attribute discovery operations.
 pub mod discovery;
 /// Entity query and retrieval operations.

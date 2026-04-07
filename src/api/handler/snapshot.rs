@@ -1,7 +1,8 @@
 use crate::{
     api::tenant::TenantState,
     domain::snapshot::{SnapshotInput, SnapshotPatch},
-    error::{AndromedaError, api::ApiError},
+    error::AndromedaError,
+    http::error::problem::NgsiLdError,
 };
 use axum::{
     Json,
@@ -10,7 +11,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 
-pub async fn create(TenantState(state): TenantState, OriginalUri(uri): OriginalUri, Json(input): Json<SnapshotInput>) -> Result<Response, ApiError> {
+pub async fn create(TenantState(state): TenantState, OriginalUri(uri): OriginalUri, Json(input): Json<SnapshotInput>) -> Result<Response, NgsiLdError> {
     let snapshot = state.snapshots.create(input).await.map_err(|e| e.with_instance(uri.clone()))?;
 
     let location = format!("/ngsi-ld/v1/snapshots/{}", snapshot.id);
@@ -28,7 +29,7 @@ pub async fn create(TenantState(state): TenantState, OriginalUri(uri): OriginalU
     Ok((StatusCode::CREATED, headers, Json(body)).into_response())
 }
 
-pub async fn get_status(TenantState(state): TenantState, OriginalUri(uri): OriginalUri, Path(snapshot_id): Path<String>) -> Result<Response, ApiError> {
+pub async fn get_status(TenantState(state): TenantState, OriginalUri(uri): OriginalUri, Path(snapshot_id): Path<String>) -> Result<Response, NgsiLdError> {
     let snapshot = state.snapshots.get(&snapshot_id).await.map_err(|e| e.with_instance(uri.clone()))?;
 
     let body = serde_json::to_value(&snapshot).map_err(|e| AndromedaError::internal("Failed to serialize snapshot").with_source(e).with_instance(uri))?;
@@ -40,26 +41,26 @@ pub async fn update_status(
     OriginalUri(uri): OriginalUri,
     Path(snapshot_id): Path<String>,
     Json(patch): Json<SnapshotPatch>,
-) -> Result<Response, ApiError> {
+) -> Result<Response, NgsiLdError> {
     let updated = state.snapshots.update(&snapshot_id, patch).await.map_err(|e| e.with_instance(uri.clone()))?;
 
     let body = serde_json::to_value(&updated).map_err(|e| AndromedaError::internal("Failed to serialize snapshot").with_source(e).with_instance(uri))?;
     Ok((StatusCode::OK, Json(body)).into_response())
 }
 
-pub async fn delete(TenantState(state): TenantState, OriginalUri(uri): OriginalUri, Path(snapshot_id): Path<String>) -> Result<Response, ApiError> {
+pub async fn delete(TenantState(state): TenantState, OriginalUri(uri): OriginalUri, Path(snapshot_id): Path<String>) -> Result<Response, NgsiLdError> {
     state.snapshots.delete(&snapshot_id).await.map_err(|e| e.with_instance(uri.clone()))?;
 
     Ok(StatusCode::NO_CONTENT.into_response())
 }
 
-pub async fn purge(TenantState(state): TenantState, OriginalUri(uri): OriginalUri) -> Result<Response, ApiError> {
+pub async fn purge(TenantState(state): TenantState, OriginalUri(uri): OriginalUri) -> Result<Response, NgsiLdError> {
     state.snapshots.purge().await.map_err(|e| e.with_instance(uri.clone()))?;
 
     Ok(StatusCode::NO_CONTENT.into_response())
 }
 
-pub async fn clone_snapshot(TenantState(state): TenantState, OriginalUri(uri): OriginalUri, Path(snapshot_id): Path<String>) -> Result<Response, ApiError> {
+pub async fn clone_snapshot(TenantState(state): TenantState, OriginalUri(uri): OriginalUri, Path(snapshot_id): Path<String>) -> Result<Response, NgsiLdError> {
     let cloned = state.snapshots.clone_snapshot(&snapshot_id).await.map_err(|e| e.with_instance(uri.clone()))?;
 
     let location = format!("/ngsi-ld/v1/snapshots/{}", cloned.id);

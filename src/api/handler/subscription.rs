@@ -3,8 +3,8 @@ use crate::{
         handler::parse::{extract_body_context, is_json_content_type, parse_list_options},
         tenant::TenantState,
     },
-    error::api::ApiError,
     http::{
+        error::problem::NgsiLdError,
         extractor::{accept::AcceptFormatNoGeo, context::ContextUrl, prefer::PreferHeader, query::ValidatedQuery},
         parameter::{EmptyParams, subscription::ListParams},
         response::{
@@ -34,12 +34,12 @@ pub async fn create(
     ValidatedQuery(_params): ValidatedQuery<EmptyParams>,
     context: ContextUrl,
     body: Bytes,
-) -> Result<Response, ApiError> {
+) -> Result<Response, NgsiLdError> {
     if !is_json_content_type(&headers) {
         return Ok(StatusCode::UNSUPPORTED_MEDIA_TYPE.into_response());
     }
-    let payload: Value = serde_json::from_slice(&body)
-        .map_err(|e| ApiError::from_error(crate::error::AndromedaError::invalid_request(format!("Invalid JSON: {}", e)), uri.clone()))?;
+    let payload: Value =
+        serde_json::from_slice(&body).map_err(|e| crate::error::AndromedaError::invalid_request(format!("Invalid JSON: {}", e)).with_instance(uri.clone()))?;
     let service = &state.subscriptions;
     let base_url = headers.get("host").and_then(|v| v.to_str().ok()).map(|h| format!("http://{}", h));
     let context = if let Some(body_ctx) = extract_body_context(&payload) {
@@ -63,7 +63,7 @@ pub async fn get(
     context: ContextUrl,
     Path(subscription_id): Path<String>,
     ValidatedQuery(params): ValidatedQuery<ListParams>,
-) -> Result<Response, ApiError> {
+) -> Result<Response, NgsiLdError> {
     let service = &state.subscriptions;
     let context: ContextSpec = context.into_inner();
     let options = parse_list_options(params.options.as_deref(), &uri)?;
@@ -97,7 +97,7 @@ pub async fn query(
     accept: AcceptFormatNoGeo,
     context: ContextUrl,
     ValidatedQuery(params): ValidatedQuery<ListParams>,
-) -> Result<Response, ApiError> {
+) -> Result<Response, NgsiLdError> {
     let service = &state.subscriptions;
     let context: ContextSpec = context.into_inner();
     let options = parse_list_options(params.options.as_deref(), &uri)?;
@@ -105,15 +105,13 @@ pub async fn query(
     let limit = params.limit.unwrap_or(100);
     let offset = params.offset.unwrap_or(0);
     if limit <= 0 {
-        return Err(ApiError::from_error(
-            crate::error::AndromedaError::bad_request_data("limit must be greater than 0"),
-            uri.clone(),
+        return Err(NgsiLdError::from(
+            crate::error::AndromedaError::bad_request_data("limit must be greater than 0").with_instance(uri.clone()),
         ));
     }
     if offset < 0 {
-        return Err(ApiError::from_error(
-            crate::error::AndromedaError::bad_request_data("offset must be greater than or equal to 0"),
-            uri.clone(),
+        return Err(NgsiLdError::from(
+            crate::error::AndromedaError::bad_request_data("offset must be greater than or equal to 0").with_instance(uri.clone()),
         ));
     }
 
@@ -155,12 +153,12 @@ pub async fn update(
     context: ContextUrl,
     Path(subscription_id): Path<String>,
     body: Bytes,
-) -> Result<Response, ApiError> {
+) -> Result<Response, NgsiLdError> {
     if !is_json_content_type(&headers) {
         return Ok(StatusCode::UNSUPPORTED_MEDIA_TYPE.into_response());
     }
-    let payload: Value = serde_json::from_slice(&body)
-        .map_err(|e| ApiError::from_error(crate::error::AndromedaError::invalid_request(format!("Invalid JSON: {}", e)), uri.clone()))?;
+    let payload: Value =
+        serde_json::from_slice(&body).map_err(|e| crate::error::AndromedaError::invalid_request(format!("Invalid JSON: {}", e)).with_instance(uri.clone()))?;
     let service = &state.subscriptions;
     let base_url = headers.get("host").and_then(|v| v.to_str().ok()).map(|h| format!("http://{}", h));
     let context = if let Some(body_ctx) = extract_body_context(&payload) {
@@ -177,7 +175,7 @@ pub async fn update(
     Ok(StatusCode::NO_CONTENT.into_response())
 }
 
-pub async fn delete(TenantState(state): TenantState, OriginalUri(uri): OriginalUri, Path(subscription_id): Path<String>) -> Result<Response, ApiError> {
+pub async fn delete(TenantState(state): TenantState, OriginalUri(uri): OriginalUri, Path(subscription_id): Path<String>) -> Result<Response, NgsiLdError> {
     let service = &state.subscriptions;
     service.delete(&subscription_id).await.map_err(|e| e.with_instance(uri.clone()))?;
 

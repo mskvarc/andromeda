@@ -1,8 +1,9 @@
 use crate::{
     api::tenant::TenantState,
     domain::jsonld_context::ContextKind,
-    error::{AndromedaError, api::ApiError},
+    error::AndromedaError,
     http::{
+        error::problem::NgsiLdError,
         extractor::query::ValidatedQuery,
         parameter::jsonld_context::{DeleteParams, ListParams, ServeParams},
     },
@@ -16,10 +17,10 @@ use axum::{
 };
 use serde_json::Value;
 
-pub async fn create(TenantState(state): TenantState, OriginalUri(uri): OriginalUri, headers: HeaderMap, body: Bytes) -> Result<Response, ApiError> {
+pub async fn create(TenantState(state): TenantState, OriginalUri(uri): OriginalUri, headers: HeaderMap, body: Bytes) -> Result<Response, NgsiLdError> {
     let service = &state.contexts;
     let payload: Value =
-        serde_json::from_slice(&body).map_err(|_| ApiError::from_error(AndromedaError::invalid_request("Request body is not valid JSON"), uri.clone()))?;
+        serde_json::from_slice(&body).map_err(|_| AndromedaError::invalid_request("Request body is not valid JSON").with_instance(uri.clone()))?;
 
     let base_url = headers.get("host").and_then(|v| v.to_str().ok()).map(|h| format!("http://{}", h));
 
@@ -32,7 +33,7 @@ pub async fn list(
     TenantState(state): TenantState,
     OriginalUri(uri): OriginalUri,
     ValidatedQuery(params): ValidatedQuery<ListParams>,
-) -> Result<Response, ApiError> {
+) -> Result<Response, NgsiLdError> {
     let service = &state.contexts;
     let kind = params
         .kind
@@ -55,7 +56,7 @@ pub async fn get(
     OriginalUri(uri): OriginalUri,
     Path(context_id): Path<String>,
     ValidatedQuery(params): ValidatedQuery<ServeParams>,
-) -> Result<Response, ApiError> {
+) -> Result<Response, NgsiLdError> {
     let service = &state.contexts;
     let details = params.details.unwrap_or(false);
 
@@ -74,7 +75,7 @@ pub async fn delete(
     OriginalUri(uri): OriginalUri,
     Path(context_id): Path<String>,
     ValidatedQuery(params): ValidatedQuery<DeleteParams>,
-) -> Result<Response, ApiError> {
+) -> Result<Response, NgsiLdError> {
     let service = &state.contexts;
     let reload = params.reload.unwrap_or(false);
 
@@ -84,9 +85,8 @@ pub async fn delete(
             // Core contexts are embedded; reload is a no-op success.
             return Ok(StatusCode::NO_CONTENT.into_response());
         }
-        return Err(ApiError::from_error(
-            AndromedaError::bad_request_data("Cannot delete a core context"),
-            uri.clone(),
+        return Err(NgsiLdError::from(
+            AndromedaError::bad_request_data("Cannot delete a core context").with_instance(uri.clone()),
         ));
     }
 

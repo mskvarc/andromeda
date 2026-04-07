@@ -1,7 +1,7 @@
 use crate::{
     api::tenant::TenantState,
-    error::api::ApiError,
     http::{
+        error::problem::NgsiLdError,
         extractor::{accept::AcceptFormat, context::ContextUrl, prefer::PreferHeader, query::ValidatedQuery, via::IncomingVia},
         parameter::{DiscoveryListParams, LocalOnlyParams},
         response::single::NgsiLdResponse,
@@ -22,7 +22,7 @@ pub async fn list(
     context: ContextUrl,
     IncomingVia(incoming_via): IncomingVia,
     ValidatedQuery(params): ValidatedQuery<DiscoveryListParams>,
-) -> Result<Response, ApiError> {
+) -> Result<Response, NgsiLdError> {
     let service = &state.entity_discovery;
     let context: ContextSpec = context.into_inner();
     let is_local = params.local.unwrap_or(false);
@@ -55,7 +55,7 @@ pub async fn get(
     IncomingVia(incoming_via): IncomingVia,
     Path(attr_id): Path<String>,
     ValidatedQuery(params): ValidatedQuery<LocalOnlyParams>,
-) -> Result<Response, ApiError> {
+) -> Result<Response, NgsiLdError> {
     let service = &state.entity_discovery;
     let context: ContextSpec = context.into_inner();
     let is_local = params.local.unwrap_or(false);

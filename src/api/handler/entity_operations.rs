@@ -4,13 +4,12 @@ use crate::{
         entity::{Entity, EntityTypeValue},
         registration::ForwardingMode,
     },
-    error::{
-        AndromedaError,
-        api::ApiError,
-        batch::{BatchEntityError, BatchProblemDetail},
-        ngsi_ld::NgsiLdErrorType,
-    },
+    error::AndromedaError,
     http::{
+        error::{
+            batch::{BatchEntityError, BatchOperationResult, make_batch_parse_error},
+            problem::{NgsiLdError, NgsiLdErrorType},
+        },
         extractor::{
             accept::AcceptFormat,
             context::ContextUrl,
@@ -113,7 +112,7 @@ pub async fn query(
         value: request,
         context: body_context,
     }: JsonLd<QueryRequest>,
-) -> Result<Response, ApiError> {
+) -> Result<Response, NgsiLdError> {
     let service = &state.entity_query;
     let context = context.merge(body_context);
     let language_filter = protocol.language_filter;
@@ -345,15 +344,11 @@ fn parse_batch_entities(
     headers: &HeaderMap,
     context: &ContextUrl,
     uri: &Uri,
-) -> Result<(Vec<Entity>, ContextSpec, Vec<BatchEntityError>), ApiError> {
+) -> Result<(Vec<Entity>, ContextSpec, Vec<BatchEntityError>), NgsiLdError> {
     let content_type_raw = headers.get(CONTENT_TYPE).and_then(|v| v.to_str().ok()).unwrap_or("");
 
-    let content_kind = classify_batch_content_type(content_type_raw).ok_or_else(|| {
-        ApiError::from_error(
-            AndromedaError::invalid_request(format!("Unsupported Media Type: {}", content_type_raw)),
-            uri.clone(),
-        )
-    })?;
+    let content_kind = classify_batch_content_type(content_type_raw)
+        .ok_or_else(|| AndromedaError::invalid_request(format!("Unsupported Media Type: {}", content_type_raw)).with_instance(uri.clone()))?;
 
     let is_ld_json = matches!(content_kind, ContentKind::LdJson);
     let is_plain_json = matches!(content_kind, ContentKind::Json);
@@ -365,36 +360,33 @@ fn parse_batch_entities(
             .iter()
             .any(|v| v.to_str().ok().is_some_and(|s| s.contains("http://www.w3.org/ns/json-ld#context")));
         if has_context_link {
-            return Err(ApiError::from_error(
-                AndromedaError::bad_request_data("application/ld+json must not be combined with a Link context header"),
-                uri.clone(),
-            ));
+            return Err(
+                AndromedaError::bad_request_data("application/ld+json must not be combined with a Link context header")
+                    .with_instance(uri.clone())
+                    .into(),
+            );
         }
     }
 
     if body.is_empty() {
-        return Err(ApiError::from_error(
-            AndromedaError::bad_request_data("Request body shall not be empty"),
-            uri.clone(),
-        ));
+        return Err(AndromedaError::bad_request_data("Request body shall not be empty")
+            .with_instance(uri.clone())
+            .into());
     }
 
-    let value: Value =
-        serde_json::from_slice(body).map_err(|e| ApiError::from_error(AndromedaError::invalid_request(format!("Invalid JSON: {}", e)), uri.clone()))?;
+    let value: Value = serde_json::from_slice(body).map_err(|e| AndromedaError::invalid_request(format!("Invalid JSON: {}", e)).with_instance(uri.clone()))?;
 
     let items = match value {
         Value::Array(arr) if arr.is_empty() => {
-            return Err(ApiError::from_error(
-                AndromedaError::bad_request_data("Request body must contain a non-empty array of entities"),
-                uri.clone(),
-            ));
+            return Err(AndromedaError::bad_request_data("Request body must contain a non-empty array of entities")
+                .with_instance(uri.clone())
+                .into());
         }
         Value::Array(arr) => arr,
         _ => {
-            return Err(ApiError::from_error(
-                AndromedaError::bad_request_data("Request body must be a JSON array of entities"),
-                uri.clone(),
-            ));
+            return Err(AndromedaError::bad_request_data("Request body must be a JSON array of entities")
+                .with_instance(uri.clone())
+                .into());
         }
     };
 
@@ -484,18 +476,6 @@ fn parse_batch_entities(
     Ok((entities, merged_context, parse_errors))
 }
 
-fn make_batch_parse_error(entity_id: &str, error_type: NgsiLdErrorType, detail: &str) -> BatchEntityError {
-    BatchEntityError {
-        entity_id: entity_id.to_string(),
-        error: BatchProblemDetail {
-            type_: error_type.type_uri().to_string(),
-            title: error_type.title().to_string(),
-            status: error_type.status_code().as_u16(),
-            detail: detail.to_string(),
-        },
-    }
-}
-
 fn has_supported_json_content_type(headers: &HeaderMap) -> bool {
     classify_batch_content_type(headers.get(CONTENT_TYPE).and_then(|v| v.to_str().ok()).unwrap_or("")).is_some()
 }
@@ -540,16 +520,15 @@ pub async fn batch_create(
     context: ContextUrl,
     IncomingVia(incoming_via): IncomingVia,
     BatchBody { headers, body }: BatchBody,
-) -> Result<Response, ApiError> {
+) -> Result<Response, NgsiLdError> {
     let service = &state.entities;
 
     let (entities, context, mut parse_errors) = parse_batch_entities(&body, &headers, &context, &uri)?;
 
     if entities.is_empty() && parse_errors.is_empty() {
-        return Err(ApiError::from_error(
-            AndromedaError::bad_request_data("Request body must contain a non-empty array of entities"),
-            uri.clone(),
-        ));
+        return Err(AndromedaError::bad_request_data("Request body must contain a non-empty array of entities")
+            .with_instance(uri.clone())
+            .into());
     }
 
     // Distributed forwarding: forward to matching context sources
@@ -572,7 +551,7 @@ pub async fn batch_create(
             incoming_via: incoming_via.as_ref(),
         })
         .await
-        .map_err(|e| ApiError::from_error(e.with_instance(uri.clone()), uri.clone()))?;
+        .map_err(|e| e.with_instance(uri.clone()))?;
 
     let has_exclusive = forwarded.iter().any(|r| r.mode == ForwardingMode::Exclusive);
     let has_redirect = forwarded.iter().any(|r| r.mode == ForwardingMode::Redirect);
@@ -581,7 +560,7 @@ pub async fn batch_create(
         // Per spec 4.3.6.3: exclusive/redirect — don't create locally, return CS result
         // SAFETY: guarded by has_exclusive/has_redirect which require non-empty forwarded
         let Some(first) = forwarded.first() else {
-            return Err(ApiError::from_error(AndromedaError::internal("Expected forwarded result"), uri));
+            return Err(NgsiLdError::from(AndromedaError::internal("Expected forwarded result").with_instance(uri)));
         };
         let status = StatusCode::from_u16(first.status).unwrap_or(StatusCode::CREATED);
         if let Some(ref resp_body) = first.body {
@@ -591,18 +570,24 @@ pub async fn batch_create(
     }
 
     // Inclusive or no match: create locally
-    let mut result = service.batch_create(&entities, &context).await.map_err(|e| e.with_instance(uri.clone()))?;
-
+    let batch = service.batch_create(&entities, &context).await.map_err(|e| e.with_instance(uri.clone()))?;
+    let mut result: BatchOperationResult = batch.into();
     result.errors.append(&mut parse_errors);
 
     if result.errors.is_empty() {
-        let value = serde_json::to_value(&result.success)
-            .map_err(|e| ApiError::from_error(AndromedaError::internal("Failed to serialize batch result").with_source(e), uri.clone()))?;
+        let value = serde_json::to_value(&result.success).map_err(|e| {
+            AndromedaError::internal("Failed to serialize batch result")
+                .with_source(e)
+                .with_instance(uri.clone())
+        })?;
         let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default()).render_batch(value);
         Ok(NgsiLdBatchResponse::new(StatusCode::CREATED, rendered).into_response())
     } else {
-        let value = serde_json::to_value(&result)
-            .map_err(|e| ApiError::from_error(AndromedaError::internal("Failed to serialize batch result").with_source(e), uri.clone()))?;
+        let value = serde_json::to_value(&result).map_err(|e| {
+            AndromedaError::internal("Failed to serialize batch result")
+                .with_source(e)
+                .with_instance(uri.clone())
+        })?;
         let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default()).render_batch(value);
         Ok(NgsiLdBatchResponse::new(StatusCode::MULTI_STATUS, rendered).into_response())
     }
@@ -616,16 +601,15 @@ pub async fn batch_upsert(
     ValidatedQuery(params): ValidatedQuery<UpsertParams>,
     IncomingVia(incoming_via): IncomingVia,
     BatchBody { headers, body }: BatchBody,
-) -> Result<Response, ApiError> {
+) -> Result<Response, NgsiLdError> {
     let service = &state.entities;
 
     let (entities, context, mut parse_errors) = parse_batch_entities(&body, &headers, &context, &uri)?;
 
     if entities.is_empty() && parse_errors.is_empty() {
-        return Err(ApiError::from_error(
-            AndromedaError::bad_request_data("Request body must contain a non-empty array of entities"),
-            uri.clone(),
-        ));
+        return Err(AndromedaError::bad_request_data("Request body must contain a non-empty array of entities")
+            .with_instance(uri.clone())
+            .into());
     }
 
     let update_mode = params.options.as_deref() == Some("update");
@@ -651,7 +635,7 @@ pub async fn batch_upsert(
             incoming_via: incoming_via.as_ref(),
         })
         .await
-        .map_err(|e| ApiError::from_error(e.with_instance(uri.clone()), uri.clone()))?;
+        .map_err(|e| e.with_instance(uri.clone()))?;
 
     let has_exclusive = forwarded.iter().any(|r| r.mode == ForwardingMode::Exclusive);
     let has_redirect = forwarded.iter().any(|r| r.mode == ForwardingMode::Redirect);
@@ -659,7 +643,7 @@ pub async fn batch_upsert(
     if has_exclusive || has_redirect {
         // SAFETY: guarded by has_exclusive/has_redirect which require non-empty forwarded
         let Some(first) = forwarded.first() else {
-            return Err(ApiError::from_error(AndromedaError::internal("Expected forwarded result"), uri));
+            return Err(NgsiLdError::from(AndromedaError::internal("Expected forwarded result").with_instance(uri)));
         };
         let status = StatusCode::from_u16(first.status).unwrap_or(StatusCode::NO_CONTENT);
         if let Some(ref resp_body) = first.body {
@@ -669,25 +653,31 @@ pub async fn batch_upsert(
     }
 
     // Inclusive or no match: upsert locally
-    let (mut result, created_ids) = service
+    let (batch, created_ids) = service
         .batch_upsert(&entities, &context, update_mode)
         .await
         .map_err(|e| e.with_instance(uri.clone()))?;
-
+    let mut result: BatchOperationResult = batch.into();
     result.errors.append(&mut parse_errors);
 
     if result.errors.is_empty() {
         if created_ids.is_empty() {
             Ok(StatusCode::NO_CONTENT.into_response())
         } else {
-            let value = serde_json::to_value(&created_ids)
-                .map_err(|e| ApiError::from_error(AndromedaError::internal("Failed to serialize batch result").with_source(e), uri.clone()))?;
+            let value = serde_json::to_value(&created_ids).map_err(|e| {
+                AndromedaError::internal("Failed to serialize batch result")
+                    .with_source(e)
+                    .with_instance(uri.clone())
+            })?;
             let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default()).render_batch(value);
             Ok(NgsiLdBatchResponse::new(StatusCode::CREATED, rendered).into_response())
         }
     } else {
-        let value = serde_json::to_value(&result)
-            .map_err(|e| ApiError::from_error(AndromedaError::internal("Failed to serialize batch result").with_source(e), uri.clone()))?;
+        let value = serde_json::to_value(&result).map_err(|e| {
+            AndromedaError::internal("Failed to serialize batch result")
+                .with_source(e)
+                .with_instance(uri.clone())
+        })?;
         let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default()).render_batch(value);
         Ok(NgsiLdBatchResponse::new(StatusCode::MULTI_STATUS, rendered).into_response())
     }
@@ -701,16 +691,15 @@ pub async fn batch_update(
     ValidatedQuery(params): ValidatedQuery<UpdateParams>,
     IncomingVia(incoming_via): IncomingVia,
     BatchBody { headers, body }: BatchBody,
-) -> Result<Response, ApiError> {
+) -> Result<Response, NgsiLdError> {
     let service = &state.entities;
 
     let (entities, context, mut parse_errors) = parse_batch_entities(&body, &headers, &context, &uri)?;
 
     if entities.is_empty() && parse_errors.is_empty() {
-        return Err(ApiError::from_error(
-            AndromedaError::bad_request_data("Request body must contain a non-empty array of entities"),
-            uri.clone(),
-        ));
+        return Err(AndromedaError::bad_request_data("Request body must contain a non-empty array of entities")
+            .with_instance(uri.clone())
+            .into());
     }
 
     let no_overwrite = params.options.as_deref().is_some_and(|o| o.contains("noOverwrite"));
@@ -735,7 +724,7 @@ pub async fn batch_update(
             incoming_via: incoming_via.as_ref(),
         })
         .await
-        .map_err(|e| ApiError::from_error(e.with_instance(uri.clone()), uri.clone()))?;
+        .map_err(|e| e.with_instance(uri.clone()))?;
 
     let has_exclusive = forwarded.iter().any(|r| r.mode == ForwardingMode::Exclusive);
     let has_redirect = forwarded.iter().any(|r| r.mode == ForwardingMode::Redirect);
@@ -743,7 +732,7 @@ pub async fn batch_update(
     if has_exclusive || has_redirect {
         // SAFETY: guarded by has_exclusive/has_redirect which require non-empty forwarded
         let Some(first) = forwarded.first() else {
-            return Err(ApiError::from_error(AndromedaError::internal("Expected forwarded result"), uri));
+            return Err(NgsiLdError::from(AndromedaError::internal("Expected forwarded result").with_instance(uri)));
         };
         let status = StatusCode::from_u16(first.status).unwrap_or(StatusCode::NO_CONTENT);
         if let Some(ref resp_body) = first.body {
@@ -752,18 +741,21 @@ pub async fn batch_update(
         return Ok(status.into_response());
     }
 
-    let mut result = service
+    let batch = service
         .batch_update(&entities, &context, no_overwrite)
         .await
         .map_err(|e| e.with_instance(uri.clone()))?;
-
+    let mut result: BatchOperationResult = batch.into();
     result.errors.append(&mut parse_errors);
 
     if result.errors.is_empty() {
         Ok(StatusCode::NO_CONTENT.into_response())
     } else {
-        let value = serde_json::to_value(&result)
-            .map_err(|e| ApiError::from_error(AndromedaError::internal("Failed to serialize batch result").with_source(e), uri.clone()))?;
+        let value = serde_json::to_value(&result).map_err(|e| {
+            AndromedaError::internal("Failed to serialize batch result")
+                .with_source(e)
+                .with_instance(uri.clone())
+        })?;
         let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default()).render_batch(value);
         Ok(NgsiLdBatchResponse::new(StatusCode::MULTI_STATUS, rendered).into_response())
     }
@@ -776,16 +768,15 @@ pub async fn batch_merge(
     context: ContextUrl,
     IncomingVia(incoming_via): IncomingVia,
     BatchBody { headers, body }: BatchBody,
-) -> Result<Response, ApiError> {
+) -> Result<Response, NgsiLdError> {
     let service = &state.entities;
 
     let (entities, context, mut parse_errors) = parse_batch_entities(&body, &headers, &context, &uri)?;
 
     if entities.is_empty() && parse_errors.is_empty() {
-        return Err(ApiError::from_error(
-            AndromedaError::bad_request_data("Request body must contain a non-empty array of entities"),
-            uri.clone(),
-        ));
+        return Err(AndromedaError::bad_request_data("Request body must contain a non-empty array of entities")
+            .with_instance(uri.clone())
+            .into());
     }
 
     // Distributed forwarding per spec 5.6.20
@@ -807,7 +798,7 @@ pub async fn batch_merge(
             incoming_via: incoming_via.as_ref(),
         })
         .await
-        .map_err(|e| ApiError::from_error(e.with_instance(uri.clone()), uri.clone()))?;
+        .map_err(|e| e.with_instance(uri.clone()))?;
 
     let has_exclusive = forwarded.iter().any(|r| r.mode == ForwardingMode::Exclusive);
     let has_redirect = forwarded.iter().any(|r| r.mode == ForwardingMode::Redirect);
@@ -815,7 +806,7 @@ pub async fn batch_merge(
     if has_exclusive || has_redirect {
         // SAFETY: guarded by has_exclusive/has_redirect which require non-empty forwarded
         let Some(first) = forwarded.first() else {
-            return Err(ApiError::from_error(AndromedaError::internal("Expected forwarded result"), uri));
+            return Err(NgsiLdError::from(AndromedaError::internal("Expected forwarded result").with_instance(uri)));
         };
         let status = StatusCode::from_u16(first.status).unwrap_or(StatusCode::NO_CONTENT);
         if let Some(ref resp_body) = first.body {
@@ -824,15 +815,18 @@ pub async fn batch_merge(
         return Ok(status.into_response());
     }
 
-    let mut result = service.batch_merge(&entities, &context).await.map_err(|e| e.with_instance(uri.clone()))?;
-
+    let batch = service.batch_merge(&entities, &context).await.map_err(|e| e.with_instance(uri.clone()))?;
+    let mut result: BatchOperationResult = batch.into();
     result.errors.append(&mut parse_errors);
 
     if result.errors.is_empty() {
         Ok(StatusCode::NO_CONTENT.into_response())
     } else {
-        let value = serde_json::to_value(&result)
-            .map_err(|e| ApiError::from_error(AndromedaError::internal("Failed to serialize batch result").with_source(e), uri.clone()))?;
+        let value = serde_json::to_value(&result).map_err(|e| {
+            AndromedaError::internal("Failed to serialize batch result")
+                .with_source(e)
+                .with_instance(uri.clone())
+        })?;
         let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default()).render_batch(value);
         Ok(NgsiLdBatchResponse::new(StatusCode::MULTI_STATUS, rendered).into_response())
     }
@@ -845,21 +839,16 @@ pub async fn batch_delete(
     context: ContextUrl,
     IncomingVia(incoming_via): IncomingVia,
     body: Bytes,
-) -> Result<Response, ApiError> {
+) -> Result<Response, NgsiLdError> {
     let service = &state.entities;
 
-    let entity_ids: Vec<String> = serde_json::from_slice(&body).map_err(|e| {
-        ApiError::from_error(
-            AndromedaError::invalid_request(format!("Request body must be a JSON array of entity IDs: {}", e)),
-            uri.clone(),
-        )
-    })?;
+    let entity_ids: Vec<String> = serde_json::from_slice(&body)
+        .map_err(|e| AndromedaError::invalid_request(format!("Request body must be a JSON array of entity IDs: {}", e)).with_instance(uri.clone()))?;
 
     if entity_ids.is_empty() {
-        return Err(ApiError::from_error(
-            AndromedaError::bad_request_data("Request body must contain a non-empty array of entity IDs"),
-            uri.clone(),
-        ));
+        return Err(AndromedaError::bad_request_data("Request body must contain a non-empty array of entity IDs")
+            .with_instance(uri.clone())
+            .into());
     }
 
     // Distributed forwarding per spec 5.6.10
@@ -878,7 +867,7 @@ pub async fn batch_delete(
             incoming_via: incoming_via.as_ref(),
         })
         .await
-        .map_err(|e| ApiError::from_error(e.with_instance(uri.clone()), uri.clone()))?;
+        .map_err(|e| e.with_instance(uri.clone()))?;
 
     let has_exclusive = forwarded.iter().any(|r| r.mode == ForwardingMode::Exclusive);
     let has_redirect = forwarded.iter().any(|r| r.mode == ForwardingMode::Redirect);
@@ -887,7 +876,7 @@ pub async fn batch_delete(
         // Redirect: don't delete locally, return CS result
         // SAFETY: guarded by has_exclusive/has_redirect which require non-empty forwarded
         let Some(first) = forwarded.first() else {
-            return Err(ApiError::from_error(AndromedaError::internal("Expected forwarded result"), uri));
+            return Err(NgsiLdError::from(AndromedaError::internal("Expected forwarded result").with_instance(uri)));
         };
         let status = StatusCode::from_u16(first.status).unwrap_or(StatusCode::NO_CONTENT);
         if let Some(ref resp_body) = first.body {
@@ -905,13 +894,17 @@ pub async fn batch_delete(
     }
 
     // Inclusive or no match: delete locally
-    let result = service.batch_delete(&entity_ids).await.map_err(|e| e.with_instance(uri.clone()))?;
+    let batch = service.batch_delete(&entity_ids).await.map_err(|e| e.with_instance(uri.clone()))?;
+    let result: BatchOperationResult = batch.into();
 
     if result.errors.is_empty() {
         Ok(StatusCode::NO_CONTENT.into_response())
     } else {
-        let value = serde_json::to_value(&result)
-            .map_err(|e| ApiError::from_error(AndromedaError::internal("Failed to serialize batch result").with_source(e), uri.clone()))?;
+        let value = serde_json::to_value(&result).map_err(|e| {
+            AndromedaError::internal("Failed to serialize batch result")
+                .with_source(e)
+                .with_instance(uri.clone())
+        })?;
         let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default()).render_batch(value);
         Ok(NgsiLdBatchResponse::new(StatusCode::MULTI_STATUS, rendered).into_response())
     }

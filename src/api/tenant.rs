@@ -9,31 +9,28 @@ use headers::{Header, HeaderMapExt};
 
 use crate::{
     api::state::{AndromedaState, AppState},
-    error::api::ApiError,
+    http::error::problem::NgsiLdError,
     tenancy::TenantRef,
 };
 
 pub struct TenantState(pub AndromedaState);
 pub struct TenantStateOrCreate(pub AndromedaState);
 
-async fn resolve(parts: &mut Parts, app: &AppState, allow_implicit_creation: bool) -> Result<AndromedaState, ApiError> {
-    let tenant = TenantHeader::from_request_parts(parts, app).await.map_err(|_| {
-        ApiError::from_error(
-            crate::error::AndromedaError::bad_request_data("Invalid NGSILD-Tenant header"),
-            parts.uri.clone(),
-        )
-    })?;
+async fn resolve(parts: &mut Parts, app: &AppState, allow_implicit_creation: bool) -> Result<AndromedaState, NgsiLdError> {
+    let tenant = TenantHeader::from_request_parts(parts, app)
+        .await
+        .map_err(|_| NgsiLdError::from(crate::error::AndromedaError::bad_request_data("Invalid NGSILD-Tenant header").with_instance(parts.uri.clone())))?;
     let tenant_ref = TenantRef::from_header(tenant.into_inner());
     let runtime = app
         .tenants
         .resolve_state(&tenant_ref, allow_implicit_creation)
         .await
-        .map_err(|e| ApiError::from_error(e, parts.uri.clone()))?;
+        .map_err(|e| e.with_instance(parts.uri.clone()))?;
     Ok((*runtime).clone())
 }
 
 impl FromRequestParts<AppState> for TenantState {
-    type Rejection = ApiError;
+    type Rejection = NgsiLdError;
 
     async fn from_request_parts(parts: &mut Parts, app: &AppState) -> Result<Self, Self::Rejection> {
         let state = resolve(parts, app, false).await?;
@@ -42,7 +39,7 @@ impl FromRequestParts<AppState> for TenantState {
 }
 
 impl FromRequestParts<AppState> for TenantStateOrCreate {
-    type Rejection = ApiError;
+    type Rejection = NgsiLdError;
 
     async fn from_request_parts(parts: &mut Parts, app: &AppState) -> Result<Self, Self::Rejection> {
         let state = resolve(parts, app, true).await?;

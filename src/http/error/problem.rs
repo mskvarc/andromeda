@@ -16,38 +16,7 @@ use axum::{
 use problem_details::ProblemDetails;
 use strum::Display;
 
-use crate::error::AndromedaError;
-
-/// Converts an error into an RFC 7807 Problem Details response.
-pub trait ToProblem {
-    /// Returns the HTTP status code and a `ProblemDetails` value ready for
-    /// serialisation into a JSON response body.
-    fn to_problem(&self) -> (StatusCode, ProblemDetails);
-}
-
-impl ToProblem for AndromedaError {
-    fn to_problem(&self) -> (StatusCode, ProblemDetails) {
-        let error_type = self.kind().to_ngsi_ld_error_type();
-        let status = error_type.status_code();
-
-        let detail = if self.kind().is_internal() {
-            "Internal error".to_string()
-        } else {
-            self.message().to_string()
-        };
-
-        let instance = self.context().instance.clone().unwrap_or_else(|| Uri::from_static("/"));
-
-        let problem = ProblemDetails::new()
-            .with_type(Uri::from_static(error_type.type_uri()))
-            .with_title(error_type.title())
-            .with_status(status)
-            .with_detail(detail)
-            .with_instance(instance);
-
-        (status, problem)
-    }
-}
+use crate::error::core::{AndromedaError, AndromedaErrorKind};
 
 /// NGSI-LD error categories as defined in ETSI GS CIM 009 v1.9.1, clause 5.5.2.
 ///
@@ -180,6 +149,23 @@ impl NgsiLdErrorType {
     }
 }
 
+impl From<AndromedaErrorKind> for NgsiLdErrorType {
+    fn from(kind: AndromedaErrorKind) -> NgsiLdErrorType {
+        match kind {
+            AndromedaErrorKind::InvalidRequest => NgsiLdErrorType::InvalidRequest,
+            AndromedaErrorKind::BadRequestData => NgsiLdErrorType::BadRequestData,
+            AndromedaErrorKind::NotFound => NgsiLdErrorType::ResourceNotFound,
+            AndromedaErrorKind::AlreadyExists => NgsiLdErrorType::AlreadyExists,
+            AndromedaErrorKind::Conflict => NgsiLdErrorType::Conflict,
+            AndromedaErrorKind::LdContextNotAvailable => NgsiLdErrorType::LdContextNotAvailable,
+            AndromedaErrorKind::NoMultiTenantSupport => NgsiLdErrorType::NoMultiTenantSupport,
+            AndromedaErrorKind::NonexistentTenant => NgsiLdErrorType::NonexistentTenant,
+            AndromedaErrorKind::OperationNotSupported => NgsiLdErrorType::OperationNotSupported,
+            AndromedaErrorKind::Repository | AndromedaErrorKind::ExternalDependency | AndromedaErrorKind::Internal => NgsiLdErrorType::InternalError,
+        }
+    }
+}
+
 /// An NGSI-LD API error that serialises as an RFC 7807 Problem Details JSON
 /// response when converted into an Axum [`Response`].
 ///
@@ -187,7 +173,7 @@ impl NgsiLdErrorType {
 ///
 /// ```ignore
 /// use axum::http::Uri;
-/// use crate::error::ngsi_ld::{NgsiLdError, NgsiLdErrorType};
+/// use crate::http::error::problem::{NgsiLdError, NgsiLdErrorType};
 ///
 /// let error = NgsiLdError::new(
 ///     NgsiLdErrorType::ResourceNotFound,
@@ -211,6 +197,29 @@ impl NgsiLdError {
             detail: detail.into(),
             instance,
         }
+    }
+}
+
+impl From<AndromedaError> for NgsiLdError {
+    fn from(err: AndromedaError) -> NgsiLdError {
+        let error_type: NgsiLdErrorType = err.kind().into();
+        let instance = err.context().instance.clone().unwrap_or_else(|| Uri::from_static("/"));
+
+        if err.kind().is_internal() {
+            tracing::error!(
+                error = %err,
+                kind = ?err.kind(),
+                "Internal error (sanitized before sending to client)"
+            );
+        }
+
+        let detail = if err.kind().is_internal() {
+            "Internal error".to_string()
+        } else {
+            err.message().to_string()
+        };
+
+        NgsiLdError::new(error_type, detail, instance)
     }
 }
 
@@ -279,5 +288,73 @@ mod tests {
         assert_eq!(json["status"], 404);
         assert_eq!(json["title"], "Resource not found");
         assert_eq!(json["instance"], "/ngsi-ld/v1/entities/x");
+    }
+
+    #[test]
+    fn error_kind_maps_to_ngsi_error_type() {
+        let err = AndromedaError::invalid_request("bad");
+        let ngsi: NgsiLdError = err.into();
+        assert_eq!(ngsi.error_type, NgsiLdErrorType::InvalidRequest);
+    }
+
+    #[tokio::test]
+    async fn response_includes_instance_and_status() {
+        let err = AndromedaError::invalid_request("bad request").with_instance(Uri::from_static("/ngsi-ld/v1/entities"));
+        let ngsi: NgsiLdError = err.into();
+        let response = ngsi.into_response();
+        assert_eq!(response.status().as_u16(), 400);
+
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let json: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json.get("instance").and_then(|v| v.as_str()), Some("/ngsi-ld/v1/entities"));
+        assert_eq!(json.get("status").and_then(|v| v.as_u64()), Some(400));
+    }
+
+    #[test]
+    fn internal_errors_are_sanitized() {
+        let err = AndromedaError::new(AndromedaErrorKind::Internal, "secret");
+        let ngsi: NgsiLdError = err.into();
+        assert_eq!(ngsi.detail, "Internal error");
+    }
+
+    #[test]
+    fn external_dependency_is_sanitized() {
+        let err = AndromedaError::external_dependency("upstream timeout");
+        let ngsi: NgsiLdError = err.into();
+        assert_eq!(ngsi.error_type, NgsiLdErrorType::InternalError);
+        assert_eq!(ngsi.detail, "Internal error");
+    }
+
+    #[test]
+    fn repository_error_is_sanitized() {
+        let err = AndromedaError::repository("connection refused");
+        let ngsi: NgsiLdError = err.into();
+        assert_eq!(ngsi.error_type, NgsiLdErrorType::InternalError);
+        assert_eq!(ngsi.detail, "Internal error");
+    }
+
+    #[test]
+    fn error_kind_to_ngsi_ld_error_type_mapping() {
+        assert_eq!(NgsiLdErrorType::from(AndromedaErrorKind::InvalidRequest), NgsiLdErrorType::InvalidRequest);
+        assert_eq!(NgsiLdErrorType::from(AndromedaErrorKind::BadRequestData), NgsiLdErrorType::BadRequestData);
+        assert_eq!(NgsiLdErrorType::from(AndromedaErrorKind::NotFound), NgsiLdErrorType::ResourceNotFound);
+        assert_eq!(NgsiLdErrorType::from(AndromedaErrorKind::AlreadyExists), NgsiLdErrorType::AlreadyExists);
+        assert_eq!(NgsiLdErrorType::from(AndromedaErrorKind::Conflict), NgsiLdErrorType::Conflict);
+        assert_eq!(
+            NgsiLdErrorType::from(AndromedaErrorKind::LdContextNotAvailable),
+            NgsiLdErrorType::LdContextNotAvailable
+        );
+        assert_eq!(
+            NgsiLdErrorType::from(AndromedaErrorKind::NoMultiTenantSupport),
+            NgsiLdErrorType::NoMultiTenantSupport
+        );
+        assert_eq!(NgsiLdErrorType::from(AndromedaErrorKind::NonexistentTenant), NgsiLdErrorType::NonexistentTenant);
+        assert_eq!(
+            NgsiLdErrorType::from(AndromedaErrorKind::OperationNotSupported),
+            NgsiLdErrorType::OperationNotSupported
+        );
+        assert_eq!(NgsiLdErrorType::from(AndromedaErrorKind::Repository), NgsiLdErrorType::InternalError);
+        assert_eq!(NgsiLdErrorType::from(AndromedaErrorKind::ExternalDependency), NgsiLdErrorType::InternalError);
+        assert_eq!(NgsiLdErrorType::from(AndromedaErrorKind::Internal), NgsiLdErrorType::InternalError);
     }
 }

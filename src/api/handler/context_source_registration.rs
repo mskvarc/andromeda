@@ -1,7 +1,7 @@
 use crate::{
     api::{handler::parse::parse_csr_id, tenant::TenantState},
-    error::api::ApiError,
     http::{
+        error::problem::NgsiLdError,
         extractor::{accept::AcceptFormatNoGeo, context::ContextUrl, jsonld::JsonLd, prefer::PreferHeader, query::ValidatedQuery},
         response::{
             collection::NgsiLdCollectionResponse,
@@ -28,7 +28,7 @@ pub async fn create(
         value: payload,
         context: body_context,
     }: JsonLd<Value>,
-) -> Result<Response, ApiError> {
+) -> Result<Response, NgsiLdError> {
     let service = &state.csr;
     let context = context.merge(body_context);
 
@@ -44,7 +44,7 @@ pub async fn get(
     context: ContextUrl,
     Path(registration_id): Path<String>,
     ValidatedQuery(params): ValidatedQuery<CsrQueryParameters>,
-) -> Result<Response, ApiError> {
+) -> Result<Response, NgsiLdError> {
     parse_csr_id(&registration_id, &uri)?;
 
     let service = &state.csr;
@@ -65,7 +65,7 @@ pub async fn query(
     accept: AcceptFormatNoGeo,
     context: ContextUrl,
     ValidatedQuery(params): ValidatedQuery<CsrQueryParameters>,
-) -> Result<Response, ApiError> {
+) -> Result<Response, NgsiLdError> {
     use crate::query::params::SharedQueryParams;
 
     let service = &state.csr;
@@ -106,7 +106,7 @@ pub async fn update(
         value: payload,
         context: body_context,
     }: JsonLd<Value>,
-) -> Result<Response, ApiError> {
+) -> Result<Response, NgsiLdError> {
     parse_csr_id(&registration_id, &uri)?;
 
     let service = &state.csr;
@@ -119,7 +119,7 @@ pub async fn update(
     Ok(StatusCode::NO_CONTENT.into_response())
 }
 
-pub async fn delete(TenantState(state): TenantState, OriginalUri(uri): OriginalUri, Path(registration_id): Path<String>) -> Result<Response, ApiError> {
+pub async fn delete(TenantState(state): TenantState, OriginalUri(uri): OriginalUri, Path(registration_id): Path<String>) -> Result<Response, NgsiLdError> {
     parse_csr_id(&registration_id, &uri)?;
 
     let service = &state.csr;

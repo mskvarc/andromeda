@@ -5,8 +5,8 @@ use crate::{
         handler::entity_operations::{EntitySelection, GeoQueryRequest},
         tenant::TenantState,
     },
-    error::api::ApiError,
     http::{
+        error::problem::NgsiLdError,
         extractor::{accept::AcceptFormat, context::ContextUrl, jsonld::JsonLd, prefer::PreferHeader, via::IncomingVia},
         response::collection::NgsiLdCollectionResponse,
     },
@@ -60,7 +60,7 @@ pub async fn query(
         value: request,
         context: body_context,
     }: JsonLd<TemporalQueryRequest>,
-) -> Result<Response, ApiError> {
+) -> Result<Response, NgsiLdError> {
     let service = &state.temporal;
     let context = context.merge(body_context);
 

@@ -7,8 +7,9 @@ use crate::{
         entity::{Entity, EntityPatch, EntityTypeValue},
         registration::ForwardingMode,
     },
-    error::{AndromedaError, api::ApiError},
+    error::AndromedaError,
     http::{
+        error::problem::{NgsiLdError, NgsiLdErrorType},
         extractor::{
             accept::AcceptFormat,
             context::ContextUrl,
@@ -50,12 +51,12 @@ use axum::{
 use serde_json::Value;
 use std::collections::HashSet;
 
-pub async fn patch_no_id(OriginalUri(uri): OriginalUri) -> Result<Response, ApiError> {
-    Err(ApiError::from_error(AndromedaError::bad_request_data("Entity id is required"), uri))
+pub async fn patch_no_id(OriginalUri(uri): OriginalUri) -> Result<Response, NgsiLdError> {
+    Err(NgsiLdError::from(AndromedaError::bad_request_data("Entity id is required").with_instance(uri)))
 }
 
-pub async fn put_no_id(OriginalUri(uri): OriginalUri) -> Result<Response, ApiError> {
-    Err(ApiError::from_error(AndromedaError::bad_request_data("Entity id is required"), uri))
+pub async fn put_no_id(OriginalUri(uri): OriginalUri) -> Result<Response, NgsiLdError> {
+    Err(NgsiLdError::from(AndromedaError::bad_request_data("Entity id is required").with_instance(uri)))
 }
 
 pub async fn create(
@@ -68,7 +69,7 @@ pub async fn create(
         value: entity,
         context: body_context,
     }: JsonLd<Entity>,
-) -> Result<Response, ApiError> {
+) -> Result<Response, NgsiLdError> {
     let service = &state.entities;
     let context = context.merge(body_context);
     let is_local = params.local.unwrap_or(false);
@@ -81,9 +82,9 @@ pub async fn create(
     // Check for matching CSRs for distributed forwarding
     let context_url = context.link_contexts().first().map(|s| s.as_str());
     let entity_value =
-        serde_json::to_value(&entity).map_err(|e| ApiError::from_error(AndromedaError::internal("Failed to serialize entity").with_source(e), uri.clone()))?;
-    let entity_body = serde_json::to_vec(&entity_value)
-        .map_err(|e| ApiError::from_error(AndromedaError::internal("Failed to serialize entity").with_source(e), uri.clone()))?;
+        serde_json::to_value(&entity).map_err(|e| AndromedaError::internal("Failed to serialize entity").with_source(e).with_instance(uri.clone()))?;
+    let entity_body =
+        serde_json::to_vec(&entity_value).map_err(|e| AndromedaError::internal("Failed to serialize entity").with_source(e).with_instance(uri.clone()))?;
     let entity_id = entity.id.to_string();
     let entity_type_str = match &entity.type_ {
         EntityTypeValue::Single(s) => s.clone(),
@@ -105,7 +106,7 @@ pub async fn create(
             incoming_via: incoming_via.as_ref(),
         })
         .await
-        .map_err(|e| ApiError::from_error(e.with_instance(uri.clone()), uri.clone()))?;
+        .map_err(|e| e.with_instance(uri.clone()))?;
 
     if forwarded.is_empty() {
         // No matching CSRs — create locally
@@ -190,7 +191,7 @@ pub async fn get(
     Path(id): Path<String>,
     ValidatedQuery(params): ValidatedQuery<GetEntityParams>,
     protocol: NgsiLdProtocolHeaders,
-) -> Result<Response, ApiError> {
+) -> Result<Response, NgsiLdError> {
     let service = &state.entity_query;
     let id = parse_entity_id(&id, &uri)?;
     let context: ContextSpec = context.into_inner();
@@ -203,9 +204,8 @@ pub async fn get(
     let options = params.options.as_deref().unwrap_or("");
     for opt in options.split(',').map(str::trim) {
         if !opt.is_empty() && !matches!(opt, "keyValues" | "simplified" | "sysAttrs" | "concise" | "normalized") {
-            return Err(ApiError::from_error(
-                AndromedaError::invalid_request(format!("Invalid options value: '{}'", opt)),
-                uri.clone(),
+            return Err(NgsiLdError::from(
+                AndromedaError::invalid_request(format!("Invalid options value: '{}'", opt)).with_instance(uri.clone()),
             ));
         }
     }
@@ -214,9 +214,8 @@ pub async fn get(
     if let Some(ref fmt) = params.format
         && !matches!(fmt.as_str(), "normalized" | "keyValues" | "simplified" | "concise")
     {
-        return Err(ApiError::from_error(
-            AndromedaError::invalid_request(format!("Invalid format value: '{}'", fmt)),
-            uri.clone(),
+        return Err(NgsiLdError::from(
+            AndromedaError::invalid_request(format!("Invalid format value: '{}'", fmt)).with_instance(uri.clone()),
         ));
     }
 
@@ -234,7 +233,7 @@ pub async fn get(
             .get_snapshot_entity(snapshot_id.as_str(), id.as_ref())
             .await
             .map_err(|e| e.with_instance(uri.clone()))?
-            .ok_or_else(|| ApiError::from_error(AndromedaError::not_found(id.to_string()), uri.clone()))?;
+            .ok_or_else(|| NgsiLdError::from(AndromedaError::not_found(id.to_string()).with_instance(uri.clone())))?;
 
         let mode = params.resolve_render_mode();
         let attrs: Option<Vec<&str>> = params.attrs.as_deref().map(|s| s.split(',').map(str::trim).collect());
@@ -284,23 +283,23 @@ pub async fn get(
         let warnings = collect_warnings(&forwarded);
 
         let local_value = match local_result {
-            Ok(e) => Some(
-                serde_json::to_value(&e)
-                    .map_err(|err| ApiError::from_error(AndromedaError::internal("Failed to serialize local entity").with_source(err), uri.clone()))?,
-            ),
+            Ok(e) => Some(serde_json::to_value(&e).map_err(|err| {
+                AndromedaError::internal("Failed to serialize local entity")
+                    .with_source(err)
+                    .with_instance(uri.clone())
+            })?),
             Err(_) => None,
         };
 
         let merged = merge_retrieve_results(local_value, forwarded);
         let entity = match merged {
             Some(value) => serde_json::from_value::<Entity>(value).map_err(|e| {
-                ApiError::from_error(
-                    AndromedaError::internal(format!("Failed to deserialize merged entity {}", id)).with_source(e),
-                    uri.clone(),
-                )
+                AndromedaError::internal(format!("Failed to deserialize merged entity {}", id))
+                    .with_source(e)
+                    .with_instance(uri.clone())
             })?,
             None => {
-                return Err(ApiError::from_error(AndromedaError::not_found(id.to_string()), uri.clone()));
+                return Err(NgsiLdError::from(AndromedaError::not_found(id.to_string()).with_instance(uri.clone())));
             }
         };
         (entity, warnings)
@@ -378,7 +377,7 @@ pub async fn delete(
     Path(id): Path<String>,
     ValidatedQuery(params): ValidatedQuery<LocalOnlyParams>,
     IncomingVia(incoming_via): IncomingVia,
-) -> Result<Response, ApiError> {
+) -> Result<Response, NgsiLdError> {
     let service = &state.entities;
     let id = parse_entity_id(&id, &uri)?;
     let is_local = params.local.unwrap_or(false);
@@ -407,7 +406,7 @@ pub async fn delete(
             incoming_via: incoming_via.as_ref(),
         })
         .await
-        .map_err(|e| ApiError::from_error(e.with_instance(uri.clone()), uri.clone()))?;
+        .map_err(|e| e.with_instance(uri.clone()))?;
 
     // Per spec 4.3.6.3: if an exclusive CSR exists but doesn't support this operation,
     // delete locally but return 207 to indicate exclusive data could not be cleaned up.
@@ -509,7 +508,7 @@ pub async fn query(
     context: ContextUrl,
     protocol: NgsiLdProtocolHeaders,
     EntityQuery(mut query): EntityQuery,
-) -> Result<Response, ApiError> {
+) -> Result<Response, NgsiLdError> {
     let service = &state.entity_query;
     let context: ContextSpec = context.into_inner();
     let language_filter = protocol.language_filter;
@@ -807,7 +806,7 @@ pub async fn merge(
         value: patch,
         context: body_context,
     }: JsonLd<EntityPatch>,
-) -> Result<Response, ApiError> {
+) -> Result<Response, NgsiLdError> {
     let service = &state.entities;
     let id = parse_entity_id(&id, &uri)?;
     let context = context.merge(body_context);
@@ -820,9 +819,9 @@ pub async fn merge(
 
     let context_url = context.link_contexts().first().map(|s| s.as_str());
     let patch_value =
-        serde_json::to_value(&patch).map_err(|e| ApiError::from_error(AndromedaError::internal("Failed to serialize patch").with_source(e), uri.clone()))?;
-    let patch_body = serde_json::to_vec(&patch_value)
-        .map_err(|e| ApiError::from_error(AndromedaError::internal("Failed to serialize patch").with_source(e), uri.clone()))?;
+        serde_json::to_value(&patch).map_err(|e| AndromedaError::internal("Failed to serialize patch").with_source(e).with_instance(uri.clone()))?;
+    let patch_body =
+        serde_json::to_vec(&patch_value).map_err(|e| AndromedaError::internal("Failed to serialize patch").with_source(e).with_instance(uri.clone()))?;
     let entity_id = id.to_string();
 
     let (forwarded, _) = state
@@ -840,7 +839,7 @@ pub async fn merge(
             incoming_via: incoming_via.as_ref(),
         })
         .await
-        .map_err(|e| ApiError::from_error(e.with_instance(uri.clone()), uri.clone()))?;
+        .map_err(|e| e.with_instance(uri.clone()))?;
 
     if forwarded.is_empty() {
         service.merge(&id, &patch, &context).await.map_err(|e| e.with_instance(uri.clone()))?;
@@ -885,7 +884,7 @@ pub async fn update(
         value: patch,
         context: body_context,
     }: JsonLd<EntityPatch>,
-) -> Result<Response, ApiError> {
+) -> Result<Response, NgsiLdError> {
     let service = &state.entities;
     let id = parse_entity_id(&id, &uri)?;
     let context = context.merge(body_context);
@@ -898,9 +897,9 @@ pub async fn update(
 
     let context_url = context.link_contexts().first().map(|s| s.as_str());
     let patch_value =
-        serde_json::to_value(&patch).map_err(|e| ApiError::from_error(AndromedaError::internal("Failed to serialize patch").with_source(e), uri.clone()))?;
-    let patch_body = serde_json::to_vec(&patch_value)
-        .map_err(|e| ApiError::from_error(AndromedaError::internal("Failed to serialize patch").with_source(e), uri.clone()))?;
+        serde_json::to_value(&patch).map_err(|e| AndromedaError::internal("Failed to serialize patch").with_source(e).with_instance(uri.clone()))?;
+    let patch_body =
+        serde_json::to_vec(&patch_value).map_err(|e| AndromedaError::internal("Failed to serialize patch").with_source(e).with_instance(uri.clone()))?;
     let entity_id = id.to_string();
 
     let (forwarded, _) = state
@@ -918,7 +917,7 @@ pub async fn update(
             incoming_via: incoming_via.as_ref(),
         })
         .await
-        .map_err(|e| ApiError::from_error(e.with_instance(uri.clone()), uri.clone()))?;
+        .map_err(|e| e.with_instance(uri.clone()))?;
 
     if forwarded.is_empty() {
         service.replace_entity(&id, &patch, &context).await.map_err(|e| e.with_instance(uri.clone()))?;
@@ -961,7 +960,7 @@ pub async fn append_attrs(
         value: fragment,
         context: body_context,
     }: JsonLd<Value>,
-) -> Result<Response, ApiError> {
+) -> Result<Response, NgsiLdError> {
     let service = &state.entities;
     let id = parse_entity_id(&id, &uri)?;
     let context = context.merge(body_context);
@@ -969,8 +968,11 @@ pub async fn append_attrs(
 
     // Forward to matching context sources
     let context_url = context.link_contexts().first().map(|s| s.as_str());
-    let fragment_body = serde_json::to_vec(&fragment)
-        .map_err(|e| ApiError::from_error(AndromedaError::internal("Failed to serialize fragment").with_source(e), uri.clone()))?;
+    let fragment_body = serde_json::to_vec(&fragment).map_err(|e| {
+        AndromedaError::internal("Failed to serialize fragment")
+            .with_source(e)
+            .with_instance(uri.clone())
+    })?;
     let entity_id = id.to_string();
     let qs = if no_overwrite { "options=noOverwrite" } else { "" };
 
@@ -989,7 +991,7 @@ pub async fn append_attrs(
             incoming_via: incoming_via.as_ref(),
         })
         .await
-        .map_err(|e| ApiError::from_error(e.with_instance(uri.clone()), uri.clone()))?;
+        .map_err(|e| e.with_instance(uri.clone()))?;
 
     if forwarded.is_empty() {
         // No matching CSRs — append locally
@@ -1070,15 +1072,18 @@ pub async fn update_attrs(
         value: fragment,
         context: body_context,
     }: JsonLd<Value>,
-) -> Result<Response, ApiError> {
+) -> Result<Response, NgsiLdError> {
     let service = &state.entities;
     let id = parse_entity_id(&id, &uri)?;
     let context = context.merge(body_context);
 
     // Forward to matching context sources
     let context_url = context.link_contexts().first().map(|s| s.as_str());
-    let fragment_body = serde_json::to_vec(&fragment)
-        .map_err(|e| ApiError::from_error(AndromedaError::internal("Failed to serialize fragment").with_source(e), uri.clone()))?;
+    let fragment_body = serde_json::to_vec(&fragment).map_err(|e| {
+        AndromedaError::internal("Failed to serialize fragment")
+            .with_source(e)
+            .with_instance(uri.clone())
+    })?;
     let entity_id = id.to_string();
 
     let (forwarded, _) = state
@@ -1096,7 +1101,7 @@ pub async fn update_attrs(
             incoming_via: incoming_via.as_ref(),
         })
         .await
-        .map_err(|e| ApiError::from_error(e.with_instance(uri.clone()), uri.clone()))?;
+        .map_err(|e| e.with_instance(uri.clone()))?;
 
     if forwarded.is_empty() {
         // No matching CSRs — update locally
@@ -1168,15 +1173,18 @@ pub async fn partial_update_attr(
         value: fragment,
         context: body_context,
     }: JsonLd<Value>,
-) -> Result<Response, ApiError> {
+) -> Result<Response, NgsiLdError> {
     let service = &state.entities;
     let id = parse_entity_id(&id, &uri)?;
     let context = context.merge(body_context);
 
     // Forward to matching context sources
     let context_url = context.link_contexts().first().map(|s| s.as_str());
-    let fragment_body = serde_json::to_vec(&fragment)
-        .map_err(|e| ApiError::from_error(AndromedaError::internal("Failed to serialize fragment").with_source(e), uri.clone()))?;
+    let fragment_body = serde_json::to_vec(&fragment).map_err(|e| {
+        AndromedaError::internal("Failed to serialize fragment")
+            .with_source(e)
+            .with_instance(uri.clone())
+    })?;
     let entity_id = id.to_string();
     let path_suffix = format!("/attrs/{attr_id}");
     let qs = params.dataset_id.as_deref().map(|d| format!("datasetId={d}"));
@@ -1196,7 +1204,7 @@ pub async fn partial_update_attr(
             incoming_via: incoming_via.as_ref(),
         })
         .await
-        .map_err(|e| ApiError::from_error(e.with_instance(uri.clone()), uri.clone()))?;
+        .map_err(|e| e.with_instance(uri.clone()))?;
 
     if forwarded.is_empty() {
         // No matching CSRs — update locally
@@ -1237,7 +1245,7 @@ pub async fn delete_attr(
     Path((id, attr_id)): Path<(String, String)>,
     ValidatedQuery(params): ValidatedQuery<DeleteAttrParams>,
     IncomingVia(incoming_via): IncomingVia,
-) -> Result<Response, ApiError> {
+) -> Result<Response, NgsiLdError> {
     let service = &state.entities;
     let id = parse_entity_id(&id, &uri)?;
     let context: ContextSpec = context.into_inner();
@@ -1273,7 +1281,7 @@ pub async fn delete_attr(
             incoming_via: incoming_via.as_ref(),
         })
         .await
-        .map_err(|e| ApiError::from_error(e.with_instance(uri.clone()), uri.clone()))?;
+        .map_err(|e| e.with_instance(uri.clone()))?;
 
     if forwarded.is_empty() {
         // No matching CSRs — delete locally
@@ -1325,7 +1333,7 @@ pub async fn replace_attr(
         value: fragment,
         context: body_context,
     }: JsonLd<Value>,
-) -> Result<Response, ApiError> {
+) -> Result<Response, NgsiLdError> {
     let service = &state.entities;
     let id = parse_entity_id(&id, &uri)?;
     let context = context.merge(body_context);
@@ -1345,7 +1353,7 @@ pub async fn delete_by_query(
     context: ContextUrl,
     IncomingVia(incoming_via): IncomingVia,
     EntityQuery(query): EntityQuery,
-) -> Result<Response, ApiError> {
+) -> Result<Response, NgsiLdError> {
     let is_local = query.local.unwrap_or(false);
     let context: ContextSpec = context.into_inner();
 
@@ -1361,8 +1369,11 @@ pub async fn delete_by_query(
     }
 
     if !is_local {
-        let body = serde_json::to_vec(&entity_ids)
-            .map_err(|e| ApiError::from_error(AndromedaError::internal("Failed to serialize entity IDs").with_source(e), uri.clone()))?;
+        let body = serde_json::to_vec(&entity_ids).map_err(|e| {
+            AndromedaError::internal("Failed to serialize entity IDs")
+                .with_source(e)
+                .with_instance(uri.clone())
+        })?;
         let context_url = context.link_contexts().first().map(|s| s.as_str());
         let forwarded = state
             .forwarding
@@ -1377,14 +1388,14 @@ pub async fn delete_by_query(
                 incoming_via: incoming_via.as_ref(),
             })
             .await
-            .map_err(|e| ApiError::from_error(e.with_instance(uri.clone()), uri.clone()))?;
+            .map_err(|e| e.with_instance(uri.clone()))?;
 
         let has_redirect = forwarded.iter().any(|r| r.mode == ForwardingMode::Redirect);
         let has_exclusive = forwarded.iter().any(|r| r.mode == ForwardingMode::Exclusive);
 
         if has_redirect {
             let Some(first) = forwarded.first() else {
-                return Err(ApiError::from_error(AndromedaError::internal("Expected forwarded result"), uri));
+                return Err(NgsiLdError::from(AndromedaError::internal("Expected forwarded result").with_instance(uri)));
             };
             let status = StatusCode::from_u16(first.status).unwrap_or(StatusCode::NO_CONTENT);
             if let Some(ref resp_body) = first.body {
@@ -1401,7 +1412,8 @@ pub async fn delete_by_query(
         }
     }
 
-    let result = state.entities.batch_delete(&entity_ids).await.map_err(|e| e.with_instance(uri.clone()))?;
+    let batch = state.entities.batch_delete(&entity_ids).await.map_err(|e| e.with_instance(uri.clone()))?;
+    let result: crate::http::error::batch::BatchOperationResult = batch.into();
 
     if result.errors.is_empty() {
         Ok(StatusCode::NO_CONTENT.into_response())
@@ -1412,7 +1424,7 @@ pub async fn delete_by_query(
 
 /// Convert an `AndromedaError` to a JSON problem detail value for use in 207 responses.
 fn andromeda_error_to_json(err: AndromedaError, uri: &axum::http::Uri) -> Value {
-    let error_type = err.kind().to_ngsi_ld_error_type();
+    let error_type: NgsiLdErrorType = err.kind().into();
     let detail = if err.kind().is_internal() {
         "Internal error".to_string()
     } else {

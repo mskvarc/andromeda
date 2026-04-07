@@ -4,7 +4,7 @@
 //! used across multiple handler modules (entities, temporal, subscriptions,
 //! context source registrations).
 
-use crate::error::{AndromedaError, api::ApiError};
+use crate::{error::AndromedaError, http::error::problem::NgsiLdError};
 use axum::http::{HeaderMap, Uri, header::CONTENT_TYPE};
 use mediatype::{MediaTypeBuf, names};
 use serde_json::Value;
@@ -14,18 +14,20 @@ use urn::Urn;
 /// Parse and validate an entity ID as a URN.
 ///
 /// Returns `BadRequestData` if the string is not a valid URN.
-pub fn parse_entity_id(id: &str, uri: &Uri) -> Result<Urn, ApiError> {
+pub fn parse_entity_id(id: &str, uri: &Uri) -> Result<Urn, NgsiLdError> {
     id.parse::<Urn>()
-        .map_err(|_| ApiError::from_error(AndromedaError::bad_request_data("Invalid entity id: not a valid URI"), uri.clone()))
+        .map_err(|_| NgsiLdError::from(AndromedaError::bad_request_data("Invalid entity id: not a valid URI").with_instance(uri.clone())))
 }
 
 /// Validate an attribute name path parameter.
 ///
 /// Attribute names must be either a URI (containing `://`) or composed of
 /// alphanumeric characters plus `-`, `_`, `.`, `:`.
-pub fn validate_attr_name(name: &str, uri: &Uri) -> Result<(), ApiError> {
+pub fn validate_attr_name(name: &str, uri: &Uri) -> Result<(), NgsiLdError> {
     if name.is_empty() || (!name.contains("://") && !name.chars().all(|c| c.is_alphanumeric() || matches!(c, '-' | '_' | '.' | ':'))) {
-        return Err(ApiError::from_error(AndromedaError::bad_request_data("Invalid attribute name"), uri.clone()));
+        return Err(NgsiLdError::from(
+            AndromedaError::bad_request_data("Invalid attribute name").with_instance(uri.clone()),
+        ));
     }
     Ok(())
 }
@@ -33,11 +35,10 @@ pub fn validate_attr_name(name: &str, uri: &Uri) -> Result<(), ApiError> {
 /// Validate an attribute instance ID path parameter.
 ///
 /// Instance IDs must be valid URIs (parseable by `url::Url`).
-pub fn validate_instance_id(id: &str, uri: &Uri) -> Result<(), ApiError> {
+pub fn validate_instance_id(id: &str, uri: &Uri) -> Result<(), NgsiLdError> {
     if id.is_empty() || Url::parse(id).is_err() {
-        return Err(ApiError::from_error(
-            AndromedaError::bad_request_data("Invalid instance id: not a valid URI"),
-            uri.clone(),
+        return Err(NgsiLdError::from(
+            AndromedaError::bad_request_data("Invalid instance id: not a valid URI").with_instance(uri.clone()),
         ));
     }
     Ok(())
@@ -47,12 +48,13 @@ pub fn validate_instance_id(id: &str, uri: &Uri) -> Result<(), ApiError> {
 ///
 /// CSR IDs may be either URNs (starting with `urn:`) or URLs. Returns
 /// `BadRequestData` if the string is neither.
-pub fn parse_csr_id(id: &str, uri: &Uri) -> Result<(), ApiError> {
+pub fn parse_csr_id(id: &str, uri: &Uri) -> Result<(), NgsiLdError> {
     if id.starts_with("urn:") {
         id.parse::<Urn>()
-            .map_err(|_| ApiError::from_error(AndromedaError::bad_request_data("Invalid registration id: not a valid URI"), uri.clone()))?;
+            .map_err(|_| NgsiLdError::from(AndromedaError::bad_request_data("Invalid registration id: not a valid URI").with_instance(uri.clone())))?;
     } else {
-        Url::parse(id).map_err(|_| ApiError::from_error(AndromedaError::bad_request_data("Invalid registration id: not a valid URI"), uri.clone()))?;
+        Url::parse(id)
+            .map_err(|_| NgsiLdError::from(AndromedaError::bad_request_data("Invalid registration id: not a valid URI").with_instance(uri.clone())))?;
     }
     Ok(())
 }
@@ -70,7 +72,7 @@ pub struct ListOptions {
 ///
 /// Recognized values: `count`, `sysAttrs`. Returns `InvalidRequest` for
 /// any unrecognized value.
-pub fn parse_list_options(options: Option<&str>, uri: &Uri) -> Result<ListOptions, ApiError> {
+pub fn parse_list_options(options: Option<&str>, uri: &Uri) -> Result<ListOptions, NgsiLdError> {
     let mut parsed = ListOptions::default();
     if let Some(opts) = options {
         for opt in opts.split(',').map(str::trim) {
@@ -81,9 +83,8 @@ pub fn parse_list_options(options: Option<&str>, uri: &Uri) -> Result<ListOption
                 "count" => parsed.count = true,
                 "sysAttrs" => parsed.sys_attrs = true,
                 other => {
-                    return Err(ApiError::from_error(
-                        AndromedaError::invalid_request(format!("Invalid options value: '{}'", other)),
-                        uri.clone(),
+                    return Err(NgsiLdError::from(
+                        AndromedaError::invalid_request(format!("Invalid options value: '{}'", other)).with_instance(uri.clone()),
                     ));
                 }
             }

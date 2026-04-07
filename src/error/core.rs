@@ -6,7 +6,7 @@ use sqlx::{Error as SqlxError, migrate::MigrateError};
 use tracing::subscriber::SetGlobalDefaultError;
 use urn::Error as UrnError;
 
-use crate::{error::ngsi_ld::NgsiLdErrorType, jsonld::Error as JsonLdError, query::error::QueryError};
+use crate::{jsonld::Error as JsonLdError, query::error::QueryError};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AndromedaErrorKind {
@@ -27,22 +27,6 @@ pub enum AndromedaErrorKind {
 }
 
 impl AndromedaErrorKind {
-    /// Maps this error kind to its corresponding NGSI-LD error type.
-    pub const fn to_ngsi_ld_error_type(self) -> NgsiLdErrorType {
-        match self {
-            AndromedaErrorKind::InvalidRequest => NgsiLdErrorType::InvalidRequest,
-            AndromedaErrorKind::BadRequestData => NgsiLdErrorType::BadRequestData,
-            AndromedaErrorKind::NotFound => NgsiLdErrorType::ResourceNotFound,
-            AndromedaErrorKind::AlreadyExists => NgsiLdErrorType::AlreadyExists,
-            AndromedaErrorKind::Conflict => NgsiLdErrorType::Conflict,
-            AndromedaErrorKind::LdContextNotAvailable => NgsiLdErrorType::LdContextNotAvailable,
-            AndromedaErrorKind::NoMultiTenantSupport => NgsiLdErrorType::NoMultiTenantSupport,
-            AndromedaErrorKind::NonexistentTenant => NgsiLdErrorType::NonexistentTenant,
-            AndromedaErrorKind::OperationNotSupported => NgsiLdErrorType::OperationNotSupported,
-            AndromedaErrorKind::Repository | AndromedaErrorKind::ExternalDependency | AndromedaErrorKind::Internal => NgsiLdErrorType::InternalError,
-        }
-    }
-
     /// Returns `true` if this error kind represents an internal/infrastructure failure
     /// whose details should be sanitized before sending to clients.
     pub const fn is_internal(self) -> bool {
