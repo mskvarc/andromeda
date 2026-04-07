@@ -1,10 +1,10 @@
-FROM golang:1.25.7-alpine3.23 AS tools
+FROM golang:1.26.1-alpine3.23 AS tools
 
 RUN apk add --no-cache git gcc musl-dev
 RUN go install github.com/timescale/timescaledb-tune/cmd/timescaledb-tune@latest
 RUN go install github.com/timescale/timescaledb-parallel-copy/cmd/timescaledb-parallel-copy@latest
 
-FROM postgres:18.1-alpine3.23 AS base
+FROM postgres:18.3-alpine3.23 AS base
 
 RUN apk update
 RUN apk add --update icu-data-full musl musl-utils musl-locales tzdata
@@ -64,7 +64,7 @@ RUN apk add --no-cache --virtual .timescaledb-rundeps \
 
 WORKDIR /usr/src
 
-ENV POSTGIS_VERSION=3.6.1
+ENV POSTGIS_VERSION=3.6.2
 RUN wget -O postgis.tar.gz "https://github.com/postgis/postgis/archive/$POSTGIS_VERSION.tar.gz"
 RUN tar -xzf postgis.tar.gz
 
@@ -75,7 +75,7 @@ RUN ./configure --enable-lto
 RUN make -s -j$(nproc)
 RUN make -s install
 
-ENV TIMESCALEDB_VERSION=2.25.0
+ENV TIMESCALEDB_VERSION=2.26.1
 
 WORKDIR /usr/src
 RUN wget -O timescaledb.tar.gz "https://github.com/timescale/timescaledb/archive/$TIMESCALEDB_VERSION.tar.gz"
