@@ -1,9 +1,18 @@
-use crate::domain::snapshot::{ExecutionResultDetails, Snapshot, SnapshotStatus};
+//! Repository for NGSI-LD entity snapshots.
+//!
+//! Manages snapshot metadata, frozen entity data, and frozen temporal entity data
+//! stored in PostgreSQL, including cloning, pagination, and expiration support.
+
+use crate::{
+    domain::snapshot::{ExecutionResultDetails, Snapshot, SnapshotStatus},
+    error::AndromedaError,
+};
 use chrono::{DateTime, Utc};
 use serde_json::Value;
 use sqlx::{Row, postgres::PgPool};
 
 /// Repository for persisting and querying snapshot records.
+#[derive(Debug)]
 pub struct SnapshotRepository {
     pool: PgPool,
 }
@@ -15,7 +24,7 @@ impl SnapshotRepository {
     }
 
     /// Insert a new snapshot into the database.
-    pub async fn create(&self, snapshot: &Snapshot) -> Result<(), sqlx::Error> {
+    pub async fn create(&self, snapshot: &Snapshot) -> Result<(), AndromedaError> {
         sqlx::query(
             "INSERT INTO snapshots (id, snapshot_queries, snapshot_temporal_queries, snapshot_lifetime, snapshot_priority, endpoint, receiver_info, status, queries_details, temporal_queries_details, created_at, modified_at, expires_at, last_used_at)
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)",
@@ -40,7 +49,7 @@ impl SnapshotRepository {
     }
 
     /// Retrieve a snapshot by its identifier, returning `None` if not found.
-    pub async fn get(&self, id: &str) -> Result<Option<Snapshot>, sqlx::Error> {
+    pub async fn get(&self, id: &str) -> Result<Option<Snapshot>, AndromedaError> {
         let row = sqlx::query(
             "SELECT id, snapshot_queries, snapshot_temporal_queries, snapshot_lifetime, snapshot_priority, endpoint, receiver_info, status, queries_details, temporal_queries_details, created_at, modified_at, expires_at, last_used_at FROM snapshots WHERE id = $1",
         )
@@ -55,7 +64,7 @@ impl SnapshotRepository {
     }
 
     /// Check whether a snapshot with the given identifier exists.
-    pub async fn exists(&self, id: &str) -> Result<bool, sqlx::Error> {
+    pub async fn exists(&self, id: &str) -> Result<bool, AndromedaError> {
         let row = sqlx::query("SELECT 1 FROM snapshots WHERE id = $1").bind(id).fetch_optional(&self.pool).await?;
         Ok(row.is_some())
     }
@@ -67,7 +76,7 @@ impl SnapshotRepository {
         lifetime: Option<&str>,
         priority: Option<i16>,
         new_expires_at: Option<DateTime<Utc>>,
-    ) -> Result<bool, sqlx::Error> {
+    ) -> Result<bool, AndromedaError> {
         let result = sqlx::query(
             "UPDATE snapshots SET snapshot_lifetime = COALESCE($2, snapshot_lifetime), snapshot_priority = COALESCE($3, snapshot_priority), expires_at = COALESCE($4, expires_at), modified_at = NOW() WHERE id = $1",
         )
@@ -81,19 +90,21 @@ impl SnapshotRepository {
     }
 
     /// Delete a snapshot by its identifier. Returns `true` if a row was removed.
-    pub async fn delete(&self, id: &str) -> Result<bool, sqlx::Error> {
+    pub async fn delete(&self, id: &str) -> Result<bool, AndromedaError> {
         let result = sqlx::query("DELETE FROM snapshots WHERE id = $1").bind(id).execute(&self.pool).await?;
         Ok(result.rows_affected() > 0)
     }
 
     /// Delete all snapshots and return the number of rows removed.
-    pub async fn delete_all(&self) -> Result<u64, sqlx::Error> {
+    pub async fn delete_all(&self) -> Result<u64, AndromedaError> {
         let result = sqlx::query("DELETE FROM snapshots").execute(&self.pool).await?;
         Ok(result.rows_affected())
     }
 
     /// Duplicate a snapshot (metadata, entities, and temporal data) under a new identifier and expiration.
-    pub async fn clone_snapshot(&self, source_id: &str, new_id: &str, new_expires_at: DateTime<Utc>) -> Result<Snapshot, sqlx::Error> {
+    pub async fn clone_snapshot(&self, source_id: &str, new_id: &str, new_expires_at: DateTime<Utc>) -> Result<Snapshot, AndromedaError> {
+        let mut tx = self.pool.begin().await?;
+
         // Copy the snapshot metadata
         sqlx::query(
             "INSERT INTO snapshots (id, snapshot_queries, snapshot_temporal_queries, snapshot_lifetime, snapshot_priority, endpoint, receiver_info, status, queries_details, temporal_queries_details, created_at, modified_at, expires_at, last_used_at)
@@ -103,7 +114,7 @@ impl SnapshotRepository {
         .bind(source_id)
         .bind(new_id)
         .bind(new_expires_at)
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await?;
 
         // Copy entity data
@@ -113,7 +124,7 @@ impl SnapshotRepository {
         )
         .bind(source_id)
         .bind(new_id)
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await?;
 
         // Copy temporal data
@@ -123,14 +134,18 @@ impl SnapshotRepository {
         )
         .bind(source_id)
         .bind(new_id)
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await?;
 
-        self.get(new_id).await?.ok_or_else(|| sqlx::Error::RowNotFound)
+        tx.commit().await?;
+
+        self.get(new_id)
+            .await?
+            .ok_or_else(|| AndromedaError::not_found("Cloned snapshot not found after insert".to_string()))
     }
 
     /// Update the `last_used_at` timestamp to the current time.
-    pub async fn touch_last_used(&self, id: &str) -> Result<(), sqlx::Error> {
+    pub async fn touch_last_used(&self, id: &str) -> Result<(), AndromedaError> {
         sqlx::query("UPDATE snapshots SET last_used_at = NOW() WHERE id = $1")
             .bind(id)
             .execute(&self.pool)
@@ -139,20 +154,8 @@ impl SnapshotRepository {
     }
 
     /// Retrieve a single entity from `snapshot_entities` by snapshot and entity identifiers.
-    pub async fn get_entity(&self, snapshot_id: &str, entity_id: &str) -> Result<Option<Value>, sqlx::Error> {
-        let row = sqlx::query("SELECT entity_data FROM snapshot_entities WHERE snapshot_id = $1 AND entity_id = $2")
-            .bind(snapshot_id)
-            .bind(entity_id)
-            .fetch_optional(&self.pool)
-            .await?;
-
-        match row {
-            Some(row) => {
-                let data: Value = row.try_get("entity_data")?;
-                Ok(Some(data))
-            }
-            None => Ok(None),
-        }
+    pub async fn get_entity(&self, snapshot_id: &str, entity_id: &str) -> Result<Option<Value>, AndromedaError> {
+        get_snapshot_row(&self.pool, "snapshot_entities", "entity_data", snapshot_id, entity_id).await
     }
 
     /// Query entities from `snapshot_entities` with optional type and ID filtering.
@@ -165,77 +168,23 @@ impl SnapshotRepository {
         entity_ids: Option<&[String]>,
         limit: i64,
         offset: i64,
-    ) -> Result<(Vec<Value>, i64), sqlx::Error> {
-        // Build a dynamic query with optional filters
-        let mut conditions = vec!["snapshot_id = $1".to_string()];
-        let mut param_idx = 2u32;
-
-        if entity_type.is_some() {
-            conditions.push(format!("entity_data->>'type' LIKE '%' || ${param_idx} || '%'"));
-            param_idx += 1;
-        }
-
-        if let Some(ids) = entity_ids {
-            let placeholders: Vec<String> = ids.iter().enumerate().map(|(i, _)| format!("${}", param_idx + i as u32)).collect();
-            if !placeholders.is_empty() {
-                conditions.push(format!("entity_id IN ({})", placeholders.join(", ")));
-            }
-            param_idx += ids.len() as u32;
-        }
-
-        let where_clause = conditions.join(" AND ");
-
-        // Count query
-        let count_sql = format!("SELECT COUNT(*) as cnt FROM snapshot_entities WHERE {where_clause}");
-        let mut count_query = sqlx::query(&count_sql).bind(snapshot_id);
-        if let Some(t) = entity_type {
-            count_query = count_query.bind(t);
-        }
-        if let Some(ids) = entity_ids {
-            for id in ids {
-                count_query = count_query.bind(id);
-            }
-        }
-        let count_row = count_query.fetch_one(&self.pool).await?;
-        let total: i64 = count_row.try_get("cnt")?;
-
-        // Data query
-        let data_sql = format!(
-            "SELECT entity_data FROM snapshot_entities WHERE {where_clause} ORDER BY entity_id LIMIT ${param_idx} OFFSET ${}",
-            param_idx + 1
-        );
-        let mut data_query = sqlx::query(&data_sql).bind(snapshot_id);
-        if let Some(t) = entity_type {
-            data_query = data_query.bind(t);
-        }
-        if let Some(ids) = entity_ids {
-            for id in ids {
-                data_query = data_query.bind(id);
-            }
-        }
-        data_query = data_query.bind(limit).bind(offset);
-
-        let rows = data_query.fetch_all(&self.pool).await?;
-        let entities: Vec<Value> = rows.iter().map(|r| r.try_get("entity_data")).collect::<Result<Vec<_>, _>>()?;
-
-        Ok((entities, total))
+    ) -> Result<(Vec<Value>, i64), AndromedaError> {
+        query_snapshot_table(&SnapshotQueryParams {
+            pool: &self.pool,
+            table: "snapshot_entities",
+            data_column: "entity_data",
+            snapshot_id,
+            entity_type,
+            entity_ids,
+            limit,
+            offset,
+        })
+        .await
     }
 
     /// Retrieve a single temporal entity from `snapshot_temporal_entities`.
-    pub async fn get_temporal_entity(&self, snapshot_id: &str, entity_id: &str) -> Result<Option<Value>, sqlx::Error> {
-        let row = sqlx::query("SELECT temporal_data FROM snapshot_temporal_entities WHERE snapshot_id = $1 AND entity_id = $2")
-            .bind(snapshot_id)
-            .bind(entity_id)
-            .fetch_optional(&self.pool)
-            .await?;
-
-        match row {
-            Some(row) => {
-                let data: Value = row.try_get("temporal_data")?;
-                Ok(Some(data))
-            }
-            None => Ok(None),
-        }
+    pub async fn get_temporal_entity(&self, snapshot_id: &str, entity_id: &str) -> Result<Option<Value>, AndromedaError> {
+        get_snapshot_row(&self.pool, "snapshot_temporal_entities", "temporal_data", snapshot_id, entity_id).await
     }
 
     /// Query temporal entities from `snapshot_temporal_entities` with optional filtering.
@@ -248,119 +197,131 @@ impl SnapshotRepository {
         entity_ids: Option<&[String]>,
         limit: i64,
         offset: i64,
-    ) -> Result<(Vec<Value>, i64), sqlx::Error> {
-        let mut conditions = vec!["snapshot_id = $1".to_string()];
-        let mut param_idx = 2u32;
-
-        if entity_type.is_some() {
-            conditions.push(format!("temporal_data->>'type' LIKE '%' || ${param_idx} || '%'"));
-            param_idx += 1;
-        }
-
-        if let Some(ids) = entity_ids {
-            let placeholders: Vec<String> = ids.iter().enumerate().map(|(i, _)| format!("${}", param_idx + i as u32)).collect();
-            if !placeholders.is_empty() {
-                conditions.push(format!("entity_id IN ({})", placeholders.join(", ")));
-            }
-            param_idx += ids.len() as u32;
-        }
-
-        let where_clause = conditions.join(" AND ");
-
-        let count_sql = format!("SELECT COUNT(*) as cnt FROM snapshot_temporal_entities WHERE {where_clause}");
-        let mut count_query = sqlx::query(&count_sql).bind(snapshot_id);
-        if let Some(t) = entity_type {
-            count_query = count_query.bind(t);
-        }
-        if let Some(ids) = entity_ids {
-            for id in ids {
-                count_query = count_query.bind(id);
-            }
-        }
-        let count_row = count_query.fetch_one(&self.pool).await?;
-        let total: i64 = count_row.try_get("cnt")?;
-
-        let data_sql = format!(
-            "SELECT temporal_data FROM snapshot_temporal_entities WHERE {where_clause} ORDER BY entity_id LIMIT ${param_idx} OFFSET ${}",
-            param_idx + 1
-        );
-        let mut data_query = sqlx::query(&data_sql).bind(snapshot_id);
-        if let Some(t) = entity_type {
-            data_query = data_query.bind(t);
-        }
-        if let Some(ids) = entity_ids {
-            for id in ids {
-                data_query = data_query.bind(id);
-            }
-        }
-        data_query = data_query.bind(limit).bind(offset);
-
-        let rows = data_query.fetch_all(&self.pool).await?;
-        let entities: Vec<Value> = rows.iter().map(|r| r.try_get("temporal_data")).collect::<Result<Vec<_>, _>>()?;
-
-        Ok((entities, total))
+    ) -> Result<(Vec<Value>, i64), AndromedaError> {
+        query_snapshot_table(&SnapshotQueryParams {
+            pool: &self.pool,
+            table: "snapshot_temporal_entities",
+            data_column: "temporal_data",
+            snapshot_id,
+            entity_type,
+            entity_ids,
+            limit,
+            offset,
+        })
+        .await
     }
 }
 
-fn row_to_snapshot(row: &sqlx::postgres::PgRow) -> Result<Snapshot, sqlx::Error> {
+/// Parameters for a paginated snapshot table query.
+struct SnapshotQueryParams<'a> {
+    pool: &'a PgPool,
+    table: &'a str,
+    data_column: &'a str,
+    snapshot_id: &'a str,
+    entity_type: Option<&'a str>,
+    entity_ids: Option<&'a [String]>,
+    limit: i64,
+    offset: i64,
+}
+
+/// Execute a paginated query against a snapshot-related table with optional type and ID filtering.
+async fn query_snapshot_table(params: &SnapshotQueryParams<'_>) -> Result<(Vec<Value>, i64), AndromedaError> {
+    let SnapshotQueryParams {
+        pool,
+        table,
+        data_column,
+        snapshot_id,
+        entity_type,
+        entity_ids,
+        limit,
+        offset,
+    } = params;
+    let mut conditions = vec!["snapshot_id = $1".to_string()];
+    let mut param_idx = 2u32;
+
+    if entity_type.is_some() {
+        conditions.push(format!("{data_column}->>'type' LIKE '%' || ${param_idx} || '%'"));
+        param_idx += 1;
+    }
+
+    if let Some(ids) = entity_ids {
+        let placeholders: Vec<String> = ids.iter().enumerate().map(|(i, _)| format!("${}", param_idx + i as u32)).collect();
+        if !placeholders.is_empty() {
+            conditions.push(format!("entity_id IN ({})", placeholders.join(", ")));
+        }
+        param_idx += ids.len() as u32;
+    }
+
+    let where_clause = conditions.join(" AND ");
+
+    // Count query
+    let count_sql = format!("SELECT COUNT(*) as cnt FROM {table} WHERE {where_clause}");
+    let mut count_query = sqlx::query(&count_sql).bind(*snapshot_id);
+    if let Some(t) = entity_type {
+        count_query = count_query.bind(*t);
+    }
+    if let Some(ids) = entity_ids {
+        for id in *ids {
+            count_query = count_query.bind(id);
+        }
+    }
+    let count_row = count_query.fetch_one(*pool).await?;
+    let total: i64 = count_row.try_get("cnt")?;
+
+    // Data query
+    let data_sql = format!(
+        "SELECT {data_column} FROM {table} WHERE {where_clause} ORDER BY entity_id LIMIT ${param_idx} OFFSET ${}",
+        param_idx + 1
+    );
+    let mut data_query = sqlx::query(&data_sql).bind(*snapshot_id);
+    if let Some(t) = entity_type {
+        data_query = data_query.bind(*t);
+    }
+    if let Some(ids) = entity_ids {
+        for id in *ids {
+            data_query = data_query.bind(id);
+        }
+    }
+    data_query = data_query.bind(*limit).bind(*offset);
+
+    let rows = data_query.fetch_all(*pool).await?;
+    let entities: Vec<Value> = rows.iter().map(|r| r.try_get(*data_column)).collect::<Result<Vec<_>, _>>()?;
+
+    Ok((entities, total))
+}
+
+/// Retrieve a single row from a snapshot-related table by snapshot and entity identifiers.
+async fn get_snapshot_row(pool: &PgPool, table: &str, data_column: &str, snapshot_id: &str, entity_id: &str) -> Result<Option<Value>, AndromedaError> {
+    let sql = format!("SELECT {data_column} FROM {table} WHERE snapshot_id = $1 AND entity_id = $2");
+    let row = sqlx::query(&sql).bind(snapshot_id).bind(entity_id).fetch_optional(pool).await?;
+
+    match row {
+        Some(row) => {
+            let data: Value = row.try_get(data_column)?;
+            Ok(Some(data))
+        }
+        None => Ok(None),
+    }
+}
+
+/// Deserialize an optional JSON column into a typed `Option<T>`.
+fn deserialize_json_column<T: serde::de::DeserializeOwned>(row: &sqlx::postgres::PgRow, column: &str) -> Result<Option<T>, AndromedaError> {
+    let val: Option<Value> = row.try_get(column)?;
+    val.map(|v| serde_json::from_value(v).map_err(|e| AndromedaError::internal(format!("Failed to deserialize {}: {}", column, e))))
+        .transpose()
+}
+
+fn row_to_snapshot(row: &sqlx::postgres::PgRow) -> Result<Snapshot, AndromedaError> {
     let status_str: String = row.try_get("status")?;
-    let status = status_str.parse::<SnapshotStatus>().map_err(|e| sqlx::Error::ColumnDecode {
-        index: "status".to_string(),
-        source: Box::new(std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            format!("Invalid snapshot status '{}': {}", status_str, e),
-        )),
-    })?;
+    let status = status_str
+        .parse::<SnapshotStatus>()
+        .map_err(|e| AndromedaError::internal(format!("Invalid snapshot status '{}': {}", status_str, e)))?;
 
-    let queries_details_val: Option<Value> = row.try_get("queries_details")?;
-    let queries_details: Option<Vec<ExecutionResultDetails>> = queries_details_val
-        .map(|v| {
-            serde_json::from_value(v).map_err(|e| sqlx::Error::ColumnDecode {
-                index: "queries_details".to_string(),
-                source: Box::new(e),
-            })
-        })
-        .transpose()?;
-
-    let temporal_queries_details_val: Option<Value> = row.try_get("temporal_queries_details")?;
-    let temporal_queries_details: Option<Vec<ExecutionResultDetails>> = temporal_queries_details_val
-        .map(|v| {
-            serde_json::from_value(v).map_err(|e| sqlx::Error::ColumnDecode {
-                index: "temporal_queries_details".to_string(),
-                source: Box::new(e),
-            })
-        })
-        .transpose()?;
-
-    let snapshot_queries_val: Option<Value> = row.try_get("snapshot_queries")?;
-    let snapshot_queries: Option<Vec<Value>> = snapshot_queries_val
-        .map(|v| {
-            serde_json::from_value(v).map_err(|e| sqlx::Error::ColumnDecode {
-                index: "snapshot_queries".to_string(),
-                source: Box::new(e),
-            })
-        })
-        .transpose()?;
-
-    let snapshot_temporal_queries_val: Option<Value> = row.try_get("snapshot_temporal_queries")?;
-    let snapshot_temporal_queries: Option<Vec<Value>> = snapshot_temporal_queries_val
-        .map(|v| {
-            serde_json::from_value(v).map_err(|e| sqlx::Error::ColumnDecode {
-                index: "snapshot_temporal_queries".to_string(),
-                source: Box::new(e),
-            })
-        })
-        .transpose()?;
-
-    let receiver_info_val: Option<Value> = row.try_get("receiver_info")?;
-    let receiver_info: Option<Vec<Value>> = receiver_info_val
-        .map(|v| {
-            serde_json::from_value(v).map_err(|e| sqlx::Error::ColumnDecode {
-                index: "receiver_info".to_string(),
-                source: Box::new(e),
-            })
-        })
-        .transpose()?;
+    let queries_details: Option<Vec<ExecutionResultDetails>> = deserialize_json_column(row, "queries_details")?;
+    let temporal_queries_details: Option<Vec<ExecutionResultDetails>> = deserialize_json_column(row, "temporal_queries_details")?;
+    let snapshot_queries: Option<Vec<Value>> = deserialize_json_column(row, "snapshot_queries")?;
+    let snapshot_temporal_queries: Option<Vec<Value>> = deserialize_json_column(row, "snapshot_temporal_queries")?;
+    let receiver_info: Option<Vec<Value>> = deserialize_json_column(row, "receiver_info")?;
 
     Ok(Snapshot {
         id: row.try_get("id")?,

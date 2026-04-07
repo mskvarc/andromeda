@@ -1,16 +1,17 @@
+//! Shared subscription persistence trait and helpers.
+//!
+//! Defines the `SubscriptionStore` trait, the `impl_subscription_store!` macro
+//! that generates implementations, and helper functions for status computation
+//! and row deserialization shared by entity and context source subscriptions.
+
 use crate::{
-    domain::{
-        subscription::{NotificationParams, NotificationStatus, Subscription, SubscriptionStatus},
-        uri::NGSI_LD_URN_NID,
-    },
+    domain::subscription::{NotificationParams, NotificationStatus, Subscription, SubscriptionStatus},
     error::AndromedaError,
 };
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use serde_json::Value;
 use sqlx::Row;
-use urn::UrnBuilder;
-use uuid::Uuid;
 
 /// Whether the subscription table includes a `dataset_id` column.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -22,6 +23,7 @@ pub enum DatasetIdPresence {
 }
 
 /// Borrowed field values used when creating or updating a subscription.
+#[derive(Debug)]
 pub struct SubscriptionFields<'a> {
     /// Human-readable name of the subscription.
     pub subscription_name: Option<&'a str>,
@@ -308,6 +310,7 @@ macro_rules! impl_subscription_store {
 
 /// Fields that may be present in a subscription update request.
 /// Uses `Option<Option<T>>` to distinguish "not provided" (`None`) from "provided" (`Some`).
+#[derive(Debug)]
 pub struct StatusUpdateFields {
     /// New active/paused flag, if provided in the update request.
     pub is_active: Option<bool>,
@@ -332,14 +335,9 @@ pub fn compute_updated_status(current_status: SubscriptionStatus, fields: &Statu
         (Some(true), true) => SubscriptionStatus::Active,
         (Some(false), true) => SubscriptionStatus::Paused,
         (None, true) if current_status == SubscriptionStatus::Expired => SubscriptionStatus::Active,
-        (Some(true) | Some(false) | None, true | false) => current_status,
+        (Some(true), false) | (Some(false), false) => current_status,
+        (None, true) | (None, false) => current_status,
     }
-}
-
-/// Generate a new random NGSI-LD subscription URN identifier.
-pub fn generate_subscription_id() -> Result<String, AndromedaError> {
-    let urn = UrnBuilder::new(NGSI_LD_URN_NID, &format!("Subscription:{}", Uuid::new_v4())).build()?;
-    Ok(urn.to_string())
 }
 
 /// Shared row-to-subscription builder used by both `SubscriptionRepository` and
@@ -373,7 +371,11 @@ pub fn build_subscription_from_row(row: &sqlx::postgres::PgRow, dataset_id_prese
     let temporal_q: Option<Value> = row.get("temporal_q");
     let lang: Option<String> = row.get("lang");
     let jsonld_context: Option<String> = row.get("jsonld_context");
-    let local_only: bool = row.try_get("local_only").unwrap_or(false);
+    let local_only: bool = match row.try_get("local_only") {
+        Ok(v) => v,
+        Err(sqlx::Error::ColumnNotFound(_)) | Err(sqlx::Error::ColumnDecode { .. }) => false,
+        Err(e) => return Err(AndromedaError::internal(format!("Failed to read local_only column: {}", e))),
+    };
     let times_sent: i32 = row.get("times_sent");
     let last_notification: Option<DateTime<Utc>> = row.get("last_notification");
     let last_success: Option<DateTime<Utc>> = row.get("last_success");
@@ -426,4 +428,98 @@ pub fn build_subscription_from_row(row: &sqlx::postgres::PgRow, dataset_id_prese
         created_at,
         modified_at,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{StatusUpdateFields, compute_updated_status};
+    use crate::domain::subscription::SubscriptionStatus;
+    use chrono::{Duration, Utc};
+
+    #[test]
+    fn active_with_is_active_true_stays_active() {
+        let status = compute_updated_status(
+            SubscriptionStatus::Active,
+            &StatusUpdateFields {
+                is_active: Some(true),
+                expires_at: None,
+            },
+        );
+        assert_eq!(status, SubscriptionStatus::Active);
+    }
+
+    #[test]
+    fn active_with_is_active_false_becomes_paused() {
+        let status = compute_updated_status(
+            SubscriptionStatus::Active,
+            &StatusUpdateFields {
+                is_active: Some(false),
+                expires_at: None,
+            },
+        );
+        assert_eq!(status, SubscriptionStatus::Paused);
+    }
+
+    #[test]
+    fn expired_with_is_active_true_no_expiry_change_stays_expired() {
+        let status = compute_updated_status(
+            SubscriptionStatus::Expired,
+            &StatusUpdateFields {
+                is_active: Some(true),
+                expires_at: None,
+            },
+        );
+        assert_eq!(status, SubscriptionStatus::Expired);
+    }
+
+    #[test]
+    fn expired_with_new_future_expires_at_reactivates() {
+        let future = Utc::now() + Duration::hours(1);
+        let status = compute_updated_status(
+            SubscriptionStatus::Expired,
+            &StatusUpdateFields {
+                is_active: None,
+                expires_at: Some(Some(future)),
+            },
+        );
+        assert_eq!(status, SubscriptionStatus::Active);
+    }
+
+    #[test]
+    fn expired_with_past_expires_at_stays_expired() {
+        let past = Utc::now() - Duration::hours(1);
+        let status = compute_updated_status(
+            SubscriptionStatus::Expired,
+            &StatusUpdateFields {
+                is_active: None,
+                expires_at: Some(Some(past)),
+            },
+        );
+        assert_eq!(status, SubscriptionStatus::Expired);
+    }
+
+    #[test]
+    fn active_with_no_changes_stays_active() {
+        let status = compute_updated_status(
+            SubscriptionStatus::Active,
+            &StatusUpdateFields {
+                is_active: None,
+                expires_at: None,
+            },
+        );
+        assert_eq!(status, SubscriptionStatus::Active);
+    }
+
+    #[test]
+    fn paused_with_is_active_true_and_new_expiry_becomes_active() {
+        let future = Utc::now() + Duration::hours(1);
+        let status = compute_updated_status(
+            SubscriptionStatus::Paused,
+            &StatusUpdateFields {
+                is_active: Some(true),
+                expires_at: Some(Some(future)),
+            },
+        );
+        assert_eq!(status, SubscriptionStatus::Active);
+    }
 }

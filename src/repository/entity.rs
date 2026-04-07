@@ -1,3 +1,8 @@
+//! Repository for persisting and querying NGSI-LD entities.
+//!
+//! Handles single-entity CRUD, batch operations (via SQL `UNNEST`), compiled
+//! query execution, entity type/attribute discovery, and expiration cleanup.
+
 use crate::{
     domain::{expanded, notification::SysAttrsSnapshot},
     error::AndromedaError,
@@ -18,6 +23,7 @@ use urn::Urn;
 /// table.  The `types_json` and `scopes_json` fields are JSON arrays of strings
 /// because PostgreSQL `UNNEST` flattens `text[][]` into individual elements
 /// rather than per-row arrays.
+#[derive(Debug)]
 pub struct PreparedEntityRow {
     /// Entity identifier (URN).
     pub id: String,
@@ -41,6 +47,7 @@ pub struct PreparedEntityRow {
 ///
 /// Contains the deleted entity's payload and system attributes so the caller
 /// can emit change events without additional queries.
+#[derive(Debug)]
 pub struct DeletedEntity {
     /// Entity identifier.
     pub id: String,
@@ -55,6 +62,7 @@ pub struct DeletedEntity {
 }
 
 /// Result of an entity query containing matched rows and an optional total count.
+#[derive(Debug)]
 pub struct QueryResult {
     /// The matched entity payloads.
     pub rows: Vec<Value>,
@@ -63,6 +71,7 @@ pub struct QueryResult {
 }
 
 /// Aggregated metadata for a single attribute across all entities.
+#[derive(Debug)]
 pub struct AttributeSummaryRow {
     /// The expanded IRI of the attribute.
     pub attr_iri: String,
@@ -75,6 +84,7 @@ pub struct AttributeSummaryRow {
 }
 
 /// Repository for persisting and querying NGSI-LD entities.
+#[derive(Debug)]
 pub struct EntityRepository {
     pool: PgPool,
 }
@@ -264,14 +274,7 @@ impl EntityRepository {
     }
 
     async fn execute_dynamic_query(&self, sql: &str, binds: &[BindValue<'_>]) -> Result<Vec<Value>, AndromedaError> {
-        let mut query = sqlx::query(sql);
-        for bind in binds {
-            query = match bind {
-                BindValue::String(s) => query.bind(s.as_ref()),
-                BindValue::StringVec(v) => query.bind(v.as_ref()),
-                BindValue::I64(i) => query.bind(i),
-            };
-        }
+        let query = crate::bind_values!(sqlx::query(sql), binds);
 
         let rows = query.fetch_all(&self.pool).await?;
         let mut results = Vec::with_capacity(rows.len());
@@ -283,14 +286,7 @@ impl EntityRepository {
     }
 
     async fn execute_count_query(&self, sql: &str, binds: &[BindValue<'_>]) -> Result<i64, AndromedaError> {
-        let mut query = sqlx::query_scalar(sql);
-        for bind in binds {
-            query = match bind {
-                BindValue::String(s) => query.bind(s.as_ref()),
-                BindValue::StringVec(v) => query.bind(v.as_ref()),
-                BindValue::I64(i) => query.bind(i),
-            };
-        }
+        let query = crate::bind_values!(sqlx::query_scalar(sql), binds);
 
         let count: i64 = query.fetch_one(&self.pool).await?;
         Ok(count)
@@ -306,18 +302,20 @@ impl EntityRepository {
             .fetch_all(&self.pool)
             .await?;
 
-        let mut result = HashMap::with_capacity(ids.len());
-        for row in rows {
-            let id: String = row.get("id");
-            result.insert(
-                id,
-                SysAttrsSnapshot {
-                    created_at: row.get("created_at"),
-                    modified_at: row.get("modified_at"),
-                    expires_at: row.get("expires_at"),
-                },
-            );
-        }
+        let result = rows
+            .into_iter()
+            .map(|row| {
+                let id: String = row.get("id");
+                (
+                    id,
+                    SysAttrsSnapshot {
+                        created_at: row.get("created_at"),
+                        modified_at: row.get("modified_at"),
+                        expires_at: row.get("expires_at"),
+                    },
+                )
+            })
+            .collect();
         Ok(result)
     }
 
@@ -396,12 +394,14 @@ impl EntityRepository {
         .fetch_all(&self.pool)
         .await?;
 
-        let mut results = Vec::new();
-        for row in rows {
-            let type_iri: String = row.get("type_iri");
-            let attr_keys: Vec<String> = row.get("attr_keys");
-            results.push((type_iri, attr_keys));
-        }
+        let results = rows
+            .into_iter()
+            .map(|row| {
+                let type_iri: String = row.get("type_iri");
+                let attr_keys: Vec<String> = row.get("attr_keys");
+                (type_iri, attr_keys)
+            })
+            .collect();
         Ok(results)
     }
 
@@ -431,16 +431,18 @@ impl EntityRepository {
         .fetch_all(&self.pool)
         .await?;
 
-        let mut results = Vec::new();
-        for row in rows {
-            let attribute_types: Option<Vec<String>> = row.get("attribute_types");
-            results.push(AttributeSummaryRow {
-                attr_iri: row.get("attr_key"),
-                entity_count: row.get("entity_count"),
-                entity_types: row.get("entity_types"),
-                attribute_types: attribute_types.unwrap_or_default(),
-            });
-        }
+        let results = rows
+            .into_iter()
+            .map(|row| {
+                let attribute_types: Option<Vec<String>> = row.get("attribute_types");
+                AttributeSummaryRow {
+                    attr_iri: row.get("attr_key"),
+                    entity_count: row.get("entity_count"),
+                    entity_types: row.get("entity_types"),
+                    attribute_types: attribute_types.unwrap_or_default(),
+                }
+            })
+            .collect();
         Ok(results)
     }
 
@@ -489,14 +491,7 @@ impl EntityRepository {
 
         tracing::info!("Built IDs SQL: {} with binds: {:?}", built.sql, built.bind_values);
 
-        let mut query = sqlx::query(&built.sql);
-        for bind in &built.bind_values {
-            query = match bind {
-                BindValue::String(s) => query.bind(s.as_ref()),
-                BindValue::StringVec(v) => query.bind(v.as_ref()),
-                BindValue::I64(i) => query.bind(i),
-            };
-        }
+        let query = crate::bind_values!(sqlx::query(&built.sql), &built.bind_values);
 
         let rows = query.fetch_all(&self.pool).await?;
         let ids: Vec<String> = rows.iter().map(|row| row.get("id")).collect();
@@ -583,16 +578,16 @@ impl EntityRepository {
             .fetch_all(&self.pool)
             .await?;
 
-        let mut result = Vec::with_capacity(rows.len());
-        for row in rows {
-            result.push(DeletedEntity {
+        let result = rows
+            .into_iter()
+            .map(|row| DeletedEntity {
                 id: row.get("id"),
                 payload: row.get("payload"),
                 created_at: row.get("created_at"),
                 modified_at: row.get("modified_at"),
                 expires_at: row.get("expires_at"),
-            });
-        }
+            })
+            .collect();
         Ok(result)
     }
 
@@ -705,18 +700,21 @@ impl EntityRepository {
         .fetch_all(&self.pool)
         .await?;
 
-        let mut result = Vec::with_capacity(rows.len());
-        for row in rows {
-            let id: String = row.get("id");
-            let was_created: bool = row.get("was_created");
-            result.push((id, was_created));
-        }
+        let result = rows
+            .into_iter()
+            .map(|row| {
+                let id: String = row.get("id");
+                let was_created: bool = row.get("was_created");
+                (id, was_created)
+            })
+            .collect();
         Ok(result)
     }
 }
 
 /// Parallel column vectors extracted from [`PreparedEntityRow`] slices for
 /// sqlx `UNNEST` binding.
+#[derive(Debug)]
 struct DecomposedColumns {
     ids: Vec<String>,
     types_json: Vec<Value>,

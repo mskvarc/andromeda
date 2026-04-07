@@ -17,7 +17,10 @@ use crate::{
         ensure_temporal_attrs_are_arrays,
         transform_to_temporal_values,
     },
-    repository::{entity::EntityRepository, temporal::TemporalRepository},
+    repository::{
+        entity::EntityRepository,
+        temporal::{DeleteScope, TemporalRepository},
+    },
     service::{entity::extract_entity_types, temporal_recorder::TemporalRecorder},
 };
 use chrono::{DateTime, SecondsFormat, Utc};
@@ -184,7 +187,7 @@ impl TemporalService {
         entity_id: &str,
         attr_id: &str,
         dataset_id: Option<&str>,
-        delete_all: bool,
+        scope: DeleteScope,
         context: &ContextSpec,
     ) -> Result<(), AndromedaError> {
         let attr_iri = self.engine.expand_term(attr_id, context).await?;
@@ -198,7 +201,7 @@ impl TemporalService {
             return Err(AndromedaError::not_found(format!("Attribute {} not found on entity {}", attr_iri, entity_id)));
         }
 
-        self.repo.delete_tea(entity_id, &attr_iri, dataset_id, delete_all).await?;
+        self.repo.delete_tea(entity_id, &attr_iri, dataset_id, scope).await?;
         Ok(())
     }
 

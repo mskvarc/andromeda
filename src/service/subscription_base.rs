@@ -106,7 +106,7 @@ where
                 }
                 provided_id.to_string()
             }
-            None => crate::repository::subscription_store::generate_subscription_id()?,
+            None => crate::repository::subscription::SubscriptionRepository::generate_id()?,
         };
 
         if let Some(ctx_value) = payload.get("jsonldContext") {

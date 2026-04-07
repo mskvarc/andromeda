@@ -20,6 +20,26 @@ pub struct BuiltQuery<'a> {
     pub bind_values: Vec<BindValue<'a>>,
 }
 
+/// Bind all values in a [`BindValue`] slice to a sqlx query.
+///
+/// Works with `sqlx::query()`, `sqlx::query_scalar()`, and `sqlx::query_as()` since
+/// all share the same `.bind()` method signature. The query type is returned after
+/// all binds are applied.
+#[macro_export]
+macro_rules! bind_values {
+    ($query:expr, $binds:expr) => {{
+        let mut q = $query;
+        for bind in $binds {
+            q = match bind {
+                $crate::query::sql::BindValue::String(s) => q.bind(s.as_ref()),
+                $crate::query::sql::BindValue::StringVec(v) => q.bind(v.as_ref()),
+                $crate::query::sql::BindValue::I64(i) => q.bind(*i),
+            };
+        }
+        q
+    }};
+}
+
 /// A typed bind value for parameterized SQL queries.
 #[derive(Debug, Clone)]
 pub enum BindValue<'a> {

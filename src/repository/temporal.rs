@@ -7,7 +7,17 @@ use chrono::{DateTime, Utc};
 use serde_json::Value;
 use sqlx::postgres::PgPool;
 
+/// Whether to delete all instances of an attribute or a single specific instance.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeleteScope {
+    /// Delete all instances of the attribute regardless of dataset ID.
+    All,
+    /// Delete only the instance matching the specific dataset ID (or the default if `None`).
+    Single,
+}
+
 /// Typed value columns for an attribute history row (exactly one should be set).
+#[derive(Debug)]
 pub struct HistoryValues<'a> {
     /// Numeric attribute value.
     pub value_number: Option<f64>,
@@ -28,6 +38,7 @@ pub struct HistoryValues<'a> {
 }
 
 /// Parameters for inserting a single observation into attribute history.
+#[derive(Debug)]
 pub struct InsertHistoryParams<'a> {
     /// Timestamp used for the TimescaleDB partition key.
     pub time: DateTime<Utc>,
@@ -42,6 +53,7 @@ pub struct InsertHistoryParams<'a> {
 }
 
 /// Parameters for modifying an existing attribute instance in history.
+#[derive(Debug)]
 pub struct UpdateInstanceParams<'a> {
     /// Identifier of the attribute instance to update.
     pub instance_id: &'a str,
@@ -56,6 +68,7 @@ pub struct UpdateInstanceParams<'a> {
 }
 
 /// PostgreSQL/TimescaleDB-backed repository for NGSI-LD temporal entity data.
+#[derive(Debug)]
 pub struct TemporalRepository {
     pool: PgPool,
 }
@@ -137,45 +150,50 @@ impl TemporalRepository {
     }
 
     /// Delete specific TEA entry.
-    /// - `delete_all`: delete all instances of the attribute
-    /// - `dataset_id: None` with `delete_all: false`: delete only default instance (dataset_id IS NULL)
-    /// - `dataset_id: Some(s)`: delete the instance with that datasetId
-    pub async fn delete_tea(&self, entity_id: &str, attribute_name: &str, dataset_id: Option<&str>, delete_all: bool) -> Result<(), AndromedaError> {
-        if delete_all {
-            sqlx::query(
-                r#"
-                DELETE FROM temporal_entity_attributes
-                WHERE entity_id = $1 AND attribute_name = $2
-                "#,
-            )
-            .bind(entity_id)
-            .bind(attribute_name)
-            .execute(&self.pool)
-            .await?;
-        } else if let Some(ds_id) = dataset_id {
-            sqlx::query(
-                r#"
-                DELETE FROM temporal_entity_attributes
-                WHERE entity_id = $1 AND attribute_name = $2
-                AND dataset_id = $3
-                "#,
-            )
-            .bind(entity_id)
-            .bind(attribute_name)
-            .bind(ds_id)
-            .execute(&self.pool)
-            .await?;
-        } else {
-            sqlx::query(
-                r#"
-                DELETE FROM temporal_entity_attributes
-                WHERE entity_id = $1 AND attribute_name = $2 AND dataset_id IS NULL
-                "#,
-            )
-            .bind(entity_id)
-            .bind(attribute_name)
-            .execute(&self.pool)
-            .await?;
+    /// - `scope: DeleteScope::All`: delete all instances of the attribute
+    /// - `scope: DeleteScope::Single` with `dataset_id: None`: delete only default instance (dataset_id IS NULL)
+    /// - `scope: DeleteScope::Single` with `dataset_id: Some(s)`: delete the instance with that datasetId
+    pub async fn delete_tea(&self, entity_id: &str, attribute_name: &str, dataset_id: Option<&str>, scope: DeleteScope) -> Result<(), AndromedaError> {
+        match scope {
+            DeleteScope::All => {
+                sqlx::query(
+                    r#"
+                    DELETE FROM temporal_entity_attributes
+                    WHERE entity_id = $1 AND attribute_name = $2
+                    "#,
+                )
+                .bind(entity_id)
+                .bind(attribute_name)
+                .execute(&self.pool)
+                .await?;
+            }
+            DeleteScope::Single => {
+                if let Some(ds_id) = dataset_id {
+                    sqlx::query(
+                        r#"
+                        DELETE FROM temporal_entity_attributes
+                        WHERE entity_id = $1 AND attribute_name = $2
+                        AND dataset_id = $3
+                        "#,
+                    )
+                    .bind(entity_id)
+                    .bind(attribute_name)
+                    .bind(ds_id)
+                    .execute(&self.pool)
+                    .await?;
+                } else {
+                    sqlx::query(
+                        r#"
+                        DELETE FROM temporal_entity_attributes
+                        WHERE entity_id = $1 AND attribute_name = $2 AND dataset_id IS NULL
+                        "#,
+                    )
+                    .bind(entity_id)
+                    .bind(attribute_name)
+                    .execute(&self.pool)
+                    .await?;
+                }
+            }
         }
 
         Ok(())
@@ -245,14 +263,7 @@ impl TemporalRepository {
 
     /// Execute a dynamically-built temporal query. Returns raw rows for the service to map.
     pub async fn execute_temporal_query(&self, sql: &str, binds: &[BindValue<'_>]) -> Result<Vec<sqlx::postgres::PgRow>, AndromedaError> {
-        let mut query = sqlx::query(sql);
-        for bind in binds {
-            query = match bind {
-                BindValue::String(s) => query.bind(s.as_ref()),
-                BindValue::StringVec(v) => query.bind(v.as_ref()),
-                BindValue::I64(i) => query.bind(i),
-            };
-        }
+        let query = crate::bind_values!(sqlx::query(sql), binds);
 
         let rows = query.fetch_all(&self.pool).await?;
         Ok(rows)

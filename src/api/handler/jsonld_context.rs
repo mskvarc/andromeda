@@ -7,6 +7,7 @@ use crate::{
         extractor::query::ValidatedQuery,
         parameter::jsonld_context::{DeleteParams, ListParams, ServeParams},
     },
+    repository::jsonld_context::DetailLevel,
 };
 use axum::{
     Json,
@@ -44,9 +45,13 @@ pub async fn list(
         .transpose()
         .map_err(|e| e.with_instance(uri.clone()))?;
 
-    let details = params.details.unwrap_or(false);
+    let detail_level = if params.details.unwrap_or(false) {
+        DetailLevel::Full
+    } else {
+        DetailLevel::Summary
+    };
 
-    let result = service.list(kind, details).await.map_err(|e| e.with_instance(uri.clone()))?;
+    let result = service.list(kind, detail_level).await.map_err(|e| e.with_instance(uri.clone()))?;
 
     Ok((StatusCode::OK, Json(result)).into_response())
 }
@@ -58,9 +63,13 @@ pub async fn get(
     ValidatedQuery(params): ValidatedQuery<ServeParams>,
 ) -> Result<Response, NgsiLdError> {
     let service = &state.contexts;
-    let details = params.details.unwrap_or(false);
+    let detail_level = if params.details.unwrap_or(false) {
+        DetailLevel::Full
+    } else {
+        DetailLevel::Summary
+    };
 
-    let result = service.get(&context_id, details).await.map_err(|e| e.with_instance(uri.clone()))?;
+    let result = service.get(&context_id, detail_level).await.map_err(|e| e.with_instance(uri.clone()))?;
 
     Ok((StatusCode::OK, Json(result)).into_response())
 }

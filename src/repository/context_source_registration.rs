@@ -1,10 +1,15 @@
+//! Repository for NGSI-LD context source registrations (CSRs).
+//!
+//! Provides CRUD, query, and discovery operations for CSR records stored in
+//! PostgreSQL, including geometry handling and additional property merging.
+
 use crate::{
     domain::{
         registration::{ContextSourceRegistration, CsrOperation, CsrStatus, ForwardingMode},
         uri::NGSI_LD_URN_NID,
     },
     error::AndromedaError,
-    query::{compiled::CompiledCsrQuery, csr_sql, sql::BindValue},
+    query::{compiled::CompiledCsrQuery, csr_sql},
 };
 use chrono::{DateTime, Utc};
 use serde_json::Value;
@@ -26,6 +31,7 @@ const COLUMNS: &str = "\
     additional_properties";
 
 /// Parameters for creating a new context source registration.
+#[derive(Debug)]
 pub struct CreateCsrParams<'a> {
     /// Human-readable name of the registration.
     pub registration_name: Option<&'a str>,
@@ -109,6 +115,7 @@ impl CreateCsrParams<'_> {
 
 /// Typed fragment for CSR updates. `None` = field not provided (keep existing).
 /// `Some(None)` = explicitly null (clear field). `Some(Some(v))` = new value.
+#[derive(Debug)]
 pub struct CsrUpdateFragment {
     /// Updated registration name.
     pub registration_name: Option<Option<String>>,
@@ -155,6 +162,7 @@ pub struct CsrUpdateFragment {
 }
 
 /// PostgreSQL-backed repository for NGSI-LD context source registrations.
+#[derive(Debug)]
 pub struct ContextSourceRegistrationRepository {
     pool: PgPool,
 }
@@ -281,14 +289,7 @@ impl ContextSourceRegistrationRepository {
 
         // Execute count query
         let total = if let Some(ref count_sql) = built.count_sql {
-            let mut count_query = sqlx::query_as::<_, (i64,)>(count_sql);
-            for bind in &built.bind_values {
-                count_query = match bind {
-                    BindValue::String(s) => count_query.bind(s.as_ref()),
-                    BindValue::StringVec(v) => count_query.bind(v.as_ref()),
-                    BindValue::I64(i) => count_query.bind(*i),
-                };
-            }
+            let count_query = crate::bind_values!(sqlx::query_as::<_, (i64,)>(count_sql), &built.bind_values);
             let (total,) = count_query.fetch_one(&self.pool).await?;
             total
         } else {
@@ -296,14 +297,7 @@ impl ContextSourceRegistrationRepository {
         };
 
         // Execute main query
-        let mut main_query = sqlx::query(&built.sql);
-        for bind in &built.bind_values {
-            main_query = match bind {
-                BindValue::String(s) => main_query.bind(s.as_ref()),
-                BindValue::StringVec(v) => main_query.bind(v.as_ref()),
-                BindValue::I64(i) => main_query.bind(*i),
-            };
-        }
+        let main_query = crate::bind_values!(sqlx::query(&built.sql), &built.bind_values);
         let rows = main_query.fetch_all(&self.pool).await?;
 
         let csrs = rows.iter().map(row_to_csr).collect::<Result<Vec<_>, _>>()?;
@@ -597,7 +591,11 @@ fn row_to_csr(row: &sqlx::postgres::PgRow) -> Result<ContextSourceRegistration, 
     let management: Option<Value> = row.get("management");
     let context_source_info: Option<Value> = row.get("context_source_info");
     let jsonld_context: Option<String> = row.get("jsonld_context");
-    let context_source_alias: Option<String> = row.try_get("context_source_alias").unwrap_or(None);
+    let context_source_alias: Option<String> = match row.try_get("context_source_alias") {
+        Ok(v) => v,
+        Err(sqlx::Error::ColumnNotFound(_)) | Err(sqlx::Error::ColumnDecode { .. }) => None,
+        Err(e) => return Err(AndromedaError::internal(format!("Failed to read context_source_alias column: {}", e))),
+    };
     let status_str: String = row.get("status");
     let status: CsrStatus = status_str.parse().map_err(|e: strum::ParseError| AndromedaError::internal(e.to_string()))?;
     let times_sent: i32 = row.get("times_sent");
@@ -653,4 +651,40 @@ pub fn unwrap_geo_property_to_string(v: &Value) -> String {
         return inner.to_string();
     }
     v.to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::unwrap_geo_property_to_string;
+    use serde_json::json;
+
+    #[test]
+    fn geo_property_wrapper_returns_inner_value() {
+        let input = json!({
+            "type": "GeoProperty",
+            "value": {"type": "Point", "coordinates": [1.0, 2.0]}
+        });
+        let result = unwrap_geo_property_to_string(&input);
+        let expected: serde_json::Value = serde_json::from_str(&result).expect("valid JSON");
+        assert_eq!(expected, json!({"type": "Point", "coordinates": [1.0, 2.0]}));
+    }
+
+    #[test]
+    fn raw_geojson_returns_as_is() {
+        let input = json!({"type": "Point", "coordinates": [1.0, 2.0]});
+        let result = unwrap_geo_property_to_string(&input);
+        let expected: serde_json::Value = serde_json::from_str(&result).expect("valid JSON");
+        assert_eq!(expected, json!({"type": "Point", "coordinates": [1.0, 2.0]}));
+    }
+
+    #[test]
+    fn non_geo_property_type_returns_full_value() {
+        let input = json!({
+            "type": "Property",
+            "value": {"type": "Point", "coordinates": [1.0, 2.0]}
+        });
+        let result = unwrap_geo_property_to_string(&input);
+        let expected: serde_json::Value = serde_json::from_str(&result).expect("valid JSON");
+        assert_eq!(expected, input);
+    }
 }

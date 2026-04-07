@@ -1,3 +1,8 @@
+//! Repository for JSON-LD context documents.
+//!
+//! Manages hosted, cached, and implicitly-created JSON-LD contexts stored in
+//! PostgreSQL, including hit tracking and the `ContextCache` trait implementation.
+
 use crate::{
     domain::{
         jsonld_context::{ContextKind, ContextMetadata},
@@ -8,11 +13,21 @@ use crate::{
 };
 use async_trait::async_trait;
 use serde_json::Value;
-use sqlx::{postgres::PgPool, types::Json};
+use sqlx::{Row, postgres::PgPool, types::Json};
 use urn::{Urn, UrnBuilder};
 use uuid::Uuid;
 
+/// Whether to return summary identifiers or full metadata records.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DetailLevel {
+    /// Return only identifiers or URLs.
+    Summary,
+    /// Return full metadata records.
+    Full,
+}
+
 /// Result of listing JSON-LD contexts, either as URLs or full metadata.
+#[derive(Debug)]
 pub enum ContextListResult {
     /// List of context URLs or IDs.
     Urls(Vec<String>),
@@ -21,6 +36,7 @@ pub enum ContextListResult {
 }
 
 /// Result of fetching a single JSON-LD context, either its payload or metadata.
+#[derive(Debug)]
 pub enum ContextGetResult {
     /// The raw JSON-LD context payload.
     Payload(Value),
@@ -93,12 +109,13 @@ impl JsonLdContextRepository {
     }
 
     /// Lists JSON-LD contexts, optionally filtered by kind, as URLs or detailed metadata.
-    pub async fn list(&self, kind: Option<ContextKind>, details: bool) -> Result<ContextListResult, AndromedaError> {
+    pub async fn list(&self, kind: Option<ContextKind>, detail_level: DetailLevel) -> Result<ContextListResult, AndromedaError> {
         let kind_str = kind.map(|k| k.to_string());
 
-        if details {
-            let rows = sqlx::query(
-                r#"
+        match detail_level {
+            DetailLevel::Full => {
+                let rows = sqlx::query(
+                    r#"
                     SELECT
                         id as local_id,
                         url,
@@ -111,64 +128,64 @@ impl JsonLdContextRepository {
                     FROM jsonld_contexts
                     WHERE ($1 IS NULL OR kind = $1)
                     "#,
-            )
-            .bind(kind_str)
-            .fetch_all(&self.pool)
-            .await?;
+                )
+                .bind(kind_str)
+                .fetch_all(&self.pool)
+                .await?;
 
-            let metas: Vec<ContextMetadata> = rows
-                .into_iter()
-                .map(|row| {
-                    use sqlx::Row;
-                    let local_id: String = row.get("local_id");
-                    let url: Option<String> = row.get("url");
-                    ContextMetadata {
-                        url,
-                        local_id,
-                        kind: row.get("kind"),
-                        created_at: row.get("created_at"),
-                        expires_at: row.get("expires_at"),
-                        last_usage: row.get("last_usage"),
-                        number_of_hits: row.get("number_of_hits"),
-                        extra_info: row.get("extra_info"),
-                    }
-                })
-                .collect();
+                let metas: Vec<ContextMetadata> = rows
+                    .into_iter()
+                    .map(|row| {
+                        let local_id: String = row.get("local_id");
+                        let url: Option<String> = row.get("url");
+                        ContextMetadata {
+                            url,
+                            local_id,
+                            kind: row.get("kind"),
+                            created_at: row.get("created_at"),
+                            expires_at: row.get("expires_at"),
+                            last_usage: row.get("last_usage"),
+                            number_of_hits: row.get("number_of_hits"),
+                            extra_info: row.get("extra_info"),
+                        }
+                    })
+                    .collect();
 
-            Ok(ContextListResult::Detailed(metas))
-        } else {
-            let rows = sqlx::query(
-                r#"
+                Ok(ContextListResult::Detailed(metas))
+            }
+            DetailLevel::Summary => {
+                let rows = sqlx::query(
+                    r#"
                     SELECT id, url
                     FROM jsonld_contexts
                     WHERE ($1 IS NULL OR kind = $1)
                     "#,
-            )
-            .bind(kind_str)
-            .fetch_all(&self.pool)
-            .await?;
+                )
+                .bind(kind_str)
+                .fetch_all(&self.pool)
+                .await?;
 
-            let urls: Vec<String> = rows
-                .into_iter()
-                .map(|row| {
-                    use sqlx::Row;
-                    let id: String = row.get("id");
-                    let url: Option<String> = row.get("url");
+                let urls: Vec<String> = rows
+                    .into_iter()
+                    .map(|row| {
+                        let id: String = row.get("id");
+                        let url: Option<String> = row.get("url");
 
-                    url.unwrap_or(id)
-                })
-                .collect();
+                        url.unwrap_or(id)
+                    })
+                    .collect();
 
-            Ok(ContextListResult::Urls(urls))
+                Ok(ContextListResult::Urls(urls))
+            }
         }
     }
 
     /// Fetches a JSON-LD context by ID or URL, returning its payload or metadata.
-    pub async fn get(&self, identifier: &str, details: bool) -> Result<Option<ContextGetResult>, AndromedaError> {
-        if details {
-            // details=true: SELECT only, no hit increment
-            let row_opt = sqlx::query(
-                r#"
+    pub async fn get(&self, identifier: &str, detail_level: DetailLevel) -> Result<Option<ContextGetResult>, AndromedaError> {
+        match detail_level {
+            DetailLevel::Full => {
+                let row_opt = sqlx::query(
+                    r#"
                     SELECT
                         id as local_id,
                         url,
@@ -181,37 +198,37 @@ impl JsonLdContextRepository {
                     FROM jsonld_contexts
                     WHERE id = $1 OR url = $1
                     "#,
-            )
-            .bind(identifier)
-            .fetch_optional(&self.pool)
-            .await?;
-
-            if let Some(row) = row_opt {
-                use sqlx::Row;
-                let local_id: String = row.get("local_id");
-                let url: Option<String> = row.get("url");
-                let meta = ContextMetadata {
-                    url,
-                    local_id,
-                    kind: row.get("kind"),
-                    created_at: row.get("created_at"),
-                    expires_at: row.get("expires_at"),
-                    last_usage: row.get("last_usage"),
-                    number_of_hits: row.get("number_of_hits"),
-                    extra_info: row.get("extra_info"),
-                };
-                Ok(Some(ContextGetResult::Detailed(meta)))
-            } else {
-                Ok(None)
-            }
-        } else {
-            // details=false: pure read, return payload
-            let row_opt: Option<(Json<Value>,)> = sqlx::query_as("SELECT payload FROM jsonld_contexts WHERE id = $1 OR url = $1")
+                )
                 .bind(identifier)
                 .fetch_optional(&self.pool)
                 .await?;
 
-            Ok(row_opt.map(|r| ContextGetResult::Payload(r.0.0)))
+                if let Some(row) = row_opt {
+                    let local_id: String = row.get("local_id");
+                    let url: Option<String> = row.get("url");
+                    let meta = ContextMetadata {
+                        url,
+                        local_id,
+                        kind: row.get("kind"),
+                        created_at: row.get("created_at"),
+                        expires_at: row.get("expires_at"),
+                        last_usage: row.get("last_usage"),
+                        number_of_hits: row.get("number_of_hits"),
+                        extra_info: row.get("extra_info"),
+                    };
+                    Ok(Some(ContextGetResult::Detailed(meta)))
+                } else {
+                    Ok(None)
+                }
+            }
+            DetailLevel::Summary => {
+                let row_opt: Option<(Json<Value>,)> = sqlx::query_as("SELECT payload FROM jsonld_contexts WHERE id = $1 OR url = $1")
+                    .bind(identifier)
+                    .fetch_optional(&self.pool)
+                    .await?;
+
+                Ok(row_opt.map(|r| ContextGetResult::Payload(r.0.0)))
+            }
         }
     }
 
@@ -249,7 +266,6 @@ impl JsonLdContextRepository {
         .await?;
 
         if let Some(row) = row_opt {
-            use sqlx::Row;
             let id: String = row.get("id");
             let kind: ContextKind = row.get("kind");
             let url: Option<String> = row.get("url");

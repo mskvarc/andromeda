@@ -23,6 +23,7 @@ use crate::{
     jsonld::ContextSpec,
     query::temporal::TemporalQueryParameters,
     renderer::response::ResponseRenderer,
+    repository::temporal::DeleteScope,
     service::{
         context_source_forwarding::{ForwardingOperation, collect_warnings, merge_temporal_query_results, merge_temporal_retrieve_results},
         temporal::CreateOrUpdateResult,
@@ -410,14 +411,13 @@ pub async fn delete_attr(
     let id = parse_entity_id(&id, &uri)?;
     validate_attr_name(&attr_id, &uri)?;
     let context = context.into_inner();
+    let scope = if params.delete_all.unwrap_or(false) {
+        DeleteScope::All
+    } else {
+        DeleteScope::Single
+    };
     service
-        .delete_attr(
-            id.as_ref(),
-            &attr_id,
-            params.dataset_id.as_deref(),
-            params.delete_all.unwrap_or(false),
-            &context,
-        )
+        .delete_attr(id.as_ref(), &attr_id, params.dataset_id.as_deref(), scope, &context)
         .await
         .map_err(|e| e.with_instance(uri.clone()))?;
     Ok(StatusCode::NO_CONTENT.into_response())

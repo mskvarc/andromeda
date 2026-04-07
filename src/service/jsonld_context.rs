@@ -5,7 +5,7 @@ use crate::{
         JsonLdEngine,
         core_context::{NGSI_LD_CORE_CONTEXT_URL, NGSI_LD_CORE_CONTEXT_V19, is_ngsi_ld_core_context_url},
     },
-    repository::jsonld_context::{ContextGetResult, ContextListResult, JsonLdContextRepository},
+    repository::jsonld_context::{ContextGetResult, ContextListResult, DetailLevel, JsonLdContextRepository},
 };
 use chrono::Utc;
 use serde_json::Value;
@@ -37,9 +37,9 @@ impl JsonLdContextService {
     }
 
     /// List available JSON-LD contexts, optionally filtered by kind and with detailed metadata.
-    pub async fn list(&self, kind: Option<ContextKind>, details: bool) -> Result<Value, AndromedaError> {
+    pub async fn list(&self, kind: Option<ContextKind>, detail_level: DetailLevel) -> Result<Value, AndromedaError> {
         let include_core = kind.is_none() || kind == Some(ContextKind::ImplicitlyCreated);
-        let result = self.repo.list(kind, details).await?;
+        let result = self.repo.list(kind, detail_level).await?;
 
         match result {
             ContextListResult::Detailed(mut metas) => {
@@ -58,23 +58,22 @@ impl JsonLdContextService {
     }
 
     /// Retrieve a JSON-LD context by its identifier, returning either the payload or metadata.
-    pub async fn get(&self, identifier: &str, details: bool) -> Result<Value, AndromedaError> {
+    pub async fn get(&self, identifier: &str, detail_level: DetailLevel) -> Result<Value, AndromedaError> {
         if is_core_context_url(identifier) {
-            return if details {
-                Ok(serde_json::to_value(build_core_context_metadata(identifier))?)
-            } else {
-                core_context_payload()
+            return match detail_level {
+                DetailLevel::Full => Ok(serde_json::to_value(build_core_context_metadata(identifier))?),
+                DetailLevel::Summary => core_context_payload(),
             };
         }
 
         let result = self
             .repo
-            .get(identifier, details)
+            .get(identifier, detail_level)
             .await?
             .ok_or_else(|| AndromedaError::not_found(identifier.to_string()))?;
 
         // Record the access hit when serving the context payload (not for details queries)
-        if !details {
+        if detail_level == DetailLevel::Summary {
             let _ = self.repo.record_access(identifier).await;
         }
 
