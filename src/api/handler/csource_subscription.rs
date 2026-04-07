@@ -1,5 +1,8 @@
 use crate::{
-    api::tenant::TenantState,
+    api::{
+        handler::parse::{check_json_content_type, extract_body_context, is_json_content_type, parse_list_options},
+        tenant::TenantState,
+    },
     error::api::ApiError,
     http::{
         extractor::{accept::AcceptFormatNoGeo, context::ContextUrl, prefer::PreferHeader, query::ValidatedQuery},
@@ -16,72 +19,10 @@ use crate::{
 use axum::{
     body::Bytes,
     extract::{OriginalUri, Path},
-    http::{HeaderMap, StatusCode, header::CONTENT_TYPE},
+    http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
 };
-use mediatype::{MediaTypeBuf, names};
 use serde_json::Value;
-
-#[derive(Debug, Default, Clone, Copy)]
-struct ListOptions {
-    count: bool,
-    sys_attrs: bool,
-}
-
-fn parse_list_options(options: Option<&str>, uri: &axum::http::Uri) -> Result<ListOptions, ApiError> {
-    let mut parsed = ListOptions::default();
-    if let Some(opts) = options {
-        for opt in opts.split(',').map(str::trim) {
-            if opt.is_empty() {
-                continue;
-            }
-            match opt {
-                "count" => parsed.count = true,
-                "sysAttrs" => parsed.sys_attrs = true,
-                _ => {
-                    return Err(ApiError::from_error(
-                        crate::error::AndromedaError::invalid_request(format!("Invalid options value: '{}'", opt)),
-                        uri.clone(),
-                    ));
-                }
-            }
-        }
-    }
-    Ok(parsed)
-}
-
-/// Check Content-Type header for JSON compatibility.
-/// Returns `Ok(())` if JSON or absent/unparseable (we'll try to parse the body),
-/// `Err(())` if explicitly a non-JSON media type.
-fn check_json_content_type(headers: &HeaderMap) -> Result<(), ()> {
-    let Some(raw) = headers.get(CONTENT_TYPE).and_then(|v| v.to_str().ok()).filter(|s| !s.is_empty()) else {
-        return Ok(());
-    };
-    let Ok(mt) = raw.parse::<MediaTypeBuf>() else {
-        return Ok(());
-    };
-    if mt.ty() != names::APPLICATION {
-        return Err(());
-    }
-    if mt.subty() == names::LD && mt.suffix() == Some(names::JSON) {
-        return Ok(());
-    }
-    if mt.subty() == names::MERGE_PATCH && mt.suffix() == Some(names::JSON) {
-        return Ok(());
-    }
-    if mt.subty() == names::JSON && mt.suffix().is_none() {
-        return Ok(());
-    }
-    Err(())
-}
-
-fn is_json_content_type(headers: &HeaderMap) -> bool {
-    check_json_content_type(headers).is_ok()
-}
-
-fn extract_body_context(payload: &Value) -> Option<Value> {
-    payload.as_object().and_then(|obj| obj.get("@context")).cloned()
-}
 
 pub async fn create(
     crate::api::tenant::TenantStateOrCreate(state): crate::api::tenant::TenantStateOrCreate,

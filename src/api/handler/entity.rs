@@ -1,5 +1,8 @@
 use crate::{
-    api::tenant::{TenantState, TenantStateOrCreate},
+    api::{
+        handler::parse::parse_entity_id,
+        tenant::{TenantState, TenantStateOrCreate},
+    },
     domain::{
         entity::{Entity, EntityPatch, EntityTypeValue},
         registration::ForwardingMode,
@@ -25,7 +28,7 @@ use crate::{
     jsonld::ContextSpec,
     query::{compile::expand_q_expression, q::eval::evaluate},
     renderer::{
-        entity::{EntityRenderer, RenderMode, render_snapshot},
+        entity::{EntityRenderer, render_snapshot},
         response::ResponseRenderer,
     },
     service::context_source_forwarding::{
@@ -46,25 +49,6 @@ use axum::{
 };
 use serde_json::Value;
 use std::collections::HashSet;
-use urn::Urn;
-
-fn parse_entity_id(id: &str, uri: &axum::http::Uri) -> Result<Urn, ApiError> {
-    id.parse::<Urn>()
-        .map_err(|_| ApiError::from_error(AndromedaError::bad_request_data("Invalid entity id: not a valid URI"), uri.clone()))
-}
-
-/// Determine the [`RenderMode`] from the `format` and `options` query parameters.
-///
-/// `format` parameter takes precedence per NGSI-LD spec.
-fn resolve_render_mode(format_param: &str, options: &str) -> RenderMode {
-    if format_param == "keyValues" || format_param == "simplified" || options.contains("keyValues") || options.contains("simplified") {
-        RenderMode::Simplified
-    } else if format_param == "concise" || options.contains("concise") {
-        RenderMode::Concise
-    } else {
-        RenderMode::Normalized
-    }
-}
 
 pub async fn patch_no_id(OriginalUri(uri): OriginalUri) -> Result<Response, ApiError> {
     Err(ApiError::from_error(AndromedaError::bad_request_data("Entity id is required"), uri))
@@ -252,8 +236,7 @@ pub async fn get(
             .map_err(|e| e.with_instance(uri.clone()))?
             .ok_or_else(|| ApiError::from_error(AndromedaError::not_found(id.to_string()), uri.clone()))?;
 
-        let format_param = params.format.as_deref().unwrap_or("");
-        let mode = resolve_render_mode(format_param, options);
+        let mode = params.resolve_render_mode();
         let attrs: Option<Vec<&str>> = params.attrs.as_deref().map(|s| s.split(',').map(str::trim).collect());
         let result = render_snapshot(entity_data, attrs.as_deref(), mode);
 
@@ -323,9 +306,7 @@ pub async fn get(
         (entity, warnings)
     };
 
-    let options = params.options.as_deref().unwrap_or("");
-    let format_param = params.format.as_deref().unwrap_or("");
-    let mode = resolve_render_mode(format_param, options);
+    let mode = params.resolve_render_mode();
 
     // Handle join parameter
     let join_mode = params.join.as_deref();
@@ -399,9 +380,7 @@ pub async fn delete(
     IncomingVia(incoming_via): IncomingVia,
 ) -> Result<Response, ApiError> {
     let service = &state.entities;
-    let id: Urn = id
-        .parse()
-        .map_err(|_| ApiError::from_error(AndromedaError::bad_request_data("Invalid entity id: not a valid URI".to_string()), uri.clone()))?;
+    let id = parse_entity_id(&id, &uri)?;
     let is_local = params.local.unwrap_or(false);
 
     if is_local {

@@ -1,5 +1,6 @@
 use crate::{
     error::AndromedaError,
+    jsonld::vocab,
     query::{
         compiled::{CompiledEntityQuery, CompiledOrderTerm, GeoQuery, GeoRel, OrderingGeometry},
         q::ast::{AttrPath, CmpOp, CompareValue, Expr, Predicate, Scalar},
@@ -297,7 +298,7 @@ fn geo_to_sql(geo: &GeoQuery, binds: &mut Vec<BindValue<'_>>, param_idx: &mut us
     binds.push(BindValue::String(Cow::Owned(geojson)));
     *param_idx += 1;
 
-    let sql = match &geo.georel {
+    let spatial_sql = match &geo.georel {
         GeoRel::Within => format!("ST_Within({}, {})", geo_extract, ref_geom),
         GeoRel::Contains => format!("ST_Contains({}, {})", geo_extract, ref_geom),
         GeoRel::Intersects => format!("ST_Intersects({}, {})", geo_extract, ref_geom),
@@ -317,6 +318,23 @@ fn geo_to_sql(geo: &GeoQuery, binds: &mut Vec<BindValue<'_>>, param_idx: &mut us
             }
             parts.join(" AND ")
         }
+    };
+
+    // When using the materialized location column, guard against expired location
+    // attributes that the background worker has not yet NULLed. The EXISTS subquery
+    // confirms at least one non-expired location instance exists in the JSONB payload.
+    let sql = if is_default_location {
+        let location_iri = vocab::LOCATION.as_str();
+        let expires_at_iri = vocab::EXPIRES_AT.as_str();
+        format!(
+            "({spatial_sql} AND EXISTS (\
+                SELECT 1 FROM jsonb_array_elements({payload_column}->0->'{location_iri}') AS inst(elem) \
+                WHERE (inst.elem #>> '{{{expires_at_iri},0,@value}}') IS NULL \
+                   OR (inst.elem #>> '{{{expires_at_iri},0,@value}}')::timestamptz > NOW()\
+            ))"
+        )
+    } else {
+        spatial_sql
     };
 
     Ok(sql)
@@ -876,6 +894,41 @@ mod tests {
         assert!(built.sql.contains("ST_Distance"));
         // Should use the ordering geometry (Berlin), not the geo query (Paris)
         assert!(built.sql.contains("13.3986"));
+    }
+
+    #[test]
+    fn geo_default_location_includes_expiration_guard() {
+        use crate::query::compiled::{GeoQuery, GeoRel};
+        let mut q = empty_query();
+        q.geo = Some(GeoQuery {
+            georel: GeoRel::Near {
+                max_distance: Some(5000.0),
+                min_distance: None,
+            },
+            geometry: "Point".to_string(),
+            coordinates: serde_json::json!([13.4, 52.5]),
+            geoproperty_iri: "https://uri.etsi.org/ngsi-ld/location".to_string(),
+        });
+        let built = build_query(&q).unwrap();
+        assert!(built.sql.contains("ST_DWithin"), "should contain spatial predicate");
+        assert!(built.sql.contains("EXISTS"), "should contain EXISTS expiration guard");
+        assert!(built.sql.contains("expiresAt"), "should reference expiresAt IRI");
+        assert!(built.sql.contains("NOW()"), "should compare against NOW()");
+    }
+
+    #[test]
+    fn geo_non_default_geoproperty_omits_expiration_guard() {
+        use crate::query::compiled::{GeoQuery, GeoRel};
+        let mut q = empty_query();
+        q.geo = Some(GeoQuery {
+            georel: GeoRel::Within,
+            geometry: "Polygon".to_string(),
+            coordinates: serde_json::json!([[[0.0, 0.0], [10.0, 0.0], [10.0, 10.0], [0.0, 10.0], [0.0, 0.0]]]),
+            geoproperty_iri: "https://example.com/customGeo".to_string(),
+        });
+        let built = build_query(&q).unwrap();
+        assert!(built.sql.contains("ST_Within"), "should contain spatial predicate");
+        assert!(!built.sql.contains("EXISTS"), "should NOT contain EXISTS guard for non-default geoproperty");
     }
 
     #[test]

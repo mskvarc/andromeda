@@ -6,6 +6,7 @@ pub mod entity_map;
 pub mod entity_operations;
 pub mod info;
 pub mod jsonld_context;
+pub mod parse;
 pub mod snapshot;
 pub mod subscription;
 pub mod temporal;

@@ -1,5 +1,5 @@
 use crate::{
-    api::tenant::TenantState,
+    api::{handler::parse::parse_csr_id, tenant::TenantState},
     error::api::ApiError,
     http::{
         extractor::{accept::AcceptFormatNoGeo, context::ContextUrl, jsonld::JsonLd, prefer::PreferHeader, query::ValidatedQuery},
@@ -19,27 +19,6 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use serde_json::Value;
-use url::Url;
-use urn::Urn;
-
-fn parse_csr_id(id: &str, uri: &axum::http::Uri) -> Result<(), ApiError> {
-    if id.starts_with("urn:") {
-        id.parse::<Urn>().map_err(|_| {
-            ApiError::from_error(
-                crate::error::AndromedaError::bad_request_data("Invalid registration id: not a valid URI"),
-                uri.clone(),
-            )
-        })?;
-    } else {
-        Url::parse(id).map_err(|_| {
-            ApiError::from_error(
-                crate::error::AndromedaError::bad_request_data("Invalid registration id: not a valid URI"),
-                uri.clone(),
-            )
-        })?;
-    }
-    Ok(())
-}
 
 pub async fn create(
     crate::api::tenant::TenantStateOrCreate(state): crate::api::tenant::TenantStateOrCreate,

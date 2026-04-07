@@ -1,7 +1,10 @@
 //! API handlers for the NGSI-LD Temporal API.
 
 use crate::{
-    api::tenant::TenantState,
+    api::{
+        handler::parse::{parse_entity_id, validate_attr_name, validate_instance_id},
+        tenant::TenantState,
+    },
     domain::entity::Entity,
     error::{AndromedaError, api::ApiError, core::AndromedaErrorKind},
     http::{
@@ -30,36 +33,6 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use serde_json::Value;
-use urn::Urn;
-
-fn parse_entity_id(id: &str, uri: &axum::http::Uri) -> Result<Urn, ApiError> {
-    id.parse::<Urn>().map_err(|_| {
-        ApiError::from_error(
-            crate::error::AndromedaError::bad_request_data("Invalid entity id: not a valid URI"),
-            uri.clone(),
-        )
-    })
-}
-
-fn validate_attr_name(name: &str, uri: &axum::http::Uri) -> Result<(), ApiError> {
-    if name.is_empty() || (!name.contains("://") && !name.chars().all(|c| c.is_alphanumeric() || matches!(c, '-' | '_' | '.' | ':'))) {
-        return Err(ApiError::from_error(
-            crate::error::AndromedaError::bad_request_data("Invalid attribute name"),
-            uri.clone(),
-        ));
-    }
-    Ok(())
-}
-
-fn validate_instance_id(id: &str, uri: &axum::http::Uri) -> Result<(), ApiError> {
-    if id.is_empty() || url::Url::parse(id).is_err() {
-        return Err(ApiError::from_error(
-            crate::error::AndromedaError::bad_request_data("Invalid instance id: not a valid URI"),
-            uri.clone(),
-        ));
-    }
-    Ok(())
-}
 
 /// POST /ngsi-ld/v1/temporal/entities
 pub async fn create_or_update(
@@ -115,8 +88,7 @@ pub async fn get(
             .map_err(|e| e.with_instance(uri.clone()))?
             .ok_or_else(|| ApiError::from_error(AndromedaError::not_found(id.to_string()), uri.clone()))?;
 
-        let options = params.options.as_deref().unwrap_or("");
-        let key_values = options.contains("keyValues") || options.contains("simplified");
+        let key_values = params.is_simplified();
 
         let data = if key_values {
             let entity: Entity = serde_json::from_value(entity_data).map_err(|e| {
@@ -185,8 +157,7 @@ pub async fn get(
         }
     };
 
-    let options = params.options.as_deref().unwrap_or("");
-    let key_values = options.contains("keyValues") || options.contains("simplified");
+    let key_values = params.is_simplified();
 
     let status = if content_range.is_some() {
         StatusCode::PARTIAL_CONTENT
@@ -231,8 +202,7 @@ pub async fn query(
     let snapshot = protocol.snapshot;
     let incoming_via = protocol.incoming_via;
     let entity_map_header = protocol.entity_map;
-    let options = params.options.as_deref().unwrap_or("");
-    let key_values = options.contains("keyValues") || options.contains("simplified");
+    let key_values = params.is_simplified();
 
     // Snapshot scoping (ETSI GS CIM 009 clause 5.5.15, 6.3.22): if NGSILD-Snapshot header
     // is present, query temporal entities from the snapshot's frozen data and return early.

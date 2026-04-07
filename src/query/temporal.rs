@@ -167,6 +167,14 @@ impl TemporalQueryParameters {
         self.options.as_deref().is_some_and(|o| o.contains("sysAttrs"))
     }
 
+    /// Returns whether the query requests simplified (key-values) output.
+    ///
+    /// Checks both `keyValues` and `simplified` option values, which are
+    /// equivalent per NGSI-LD spec.
+    pub fn is_simplified(&self) -> bool {
+        self.options.as_deref().is_some_and(|o| o.contains("keyValues") || o.contains("simplified"))
+    }
+
     /// Validate parameters.
     /// - For query endpoint (require_temporal=true): timerel and timeAt are REQUIRED.
     /// - For single-entity GET (require_temporal=false): timerel and timeAt are optional (both or neither).
@@ -450,5 +458,23 @@ mod tests {
     fn is_local_false_with_specific_type() {
         let p = params_from_query("type=Vehicle");
         assert!(!p.is_local());
+    }
+
+    #[test]
+    fn is_simplified_with_key_values() {
+        let p = params_from_query("options=keyValues");
+        assert!(p.is_simplified());
+    }
+
+    #[test]
+    fn is_simplified_with_simplified_option() {
+        let p = params_from_query("options=simplified");
+        assert!(p.is_simplified());
+    }
+
+    #[test]
+    fn is_simplified_default_is_false() {
+        let p = params_from_query("");
+        assert!(!p.is_simplified());
     }
 }
