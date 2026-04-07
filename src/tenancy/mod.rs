@@ -128,6 +128,11 @@ impl TenantRuntimeManager {
         Ok(manager)
     }
 
+    /// Returns a reference to the main PostgreSQL connection pool.
+    pub const fn main_pool(&self) -> &sqlx::PgPool {
+        &self.main_pool
+    }
+
     pub async fn resolve_state(&self, tenant: &TenantRef, allow_implicit_creation: bool) -> Result<Arc<AndromedaState>, AndromedaError> {
         if !self.multitenancy.enabled && matches!(tenant, TenantRef::Named(_)) {
             return Err(AndromedaError::no_multi_tenant_support(

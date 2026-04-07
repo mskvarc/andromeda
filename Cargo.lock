@@ -74,6 +74,7 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "axum",
+ "axum-health",
  "backon",
  "bytes",
  "chrono",
@@ -327,6 +328,20 @@ dependencies = [
  "tower-layer",
  "tower-service",
  "tracing",
+]
+
+[[package]]
+name = "axum-health"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a56f5dc54368de406d0b9efbd0f9cd1a32a0e74452889e872cc0d66e3de5ada9"
+dependencies = [
+ "async-trait",
+ "axum",
+ "futures",
+ "serde",
+ "sqlx",
+ "tower-layer",
 ]
 
 [[package]]

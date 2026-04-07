@@ -51,6 +51,7 @@ use axum::{
     response::IntoResponse,
     routing::{delete, get, patch, post, put},
 };
+use axum_health::{Health, database::DatabaseHealthIndicator};
 use sqlx::postgres::PgPoolOptions;
 use std::sync::Arc;
 use tokio::task::JoinHandle;
@@ -63,11 +64,16 @@ pub async fn create_router(config: &Configuration) -> Result<Router, AndromedaEr
     // Ensure unnamed default runtime is initialized at startup.
     let _ = tenants.resolve_state(&TenantRef::UnnamedDefault, false).await?;
 
+    let health_indicator = DatabaseHealthIndicator::new("postgres".to_owned(), tenants.main_pool().clone());
+    let health_router: Router<AppState> = Router::new()
+        .route("/health", get(axum_health::health))
+        .layer(Health::builder().with_indicator(health_indicator).build());
+
     let app_state = AppState {
         tenants,
         source_identity: config.info.source_identity.clone(),
     };
-    let router = Router::new().nest("/ngsi-ld/v1", build_v1_router()).with_state(app_state);
+    let router = Router::new().nest("/ngsi-ld/v1", build_v1_router().merge(health_router)).with_state(app_state);
     Ok(router)
 }
 
