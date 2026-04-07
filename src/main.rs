@@ -34,7 +34,7 @@ async fn main() -> Result<(), AndromedaError> {
 
     info!("Configuration: {:#?}", config);
 
-    server::run(&config).await?;
+    server::run(config).await?;
 
     Ok(())
 }

@@ -16,19 +16,12 @@ use std::{sync::Arc, time::Duration};
 use tracing::{debug, error, info};
 use uuid::Uuid;
 
-#[async_trait::async_trait]
-impl super::Worker for CsrIntervalWorker {
-    async fn run(self) {
-        CsrIntervalWorker::run(self).await
-    }
-}
-
 pub struct CsrIntervalWorker {
     sub_repo: CsourceSubscriptionRepository,
     csr_repo: ContextSourceRegistrationRepository,
     transport: Arc<TransportDispatcher>,
     poll_interval: Duration,
-    tenant: crate::tenancy::TenantRef,
+    tenant: crate::tenancy::types::TenantRef,
 }
 
 impl CsrIntervalWorker {
@@ -36,7 +29,7 @@ impl CsrIntervalWorker {
         sub_repo: CsourceSubscriptionRepository,
         csr_repo: ContextSourceRegistrationRepository,
         transport: Arc<TransportDispatcher>,
-        tenant: crate::tenancy::TenantRef,
+        tenant: crate::tenancy::types::TenantRef,
     ) -> Self {
         Self {
             sub_repo,
@@ -127,7 +120,7 @@ impl CsrIntervalWorker {
                     accept,
                     sub.notification.endpoint.receiver_info.as_deref(),
                     jsonld_context,
-                    self.tenant.response_header_value(),
+                    self.tenant.tenant_name(),
                     &sub.id,
                 ) {
                     Ok(r) => r,

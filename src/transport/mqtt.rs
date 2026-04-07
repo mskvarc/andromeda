@@ -497,7 +497,7 @@ impl NotificationTransport for MqttTransportHandle {
             content_type_str,
             &req.receiver_info,
             req.context_url.as_deref(),
-            req.tenant.as_deref(),
+            req.tenant.as_ref().map(|t| t.as_str()),
         );
         let mqtt_endpoint = format!("{}:{}/{}", self.config.host, self.config.port, self.config.topic);
 
@@ -521,7 +521,7 @@ impl NotificationTransport for MqttTransportHandle {
                 }
 
                 if let Some(ref tenant) = req.tenant {
-                    properties.user_properties.push(("NGSILD-Tenant".to_string(), tenant.clone()));
+                    properties.user_properties.push(("NGSILD-Tenant".to_string(), tenant.to_string()));
                 }
 
                 let v5_qos = match qos {

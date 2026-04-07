@@ -163,10 +163,15 @@ impl EntityService {
             return Ok(BatchResult { success: Vec::new(), errors });
         }
 
-        // Keep a map of id -> (expanded, types) for post-insert processing
+        // Deduplicate by entity ID: first occurrence is kept, subsequent
+        // duplicates are reported as AlreadyExists errors (NGSI-LD 5.6.7).
         let mut entity_data: HashMap<String, (Value, Vec<String>)> = HashMap::with_capacity(prepared.len());
         let mut rows = Vec::with_capacity(prepared.len());
         for p in prepared {
+            if entity_data.contains_key(&p.id) {
+                errors.push((p.id.clone(), AndromedaError::already_exists(&p.id))); // clone: owned String needed for error
+                continue;
+            }
             let id = p.id.clone(); // clone: key for lookup map, original moves into row
             let expanded = p.expanded.clone(); // clone: kept for temporal recording + events, original moves into row
             let types = p.types.clone(); // clone: kept for events, original moves into row

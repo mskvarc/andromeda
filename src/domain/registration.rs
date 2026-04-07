@@ -1,6 +1,9 @@
 //! Context source registration types (ETSI GS CIM 009 clause 5.2.9).
 
-use crate::domain::{serde_helpers, subscription::EntitySelector};
+use crate::{
+    domain::{serde_helpers, subscription::EntitySelector},
+    tenancy::types::TenantName,
+};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -120,7 +123,7 @@ pub struct ContextSourceRegistration {
     pub information: Vec<RegistrationInfo>,
     /// Tenant identifier.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub tenant: Option<String>,
+    pub tenant: Option<TenantName>,
     /// Observation interval.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub observation_interval: Option<Value>,

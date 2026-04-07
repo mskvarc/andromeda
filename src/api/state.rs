@@ -28,6 +28,6 @@ pub struct AndromedaState {
 
 #[derive(Clone)]
 pub struct AppState {
-    pub tenants: Arc<crate::tenancy::TenantRuntimeManager>,
+    pub tenants: Arc<crate::tenancy::runtime::TenantRuntimeManager>,
     pub source_identity: String,
 }

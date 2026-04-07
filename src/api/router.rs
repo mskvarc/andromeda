@@ -35,14 +35,19 @@ use crate::{
         subscription::SubscriptionService,
         temporal::TemporalService,
     },
-    tenancy::{TenantRef, TenantRuntimeManager},
+    tenancy::{
+        database::migrate_tenant_db,
+        runtime::TenantRuntimeManager,
+        types::{TenantCreationPolicy, TenantRef},
+    },
     transport::{dispatch::TransportDispatcher, http::HttpTransportConfig, mqtt::MqttPoolConfig},
     worker::{
         csr_interval::CsrIntervalWorker,
         csr_notification::CsrNotificationWorker,
-        expiration::ExpirationWorker,
+        data_expiration::DataExpirationWorker,
         interval::IntervalWorker,
         notification::NotificationWorker,
+        subscription_expiration::SubscriptionExpirationWorker,
     },
 };
 use axum::{
@@ -57,12 +62,12 @@ use std::sync::Arc;
 use tokio::task::JoinHandle;
 use tracing::info;
 
-pub async fn create_router(config: &Configuration) -> Result<Router, AndromedaError> {
+pub async fn create_router(config: Arc<Configuration>) -> Result<Router, AndromedaError> {
     info!("Constructing router!");
-    let tenants = TenantRuntimeManager::new(config).await?;
+    let tenants = TenantRuntimeManager::new(Arc::clone(&config)).await?;
 
     // Ensure unnamed default runtime is initialized at startup.
-    let _ = tenants.resolve_state(&TenantRef::UnnamedDefault, false).await?;
+    let _ = tenants.resolve_state(&TenantRef::UnnamedDefault, TenantCreationPolicy::MustExist).await?;
 
     let health_indicator = DatabaseHealthIndicator::new("postgres".to_owned(), tenants.main_pool().clone());
     let health_router: Router<AppState> = Router::new()
@@ -197,9 +202,13 @@ pub async fn build_tenant_state(
     db_url: &str,
     tenant: TenantRef,
 ) -> Result<(AndromedaState, Vec<JoinHandle<()>>, Arc<TransportDispatcher>), AndromedaError> {
-    let pool = PgPoolOptions::new().max_connections(config.database.max_connections).connect(db_url).await?;
+    let max_connections = match tenant {
+        TenantRef::UnnamedDefault => config.database.max_connections,
+        TenantRef::Named(_) => config.multitenancy.tenant_max_connections,
+    };
+    let pool = PgPoolOptions::new().max_connections(max_connections).connect(db_url).await?;
 
-    crate::tenancy::migrate_tenant_db(&pool).await?;
+    migrate_tenant_db(&pool).await?;
 
     let (change_tx, _) = tokio::sync::broadcast::channel::<ChangeEvent>(4096);
     let (sub_change_tx, _) = tokio::sync::broadcast::channel::<SubscriptionChange>(256);
@@ -229,11 +238,12 @@ pub async fn build_tenant_state(
     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
     let mut worker_handles = Vec::new();
 
-    // MQTT health probe background task
-    worker_handles.push(transport.mqtt_pool().spawn_health_probe(shutdown_rx));
+    // Shared health probe: run only for the unnamed default runtime.
+    if matches!(tenant, TenantRef::UnnamedDefault) {
+        worker_handles.push(transport.mqtt_pool().spawn_health_probe(shutdown_rx));
+    }
 
-    // Keep shutdown sender alive so the health probe can be stopped on drop.
-    // In a future graceful shutdown implementation, call `shutdown_tx.send(true)`.
+    // Keep shutdown sender alive so an eventual graceful shutdown can signal the probe.
     let _shutdown_tx = shutdown_tx;
 
     let notification_entity_query = crate::service::entity::query::EntityQueryService::new(&pool, engine.clone());
@@ -252,14 +262,14 @@ pub async fn build_tenant_state(
     worker_handles.push(tokio::spawn(notification_worker.run()));
 
     let expiration_interval = config.temporal.expiration_check_interval_secs;
-    let expiration_worker = ExpirationWorker::new(
+    let subscription_expiration_worker = SubscriptionExpirationWorker::new(
         SubscriptionRepository::new(&pool),
         sub_change_tx,
-        SubscriptionChange::Deleted,
-        "",
+        CsourceSubscriptionRepository::new(&pool),
+        csr_sub_change_tx.clone(),
         expiration_interval,
     );
-    worker_handles.push(tokio::spawn(expiration_worker.run()));
+    worker_handles.push(tokio::spawn(subscription_expiration_worker.run()));
 
     let interval_worker = IntervalWorker::new(
         SubscriptionRepository::new(&pool),
@@ -280,24 +290,9 @@ pub async fn build_tenant_state(
     );
     worker_handles.push(tokio::spawn(csr_notification_worker.run()));
 
-    let csr_expiration_worker = ExpirationWorker::new(
-        CsourceSubscriptionRepository::new(&pool),
-        csr_sub_change_tx,
-        CsourceSubscriptionChange::Deleted,
-        "CSR ",
-        expiration_interval,
-    );
-    worker_handles.push(tokio::spawn(csr_expiration_worker.run()));
-
-    // Entity expiration worker (§4.22 transient storage)
-    let entity_expiration_worker =
-        crate::worker::entity_expiration::EntityExpirationWorker::new(EntityRepository::new(&pool), Some(change_tx.clone()), expiration_interval);
-    worker_handles.push(tokio::spawn(entity_expiration_worker.run()));
-
-    // Attribute-level expiration worker (§4.22 attribute expiresAt)
-    let attr_expiration_worker =
-        crate::worker::attribute_expiration::AttributeExpirationWorker::new(EntityRepository::new(&pool), Some(change_tx), expiration_interval);
-    worker_handles.push(tokio::spawn(attr_expiration_worker.run()));
+    // Combined entity and attribute expiration worker (§4.22).
+    let data_expiration_worker = DataExpirationWorker::new(EntityRepository::new(&pool), Some(change_tx), expiration_interval);
+    worker_handles.push(tokio::spawn(data_expiration_worker.run()));
 
     let snapshot_transport = transport.clone();
     let transport_handle = transport.clone();

@@ -1,0 +1,293 @@
+use crate::{
+    api::{router::build_tenant_state, state::AndromedaState},
+    core::config::{Configuration, MultitenancyConfig},
+    error::AndromedaError,
+    tenancy::{
+        database::{DatabaseUrl, create_database_if_missing, generate_db_name, migrate_main_db, migrate_single_tenant_db},
+        types::{TenantCreationPolicy, TenantName, TenantRef, TenantStatus},
+    },
+    transport::dispatch::TransportDispatcher,
+};
+use dashmap::DashMap;
+use sqlx::{Row, postgres::PgPoolOptions};
+use std::{
+    collections::HashSet,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
+    time::{Duration, Instant},
+};
+use tokio::task::JoinHandle;
+use tracing::info;
+
+static EPOCH: std::sync::LazyLock<Instant> = std::sync::LazyLock::new(Instant::now);
+
+struct TenantRuntime {
+    state: Arc<AndromedaState>,
+    worker_handles: Vec<JoinHandle<()>>,
+    transport: Arc<TransportDispatcher>,
+    last_used: AtomicU64,
+}
+
+impl TenantRuntime {
+    fn touch(&self) {
+        let millis = EPOCH.elapsed().as_millis() as u64;
+        self.last_used.store(millis, Ordering::Relaxed);
+    }
+
+    fn last_used_instant(&self) -> Instant {
+        let millis = self.last_used.load(Ordering::Relaxed);
+        *EPOCH + Duration::from_millis(millis)
+    }
+}
+
+/// Manages per-tenant database connections and worker runtimes.
+pub struct TenantRuntimeManager {
+    config: Arc<Configuration>,
+    multitenancy: MultitenancyConfig,
+    database_url: DatabaseUrl,
+    runtimes: DashMap<TenantRef, TenantRuntime>,
+    in_flight: Arc<tokio::sync::Mutex<HashSet<TenantRef>>>,
+    main_pool: sqlx::PgPool,
+    default_db_name: String,
+}
+
+impl TenantRuntimeManager {
+    /// Create a new tenant runtime manager, connecting to the main database and running migrations.
+    pub async fn new(config: Arc<Configuration>) -> Result<Arc<TenantRuntimeManager>, AndromedaError> {
+        let main_pool = PgPoolOptions::new()
+            .max_connections(config.database.max_connections)
+            .connect(&config.database.url)
+            .await?;
+
+        let database_url = DatabaseUrl::parse(&config.database.url)?;
+        let default_db_name = database_url.db_name()?;
+
+        let manager = Arc::new(TenantRuntimeManager {
+            multitenancy: config.multitenancy.clone(),
+            database_url,
+            default_db_name,
+            config,
+            runtimes: DashMap::new(),
+            in_flight: Arc::new(tokio::sync::Mutex::new(HashSet::new())),
+            main_pool,
+        });
+
+        migrate_main_db(&manager.main_pool).await?;
+        manager.ensure_default_tenant_registry_row().await?;
+
+        if manager.multitenancy.enabled {
+            let janitor = Arc::clone(&manager);
+            tokio::spawn(async move {
+                janitor.run_janitor().await;
+            });
+        }
+
+        Ok(manager)
+    }
+
+    /// Returns a reference to the main PostgreSQL connection pool.
+    pub const fn main_pool(&self) -> &sqlx::PgPool {
+        &self.main_pool
+    }
+
+    /// Resolve tenant runtime state according to creation policy.
+    pub async fn resolve_state(&self, tenant: &TenantRef, policy: TenantCreationPolicy) -> Result<Arc<AndromedaState>, AndromedaError> {
+        if !self.multitenancy.enabled && matches!(tenant, TenantRef::Named(_)) {
+            return Err(AndromedaError::no_multi_tenant_support(
+                "NGSILD-Tenant header is not supported by this deployment",
+            ));
+        }
+
+        if let Some(runtime) = self.runtimes.get(tenant) {
+            runtime.touch();
+            return Ok(Arc::clone(&runtime.state));
+        }
+
+        {
+            let mut in_flight = self.in_flight.lock().await;
+            if let Some(runtime) = self.runtimes.get(tenant) {
+                runtime.touch();
+                return Ok(Arc::clone(&runtime.state));
+            }
+            in_flight.insert(tenant.clone());
+        }
+
+        let result = self.resolve_state_cold(tenant, policy).await;
+        self.in_flight.lock().await.remove(tenant);
+        result
+    }
+
+    async fn resolve_state_cold(&self, tenant: &TenantRef, policy: TenantCreationPolicy) -> Result<Arc<AndromedaState>, AndromedaError> {
+        let db_name = match tenant {
+            TenantRef::UnnamedDefault => self.default_db_name.clone(),
+            TenantRef::Named(name) => match self.lookup_db_name(name).await? {
+                Some(found) => found,
+                None => match policy {
+                    TenantCreationPolicy::MustExist => {
+                        return Err(AndromedaError::nonexistent_tenant(format!("Tenant '{}' does not exist", name)));
+                    }
+                    TenantCreationPolicy::CreateOnDemand => self.ensure_named_tenant_created(name).await?,
+                },
+            },
+        };
+
+        let db_url = self.database_url.with_db_name(&db_name);
+        let (state, handles, transport) = build_tenant_state(&self.config, &db_url, tenant.clone()).await?;
+        let state = Arc::new(state);
+
+        match self.runtimes.entry(tenant.clone()) {
+            dashmap::mapref::entry::Entry::Occupied(entry) => {
+                entry.get().touch();
+                for handle in handles {
+                    handle.abort();
+                }
+                transport.shutdown().await;
+                Ok(Arc::clone(&entry.get().state))
+            }
+            dashmap::mapref::entry::Entry::Vacant(vacant) => {
+                vacant.insert(TenantRuntime {
+                    state: Arc::clone(&state),
+                    worker_handles: handles,
+                    transport,
+                    last_used: AtomicU64::new(EPOCH.elapsed().as_millis() as u64),
+                });
+                Ok(state)
+            }
+        }
+    }
+
+    async fn run_janitor(self: Arc<Self>) {
+        let interval = Duration::from_secs(self.multitenancy.janitor_interval_seconds.max(1));
+        let ttl = Duration::from_secs(self.multitenancy.runtime_idle_ttl_seconds.max(1));
+        let mut ticker = tokio::time::interval(interval);
+        loop {
+            ticker.tick().await;
+
+            let excess_evictions = collect_excess_evictions(&self.runtimes, self.multitenancy.runtime_max_cached);
+            if !excess_evictions.is_empty() {
+                let trimmed = excess_evictions.len();
+                for key in excess_evictions {
+                    if let Some((_, runtime)) = self.runtimes.remove(&key) {
+                        shutdown_runtime(runtime).await;
+                    }
+                }
+                info!(trimmed, max = self.multitenancy.runtime_max_cached, "Janitor trimmed excess tenant runtimes");
+            }
+
+            let now = Instant::now();
+            let keys_to_evict: Vec<TenantRef> = self
+                .runtimes
+                .iter()
+                .filter(|entry| !matches!(entry.key(), TenantRef::UnnamedDefault) && now.duration_since(entry.value().last_used_instant()) > ttl)
+                .map(|entry| entry.key().clone())
+                .collect();
+
+            let evict_count = keys_to_evict.len();
+            for key in keys_to_evict {
+                if let Some((_, runtime)) = self.runtimes.remove(&key) {
+                    shutdown_runtime(runtime).await;
+                }
+            }
+            if evict_count > 0 {
+                info!(evicted = evict_count, "Janitor evicted idle tenant runtimes");
+            }
+        }
+    }
+
+    async fn ensure_default_tenant_registry_row(&self) -> Result<(), AndromedaError> {
+        let status = TenantStatus::Active;
+        sqlx::query(
+            r#"
+            INSERT INTO tenants (name, is_unnamed_default, db_name, status, created_at, modified_at)
+            VALUES (NULL, TRUE, $1, $2, NOW(), NOW())
+            ON CONFLICT (db_name) DO UPDATE SET modified_at = NOW()
+            "#,
+        )
+        .bind(&self.default_db_name)
+        .bind(status)
+        .execute(&self.main_pool)
+        .await?;
+
+        Ok(())
+    }
+
+    async fn lookup_db_name(&self, tenant_name: &TenantName) -> Result<Option<String>, AndromedaError> {
+        let row = sqlx::query("SELECT db_name FROM tenants WHERE name = $1 AND is_unnamed_default = FALSE")
+            .bind(tenant_name.as_str())
+            .fetch_optional(&self.main_pool)
+            .await?;
+        Ok(row.map(|r| r.get::<String, _>("db_name")))
+    }
+
+    async fn ensure_named_tenant_created(&self, tenant_name: &TenantName) -> Result<String, AndromedaError> {
+        let mut tx = self.main_pool.begin().await?;
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtext($1))")
+            .bind(tenant_name.as_str())
+            .execute(&mut *tx)
+            .await?;
+
+        if let Some(existing) = sqlx::query("SELECT db_name FROM tenants WHERE name = $1")
+            .bind(tenant_name.as_str())
+            .fetch_optional(&mut *tx)
+            .await?
+        {
+            let db_name: String = existing.get("db_name");
+            tx.commit().await?;
+            return Ok(db_name);
+        }
+
+        let db_name = generate_db_name(&self.multitenancy.tenant_db_prefix, tenant_name);
+        create_database_if_missing(&self.database_url, &db_name).await?;
+
+        let status = TenantStatus::Active;
+        sqlx::query(
+            r#"
+            INSERT INTO tenants (name, is_unnamed_default, db_name, status, created_at, modified_at)
+            VALUES ($1, FALSE, $2, $3, NOW(), NOW())
+            "#,
+        )
+        .bind(tenant_name.as_str())
+        .bind(&db_name)
+        .bind(status)
+        .execute(&mut *tx)
+        .await?;
+        tx.commit().await?;
+
+        let tenant_url = self.database_url.with_db_name(&db_name);
+        migrate_single_tenant_db(&tenant_url, self.multitenancy.tenant_max_connections).await?;
+
+        Ok(db_name)
+    }
+}
+
+/// Shut down a tenant runtime by stopping the transport and aborting all worker tasks.
+async fn shutdown_runtime(runtime: TenantRuntime) {
+    runtime.transport.shutdown().await;
+    for handle in runtime.worker_handles {
+        handle.abort();
+    }
+}
+
+/// Collect tenant keys that should be evicted to bring the cache below `max_cached`.
+///
+/// Returns the keys of the oldest non-default tenants that exceed the limit.
+fn collect_excess_evictions(runtimes: &DashMap<TenantRef, TenantRuntime>, max_cached: usize) -> Vec<TenantRef> {
+    if runtimes.len() <= max_cached {
+        return Vec::new();
+    }
+
+    let mut candidates: Vec<(TenantRef, Instant)> = runtimes
+        .iter()
+        .filter(|entry| !matches!(entry.key(), TenantRef::UnnamedDefault))
+        .map(|entry| (entry.key().clone(), entry.value().last_used_instant()))
+        .collect();
+    candidates.sort_by_key(|(_, touched)| *touched);
+
+    candidates
+        .into_iter()
+        .take(runtimes.len().saturating_sub(max_cached))
+        .map(|(tenant, _)| tenant)
+        .collect()
+}

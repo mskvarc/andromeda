@@ -4,6 +4,7 @@ use crate::{
     http::header::{link::Link, ngsild_tenant::NgsiLdTenant, ngsild_warning::NgsiLdWarning, via::Via},
     jsonld::{ContextSpec, JsonLdEngine},
     repository::context_source_registration::ContextSourceRegistrationRepository,
+    tenancy::types::TenantName,
 };
 use headers::Header;
 use serde_json::Value;
@@ -302,7 +303,7 @@ impl ContextSourceForwardingService {
             debug!("Forwarding entity query to context source {}: {}", csr.id, url);
 
             let mode = csr.mode.unwrap_or_default();
-            match self.forward_get(&url, context_url, csr.tenant.as_deref(), incoming_via).await {
+            match self.forward_get(&url, context_url, csr.tenant.as_ref(), incoming_via).await {
                 ForwardGetOutcome::Success(Value::Array(arr), cs_warnings) => {
                     results.push(ForwardedEntities {
                         mode,
@@ -406,7 +407,7 @@ impl ContextSourceForwardingService {
             debug!("Forwarding entity retrieve to context source {}: {}", csr.id, url);
 
             let mode = csr.mode.unwrap_or_default();
-            match self.forward_get(&url, context_url, csr.tenant.as_deref(), incoming_via).await {
+            match self.forward_get(&url, context_url, csr.tenant.as_ref(), incoming_via).await {
                 ForwardGetOutcome::Success(obj @ Value::Object(_), cs_warnings) => {
                     results.push(ForwardedEntities {
                         mode,
@@ -546,7 +547,7 @@ impl ContextSourceForwardingService {
                     request.method.clone(), // clone: reqwest::Method is reused across loop iterations
                     request.body,
                     request.context_url,
-                    csr.tenant.as_deref(),
+                    csr.tenant.as_ref(),
                     request.incoming_via,
                 )
                 .await
@@ -621,7 +622,7 @@ impl ContextSourceForwardingService {
                     reqwest::Method::POST,
                     Some(request.body),
                     request.context_url,
-                    csr.tenant.as_deref(),
+                    csr.tenant.as_ref(),
                     request.incoming_via,
                 )
                 .await
@@ -651,7 +652,7 @@ impl ContextSourceForwardingService {
         method: reqwest::Method,
         body: Option<&[u8]>,
         context_url: Option<&str>,
-        tenant: Option<&str>,
+        tenant: Option<&TenantName>,
         incoming_via: Option<&Via>,
     ) -> Result<(u16, Option<Value>), AndromedaError> {
         debug!("CS forwarding {} {}", method, url);
@@ -675,7 +676,7 @@ impl ContextSourceForwardingService {
     }
 
     /// Make a GET request to a context source endpoint.
-    async fn forward_get(&self, url: &str, context_url: Option<&str>, tenant: Option<&str>, incoming_via: Option<&Via>) -> ForwardGetOutcome {
+    async fn forward_get(&self, url: &str, context_url: Option<&str>, tenant: Option<&TenantName>, incoming_via: Option<&Via>) -> ForwardGetOutcome {
         debug!("CS forwarding GET {}", url);
 
         let request = self
@@ -719,7 +720,7 @@ impl ContextSourceForwardingService {
         method: reqwest::Method,
         url: &str,
         context_url: Option<&str>,
-        tenant: Option<&str>,
+        tenant: Option<&TenantName>,
         incoming_via: Option<&Via>,
     ) -> reqwest::RequestBuilder {
         let mut request = self.http_client.request(method, url).header("Connection", "close");
@@ -731,13 +732,9 @@ impl ContextSourceForwardingService {
             }
         }
 
-        if let Some(tenant) = tenant {
-            // Tenant string comes from a previously validated TenantRef; construct
-            // TenantName for type safety. If it fails (should not happen), skip the header.
-            if let Ok(name) = crate::tenancy::TenantName::new(tenant.to_string()) {
-                let tenant_header = NgsiLdTenant::new(name);
-                request = request.header(NgsiLdTenant::name().as_str(), tenant_header.as_str());
-            }
+        if let Some(name) = tenant {
+            let tenant_header = NgsiLdTenant::new(name.clone()); // clone: TenantName is borrowed, header needs ownership
+            request = request.header(NgsiLdTenant::name().as_str(), tenant_header.as_str());
         }
 
         // Append our identity to the Via header chain (section 6.3.18)
@@ -794,7 +791,7 @@ impl ContextSourceForwardingService {
             let url = build_discovery_url(&csr.endpoint, path, query_string);
             debug!("Forwarding discovery query to context source {}: {}", csr.id, url);
 
-            match self.forward_get(&url, context_url, csr.tenant.as_deref(), incoming_via).await {
+            match self.forward_get(&url, context_url, csr.tenant.as_ref(), incoming_via).await {
                 ForwardGetOutcome::Success(body, cs_warnings) => {
                     results.push(ForwardedDiscoveryResult {
                         body: Some(body),
@@ -884,7 +881,7 @@ impl ContextSourceForwardingService {
             debug!("Forwarding temporal query to context source {}: {}", csr.id, url);
 
             let mode = csr.mode.unwrap_or_default();
-            match self.forward_get(&url, context_url, csr.tenant.as_deref(), incoming_via).await {
+            match self.forward_get(&url, context_url, csr.tenant.as_ref(), incoming_via).await {
                 ForwardGetOutcome::Success(Value::Array(arr), cs_warnings) => {
                     results.push(ForwardedEntities {
                         mode,
@@ -986,7 +983,7 @@ impl ContextSourceForwardingService {
             debug!("Forwarding temporal retrieve to context source {}: {}", csr.id, url);
 
             let mode = csr.mode.unwrap_or_default();
-            match self.forward_get(&url, context_url, csr.tenant.as_deref(), incoming_via).await {
+            match self.forward_get(&url, context_url, csr.tenant.as_ref(), incoming_via).await {
                 ForwardGetOutcome::Success(obj @ Value::Object(_), cs_warnings) => {
                     results.push(ForwardedEntities {
                         mode,

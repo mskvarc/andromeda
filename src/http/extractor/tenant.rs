@@ -5,7 +5,7 @@
 
 use crate::{
     http::{extractor::error::ExtractorRejection, header::ngsild_tenant::NgsiLdTenant},
-    tenancy::TenantName,
+    tenancy::types::TenantName,
 };
 use axum::{extract::FromRequestParts, http::request::Parts};
 use headers::HeaderMapExt;

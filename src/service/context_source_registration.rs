@@ -12,6 +12,7 @@ use crate::{
         q::parser,
     },
     repository::context_source_registration::{ContextSourceRegistrationRepository, CreateCsrParams, CsrUpdateFragment, unwrap_geo_property_to_string},
+    tenancy::types::TenantName,
 };
 use chrono::{DateTime, Utc};
 use serde_json::Value;
@@ -64,7 +65,7 @@ fn extract_update_fragment(fragment: &Value) -> Result<CsrUpdateFragment, Androm
         registration_name: extract_optional_string(fragment, "registrationName"),
         description: extract_optional_string(fragment, "description"),
         information: fragment.get("information").cloned(), // clone: need owned Value for update fragment struct
-        tenant: extract_optional_string(fragment, "tenant"),
+        tenant: extract_optional_tenant_name(fragment, "tenant")?,
         observation_interval: extract_optional_value(fragment, "observationInterval"),
         management_interval: extract_optional_value(fragment, "managementInterval"),
         location: fragment
@@ -136,6 +137,23 @@ fn extract_optional_string(payload: &Value, key: &str) -> Option<Option<String>>
 /// For nullable Value fields: absent -> None, null -> Some(None), value -> Some(Some(v))
 fn extract_optional_value(payload: &Value, key: &str) -> Option<Option<Value>> {
     payload.get(key).map(|v| if v.is_null() { None } else { Some(v.clone()) }) // clone: need owned Value; v is borrowed from payload
+}
+
+fn extract_optional_tenant_name(payload: &Value, key: &str) -> Result<Option<Option<TenantName>>, AndromedaError> {
+    let value = payload.get(key);
+    let result = match value {
+        None => None,
+        Some(raw) if raw.is_null() => Some(None),
+        Some(raw) => {
+            let tenant = raw
+                .as_str()
+                .ok_or_else(|| AndromedaError::bad_request_data(format!("'{key}' must be a string")))?;
+            let tenant_name =
+                TenantName::try_from(tenant.to_string()).map_err(|_| AndromedaError::bad_request_data(format!("'{key}' must be a non-empty string")))?;
+            Some(Some(tenant_name))
+        }
+    };
+    Ok(result)
 }
 
 fn extract_additional_properties(payload: &Value) -> Option<Value> {

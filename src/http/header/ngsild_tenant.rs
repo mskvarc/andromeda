@@ -3,7 +3,7 @@
 //! Identifies the tenant scope for multi-tenant deployments.
 //! The value must be a non-empty string.
 
-use crate::tenancy::TenantName;
+use crate::tenancy::types::TenantName;
 use axum::http::{HeaderName, HeaderValue};
 
 static NGSILD_TENANT: HeaderName = HeaderName::from_static("ngsild-tenant");
@@ -44,7 +44,7 @@ impl headers::Header for NgsiLdTenant {
         let value = values.next().ok_or_else(headers::Error::invalid)?;
         let s = value.to_str().map_err(|_| headers::Error::invalid())?;
         let trimmed = s.trim();
-        let name = TenantName::new(trimmed.to_string()).map_err(|_| headers::Error::invalid())?;
+        let name = TenantName::try_from(trimmed.to_string()).map_err(|_| headers::Error::invalid())?;
         Ok(NgsiLdTenant(name))
     }
 
@@ -91,15 +91,29 @@ mod tests {
 
     #[test]
     fn encode_roundtrip() {
-        let name = TenantName::new("t1".to_string()).expect("valid tenant name");
+        let name = match TenantName::try_from("t1".to_string()) {
+            Ok(value) => value,
+            Err(err) => panic!("unexpected tenant error: {err}"),
+        };
         let header = NgsiLdTenant::new(name);
         let mut encoded = Vec::new();
         header.encode(&mut encoded);
         assert_eq!(encoded.len(), 1);
-        assert_eq!(encoded[0].to_str().expect("valid str"), "t1");
+        let encoded_str = encoded[0].to_str();
+        assert!(encoded_str.is_ok());
+        let encoded_str = match encoded_str {
+            Ok(value) => value,
+            Err(err) => panic!("unexpected header value error: {err}"),
+        };
+        assert_eq!(encoded_str, "t1");
 
         let mut iter = encoded.iter();
-        let decoded = NgsiLdTenant::decode(&mut iter).expect("roundtrip decode");
+        let decoded = NgsiLdTenant::decode(&mut iter);
+        assert!(decoded.is_ok());
+        let decoded = match decoded {
+            Ok(value) => value,
+            Err(err) => panic!("unexpected roundtrip decode error: {err}"),
+        };
         assert_eq!(header, decoded);
     }
 }

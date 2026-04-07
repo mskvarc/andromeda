@@ -23,20 +23,13 @@ use super::notification::{
 
 const INTERVAL_NOTIFICATION_CONCURRENCY: usize = 20;
 
-#[async_trait::async_trait]
-impl super::Worker for IntervalWorker {
-    async fn run(self) {
-        IntervalWorker::run(self).await
-    }
-}
-
 pub struct IntervalWorker {
     sub_repo: SubscriptionRepository,
     entity_repo: EntityRepository,
     transport: Arc<TransportDispatcher>,
     poll_interval: Duration,
     engine: JsonLdEngine,
-    tenant: crate::tenancy::TenantRef,
+    tenant: crate::tenancy::types::TenantRef,
 }
 
 impl IntervalWorker {
@@ -45,7 +38,7 @@ impl IntervalWorker {
         entity_repo: EntityRepository,
         engine: JsonLdEngine,
         transport: Arc<TransportDispatcher>,
-        tenant: crate::tenancy::TenantRef,
+        tenant: crate::tenancy::types::TenantRef,
     ) -> Self {
         Self {
             sub_repo,
@@ -155,7 +148,7 @@ impl IntervalWorker {
                         accept,
                         sub.notification.endpoint.receiver_info.as_deref(),
                         jsonld_context,
-                        this.tenant.response_header_value(),
+                        this.tenant.tenant_name(),
                         &sub.id,
                     ) {
                         Ok(r) => r,

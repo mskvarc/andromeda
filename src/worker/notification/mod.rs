@@ -32,14 +32,6 @@ use payload::{NotificationBuildParams, NotificationCompactionCache, build_notifi
 
 const NOTIFICATION_CONCURRENCY: usize = 20;
 
-#[async_trait::async_trait]
-impl super::Worker for NotificationWorker {
-    async fn run(self) {
-        // Delegates to the inherent run method below
-        NotificationWorker::run(self).await
-    }
-}
-
 pub struct NotificationWorker {
     change_rx: broadcast::Receiver<ChangeEvent>,
     sub_change_rx: broadcast::Receiver<SubscriptionChange>,
@@ -49,7 +41,7 @@ pub struct NotificationWorker {
     cache: Arc<RwLock<HashMap<String, Arc<CompiledSubscription>>>>,
     transport: Arc<TransportDispatcher>,
     engine: JsonLdEngine,
-    tenant: crate::tenancy::TenantRef,
+    tenant: crate::tenancy::types::TenantRef,
 }
 
 pub struct NotificationWorkerDeps {
@@ -58,7 +50,7 @@ pub struct NotificationWorkerDeps {
     pub entity_query: EntityQueryService,
     pub engine: JsonLdEngine,
     pub transport: Arc<TransportDispatcher>,
-    pub tenant: crate::tenancy::TenantRef,
+    pub tenant: crate::tenancy::types::TenantRef,
 }
 
 impl NotificationWorker {
@@ -345,7 +337,7 @@ impl NotificationWorker {
                         compiled_sub.endpoint_accept.as_deref(),
                         compiled_sub.endpoint_receiver_info.as_deref(),
                         compiled_sub.jsonld_context.as_deref(),
-                        self.tenant.response_header_value(),
+                        self.tenant.tenant_name(),
                         &sub_id,
                     ) {
                         Ok(r) => r,

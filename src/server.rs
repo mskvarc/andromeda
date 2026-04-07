@@ -1,12 +1,14 @@
 use crate::{api::router::create_router, core::config::Configuration, error::AndromedaError};
 use axum::{ServiceExt, middleware};
+use std::sync::Arc;
 use tokio::net::TcpListener;
 use tower_http::normalize_path::NormalizePathLayer;
 use tower_layer::Layer;
 use tracing::info;
 
-pub async fn run(config: &Configuration) -> Result<(), AndromedaError> {
-    let router = create_router(config)
+pub async fn run(config: Configuration) -> Result<(), AndromedaError> {
+    let config = Arc::new(config);
+    let router = create_router(Arc::clone(&config))
         .await?
         .layer(middleware::from_fn(crate::api::tenant::echo_tenant_header_middleware));
 

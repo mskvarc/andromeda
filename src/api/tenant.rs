@@ -10,20 +10,23 @@ use headers::{Header, HeaderMapExt};
 use crate::{
     api::state::{AndromedaState, AppState},
     http::error::problem::NgsiLdError,
-    tenancy::TenantRef,
+    tenancy::types::{TenantCreationPolicy, TenantRef},
 };
 
+/// Extracts tenant state for requests that require the tenant to already exist.
 pub struct TenantState(pub AndromedaState);
+
+/// Extracts tenant state, creating the tenant database on demand if it does not exist.
 pub struct TenantStateOrCreate(pub AndromedaState);
 
-async fn resolve(parts: &mut Parts, app: &AppState, allow_implicit_creation: bool) -> Result<AndromedaState, NgsiLdError> {
+async fn resolve(parts: &mut Parts, app: &AppState, policy: TenantCreationPolicy) -> Result<AndromedaState, NgsiLdError> {
     let tenant = TenantHeader::from_request_parts(parts, app)
         .await
         .map_err(|_| NgsiLdError::from(crate::error::AndromedaError::bad_request_data("Invalid NGSILD-Tenant header").with_instance(parts.uri.clone())))?;
     let tenant_ref = TenantRef::from_header(tenant.into_inner());
     let runtime = app
         .tenants
-        .resolve_state(&tenant_ref, allow_implicit_creation)
+        .resolve_state(&tenant_ref, policy)
         .await
         .map_err(|e| e.with_instance(parts.uri.clone()))?;
     Ok((*runtime).clone())
@@ -33,7 +36,7 @@ impl FromRequestParts<AppState> for TenantState {
     type Rejection = NgsiLdError;
 
     async fn from_request_parts(parts: &mut Parts, app: &AppState) -> Result<Self, Self::Rejection> {
-        let state = resolve(parts, app, false).await?;
+        let state = resolve(parts, app, TenantCreationPolicy::MustExist).await?;
         Ok(Self(state))
     }
 }
@@ -42,7 +45,7 @@ impl FromRequestParts<AppState> for TenantStateOrCreate {
     type Rejection = NgsiLdError;
 
     async fn from_request_parts(parts: &mut Parts, app: &AppState) -> Result<Self, Self::Rejection> {
-        let state = resolve(parts, app, true).await?;
+        let state = resolve(parts, app, TenantCreationPolicy::CreateOnDemand).await?;
         Ok(Self(state))
     }
 }

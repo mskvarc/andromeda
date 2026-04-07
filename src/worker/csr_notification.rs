@@ -28,13 +28,6 @@ use uuid::Uuid;
 
 const CSR_NOTIFICATION_CONCURRENCY: usize = 20;
 
-#[async_trait::async_trait]
-impl super::Worker for CsrNotificationWorker {
-    async fn run(self) {
-        CsrNotificationWorker::run(self).await
-    }
-}
-
 pub struct CsrNotificationWorker {
     csr_change_rx: broadcast::Receiver<CsrChangeEvent>,
     sub_change_rx: broadcast::Receiver<CsourceSubscriptionChange>,
@@ -42,7 +35,7 @@ pub struct CsrNotificationWorker {
     csr_repo: ContextSourceRegistrationRepository,
     cache: Arc<RwLock<HashMap<String, Arc<CompiledCsrSubscription>>>>,
     transport: Arc<TransportDispatcher>,
-    tenant: crate::tenancy::TenantRef,
+    tenant: crate::tenancy::types::TenantRef,
 }
 
 impl CsrNotificationWorker {
@@ -52,7 +45,7 @@ impl CsrNotificationWorker {
         sub_repo: CsourceSubscriptionRepository,
         csr_repo: ContextSourceRegistrationRepository,
         transport: Arc<TransportDispatcher>,
-        tenant: crate::tenancy::TenantRef,
+        tenant: crate::tenancy::types::TenantRef,
     ) -> Self {
         Self {
             csr_change_rx,
@@ -242,7 +235,7 @@ impl CsrNotificationWorker {
             compiled_sub.endpoint_accept.as_deref(),
             compiled_sub.endpoint_receiver_info.as_deref(),
             compiled_sub.jsonld_context.as_deref(),
-            self.tenant.response_header_value(),
+            self.tenant.tenant_name(),
             sub_id,
         ) {
             Ok(r) => r,
@@ -350,7 +343,7 @@ impl CsrNotificationWorker {
                         compiled_sub.endpoint_accept.as_deref(),
                         compiled_sub.endpoint_receiver_info.as_deref(),
                         compiled_sub.jsonld_context.as_deref(),
-                        self.tenant.response_header_value(),
+                        self.tenant.tenant_name(),
                         &sub_id,
                     ) {
                         Ok(r) => r,
@@ -479,7 +472,7 @@ impl CsrNotificationWorker {
             compiled_sub.endpoint_accept.as_deref(),
             compiled_sub.endpoint_receiver_info.as_deref(),
             compiled_sub.jsonld_context.as_deref(),
-            self.tenant.response_header_value(),
+            self.tenant.tenant_name(),
             sub_id,
         ) {
             Ok(r) => r,

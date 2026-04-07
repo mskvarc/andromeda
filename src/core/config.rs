@@ -126,6 +126,15 @@ pub struct MultitenancyConfig {
     #[config(layer_attr(arg(skip)))]
     pub tenant_db_prefix: String,
 
+    /// Maximum number of connections in per-tenant database pools.
+    ///
+    /// Each tenant gets its own connection pool capped at this value,
+    /// preventing a single tenant from exhausting system-wide connection
+    /// limits. Defaults to 3.
+    #[config(default = 3)]
+    #[config(layer_attr(arg(skip)))]
+    pub tenant_max_connections: u32,
+
     #[config(default = 900)]
     #[config(layer_attr(arg(skip)))]
     pub runtime_idle_ttl_seconds: u64,
@@ -192,10 +201,11 @@ impl Default for JsonLdConfig {
 }
 
 impl Default for MultitenancyConfig {
-    fn default() -> Self {
-        Self {
+    fn default() -> MultitenancyConfig {
+        MultitenancyConfig {
             enabled: true,
             tenant_db_prefix: "andromeda_tenant".to_string(),
+            tenant_max_connections: 3,
             runtime_idle_ttl_seconds: 900,
             runtime_max_cached: 64,
             janitor_interval_seconds: 30,

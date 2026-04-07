@@ -10,6 +10,7 @@ use crate::{
     },
     error::AndromedaError,
     query::{compiled::CompiledCsrQuery, csr_sql},
+    tenancy::types::TenantName,
 };
 use chrono::{DateTime, Utc};
 use serde_json::Value;
@@ -124,7 +125,7 @@ pub struct CsrUpdateFragment {
     /// Updated registration information entries.
     pub information: Option<Value>,
     /// Updated tenant identifier.
-    pub tenant: Option<Option<String>>,
+    pub tenant: Option<Option<TenantName>>,
     /// Updated observation interval.
     pub observation_interval: Option<Option<Value>>,
     /// Updated management interval.
@@ -332,7 +333,7 @@ impl ContextSourceRegistrationRepository {
             Some(v) => v.clone(), // clone: conditional ownership -- fragment or existing
             None => serde_json::to_value(&existing.information)?,
         };
-        let tenant: Option<String> = match &fragment.tenant {
+        let tenant: Option<TenantName> = match &fragment.tenant {
             Some(v) => v.clone(), // clone: conditional ownership -- fragment or existing
             None => existing.tenant,
         };
@@ -451,7 +452,7 @@ impl ContextSourceRegistrationRepository {
         .bind(registration_name)
         .bind(description)
         .bind(serde_json::to_value(&information)?)
-        .bind(tenant.as_deref())
+        .bind(tenant.as_ref().map(TenantName::as_str))
         .bind(observation_interval)
         .bind(management_interval)
         .bind(location_geojson.as_deref())
@@ -561,7 +562,11 @@ fn row_to_csr(row: &sqlx::postgres::PgRow) -> Result<ContextSourceRegistration, 
     let registration_name: Option<String> = row.get("registration_name");
     let description: Option<String> = row.get("description");
     let information_json: Value = row.get("information");
-    let tenant: Option<String> = row.get("tenant");
+    let tenant_str: Option<String> = row.get("tenant");
+    let tenant = tenant_str
+        .map(TenantName::try_from)
+        .transpose()
+        .map_err(|e| AndromedaError::internal(e.to_string()))?;
     let observation_interval: Option<Value> = row.get("observation_interval");
     let management_interval: Option<Value> = row.get("management_interval");
     let location: Option<Value> = row.get("location");

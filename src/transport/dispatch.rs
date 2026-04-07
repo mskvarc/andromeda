@@ -10,11 +10,14 @@ use bytes::Bytes;
 use serde_json::Value;
 use tracing::{debug, warn};
 
-use crate::transport::{
-    endpoint::{EndpointTransport, extract_key_value_pairs},
-    http::{HttpTransport, HttpTransportConfig},
-    mqtt::{MqttPoolConfig, MqttTransportHandle, MqttTransportPool},
-    types::{DeliveryOutcome, DeliveryRequest, NotificationTransport, TransportError, content_type_for_accept},
+use crate::{
+    tenancy::types::TenantName,
+    transport::{
+        endpoint::{EndpointTransport, extract_key_value_pairs},
+        http::{HttpTransport, HttpTransportConfig},
+        mqtt::{MqttPoolConfig, MqttTransportHandle, MqttTransportPool},
+        types::{DeliveryOutcome, DeliveryRequest, NotificationTransport, TenantHeaderValue, TransportError, content_type_for_accept},
+    },
 };
 
 /// Unified transport dispatcher routing to HTTP or MQTT.
@@ -147,7 +150,7 @@ pub fn build_delivery_request(
     accept: Option<&str>,
     receiver_info: Option<&[Value]>,
     jsonld_context: Option<&str>,
-    tenant: Option<&str>,
+    tenant: Option<&TenantName>,
     subscription_id: &str,
 ) -> Result<DeliveryRequest, TransportError> {
     let content_type = content_type_for_accept(accept);
@@ -161,7 +164,7 @@ pub fn build_delivery_request(
         endpoint_uri: endpoint_uri.to_string(),
         content_type,
         context_url: jsonld_context.map(String::from),
-        tenant: tenant.map(String::from),
+        tenant: tenant.map(TenantHeaderValue::from),
         receiver_info: extract_key_value_pairs(receiver_info),
         subscription_id: subscription_id.to_string(),
         attempt: 0,

@@ -111,8 +111,8 @@ impl NotificationTransport for HttpTransport {
             }
         }
 
-        if let Some(ref tenant) = req.tenant {
-            request = request.header(NgsiLdTenant::name().as_str(), tenant.as_str());
+        if let Some(ref tenant_value) = req.tenant {
+            request = request.header(NgsiLdTenant::name().as_str(), tenant_value.as_str());
         }
 
         for (key, value) in &req.receiver_info {

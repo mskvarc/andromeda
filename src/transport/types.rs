@@ -10,7 +10,10 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use mediatype::MediaTypeBuf;
 
-use crate::http::model::response_format::{APPLICATION_GEO_JSON, APPLICATION_JSON, APPLICATION_LD_JSON};
+use crate::{
+    http::model::response_format::{APPLICATION_GEO_JSON, APPLICATION_JSON, APPLICATION_LD_JSON},
+    tenancy::types::TenantName,
+};
 
 /// Resolve the notification content type from the subscription's `accept`
 /// field, falling back to `application/json`.
@@ -22,16 +25,44 @@ pub fn content_type_for_accept(accept: Option<&str>) -> MediaTypeBuf {
     }
 }
 
+/// Typed wrapper for the tenant identifier in transport-layer headers.
+///
+/// Used in [`DeliveryRequest`] and HTTP header insertion to avoid raw strings
+/// for the `NGSILD-Tenant` header value.
+#[derive(Debug, Clone, derive_more::Display, derive_more::AsRef)]
+pub struct TenantHeaderValue(String);
+
+impl TenantHeaderValue {
+    /// Return the tenant header value as a string slice.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl From<&TenantName> for TenantHeaderValue {
+    fn from(name: &TenantName) -> TenantHeaderValue {
+        TenantHeaderValue(name.as_str().to_string())
+    }
+}
+
 /// Everything a transport needs to deliver a single notification.
 #[derive(Debug, Clone)]
 pub struct DeliveryRequest {
+    /// Serialized notification payload.
     pub payload: Bytes,
+    /// Target endpoint URL.
     pub endpoint_uri: String,
+    /// Content-Type for the notification body.
     pub content_type: MediaTypeBuf,
+    /// JSON-LD context URL for the Link header.
     pub context_url: Option<String>,
-    pub tenant: Option<String>,
+    /// Tenant identifier for the `NGSILD-Tenant` header.
+    pub tenant: Option<TenantHeaderValue>,
+    /// Additional key-value pairs from receiver_info.
     pub receiver_info: Vec<(String, String)>,
+    /// Subscription ID for logging and tracking.
     pub subscription_id: String,
+    /// Delivery attempt number.
     pub attempt: u32,
 }
 
