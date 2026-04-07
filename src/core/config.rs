@@ -10,11 +10,11 @@ use std::{
 #[derive(Config, Debug, Clone)]
 #[config(layer_attr(derive(Args, Clone)))]
 pub struct Andromeda {
-    #[config(default = "0.0.0.0")]
+    #[config(env = "ANDROMEDA_HOST", default = "0.0.0.0")]
     #[config(layer_attr(arg(short = 'H', long)))]
     pub host: IpAddr,
 
-    #[config(default = 1056)]
+    #[config(env = "ANDROMEDA_PORT", default = 1056)]
     #[config(layer_attr(arg(short = 'p', long)))]
     pub port: u16,
 }
@@ -22,11 +22,11 @@ pub struct Andromeda {
 #[derive(Config, Debug, Clone)]
 #[config(layer_attr(derive(Args, Clone)))]
 pub struct Database {
-    #[config(default = "postgres://postgres:postgres@localhost:5432/postgres")]
+    #[config(env = "ANDROMEDA_DATABASE_URL", default = "postgres://postgres:postgres@localhost:5432/postgres")]
     #[config(layer_attr(arg(long = "database-url")))]
     pub url: String,
 
-    #[config(default = 5)]
+    #[config(env = "ANDROMEDA_DATABASE_MAX_CONNECTIONS", default = 5)]
     #[config(layer_attr(arg(long = "database-max-connections")))]
     pub max_connections: u32,
 }
@@ -51,11 +51,11 @@ pub struct JsonLdConfig {
     pub max_context_bytes: u64,
 
     #[config(default = 1024)]
-    #[config(layer_attr(arg(long = "jsonld-cache-capacity")))]
+    #[config(layer_attr(arg(skip)))]
     pub cache_capacity: u64,
 
     #[config(default = 3600)]
-    #[config(layer_attr(arg(long = "jsonld-cache-ttl-seconds")))]
+    #[config(layer_attr(arg(skip)))]
     pub cache_ttl_seconds: u64,
 
     #[config(layer_attr(arg(skip)))]
@@ -111,31 +111,31 @@ pub struct TemporalConfig {
 
     /// Interval in seconds between expiration checks.
     #[config(default = 30)]
-    #[config(layer_attr(arg(long = "expiration-check-interval-secs")))]
+    #[config(layer_attr(arg(skip)))]
     pub expiration_check_interval_secs: u64,
 }
 
 #[derive(Config, Debug, Clone)]
 #[config(layer_attr(derive(Args)))]
 pub struct MultitenancyConfig {
-    #[config(default = true)]
-    #[config(layer_attr(arg(long = "multitenancy-enabled")))]
+    #[config(env = "ANDROMEDA_MULTITENANCY_ENABLED", default = true)]
+    #[config(layer_attr(arg(skip)))]
     pub enabled: bool,
 
-    #[config(default = "andromeda_tenant")]
-    #[config(layer_attr(arg(long = "multitenancy-db-prefix")))]
+    #[config(env = "ANDROMEDA_MULTITENANCY_TENANT_DB_PREFIX", default = "andromeda_tenant")]
+    #[config(layer_attr(arg(skip)))]
     pub tenant_db_prefix: String,
 
     #[config(default = 900)]
-    #[config(layer_attr(arg(long = "multitenancy-runtime-idle-ttl-seconds")))]
+    #[config(layer_attr(arg(skip)))]
     pub runtime_idle_ttl_seconds: u64,
 
     #[config(default = 64)]
-    #[config(layer_attr(arg(long = "multitenancy-runtime-max-cached")))]
+    #[config(layer_attr(arg(skip)))]
     pub runtime_max_cached: usize,
 
     #[config(default = 30)]
-    #[config(layer_attr(arg(long = "multitenancy-janitor-interval-seconds")))]
+    #[config(layer_attr(arg(skip)))]
     pub janitor_interval_seconds: u64,
 }
 
@@ -153,7 +153,7 @@ impl Configuration {
         let cli = Cli::parse();
         let config_file = cli.config_file.clone();
 
-        let mut config = Configuration::builder().preloaded(cli.config).file(config_file.clone()).load()?;
+        let mut config = Configuration::builder().preloaded(cli.config).env().file(config_file.clone()).load()?;
         normalize_preload_context_paths(&mut config, &config_file);
 
         Ok(config)
@@ -205,6 +205,9 @@ impl Default for MultitenancyConfig {
 
 #[cfg(test)]
 mod tests {
+    use confique::Layer;
+    use serial_test::serial;
+
     use super::*;
 
     fn test_configuration_with_preload(path: &str) -> Configuration {
@@ -259,5 +262,82 @@ mod tests {
             .and_then(|m| m.get("https://example.com/context.jsonld"))
             .expect("preload path missing");
         assert_eq!(path, "/opt/contexts/test.jsonld");
+    }
+
+    #[test]
+    #[serial]
+    fn env_overrides_default_host() {
+        unsafe { std::env::set_var("ANDROMEDA_HOST", "192.168.1.1") };
+        let config = Configuration::builder().env().load().expect("config should load");
+        unsafe { std::env::remove_var("ANDROMEDA_HOST") };
+        assert_eq!(config.andromeda.host, IpAddr::from([192, 168, 1, 1]));
+    }
+
+    #[test]
+    #[serial]
+    fn env_overrides_default_port() {
+        unsafe { std::env::set_var("ANDROMEDA_PORT", "9999") };
+        let config = Configuration::builder().env().load().expect("config should load");
+        unsafe { std::env::remove_var("ANDROMEDA_PORT") };
+        assert_eq!(config.andromeda.port, 9999);
+    }
+
+    #[test]
+    #[serial]
+    fn env_overrides_database_url() {
+        unsafe { std::env::set_var("ANDROMEDA_DATABASE_URL", "postgres://envhost/envdb") };
+        let config = Configuration::builder().env().load().expect("config should load");
+        unsafe { std::env::remove_var("ANDROMEDA_DATABASE_URL") };
+        assert_eq!(config.database.url, "postgres://envhost/envdb");
+    }
+
+    #[test]
+    #[serial]
+    fn env_overrides_database_max_connections() {
+        unsafe { std::env::set_var("ANDROMEDA_DATABASE_MAX_CONNECTIONS", "20") };
+        let config = Configuration::builder().env().load().expect("config should load");
+        unsafe { std::env::remove_var("ANDROMEDA_DATABASE_MAX_CONNECTIONS") };
+        assert_eq!(config.database.max_connections, 20);
+    }
+
+    #[test]
+    #[serial]
+    fn env_overrides_multitenancy_enabled() {
+        unsafe { std::env::set_var("ANDROMEDA_MULTITENANCY_ENABLED", "false") };
+        let config = Configuration::builder().env().load().expect("config should load");
+        unsafe { std::env::remove_var("ANDROMEDA_MULTITENANCY_ENABLED") };
+        assert!(!config.multitenancy.enabled);
+    }
+
+    #[test]
+    #[serial]
+    fn env_overrides_multitenancy_tenant_db_prefix() {
+        unsafe { std::env::set_var("ANDROMEDA_MULTITENANCY_TENANT_DB_PREFIX", "custom_prefix") };
+        let config = Configuration::builder().env().load().expect("config should load");
+        unsafe { std::env::remove_var("ANDROMEDA_MULTITENANCY_TENANT_DB_PREFIX") };
+        assert_eq!(config.multitenancy.tenant_db_prefix, "custom_prefix");
+    }
+
+    #[test]
+    #[serial]
+    fn non_env_fields_ignore_env_vars() {
+        unsafe { std::env::set_var("ANDROMEDA_JSONLD_CACHE_CAPACITY", "9999") };
+        let config = Configuration::builder().env().load().expect("config should load");
+        unsafe { std::env::remove_var("ANDROMEDA_JSONLD_CACHE_CAPACITY") };
+        assert_eq!(config.jsonld.cache_capacity, 1024);
+    }
+
+    #[test]
+    #[serial]
+    fn preloaded_cli_overrides_env() {
+        unsafe { std::env::set_var("ANDROMEDA_PORT", "8888") };
+
+        let mut layer = <Configuration as Config>::Layer::default_values();
+        layer.andromeda.port = Some(7777);
+
+        let config = Configuration::builder().preloaded(layer).env().load().expect("config should load");
+
+        unsafe { std::env::remove_var("ANDROMEDA_PORT") };
+        assert_eq!(config.andromeda.port, 7777);
     }
 }
