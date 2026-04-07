@@ -29,6 +29,7 @@ pub enum ContextGetResult {
 }
 
 /// PostgreSQL-backed repository for JSON-LD context documents.
+#[derive(Debug)]
 pub struct JsonLdContextRepository {
     pool: PgPool,
 }

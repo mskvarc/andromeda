@@ -18,6 +18,7 @@ use dashmap::DashMap;
 use iref3::{Iri, IriBuf};
 use json_ld::{LoadError, Loader, RemoteDocument};
 use json_syntax::Parse;
+use mediatype::MediaTypeBuf;
 use moka::future::Cache;
 use reqwest::{Client, header::CONTENT_TYPE, redirect::Policy};
 use std::{
@@ -40,10 +41,11 @@ fn fallback_iri() -> IriBuf {
     }
 }
 
-/// `application/ld+json` media type constant.
+/// `application/ld+json` media type constant for `json_ld::RemoteDocument` compatibility.
 ///
-/// The literal `"application/ld+json"` is always a valid MIME type.
-/// Falls back to `application/octet-stream` if parsing somehow fails.
+/// The `json_ld` crate requires `mime::Mime` in its `RemoteDocument::new` API.
+/// The literal `"application/ld+json"` is always a valid MIME type; the
+/// `unwrap_or` fallback is unreachable but avoids using `.unwrap()`.
 static MEDIA_TYPE_LD_JSON: LazyLock<mime::Mime> = LazyLock::new(|| "application/ld+json".parse().unwrap_or(mime::APPLICATION_OCTET_STREAM));
 
 /// Accept header value for context fetches.
@@ -59,7 +61,7 @@ const ACCEPT_HEADER: &str = "application/ld+json, application/json";
 /// engine.  The engine will check the cache before making HTTP requests and
 /// will persist successfully fetched remote contexts via [`put`](ContextCache::put).
 #[async_trait]
-pub trait ContextCache: Send + Sync {
+pub trait ContextCache: Send + Sync + std::fmt::Debug {
     /// Look up a previously cached context by URL.
     async fn get(&self, url: &str) -> Option<serde_json::Value>;
 
@@ -110,6 +112,7 @@ impl ContextRegistry {
 /// HTTP context loader with L1 cache, registry, and optional L2 cache.
 ///
 /// Cloning is not supported — wrap in `Arc` to share across tasks.
+#[derive(Debug)]
 pub struct HttpContextLoader {
     client: Client,
     cache: Cache<String, Arc<json_syntax::Value>>,
@@ -369,7 +372,7 @@ fn strip_core_aliases_from_context_slot(context: &mut serde_json::Value) {
         serde_json::Value::Object(_) => {
             remove_embedded_core_context_aliases(context);
         }
-        _ => {}
+        serde_json::Value::Null | serde_json::Value::Bool(_) | serde_json::Value::Number(_) | serde_json::Value::String(_) => {}
     }
 }
 
@@ -466,9 +469,17 @@ async fn fetch_and_parse(client: &Client, url: &str, max_bytes: usize) -> Result
     }
 
     if let Some(content_type) = response.headers().get(CONTENT_TYPE).and_then(|v| v.to_str().ok()) {
-        let ct = content_type.to_ascii_lowercase();
-        let json_like = ct.contains("application/ld+json") || ct.contains("application/json") || ct.contains("+json") || ct.contains("text/plain");
-        if !json_like {
+        let is_json_like = match content_type.parse::<MediaTypeBuf>() {
+            Ok(mt) => {
+                let subtype = mt.subty().as_str();
+                subtype == "json"
+                    || subtype == "ld+json"
+                    || mt.suffix().is_some_and(|s| s.as_str() == "json")
+                    || (mt.ty().as_str() == "text" && subtype == "plain")
+            }
+            Err(_) => false,
+        };
+        if !is_json_like {
             return Err(LoaderError {
                 url: url.to_string(),
                 kind: LoaderErrorKind::Invalid(format!("Unsupported context content type: {}", content_type)),

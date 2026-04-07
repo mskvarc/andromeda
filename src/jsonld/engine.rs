@@ -29,7 +29,6 @@ use moka::future::Cache;
 use rdf_types::vocabulary::{BlankIdIndex, IndexVocabulary, IriIndex};
 use std::{
     collections::HashMap,
-    fmt,
     fs,
     hash::Hash,
     sync::{
@@ -45,21 +44,13 @@ use tracing::info;
 // ---------------------------------------------------------------------------
 
 /// Controls whether `@context` is stripped from compacted output.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, strum::Display)]
 pub enum ContextStripping {
     /// Remove `@context` from the compacted output.
+    #[default]
     Strip,
     /// Keep `@context` in the compacted output.
     Keep,
-}
-
-impl fmt::Display for ContextStripping {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            ContextStripping::Strip => write!(f, "Strip"),
-            ContextStripping::Keep => write!(f, "Keep"),
-        }
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -67,21 +58,12 @@ impl fmt::Display for ContextStripping {
 // ---------------------------------------------------------------------------
 
 /// Controls whether the engine is allowed to fetch remote contexts over HTTP.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::Display)]
 pub enum RemoteContextFetch {
     /// Allow fetching remote JSON-LD contexts.
     Allow,
     /// Deny all remote context fetches.
     Deny,
-}
-
-impl fmt::Display for RemoteContextFetch {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            RemoteContextFetch::Allow => write!(f, "Allow"),
-            RemoteContextFetch::Deny => write!(f, "Deny"),
-        }
-    }
 }
 
 impl From<bool> for RemoteContextFetch {
@@ -97,18 +79,10 @@ impl From<bool> for RemoteContextFetch {
 // ---------------------------------------------------------------------------
 
 /// Options for JSON-LD compaction.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Default)]
 pub struct CompactOptions {
     /// Whether to strip `@context` from the compacted output.
     pub strip_context: ContextStripping,
-}
-
-impl Default for CompactOptions {
-    fn default() -> CompactOptions {
-        CompactOptions {
-            strip_context: ContextStripping::Strip,
-        }
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -121,7 +95,7 @@ impl Default for CompactOptions {
 /// backed by a configurable context loader with multi-tier caching.
 ///
 /// Cloning is cheap — the loader and caches are shared via `Arc`.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct JsonLdEngine {
     loader: Arc<HttpContextLoader>,
     /// Cache for expanded type/term IRIs to avoid creating synthetic documents
@@ -132,17 +106,6 @@ pub struct JsonLdEngine {
 }
 
 impl JsonLdEngine {
-    /// Create an engine with default settings (remote contexts enabled, no L2
-    /// cache, no preloaded contexts).
-    ///
-    /// # Errors
-    ///
-    /// Returns [`Error`] if the embedded core contexts cannot be parsed.
-    #[allow(dead_code)]
-    pub fn new() -> Result<JsonLdEngine, Error> {
-        JsonLdEngine::builder().build()
-    }
-
     /// Start building an engine with custom configuration.
     pub fn builder() -> JsonLdEngineBuilder {
         JsonLdEngineBuilder::new()
@@ -725,7 +688,11 @@ fn resolve_relative_context_urls(document: &mut serde_json::Value) {
                     resolve_entry(item);
                 }
             }
-            _ => {}
+            serde_json::Value::Null
+            | serde_json::Value::Bool(_)
+            | serde_json::Value::Number(_)
+            | serde_json::Value::String(_)
+            | serde_json::Value::Object(_) => {}
         }
     }
 
@@ -744,7 +711,7 @@ fn resolve_relative_context_urls(document: &mut serde_json::Value) {
                 }
             }
         }
-        _ => {}
+        serde_json::Value::Null | serde_json::Value::Bool(_) | serde_json::Value::Number(_) | serde_json::Value::String(_) => {}
     }
 }
 
