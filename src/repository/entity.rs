@@ -525,7 +525,16 @@ impl EntityRepository {
             return Ok(Vec::new());
         }
 
-        let (ids, types_json, scopes_json, payloads, locations, obs_spaces, op_spaces, expires_ats) = decompose_rows(entities);
+        let DecomposedColumns {
+            ids,
+            types_json,
+            scopes_json,
+            payloads,
+            locations,
+            obs_spaces,
+            op_spaces,
+            expires_ats,
+        } = decompose_rows(entities);
 
         let rows: Vec<(String,)> = sqlx::query_as(
             r#"
@@ -596,7 +605,16 @@ impl EntityRepository {
             return Ok(Vec::new());
         }
 
-        let (ids, types_json, scopes_json, payloads, locations, obs_spaces, op_spaces, expires_ats) = decompose_rows(entities);
+        let DecomposedColumns {
+            ids,
+            types_json,
+            scopes_json,
+            payloads,
+            locations,
+            obs_spaces,
+            op_spaces,
+            expires_ats,
+        } = decompose_rows(entities);
 
         let rows: Vec<(String,)> = sqlx::query_as(
             r#"
@@ -639,7 +657,16 @@ impl EntityRepository {
             return Ok(Vec::new());
         }
 
-        let (ids, types_json, scopes_json, payloads, locations, obs_spaces, op_spaces, expires_ats) = decompose_rows(entities);
+        let DecomposedColumns {
+            ids,
+            types_json,
+            scopes_json,
+            payloads,
+            locations,
+            obs_spaces,
+            op_spaces,
+            expires_ats,
+        } = decompose_rows(entities);
 
         let rows = sqlx::query(
             r#"
@@ -688,20 +715,22 @@ impl EntityRepository {
     }
 }
 
+/// Parallel column vectors extracted from [`PreparedEntityRow`] slices for
+/// sqlx `UNNEST` binding.
+struct DecomposedColumns {
+    ids: Vec<String>,
+    types_json: Vec<Value>,
+    scopes_json: Vec<Value>,
+    payloads: Vec<Value>,
+    locations: Vec<Option<String>>,
+    obs_spaces: Vec<Option<String>>,
+    op_spaces: Vec<Option<String>>,
+    expires_ats: Vec<Option<DateTime<Utc>>>,
+}
+
 /// Decompose a slice of [`PreparedEntityRow`] into parallel column vectors for
 /// sqlx `UNNEST` binding.
-fn decompose_rows(
-    entities: &[PreparedEntityRow],
-) -> (
-    Vec<String>,
-    Vec<Value>,
-    Vec<Value>,
-    Vec<Value>,
-    Vec<Option<String>>,
-    Vec<Option<String>>,
-    Vec<Option<String>>,
-    Vec<Option<DateTime<Utc>>>,
-) {
+fn decompose_rows(entities: &[PreparedEntityRow]) -> DecomposedColumns {
     let len = entities.len();
     let mut ids = Vec::with_capacity(len);
     let mut types_json = Vec::with_capacity(len);
@@ -723,5 +752,14 @@ fn decompose_rows(
         expires_ats.push(e.expires_at);
     }
 
-    (ids, types_json, scopes_json, payloads, locations, obs_spaces, op_spaces, expires_ats)
+    DecomposedColumns {
+        ids,
+        types_json,
+        scopes_json,
+        payloads,
+        locations,
+        obs_spaces,
+        op_spaces,
+        expires_ats,
+    }
 }

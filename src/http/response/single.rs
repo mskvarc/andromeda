@@ -38,7 +38,7 @@ pub struct NgsiLdResponse {
 
 impl NgsiLdResponse {
     /// Create a response with a specific status code.
-    pub fn new(status: StatusCode, rendered: RenderedOutput) -> NgsiLdResponse {
+    pub const fn new(status: StatusCode, rendered: RenderedOutput) -> NgsiLdResponse {
         NgsiLdResponse {
             status,
             rendered,
@@ -51,7 +51,7 @@ impl NgsiLdResponse {
     }
 
     /// Create a 200 OK response.
-    pub fn ok(rendered: RenderedOutput) -> NgsiLdResponse {
+    pub const fn ok(rendered: RenderedOutput) -> NgsiLdResponse {
         NgsiLdResponse::new(StatusCode::OK, rendered)
     }
 

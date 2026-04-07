@@ -49,7 +49,7 @@ pub struct RenderedOutput {
 
 impl ResponseRenderer {
     /// Create a new renderer with the given format, context, and preferences.
-    pub fn new(format: ResponseFormat, context: ContextSpec, prefer: PreferHeader) -> ResponseRenderer {
+    pub const fn new(format: ResponseFormat, context: ContextSpec, prefer: PreferHeader) -> ResponseRenderer {
         ResponseRenderer {
             format,
             context,

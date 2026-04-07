@@ -25,7 +25,7 @@ pub struct NgsiLdBatchResponse {
 
 impl NgsiLdBatchResponse {
     /// Create a batch response with the given status and pre-rendered data.
-    pub fn new(status: StatusCode, rendered: RenderedOutput) -> NgsiLdBatchResponse {
+    pub const fn new(status: StatusCode, rendered: RenderedOutput) -> NgsiLdBatchResponse {
         NgsiLdBatchResponse {
             status,
             rendered,

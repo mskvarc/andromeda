@@ -38,7 +38,7 @@ pub struct NgsiLdCollectionResponse {
 
 impl NgsiLdCollectionResponse {
     /// Create a 200 OK response for a collection.
-    pub fn ok(rendered: RenderedOutput) -> NgsiLdCollectionResponse {
+    pub const fn ok(rendered: RenderedOutput) -> NgsiLdCollectionResponse {
         NgsiLdCollectionResponse {
             status: StatusCode::OK,
             rendered,
