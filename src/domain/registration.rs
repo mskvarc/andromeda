@@ -1,7 +1,7 @@
 //! Context source registration types (ETSI GS CIM 009 clause 5.2.9).
 
 use crate::{
-    domain::{serde_helpers, subscription::EntitySelector},
+    domain::{scope::ScopeBuf, serde_helpers, subscription::EntitySelector},
     tenancy::types::TenantName,
 };
 use chrono::{DateTime, Utc};
@@ -155,7 +155,7 @@ pub struct ContextSourceRegistration {
     pub operations: Option<Vec<CsrOperation>>,
     /// Scope values.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub scope: Option<Vec<String>>,
+    pub scope: Option<Vec<ScopeBuf>>,
     /// Refresh rate.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub refresh_rate: Option<String>,

@@ -6,6 +6,7 @@
 use crate::{
     domain::{
         registration::{ContextSourceRegistration, CsrOperation, CsrStatus, ForwardingMode},
+        scope::ScopeBuf,
         uri::NGSI_LD_URN_NID,
     },
     error::AndromedaError,
@@ -367,7 +368,7 @@ impl ContextSourceRegistrationRepository {
         };
         let scope: Option<Vec<String>> = match &fragment.scope {
             Some(v) => v.clone(), // clone: conditional ownership -- fragment or existing
-            None => existing.scope,
+            None => existing.scope.map(|v| v.into_iter().map(|s| s.to_string()).collect()),
         };
         let refresh_rate: Option<String> = match &fragment.refresh_rate {
             Some(v) => v.clone(), // clone: conditional ownership -- fragment or existing
@@ -591,7 +592,14 @@ fn row_to_csr(row: &sqlx::postgres::PgRow) -> Result<ContextSourceRegistration, 
                 .collect::<Result<Vec<_>, _>>()
         })
         .transpose()?;
-    let scope: Option<Vec<String>> = row.get("scope");
+    let scope: Option<Vec<ScopeBuf>> = row
+        .get::<Option<Vec<String>>, _>("scope")
+        .map(|v| {
+            v.into_iter()
+                .map(|s| ScopeBuf::new(s).map_err(|e| AndromedaError::internal(format!("Invalid scope value in DB: {}", e))))
+                .collect::<Result<Vec<_>, _>>()
+        })
+        .transpose()?;
     let refresh_rate: Option<String> = row.get("refresh_rate");
     let management: Option<Value> = row.get("management");
     let context_source_info: Option<Value> = row.get("context_source_info");

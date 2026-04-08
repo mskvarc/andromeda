@@ -1,4 +1,4 @@
-use crate::domain::{attribute::AttributeValue, notification::SysAttrsSnapshot, serde_helpers, uri::Uri};
+use crate::domain::{attribute::AttributeValue, notification::SysAttrsSnapshot, scope::ScopeBuf, serde_helpers, uri::Uri};
 use chrono::{DateTime, Utc};
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
@@ -11,12 +11,12 @@ pub enum EntityTypeValue {
     Multiple(Vec<String>),
 }
 
-/// Single or multiple scope values.
+/// Single or multiple scope values on an entity (ETSI GS CIM 009 clause 5.2.4).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
-pub enum Scope {
-    Single(String),
-    Multiple(Vec<String>),
+pub enum ScopeValue {
+    Single(ScopeBuf),
+    Multiple(Vec<ScopeBuf>),
 }
 
 /// NGSI-LD Entity representation (ETSI GS CIM 009 clause 5.2.4, Table 5.2.4-1).
@@ -33,7 +33,7 @@ pub struct Entity {
     #[serde(rename = "type")]
     pub type_: EntityTypeValue,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub scope: Option<Scope>,
+    pub scope: Option<ScopeValue>,
 
     /// Entity expiration timestamp (clause 4.22).
     #[serde(rename = "expiresAt", skip_serializing_if = "Option::is_none", with = "serde_helpers::rfc3339_option", default)]
@@ -227,7 +227,7 @@ pub struct EntityPatch {
     #[serde(rename = "type")]
     pub type_: Option<EntityTypeValue>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub scope: Option<Scope>,
+    pub scope: Option<ScopeValue>,
 
     /// Entity expiration timestamp (clause 4.22).
     #[serde(rename = "expiresAt", skip_serializing_if = "Option::is_none", with = "serde_helpers::rfc3339_option", default)]

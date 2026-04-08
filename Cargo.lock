@@ -116,6 +116,7 @@ dependencies = [
  "shadow-rs",
  "sqlx",
  "static-iref",
+ "static-regular-grammar",
  "strum",
  "thiserror 2.0.18",
  "tokio",

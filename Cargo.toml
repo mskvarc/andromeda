@@ -57,6 +57,7 @@ serde_with = "3.18.0"
 shadow-rs = "1.7.1"
 sqlx = { version = "0.8.6", features = ["runtime-tokio", "postgres", "json", "chrono", "uuid"] }
 static-iref = "3.0.0"
+static-regular-grammar = "2.0.2"
 strum = { version = "0.28.0", features = ["derive"] }
 thiserror = "2.0.18"
 tokio = { version = "1.51.0", features = ["full"] }
