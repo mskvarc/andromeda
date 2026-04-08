@@ -52,6 +52,7 @@ rumqttc = { version = "0.25.1", features = ["use-rustls"] }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"
 serde_urlencoded = "0.7.1"
+serde_with = "3.18.0"
 shadow-rs = "1.7.1"
 sqlx = { version = "0.8.6", features = ["runtime-tokio", "postgres", "json", "chrono", "uuid"] }
 static-iref = "3.0.0"
