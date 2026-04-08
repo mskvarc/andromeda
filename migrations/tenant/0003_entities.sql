@@ -10,7 +10,7 @@
 --   natively — avoiding slow JSON parsing during filtering.
 --
 --   • types[]   — GIN-indexed array for fast type-based filtering
---   • scopes[]  — GIN-indexed array for NGSI-LD Scope queries (clause 4.18)
+--   • scope_paths[] — GIST-indexed ltree array for hierarchical scope matching (clause 4.18)
 --   • location  — PostGIS geometry extracted from the entity's default
 --                  GeoProperty named "location", enabling GIST-indexed
 --                  spatial queries (within, near, intersects, etc.)
@@ -25,9 +25,9 @@ CREATE TABLE entities (
     -- An entity may belong to multiple types per NGSI-LD spec.
     types TEXT[] NOT NULL,
 
-    -- NGSI-LD Scopes (clause 4.18) for hierarchical entity structuring,
-    -- e.g. '{"/Madrid/Gardens", "/Madrid/Traffic"}'
-    scopes TEXT[],
+    -- NGSI-LD Scopes (clause 4.18) as ltree paths for hierarchical matching,
+    -- e.g. '{"Madrid.Gardens", "Madrid.Traffic"}'
+    scope_paths ltree[],
 
     -- Materialized geometry from the entity's "location" GeoProperty.
     -- Supports Point, Polygon, LineString, etc. in WGS 84 (SRID 4326).
@@ -49,8 +49,8 @@ CREATE TABLE entities (
 -- Fast filtering by entity type(s):  WHERE 'Vehicle' = ANY(types)
 CREATE INDEX idx_entities_types ON entities USING GIN (types);
 
--- Fast filtering by scope(s):  WHERE scopes && ARRAY['/Madrid/Gardens']
-CREATE INDEX idx_entities_scopes ON entities USING GIN (scopes);
+-- Fast hierarchical scope matching:  scope_paths ~ 'A.B.*{1,}'::lquery
+CREATE INDEX idx_entities_scope_paths ON entities USING GIST (scope_paths);
 
 -- Spatial queries:  ST_DWithin(location, ...), ST_Within(location, ...)
 CREATE INDEX idx_entities_location ON entities USING GIST (location);

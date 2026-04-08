@@ -20,17 +20,17 @@ use urn::Urn;
 /// Row data prepared for bulk entity SQL operations.
 ///
 /// Each field corresponds to a column (or derived column) in the `entities`
-/// table.  The `types_json` and `scopes_json` fields are JSON arrays of strings
-/// because PostgreSQL `UNNEST` flattens `text[][]` into individual elements
-/// rather than per-row arrays.
+/// table.  The `types_json` and `scope_paths_json` fields are JSON arrays of
+/// strings because PostgreSQL `UNNEST` flattens `text[][]` into individual
+/// elements rather than per-row arrays.
 #[derive(Debug)]
 pub struct PreparedEntityRow {
     /// Entity identifier (URN).
     pub id: String,
     /// JSON array of type IRIs (e.g. `["https://example.com/Vehicle"]`).
     pub types_json: Value,
-    /// JSON array of scope strings (e.g. `["/Madrid", "/Traffic"]`).
-    pub scopes_json: Value,
+    /// JSON array of ltree-formatted scope paths (e.g. `["Madrid", "Traffic"]`).
+    pub scope_paths_json: Value,
     /// Full expanded JSON-LD payload.
     pub payload: Value,
     /// GeoJSON string for the `location` GeoProperty, if present.
@@ -101,10 +101,11 @@ impl EntityRepository {
         let location_geojson = expanded::extract_location_geojson(entity);
         let observation_space_geojson = expanded::extract_observation_space_geojson(entity);
         let operation_space_geojson = expanded::extract_operation_space_geojson(entity);
+        let scope_paths: Vec<String> = scopes.iter().map(|s| sql::scope_to_ltree(s)).collect();
         sqlx::query(
             r#"
-            INSERT INTO entities (id, types, scopes, payload, location, observation_space, operation_space, expires_at)
-            VALUES ($1, $2, $3, $4,
+            INSERT INTO entities (id, types, scope_paths, payload, location, observation_space, operation_space, expires_at)
+            VALUES ($1, $2, $3::ltree[], $4,
                     CASE WHEN $5 IS NOT NULL THEN ST_SetSRID(ST_GeomFromGeoJSON($5), 4326) ELSE NULL END,
                     CASE WHEN $6 IS NOT NULL THEN ST_SetSRID(ST_GeomFromGeoJSON($6), 4326) ELSE NULL END,
                     CASE WHEN $7 IS NOT NULL THEN ST_SetSRID(ST_GeomFromGeoJSON($7), 4326) ELSE NULL END,
@@ -113,7 +114,7 @@ impl EntityRepository {
         )
         .bind(id)
         .bind(type_)
-        .bind(scopes)
+        .bind(&scope_paths)
         .bind(entity)
         .bind(&location_geojson)
         .bind(&observation_space_geojson)
@@ -217,7 +218,7 @@ impl EntityRepository {
     /// Preserves existing expires_at unless the payload contains a new expiresAt value.
     pub async fn save(&self, id: &str, entity: &Value) -> Result<bool, AndromedaError> {
         let types = expanded::extract_types(entity);
-        let scopes = expanded::extract_scopes(entity);
+        let scope_paths: Vec<String> = expanded::extract_scopes(entity).iter().map(|s| sql::scope_to_ltree(s)).collect();
         let location_geojson = expanded::extract_location_geojson(entity);
         let observation_space_geojson = expanded::extract_observation_space_geojson(entity);
         let operation_space_geojson = expanded::extract_operation_space_geojson(entity);
@@ -225,7 +226,7 @@ impl EntityRepository {
         let result = sqlx::query(
             r#"
             UPDATE entities
-            SET payload = $2, types = $3, scopes = $4,
+            SET payload = $2, types = $3, scope_paths = $4::ltree[],
                 location = CASE WHEN $5 IS NOT NULL THEN ST_SetSRID(ST_GeomFromGeoJSON($5), 4326) ELSE NULL END,
                 observation_space = CASE WHEN $6 IS NOT NULL THEN ST_SetSRID(ST_GeomFromGeoJSON($6), 4326) ELSE NULL END,
                 operation_space = CASE WHEN $7 IS NOT NULL THEN ST_SetSRID(ST_GeomFromGeoJSON($7), 4326) ELSE NULL END,
@@ -237,7 +238,7 @@ impl EntityRepository {
         .bind(id)
         .bind(entity)
         .bind(&types)
-        .bind(&scopes)
+        .bind(&scope_paths)
         .bind(&location_geojson)
         .bind(&observation_space_geojson)
         .bind(&operation_space_geojson)
@@ -523,7 +524,7 @@ impl EntityRepository {
         let DecomposedColumns {
             ids,
             types_json,
-            scopes_json,
+            scope_paths_json,
             payloads,
             locations,
             obs_spaces,
@@ -533,25 +534,25 @@ impl EntityRepository {
 
         let rows: Vec<(String,)> = sqlx::query_as(
             r#"
-            INSERT INTO entities (id, types, scopes, payload, location, observation_space, operation_space, expires_at)
+            INSERT INTO entities (id, types, scope_paths, payload, location, observation_space, operation_space, expires_at)
             SELECT
                 d.id,
                 ARRAY(SELECT jsonb_array_elements_text(d.types_json)),
-                ARRAY(SELECT jsonb_array_elements_text(d.scopes_json)),
+                ARRAY(SELECT jsonb_array_elements_text(d.scope_paths_json)::ltree),
                 d.payload,
                 CASE WHEN d.loc IS NOT NULL THEN ST_SetSRID(ST_GeomFromGeoJSON(d.loc), 4326) ELSE NULL END,
                 CASE WHEN d.obs IS NOT NULL THEN ST_SetSRID(ST_GeomFromGeoJSON(d.obs), 4326) ELSE NULL END,
                 CASE WHEN d.ops IS NOT NULL THEN ST_SetSRID(ST_GeomFromGeoJSON(d.ops), 4326) ELSE NULL END,
                 d.expires_at
             FROM UNNEST($1::text[], $2::jsonb[], $3::jsonb[], $4::jsonb[], $5::text[], $6::text[], $7::text[], $8::timestamptz[])
-                AS d(id, types_json, scopes_json, payload, loc, obs, ops, expires_at)
+                AS d(id, types_json, scope_paths_json, payload, loc, obs, ops, expires_at)
             ON CONFLICT (id) DO NOTHING
             RETURNING id
             "#,
         )
         .bind(&ids)
         .bind(&types_json)
-        .bind(&scopes_json)
+        .bind(&scope_paths_json)
         .bind(&payloads)
         .bind(&locations)
         .bind(&obs_spaces)
@@ -603,7 +604,7 @@ impl EntityRepository {
         let DecomposedColumns {
             ids,
             types_json,
-            scopes_json,
+            scope_paths_json,
             payloads,
             locations,
             obs_spaces,
@@ -616,21 +617,21 @@ impl EntityRepository {
             UPDATE entities SET
                 payload = d.payload,
                 types = ARRAY(SELECT jsonb_array_elements_text(d.types_json)),
-                scopes = ARRAY(SELECT jsonb_array_elements_text(d.scopes_json)),
+                scope_paths = ARRAY(SELECT jsonb_array_elements_text(d.scope_paths_json)::ltree),
                 location = CASE WHEN d.loc IS NOT NULL THEN ST_SetSRID(ST_GeomFromGeoJSON(d.loc), 4326) ELSE NULL END,
                 observation_space = CASE WHEN d.obs IS NOT NULL THEN ST_SetSRID(ST_GeomFromGeoJSON(d.obs), 4326) ELSE NULL END,
                 operation_space = CASE WHEN d.ops IS NOT NULL THEN ST_SetSRID(ST_GeomFromGeoJSON(d.ops), 4326) ELSE NULL END,
                 modified_at = NOW(),
                 expires_at = COALESCE(d.expires_at, entities.expires_at)
             FROM UNNEST($1::text[], $2::jsonb[], $3::jsonb[], $4::jsonb[], $5::text[], $6::text[], $7::text[], $8::timestamptz[])
-                AS d(id, types_json, scopes_json, payload, loc, obs, ops, expires_at)
+                AS d(id, types_json, scope_paths_json, payload, loc, obs, ops, expires_at)
             WHERE entities.id = d.id
             RETURNING entities.id
             "#,
         )
         .bind(&ids)
         .bind(&types_json)
-        .bind(&scopes_json)
+        .bind(&scope_paths_json)
         .bind(&payloads)
         .bind(&locations)
         .bind(&obs_spaces)
@@ -655,7 +656,7 @@ impl EntityRepository {
         let DecomposedColumns {
             ids,
             types_json,
-            scopes_json,
+            scope_paths_json,
             payloads,
             locations,
             obs_spaces,
@@ -665,22 +666,22 @@ impl EntityRepository {
 
         let rows = sqlx::query(
             r#"
-            INSERT INTO entities (id, types, scopes, payload, location, observation_space, operation_space, expires_at)
+            INSERT INTO entities (id, types, scope_paths, payload, location, observation_space, operation_space, expires_at)
             SELECT
                 d.id,
                 ARRAY(SELECT jsonb_array_elements_text(d.types_json)),
-                ARRAY(SELECT jsonb_array_elements_text(d.scopes_json)),
+                ARRAY(SELECT jsonb_array_elements_text(d.scope_paths_json)::ltree),
                 d.payload,
                 CASE WHEN d.loc IS NOT NULL THEN ST_SetSRID(ST_GeomFromGeoJSON(d.loc), 4326) ELSE NULL END,
                 CASE WHEN d.obs IS NOT NULL THEN ST_SetSRID(ST_GeomFromGeoJSON(d.obs), 4326) ELSE NULL END,
                 CASE WHEN d.ops IS NOT NULL THEN ST_SetSRID(ST_GeomFromGeoJSON(d.ops), 4326) ELSE NULL END,
                 d.expires_at
             FROM UNNEST($1::text[], $2::jsonb[], $3::jsonb[], $4::jsonb[], $5::text[], $6::text[], $7::text[], $8::timestamptz[])
-                AS d(id, types_json, scopes_json, payload, loc, obs, ops, expires_at)
+                AS d(id, types_json, scope_paths_json, payload, loc, obs, ops, expires_at)
             ON CONFLICT (id) DO UPDATE SET
                 payload = EXCLUDED.payload,
                 types = EXCLUDED.types,
-                scopes = EXCLUDED.scopes,
+                scope_paths = EXCLUDED.scope_paths,
                 location = EXCLUDED.location,
                 observation_space = EXCLUDED.observation_space,
                 operation_space = EXCLUDED.operation_space,
@@ -691,7 +692,7 @@ impl EntityRepository {
         )
         .bind(&ids)
         .bind(&types_json)
-        .bind(&scopes_json)
+        .bind(&scope_paths_json)
         .bind(&payloads)
         .bind(&locations)
         .bind(&obs_spaces)
@@ -718,7 +719,7 @@ impl EntityRepository {
 struct DecomposedColumns {
     ids: Vec<String>,
     types_json: Vec<Value>,
-    scopes_json: Vec<Value>,
+    scope_paths_json: Vec<Value>,
     payloads: Vec<Value>,
     locations: Vec<Option<String>>,
     obs_spaces: Vec<Option<String>>,
@@ -732,7 +733,7 @@ fn decompose_rows(entities: &[PreparedEntityRow]) -> DecomposedColumns {
     let len = entities.len();
     let mut ids = Vec::with_capacity(len);
     let mut types_json = Vec::with_capacity(len);
-    let mut scopes_json = Vec::with_capacity(len);
+    let mut scope_paths_json = Vec::with_capacity(len);
     let mut payloads = Vec::with_capacity(len);
     let mut locations: Vec<Option<String>> = Vec::with_capacity(len);
     let mut obs_spaces: Vec<Option<String>> = Vec::with_capacity(len);
@@ -742,7 +743,7 @@ fn decompose_rows(entities: &[PreparedEntityRow]) -> DecomposedColumns {
     for e in entities {
         ids.push(e.id.clone()); // clone: owned String needed for sqlx bind vector
         types_json.push(e.types_json.clone()); // clone: owned Value needed for sqlx bind vector
-        scopes_json.push(e.scopes_json.clone()); // clone: owned Value needed for sqlx bind vector
+        scope_paths_json.push(e.scope_paths_json.clone()); // clone: owned Value needed for sqlx bind vector
         payloads.push(e.payload.clone()); // clone: owned Value needed for sqlx bind vector
         locations.push(e.location.clone()); // clone: owned Option<String> needed for sqlx bind vector
         obs_spaces.push(e.observation_space.clone()); // clone: owned Option<String> needed for sqlx bind vector
@@ -753,7 +754,7 @@ fn decompose_rows(entities: &[PreparedEntityRow]) -> DecomposedColumns {
     DecomposedColumns {
         ids,
         types_json,
-        scopes_json,
+        scope_paths_json,
         payloads,
         locations,
         obs_spaces,

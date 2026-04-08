@@ -51,6 +51,43 @@ pub enum BindValue<'a> {
     I64(i64),
 }
 
+/// Convert an NGSI-LD scope path to PostgreSQL ltree format for storage.
+///
+/// Strips the leading `/` and replaces remaining `/` separators with `.` to form
+/// a valid ltree label path.
+///
+/// # Examples
+/// - `/A/B/C` -> `A.B.C`
+/// - `/Madrid` -> `Madrid`
+pub fn scope_to_ltree(scope: &str) -> String {
+    scope.trim_start_matches('/').replace('/', ".")
+}
+
+/// Convert an NGSI-LD scope query pattern to PostgreSQL lquery format for matching.
+///
+/// Translates NGSI-LD wildcard conventions into lquery syntax:
+/// - `#` (at end) becomes `*{1,}` (one or more labels)
+/// - `+` becomes `*{1}` (exactly one label)
+/// - Literal segments pass through unchanged.
+///
+/// # Examples
+/// - `/A/B/C` -> `A.B.C`
+/// - `/A/#` -> `A.*{1,}`
+/// - `/A/+/C` -> `A.*{1}.C`
+/// - `/#` -> `*{1,}`
+pub fn scope_to_lquery(scope: &str) -> String {
+    let trimmed = scope.trim_start_matches('/');
+    trimmed
+        .split('/')
+        .map(|segment| match segment {
+            "#" => "*{1,}",
+            "+" => "*{1}",
+            other => other,
+        })
+        .collect::<Vec<_>>()
+        .join(".")
+}
+
 /// Builds a parameterized SQL query to retrieve entity payloads from the `entities` table.
 ///
 /// Generates filter conditions from the compiled query (IDs, types, attrs, q expression,
@@ -421,27 +458,11 @@ fn scope_q_to_sql(scope_q: &str, binds: &mut Vec<BindValue<'_>>, param_idx: &mut
 }
 
 fn single_scope_to_sql(scope: &str, binds: &mut Vec<BindValue<'_>>, param_idx: &mut usize, scopes_col: &str) -> Result<String, AndromedaError> {
-    if let Some(prefix) = scope.strip_suffix("/#") {
-        // Hash wildcard: match one or more levels below the prefix
-        let regex = format!("^{}/.+$", regex::escape(prefix));
-        let sql = format!("EXISTS(SELECT 1 FROM unnest({}) s WHERE s ~ ${})", scopes_col, *param_idx);
-        binds.push(BindValue::String(Cow::Owned(regex)));
-        *param_idx += 1;
-        Ok(sql)
-    } else if scope.contains("/+") {
-        // Plus wildcard: match any single component at that position
-        let regex = format!("^{}$", scope.replace("/+", "/[^/]+"));
-        let sql = format!("EXISTS(SELECT 1 FROM unnest({}) s WHERE s ~ ${})", scopes_col, *param_idx);
-        binds.push(BindValue::String(Cow::Owned(regex)));
-        *param_idx += 1;
-        Ok(sql)
-    } else {
-        // Exact match
-        let sql = format!("${} = ANY({})", *param_idx, scopes_col);
-        binds.push(BindValue::String(Cow::Owned(scope.to_string())));
-        *param_idx += 1;
-        Ok(sql)
-    }
+    let lquery = scope_to_lquery(scope);
+    let sql = format!("{} ~ ${}::lquery", scopes_col, *param_idx);
+    binds.push(BindValue::String(Cow::Owned(lquery)));
+    *param_idx += 1;
+    Ok(sql)
 }
 
 /// Builds the ORDER BY clause for entity queries.
@@ -500,7 +521,7 @@ fn build_order_clause(order_by: &[CompiledOrderTerm], geo: Option<&GeoQuery>, or
 /// entity-level filtering (IDs, types, attrs, q expression, geo filter,
 /// scope query). The `table_prefix` controls column qualification: when
 /// non-empty (e.g. `"e"`), columns are qualified as `e.id`, `e.types`,
-/// `e.payload`, `e.scopes`; when empty, bare column names are used.
+/// `e.payload`, `e.scope_paths`; when empty, bare column names are used.
 pub struct EntityFilterConditionsInput<'q, 'b> {
     /// Entity IDs to filter by.
     pub ids: Option<&'q [String]>,
@@ -531,7 +552,7 @@ pub struct EntityFilterConditionsInput<'q, 'b> {
 /// Returns a vector of SQL condition strings that can be joined with `AND`
 /// for a WHERE clause. Bind values and parameter indices are updated in-place.
 /// When `table_prefix` is empty, bare column names (`id`, `types`, `payload`,
-/// `scopes`) are used; otherwise they are qualified (e.g. `e.id`).
+/// `scope_paths`) are used; otherwise they are qualified (e.g. `e.id`).
 pub fn build_entity_filter_conditions(input: EntityFilterConditionsInput<'_, '_>) -> Result<Vec<String>, AndromedaError> {
     let EntityFilterConditionsInput {
         ids,
@@ -550,13 +571,13 @@ pub fn build_entity_filter_conditions(input: EntityFilterConditionsInput<'_, '_>
     let mut conditions = Vec::with_capacity(8);
 
     let (id_col, types_col, payload_col, scopes_col) = if table_prefix.is_empty() {
-        ("id".to_string(), "types".to_string(), "payload".to_string(), "scopes".to_string())
+        ("id".to_string(), "types".to_string(), "payload".to_string(), "scope_paths".to_string())
     } else {
         (
             format!("{}.id", table_prefix),
             format!("{}.types", table_prefix),
             format!("{}.payload", table_prefix),
-            format!("{}.scopes", table_prefix),
+            format!("{}.scope_paths", table_prefix),
         )
     };
 
@@ -675,7 +696,7 @@ pub fn build_ids_query<'a>(query: &'a CompiledEntityQuery) -> Result<BuiltQuery<
 mod tests {
     use super::*;
     use crate::query::{
-        compiled::{CompiledEntityQuery, CompiledOrderTerm, IcuCollation, IdPattern},
+        compiled::{CompiledEntityQuery, CompiledOrderTerm, IcuCollation, IdPattern, ScopeQuery},
         entity::OrderDirection,
         q::parser,
     };
@@ -969,5 +990,124 @@ mod tests {
     fn value_extraction_jsonpath_with_sub_attr() {
         let jp = value_extraction_jsonpath("https://example.com/temperature", &["https://uri.etsi.org/ngsi-ld/observedAt".to_string()], &[]);
         assert!(jp.contains("observedAt"));
+    }
+
+    // -------------------------------------------------------------------------
+    // scope_to_ltree tests
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn scope_to_ltree_simple_path() {
+        assert_eq!(scope_to_ltree("/A/B/C"), "A.B.C");
+    }
+
+    #[test]
+    fn scope_to_ltree_single_level() {
+        assert_eq!(scope_to_ltree("/Madrid"), "Madrid");
+    }
+
+    #[test]
+    fn scope_to_ltree_without_leading_slash() {
+        assert_eq!(scope_to_ltree("A/B"), "A.B");
+    }
+
+    // -------------------------------------------------------------------------
+    // scope_to_lquery tests
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn scope_to_lquery_exact_match() {
+        assert_eq!(scope_to_lquery("/A/B/C"), "A.B.C");
+    }
+
+    #[test]
+    fn scope_to_lquery_hash_wildcard() {
+        assert_eq!(scope_to_lquery("/A/#"), "A.*{1,}");
+    }
+
+    #[test]
+    fn scope_to_lquery_hash_wildcard_deep() {
+        assert_eq!(scope_to_lquery("/A/B/#"), "A.B.*{1,}");
+    }
+
+    #[test]
+    fn scope_to_lquery_root_hash() {
+        assert_eq!(scope_to_lquery("/#"), "*{1,}");
+    }
+
+    #[test]
+    fn scope_to_lquery_plus_wildcard() {
+        assert_eq!(scope_to_lquery("/A/+/C"), "A.*{1}.C");
+    }
+
+    #[test]
+    fn scope_to_lquery_plus_wildcard_at_start() {
+        assert_eq!(scope_to_lquery("/+/B"), "*{1}.B");
+    }
+
+    #[test]
+    fn scope_to_lquery_multiple_plus() {
+        assert_eq!(scope_to_lquery("/+/B/+"), "*{1}.B.*{1}");
+    }
+
+    // -------------------------------------------------------------------------
+    // Scope SQL generation tests
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn scope_exact_generates_lquery() {
+        let mut q = empty_query();
+        q.scope_q = Some(ScopeQuery::new("/A/B".to_string()));
+        let built = build_query(&q).unwrap();
+        assert!(built.sql.contains("scope_paths ~ $"), "SQL should use ltree ~ lquery operator");
+        assert!(built.sql.contains("::lquery"), "SQL should cast to lquery");
+        match &built.bind_values[0] {
+            BindValue::String(s) => assert_eq!(s.as_ref(), "A.B"),
+            _other => panic!("expected String bind value"),
+        }
+    }
+
+    #[test]
+    fn scope_hash_generates_lquery() {
+        let mut q = empty_query();
+        q.scope_q = Some(ScopeQuery::new("/A/#".to_string()));
+        let built = build_query(&q).unwrap();
+        assert!(built.sql.contains("scope_paths ~ $"), "SQL should use ltree ~ lquery operator");
+        match &built.bind_values[0] {
+            BindValue::String(s) => assert_eq!(s.as_ref(), "A.*{1,}"),
+            _other => panic!("expected String bind value"),
+        }
+    }
+
+    #[test]
+    fn scope_or_generates_disjunction() {
+        let mut q = empty_query();
+        q.scope_q = Some(ScopeQuery::new("/A,/B".to_string()));
+        let built = build_query(&q).unwrap();
+        assert!(built.sql.contains(" OR "), "SQL should contain OR for comma-separated scopes");
+        let scope_count = built.sql.matches("scope_paths ~").count();
+        assert_eq!(scope_count, 2, "should have two scope_paths ~ clauses");
+    }
+
+    #[test]
+    fn scope_and_generates_conjunction() {
+        let mut q = empty_query();
+        q.scope_q = Some(ScopeQuery::new("/A;/B".to_string()));
+        let built = build_query(&q).unwrap();
+        assert!(built.sql.contains(" AND "), "SQL should contain AND for semicolon-separated scopes");
+        let scope_count = built.sql.matches("scope_paths ~").count();
+        assert_eq!(scope_count, 2, "should have two scope_paths ~ clauses");
+    }
+
+    #[test]
+    fn scope_complex_generates_mixed() {
+        let mut q = empty_query();
+        q.scope_q = Some(ScopeQuery::new("/A;/B,/C/#".to_string()));
+        let built = build_query(&q).unwrap();
+        assert!(built.sql.contains(" AND "), "SQL should contain AND");
+        assert!(built.sql.contains(" OR "), "SQL should contain OR");
+        // Check that the hash wildcard is converted to lquery
+        let has_hash_lquery = built.bind_values.iter().any(|b| matches!(b, BindValue::String(s) if s.as_ref() == "C.*{1,}"));
+        assert!(has_hash_lquery, "should have C.*{{1,}} lquery bind value");
     }
 }

@@ -6,6 +6,7 @@ use crate::{
     },
     error::AndromedaError,
     jsonld::ContextSpec,
+    query::sql,
     repository::entity::PreparedEntityRow,
     service::entity::{
         EntityService,
@@ -64,7 +65,7 @@ impl PreparedEntity {
         PreparedEntityRow {
             id: self.id,
             types_json: Value::Array(self.types.into_iter().map(Value::String).collect()),
-            scopes_json: Value::Array(self.scopes.into_iter().map(Value::String).collect()),
+            scope_paths_json: Value::Array(self.scopes.into_iter().map(|s| Value::String(sql::scope_to_ltree(&s))).collect()),
             payload: self.expanded,
             location: self.location,
             observation_space: self.observation_space,
@@ -82,7 +83,12 @@ fn row_from_expanded(id: String, expanded: &Value) -> PreparedEntityRow {
     PreparedEntityRow {
         id,
         types_json: Value::Array(expanded::extract_types(expanded).into_iter().map(Value::String).collect()),
-        scopes_json: Value::Array(expanded::extract_scopes(expanded).into_iter().map(Value::String).collect()),
+        scope_paths_json: Value::Array(
+            expanded::extract_scopes(expanded)
+                .into_iter()
+                .map(|s| Value::String(sql::scope_to_ltree(&s)))
+                .collect(),
+        ),
         payload: expanded.clone(), // clone: ownership transfer into row for SQL binding
         location: expanded::extract_location_geojson(expanded),
         observation_space: expanded::extract_observation_space_geojson(expanded),
@@ -561,7 +567,7 @@ impl EntityService {
                 new_rows.push(PreparedEntityRow {
                     id: id.clone(),                                                                     // clone: id also stored in lookup map below
                     types_json: Value::Array(types.iter().map(|t| Value::String(t.clone())).collect()), // clone: owned strings for JSON array
-                    scopes_json: Value::Array(p.scopes.into_iter().map(Value::String).collect()),
+                    scope_paths_json: Value::Array(p.scopes.into_iter().map(|s| Value::String(sql::scope_to_ltree(&s))).collect()),
                     payload: expanded.clone(), // clone: kept for events in new_entity_data
                     location: p.location,
                     observation_space: p.observation_space,
