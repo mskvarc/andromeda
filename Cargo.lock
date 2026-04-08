@@ -81,6 +81,7 @@ dependencies = [
  "clap",
  "clap-themes",
  "confique",
+ "constant-string",
  "contextual",
  "dashmap",
  "derive_more",
@@ -649,6 +650,12 @@ dependencies = [
  "quote",
  "unicode-xid",
 ]
+
+[[package]]
+name = "constant-string"
+version = "1.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fca1829c3b093c20be8a8c35d5dba5a251ae2e2e7bac8398b9364eb8cf77cd47"
 
 [[package]]
 name = "contextual"

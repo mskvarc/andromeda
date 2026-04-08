@@ -7,13 +7,13 @@
 
 use crate::{
     domain::{
-        attribute::{Attribute, AttributeValue, LanguageProperty},
+        attribute::{Attribute, AttributeValue, LanguageMapKey, LanguageMapValue, LanguageProperty},
         entity::Entity,
         serde_helpers,
         uri::Uri,
     },
     error::AndromedaError,
-    http::model::language::{LanguageFilter, LanguageFilterError, LanguageRange},
+    http::model::language::{LanguageFilter, LanguageRange},
 };
 use chrono::{DateTime, SecondsFormat, Utc};
 use indexmap::IndexMap;
@@ -189,7 +189,7 @@ fn render_attribute(attribute: &Attribute, language_filter: Option<&LanguageFilt
 
 fn render_language_property(language_property: &LanguageProperty, language_filter: Option<&LanguageFilter>) -> Result<Value, AndromedaError> {
     if let Some(filter) = language_filter
-        && let Some(negotiated) = negotiate_language_property(language_property, filter)?
+        && let Some(negotiated) = negotiate_language_property(language_property, filter)
     {
         return serialize_value(&negotiated);
     }
@@ -199,58 +199,40 @@ fn render_language_property(language_property: &LanguageProperty, language_filte
     serialize_value(&Attribute::LanguageProperty(language_property.clone()))
 }
 
-fn negotiate_language_property<'a>(language_property: &'a LanguageProperty, filter: &LanguageFilter) -> Result<Option<NegotiatedProperty<'a>>, AndromedaError> {
-    let available = language_entries(&language_property.language_map)?;
+fn negotiate_language_property<'a>(language_property: &'a LanguageProperty, filter: &LanguageFilter) -> Option<NegotiatedProperty<'a>> {
+    let available = language_entries(&language_property.language_map);
 
     for preference in filter.ordered() {
         let range = preference.value();
         match range {
             LanguageRange::Wildcard => {
                 if let Some(entry) = available.iter().find(|entry| matches!(entry.range, AvailableLanguageRange::Tag(_))) {
-                    return Ok(Some(NegotiatedProperty::from_language_property(language_property, entry)));
+                    return Some(NegotiatedProperty::from_language_property(language_property, entry));
                 }
                 if let Some(entry) = available.iter().find(|entry| matches!(entry.range, AvailableLanguageRange::Default)) {
-                    return Ok(Some(NegotiatedProperty::from_language_property(language_property, entry)));
+                    return Some(NegotiatedProperty::from_language_property(language_property, entry));
                 }
             }
             LanguageRange::Tag(_) => {
                 // Exact match
                 if let Some(entry) = available.iter().find(|entry| entry.matches_exact(range)) {
-                    return Ok(Some(NegotiatedProperty::from_language_property(language_property, entry)));
+                    return Some(NegotiatedProperty::from_language_property(language_property, entry));
                 }
                 // Prefix match (only for basic ranges like "fr", not "fr-CA")
                 if range.is_basic_range()
                     && let Some(entry) = available.iter().find(|entry| entry.matches_prefix(range))
                 {
-                    return Ok(Some(NegotiatedProperty::from_language_property(language_property, entry)));
+                    return Some(NegotiatedProperty::from_language_property(language_property, entry));
                 }
             }
         }
     }
 
-    Ok(None)
+    None
 }
 
-fn language_entries(language_map: &Value) -> Result<Vec<AvailableLanguage<'_>>, AndromedaError> {
-    let map = language_map
-        .as_object()
-        .ok_or_else(|| AndromedaError::internal("LanguageProperty languageMap must be a JSON object"))?;
-
-    map.iter()
-        .filter_map(|(tag, value)| extract_language_value(value).map(|val| (tag, val)))
-        .map(|(tag, value)| AvailableLanguage::new(tag, value))
-        .collect()
-}
-
-/// Extract a language map value, preserving both strings and non-empty arrays.
-///
-/// Per NGSI-LD spec clause 5.7.2.5, language map values can be arrays of strings.
-const fn extract_language_value(value: &Value) -> Option<&Value> {
-    match value {
-        Value::String(_) => Some(value),
-        Value::Array(items) if !items.is_empty() => Some(value),
-        Value::Array(_) | Value::Null | Value::Bool(_) | Value::Number(_) | Value::Object(_) => None,
-    }
+fn language_entries(language_map: &IndexMap<LanguageMapKey, LanguageMapValue>) -> Vec<AvailableLanguage<'_>> {
+    language_map.iter().map(|(key, value)| AvailableLanguage::from_entry(key, value)).collect()
 }
 
 fn serialize_value<T>(value: &T) -> Result<Value, AndromedaError>
@@ -263,27 +245,18 @@ where
 #[derive(Debug)]
 struct AvailableLanguage<'a> {
     range: AvailableLanguageRange,
-    value: &'a Value,
+    value: &'a LanguageMapValue,
 }
 
 impl<'a> AvailableLanguage<'a> {
-    fn new(tag: &str, value: &'a Value) -> Result<AvailableLanguage<'a>, AndromedaError> {
-        let range = if tag == "@none" {
-            AvailableLanguageRange::Default
-        } else {
-            let parsed = LangTagBuf::new(tag.to_string()).map_err(|error| {
-                AndromedaError::bad_request_data(
-                    LanguageFilterError::InvalidLanguageTag {
-                        value: tag.to_string(),
-                        source: error,
-                    }
-                    .to_string(),
-                )
-            })?;
-            AvailableLanguageRange::Tag(parsed)
+    /// Construct from a typed language map entry. Infallible because keys are
+    /// already validated at deserialization time.
+    fn from_entry(key: &LanguageMapKey, value: &'a LanguageMapValue) -> AvailableLanguage<'a> {
+        let range = match key {
+            LanguageMapKey::None => AvailableLanguageRange::Default,
+            LanguageMapKey::Tag(tag) => AvailableLanguageRange::Tag(tag.clone()),
         };
-
-        Ok(AvailableLanguage { range, value })
+        AvailableLanguage { range, value }
     }
 
     /// Case-insensitive exact match using [`LanguageRange::exact_matches`].
@@ -314,7 +287,7 @@ enum AvailableLanguageRange {
 struct NegotiatedProperty<'a> {
     #[serde(rename = "type")]
     type_: &'static str,
-    value: &'a Value,
+    value: &'a LanguageMapValue,
     lang: String,
     #[serde(skip_serializing_if = "Option::is_none", with = "serde_helpers::rfc3339_option", default)]
     observed_at: Option<DateTime<Utc>>,

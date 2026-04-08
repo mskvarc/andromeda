@@ -9,7 +9,7 @@ mod vocab_property;
 
 pub use geo_property::GeoProperty;
 pub use json_property::JsonProperty;
-pub use language_property::LanguageProperty;
+pub use language_property::{LanguageMapKey, LanguageMapValue, LanguageProperty};
 pub use list_property::ListProperty;
 pub use list_relationship::ListRelationship;
 pub use property::Property;
@@ -39,7 +39,9 @@ impl Attribute {
             Attribute::Relationship(r) => serde_json::Value::String(r.object.to_string()),
             Attribute::VocabProperty(v) => v.vocab.clone(),
             Attribute::GeoProperty(g) => serde_json::json!(g.value),
-            Attribute::LanguageProperty(l) => l.language_map.clone(),
+            // Serialization of IndexMap<LanguageMapKey, LanguageMapValue> to JSON cannot fail
+            // (keys serialize to strings, values to strings or arrays of strings).
+            Attribute::LanguageProperty(l) => serde_json::to_value(&l.language_map).unwrap_or_default(),
             Attribute::JsonProperty(j) => j.json.clone(),
             Attribute::ListProperty(lp) => serde_json::json!(lp.value_list),
             Attribute::ListRelationship(lr) => serde_json::json!(lr.object_list.iter().map(|u| u.to_string()).collect::<Vec<_>>()),
