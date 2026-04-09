@@ -8,6 +8,7 @@ use crate::{
     },
     jsonld::{JsonLdEngine, vocab},
     query::q,
+    renderer::SysAttrsInclusion,
     repository::{entity::EntityRepository, subscription::SubscriptionRepository, subscription_store::SubscriptionStore},
     service::entity::{inject_sys_attrs, query::EntityQueryService},
     transport::{
@@ -192,7 +193,7 @@ impl NotificationWorker {
                                 Value::Array(arr) => arr.first().cloned().unwrap_or_else(|| snapshot.as_ref().clone()),
                                 other => other.clone(),
                             },
-                            false,
+                            SysAttrsInclusion::Strip,
                         );
                         if let Some(obj) = bare.as_object_mut() {
                             obj.insert(
@@ -247,7 +248,7 @@ impl NotificationWorker {
             return;
         }
 
-        let need_sys_attrs = matching.iter().any(|sub| sub.notification_sys_attrs);
+        let need_sys_attrs = matching.iter().any(|sub| sub.notification_sys_attrs == SysAttrsInclusion::Include);
 
         let sys_attrs = if need_sys_attrs {
             let fallback_sys_attrs = event.sys_attrs_snapshot.clone();
@@ -287,7 +288,7 @@ impl NotificationWorker {
                         }
                     }
 
-                    if compiled_sub.notification_sys_attrs
+                    if compiled_sub.notification_sys_attrs == SysAttrsInclusion::Include
                         && let (Some(ref mut data), Some(sa)) = (entity_data.as_mut(), &sys_attrs)
                     {
                         inject_sys_attrs(data, sa.created_at, sa.modified_at, sa.expires_at);
@@ -418,7 +419,11 @@ fn compile_subscription(sub: &Subscription) -> Option<CompiledSubscription> {
         time_interval_secs: sub.time_interval,
         notification_attributes: sub.notification.attributes.clone(),
         notification_format: sub.notification.format.map(|f| f.to_string()),
-        notification_sys_attrs: sub.notification.sys_attrs.unwrap_or(false),
+        notification_sys_attrs: if sub.notification.sys_attrs.unwrap_or(false) {
+            SysAttrsInclusion::Include
+        } else {
+            SysAttrsInclusion::Strip
+        },
         notification_show_changes: sub.notification.show_changes.unwrap_or(false),
         jsonld_context: sub.jsonld_context.clone(),
         expires_at: sub.expires_at,
@@ -503,7 +508,7 @@ mod tests {
             time_interval_secs: None,
             notification_attributes: None,
             notification_format: None,
-            notification_sys_attrs: false,
+            notification_sys_attrs: SysAttrsInclusion::Strip,
             notification_show_changes: false,
             jsonld_context: None,
             expires_at: None,

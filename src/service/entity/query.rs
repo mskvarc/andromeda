@@ -10,6 +10,7 @@ use crate::{
         entity::EntityQueryParameters,
         params::SharedQueryParams,
     },
+    renderer::SysAttrsInclusion,
     repository::entity::EntityRepository,
     service::context_source_forwarding::{ForwardedEntities, merge_query_results},
 };
@@ -90,7 +91,7 @@ impl EntityQueryService {
         &self,
         id: &Urn,
         attrs: &[String],
-        sys_attrs: bool,
+        sys_attrs: SysAttrsInclusion,
         dataset_ids: &[String],
         context: &ContextSpec,
     ) -> Result<Entity, AndromedaError> {
@@ -100,7 +101,9 @@ impl EntityQueryService {
         if let Some(expanded_entity) = result {
             let mut entity = self.compact_to_entity(expanded_entity, context, Some(&id_str)).await?;
 
-            if sys_attrs && let Some(sa) = self.repo.get_sys_attrs(&id_str).await? {
+            if sys_attrs == SysAttrsInclusion::Include
+                && let Some(sa) = self.repo.get_sys_attrs(&id_str).await?
+            {
                 entity = entity.with_sys_attrs(&sa);
             }
 
@@ -133,7 +136,7 @@ impl EntityQueryService {
         let sys_attrs = query.parse_options().sys_attrs;
 
         // Batch-fetch sys_attrs for all entities in one query instead of N+1
-        let sys_attrs_map = if sys_attrs {
+        let sys_attrs_map = if sys_attrs == SysAttrsInclusion::Include {
             let ids: Vec<String> = query_result
                 .rows
                 .iter()
@@ -159,7 +162,7 @@ impl EntityQueryService {
 
             let mut entity = self.compact_to_entity(value, context, None).await?;
 
-            if sys_attrs
+            if sys_attrs == SysAttrsInclusion::Include
                 && let Some(ref id_str) = id_str
                 && let Some(sa) = sys_attrs_map.get(id_str)
             {
@@ -186,7 +189,7 @@ impl EntityQueryService {
         &'a self,
         entities: &'a [Entity],
         join_level: u32,
-        sys_attrs: bool,
+        sys_attrs: SysAttrsInclusion,
         context: &'a ContextSpec,
         contained_by: &'a HashSet<String>,
     ) -> ResolveLinkedFuture<'a> {
@@ -210,7 +213,7 @@ impl EntityQueryService {
             let linked_id_vec: Vec<String> = linked_ids.iter().cloned().collect(); // clone: owned strings from HashSet for batch query API
             let batch_payloads = self.repo.get_batch(&linked_id_vec).await?;
 
-            let batch_sys_attrs = if sys_attrs {
+            let batch_sys_attrs = if sys_attrs == SysAttrsInclusion::Include {
                 self.repo.get_sys_attrs_batch(&linked_id_vec).await?
             } else {
                 HashMap::new()
@@ -220,7 +223,9 @@ impl EntityQueryService {
             for (linked_id, expanded) in batch_payloads {
                 match self.compact_to_entity(expanded, context, Some(&linked_id)).await {
                     Ok(mut entity) => {
-                        if sys_attrs && let Some(sa) = batch_sys_attrs.get(&linked_id) {
+                        if sys_attrs == SysAttrsInclusion::Include
+                            && let Some(sa) = batch_sys_attrs.get(&linked_id)
+                        {
                             entity = entity.with_sys_attrs(sa);
                         }
                         linked_map.insert(linked_id, entity);

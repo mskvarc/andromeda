@@ -9,7 +9,8 @@ use crate::{
     },
     error::AndromedaError,
     jsonld::vocab,
-    query::temporal::CompiledTemporalQuery,
+    query::temporal::{CompiledTemporalQuery, LastNOrigin},
+    renderer::SysAttrsInclusion,
     service::temporal::format_datetime,
 };
 use chrono::{DateTime, Utc};
@@ -20,7 +21,20 @@ use sqlx::Row;
 type TimeRange = (DateTime<Utc>, DateTime<Utc>);
 type TemporalAttributeInstances = Vec<(Option<DateTime<Utc>>, Value)>;
 type TemporalAttrMap = IndexMap<String, TemporalAttributeInstances>;
-type BuildEntityTemporalResult = (Value, bool, Option<TimeRange>, Option<i64>);
+
+/// Result of [`build_entity_temporal`]: the assembled entity JSON together with
+/// pagination metadata needed for Content-Range header construction.
+#[derive(Debug)]
+pub struct TemporalEntityBuildResult {
+    /// The fully-assembled temporal entity JSON value (expanded form).
+    pub entity: Value,
+    /// Whether the result set was truncated by the system-applied lastN cap.
+    pub truncated: bool,
+    /// The observed time range across all attribute instances.
+    pub time_range: Option<TimeRange>,
+    /// The maximum partition total across all attributes (for Content-Range size).
+    pub max_partition_total: Option<i64>,
+}
 
 /// After JSON-LD compaction, single-element arrays may be collapsed into plain objects.
 /// NGSI-LD temporal attributes must always be arrays, so re-wrap them.
@@ -51,13 +65,13 @@ pub fn build_content_range(
     compiled: &CompiledTemporalQuery,
     time_range: Option<TimeRange>,
     partition_total: Option<i64>,
-    user_specified_last_n: bool,
+    last_n_origin: LastNOrigin,
 ) -> Option<String> {
     let (min_time, max_time) = time_range?;
     let lrt = format_datetime(min_time);
     let mrt = format_datetime(max_time);
 
-    let (start, end, size) = if user_specified_last_n {
+    let (start, end, size) = if last_n_origin.is_user_specified() {
         let upper = match compiled.timerel {
             Some(TimeRel::Before) => compiled.time_at.map_or_else(|| mrt.clone(), format_datetime),
             Some(TimeRel::Between) => compiled.end_time_at.map_or_else(|| mrt.clone(), format_datetime),
@@ -89,7 +103,7 @@ pub fn build_entity_temporal(
     entity_types: &[String],
     rows: &[sqlx::postgres::PgRow],
     compiled: &CompiledTemporalQuery,
-) -> Result<BuildEntityTemporalResult, AndromedaError> {
+) -> Result<TemporalEntityBuildResult, AndromedaError> {
     let mut attrs: TemporalAttrMap = IndexMap::with_capacity(rows.len().min(64));
     let mut truncated = false;
     let mut min_time: Option<DateTime<Utc>> = None;
@@ -180,7 +194,12 @@ pub fn build_entity_temporal(
     }
 
     let time_range = min_time.zip(max_time);
-    Ok((Value::Object(entity), truncated, time_range, max_partition_total))
+    Ok(TemporalEntityBuildResult {
+        entity: Value::Object(entity),
+        truncated,
+        time_range,
+        max_partition_total,
+    })
 }
 
 /// Build aggregated temporal data from database rows.
@@ -261,7 +280,7 @@ pub fn build_entity_temporal_aggregated_data(
     Ok(result)
 }
 
-fn history_row_to_expanded_instance(row: &sqlx::postgres::PgRow, tea: &TeaEntry, sys_attrs: bool) -> Result<Value, AndromedaError> {
+fn history_row_to_expanded_instance(row: &sqlx::postgres::PgRow, tea: &TeaEntry, sys_attrs: SysAttrsInclusion) -> Result<Value, AndromedaError> {
     let mut instance = serde_json::Map::new();
 
     let attr_type: Option<AttributeType> = tea.attribute_type.parse().ok();
@@ -390,7 +409,9 @@ fn history_row_to_expanded_instance(row: &sqlx::postgres::PgRow, tea: &TeaEntry,
         );
     }
 
-    if sys_attrs && let Ok(time) = row.try_get::<DateTime<Utc>, _>("time") {
+    if sys_attrs == SysAttrsInclusion::Include
+        && let Ok(time) = row.try_get::<DateTime<Utc>, _>("time")
+    {
         instance.insert(
             vocab::CREATED_AT.as_str().to_string(),
             json!([{"@value": format_datetime(time), "@type": vocab::DATE_TIME.as_str()}]),
@@ -557,11 +578,7 @@ pub fn simplify_temporal_value(entity_value: Value) -> Result<Value, AndromedaEr
 /// Applies [`simplify_temporal_value`] to each entity in the collection.
 /// Propagates the first deserialization error encountered.
 pub fn simplify_temporal_values(entities: Vec<Value>) -> Result<Vec<Value>, AndromedaError> {
-    let mut simplified = Vec::with_capacity(entities.len());
-    for entity_value in entities {
-        simplified.push(simplify_temporal_value(entity_value)?);
-    }
-    Ok(simplified)
+    entities.into_iter().map(simplify_temporal_value).collect()
 }
 
 #[cfg(test)]
@@ -642,5 +659,96 @@ mod tests {
             json!({"not": "an entity"}),
         ];
         assert!(simplify_temporal_values(entities).is_err());
+    }
+
+    // --- ensure_temporal_attrs_are_arrays tests (NGSI-LD 6.3.10) ---
+
+    #[test]
+    fn ensure_temporal_attrs_wraps_objects() {
+        let mut value = json!({"id": "urn:x", "type": "T", "speed": {"type": "Property", "value": 25}});
+        ensure_temporal_attrs_are_arrays(&mut value);
+        assert!(value["speed"].is_array());
+        assert_eq!(value["speed"][0]["value"], 25);
+    }
+
+    #[test]
+    fn ensure_temporal_attrs_leaves_arrays() {
+        let mut value = json!({"id": "urn:x", "type": "T", "speed": [{"type": "Property", "value": 25}]});
+        let original = value.clone();
+        ensure_temporal_attrs_are_arrays(&mut value);
+        assert_eq!(value, original);
+    }
+
+    #[test]
+    fn ensure_temporal_attrs_skips_reserved() {
+        let mut value = json!({"id": "urn:x", "type": "T", "createdAt": "2025-01-01T00:00:00Z"});
+        ensure_temporal_attrs_are_arrays(&mut value);
+        assert!(value["createdAt"].is_string());
+    }
+
+    // --- transform_to_temporal_values tests (NGSI-LD 4.5.5) ---
+
+    #[test]
+    fn temporal_values_single_property() {
+        let input = json!({
+            "id": "urn:x",
+            "type": "Vehicle",
+            "speed": [
+                {"type": "Property", "value": 25, "observedAt": "2025-01-01T00:00:00Z"},
+                {"type": "Property", "value": 30, "observedAt": "2025-01-01T01:00:00Z"}
+            ]
+        });
+        let result = transform_to_temporal_values(input);
+        assert_eq!(result["speed"]["type"], "Property");
+        let values = result["speed"]["values"].as_array().expect("values array");
+        assert_eq!(values.len(), 2);
+        assert_eq!(values[0][0], 25);
+        assert_eq!(values[1][0], 30);
+    }
+
+    #[test]
+    fn temporal_values_multi_dataset() {
+        let input = json!({
+            "id": "urn:x",
+            "type": "Vehicle",
+            "speed": [
+                {"type": "Property", "value": 25, "observedAt": "t1", "datasetId": "urn:ds:1"},
+                {"type": "Property", "value": 30, "observedAt": "t2", "datasetId": "urn:ds:2"}
+            ]
+        });
+        let result = transform_to_temporal_values(input);
+        let arr = result["speed"].as_array().expect("multi-dataset array");
+        assert_eq!(arr.len(), 2);
+    }
+
+    #[test]
+    fn temporal_values_preserves_reserved() {
+        let input = json!({
+            "id": "urn:x",
+            "type": "Vehicle",
+            "@context": "https://example.org/ctx",
+            "speed": [{"type": "Property", "value": 10, "observedAt": "t1"}]
+        });
+        let result = transform_to_temporal_values(input);
+        assert_eq!(result["id"], "urn:x");
+        assert_eq!(result["type"], "Vehicle");
+        assert_eq!(result["@context"], "https://example.org/ctx");
+    }
+
+    #[test]
+    fn temporal_values_relationship() {
+        let input = json!({
+            "id": "urn:x",
+            "type": "Vehicle",
+            "isParked": [
+                {"type": "Relationship", "object": "urn:p1", "observedAt": "t1"},
+                {"type": "Relationship", "object": "urn:p2", "observedAt": "t2"}
+            ]
+        });
+        let result = transform_to_temporal_values(input);
+        assert_eq!(result["isParked"]["type"], "Relationship");
+        let objects = result["isParked"]["objects"].as_array().expect("objects array");
+        assert_eq!(objects.len(), 2);
+        assert_eq!(objects[0][0], "urn:p1");
     }
 }

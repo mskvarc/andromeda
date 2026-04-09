@@ -55,7 +55,7 @@ pub async fn get(
 
     render_registration(&mut csr, options.sys_attrs);
 
-    let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default()).render_single(csr);
+    let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default()).render_single(csr)?;
     Ok(NgsiLdResponse::ok(rendered).into_response())
 }
 
@@ -81,7 +81,7 @@ pub async fn query(
         render_registration(csr, options.sys_attrs);
     }
 
-    let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default()).render_collection(csrs);
+    let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default()).render_collection(csrs)?;
     let response = NgsiLdCollectionResponse::ok(rendered).with_total_count(total as usize);
 
     let mut response = response.into_response();

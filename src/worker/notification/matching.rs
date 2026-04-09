@@ -6,6 +6,7 @@ use crate::{
         subscription::SubscriptionStatus,
     },
     query::q,
+    renderer::SysAttrsInclusion,
 };
 use chrono::Utc;
 use regex::Regex;
@@ -305,7 +306,7 @@ mod tests {
             time_interval_secs: None,
             notification_attributes: None,
             notification_format: None,
-            notification_sys_attrs: false,
+            notification_sys_attrs: SysAttrsInclusion::Strip,
             notification_show_changes: false,
             jsonld_context: None,
             expires_at: None,

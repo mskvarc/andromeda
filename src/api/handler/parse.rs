@@ -4,7 +4,7 @@
 //! used across multiple handler modules (entities, temporal, subscriptions,
 //! context source registrations).
 
-use crate::{domain::name::Name, error::AndromedaError, http::error::problem::NgsiLdError};
+use crate::{domain::name::Name, error::AndromedaError, http::error::problem::NgsiLdError, renderer::SysAttrsInclusion};
 use axum::http::{HeaderMap, Uri, header::CONTENT_TYPE};
 use mediatype::{MediaTypeBuf, names};
 use serde_json::Value;
@@ -110,7 +110,7 @@ pub struct ListOptions {
     /// Whether `count` was present in the options string.
     pub count: bool,
     /// Whether `sysAttrs` was present in the options string.
-    pub sys_attrs: bool,
+    pub sys_attrs: SysAttrsInclusion,
 }
 
 /// Parse the `options` query parameter for subscription list endpoints.
@@ -126,7 +126,7 @@ pub fn parse_list_options(options: Option<&str>, uri: &Uri) -> Result<ListOption
             }
             match opt {
                 "count" => parsed.count = true,
-                "sysAttrs" => parsed.sys_attrs = true,
+                "sysAttrs" => parsed.sys_attrs = SysAttrsInclusion::Include,
                 other => {
                     return Err(NgsiLdError::from(
                         AndromedaError::invalid_request(format!("Invalid options value: '{}'", other)).with_instance(uri.clone()),
@@ -343,21 +343,21 @@ mod tests {
     fn parse_list_options_count() {
         let opts = parse_list_options(Some("count"), &test_uri()).expect("valid options");
         assert!(opts.count);
-        assert!(!opts.sys_attrs);
+        assert_eq!(opts.sys_attrs, SysAttrsInclusion::Strip);
     }
 
     #[test]
     fn parse_list_options_sys_attrs() {
         let opts = parse_list_options(Some("sysAttrs"), &test_uri()).expect("valid options");
         assert!(!opts.count);
-        assert!(opts.sys_attrs);
+        assert_eq!(opts.sys_attrs, SysAttrsInclusion::Include);
     }
 
     #[test]
     fn parse_list_options_combined() {
         let opts = parse_list_options(Some("count,sysAttrs"), &test_uri()).expect("valid options");
         assert!(opts.count);
-        assert!(opts.sys_attrs);
+        assert_eq!(opts.sys_attrs, SysAttrsInclusion::Include);
     }
 
     #[test]
@@ -369,7 +369,7 @@ mod tests {
     fn parse_list_options_none_returns_defaults() {
         let opts = parse_list_options(None, &test_uri()).expect("valid options");
         assert!(!opts.count);
-        assert!(!opts.sys_attrs);
+        assert_eq!(opts.sys_attrs, SysAttrsInclusion::Strip);
     }
 
     // -- is_json_content_type --

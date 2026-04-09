@@ -5,6 +5,7 @@
 //! crate for type-safe construction; `@context` is injected post-serialization
 //! because it is an NGSI-LD extension absent from the GeoJSON spec.
 
+use crate::error::AndromedaError;
 use geojson::{Feature, FeatureCollection, feature::Id};
 use serde_json::{Map, Value};
 
@@ -15,6 +16,7 @@ use serde_json::{Map, Value};
 const DEFAULT_LOCATION_KEYS: &[&str] = &["location", "https://uri.etsi.org/ngsi-ld/location"];
 
 /// Renders NGSI-LD JSON objects into GeoJSON Features or FeatureCollections.
+#[derive(Debug)]
 pub struct GeoJsonRenderer<'a> {
     payload: Value,
     context_value: Option<Value>,
@@ -44,19 +46,19 @@ impl<'a> GeoJsonRenderer<'a> {
     }
 
     /// Convert the entity JSON object payload to a GeoJSON Feature.
-    pub fn render_entity(self) -> Value {
+    pub fn render_entity(self) -> Result<Value, AndromedaError> {
         let feature = entity_to_feature(&self.payload, self.geometry_property);
-        let mut value = serde_json::to_value(feature).unwrap_or(Value::Null);
+        let mut value = serde_json::to_value(feature).map_err(|e| AndromedaError::internal("Failed to serialize GeoJSON Feature").with_source(e))?;
         if let Some(ctx) = self.context_value
             && let Some(obj) = value.as_object_mut()
         {
             obj.insert("@context".to_string(), ctx);
         }
-        value
+        Ok(value)
     }
 
     /// Convert the array of entities payload to a GeoJSON FeatureCollection.
-    pub fn render_collection(self) -> Value {
+    pub fn render_collection(self) -> Result<Value, AndromedaError> {
         let features = match self.payload {
             Value::Array(items) => items.iter().map(|e| entity_to_feature(e, self.geometry_property)).collect(),
             _ => Vec::new(),
@@ -68,13 +70,14 @@ impl<'a> GeoJsonRenderer<'a> {
             foreign_members: None,
         };
 
-        let mut value = serde_json::to_value(collection).unwrap_or(Value::Null);
+        let mut value =
+            serde_json::to_value(collection).map_err(|e| AndromedaError::internal("Failed to serialize GeoJSON FeatureCollection").with_source(e))?;
         if let Some(ctx) = self.context_value
             && let Some(obj) = value.as_object_mut()
         {
             obj.insert("@context".to_string(), ctx);
         }
-        value
+        Ok(value)
     }
 }
 
@@ -161,7 +164,7 @@ mod tests {
             }
         ]);
 
-        let geo = GeoJsonRenderer::new(entities).render_collection();
+        let geo = GeoJsonRenderer::new(entities).render_collection().expect("GeoJSON collection");
         assert_eq!(geo["type"], "FeatureCollection");
         let features = geo["features"].as_array().expect("features array");
         assert_eq!(features.len(), 1);
@@ -177,7 +180,7 @@ mod tests {
     #[test]
     fn null_geometry_when_no_location() {
         let entity = json!({"id": "urn:x", "type": "T", "name": {"type": "Property", "value": "foo"}});
-        let geo = GeoJsonRenderer::new(entity).render_entity();
+        let geo = GeoJsonRenderer::new(entity).render_entity().expect("GeoJSON entity");
         assert_eq!(geo["type"], "Feature");
         assert!(geo["geometry"].is_null());
     }
@@ -191,7 +194,10 @@ mod tests {
                 "value": {"type": "Polygon", "coordinates": [[[0,0],[1,0],[1,1],[0,1],[0,0]]]}
             }
         });
-        let geo = GeoJsonRenderer::new(entity).with_geometry_property(Some("observationSpace")).render_entity();
+        let geo = GeoJsonRenderer::new(entity)
+            .with_geometry_property(Some("observationSpace"))
+            .render_entity()
+            .expect("GeoJSON entity");
         assert_eq!(geo["geometry"]["type"], "Polygon");
     }
 
@@ -201,7 +207,7 @@ mod tests {
             "id": "urn:x", "type": "T",
             "location": {"type": "Point", "coordinates": [1.0, 2.0]}
         });
-        let geo = GeoJsonRenderer::new(entity).render_entity();
+        let geo = GeoJsonRenderer::new(entity).render_entity().expect("GeoJSON entity");
         assert_eq!(geo["geometry"]["type"], "Point");
         assert_eq!(geo["geometry"]["coordinates"], json!([1.0, 2.0]));
     }
@@ -209,13 +215,13 @@ mod tests {
     #[test]
     fn feature_id_matches_entity_id() {
         let entity = json!({"id": "urn:ngsi-ld:Entity:42", "type": "T"});
-        let geo = GeoJsonRenderer::new(entity).render_entity();
+        let geo = GeoJsonRenderer::new(entity).render_entity().expect("GeoJSON entity");
         assert_eq!(geo["id"], "urn:ngsi-ld:Entity:42");
     }
 
     #[test]
     fn empty_array_produces_empty_collection() {
-        let geo = GeoJsonRenderer::new(json!([])).render_collection();
+        let geo = GeoJsonRenderer::new(json!([])).render_collection().expect("GeoJSON collection");
         assert_eq!(geo["type"], "FeatureCollection");
         assert_eq!(geo["features"].as_array().expect("features").len(), 0);
     }
@@ -224,7 +230,10 @@ mod tests {
     fn context_injected_into_feature() {
         let entity = json!({"id": "urn:x", "type": "T"});
         let ctx = json!("https://example.org/ctx");
-        let geo = GeoJsonRenderer::new(entity).with_context(Some(ctx.clone())).render_entity();
+        let geo = GeoJsonRenderer::new(entity)
+            .with_context(Some(ctx.clone()))
+            .render_entity()
+            .expect("GeoJSON entity");
         assert_eq!(geo["@context"], ctx);
     }
 
@@ -232,13 +241,16 @@ mod tests {
     fn context_injected_into_feature_collection() {
         let entities = json!([{"id": "urn:x", "type": "T"}]);
         let ctx = json!("https://example.org/ctx");
-        let geo = GeoJsonRenderer::new(entities).with_context(Some(ctx.clone())).render_collection();
+        let geo = GeoJsonRenderer::new(entities)
+            .with_context(Some(ctx.clone()))
+            .render_collection()
+            .expect("GeoJSON collection");
         assert_eq!(geo["@context"], ctx);
     }
 
     #[test]
     fn non_object_entity_produces_feature_with_null_geometry() {
-        let geo = GeoJsonRenderer::new(json!("bad")).render_entity();
+        let geo = GeoJsonRenderer::new(json!("bad")).render_entity().expect("GeoJSON entity");
         assert_eq!(geo["type"], "Feature");
         assert!(geo["geometry"].is_null());
     }

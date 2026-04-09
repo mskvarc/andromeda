@@ -86,7 +86,7 @@ pub async fn get(
         context
     };
 
-    let rendered = ResponseRenderer::new(accept.format(), response_context, PreferHeader::default()).render_single(subscription);
+    let rendered = ResponseRenderer::new(accept.format(), response_context, PreferHeader::default()).render_single(subscription)?;
     let response = NgsiLdResponse::ok(rendered).into_response();
     Ok(response)
 }
@@ -126,7 +126,7 @@ pub async fn query(
         strip_jsonld_context(sub);
     }
 
-    let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default()).render_collection(subscriptions);
+    let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default()).render_collection(subscriptions)?;
     let mut response = NgsiLdCollectionResponse::ok(rendered);
 
     if options.count {

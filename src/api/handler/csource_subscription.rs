@@ -68,7 +68,7 @@ pub async fn get(
 
     render_csource_subscription(&mut subscription, options.sys_attrs);
 
-    let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default()).render_single(subscription);
+    let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default()).render_single(subscription)?;
     let response = NgsiLdResponse::ok(rendered).into_response();
     Ok(response)
 }
@@ -118,7 +118,7 @@ pub async fn query(
         render_csource_subscription(sub, options.sys_attrs);
     }
 
-    let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default()).render_collection(subscriptions);
+    let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default()).render_collection(subscriptions)?;
     let mut response = NgsiLdCollectionResponse::ok(rendered);
 
     if options.count {

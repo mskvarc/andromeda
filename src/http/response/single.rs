@@ -5,7 +5,7 @@ use crate::{
         header::{ngsild_warning::NgsiLdWarning, preference_applied::PreferenceApplied},
         response::headers::{CommonHeadersOptions, apply_common_headers},
     },
-    renderer::response::RenderedOutput,
+    renderer::{VersionAdaptation, response::RenderedOutput},
 };
 use axum::{
     Json,
@@ -89,7 +89,7 @@ impl NgsiLdResponse {
 impl IntoResponse for NgsiLdResponse {
     fn into_response(self) -> Response {
         // 203 Non-Authoritative Information when version adaptation was applied
-        let status = if self.rendered.version_adapted {
+        let status = if self.rendered.version_adaptation == VersionAdaptation::Applied {
             StatusCode::NON_AUTHORITATIVE_INFORMATION
         } else {
             self.status
@@ -100,7 +100,7 @@ impl IntoResponse for NgsiLdResponse {
             headers.insert(CONTENT_TYPE, ct);
         }
 
-        if self.rendered.version_adapted {
+        if self.rendered.version_adaptation == VersionAdaptation::Applied {
             headers.typed_insert(PreferenceApplied::version_conformance());
         }
 
@@ -112,7 +112,7 @@ impl IntoResponse for NgsiLdResponse {
                 entity_map_uri: self.entity_map_uri.as_deref(),
                 snapshot_uri: self.snapshot_uri.as_ref(),
                 warnings: &self.warnings,
-                include_context_in_link: self.rendered.include_context_in_link,
+                context_location: self.rendered.context_location,
             },
         );
 

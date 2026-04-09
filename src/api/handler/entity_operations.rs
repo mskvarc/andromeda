@@ -143,7 +143,7 @@ pub async fn query(
             }
             let rendered = ResponseRenderer::new(accept.format(), context, protocol.prefer)
                 .with_geometry_property(geometry_property)
-                .render_collection(all_values);
+                .render_collection(all_values)?;
             let mut response = NgsiLdCollectionResponse::ok(rendered).with_warnings(warnings);
             if let Some(count) = total_count {
                 response = response.with_total_count(count as usize);
@@ -164,7 +164,7 @@ pub async fn query(
             }
             let rendered = ResponseRenderer::new(accept.format(), context, protocol.prefer)
                 .with_geometry_property(geometry_property)
-                .render_collection(entity_values);
+                .render_collection(entity_values)?;
             let mut response = NgsiLdCollectionResponse::ok(rendered).with_warnings(warnings);
             if let Some(count) = total_count {
                 response = response.with_total_count(count as usize);
@@ -185,7 +185,7 @@ pub async fn query(
         .map_err(|e| e.with_instance(uri.clone()))?;
     let rendered = ResponseRenderer::new(accept.format(), context, protocol.prefer)
         .with_geometry_property(geometry_property)
-        .render_collection(entity_values);
+        .render_collection(entity_values)?;
     let mut response = NgsiLdCollectionResponse::ok(rendered).with_warnings(warnings);
     if let Some(count) = total_count {
         response = response.with_total_count(count as usize);
@@ -259,7 +259,7 @@ pub async fn batch_create(
                 .with_source(e)
                 .with_instance(uri.clone())
         })?;
-        let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default()).render_batch(value);
+        let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default()).render_batch(value)?;
         Ok(NgsiLdBatchResponse::new(StatusCode::CREATED, rendered).into_response())
     } else {
         let value = serde_json::to_value(&result).map_err(|e| {
@@ -267,7 +267,7 @@ pub async fn batch_create(
                 .with_source(e)
                 .with_instance(uri.clone())
         })?;
-        let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default()).render_batch(value);
+        let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default()).render_batch(value)?;
         Ok(NgsiLdBatchResponse::new(StatusCode::MULTI_STATUS, rendered).into_response())
     }
 }
@@ -347,7 +347,7 @@ pub async fn batch_upsert(
                     .with_source(e)
                     .with_instance(uri.clone())
             })?;
-            let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default()).render_batch(value);
+            let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default()).render_batch(value)?;
             Ok(NgsiLdBatchResponse::new(StatusCode::CREATED, rendered).into_response())
         }
     } else {
@@ -356,7 +356,7 @@ pub async fn batch_upsert(
                 .with_source(e)
                 .with_instance(uri.clone())
         })?;
-        let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default()).render_batch(value);
+        let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default()).render_batch(value)?;
         Ok(NgsiLdBatchResponse::new(StatusCode::MULTI_STATUS, rendered).into_response())
     }
 }
@@ -433,7 +433,7 @@ pub async fn batch_update(
                 .with_source(e)
                 .with_instance(uri.clone())
         })?;
-        let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default()).render_batch(value);
+        let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default()).render_batch(value)?;
         Ok(NgsiLdBatchResponse::new(StatusCode::MULTI_STATUS, rendered).into_response())
     }
 }
@@ -503,7 +503,7 @@ pub async fn batch_merge(
                 .with_source(e)
                 .with_instance(uri.clone())
         })?;
-        let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default()).render_batch(value);
+        let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default()).render_batch(value)?;
         Ok(NgsiLdBatchResponse::new(StatusCode::MULTI_STATUS, rendered).into_response())
     }
 }
@@ -579,7 +579,7 @@ pub async fn batch_delete(
                 .with_source(e)
                 .with_instance(uri.clone())
         })?;
-        let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default()).render_batch(value);
+        let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default()).render_batch(value)?;
         Ok(NgsiLdBatchResponse::new(StatusCode::MULTI_STATUS, rendered).into_response())
     }
 }

@@ -183,7 +183,13 @@ fn render_attribute_value(attr: &AttributeValue, language_filter: Option<&Langua
 fn render_attribute(attribute: &Attribute, language_filter: Option<&LanguageFilter>) -> Result<Value, AndromedaError> {
     match attribute {
         Attribute::LanguageProperty(language_property) => render_language_property(language_property, language_filter),
-        _ => serialize_value(attribute),
+        Attribute::Property(_)
+        | Attribute::Relationship(_)
+        | Attribute::VocabProperty(_)
+        | Attribute::GeoProperty(_)
+        | Attribute::JsonProperty(_)
+        | Attribute::ListProperty(_)
+        | Attribute::ListRelationship(_) => serialize_value(attribute),
     }
 }
 
@@ -363,15 +369,14 @@ fn concise_attr_value(value: &Value) -> Value {
 fn concise_single_instance(attr_obj: &Map<String, Value>) -> Value {
     let attr_type = attr_obj.get("type").and_then(Value::as_str);
 
-    let (value_key, collapse_to_scalar) = match attr_type {
-        Some("Property") => ("value", true),
-        Some("GeoProperty") => ("value", true),
-        Some("Relationship") => ("object", false),
-        Some("LanguageProperty") => ("languageMap", false),
-        Some("VocabProperty") => ("vocab", false),
-        Some("JsonProperty") => ("json", false),
-        Some("ListProperty") => ("valueList", false),
-        Some("ListRelationship") => ("objectList", false),
+    let value_key = match attr_type {
+        Some("Property") | Some("GeoProperty") => "value",
+        Some("Relationship") => "object",
+        Some("LanguageProperty") => "languageMap",
+        Some("VocabProperty") => "vocab",
+        Some("JsonProperty") => "json",
+        Some("ListProperty") => "valueList",
+        Some("ListRelationship") => "objectList",
         // Unknown type -- pass through unchanged
         Some(_) | None => return Value::Object(attr_obj.clone()),
     };
@@ -380,12 +385,7 @@ fn concise_single_instance(attr_obj: &Map<String, Value>) -> Value {
     let is_bare = attr_obj.len() == 2 && attr_obj.contains_key("type") && attr_obj.contains_key(value_key);
 
     if is_bare {
-        // Bare attribute: collapse to just the value
-        if collapse_to_scalar {
-            attr_obj.get(value_key).cloned().unwrap_or_else(|| Value::Object(attr_obj.clone()))
-        } else {
-            attr_obj.get(value_key).cloned().unwrap_or_else(|| Value::Object(attr_obj.clone()))
-        }
+        attr_obj.get(value_key).cloned().unwrap_or_else(|| Value::Object(attr_obj.clone()))
     } else {
         // Has metadata and/or sub-attributes: remove "type", recursively concise sub-attrs
         let metadata_keys: &[&str] = &[
@@ -423,82 +423,64 @@ pub fn apply_inline_join(entity: &mut Value, linked: &HashMap<String, Entity>, l
     for attr_val in obj.values_mut() {
         match attr_val {
             Value::Object(attr_obj) => {
-                let attr_type = attr_obj.get("type").and_then(Value::as_str).map(ToOwned::to_owned);
-                if attr_type.as_deref() == Some("Relationship") {
-                    if let Some(object_uri) = attr_obj.get("object").and_then(Value::as_str).map(ToOwned::to_owned)
-                        && let Some(linked_entity) = linked.get(&object_uri)
-                    {
-                        let mut rendered = EntityRenderer::new(linked_entity);
-                        if let Some(filter) = language_filter {
-                            rendered = rendered.with_language_filter(filter);
-                        }
-                        let mut linked_val = rendered.render()?;
-                        apply_inline_join(&mut linked_val, linked, language_filter)?;
-                        attr_obj.insert("entity".to_string(), linked_val);
-                    }
-                } else if attr_type.as_deref() == Some("ListRelationship")
-                    && let Some(object_list) = attr_obj.get("objectList").and_then(Value::as_array)
-                {
-                    let entity_list = object_list
-                        .iter()
-                        .filter_map(Value::as_str)
-                        .filter_map(|uri| linked.get(uri))
-                        .map(|linked_entity| {
-                            let mut rendered = EntityRenderer::new(linked_entity);
-                            if let Some(filter) = language_filter {
-                                rendered = rendered.with_language_filter(filter);
-                            }
-                            let mut linked_val = rendered.render()?;
-                            apply_inline_join(&mut linked_val, linked, language_filter)?;
-                            Ok(linked_val)
-                        })
-                        .collect::<Result<Vec<_>, AndromedaError>>()?;
-                    if !entity_list.is_empty() {
-                        attr_obj.insert("entityList".to_string(), Value::Array(entity_list));
-                    }
-                }
+                inline_join_attribute_instance(attr_obj, linked, language_filter)?;
             }
             Value::Array(items) => {
                 for item in items.iter_mut() {
                     if let Value::Object(attr_obj) = item {
-                        let attr_type = attr_obj.get("type").and_then(Value::as_str).map(ToOwned::to_owned);
-                        if attr_type.as_deref() == Some("Relationship") {
-                            if let Some(object_uri) = attr_obj.get("object").and_then(Value::as_str).map(ToOwned::to_owned)
-                                && let Some(linked_entity) = linked.get(&object_uri)
-                            {
-                                let mut rendered = EntityRenderer::new(linked_entity);
-                                if let Some(filter) = language_filter {
-                                    rendered = rendered.with_language_filter(filter);
-                                }
-                                let mut linked_val = rendered.render()?;
-                                apply_inline_join(&mut linked_val, linked, language_filter)?;
-                                attr_obj.insert("entity".to_string(), linked_val);
-                            }
-                        } else if attr_type.as_deref() == Some("ListRelationship")
-                            && let Some(object_list) = attr_obj.get("objectList").and_then(Value::as_array)
-                        {
-                            let entity_list = object_list
-                                .iter()
-                                .filter_map(Value::as_str)
-                                .filter_map(|uri| linked.get(uri))
-                                .map(|linked_entity| {
-                                    let mut rendered = EntityRenderer::new(linked_entity);
-                                    if let Some(filter) = language_filter {
-                                        rendered = rendered.with_language_filter(filter);
-                                    }
-                                    let mut linked_val = rendered.render()?;
-                                    apply_inline_join(&mut linked_val, linked, language_filter)?;
-                                    Ok(linked_val)
-                                })
-                                .collect::<Result<Vec<_>, AndromedaError>>()?;
-                            if !entity_list.is_empty() {
-                                attr_obj.insert("entityList".to_string(), Value::Array(entity_list));
-                            }
-                        }
+                        inline_join_attribute_instance(attr_obj, linked, language_filter)?;
                     }
                 }
             }
             Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => {}
+        }
+    }
+    Ok(())
+}
+
+/// Expand a single attribute instance with inline-joined linked entities.
+///
+/// For `Relationship` attributes, resolves the `object` URI against the linked
+/// entity map and inserts the rendered entity under the `"entity"` key.
+/// For `ListRelationship` attributes, resolves each URI in `objectList` and
+/// inserts the rendered entities under the `"entityList"` key.
+fn inline_join_attribute_instance(
+    attr_obj: &mut Map<String, Value>,
+    linked: &HashMap<String, Entity>,
+    language_filter: Option<&LanguageFilter>,
+) -> Result<(), AndromedaError> {
+    let attr_type = attr_obj.get("type").and_then(Value::as_str).map(ToOwned::to_owned);
+    if attr_type.as_deref() == Some("Relationship") {
+        if let Some(object_uri) = attr_obj.get("object").and_then(Value::as_str).map(ToOwned::to_owned)
+            && let Some(linked_entity) = linked.get(&object_uri)
+        {
+            let mut rendered = EntityRenderer::new(linked_entity);
+            if let Some(filter) = language_filter {
+                rendered = rendered.with_language_filter(filter);
+            }
+            let mut linked_val = rendered.render()?;
+            apply_inline_join(&mut linked_val, linked, language_filter)?;
+            attr_obj.insert("entity".to_string(), linked_val);
+        }
+    } else if attr_type.as_deref() == Some("ListRelationship")
+        && let Some(object_list) = attr_obj.get("objectList").and_then(Value::as_array)
+    {
+        let entity_list = object_list
+            .iter()
+            .filter_map(Value::as_str)
+            .filter_map(|uri| linked.get(uri))
+            .map(|linked_entity| {
+                let mut rendered = EntityRenderer::new(linked_entity);
+                if let Some(filter) = language_filter {
+                    rendered = rendered.with_language_filter(filter);
+                }
+                let mut linked_val = rendered.render()?;
+                apply_inline_join(&mut linked_val, linked, language_filter)?;
+                Ok(linked_val)
+            })
+            .collect::<Result<Vec<_>, AndromedaError>>()?;
+        if !entity_list.is_empty() {
+            attr_obj.insert("entityList".to_string(), Value::Array(entity_list));
         }
     }
     Ok(())
@@ -1006,5 +988,105 @@ mod tests {
         let result = render_snapshot(value, Some(&["name"]), RenderMode::Simplified);
         assert_eq!(result["name"], "Tower");
         assert!(result.get("temp").is_none());
+    }
+
+    // --- apply_inline_join tests (NGSI-LD clause 4.11) ---
+
+    use super::apply_inline_join;
+    use std::collections::HashMap;
+
+    #[test]
+    fn inline_join_expands_relationship() {
+        let linked_entity = parse_entity(json!({
+            "id": "urn:ngsi-ld:Room:1",
+            "type": "Room",
+            "name": {"type": "Property", "value": "Conference Room"}
+        }));
+        let mut linked_map = HashMap::new();
+        linked_map.insert("urn:ngsi-ld:Room:1".to_string(), linked_entity);
+
+        let mut entity = json!({
+            "id": "urn:ngsi-ld:Building:1",
+            "type": "Building",
+            "hasRoom": {"type": "Relationship", "object": "urn:ngsi-ld:Room:1"}
+        });
+
+        apply_inline_join(&mut entity, &linked_map, None).expect("inline join");
+        assert!(entity["hasRoom"]["entity"].is_object());
+        assert_eq!(entity["hasRoom"]["entity"]["id"], "urn:ngsi-ld:Room:1");
+        assert_eq!(entity["hasRoom"]["entity"]["name"]["value"], "Conference Room");
+    }
+
+    #[test]
+    fn inline_join_expands_list_relationship() {
+        let room_a = parse_entity(json!({"id": "urn:a", "type": "Room", "name": {"type": "Property", "value": "A"}}));
+        let room_b = parse_entity(json!({"id": "urn:b", "type": "Room", "name": {"type": "Property", "value": "B"}}));
+        let mut linked_map = HashMap::new();
+        linked_map.insert("urn:a".to_string(), room_a);
+        linked_map.insert("urn:b".to_string(), room_b);
+
+        let mut entity = json!({
+            "id": "urn:building", "type": "Building",
+            "hasRooms": {"type": "ListRelationship", "objectList": ["urn:a", "urn:b"]}
+        });
+
+        apply_inline_join(&mut entity, &linked_map, None).expect("inline join");
+        let entity_list = entity["hasRooms"]["entityList"].as_array().expect("entityList array");
+        assert_eq!(entity_list.len(), 2);
+    }
+
+    #[test]
+    fn inline_join_skips_unresolved() {
+        let linked_map: HashMap<String, Entity> = HashMap::new();
+        let mut entity = json!({
+            "id": "urn:building", "type": "Building",
+            "hasRoom": {"type": "Relationship", "object": "urn:ngsi-ld:Missing:1"}
+        });
+
+        apply_inline_join(&mut entity, &linked_map, None).expect("inline join");
+        assert!(entity["hasRoom"].get("entity").is_none());
+    }
+
+    #[test]
+    fn inline_join_handles_multi_attribute_array() {
+        let room = parse_entity(json!({"id": "urn:a", "type": "Room", "name": {"type": "Property", "value": "A"}}));
+        let mut linked_map = HashMap::new();
+        linked_map.insert("urn:a".to_string(), room);
+
+        let mut entity = json!({
+            "id": "urn:building", "type": "Building",
+            "hasRoom": [
+                {"type": "Relationship", "object": "urn:a", "datasetId": "urn:ds:1"},
+                {"type": "Relationship", "object": "urn:missing", "datasetId": "urn:ds:2"}
+            ]
+        });
+
+        apply_inline_join(&mut entity, &linked_map, None).expect("inline join");
+        let arr = entity["hasRoom"].as_array().expect("array");
+        assert!(arr[0].get("entity").is_some());
+        assert!(arr[1].get("entity").is_none());
+    }
+
+    #[test]
+    fn inline_join_recursive() {
+        let entity_c = parse_entity(json!({
+            "id": "urn:c", "type": "T", "name": {"type": "Property", "value": "C"}
+        }));
+        let entity_b = parse_entity(json!({
+            "id": "urn:b", "type": "T",
+            "ref": {"type": "Relationship", "object": "urn:c"}
+        }));
+        let mut linked_map = HashMap::new();
+        linked_map.insert("urn:b".to_string(), entity_b);
+        linked_map.insert("urn:c".to_string(), entity_c);
+
+        let mut entity = json!({
+            "id": "urn:a", "type": "T",
+            "ref": {"type": "Relationship", "object": "urn:b"}
+        });
+
+        apply_inline_join(&mut entity, &linked_map, None).expect("inline join");
+        assert_eq!(entity["ref"]["entity"]["id"], "urn:b");
+        assert_eq!(entity["ref"]["entity"]["ref"]["entity"]["id"], "urn:c");
     }
 }

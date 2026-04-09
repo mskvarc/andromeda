@@ -30,6 +30,7 @@ use crate::{
     jsonld::ContextSpec,
     query::{compile::expand_q_expression, q::eval::evaluate},
     renderer::{
+        SysAttrsInclusion,
         entity::{EntityRenderer, render_snapshot},
         response::ResponseRenderer,
     },
@@ -207,7 +208,7 @@ pub async fn get(
 
         let rendered = ResponseRenderer::new(accept.format(), context, prefer)
             .with_geometry_property(params.geometry_property.clone())
-            .render_single(result);
+            .render_single(result)?;
         return Ok(NgsiLdResponse::ok(rendered).with_snapshot_uri(snapshot_id).into_response());
     }
 
@@ -217,7 +218,11 @@ pub async fn get(
         .map(|s| s.split(',').map(str::trim).map(String::from).collect())
         .unwrap_or_default();
 
-    let sys_attrs = options.contains("sysAttrs");
+    let sys_attrs = if options.contains("sysAttrs") {
+        SysAttrsInclusion::Include
+    } else {
+        SysAttrsInclusion::Strip
+    };
     let dataset_ids: Vec<String> = params
         .dataset_id
         .as_deref()
@@ -308,7 +313,7 @@ pub async fn get(
                         .map_err(|e| e.with_instance(uri.clone()))?,
                 );
             }
-            let rendered = ResponseRenderer::new(accept.format(), context, prefer).render_collection(all_entities);
+            let rendered = ResponseRenderer::new(accept.format(), context, prefer).render_collection(all_entities)?;
             return Ok(NgsiLdCollectionResponse::ok(rendered).with_warnings(warnings).into_response());
         } else {
             // Inline: renderer handles join + mode transformation
@@ -320,7 +325,7 @@ pub async fn get(
                 .map_err(|e| e.with_instance(uri.clone()))?;
             let rendered = ResponseRenderer::new(accept.format(), context, prefer)
                 .with_geometry_property(params.geometry_property.clone())
-                .render_single(entity_value);
+                .render_single(entity_value)?;
             return Ok(NgsiLdResponse::ok(rendered).with_warnings(warnings).into_response());
         }
     }
@@ -332,7 +337,7 @@ pub async fn get(
         .map_err(|e| e.with_instance(uri.clone()))?;
     let rendered = ResponseRenderer::new(accept.format(), context, prefer)
         .with_geometry_property(params.geometry_property.clone())
-        .render_single(entity_value);
+        .render_single(entity_value)?;
     Ok(NgsiLdResponse::ok(rendered).with_warnings(warnings).into_response())
 }
 
@@ -463,7 +468,7 @@ pub async fn query(
 
         let rendered = ResponseRenderer::new(accept.format(), context, prefer)
             .with_geometry_property(query.geometry_property.clone())
-            .render_collection(filtered);
+            .render_collection(filtered)?;
         let response = NgsiLdCollectionResponse::ok(rendered)
             .with_snapshot_uri(snapshot_id)
             .with_total_count(total as usize);
@@ -630,7 +635,7 @@ pub async fn query(
             }
             let rendered = ResponseRenderer::new(accept.format(), context, prefer)
                 .with_geometry_property(query.geometry_property.clone())
-                .render_collection(all_values);
+                .render_collection(all_values)?;
             let mut response = NgsiLdCollectionResponse::ok(rendered).with_status(status).with_warnings(warnings);
             if let Some(count) = total_count {
                 response = response.with_total_count(count as usize);
@@ -654,7 +659,7 @@ pub async fn query(
             }
             let rendered = ResponseRenderer::new(accept.format(), context, prefer)
                 .with_geometry_property(query.geometry_property.clone())
-                .render_collection(entity_values);
+                .render_collection(entity_values)?;
             let mut response = NgsiLdCollectionResponse::ok(rendered).with_status(status).with_warnings(warnings);
             if let Some(count) = total_count {
                 response = response.with_total_count(count as usize);
@@ -678,7 +683,7 @@ pub async fn query(
         .map_err(|e| e.with_instance(uri.clone()))?;
     let rendered_output = ResponseRenderer::new(accept.format(), context, prefer)
         .with_geometry_property(query.geometry_property.clone())
-        .render_collection(rendered);
+        .render_collection(rendered)?;
     let mut response = NgsiLdCollectionResponse::ok(rendered_output).with_status(status).with_warnings(warnings);
     if let Some(count) = total_count {
         response = response.with_total_count(count as usize);

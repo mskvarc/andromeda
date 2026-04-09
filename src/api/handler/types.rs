@@ -45,7 +45,7 @@ pub async fn list(
             (merged, warnings)
         };
 
-        let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default()).render_single(result);
+        let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default()).render_single(result)?;
         Ok(NgsiLdResponse::ok(rendered).with_warnings(warnings).into_response())
     } else {
         let types = service.types(&context).await.map_err(|e| e.with_instance(uri.clone()))?;
@@ -69,7 +69,7 @@ pub async fn list(
             (merged, warnings)
         };
 
-        let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default()).render_single(result);
+        let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default()).render_single(result)?;
         Ok(NgsiLdResponse::ok(rendered).with_warnings(warnings).into_response())
     }
 }
@@ -105,6 +105,6 @@ pub async fn get(
         (merged, warnings)
     };
 
-    let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default()).render_single(result);
+    let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default()).render_single(result)?;
     Ok(NgsiLdResponse::ok(rendered).with_warnings(warnings).into_response())
 }

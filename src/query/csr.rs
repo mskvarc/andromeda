@@ -1,6 +1,9 @@
 //! Query parameters for the NGSI-LD Context Source Registration discovery API.
 
-use crate::query::{error::QueryError, params::is_valid_uri};
+use crate::{
+    query::{error::QueryError, params::is_valid_uri},
+    renderer::SysAttrsInclusion,
+};
 use serde::Deserialize;
 
 /// Raw HTTP query parameters for Context Source Registration discovery.
@@ -44,7 +47,11 @@ impl CsrQueryParameters {
     pub fn parse_options(&self) -> CsrQueryParametersOptions {
         let opts = self.options.as_deref().unwrap_or("");
         CsrQueryParametersOptions {
-            sys_attrs: opts.contains("sysAttrs"),
+            sys_attrs: if opts.contains("sysAttrs") {
+                SysAttrsInclusion::Include
+            } else {
+                SysAttrsInclusion::Strip
+            },
         }
     }
 
@@ -99,8 +106,8 @@ impl CsrQueryParameters {
 /// Parsed response shaping options from the CSR `options` parameter.
 #[derive(Debug, Default)]
 pub struct CsrQueryParametersOptions {
-    /// When true, include system-generated attributes (`createdAt`, `modifiedAt`).
-    pub sys_attrs: bool,
+    /// Whether to include system-generated attributes (`createdAt`, `modifiedAt`).
+    pub sys_attrs: SysAttrsInclusion,
 }
 
 #[cfg(test)]
@@ -156,13 +163,13 @@ mod tests {
     #[test]
     fn parse_options_sys_attrs() {
         let p = params_from_query("type=Vehicle&options=sysAttrs");
-        assert!(p.parse_options().sys_attrs);
+        assert_eq!(p.parse_options().sys_attrs, SysAttrsInclusion::Include);
     }
 
     #[test]
     fn parse_options_default() {
         let p = params_from_query("type=Vehicle");
-        assert!(!p.parse_options().sys_attrs);
+        assert_eq!(p.parse_options().sys_attrs, SysAttrsInclusion::Strip);
     }
 
     #[test]

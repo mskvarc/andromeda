@@ -391,7 +391,10 @@ ORDER BY {}"#,
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::query::temporal::{CompiledTemporalQuery, LastNOrigin};
+    use crate::{
+        query::temporal::{CompiledTemporalQuery, LastNOrigin},
+        renderer::SysAttrsInclusion,
+    };
     use chrono::{DateTime, Utc};
 
     fn minimal_compiled() -> CompiledTemporalQuery {
@@ -415,7 +418,7 @@ mod tests {
             limit: 20,
             offset: 0,
             count: false,
-            sys_attrs: false,
+            sys_attrs: SysAttrsInclusion::Strip,
         }
     }
 

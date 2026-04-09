@@ -3,7 +3,7 @@
 use crate::{
     http::model::query_request::QueryRequest,
     query::{error::QueryError, params::is_valid_uri},
-    renderer::entity::RenderMode,
+    renderer::{SysAttrsInclusion, entity::RenderMode},
 };
 use serde::Deserialize;
 
@@ -151,7 +151,11 @@ impl EntityQueryParameters {
         };
         EntityQueryParametersOptions {
             render_mode,
-            sys_attrs: opts.contains("sysAttrs"),
+            sys_attrs: if opts.contains("sysAttrs") {
+                SysAttrsInclusion::Include
+            } else {
+                SysAttrsInclusion::Strip
+            },
             count: self.count.unwrap_or(false),
         }
     }
@@ -275,8 +279,8 @@ impl OrderDirection {
 pub struct EntityQueryParametersOptions {
     /// Output representation mode (normalized, concise, or simplified).
     pub render_mode: RenderMode,
-    /// When true, include system-generated attributes (`createdAt`, `modifiedAt`).
-    pub sys_attrs: bool,
+    /// Whether to include system-generated attributes (`createdAt`, `modifiedAt`).
+    pub sys_attrs: SysAttrsInclusion,
     /// When true, include a total count of matching entities in the response.
     pub count: bool,
 }

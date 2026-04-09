@@ -4,18 +4,19 @@
 //! and JSON-LD context from subscription and CSR subscription payloads
 //! before they are sent as HTTP responses.
 
+use crate::renderer::SysAttrsInclusion;
 use serde_json::Value;
 
 /// Render a subscription for response by conditionally stripping system attributes.
 ///
-/// When `include_sys_attrs` is false, removes `createdAt`, `modifiedAt`, and
-/// conditionally removes `isActive` (when true, since true is the default) and
-/// `localOnly` (when not true, since false is the default).
+/// When `sys_attrs` is [`SysAttrsInclusion::Strip`], removes `createdAt`,
+/// `modifiedAt`, and conditionally removes `isActive` (when true, since true
+/// is the default) and `localOnly` (when not true, since false is the default).
 ///
 /// Does NOT remove `jsonldContext` -- use [`strip_jsonld_context`] separately
 /// when needed.
-pub fn render_subscription(value: &mut Value, include_sys_attrs: bool) {
-    if include_sys_attrs {
+pub fn render_subscription(value: &mut Value, sys_attrs: SysAttrsInclusion) {
+    if sys_attrs == SysAttrsInclusion::Include {
         return;
     }
     let Some(obj) = value.as_object_mut() else {
@@ -36,12 +37,12 @@ pub fn render_subscription(value: &mut Value, include_sys_attrs: bool) {
 /// Render a context source subscription for response by conditionally stripping
 /// system attributes, JSON-LD context, and notification runtime fields.
 ///
-/// When `include_sys_attrs` is false, removes `createdAt`, `modifiedAt`,
-/// `jsonldContext`, conditionally `isActive` (when true), and notification
-/// runtime sub-fields (`timesSent`, `lastNotification`, `lastSuccess`,
-/// `lastFailure`).
-pub fn render_csource_subscription(value: &mut Value, include_sys_attrs: bool) {
-    if include_sys_attrs {
+/// When `sys_attrs` is [`SysAttrsInclusion::Strip`], removes `createdAt`,
+/// `modifiedAt`, `jsonldContext`, conditionally `isActive` (when true), and
+/// notification runtime sub-fields (`timesSent`, `lastNotification`,
+/// `lastSuccess`, `lastFailure`).
+pub fn render_csource_subscription(value: &mut Value, sys_attrs: SysAttrsInclusion) {
+    if sys_attrs == SysAttrsInclusion::Include {
         return;
     }
     let Some(obj) = value.as_object_mut() else {
@@ -88,7 +89,7 @@ mod tests {
             "localOnly": false,
             "entities": [{"type": "Vehicle"}]
         });
-        render_subscription(&mut value, false);
+        render_subscription(&mut value, SysAttrsInclusion::Strip);
         assert!(value.get("createdAt").is_none());
         assert!(value.get("modifiedAt").is_none());
         assert!(value.get("isActive").is_none());
@@ -107,7 +108,7 @@ mod tests {
             "localOnly": false
         });
         let mut value = original.clone();
-        render_subscription(&mut value, true);
+        render_subscription(&mut value, SysAttrsInclusion::Include);
         assert_eq!(value, original);
     }
 
@@ -118,7 +119,7 @@ mod tests {
             "type": "Subscription",
             "isActive": false
         });
-        render_subscription(&mut value, false);
+        render_subscription(&mut value, SysAttrsInclusion::Strip);
         assert_eq!(value.get("isActive").and_then(|v| v.as_bool()), Some(false));
     }
 
@@ -129,7 +130,7 @@ mod tests {
             "type": "Subscription",
             "localOnly": true
         });
-        render_subscription(&mut value, false);
+        render_subscription(&mut value, SysAttrsInclusion::Strip);
         assert_eq!(value.get("localOnly").and_then(|v| v.as_bool()), Some(true));
     }
 
@@ -150,7 +151,7 @@ mod tests {
                 "lastFailure": "2025-01-01T00:00:00Z"
             }
         });
-        render_csource_subscription(&mut value, false);
+        render_csource_subscription(&mut value, SysAttrsInclusion::Strip);
         assert!(value.get("createdAt").is_none());
         assert!(value.get("modifiedAt").is_none());
         assert!(value.get("jsonldContext").is_none());
@@ -172,7 +173,7 @@ mod tests {
             "notification": {"timesSent": 42}
         });
         let mut value = original.clone();
-        render_csource_subscription(&mut value, true);
+        render_csource_subscription(&mut value, SysAttrsInclusion::Include);
         assert_eq!(value, original);
     }
 

@@ -100,7 +100,7 @@ pub async fn get(
         } else {
             entity_data
         };
-        let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default()).render_single(data);
+        let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default()).render_single(data)?;
         return Ok(NgsiLdResponse::ok(rendered).with_snapshot_uri(snapshot_id).into_response());
     }
 
@@ -171,7 +171,7 @@ pub async fn get(
         entity_value
     };
 
-    let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default()).render_single(data);
+    let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default()).render_single(data)?;
     let mut builder = NgsiLdResponse::new(status, rendered).with_warnings(warnings);
     if let Some(map_header) = entity_map_header {
         builder = builder.with_entity_map_uri(map_header.into_inner().to_string());
@@ -224,7 +224,7 @@ pub async fn query(
         } else {
             entities
         };
-        let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default()).render_collection(values);
+        let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default()).render_collection(values)?;
         let response = NgsiLdCollectionResponse::ok(rendered)
             .with_snapshot_uri(snapshot_id)
             .with_total_count(total as usize);
@@ -314,7 +314,7 @@ pub async fn query(
         entities
     };
 
-    let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default()).render_collection(values);
+    let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default()).render_collection(values)?;
     let mut response = NgsiLdCollectionResponse::ok(rendered).with_status(status).with_warnings(forwarding_warnings);
     if let Some(count) = total_count {
         response = response.with_total_count(count as usize);

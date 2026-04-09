@@ -42,7 +42,7 @@ pub async fn get(
     let map = state.entity_maps.retrieve(&entity_map_id).await.map_err(|e| e.with_instance(uri.clone()))?;
 
     let value = serde_json::to_value(&map).map_err(|e| AndromedaError::internal("Failed to serialize entity map").with_source(e).with_instance(uri))?;
-    let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default()).render_single(value);
+    let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default()).render_single(value)?;
     Ok(NgsiLdResponse::ok(rendered).into_response())
 }
 
@@ -130,7 +130,7 @@ pub async fn create_from_query(
     let map_uri = map.id.clone();
 
     let value = serde_json::to_value(&map).map_err(|e| AndromedaError::internal("Failed to serialize entity map").with_source(e).with_instance(uri))?;
-    let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default()).render_single(value);
+    let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default()).render_single(value)?;
 
     Ok(NgsiLdResponse::new(StatusCode::CREATED, rendered)
         .with_location(location)
@@ -166,7 +166,7 @@ pub async fn create_from_query_post(
     let map_uri = map.id.clone();
 
     let value = serde_json::to_value(&map).map_err(|e| AndromedaError::internal("Failed to serialize entity map").with_source(e).with_instance(uri))?;
-    let rendered = ResponseRenderer::new(accept.format(), context_spec, PreferHeader::default()).render_single(value);
+    let rendered = ResponseRenderer::new(accept.format(), context_spec, PreferHeader::default()).render_single(value)?;
 
     Ok(NgsiLdResponse::new(StatusCode::CREATED, rendered)
         .with_location(location)
@@ -203,7 +203,7 @@ pub async fn create_temporal_from_query(
     let map_uri = map.id.clone();
 
     let value = serde_json::to_value(&map).map_err(|e| AndromedaError::internal("Failed to serialize entity map").with_source(e).with_instance(uri))?;
-    let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default()).render_single(value);
+    let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default()).render_single(value)?;
 
     Ok(NgsiLdResponse::new(StatusCode::CREATED, rendered)
         .with_location(location)
@@ -239,7 +239,7 @@ pub async fn create_temporal_from_query_post(
     let map_uri = map.id.clone();
 
     let value = serde_json::to_value(&map).map_err(|e| AndromedaError::internal("Failed to serialize entity map").with_source(e).with_instance(uri))?;
-    let rendered = ResponseRenderer::new(accept.format(), context_spec, PreferHeader::default()).render_single(value);
+    let rendered = ResponseRenderer::new(accept.format(), context_spec, PreferHeader::default()).render_single(value)?;
 
     Ok(NgsiLdResponse::new(StatusCode::CREATED, rendered)
         .with_location(location)

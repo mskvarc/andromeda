@@ -13,12 +13,13 @@
 //! the response type for header construction and serialization.
 
 use crate::{
+    error::AndromedaError,
     http::{
         extractor::prefer::PreferHeader,
         model::{preference::GeoJsonBodyPreference, response_format::ResponseFormat},
     },
     jsonld::ContextSpec,
-    renderer::{entity::decode_percent_encoded_uris, geojson::GeoJsonRenderer, version::VersionRenderer},
+    renderer::{ContextLocation, VersionAdaptation, entity::decode_percent_encoded_uris, geojson::GeoJsonRenderer, version::VersionRenderer},
 };
 use serde_json::Value;
 
@@ -26,6 +27,7 @@ use serde_json::Value;
 ///
 /// Configured by handlers based on Accept header, JSON-LD context, client
 /// preferences, and optional geometry property for GeoJSON conversion.
+#[derive(Debug)]
 pub struct ResponseRenderer {
     format: ResponseFormat,
     context: ContextSpec,
@@ -34,6 +36,7 @@ pub struct ResponseRenderer {
 }
 
 /// Output of the rendering pipeline, ready for the response type to serialize.
+#[derive(Debug)]
 pub struct RenderedOutput {
     /// The fully-rendered JSON value (with @context injected if applicable).
     pub value: Value,
@@ -41,10 +44,10 @@ pub struct RenderedOutput {
     pub context: ContextSpec,
     /// The Content-Type string for this response.
     pub content_type: &'static str,
-    /// Whether the JSON-LD context should be included in the Link header.
-    pub include_context_in_link: bool,
+    /// Where the JSON-LD `@context` should appear: in the `Link` header or in the body.
+    pub context_location: ContextLocation,
     /// Whether version adaptation was applied (triggers 203 status).
-    pub version_adapted: bool,
+    pub version_adaptation: VersionAdaptation,
 }
 
 impl ResponseRenderer {
@@ -68,13 +71,29 @@ impl ResponseRenderer {
     ///
     /// Applies: URI decoding (Json/JsonLd), version adaptation, @context injection
     /// or GeoJSON wrapping depending on the response format.
-    pub fn render_single(self, mut value: Value) -> RenderedOutput {
-        let version_adapted = self.prefer.requested_version.is_some();
+    pub fn render_single(self, mut value: Value) -> Result<RenderedOutput, AndromedaError> {
+        let version_adaptation = if self.prefer.requested_version.is_some() {
+            VersionAdaptation::Applied
+        } else {
+            VersionAdaptation::None
+        };
         let context_value = self.context.for_presentation().to_context_value();
 
-        let include_context_in_link = match self.format {
-            ResponseFormat::Json | ResponseFormat::JsonLd => !self.format.include_context_in_body(),
-            ResponseFormat::GeoJson => self.prefer.geo_json_body == GeoJsonBodyPreference::Json,
+        let context_location = match self.format {
+            ResponseFormat::Json | ResponseFormat::JsonLd => {
+                if self.format.include_context_in_body() {
+                    ContextLocation::Body
+                } else {
+                    ContextLocation::LinkHeader
+                }
+            }
+            ResponseFormat::GeoJson => {
+                if self.prefer.geo_json_body == GeoJsonBodyPreference::Json {
+                    ContextLocation::LinkHeader
+                } else {
+                    ContextLocation::Body
+                }
+            }
         };
 
         match self.format {
@@ -101,30 +120,46 @@ impl ResponseRenderer {
                 value = GeoJsonRenderer::new(value)
                     .with_context(geojson_context)
                     .with_geometry_property(self.geometry_property.as_deref())
-                    .render_entity();
+                    .render_entity()?;
             }
         }
 
-        RenderedOutput {
+        Ok(RenderedOutput {
             value,
             context: self.context,
             content_type: self.format.content_type_str(),
-            include_context_in_link,
-            version_adapted,
-        }
+            context_location,
+            version_adaptation,
+        })
     }
 
     /// Render a collection of entities/objects.
     ///
     /// Applies: URI decoding (Json/JsonLd), version adaptation, per-item @context
     /// injection or GeoJSON FeatureCollection wrapping depending on the format.
-    pub fn render_collection(self, values: Vec<Value>) -> RenderedOutput {
-        let version_adapted = self.prefer.requested_version.is_some();
+    pub fn render_collection(self, values: Vec<Value>) -> Result<RenderedOutput, AndromedaError> {
+        let version_adaptation = if self.prefer.requested_version.is_some() {
+            VersionAdaptation::Applied
+        } else {
+            VersionAdaptation::None
+        };
         let context_value = self.context.for_presentation().to_context_value();
 
-        let include_context_in_link = match self.format {
-            ResponseFormat::Json | ResponseFormat::JsonLd => !self.format.include_context_in_body(),
-            ResponseFormat::GeoJson => self.prefer.geo_json_body == GeoJsonBodyPreference::Json,
+        let context_location = match self.format {
+            ResponseFormat::Json | ResponseFormat::JsonLd => {
+                if self.format.include_context_in_body() {
+                    ContextLocation::Body
+                } else {
+                    ContextLocation::LinkHeader
+                }
+            }
+            ResponseFormat::GeoJson => {
+                if self.prefer.geo_json_body == GeoJsonBodyPreference::Json {
+                    ContextLocation::LinkHeader
+                } else {
+                    ContextLocation::Body
+                }
+            }
         };
 
         let mut array_value = Value::Array(values);
@@ -157,17 +192,17 @@ impl ResponseRenderer {
                 array_value = GeoJsonRenderer::new(array_value)
                     .with_context(geojson_context)
                     .with_geometry_property(self.geometry_property.as_deref())
-                    .render_collection();
+                    .render_collection()?;
             }
         }
 
-        RenderedOutput {
+        Ok(RenderedOutput {
             value: array_value,
             context: self.context,
             content_type: self.format.content_type_str(),
-            include_context_in_link,
-            version_adapted,
-        }
+            context_location,
+            version_adaptation,
+        })
     }
 
     /// Render a batch operation result.
@@ -175,10 +210,18 @@ impl ResponseRenderer {
     /// Applies: version adaptation, @context injection. No URI decoding
     /// (batch results don't contain entity Relationship objects) and no
     /// GeoJSON wrapping.
-    pub fn render_batch(self, mut value: Value) -> RenderedOutput {
-        let version_adapted = self.prefer.requested_version.is_some();
+    pub fn render_batch(self, mut value: Value) -> Result<RenderedOutput, AndromedaError> {
+        let version_adaptation = if self.prefer.requested_version.is_some() {
+            VersionAdaptation::Applied
+        } else {
+            VersionAdaptation::None
+        };
         let context_value = self.context.for_presentation().to_context_value();
-        let include_context_in_link = !self.format.include_context_in_body();
+        let context_location = if self.format.include_context_in_body() {
+            ContextLocation::Body
+        } else {
+            ContextLocation::LinkHeader
+        };
 
         if let Some(target) = self.prefer.requested_version {
             VersionRenderer::new(target).render(&mut value);
@@ -189,13 +232,13 @@ impl ResponseRenderer {
             obj.insert("@context".to_string(), format_context(cv));
         }
 
-        RenderedOutput {
+        Ok(RenderedOutput {
             value,
             context: self.context,
             content_type: self.format.content_type_str(),
-            include_context_in_link,
-            version_adapted,
-        }
+            context_location,
+            version_adaptation,
+        })
     }
 }
 
@@ -224,9 +267,11 @@ mod tests {
     fn render_single_json_does_not_inject_context() {
         let ctx = ContextSpec::from_links(vec!["https://example.org/ctx".to_string()]);
         let value = json!({"id": "urn:x", "type": "T", "name": {"type": "Property", "value": "test"}});
-        let rendered = ResponseRenderer::new(ResponseFormat::Json, ctx, default_prefer()).render_single(value);
+        let rendered = ResponseRenderer::new(ResponseFormat::Json, ctx, default_prefer())
+            .render_single(value)
+            .expect("render");
         assert!(rendered.value.get("@context").is_none());
-        assert!(rendered.include_context_in_link);
+        assert_eq!(rendered.context_location, ContextLocation::LinkHeader);
         assert_eq!(rendered.content_type, "application/json");
     }
 
@@ -234,9 +279,11 @@ mod tests {
     fn render_single_ld_json_injects_context() {
         let ctx = ContextSpec::from_links(vec!["https://example.org/ctx".to_string()]);
         let value = json!({"id": "urn:x", "type": "T"});
-        let rendered = ResponseRenderer::new(ResponseFormat::JsonLd, ctx, default_prefer()).render_single(value);
+        let rendered = ResponseRenderer::new(ResponseFormat::JsonLd, ctx, default_prefer())
+            .render_single(value)
+            .expect("render");
         assert!(rendered.value.get("@context").is_some());
-        assert!(!rendered.include_context_in_link);
+        assert_eq!(rendered.context_location, ContextLocation::Body);
         assert_eq!(rendered.content_type, "application/ld+json");
     }
 
@@ -244,7 +291,9 @@ mod tests {
     fn render_collection_ld_json_injects_context_per_item() {
         let ctx = ContextSpec::from_links(vec!["https://example.org/ctx".to_string()]);
         let values = vec![json!({"id": "urn:x", "type": "T"}), json!({"id": "urn:y", "type": "T"})];
-        let rendered = ResponseRenderer::new(ResponseFormat::JsonLd, ctx, default_prefer()).render_collection(values);
+        let rendered = ResponseRenderer::new(ResponseFormat::JsonLd, ctx, default_prefer())
+            .render_collection(values)
+            .expect("render");
         let items = rendered.value.as_array().expect("array");
         assert_eq!(items.len(), 2);
         assert!(items[0].get("@context").is_some());
@@ -255,7 +304,9 @@ mod tests {
     fn render_batch_injects_context_for_ld_json() {
         let ctx = ContextSpec::from_links(vec!["https://example.org/ctx".to_string()]);
         let value = json!({"success": ["urn:x"], "errors": []});
-        let rendered = ResponseRenderer::new(ResponseFormat::JsonLd, ctx, default_prefer()).render_batch(value);
+        let rendered = ResponseRenderer::new(ResponseFormat::JsonLd, ctx, default_prefer())
+            .render_batch(value)
+            .expect("render");
         assert!(rendered.value.get("@context").is_some());
     }
 
@@ -268,16 +319,18 @@ mod tests {
             ..PreferHeader::default()
         };
         let value = json!({"id": "urn:x", "type": "T"});
-        let rendered = ResponseRenderer::new(ResponseFormat::Json, ctx, prefer).render_single(value);
-        assert!(rendered.version_adapted);
+        let rendered = ResponseRenderer::new(ResponseFormat::Json, ctx, prefer).render_single(value).expect("render");
+        assert_eq!(rendered.version_adaptation, VersionAdaptation::Applied);
     }
 
     #[test]
     fn render_single_no_version_adaptation_by_default() {
         let ctx = ContextSpec::from_links(vec!["https://example.org/ctx".to_string()]);
         let value = json!({"id": "urn:x", "type": "T"});
-        let rendered = ResponseRenderer::new(ResponseFormat::Json, ctx, default_prefer()).render_single(value);
-        assert!(!rendered.version_adapted);
+        let rendered = ResponseRenderer::new(ResponseFormat::Json, ctx, default_prefer())
+            .render_single(value)
+            .expect("render");
+        assert_eq!(rendered.version_adaptation, VersionAdaptation::None);
     }
 
     #[test]

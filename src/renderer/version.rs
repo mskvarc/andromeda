@@ -16,13 +16,14 @@ use serde_json::Value;
 ///
 /// This modifies the value in place. It handles both single entities
 /// (JSON objects) and entity arrays.
+#[derive(Debug)]
 pub struct VersionRenderer {
     target: NgsiLdVersion,
 }
 
 impl VersionRenderer {
-    pub const fn new(target: NgsiLdVersion) -> Self {
-        Self { target }
+    pub const fn new(target: NgsiLdVersion) -> VersionRenderer {
+        VersionRenderer { target }
     }
 
     pub fn render(&self, value: &mut Value) {
@@ -162,8 +163,7 @@ fn adapt_attribute_instance(instance: &mut Value, target: NgsiLdVersion) {
             adapt_relationship_fields(obj, target);
         }
         // Unknown attribute type -- no adaptation needed
-        Some(_) => {}
-        None => {}
+        Some(_) | None => {}
     }
 }
 

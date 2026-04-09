@@ -7,7 +7,10 @@ use crate::{
         notification::{CompiledSubscription, TriggerReason},
     },
     jsonld::{CompactOptions, ContextSpec, ContextStripping, JsonLdEngine, vocab},
-    renderer::entity::{apply_inline_join, simplify_value},
+    renderer::{
+        SysAttrsInclusion,
+        entity::{apply_inline_join, simplify_value},
+    },
     service::entity::{expanded_entity_object_mut, inject_attr_sys_attrs, query::EntityQueryService},
 };
 use chrono::{DateTime, SecondsFormat, Utc};
@@ -70,7 +73,11 @@ pub async fn build_notification_data(params: NotificationBuildParams<'_>) -> Vec
     }
 
     if is_attr_deleted {
-        let deleted_at = if sub.notification_sys_attrs { Some(occurred_at) } else { None };
+        let deleted_at = if sub.notification_sys_attrs == SysAttrsInclusion::Include {
+            Some(occurred_at)
+        } else {
+            None
+        };
         let filtered_changed: Vec<String>;
         let effective_changed = if let Some(ref watched) = sub.watched_attrs {
             filtered_changed = changed_attributes.iter().filter(|a| watched.contains(*a)).cloned().collect();
@@ -80,7 +87,7 @@ pub async fn build_notification_data(params: NotificationBuildParams<'_>) -> Vec
         };
         inject_deleted_attributes(&mut entity, effective_changed, previous_attributes, deleted_at);
 
-        if sub.notification_sys_attrs
+        if sub.notification_sys_attrs == SysAttrsInclusion::Include
             && let Some(obj) = expanded_entity_object_mut(&mut entity)
         {
             let ca = obj.get(vocab::CREATED_AT.as_str()).cloned();
@@ -403,7 +410,7 @@ fn decode_percent_encoded_strings(value: &mut Value) {
     }
 }
 
-pub fn strip_to_structural_keys(entity: &Value, include_sys_attrs: bool) -> Value {
+pub fn strip_to_structural_keys(entity: &Value, sys_attrs: SysAttrsInclusion) -> Value {
     let Some(obj) = entity.as_object() else {
         return entity.clone();
     };
@@ -412,7 +419,7 @@ pub fn strip_to_structural_keys(entity: &Value, include_sys_attrs: bool) -> Valu
         let keep = key == "@id"
             || key == "@type"
             || key == vocab::DELETED_AT.as_str()
-            || (include_sys_attrs && (key == vocab::CREATED_AT.as_str() || key == vocab::MODIFIED_AT.as_str()));
+            || (sys_attrs == SysAttrsInclusion::Include && (key == vocab::CREATED_AT.as_str() || key == vocab::MODIFIED_AT.as_str()));
         if keep {
             stripped.insert(key.clone(), value.clone());
         }

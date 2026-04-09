@@ -10,12 +10,15 @@ use crate::{
         temporal::{CompiledTemporalQuery, LastNOrigin, TemporalQueryParameters},
         temporal_sql::{build_stage1_entity_ids, build_temporal_history_query},
     },
-    renderer::temporal::{
-        build_content_range,
-        build_entity_temporal,
-        build_entity_temporal_aggregated_data,
-        ensure_temporal_attrs_are_arrays,
-        transform_to_temporal_values,
+    renderer::{
+        SysAttrsInclusion,
+        temporal::{
+            build_content_range,
+            build_entity_temporal,
+            build_entity_temporal_aggregated_data,
+            ensure_temporal_attrs_are_arrays,
+            transform_to_temporal_values,
+        },
     },
     repository::{
         entity::EntityRepository,
@@ -305,10 +308,10 @@ impl TemporalService {
             });
         }
 
-        let (response, truncated, time_range, partition_total) = build_entity_temporal(entity_id, &entity_types, &rows, &compiled)?;
+        let result = build_entity_temporal(entity_id, &entity_types, &rows, &compiled)?;
         let mut compacted = self
             .engine
-            .compact(response, context, CompactOptions::default())
+            .compact(result.entity, context, CompactOptions::default())
             .await
             .map_err(|e| AndromedaError::map_jsonld(e, "temporal_compact"))?;
         ensure_temporal_attrs_are_arrays(&mut compacted);
@@ -319,8 +322,8 @@ impl TemporalService {
             compacted
         };
 
-        let content_range = if truncated {
-            build_content_range(&compiled, time_range, partition_total, compiled.last_n_origin.is_user_specified())
+        let content_range = if result.truncated {
+            build_content_range(&compiled, result.time_range, result.max_partition_total, compiled.last_n_origin)
         } else {
             None
         };
@@ -404,18 +407,18 @@ impl TemporalService {
                     }
                 } else {
                     match build_entity_temporal(&entity_id, &entity_types, &rows, &compiled) {
-                        Ok((response, truncated, time_range, partition_total)) => {
-                            if truncated {
+                        Ok(result) => {
+                            if result.truncated {
                                 any_truncated = true;
                             }
-                            if let Some((min_t, max_t)) = time_range {
+                            if let Some((min_t, max_t)) = result.time_range {
                                 overall_min = Some(overall_min.map_or(min_t, |m: DateTime<Utc>| m.min(min_t)));
                                 overall_max = Some(overall_max.map_or(max_t, |m: DateTime<Utc>| m.max(max_t)));
                             }
-                            if let Some(pt) = partition_total {
+                            if let Some(pt) = result.max_partition_total {
                                 overall_partition_total = Some(overall_partition_total.map_or(pt, |m: i64| m.max(pt)));
                             }
-                            match self.engine.compact(response, context, CompactOptions::default()).await {
+                            match self.engine.compact(result.entity, context, CompactOptions::default()).await {
                                 Ok(mut compacted) => {
                                     ensure_temporal_attrs_are_arrays(&mut compacted);
                                     let result = if compiled.format == TemporalFormat::TemporalValues {
@@ -447,12 +450,7 @@ impl TemporalService {
         }
 
         let content_range = if any_truncated {
-            build_content_range(
-                &compiled,
-                overall_min.zip(overall_max),
-                overall_partition_total,
-                compiled.last_n_origin.is_user_specified(),
-            )
+            build_content_range(&compiled, overall_min.zip(overall_max), overall_partition_total, compiled.last_n_origin)
         } else {
             None
         };
@@ -660,7 +658,11 @@ impl TemporalService {
             limit: params.effective_limit(),
             offset: params.effective_offset(),
             count: params.count.unwrap_or(false),
-            sys_attrs: params.has_sys_attrs(),
+            sys_attrs: if params.has_sys_attrs() {
+                SysAttrsInclusion::Include
+            } else {
+                SysAttrsInclusion::Strip
+            },
         })
     }
 

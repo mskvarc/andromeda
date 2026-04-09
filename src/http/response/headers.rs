@@ -8,6 +8,7 @@ use crate::{
         ngsild_warning::{NgsiLdWarning, NgsiLdWarningHeader},
     },
     jsonld::ContextSpec,
+    renderer::ContextLocation,
 };
 use axum::http::{HeaderMap, HeaderValue};
 use headers::HeaderMapExt;
@@ -23,8 +24,8 @@ pub struct CommonHeadersOptions<'a> {
     pub snapshot_uri: Option<&'a Urn>,
     /// NGSILD-Warning header values from distributed forwarding (clause 6.3.17).
     pub warnings: &'a [NgsiLdWarning],
-    /// Whether to include the JSON-LD context as a `Link` header rather than in the body.
-    pub include_context_in_link: bool,
+    /// Where the JSON-LD `@context` should appear: in the `Link` header or in the body.
+    pub context_location: ContextLocation,
 }
 
 /// Apply common NGSI-LD headers to a HeaderMap.
@@ -49,7 +50,7 @@ pub fn apply_common_headers(headers: &mut HeaderMap, context: &ContextSpec, opti
         headers.typed_insert(NgsiLdWarningHeader::new(options.warnings.to_vec()));
     }
 
-    if options.include_context_in_link {
+    if options.context_location == ContextLocation::LinkHeader {
         let urls = context.for_presentation().to_link_headers();
         Link::insert_jsonld_contexts(headers, &urls);
     }

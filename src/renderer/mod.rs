@@ -26,6 +26,44 @@
 //! API handlers configure renderers via builder methods and call `render()`.
 //! No transformation logic should live in handlers directly.
 
+/// Whether system-generated attributes (`createdAt`, `modifiedAt`) should be
+/// included in the response or stripped before serialization.
+///
+/// Replaces bare `bool` parameters in subscription, registration, and temporal
+/// rendering functions.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum SysAttrsInclusion {
+    /// Include `createdAt`, `modifiedAt`, and related system attributes.
+    Include,
+    /// Strip system attributes from the response.
+    #[default]
+    Strip,
+}
+
+/// Where the JSON-LD `@context` should appear in the response.
+///
+/// For `application/json` responses the context goes in the `Link` header;
+/// for `application/ld+json` it is embedded in the body.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ContextLocation {
+    /// Context is provided via the HTTP `Link` header.
+    LinkHeader,
+    /// Context is embedded in the JSON response body.
+    Body,
+}
+
+/// Whether NGSI-LD version adaptation was applied to the response payload.
+///
+/// When a client sends `Prefer: ngsi-ld=<version>` and the broker adapts the
+/// payload, the response uses 203 Non-Authoritative Information.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VersionAdaptation {
+    /// The payload was adapted to an older NGSI-LD version.
+    Applied,
+    /// No version adaptation was performed.
+    None,
+}
+
 pub mod entity;
 pub mod geojson;
 pub mod registration;

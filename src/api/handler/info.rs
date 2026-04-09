@@ -37,6 +37,6 @@ pub async fn source_identity(
             .with_source(e)
             .with_instance(uri)
     })?;
-    let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default()).render_single(value);
+    let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default()).render_single(value)?;
     Ok(NgsiLdResponse::ok(rendered).into_response())
 }

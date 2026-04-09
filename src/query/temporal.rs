@@ -8,6 +8,7 @@ use crate::{
         error::QueryError,
         q::ast::Expr,
     },
+    renderer::SysAttrsInclusion,
 };
 use chrono::{DateTime, Utc};
 use serde::Deserialize;
@@ -385,8 +386,8 @@ pub struct CompiledTemporalQuery {
     /// Whether to include a total count of matching entities in the response.
     pub count: bool,
 
-    /// When true, include system-generated attributes (`createdAt`, `modifiedAt`).
-    pub sys_attrs: bool,
+    /// Whether to include system-generated attributes (`createdAt`, `modifiedAt`).
+    pub sys_attrs: SysAttrsInclusion,
 }
 
 #[cfg(test)]

@@ -3,15 +3,17 @@
 //! Handles stripping of system attributes and runtime status fields from
 //! CSR payloads before they are sent as HTTP responses.
 
+use crate::renderer::SysAttrsInclusion;
 use serde_json::Value;
 
 /// Render a context source registration for response by conditionally
 /// stripping system attributes and runtime status fields.
 ///
-/// When `include_sys_attrs` is false, removes `status`, `timesSent`,
-/// `timesFailed`, `lastSuccess`, `lastFailure`, `createdAt`, and `modifiedAt`.
-pub fn render_registration(value: &mut Value, include_sys_attrs: bool) {
-    if include_sys_attrs {
+/// When `sys_attrs` is [`SysAttrsInclusion::Strip`], removes `status`,
+/// `timesSent`, `timesFailed`, `lastSuccess`, `lastFailure`, `createdAt`,
+/// and `modifiedAt`.
+pub fn render_registration(value: &mut Value, sys_attrs: SysAttrsInclusion) {
+    if sys_attrs == SysAttrsInclusion::Include {
         return;
     }
     let Some(obj) = value.as_object_mut() else {
@@ -45,7 +47,7 @@ mod tests {
             "modifiedAt": "2025-01-01T00:00:00Z",
             "endpoint": "https://example.org"
         });
-        render_registration(&mut value, false);
+        render_registration(&mut value, SysAttrsInclusion::Strip);
         assert!(value.get("status").is_none());
         assert!(value.get("timesSent").is_none());
         assert!(value.get("timesFailed").is_none());
@@ -67,14 +69,14 @@ mod tests {
             "modifiedAt": "2025-01-01T00:00:00Z"
         });
         let mut value = original.clone();
-        render_registration(&mut value, true);
+        render_registration(&mut value, SysAttrsInclusion::Include);
         assert_eq!(value, original);
     }
 
     #[test]
     fn render_registration_handles_non_object() {
         let mut value = json!("not an object");
-        render_registration(&mut value, false);
+        render_registration(&mut value, SysAttrsInclusion::Strip);
         assert_eq!(value, json!("not an object"));
     }
 }

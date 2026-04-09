@@ -1,6 +1,7 @@
 use crate::{
     domain::{serde_helpers, subscription::SubscriptionStatus},
     query::q::ast::Expr,
+    renderer::SysAttrsInclusion,
     transport::endpoint::EndpointTransport,
 };
 use chrono::{DateTime, Utc};
@@ -253,7 +254,7 @@ pub struct CompiledSubscription {
     pub time_interval_secs: Option<f64>,
     pub notification_attributes: Option<Vec<String>>,
     pub notification_format: Option<String>,
-    pub notification_sys_attrs: bool,
+    pub notification_sys_attrs: SysAttrsInclusion,
     pub notification_show_changes: bool,
     pub jsonld_context: Option<String>,
     pub expires_at: Option<DateTime<Utc>>,
