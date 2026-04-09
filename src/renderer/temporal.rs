@@ -4,6 +4,7 @@
 use crate::{
     domain::{
         attribute_type::AttributeType,
+        entity::Entity,
         temporal::{AggrMethod, TeaEntry, TimeRel},
     },
     error::AndromedaError,
@@ -538,4 +539,108 @@ pub fn transform_to_temporal_values(compacted: Value) -> Value {
     }
 
     Value::Object(result)
+}
+
+/// Simplify a single temporal entity value to key-values representation.
+///
+/// Deserializes the JSON value into an [`Entity`], calls `simplify()` to
+/// produce the simplified output, and returns the result. Used by temporal
+/// handlers that need to apply key-values mode to temporal entity responses.
+pub fn simplify_temporal_value(entity_value: Value) -> Result<Value, AndromedaError> {
+    let entity: Entity = serde_json::from_value(entity_value)
+        .map_err(|e| AndromedaError::bad_request_data(format!("Failed to parse temporal entity for simplification: {}", e)))?;
+    Ok(entity.simplify())
+}
+
+/// Simplify a collection of temporal entity values to key-values representation.
+///
+/// Applies [`simplify_temporal_value`] to each entity in the collection.
+/// Propagates the first deserialization error encountered.
+pub fn simplify_temporal_values(entities: Vec<Value>) -> Result<Vec<Value>, AndromedaError> {
+    let mut simplified = Vec::with_capacity(entities.len());
+    for entity_value in entities {
+        simplified.push(simplify_temporal_value(entity_value)?);
+    }
+    Ok(simplified)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn simplify_temporal_value_with_property() {
+        let entity = json!({
+            "id": "urn:ngsi-ld:Vehicle:1",
+            "type": "Vehicle",
+            "speed": {
+                "type": "Property",
+                "value": 100
+            }
+        });
+        let result = simplify_temporal_value(entity).expect("simplification succeeds");
+        assert_eq!(result["id"], "urn:ngsi-ld:Vehicle:1");
+        assert_eq!(result["type"], "Vehicle");
+        assert_eq!(result["speed"], 100);
+    }
+
+    #[test]
+    fn simplify_temporal_value_with_relationship() {
+        let entity = json!({
+            "id": "urn:ngsi-ld:Vehicle:1",
+            "type": "Vehicle",
+            "isParked": {
+                "type": "Relationship",
+                "object": "urn:ngsi-ld:Parking:1"
+            }
+        });
+        let result = simplify_temporal_value(entity).expect("simplification succeeds");
+        assert_eq!(result["isParked"], "urn:ngsi-ld:Parking:1");
+    }
+
+    #[test]
+    fn simplify_temporal_value_invalid_json_returns_error() {
+        let not_entity = json!({"not": "an entity"});
+        assert!(simplify_temporal_value(not_entity).is_err());
+    }
+
+    #[test]
+    fn simplify_temporal_values_empty_vec() {
+        let result = simplify_temporal_values(Vec::new()).expect("empty vec succeeds");
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn simplify_temporal_values_multiple_entities() {
+        let entities = vec![
+            json!({
+                "id": "urn:ngsi-ld:Vehicle:1",
+                "type": "Vehicle",
+                "speed": { "type": "Property", "value": 100 }
+            }),
+            json!({
+                "id": "urn:ngsi-ld:Vehicle:2",
+                "type": "Vehicle",
+                "speed": { "type": "Property", "value": 200 }
+            }),
+        ];
+        let result = simplify_temporal_values(entities).expect("simplification succeeds");
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0]["speed"], 100);
+        assert_eq!(result[1]["speed"], 200);
+    }
+
+    #[test]
+    fn simplify_temporal_values_propagates_error() {
+        let entities = vec![
+            json!({
+                "id": "urn:ngsi-ld:Vehicle:1",
+                "type": "Vehicle",
+                "speed": { "type": "Property", "value": 100 }
+            }),
+            json!({"not": "an entity"}),
+        ];
+        assert!(simplify_temporal_values(entities).is_err());
+    }
 }

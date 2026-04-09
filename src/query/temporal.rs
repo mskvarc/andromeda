@@ -2,6 +2,7 @@
 
 use crate::{
     domain::temporal::{AggrMethod, TemporalFormat, TimeProp, TimeRel},
+    http::model::temporal_query_request::TemporalQueryRequest,
     query::{
         compiled::{GeoQuery, IdPattern},
         error::QueryError,
@@ -221,6 +222,77 @@ impl TemporalQueryParameters {
             ));
         }
         Ok(())
+    }
+}
+
+impl From<TemporalQueryRequest> for TemporalQueryParameters {
+    fn from(request: TemporalQueryRequest) -> TemporalQueryParameters {
+        let mut ids = Vec::new();
+        let mut types = Vec::new();
+        let mut id_pattern = None;
+
+        if let Some(entities) = request.entities {
+            for sel in entities {
+                if let Some(id) = sel.id() {
+                    ids.push(id.to_string());
+                }
+                if let Some(t) = sel.type_() {
+                    types.push(t.to_string());
+                }
+                if let Some(p) = sel.id_pattern() {
+                    id_pattern = Some(p.to_string());
+                }
+            }
+        }
+
+        let (timerel, time_at, end_time_at, timeproperty, aggr_methods, aggr_period_duration) = if let Some(tq) = request.temporal_q {
+            (
+                Some(tq.timerel),
+                Some(tq.time_at),
+                tq.end_time_at,
+                tq.timeproperty,
+                tq.aggr_methods,
+                tq.aggr_period_duration,
+            )
+        } else {
+            (None, None, None, None, None, None)
+        };
+
+        TemporalQueryParameters {
+            id: if ids.is_empty() { None } else { Some(ids.join(",")) },
+            entity_type: if types.is_empty() { None } else { Some(types.join(",")) },
+            id_pattern,
+            attrs: request.attrs.map(|a: Vec<String>| a.join(",")),
+            q: request.q,
+            georel: request.geo_q.as_ref().map(|g| g.georel.clone()), // clone: owned String from borrowed optional struct
+            geometry: request.geo_q.as_ref().map(|g| g.geometry.clone()), // clone: owned String from borrowed optional struct
+            coordinates: request.geo_q.as_ref().map(|g| g.coordinates.to_string()),
+            geoproperty: request.geo_q.as_ref().and_then(|g| g.geoproperty.clone()), // clone: owned String from borrowed optional struct
+            timerel,
+            time_at,
+            end_time_at,
+            timeproperty,
+            last_n: request.last_n,
+            format: request.format,
+            options: None,
+            aggr_methods,
+            aggr_period_duration,
+            limit: request.limit,
+            offset: request.offset,
+            count: request.count,
+            _order_by: None,
+            pick: None,
+            omit: None,
+            dataset_id: None,
+            _lang: None,
+            local: request.local,
+            entity_map: None,
+            entity_map_lifetime: None,
+            split_entities: None,
+            _scope_q: None,
+            expand_values: None,
+            json_keys: None,
+        }
     }
 }
 
@@ -476,5 +548,96 @@ mod tests {
     fn is_simplified_default_is_false() {
         let p = params_from_query("");
         assert!(!p.is_simplified());
+    }
+
+    #[test]
+    fn from_temporal_query_request_empty() {
+        use crate::http::model::temporal_query_request::TemporalQueryRequest;
+
+        let request = TemporalQueryRequest {
+            _type: "Query".to_string(),
+            entities: None,
+            attrs: None,
+            q: None,
+            geo_q: None,
+            temporal_q: None,
+            limit: None,
+            offset: None,
+            count: None,
+            format: None,
+            last_n: None,
+            local: None,
+        };
+        let params: TemporalQueryParameters = request.into();
+        assert!(params.id.is_none());
+        assert!(params.entity_type.is_none());
+        assert!(params.timerel.is_none());
+        assert!(params.time_at.is_none());
+    }
+
+    #[test]
+    fn from_temporal_query_request_with_temporal_q() {
+        use crate::http::model::temporal_query_request::{TemporalQ, TemporalQueryRequest};
+
+        let request = TemporalQueryRequest {
+            _type: "Query".to_string(),
+            entities: None,
+            attrs: Some(vec!["speed".to_string()]),
+            q: None,
+            geo_q: None,
+            temporal_q: Some(TemporalQ {
+                timerel: "after".to_string(),
+                time_at: "2024-01-01T00:00:00Z".to_string(),
+                end_time_at: None,
+                timeproperty: Some("observedAt".to_string()),
+                aggr_methods: Some("avg".to_string()),
+                aggr_period_duration: Some("PT1H".to_string()),
+            }),
+            limit: Some(50),
+            offset: None,
+            count: Some(true),
+            format: Some("temporalValues".to_string()),
+            last_n: Some(10),
+            local: Some(true),
+        };
+        let params: TemporalQueryParameters = request.into();
+        assert_eq!(params.timerel.as_deref(), Some("after"));
+        assert_eq!(params.time_at.as_deref(), Some("2024-01-01T00:00:00Z"));
+        assert_eq!(params.timeproperty.as_deref(), Some("observedAt"));
+        assert_eq!(params.aggr_methods.as_deref(), Some("avg"));
+        assert_eq!(params.aggr_period_duration.as_deref(), Some("PT1H"));
+        assert_eq!(params.attrs.as_deref(), Some("speed"));
+        assert_eq!(params.limit, Some(50));
+        assert_eq!(params.count, Some(true));
+        assert_eq!(params.format.as_deref(), Some("temporalValues"));
+        assert_eq!(params.last_n, Some(10));
+        assert_eq!(params.local, Some(true));
+    }
+
+    #[test]
+    fn from_temporal_query_request_without_temporal_q() {
+        use crate::http::model::temporal_query_request::TemporalQueryRequest;
+
+        let request = TemporalQueryRequest {
+            _type: "Query".to_string(),
+            entities: None,
+            attrs: None,
+            q: None,
+            geo_q: None,
+            temporal_q: None,
+            limit: None,
+            offset: None,
+            count: None,
+            format: None,
+            last_n: None,
+            local: None,
+        };
+        let params: TemporalQueryParameters = request.into();
+        assert!(params.timerel.is_none());
+        assert!(params.time_at.is_none());
+        assert!(params.end_time_at.is_none());
+        assert!(params.timeproperty.is_none());
+        assert!(params.aggr_methods.is_none());
+        assert!(params.aggr_period_duration.is_none());
     }
 }

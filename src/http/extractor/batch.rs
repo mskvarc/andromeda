@@ -1,0 +1,226 @@
+//! Batch entity request parsing for NGSI-LD batch operations.
+//!
+//! Provides [`BatchBody`] (a [`FromRequest`] extractor that validates Content-Type)
+//! and [`parse_batch_entities`] which handles per-entity JSON-LD context merging,
+//! content-type classification, and validation.
+
+use crate::{
+    domain::entity::Entity,
+    error::AndromedaError,
+    http::{
+        error::{
+            batch::BatchEntityError,
+            problem::{NgsiLdError, NgsiLdErrorType},
+        },
+        extractor::context::ContextUrl,
+    },
+    jsonld::ContextSpec,
+};
+use axum::{
+    body::Bytes,
+    extract::{FromRequest, Request},
+    http::{HeaderMap, StatusCode, Uri, header::CONTENT_TYPE},
+    response::{IntoResponse, Response},
+};
+use mediatype::{MediaTypeBuf, names};
+use serde_json::Value;
+use std::collections::HashSet;
+
+/// Content-Type classification for batch entity parsing.
+enum ContentKind {
+    Json,
+    LdJson,
+}
+
+fn classify_batch_content_type(raw: &str) -> Option<ContentKind> {
+    let mt: MediaTypeBuf = raw.parse().ok()?;
+    if mt.ty() != names::APPLICATION {
+        return None;
+    }
+    if mt.subty() == names::LD && mt.suffix() == Some(names::JSON) {
+        return Some(ContentKind::LdJson);
+    }
+    if mt.subty() == names::JSON && mt.suffix().is_none() {
+        return Some(ContentKind::Json);
+    }
+    None
+}
+
+fn has_supported_json_content_type(headers: &HeaderMap) -> bool {
+    classify_batch_content_type(headers.get(CONTENT_TYPE).and_then(|v| v.to_str().ok()).unwrap_or("")).is_some()
+}
+
+/// Validated batch request body with associated headers.
+///
+/// Bundles the request headers and body bytes for batch entity operations,
+/// rejecting the request with 415 Unsupported Media Type if the Content-Type
+/// is not a supported JSON variant (`application/json` or `application/ld+json`).
+pub struct BatchBody {
+    /// Request headers, needed by [`parse_batch_entities`] for Content-Type
+    /// classification and Link header conflict detection.
+    pub headers: HeaderMap,
+    /// Raw request body bytes.
+    pub body: Bytes,
+}
+
+impl<S> FromRequest<S> for BatchBody
+where
+    S: Send + Sync,
+{
+    type Rejection = Response;
+
+    async fn from_request(req: Request, state: &S) -> Result<BatchBody, Self::Rejection> {
+        let (mut parts, body) = req.into_parts();
+        if !has_supported_json_content_type(&parts.headers) {
+            return Err(StatusCode::UNSUPPORTED_MEDIA_TYPE.into_response());
+        }
+        // Move headers out before reassembling the request for body extraction.
+        // Bytes::from_request does not inspect headers, so empty headers are safe.
+        let headers = std::mem::take(&mut parts.headers);
+        let req = Request::from_parts(parts, body);
+        let body = Bytes::from_request(req, state).await.map_err(IntoResponse::into_response)?;
+        Ok(BatchBody { headers, body })
+    }
+}
+
+/// Parse a batch request body with per-entity error handling.
+///
+/// Returns `(valid_entities, context, per_entity_errors)`.
+/// Whole-request errors (empty body, invalid JSON, unsupported Content-Type)
+/// are returned as `Err`.
+pub fn parse_batch_entities(
+    body: &Bytes,
+    headers: &HeaderMap,
+    context: &ContextUrl,
+    uri: &Uri,
+) -> Result<(Vec<Entity>, ContextSpec, Vec<BatchEntityError>), NgsiLdError> {
+    let content_type_raw = headers.get(CONTENT_TYPE).and_then(|v| v.to_str().ok()).unwrap_or("");
+
+    let content_kind = classify_batch_content_type(content_type_raw)
+        .ok_or_else(|| AndromedaError::invalid_request(format!("Unsupported Media Type: {}", content_type_raw)).with_instance(uri.clone()))?;
+
+    let is_ld_json = matches!(content_kind, ContentKind::LdJson);
+    let is_plain_json = matches!(content_kind, ContentKind::Json);
+
+    // Check for conflicting Link header + ld+json
+    if is_ld_json {
+        let has_context_link = headers
+            .get_all("Link")
+            .iter()
+            .any(|v| v.to_str().ok().is_some_and(|s| s.contains("http://www.w3.org/ns/json-ld#context")));
+        if has_context_link {
+            return Err(
+                AndromedaError::bad_request_data("application/ld+json must not be combined with a Link context header")
+                    .with_instance(uri.clone())
+                    .into(),
+            );
+        }
+    }
+
+    if body.is_empty() {
+        return Err(AndromedaError::bad_request_data("Request body shall not be empty")
+            .with_instance(uri.clone())
+            .into());
+    }
+
+    let value: Value = serde_json::from_slice(body).map_err(|e| AndromedaError::invalid_request(format!("Invalid JSON: {}", e)).with_instance(uri.clone()))?;
+
+    let items = match value {
+        Value::Array(arr) if arr.is_empty() => {
+            return Err(AndromedaError::bad_request_data("Request body must contain a non-empty array of entities")
+                .with_instance(uri.clone())
+                .into());
+        }
+        Value::Array(arr) => arr,
+        _ => {
+            return Err(AndromedaError::bad_request_data("Request body must be a JSON array of entities")
+                .with_instance(uri.clone())
+                .into());
+        }
+    };
+
+    // Merge all @context values from all items for the overall context
+    let mut merged_context = context.0.clone(); // clone: need owned ContextSpec to merge body contexts into
+    if is_ld_json {
+        let mut seen = HashSet::new();
+        let mut merged_ctx_values = Vec::new();
+        for item in &items {
+            if let Some(ctx) = item.as_object().and_then(|o| o.get("@context")) {
+                match ctx {
+                    Value::Array(arr) => {
+                        for v in arr {
+                            let key = serde_json::to_string(v).unwrap_or_default();
+                            if seen.insert(key) {
+                                merged_ctx_values.push(v.clone()); // clone: collecting values from borrowed JSON
+                            }
+                        }
+                    }
+                    other => {
+                        let key = serde_json::to_string(other).unwrap_or_default();
+                        if seen.insert(key) {
+                            merged_ctx_values.push(other.clone()); // clone: collecting values from borrowed JSON
+                        }
+                    }
+                }
+            }
+        }
+        if !merged_ctx_values.is_empty() {
+            let ctx_value = match merged_ctx_values.len() {
+                1 => merged_ctx_values.into_iter().next().unwrap_or(Value::Null),
+                _ => Value::Array(merged_ctx_values),
+            };
+            merged_context = merged_context.with_body_context(Some(ctx_value));
+        }
+    }
+
+    let mut entities = Vec::new();
+    let mut parse_errors = Vec::new();
+
+    for mut item in items {
+        let entity_id = item
+            .as_object()
+            .and_then(|o| o.get("id"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown")
+            .to_string();
+
+        // Per-entity @context validation
+        let has_context = item.as_object().is_some_and(|o| o.contains_key("@context"));
+
+        if is_plain_json && has_context {
+            parse_errors.push(BatchEntityError::from_parse_error(
+                &entity_id,
+                NgsiLdErrorType::BadRequestData,
+                "application/json body must not contain @context",
+            ));
+            continue;
+        }
+
+        if is_ld_json && !has_context {
+            parse_errors.push(BatchEntityError::from_parse_error(
+                &entity_id,
+                NgsiLdErrorType::BadRequestData,
+                "application/ld+json body must contain @context",
+            ));
+            continue;
+        }
+
+        // Strip @context before deserializing
+        if let Some(obj) = item.as_object_mut() {
+            obj.remove("@context");
+        }
+
+        match serde_json::from_value::<Entity>(item) {
+            Ok(entity) => entities.push(entity),
+            Err(e) => {
+                parse_errors.push(BatchEntityError::from_parse_error(
+                    &entity_id,
+                    NgsiLdErrorType::BadRequestData,
+                    &format!("Invalid entity: {}", e),
+                ));
+            }
+        }
+    }
+
+    Ok((entities, merged_context, parse_errors))
+}

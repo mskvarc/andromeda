@@ -3,13 +3,13 @@ use crate::{
         handler::parse::{parse_entity_id, validate_attr_name},
         tenant::{TenantState, TenantStateOrCreate},
     },
-    domain::{
-        entity::{Entity, EntityPatch, EntityTypeValue},
-        registration::ForwardingMode,
-    },
+    domain::entity::{Entity, EntityPatch, EntityTypeValue},
     error::AndromedaError,
     http::{
-        error::{batch::BatchEntityError, problem::NgsiLdError},
+        error::{
+            batch::{BatchEntityError, BatchOperationResult},
+            problem::NgsiLdError,
+        },
         extractor::{
             accept::AcceptFormat,
             context::ContextUrl,
@@ -23,29 +23,37 @@ use crate::{
             DeleteAttrParams,
             LocalOnlyParams,
             entity::{AppendParams, GetEntityParams, PartialUpdateAttrParams},
+            protocol::{apply_entity_get_extension_headers, apply_entity_query_extension_headers},
         },
         response::{collection::NgsiLdCollectionResponse, single::NgsiLdResponse},
     },
     jsonld::ContextSpec,
-    query::{compile::expand_q_expression, entity::EntityQueryParameters, q::eval::evaluate},
+    query::{compile::expand_q_expression, q::eval::evaluate},
     renderer::{
         entity::{EntityRenderer, render_snapshot},
         response::ResponseRenderer,
     },
-    service::context_source_forwarding::{
-        ForwardBatchProvisionRequest,
-        ForwardProvisionRequest,
-        ForwardingOperation,
-        collect_warnings,
-        merge_query_results,
-        merge_retrieve_results,
+    service::{
+        context_source_forwarding::{
+            ForwardBatchProvisionRequest,
+            ForwardProvisionRequest,
+            ForwardingOperation,
+            collect_forwarded_exclusive_attrs,
+            collect_warnings,
+            merge_retrieve_results,
+            strip_exclusive_attrs_from_value,
+        },
+        entity::{
+            provision_forwarding::{ForwardingModes, build_multi_status_body, first_forwarded_status, has_remote_errors},
+            query::EntityQueryService,
+        },
     },
     worker::notification::matching::{matches_geo_filter, matches_scope_filter},
 };
 use axum::{
     Json,
     extract::{OriginalUri, Path},
-    http::{StatusCode, Uri},
+    http::StatusCode,
     response::{IntoResponse, Response},
 };
 use serde_json::Value;
@@ -57,74 +65,6 @@ pub async fn patch_no_id(OriginalUri(uri): OriginalUri) -> Result<Response, Ngsi
 
 pub async fn put_no_id(OriginalUri(uri): OriginalUri) -> Result<Response, NgsiLdError> {
     Err(NgsiLdError::from(AndromedaError::bad_request_data("Entity id is required").with_instance(uri)))
-}
-
-fn dataset_header_to_csv(protocol: &NgsiLdProtocolHeaders) -> Option<String> {
-    protocol
-        .dataset_id
-        .as_ref()
-        .map(|dataset| dataset.as_slice().iter().map(ToString::to_string).collect::<Vec<_>>().join(","))
-}
-
-fn apply_entity_get_extension_headers(params: &mut GetEntityParams, protocol: &NgsiLdProtocolHeaders, uri: &Uri) -> Result<(), NgsiLdError> {
-    if params.format.is_none()
-        && let Some(response_format) = protocol.response_format
-    {
-        let format_value = response_format.as_query_value();
-        if !matches!(format_value, "normalized" | "keyValues" | "simplified" | "concise") {
-            return Err(NgsiLdError::from(
-                AndromedaError::invalid_request(format!("Invalid format value: '{}'", format_value)).with_instance(uri.clone()),
-            ));
-        }
-        params.format = Some(format_value.to_string());
-    }
-    if params.dataset_id.is_none() {
-        params.dataset_id = dataset_header_to_csv(protocol);
-    }
-    if params.join.is_none()
-        && let Some(join) = protocol.join
-    {
-        params.join = Some(join.into_inner().to_string());
-    }
-    if params.join_level.is_none()
-        && let Some(join_level) = protocol.join_level
-    {
-        params.join_level = Some(join_level.into_inner());
-    }
-    Ok(())
-}
-
-fn apply_entity_query_extension_headers(params: &mut EntityQueryParameters, protocol: &NgsiLdProtocolHeaders, uri: &Uri) -> Result<(), NgsiLdError> {
-    if params.scope_q.is_none()
-        && let Some(scope) = protocol.scope.as_ref()
-    {
-        params.scope_q = Some(scope.as_str().to_string());
-    }
-    if params.format.is_none()
-        && let Some(response_format) = protocol.response_format
-    {
-        let format_value = response_format.as_query_value();
-        if !matches!(format_value, "normalized" | "keyValues" | "simplified" | "concise") {
-            return Err(NgsiLdError::from(
-                AndromedaError::invalid_request(format!("Invalid format value: '{}'", format_value)).with_instance(uri.clone()),
-            ));
-        }
-        params.format = Some(format_value.to_string());
-    }
-    if params.dataset_id.is_none() {
-        params.dataset_id = dataset_header_to_csv(protocol);
-    }
-    if params.join.is_none()
-        && let Some(join) = protocol.join
-    {
-        params.join = Some(join.into_inner().to_string());
-    }
-    if params.join_level.is_none()
-        && let Some(join_level) = protocol.join_level
-    {
-        params.join_level = Some(join_level.into_inner());
-    }
-    Ok(())
 }
 
 pub async fn create(
@@ -177,76 +117,33 @@ pub async fn create(
         .map_err(|e| e.with_instance(uri.clone()))?;
 
     if forwarded.is_empty() {
-        // No matching CSRs — create locally
         let id = service.create(&entity, &context).await.map_err(|e| e.with_instance(uri.clone()))?;
         return Ok((StatusCode::CREATED, [("Location", format!("/ngsi-ld/v1/entities/{}", id))]).into_response());
     }
 
-    // Check modes
-    let has_exclusive = forwarded.iter().any(|r| r.mode == ForwardingMode::Exclusive);
-    let has_redirect = forwarded.iter().any(|r| r.mode == ForwardingMode::Redirect);
-    let has_inclusive = forwarded.iter().any(|r| r.mode == ForwardingMode::Inclusive);
+    let modes = ForwardingModes::from_results(&forwarded);
 
-    if has_exclusive || has_redirect {
-        // Exclusive/redirect: don't create locally, return CS result
-        let first_status = forwarded.first().map_or(201, |r| r.status);
-        let status = StatusCode::from_u16(first_status).unwrap_or(StatusCode::CREATED);
+    if modes.has_exclusive || modes.has_redirect {
+        let status = StatusCode::from_u16(first_forwarded_status(&forwarded, 201)).unwrap_or(StatusCode::CREATED);
         if status == StatusCode::CREATED {
             return Ok((status, [("Location", format!("/ngsi-ld/v1/entities/{}", entity_id))]).into_response());
         }
         return Ok(status.into_response());
     }
 
-    if has_inclusive {
-        // Inclusive: create locally AND forward to CS (already forwarded above)
+    if modes.has_inclusive {
         let local_result = service.create(&entity, &context).await;
         let local_ok = local_result.is_ok();
         let local_error = local_result.err();
 
-        let has_remote_errors = forwarded.iter().any(|r| r.status >= 400);
-
-        if local_ok && !has_remote_errors {
+        if local_ok && !has_remote_errors(&forwarded) {
             return Ok((StatusCode::CREATED, [("Location", format!("/ngsi-ld/v1/entities/{}", entity_id))]).into_response());
         }
 
-        // 207 Multi-Status
-        let mut success = Vec::new();
-        let mut errors = Vec::new();
-
-        if local_ok {
-            success.push(serde_json::json!(entity_id));
-        } else if let Some(err) = local_error {
-            errors.push(serde_json::json!({
-                "entityId": entity_id,
-                "error": serde_json::to_value(BatchEntityError::from_domain_error(&entity_id, &err).error).unwrap_or_default()
-            }));
-        }
-
-        for r in &forwarded {
-            if r.status >= 400 {
-                let error_body = r.body.clone().unwrap_or_else(|| {
-                    serde_json::json!({
-                        "status": r.status,
-                        "title": "Error from context source"
-                    })
-                });
-                errors.push(serde_json::json!({
-                    "entityId": entity_id,
-                    "error": error_body
-                }));
-            } else if !local_ok {
-                success.push(serde_json::json!(entity_id));
-            }
-        }
-
-        let body = serde_json::json!({
-            "success": success,
-            "errors": errors
-        });
+        let body = build_multi_status_body(&entity_id, local_ok, local_error.as_ref(), &forwarded);
         return Ok((StatusCode::MULTI_STATUS, Json(body)).into_response());
     }
 
-    // Fallback: create locally
     let id = service.create(&entity, &context).await.map_err(|e| e.with_instance(uri.clone()))?;
     Ok((StatusCode::CREATED, [("Location", format!("/ngsi-ld/v1/entities/{}", id))]).into_response())
 }
@@ -481,17 +378,7 @@ pub async fn delete(
     // delete locally but return 207 to indicate exclusive data could not be cleaned up.
     if forwarded.is_empty() && !unforwardable_exclusive.is_empty() {
         let local_result = service.delete(&id).await;
-        let mut success = Vec::new();
-        let mut errors = Vec::new();
-        if local_result.is_ok() {
-            success.push(serde_json::json!(entity_id));
-        } else if let Some(err) = local_result.err() {
-            errors.push(serde_json::json!({
-                "entityId": entity_id,
-                "error": serde_json::to_value(BatchEntityError::from_domain_error(&entity_id, &err).error).unwrap_or_default()
-            }));
-        }
-        let body = serde_json::json!({ "success": success, "errors": errors });
+        let body = build_multi_status_body(&entity_id, local_result.is_ok(), local_result.err().as_ref(), &[]);
         return Ok((StatusCode::MULTI_STATUS, Json(body)).into_response());
     }
 
@@ -500,72 +387,32 @@ pub async fn delete(
         return Ok(StatusCode::NO_CONTENT.into_response());
     }
 
-    let has_exclusive = forwarded.iter().any(|r| r.mode == ForwardingMode::Exclusive);
-    let has_redirect = forwarded.iter().any(|r| r.mode == ForwardingMode::Redirect);
-    let has_inclusive = forwarded.iter().any(|r| r.mode == ForwardingMode::Inclusive);
+    let modes = ForwardingModes::from_results(&forwarded);
 
-    if has_exclusive {
-        // Delete locally AND forward (already forwarded)
+    if modes.has_exclusive {
         if let Err(e) = service.delete(&id).await {
             tracing::warn!(error = %e, entity_id = %id, "Failed to delete local entity during exclusive forwarding");
         }
         return Ok(StatusCode::NO_CONTENT.into_response());
     }
 
-    if has_redirect {
-        // Redirect: don't delete locally, return CS result
+    if modes.has_redirect {
         return Ok(StatusCode::NO_CONTENT.into_response());
     }
 
-    if has_inclusive {
+    if modes.has_inclusive {
         let local_result = service.delete(&id).await;
         let local_ok = local_result.is_ok();
         let local_error = local_result.err();
 
-        let has_remote_errors = forwarded.iter().any(|r| r.status >= 400);
-
-        if local_ok && !has_remote_errors {
+        if local_ok && !has_remote_errors(&forwarded) {
             return Ok(StatusCode::NO_CONTENT.into_response());
         }
 
-        // 207 Multi-Status
-        let mut success = Vec::new();
-        let mut errors = Vec::new();
-
-        if local_ok {
-            success.push(serde_json::json!(entity_id));
-        } else if let Some(err) = local_error {
-            errors.push(serde_json::json!({
-                "entityId": entity_id,
-                "error": serde_json::to_value(BatchEntityError::from_domain_error(&entity_id, &err).error).unwrap_or_default()
-            }));
-        }
-
-        for r in &forwarded {
-            if r.status >= 400 {
-                let error_body = r.body.clone().unwrap_or_else(|| {
-                    serde_json::json!({
-                        "status": r.status,
-                        "title": "Error from context source"
-                    })
-                });
-                errors.push(serde_json::json!({
-                    "entityId": entity_id,
-                    "error": error_body
-                }));
-            } else if !local_ok {
-                success.push(serde_json::json!(entity_id));
-            }
-        }
-
-        let body = serde_json::json!({
-            "success": success,
-            "errors": errors
-        });
+        let body = build_multi_status_body(&entity_id, local_ok, local_error.as_ref(), &forwarded);
         return Ok((StatusCode::MULTI_STATUS, Json(body)).into_response());
     }
 
-    // Fallback
     service.delete(&id).await.map_err(|e| e.with_instance(uri.clone()))?;
     Ok(StatusCode::NO_CONTENT.into_response())
 }
@@ -626,18 +473,12 @@ pub async fn query(
 
     // §5.5.9.3: If NGSILD-EntityMap header present, scope query to that map's entity IDs
     if let Some(ref map_id) = entity_map_header {
-        let map = state.entity_maps.retrieve(map_id.as_str()).await.map_err(|e| e.with_instance(uri.clone()))?;
-        // Inject entity map IDs as the id filter (scopes the query to the frozen set)
-        let ids_csv = map.entity_ids.join(",");
-        if let Some(ref existing_ids) = query.id {
-            // Intersect: keep only IDs that are in both the query and the map
-            let query_ids: std::collections::HashSet<String> = existing_ids.split(',').map(|s| s.trim().to_string()).collect();
-            let map_ids: std::collections::HashSet<String> = map.entity_ids.into_iter().collect();
-            let intersection: Vec<String> = query_ids.intersection(&map_ids).cloned().collect();
-            query.id = Some(intersection.join(","));
-        } else {
-            query.id = Some(ids_csv);
-        }
+        let scoped = state
+            .entity_maps
+            .scope_query_ids(map_id.as_str(), query.id.as_deref())
+            .await
+            .map_err(|e| e.with_instance(uri.clone()))?;
+        query.id = Some(scoped);
     }
 
     let opts = query.parse_options();
@@ -696,28 +537,8 @@ pub async fn query(
         if forwarded.is_empty() {
             (local_entities, warnings)
         } else {
-            let local_values: Vec<Value> = local_entities.iter().map(|e| serde_json::to_value(e).unwrap_or_default()).collect();
-            let merged_values = merge_query_results(local_values, forwarded);
-            // Convert merged values back to Entity structs
-            let mut result = Vec::new();
-            for val in merged_values {
-                match serde_json::from_value::<Entity>(val) {
-                    Ok(e) => result.push(e),
-                    Err(err) => {
-                        tracing::debug!("Failed to deserialize merged entity: {}", err);
-                    }
-                }
-            }
-            // Per spec 5.7.2: apply attrs filter to merged results -- context sources
-            // return all attributes, so filtering must happen after merge
-            if let Some(ref attrs_str) = query.attrs {
-                let requested: Vec<&str> = attrs_str.split(',').map(str::trim).collect();
-                for entity in &mut result {
-                    entity.attrs.retain(|k, _| requested.iter().any(|a| k.ends_with(a)));
-                }
-                result.retain(|e| !e.attrs.is_empty());
-            }
-            (result, warnings)
+            let merged = EntityQueryService::merge_with_forwarded(local_entities, forwarded, query.attrs.as_deref());
+            (merged, warnings)
         }
     };
 
@@ -919,24 +740,18 @@ pub async fn merge(
         return Ok(StatusCode::NO_CONTENT.into_response());
     }
 
-    let has_redirect = forwarded.iter().any(|r| r.mode == ForwardingMode::Redirect);
+    let modes = ForwardingModes::from_results(&forwarded);
 
-    if has_redirect {
-        // Redirect: return CS status
-        let first_status = forwarded.first().map_or(204, |r| r.status);
-        return Ok(StatusCode::from_u16(first_status).unwrap_or(StatusCode::NO_CONTENT).into_response());
+    if modes.has_redirect {
+        let status = StatusCode::from_u16(first_forwarded_status(&forwarded, 204)).unwrap_or(StatusCode::NO_CONTENT);
+        return Ok(status.into_response());
     }
 
     // Per spec 4.3.6.3: exclusive attributes shall not be held locally.
-    // Strip exclusive attributes from the patch before local merge.
-    let exclusive_attrs: Vec<String> = forwarded.iter().flat_map(|r| r.exclusive_attrs.iter().cloned()).collect();
+    let exclusive_attrs = collect_forwarded_exclusive_attrs(&forwarded);
     if !exclusive_attrs.is_empty() {
-        let mut filtered_patch = patch.clone();
-        for attr in &exclusive_attrs {
-            filtered_patch.attrs.shift_remove(attr);
-        }
-        if filtered_patch.attrs.is_empty() {
-            // All attributes are exclusive — nothing to merge locally
+        let mut filtered_patch = patch.clone(); // clone: need modified copy; original consumed by forwarding
+        if !filtered_patch.strip_exclusive_attrs(&exclusive_attrs) {
             return Ok(StatusCode::NO_CONTENT.into_response());
         }
         service.merge(&id, &filtered_patch, &context).await.map_err(|e| e.with_instance(uri.clone()))?;
@@ -997,21 +812,18 @@ pub async fn update(
         return Ok(StatusCode::NO_CONTENT.into_response());
     }
 
-    let has_redirect = forwarded.iter().any(|r| r.mode == ForwardingMode::Redirect);
+    let modes = ForwardingModes::from_results(&forwarded);
 
-    if has_redirect {
-        let first_status = forwarded.first().map_or(204, |r| r.status);
-        return Ok(StatusCode::from_u16(first_status).unwrap_or(StatusCode::NO_CONTENT).into_response());
+    if modes.has_redirect {
+        let status = StatusCode::from_u16(first_forwarded_status(&forwarded, 204)).unwrap_or(StatusCode::NO_CONTENT);
+        return Ok(status.into_response());
     }
 
     // Per spec 4.3.6.3: exclusive attributes shall not be held locally.
-    // Strip exclusive attributes from the payload before local replace.
-    let exclusive_attrs: Vec<String> = forwarded.iter().flat_map(|r| r.exclusive_attrs.iter().cloned()).collect();
+    let exclusive_attrs = collect_forwarded_exclusive_attrs(&forwarded);
     if !exclusive_attrs.is_empty() {
-        let mut filtered_patch = patch.clone();
-        for attr in &exclusive_attrs {
-            filtered_patch.attrs.shift_remove(attr);
-        }
+        let mut filtered_patch = patch.clone(); // clone: need modified copy; original consumed by forwarding
+        filtered_patch.strip_exclusive_attrs(&exclusive_attrs);
         service
             .replace_entity(&id, &filtered_patch, &context)
             .await
@@ -1085,33 +897,28 @@ pub async fn append_attrs(
         return Ok((StatusCode::MULTI_STATUS, Json(body)).into_response());
     }
 
-    let has_redirect = forwarded.iter().any(|r| r.mode == ForwardingMode::Redirect);
-    if has_redirect {
-        let first_status = forwarded.first().map_or(204, |r| r.status);
-        return Ok(StatusCode::from_u16(first_status).unwrap_or(StatusCode::NO_CONTENT).into_response());
+    let modes = ForwardingModes::from_results(&forwarded);
+    if modes.has_redirect {
+        let status = StatusCode::from_u16(first_forwarded_status(&forwarded, 204)).unwrap_or(StatusCode::NO_CONTENT);
+        return Ok(status.into_response());
     }
 
     // Per spec 4.3.6.3: exclusive attributes shall not be held locally.
-    // Strip exclusive attributes from the fragment before local append.
-    let exclusive_attrs: Vec<String> = forwarded.iter().flat_map(|r| r.exclusive_attrs.iter().cloned()).collect();
+    let exclusive_attrs = collect_forwarded_exclusive_attrs(&forwarded);
     let local_fragment = if !exclusive_attrs.is_empty() {
-        let mut filtered = fragment.clone();
-        if let Some(obj) = filtered.as_object_mut() {
-            for attr in &exclusive_attrs {
-                obj.remove(attr);
-            }
-        }
+        let mut filtered = fragment.clone(); // clone: need modified copy; original consumed by forwarding
+        strip_exclusive_attrs_from_value(&mut filtered, &exclusive_attrs);
         filtered
     } else {
         fragment
     };
 
-    // Apply locally (ignore errors for inclusive — remote already succeeded)
+    // Apply locally (ignore errors for inclusive -- remote already succeeded)
     let local_result = service.append_attrs(&id, local_fragment, no_overwrite, &context).await;
-    let has_remote_errors = forwarded.iter().any(|r| r.status >= 400);
+    let remote_errors = has_remote_errors(&forwarded);
 
     if let Ok((_, not_appended)) = &local_result
-        && !has_remote_errors
+        && !remote_errors
         && not_appended.is_empty()
     {
         return Ok(StatusCode::NO_CONTENT.into_response());
@@ -1190,48 +997,29 @@ pub async fn update_attrs(
         return Ok((StatusCode::MULTI_STATUS, Json(body)).into_response());
     }
 
-    let has_redirect = forwarded.iter().any(|r| r.mode == ForwardingMode::Redirect);
-    if has_redirect {
-        let first_status = forwarded.first().map_or(204, |r| r.status);
-        return Ok(StatusCode::from_u16(first_status).unwrap_or(StatusCode::NO_CONTENT).into_response());
+    let modes = ForwardingModes::from_results(&forwarded);
+    if modes.has_redirect {
+        let status = StatusCode::from_u16(first_forwarded_status(&forwarded, 204)).unwrap_or(StatusCode::NO_CONTENT);
+        return Ok(status.into_response());
     }
 
     // Strip exclusive attributes before local update
-    let exclusive_attrs: Vec<String> = forwarded.iter().flat_map(|r| r.exclusive_attrs.iter().cloned()).collect();
+    let exclusive_attrs = collect_forwarded_exclusive_attrs(&forwarded);
     let local_fragment = if !exclusive_attrs.is_empty() {
-        let mut filtered = fragment.clone();
-        if let Some(obj) = filtered.as_object_mut() {
-            for attr in &exclusive_attrs {
-                obj.remove(attr);
-            }
-        }
+        let mut filtered = fragment.clone(); // clone: need modified copy; original consumed by forwarding
+        strip_exclusive_attrs_from_value(&mut filtered, &exclusive_attrs);
         filtered
     } else {
         fragment
     };
 
     let local_result = service.update_attrs(&id, local_fragment, &context).await;
-    let has_remote_errors = forwarded.iter().any(|r| r.status >= 400);
 
-    if local_result.is_ok() && !has_remote_errors {
+    if local_result.is_ok() && !has_remote_errors(&forwarded) {
         return Ok(StatusCode::NO_CONTENT.into_response());
     }
 
-    // 207 Multi-Status
-    let mut errors = Vec::new();
-    if let Err(err) = local_result {
-        errors.push(serde_json::to_value(BatchEntityError::from_domain_error(&entity_id, &err)).unwrap_or_default());
-    }
-    for r in &forwarded {
-        if r.status >= 400 {
-            let error_body = r
-                .body
-                .clone()
-                .unwrap_or_else(|| serde_json::json!({ "status": r.status, "title": "Error from context source" }));
-            errors.push(serde_json::json!({ "entityId": entity_id, "error": error_body }));
-        }
-    }
-    let body = serde_json::json!({ "success": [entity_id], "errors": errors });
+    let body = build_multi_status_body(&entity_id, local_result.is_ok(), local_result.err().as_ref(), &forwarded);
     Ok((StatusCode::MULTI_STATUS, Json(body)).into_response())
 }
 
@@ -1289,16 +1077,16 @@ pub async fn partial_update_attr(
         return Ok(StatusCode::NO_CONTENT.into_response());
     }
 
-    let has_redirect = forwarded.iter().any(|r| r.mode == ForwardingMode::Redirect);
-    let has_exclusive = forwarded.iter().any(|r| r.mode == ForwardingMode::Exclusive);
-    if has_redirect || has_exclusive {
+    let modes = ForwardingModes::from_results(&forwarded);
+    if modes.has_redirect || modes.has_exclusive {
         // Per spec 4.3.6.3: exclusive attributes shall not be held locally.
-        // Strip the exclusive attribute from the local entity if it exists.
-        if has_exclusive && let Err(e) = service.delete_attr(&id, &attr_id, None, true, &context).await {
+        if modes.has_exclusive
+            && let Err(e) = service.delete_attr(&id, &attr_id, None, true, &context).await
+        {
             tracing::warn!(error = %e, entity_id = %id, attr_id = %attr_id, "Failed to delete exclusive attribute locally");
         }
-        let first_status = forwarded.first().map_or(204, |r| r.status);
-        return Ok(StatusCode::from_u16(first_status).unwrap_or(StatusCode::NO_CONTENT).into_response());
+        let status = StatusCode::from_u16(first_forwarded_status(&forwarded, 204)).unwrap_or(StatusCode::NO_CONTENT);
+        return Ok(status.into_response());
     }
 
     // Inclusive: apply locally and return 204.
@@ -1359,7 +1147,6 @@ pub async fn delete_attr(
         .map_err(|e| e.with_instance(uri.clone()))?;
 
     if forwarded.is_empty() {
-        // No matching CSRs — delete locally
         service
             .delete_attr(&id, &attr_id, params.dataset_id.as_deref(), delete_all, &context)
             .await
@@ -1367,35 +1154,20 @@ pub async fn delete_attr(
         return Ok(StatusCode::NO_CONTENT.into_response());
     }
 
-    let has_redirect = forwarded.iter().any(|r| r.mode == ForwardingMode::Redirect);
-    let has_exclusive = forwarded.iter().any(|r| r.mode == ForwardingMode::Exclusive);
-    if has_redirect || has_exclusive {
-        let first_status = forwarded.first().map_or(204, |r| r.status);
-        return Ok(StatusCode::from_u16(first_status).unwrap_or(StatusCode::NO_CONTENT).into_response());
+    let modes = ForwardingModes::from_results(&forwarded);
+    if modes.has_redirect || modes.has_exclusive {
+        let status = StatusCode::from_u16(first_forwarded_status(&forwarded, 204)).unwrap_or(StatusCode::NO_CONTENT);
+        return Ok(status.into_response());
     }
 
     // Inclusive: delete locally and combine results
     let local_result = service.delete_attr(&id, &attr_id, params.dataset_id.as_deref(), delete_all, &context).await;
-    let has_remote_errors = forwarded.iter().any(|r| r.status >= 400);
 
-    if local_result.is_ok() && !has_remote_errors {
+    if local_result.is_ok() && !has_remote_errors(&forwarded) {
         return Ok(StatusCode::NO_CONTENT.into_response());
     }
 
-    let mut errors = Vec::new();
-    if let Err(err) = local_result {
-        errors.push(serde_json::to_value(BatchEntityError::from_domain_error(&entity_id, &err)).unwrap_or_default());
-    }
-    for r in &forwarded {
-        if r.status >= 400 {
-            let error_body = r
-                .body
-                .clone()
-                .unwrap_or_else(|| serde_json::json!({ "status": r.status, "title": "Error from context source" }));
-            errors.push(serde_json::json!({ "entityId": entity_id, "error": error_body }));
-        }
-    }
-    let body = serde_json::json!({ "success": [entity_id], "errors": errors });
+    let body = build_multi_status_body(&entity_id, local_result.is_ok(), local_result.err().as_ref(), &forwarded);
     Ok((StatusCode::MULTI_STATUS, Json(body)).into_response())
 }
 
@@ -1466,10 +1238,9 @@ pub async fn delete_by_query(
             .await
             .map_err(|e| e.with_instance(uri.clone()))?;
 
-        let has_redirect = forwarded.iter().any(|r| r.mode == ForwardingMode::Redirect);
-        let has_exclusive = forwarded.iter().any(|r| r.mode == ForwardingMode::Exclusive);
+        let modes = ForwardingModes::from_results(&forwarded);
 
-        if has_redirect {
+        if modes.has_redirect {
             let Some(first) = forwarded.first() else {
                 return Err(NgsiLdError::from(AndromedaError::internal("Expected forwarded result").with_instance(uri)));
             };
@@ -1480,7 +1251,7 @@ pub async fn delete_by_query(
             return Ok(status.into_response());
         }
 
-        if has_exclusive {
+        if modes.has_exclusive {
             if let Err(e) = state.entities.batch_delete(&entity_ids).await {
                 tracing::warn!(error = %e, "Failed to delete local entities during exclusive batch delete");
             }
@@ -1489,7 +1260,7 @@ pub async fn delete_by_query(
     }
 
     let batch = state.entities.batch_delete(&entity_ids).await.map_err(|e| e.with_instance(uri.clone()))?;
-    let result: crate::http::error::batch::BatchOperationResult = batch.into();
+    let result: BatchOperationResult = batch.into();
 
     if result.errors.is_empty() {
         Ok(StatusCode::NO_CONTENT.into_response())

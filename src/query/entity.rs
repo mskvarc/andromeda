@@ -1,6 +1,7 @@
 //! Query parameters for the NGSI-LD Entity query API (5.7.2).
 
 use crate::{
+    http::model::query_request::QueryRequest,
     query::{error::QueryError, params::is_valid_uri},
     renderer::entity::RenderMode,
 };
@@ -280,6 +281,70 @@ pub struct EntityQueryParametersOptions {
     pub count: bool,
 }
 
+impl From<QueryRequest> for EntityQueryParameters {
+    fn from(request: QueryRequest) -> EntityQueryParameters {
+        let mut ids = Vec::new();
+        let mut types = Vec::new();
+        let mut id_pattern = None;
+
+        if let Some(entities) = request.entities {
+            for selection in entities {
+                if let Some(id) = selection.id() {
+                    ids.push(id.to_string());
+                }
+                if let Some(t) = selection.type_() {
+                    types.push(t.to_string());
+                }
+                if let Some(p) = selection.id_pattern() {
+                    id_pattern = Some(p.to_string());
+                }
+            }
+        }
+
+        let (georel, geometry, coordinates, geoproperty) = if let Some(geo) = request.geo_q {
+            (Some(geo.georel), Some(geo.geometry), Some(geo.coordinates.to_string()), geo.geoproperty)
+        } else {
+            (None, None, None, None)
+        };
+
+        EntityQueryParameters {
+            id: if ids.is_empty() { None } else { Some(ids.join(",")) },
+            entity_type: if types.is_empty() { None } else { Some(types.join(",")) },
+            id_pattern,
+            attrs: request.attrs.map(|a| a.join(",")),
+            q: request.q,
+            georel,
+            geometry,
+            coordinates,
+            geoproperty,
+            limit: request.limit,
+            offset: request.offset,
+            count: request.count,
+            options: None,
+            local: None,
+            pick: None,
+            omit: None,
+            order_by: None,
+            scope_q: None,
+            lang: None,
+            dataset_id: None,
+            expand_values: None,
+            json_keys: None,
+            format: None,
+            join: None,
+            join_level: None,
+            contained_by: None,
+            entity_map: None,
+            entity_map_lifetime: None,
+            split_entities: None,
+            geometry_property: None,
+            collation: None,
+            order_from: None,
+            order_geometry: None,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -526,5 +591,123 @@ mod tests {
     fn has_any_filter_local_only_does_not_count() {
         let p = params_from_query("local=true");
         assert!(!p.has_any_filter());
+    }
+
+    #[test]
+    fn from_query_request_empty_entities() {
+        let request = QueryRequest {
+            type_: None,
+            entities: None,
+            attrs: None,
+            q: None,
+            geo_q: None,
+            limit: None,
+            offset: None,
+            count: None,
+        };
+        let params: EntityQueryParameters = request.into();
+        assert!(params.id.is_none());
+        assert!(params.entity_type.is_none());
+        assert!(params.id_pattern.is_none());
+        assert!(params.attrs.is_none());
+    }
+
+    #[test]
+    fn from_query_request_single_entity_with_id_and_type() {
+        use crate::http::model::query_request::EntitySelection;
+
+        let request = QueryRequest {
+            type_: None,
+            entities: Some(vec![EntitySelection::Object {
+                id: Some("urn:ngsi-ld:Vehicle:1".to_string()),
+                id_pattern: None,
+                type_: Some("Vehicle".to_string()),
+            }]),
+            attrs: Some(vec!["speed".to_string()]),
+            q: Some("speed>50".to_string()),
+            geo_q: None,
+            limit: Some(10),
+            offset: Some(5),
+            count: Some(true),
+        };
+        let params: EntityQueryParameters = request.into();
+        assert_eq!(params.id.as_deref(), Some("urn:ngsi-ld:Vehicle:1"));
+        assert_eq!(params.entity_type.as_deref(), Some("Vehicle"));
+        assert_eq!(params.attrs.as_deref(), Some("speed"));
+        assert_eq!(params.q.as_deref(), Some("speed>50"));
+        assert_eq!(params.limit, Some(10));
+        assert_eq!(params.offset, Some(5));
+        assert_eq!(params.count, Some(true));
+    }
+
+    #[test]
+    fn from_query_request_multiple_entities() {
+        use crate::http::model::query_request::EntitySelection;
+
+        let request = QueryRequest {
+            type_: None,
+            entities: Some(vec![
+                EntitySelection::Id("urn:ngsi-ld:Vehicle:1".to_string()),
+                EntitySelection::Id("urn:ngsi-ld:Vehicle:2".to_string()),
+            ]),
+            attrs: None,
+            q: None,
+            geo_q: None,
+            limit: None,
+            offset: None,
+            count: None,
+        };
+        let params: EntityQueryParameters = request.into();
+        let ids = params.id.expect("ids present");
+        assert!(ids.contains("urn:ngsi-ld:Vehicle:1"));
+        assert!(ids.contains("urn:ngsi-ld:Vehicle:2"));
+    }
+
+    #[test]
+    fn from_query_request_with_geo_q() {
+        use crate::http::model::query_request::GeoQueryRequest;
+
+        let request = QueryRequest {
+            type_: None,
+            entities: None,
+            attrs: None,
+            q: None,
+            geo_q: Some(GeoQueryRequest {
+                georel: "near;maxDistance==2000".to_string(),
+                geometry: "Point".to_string(),
+                coordinates: serde_json::json!([13.4, 52.5]),
+                geoproperty: Some("location".to_string()),
+            }),
+            limit: None,
+            offset: None,
+            count: None,
+        };
+        let params: EntityQueryParameters = request.into();
+        assert_eq!(params.georel.as_deref(), Some("near;maxDistance==2000"));
+        assert_eq!(params.geometry.as_deref(), Some("Point"));
+        assert!(params.coordinates.is_some());
+        assert_eq!(params.geoproperty.as_deref(), Some("location"));
+    }
+
+    #[test]
+    fn from_query_request_optional_fields_default_to_none() {
+        let request = QueryRequest {
+            type_: None,
+            entities: None,
+            attrs: None,
+            q: None,
+            geo_q: None,
+            limit: None,
+            offset: None,
+            count: None,
+        };
+        let params: EntityQueryParameters = request.into();
+        assert!(params.options.is_none());
+        assert!(params.local.is_none());
+        assert!(params.format.is_none());
+        assert!(params.join.is_none());
+        assert!(params.join_level.is_none());
+        assert!(params.scope_q.is_none());
+        assert!(params.dataset_id.is_none());
     }
 }

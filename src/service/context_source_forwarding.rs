@@ -1295,6 +1295,28 @@ pub fn collect_warnings(results: &[ForwardedEntities]) -> Vec<NgsiLdWarning> {
     results.iter().flat_map(|r| r.warnings.iter().cloned()).collect()
 }
 
+/// Collect exclusive attribute names from forwarding results.
+///
+/// Gathers attribute names marked as exclusive across all forwarded write
+/// results. Used by provision handlers to strip exclusive attributes from
+/// local operations per spec 4.3.6.3.
+pub fn collect_forwarded_exclusive_attrs(results: &[ForwardedWriteResult]) -> Vec<String> {
+    results.iter().flat_map(|r| r.exclusive_attrs.iter().cloned()).collect() // clone: owned strings from borrowed slice
+}
+
+/// Strip exclusive attributes from a JSON Value object.
+///
+/// Removes keys matching `exclusive_attrs` from a `Value::Object`. This is a
+/// no-op for non-object values. Used for attribute fragment payloads (append,
+/// update_attrs) that are `Value` rather than `EntityPatch`.
+pub fn strip_exclusive_attrs_from_value(fragment: &mut Value, exclusive_attrs: &[String]) {
+    if let Some(obj) = fragment.as_object_mut() {
+        for attr in exclusive_attrs {
+            obj.remove(attr);
+        }
+    }
+}
+
 /// Collect all warnings from discovery forwarding results.
 pub fn collect_discovery_warnings(results: &[ForwardedDiscoveryResult]) -> Vec<NgsiLdWarning> {
     results.iter().flat_map(|r| r.warnings.iter().cloned()).collect()
@@ -1671,7 +1693,15 @@ pub fn merge_temporal_retrieve_results(local_entity: Option<Value>, remote_resul
 mod tests {
     use crate::{
         domain::registration::ForwardingMode,
-        service::context_source_forwarding::{ForwardedEntities, NgsiLdWarning, collect_warnings, merge_query_results},
+        service::context_source_forwarding::{
+            ForwardedEntities,
+            ForwardedWriteResult,
+            NgsiLdWarning,
+            collect_forwarded_exclusive_attrs,
+            collect_warnings,
+            merge_query_results,
+            strip_exclusive_attrs_from_value,
+        },
     };
 
     #[test]
@@ -1971,5 +2001,98 @@ mod tests {
         ];
         let warnings = collect_discovery_warnings(&results);
         assert_eq!(warnings.len(), 1);
+    }
+
+    #[test]
+    fn collect_forwarded_exclusive_attrs_empty_results() {
+        let result = collect_forwarded_exclusive_attrs(&[]);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn collect_forwarded_exclusive_attrs_gathers_attrs() {
+        let results = vec![
+            ForwardedWriteResult {
+                mode: ForwardingMode::Exclusive,
+                status: 204,
+                body: None,
+                exclusive_attrs: vec!["speed".to_string(), "fuel".to_string()],
+            },
+            ForwardedWriteResult {
+                mode: ForwardingMode::Inclusive,
+                status: 204,
+                body: None,
+                exclusive_attrs: vec!["temperature".to_string()],
+            },
+        ];
+        let attrs = collect_forwarded_exclusive_attrs(&results);
+        assert_eq!(attrs.len(), 3);
+        assert!(attrs.contains(&"speed".to_string()));
+        assert!(attrs.contains(&"fuel".to_string()));
+        assert!(attrs.contains(&"temperature".to_string()));
+    }
+
+    #[test]
+    fn strip_exclusive_attrs_from_value_removes_matching_keys() {
+        let mut value = serde_json::json!({
+            "speed": { "type": "Property", "value": 100 },
+            "fuel": { "type": "Property", "value": 50 },
+            "name": { "type": "Property", "value": "Car" }
+        });
+        strip_exclusive_attrs_from_value(&mut value, &["speed".to_string(), "fuel".to_string()]);
+        let obj = value.as_object().expect("is object");
+        assert_eq!(obj.len(), 1);
+        assert!(obj.contains_key("name"));
+    }
+
+    #[test]
+    fn strip_exclusive_attrs_from_value_no_matching_keys() {
+        let mut value = serde_json::json!({
+            "name": { "type": "Property", "value": "Car" }
+        });
+        strip_exclusive_attrs_from_value(&mut value, &["speed".to_string()]);
+        let obj = value.as_object().expect("is object");
+        assert_eq!(obj.len(), 1);
+    }
+
+    #[test]
+    fn strip_exclusive_attrs_from_value_non_object_noop() {
+        let mut value = serde_json::json!([1, 2, 3]);
+        strip_exclusive_attrs_from_value(&mut value, &["speed".to_string()]);
+        assert!(value.is_array());
+    }
+
+    #[test]
+    fn collect_forwarded_exclusive_attrs_results_with_no_exclusive_attrs() {
+        let results = vec![ForwardedWriteResult {
+            mode: ForwardingMode::Inclusive,
+            status: 204,
+            body: None,
+            exclusive_attrs: Vec::new(),
+        }];
+        let attrs = collect_forwarded_exclusive_attrs(&results);
+        assert!(attrs.is_empty());
+    }
+
+    #[test]
+    fn collect_forwarded_exclusive_attrs_duplicates_not_deduped() {
+        // collect_forwarded_exclusive_attrs does not deduplicate -- callers
+        // use the list for removal which is idempotent on duplicates.
+        let results = vec![
+            ForwardedWriteResult {
+                mode: ForwardingMode::Exclusive,
+                status: 204,
+                body: None,
+                exclusive_attrs: vec!["speed".to_string()],
+            },
+            ForwardedWriteResult {
+                mode: ForwardingMode::Exclusive,
+                status: 204,
+                body: None,
+                exclusive_attrs: vec!["speed".to_string()],
+            },
+        ];
+        let attrs = collect_forwarded_exclusive_attrs(&results);
+        assert_eq!(attrs.len(), 2);
     }
 }

@@ -282,6 +282,19 @@ pub struct EntityPatch {
     pub attrs: IndexMap<String, AttributeValue>,
 }
 
+impl EntityPatch {
+    /// Strip attributes marked as exclusive per spec 4.3.6.3.
+    ///
+    /// Removes attributes whose names appear in `exclusive_attrs` from this
+    /// patch. Returns `true` if any attributes remain after stripping.
+    pub fn strip_exclusive_attrs(&mut self, exclusive_attrs: &[String]) -> bool {
+        for attr in exclusive_attrs {
+            self.attrs.shift_remove(attr);
+        }
+        !self.attrs.is_empty()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{Entity, EntityPatch};
@@ -720,5 +733,52 @@ mod tests {
         // Location is an AttributeValue, expanded via custom
         let arr = location.as_array().expect("location is array");
         assert!(!arr.is_empty());
+    }
+
+    #[test]
+    fn strip_exclusive_attrs_no_overlap_all_remain() {
+        let mut patch: EntityPatch = serde_json::from_value(json!({
+            "speed": { "type": "Property", "value": 100 },
+            "fuel": { "type": "Property", "value": 50 }
+        }))
+        .unwrap();
+        let exclusive = vec!["temperature".to_string()];
+        assert!(patch.strip_exclusive_attrs(&exclusive));
+        assert_eq!(patch.attrs.len(), 2);
+    }
+
+    #[test]
+    fn strip_exclusive_attrs_partial_overlap() {
+        let mut patch: EntityPatch = serde_json::from_value(json!({
+            "speed": { "type": "Property", "value": 100 },
+            "fuel": { "type": "Property", "value": 50 }
+        }))
+        .unwrap();
+        let exclusive = vec!["speed".to_string()];
+        assert!(patch.strip_exclusive_attrs(&exclusive));
+        assert_eq!(patch.attrs.len(), 1);
+        assert!(patch.attrs.contains_key("fuel"));
+    }
+
+    #[test]
+    fn strip_exclusive_attrs_full_overlap_returns_false() {
+        let mut patch: EntityPatch = serde_json::from_value(json!({
+            "speed": { "type": "Property", "value": 100 }
+        }))
+        .unwrap();
+        let exclusive = vec!["speed".to_string()];
+        assert!(!patch.strip_exclusive_attrs(&exclusive));
+        assert!(patch.attrs.is_empty());
+    }
+
+    #[test]
+    fn strip_exclusive_attrs_empty_exclusive_list() {
+        let mut patch: EntityPatch = serde_json::from_value(json!({
+            "speed": { "type": "Property", "value": 100 }
+        }))
+        .unwrap();
+        let exclusive: Vec<String> = Vec::new();
+        assert!(patch.strip_exclusive_attrs(&exclusive));
+        assert_eq!(patch.attrs.len(), 1);
     }
 }

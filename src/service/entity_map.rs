@@ -36,6 +36,38 @@ impl EntityMapService {
         }
     }
 
+    /// Scope query IDs by intersecting with an EntityMap's entity set.
+    ///
+    /// When `existing_ids` is `Some`, returns only the IDs present in both the
+    /// map and the existing set. When `None`, returns all IDs from the map as
+    /// a comma-separated string. Per spec 5.5.9.3, this scopes queries to the
+    /// frozen entity set of the given map.
+    pub async fn scope_query_ids(&self, map_id: &str, existing_ids: Option<&str>) -> Result<String, AndromedaError> {
+        let map = self.retrieve(map_id).await?;
+        if let Some(existing) = existing_ids {
+            let query_ids: std::collections::HashSet<String> = existing.split(',').map(|s| s.trim().to_string()).collect();
+            let map_ids: std::collections::HashSet<String> = map.entity_ids.into_iter().collect();
+            let intersection: Vec<String> = query_ids.intersection(&map_ids).cloned().collect(); // clone: owned strings from set intersection
+            Ok(intersection.join(","))
+        } else {
+            Ok(map.entity_ids.join(","))
+        }
+    }
+
+    /// Validate that a specific entity ID exists in the given EntityMap.
+    ///
+    /// Returns `Ok(())` if the entity is present, or `Err(NotFound)` if it is
+    /// not. Per spec 5.7.3.4, entity-map-scoped retrieval must return 404 for
+    /// entities not in the map.
+    pub async fn validate_entity_in_map(&self, map_id: &str, entity_id: &str) -> Result<(), AndromedaError> {
+        let map = self.retrieve(map_id).await?;
+        if map.entity_ids.iter().any(|id| id == entity_id) {
+            Ok(())
+        } else {
+            Err(AndromedaError::not_found(entity_id))
+        }
+    }
+
     /// Delete an entity map by its identifier.
     pub async fn delete(&self, id: &str) -> Result<(), AndromedaError> {
         if self.store.delete(id).await {
@@ -126,7 +158,62 @@ pub fn parse_iso8601_duration(input: Option<&str>) -> Result<Duration, Andromeda
 
 #[cfg(test)]
 mod tests {
-    use crate::service::entity_map::parse_iso8601_duration;
+    use crate::{repository::entity_map::EntityMapStore, service::entity_map::parse_iso8601_duration};
+
+    fn make_service() -> super::EntityMapService {
+        super::EntityMapService::new(EntityMapStore::new())
+    }
+
+    #[tokio::test]
+    async fn scope_query_ids_no_existing_returns_all_map_ids() {
+        let svc = make_service();
+        let map = svc.create(vec!["urn:a".to_string(), "urn:b".to_string()], None).await.unwrap();
+        let result = svc.scope_query_ids(&map.id, None).await.unwrap();
+        assert!(result.contains("urn:a"));
+        assert!(result.contains("urn:b"));
+    }
+
+    #[tokio::test]
+    async fn scope_query_ids_with_overlap_returns_intersection() {
+        let svc = make_service();
+        let map = svc
+            .create(vec!["urn:a".to_string(), "urn:b".to_string(), "urn:c".to_string()], None)
+            .await
+            .unwrap();
+        let result = svc.scope_query_ids(&map.id, Some("urn:b,urn:d")).await.unwrap();
+        assert!(result.contains("urn:b"));
+        assert!(!result.contains("urn:a"));
+        assert!(!result.contains("urn:d"));
+    }
+
+    #[tokio::test]
+    async fn scope_query_ids_no_overlap_returns_empty() {
+        let svc = make_service();
+        let map = svc.create(vec!["urn:a".to_string()], None).await.unwrap();
+        let result = svc.scope_query_ids(&map.id, Some("urn:x")).await.unwrap();
+        assert!(result.is_empty());
+    }
+
+    #[tokio::test]
+    async fn scope_query_ids_map_not_found_returns_error() {
+        let svc = make_service();
+        let result = svc.scope_query_ids("urn:nonexistent", None).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn validate_entity_in_map_id_present() {
+        let svc = make_service();
+        let map = svc.create(vec!["urn:a".to_string(), "urn:b".to_string()], None).await.unwrap();
+        assert!(svc.validate_entity_in_map(&map.id, "urn:a").await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn validate_entity_in_map_id_absent_returns_not_found() {
+        let svc = make_service();
+        let map = svc.create(vec!["urn:a".to_string()], None).await.unwrap();
+        assert!(svc.validate_entity_in_map(&map.id, "urn:x").await.is_err());
+    }
 
     #[test]
     fn parse_pt5m() {

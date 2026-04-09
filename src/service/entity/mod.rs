@@ -2,6 +2,8 @@ mod attrs;
 pub mod batch;
 /// Entity type and attribute discovery operations.
 pub mod discovery;
+/// Provision (write) forwarding mode classification and multi-status helpers.
+pub mod provision_forwarding;
 /// Entity query and retrieval operations.
 pub mod query;
 
@@ -271,6 +273,7 @@ fn unwrap_expanded_ref(value: &Value) -> &Value {
     }
 }
 
+#[inline(always)]
 fn normalize_entity_attributes(payload: &mut Value) {
     let Some(obj) = payload.as_object_mut() else {
         return;
@@ -287,6 +290,7 @@ fn normalize_entity_attributes(payload: &mut Value) {
     }
 }
 
+#[inline(always)]
 fn normalize_attribute_value(value: &mut Value) {
     match value {
         Value::Object(obj) if is_explicit_attribute_object(obj) => {

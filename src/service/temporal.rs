@@ -21,7 +21,11 @@ use crate::{
         entity::EntityRepository,
         temporal::{DeleteScope, TemporalRepository},
     },
-    service::{entity::extract_entity_types, temporal_recorder::TemporalRecorder},
+    service::{
+        context_source_forwarding::{ForwardedEntities, merge_temporal_query_results},
+        entity::extract_entity_types,
+        temporal_recorder::TemporalRecorder,
+    },
 };
 use chrono::{DateTime, SecondsFormat, Utc};
 use serde_json::{Value, json};
@@ -528,6 +532,18 @@ impl TemporalService {
         let stage1 = build_stage1_entity_ids(&compiled, &mut binds, &mut param_idx)?;
         let entity_id_rows = self.repo.execute_temporal_query(&stage1.sql, &stage1.bind_values).await?;
         Ok(entity_id_rows.iter().filter_map(|r| r.try_get("entity_id").ok()).collect())
+    }
+
+    /// Merge local temporal query results with forwarded context source results.
+    ///
+    /// Returns the merged entity values and any warnings generated during forwarding.
+    /// When the forwarded list is empty, returns the local entities unchanged.
+    pub fn merge_with_forwarded(local_entities: Vec<Value>, forwarded: Vec<ForwardedEntities>) -> Vec<Value> {
+        if forwarded.is_empty() {
+            local_entities
+        } else {
+            merge_temporal_query_results(local_entities, forwarded)
+        }
     }
 
     /// Compile raw temporal query parameters into a validated, expanded query structure.

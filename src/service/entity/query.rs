@@ -11,6 +11,7 @@ use crate::{
         params::SharedQueryParams,
     },
     repository::entity::EntityRepository,
+    service::context_source_forwarding::{ForwardedEntities, merge_query_results},
 };
 use serde_json::Value;
 use sqlx::postgres::PgPool;
@@ -262,6 +263,34 @@ impl EntityQueryService {
     /// Execute a compiled query returning only entity IDs.
     pub async fn query_ids(&self, compiled: &CompiledEntityQuery) -> Result<Vec<String>, AndromedaError> {
         self.repo.query_ids(compiled).await
+    }
+
+    /// Merge local query results with forwarded context source results.
+    ///
+    /// Handles the conversion round-trip (Entity -> Value -> merge -> Entity)
+    /// and post-merge attrs filtering per spec 5.7.2: context sources return
+    /// all attributes, so filtering must happen after merge.
+    pub fn merge_with_forwarded(local_entities: Vec<Entity>, forwarded: Vec<ForwardedEntities>, attrs_filter: Option<&str>) -> Vec<Entity> {
+        let local_values: Vec<Value> = local_entities.iter().map(|e| serde_json::to_value(e).unwrap_or_default()).collect();
+        let merged_values = merge_query_results(local_values, forwarded);
+        let mut result = Vec::new();
+        for val in merged_values {
+            match serde_json::from_value::<Entity>(val) {
+                Ok(e) => result.push(e),
+                Err(err) => {
+                    tracing::debug!("Failed to deserialize merged entity: {}", err);
+                }
+            }
+        }
+        // Per spec 5.7.2: apply attrs filter to merged results
+        if let Some(attrs_str) = attrs_filter {
+            let requested: Vec<&str> = attrs_str.split(',').map(str::trim).collect();
+            for entity in &mut result {
+                entity.attrs.retain(|k, _| requested.iter().any(|a| k.ends_with(a)));
+            }
+            result.retain(|e| !e.attrs.is_empty());
+        }
+        result
     }
 
     // -------------------------------------------------------------------------

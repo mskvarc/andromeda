@@ -5,7 +5,6 @@ use crate::{
         handler::parse::{parse_entity_id, validate_attr_name, validate_instance_id},
         tenant::TenantState,
     },
-    domain::entity::Entity,
     error::{AndromedaError, core::AndromedaErrorKind},
     http::{
         error::problem::NgsiLdError,
@@ -17,16 +16,19 @@ use crate::{
             protocol::NgsiLdProtocolHeaders,
             query::ValidatedQuery,
         },
-        parameter::{DeleteAttrParams, EmptyParams},
+        parameter::{DeleteAttrParams, EmptyParams, protocol::apply_temporal_extension_headers},
         response::{collection::NgsiLdCollectionResponse, single::NgsiLdResponse},
     },
     jsonld::ContextSpec,
     query::temporal::TemporalQueryParameters,
-    renderer::response::ResponseRenderer,
+    renderer::{
+        response::ResponseRenderer,
+        temporal::{simplify_temporal_value, simplify_temporal_values},
+    },
     repository::temporal::DeleteScope,
     service::{
-        context_source_forwarding::{ForwardingOperation, collect_warnings, merge_temporal_query_results, merge_temporal_retrieve_results},
-        temporal::CreateOrUpdateResult,
+        context_source_forwarding::{ForwardingOperation, collect_warnings, merge_temporal_retrieve_results},
+        temporal::{CreateOrUpdateResult, TemporalService},
     },
 };
 use axum::{
@@ -70,25 +72,10 @@ pub async fn get(
     let service = &state.temporal;
     let id = parse_entity_id(&id, &uri)?;
     let context: ContextSpec = context.into_inner();
+    apply_temporal_extension_headers(&mut params, &protocol, &uri)?;
     let snapshot = protocol.snapshot;
     let incoming_via = protocol.incoming_via;
     let entity_map_header = protocol.entity_map;
-    if params.format.is_none()
-        && let Some(response_format) = protocol.response_format
-    {
-        let format_value = response_format.as_query_value();
-        if !matches!(format_value, "temporalValues" | "aggregatedValues") {
-            return Err(NgsiLdError::from(
-                AndromedaError::invalid_request(format!("Invalid format value: '{}'", format_value)).with_instance(uri.clone()),
-            ));
-        }
-        params.format = Some(format_value.to_string());
-    }
-    if params.dataset_id.is_none()
-        && let Some(dataset_id) = protocol.dataset_id.as_ref()
-    {
-        params.dataset_id = Some(dataset_id.as_slice().iter().map(ToString::to_string).collect::<Vec<_>>().join(","));
-    }
 
     // Snapshot scoping (ETSI GS CIM 009 clause 5.5.15, 6.3.22): if NGSILD-Snapshot header
     // is present, retrieve temporal entity from the snapshot's frozen data and return early.
@@ -109,13 +96,7 @@ pub async fn get(
         let key_values = params.is_simplified();
 
         let data = if key_values {
-            let entity: Entity = serde_json::from_value(entity_data).map_err(|e| {
-                NgsiLdError::from(AndromedaError::bad_request_data(format!(
-                    "Failed to parse temporal entity for simplification: {}",
-                    e
-                )))
-            })?;
-            entity.simplify()
+            simplify_temporal_value(entity_data).map_err(|e| e.with_instance(uri.clone()))?
         } else {
             entity_data
         };
@@ -126,10 +107,11 @@ pub async fn get(
     // EntityMap scoping (spec 5.7.3.4): if NGSILD-EntityMap header is present,
     // only entities in the map are accessible. Return 404 if not in the map.
     if let Some(ref map_id) = entity_map_header {
-        let map = state.entity_maps.retrieve(map_id.as_str()).await.map_err(|e| e.with_instance(uri.clone()))?;
-        if !map.entity_ids.contains(&id.to_string()) {
-            return Err(NgsiLdError::from(AndromedaError::not_found(id.to_string()).with_instance(uri.clone())));
-        }
+        state
+            .entity_maps
+            .validate_entity_in_map(map_id.as_str(), id.as_ref())
+            .await
+            .map_err(|e| e.with_instance(uri.clone()))?;
     }
 
     let is_local = params.is_local();
@@ -184,13 +166,7 @@ pub async fn get(
     };
 
     let data: Value = if key_values {
-        let entity: Entity = serde_json::from_value(entity_value).map_err(|e| {
-            NgsiLdError::from(AndromedaError::bad_request_data(format!(
-                "Failed to parse temporal entity for simplification: {}",
-                e
-            )))
-        })?;
-        entity.simplify()
+        simplify_temporal_value(entity_value).map_err(|e| e.with_instance(uri.clone()))?
     } else {
         entity_value
     };
@@ -217,25 +193,10 @@ pub async fn query(
 ) -> Result<Response, NgsiLdError> {
     let service = &state.temporal;
     let context: ContextSpec = context.into_inner();
+    apply_temporal_extension_headers(&mut params, &protocol, &uri)?;
     let snapshot = protocol.snapshot;
     let incoming_via = protocol.incoming_via;
     let entity_map_header = protocol.entity_map;
-    if params.format.is_none()
-        && let Some(response_format) = protocol.response_format
-    {
-        let format_value = response_format.as_query_value();
-        if !matches!(format_value, "temporalValues" | "aggregatedValues") {
-            return Err(NgsiLdError::from(
-                AndromedaError::invalid_request(format!("Invalid format value: '{}'", format_value)).with_instance(uri.clone()),
-            ));
-        }
-        params.format = Some(format_value.to_string());
-    }
-    if params.dataset_id.is_none()
-        && let Some(dataset_id) = protocol.dataset_id.as_ref()
-    {
-        params.dataset_id = Some(dataset_id.as_slice().iter().map(ToString::to_string).collect::<Vec<_>>().join(","));
-    }
     let key_values = params.is_simplified();
 
     // Snapshot scoping (ETSI GS CIM 009 clause 5.5.15, 6.3.22): if NGSILD-Snapshot header
@@ -259,17 +220,7 @@ pub async fn query(
             .map_err(|e| e.with_instance(uri.clone()))?;
 
         let values = if key_values {
-            let mut simplified = Vec::with_capacity(entities.len());
-            for e_val in entities {
-                let entity: Entity = serde_json::from_value(e_val).map_err(|e| {
-                    NgsiLdError::from(AndromedaError::bad_request_data(format!(
-                        "Failed to parse temporal entity for simplification: {}",
-                        e
-                    )))
-                })?;
-                simplified.push(entity.simplify());
-            }
-            simplified
+            simplify_temporal_values(entities).map_err(|e| e.with_instance(uri.clone()))?
         } else {
             entities
         };
@@ -283,17 +234,12 @@ pub async fn query(
     // EntityMap scoping (spec 5.5.14): if NGSILD-EntityMap header is present,
     // scope the query to only the entity IDs in the map.
     if let Some(ref map_id) = entity_map_header {
-        let map = state.entity_maps.retrieve(map_id.as_str()).await.map_err(|e| e.with_instance(uri.clone()))?;
-        let ids_csv = map.entity_ids.join(",");
-        if let Some(ref existing_ids) = params.id {
-            // Intersect: keep only IDs that are in both the query and the map
-            let query_ids: std::collections::HashSet<String> = existing_ids.split(',').map(|s| s.trim().to_string()).collect();
-            let map_ids: std::collections::HashSet<String> = map.entity_ids.into_iter().collect();
-            let intersection: Vec<String> = query_ids.intersection(&map_ids).cloned().collect();
-            params.id = Some(intersection.join(","));
-        } else {
-            params.id = Some(ids_csv);
-        }
+        let scoped = state
+            .entity_maps
+            .scope_query_ids(map_id.as_str(), params.id.as_deref())
+            .await
+            .map_err(|e| e.with_instance(uri.clone()))?;
+        params.id = Some(scoped);
     }
 
     let is_local = params.is_local();
@@ -335,12 +281,8 @@ pub async fn query(
             .unwrap_or_default();
         let warnings = collect_warnings(&forwarded);
 
-        if forwarded.is_empty() {
-            (local_entities, warnings)
-        } else {
-            let merged = merge_temporal_query_results(local_entities, forwarded);
-            (merged, warnings)
-        }
+        let merged = TemporalService::merge_with_forwarded(local_entities, forwarded);
+        (merged, warnings)
     };
 
     // EntityMap creation (spec 5.5.14, 5.7.4.4): if entityMap=true was requested,
@@ -367,17 +309,7 @@ pub async fn query(
     let returned = entities.len();
 
     let values = if key_values {
-        let mut simplified = Vec::with_capacity(entities.len());
-        for e_val in entities {
-            let entity: Entity = serde_json::from_value(e_val).map_err(|e| {
-                NgsiLdError::from(AndromedaError::bad_request_data(format!(
-                    "Failed to parse temporal entity for simplification: {}",
-                    e
-                )))
-            })?;
-            simplified.push(entity.simplify());
-        }
-        simplified
+        simplify_temporal_values(entities).map_err(|e| e.with_instance(uri.clone()))?
     } else {
         entities
     };

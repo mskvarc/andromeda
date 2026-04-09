@@ -5,6 +5,7 @@
 //! [`FromRequestParts`](axum::extract::FromRequestParts) implementation.
 
 pub mod accept;
+pub mod batch;
 pub mod context;
 pub mod entity_query;
 pub mod error;
