@@ -28,7 +28,7 @@ use serde_json::Value;
 ///     #[jsonld(id)]
 ///     pub id: String,
 ///
-///     #[jsonld(property = "https://uri.etsi.org/ngsi-ld/typeName")]
+///     #[jsonld(property = "ngsi:typeName")]
 ///     pub type_name: String,
 /// }
 /// ```

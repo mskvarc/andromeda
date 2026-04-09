@@ -6,12 +6,14 @@ mod jsonld {
     }
 }
 
-pub struct Inner;
-
 #[derive(JsonLdExpandable)]
-pub enum BadEnum {
-    A(Inner),
-    B,
+#[jsonld(type = "https://example.com/Thing")]
+pub struct Thing {
+    #[jsonld(id)]
+    pub id: String,
+
+    #[jsonld(vocab_polymorphic)]
+    pub vocab: serde_json::Value,
 }
 
 fn main() {}

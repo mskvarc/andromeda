@@ -1,6 +1,6 @@
 use crate::{
     domain::{attribute::AttributeValue, uri::Uri},
-    jsonld::JsonLdExpandable,
+    jsonld::JsonLdExpandableMacro,
 };
 use chrono::{DateTime, Utc};
 use indexmap::IndexMap;
@@ -14,75 +14,25 @@ use serde_with::skip_serializing_none;
 /// (compact IRI or full IRI). Contains the vocab value, optional previous
 /// value, metadata (observedAt, datasetId), and optional sub-attributes.
 #[skip_serializing_none]
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonLdExpandableMacro)]
 #[serde(rename_all = "camelCase")]
+#[jsonld(type = "ngsi:VocabProperty")]
 pub struct VocabProperty {
+    #[jsonld(property = "ngsi:hasVocab", vocab_polymorphic)]
     pub vocab: Value,
+    #[jsonld(skip)]
     pub previous_vocab: Option<Value>,
     #[serde(default)]
+    #[jsonld(property = "ngsi:observedAt", typed_value, datatype = "ngsi:DateTime")]
     pub observed_at: Option<DateTime<Utc>>,
     #[serde(default)]
+    #[jsonld(property = "ngsi:expiresAt", typed_value, datatype = "ngsi:DateTime")]
     pub expires_at: Option<DateTime<Utc>>,
+    #[jsonld(property = "ngsi:datasetId", id_ref)]
     pub dataset_id: Option<Uri>,
     #[serde(flatten)]
+    #[jsonld(flatten_map)]
     pub sub_attributes: IndexMap<String, AttributeValue>,
-}
-
-/// Manual impl because `vocab` can be a string (single term) or array (multiple
-/// terms) at runtime, requiring dynamic dispatch for correct `@id` wrapping.
-impl JsonLdExpandable for VocabProperty {
-    fn to_expanded(&self) -> Value {
-        let mut obj = serde_json::Map::new();
-
-        obj.insert("@type".to_string(), serde_json::json!(["https://uri.etsi.org/ngsi-ld/VocabProperty"]));
-
-        // vocab can be string -> single @id, or array -> multiple @id entries
-        let has_vocab = match &self.vocab {
-            Value::String(s) => {
-                obj.insert("https://uri.etsi.org/ngsi-ld/hasVocab".to_string(), serde_json::json!([{"@id": s}]));
-                true
-            }
-            Value::Array(arr) => {
-                let ids: Vec<Value> = arr.iter().filter_map(|v| v.as_str().map(|s| serde_json::json!({"@id": s}))).collect();
-                obj.insert("https://uri.etsi.org/ngsi-ld/hasVocab".to_string(), Value::Array(ids));
-                true
-            }
-            Value::Null => false,
-            _other => {
-                obj.insert("https://uri.etsi.org/ngsi-ld/hasVocab".to_string(), serde_json::json!([{"@value": self.vocab}]));
-                true
-            }
-        };
-
-        let _ = has_vocab;
-
-        if let Some(ref observed_at) = self.observed_at {
-            obj.insert(
-                "https://uri.etsi.org/ngsi-ld/observedAt".to_string(),
-                serde_json::json!([{"@value": observed_at, "@type": "https://uri.etsi.org/ngsi-ld/DateTime"}]),
-            );
-        }
-
-        if let Some(ref expires_at) = self.expires_at {
-            obj.insert(
-                "https://uri.etsi.org/ngsi-ld/expiresAt".to_string(),
-                serde_json::json!([{"@value": expires_at, "@type": "https://uri.etsi.org/ngsi-ld/DateTime"}]),
-            );
-        }
-
-        if let Some(ref dataset_id) = self.dataset_id {
-            obj.insert(
-                "https://uri.etsi.org/ngsi-ld/datasetId".to_string(),
-                serde_json::json!([{"@id": dataset_id.to_string()}]),
-            );
-        }
-
-        for (key, val) in &self.sub_attributes {
-            obj.insert(key.to_string(), JsonLdExpandable::to_expanded(val));
-        }
-
-        Value::Object(obj)
-    }
 }
 
 #[cfg(test)]

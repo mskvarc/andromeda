@@ -95,25 +95,17 @@ impl JsonLdLanguageMap for IndexMap<LanguageMapKey, LanguageMapValue> {
 #[skip_serializing_none]
 #[derive(Debug, Clone, Serialize, Deserialize, JsonLdExpandableMacro)]
 #[serde(rename_all = "camelCase")]
-#[jsonld(type = "https://uri.etsi.org/ngsi-ld/LanguageProperty")]
+#[jsonld(type = "ngsi:LanguageProperty")]
 pub struct LanguageProperty {
-    #[jsonld(property = "https://uri.etsi.org/ngsi-ld/hasLanguageMap", language_map)]
+    #[jsonld(property = "ngsi:hasLanguageMap", language_map)]
     pub language_map: IndexMap<LanguageMapKey, LanguageMapValue>,
     #[serde(default)]
-    #[jsonld(
-        property = "https://uri.etsi.org/ngsi-ld/observedAt",
-        typed_value,
-        datatype = "https://uri.etsi.org/ngsi-ld/DateTime"
-    )]
+    #[jsonld(property = "ngsi:observedAt", typed_value, datatype = "ngsi:DateTime")]
     pub observed_at: Option<DateTime<Utc>>,
     #[serde(default)]
-    #[jsonld(
-        property = "https://uri.etsi.org/ngsi-ld/expiresAt",
-        typed_value,
-        datatype = "https://uri.etsi.org/ngsi-ld/DateTime"
-    )]
+    #[jsonld(property = "ngsi:expiresAt", typed_value, datatype = "ngsi:DateTime")]
     pub expires_at: Option<DateTime<Utc>>,
-    #[jsonld(property = "https://uri.etsi.org/ngsi-ld/datasetId", id_ref)]
+    #[jsonld(property = "ngsi:datasetId", id_ref)]
     pub dataset_id: Option<Uri>,
     #[serde(flatten)]
     #[jsonld(flatten_map)]

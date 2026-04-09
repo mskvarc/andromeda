@@ -5,12 +5,16 @@ use urn::Urn;
 /// NGSI-LD EntityTypeList representation (ETSI GS CIM 009 clause 5.2.24).
 ///
 /// Lists all entity types known to the broker.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonLdExpandableMacro)]
 #[serde(rename_all = "camelCase")]
+#[jsonld(type = "ngsi:EntityTypeList")]
 pub struct Types {
+    #[jsonld(id)]
     pub id: Urn,
     #[serde(rename = "type")]
+    #[jsonld(skip)]
     pub type_: String,
+    #[jsonld(property = "ngsi:typeList", vocab_vec)]
     pub type_list: Vec<String>,
 }
 
@@ -20,34 +24,34 @@ pub struct Types {
 /// associated with entities of this type.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonLdExpandableMacro)]
 #[serde(rename_all = "camelCase")]
-#[jsonld(type = "https://uri.etsi.org/ngsi-ld/EntityTypeInfo")]
+#[jsonld(type = "ngsi:EntityTypeInfo")]
 pub struct EntityTypeInfo {
     #[jsonld(id)]
     pub id: String,
     #[serde(rename = "type")]
     #[jsonld(skip)]
     pub type_: String,
-    #[jsonld(property = "https://uri.etsi.org/ngsi-ld/typeName", vocab)]
+    #[jsonld(property = "ngsi:typeName", vocab)]
     pub type_name: String,
-    #[jsonld(property = "https://uri.etsi.org/ngsi-ld/entityCount")]
+    #[jsonld(property = "ngsi:entityCount")]
     pub entity_count: i64,
-    #[jsonld(property = "https://uri.etsi.org/ngsi-ld/attributeDetails", nested, vec)]
+    #[jsonld(property = "ngsi:attributeDetails", nested, vec)]
     pub attribute_details: Vec<AttributeDetail>,
 }
 
 /// Detail record for a single attribute within an EntityTypeInfo (ETSI GS CIM 009 clause 5.2.26).
 #[derive(Debug, Clone, Serialize, Deserialize, JsonLdExpandableMacro)]
 #[serde(rename_all = "camelCase")]
-#[jsonld(type = "https://uri.etsi.org/ngsi-ld/Attribute")]
+#[jsonld(type = "ngsi:Attribute")]
 pub struct AttributeDetail {
     #[jsonld(id)]
     pub id: String,
     #[serde(rename = "type")]
     #[jsonld(skip)]
     pub type_: String,
-    #[jsonld(property = "https://uri.etsi.org/ngsi-ld/attributeName", vocab)]
+    #[jsonld(property = "ngsi:attributeName", vocab)]
     pub attribute_name: String,
-    #[jsonld(property = "https://uri.etsi.org/ngsi-ld/attributeTypes", vocab_vec)]
+    #[jsonld(property = "ngsi:attributeTypes", vocab_vec)]
     pub attribute_types: Vec<String>,
 }
 
@@ -57,28 +61,32 @@ pub struct AttributeDetail {
 /// of this type.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonLdExpandableMacro)]
 #[serde(rename_all = "camelCase")]
-#[jsonld(type = "https://uri.etsi.org/ngsi-ld/EntityType")]
+#[jsonld(type = "ngsi:EntityType")]
 pub struct EntityType {
     #[jsonld(id)]
     pub id: String,
     #[serde(rename = "type")]
     #[jsonld(skip)]
     pub type_: String,
-    #[jsonld(property = "https://uri.etsi.org/ngsi-ld/typeName", vocab)]
+    #[jsonld(property = "ngsi:typeName", vocab)]
     pub type_name: String,
-    #[jsonld(property = "https://uri.etsi.org/ngsi-ld/attributeNames", vocab_vec)]
+    #[jsonld(property = "ngsi:attributeNames", vocab_vec)]
     pub attribute_names: Vec<String>,
 }
 
 /// NGSI-LD AttributeList representation (ETSI GS CIM 009 clause 5.2.27).
 ///
 /// Lists all attributes known to the broker.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonLdExpandableMacro)]
 #[serde(rename_all = "camelCase")]
+#[jsonld(type = "ngsi:AttributeList")]
 pub struct AttributeList {
+    #[jsonld(id)]
     pub id: Urn,
     #[serde(rename = "type")]
+    #[jsonld(skip)]
     pub type_: String,
+    #[jsonld(property = "ngsi:attributeList", vocab_vec)]
     pub attribute_list: Vec<String>,
 }
 
@@ -88,19 +96,19 @@ pub struct AttributeList {
 /// type names.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonLdExpandableMacro)]
 #[serde(rename_all = "camelCase")]
-#[jsonld(type = "https://uri.etsi.org/ngsi-ld/Attribute")]
+#[jsonld(type = "ngsi:Attribute")]
 pub struct Attribute {
     #[jsonld(id)]
     pub id: String,
     #[serde(rename = "type")]
     #[jsonld(skip)]
     pub type_: String,
-    #[jsonld(property = "https://uri.etsi.org/ngsi-ld/attributeName", vocab)]
+    #[jsonld(property = "ngsi:attributeName", vocab)]
     pub attribute_name: String,
-    #[jsonld(property = "https://uri.etsi.org/ngsi-ld/attributeTypes", vocab_vec)]
+    #[jsonld(property = "ngsi:attributeTypes", vocab_vec)]
     pub attribute_types: Vec<String>,
-    #[jsonld(property = "https://uri.etsi.org/ngsi-ld/attributeCount")]
+    #[jsonld(property = "ngsi:attributeCount")]
     pub attribute_count: Option<i64>,
-    #[jsonld(property = "https://uri.etsi.org/ngsi-ld/typeNames", vocab_vec)]
+    #[jsonld(property = "ngsi:typeNames", vocab_vec)]
     pub type_names: Option<Vec<String>>,
 }

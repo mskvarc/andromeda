@@ -16,25 +16,17 @@ use serde_with::skip_serializing_none;
 #[skip_serializing_none]
 #[derive(Debug, Clone, Serialize, Deserialize, JsonLdExpandableMacro)]
 #[serde(rename_all = "camelCase")]
-#[jsonld(type = "https://uri.etsi.org/ngsi-ld/GeoProperty")]
+#[jsonld(type = "ngsi:GeoProperty")]
 pub struct GeoProperty {
-    #[jsonld(property = "https://uri.etsi.org/ngsi-ld/hasValue", json_value)]
+    #[jsonld(property = "ngsi:hasValue", json_value)]
     pub value: Geometry,
     #[serde(default)]
-    #[jsonld(
-        property = "https://uri.etsi.org/ngsi-ld/observedAt",
-        typed_value,
-        datatype = "https://uri.etsi.org/ngsi-ld/DateTime"
-    )]
+    #[jsonld(property = "ngsi:observedAt", typed_value, datatype = "ngsi:DateTime")]
     pub observed_at: Option<DateTime<Utc>>,
     #[serde(default)]
-    #[jsonld(
-        property = "https://uri.etsi.org/ngsi-ld/expiresAt",
-        typed_value,
-        datatype = "https://uri.etsi.org/ngsi-ld/DateTime"
-    )]
+    #[jsonld(property = "ngsi:expiresAt", typed_value, datatype = "ngsi:DateTime")]
     pub expires_at: Option<DateTime<Utc>>,
-    #[jsonld(property = "https://uri.etsi.org/ngsi-ld/datasetId", id_ref)]
+    #[jsonld(property = "ngsi:datasetId", id_ref)]
     pub dataset_id: Option<Uri>,
     #[serde(flatten)]
     #[jsonld(flatten_map)]
