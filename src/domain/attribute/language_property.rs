@@ -1,4 +1,7 @@
-use crate::domain::{attribute::AttributeValue, uri::Uri};
+use crate::{
+    domain::{attribute::AttributeValue, uri::Uri},
+    jsonld::{JsonLdExpandableMacro, JsonLdLanguageMap},
+};
 use chrono::{DateTime, Utc};
 use indexmap::IndexMap;
 use langtag::LangTagBuf;
@@ -60,22 +63,60 @@ pub enum LanguageMapValue {
     Multiple(Vec<String>),
 }
 
+impl JsonLdLanguageMap for IndexMap<LanguageMapKey, LanguageMapValue> {
+    fn to_expanded_language_map(&self) -> serde_json::Value {
+        let mut entries = Vec::new();
+        for (key, value) in self {
+            let texts: Vec<&str> = match value {
+                LanguageMapValue::Single(s) => vec![s.as_str()],
+                LanguageMapValue::Multiple(v) => v.iter().map(String::as_str).collect(),
+            };
+            for text in texts {
+                let mut entry = serde_json::Map::new();
+                entry.insert("@value".to_string(), serde_json::Value::String(text.to_string()));
+                match key {
+                    LanguageMapKey::None => {}
+                    LanguageMapKey::Tag(tag) => {
+                        entry.insert("@language".to_string(), serde_json::Value::String(tag.as_str().to_string()));
+                    }
+                }
+                entries.push(serde_json::Value::Object(entry));
+            }
+        }
+        serde_json::Value::Array(entries)
+    }
+}
+
 /// NGSI-LD LanguageProperty representation (ETSI GS CIM 009 clause 5.2.32).
 ///
 /// A LanguageProperty represents an attribute whose value is a language map
 /// (BCP47 language tag to string mapping). Contains the language map,
 /// optional metadata (observedAt, datasetId), and optional sub-attributes.
 #[skip_serializing_none]
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonLdExpandableMacro)]
 #[serde(rename_all = "camelCase")]
+#[jsonld(type = "https://uri.etsi.org/ngsi-ld/LanguageProperty")]
 pub struct LanguageProperty {
+    #[jsonld(property = "https://uri.etsi.org/ngsi-ld/hasLanguageMap", language_map)]
     pub language_map: IndexMap<LanguageMapKey, LanguageMapValue>,
     #[serde(default)]
+    #[jsonld(
+        property = "https://uri.etsi.org/ngsi-ld/observedAt",
+        typed_value,
+        datatype = "https://uri.etsi.org/ngsi-ld/DateTime"
+    )]
     pub observed_at: Option<DateTime<Utc>>,
     #[serde(default)]
+    #[jsonld(
+        property = "https://uri.etsi.org/ngsi-ld/expiresAt",
+        typed_value,
+        datatype = "https://uri.etsi.org/ngsi-ld/DateTime"
+    )]
     pub expires_at: Option<DateTime<Utc>>,
+    #[jsonld(property = "https://uri.etsi.org/ngsi-ld/datasetId", id_ref)]
     pub dataset_id: Option<Uri>,
     #[serde(flatten)]
+    #[jsonld(flatten_map)]
     pub sub_attributes: IndexMap<String, AttributeValue>,
 }
 
@@ -200,5 +241,36 @@ mod tests {
         let reserialized = serde_json::to_value(&prop).unwrap();
         assert_eq!(reserialized["languageMap"]["@none"], "default");
         assert_eq!(reserialized["languageMap"]["en"], "hello");
+    }
+
+    #[test]
+    fn language_property_expanded_produces_language_map() {
+        use crate::jsonld::JsonLdExpandable;
+
+        let json = serde_json::json!({
+            "type": "LanguageProperty",
+            "languageMap": {
+                "@none": "default",
+                "en": "hello",
+                "de": ["hallo", "guten tag"]
+            }
+        });
+        let attr: crate::domain::attribute::Attribute = serde_json::from_value(json).expect("language_property");
+        let crate::domain::attribute::Attribute::LanguageProperty(lp) = &attr else {
+            panic!("expected LanguageProperty");
+        };
+        let expanded = lp.to_expanded();
+        let obj = expanded.as_object().expect("expanded is object");
+
+        assert_eq!(obj["@type"], serde_json::json!(["https://uri.etsi.org/ngsi-ld/LanguageProperty"]));
+
+        let lang_map = obj["https://uri.etsi.org/ngsi-ld/hasLanguageMap"].as_array().expect("language map array");
+        // @none entry has no @language
+        assert!(lang_map.iter().any(|e| e["@value"] == "default" && e.get("@language").is_none()));
+        // en entry
+        assert!(lang_map.iter().any(|e| e["@value"] == "hello" && e["@language"] == "en"));
+        // de entries (multiple)
+        assert!(lang_map.iter().any(|e| e["@value"] == "hallo" && e["@language"] == "de"));
+        assert!(lang_map.iter().any(|e| e["@value"] == "guten tag" && e["@language"] == "de"));
     }
 }

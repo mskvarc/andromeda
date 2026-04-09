@@ -1,4 +1,7 @@
-use crate::domain::{attribute::AttributeValue, notification::SysAttrsSnapshot, scope::ScopeBuf, serde_helpers, uri::Uri};
+use crate::{
+    domain::{attribute::AttributeValue, notification::SysAttrsSnapshot, scope::ScopeBuf, serde_helpers, uri::Uri},
+    jsonld::{JsonLdExpandable, JsonLdExpandableMacro, JsonLdTypeValue},
+};
 use chrono::{DateTime, Utc};
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
@@ -19,6 +22,24 @@ pub enum ScopeValue {
     Multiple(Vec<ScopeBuf>),
 }
 
+impl JsonLdTypeValue for EntityTypeValue {
+    fn to_type_array(&self) -> serde_json::Value {
+        match self {
+            EntityTypeValue::Single(s) => serde_json::json!([s]),
+            EntityTypeValue::Multiple(v) => serde_json::json!(v),
+        }
+    }
+}
+
+impl JsonLdExpandable for ScopeValue {
+    fn to_expanded(&self) -> serde_json::Value {
+        match self {
+            ScopeValue::Single(s) => serde_json::json!([{"@value": s.as_str()}]),
+            ScopeValue::Multiple(v) => serde_json::Value::Array(v.iter().map(|s| serde_json::json!({"@value": s.as_str()})).collect()),
+        }
+    }
+}
+
 /// NGSI-LD Entity representation (ETSI GS CIM 009 clause 5.2.4, Table 5.2.4-1).
 ///
 /// An Entity is the core informational unit in NGSI-LD, representing a
@@ -27,43 +48,71 @@ pub enum ScopeValue {
 ///
 /// All spec-defined entity members are explicit fields. `@context` is excluded
 /// as it is a transport concern handled by the JSON-LD engine.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonLdExpandableMacro)]
+#[jsonld(type_field)]
 pub struct Entity {
+    #[jsonld(id)]
     pub id: Uri,
     #[serde(rename = "type")]
+    #[jsonld(type_value)]
     pub type_: EntityTypeValue,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[jsonld(property = "https://uri.etsi.org/ngsi-ld/scope", custom)]
     pub scope: Option<ScopeValue>,
 
     /// Entity expiration timestamp (clause 4.22).
     #[serde(rename = "expiresAt", skip_serializing_if = "Option::is_none", with = "serde_helpers::rfc3339_option", default)]
+    #[jsonld(
+        property = "https://uri.etsi.org/ngsi-ld/expiresAt",
+        typed_value,
+        datatype = "https://uri.etsi.org/ngsi-ld/DateTime"
+    )]
     pub expires_at: Option<DateTime<Utc>>,
 
     /// Default geospatial property (clause 4.7).
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[jsonld(property = "https://uri.etsi.org/ngsi-ld/location", custom)]
     pub location: Option<AttributeValue>,
 
     /// Observation space geometry (clause 5.2.4).
     #[serde(rename = "observationSpace", skip_serializing_if = "Option::is_none")]
+    #[jsonld(property = "https://uri.etsi.org/ngsi-ld/observationSpace", custom)]
     pub observation_space: Option<AttributeValue>,
 
     /// Operation space geometry (clause 5.2.4).
     #[serde(rename = "operationSpace", skip_serializing_if = "Option::is_none")]
+    #[jsonld(property = "https://uri.etsi.org/ngsi-ld/operationSpace", custom)]
     pub operation_space: Option<AttributeValue>,
 
     /// System-generated creation timestamp (clause 4.8, Table 5.2.2-1).
     #[serde(rename = "createdAt", skip_serializing_if = "Option::is_none", with = "serde_helpers::rfc3339_option", default)]
+    #[jsonld(
+        property = "https://uri.etsi.org/ngsi-ld/createdAt",
+        typed_value,
+        datatype = "https://uri.etsi.org/ngsi-ld/DateTime"
+    )]
     pub created_at: Option<DateTime<Utc>>,
 
     /// System-generated modification timestamp (clause 4.8, Table 5.2.2-1).
     #[serde(rename = "modifiedAt", skip_serializing_if = "Option::is_none", with = "serde_helpers::rfc3339_option", default)]
+    #[jsonld(
+        property = "https://uri.etsi.org/ngsi-ld/modifiedAt",
+        typed_value,
+        datatype = "https://uri.etsi.org/ngsi-ld/DateTime"
+    )]
     pub modified_at: Option<DateTime<Utc>>,
 
     /// Deletion timestamp, output-only in notifications/temporal (clause 4.8).
     #[serde(rename = "deletedAt", skip_serializing_if = "Option::is_none", with = "serde_helpers::rfc3339_option", default)]
+    #[jsonld(
+        property = "https://uri.etsi.org/ngsi-ld/deletedAt",
+        typed_value,
+        datatype = "https://uri.etsi.org/ngsi-ld/DateTime"
+    )]
     pub deleted_at: Option<DateTime<Utc>>,
 
     #[serde(flatten)]
+    #[jsonld(flatten_map)]
     pub attrs: IndexMap<String, AttributeValue>,
 }
 
@@ -562,5 +611,130 @@ mod tests {
         let entity = entity.with_sys_attrs(&snapshot);
         // User-provided expiresAt is preserved, not overwritten by snapshot
         assert_eq!(entity.expires_at, original_expires);
+    }
+
+    #[test]
+    fn entity_expanded_has_dynamic_type_and_id() {
+        use crate::jsonld::JsonLdExpandable;
+
+        let payload = json!({
+            "id": "urn:ngsi-ld:Building:001",
+            "type": "Building"
+        });
+
+        let entity: Entity = serde_json::from_value(payload).expect("basic entity");
+        let expanded = entity.to_expanded();
+        let obj = expanded.as_object().expect("expanded is object");
+
+        assert_eq!(obj["@id"], "urn:ngsi-ld:Building:001");
+        assert_eq!(obj["@type"], json!(["Building"]));
+    }
+
+    #[test]
+    fn entity_expanded_with_multiple_types() {
+        use crate::jsonld::JsonLdExpandable;
+
+        let payload = json!({
+            "id": "urn:ngsi-ld:Building:002",
+            "type": ["Building", "Venue"]
+        });
+
+        let entity: Entity = serde_json::from_value(payload).expect("entity with multi type");
+        let expanded = entity.to_expanded();
+        let obj = expanded.as_object().expect("expanded is object");
+
+        assert_eq!(obj["@type"], json!(["Building", "Venue"]));
+    }
+
+    #[test]
+    fn entity_expanded_includes_scope() {
+        use crate::jsonld::JsonLdExpandable;
+
+        let payload = json!({
+            "id": "urn:ngsi-ld:Building:003",
+            "type": "Building",
+            "scope": "/Madrid/Gardens"
+        });
+
+        let entity: Entity = serde_json::from_value(payload).expect("entity with scope");
+        let expanded = entity.to_expanded();
+        let obj = expanded.as_object().expect("expanded is object");
+
+        let scope = &obj["https://uri.etsi.org/ngsi-ld/scope"];
+        assert_eq!(scope, &json!([{"@value": "/Madrid/Gardens"}]));
+    }
+
+    #[test]
+    fn entity_expanded_includes_timestamps_and_attributes() {
+        use crate::jsonld::JsonLdExpandable;
+
+        let payload = json!({
+            "id": "urn:ngsi-ld:Building:004",
+            "type": "Building",
+            "createdAt": "2024-01-01T00:00:00Z",
+            "modifiedAt": "2024-06-15T12:30:00Z",
+            "temperature": {
+                "type": "Property",
+                "value": 25
+            }
+        });
+
+        let entity: Entity = serde_json::from_value(payload).expect("entity with attrs");
+        let expanded = entity.to_expanded();
+        let obj = expanded.as_object().expect("expanded is object");
+
+        // Timestamps should be typed values
+        assert!(obj.contains_key("https://uri.etsi.org/ngsi-ld/createdAt"));
+        let created = &obj["https://uri.etsi.org/ngsi-ld/createdAt"];
+        assert_eq!(created[0]["@type"], "https://uri.etsi.org/ngsi-ld/DateTime");
+
+        // Flattened attribute
+        assert!(obj.contains_key("temperature"));
+    }
+
+    #[test]
+    fn entity_expanded_omits_none_fields() {
+        use crate::jsonld::JsonLdExpandable;
+
+        let payload = json!({
+            "id": "urn:ngsi-ld:Building:005",
+            "type": "Building"
+        });
+
+        let entity: Entity = serde_json::from_value(payload).expect("basic entity");
+        let expanded = entity.to_expanded();
+        let obj = expanded.as_object().expect("expanded is object");
+
+        assert!(!obj.contains_key("https://uri.etsi.org/ngsi-ld/scope"));
+        assert!(!obj.contains_key("https://uri.etsi.org/ngsi-ld/expiresAt"));
+        assert!(!obj.contains_key("https://uri.etsi.org/ngsi-ld/location"));
+        assert!(!obj.contains_key("https://uri.etsi.org/ngsi-ld/observationSpace"));
+        assert!(!obj.contains_key("https://uri.etsi.org/ngsi-ld/operationSpace"));
+        assert!(!obj.contains_key("https://uri.etsi.org/ngsi-ld/createdAt"));
+        assert!(!obj.contains_key("https://uri.etsi.org/ngsi-ld/modifiedAt"));
+        assert!(!obj.contains_key("https://uri.etsi.org/ngsi-ld/deletedAt"));
+    }
+
+    #[test]
+    fn entity_expanded_includes_location() {
+        use crate::jsonld::JsonLdExpandable;
+
+        let payload = json!({
+            "id": "urn:ngsi-ld:Building:006",
+            "type": "Building",
+            "location": {
+                "type": "GeoProperty",
+                "value": {"type": "Point", "coordinates": [13.0, 52.0]}
+            }
+        });
+
+        let entity: Entity = serde_json::from_value(payload).expect("entity with location");
+        let expanded = entity.to_expanded();
+        let obj = expanded.as_object().expect("expanded is object");
+
+        let location = &obj["https://uri.etsi.org/ngsi-ld/location"];
+        // Location is an AttributeValue, expanded via custom
+        let arr = location.as_array().expect("location is array");
+        assert!(!arr.is_empty());
     }
 }

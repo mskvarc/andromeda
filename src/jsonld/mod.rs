@@ -16,7 +16,7 @@ pub mod vocab;
 pub use context::{ContextSpec, CoreContextPolicy, default_core_context_url, set_default_core_context_url};
 pub use engine::{CompactOptions, ContextStripping, JsonLdEngine};
 pub use error::Error;
-pub use expandable::JsonLdExpandable;
+pub use expandable::{JsonLdExpandable, JsonLdLanguageMap, JsonLdTypeValue};
 pub use loader::ContextCache;
 
 pub use json_ld_expandable::JsonLdExpandable as JsonLdExpandableMacro;
