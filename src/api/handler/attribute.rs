@@ -1,5 +1,5 @@
 use crate::{
-    api::tenant::TenantState,
+    api::{handler::parse::validate_name_or_iri, tenant::TenantState},
     http::{
         error::problem::NgsiLdError,
         extractor::{accept::AcceptFormat, context::ContextUrl, prefer::PreferHeader, query::ValidatedQuery, via::IncomingVia},
@@ -57,6 +57,7 @@ pub async fn get(
     ValidatedQuery(params): ValidatedQuery<LocalOnlyParams>,
 ) -> Result<Response, NgsiLdError> {
     let service = &state.entity_discovery;
+    validate_name_or_iri(&attr_id, &uri)?;
     let context: ContextSpec = context.into_inner();
     let is_local = params.local.unwrap_or(false);
 

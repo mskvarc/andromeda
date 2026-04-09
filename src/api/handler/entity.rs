@@ -1,6 +1,6 @@
 use crate::{
     api::{
-        handler::parse::parse_entity_id,
+        handler::parse::{parse_entity_id, validate_attr_name},
         tenant::{TenantState, TenantStateOrCreate},
     },
     domain::{
@@ -1176,6 +1176,7 @@ pub async fn partial_update_attr(
 ) -> Result<Response, NgsiLdError> {
     let service = &state.entities;
     let id = parse_entity_id(&id, &uri)?;
+    validate_attr_name(&attr_id, &uri)?;
     let context = context.merge(body_context);
 
     // Forward to matching context sources
@@ -1248,6 +1249,7 @@ pub async fn delete_attr(
 ) -> Result<Response, NgsiLdError> {
     let service = &state.entities;
     let id = parse_entity_id(&id, &uri)?;
+    validate_attr_name(&attr_id, &uri)?;
     let context: ContextSpec = context.into_inner();
     let delete_all = params.delete_all.unwrap_or(false);
 
@@ -1336,6 +1338,7 @@ pub async fn replace_attr(
 ) -> Result<Response, NgsiLdError> {
     let service = &state.entities;
     let id = parse_entity_id(&id, &uri)?;
+    validate_attr_name(&attr_id, &uri)?;
     let context = context.merge(body_context);
 
     service

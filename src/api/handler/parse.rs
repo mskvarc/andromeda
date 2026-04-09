@@ -4,7 +4,7 @@
 //! used across multiple handler modules (entities, temporal, subscriptions,
 //! context source registrations).
 
-use crate::{error::AndromedaError, http::error::problem::NgsiLdError};
+use crate::{domain::name::Name, error::AndromedaError, http::error::problem::NgsiLdError};
 use axum::http::{HeaderMap, Uri, header::CONTENT_TYPE};
 use mediatype::{MediaTypeBuf, names};
 use serde_json::Value;
@@ -19,17 +19,62 @@ pub fn parse_entity_id(id: &str, uri: &Uri) -> Result<Urn, NgsiLdError> {
         .map_err(|_| NgsiLdError::from(AndromedaError::bad_request_data("Invalid entity id: not a valid URI").with_instance(uri.clone())))
 }
 
-/// Validate an attribute name path parameter.
+/// Validate that a string is a valid NGSI-LD Name (clause 4.6.2) or a valid IRI.
 ///
-/// Attribute names must be either a URI (containing `://`) or composed of
-/// alphanumeric characters plus `-`, `_`, `.`, `:`.
-pub fn validate_attr_name(name: &str, uri: &Uri) -> Result<(), NgsiLdError> {
-    if name.is_empty() || (!name.contains("://") && !name.chars().all(|c| c.is_alphanumeric() || matches!(c, '-' | '_' | '.' | ':'))) {
+/// Per ETSI GS CIM 009 v1.9.1 clause 4.6.2, Entity Type names, Property names,
+/// and Relationship names must conform to the Name grammar when given as
+/// short-hand strings: `name = unicodeLetter *nameChar` where `nameChar`
+/// includes Unicode letters, digits, and underscore.
+///
+/// Names may also use the prefixed form `prefix:localName` (compact IRI), where
+/// both prefix and local name individually conform to the Name grammar.
+///
+/// Full IRIs (containing `://`) and URNs (starting with `urn:`) pass through
+/// without Name grammar validation.
+pub fn validate_name_or_iri(value: &str, uri: &Uri) -> Result<(), NgsiLdError> {
+    if value.is_empty() {
         return Err(NgsiLdError::from(
-            AndromedaError::bad_request_data("Invalid attribute name").with_instance(uri.clone()),
+            AndromedaError::bad_request_data("Name must not be empty").with_instance(uri.clone()),
         ));
     }
+    // Full IRI (HTTP, HTTPS, etc.) — pass through.
+    if value.contains("://") {
+        return Ok(());
+    }
+    // URN — pass through.
+    if value.starts_with("urn:") {
+        return Ok(());
+    }
+    // Prefixed name (compact IRI): prefix:localName.
+    if let Some(colon_pos) = value.find(':') {
+        let prefix = &value[..colon_pos];
+        let local = &value[colon_pos + 1..];
+        if Name::new(prefix).is_err() || Name::new(local).is_err() {
+            return Err(NgsiLdError::from(
+                AndromedaError::bad_request_data(format!(
+                    "Invalid prefixed name '{value}': both prefix and local name must conform to NGSI-LD name grammar (clause 4.6.2)"
+                ))
+                .with_instance(uri.clone()),
+            ));
+        }
+        return Ok(());
+    }
+    // Bare name — validate against the Name grammar.
+    Name::new(value).map_err(|_| {
+        NgsiLdError::from(
+            AndromedaError::bad_request_data(format!("Invalid name '{value}': does not conform to NGSI-LD name grammar (clause 4.6.2)"))
+                .with_instance(uri.clone()),
+        )
+    })?;
     Ok(())
+}
+
+/// Validate an attribute name path parameter.
+///
+/// Attribute names must be either a valid NGSI-LD Name per clause 4.6.2
+/// (including the prefixed `prefix:localName` form) or a valid IRI.
+pub fn validate_attr_name(name: &str, uri: &Uri) -> Result<(), NgsiLdError> {
+    validate_name_or_iri(name, uri)
 }
 
 /// Validate an attribute instance ID path parameter.
@@ -174,7 +219,79 @@ mod tests {
         assert!(result.is_err());
     }
 
-    // -- validate_attr_name --
+    // -- validate_name_or_iri --
+
+    #[test]
+    fn validate_name_or_iri_valid_bare_name() {
+        assert!(validate_name_or_iri("temperature", &test_uri()).is_ok());
+    }
+
+    #[test]
+    fn validate_name_or_iri_valid_name_with_underscore() {
+        assert!(validate_name_or_iri("speed_limit", &test_uri()).is_ok());
+    }
+
+    #[test]
+    fn validate_name_or_iri_valid_name_with_digits() {
+        assert!(validate_name_or_iri("sensor42", &test_uri()).is_ok());
+    }
+
+    #[test]
+    fn validate_name_or_iri_valid_unicode_name() {
+        assert!(validate_name_or_iri("M\u{00fc}nchen", &test_uri()).is_ok());
+    }
+
+    #[test]
+    fn validate_name_or_iri_valid_https_iri() {
+        assert!(validate_name_or_iri("https://example.org/temperature", &test_uri()).is_ok());
+    }
+
+    #[test]
+    fn validate_name_or_iri_valid_urn() {
+        assert!(validate_name_or_iri("urn:ngsi-ld:default-context:temperature", &test_uri()).is_ok());
+    }
+
+    #[test]
+    fn validate_name_or_iri_valid_prefixed_name() {
+        assert!(validate_name_or_iri("ngsi:temperature", &test_uri()).is_ok());
+    }
+
+    #[test]
+    fn validate_name_or_iri_invalid_empty() {
+        assert!(validate_name_or_iri("", &test_uri()).is_err());
+    }
+
+    #[test]
+    fn validate_name_or_iri_invalid_starts_with_digit() {
+        assert!(validate_name_or_iri("42sensor", &test_uri()).is_err());
+    }
+
+    #[test]
+    fn validate_name_or_iri_invalid_contains_hyphen() {
+        assert!(validate_name_or_iri("speed-limit", &test_uri()).is_err());
+    }
+
+    #[test]
+    fn validate_name_or_iri_invalid_contains_dot() {
+        assert!(validate_name_or_iri("a.b", &test_uri()).is_err());
+    }
+
+    #[test]
+    fn validate_name_or_iri_invalid_contains_space() {
+        assert!(validate_name_or_iri("my name", &test_uri()).is_err());
+    }
+
+    #[test]
+    fn validate_name_or_iri_invalid_prefixed_bad_prefix() {
+        assert!(validate_name_or_iri("42bad:name", &test_uri()).is_err());
+    }
+
+    #[test]
+    fn validate_name_or_iri_invalid_prefixed_bad_local() {
+        assert!(validate_name_or_iri("ngsi:42bad", &test_uri()).is_err());
+    }
+
+    // -- validate_attr_name (delegates to validate_name_or_iri) --
 
     #[test]
     fn validate_attr_name_valid_simple() {
