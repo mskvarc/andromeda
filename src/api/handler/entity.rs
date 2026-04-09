@@ -27,7 +27,7 @@ use crate::{
         response::{collection::NgsiLdCollectionResponse, single::NgsiLdResponse},
     },
     jsonld::ContextSpec,
-    query::{compile::expand_q_expression, q::eval::evaluate},
+    query::{compile::expand_q_expression, entity::EntityQueryParameters, q::eval::evaluate},
     renderer::{
         entity::{EntityRenderer, render_snapshot},
         response::ResponseRenderer,
@@ -45,7 +45,7 @@ use crate::{
 use axum::{
     Json,
     extract::{OriginalUri, Path},
-    http::StatusCode,
+    http::{StatusCode, Uri},
     response::{IntoResponse, Response},
 };
 use serde_json::Value;
@@ -57,6 +57,74 @@ pub async fn patch_no_id(OriginalUri(uri): OriginalUri) -> Result<Response, Ngsi
 
 pub async fn put_no_id(OriginalUri(uri): OriginalUri) -> Result<Response, NgsiLdError> {
     Err(NgsiLdError::from(AndromedaError::bad_request_data("Entity id is required").with_instance(uri)))
+}
+
+fn dataset_header_to_csv(protocol: &NgsiLdProtocolHeaders) -> Option<String> {
+    protocol
+        .dataset_id
+        .as_ref()
+        .map(|dataset| dataset.as_slice().iter().map(ToString::to_string).collect::<Vec<_>>().join(","))
+}
+
+fn apply_entity_get_extension_headers(params: &mut GetEntityParams, protocol: &NgsiLdProtocolHeaders, uri: &Uri) -> Result<(), NgsiLdError> {
+    if params.format.is_none()
+        && let Some(response_format) = protocol.response_format
+    {
+        let format_value = response_format.as_query_value();
+        if !matches!(format_value, "normalized" | "keyValues" | "simplified" | "concise") {
+            return Err(NgsiLdError::from(
+                AndromedaError::invalid_request(format!("Invalid format value: '{}'", format_value)).with_instance(uri.clone()),
+            ));
+        }
+        params.format = Some(format_value.to_string());
+    }
+    if params.dataset_id.is_none() {
+        params.dataset_id = dataset_header_to_csv(protocol);
+    }
+    if params.join.is_none()
+        && let Some(join) = protocol.join
+    {
+        params.join = Some(join.into_inner().to_string());
+    }
+    if params.join_level.is_none()
+        && let Some(join_level) = protocol.join_level
+    {
+        params.join_level = Some(join_level.into_inner());
+    }
+    Ok(())
+}
+
+fn apply_entity_query_extension_headers(params: &mut EntityQueryParameters, protocol: &NgsiLdProtocolHeaders, uri: &Uri) -> Result<(), NgsiLdError> {
+    if params.scope_q.is_none()
+        && let Some(scope) = protocol.scope.as_ref()
+    {
+        params.scope_q = Some(scope.as_str().to_string());
+    }
+    if params.format.is_none()
+        && let Some(response_format) = protocol.response_format
+    {
+        let format_value = response_format.as_query_value();
+        if !matches!(format_value, "normalized" | "keyValues" | "simplified" | "concise") {
+            return Err(NgsiLdError::from(
+                AndromedaError::invalid_request(format!("Invalid format value: '{}'", format_value)).with_instance(uri.clone()),
+            ));
+        }
+        params.format = Some(format_value.to_string());
+    }
+    if params.dataset_id.is_none() {
+        params.dataset_id = dataset_header_to_csv(protocol);
+    }
+    if params.join.is_none()
+        && let Some(join) = protocol.join
+    {
+        params.join = Some(join.into_inner().to_string());
+    }
+    if params.join_level.is_none()
+        && let Some(join_level) = protocol.join_level
+    {
+        params.join_level = Some(join_level.into_inner());
+    }
+    Ok(())
 }
 
 pub async fn create(
@@ -189,12 +257,13 @@ pub async fn get(
     accept: AcceptFormat,
     context: ContextUrl,
     Path(id): Path<String>,
-    ValidatedQuery(params): ValidatedQuery<GetEntityParams>,
+    ValidatedQuery(mut params): ValidatedQuery<GetEntityParams>,
     protocol: NgsiLdProtocolHeaders,
 ) -> Result<Response, NgsiLdError> {
     let service = &state.entity_query;
     let id = parse_entity_id(&id, &uri)?;
     let context: ContextSpec = context.into_inner();
+    apply_entity_get_extension_headers(&mut params, &protocol, &uri)?;
     let language_filter = protocol.language_filter;
     let prefer = protocol.prefer;
     let snapshot = protocol.snapshot;
@@ -511,6 +580,10 @@ pub async fn query(
 ) -> Result<Response, NgsiLdError> {
     let service = &state.entity_query;
     let context: ContextSpec = context.into_inner();
+    apply_entity_query_extension_headers(&mut query, &protocol, &uri)?;
+    query
+        .validate()
+        .map_err(|error| NgsiLdError::from(AndromedaError::from(error).with_instance(uri.clone())))?;
     let language_filter = protocol.language_filter;
     let prefer = protocol.prefer;
     let snapshot = protocol.snapshot;

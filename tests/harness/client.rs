@@ -54,6 +54,31 @@ impl RequestHeaders {
         self
     }
 
+    pub fn scope(mut self, scope: &str) -> Self {
+        self.0.insert("NGSILD-Scope", HeaderValue::from_str(scope).unwrap());
+        self
+    }
+
+    pub fn response_format(mut self, format: &str) -> Self {
+        self.0.insert("NGSILD-Response-Format", HeaderValue::from_str(format).unwrap());
+        self
+    }
+
+    pub fn dataset_id(mut self, dataset_id: &str) -> Self {
+        self.0.insert("NGSILD-Dataset-Id", HeaderValue::from_str(dataset_id).unwrap());
+        self
+    }
+
+    pub fn join(mut self, join: &str) -> Self {
+        self.0.insert("NGSILD-Join", HeaderValue::from_str(join).unwrap());
+        self
+    }
+
+    pub fn join_level(mut self, join_level: u32) -> Self {
+        self.0.insert("NGSILD-Join-Level", HeaderValue::from_str(&join_level.to_string()).unwrap());
+        self
+    }
+
     pub fn snapshot(mut self, id: &str) -> Self {
         self.0.insert("NGSILD-Snapshot", HeaderValue::from_str(id).unwrap());
         self

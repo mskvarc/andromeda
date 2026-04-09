@@ -143,7 +143,7 @@ pub async fn query(
         (None, None, None, None)
     };
 
-    let params = EntityQueryParameters {
+    let mut params = EntityQueryParameters {
         id: if ids.is_empty() { None } else { Some(ids.join(",")) },
         entity_type: if types.is_empty() { None } else { Some(types.join(",")) },
         id_pattern,
@@ -178,6 +178,35 @@ pub async fn query(
         order_from: None,
         order_geometry: None,
     };
+    if params.format.is_none()
+        && let Some(response_format) = protocol.response_format
+    {
+        let format_value = response_format.as_query_value();
+        if !matches!(format_value, "normalized" | "keyValues" | "simplified" | "concise") {
+            return Err(NgsiLdError::from(
+                AndromedaError::invalid_request(format!("Invalid format value: '{}'", format_value)).with_instance(uri.clone()),
+            ));
+        }
+        params.format = Some(format_value.to_string());
+    }
+    if params.dataset_id.is_none()
+        && let Some(dataset_id) = protocol.dataset_id.as_ref()
+    {
+        params.dataset_id = Some(dataset_id.as_slice().iter().map(ToString::to_string).collect::<Vec<_>>().join(","));
+    }
+    if params.join.is_none()
+        && let Some(join) = protocol.join
+    {
+        params.join = Some(join.into_inner().to_string());
+    }
+    if params.join_level.is_none()
+        && let Some(join_level) = protocol.join_level
+    {
+        params.join_level = Some(join_level.into_inner());
+    }
+    params
+        .validate()
+        .map_err(|error| NgsiLdError::from(AndromedaError::from(error).with_instance(uri.clone())))?;
 
     let opts = params.parse_options();
     let join_mode = params.join.clone();

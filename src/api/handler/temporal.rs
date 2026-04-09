@@ -65,7 +65,7 @@ pub async fn get(
     context: ContextUrl,
     protocol: NgsiLdProtocolHeaders,
     Path(id): Path<String>,
-    ValidatedQuery(params): ValidatedQuery<TemporalQueryParameters>,
+    ValidatedQuery(mut params): ValidatedQuery<TemporalQueryParameters>,
 ) -> Result<Response, NgsiLdError> {
     let service = &state.temporal;
     let id = parse_entity_id(&id, &uri)?;
@@ -73,6 +73,22 @@ pub async fn get(
     let snapshot = protocol.snapshot;
     let incoming_via = protocol.incoming_via;
     let entity_map_header = protocol.entity_map;
+    if params.format.is_none()
+        && let Some(response_format) = protocol.response_format
+    {
+        let format_value = response_format.as_query_value();
+        if !matches!(format_value, "temporalValues" | "aggregatedValues") {
+            return Err(NgsiLdError::from(
+                AndromedaError::invalid_request(format!("Invalid format value: '{}'", format_value)).with_instance(uri.clone()),
+            ));
+        }
+        params.format = Some(format_value.to_string());
+    }
+    if params.dataset_id.is_none()
+        && let Some(dataset_id) = protocol.dataset_id.as_ref()
+    {
+        params.dataset_id = Some(dataset_id.as_slice().iter().map(ToString::to_string).collect::<Vec<_>>().join(","));
+    }
 
     // Snapshot scoping (ETSI GS CIM 009 clause 5.5.15, 6.3.22): if NGSILD-Snapshot header
     // is present, retrieve temporal entity from the snapshot's frozen data and return early.
@@ -204,6 +220,22 @@ pub async fn query(
     let snapshot = protocol.snapshot;
     let incoming_via = protocol.incoming_via;
     let entity_map_header = protocol.entity_map;
+    if params.format.is_none()
+        && let Some(response_format) = protocol.response_format
+    {
+        let format_value = response_format.as_query_value();
+        if !matches!(format_value, "temporalValues" | "aggregatedValues") {
+            return Err(NgsiLdError::from(
+                AndromedaError::invalid_request(format!("Invalid format value: '{}'", format_value)).with_instance(uri.clone()),
+            ));
+        }
+        params.format = Some(format_value.to_string());
+    }
+    if params.dataset_id.is_none()
+        && let Some(dataset_id) = protocol.dataset_id.as_ref()
+    {
+        params.dataset_id = Some(dataset_id.as_slice().iter().map(ToString::to_string).collect::<Vec<_>>().join(","));
+    }
     let key_values = params.is_simplified();
 
     // Snapshot scoping (ETSI GS CIM 009 clause 5.5.15, 6.3.22): if NGSILD-Snapshot header
