@@ -238,7 +238,7 @@ impl TemporalRepository {
             INSERT INTO attribute_history
                 (time, tea_id, value_number, value_string, value_bool, value_geo, value_object, value_datetime, value_uri, instance_id, observed_at, metadata)
             VALUES
-                ($1, $2, $3, $4, $5, ST_SetSRID(ST_GeomFromGeoJSON($6), 4326), $7, $8, $9, $10, $11, $12)
+                ($1, $2, $3, $4, $5, ST_MakeValid(ST_SetSRID(ST_GeomFromGeoJSON($6), 4326)), $7, $8, $9, $10, $11, $12)
             "#,
         )
         .bind(params.time)
@@ -301,7 +301,7 @@ impl TemporalRepository {
             r#"
             UPDATE attribute_history
             SET value_number = $4, value_string = $5, value_bool = $6,
-                value_geo = ST_SetSRID(ST_GeomFromGeoJSON($7), 4326),
+                value_geo = ST_MakeValid(ST_SetSRID(ST_GeomFromGeoJSON($7), 4326)),
                 value_object = $8, value_datetime = $9, value_uri = $10,
                 observed_at = $11, metadata = $12
             WHERE instance_id = $1

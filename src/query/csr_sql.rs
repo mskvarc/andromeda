@@ -85,7 +85,7 @@ pub fn build_csr_query<'a>(query: &'a CompiledCsrQuery) -> Result<BuiltQuery<'a>
     // Geo filter: CSRs without a location still match (per NGSI-LD spec)
     if let Some(ref geo) = query.geo {
         let geojson = build_geojson(&geo.geometry, &geo.coordinates)?;
-        let ref_geom = format!("ST_SetSRID(ST_GeomFromGeoJSON(${}), 4326)", param_idx);
+        let ref_geom = format!("ST_MakeValid(ST_SetSRID(ST_GeomFromGeoJSON(${}), 4326))", param_idx);
         binds.push(BindValue::String(Cow::Owned(geojson)));
         let spatial_cond = match &geo.georel {
             GeoRel::Within => format!("ST_Within(location, {})", ref_geom),

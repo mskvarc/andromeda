@@ -106,9 +106,9 @@ impl EntityRepository {
             r#"
             INSERT INTO entities (id, types, scope_paths, payload, location, observation_space, operation_space, expires_at)
             VALUES ($1, $2, $3::ltree[], $4,
-                    CASE WHEN $5 IS NOT NULL THEN ST_SetSRID(ST_GeomFromGeoJSON($5), 4326) ELSE NULL END,
-                    CASE WHEN $6 IS NOT NULL THEN ST_SetSRID(ST_GeomFromGeoJSON($6), 4326) ELSE NULL END,
-                    CASE WHEN $7 IS NOT NULL THEN ST_SetSRID(ST_GeomFromGeoJSON($7), 4326) ELSE NULL END,
+                    CASE WHEN $5 IS NOT NULL THEN ST_MakeValid(ST_SetSRID(ST_GeomFromGeoJSON($5), 4326)) ELSE NULL END,
+                    CASE WHEN $6 IS NOT NULL THEN ST_MakeValid(ST_SetSRID(ST_GeomFromGeoJSON($6), 4326)) ELSE NULL END,
+                    CASE WHEN $7 IS NOT NULL THEN ST_MakeValid(ST_SetSRID(ST_GeomFromGeoJSON($7), 4326)) ELSE NULL END,
                     $8)
             "#,
         )
@@ -227,9 +227,9 @@ impl EntityRepository {
             r#"
             UPDATE entities
             SET payload = $2, types = $3, scope_paths = $4::ltree[],
-                location = CASE WHEN $5 IS NOT NULL THEN ST_SetSRID(ST_GeomFromGeoJSON($5), 4326) ELSE NULL END,
-                observation_space = CASE WHEN $6 IS NOT NULL THEN ST_SetSRID(ST_GeomFromGeoJSON($6), 4326) ELSE NULL END,
-                operation_space = CASE WHEN $7 IS NOT NULL THEN ST_SetSRID(ST_GeomFromGeoJSON($7), 4326) ELSE NULL END,
+                location = CASE WHEN $5 IS NOT NULL THEN ST_MakeValid(ST_SetSRID(ST_GeomFromGeoJSON($5), 4326)) ELSE NULL END,
+                observation_space = CASE WHEN $6 IS NOT NULL THEN ST_MakeValid(ST_SetSRID(ST_GeomFromGeoJSON($6), 4326)) ELSE NULL END,
+                operation_space = CASE WHEN $7 IS NOT NULL THEN ST_MakeValid(ST_SetSRID(ST_GeomFromGeoJSON($7), 4326)) ELSE NULL END,
                 modified_at = NOW(),
                 expires_at = COALESCE($8, expires_at)
             WHERE id = $1
@@ -540,9 +540,9 @@ impl EntityRepository {
                 ARRAY(SELECT jsonb_array_elements_text(d.types_json)),
                 ARRAY(SELECT jsonb_array_elements_text(d.scope_paths_json)::ltree),
                 d.payload,
-                CASE WHEN d.loc IS NOT NULL THEN ST_SetSRID(ST_GeomFromGeoJSON(d.loc), 4326) ELSE NULL END,
-                CASE WHEN d.obs IS NOT NULL THEN ST_SetSRID(ST_GeomFromGeoJSON(d.obs), 4326) ELSE NULL END,
-                CASE WHEN d.ops IS NOT NULL THEN ST_SetSRID(ST_GeomFromGeoJSON(d.ops), 4326) ELSE NULL END,
+                CASE WHEN d.loc IS NOT NULL THEN ST_MakeValid(ST_SetSRID(ST_GeomFromGeoJSON(d.loc), 4326)) ELSE NULL END,
+                CASE WHEN d.obs IS NOT NULL THEN ST_MakeValid(ST_SetSRID(ST_GeomFromGeoJSON(d.obs), 4326)) ELSE NULL END,
+                CASE WHEN d.ops IS NOT NULL THEN ST_MakeValid(ST_SetSRID(ST_GeomFromGeoJSON(d.ops), 4326)) ELSE NULL END,
                 d.expires_at
             FROM UNNEST($1::text[], $2::jsonb[], $3::jsonb[], $4::jsonb[], $5::text[], $6::text[], $7::text[], $8::timestamptz[])
                 AS d(id, types_json, scope_paths_json, payload, loc, obs, ops, expires_at)
@@ -618,9 +618,9 @@ impl EntityRepository {
                 payload = d.payload,
                 types = ARRAY(SELECT jsonb_array_elements_text(d.types_json)),
                 scope_paths = ARRAY(SELECT jsonb_array_elements_text(d.scope_paths_json)::ltree),
-                location = CASE WHEN d.loc IS NOT NULL THEN ST_SetSRID(ST_GeomFromGeoJSON(d.loc), 4326) ELSE NULL END,
-                observation_space = CASE WHEN d.obs IS NOT NULL THEN ST_SetSRID(ST_GeomFromGeoJSON(d.obs), 4326) ELSE NULL END,
-                operation_space = CASE WHEN d.ops IS NOT NULL THEN ST_SetSRID(ST_GeomFromGeoJSON(d.ops), 4326) ELSE NULL END,
+                location = CASE WHEN d.loc IS NOT NULL THEN ST_MakeValid(ST_SetSRID(ST_GeomFromGeoJSON(d.loc), 4326)) ELSE NULL END,
+                observation_space = CASE WHEN d.obs IS NOT NULL THEN ST_MakeValid(ST_SetSRID(ST_GeomFromGeoJSON(d.obs), 4326)) ELSE NULL END,
+                operation_space = CASE WHEN d.ops IS NOT NULL THEN ST_MakeValid(ST_SetSRID(ST_GeomFromGeoJSON(d.ops), 4326)) ELSE NULL END,
                 modified_at = NOW(),
                 expires_at = COALESCE(d.expires_at, entities.expires_at)
             FROM UNNEST($1::text[], $2::jsonb[], $3::jsonb[], $4::jsonb[], $5::text[], $6::text[], $7::text[], $8::timestamptz[])
@@ -672,9 +672,9 @@ impl EntityRepository {
                 ARRAY(SELECT jsonb_array_elements_text(d.types_json)),
                 ARRAY(SELECT jsonb_array_elements_text(d.scope_paths_json)::ltree),
                 d.payload,
-                CASE WHEN d.loc IS NOT NULL THEN ST_SetSRID(ST_GeomFromGeoJSON(d.loc), 4326) ELSE NULL END,
-                CASE WHEN d.obs IS NOT NULL THEN ST_SetSRID(ST_GeomFromGeoJSON(d.obs), 4326) ELSE NULL END,
-                CASE WHEN d.ops IS NOT NULL THEN ST_SetSRID(ST_GeomFromGeoJSON(d.ops), 4326) ELSE NULL END,
+                CASE WHEN d.loc IS NOT NULL THEN ST_MakeValid(ST_SetSRID(ST_GeomFromGeoJSON(d.loc), 4326)) ELSE NULL END,
+                CASE WHEN d.obs IS NOT NULL THEN ST_MakeValid(ST_SetSRID(ST_GeomFromGeoJSON(d.obs), 4326)) ELSE NULL END,
+                CASE WHEN d.ops IS NOT NULL THEN ST_MakeValid(ST_SetSRID(ST_GeomFromGeoJSON(d.ops), 4326)) ELSE NULL END,
                 d.expires_at
             FROM UNNEST($1::text[], $2::jsonb[], $3::jsonb[], $4::jsonb[], $5::text[], $6::text[], $7::text[], $8::timestamptz[])
                 AS d(id, types_json, scope_paths_json, payload, loc, obs, ops, expires_at)

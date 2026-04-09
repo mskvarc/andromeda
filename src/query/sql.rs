@@ -343,7 +343,7 @@ fn geo_to_sql(geo: &GeoQuery, binds: &mut Vec<BindValue<'_>>, param_idx: &mut us
         }
     } else {
         format!(
-            "ST_SetSRID(ST_GeomFromGeoJSON((jsonb_path_query_first({}, '$[0].\"{}\"[0].\"https://uri.etsi.org/ngsi-ld/hasValue\"[0].\"@value\"')::text)), 4326)",
+            "ST_MakeValid(ST_SetSRID(ST_GeomFromGeoJSON((jsonb_path_query_first({}, '$[0].\"{}\"[0].\"https://uri.etsi.org/ngsi-ld/hasValue\"[0].\"@value\"')::text)), 4326))",
             payload_column,
             escape_jsonpath_key(&geo.geoproperty_iri)
         )
@@ -351,7 +351,7 @@ fn geo_to_sql(geo: &GeoQuery, binds: &mut Vec<BindValue<'_>>, param_idx: &mut us
 
     let geojson = build_geojson(&geo.geometry, &geo.coordinates)?;
 
-    let ref_geom = format!("ST_SetSRID(ST_GeomFromGeoJSON(${}), 4326)", *param_idx);
+    let ref_geom = format!("ST_MakeValid(ST_SetSRID(ST_GeomFromGeoJSON(${}), 4326))", *param_idx);
     binds.push(BindValue::String(Cow::Owned(geojson)));
     *param_idx += 1;
 
@@ -423,7 +423,7 @@ fn build_geo_extract(geoproperty_iri: &str, payload_column: &str) -> String {
         }
     } else {
         format!(
-            "ST_SetSRID(ST_GeomFromGeoJSON((jsonb_path_query_first({}, '$[0].\"{}\"[0].\"https://uri.etsi.org/ngsi-ld/hasValue\"[0].\"@value\"')::text)), 4326)",
+            "ST_MakeValid(ST_SetSRID(ST_GeomFromGeoJSON((jsonb_path_query_first({}, '$[0].\"{}\"[0].\"https://uri.etsi.org/ngsi-ld/hasValue\"[0].\"@value\"')::text)), 4326))",
             payload_column,
             escape_jsonpath_key(geoproperty_iri)
         )
@@ -488,12 +488,15 @@ fn build_order_clause(order_by: &[CompiledOrderTerm], geo: Option<&GeoQuery>, or
                     let geo_extract = build_geo_extract(&term.attr_iri, "payload");
                     let geojson_str = serde_json::to_string(&og.geometry)
                         .map_err(|e| AndromedaError::bad_request_data(format!("Failed to serialize ordering geometry: {}", e)))?;
-                    let ref_geom = format!("ST_SetSRID(ST_GeomFromGeoJSON('{}'), 4326)", geojson_str);
+                    let ref_geom = format!("ST_MakeValid(ST_SetSRID(ST_GeomFromGeoJSON('{}'), 4326))", geojson_str);
                     Ok(format!("ST_Distance({}::geography, {}::geography) {} NULLS LAST", geo_extract, ref_geom, dir))
                 } else if let Some(geo) = geo {
                     // Fallback to geo query reference geometry
                     let geo_extract = build_geo_extract(&term.attr_iri, "payload");
-                    let ref_geom = format!("ST_SetSRID(ST_GeomFromGeoJSON('{}'), 4326)", build_geojson(&geo.geometry, &geo.coordinates)?);
+                    let ref_geom = format!(
+                        "ST_MakeValid(ST_SetSRID(ST_GeomFromGeoJSON('{}'), 4326))",
+                        build_geojson(&geo.geometry, &geo.coordinates)?
+                    );
                     Ok(format!("ST_Distance({}::geography, {}::geography) {} NULLS LAST", geo_extract, ref_geom, dir))
                 } else {
                     // Defensive: should have been caught during compilation (S5.7.2.4)
