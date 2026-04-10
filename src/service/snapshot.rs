@@ -1,17 +1,18 @@
 use crate::{
-    domain::snapshot::{Snapshot, SnapshotInput, SnapshotPatch, SnapshotStatus},
+    domain::snapshot::{KeyValuePair, Snapshot, SnapshotInput, SnapshotPatch, SnapshotPriority, SnapshotStatus, validate_snapshot_urn},
     error::AndromedaError,
     repository::snapshot::SnapshotRepository,
-    service::entity_map::parse_iso8601_duration,
     transport::{
         dispatch::{DeliveryResult, TransportDispatcher, build_delivery_request},
         endpoint::EndpointTransport,
     },
 };
 use chrono::Utc;
+use iso8601_duration::Duration as Iso8601Duration;
 use serde_json::Value;
 use sqlx::postgres::PgPool;
 use std::sync::Arc;
+use urn::Urn;
 
 /// Service for managing NGSI-LD entity snapshots.
 pub struct SnapshotService {
@@ -34,21 +35,23 @@ impl SnapshotService {
 
     /// Create a new snapshot from the given input parameters.
     pub async fn create(&self, input: SnapshotInput) -> Result<Snapshot, AndromedaError> {
-        let id = input.id.unwrap_or_else(|| format!("urn:ngsi-ld:Snapshot:{}", uuid::Uuid::new_v4()));
+        let id = match input.id {
+            Some(snapshot_id) => snapshot_id,
+            None => build_snapshot_id()?,
+        };
+        validate_snapshot_urn(&id).map_err(|e| AndromedaError::bad_request_data(format!("Invalid snapshot id: {}", e)))?;
 
         if self.repo.exists(&id).await? {
             return Err(AndromedaError::already_exists(format!("Snapshot {} already exists", id)));
         }
 
-        let priority = input.snapshot_priority.unwrap_or(5);
-        if !(1..=10).contains(&priority) {
-            return Err(AndromedaError::bad_request_data("snapshotPriority must be between 1 and 10"));
-        }
+        let priority = match input.snapshot_priority {
+            Some(value) => SnapshotPriority::try_from(value).map_err(|e| AndromedaError::bad_request_data(format!("{}", e)))?,
+            None => SnapshotPriority::default(),
+        };
 
-        let lifetime = input.snapshot_lifetime.as_deref().or(Some("PT1H"));
-        let duration = parse_iso8601_duration(lifetime)?;
         let now = Utc::now();
-        let expires_at = now + duration;
+        let expires_at = compute_snapshot_expires_at(now, input.snapshot_lifetime.as_ref())?;
 
         let snapshot = Snapshot {
             id,
@@ -74,7 +77,7 @@ impl SnapshotService {
     }
 
     /// Retrieve a snapshot by its identifier, returning 404 if expired.
-    pub async fn get(&self, id: &str) -> Result<Snapshot, AndromedaError> {
+    pub async fn get(&self, id: &Urn) -> Result<Snapshot, AndromedaError> {
         let snapshot = self
             .repo
             .get(id)
@@ -97,25 +100,23 @@ impl SnapshotService {
     }
 
     /// Partially update a snapshot's lifetime or priority.
-    pub async fn update(&self, id: &str, patch: SnapshotPatch) -> Result<Snapshot, AndromedaError> {
+    pub async fn update(&self, id: &Urn, patch: SnapshotPatch) -> Result<Snapshot, AndromedaError> {
         let existing = self.get(id).await?;
 
-        if let Some(p) = patch.snapshot_priority
-            && !(1..=10).contains(&p)
-        {
-            return Err(AndromedaError::bad_request_data("snapshotPriority must be between 1 and 10"));
-        }
+        let patch_priority = match patch.snapshot_priority {
+            Some(value) => Some(SnapshotPriority::try_from(value).map_err(|e| AndromedaError::bad_request_data(format!("{}", e)))?),
+            None => None,
+        };
 
         // Recalculate expiresAt if lifetime changed
         let new_expires_at = if let Some(ref lt) = patch.snapshot_lifetime {
-            let duration = parse_iso8601_duration(Some(lt))?;
-            Some(existing.created_at + duration)
+            Some(compute_snapshot_expires_at(existing.created_at, Some(lt))?)
         } else {
             None
         };
 
         self.repo
-            .update_lifetime_priority(id, patch.snapshot_lifetime.as_deref(), patch.snapshot_priority, new_expires_at)
+            .update_lifetime_priority(id, patch.snapshot_lifetime.as_ref(), patch_priority, new_expires_at)
             .await?;
 
         let updated = self.get(id).await?;
@@ -124,7 +125,7 @@ impl SnapshotService {
     }
 
     /// Delete a snapshot by its identifier.
-    pub async fn delete(&self, id: &str) -> Result<(), AndromedaError> {
+    pub async fn delete(&self, id: &Urn) -> Result<(), AndromedaError> {
         let deleted = self.repo.delete(id).await?;
         if !deleted {
             return Err(AndromedaError::not_found(format!("Snapshot {} not found", id)));
@@ -141,7 +142,7 @@ impl SnapshotService {
     ///
     /// The snapshot must exist, not be expired, and have a queryable status
     /// (`Success` or `Partial`). Touches `last_used_at` on success.
-    pub async fn validate_for_scoping(&self, id: &str) -> Result<Snapshot, AndromedaError> {
+    pub async fn validate_for_scoping(&self, id: &Urn) -> Result<Snapshot, AndromedaError> {
         let snapshot = self
             .repo
             .get(id)
@@ -173,14 +174,14 @@ impl SnapshotService {
     }
 
     /// Retrieve a single entity from a snapshot's frozen data.
-    pub async fn get_snapshot_entity(&self, snapshot_id: &str, entity_id: &str) -> Result<Option<Value>, AndromedaError> {
+    pub async fn get_snapshot_entity(&self, snapshot_id: &Urn, entity_id: &str) -> Result<Option<Value>, AndromedaError> {
         self.repo.get_entity(snapshot_id, entity_id).await
     }
 
     /// Query entities from a snapshot's frozen data with optional filtering and pagination.
     pub async fn query_snapshot_entities(
         &self,
-        snapshot_id: &str,
+        snapshot_id: &Urn,
         entity_type: Option<&str>,
         entity_ids: Option<&[String]>,
         limit: i64,
@@ -190,14 +191,14 @@ impl SnapshotService {
     }
 
     /// Retrieve a single temporal entity from a snapshot's frozen data.
-    pub async fn get_snapshot_temporal_entity(&self, snapshot_id: &str, entity_id: &str) -> Result<Option<Value>, AndromedaError> {
+    pub async fn get_snapshot_temporal_entity(&self, snapshot_id: &Urn, entity_id: &str) -> Result<Option<Value>, AndromedaError> {
         self.repo.get_temporal_entity(snapshot_id, entity_id).await
     }
 
     /// Query temporal entities from a snapshot's frozen data with optional filtering and pagination.
     pub async fn query_snapshot_temporal_entities(
         &self,
-        snapshot_id: &str,
+        snapshot_id: &Urn,
         entity_type: Option<&str>,
         entity_ids: Option<&[String]>,
         limit: i64,
@@ -207,14 +208,12 @@ impl SnapshotService {
     }
 
     /// Clone an existing snapshot, producing a new snapshot with a fresh ID and expiration.
-    pub async fn clone_snapshot(&self, source_id: &str) -> Result<Snapshot, AndromedaError> {
+    pub async fn clone_snapshot(&self, source_id: &Urn) -> Result<Snapshot, AndromedaError> {
         let source = self.get(source_id).await?;
 
-        let new_id = format!("urn:ngsi-ld:Snapshot:{}", uuid::Uuid::new_v4());
+        let new_id = build_snapshot_id()?;
 
-        let lifetime = source.snapshot_lifetime.as_deref().or(Some("PT1H"));
-        let duration = parse_iso8601_duration(lifetime)?;
-        let new_expires_at = Utc::now() + duration;
+        let new_expires_at = compute_snapshot_expires_at(Utc::now(), source.snapshot_lifetime.as_ref())?;
 
         let cloned = self.repo.clone_snapshot(source_id, &new_id, new_expires_at).await?;
 
@@ -229,8 +228,8 @@ impl SnapshotService {
     /// `endpoint` member is present. Delivery is fire-and-forget: errors are
     /// logged but never propagated.
     async fn send_notification_if_configured(&self, snapshot: &Snapshot) {
-        let endpoint = match snapshot.endpoint.as_deref() {
-            Some(uri) => uri,
+        let endpoint = match snapshot.endpoint.as_ref() {
+            Some(uri) => uri.as_str(),
             None => return,
         };
 
@@ -239,7 +238,18 @@ impl SnapshotService {
             None => return,
         };
 
-        let notification = snapshot.build_notification();
+        let notification = match snapshot.build_notification() {
+            Ok(value) => value,
+            Err(e) => {
+                tracing::error!(
+                    error = %e,
+                    snapshot_id = %snapshot.id,
+                    "Failed to build snapshot notification payload"
+                );
+                return;
+            }
+        };
+
         let payload = match serde_json::to_value(&notification) {
             Ok(v) => v,
             Err(e) => {
@@ -252,7 +262,8 @@ impl SnapshotService {
             }
         };
 
-        let request = match build_delivery_request(&payload, endpoint, None, snapshot.receiver_info.as_deref(), None, None, &snapshot.id) {
+        let receiver_info_values = receiver_info_to_values(snapshot.receiver_info.as_deref());
+        let request = match build_delivery_request(&payload, endpoint, None, receiver_info_values.as_deref(), None, None, snapshot.id.as_str()) {
             Ok(r) => r,
             Err(e) => {
                 tracing::error!(
@@ -273,4 +284,25 @@ impl SnapshotService {
             }
         }
     }
+}
+
+fn build_snapshot_id() -> Result<Urn, AndromedaError> {
+    let value = format!("urn:ngsi-ld:Snapshot:{}", uuid::Uuid::new_v4());
+    value
+        .parse::<Urn>()
+        .map_err(|e| AndromedaError::internal(format!("Failed to build snapshot id: {}", e)))
+}
+
+fn compute_snapshot_expires_at(created_at: chrono::DateTime<Utc>, lifetime: Option<&Iso8601Duration>) -> Result<chrono::DateTime<Utc>, AndromedaError> {
+    let parsed = match lifetime {
+        Some(value) => *value,
+        None => "PT1H"
+            .parse::<Iso8601Duration>()
+            .map_err(|e| AndromedaError::internal(format!("Invalid default snapshotLifetime: {:?}", e)))?,
+    };
+    Ok(created_at + parsed)
+}
+
+fn receiver_info_to_values(receiver_info: Option<&[KeyValuePair]>) -> Option<Vec<Value>> {
+    receiver_info.map(|values| values.iter().map(|item| serde_json::json!({ "key": item.key, "value": item.value })).collect())
 }

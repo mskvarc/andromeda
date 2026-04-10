@@ -34,7 +34,7 @@ where
         match parts.headers.typed_try_get::<NgsiLdSnapshot>() {
             Ok(Some(snapshot)) => Ok(Self(Some(snapshot.into_inner()))),
             Ok(None) => Ok(Self(None)),
-            Err(_) => Err(ExtractorRejection::bad_request_data("NGSILD-Snapshot header must be a valid URN", uri)),
+            Err(_) => Err(ExtractorRejection::bad_request_data("NGSILD-Snapshot header must be a valid snapshot URN", uri)),
         }
     }
 }

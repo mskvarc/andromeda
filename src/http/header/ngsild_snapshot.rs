@@ -1,8 +1,9 @@
 //! Typed `NGSILD-Snapshot` request/response header (ETSI GS CIM 009 clause 6.3.22).
 //!
 //! Carries the snapshot identifier for snapshot-scoped requests and responses.
-//! The value must be a valid URN (RFC 8141).
+//! The value must be a valid snapshot URN (`urn:ngsi-ld:Snapshot:<id>`).
 
+use crate::domain::snapshot::validate_snapshot_urn;
 use axum::http::{HeaderName, HeaderValue};
 use urn::Urn;
 
@@ -42,8 +43,9 @@ impl headers::Header for NgsiLdSnapshot {
         if trimmed.is_empty() {
             return Err(headers::Error::invalid());
         }
-        let urn: Urn = trimmed.parse().map_err(|_| headers::Error::invalid())?;
-        Ok(NgsiLdSnapshot(urn))
+        let snapshot_id = trimmed.parse::<Urn>().map_err(|_| headers::Error::invalid())?;
+        validate_snapshot_urn(&snapshot_id).map_err(|_| headers::Error::invalid())?;
+        Ok(NgsiLdSnapshot(snapshot_id))
     }
 
     fn encode<E: Extend<HeaderValue>>(&self, values: &mut E) {
@@ -99,8 +101,8 @@ mod tests {
 
     #[test]
     fn encode_roundtrip() {
-        let urn: Urn = "urn:ngsi-ld:Snapshot:x".parse().expect("valid URN");
-        let header = NgsiLdSnapshot::new(urn);
+        let snapshot_id = "urn:ngsi-ld:Snapshot:x".parse::<Urn>().expect("valid snapshot id");
+        let header = NgsiLdSnapshot::new(snapshot_id);
         let mut encoded = Vec::new();
         header.encode(&mut encoded);
         assert_eq!(encoded.len(), 1);

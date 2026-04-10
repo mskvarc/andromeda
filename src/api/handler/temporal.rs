@@ -81,13 +81,13 @@ pub async fn get(
     if let Some(snapshot_id) = snapshot.into_inner() {
         let _snap = state
             .snapshots
-            .validate_for_scoping(snapshot_id.as_str())
+            .validate_for_scoping(&snapshot_id)
             .await
             .map_err(|e| e.with_instance(uri.clone()))?;
 
         let entity_data = state
             .snapshots
-            .get_snapshot_temporal_entity(snapshot_id.as_str(), id.as_ref())
+            .get_snapshot_temporal_entity(&snapshot_id, id.as_ref())
             .await
             .map_err(|e| e.with_instance(uri.clone()))?
             .ok_or_else(|| NgsiLdError::from(AndromedaError::not_found(id.to_string()).with_instance(uri.clone())))?;
@@ -203,7 +203,7 @@ pub async fn query(
     if let Some(snapshot_id) = snapshot.into_inner() {
         let _snap = state
             .snapshots
-            .validate_for_scoping(snapshot_id.as_str())
+            .validate_for_scoping(&snapshot_id)
             .await
             .map_err(|e| e.with_instance(uri.clone()))?;
 
@@ -214,7 +214,7 @@ pub async fn query(
 
         let (entities, total) = state
             .snapshots
-            .query_snapshot_temporal_entities(snapshot_id.as_str(), entity_type, entity_ids.as_deref(), limit, offset)
+            .query_snapshot_temporal_entities(&snapshot_id, entity_type, entity_ids.as_deref(), limit, offset)
             .await
             .map_err(|e| e.with_instance(uri.clone()))?;
 
