@@ -1,3 +1,5 @@
+//! SQL generation for Context Source Registration queries.
+
 use crate::{
     domain::temporal::{TimeProp, TimeRel},
     error::AndromedaError,
@@ -192,7 +194,7 @@ pub fn build_csr_query<'a>(query: &'a CompiledCsrQuery) -> Result<BuiltQuery<'a>
 }
 
 /// Build a GeoJSON string from NGSI-LD geometry type and coordinates.
-/// Handles Polygon coordinate wrapping (flat point list → ring array + close).
+/// Handles Polygon coordinate wrapping (flat point list -> ring array + close).
 fn build_geojson(geometry: &str, coordinates: &serde_json::Value) -> Result<String, AndromedaError> {
     let coords_value = match geometry {
         "Polygon" => {

@@ -10,7 +10,7 @@ use crate::{
         uri::NGSI_LD_URN_NID,
     },
     error::AndromedaError,
-    query::{compiled::CompiledCsrQuery, csr_sql},
+    query::{compiled::CompiledCsrQuery, sql::csr as csr_sql},
     tenancy::types::TenantName,
 };
 use chrono::{DateTime, Utc};

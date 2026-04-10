@@ -273,7 +273,7 @@ pub struct EntitySelector {
     pub type_: Option<String>,
 }
 
-fn query_body_to_params(body: &QueryRequestBody) -> Result<crate::query::entity::EntityQueryParameters, serde_urlencoded::de::Error> {
+fn query_body_to_params(body: &QueryRequestBody) -> Result<crate::http::parameter::query::entity::EntityQueryParameters, serde_urlencoded::de::Error> {
     let (id, entity_type, id_pattern) = if let Some(entities) = &body.entities {
         let ids: Vec<String> = entities.iter().filter_map(|e| e.id.clone()).flatten().collect();
         let types: Vec<String> = entities.iter().filter_map(|e| e.type_.clone()).collect();
@@ -328,7 +328,7 @@ fn query_body_to_params(body: &QueryRequestBody) -> Result<crate::query::entity:
     })
 }
 
-fn validate_has_filter(query: &crate::query::entity::EntityQueryParameters, uri: &axum::http::Uri) -> Result<(), NgsiLdError> {
+fn validate_has_filter(query: &crate::http::parameter::query::entity::EntityQueryParameters, uri: &axum::http::Uri) -> Result<(), NgsiLdError> {
     let has_filter = query.entity_type.is_some()
         || query.id.is_some()
         || query.id_pattern.is_some()

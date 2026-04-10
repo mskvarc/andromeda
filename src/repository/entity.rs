@@ -258,7 +258,7 @@ impl EntityRepository {
 
     /// Execute a compiled entity query and return matching payloads with an optional total count.
     pub async fn query_compiled(&self, compiled: &CompiledEntityQuery) -> Result<QueryResult, AndromedaError> {
-        let built = sql::build_query(compiled)?;
+        let built = sql::entity::build_query(compiled)?;
 
         tracing::info!("Built SQL: {} with binds: {:?}", built.sql, built.bind_values);
 
@@ -488,7 +488,7 @@ impl EntityRepository {
 
     /// Execute a compiled query and return only the matching entity identifiers.
     pub async fn query_ids(&self, compiled: &CompiledEntityQuery) -> Result<Vec<String>, AndromedaError> {
-        let built = sql::build_ids_query(compiled)?;
+        let built = sql::entity::build_ids_query(compiled)?;
 
         tracing::info!("Built IDs SQL: {} with binds: {:?}", built.sql, built.bind_values);
 

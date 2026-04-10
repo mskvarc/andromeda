@@ -1,4 +1,12 @@
-//! Shared query parameter trait for entity, temporal, and CSR query types.
+//! Shared query parameter trait and HTTP parameter types for NGSI-LD query APIs.
+//!
+//! This module consolidates HTTP query parameter deserialization structs for
+//! entity, temporal, and CSR queries alongside the shared query parameter trait
+//! that provides common parsing behaviour across all query types.
+
+pub mod csr;
+pub mod entity;
+pub mod temporal;
 
 /// Generate a trait method that splits a raw comma-separated parameter into a `Vec<String>`.
 ///
@@ -107,4 +115,40 @@ pub(crate) fn is_valid_uri(id: &str) -> bool {
         return id.parse::<urn::Urn>().is_ok();
     }
     url::Url::parse(id).is_ok()
+}
+
+/// Generate a [`SharedQueryParams`] implementation for a query parameter struct.
+///
+/// Maps struct fields to the trait's raw accessor methods. Use `field_name` to
+/// map a field via `self.field_name.as_deref()` (for `Option<String>`) or
+/// `self.field_name` (for `Option<u32>`). Use `None` for parameters the struct
+/// does not support.
+#[macro_export]
+macro_rules! impl_shared_query_params {
+    ($ty:ty { id: $id:ident, attrs: $attrs:ident,
+              pick: $($pick:ident)?, omit: $($omit:ident)?,
+              dataset_id: $($ds:ident)?, limit: $lim:ident, offset: $off:ident }) => {
+        impl crate::http::parameter::query::SharedQueryParams for $ty {
+            fn raw_id(&self) -> Option<&str> { self.$id.as_deref() }
+            fn raw_attrs(&self) -> Option<&str> { self.$attrs.as_deref() }
+            fn raw_pick(&self) -> Option<&str> { impl_shared_query_params!(@opt self $($pick)?) }
+            fn raw_omit(&self) -> Option<&str> { impl_shared_query_params!(@opt self $($omit)?) }
+            fn raw_dataset_id(&self) -> Option<&str> { impl_shared_query_params!(@opt self $($ds)?) }
+            fn raw_limit(&self) -> Option<u32> { self.$lim }
+            fn raw_offset(&self) -> Option<u32> { self.$off }
+        }
+    };
+    (@opt $self:ident) => { None };
+    (@opt $self:ident $field:ident) => { $self.$field.as_deref() };
+}
+
+/// Deserialize a query string into a query parameter struct for testing.
+///
+/// Wraps `serde_urlencoded::from_str` for use in test helper functions.
+#[cfg(test)]
+#[macro_export]
+macro_rules! params_from_query {
+    ($query:expr, $ty:ty) => {
+        serde_urlencoded::from_str::<$ty>($query).unwrap()
+    };
 }

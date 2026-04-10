@@ -6,7 +6,6 @@ use crate::{
         subscription::SubscriptionStatus,
     },
     query::q,
-    renderer::SysAttrsInclusion,
 };
 use chrono::Utc;
 use regex::Regex;
@@ -288,6 +287,7 @@ mod tests {
             notification::{ChangeEvent, ChangeOrigin, CompiledSubscription, TriggerReason},
             subscription::SubscriptionStatus,
         },
+        renderer::SysAttrsInclusion,
         transport::endpoint::EndpointTransport,
     };
 

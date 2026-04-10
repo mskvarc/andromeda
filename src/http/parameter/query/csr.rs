@@ -1,9 +1,6 @@
 //! Query parameters for the NGSI-LD Context Source Registration discovery API.
 
-use crate::{
-    query::{error::QueryError, params::is_valid_uri},
-    renderer::SysAttrsInclusion,
-};
+use crate::{http::parameter::query::is_valid_uri, impl_shared_query_params, query::error::QueryError, renderer::SysAttrsInclusion};
 use serde::Deserialize;
 
 /// Raw HTTP query parameters for Context Source Registration discovery.
@@ -113,7 +110,7 @@ pub struct CsrQueryParametersOptions {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::query::params::SharedQueryParams;
+    use crate::{http::parameter::query::SharedQueryParams, params_from_query};
 
     fn params_from_query(query: &str) -> CsrQueryParameters {
         params_from_query!(query, CsrQueryParameters)

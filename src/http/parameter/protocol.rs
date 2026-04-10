@@ -6,8 +6,14 @@
 
 use crate::{
     error::AndromedaError,
-    http::{error::problem::NgsiLdError, extractor::protocol::NgsiLdProtocolHeaders, parameter::entity::GetEntityParams},
-    query::{entity::EntityQueryParameters, temporal::TemporalQueryParameters},
+    http::{
+        error::problem::NgsiLdError,
+        extractor::protocol::NgsiLdProtocolHeaders,
+        parameter::{
+            entity::GetEntityParams,
+            query::{entity::EntityQueryParameters, temporal::TemporalQueryParameters},
+        },
+    },
 };
 use axum::http::Uri;
 

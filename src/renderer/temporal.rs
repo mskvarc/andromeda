@@ -9,7 +9,7 @@ use crate::{
     },
     error::AndromedaError,
     jsonld::vocab,
-    query::temporal::{CompiledTemporalQuery, LastNOrigin},
+    query::compiled::{CompiledTemporalQuery, LastNOrigin},
     renderer::SysAttrsInclusion,
     service::temporal::format_datetime,
 };

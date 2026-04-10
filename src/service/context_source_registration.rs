@@ -4,11 +4,10 @@ use crate::{
         temporal::{TimeProp, TimeRel},
     },
     error::AndromedaError,
+    http::parameter::query::{SharedQueryParams, csr::CsrQueryParameters},
     jsonld::{ContextSpec, JsonLdEngine},
     query::{
         compiled::{CompiledCsrQuery, CompiledCsrTemporalFilter, IdPattern},
-        csr::CsrQueryParameters,
-        params::SharedQueryParams,
         q::parser,
     },
     repository::context_source_registration::{ContextSourceRegistrationRepository, CreateCsrParams, CsrUpdateFragment, unwrap_geo_property_to_string},
@@ -325,7 +324,7 @@ impl ContextSourceRegistrationService {
         };
 
         // Parse geo filter
-        let geo = crate::query::geo::compile_geo_query(
+        let geo = crate::query::compile::geo::compile_geo_query(
             params.georel.as_deref(),
             params.geometry.as_deref(),
             params.coordinates.as_deref(),

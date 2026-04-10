@@ -4,8 +4,8 @@ use crate::{
     domain::temporal::{AggrMethod, TemporalFormat, TimeProp, TimeRel},
     error::AndromedaError,
     query::{
+        compiled::CompiledTemporalQuery,
         sql::{BindValue, EntityFilterConditionsInput, build_entity_filter_conditions},
-        temporal::CompiledTemporalQuery,
     },
 };
 use std::borrow::Cow;
@@ -392,7 +392,7 @@ ORDER BY {}"#,
 mod tests {
     use super::*;
     use crate::{
-        query::temporal::{CompiledTemporalQuery, LastNOrigin},
+        query::compiled::{CompiledTemporalQuery, LastNOrigin},
         renderer::SysAttrsInclusion,
     };
     use chrono::{DateTime, Utc};

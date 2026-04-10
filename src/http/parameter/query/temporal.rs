@@ -1,16 +1,11 @@
-//! Query parameters and compiled representation for the NGSI-LD Temporal API.
+//! Query parameters for the NGSI-LD Temporal API.
 
 use crate::{
     domain::temporal::{AggrMethod, TemporalFormat, TimeProp, TimeRel},
     http::model::temporal_query_request::TemporalQueryRequest,
-    query::{
-        compiled::{GeoQuery, IdPattern},
-        error::QueryError,
-        q::ast::Expr,
-    },
-    renderer::SysAttrsInclusion,
+    impl_shared_query_params,
+    query::error::QueryError,
 };
-use chrono::{DateTime, Utc};
 use serde::Deserialize;
 
 /// Raw HTTP query parameters for temporal entity queries.
@@ -297,103 +292,10 @@ impl From<TemporalQueryRequest> for TemporalQueryParameters {
     }
 }
 
-/// Indicates the origin of the `lastN` limit in a temporal query.
-///
-/// Indicates the origin of the `lastN` limit in a temporal query.
-///
-/// This enum replaces two boolean fields (`system_last_n` and
-/// `user_specified_last_n`) to clearly distinguish between the four possible
-/// states of lastN handling.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum LastNOrigin {
-    /// The user explicitly specified a `lastN` parameter within the system cap.
-    /// No truncation detection needed -- the user gets exactly what they asked for.
-    UserSpecified,
-    /// The user specified `lastN` but it exceeded the system cap, so the system
-    /// reduced it. Triggers truncation detection (206 Partial Content) but uses
-    /// user-specified direction for Content-Range.
-    UserSpecifiedCapped,
-    /// No user `lastN` was specified; the system applied DEFAULT_LAST_N as a cap.
-    /// Triggers truncation detection (206 Partial Content) with system direction
-    /// for Content-Range.
-    SystemCapped,
-    /// No `lastN` limit is active (e.g. aggregated queries without lastN).
-    None,
-}
-
-impl LastNOrigin {
-    /// Returns true when the system cap is active and truncation may occur.
-    /// This is the case for both `SystemCapped` and `UserSpecifiedCapped`.
-    pub const fn is_system_capped(self) -> bool {
-        matches!(self, LastNOrigin::SystemCapped | LastNOrigin::UserSpecifiedCapped)
-    }
-
-    /// Returns true when the user explicitly provided a `lastN` parameter,
-    /// regardless of whether it was further capped by the system.
-    pub const fn is_user_specified(self) -> bool {
-        matches!(self, LastNOrigin::UserSpecified | LastNOrigin::UserSpecifiedCapped)
-    }
-}
-
-/// Compiled temporal query ready for SQL building.
-///
-/// Produced by expanding and validating `TemporalQueryParameters` against the
-/// active JSON-LD context. Contains both entity-level filters and temporal-specific
-/// parameters needed to query the `temporal_entity_attributes` and `attribute_history` tables.
-#[derive(Debug, Clone)]
-pub struct CompiledTemporalQuery {
-    /// Optional set of entity IDs to filter by (expanded URIs/URNs).
-    pub ids: Option<Vec<String>>,
-    /// Optional regex pattern for matching entity IDs.
-    pub id_pattern: Option<IdPattern>,
-    /// Optional set of entity type IRIs to filter by.
-    pub types: Option<Vec<String>>,
-    /// Parsed `q` expression for property-level filtering.
-    pub q_expr: Option<Expr>,
-    /// Geo-spatial query filter, if specified.
-    pub geo: Option<GeoQuery>,
-
-    /// Temporal relationship operator (`before`, `after`, `between`).
-    pub timerel: Option<TimeRel>,
-    /// Reference time point for the temporal filter.
-    pub time_at: Option<DateTime<Utc>>,
-    /// End time point for `between` queries.
-    pub end_time_at: Option<DateTime<Utc>>,
-    /// The time property to filter on (`observedAt`, `createdAt`, `modifiedAt`, `deletedAt`).
-    pub timeproperty: TimeProp,
-
-    /// Expanded attribute IRIs to filter temporal data by.
-    pub attr_filter: Vec<String>,
-    /// Dataset IDs to filter temporal data by. `"@none"` matches the default (null) dataset.
-    pub dataset_id_filter: Vec<String>,
-
-    /// Maximum number of temporal instances per attribute to return.
-    pub last_n: Option<u32>,
-    /// The origin of the `lastN` limit, distinguishing user-specified values
-    /// from system-imposed caps (which trigger 206 Partial Content).
-    pub last_n_origin: LastNOrigin,
-    /// The temporal response format (normalized, temporalValues, or aggregatedValues).
-    pub format: TemporalFormat,
-    /// Aggregation methods to apply when `format` is `aggregatedValues`.
-    pub aggr_methods: Vec<AggrMethod>,
-    /// ISO 8601 duration for aggregation bucket size (e.g. `"PT1H"`).
-    pub aggr_period_duration: Option<String>,
-
-    /// Maximum number of entities to return.
-    pub limit: u32,
-    /// Number of entities to skip for pagination.
-    pub offset: u32,
-    /// Whether to include a total count of matching entities in the response.
-    pub count: bool,
-
-    /// Whether to include system-generated attributes (`createdAt`, `modifiedAt`).
-    pub sys_attrs: SysAttrsInclusion,
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::query::params::SharedQueryParams;
+    use crate::{http::parameter::query::SharedQueryParams, params_from_query};
 
     fn params_from_query(query: &str) -> TemporalQueryParameters {
         params_from_query!(query, TemporalQueryParameters)

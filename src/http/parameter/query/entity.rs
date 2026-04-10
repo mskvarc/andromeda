@@ -1,8 +1,12 @@
 //! Query parameters for the NGSI-LD Entity query API (5.7.2).
 
 use crate::{
-    http::model::query_request::QueryRequest,
-    query::{error::QueryError, params::is_valid_uri},
+    http::{model::query_request::QueryRequest, parameter::query::is_valid_uri},
+    impl_shared_query_params,
+    query::{
+        compiled::{OrderDirection, OrderTerm},
+        error::QueryError,
+    },
     renderer::{SysAttrsInclusion, entity::RenderMode},
 };
 use serde::Deserialize;
@@ -234,46 +238,6 @@ impl EntityQueryParameters {
     }
 }
 
-/// A single parsed ordering term from the `orderBy` parameter.
-///
-/// Contains the compact (pre-expansion) attribute name and the requested
-/// sort direction. Will be expanded to a `CompiledOrderTerm` during compilation.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct OrderTerm {
-    /// The compact attribute name to sort by.
-    pub attr: String,
-    /// The sort direction.
-    pub direction: OrderDirection,
-}
-
-/// Sort direction for `orderBy` terms per NGSI-LD S4.23.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum OrderDirection {
-    /// Sort in ascending order.
-    Asc,
-    /// Sort in descending order.
-    Desc,
-    /// Sort by distance in ascending order from the geo query reference geometry (S4.23).
-    DistAsc,
-    /// Sort by distance in descending order from the geo query reference geometry (S4.23).
-    DistDesc,
-}
-
-impl OrderDirection {
-    /// Whether this is a distance-based ordering direction.
-    pub const fn is_distance(&self) -> bool {
-        matches!(self, OrderDirection::DistAsc | OrderDirection::DistDesc)
-    }
-
-    /// SQL direction keyword.
-    pub const fn sql_dir(&self) -> &'static str {
-        match self {
-            OrderDirection::Asc | OrderDirection::DistAsc => "ASC",
-            OrderDirection::Desc | OrderDirection::DistDesc => "DESC",
-        }
-    }
-}
-
 /// Parsed response shaping options from the `options` and `format` parameters.
 #[derive(Debug)]
 pub struct EntityQueryParametersOptions {
@@ -352,7 +316,7 @@ impl From<QueryRequest> for EntityQueryParameters {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::query::params::SharedQueryParams;
+    use crate::{http::parameter::query::SharedQueryParams, params_from_query, query::compiled::OrderDirection};
 
     fn params_from_query(query: &str) -> EntityQueryParameters {
         params_from_query!(query, EntityQueryParameters)

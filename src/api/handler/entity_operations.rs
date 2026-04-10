@@ -18,10 +18,10 @@ use crate::{
         parameter::{
             entity_operations::{PostQueryParams, UpdateParams, UpsertParams},
             protocol::apply_entity_query_extension_headers,
+            query::entity::EntityQueryParameters,
         },
         response::{batch::NgsiLdBatchResponse, collection::NgsiLdCollectionResponse},
     },
-    query::entity::EntityQueryParameters,
     renderer::{entity::EntityRenderer, response::ResponseRenderer},
     service::{
         context_source_forwarding::{ForwardBatchProvisionRequest, ForwardingOperation, collect_warnings},

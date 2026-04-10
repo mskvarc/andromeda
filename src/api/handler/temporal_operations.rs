@@ -6,9 +6,9 @@ use crate::{
         error::problem::NgsiLdError,
         extractor::{accept::AcceptFormat, context::ContextUrl, jsonld::JsonLd, prefer::PreferHeader, via::IncomingVia},
         model::temporal_query_request::TemporalQueryRequest,
+        parameter::query::temporal::TemporalQueryParameters,
         response::collection::NgsiLdCollectionResponse,
     },
-    query::temporal::TemporalQueryParameters,
     renderer::response::ResponseRenderer,
     service::{
         context_source_forwarding::{ForwardingOperation, collect_warnings},

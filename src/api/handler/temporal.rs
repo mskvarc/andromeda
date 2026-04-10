@@ -16,11 +16,10 @@ use crate::{
             protocol::NgsiLdProtocolHeaders,
             query::ValidatedQuery,
         },
-        parameter::{DeleteAttrParams, EmptyParams, protocol::apply_temporal_extension_headers},
+        parameter::{DeleteAttrParams, EmptyParams, protocol::apply_temporal_extension_headers, query::temporal::TemporalQueryParameters},
         response::{collection::NgsiLdCollectionResponse, single::NgsiLdResponse},
     },
     jsonld::ContextSpec,
-    query::temporal::TemporalQueryParameters,
     renderer::{
         response::ResponseRenderer,
         temporal::{simplify_temporal_value, simplify_temporal_values},

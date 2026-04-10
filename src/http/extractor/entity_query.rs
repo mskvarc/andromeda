@@ -5,8 +5,8 @@
 //! at least one filter or `local=true` must be present.
 
 use crate::{
-    http::extractor::error::ExtractorRejection,
-    query::{entity::EntityQueryParameters, error::QueryError},
+    http::{extractor::error::ExtractorRejection, parameter::query::entity::EntityQueryParameters},
+    query::error::QueryError,
 };
 use axum::{extract::FromRequestParts, http::request::Parts};
 

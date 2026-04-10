@@ -3,6 +3,7 @@ use crate::{
     http::{
         error::problem::NgsiLdError,
         extractor::{accept::AcceptFormatNoGeo, context::ContextUrl, jsonld::JsonLd, prefer::PreferHeader, query::ValidatedQuery},
+        parameter::query::csr::CsrQueryParameters,
         response::{
             collection::NgsiLdCollectionResponse,
             pagination::{PaginationMediaType, PaginationStyle, append_pagination_links},
@@ -10,7 +11,6 @@ use crate::{
         },
     },
     jsonld::ContextSpec,
-    query::csr::CsrQueryParameters,
     renderer::{registration::render_registration, response::ResponseRenderer},
 };
 use axum::{
@@ -66,7 +66,7 @@ pub async fn query(
     context: ContextUrl,
     ValidatedQuery(params): ValidatedQuery<CsrQueryParameters>,
 ) -> Result<Response, NgsiLdError> {
-    use crate::query::params::SharedQueryParams;
+    use crate::http::parameter::query::SharedQueryParams;
 
     let service = &state.csr;
     let context: ContextSpec = context.into_inner();

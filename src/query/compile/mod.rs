@@ -4,6 +4,8 @@ use crate::{
     query::q::{ast::Expr, parser},
 };
 
+pub mod geo;
+
 /// Expand a list of short attribute names to their full IRIs.
 pub async fn expand_attrs(raw: &[String], engine: &JsonLdEngine, context: &ContextSpec) -> Result<Vec<String>, AndromedaError> {
     let mut expanded = Vec::with_capacity(raw.len());

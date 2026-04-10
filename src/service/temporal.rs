@@ -3,12 +3,11 @@
 use crate::{
     domain::temporal::TemporalFormat,
     error::AndromedaError,
+    http::parameter::query::{SharedQueryParams, temporal::TemporalQueryParameters},
     jsonld::{CompactOptions, ContextSpec, JsonLdEngine, vocab},
     query::{
-        compiled::{GeoQuery, IdPattern},
-        params::SharedQueryParams,
-        temporal::{CompiledTemporalQuery, LastNOrigin, TemporalQueryParameters},
-        temporal_sql::{build_stage1_entity_ids, build_temporal_history_query},
+        compiled::{CompiledTemporalQuery, GeoQuery, IdPattern, LastNOrigin},
+        sql::temporal::{build_stage1_entity_ids, build_temporal_history_query},
     },
     renderer::{
         SysAttrsInclusion,
@@ -667,7 +666,7 @@ impl TemporalService {
     }
 
     async fn compile_geo_query(&self, params: &TemporalQueryParameters, context: &ContextSpec) -> Result<Option<GeoQuery>, AndromedaError> {
-        crate::query::geo::compile_geo_query(
+        crate::query::compile::geo::compile_geo_query(
             params.georel.as_deref(),
             params.geometry.as_deref(),
             params.coordinates.as_deref(),

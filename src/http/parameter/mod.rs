@@ -9,6 +9,7 @@ pub mod entity;
 pub mod entity_operations;
 pub mod jsonld_context;
 pub mod protocol;
+pub mod query;
 pub mod subscription;
 
 use serde::{Deserialize, Deserializer};

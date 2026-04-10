@@ -4,12 +4,9 @@ use crate::{
         entity::Entity,
     },
     error::AndromedaError,
+    http::parameter::query::{SharedQueryParams, entity::EntityQueryParameters},
     jsonld::{CompactOptions, ContextSpec, JsonLdEngine},
-    query::{
-        compiled::{CompiledEntityQuery, CompiledOrderTerm, GeoQuery, IcuCollation, IdPattern, OrderingGeometry, ScopeQuery},
-        entity::EntityQueryParameters,
-        params::SharedQueryParams,
-    },
+    query::compiled::{CompiledEntityQuery, CompiledOrderTerm, GeoQuery, IcuCollation, IdPattern, OrderingGeometry, ScopeQuery},
     renderer::SysAttrsInclusion,
     repository::entity::EntityRepository,
     service::context_source_forwarding::{ForwardedEntities, merge_query_results},
@@ -439,7 +436,7 @@ impl EntityQueryService {
     }
 
     async fn compile_geo_query(&self, params: &EntityQueryParameters, context: &ContextSpec) -> Result<Option<GeoQuery>, AndromedaError> {
-        crate::query::geo::compile_geo_query(
+        crate::query::compile::geo::compile_geo_query(
             params.georel.as_deref(),
             params.geometry.as_deref(),
             params.coordinates.as_deref(),
