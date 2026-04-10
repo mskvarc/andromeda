@@ -6,14 +6,16 @@
 use crate::{
     domain::{
         jsonld_context::{ContextKind, ContextMetadata},
-        uri::NGSI_LD_URN_NID,
+        uri::{NGSI_LD_URN_NID, Uri},
     },
     error::AndromedaError,
     jsonld::ContextCache,
 };
 use async_trait::async_trait;
+use chrono::{DateTime, Utc};
 use serde_json::Value;
 use sqlx::{Row, postgres::PgPool, types::Json};
+use url::Url;
 use urn::{Urn, UrnBuilder};
 use uuid::Uuid;
 
@@ -133,23 +135,8 @@ impl JsonLdContextRepository {
                 .fetch_all(&self.pool)
                 .await?;
 
-                let metas: Vec<ContextMetadata> = rows
-                    .into_iter()
-                    .map(|row| {
-                        let local_id: String = row.get("local_id");
-                        let url: Option<String> = row.get("url");
-                        ContextMetadata {
-                            url,
-                            local_id,
-                            kind: row.get("kind"),
-                            created_at: row.get("created_at"),
-                            expires_at: row.get("expires_at"),
-                            last_usage: row.get("last_usage"),
-                            number_of_hits: row.get("number_of_hits"),
-                            extra_info: row.get("extra_info"),
-                        }
-                    })
-                    .collect();
+                let metas: Result<Vec<ContextMetadata>, AndromedaError> = rows.into_iter().map(|row| row_to_context_metadata(&row)).collect();
+                let metas = metas?;
 
                 Ok(ContextListResult::Detailed(metas))
             }
@@ -203,22 +190,9 @@ impl JsonLdContextRepository {
                 .fetch_optional(&self.pool)
                 .await?;
 
-                if let Some(row) = row_opt {
-                    let local_id: String = row.get("local_id");
-                    let url: Option<String> = row.get("url");
-                    let meta = ContextMetadata {
-                        url,
-                        local_id,
-                        kind: row.get("kind"),
-                        created_at: row.get("created_at"),
-                        expires_at: row.get("expires_at"),
-                        last_usage: row.get("last_usage"),
-                        number_of_hits: row.get("number_of_hits"),
-                        extra_info: row.get("extra_info"),
-                    };
-                    Ok(Some(ContextGetResult::Detailed(meta)))
-                } else {
-                    Ok(None)
+                match row_opt {
+                    Some(row) => Ok(Some(ContextGetResult::Detailed(row_to_context_metadata(&row)?))),
+                    None => Ok(None),
                 }
             }
             DetailLevel::Summary => {
@@ -267,7 +241,10 @@ impl JsonLdContextRepository {
 
         if let Some(row) = row_opt {
             let id: String = row.get("id");
-            let kind: ContextKind = row.get("kind");
+            let kind_str: String = row.get("kind");
+            let kind: ContextKind = kind_str
+                .parse()
+                .map_err(|_| AndromedaError::internal(format!("Unknown context kind in database: {}", kind_str)))?;
             let url: Option<String> = row.get("url");
             Ok(Some((id, kind, url)))
         } else {
@@ -291,6 +268,43 @@ impl JsonLdContextRepository {
 
         Ok(())
     }
+}
+
+/// Converts a database row into a [`ContextMetadata`] domain object.
+fn row_to_context_metadata(row: &sqlx::postgres::PgRow) -> Result<ContextMetadata, AndromedaError> {
+    let local_id_str: String = row.get("local_id");
+    let url_str: Option<String> = row.get("url");
+    let kind_str: String = row.get("kind");
+    let hits: i64 = row.get("number_of_hits");
+
+    let local_id: Uri = local_id_str
+        .parse()
+        .map_err(|_| AndromedaError::internal(format!("Invalid URI in database: {}", local_id_str)))?;
+
+    let url = url_str
+        .map(|s| s.parse::<Url>())
+        .transpose()
+        .map_err(|e| AndromedaError::internal(format!("Invalid URL in database: {}", e)))?;
+
+    let kind: ContextKind = kind_str
+        .parse()
+        .map_err(|_| AndromedaError::internal(format!("Unknown context kind in database: {}", kind_str)))?;
+
+    let created_at: DateTime<Utc> = row.get("created_at");
+    let expires_at: Option<DateTime<Utc>> = row.get("expires_at");
+    let last_usage: DateTime<Utc> = row.get("last_usage");
+    let extra_info: Option<Value> = row.get("extra_info");
+
+    Ok(ContextMetadata {
+        url,
+        local_id,
+        kind,
+        created_at,
+        expires_at,
+        last_usage,
+        number_of_hits: hits as u64,
+        extra_info,
+    })
 }
 
 #[async_trait]

@@ -1,5 +1,6 @@
 use derive_more::{Display, From};
 use serde::{Deserialize, Serialize};
+use thiserror::Error;
 use url::Url;
 use urn::Urn;
 
@@ -19,6 +20,22 @@ pub enum Uri {
     /// A URL identifier (e.g., `https://example.com/entity/1`).
     #[display("{_0}")]
     Url(Url),
+}
+
+/// Error returned when a string cannot be parsed as a [`Uri`].
+#[derive(Debug, Error)]
+#[error("invalid URI: not a valid URN or URL")]
+pub struct UriParseError;
+
+impl std::str::FromStr for Uri {
+    type Err = UriParseError;
+
+    fn from_str(s: &str) -> Result<Uri, UriParseError> {
+        if let Ok(urn) = s.parse::<Urn>() {
+            return Ok(Uri::Urn(urn));
+        }
+        s.parse::<Url>().map(Uri::Url).map_err(|_| UriParseError)
+    }
 }
 
 #[cfg(test)]

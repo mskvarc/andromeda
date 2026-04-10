@@ -1,5 +1,8 @@
 use crate::{
-    domain::jsonld_context::{ContextKind, ContextMetadata},
+    domain::{
+        jsonld_context::{ContextKind, ContextMetadata},
+        uri::Uri,
+    },
     error::AndromedaError,
     jsonld::{
         JsonLdEngine,
@@ -11,6 +14,7 @@ use chrono::Utc;
 use serde_json::Value;
 use sqlx::postgres::PgPool;
 use tracing::debug;
+use url::Url;
 use urn::Urn;
 
 /// Service for managing hosted and cached JSON-LD contexts.
@@ -44,7 +48,7 @@ impl JsonLdContextService {
         match result {
             ContextListResult::Detailed(mut metas) => {
                 if include_core {
-                    metas.push(build_core_context_metadata(NGSI_LD_CORE_CONTEXT_URL));
+                    metas.push(build_core_context_metadata(NGSI_LD_CORE_CONTEXT_URL)?);
                 }
                 Ok(serde_json::to_value(metas)?)
             }
@@ -61,7 +65,7 @@ impl JsonLdContextService {
     pub async fn get(&self, identifier: &str, detail_level: DetailLevel) -> Result<Value, AndromedaError> {
         if is_core_context_url(identifier) {
             return match detail_level {
-                DetailLevel::Full => Ok(serde_json::to_value(build_core_context_metadata(identifier))?),
+                DetailLevel::Full => Ok(serde_json::to_value(build_core_context_metadata(identifier)?)?),
                 DetailLevel::Summary => core_context_payload(),
             };
         }
@@ -128,24 +132,29 @@ fn core_context_payload() -> Result<Value, AndromedaError> {
     serde_json::from_str(NGSI_LD_CORE_CONTEXT_V19).map_err(|e| AndromedaError::internal(format!("Embedded core context JSON is invalid: {}", e)))
 }
 
-fn build_core_context_metadata(identifier: &str) -> ContextMetadata {
+fn build_core_context_metadata(identifier: &str) -> Result<ContextMetadata, AndromedaError> {
     let now = Utc::now();
-    ContextMetadata {
-        url: Some(identifier.to_string()),
-        local_id: identifier.to_string(),
+    let url: Url = identifier
+        .parse()
+        .map_err(|e| AndromedaError::internal(format!("Core context URL is invalid: {}", e)))?;
+    let local_id = Uri::Url(url.clone()); // clone: need url for both fields
+    Ok(ContextMetadata {
+        url: Some(url),
+        local_id,
         kind: ContextKind::ImplicitlyCreated,
         created_at: now,
         expires_at: None,
         last_usage: now,
         number_of_hits: 0,
         extra_info: None,
-    }
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::{build_core_context_metadata, core_context_payload, is_core_context_url};
-    use crate::domain::jsonld_context::ContextKind;
+    use crate::domain::{jsonld_context::ContextKind, uri::Uri};
+    use url::Url;
 
     #[test]
     fn core_context_url_is_recognized() {
@@ -157,10 +166,11 @@ mod tests {
     #[test]
     fn core_context_details_include_kind_and_url() {
         let identifier = "https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.6.jsonld";
-        let metadata = build_core_context_metadata(identifier);
+        let metadata = build_core_context_metadata(identifier).expect("valid core context metadata");
         assert_eq!(metadata.kind, ContextKind::ImplicitlyCreated);
-        assert_eq!(metadata.url.as_deref(), Some(identifier));
-        assert_eq!(metadata.local_id, identifier);
+        let expected_url: Url = identifier.parse().expect("valid URL");
+        assert_eq!(metadata.url, Some(expected_url.clone()));
+        assert_eq!(metadata.local_id, Uri::Url(expected_url));
     }
 
     #[test]

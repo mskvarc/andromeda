@@ -23,6 +23,7 @@ bytes = "1.11.1"
 chrono = { version = "0.4.44", features = ["serde"] }
 clap = { version = "4.6.0", features = ["derive", "wrap_help"] }
 clap-themes = "0.1.3"
+compact_str = "0.9.0"
 confique = { version = "0.4.0", features = ["toml"] }
 constant-string = "1.0.1"
 contextual = "0.1.6"
