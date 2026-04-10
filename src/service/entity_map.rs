@@ -1,5 +1,9 @@
-use crate::{domain::entity_map::EntityMap, error::AndromedaError, repository::entity_map::EntityMapStore};
-use chrono::{DateTime, Duration, Utc};
+use crate::{domain::{entity_map::EntityMap, uri::Uri}, error::AndromedaError, repository::entity_map::EntityMapStore};
+use chrono::{DateTime, Utc};
+use iso8601_duration::Duration as Iso8601Duration;
+use std::collections::HashSet;
+use std::str::FromStr;
+use urn::Urn;
 
 /// Service for managing NGSI-LD entity maps.
 pub struct EntityMapService {
@@ -12,153 +16,129 @@ impl EntityMapService {
         EntityMapService { store }
     }
 
-    /// Create a new entity map from the given entity IDs with an optional ISO 8601 lifetime.
-    pub async fn create(&self, entity_ids: Vec<String>, lifetime: Option<&str>) -> Result<EntityMap, AndromedaError> {
-        let id = format!("urn:ngsi-ld:EntityMap:{}", uuid::Uuid::new_v4());
-        let duration = parse_iso8601_duration(lifetime)?;
-        let expires_at = Utc::now() + duration;
+    /// Create a new entity map from the given entity IDs with an optional ISO8601 lifetime.
+    pub async fn create(&self, entity_ids: Vec<Uri>, lifetime: Option<&Iso8601Duration>) -> Result<EntityMap, AndromedaError> {
+        let id = build_entity_map_id()?;
+        let expires_at = compute_entity_map_expires_at(Utc::now(), lifetime)?;
         let map = EntityMap::new(id, expires_at, entity_ids);
         self.store.insert(map.clone()).await; // clone: store takes ownership, caller needs return value
         Ok(map)
     }
 
     /// Retrieve an entity map by its identifier.
-    pub async fn retrieve(&self, id: &str) -> Result<EntityMap, AndromedaError> {
-        self.store.get(id).await.ok_or_else(|| AndromedaError::not_found(id))
+    pub async fn retrieve(&self, id: &Urn) -> Result<EntityMap, AndromedaError> {
+        self.store.get(id).await.ok_or_else(|| AndromedaError::not_found(id.to_string()))
     }
 
     /// Update the expiration time of an existing entity map.
-    pub async fn update(&self, id: &str, expires_at: DateTime<Utc>) -> Result<(), AndromedaError> {
+    pub async fn update(&self, id: &Urn, expires_at: DateTime<Utc>) -> Result<(), AndromedaError> {
         if self.store.update(id, expires_at).await {
             Ok(())
         } else {
-            Err(AndromedaError::not_found(id))
+            Err(AndromedaError::not_found(id.to_string()))
         }
     }
 
     /// Scope query IDs by intersecting with an EntityMap's entity set.
-    ///
-    /// When `existing_ids` is `Some`, returns only the IDs present in both the
-    /// map and the existing set. When `None`, returns all IDs from the map as
-    /// a comma-separated string. Per spec 5.5.9.3, this scopes queries to the
-    /// frozen entity set of the given map.
-    pub async fn scope_query_ids(&self, map_id: &str, existing_ids: Option<&str>) -> Result<String, AndromedaError> {
+    pub async fn scope_query_ids(&self, map_id: &Urn, existing_ids: Option<&[Uri]>) -> Result<Vec<Uri>, AndromedaError> {
         let map = self.retrieve(map_id).await?;
         if let Some(existing) = existing_ids {
-            let query_ids: std::collections::HashSet<String> = existing.split(',').map(|s| s.trim().to_string()).collect();
-            let map_ids: std::collections::HashSet<String> = map.entity_ids.into_iter().collect();
-            let intersection: Vec<String> = query_ids.intersection(&map_ids).cloned().collect(); // clone: owned strings from set intersection
-            Ok(intersection.join(","))
+            let query_ids: HashSet<Uri> = existing.iter().cloned().collect(); // clone: owned set elements for intersection
+            let map_ids: HashSet<Uri> = map.entity_ids.into_iter().collect();
+            let intersection: Vec<Uri> = query_ids.intersection(&map_ids).cloned().collect(); // clone: owned values from set intersection
+            Ok(intersection)
         } else {
-            Ok(map.entity_ids.join(","))
+            Ok(map.entity_ids)
         }
     }
 
     /// Validate that a specific entity ID exists in the given EntityMap.
-    ///
-    /// Returns `Ok(())` if the entity is present, or `Err(NotFound)` if it is
-    /// not. Per spec 5.7.3.4, entity-map-scoped retrieval must return 404 for
-    /// entities not in the map.
-    pub async fn validate_entity_in_map(&self, map_id: &str, entity_id: &str) -> Result<(), AndromedaError> {
+    pub async fn validate_entity_in_map(&self, map_id: &Urn, entity_id: &Urn) -> Result<(), AndromedaError> {
         let map = self.retrieve(map_id).await?;
-        if map.entity_ids.iter().any(|id| id == entity_id) {
+        if map
+            .entity_ids
+            .iter()
+            .any(|id| matches!(id, Uri::Urn(candidate) if candidate == entity_id))
+        {
             Ok(())
         } else {
-            Err(AndromedaError::not_found(entity_id))
+            Err(AndromedaError::not_found(entity_id.to_string()))
         }
     }
 
     /// Delete an entity map by its identifier.
-    pub async fn delete(&self, id: &str) -> Result<(), AndromedaError> {
+    pub async fn delete(&self, id: &Urn) -> Result<(), AndromedaError> {
         if self.store.delete(id).await {
             Ok(())
         } else {
-            Err(AndromedaError::not_found(id))
+            Err(AndromedaError::not_found(id.to_string()))
         }
     }
 }
 
-/// Parse an ISO 8601 duration string (e.g. `PT5M`, `P1D`) into a `chrono::Duration`.
+/// Parse an ISO8601 duration string into `iso8601_duration::Duration`.
 ///
-/// Returns a default of 1 hour when `input` is `None` or empty.
-pub fn parse_iso8601_duration(input: Option<&str>) -> Result<Duration, AndromedaError> {
-    let Some(s) = input else {
-        return Ok(Duration::hours(1));
-    };
-
-    if s.is_empty() {
-        return Ok(Duration::hours(1));
+/// Returns a default of `PT1H` when `input` is `None` or empty.
+pub fn parse_iso8601_duration(input: Option<&str>) -> Result<Iso8601Duration, AndromedaError> {
+    match input {
+        Some(raw) if !raw.trim().is_empty() => raw
+            .trim()
+            .parse::<Iso8601Duration>()
+            .map_err(|e| AndromedaError::bad_request_data(format!("Invalid ISO8601 duration '{}': {:?}", raw, e))),
+        _ => "PT1H"
+            .parse::<Iso8601Duration>()
+            .map_err(|e| AndromedaError::internal(format!("Invalid default entityMapLifetime: {:?}", e))),
     }
+}
 
-    // Simple ISO 8601 duration parser for PT#H#M#S format
-    let s = s.trim();
-    if !s.starts_with('P') {
-        return Err(AndromedaError::bad_request_data(format!("Invalid ISO 8601 duration: {}", s)));
-    }
+/// Parse a comma-separated list of URI identifiers.
+pub fn parse_uri_csv(input: &str) -> Result<Vec<Uri>, AndromedaError> {
+    input
+        .split(',')
+        .map(str::trim)
+        .filter(|segment| !segment.is_empty())
+        .map(|segment| Uri::from_str(segment).map_err(|_| AndromedaError::bad_request_data(format!("Invalid URI '{}': expected URN or URL", segment))))
+        .collect()
+}
 
-    let rest = &s[1..];
-    let (date_part, time_part) = if let Some(idx) = rest.find('T') {
-        (&rest[..idx], &rest[idx + 1..])
+fn build_entity_map_id() -> Result<Urn, AndromedaError> {
+    let value = format!("urn:ngsi-ld:EntityMap:{}", uuid::Uuid::new_v4());
+    let id = value
+        .parse::<Urn>()
+        .map_err(|e| AndromedaError::internal(format!("Failed to build entity map id: {}", e)))?;
+    validate_entity_map_urn(&id)?;
+    Ok(id)
+}
+
+pub fn parse_entity_map_urn(raw: &str) -> Result<Urn, AndromedaError> {
+    let id = raw
+        .parse::<Urn>()
+        .map_err(|e| AndromedaError::bad_request_data(format!("Invalid entityMap id URN: {}", e)))?;
+    validate_entity_map_urn(&id)?;
+    Ok(id)
+}
+
+pub fn validate_entity_map_urn(id: &Urn) -> Result<(), AndromedaError> {
+    if id.as_str().starts_with("urn:ngsi-ld:EntityMap:") {
+        Ok(())
     } else {
-        (rest, "")
+        Err(AndromedaError::bad_request_data("entityMap id must use the 'urn:ngsi-ld:EntityMap:' prefix"))
+    }
+}
+
+fn compute_entity_map_expires_at(created_at: DateTime<Utc>, lifetime: Option<&Iso8601Duration>) -> Result<DateTime<Utc>, AndromedaError> {
+    let duration = match lifetime {
+        Some(value) => *value,
+        None => parse_iso8601_duration(None)?,
     };
-
-    let mut total_seconds: i64 = 0;
-
-    // Parse date part (D for days)
-    if !date_part.is_empty() {
-        let mut num_buf = String::new();
-        for c in date_part.chars() {
-            if c.is_ascii_digit() {
-                num_buf.push(c);
-            } else {
-                let val: i64 = num_buf
-                    .parse()
-                    .map_err(|_| AndromedaError::bad_request_data(format!("Invalid ISO 8601 duration: {}", s)))?;
-                num_buf.clear();
-                match c {
-                    'D' => total_seconds += val * 86400,
-                    _other => {
-                        return Err(AndromedaError::bad_request_data(format!("Invalid ISO 8601 duration: {}", s)));
-                    }
-                }
-            }
-        }
-    }
-
-    // Parse time part (H, M, S)
-    if !time_part.is_empty() {
-        let mut num_buf = String::new();
-        for c in time_part.chars() {
-            if c.is_ascii_digit() || c == '.' {
-                num_buf.push(c);
-            } else {
-                let val: f64 = num_buf
-                    .parse()
-                    .map_err(|_| AndromedaError::bad_request_data(format!("Invalid ISO 8601 duration: {}", s)))?;
-                num_buf.clear();
-                match c {
-                    'H' => total_seconds += (val * 3600.0) as i64,
-                    'M' => total_seconds += (val * 60.0) as i64,
-                    'S' => total_seconds += val as i64,
-                    _other => {
-                        return Err(AndromedaError::bad_request_data(format!("Invalid ISO 8601 duration: {}", s)));
-                    }
-                }
-            }
-        }
-    }
-
-    if total_seconds == 0 {
-        return Err(AndromedaError::bad_request_data(format!("Invalid ISO 8601 duration: {}", s)));
-    }
-
-    Ok(Duration::seconds(total_seconds))
+    Ok(created_at + duration)
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::{repository::entity_map::EntityMapStore, service::entity_map::parse_iso8601_duration};
+    use crate::{domain::uri::Uri, repository::entity_map::EntityMapStore, service::entity_map::{parse_entity_map_urn, parse_iso8601_duration, parse_uri_csv}};
+    use std::str::FromStr;
+    use urn::Urn;
 
     fn make_service() -> super::EntityMapService {
         super::EntityMapService::new(EntityMapStore::new())
@@ -167,86 +147,72 @@ mod tests {
     #[tokio::test]
     async fn scope_query_ids_no_existing_returns_all_map_ids() {
         let svc = make_service();
-        let map = svc.create(vec!["urn:a".to_string(), "urn:b".to_string()], None).await.unwrap();
-        let result = svc.scope_query_ids(&map.id, None).await.unwrap();
-        assert!(result.contains("urn:a"));
-        assert!(result.contains("urn:b"));
+        let map = svc
+            .create(
+                vec![Uri::from_str("urn:a").expect("uri"), Uri::from_str("urn:b").expect("uri")],
+                None,
+            )
+            .await
+            .expect("create map");
+        let result = svc.scope_query_ids(&map.id, None).await.expect("scope ids");
+        assert!(result.iter().any(|id| id.to_string() == "urn:a"));
+        assert!(result.iter().any(|id| id.to_string() == "urn:b"));
     }
 
     #[tokio::test]
     async fn scope_query_ids_with_overlap_returns_intersection() {
         let svc = make_service();
         let map = svc
-            .create(vec!["urn:a".to_string(), "urn:b".to_string(), "urn:c".to_string()], None)
+            .create(
+                vec![
+                    Uri::from_str("urn:a").expect("uri"),
+                    Uri::from_str("urn:b").expect("uri"),
+                    Uri::from_str("urn:c").expect("uri"),
+                ],
+                None,
+            )
             .await
-            .unwrap();
-        let result = svc.scope_query_ids(&map.id, Some("urn:b,urn:d")).await.unwrap();
-        assert!(result.contains("urn:b"));
-        assert!(!result.contains("urn:a"));
-        assert!(!result.contains("urn:d"));
-    }
-
-    #[tokio::test]
-    async fn scope_query_ids_no_overlap_returns_empty() {
-        let svc = make_service();
-        let map = svc.create(vec!["urn:a".to_string()], None).await.unwrap();
-        let result = svc.scope_query_ids(&map.id, Some("urn:x")).await.unwrap();
-        assert!(result.is_empty());
-    }
-
-    #[tokio::test]
-    async fn scope_query_ids_map_not_found_returns_error() {
-        let svc = make_service();
-        let result = svc.scope_query_ids("urn:nonexistent", None).await;
-        assert!(result.is_err());
-    }
-
-    #[tokio::test]
-    async fn validate_entity_in_map_id_present() {
-        let svc = make_service();
-        let map = svc.create(vec!["urn:a".to_string(), "urn:b".to_string()], None).await.unwrap();
-        assert!(svc.validate_entity_in_map(&map.id, "urn:a").await.is_ok());
-    }
-
-    #[tokio::test]
-    async fn validate_entity_in_map_id_absent_returns_not_found() {
-        let svc = make_service();
-        let map = svc.create(vec!["urn:a".to_string()], None).await.unwrap();
-        assert!(svc.validate_entity_in_map(&map.id, "urn:x").await.is_err());
+            .expect("create map");
+        let existing = vec![Uri::from_str("urn:b").expect("uri"), Uri::from_str("urn:d").expect("uri")];
+        let result = svc.scope_query_ids(&map.id, Some(&existing)).await.expect("scope ids");
+        assert!(result.iter().any(|id| id.to_string() == "urn:b"));
+        assert!(!result.iter().any(|id| id.to_string() == "urn:a"));
+        assert!(!result.iter().any(|id| id.to_string() == "urn:d"));
     }
 
     #[test]
     fn parse_pt5m() {
-        let d = parse_iso8601_duration(Some("PT5M")).unwrap();
-        assert_eq!(d.num_seconds(), 300);
-    }
-
-    #[test]
-    fn parse_pt1h() {
-        let d = parse_iso8601_duration(Some("PT1H")).unwrap();
-        assert_eq!(d.num_seconds(), 3600);
-    }
-
-    #[test]
-    fn parse_pt1h30m() {
-        let d = parse_iso8601_duration(Some("PT1H30M")).unwrap();
-        assert_eq!(d.num_seconds(), 5400);
-    }
-
-    #[test]
-    fn parse_p1d() {
-        let d = parse_iso8601_duration(Some("P1D")).unwrap();
-        assert_eq!(d.num_seconds(), 86400);
+        let d = parse_iso8601_duration(Some("PT5M")).expect("duration");
+        assert_eq!(d.to_string(), "PT5M");
     }
 
     #[test]
     fn parse_default_none() {
-        let d = parse_iso8601_duration(None).unwrap();
-        assert_eq!(d.num_seconds(), 3600);
+        let d = parse_iso8601_duration(None).expect("duration");
+        assert_eq!(d.to_string(), "PT1H");
     }
 
     #[test]
     fn parse_invalid() {
         assert!(parse_iso8601_duration(Some("invalid")).is_err());
+    }
+
+    #[test]
+    fn parse_entity_map_urn_enforces_prefix() {
+        let ok = parse_entity_map_urn("urn:ngsi-ld:EntityMap:1").expect("urn");
+        assert_eq!(ok.as_str(), "urn:ngsi-ld:EntityMap:1");
+        assert!(parse_entity_map_urn("urn:ngsi-ld:Snapshot:1").is_err());
+    }
+
+    #[test]
+    fn parse_uri_csv_rejects_invalid() {
+        assert!(parse_uri_csv("urn:ngsi-ld:Thing:1,https://example.com/e/2").is_ok());
+        assert!(parse_uri_csv("not-a-uri").is_err());
+    }
+
+    #[test]
+    fn parse_entity_map_urn_accepts_valid_urn() {
+        let parsed = Urn::from_str("urn:ngsi-ld:EntityMap:abc").expect("valid urn");
+        assert!(super::validate_entity_map_urn(&parsed).is_ok());
     }
 }

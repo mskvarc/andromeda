@@ -1,34 +1,80 @@
+use crate::domain::uri::Uri;
 use chrono::{DateTime, Utc};
+use compact_str::CompactString;
 use indexmap::IndexMap;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+use thiserror::Error;
+use urn::Urn;
+
+/// JSON-LD `@type` for EntityMap resources.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum EntityMapType {
+    #[serde(rename = "EntityMap")]
+    EntityMap,
+}
+
+/// Dataset identifier reference inside `entityMap` values.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(try_from = "String", into = "String")]
+pub enum EntityMapDatasetId {
+    /// Default dataset marker.
+    None,
+    /// Concrete dataset identifier URI.
+    Uri(Uri),
+}
+
+impl From<EntityMapDatasetId> for String {
+    fn from(value: EntityMapDatasetId) -> String {
+        match value {
+            EntityMapDatasetId::None => "@none".to_string(),
+            EntityMapDatasetId::Uri(uri) => uri.to_string(),
+        }
+    }
+}
+
+impl TryFrom<String> for EntityMapDatasetId {
+    type Error = EntityMapDatasetIdParseError;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        if value == "@none" {
+            return Ok(EntityMapDatasetId::None);
+        }
+        let uri = value.parse::<Uri>().map_err(|_| EntityMapDatasetIdParseError::InvalidUri)?;
+        Ok(EntityMapDatasetId::Uri(uri))
+    }
+}
+
+/// Parsing errors for [`EntityMapDatasetId`].
+#[derive(Debug, Error, Clone, Copy, PartialEq, Eq)]
+pub enum EntityMapDatasetIdParseError {
+    #[error("entityMap dataset id must be '@none' or a valid URI")]
+    InvalidUri,
+}
 
 /// NGSI-LD EntityMap representation (ETSI GS CIM 009 clause 5.2.39).
-///
-/// Maps entity identifiers to their dataset IDs for distributed query results.
-/// Used by the broker to track which entities were retrieved from which
-/// context sources and to support linked entity map navigation.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EntityMap {
-    pub id: String,
+    pub id: Urn,
     #[serde(rename = "type")]
-    pub type_: &'static str,
+    pub type_: EntityMapType,
     pub expires_at: DateTime<Utc>,
     #[serde(skip)]
-    pub entity_ids: Vec<String>,
-    pub entity_map: IndexMap<String, Vec<String>>,
-    pub linked_maps: IndexMap<String, String>,
+    pub entity_ids: Vec<Uri>,
+    pub entity_map: IndexMap<Uri, Vec<EntityMapDatasetId>>,
+    pub linked_maps: IndexMap<CompactString, Urn>,
 }
 
 impl EntityMap {
-    pub fn new(id: String, expires_at: DateTime<Utc>, entity_ids: Vec<String>) -> Self {
+    /// Construct a new EntityMap with default `@none` dataset mapping per entity.
+    pub fn new(id: Urn, expires_at: DateTime<Utc>, entity_ids: Vec<Uri>) -> EntityMap {
         let mut entity_map = IndexMap::new();
-        for eid in &entity_ids {
-            entity_map.insert(eid.clone(), vec!["@none".to_string()]);
+        for entity_id in &entity_ids {
+            entity_map.insert(entity_id.clone(), vec![EntityMapDatasetId::None]);
         }
-        Self {
+        EntityMap {
             id,
-            type_: "EntityMap",
+            type_: EntityMapType::EntityMap,
             expires_at,
             entity_ids,
             entity_map,
@@ -36,6 +82,7 @@ impl EntityMap {
         }
     }
 
+    /// Returns whether this map has already expired.
     pub fn is_expired(&self) -> bool {
         Utc::now() >= self.expires_at
     }

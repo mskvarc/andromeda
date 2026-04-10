@@ -1,5 +1,6 @@
 use crate::{
     api::tenant::TenantState,
+    domain::uri::Uri,
     error::AndromedaError,
     http::{
         error::problem::NgsiLdError,
@@ -8,6 +9,7 @@ use crate::{
     },
     jsonld::ContextSpec,
     renderer::response::ResponseRenderer,
+    service::entity_map::{parse_entity_map_urn, parse_iso8601_duration},
 };
 use axum::{
     Json,
@@ -18,14 +20,10 @@ use axum::{
 use chrono::DateTime;
 use serde::Deserialize;
 use serde_json::Value;
+use std::str::FromStr;
 
-fn parse_entity_map_id(id: &str, uri: &axum::http::Uri) -> Result<(), NgsiLdError> {
-    if id.is_empty() || (!id.starts_with("urn:") && url::Url::parse(id).is_err()) {
-        return Err(NgsiLdError::from(
-            AndromedaError::bad_request_data("Invalid entityMap id: not a valid URI").with_instance(uri.clone()),
-        ));
-    }
-    Ok(())
+fn parse_entity_map_id(id: &str, uri: &axum::http::Uri) -> Result<urn::Urn, NgsiLdError> {
+    parse_entity_map_urn(id).map_err(|e| NgsiLdError::from(e.with_instance(uri.clone())))
 }
 
 /// GET /ngsi-ld/v1/entityMaps/{entityMapId} -- Retrieve EntityMap (section 5.14.1)
@@ -36,7 +34,7 @@ pub async fn get(
     context: ContextUrl,
     Path(entity_map_id): Path<String>,
 ) -> Result<Response, NgsiLdError> {
-    parse_entity_map_id(&entity_map_id, &uri)?;
+    let entity_map_id = parse_entity_map_id(&entity_map_id, &uri)?;
     let context: ContextSpec = context.into_inner();
 
     let map = state.entity_maps.retrieve(&entity_map_id).await.map_err(|e| e.with_instance(uri.clone()))?;
@@ -71,7 +69,7 @@ pub async fn update(
     Path(entity_map_id): Path<String>,
     Json(body): Json<UpdateEntityMapBody>,
 ) -> Result<Response, NgsiLdError> {
-    parse_entity_map_id(&entity_map_id, &uri)?;
+    let entity_map_id = parse_entity_map_id(&entity_map_id, &uri)?;
 
     let expires_at_str = body
         .expires_at
@@ -94,6 +92,7 @@ pub async fn update(
 
 /// DELETE /ngsi-ld/v1/entityMaps/{entityMapId} -- Delete EntityMap (section 5.14.3)
 pub async fn delete(TenantState(state): TenantState, OriginalUri(uri): OriginalUri, Path(entity_map_id): Path<String>) -> Result<Response, NgsiLdError> {
+    let entity_map_id = parse_entity_map_id(&entity_map_id, &uri)?;
     state.entity_maps.delete(&entity_map_id).await.map_err(|e| e.with_instance(uri))?;
 
     Ok(StatusCode::NO_CONTENT.into_response())
@@ -119,15 +118,26 @@ pub async fn create_from_query(
         .map_err(|e| e.with_instance(uri.clone()))?;
     let ids = state.entity_query.query_ids(&compiled).await.map_err(|e| e.with_instance(uri.clone()))?;
 
+    let lifetime = query
+        .entity_map_lifetime
+        .as_deref()
+        .map(|raw| parse_iso8601_duration(Some(raw)))
+        .transpose()
+        .map_err(|e| NgsiLdError::from(e.with_instance(uri.clone())))?;
+    let typed_ids: Vec<Uri> = ids
+        .iter()
+        .map(|id| Uri::from_str(id).map_err(|_| AndromedaError::bad_request_data(format!("Invalid entity id URI '{}'", id))))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| NgsiLdError::from(e.with_instance(uri.clone())))?;
     let map = state
         .entity_maps
-        .create(ids, query.entity_map_lifetime.as_deref())
+        .create(typed_ids, lifetime.as_ref())
         .await
         .map_err(|e| e.with_instance(uri.clone()))?;
 
     let location = format!("/ngsi-ld/v1/entityMaps/{}", map.id);
     // Clone id before converting map to Value
-    let map_uri = map.id.clone();
+    let map_uri = map.id.to_string();
 
     let value = serde_json::to_value(&map).map_err(|e| AndromedaError::internal("Failed to serialize entity map").with_source(e).with_instance(uri))?;
     let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default()).render_single(value)?;
@@ -159,11 +169,25 @@ pub async fn create_from_query_post(
         .map_err(|e| e.with_instance(uri.clone()))?;
     let ids = state.entity_query.query_ids(&compiled).await.map_err(|e| e.with_instance(uri.clone()))?;
 
-    let lifetime = body.entity_map_lifetime.as_deref();
-    let map = state.entity_maps.create(ids, lifetime).await.map_err(|e| e.with_instance(uri.clone()))?;
+    let lifetime = body
+        .entity_map_lifetime
+        .as_deref()
+        .map(|raw| parse_iso8601_duration(Some(raw)))
+        .transpose()
+        .map_err(|e| NgsiLdError::from(e.with_instance(uri.clone())))?;
+    let typed_ids: Vec<Uri> = ids
+        .iter()
+        .map(|id| Uri::from_str(id).map_err(|_| AndromedaError::bad_request_data(format!("Invalid entity id URI '{}'", id))))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| NgsiLdError::from(e.with_instance(uri.clone())))?;
+    let map = state
+        .entity_maps
+        .create(typed_ids, lifetime.as_ref())
+        .await
+        .map_err(|e| e.with_instance(uri.clone()))?;
 
     let location = format!("/ngsi-ld/v1/entityMaps/{}", map.id);
-    let map_uri = map.id.clone();
+    let map_uri = map.id.to_string();
 
     let value = serde_json::to_value(&map).map_err(|e| AndromedaError::internal("Failed to serialize entity map").with_source(e).with_instance(uri))?;
     let rendered = ResponseRenderer::new(accept.format(), context_spec, PreferHeader::default()).render_single(value)?;
@@ -193,14 +217,25 @@ pub async fn create_temporal_from_query(
         .map_err(|e| e.with_instance(uri.clone()))?;
     let ids = state.entity_query.query_ids(&compiled).await.map_err(|e| e.with_instance(uri.clone()))?;
 
+    let lifetime = query
+        .entity_map_lifetime
+        .as_deref()
+        .map(|raw| parse_iso8601_duration(Some(raw)))
+        .transpose()
+        .map_err(|e| NgsiLdError::from(e.with_instance(uri.clone())))?;
+    let typed_ids: Vec<Uri> = ids
+        .iter()
+        .map(|id| Uri::from_str(id).map_err(|_| AndromedaError::bad_request_data(format!("Invalid entity id URI '{}'", id))))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| NgsiLdError::from(e.with_instance(uri.clone())))?;
     let map = state
         .entity_maps
-        .create(ids, query.entity_map_lifetime.as_deref())
+        .create(typed_ids, lifetime.as_ref())
         .await
         .map_err(|e| e.with_instance(uri.clone()))?;
 
     let location = format!("/ngsi-ld/v1/temporal/entityMaps/{}", map.id);
-    let map_uri = map.id.clone();
+    let map_uri = map.id.to_string();
 
     let value = serde_json::to_value(&map).map_err(|e| AndromedaError::internal("Failed to serialize entity map").with_source(e).with_instance(uri))?;
     let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default()).render_single(value)?;
@@ -232,11 +267,25 @@ pub async fn create_temporal_from_query_post(
         .map_err(|e| e.with_instance(uri.clone()))?;
     let ids = state.entity_query.query_ids(&compiled).await.map_err(|e| e.with_instance(uri.clone()))?;
 
-    let lifetime = body.entity_map_lifetime.as_deref();
-    let map = state.entity_maps.create(ids, lifetime).await.map_err(|e| e.with_instance(uri.clone()))?;
+    let lifetime = body
+        .entity_map_lifetime
+        .as_deref()
+        .map(|raw| parse_iso8601_duration(Some(raw)))
+        .transpose()
+        .map_err(|e| NgsiLdError::from(e.with_instance(uri.clone())))?;
+    let typed_ids: Vec<Uri> = ids
+        .iter()
+        .map(|id| Uri::from_str(id).map_err(|_| AndromedaError::bad_request_data(format!("Invalid entity id URI '{}'", id))))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| NgsiLdError::from(e.with_instance(uri.clone())))?;
+    let map = state
+        .entity_maps
+        .create(typed_ids, lifetime.as_ref())
+        .await
+        .map_err(|e| e.with_instance(uri.clone()))?;
 
     let location = format!("/ngsi-ld/v1/temporal/entityMaps/{}", map.id);
-    let map_uri = map.id.clone();
+    let map_uri = map.id.to_string();
 
     let value = serde_json::to_value(&map).map_err(|e| AndromedaError::internal("Failed to serialize entity map").with_source(e).with_instance(uri))?;
     let rendered = ResponseRenderer::new(accept.format(), context_spec, PreferHeader::default()).render_single(value)?;

@@ -192,10 +192,15 @@ impl EntityService {
             // Record tombstones for all dataset instances of this attribute
             if let Ok(teas) = self.temporal_recorder.get_teas_for_entity_attr(&id, &attr_iri).await {
                 for tea in &teas {
-                    let _ = self
-                        .temporal_recorder
-                        .record_attribute_deletion(&id, &attr_iri, tea.dataset_id.as_deref())
-                        .await;
+                    if let Some(dataset_id) = tea.dataset_id.as_ref() {
+                        let dataset_id = dataset_id.to_string();
+                        let _ = self
+                            .temporal_recorder
+                            .record_attribute_deletion(&id, &attr_iri, Some(&dataset_id))
+                            .await;
+                    } else {
+                        let _ = self.temporal_recorder.record_attribute_deletion(&id, &attr_iri, None).await;
+                    }
                 }
             }
         } else {

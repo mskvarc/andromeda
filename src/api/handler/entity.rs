@@ -3,7 +3,7 @@ use crate::{
         handler::parse::{parse_entity_id, validate_attr_name},
         tenant::{TenantState, TenantStateOrCreate},
     },
-    domain::entity::{Entity, EntityPatch, EntityTypeValue},
+    domain::{entity::{Entity, EntityPatch, EntityTypeValue}, uri::Uri},
     error::AndromedaError,
     http::{
         error::{
@@ -35,6 +35,7 @@ use crate::{
         response::ResponseRenderer,
     },
     service::{
+        entity_map::{parse_entity_map_urn, parse_iso8601_duration, parse_uri_csv},
         context_source_forwarding::{
             ForwardBatchProvisionRequest,
             ForwardProvisionRequest,
@@ -59,6 +60,7 @@ use axum::{
 };
 use serde_json::Value;
 use std::collections::HashSet;
+use std::str::FromStr;
 
 pub async fn patch_no_id(OriginalUri(uri): OriginalUri) -> Result<Response, NgsiLdError> {
     Err(NgsiLdError::from(AndromedaError::bad_request_data("Entity id is required").with_instance(uri)))
@@ -478,12 +480,14 @@ pub async fn query(
 
     // §5.5.9.3: If NGSILD-EntityMap header present, scope query to that map's entity IDs
     if let Some(ref map_id) = entity_map_header {
+        let map_urn = parse_entity_map_urn(map_id.as_str()).map_err(|e| e.with_instance(uri.clone()))?;
+        let scoped_input = query.id.as_deref().map(parse_uri_csv).transpose().map_err(|e| e.with_instance(uri.clone()))?;
         let scoped = state
             .entity_maps
-            .scope_query_ids(map_id.as_str(), query.id.as_deref())
+            .scope_query_ids(&map_urn, scoped_input.as_deref())
             .await
             .map_err(|e| e.with_instance(uri.clone()))?;
-        query.id = Some(scoped);
+        query.id = Some(scoped.iter().map(ToString::to_string).collect::<Vec<_>>().join(","));
     }
 
     let opts = query.parse_options();
@@ -583,12 +587,23 @@ pub async fn query(
     let entity_map_uri = if entity_map_requested {
         let compiled = service.compile_query_public(&query, &context).await.map_err(|e| e.with_instance(uri.clone()))?;
         let all_ids = service.query_ids(&compiled).await.map_err(|e| e.with_instance(uri.clone()))?;
+        let typed_ids: Vec<Uri> = all_ids
+            .iter()
+            .map(|id| Uri::from_str(id).map_err(|_| AndromedaError::bad_request_data(format!("Invalid entity id URI '{}'", id))))
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.with_instance(uri.clone()))?;
+        let lifetime = query
+            .entity_map_lifetime
+            .as_deref()
+            .map(|raw| parse_iso8601_duration(Some(raw)))
+            .transpose()
+            .map_err(|e| e.with_instance(uri.clone()))?;
         let map = state
             .entity_maps
-            .create(all_ids, query.entity_map_lifetime.as_deref())
+            .create(typed_ids, lifetime.as_ref())
             .await
             .map_err(|e| e.with_instance(uri.clone()))?;
-        Some(map.id)
+        Some(map.id.to_string())
     } else if entity_map_header.is_some() {
         // Echo the same map back in the response header
         entity_map_header.map(|h| h.into_inner().to_string())

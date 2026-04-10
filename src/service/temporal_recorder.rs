@@ -4,13 +4,15 @@
 
 use crate::{
     domain::attribute_type::AttributeType,
+    domain::temporal::ValueType,
+    domain::uri::Uri,
     error::AndromedaError,
     jsonld::vocab,
     repository::temporal::{HistoryValues, InsertHistoryParams, TemporalRepository, UpdateInstanceParams},
 };
 use chrono::{DateTime, Utc};
 use serde_json::Value;
-use std::sync::Arc;
+use std::{str::FromStr, sync::Arc};
 
 /// Returns whether the given expanded IRI is an NGSI-LD system attribute.
 fn is_system_attribute(attr_name: &str) -> bool {
@@ -156,7 +158,7 @@ impl TemporalRecorder {
 
         let tea_id = self
             .repo
-            .upsert_tea(entity_id, attr_name, attribute_type, dataset_id.as_deref(), value_type)
+            .upsert_tea(entity_id, attr_name, attribute_type, dataset_id.as_ref(), value_type)
             .await?;
 
         let p = typed_value.into_db_params();
@@ -187,13 +189,22 @@ impl TemporalRecorder {
     pub async fn record_attribute_deletion(&self, entity_id: &str, attr_iri: &str, dataset_id: Option<&str>) -> Result<(), AndromedaError> {
         // Look up the existing TEA to preserve the attribute type
         let teas = self.repo.get_teas_for_entity_attr(entity_id, attr_iri).await?;
+        let parsed_dataset_id = dataset_id.map(Uri::from_str).transpose().map_err(|_| {
+            AndromedaError::bad_request_data(format!(
+                "Invalid datasetId '{}': not a valid URI",
+                dataset_id.unwrap_or_default()
+            ))
+        })?;
         let attr_type = teas
             .iter()
-            .find(|t| t.dataset_id.as_deref() == dataset_id)
+            .find(|t| t.dataset_id.as_ref() == parsed_dataset_id.as_ref())
             .or_else(|| teas.first())
-            .map_or(AttributeType::Property.short_name(), |t| t.attribute_type.as_str());
+            .map_or(AttributeType::Property, |t| t.attribute_type);
 
-        let tea_id = self.repo.upsert_tea(entity_id, attr_iri, attr_type, dataset_id, "String").await?;
+        let tea_id = self
+            .repo
+            .upsert_tea(entity_id, attr_iri, attr_type, parsed_dataset_id.as_ref(), ValueType::String)
+            .await?;
 
         let now = Utc::now();
         let instance_id = format!("urn:ngsi-ld:attribute:instance:{}", uuid::Uuid::new_v4());
@@ -263,7 +274,7 @@ fn is_ngsi_ld_attribute_instance(obj: &serde_json::Map<String, Value>) -> bool {
     types.iter().filter_map(|t| t.as_str()).any(|s| AttributeType::from_expanded_iri(s).is_some())
 }
 
-fn detect_attribute_type(instance: &Value) -> &'static str {
+fn detect_attribute_type(instance: &Value) -> AttributeType {
     let empty: Vec<serde_json::Value> = vec![];
     let types = instance.get("@type").and_then(|v| v.as_array()).unwrap_or(&empty);
 
@@ -271,10 +282,10 @@ fn detect_attribute_type(instance: &Value) -> &'static str {
         if let Some(s) = t.as_str()
             && let Some(attr_type) = AttributeType::from_expanded_iri(s)
         {
-            return attr_type.short_name();
+            return attr_type;
         }
     }
-    AttributeType::Property.short_name()
+    AttributeType::Property
 }
 
 #[derive(Debug)]
@@ -289,15 +300,15 @@ enum TypedValue {
 }
 
 impl TypedValue {
-    const fn value_type(&self) -> &'static str {
+    const fn value_type(&self) -> ValueType {
         match self {
-            Self::Number(_) => "Number",
-            Self::String(_) => "String",
-            Self::Boolean(_) => "Boolean",
-            Self::Geometry(_) => "Geometry",
-            Self::Object(_) => "Object",
-            Self::DateTime(_) => "DateTime",
-            Self::Uri(_) => "Uri",
+            Self::Number(_) => ValueType::Number,
+            Self::String(_) => ValueType::String,
+            Self::Boolean(_) => ValueType::Boolean,
+            Self::Geometry(_) => ValueType::Geometry,
+            Self::Object(_) => ValueType::Object,
+            Self::DateTime(_) => ValueType::DateTime,
+            Self::Uri(_) => ValueType::Uri,
         }
     }
 
@@ -326,9 +337,9 @@ impl TypedValue {
     }
 }
 
-fn extract_typed_value(instance: &Value, attribute_type: &str) -> Result<TypedValue, AndromedaError> {
+fn extract_typed_value(instance: &Value, attribute_type: AttributeType) -> Result<TypedValue, AndromedaError> {
     match attribute_type {
-        x if x == AttributeType::Relationship.short_name() => {
+        AttributeType::Relationship => {
             let uri = instance
                 .get(vocab::OBJECT.as_str())
                 .and_then(|v| v.as_array())
@@ -338,7 +349,7 @@ fn extract_typed_value(instance: &Value, attribute_type: &str) -> Result<TypedVa
                 .ok_or_else(|| AndromedaError::bad_request_data("Relationship missing object"))?;
             Ok(TypedValue::Uri(uri.to_string()))
         }
-        x if x == AttributeType::GeoProperty.short_name() => {
+        AttributeType::GeoProperty => {
             let geo_node = instance
                 .get(vocab::VALUE.as_str())
                 .and_then(|v| v.as_array())
@@ -355,7 +366,7 @@ fn extract_typed_value(instance: &Value, attribute_type: &str) -> Result<TypedVa
             };
             Ok(TypedValue::Geometry(geo_str))
         }
-        x if x == AttributeType::VocabProperty.short_name() => {
+        AttributeType::VocabProperty => {
             let arr = instance
                 .get(vocab::VOCAB.as_str())
                 .and_then(|v| v.as_array())
@@ -372,13 +383,13 @@ fn extract_typed_value(instance: &Value, attribute_type: &str) -> Result<TypedVa
                 Ok(TypedValue::String(vocab_val.to_string()))
             }
         }
-        x if x == AttributeType::LanguageProperty.short_name() => {
+        AttributeType::LanguageProperty => {
             let lang_map = instance
                 .get(vocab::LANGUAGE_MAP.as_str())
                 .ok_or_else(|| AndromedaError::bad_request_data("LanguageProperty missing languageMap"))?;
             Ok(TypedValue::Object(lang_map.clone())) // clone: need owned Value for TypedValue enum; lang_map is borrowed from instance
         }
-        x if x == AttributeType::JsonProperty.short_name() => {
+        AttributeType::JsonProperty => {
             let json_val = instance
                 .get(vocab::JSON.as_str())
                 .and_then(|v| v.as_array())
@@ -387,7 +398,7 @@ fn extract_typed_value(instance: &Value, attribute_type: &str) -> Result<TypedVa
                 .ok_or_else(|| AndromedaError::bad_request_data("JsonProperty missing json value"))?;
             Ok(TypedValue::Object(json_val.clone())) // clone: need owned Value for TypedValue enum; json_val is borrowed from instance
         }
-        x if x == AttributeType::ListProperty.short_name() => {
+        AttributeType::ListProperty => {
             let list = instance
                 .get(vocab::VALUE_LIST.as_str())
                 .and_then(|v| v.as_array())
@@ -396,7 +407,7 @@ fn extract_typed_value(instance: &Value, attribute_type: &str) -> Result<TypedVa
                 .ok_or_else(|| AndromedaError::bad_request_data("ListProperty missing valueList"))?;
             Ok(TypedValue::Object(list.clone())) // clone: need owned Value for TypedValue enum; list is borrowed from instance
         }
-        x if x == AttributeType::ListRelationship.short_name() => {
+        AttributeType::ListRelationship => {
             let list = instance
                 .get(vocab::OBJECT_LIST.as_str())
                 .and_then(|v| v.as_array())
@@ -409,7 +420,7 @@ fn extract_typed_value(instance: &Value, attribute_type: &str) -> Result<TypedVa
                 .unwrap_or_default();
             Ok(TypedValue::Object(Value::Array(uris)))
         }
-        _other => {
+        AttributeType::Property => {
             // Property -- uses hasValue
             let has_value = instance
                 .get(vocab::VALUE.as_str())
@@ -510,14 +521,14 @@ fn extract_observed_at(instance: &Value) -> Option<String> {
         .map(String::from)
 }
 
-fn extract_dataset_id(instance: &Value) -> Option<String> {
+fn extract_dataset_id(instance: &Value) -> Option<Uri> {
     instance
         .get(vocab::DATASET_ID.as_str())
         .and_then(|v| v.as_array())
         .and_then(|arr| arr.first())
         .and_then(|obj| obj.get("@id"))
         .and_then(|v| v.as_str())
-        .map(String::from)
+        .and_then(|value| Uri::from_str(value).ok())
 }
 
 fn extract_or_generate_instance_id(instance: &Value) -> String {

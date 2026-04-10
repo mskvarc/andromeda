@@ -5,6 +5,7 @@ use crate::{
         handler::parse::{parse_entity_id, validate_attr_name, validate_instance_id},
         tenant::TenantState,
     },
+    domain::uri::Uri,
     error::{AndromedaError, core::AndromedaErrorKind},
     http::{
         error::problem::NgsiLdError,
@@ -27,6 +28,7 @@ use crate::{
     repository::temporal::DeleteScope,
     service::{
         context_source_forwarding::{ForwardingOperation, collect_warnings, merge_temporal_retrieve_results},
+        entity_map::{parse_entity_map_urn, parse_iso8601_duration, parse_uri_csv},
         temporal::{CreateOrUpdateResult, TemporalService},
     },
 };
@@ -36,6 +38,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use serde_json::Value;
+use std::str::FromStr;
 
 /// POST /ngsi-ld/v1/temporal/entities
 pub async fn create_or_update(
@@ -106,9 +109,10 @@ pub async fn get(
     // EntityMap scoping (spec 5.7.3.4): if NGSILD-EntityMap header is present,
     // only entities in the map are accessible. Return 404 if not in the map.
     if let Some(ref map_id) = entity_map_header {
+        let map_urn = parse_entity_map_urn(map_id.as_str()).map_err(|e| e.with_instance(uri.clone()))?;
         state
             .entity_maps
-            .validate_entity_in_map(map_id.as_str(), id.as_ref())
+            .validate_entity_in_map(&map_urn, &id)
             .await
             .map_err(|e| e.with_instance(uri.clone()))?;
     }
@@ -233,12 +237,14 @@ pub async fn query(
     // EntityMap scoping (spec 5.5.14): if NGSILD-EntityMap header is present,
     // scope the query to only the entity IDs in the map.
     if let Some(ref map_id) = entity_map_header {
+        let map_urn = parse_entity_map_urn(map_id.as_str()).map_err(|e| e.with_instance(uri.clone()))?;
+        let scoped_input = params.id.as_deref().map(parse_uri_csv).transpose().map_err(|e| e.with_instance(uri.clone()))?;
         let scoped = state
             .entity_maps
-            .scope_query_ids(map_id.as_str(), params.id.as_deref())
+            .scope_query_ids(&map_urn, scoped_input.as_deref())
             .await
             .map_err(|e| e.with_instance(uri.clone()))?;
-        params.id = Some(scoped);
+        params.id = Some(scoped.iter().map(ToString::to_string).collect::<Vec<_>>().join(","));
     }
 
     let is_local = params.is_local();
@@ -292,12 +298,23 @@ pub async fn query(
     let entity_map_requested = params.entity_map.unwrap_or(false);
     let entity_map_uri = if entity_map_requested {
         let all_ids = service.query_ids(&params, &context).await.map_err(|e| e.with_instance(uri.clone()))?;
+        let typed_ids: Vec<Uri> = all_ids
+            .iter()
+            .map(|id| Uri::from_str(id).map_err(|_| AndromedaError::bad_request_data(format!("Invalid entity id URI '{}'", id))))
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.with_instance(uri.clone()))?;
+        let lifetime = params
+            .entity_map_lifetime
+            .as_deref()
+            .map(|raw| parse_iso8601_duration(Some(raw)))
+            .transpose()
+            .map_err(|e| e.with_instance(uri.clone()))?;
         let map = state
             .entity_maps
-            .create(all_ids, params.entity_map_lifetime.as_deref())
+            .create(typed_ids, lifetime.as_ref())
             .await
             .map_err(|e| e.with_instance(uri.clone()))?;
-        Some(map.id)
+        Some(map.id.to_string())
     } else if entity_map_header.is_some() {
         entity_map_header.map(|h| h.into_inner().to_string())
     } else {

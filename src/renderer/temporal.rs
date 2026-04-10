@@ -5,7 +5,8 @@ use crate::{
     domain::{
         attribute_type::AttributeType,
         entity::Entity,
-        temporal::{AggrMethod, TeaEntry, TimeRel},
+        temporal::{AggrMethod, TeaEntry, TimeRel, ValueType},
+        uri::Uri,
     },
     error::AndromedaError,
     jsonld::vocab,
@@ -14,9 +15,11 @@ use crate::{
     service::temporal::format_datetime,
 };
 use chrono::{DateTime, Utc};
+use iref::IriBuf;
 use indexmap::IndexMap;
 use serde_json::{Value, json};
-use sqlx::Row;
+use sqlx::{Row, postgres::PgRow};
+use std::str::FromStr;
 
 type TimeRange = (DateTime<Utc>, DateTime<Utc>);
 type TemporalAttributeInstances = Vec<(Option<DateTime<Utc>>, Value)>;
@@ -101,7 +104,7 @@ pub fn build_content_range(
 pub fn build_entity_temporal(
     entity_id: &str,
     entity_types: &[String],
-    rows: &[sqlx::postgres::PgRow],
+    rows: &[PgRow],
     compiled: &CompiledTemporalQuery,
 ) -> Result<TemporalEntityBuildResult, AndromedaError> {
     let mut attrs: TemporalAttrMap = IndexMap::with_capacity(rows.len().min(64));
@@ -111,10 +114,8 @@ pub fn build_entity_temporal(
     let mut max_partition_total: Option<i64> = None;
 
     for row in rows {
-        let attr_name: String = row.try_get("attribute_name")?;
-        let attr_type: String = row.try_get("attribute_type")?;
-        let dataset_id: Option<String> = row.try_get("dataset_id")?;
-        let value_type: String = row.try_get("value_type")?;
+        let tea = parse_tea_entry(row)?;
+        let attr_name = tea.attribute_name.as_str().to_string();
 
         if compiled.last_n_origin.is_system_capped()
             && let Some(last_n) = compiled.last_n
@@ -135,15 +136,6 @@ pub fn build_entity_temporal(
             min_time = Some(min_time.map_or(t, |m: DateTime<Utc>| m.min(t)));
             max_time = Some(max_time.map_or(t, |m: DateTime<Utc>| m.max(t)));
         }
-
-        let tea = TeaEntry {
-            id: row.try_get("tea_id")?,
-            entity_id: entity_id.to_string(),
-            attribute_name: attr_name.clone(),
-            attribute_type: attr_type,
-            dataset_id,
-            value_type,
-        };
 
         let instance = history_row_to_expanded_instance(row, &tea, compiled.sys_attrs)?;
         attrs.entry(attr_name).or_default().push((obs, instance));
@@ -208,11 +200,11 @@ pub fn build_entity_temporal(
 /// method values (avg, min, max, sum, etc.) with their bucket time ranges.
 /// Returns an ordered map of attribute name to aggregated instance(s).
 pub fn build_entity_temporal_aggregated_data(
-    rows: &[sqlx::postgres::PgRow],
+    rows: &[PgRow],
     compiled: &CompiledTemporalQuery,
 ) -> Result<IndexMap<String, Value>, AndromedaError> {
     type GroupKey = (String, Option<String>);
-    let mut groups: IndexMap<GroupKey, Vec<&sqlx::postgres::PgRow>> = IndexMap::with_capacity(rows.len().min(64));
+    let mut groups: IndexMap<GroupKey, Vec<&PgRow>> = IndexMap::with_capacity(rows.len().min(64));
 
     for row in rows {
         let attr_name: String = row.try_get("attribute_name")?;
@@ -280,23 +272,47 @@ pub fn build_entity_temporal_aggregated_data(
     Ok(result)
 }
 
-fn history_row_to_expanded_instance(row: &sqlx::postgres::PgRow, tea: &TeaEntry, sys_attrs: SysAttrsInclusion) -> Result<Value, AndromedaError> {
+fn parse_tea_entry(row: &PgRow) -> Result<TeaEntry, AndromedaError> {
+    let attribute_name_raw: String = row.try_get("attribute_name")?;
+    let attribute_name = IriBuf::new(attribute_name_raw.clone())
+        .map_err(|e| AndromedaError::internal(format!("Invalid temporal attribute IRI '{}': {}", attribute_name_raw, e)))?;
+
+    let attribute_type_raw: String = row.try_get("attribute_type")?;
+    let attribute_type = AttributeType::from_str(&attribute_type_raw)
+        .map_err(|e| AndromedaError::internal(format!("Invalid temporal attribute type '{}': {}", attribute_type_raw, e)))?;
+
+    let dataset_id = row
+        .try_get::<Option<String>, _>("dataset_id")?
+        .map(|raw| Uri::from_str(&raw).map_err(|_| AndromedaError::internal(format!("Invalid temporal datasetId URI '{}'", raw))))
+        .transpose()?;
+
+    let value_type_raw: String = row.try_get("value_type")?;
+    let value_type = ValueType::from_str(&value_type_raw)
+        .map_err(|e| AndromedaError::internal(format!("Invalid temporal value type '{}': {}", value_type_raw, e)))?;
+
+    Ok(TeaEntry {
+        attribute_name,
+        attribute_type,
+        dataset_id,
+        value_type,
+    })
+}
+
+fn history_row_to_expanded_instance(row: &PgRow, tea: &TeaEntry, sys_attrs: SysAttrsInclusion) -> Result<Value, AndromedaError> {
     let mut instance = serde_json::Map::new();
 
-    let attr_type: Option<AttributeType> = tea.attribute_type.parse().ok();
-    let type_iri = attr_type.map_or(tea.attribute_type.as_str(), |t| t.iri().as_str());
-    instance.insert("@type".to_string(), json!([type_iri]));
+    instance.insert("@type".to_string(), json!([tea.attribute_type.iri().as_str()]));
 
-    let value_key = attr_type.map_or(vocab::VALUE.as_str(), |t| t.value_key().as_str());
+    let value_key = tea.attribute_type.value_key().as_str();
 
     let is_tombstone = row.try_get::<Option<String>, _>("value_string").ok().flatten().as_deref() == Some(vocab::NULL_URI.as_str());
 
     if is_tombstone {
         if tea.attribute_name == vocab::SCOPE.as_str() {
             instance.insert(value_key.to_string(), json!([]));
-        } else if attr_type == Some(AttributeType::Relationship) {
+        } else if tea.attribute_type == AttributeType::Relationship {
             instance.insert(value_key.to_string(), json!([{"@id": vocab::NULL_URI.as_str()}]));
-        } else if attr_type == Some(AttributeType::LanguageProperty) {
+        } else if tea.attribute_type == AttributeType::LanguageProperty {
             instance.insert(value_key.to_string(), json!([{"@value": vocab::NULL_URI.as_str(), "@language": "@none"}]));
         } else {
             instance.insert(value_key.to_string(), json!([{"@value": vocab::NULL_URI.as_str()}]));
@@ -317,25 +333,25 @@ fn history_row_to_expanded_instance(row: &sqlx::postgres::PgRow, tea: &TeaEntry,
         return Ok(Value::Object(instance));
     }
 
-    let effective_value_type = if tea.value_type == "Object" {
+    let effective_value_type = if tea.value_type == ValueType::Object {
         match row.try_get::<Option<Value>, _>("value_object") {
-            Ok(Some(_)) => "Object",
+            Ok(Some(_)) => ValueType::Object,
             _ => {
                 if row.try_get::<Option<String>, _>("value_string").ok().flatten().is_some() {
-                    "String"
+                    ValueType::String
                 } else if row.try_get::<Option<f64>, _>("value_number").ok().flatten().is_some() {
-                    "Number"
+                    ValueType::Number
                 } else {
-                    "Object"
+                    ValueType::Object
                 }
             }
         }
     } else {
-        tea.value_type.as_str()
+        tea.value_type
     };
 
     match effective_value_type {
-        "Number" => {
+        ValueType::Number => {
             if let Ok(v) = row.try_get::<f64, _>("value_number") {
                 let json_val = if v.fract() == 0.0 && v >= i64::MIN as f64 && v <= i64::MAX as f64 {
                     json!(v as i64)
@@ -345,21 +361,21 @@ fn history_row_to_expanded_instance(row: &sqlx::postgres::PgRow, tea: &TeaEntry,
                 instance.insert(value_key.to_string(), json!([{"@value": json_val}]));
             }
         }
-        "String" => {
+        ValueType::String => {
             if let Ok(v) = row.try_get::<String, _>("value_string") {
-                if attr_type == Some(AttributeType::VocabProperty) {
+                if tea.attribute_type == AttributeType::VocabProperty {
                     instance.insert(value_key.to_string(), json!([{"@id": v}]));
                 } else {
                     instance.insert(value_key.to_string(), json!([{"@value": v}]));
                 }
             }
         }
-        "Boolean" => {
+        ValueType::Boolean => {
             if let Ok(v) = row.try_get::<bool, _>("value_bool") {
                 instance.insert(value_key.to_string(), json!([{"@value": v}]));
             }
         }
-        "Geometry" => {
+        ValueType::Geometry => {
             if let Ok(v) = row.try_get::<String, _>("value_geo_json") {
                 let geo: Value =
                     serde_json::from_str(&v).map_err(|e| AndromedaError::internal("Failed to parse GeoJSON from temporal value").with_source(e))?;
@@ -367,13 +383,13 @@ fn history_row_to_expanded_instance(row: &sqlx::postgres::PgRow, tea: &TeaEntry,
                 instance.insert(value_key.to_string(), json!([expanded]));
             }
         }
-        "Object" => {
+        ValueType::Object => {
             if let Ok(v) = row.try_get::<Value, _>("value_object") {
-                if attr_type == Some(AttributeType::JsonProperty) {
+                if tea.attribute_type == AttributeType::JsonProperty {
                     instance.insert(value_key.to_string(), json!([{"@value": v, "@type": "@json"}]));
-                } else if attr_type == Some(AttributeType::LanguageProperty) {
+                } else if tea.attribute_type == AttributeType::LanguageProperty {
                     instance.insert(value_key.to_string(), v);
-                } else if attr_type == Some(AttributeType::VocabProperty) {
+                } else if tea.attribute_type == AttributeType::VocabProperty {
                     if let Some(arr) = v.as_array() {
                         let nodes: Vec<Value> = arr.iter().map(|val| json!({"@id": val})).collect();
                         instance.insert(value_key.to_string(), Value::Array(nodes));
@@ -385,7 +401,7 @@ fn history_row_to_expanded_instance(row: &sqlx::postgres::PgRow, tea: &TeaEntry,
                 }
             }
         }
-        "DateTime" => {
+        ValueType::DateTime => {
             if let Ok(v) = row.try_get::<DateTime<Utc>, _>("value_datetime") {
                 instance.insert(
                     value_key.to_string(),
@@ -393,13 +409,11 @@ fn history_row_to_expanded_instance(row: &sqlx::postgres::PgRow, tea: &TeaEntry,
                 );
             }
         }
-        "Uri" => {
+        ValueType::Uri => {
             if let Ok(v) = row.try_get::<String, _>("value_uri") {
                 instance.insert(value_key.to_string(), json!([{"@id": v}]));
             }
         }
-        // Value type from DB is genuinely unbounded (user-defined strings)
-        _other => {}
     }
 
     if let Ok(Some(observed_at)) = row.try_get::<Option<DateTime<Utc>>, _>("observed_at") {

@@ -3,24 +3,16 @@
 //! Types supporting the temporal entity API, which provides access to the
 //! history of attribute values over time.
 
-use serde::{Deserialize, Serialize};
-use sqlx::FromRow;
+use crate::domain::{attribute_type::AttributeType, uri::Uri};
+use iref::IriBuf;
 use strum::{Display, EnumString};
-
-/// A row from the temporal_entity_attributes table.
-#[derive(Debug, Clone, FromRow)]
+/// A typed row from the temporal_entity_attributes table.
+#[derive(Debug, Clone)]
 pub struct TeaEntry {
-    #[allow(dead_code)]
-    pub id: uuid::Uuid,
-    #[allow(dead_code)]
-    pub entity_id: String,
-    #[allow(dead_code)]
-    pub attribute_name: String,
-    /// "Property", "Relationship", "GeoProperty", etc.
-    pub attribute_type: String,
-    pub dataset_id: Option<String>,
-    /// "Number", "String", "Boolean", "Geometry", "Object", "DateTime", "Uri"
-    pub value_type: String,
+    pub attribute_name: IriBuf,
+    pub attribute_type: AttributeType,
+    pub dataset_id: Option<Uri>,
+    pub value_type: ValueType,
 }
 
 // ---------------------------------------------------------------------------
@@ -71,11 +63,9 @@ pub enum TemporalFormat {
     AggregatedValues,
 }
 
-/// Value type for temporal attribute values.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Display, EnumString)]
-#[serde(rename_all = "PascalCase")]
+/// Typed value discriminator for temporal attribute values.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Display, EnumString)]
 #[strum(serialize_all = "PascalCase")]
-#[allow(dead_code)]
 pub enum ValueType {
     Number,
     String,
@@ -119,7 +109,7 @@ mod tests {
     fn time_rel_display_and_parse_round_trip() {
         for variant in [TimeRel::Before, TimeRel::After, TimeRel::Between] {
             let s = variant.to_string();
-            let parsed = TimeRel::from_str(&s).unwrap();
+            let parsed = TimeRel::from_str(&s).expect("parse timeRel");
             assert_eq!(parsed, variant, "round-trip failed for {variant}");
         }
     }
@@ -133,7 +123,7 @@ mod tests {
     fn time_prop_display_and_parse_round_trip() {
         for variant in [TimeProp::Observed, TimeProp::Created, TimeProp::Modified, TimeProp::Deleted] {
             let s = variant.to_string();
-            let parsed = TimeProp::from_str(&s).unwrap();
+            let parsed = TimeProp::from_str(&s).expect("parse timeProperty");
             assert_eq!(parsed, variant, "round-trip failed for {variant}");
         }
     }
@@ -142,7 +132,7 @@ mod tests {
     fn temporal_format_display_and_parse_round_trip() {
         for variant in [TemporalFormat::Normalized, TemporalFormat::TemporalValues, TemporalFormat::AggregatedValues] {
             let s = variant.to_string();
-            let parsed = TemporalFormat::from_str(&s).unwrap();
+            let parsed = TemporalFormat::from_str(&s).expect("parse temporal format");
             assert_eq!(parsed, variant, "round-trip failed for {variant}");
         }
     }
@@ -160,7 +150,7 @@ mod tests {
             AggrMethod::DistinctCount,
         ] {
             let s = variant.to_string();
-            let parsed = AggrMethod::from_str(&s).unwrap();
+            let parsed = AggrMethod::from_str(&s).expect("parse aggrMethod");
             assert_eq!(parsed, variant, "round-trip failed for {variant}");
         }
     }
@@ -177,7 +167,7 @@ mod tests {
             ValueType::Uri,
         ] {
             let s = variant.to_string();
-            let parsed = ValueType::from_str(&s).unwrap();
+            let parsed = ValueType::from_str(&s).expect("parse valueType");
             assert_eq!(parsed, variant, "round-trip failed for {variant}");
         }
     }
