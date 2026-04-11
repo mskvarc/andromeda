@@ -1,4 +1,5 @@
 use crate::{
+    core::batch_activity::BatchActivityTracker,
     domain::{
         notification::{ChangeEvent, TriggerReason},
         uri::Uri,
@@ -7,21 +8,28 @@ use crate::{
 };
 use std::time::Duration;
 use tokio::sync::broadcast;
-use tracing::{error, info};
+use tracing::{debug, error, info};
 
 /// Combined worker that expires both entities and attribute instances.
 pub struct DataExpirationWorker {
     entity_repo: EntityRepository,
     change_tx: Option<broadcast::Sender<ChangeEvent>>,
     interval: Duration,
+    batch_activity: BatchActivityTracker,
 }
 
 impl DataExpirationWorker {
-    pub const fn new(entity_repo: EntityRepository, change_tx: Option<broadcast::Sender<ChangeEvent>>, interval_secs: u64) -> DataExpirationWorker {
+    pub fn new(
+        entity_repo: EntityRepository,
+        change_tx: Option<broadcast::Sender<ChangeEvent>>,
+        interval_secs: u64,
+        batch_activity: BatchActivityTracker,
+    ) -> DataExpirationWorker {
         DataExpirationWorker {
             entity_repo,
             change_tx,
             interval: Duration::from_secs(interval_secs),
+            batch_activity,
         }
     }
 
@@ -31,6 +39,11 @@ impl DataExpirationWorker {
 
         loop {
             ticker.tick().await;
+
+            if self.batch_activity.is_within_cooldown() {
+                debug!("DataExpirationWorker skipping scan: batch activity within cooldown");
+                continue;
+            }
 
             match self.entity_repo.expire_due_entities().await {
                 Ok(expired_ids) => {

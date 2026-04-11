@@ -11,13 +11,14 @@ use crate::{
     query::sql::BindValue,
 };
 use chrono::{DateTime, Utc};
+use dashmap::DashMap;
 use iref::IriBuf;
 use serde_json::Value;
 use sqlx::{
     Row,
     postgres::{PgPool, PgRow},
 };
-use std::str::FromStr;
+use std::{collections::HashMap, str::FromStr, sync::Arc};
 use urn::Urn;
 
 /// Whether to delete all instances of an attribute or a single specific instance.
@@ -84,12 +85,100 @@ pub struct UpdateInstanceParams<'a> {
 #[derive(Debug)]
 pub struct TemporalRepository {
     pool: PgPool,
+    /// In-process cache for attribute name dictionary lookups.
+    ///
+    /// With only ~30 distinct attribute names, caching avoids repeated
+    /// database round-trips on every batch operation. New names are inserted
+    /// on first encounter and cached for the process lifetime.
+    attr_name_cache: Arc<DashMap<String, i16>>,
 }
 
 impl TemporalRepository {
     /// Creates a new repository backed by the given connection pool.
     pub fn new(pool: &PgPool) -> TemporalRepository {
-        TemporalRepository { pool: pool.clone() } // clone: Arc ref-count bump (PgPool is Arc-based)
+        TemporalRepository {
+            pool: pool.clone(), // clone: Arc ref-count bump (PgPool is Arc-based)
+            attr_name_cache: Arc::new(DashMap::new()),
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Attribute name dictionary
+    // -------------------------------------------------------------------------
+
+    /// Resolve a single attribute name to its dictionary ID, inserting if new.
+    ///
+    /// Returns from the in-process cache on hit; on miss, inserts into the
+    /// database with `DO NOTHING` and then SELECTs the ID.
+    async fn resolve_attribute_name_id(&self, name: &str) -> Result<i16, AndromedaError> {
+        if let Some(id) = self.attr_name_cache.get(name) {
+            return Ok(*id);
+        }
+
+        // Insert only genuinely new names (no exclusive lock on existing rows).
+        sqlx::query("INSERT INTO attribute_names (name) VALUES ($1) ON CONFLICT (name) DO NOTHING")
+            .bind(name)
+            .execute(&self.pool)
+            .await?;
+
+        let id: i16 = sqlx::query_scalar("SELECT id FROM attribute_names WHERE name = $1")
+            .bind(name)
+            .fetch_one(&self.pool)
+            .await?;
+
+        self.attr_name_cache.insert(name.to_owned(), id);
+        Ok(id)
+    }
+
+    /// Bulk-resolve attribute names to dictionary IDs, inserting new names.
+    ///
+    /// Checks the in-process cache first; only names not yet cached are sent
+    /// to the database. Uses `INSERT ... DO NOTHING` to avoid exclusive row
+    /// locks on existing names, then SELECTs all IDs in one round-trip.
+    async fn resolve_attribute_name_ids(&self, names: &[&str]) -> Result<HashMap<String, i16>, AndromedaError> {
+        if names.is_empty() {
+            return Ok(HashMap::new());
+        }
+
+        let mut result = HashMap::with_capacity(names.len());
+        let mut uncached: Vec<&str> = Vec::new();
+
+        for name in names {
+            if let Some(id) = self.attr_name_cache.get(*name) {
+                result.insert((*name).to_owned(), *id);
+            } else {
+                uncached.push(name);
+            }
+        }
+
+        if uncached.is_empty() {
+            return Ok(result);
+        }
+
+        // Insert only genuinely new names (shared-lock-friendly).
+        sqlx::query(
+            "INSERT INTO attribute_names (name) \
+             SELECT name FROM UNNEST($1::text[]) AS t(name) \
+             ON CONFLICT (name) DO NOTHING",
+        )
+        .bind(&uncached)
+        .execute(&self.pool)
+        .await?;
+
+        // Fetch IDs for all uncached names in one query.
+        let rows = sqlx::query("SELECT id, name FROM attribute_names WHERE name = ANY($1)")
+            .bind(&uncached)
+            .fetch_all(&self.pool)
+            .await?;
+
+        for row in rows {
+            let name: String = row.get("name");
+            let id: i16 = row.get("id");
+            self.attr_name_cache.insert(name.clone(), id);
+            result.insert(name, id);
+        }
+
+        Ok(result)
     }
 
     // -------------------------------------------------------------------------
@@ -105,17 +194,19 @@ impl TemporalRepository {
         dataset_id: Option<&Urn>,
         value_type: ValueType,
     ) -> Result<uuid::Uuid, AndromedaError> {
+        let attr_name_id = self.resolve_attribute_name_id(attribute_name).await?;
+
         let id: uuid::Uuid = sqlx::query_scalar(
             r#"
-            INSERT INTO temporal_entity_attributes (entity_id, attribute_name, attribute_type, dataset_id, value_type)
+            INSERT INTO temporal_entity_attributes (entity_id, attribute_name_id, attribute_type, dataset_id, value_type)
             VALUES ($1, $2, $3, $4, $5)
-            ON CONFLICT (entity_id, attribute_name, dataset_id) DO UPDATE
+            ON CONFLICT (entity_id, attribute_name_id, dataset_id) DO UPDATE
             SET attribute_type = EXCLUDED.attribute_type, value_type = EXCLUDED.value_type
             RETURNING id
             "#,
         )
         .bind(entity_id)
-        .bind(attribute_name)
+        .bind(attr_name_id)
         .bind(attribute_type.short_name())
         .bind(dataset_id.map(ToString::to_string))
         .bind(value_type.to_string())
@@ -129,9 +220,11 @@ impl TemporalRepository {
     pub async fn get_teas_for_entity_attr(&self, entity_id: &str, attribute_name: &str) -> Result<Vec<TeaEntry>, AndromedaError> {
         let rows = sqlx::query(
             r#"
-            SELECT id, entity_id, attribute_name, attribute_type, dataset_id, value_type
-            FROM temporal_entity_attributes
-            WHERE entity_id = $1 AND attribute_name = $2
+            SELECT tea.id, tea.entity_id, an.name AS attribute_name,
+                   tea.attribute_type, tea.dataset_id, tea.value_type
+            FROM temporal_entity_attributes tea
+            JOIN attribute_names an ON an.id = tea.attribute_name_id
+            WHERE tea.entity_id = $1 AND an.name = $2
             "#,
         )
         .bind(entity_id)
@@ -171,8 +264,10 @@ impl TemporalRepository {
             DeleteScope::All => {
                 sqlx::query(
                     r#"
-                    DELETE FROM temporal_entity_attributes
-                    WHERE entity_id = $1 AND attribute_name = $2
+                    DELETE FROM temporal_entity_attributes tea
+                    USING attribute_names an
+                    WHERE an.id = tea.attribute_name_id
+                    AND tea.entity_id = $1 AND an.name = $2
                     "#,
                 )
                 .bind(entity_id)
@@ -184,9 +279,11 @@ impl TemporalRepository {
                 if let Some(ds_id) = dataset_id {
                     sqlx::query(
                         r#"
-                        DELETE FROM temporal_entity_attributes
-                        WHERE entity_id = $1 AND attribute_name = $2
-                        AND dataset_id = $3
+                        DELETE FROM temporal_entity_attributes tea
+                        USING attribute_names an
+                        WHERE an.id = tea.attribute_name_id
+                        AND tea.entity_id = $1 AND an.name = $2
+                        AND tea.dataset_id = $3
                         "#,
                     )
                     .bind(entity_id)
@@ -197,8 +294,11 @@ impl TemporalRepository {
                 } else {
                     sqlx::query(
                         r#"
-                        DELETE FROM temporal_entity_attributes
-                        WHERE entity_id = $1 AND attribute_name = $2 AND dataset_id IS NULL
+                        DELETE FROM temporal_entity_attributes tea
+                        USING attribute_names an
+                        WHERE an.id = tea.attribute_name_id
+                        AND tea.entity_id = $1 AND an.name = $2
+                        AND tea.dataset_id IS NULL
                         "#,
                     )
                     .bind(entity_id)
@@ -220,8 +320,8 @@ impl TemporalRepository {
     /// Only one value column should be non-NULL, determined by the TEA's value_type.
     ///
     /// Deduplication: removes conflicting rows before insertion. Two dedup axes:
-    ///   1. Same (tea_id, instance_id) — entity update re-records the same attribute instance
-    ///   2. Same (tea_id, observed_at) — temporal create_or_update merges at the same timestamp
+    ///   1. Same (tea_id, instance_id) -- entity update re-records the same attribute instance
+    ///   2. Same (tea_id, observed_at) -- temporal create_or_update merges at the same timestamp
     ///
     /// Note: INSERT ON CONFLICT is not viable here because TimescaleDB requires
     /// the partitioning column (`time`) in all unique constraints, but dedup keys
@@ -230,18 +330,18 @@ impl TemporalRepository {
     pub async fn insert_history(&self, params: InsertHistoryParams<'_>) -> Result<(), AndromedaError> {
         let mut tx = self.pool.begin().await?;
 
-        // Single DELETE covering both dedup axes in one round-trip.
+        // Dedup axis 1: same instance_id (uses idx_attribute_history_dedup).
+        sqlx::query("DELETE FROM attribute_history WHERE tea_id = $1 AND instance_id = $2")
+            .bind(params.tea_id)
+            .bind(params.instance_id)
+            .execute(&mut *tx)
+            .await?;
+
+        // Dedup axis 2: same observed_at (uses idx_attribute_history_observed_at).
         if let Some(obs) = params.observed_at {
-            sqlx::query("DELETE FROM attribute_history WHERE tea_id = $1 AND (instance_id = $2 OR observed_at = $3)")
+            sqlx::query("DELETE FROM attribute_history WHERE tea_id = $1 AND observed_at = $2")
                 .bind(params.tea_id)
-                .bind(params.instance_id)
                 .bind(obs)
-                .execute(&mut *tx)
-                .await?;
-        } else {
-            sqlx::query("DELETE FROM attribute_history WHERE tea_id = $1 AND instance_id = $2")
-                .bind(params.tea_id)
-                .bind(params.instance_id)
                 .execute(&mut *tx)
                 .await?;
         }
@@ -289,8 +389,9 @@ impl TemporalRepository {
             DELETE FROM attribute_history
             WHERE instance_id = $1
             AND tea_id IN (
-                SELECT id FROM temporal_entity_attributes
-                WHERE entity_id = $2 AND attribute_name = $3
+                SELECT tea.id FROM temporal_entity_attributes tea
+                JOIN attribute_names an ON an.id = tea.attribute_name_id
+                WHERE tea.entity_id = $2 AND an.name = $3
             )
             RETURNING instance_id
             "#,
@@ -319,8 +420,9 @@ impl TemporalRepository {
                 observed_at = $11, metadata = $12
             WHERE instance_id = $1
             AND tea_id IN (
-                SELECT id FROM temporal_entity_attributes
-                WHERE entity_id = $2 AND attribute_name = $3
+                SELECT tea.id FROM temporal_entity_attributes tea
+                JOIN attribute_names an ON an.id = tea.attribute_name_id
+                WHERE tea.entity_id = $2 AND an.name = $3
             )
             RETURNING instance_id
             "#,
@@ -354,11 +456,12 @@ impl TemporalRepository {
     pub async fn get_instance(&self, instance_id: &str, entity_id: &str, attribute_name: &str) -> Result<Option<sqlx::postgres::PgRow>, AndromedaError> {
         let row = sqlx::query(
             r#"
-            SELECT ah.*, tea.attribute_name, tea.attribute_type, tea.value_type
+            SELECT ah.*, an.name AS attribute_name, tea.attribute_type, tea.value_type
             FROM attribute_history ah
             JOIN temporal_entity_attributes tea ON tea.id = ah.tea_id
+            JOIN attribute_names an ON an.id = tea.attribute_name_id
             WHERE ah.instance_id = $1
-            AND tea.entity_id = $2 AND tea.attribute_name = $3
+            AND tea.entity_id = $2 AND an.name = $3
             "#,
         )
         .bind(instance_id)
@@ -465,15 +568,29 @@ impl TemporalRepository {
             return Ok(Vec::new());
         }
 
+        // Step 1: resolve all distinct attribute names to dictionary IDs.
+        let distinct_names: Vec<&str> = {
+            let mut seen = std::collections::HashSet::new();
+            entries
+                .iter()
+                .filter_map(|e| seen.insert(e.attribute_name.as_str()).then_some(e.attribute_name.as_str()))
+                .collect()
+        };
+        let name_to_id = self.resolve_attribute_name_ids(&distinct_names).await?;
+
+        // Step 2: build column vectors with attribute_name_id instead of attribute_name.
         let mut entity_ids = Vec::with_capacity(entries.len());
-        let mut attribute_names = Vec::with_capacity(entries.len());
+        let mut attr_name_ids: Vec<i16> = Vec::with_capacity(entries.len());
         let mut attribute_types = Vec::with_capacity(entries.len());
         let mut dataset_ids: Vec<Option<String>> = Vec::with_capacity(entries.len());
         let mut value_types = Vec::with_capacity(entries.len());
 
         for e in entries {
+            let attr_id = name_to_id
+                .get(e.attribute_name.as_str())
+                .ok_or_else(|| AndromedaError::internal(format!("Attribute name '{}' not found in dictionary after resolve", e.attribute_name)))?;
             entity_ids.push(e.entity_id.as_str());
-            attribute_names.push(e.attribute_name.as_str());
+            attr_name_ids.push(*attr_id);
             attribute_types.push(e.attribute_type.as_str());
             dataset_ids.push(e.dataset_id.clone()); // clone: Option<String> for sqlx bind vector
             value_types.push(e.value_type.as_str());
@@ -481,17 +598,19 @@ impl TemporalRepository {
 
         let rows = sqlx::query(
             r#"
-            INSERT INTO temporal_entity_attributes (entity_id, attribute_name, attribute_type, dataset_id, value_type)
-            SELECT d.entity_id, d.attribute_name, d.attribute_type, d.dataset_id, d.value_type
-            FROM UNNEST($1::text[], $2::text[], $3::text[], $4::text[], $5::text[])
-                AS d(entity_id, attribute_name, attribute_type, dataset_id, value_type)
-            ON CONFLICT (entity_id, attribute_name, dataset_id) DO UPDATE
+            INSERT INTO temporal_entity_attributes (entity_id, attribute_name_id, attribute_type, dataset_id, value_type)
+            SELECT d.entity_id, d.attribute_name_id, d.attribute_type, d.dataset_id, d.value_type
+            FROM UNNEST($1::text[], $2::smallint[], $3::text[], $4::text[], $5::text[])
+                AS d(entity_id, attribute_name_id, attribute_type, dataset_id, value_type)
+            ON CONFLICT (entity_id, attribute_name_id, dataset_id) DO UPDATE
             SET attribute_type = EXCLUDED.attribute_type, value_type = EXCLUDED.value_type
-            RETURNING id, entity_id, attribute_name, dataset_id
+            RETURNING id, entity_id,
+                (SELECT an.name FROM attribute_names an WHERE an.id = temporal_entity_attributes.attribute_name_id) AS attribute_name,
+                dataset_id
             "#,
         )
         .bind(&entity_ids)
-        .bind(&attribute_names)
+        .bind(&attr_name_ids)
         .bind(&attribute_types)
         .bind(&dataset_ids)
         .bind(&value_types)
@@ -561,23 +680,43 @@ impl TemporalRepository {
 
         let mut tx = self.pool.begin().await?;
 
-        // Bulk dedup: delete rows that would conflict by (tea_id, instance_id)
-        // or by (tea_id, observed_at) when observed_at is present.
+        // Dedup axis 1: delete by (tea_id, instance_id) using idx_attribute_history_dedup.
         sqlx::query(
             r#"
             DELETE FROM attribute_history ah
-            USING UNNEST($1::uuid[], $2::text[], $3::timestamptz[])
-                AS d(tea_id, instance_id, observed_at)
-            WHERE ah.tea_id = d.tea_id
-            AND (ah.instance_id = d.instance_id
-                 OR (d.observed_at IS NOT NULL AND ah.observed_at = d.observed_at))
+            USING UNNEST($1::uuid[], $2::text[])
+                AS d(tea_id, instance_id)
+            WHERE ah.tea_id = d.tea_id AND ah.instance_id = d.instance_id
             "#,
         )
         .bind(&dedup_tea_ids)
         .bind(&dedup_instance_ids)
-        .bind(&dedup_observed_ats)
         .execute(&mut *tx)
         .await?;
+
+        // Dedup axis 2: delete by (tea_id, observed_at) for entries that have one,
+        // using idx_attribute_history_observed_at.
+        let filtered: Vec<(uuid::Uuid, DateTime<Utc>)> = dedup_tea_ids
+            .iter()
+            .zip(dedup_observed_ats.iter())
+            .filter_map(|(tid, obs)| obs.map(|o| (*tid, o)))
+            .collect();
+
+        if !filtered.is_empty() {
+            let (obs_tea_ids, obs_ats): (Vec<uuid::Uuid>, Vec<DateTime<Utc>>) = filtered.into_iter().unzip();
+            sqlx::query(
+                r#"
+                DELETE FROM attribute_history ah
+                USING UNNEST($1::uuid[], $2::timestamptz[])
+                    AS d(tea_id, observed_at)
+                WHERE ah.tea_id = d.tea_id AND ah.observed_at = d.observed_at
+                "#,
+            )
+            .bind(&obs_tea_ids)
+            .bind(&obs_ats)
+            .execute(&mut *tx)
+            .await?;
+        }
 
         // Bulk insert all history entries
         sqlx::query(

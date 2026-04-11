@@ -45,13 +45,13 @@ pub fn build_stage1_entity_ids<'a>(
         param_idx,
     })?;
 
-    // Attribute filter: tea.attribute_name = ANY($N)
+    // Attribute filter: an.name = ANY($N)
     if !compiled.attr_filter.is_empty() {
         bind_condition!(
             conditions,
             binds,
             param_idx,
-            "tea.attribute_name = ANY(${})",
+            "an.name = ANY(${})",
             BindValue::StringVec(Cow::Borrowed(compiled.attr_filter.as_slice()))
         );
     }
@@ -116,7 +116,9 @@ pub fn build_stage1_entity_ids<'a>(
     };
 
     let base = format!(
-        "SELECT DISTINCT tea.entity_id FROM temporal_entity_attributes tea LEFT JOIN entities e ON e.id = tea.entity_id{}",
+        "SELECT DISTINCT tea.entity_id FROM temporal_entity_attributes tea \
+         JOIN attribute_names an ON an.id = tea.attribute_name_id \
+         LEFT JOIN entities e ON e.id = tea.entity_id{}",
         join_ah
     );
     let limit_offset = format!(" LIMIT {} OFFSET {}", compiled.limit, compiled.offset);
@@ -124,7 +126,9 @@ pub fn build_stage1_entity_ids<'a>(
 
     let count_sql = if compiled.count {
         Some(format!(
-            "SELECT COUNT(DISTINCT tea.entity_id) as count FROM temporal_entity_attributes tea LEFT JOIN entities e ON e.id = tea.entity_id{}{}",
+            "SELECT COUNT(DISTINCT tea.entity_id) as count FROM temporal_entity_attributes tea \
+             JOIN attribute_names an ON an.id = tea.attribute_name_id \
+             LEFT JOIN entities e ON e.id = tea.entity_id{}{}",
             join_ah, where_clause
         ))
     } else {
@@ -203,7 +207,7 @@ pub fn build_temporal_history_query<'a>(
             conditions,
             binds,
             param_idx,
-            "tea.attribute_name = ANY(${})",
+            "an.name = ANY(${})",
             BindValue::StringVec(Cow::Borrowed(compiled.attr_filter.as_slice()))
         );
     }
@@ -252,7 +256,7 @@ fn build_history_query<'a>(
        ST_AsGeoJSON(ah.value_geo) as value_geo_json,
        ah.value_object, ah.value_datetime, ah.value_uri,
        ah.instance_id, ah.observed_at, ah.metadata,
-       tea.attribute_name, tea.attribute_type, tea.dataset_id, tea.value_type";
+       an.name AS attribute_name, tea.attribute_type, tea.dataset_id, tea.value_type";
 
     let sql = if let Some(last_n) = compiled.last_n {
         let rn_param = *param_idx;
@@ -266,6 +270,7 @@ fn build_history_query<'a>(
            COUNT(*) OVER (PARTITION BY ah.tea_id) as partition_total
     FROM attribute_history ah
     JOIN temporal_entity_attributes tea ON tea.id = ah.tea_id
+    JOIN attribute_names an ON an.id = tea.attribute_name_id
     WHERE {}
 )
 SELECT time, tea_id, value_number, value_string, value_bool, value_geo_json,
@@ -280,8 +285,9 @@ ORDER BY attribute_name, {time_col_unprefixed} ASC"#,
             r#"SELECT {}
 FROM attribute_history ah
 JOIN temporal_entity_attributes tea ON tea.id = ah.tea_id
+JOIN attribute_names an ON an.id = tea.attribute_name_id
 WHERE {}
-ORDER BY tea.attribute_name, {time_col} ASC"#,
+ORDER BY an.name, {time_col} ASC"#,
             base_cols, where_clause
         )
     };
@@ -330,12 +336,12 @@ fn build_aggregation_query<'a>(
     {} + ${}::interval AS bucket_end",
                 bucket_expr, bucket_expr, period_param
             ),
-            "tea.attribute_name, bucket_start".to_string(),
+            "an.name, bucket_start".to_string(),
         )
     } else {
         (
             "NULL::timestamptz AS bucket_start, NULL::timestamptz AS bucket_end".to_string(),
-            "tea.attribute_name".to_string(),
+            "an.name".to_string(),
         )
     };
 
@@ -361,14 +367,14 @@ fn build_aggregation_query<'a>(
     };
 
     let group_by = if period.is_some() {
-        "tea.attribute_name, tea.attribute_type, tea.dataset_id, tea.value_type, bucket_start"
+        "an.name, tea.attribute_type, tea.dataset_id, tea.value_type, bucket_start"
     } else {
-        "tea.attribute_name, tea.attribute_type, tea.dataset_id, tea.value_type"
+        "an.name, tea.attribute_type, tea.dataset_id, tea.value_type"
     };
 
     let sql = format!(
         r#"SELECT
-    tea.attribute_name,
+    an.name AS attribute_name,
     tea.attribute_type,
     tea.dataset_id,
     tea.value_type,
@@ -376,6 +382,7 @@ fn build_aggregation_query<'a>(
     {}
 FROM attribute_history ah
 JOIN temporal_entity_attributes tea ON tea.id = ah.tea_id
+JOIN attribute_names an ON an.id = tea.attribute_name_id
 WHERE {}
 GROUP BY {}
 ORDER BY {}"#,
@@ -430,7 +437,8 @@ mod tests {
         let result = build_temporal_history_query(1, &compiled, &mut binds, &mut param_idx).unwrap();
         assert!(result.sql.contains("tea.entity_id = $1"));
         assert!(result.sql.contains("attribute_history"));
-        assert!(result.sql.contains("ORDER BY tea.attribute_name, COALESCE(ah.observed_at, ah.time) ASC"));
+        assert!(result.sql.contains("JOIN attribute_names an ON an.id = tea.attribute_name_id"));
+        assert!(result.sql.contains("ORDER BY an.name, COALESCE(ah.observed_at, ah.time) ASC"));
     }
 
     #[test]
@@ -475,7 +483,7 @@ mod tests {
         let mut binds = vec![BindValue::String(Cow::Borrowed("urn:ngsi-ld:Vehicle:A1"))];
         let mut param_idx = 2;
         let result = build_temporal_history_query(1, &compiled, &mut binds, &mut param_idx).unwrap();
-        assert!(result.sql.contains("tea.attribute_name = ANY($2)"));
+        assert!(result.sql.contains("an.name = ANY($2)"));
     }
 
     #[test]
@@ -502,6 +510,7 @@ mod tests {
         assert!(result.sql.contains("time_bucket"));
         assert!(result.sql.contains("bucket_start"));
         assert!(result.sql.contains("agg_avg"));
+        assert!(result.sql.contains("JOIN attribute_names an ON an.id = tea.attribute_name_id"));
     }
 
     #[test]
@@ -525,5 +534,15 @@ mod tests {
         let result = build_stage1_entity_ids(&compiled, &mut binds, &mut param_idx).unwrap();
         assert!(result.sql.contains("SELECT DISTINCT tea.entity_id"));
         assert!(result.sql.contains("e.types"));
+        assert!(result.sql.contains("JOIN attribute_names an ON an.id = tea.attribute_name_id"));
+    }
+
+    #[test]
+    fn stage1_includes_attribute_names_join() {
+        let compiled = minimal_compiled();
+        let mut binds = Vec::new();
+        let mut param_idx = 1;
+        let result = build_stage1_entity_ids(&compiled, &mut binds, &mut param_idx).unwrap();
+        assert!(result.sql.contains("JOIN attribute_names an ON an.id = tea.attribute_name_id"));
     }
 }

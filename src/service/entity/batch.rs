@@ -719,6 +719,7 @@ impl EntityService {
 
     /// Create multiple entities in a single batch operation (NGSI-LD 5.6.7).
     pub async fn batch_create(&self, entities: &[Entity], context: &ContextSpec) -> Result<BatchResult, AndromedaError> {
+        self.batch_activity.record_activity();
         let (deduped, mut errors) = Self::dedupe_create_entities(entities);
         if deduped.is_empty() {
             return Ok(BatchResult { success: Vec::new(), errors });
@@ -741,6 +742,7 @@ impl EntityService {
 
     /// Delete multiple entities by ID in a single batch operation (NGSI-LD 5.6.10).
     pub async fn batch_delete(&self, entity_ids: &[String]) -> Result<BatchResult, AndromedaError> {
+        self.batch_activity.record_activity();
         let mut seen = HashSet::new();
         let mut unique_ids = Vec::new();
         let mut errors = Vec::new();
@@ -820,6 +822,7 @@ impl EntityService {
 
     /// Update attributes of multiple entities in a single batch operation (NGSI-LD 5.6.9).
     pub async fn batch_update(&self, entities: &[Entity], context: &ContextSpec, no_overwrite: bool) -> Result<BatchResult, AndromedaError> {
+        self.batch_activity.record_activity();
         let mut errors = Vec::new();
         let mut success = Vec::new();
         let chunk_len = self.batch_chunk_len(entities.len());
@@ -838,6 +841,7 @@ impl EntityService {
 
     /// Merge partial updates into multiple entities in a single batch operation.
     pub async fn batch_merge(&self, entities: &[Entity], context: &ContextSpec) -> Result<BatchResult, AndromedaError> {
+        self.batch_activity.record_activity();
         let mut errors = Vec::new();
         let mut success = Vec::new();
         let chunk_len = self.batch_chunk_len(entities.len());
@@ -856,6 +860,7 @@ impl EntityService {
 
     /// Create or update multiple entities in a single batch operation (NGSI-LD 5.6.8).
     pub async fn batch_upsert(&self, entities: &[Entity], context: &ContextSpec, update_mode: bool) -> Result<(BatchResult, Vec<String>), AndromedaError> {
+        self.batch_activity.record_activity();
         let deduped = Self::dedupe_upsert_entities(entities);
         let chunk_len = self.batch_chunk_len(deduped.len());
         let mut errors = Vec::new();

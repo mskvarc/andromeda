@@ -98,3 +98,6 @@ RUN sed -r -i "s/[#]*\s*(shared_preload_libraries)\s*=\s*'(.*)'/\1 = 'timescaled
 
 COPY --from=tools /go/bin/timescaledb-tune /usr/local/bin/timescaledb-tune
 COPY --from=tools /go/bin/timescaledb-parallel-copy /usr/local/bin/timescaledb-parallel-copy
+
+COPY docker-entrypoint.sh /usr/local/bin/
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh

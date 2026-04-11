@@ -1,6 +1,6 @@
 use crate::{
     api::state::{AndromedaState, AppState},
-    core::{config::Configuration, error::AndromedaError},
+    core::{batch_activity::BatchActivityTracker, config::Configuration, error::AndromedaError},
     domain::notification::{ChangeEvent, CsourceSubscriptionChange, CsrChangeEvent, SubscriptionChange},
     http::handler::{
         attribute,
@@ -223,6 +223,8 @@ pub async fn build_tenant_state(
     let context_repo = Arc::new(JsonLdContextRepository::new(&pool));
     let engine = crate::jsonld::build_engine(&config.jsonld, context_repo)?;
 
+    let batch_activity = BatchActivityTracker::new();
+
     let batch_concurrency = config
         .performance
         .batch_concurrency
@@ -251,6 +253,7 @@ pub async fn build_tenant_state(
             prepare_blocking_threshold: config.performance.batch_prepare_blocking_threshold.max(1),
         },
         batch_side_effects,
+        batch_activity.clone(),
     ));
     let temporal_service = Arc::new(TemporalService::new(&pool, engine.clone(), config.temporal.default_last_n));
     let context_service = Arc::new(JsonLdContextService::new(&pool, engine.clone()));
@@ -318,7 +321,7 @@ pub async fn build_tenant_state(
     worker_handles.push(tokio::spawn(csr_notification_worker.run()));
 
     // Combined entity and attribute expiration worker (§4.22).
-    let data_expiration_worker = DataExpirationWorker::new(EntityRepository::new(&pool), Some(change_tx), expiration_interval);
+    let data_expiration_worker = DataExpirationWorker::new(EntityRepository::new(&pool), Some(change_tx), expiration_interval, batch_activity);
     worker_handles.push(tokio::spawn(data_expiration_worker.run()));
 
     let snapshot_transport = transport.clone();

@@ -14,10 +14,6 @@ max_context_bytes = 2000000
 cache_capacity = 1024
 cache_ttl_seconds = 3600
 
-[jsonld.preload_contexts]
-"https://forge.etsi.org/rep/cim/ngsi-ld-test-suite/-/raw/develop/resources/jsonld-contexts/ngsi-ld-test-suite-compound.jsonld" = "../lib/json-ld-engine/src/context/ngsi-ld-test-suite-compound.jsonld"
-"https://forge.etsi.org/rep/cim/ngsi-ld-test-suite/-/raw/main/resources/jsonld-contexts/ngsi-ld-test-suite-compound.jsonld" = "../lib/json-ld-engine/src/context/ngsi-ld-test-suite-compound.jsonld"
-
 [multitenancy]
 enabled = true
 tenant_db_prefix = "andromeda_tenant"

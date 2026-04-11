@@ -8,7 +8,7 @@ pub mod provision_forwarding;
 pub mod query;
 
 use crate::{
-    core::error::AndromedaError,
+    core::{batch_activity::BatchActivityTracker, error::AndromedaError},
     domain::{
         entity::{Entity, EntityPatch},
         notification::{ChangeEvent, TriggerReason},
@@ -61,6 +61,7 @@ pub struct EntityService {
     engine: JsonLdEngine,
     change_tx: Option<broadcast::Sender<ChangeEvent>>,
     batch_async_side_effects: Option<BatchSideEffectDispatcherConfig>,
+    batch_activity: BatchActivityTracker,
     batch_chunk_size: usize,
     batch_concurrency: usize,
     batch_large_threshold: usize,
@@ -69,12 +70,14 @@ pub struct EntityService {
 
 impl EntityService {
     /// Create a new entity service backed by the given connection pool.
+    /// Create a new entity service backed by the given connection pool.
     pub fn new(
         pool: &PgPool,
         engine: JsonLdEngine,
         change_tx: Option<broadcast::Sender<ChangeEvent>>,
         batch_config: BatchExecutionConfig,
         batch_async_side_effects: Option<BatchSideEffectDispatcherConfig>,
+        batch_activity: BatchActivityTracker,
     ) -> EntityService {
         let repo = EntityRepository::new(pool);
         let temporal_repo = Arc::new(TemporalRepository::new(pool));
@@ -88,6 +91,7 @@ impl EntityService {
             engine,
             change_tx,
             batch_async_side_effects,
+            batch_activity,
             batch_chunk_size: batch_config.chunk_size.max(1),
             batch_concurrency: batch_config.concurrency.max(1),
             batch_large_threshold: batch_config.large_threshold.max(1),
