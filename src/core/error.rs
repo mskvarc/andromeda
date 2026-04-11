@@ -7,7 +7,17 @@
 //! [`AndromedaError`] wraps an [`ErrorKind`] with an optional request URI
 //! (`instance`) that handlers attach for RFC 7807 Problem Details responses.
 
-use crate::{jsonld::Error as JsonLdError, query::error::QueryError};
+use crate::{
+    domain::ngsi_ld_urn::{
+        AttributeListIdParseError,
+        EntityMapIdParseError,
+        EntityTypeListIdParseError,
+        SnapshotIdParseError,
+        SnapshotNotificationIdParseError,
+    },
+    jsonld::Error as JsonLdError,
+    query::error::QueryError,
+};
 use axum::http::Uri;
 use confique::Error as ConfigError;
 use reqwest::Error as ReqwestError;
@@ -136,6 +146,26 @@ pub enum ErrorKind {
     /// A URN could not be parsed.
     #[error("Invalid URN: {0}")]
     InvalidUrn(#[source] urn::Error),
+
+    /// A snapshot identifier has invalid NGSI-LD URN format.
+    #[error("Invalid snapshot id: {0}")]
+    InvalidSnapshotId(#[source] SnapshotIdParseError),
+
+    /// A snapshot-notification identifier has invalid NGSI-LD URN format.
+    #[error("Invalid snapshot notification id: {0}")]
+    InvalidSnapshotNotificationId(#[source] SnapshotNotificationIdParseError),
+
+    /// An entity-map identifier has invalid NGSI-LD URN format.
+    #[error("Invalid entity map id: {0}")]
+    InvalidEntityMapId(#[source] EntityMapIdParseError),
+
+    /// An entity-type-list identifier has invalid NGSI-LD URN format.
+    #[error("Invalid entity type list id: {0}")]
+    InvalidEntityTypeListId(#[source] EntityTypeListIdParseError),
+
+    /// An attribute-list identifier has invalid NGSI-LD URN format.
+    #[error("Invalid attribute list id: {0}")]
+    InvalidAttributeListId(#[source] AttributeListIdParseError),
 
     /// JSON parsing or serialisation failed.
     #[error("JSON parse error: {0}")]
@@ -478,6 +508,36 @@ impl From<SerdeJsonError> for AndromedaError {
 impl From<urn::Error> for AndromedaError {
     fn from(error: urn::Error) -> AndromedaError {
         ErrorKind::InvalidUrn(error).into()
+    }
+}
+
+impl From<SnapshotIdParseError> for AndromedaError {
+    fn from(error: SnapshotIdParseError) -> AndromedaError {
+        ErrorKind::InvalidSnapshotId(error).into()
+    }
+}
+
+impl From<SnapshotNotificationIdParseError> for AndromedaError {
+    fn from(error: SnapshotNotificationIdParseError) -> AndromedaError {
+        ErrorKind::InvalidSnapshotNotificationId(error).into()
+    }
+}
+
+impl From<EntityMapIdParseError> for AndromedaError {
+    fn from(error: EntityMapIdParseError) -> AndromedaError {
+        ErrorKind::InvalidEntityMapId(error).into()
+    }
+}
+
+impl From<EntityTypeListIdParseError> for AndromedaError {
+    fn from(error: EntityTypeListIdParseError) -> AndromedaError {
+        ErrorKind::InvalidEntityTypeListId(error).into()
+    }
+}
+
+impl From<AttributeListIdParseError> for AndromedaError {
+    fn from(error: AttributeListIdParseError) -> AndromedaError {
+        ErrorKind::InvalidAttributeListId(error).into()
     }
 }
 

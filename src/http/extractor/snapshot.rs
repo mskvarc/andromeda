@@ -3,21 +3,23 @@
 //! Extracts the optional `NGSILD-Snapshot` header from the request, producing
 //! a [`SnapshotHeader`] that carries the snapshot URN (or `None` when absent).
 
-use crate::http::{extractor::error::ExtractorRejection, header::ngsild_snapshot::NgsiLdSnapshot};
+use crate::{
+    domain::ngsi_ld_urn::SnapshotId,
+    http::{extractor::error::ExtractorRejection, header::ngsild_snapshot::NgsiLdSnapshot},
+};
 use axum::{extract::FromRequestParts, http::request::Parts};
 use headers::HeaderMapExt;
-use urn::Urn;
 
 /// Axum extractor for the `NGSILD-Snapshot` request header.
 ///
 /// When present, the request is scoped to the frozen data of the specified
 /// snapshot. The value must be a valid URN.
 #[derive(Clone, Debug, Default)]
-pub struct SnapshotHeader(pub Option<Urn>);
+pub struct SnapshotHeader(pub Option<SnapshotId>);
 
 impl SnapshotHeader {
     /// Consume the extractor and return the optional snapshot URN.
-    pub fn into_inner(self) -> Option<Urn> {
+    pub fn into_inner(self) -> Option<SnapshotId> {
         self.0
     }
 }

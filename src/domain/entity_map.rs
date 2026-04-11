@@ -1,4 +1,4 @@
-use crate::domain::uri::Uri;
+use crate::domain::{ngsi_ld_urn::EntityMapId, uri::Uri};
 use chrono::{DateTime, Utc};
 use compact_str::CompactString;
 use indexmap::IndexMap;
@@ -20,7 +20,7 @@ pub enum EntityMapDatasetId {
     /// Default dataset marker.
     None,
     /// Concrete dataset identifier URI.
-    Uri(Uri),
+    Uri(Urn),
 }
 
 impl From<EntityMapDatasetId> for String {
@@ -39,7 +39,7 @@ impl TryFrom<String> for EntityMapDatasetId {
         if value == "@none" {
             return Ok(EntityMapDatasetId::None);
         }
-        let uri = value.parse::<Uri>().map_err(|_| EntityMapDatasetIdParseError::InvalidUri)?;
+        let uri = value.parse::<Urn>().map_err(|_| EntityMapDatasetIdParseError::InvalidUri)?;
         Ok(EntityMapDatasetId::Uri(uri))
     }
 }
@@ -55,19 +55,19 @@ pub enum EntityMapDatasetIdParseError {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EntityMap {
-    pub id: Urn,
+    pub id: EntityMapId,
     #[serde(rename = "type")]
     pub type_: EntityMapType,
     pub expires_at: DateTime<Utc>,
     #[serde(skip)]
     pub entity_ids: Vec<Uri>,
     pub entity_map: IndexMap<Uri, Vec<EntityMapDatasetId>>,
-    pub linked_maps: IndexMap<CompactString, Urn>,
+    pub linked_maps: IndexMap<CompactString, EntityMapId>,
 }
 
 impl EntityMap {
     /// Construct a new EntityMap with default `@none` dataset mapping per entity.
-    pub fn new(id: Urn, expires_at: DateTime<Utc>, entity_ids: Vec<Uri>) -> EntityMap {
+    pub fn new(id: EntityMapId, expires_at: DateTime<Utc>, entity_ids: Vec<Uri>) -> EntityMap {
         let mut entity_map = IndexMap::new();
         for entity_id in &entity_ids {
             entity_map.insert(entity_id.clone(), vec![EntityMapDatasetId::None]);

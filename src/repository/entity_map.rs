@@ -2,15 +2,14 @@
 //!
 //! Backed by a concurrent `DashMap` with automatic expiry cleanup on insert.
 
-use crate::domain::entity_map::EntityMap;
+use crate::domain::{entity_map::EntityMap, ngsi_ld_urn::EntityMapId};
 use chrono::{DateTime, Utc};
 use dashmap::DashMap;
-use urn::Urn;
 
 /// In-memory store for entity maps with automatic expiry cleanup.
 #[derive(Debug)]
 pub struct EntityMapStore {
-    maps: DashMap<Urn, EntityMap>,
+    maps: DashMap<EntityMapId, EntityMap>,
 }
 
 impl EntityMapStore {
@@ -27,12 +26,12 @@ impl EntityMapStore {
     }
 
     /// Retrieves an entity map by ID, returning `None` if not found or expired.
-    pub async fn get(&self, id: &Urn) -> Option<EntityMap> {
+    pub async fn get(&self, id: &EntityMapId) -> Option<EntityMap> {
         self.maps.get(id).filter(|m| !m.is_expired()).map(|r| r.clone()) // clone: owned copy to return from DashMap ref
     }
 
     /// Updates the expiry time of an entity map. Returns `false` if not found or already expired.
-    pub async fn update(&self, id: &Urn, expires_at: DateTime<Utc>) -> bool {
+    pub async fn update(&self, id: &EntityMapId, expires_at: DateTime<Utc>) -> bool {
         if let Some(mut entry) = self.maps.get_mut(id) {
             if entry.is_expired() {
                 drop(entry);
@@ -47,7 +46,7 @@ impl EntityMapStore {
     }
 
     /// Deletes an entity map by ID. Returns `true` if the entry existed.
-    pub async fn delete(&self, id: &Urn) -> bool {
+    pub async fn delete(&self, id: &EntityMapId) -> bool {
         self.maps.remove(id).is_some()
     }
 }

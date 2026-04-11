@@ -175,6 +175,11 @@ impl From<&ErrorKind> for NgsiLdErrorType {
             | ErrorKind::QueryValidation(_)
             | ErrorKind::JsonParse(_)
             | ErrorKind::InvalidUrn(_)
+            | ErrorKind::InvalidSnapshotId(_)
+            | ErrorKind::InvalidSnapshotNotificationId(_)
+            | ErrorKind::InvalidEntityMapId(_)
+            | ErrorKind::InvalidEntityTypeListId(_)
+            | ErrorKind::InvalidAttributeListId(_)
             | ErrorKind::DatabaseRegexError(_) => NgsiLdErrorType::BadRequestData,
 
             ErrorKind::MalformedRequest(_) => NgsiLdErrorType::InvalidRequest,

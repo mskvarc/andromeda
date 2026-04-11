@@ -1,6 +1,7 @@
 //! Shared header logic for NGSI-LD responses.
 
 use crate::{
+    domain::ngsi_ld_urn::SnapshotId,
     http::header::{
         link::Link,
         ngsild_entity_map::NgsiLdEntityMap,
@@ -21,7 +22,7 @@ pub struct CommonHeadersOptions<'a> {
     /// NGSILD-EntityMap header URI for entity map scoping (clause 5.7.3.4).
     pub entity_map_uri: Option<&'a str>,
     /// NGSILD-Snapshot header URN for snapshot-scoped responses (clause 6.3.22).
-    pub snapshot_uri: Option<&'a Urn>,
+    pub snapshot_uri: Option<&'a SnapshotId>,
     /// NGSILD-Warning header values from distributed forwarding (clause 6.3.17).
     pub warnings: &'a [NgsiLdWarning],
     /// Where the JSON-LD `@context` should appear: in the `Link` header or in the body.

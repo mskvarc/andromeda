@@ -31,12 +31,18 @@ impl headers::Header for NgsiLdDatasetId {
     {
         let mut datasets = Vec::new();
         for value in values {
-            let s = value.to_str().map_err(|_| headers::Error::invalid())?;
+            let s = match value.to_str() {
+                Ok(value) => value,
+                Err(_) => return Err(headers::Error::invalid()),
+            };
             for segment in s.split(',').map(str::trim) {
                 if segment.is_empty() {
                     return Err(headers::Error::invalid());
                 }
-                let urn = segment.parse::<Urn>().map_err(|_| headers::Error::invalid())?;
+                let urn = match segment.parse::<Urn>() {
+                    Ok(value) => value,
+                    Err(_) => return Err(headers::Error::invalid()),
+                };
                 datasets.push(urn);
             }
         }

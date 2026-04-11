@@ -1,12 +1,11 @@
 use crate::{
     core::error::AndromedaError,
-    domain::{entity_map::EntityMap, uri::Uri},
+    domain::{entity_map::EntityMap, ngsi_ld_urn::EntityMapId, uri::Uri},
     repository::entity_map::EntityMapStore,
 };
 use chrono::{DateTime, Utc};
 use iso8601_duration::Duration as Iso8601Duration;
 use std::{collections::HashSet, str::FromStr};
-use urn::Urn;
 
 /// Service for managing NGSI-LD entity maps.
 pub struct EntityMapService {
@@ -29,12 +28,12 @@ impl EntityMapService {
     }
 
     /// Retrieve an entity map by its identifier.
-    pub async fn retrieve(&self, id: &Urn) -> Result<EntityMap, AndromedaError> {
+    pub async fn retrieve(&self, id: &EntityMapId) -> Result<EntityMap, AndromedaError> {
         self.store.get(id).await.ok_or_else(|| AndromedaError::entity_map_not_found(id.to_string()))
     }
 
     /// Update the expiration time of an existing entity map.
-    pub async fn update(&self, id: &Urn, expires_at: DateTime<Utc>) -> Result<(), AndromedaError> {
+    pub async fn update(&self, id: &EntityMapId, expires_at: DateTime<Utc>) -> Result<(), AndromedaError> {
         if self.store.update(id, expires_at).await {
             Ok(())
         } else {
@@ -43,7 +42,7 @@ impl EntityMapService {
     }
 
     /// Scope query IDs by intersecting with an EntityMap's entity set.
-    pub async fn scope_query_ids(&self, map_id: &Urn, existing_ids: Option<&[Uri]>) -> Result<Vec<Uri>, AndromedaError> {
+    pub async fn scope_query_ids(&self, map_id: &EntityMapId, existing_ids: Option<&[Uri]>) -> Result<Vec<Uri>, AndromedaError> {
         let map = self.retrieve(map_id).await?;
         if let Some(existing) = existing_ids {
             let query_ids: HashSet<Uri> = existing.iter().cloned().collect(); // clone: owned set elements for intersection
@@ -56,7 +55,7 @@ impl EntityMapService {
     }
 
     /// Validate that a specific entity ID exists in the given EntityMap.
-    pub async fn validate_entity_in_map(&self, map_id: &Urn, entity_id: &Urn) -> Result<(), AndromedaError> {
+    pub async fn validate_entity_in_map(&self, map_id: &EntityMapId, entity_id: &urn::Urn) -> Result<(), AndromedaError> {
         let map = self.retrieve(map_id).await?;
         if map.entity_ids.iter().any(|id| matches!(id, Uri::Urn(candidate) if candidate == entity_id)) {
             Ok(())
@@ -66,7 +65,7 @@ impl EntityMapService {
     }
 
     /// Delete an entity map by its identifier.
-    pub async fn delete(&self, id: &Urn) -> Result<(), AndromedaError> {
+    pub async fn delete(&self, id: &EntityMapId) -> Result<(), AndromedaError> {
         if self.store.delete(id).await {
             Ok(())
         } else {
@@ -100,31 +99,15 @@ pub fn parse_uri_csv(input: &str) -> Result<Vec<Uri>, AndromedaError> {
         .collect()
 }
 
-fn build_entity_map_id() -> Result<Urn, AndromedaError> {
+fn build_entity_map_id() -> Result<EntityMapId, AndromedaError> {
     let value = format!("urn:ngsi-ld:EntityMap:{}", uuid::Uuid::new_v4());
-    let id = value
-        .parse::<Urn>()
-        .map_err(|e| AndromedaError::internal(format!("Failed to build entity map id: {}", e)))?;
-    validate_entity_map_urn(&id)?;
+    let id = value.parse::<EntityMapId>()?;
     Ok(id)
 }
 
-pub fn parse_entity_map_urn(raw: &str) -> Result<Urn, AndromedaError> {
-    let id = raw
-        .parse::<Urn>()
-        .map_err(|e| AndromedaError::entity_map_validation(format!("Invalid entityMap id URN: {}", e)))?;
-    validate_entity_map_urn(&id)?;
+pub fn parse_entity_map_urn(raw: &str) -> Result<EntityMapId, AndromedaError> {
+    let id = raw.parse::<EntityMapId>()?;
     Ok(id)
-}
-
-pub fn validate_entity_map_urn(id: &Urn) -> Result<(), AndromedaError> {
-    if id.as_str().starts_with("urn:ngsi-ld:EntityMap:") {
-        Ok(())
-    } else {
-        Err(AndromedaError::entity_map_validation(
-            "entityMap id must use the 'urn:ngsi-ld:EntityMap:' prefix",
-        ))
-    }
 }
 
 fn compute_entity_map_expires_at(created_at: DateTime<Utc>, lifetime: Option<&Iso8601Duration>) -> Result<DateTime<Utc>, AndromedaError> {
@@ -143,7 +126,6 @@ mod tests {
         service::entity_map::{parse_entity_map_urn, parse_iso8601_duration, parse_uri_csv},
     };
     use std::str::FromStr;
-    use urn::Urn;
 
     fn make_service() -> super::EntityMapService {
         super::EntityMapService::new(EntityMapStore::new())
@@ -214,7 +196,7 @@ mod tests {
 
     #[test]
     fn parse_entity_map_urn_accepts_valid_urn() {
-        let parsed = Urn::from_str("urn:ngsi-ld:EntityMap:abc").expect("valid urn");
-        assert!(super::validate_entity_map_urn(&parsed).is_ok());
+        let parsed = super::parse_entity_map_urn("urn:ngsi-ld:EntityMap:abc");
+        assert!(parsed.is_ok());
     }
 }

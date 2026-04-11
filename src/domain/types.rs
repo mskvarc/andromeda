@@ -1,6 +1,8 @@
-use crate::jsonld::JsonLdExpandableMacro;
+use crate::{
+    domain::ngsi_ld_urn::{AttributeListId, EntityTypeListId},
+    jsonld::JsonLdExpandableMacro,
+};
 use serde::{Deserialize, Serialize};
-use urn::Urn;
 
 /// NGSI-LD EntityTypeList representation (ETSI GS CIM 009 clause 5.2.24).
 ///
@@ -10,7 +12,7 @@ use urn::Urn;
 #[jsonld(type = "ngsi:EntityTypeList")]
 pub struct Types {
     #[jsonld(id)]
-    pub id: Urn,
+    pub id: EntityTypeListId,
     #[serde(rename = "type")]
     #[jsonld(skip)]
     pub type_: String,
@@ -82,7 +84,7 @@ pub struct EntityType {
 #[jsonld(type = "ngsi:AttributeList")]
 pub struct AttributeList {
     #[jsonld(id)]
-    pub id: Urn,
+    pub id: AttributeListId,
     #[serde(rename = "type")]
     #[jsonld(skip)]
     pub type_: String,

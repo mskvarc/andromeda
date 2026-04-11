@@ -7,7 +7,6 @@ use crate::{
     domain::{
         attribute_type::AttributeType,
         temporal::{TeaEntry, ValueType},
-        uri::Uri,
     },
     query::sql::BindValue,
 };
@@ -19,6 +18,7 @@ use sqlx::{
     postgres::{PgPool, PgRow},
 };
 use std::str::FromStr;
+use urn::Urn;
 
 /// Whether to delete all instances of an attribute or a single specific instance.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -102,7 +102,7 @@ impl TemporalRepository {
         entity_id: &str,
         attribute_name: &str,
         attribute_type: AttributeType,
-        dataset_id: Option<&Uri>,
+        dataset_id: Option<&Urn>,
         value_type: ValueType,
     ) -> Result<uuid::Uuid, AndromedaError> {
         let id: uuid::Uuid = sqlx::query_scalar(
@@ -380,10 +380,7 @@ fn parse_tea_entry(row: &PgRow) -> Result<TeaEntry, AndromedaError> {
     let attribute_type = AttributeType::from_str(&attribute_type_raw)
         .map_err(|e| AndromedaError::internal(format!("Invalid temporal_entity_attributes.attribute_type '{}': {}", attribute_type_raw, e)))?;
 
-    let dataset_id = row
-        .try_get::<Option<String>, _>("dataset_id")?
-        .map(|raw| Uri::from_str(&raw).map_err(|_| AndromedaError::internal(format!("Invalid temporal_entity_attributes.dataset_id '{}'", raw))))
-        .transpose()?;
+    let dataset_id = row.try_get::<Option<String>, _>("dataset_id")?.map(|raw| Urn::from_str(&raw)).transpose()?;
 
     let value_type_raw: String = row.try_get("value_type")?;
     let value_type = ValueType::from_str(&value_type_raw)

@@ -1,3 +1,4 @@
+use crate::domain::ngsi_ld_urn::{SnapshotId, SnapshotNotificationId, SnapshotNotificationIdParseError};
 use chrono::{DateTime, Utc};
 use compact_str::CompactString;
 use derive_more::Display;
@@ -8,7 +9,6 @@ use serde_with::skip_serializing_none;
 use strum::{Display as StrumDisplay, EnumString};
 use thiserror::Error;
 use url::Url;
-use urn::Urn;
 use uuid::Uuid;
 
 /// Status of a snapshot operation (ETSI GS CIM 009 clause 5.2.41, `snapshotStatus`).
@@ -110,7 +110,7 @@ pub struct KeyValuePair {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Snapshot {
-    pub id: Urn,
+    pub id: SnapshotId,
     pub snapshot_queries: Option<Vec<Value>>,
     pub snapshot_temporal_queries: Option<Vec<Value>>,
     pub snapshot_lifetime: Option<Iso8601Duration>,
@@ -148,7 +148,7 @@ pub enum SnapshotNotificationType {
 #[serde(rename_all = "camelCase")]
 pub struct SnapshotNotification {
     /// Unique notification identifier (`urn:ngsi-ld:SnapshotNotification:{uuid}`).
-    pub id: Urn,
+    pub id: SnapshotNotificationId,
     /// Always `SnapshotNotification`.
     #[serde(rename = "type")]
     pub type_: SnapshotNotificationType,
@@ -157,7 +157,7 @@ pub struct SnapshotNotification {
     /// Timestamp corresponding to the instant when the notification is generated.
     pub notified_at: DateTime<Utc>,
     /// Identifier of the snapshot whose status change triggered the notification.
-    pub snapshot_id: Urn,
+    pub snapshot_id: SnapshotId,
     /// Priority of the snapshot (1..=10).
     pub snapshot_priority: SnapshotPriority,
     /// Per-query execution details, if available.
@@ -172,14 +172,14 @@ pub struct SnapshotNotification {
 #[derive(Debug, Error)]
 pub enum SnapshotNotificationBuildError {
     #[error("invalid generated snapshot notification id URN: {0}")]
-    InvalidNotificationId(urn::Error),
+    InvalidNotificationId(SnapshotNotificationIdParseError),
 }
 
 impl Snapshot {
     /// Build a [`SnapshotNotification`] from the snapshot state.
     pub fn build_notification(&self) -> Result<SnapshotNotification, SnapshotNotificationBuildError> {
         let id = format!("urn:ngsi-ld:SnapshotNotification:{}", Uuid::new_v4())
-            .parse::<Urn>()
+            .parse::<SnapshotNotificationId>()
             .map_err(SnapshotNotificationBuildError::InvalidNotificationId)?;
         Ok(SnapshotNotification {
             id,
@@ -200,7 +200,7 @@ impl Snapshot {
 #[serde(rename_all = "camelCase")]
 pub struct SnapshotInput {
     #[serde(default)]
-    pub id: Option<Urn>,
+    pub id: Option<SnapshotId>,
     #[serde(default)]
     pub snapshot_queries: Option<Vec<Value>>,
     #[serde(default)]
@@ -225,38 +225,22 @@ pub struct SnapshotPatch {
     pub snapshot_priority: Option<i16>,
 }
 
-/// Validate that a URN is a snapshot URN (`urn:ngsi-ld:Snapshot:<id>`).
-pub fn validate_snapshot_urn(id: &Urn) -> Result<(), SnapshotUrnError> {
-    if id.as_str().starts_with("urn:ngsi-ld:Snapshot:") {
-        Ok(())
-    } else {
-        Err(SnapshotUrnError::InvalidKind)
-    }
-}
-
-/// Errors for snapshot URN validation.
-#[derive(Debug, Error)]
-pub enum SnapshotUrnError {
-    #[error("snapshot id must use the 'urn:ngsi-ld:Snapshot:' prefix")]
-    InvalidKind,
-}
-
 #[cfg(test)]
 mod tests {
-    use crate::domain::snapshot::{SnapshotPriority, SnapshotStatus, validate_snapshot_urn};
+    use crate::domain::{
+        ngsi_ld_urn::SnapshotId,
+        snapshot::{SnapshotPriority, SnapshotStatus},
+    };
     use iso8601_duration::Duration as Iso8601Duration;
-    use urn::Urn;
 
     #[test]
     fn snapshot_urn_accepts_snapshot_prefix() {
-        let id: Urn = "urn:ngsi-ld:Snapshot:abc".parse().expect("valid snapshot urn");
-        assert!(validate_snapshot_urn(&id).is_ok());
+        assert!("urn:ngsi-ld:Snapshot:abc".parse::<SnapshotId>().is_ok());
     }
 
     #[test]
     fn snapshot_urn_rejects_other_prefix() {
-        let id: Urn = "urn:ngsi-ld:EntityMap:abc".parse().expect("valid urn");
-        assert!(validate_snapshot_urn(&id).is_err());
+        assert!("urn:ngsi-ld:EntityMap:abc".parse::<SnapshotId>().is_err());
     }
 
     #[test]

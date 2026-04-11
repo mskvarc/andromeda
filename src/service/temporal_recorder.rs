@@ -4,13 +4,14 @@
 
 use crate::{
     core::error::AndromedaError,
-    domain::{attribute_type::AttributeType, temporal::ValueType, uri::Uri},
+    domain::{attribute_type::AttributeType, temporal::ValueType},
     jsonld::vocab,
     repository::temporal::{HistoryValues, InsertHistoryParams, TemporalRepository, UpdateInstanceParams},
 };
 use chrono::{DateTime, Utc};
 use serde_json::Value;
-use std::{str::FromStr, sync::Arc};
+use std::sync::Arc;
+use urn::Urn;
 
 /// Returns whether the given expanded IRI is an NGSI-LD system attribute.
 fn is_system_attribute(attr_name: &str) -> bool {
@@ -187,10 +188,7 @@ impl TemporalRecorder {
     pub async fn record_attribute_deletion(&self, entity_id: &str, attr_iri: &str, dataset_id: Option<&str>) -> Result<(), AndromedaError> {
         // Look up the existing TEA to preserve the attribute type
         let teas = self.repo.get_teas_for_entity_attr(entity_id, attr_iri).await?;
-        let parsed_dataset_id = dataset_id
-            .map(Uri::from_str)
-            .transpose()
-            .map_err(|_| AndromedaError::temporal_validation(format!("Invalid datasetId '{}': not a valid URI", dataset_id.unwrap_or_default())))?;
+        let parsed_dataset_id = dataset_id.map(Urn::try_from).transpose()?;
         let attr_type = teas
             .iter()
             .find(|t| t.dataset_id.as_ref() == parsed_dataset_id.as_ref())
@@ -517,14 +515,14 @@ fn extract_observed_at(instance: &Value) -> Option<String> {
         .map(String::from)
 }
 
-fn extract_dataset_id(instance: &Value) -> Option<Uri> {
+fn extract_dataset_id(instance: &Value) -> Option<Urn> {
     instance
         .get(vocab::DATASET_ID.as_str())
         .and_then(|v| v.as_array())
         .and_then(|arr| arr.first())
         .and_then(|obj| obj.get("@id"))
         .and_then(|v| v.as_str())
-        .and_then(|value| Uri::from_str(value).ok())
+        .and_then(|value| Urn::try_from(value).ok())
 }
 
 fn extract_or_generate_instance_id(instance: &Value) -> String {

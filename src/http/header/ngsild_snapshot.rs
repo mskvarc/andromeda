@@ -3,9 +3,8 @@
 //! Carries the snapshot identifier for snapshot-scoped requests and responses.
 //! The value must be a valid snapshot URN (`urn:ngsi-ld:Snapshot:<id>`).
 
-use crate::domain::snapshot::validate_snapshot_urn;
+use crate::domain::ngsi_ld_urn::SnapshotId;
 use axum::http::{HeaderName, HeaderValue};
-use urn::Urn;
 
 static NGSILD_SNAPSHOT: HeaderName = HeaderName::from_static("ngsild-snapshot");
 
@@ -14,16 +13,16 @@ static NGSILD_SNAPSHOT: HeaderName = HeaderName::from_static("ngsild-snapshot");
 /// Carries the snapshot identifier URN that scopes a request to a frozen
 /// data snapshot, or indicates that a response is from a snapshot.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct NgsiLdSnapshot(Urn);
+pub struct NgsiLdSnapshot(SnapshotId);
 
 impl NgsiLdSnapshot {
     /// Create a new `NGSILD-Snapshot` header from a validated URN.
-    pub const fn new(value: Urn) -> NgsiLdSnapshot {
+    pub const fn new(value: SnapshotId) -> NgsiLdSnapshot {
         NgsiLdSnapshot(value)
     }
 
     /// Consume the header and return the inner URN.
-    pub fn into_inner(self) -> Urn {
+    pub fn into_inner(self) -> SnapshotId {
         self.0
     }
 }
@@ -38,13 +37,18 @@ impl headers::Header for NgsiLdSnapshot {
         I: Iterator<Item = &'i HeaderValue>,
     {
         let value = values.next().ok_or_else(headers::Error::invalid)?;
-        let s = value.to_str().map_err(|_| headers::Error::invalid())?;
+        let s = match value.to_str() {
+            Ok(value) => value,
+            Err(_) => return Err(headers::Error::invalid()),
+        };
         let trimmed = s.trim();
         if trimmed.is_empty() {
             return Err(headers::Error::invalid());
         }
-        let snapshot_id = trimmed.parse::<Urn>().map_err(|_| headers::Error::invalid())?;
-        validate_snapshot_urn(&snapshot_id).map_err(|_| headers::Error::invalid())?;
+        let snapshot_id = match trimmed.parse::<SnapshotId>() {
+            Ok(value) => value,
+            Err(_) => return Err(headers::Error::invalid()),
+        };
         Ok(NgsiLdSnapshot(snapshot_id))
     }
 
@@ -59,6 +63,7 @@ impl headers::Header for NgsiLdSnapshot {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::ngsi_ld_urn::SnapshotId;
     use headers::Header;
 
     fn decode_from(raw: &str) -> Result<NgsiLdSnapshot, headers::Error> {
@@ -101,7 +106,7 @@ mod tests {
 
     #[test]
     fn encode_roundtrip() {
-        let snapshot_id = "urn:ngsi-ld:Snapshot:x".parse::<Urn>().expect("valid snapshot id");
+        let snapshot_id = "urn:ngsi-ld:Snapshot:x".parse::<SnapshotId>().expect("valid snapshot id");
         let header = NgsiLdSnapshot::new(snapshot_id);
         let mut encoded = Vec::new();
         header.encode(&mut encoded);

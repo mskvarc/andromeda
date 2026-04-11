@@ -1,6 +1,9 @@
 use crate::{
     core::error::AndromedaError,
-    domain::snapshot::{KeyValuePair, Snapshot, SnapshotInput, SnapshotPatch, SnapshotPriority, SnapshotStatus, validate_snapshot_urn},
+    domain::{
+        ngsi_ld_urn::SnapshotId,
+        snapshot::{KeyValuePair, Snapshot, SnapshotInput, SnapshotPatch, SnapshotPriority, SnapshotStatus},
+    },
     repository::snapshot::SnapshotRepository,
     transport::{
         dispatch::{DeliveryResult, TransportDispatcher, build_delivery_request},
@@ -12,7 +15,6 @@ use iso8601_duration::Duration as Iso8601Duration;
 use serde_json::Value;
 use sqlx::postgres::PgPool;
 use std::sync::Arc;
-use urn::Urn;
 
 /// Service for managing NGSI-LD entity snapshots.
 pub struct SnapshotService {
@@ -39,7 +41,6 @@ impl SnapshotService {
             Some(snapshot_id) => snapshot_id,
             None => build_snapshot_id()?,
         };
-        validate_snapshot_urn(&id).map_err(|e| AndromedaError::snapshot_validation(format!("Invalid snapshot id: {}", e)))?;
 
         if self.repo.exists(&id).await? {
             return Err(AndromedaError::snapshot_already_exists(format!("Snapshot {} already exists", id)));
@@ -77,7 +78,7 @@ impl SnapshotService {
     }
 
     /// Retrieve a snapshot by its identifier, returning 404 if expired.
-    pub async fn get(&self, id: &Urn) -> Result<Snapshot, AndromedaError> {
+    pub async fn get(&self, id: &SnapshotId) -> Result<Snapshot, AndromedaError> {
         let snapshot = self
             .repo
             .get(id)
@@ -100,7 +101,7 @@ impl SnapshotService {
     }
 
     /// Partially update a snapshot's lifetime or priority.
-    pub async fn update(&self, id: &Urn, patch: SnapshotPatch) -> Result<Snapshot, AndromedaError> {
+    pub async fn update(&self, id: &SnapshotId, patch: SnapshotPatch) -> Result<Snapshot, AndromedaError> {
         let existing = self.get(id).await?;
 
         let patch_priority = match patch.snapshot_priority {
@@ -125,7 +126,7 @@ impl SnapshotService {
     }
 
     /// Delete a snapshot by its identifier.
-    pub async fn delete(&self, id: &Urn) -> Result<(), AndromedaError> {
+    pub async fn delete(&self, id: &SnapshotId) -> Result<(), AndromedaError> {
         let deleted = self.repo.delete(id).await?;
         if !deleted {
             return Err(AndromedaError::snapshot_not_found(format!("Snapshot {} not found", id)));
@@ -142,7 +143,7 @@ impl SnapshotService {
     ///
     /// The snapshot must exist, not be expired, and have a queryable status
     /// (`Success` or `Partial`). Touches `last_used_at` on success.
-    pub async fn validate_for_scoping(&self, id: &Urn) -> Result<Snapshot, AndromedaError> {
+    pub async fn validate_for_scoping(&self, id: &SnapshotId) -> Result<Snapshot, AndromedaError> {
         let snapshot = self
             .repo
             .get(id)
@@ -174,14 +175,14 @@ impl SnapshotService {
     }
 
     /// Retrieve a single entity from a snapshot's frozen data.
-    pub async fn get_snapshot_entity(&self, snapshot_id: &Urn, entity_id: &str) -> Result<Option<Value>, AndromedaError> {
+    pub async fn get_snapshot_entity(&self, snapshot_id: &SnapshotId, entity_id: &str) -> Result<Option<Value>, AndromedaError> {
         self.repo.get_entity(snapshot_id, entity_id).await
     }
 
     /// Query entities from a snapshot's frozen data with optional filtering and pagination.
     pub async fn query_snapshot_entities(
         &self,
-        snapshot_id: &Urn,
+        snapshot_id: &SnapshotId,
         entity_type: Option<&str>,
         entity_ids: Option<&[String]>,
         limit: i64,
@@ -191,14 +192,14 @@ impl SnapshotService {
     }
 
     /// Retrieve a single temporal entity from a snapshot's frozen data.
-    pub async fn get_snapshot_temporal_entity(&self, snapshot_id: &Urn, entity_id: &str) -> Result<Option<Value>, AndromedaError> {
+    pub async fn get_snapshot_temporal_entity(&self, snapshot_id: &SnapshotId, entity_id: &str) -> Result<Option<Value>, AndromedaError> {
         self.repo.get_temporal_entity(snapshot_id, entity_id).await
     }
 
     /// Query temporal entities from a snapshot's frozen data with optional filtering and pagination.
     pub async fn query_snapshot_temporal_entities(
         &self,
-        snapshot_id: &Urn,
+        snapshot_id: &SnapshotId,
         entity_type: Option<&str>,
         entity_ids: Option<&[String]>,
         limit: i64,
@@ -208,7 +209,7 @@ impl SnapshotService {
     }
 
     /// Clone an existing snapshot, producing a new snapshot with a fresh ID and expiration.
-    pub async fn clone_snapshot(&self, source_id: &Urn) -> Result<Snapshot, AndromedaError> {
+    pub async fn clone_snapshot(&self, source_id: &SnapshotId) -> Result<Snapshot, AndromedaError> {
         let source = self.get(source_id).await?;
 
         let new_id = build_snapshot_id()?;
@@ -286,11 +287,10 @@ impl SnapshotService {
     }
 }
 
-fn build_snapshot_id() -> Result<Urn, AndromedaError> {
+fn build_snapshot_id() -> Result<SnapshotId, AndromedaError> {
     let value = format!("urn:ngsi-ld:Snapshot:{}", uuid::Uuid::new_v4());
-    value
-        .parse::<Urn>()
-        .map_err(|e| AndromedaError::internal(format!("Failed to build snapshot id: {}", e)))
+    let id = value.parse::<SnapshotId>()?;
+    Ok(id)
 }
 
 fn compute_snapshot_expires_at(created_at: chrono::DateTime<Utc>, lifetime: Option<&Iso8601Duration>) -> Result<chrono::DateTime<Utc>, AndromedaError> {

@@ -6,6 +6,7 @@ pub mod entity_map;
 pub mod expanded;
 pub mod jsonld_context;
 pub mod name;
+pub mod ngsi_ld_urn;
 pub mod notification;
 pub mod registration;
 pub mod response_format;

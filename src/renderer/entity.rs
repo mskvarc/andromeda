@@ -11,7 +11,6 @@ use crate::{
         attribute::{Attribute, AttributeValue, LanguageMapKey, LanguageMapValue, LanguageProperty},
         entity::Entity,
         serde_helpers,
-        uri::Uri,
     },
     http::model::language::{LanguageFilter, LanguageRange},
 };
@@ -21,6 +20,7 @@ use langtag::LangTagBuf;
 use serde::Serialize;
 use serde_json::{Map, Value};
 use std::{collections::HashMap, ops::Deref};
+use urn::Urn;
 
 /// Output representation mode for entity rendering.
 ///
@@ -298,7 +298,7 @@ struct NegotiatedProperty<'a> {
     #[serde(skip_serializing_if = "Option::is_none", with = "serde_helpers::rfc3339_option", default)]
     observed_at: Option<DateTime<Utc>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    dataset_id: &'a Option<Uri>,
+    dataset_id: &'a Option<Urn>,
     #[serde(flatten)]
     sub_attributes: &'a IndexMap<String, AttributeValue>,
 }

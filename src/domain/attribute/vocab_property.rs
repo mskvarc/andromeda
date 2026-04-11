@@ -1,12 +1,10 @@
-use crate::{
-    domain::{attribute::AttributeValue, uri::Uri},
-    jsonld::JsonLdExpandableMacro,
-};
+use crate::{domain::attribute::AttributeValue, jsonld::JsonLdExpandableMacro};
 use chrono::{DateTime, Utc};
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use serde_with::skip_serializing_none;
+use urn::Urn;
 
 /// NGSI-LD VocabProperty representation (ETSI GS CIM 009 clause 5.2.35).
 ///
@@ -29,7 +27,7 @@ pub struct VocabProperty {
     #[jsonld(property = "ngsi:expiresAt", typed_value, datatype = "ngsi:DateTime")]
     pub expires_at: Option<DateTime<Utc>>,
     #[jsonld(property = "ngsi:datasetId", id_ref)]
-    pub dataset_id: Option<Uri>,
+    pub dataset_id: Option<Urn>,
     #[serde(flatten)]
     #[jsonld(flatten_map)]
     pub sub_attributes: IndexMap<String, AttributeValue>,

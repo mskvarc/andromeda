@@ -4,7 +4,15 @@
 //! used across multiple handler modules (entities, temporal, subscriptions,
 //! context source registrations, snapshots, entity maps).
 
-use crate::{core::error::AndromedaError, domain::name::Name, http::error::problem::NgsiLdError, renderer::SysAttrsInclusion};
+use crate::{
+    core::error::AndromedaError,
+    domain::{
+        name::Name,
+        ngsi_ld_urn::{EntityMapId, SnapshotId},
+    },
+    http::error::problem::NgsiLdError,
+    renderer::SysAttrsInclusion,
+};
 use axum::http::Uri;
 use url::Url;
 use urn::Urn;
@@ -102,24 +110,22 @@ pub fn parse_csr_id(id: &str, uri: &Uri) -> Result<(), NgsiLdError> {
     Ok(())
 }
 
-/// Parse and validate a snapshot ID as a URN.
-///
-/// Validates that the string is a valid URN and conforms to the snapshot URN
-/// format defined by `validate_snapshot_urn`.
-pub fn parse_snapshot_id(snapshot_id: &str, uri: &Uri) -> Result<Urn, NgsiLdError> {
-    let id = snapshot_id
-        .parse::<Urn>()
-        .map_err(|e| AndromedaError::entity_validation(format!("Invalid snapshot id URN: {}", e)).with_instance(uri.clone()))?;
-    crate::domain::snapshot::validate_snapshot_urn(&id)
-        .map_err(|e| AndromedaError::entity_validation(format!("Invalid snapshot id: {}", e)).with_instance(uri.clone()))?;
+/// Parse and validate a snapshot ID as a typed NGSI-LD URN.
+pub fn parse_snapshot_id(snapshot_id: &str, _uri: &Uri) -> Result<SnapshotId, NgsiLdError> {
+    let id = match snapshot_id.parse::<SnapshotId>() {
+        Ok(value) => value,
+        Err(error) => return Err(AndromedaError::from(error).into()),
+    };
     Ok(id)
 }
 
-/// Parse and validate an entity map ID as a URN.
+/// Parse and validate an entity map ID as a typed NGSI-LD URN.
 ///
 /// Delegates to `parse_entity_map_urn` from the entity map service layer.
-pub fn parse_entity_map_id(id: &str, uri: &Uri) -> Result<Urn, NgsiLdError> {
-    crate::service::entity_map::parse_entity_map_urn(id).map_err(|e| NgsiLdError::from(e.with_instance(uri.clone())))
+pub fn parse_entity_map_id(id: &str, uri: &Uri) -> Result<EntityMapId, NgsiLdError> {
+    let parsed = crate::service::entity_map::parse_entity_map_urn(id)?;
+    let _ = uri;
+    Ok(parsed)
 }
 
 /// Parsed `options` parameter for subscription and CSR subscription list endpoints.

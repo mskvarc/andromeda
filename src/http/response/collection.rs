@@ -1,6 +1,7 @@
 //! NGSI-LD response type for entity collections with pre-rendered payload.
 
 use crate::{
+    domain::ngsi_ld_urn::SnapshotId,
     http::{
         header::{ngsild_results_count::NgsiLdResultsCount, ngsild_warning::NgsiLdWarning, preference_applied::PreferenceApplied},
         response::headers::{CommonHeadersOptions, apply_common_headers},
@@ -13,7 +14,6 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use headers::HeaderMapExt;
-use urn::Urn;
 
 /// NGSI-LD response wrapper for a collection of entities.
 ///
@@ -32,7 +32,7 @@ pub struct NgsiLdCollectionResponse {
     total_count: Option<usize>,
     content_range: Option<String>,
     entity_map_uri: Option<String>,
-    snapshot_uri: Option<Urn>,
+    snapshot_uri: Option<SnapshotId>,
     warnings: Vec<NgsiLdWarning>,
 }
 
@@ -81,7 +81,7 @@ impl NgsiLdCollectionResponse {
     }
 
     /// Set the NGSILD-Snapshot header for snapshot-scoped responses (clause 6.3.22).
-    pub fn with_snapshot_uri(mut self, uri: Urn) -> Self {
+    pub fn with_snapshot_uri(mut self, uri: SnapshotId) -> Self {
         self.snapshot_uri = Some(uri);
         self
     }

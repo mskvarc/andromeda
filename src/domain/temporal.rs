@@ -3,15 +3,17 @@
 //! Types supporting the temporal entity API, which provides access to the
 //! history of attribute values over time.
 
-use crate::domain::{attribute_type::AttributeType, uri::Uri};
+use crate::domain::attribute_type::AttributeType;
 use iref::IriBuf;
 use strum::{Display, EnumString};
+use urn::Urn;
+
 /// A typed row from the temporal_entity_attributes table.
 #[derive(Debug, Clone)]
 pub struct TeaEntry {
     pub attribute_name: IriBuf,
     pub attribute_type: AttributeType,
-    pub dataset_id: Option<Uri>,
+    pub dataset_id: Option<Urn>,
     pub value_type: ValueType,
 }
 

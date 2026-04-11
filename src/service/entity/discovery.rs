@@ -1,6 +1,7 @@
 use crate::{
     core::error::AndromedaError,
     domain::{
+        ngsi_ld_urn::{AttributeListId, EntityTypeListId},
         types::{AttributeDetail, EntityType, EntityTypeInfo, Types},
         uri::NGSI_LD_URN_NID,
     },
@@ -31,6 +32,7 @@ impl EntityDiscoveryService {
         const TYPE: &str = "EntityTypeList";
 
         let id = UrnBuilder::new(NGSI_LD_URN_NID, &format!("{}:{}", TYPE, Uuid::new_v4())).build()?;
+        let id = EntityTypeListId::try_from(id)?;
 
         let type_iris = self.repo.types().await?;
 
@@ -260,6 +262,7 @@ impl EntityDiscoveryService {
             compacted_names.sort();
 
             let id = UrnBuilder::new(NGSI_LD_URN_NID, &format!("AttributeList:{}", Uuid::new_v4())).build()?;
+            let id = AttributeListId::try_from(id)?;
 
             let list = crate::domain::types::AttributeList {
                 id,

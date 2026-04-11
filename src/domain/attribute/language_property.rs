@@ -1,5 +1,5 @@
 use crate::{
-    domain::{attribute::AttributeValue, uri::Uri},
+    domain::attribute::AttributeValue,
     jsonld::{JsonLdExpandableMacro, JsonLdLanguageMap},
 };
 use chrono::{DateTime, Utc};
@@ -8,6 +8,7 @@ use langtag::LangTagBuf;
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error as _};
 use serde_with::skip_serializing_none;
 use std::fmt;
+use urn::Urn;
 
 /// Key in an NGSI-LD language map: either a BCP 47 tag or the `@none` default.
 ///
@@ -106,7 +107,7 @@ pub struct LanguageProperty {
     #[jsonld(property = "ngsi:expiresAt", typed_value, datatype = "ngsi:DateTime")]
     pub expires_at: Option<DateTime<Utc>>,
     #[jsonld(property = "ngsi:datasetId", id_ref)]
-    pub dataset_id: Option<Uri>,
+    pub dataset_id: Option<Urn>,
     #[serde(flatten)]
     #[jsonld(flatten_map)]
     pub sub_attributes: IndexMap<String, AttributeValue>,

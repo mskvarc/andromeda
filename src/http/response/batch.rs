@@ -1,6 +1,7 @@
 //! NGSI-LD response type for batch operation results with pre-rendered payload.
 
 use crate::{
+    domain::ngsi_ld_urn::SnapshotId,
     http::{
         header::{ngsild_warning::NgsiLdWarning, preference_applied::PreferenceApplied},
         response::headers::{CommonHeadersOptions, apply_common_headers},
@@ -13,13 +14,12 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use headers::HeaderMapExt;
-use urn::Urn;
 
 /// NGSI-LD response wrapper for batch operation results (207 Multi-Status).
 pub struct NgsiLdBatchResponse {
     status: StatusCode,
     rendered: RenderedOutput,
-    snapshot_uri: Option<Urn>,
+    snapshot_uri: Option<SnapshotId>,
     warnings: Vec<NgsiLdWarning>,
 }
 

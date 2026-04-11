@@ -7,7 +7,6 @@ use crate::{
         attribute_type::AttributeType,
         entity::Entity,
         temporal::{AggrMethod, TeaEntry, TimeRel, ValueType},
-        uri::Uri,
     },
     jsonld::vocab,
     query::compiled::{CompiledTemporalQuery, LastNOrigin},
@@ -20,6 +19,7 @@ use iref::IriBuf;
 use serde_json::{Value, json};
 use sqlx::{Row, postgres::PgRow};
 use std::str::FromStr;
+use urn::Urn;
 
 type TimeRange = (DateTime<Utc>, DateTime<Utc>);
 type TemporalAttributeInstances = Vec<(Option<DateTime<Utc>>, Value)>;
@@ -278,10 +278,7 @@ fn parse_tea_entry(row: &PgRow) -> Result<TeaEntry, AndromedaError> {
     let attribute_type = AttributeType::from_str(&attribute_type_raw)
         .map_err(|e| AndromedaError::internal(format!("Invalid temporal attribute type '{}': {}", attribute_type_raw, e)))?;
 
-    let dataset_id = row
-        .try_get::<Option<String>, _>("dataset_id")?
-        .map(|raw| Uri::from_str(&raw).map_err(|_| AndromedaError::internal(format!("Invalid temporal datasetId URI '{}'", raw))))
-        .transpose()?;
+    let dataset_id = row.try_get::<Option<String>, _>("dataset_id")?.map(|raw| Urn::from_str(&raw)).transpose()?;
 
     let value_type_raw: String = row.try_get("value_type")?;
     let value_type =
