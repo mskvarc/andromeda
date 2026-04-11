@@ -9,7 +9,12 @@
 
 use crate::{jsonld::Error as JsonLdError, query::error::QueryError};
 use axum::http::Uri;
-use sqlx::Error as SqlxError;
+use confique::Error as ConfigError;
+use reqwest::Error as ReqwestError;
+use serde_json::Error as SerdeJsonError;
+use sqlx::{Error as SqlxError, migrate::MigrateError};
+use std::io::Error as IoError;
+use tracing::subscriber::SetGlobalDefaultError;
 
 /// Domain-centric error variants.
 ///
@@ -378,6 +383,21 @@ impl AndromedaError {
     }
 }
 
+/// Extension methods for attaching HTTP request URI context to fallible results.
+pub trait ResultInstanceExt<T, E> {
+    /// Converts the error into [`AndromedaError`] and attaches `instance`.
+    fn with_instance(self, instance: Uri) -> Result<T, AndromedaError>;
+}
+
+impl<T, E> ResultInstanceExt<T, E> for Result<T, E>
+where
+    E: Into<AndromedaError>,
+{
+    fn with_instance(self, instance: Uri) -> Result<T, AndromedaError> {
+        self.map_err(|error| error.into().with_instance(instance))
+    }
+}
+
 // -- From<ErrorKind> for AndromedaError --------------------------------------
 
 impl From<ErrorKind> for AndromedaError {
@@ -388,26 +408,26 @@ impl From<ErrorKind> for AndromedaError {
 
 // -- From impls that go through ErrorKind's #[from] --------------------------
 
-impl From<sqlx::migrate::MigrateError> for AndromedaError {
-    fn from(error: sqlx::migrate::MigrateError) -> AndromedaError {
+impl From<MigrateError> for AndromedaError {
+    fn from(error: MigrateError) -> AndromedaError {
         ErrorKind::from(error).into()
     }
 }
 
-impl From<confique::Error> for AndromedaError {
-    fn from(error: confique::Error) -> AndromedaError {
+impl From<ConfigError> for AndromedaError {
+    fn from(error: ConfigError) -> AndromedaError {
         ErrorKind::from(error).into()
     }
 }
 
-impl From<tracing::subscriber::SetGlobalDefaultError> for AndromedaError {
-    fn from(error: tracing::subscriber::SetGlobalDefaultError) -> AndromedaError {
+impl From<SetGlobalDefaultError> for AndromedaError {
+    fn from(error: SetGlobalDefaultError) -> AndromedaError {
         ErrorKind::from(error).into()
     }
 }
 
-impl From<std::io::Error> for AndromedaError {
-    fn from(error: std::io::Error) -> AndromedaError {
+impl From<IoError> for AndromedaError {
+    fn from(error: IoError) -> AndromedaError {
         ErrorKind::from(error).into()
     }
 }
@@ -420,7 +440,8 @@ impl From<SqlxError> for AndromedaError {
             match db_error.code().as_deref() {
                 Some("23505") => ErrorKind::DatabaseUniqueViolation(error),
                 Some("2201B") => ErrorKind::DatabaseRegexError(error),
-                _ => ErrorKind::Database(error),
+                Some(_) => ErrorKind::Database(error),
+                None => ErrorKind::Database(error),
             }
         } else {
             ErrorKind::Database(error)
@@ -448,8 +469,8 @@ impl From<JsonLdError> for AndromedaError {
     }
 }
 
-impl From<serde_json::Error> for AndromedaError {
-    fn from(error: serde_json::Error) -> AndromedaError {
+impl From<SerdeJsonError> for AndromedaError {
+    fn from(error: SerdeJsonError) -> AndromedaError {
         ErrorKind::JsonParse(error).into()
     }
 }
@@ -470,8 +491,8 @@ impl From<QueryError> for AndromedaError {
     }
 }
 
-impl From<reqwest::Error> for AndromedaError {
-    fn from(error: reqwest::Error) -> AndromedaError {
+impl From<ReqwestError> for AndromedaError {
+    fn from(error: ReqwestError) -> AndromedaError {
         ErrorKind::ExternalRequest(error).into()
     }
 }

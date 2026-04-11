@@ -2,7 +2,7 @@
 
 use crate::{
     api::tenant::TenantState,
-    core::error::AndromedaError,
+    core::error::{AndromedaError, ResultInstanceExt},
     domain::jsonld_context::ContextKind,
     http::{
         error::problem::NgsiLdError,
@@ -29,7 +29,7 @@ pub async fn create(TenantState(state): TenantState, OriginalUri(uri): OriginalU
 
     let base_url = headers.get("host").and_then(|v| v.to_str().ok()).map(|h| format!("http://{}", h));
 
-    let id = service.create(payload, base_url.as_deref()).await.map_err(|e| e.with_instance(uri.clone()))?;
+    let id = service.create(payload, base_url.as_deref()).await.with_instance(uri.clone())?;
 
     Ok((StatusCode::CREATED, [("Location", format!("/ngsi-ld/v1/jsonldContexts/{}", id))]).into_response())
 }
@@ -44,12 +44,11 @@ pub async fn query(
     let kind = params
         .kind
         .map(|k| {
-            k.parse::<ContextKind>().map_err(|_| {
-                crate::core::error::AndromedaError::query_validation(format!("Invalid kind: {}. Must be one of: Cached, Hosted, ImplicitlyCreated", k))
-            })
+            k.parse::<ContextKind>()
+                .map_err(|_| AndromedaError::query_validation(format!("Invalid kind: {}. Must be one of: Cached, Hosted, ImplicitlyCreated", k)))
         })
         .transpose()
-        .map_err(|e| e.with_instance(uri.clone()))?;
+        .with_instance(uri.clone())?;
 
     let detail_level = if params.details.unwrap_or(false) {
         DetailLevel::Full
@@ -57,7 +56,7 @@ pub async fn query(
         DetailLevel::Summary
     };
 
-    let result = service.list(kind, detail_level).await.map_err(|e| e.with_instance(uri.clone()))?;
+    let result = service.list(kind, detail_level).await.with_instance(uri.clone())?;
 
     Ok((StatusCode::OK, Json(result)).into_response())
 }
@@ -76,7 +75,7 @@ pub async fn get(
         DetailLevel::Summary
     };
 
-    let result = service.get(&context_id, detail_level).await.map_err(|e| e.with_instance(uri.clone()))?;
+    let result = service.get(&context_id, detail_level).await.with_instance(uri.clone())?;
 
     Ok((StatusCode::OK, Json(result)).into_response())
 }
@@ -102,7 +101,7 @@ pub async fn delete(
         ));
     }
 
-    service.delete(&context_id, reload).await.map_err(|e| e.with_instance(uri.clone()))?;
+    service.delete(&context_id, reload).await.with_instance(uri.clone())?;
 
     Ok(StatusCode::NO_CONTENT.into_response())
 }

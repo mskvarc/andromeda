@@ -2,6 +2,7 @@
 
 use crate::{
     api::tenant::TenantState,
+    core::error::ResultInstanceExt,
     http::{
         error::problem::NgsiLdError,
         extractor::{accept::AcceptFormat, context::ContextUrl, jsonld::JsonLd, prefer::PreferHeader, via::IncomingVia},
@@ -11,8 +12,8 @@ use crate::{
     },
     renderer::response::ResponseRenderer,
     service::{
-        context_source_forwarding::{ForwardingOperation, collect_warnings},
-        temporal::TemporalService,
+        context_source_forwarding::{ForwardTemporalQueryRequest, ForwardingOperation, collect_warnings},
+        temporal::{TemporalQueryResult, TemporalService},
     },
 };
 use axum::{
@@ -40,11 +41,11 @@ pub async fn query(
 
     let is_local = params.is_local();
 
-    let result = service.query(&params, &context).await.map_err(|e| e.with_instance(uri.clone()))?;
+    let result = service.query(&params, &context).await.with_instance(uri.clone())?;
     for warning in &result.warnings {
         tracing::debug!(entity_id = %warning.entity_id, message = %warning.message, "Temporal batch query warning");
     }
-    let crate::service::temporal::TemporalQueryResult {
+    let TemporalQueryResult {
         entities: local_entities,
         total_count,
         any_truncated,
@@ -62,7 +63,7 @@ pub async fn query(
 
         let forwarded = state
             .forwarding
-            .forward_temporal_query(&crate::service::context_source_forwarding::ForwardTemporalQueryRequest {
+            .forward_temporal_query(&ForwardTemporalQueryRequest {
                 entity_type_compact: entity_type,
                 entity_ids: entity_ids_ref,
                 query_string: "",

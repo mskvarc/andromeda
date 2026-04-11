@@ -1,11 +1,12 @@
 //! Handlers for the `/csourceRegistrations` endpoints.
 
 use crate::{
-    api::tenant::TenantState,
+    api::tenant::{TenantState, TenantStateOrCreate},
+    core::error::ResultInstanceExt,
     http::{
         error::problem::NgsiLdError,
         extractor::{accept::AcceptFormatNoGeo, context::ContextUrl, jsonld::JsonLd, prefer::PreferHeader, query::ValidatedQuery},
-        parameter::query::csr::CsrQueryParameters,
+        parameter::query::{SharedQueryParams, csr::CsrQueryParameters},
         response::{
             collection::NgsiLdCollectionResponse,
             pagination::{PaginationMediaType, PaginationStyle, append_pagination_links},
@@ -25,7 +26,7 @@ use serde_json::Value;
 
 /// POST /ngsi-ld/v1/csourceRegistrations -- Register a new context source.
 pub async fn create(
-    crate::api::tenant::TenantStateOrCreate(state): crate::api::tenant::TenantStateOrCreate,
+    TenantStateOrCreate(state): TenantStateOrCreate,
     OriginalUri(uri): OriginalUri,
     context: ContextUrl,
     JsonLd {
@@ -36,7 +37,7 @@ pub async fn create(
     let service = &state.csr;
     let context = context.merge(body_context);
 
-    let id = service.create(payload, &context).await.map_err(|e| e.with_instance(uri.clone()))?;
+    let id = service.create(payload, &context).await.with_instance(uri.clone())?;
 
     Ok((StatusCode::CREATED, [("Location", format!("/ngsi-ld/v1/csourceRegistrations/{}", id))]).into_response())
 }
@@ -56,7 +57,7 @@ pub async fn get(
     let context: ContextSpec = context.into_inner();
     let options = params.parse_options();
 
-    let mut csr = service.get(&registration_id, &context).await.map_err(|e| e.with_instance(uri.clone()))?;
+    let mut csr = service.get(&registration_id, &context).await.with_instance(uri.clone())?;
 
     render_registration(&mut csr, options.sys_attrs);
 
@@ -72,8 +73,6 @@ pub async fn query(
     context: ContextUrl,
     ValidatedQuery(params): ValidatedQuery<CsrQueryParameters>,
 ) -> Result<Response, NgsiLdError> {
-    use crate::http::parameter::query::SharedQueryParams;
-
     let service = &state.csr;
     let context: ContextSpec = context.into_inner();
     let options = params.parse_options();
@@ -81,7 +80,7 @@ pub async fn query(
     let limit = params.effective_limit() as i64;
     let offset = params.effective_offset() as i64;
 
-    let (mut csrs, total) = service.query(&params, &context).await.map_err(|e| e.with_instance(uri.clone()))?;
+    let (mut csrs, total) = service.query(&params, &context).await.with_instance(uri.clone())?;
 
     for csr in &mut csrs {
         render_registration(csr, options.sys_attrs);
@@ -118,10 +117,7 @@ pub async fn update(
 
     let service = &state.csr;
     let context = context.merge(body_context);
-    service
-        .update(&registration_id, payload, &context)
-        .await
-        .map_err(|e| e.with_instance(uri.clone()))?;
+    service.update(&registration_id, payload, &context).await.with_instance(uri.clone())?;
 
     Ok(StatusCode::NO_CONTENT.into_response())
 }
@@ -131,7 +127,7 @@ pub async fn delete(TenantState(state): TenantState, OriginalUri(uri): OriginalU
     parse_csr_id(&registration_id, &uri)?;
 
     let service = &state.csr;
-    service.delete(&registration_id).await.map_err(|e| e.with_instance(uri.clone()))?;
+    service.delete(&registration_id).await.with_instance(uri.clone())?;
 
     Ok(StatusCode::NO_CONTENT.into_response())
 }

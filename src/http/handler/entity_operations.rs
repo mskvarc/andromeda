@@ -1,6 +1,6 @@
 use crate::{
     api::tenant::{TenantState, TenantStateOrCreate},
-    core::error::AndromedaError,
+    core::error::{AndromedaError, ResultInstanceExt},
     domain::entity::EntityTypeValue,
     http::{
         error::{batch::BatchOperationResult, problem::NgsiLdError},
@@ -69,9 +69,7 @@ pub async fn query(
     apply_entity_query_extension_headers(&mut params, &protocol, &uri)?;
     let language_filter = protocol.language_filter;
     let incoming_via = protocol.incoming_via;
-    params
-        .validate()
-        .map_err(|error| NgsiLdError::from(AndromedaError::from(error).with_instance(uri.clone())))?;
+    params.validate().with_instance(uri.clone()).map_err(NgsiLdError::from)?;
 
     let opts = params.parse_options();
     let join_mode = params.join.clone();
@@ -79,7 +77,7 @@ pub async fn query(
     let geometry_property = params.geometry_property.clone();
 
     let is_local = params.local.unwrap_or(false);
-    let (local_entities, total_count) = service.query(&params, &context).await.map_err(|e| e.with_instance(uri.clone()))?;
+    let (local_entities, total_count) = service.query(&params, &context).await.with_instance(uri.clone())?;
 
     // Distributed forwarding: query matching context sources unless local=true
     let (entities, warnings) = if is_local {
@@ -120,7 +118,7 @@ pub async fn query(
         let linked = service
             .resolve_linked_entities(&entities, join_level, opts.sys_attrs, &context, &HashSet::new())
             .await
-            .map_err(|e| e.with_instance(uri.clone()))?;
+            .with_instance(uri.clone())?;
 
         if join_mode.as_deref() == Some("flat") {
             let mut all_values: Vec<Value> = Vec::new();
@@ -130,7 +128,7 @@ pub async fn query(
                         .with_optional_language_filter(language_filter.as_ref())
                         .with_mode(opts.render_mode)
                         .render()
-                        .map_err(|e| e.with_instance(uri.clone()))?,
+                        .with_instance(uri.clone())?,
                 );
             }
             for linked_entity in linked.values() {
@@ -139,7 +137,7 @@ pub async fn query(
                         .with_optional_language_filter(language_filter.as_ref())
                         .with_mode(opts.render_mode)
                         .render()
-                        .map_err(|e| e.with_instance(uri.clone()))?,
+                        .with_instance(uri.clone())?,
                 );
             }
             let rendered = ResponseRenderer::new(accept.format(), context, protocol.prefer)
@@ -160,7 +158,7 @@ pub async fn query(
                         .with_inline_linked_entities(&linked)
                         .with_mode(opts.render_mode)
                         .render()
-                        .map_err(|e| e.with_instance(uri.clone()))?,
+                        .with_instance(uri.clone())?,
                 );
             }
             let rendered = ResponseRenderer::new(accept.format(), context, protocol.prefer)
@@ -183,7 +181,7 @@ pub async fn query(
                 .render()
         })
         .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| e.with_instance(uri.clone()))?;
+        .with_instance(uri.clone())?;
     let rendered = ResponseRenderer::new(accept.format(), context, protocol.prefer)
         .with_geometry_property(geometry_property)
         .render_collection(entity_values)?;
@@ -233,7 +231,7 @@ pub async fn batch_create(
             incoming_via: incoming_via.as_ref(),
         })
         .await
-        .map_err(|e| e.with_instance(uri.clone()))?;
+        .with_instance(uri.clone())?;
 
     let modes = ForwardingModes::from_results(&forwarded);
 
@@ -251,7 +249,7 @@ pub async fn batch_create(
     }
 
     // Inclusive or no match: create locally
-    let batch = service.batch_create(&entities, &context).await.map_err(|e| e.with_instance(uri.clone()))?;
+    let batch = service.batch_create(&entities, &context).await.with_instance(uri.clone())?;
     let mut result: BatchOperationResult = batch.into();
     result.errors.append(&mut parse_errors);
 
@@ -311,7 +309,7 @@ pub async fn batch_upsert(
             incoming_via: incoming_via.as_ref(),
         })
         .await
-        .map_err(|e| e.with_instance(uri.clone()))?;
+        .with_instance(uri.clone())?;
 
     let modes = ForwardingModes::from_results(&forwarded);
 
@@ -328,10 +326,7 @@ pub async fn batch_upsert(
     }
 
     // Inclusive or no match: upsert locally
-    let (batch, created_ids) = service
-        .batch_upsert(&entities, &context, update_mode)
-        .await
-        .map_err(|e| e.with_instance(uri.clone()))?;
+    let (batch, created_ids) = service.batch_upsert(&entities, &context, update_mode).await.with_instance(uri.clone())?;
     let mut result: BatchOperationResult = batch.into();
     result.errors.append(&mut parse_errors);
 
@@ -394,7 +389,7 @@ pub async fn batch_update(
             incoming_via: incoming_via.as_ref(),
         })
         .await
-        .map_err(|e| e.with_instance(uri.clone()))?;
+        .with_instance(uri.clone())?;
 
     let modes = ForwardingModes::from_results(&forwarded);
 
@@ -410,10 +405,7 @@ pub async fn batch_update(
         return Ok(status.into_response());
     }
 
-    let batch = service
-        .batch_update(&entities, &context, no_overwrite)
-        .await
-        .map_err(|e| e.with_instance(uri.clone()))?;
+    let batch = service.batch_update(&entities, &context, no_overwrite).await.with_instance(uri.clone())?;
     let mut result: BatchOperationResult = batch.into();
     result.errors.append(&mut parse_errors);
 
@@ -465,7 +457,7 @@ pub async fn batch_merge(
             incoming_via: incoming_via.as_ref(),
         })
         .await
-        .map_err(|e| e.with_instance(uri.clone()))?;
+        .with_instance(uri.clone())?;
 
     let modes = ForwardingModes::from_results(&forwarded);
 
@@ -481,7 +473,7 @@ pub async fn batch_merge(
         return Ok(status.into_response());
     }
 
-    let batch = service.batch_merge(&entities, &context).await.map_err(|e| e.with_instance(uri.clone()))?;
+    let batch = service.batch_merge(&entities, &context).await.with_instance(uri.clone())?;
     let mut result: BatchOperationResult = batch.into();
     result.errors.append(&mut parse_errors);
 
@@ -531,7 +523,7 @@ pub async fn batch_delete(
             incoming_via: incoming_via.as_ref(),
         })
         .await
-        .map_err(|e| e.with_instance(uri.clone()))?;
+        .with_instance(uri.clone())?;
 
     let modes = ForwardingModes::from_results(&forwarded);
 
@@ -556,7 +548,7 @@ pub async fn batch_delete(
     }
 
     // Inclusive or no match: delete locally
-    let batch = service.batch_delete(&entity_ids).await.map_err(|e| e.with_instance(uri.clone()))?;
+    let batch = service.batch_delete(&entity_ids).await.with_instance(uri.clone())?;
     let result: BatchOperationResult = batch.into();
 
     if result.errors.is_empty() {

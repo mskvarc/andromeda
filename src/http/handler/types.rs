@@ -2,7 +2,7 @@
 
 use crate::{
     api::tenant::TenantState,
-    core::error::AndromedaError,
+    core::error::{AndromedaError, ResultInstanceExt},
     http::{
         error::problem::NgsiLdError,
         extractor::{accept::AcceptFormat, context::ContextUrl, prefer::PreferHeader, query::ValidatedQuery, via::IncomingVia},
@@ -33,7 +33,7 @@ pub async fn query(
     let is_local = params.local.unwrap_or(false);
 
     if params.details {
-        let local_result = service.type_details(&context).await.map_err(|e| e.with_instance(uri.clone()))?;
+        let local_result = service.type_details(&context).await.with_instance(uri.clone())?;
 
         let (result, warnings) = if is_local {
             (local_result, Vec::new())
@@ -52,7 +52,7 @@ pub async fn query(
         let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default()).render_single(result)?;
         Ok(NgsiLdResponse::ok(rendered).with_warnings(warnings).into_response())
     } else {
-        let types = service.types(&context).await.map_err(|e| e.with_instance(uri.clone()))?;
+        let types = service.types(&context).await.with_instance(uri.clone())?;
         let local_result = serde_json::to_value(&types)
             .map_err(|e| AndromedaError::internal(format!("Failed to serialize types for merge: {}", e)).with_instance(uri.clone()))?;
 
@@ -90,7 +90,7 @@ pub async fn get(
     let context: ContextSpec = context.into_inner();
     let is_local = params.local.unwrap_or(false);
 
-    let local_result = service.type_info(&type_, &context).await.map_err(|e| e.with_instance(uri.clone()))?;
+    let local_result = service.type_info(&type_, &context).await.with_instance(uri.clone())?;
 
     let (result, warnings) = if is_local {
         (local_result, Vec::new())
