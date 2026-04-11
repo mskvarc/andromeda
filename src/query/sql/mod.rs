@@ -319,12 +319,13 @@ fn geo_to_sql(geo: &GeoQuery, binds: &mut Vec<BindValue<'_>>, param_idx: &mut us
         GeoRel::Equals => format!("ST_Equals({}, {})", geo_extract, ref_geom),
         GeoRel::Overlaps => format!("ST_Overlaps({}, {})", geo_extract, ref_geom),
         GeoRel::Near { max_distance, min_distance } => {
+            let geo_col = build_geo_extract_geography(&geo.geoproperty_iri, payload_column);
             let mut parts = Vec::new();
             if let Some(max) = max_distance {
-                parts.push(format!("ST_DWithin({}::geography, {}::geography, {})", geo_extract, ref_geom, max));
+                parts.push(format!("ST_DWithin({}, {}::geography, {})", geo_col, ref_geom, max));
             }
             if let Some(min) = min_distance {
-                parts.push(format!("ST_Distance({}::geography, {}::geography) >= {}", geo_extract, ref_geom, min));
+                parts.push(format!("ST_Distance({}, {}::geography) >= {}", geo_col, ref_geom, min));
             }
             if parts.is_empty() {
                 return Err(AndromedaError::query_validation("near georel requires maxDistance or minDistance"));
@@ -383,6 +384,24 @@ pub(crate) fn build_geo_extract(geoproperty_iri: &str, payload_column: &str) -> 
             payload_column,
             escape_jsonpath_key(geoproperty_iri)
         )
+    }
+}
+
+/// Build the SQL expression to extract a geography-typed value for distance/near operations.
+///
+/// For the default geoproperty (`location`), returns the pre-computed `location_geo`
+/// column (already `geography` type, no runtime cast needed). For custom geoproperties,
+/// falls back to extracting from JSONB and casting to `geography`.
+pub(crate) fn build_geo_extract_geography(geoproperty_iri: &str, payload_column: &str) -> String {
+    let is_default_location = geoproperty_iri == "https://uri.etsi.org/ngsi-ld/location";
+    if is_default_location {
+        if let Some(prefix) = payload_column.strip_suffix(".payload") {
+            format!("{}.location_geo", prefix)
+        } else {
+            "location_geo".to_string()
+        }
+    } else {
+        format!("{}::geography", build_geo_extract(geoproperty_iri, payload_column))
     }
 }
 

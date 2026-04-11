@@ -4,7 +4,7 @@ use crate::{
     core::error::AndromedaError,
     query::{
         compiled::{CompiledEntityQuery, CompiledOrderTerm, GeoQuery, OrderingGeometry},
-        sql::{BindValue, BuiltQuery, EntityFilterConditionsInput, build_entity_filter_conditions, build_geo_extract},
+        sql::{BindValue, BuiltQuery, EntityFilterConditionsInput, build_entity_filter_conditions, build_geo_extract_geography},
     },
 };
 
@@ -74,20 +74,20 @@ fn build_order_clause(order_by: &[CompiledOrderTerm], geo: Option<&GeoQuery>, or
                 // Three-tier precedence: orderFrom > geo query > error (S5.2.43)
                 if let Some(og) = ordering_geometry {
                     // orderFrom takes precedence: use the ordering geometry as reference
-                    let geo_extract = build_geo_extract(&term.attr_iri, "payload");
+                    let geo_col = build_geo_extract_geography(&term.attr_iri, "payload");
                     let geojson_str = serde_json::to_string(&og.geometry)
                         .map_err(|e| AndromedaError::query_validation(format!("Failed to serialize ordering geometry: {}", e)))?;
                     let ref_geom = format!("ST_MakeValid(ST_SetSRID(ST_GeomFromGeoJSON('{}'), 4326))", geojson_str);
-                    Ok(format!("ST_Distance({}::geography, {}::geography) {} NULLS LAST", geo_extract, ref_geom, dir))
+                    Ok(format!("ST_Distance({}, {}::geography) {} NULLS LAST", geo_col, ref_geom, dir))
                 } else if let Some(geo) = geo {
                     // Fallback to geo query reference geometry
-                    let geo_extract = build_geo_extract(&term.attr_iri, "payload");
+                    let geo_col = build_geo_extract_geography(&term.attr_iri, "payload");
                     let geojson = serde_json::json!({
                         "type": geo.geometry,
                         "coordinates": geo.coordinates
                     });
                     let ref_geom = format!("ST_MakeValid(ST_SetSRID(ST_GeomFromGeoJSON('{}'), 4326))", geojson);
-                    Ok(format!("ST_Distance({}::geography, {}::geography) {} NULLS LAST", geo_extract, ref_geom, dir))
+                    Ok(format!("ST_Distance({}, {}::geography) {} NULLS LAST", geo_col, ref_geom, dir))
                 } else {
                     // Defensive: should have been caught during compilation (S5.7.2.4)
                     Err(AndromedaError::query_validation(

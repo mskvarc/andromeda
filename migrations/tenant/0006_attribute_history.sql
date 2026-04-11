@@ -24,9 +24,10 @@
 --
 -- Hypertable configuration:
 --   • Chunk interval: 1 day — balances query performance with chunk count
---   • Compression: segmented by tea_id (each attribute stream compresses
+--   • Columnar storage: segmented by tea_id (each attribute stream compresses
 --     independently), ordered by time DESC (recent data accessed first)
---   • Compression policy: data older than 7 days is automatically compressed
+--   • Columnstore API (newer TSL): enable_columnstore + add_columnstore_policy
+--   • Legacy compression (older TSL): timescaledb.compress + add_compression_policy
 -- ============================================================================
 
 CREATE TABLE attribute_history (
@@ -76,17 +77,40 @@ CREATE TABLE attribute_history (
 -- Convert to a TimescaleDB hypertable, partitioned by time in 1-day chunks.
 SELECT create_hypertable('attribute_history', 'time', chunk_time_interval => INTERVAL '1 day');
 
--- Enable native columnar compression.
--- Segmenting by tea_id means each attribute's time-series compresses as an
--- independent stream, yielding excellent compression ratios.
-ALTER TABLE attribute_history SET (
-    timescaledb.compress,
-    timescaledb.compress_segmentby = 'tea_id',
-    timescaledb.compress_orderby = 'time DESC'
-);
+-- Enable columnar storage.
+-- TimescaleDB columnstore API (enable_columnstore, add_columnstore_policy) replaces
+-- legacy compression with transparent columnar storage that supports DML on
+-- compressed data. When available, use columnstore; otherwise fall back to legacy
+-- compression settings.
+DO $$
+DECLARE
+    has_columnstore BOOLEAN;
+BEGIN
+    SELECT EXISTS(SELECT 1 FROM pg_proc WHERE proname = 'add_columnstore_policy')
+    INTO has_columnstore;
 
--- Automatically compress chunks older than 7 days in the background.
-SELECT add_compression_policy('attribute_history', INTERVAL '7 days');
+    IF has_columnstore THEN
+        RAISE NOTICE 'columnstore API available -- using columnstore';
+
+        ALTER TABLE attribute_history SET (
+            timescaledb.enable_columnstore,
+            timescaledb.segmentby = 'tea_id',
+            timescaledb.orderby = 'time DESC'
+        );
+        CALL add_columnstore_policy('attribute_history', after => INTERVAL '7 days');
+        SET timescaledb.max_tuples_decompressed_per_dml_transaction = 1000000;
+    ELSE
+        RAISE NOTICE 'columnstore API not available -- using legacy compression';
+
+        ALTER TABLE attribute_history SET (
+            timescaledb.compress,
+            timescaledb.compress_segmentby = 'tea_id',
+            timescaledb.compress_orderby = 'time DESC'
+        );
+        SELECT add_compression_policy('attribute_history', INTERVAL '7 days');
+    END IF;
+END
+$$;
 
 -- Primary lookup pattern: retrieve history for a specific attribute, newest first.
 CREATE INDEX idx_attribute_history_tea_time ON attribute_history(tea_id, time DESC);

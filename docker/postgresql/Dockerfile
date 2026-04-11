@@ -94,7 +94,7 @@ RUN rm -rf /usr/src
 RUN apk del .fetch-deps .build-deps
 RUN apk add --no-cache bash
 
-RUN sed -r -i "s/[#]*\s*(shared_preload_libraries)\s*=\s*'(.*)'/\1 = 'timescaledb,\2'/;s/,'/'/" /usr/local/share/postgresql/postgresql.conf.sample
+RUN sed -r -i "s/[#]*\s*(shared_preload_libraries)\s*=\s*'(.*)'/\1 = 'timescaledb,pg_stat_statements,\2'/;s/,'/'/" /usr/local/share/postgresql/postgresql.conf.sample
 
 COPY --from=tools /go/bin/timescaledb-tune /usr/local/bin/timescaledb-tune
 COPY --from=tools /go/bin/timescaledb-parallel-copy /usr/local/bin/timescaledb-parallel-copy
