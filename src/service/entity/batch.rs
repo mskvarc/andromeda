@@ -8,7 +8,7 @@ use crate::{
     },
     jsonld::ContextSpec,
     query::sql,
-    repository::entity::PreparedEntityRow,
+    repository::entity::{PreparedEntityColumns, PreparedEntityRow, decompose_rows},
     service::entity::{
         BatchSideEffectJob,
         EntityService,
@@ -64,23 +64,6 @@ struct PreparedEntity {
     expires_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
-impl PreparedEntity {
-    /// Convert this prepared entity into a [`PreparedEntityRow`] for repository
-    /// bulk SQL binding. Consumes `self` to avoid cloning the payload.
-    fn into_row(self) -> PreparedEntityRow {
-        PreparedEntityRow {
-            id: self.id,
-            types_json: Value::Array(self.types.into_iter().map(Value::String).collect()),
-            scope_paths_json: Value::Array(self.scopes.into_iter().map(|s| Value::String(sql::scope_to_ltree(&s))).collect()),
-            payload: self.expanded,
-            location: self.location,
-            observation_space: self.observation_space,
-            operation_space: self.operation_space,
-            expires_at: self.expires_at,
-        }
-    }
-}
-
 #[derive(Clone, Copy)]
 enum PrepareExecution {
     Inline,
@@ -93,26 +76,42 @@ struct BatchEffectEntity {
     types: Vec<String>,
 }
 
+struct IndexedBatchEffectEntity {
+    changed_attributes: Vec<String>,
+    payload_index: usize,
+    types: Vec<String>,
+}
+
 /// Build a [`PreparedEntityRow`] from an already-merged expanded payload.
 ///
 /// Used by update/merge/upsert flows where the caller has already produced the
 /// final merged payload and needs a row for `save_batch`.
-fn row_from_expanded(id: String, expanded: Value) -> PreparedEntityRow {
-    PreparedEntityRow {
-        id,
-        types_json: Value::Array(expanded::extract_types(&expanded).into_iter().map(Value::String).collect()),
-        scope_paths_json: Value::Array(
-            expanded::extract_scopes(&expanded)
-                .into_iter()
-                .map(|s| Value::String(sql::scope_to_ltree(&s)))
-                .collect(),
-        ),
-        payload: expanded.clone(),
-        location: expanded::extract_location_geojson(&expanded),
-        observation_space: expanded::extract_observation_space_geojson(&expanded),
-        operation_space: expanded::extract_operation_space_geojson(&expanded),
-        expires_at: expanded::extract_expires_at(&expanded),
-    }
+fn row_from_expanded(id: String, expanded: Value) -> (PreparedEntityRow, Vec<String>) {
+    let types = expanded::extract_types(&expanded);
+    let scope_paths_json = Value::Array(
+        expanded::extract_scopes(&expanded)
+            .into_iter()
+            .map(|s| Value::String(sql::scope_to_ltree(&s)))
+            .collect(),
+    );
+    let location = expanded::extract_location_geojson(&expanded);
+    let observation_space = expanded::extract_observation_space_geojson(&expanded);
+    let operation_space = expanded::extract_operation_space_geojson(&expanded);
+    let expires_at = expanded::extract_expires_at(&expanded);
+
+    (
+        PreparedEntityRow {
+            id,
+            types_json: Value::Array(types.iter().cloned().map(Value::String).collect()),
+            scope_paths_json,
+            payload: expanded,
+            location,
+            observation_space,
+            operation_space,
+            expires_at,
+        },
+        types,
+    )
 }
 
 impl EntityService {
@@ -245,8 +244,50 @@ impl EntityService {
         )
     }
 
-    fn drain_upsert_effect_entities(
-        entity_data: &mut HashMap<String, BatchEffectEntity>,
+    fn drain_indexed_effect_entities(
+        entity_data: &mut HashMap<String, IndexedBatchEffectEntity>,
+        payloads: &mut [Option<Value>],
+        ids: &[String],
+        trigger_reason: TriggerReason,
+    ) -> (BatchSideEffectJob, Vec<String>) {
+        let mut change_events = Vec::with_capacity(ids.len());
+        let mut success = Vec::with_capacity(ids.len());
+        let mut temporal_entities = Vec::with_capacity(ids.len());
+
+        for id in ids {
+            let Some(effect) = entity_data.remove(id) else {
+                continue;
+            };
+
+            let Some(expanded) = payloads.get_mut(effect.payload_index).and_then(Option::take) else {
+                tracing::error!(entity_id = %id, event = "batch_effect_payload_missing");
+                continue;
+            };
+
+            temporal_entities.push((id.clone(), expanded));
+            match id.parse::<Uri>() {
+                Ok(entity_uri) => {
+                    change_events.push(ChangeEvent::new(entity_uri, effect.types, trigger_reason.clone()).with_changed_attributes(effect.changed_attributes));
+                }
+                Err(_error) => {
+                    tracing::error!(entity_id = %id, event = "entity_uri_parse_failed");
+                }
+            }
+            success.push(id.clone());
+        }
+
+        (
+            BatchSideEffectJob {
+                temporal_entities,
+                change_events,
+            },
+            success,
+        )
+    }
+
+    fn drain_upsert_indexed_effect_entities(
+        entity_data: &mut HashMap<String, IndexedBatchEffectEntity>,
+        payloads: &mut [Option<Value>],
         upserted: Vec<(String, bool)>,
     ) -> (BatchSideEffectJob, Vec<String>, Vec<String>) {
         let mut change_events = Vec::with_capacity(upserted.len());
@@ -259,13 +300,18 @@ impl EntityService {
                 continue;
             };
 
+            let Some(expanded) = payloads.get_mut(effect.payload_index).and_then(Option::take) else {
+                tracing::error!(entity_id = %id, event = "batch_effect_payload_missing");
+                continue;
+            };
+
             let trigger_reason = if was_created {
                 created.push(id.clone());
                 TriggerReason::EntityCreated
             } else {
                 TriggerReason::EntityUpdated
             };
-            temporal_entities.push((id.clone(), effect.expanded));
+            temporal_entities.push((id.clone(), expanded));
             match id.parse::<Uri>() {
                 Ok(entity_uri) => {
                     change_events.push(ChangeEvent::new(entity_uri, effect.types, trigger_reason).with_changed_attributes(effect.changed_attributes));
@@ -324,7 +370,7 @@ impl EntityService {
         }
 
         let mut entity_data = HashMap::with_capacity(prepared.len());
-        let mut rows = Vec::with_capacity(prepared.len());
+        let mut columns = PreparedEntityColumns::with_capacity(prepared.len());
         for prepared_entity in prepared {
             let key = prepared_entity.id.clone();
             match entity_data.entry(key) {
@@ -333,18 +379,38 @@ impl EntityService {
                     errors.push((id.clone(), AndromedaError::entity_already_exists(&id)));
                 }
                 Entry::Vacant(entry) => {
-                    let effect = BatchEffectEntity {
-                        changed_attributes: prepared_entity.changed_attributes.clone(),
-                        expanded: prepared_entity.expanded.clone(),
-                        types: prepared_entity.types.clone(),
-                    };
-                    entry.insert(effect);
-                    rows.push(prepared_entity.into_row());
+                    let payload_index = columns.payloads.len();
+                    let PreparedEntity {
+                        id,
+                        expanded,
+                        types,
+                        scopes,
+                        changed_attributes,
+                        location,
+                        observation_space,
+                        operation_space,
+                        expires_at,
+                    } = prepared_entity;
+                    columns.ids.push(id);
+                    columns.types_json.push(Value::Array(types.iter().cloned().map(Value::String).collect()));
+                    columns
+                        .scope_paths_json
+                        .push(Value::Array(scopes.into_iter().map(|s| Value::String(sql::scope_to_ltree(&s))).collect()));
+                    columns.payloads.push(expanded);
+                    columns.locations.push(location);
+                    columns.obs_spaces.push(observation_space);
+                    columns.op_spaces.push(operation_space);
+                    columns.expires_ats.push(expires_at);
+                    entry.insert(IndexedBatchEffectEntity {
+                        changed_attributes,
+                        payload_index,
+                        types,
+                    });
                 }
             }
         }
 
-        let inserted_ids = self.repo.create_batch(rows).await?;
+        let inserted_ids = self.repo.create_batch(&columns).await?;
         let inserted_set: HashSet<&str> = inserted_ids.iter().map(String::as_str).collect();
         for id in entity_data.keys() {
             if !inserted_set.contains(id.as_str()) {
@@ -352,7 +418,8 @@ impl EntityService {
             }
         }
 
-        let (job, success) = Self::drain_effect_entities(&mut entity_data, &inserted_ids, TriggerReason::EntityCreated);
+        let mut payloads = columns.payloads.into_iter().map(Some).collect::<Vec<_>>();
+        let (job, success) = Self::drain_indexed_effect_entities(&mut entity_data, &mut payloads, &inserted_ids, TriggerReason::EntityCreated);
         self.dispatch_batch_side_effects(original_batch_size, job).await;
 
         Ok(BatchResult { success, errors })
@@ -407,17 +474,18 @@ impl EntityService {
                 }
             }
 
-            let row = row_from_expanded(id.clone(), existing);
+            let (row, row_types) = row_from_expanded(id.clone(), existing);
             let effect = BatchEffectEntity {
                 changed_attributes: prepared_entity.changed_attributes,
                 expanded: prepared_entity.expanded,
-                types: extract_entity_types(&row.payload),
+                types: row_types,
             };
             effect_entities.insert(id, effect);
             save_rows.push(row);
         }
 
-        let saved_ids = self.repo.save_batch(save_rows).await?;
+        let save_columns = decompose_rows(save_rows);
+        let saved_ids = self.repo.save_batch(&save_columns).await?;
         let (job, success) = Self::drain_effect_entities(&mut effect_entities, &saved_ids, TriggerReason::EntityUpdated);
         self.dispatch_batch_side_effects(original_batch_size, job).await;
 
@@ -448,17 +516,18 @@ impl EntityService {
                 continue;
             }
 
-            let row = row_from_expanded(id.clone(), existing);
+            let (row, row_types) = row_from_expanded(id.clone(), existing);
             let effect = BatchEffectEntity {
                 changed_attributes: prepared_entity.changed_attributes,
                 expanded: prepared_entity.expanded,
-                types: extract_entity_types(&row.payload),
+                types: row_types,
             };
             effect_entities.insert(id, effect);
             save_rows.push(row);
         }
 
-        let saved_ids = self.repo.save_batch(save_rows).await?;
+        let save_columns = decompose_rows(save_rows);
+        let saved_ids = self.repo.save_batch(&save_columns).await?;
         let (job, success) = Self::drain_effect_entities(&mut effect_entities, &saved_ids, TriggerReason::EntityUpdated);
         self.dispatch_batch_side_effects(original_batch_size, job).await;
 
@@ -485,19 +554,44 @@ impl EntityService {
         }
 
         let mut entity_data = HashMap::with_capacity(prepared.len());
-        let mut rows = Vec::with_capacity(prepared.len());
+        let mut columns = PreparedEntityColumns::with_capacity(prepared.len());
         for prepared_entity in prepared {
-            let effect = BatchEffectEntity {
-                changed_attributes: prepared_entity.changed_attributes.clone(),
-                expanded: prepared_entity.expanded.clone(),
-                types: prepared_entity.types.clone(),
-            };
-            entity_data.insert(prepared_entity.id.clone(), effect);
-            rows.push(prepared_entity.into_row());
+            let payload_index = columns.payloads.len();
+            let PreparedEntity {
+                id,
+                expanded,
+                types,
+                scopes,
+                changed_attributes,
+                location,
+                observation_space,
+                operation_space,
+                expires_at,
+            } = prepared_entity;
+            let types_json = Value::Array(types.iter().cloned().map(Value::String).collect());
+            entity_data.insert(
+                id.clone(),
+                IndexedBatchEffectEntity {
+                    changed_attributes,
+                    payload_index,
+                    types,
+                },
+            );
+            columns.ids.push(id);
+            columns.types_json.push(types_json);
+            columns
+                .scope_paths_json
+                .push(Value::Array(scopes.into_iter().map(|s| Value::String(sql::scope_to_ltree(&s))).collect()));
+            columns.payloads.push(expanded);
+            columns.locations.push(location);
+            columns.obs_spaces.push(observation_space);
+            columns.op_spaces.push(operation_space);
+            columns.expires_ats.push(expires_at);
         }
 
-        let upserted = self.repo.upsert_batch(rows).await?;
-        let (job, success, created) = Self::drain_upsert_effect_entities(&mut entity_data, upserted);
+        let upserted = self.repo.upsert_batch(&columns).await?;
+        let mut payloads = columns.payloads.into_iter().map(Some).collect::<Vec<_>>();
+        let (job, success, created) = Self::drain_upsert_indexed_effect_entities(&mut entity_data, &mut payloads, upserted);
         self.dispatch_batch_side_effects(original_batch_size, job).await;
 
         Ok((BatchResult { success, errors: Vec::new() }, created))
@@ -526,7 +620,7 @@ impl EntityService {
         let existing_map = self.repo.get_batch(&prepared_ids).await?;
 
         let mut created_effects = HashMap::new();
-        let mut created_rows = Vec::new();
+        let mut created_columns = PreparedEntityColumns::with_capacity(prepared.len());
         let mut updated_effects = HashMap::new();
         let mut updated_rows = Vec::new();
 
@@ -539,38 +633,67 @@ impl EntityService {
                     continue;
                 }
 
-                let row = row_from_expanded(id.clone(), merged);
+                let (row, row_types) = row_from_expanded(id.clone(), merged);
                 let effect = BatchEffectEntity {
                     changed_attributes: prepared_entity.changed_attributes,
                     expanded: prepared_entity.expanded,
-                    types: extract_entity_types(&row.payload),
+                    types: row_types,
                 };
                 updated_effects.insert(id, effect);
                 updated_rows.push(row);
             } else {
-                let effect = BatchEffectEntity {
-                    changed_attributes: prepared_entity.changed_attributes.clone(),
-                    expanded: prepared_entity.expanded.clone(),
-                    types: prepared_entity.types.clone(),
-                };
-                created_effects.insert(id.clone(), effect);
-                created_rows.push(prepared_entity.into_row());
+                let payload_index = created_columns.payloads.len();
+                let PreparedEntity {
+                    id,
+                    expanded,
+                    types,
+                    scopes,
+                    changed_attributes,
+                    location,
+                    observation_space,
+                    operation_space,
+                    expires_at,
+                } = prepared_entity;
+                let types_json = Value::Array(types.iter().cloned().map(Value::String).collect());
+                created_effects.insert(
+                    id.clone(),
+                    IndexedBatchEffectEntity {
+                        changed_attributes,
+                        payload_index,
+                        types,
+                    },
+                );
+                created_columns.ids.push(id);
+                created_columns.types_json.push(types_json);
+                created_columns
+                    .scope_paths_json
+                    .push(Value::Array(scopes.into_iter().map(|s| Value::String(sql::scope_to_ltree(&s))).collect()));
+                created_columns.payloads.push(expanded);
+                created_columns.locations.push(location);
+                created_columns.obs_spaces.push(observation_space);
+                created_columns.op_spaces.push(operation_space);
+                created_columns.expires_ats.push(expires_at);
             }
         }
 
-        let created_ids = if created_rows.is_empty() {
+        let created_ids = if created_columns.ids.is_empty() {
             Vec::new()
         } else {
-            self.repo.create_batch(created_rows).await?
+            self.repo.create_batch(&created_columns).await?
         };
         let updated_ids = if updated_rows.is_empty() {
             Vec::new()
         } else {
-            self.repo.save_batch(updated_rows).await?
+            let updated_columns = decompose_rows(updated_rows);
+            self.repo.save_batch(&updated_columns).await?
         };
 
-        let (created_job, mut success, created) =
-            Self::drain_upsert_effect_entities(&mut created_effects, created_ids.into_iter().map(|id| (id, true)).collect());
+        let mut created_payloads = created_columns.payloads.into_iter().map(Some).collect::<Vec<_>>();
+        let (created_job, mut success, created) = Self::drain_upsert_indexed_effect_entities(
+            &mut created_effects,
+            &mut created_payloads,
+            created_ids.into_iter().map(|id| (id, true)).collect(),
+        );
         let (updated_job, updated_success) = Self::drain_effect_entities(&mut updated_effects, &updated_ids, TriggerReason::EntityUpdated);
         success.extend(updated_success);
 

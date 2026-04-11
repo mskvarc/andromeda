@@ -24,7 +24,7 @@ use urn::Urn;
 /// strings because PostgreSQL `UNNEST` flattens `text[][]` into individual
 /// elements rather than per-row arrays.
 #[derive(Debug)]
-pub struct PreparedEntityRow {
+pub(crate) struct PreparedEntityRow {
     /// Entity identifier (URN).
     pub id: String,
     /// JSON array of type IRIs (e.g. `["https://example.com/Vehicle"]`).
@@ -516,21 +516,10 @@ impl EntityRepository {
     /// Duplicate IDs (entities that already exist) are silently skipped via
     /// `ON CONFLICT (id) DO NOTHING`.  Returns the IDs of successfully inserted
     /// entities; the caller compares against the input to detect conflicts.
-    pub async fn create_batch(&self, entities: Vec<PreparedEntityRow>) -> Result<Vec<String>, AndromedaError> {
-        if entities.is_empty() {
+    pub async fn create_batch(&self, entities: &PreparedEntityColumns) -> Result<Vec<String>, AndromedaError> {
+        if entities.ids.is_empty() {
             return Ok(Vec::new());
         }
-
-        let DecomposedColumns {
-            ids,
-            types_json,
-            scope_paths_json,
-            payloads,
-            locations,
-            obs_spaces,
-            op_spaces,
-            expires_ats,
-        } = decompose_rows(entities);
 
         let rows: Vec<(String,)> = sqlx::query_as(
             r#"
@@ -550,14 +539,14 @@ impl EntityRepository {
             RETURNING id
             "#,
         )
-        .bind(&ids)
-        .bind(&types_json)
-        .bind(&scope_paths_json)
-        .bind(&payloads)
-        .bind(&locations)
-        .bind(&obs_spaces)
-        .bind(&op_spaces)
-        .bind(&expires_ats)
+        .bind(&entities.ids)
+        .bind(&entities.types_json)
+        .bind(&entities.scope_paths_json)
+        .bind(&entities.payloads)
+        .bind(&entities.locations)
+        .bind(&entities.obs_spaces)
+        .bind(&entities.op_spaces)
+        .bind(&entities.expires_ats)
         .fetch_all(&self.pool)
         .await?;
 
@@ -596,21 +585,10 @@ impl EntityRepository {
     ///
     /// Only rows where `entities.id = d.id` are updated; non-existent IDs are
     /// silently skipped.  Returns the IDs of successfully updated entities.
-    pub async fn save_batch(&self, entities: Vec<PreparedEntityRow>) -> Result<Vec<String>, AndromedaError> {
-        if entities.is_empty() {
+    pub async fn save_batch(&self, entities: &PreparedEntityColumns) -> Result<Vec<String>, AndromedaError> {
+        if entities.ids.is_empty() {
             return Ok(Vec::new());
         }
-
-        let DecomposedColumns {
-            ids,
-            types_json,
-            scope_paths_json,
-            payloads,
-            locations,
-            obs_spaces,
-            op_spaces,
-            expires_ats,
-        } = decompose_rows(entities);
 
         let rows: Vec<(String,)> = sqlx::query_as(
             r#"
@@ -629,14 +607,14 @@ impl EntityRepository {
             RETURNING entities.id
             "#,
         )
-        .bind(&ids)
-        .bind(&types_json)
-        .bind(&scope_paths_json)
-        .bind(&payloads)
-        .bind(&locations)
-        .bind(&obs_spaces)
-        .bind(&op_spaces)
-        .bind(&expires_ats)
+        .bind(&entities.ids)
+        .bind(&entities.types_json)
+        .bind(&entities.scope_paths_json)
+        .bind(&entities.payloads)
+        .bind(&entities.locations)
+        .bind(&entities.obs_spaces)
+        .bind(&entities.op_spaces)
+        .bind(&entities.expires_ats)
         .fetch_all(&self.pool)
         .await?;
 
@@ -648,21 +626,10 @@ impl EntityRepository {
     /// Uses `ON CONFLICT (id) DO UPDATE` to upsert.  Returns `(id, was_created)`
     /// pairs where `was_created` is `true` for newly inserted rows and `false`
     /// for updated rows (determined via PostgreSQL's `xmax = 0` pattern).
-    pub async fn upsert_batch(&self, entities: Vec<PreparedEntityRow>) -> Result<Vec<(String, bool)>, AndromedaError> {
-        if entities.is_empty() {
+    pub async fn upsert_batch(&self, entities: &PreparedEntityColumns) -> Result<Vec<(String, bool)>, AndromedaError> {
+        if entities.ids.is_empty() {
             return Ok(Vec::new());
         }
-
-        let DecomposedColumns {
-            ids,
-            types_json,
-            scope_paths_json,
-            payloads,
-            locations,
-            obs_spaces,
-            op_spaces,
-            expires_ats,
-        } = decompose_rows(entities);
 
         let rows = sqlx::query(
             r#"
@@ -690,14 +657,14 @@ impl EntityRepository {
             RETURNING id, (xmax = 0) AS was_created
             "#,
         )
-        .bind(&ids)
-        .bind(&types_json)
-        .bind(&scope_paths_json)
-        .bind(&payloads)
-        .bind(&locations)
-        .bind(&obs_spaces)
-        .bind(&op_spaces)
-        .bind(&expires_ats)
+        .bind(&entities.ids)
+        .bind(&entities.types_json)
+        .bind(&entities.scope_paths_json)
+        .bind(&entities.payloads)
+        .bind(&entities.locations)
+        .bind(&entities.obs_spaces)
+        .bind(&entities.op_spaces)
+        .bind(&entities.expires_ats)
         .fetch_all(&self.pool)
         .await?;
 
@@ -716,49 +683,49 @@ impl EntityRepository {
 /// Parallel column vectors extracted from [`PreparedEntityRow`] slices for
 /// sqlx `UNNEST` binding.
 #[derive(Debug)]
-struct DecomposedColumns {
-    ids: Vec<String>,
-    types_json: Vec<Value>,
-    scope_paths_json: Vec<Value>,
-    payloads: Vec<Value>,
-    locations: Vec<Option<String>>,
-    obs_spaces: Vec<Option<String>>,
-    op_spaces: Vec<Option<String>>,
-    expires_ats: Vec<Option<DateTime<Utc>>>,
+pub(crate) struct PreparedEntityColumns {
+    pub ids: Vec<String>,
+    pub types_json: Vec<Value>,
+    pub scope_paths_json: Vec<Value>,
+    pub payloads: Vec<Value>,
+    pub locations: Vec<Option<String>>,
+    pub obs_spaces: Vec<Option<String>>,
+    pub op_spaces: Vec<Option<String>>,
+    pub expires_ats: Vec<Option<DateTime<Utc>>>,
+}
+
+impl PreparedEntityColumns {
+    /// Create an empty set of parallel SQL bind vectors sized for `len` rows.
+    pub fn with_capacity(len: usize) -> PreparedEntityColumns {
+        PreparedEntityColumns {
+            ids: Vec::with_capacity(len),
+            types_json: Vec::with_capacity(len),
+            scope_paths_json: Vec::with_capacity(len),
+            payloads: Vec::with_capacity(len),
+            locations: Vec::with_capacity(len),
+            obs_spaces: Vec::with_capacity(len),
+            op_spaces: Vec::with_capacity(len),
+            expires_ats: Vec::with_capacity(len),
+        }
+    }
 }
 
 /// Decompose a slice of [`PreparedEntityRow`] into parallel column vectors for
 /// sqlx `UNNEST` binding.
-fn decompose_rows(entities: Vec<PreparedEntityRow>) -> DecomposedColumns {
+pub(crate) fn decompose_rows(entities: Vec<PreparedEntityRow>) -> PreparedEntityColumns {
     let len = entities.len();
-    let mut ids = Vec::with_capacity(len);
-    let mut types_json = Vec::with_capacity(len);
-    let mut scope_paths_json = Vec::with_capacity(len);
-    let mut payloads = Vec::with_capacity(len);
-    let mut locations: Vec<Option<String>> = Vec::with_capacity(len);
-    let mut obs_spaces: Vec<Option<String>> = Vec::with_capacity(len);
-    let mut op_spaces: Vec<Option<String>> = Vec::with_capacity(len);
-    let mut expires_ats: Vec<Option<DateTime<Utc>>> = Vec::with_capacity(len);
+    let mut columns = PreparedEntityColumns::with_capacity(len);
 
     for e in entities {
-        ids.push(e.id);
-        types_json.push(e.types_json);
-        scope_paths_json.push(e.scope_paths_json);
-        payloads.push(e.payload);
-        locations.push(e.location);
-        obs_spaces.push(e.observation_space);
-        op_spaces.push(e.operation_space);
-        expires_ats.push(e.expires_at);
+        columns.ids.push(e.id);
+        columns.types_json.push(e.types_json);
+        columns.scope_paths_json.push(e.scope_paths_json);
+        columns.payloads.push(e.payload);
+        columns.locations.push(e.location);
+        columns.obs_spaces.push(e.observation_space);
+        columns.op_spaces.push(e.operation_space);
+        columns.expires_ats.push(e.expires_at);
     }
 
-    DecomposedColumns {
-        ids,
-        types_json,
-        scope_paths_json,
-        payloads,
-        locations,
-        obs_spaces,
-        op_spaces,
-        expires_ats,
-    }
+    columns
 }

@@ -19,10 +19,9 @@ use crate::jsonld::{
 use contextual::WithContext;
 use json_ld::{
     JsonLdProcessor,
-    Print,
     RemoteContextReference,
     RemoteDocument,
-    syntax::{Context as JsonLdContext, TryFromJson},
+    syntax::{Context as JsonLdContext, IntoJson, TryFromJson},
 };
 use json_syntax::Parse;
 use moka::future::Cache;
@@ -150,10 +149,7 @@ impl JsonLdEngine {
             }
         };
 
-        let expanded_json: serde_json::Value = {
-            let printed = expanded.with(&vocabulary).compact_print().to_string();
-            serde_json::from_str(&printed)?
-        };
+        let expanded_json = json_syntax::Value::into_serde_json(expanded.into_iter().collect::<Vec<_>>().into_with(&vocabulary).into_json());
         Ok(expanded_json)
     }
 
