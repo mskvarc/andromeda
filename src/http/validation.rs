@@ -1,13 +1,11 @@
-//! Shared parsing and validation helpers for API handlers.
+//! Shared parsing and validation helpers for HTTP handlers.
 //!
 //! Functions in this module extract and validate common path/query parameters
 //! used across multiple handler modules (entities, temporal, subscriptions,
-//! context source registrations).
+//! context source registrations, snapshots, entity maps).
 
 use crate::{domain::name::Name, error::AndromedaError, http::error::problem::NgsiLdError, renderer::SysAttrsInclusion};
-use axum::http::{HeaderMap, Uri, header::CONTENT_TYPE};
-use mediatype::{MediaTypeBuf, names};
-use serde_json::Value;
+use axum::http::Uri;
 use url::Url;
 use urn::Urn;
 
@@ -104,6 +102,26 @@ pub fn parse_csr_id(id: &str, uri: &Uri) -> Result<(), NgsiLdError> {
     Ok(())
 }
 
+/// Parse and validate a snapshot ID as a URN.
+///
+/// Validates that the string is a valid URN and conforms to the snapshot URN
+/// format defined by `validate_snapshot_urn`.
+pub fn parse_snapshot_id(snapshot_id: &str, uri: &Uri) -> Result<Urn, NgsiLdError> {
+    let id = snapshot_id
+        .parse::<Urn>()
+        .map_err(|e| AndromedaError::bad_request_data(format!("Invalid snapshot id URN: {}", e)).with_instance(uri.clone()))?;
+    crate::domain::snapshot::validate_snapshot_urn(&id)
+        .map_err(|e| AndromedaError::bad_request_data(format!("Invalid snapshot id: {}", e)).with_instance(uri.clone()))?;
+    Ok(id)
+}
+
+/// Parse and validate an entity map ID as a URN.
+///
+/// Delegates to `parse_entity_map_urn` from the entity map service layer.
+pub fn parse_entity_map_id(id: &str, uri: &Uri) -> Result<Urn, NgsiLdError> {
+    crate::service::entity_map::parse_entity_map_urn(id).map_err(|e| NgsiLdError::from(e.with_instance(uri.clone())))
+}
+
 /// Parsed `options` parameter for subscription and CSR subscription list endpoints.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct ListOptions {
@@ -138,67 +156,10 @@ pub fn parse_list_options(options: Option<&str>, uri: &Uri) -> Result<ListOption
     Ok(parsed)
 }
 
-/// Check whether the `Content-Type` header indicates a JSON-compatible media type.
-///
-/// Returns `Ok(())` for `application/json`, `application/ld+json`,
-/// `application/merge-patch+json`, or when the header is absent/unparseable
-/// (permissive: we let the body parser decide). Returns `Err(())` only when
-/// an explicitly non-JSON media type is present.
-pub fn check_json_content_type(headers: &HeaderMap) -> Result<(), ()> {
-    let Some(raw) = headers.get(CONTENT_TYPE).and_then(|v| v.to_str().ok()).filter(|s| !s.is_empty()) else {
-        return Ok(());
-    };
-    let Ok(mt) = raw.parse::<MediaTypeBuf>() else {
-        return Ok(());
-    };
-    if mt.ty() != names::APPLICATION {
-        return Err(());
-    }
-    if mt.subty() == names::LD && mt.suffix() == Some(names::JSON) {
-        return Ok(());
-    }
-    if mt.subty() == names::MERGE_PATCH && mt.suffix() == Some(names::JSON) {
-        return Ok(());
-    }
-    if mt.subty() == names::JSON && mt.suffix().is_none() {
-        return Ok(());
-    }
-    Err(())
-}
-
-/// Strict variant of content-type checking.
-///
-/// Returns `true` for `application/json`, `application/ld+json`, and
-/// `application/merge-patch+json`. Returns `false` for missing, unparseable,
-/// or non-JSON content types.
-pub fn is_json_content_type(headers: &HeaderMap) -> bool {
-    let raw = headers.get(CONTENT_TYPE).and_then(|v| v.to_str().ok()).unwrap_or("");
-    let Ok(mt) = raw.parse::<MediaTypeBuf>() else {
-        return false;
-    };
-    if mt.ty() != names::APPLICATION {
-        return false;
-    }
-    if mt.subty() == names::LD && mt.suffix() == Some(names::JSON) {
-        return true;
-    }
-    if mt.subty() == names::MERGE_PATCH && mt.suffix() == Some(names::JSON) {
-        return true;
-    }
-    mt.subty() == names::JSON && mt.suffix().is_none()
-}
-
-/// Extract the `@context` value from a JSON-LD payload.
-///
-/// Returns `None` if the payload is not an object or has no `@context` key.
-pub fn extract_body_context(payload: &Value) -> Option<Value> {
-    payload.as_object().and_then(|obj| obj.get("@context")).cloned()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use axum::http::{HeaderMap, HeaderValue, Uri};
+    use axum::http::Uri;
 
     fn test_uri() -> Uri {
         "/test".parse().expect("valid test URI")
@@ -370,84 +331,5 @@ mod tests {
         let opts = parse_list_options(None, &test_uri()).expect("valid options");
         assert!(!opts.count);
         assert_eq!(opts.sys_attrs, SysAttrsInclusion::Strip);
-    }
-
-    // -- is_json_content_type --
-
-    #[test]
-    fn is_json_content_type_application_json() {
-        let mut headers = HeaderMap::new();
-        headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
-        assert!(is_json_content_type(&headers));
-    }
-
-    #[test]
-    fn is_json_content_type_application_ld_json() {
-        let mut headers = HeaderMap::new();
-        headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/ld+json"));
-        assert!(is_json_content_type(&headers));
-    }
-
-    #[test]
-    fn is_json_content_type_merge_patch_json() {
-        let mut headers = HeaderMap::new();
-        headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/merge-patch+json"));
-        assert!(is_json_content_type(&headers));
-    }
-
-    #[test]
-    fn is_json_content_type_text_plain_returns_false() {
-        let mut headers = HeaderMap::new();
-        headers.insert(CONTENT_TYPE, HeaderValue::from_static("text/plain"));
-        assert!(!is_json_content_type(&headers));
-    }
-
-    #[test]
-    fn is_json_content_type_missing_header_returns_false() {
-        let headers = HeaderMap::new();
-        assert!(!is_json_content_type(&headers));
-    }
-
-    // -- extract_body_context --
-
-    #[test]
-    fn extract_body_context_present() {
-        let payload = serde_json::json!({"@context": "https://example.org/context.jsonld", "id": "urn:test"});
-        let ctx = extract_body_context(&payload);
-        assert_eq!(ctx, Some(serde_json::json!("https://example.org/context.jsonld")));
-    }
-
-    #[test]
-    fn extract_body_context_absent() {
-        let payload = serde_json::json!({"id": "urn:test"});
-        assert!(extract_body_context(&payload).is_none());
-    }
-
-    #[test]
-    fn extract_body_context_non_object() {
-        let payload = serde_json::json!("just a string");
-        assert!(extract_body_context(&payload).is_none());
-    }
-
-    // -- check_json_content_type --
-
-    #[test]
-    fn check_json_content_type_absent_header_is_ok() {
-        let headers = HeaderMap::new();
-        assert!(check_json_content_type(&headers).is_ok());
-    }
-
-    #[test]
-    fn check_json_content_type_application_json_is_ok() {
-        let mut headers = HeaderMap::new();
-        headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
-        assert!(check_json_content_type(&headers).is_ok());
-    }
-
-    #[test]
-    fn check_json_content_type_text_plain_is_err() {
-        let mut headers = HeaderMap::new();
-        headers.insert(CONTENT_TYPE, HeaderValue::from_static("text/plain"));
-        assert!(check_json_content_type(&headers).is_err());
     }
 }

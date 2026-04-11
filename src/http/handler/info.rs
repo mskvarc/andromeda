@@ -1,9 +1,12 @@
+//! Handler for the `/info` endpoint.
+
 use crate::{
     api::state::AppState,
     error::AndromedaError,
     http::{
         error::problem::NgsiLdError,
         extractor::{accept::AcceptFormat, context::ContextUrl, prefer::PreferHeader},
+        model::info::ContextSourceIdentity,
         response::single::NgsiLdResponse,
     },
     renderer::response::ResponseRenderer,
@@ -12,21 +15,9 @@ use axum::{
     extract::{OriginalUri, State},
     response::{IntoResponse, Response},
 };
-use serde::Serialize;
 
-#[derive(Serialize)]
-pub struct ContextSourceIdentity {
-    pub id: String,
-    #[serde(rename = "type")]
-    pub type_: &'static str,
-}
-
-pub async fn source_identity(
-    State(state): State<AppState>,
-    OriginalUri(uri): OriginalUri,
-    accept: AcceptFormat,
-    context: ContextUrl,
-) -> Result<Response, NgsiLdError> {
+/// GET /ngsi-ld/v1/info/sourceIdentity -- Retrieve context source identity.
+pub async fn get(State(state): State<AppState>, OriginalUri(uri): OriginalUri, accept: AcceptFormat, context: ContextUrl) -> Result<Response, NgsiLdError> {
     let identity = ContextSourceIdentity {
         id: state.source_identity,
         type_: "ContextSourceIdentity",

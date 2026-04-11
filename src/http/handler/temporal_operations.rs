@@ -20,7 +20,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 
-/// POST /ngsi-ld/v1/temporal/entityOperations/query
+/// POST /ngsi-ld/v1/temporal/entityOperations/query -- Query temporal entities via POST body.
 pub async fn query(
     TenantState(state): TenantState,
     OriginalUri(uri): OriginalUri,

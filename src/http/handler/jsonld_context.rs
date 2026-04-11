@@ -1,3 +1,5 @@
+//! Handlers for the `/jsonldContexts` endpoints.
+
 use crate::{
     api::tenant::TenantState,
     domain::jsonld_context::ContextKind,
@@ -7,6 +9,7 @@ use crate::{
         extractor::query::ValidatedQuery,
         parameter::jsonld_context::{DeleteParams, ListParams, ServeParams},
     },
+    jsonld::core_context::is_ngsi_ld_core_context_url,
     repository::jsonld_context::DetailLevel,
 };
 use axum::{
@@ -18,6 +21,7 @@ use axum::{
 };
 use serde_json::Value;
 
+/// POST /ngsi-ld/v1/jsonldContexts -- Create a hosted JSON-LD context.
 pub async fn create(TenantState(state): TenantState, OriginalUri(uri): OriginalUri, headers: HeaderMap, body: Bytes) -> Result<Response, NgsiLdError> {
     let service = &state.contexts;
     let payload: Value =
@@ -30,7 +34,8 @@ pub async fn create(TenantState(state): TenantState, OriginalUri(uri): OriginalU
     Ok((StatusCode::CREATED, [("Location", format!("/ngsi-ld/v1/jsonldContexts/{}", id))]).into_response())
 }
 
-pub async fn list(
+/// GET /ngsi-ld/v1/jsonldContexts -- Query available JSON-LD contexts.
+pub async fn query(
     TenantState(state): TenantState,
     OriginalUri(uri): OriginalUri,
     ValidatedQuery(params): ValidatedQuery<ListParams>,
@@ -56,6 +61,7 @@ pub async fn list(
     Ok((StatusCode::OK, Json(result)).into_response())
 }
 
+/// GET /ngsi-ld/v1/jsonldContexts/{context_id} -- Retrieve a specific JSON-LD context.
 pub async fn get(
     TenantState(state): TenantState,
     OriginalUri(uri): OriginalUri,
@@ -74,11 +80,7 @@ pub async fn get(
     Ok((StatusCode::OK, Json(result)).into_response())
 }
 
-/// Check if the URL refers to an NGSI-LD core context
-fn is_core_context(url: &str) -> bool {
-    url.contains("uri.etsi.org/ngsi-ld") && url.contains("core-context")
-}
-
+/// DELETE /ngsi-ld/v1/jsonldContexts/{context_id} -- Delete a JSON-LD context.
 pub async fn delete(
     TenantState(state): TenantState,
     OriginalUri(uri): OriginalUri,
@@ -89,7 +91,7 @@ pub async fn delete(
     let reload = params.reload.unwrap_or(false);
 
     // Check if attempting to delete a core context
-    if is_core_context(&context_id) {
+    if is_ngsi_ld_core_context_url(&context_id) {
         if reload {
             // Core contexts are embedded; reload is a no-op success.
             return Ok(StatusCode::NO_CONTENT.into_response());

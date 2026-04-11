@@ -1,10 +1,7 @@
 //! API handlers for the NGSI-LD Temporal API.
 
 use crate::{
-    api::{
-        handler::parse::{parse_entity_id, validate_attr_name, validate_instance_id},
-        tenant::TenantState,
-    },
+    api::tenant::TenantState,
     domain::uri::Uri,
     error::{AndromedaError, core::AndromedaErrorKind},
     http::{
@@ -19,6 +16,7 @@ use crate::{
         },
         parameter::{DeleteAttrParams, EmptyParams, protocol::apply_temporal_extension_headers, query::temporal::TemporalQueryParameters},
         response::{collection::NgsiLdCollectionResponse, single::NgsiLdResponse},
+        validation::{parse_entity_id, validate_attr_name, validate_instance_id},
     },
     jsonld::ContextSpec,
     renderer::{
@@ -404,7 +402,8 @@ pub async fn delete_attr(
 }
 
 /// PATCH /ngsi-ld/v1/temporal/entities/{id}/attrs/{attr_id}/{instance_id}
-pub async fn modify_attr_instance(
+/// PATCH /ngsi-ld/v1/temporal/entities/{id}/attrs/{attr_id}/{instance_id} -- Update an attribute instance.
+pub async fn update_attr_instance(
     TenantState(state): TenantState,
     OriginalUri(uri): OriginalUri,
     context: ContextUrl,

@@ -1,25 +1,23 @@
 use crate::{
-    api::{
-        handler::{
-            attribute,
-            context_source_registration,
-            csource_subscription,
-            entity,
-            entity_map,
-            entity_operations,
-            info,
-            jsonld_context,
-            snapshot,
-            subscription,
-            temporal,
-            temporal_operations,
-            types,
-        },
-        state::{AndromedaState, AppState},
-    },
+    api::state::{AndromedaState, AppState},
     core::config::Configuration,
     domain::notification::{ChangeEvent, CsourceSubscriptionChange, CsrChangeEvent, SubscriptionChange},
     error::AndromedaError,
+    http::handler::{
+        attribute,
+        csource_registration,
+        csource_subscription,
+        entity,
+        entity_map,
+        entity_operations,
+        info,
+        jsonld_context,
+        snapshot,
+        subscription,
+        temporal,
+        temporal_operations,
+        types,
+    },
     repository::{
         context_source_registration::ContextSourceRegistrationRepository,
         csource_subscription::CsourceSubscriptionRepository,
@@ -115,13 +113,13 @@ fn build_v1_router() -> Router<AppState> {
         .route("/delete", post(entity_operations::batch_delete))
         .route("/query", post(entity_operations::query));
 
-    let types_routes = Router::new().route("/", get(types::list)).route("/{type_}", get(types::get));
+    let types_routes = Router::new().route("/", get(types::query)).route("/{type_}", get(types::get));
 
-    let attributes_routes = Router::new().route("/", get(attribute::list)).route("/{attr_id}", get(attribute::get));
+    let attributes_routes = Router::new().route("/", get(attribute::query)).route("/{attr_id}", get(attribute::get));
 
     let jsonld_context_routes = Router::new()
         .route("/", post(jsonld_context::create))
-        .route("/", get(jsonld_context::list))
+        .route("/", get(jsonld_context::query))
         .route("/{context_id}", get(jsonld_context::get))
         .route("/{context_id}", delete(jsonld_context::delete));
 
@@ -132,7 +130,7 @@ fn build_v1_router() -> Router<AppState> {
         .route("/{id}", delete(temporal::delete))
         .route("/{id}/attrs", post(temporal::add_attrs))
         .route("/{id}/attrs/{attr_id}", delete(temporal::delete_attr))
-        .route("/{id}/attrs/{attr_id}/{instance_id}", patch(temporal::modify_attr_instance))
+        .route("/{id}/attrs/{attr_id}/{instance_id}", patch(temporal::update_attr_instance))
         .route("/{id}/attrs/{attr_id}/{instance_id}", delete(temporal::delete_attr_instance));
 
     let temporal_ops_routes = Router::new().route("/query", post(temporal_operations::query));
@@ -156,11 +154,11 @@ fn build_v1_router() -> Router<AppState> {
         .route("/{subscription_id}", delete(subscription::delete));
 
     let csr_routes = Router::new()
-        .route("/", post(context_source_registration::create))
-        .route("/", get(context_source_registration::query))
-        .route("/{registration_id}", get(context_source_registration::get))
-        .route("/{registration_id}", patch(context_source_registration::update))
-        .route("/{registration_id}", delete(context_source_registration::delete));
+        .route("/", post(csource_registration::create))
+        .route("/", get(csource_registration::query))
+        .route("/{registration_id}", get(csource_registration::get))
+        .route("/{registration_id}", patch(csource_registration::update))
+        .route("/{registration_id}", delete(csource_registration::delete));
 
     let csr_subscription_routes = Router::new()
         .route("/", post(csource_subscription::create))
@@ -172,12 +170,12 @@ fn build_v1_router() -> Router<AppState> {
     let snapshot_routes = Router::new()
         .route("/", post(snapshot::create))
         .route("/", delete(snapshot::purge))
-        .route("/{snapshot_id}", get(snapshot::get_status))
-        .route("/{snapshot_id}", patch(snapshot::update_status))
+        .route("/{snapshot_id}", get(snapshot::get))
+        .route("/{snapshot_id}", patch(snapshot::update))
         .route("/{snapshot_id}", delete(snapshot::delete))
-        .route("/{snapshot_id}/clone", post(snapshot::clone_snapshot));
+        .route("/{snapshot_id}/clone", post(snapshot::clone));
 
-    let info_routes = Router::new().route("/sourceIdentity", get(info::source_identity));
+    let info_routes = Router::new().route("/sourceIdentity", get(info::get));
 
     Router::new()
         .nest("/entities", entity_routes)

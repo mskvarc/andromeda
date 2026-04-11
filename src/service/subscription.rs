@@ -25,14 +25,16 @@ impl SubscriptionVariant for EntitySubscriptionVariant {
     type Change = SubscriptionChange;
 
     async fn expand_terms(&self, payload: &mut Value, context: &ContextSpec, base_url: Option<&str>) -> Result<(), AndromedaError> {
-        // Preserve @context as jsonldContext — entity subs host compound contexts
+        // Preserve body @context as jsonldContext — entity subs host compound contexts.
+        // The body context comes from ContextSpec (set by the JsonLd extractor), not
+        // from the payload directly, since the extractor strips @context before
+        // deserialisation.
         if payload.get("jsonldContext").is_none()
-            && let Some(ctx_val) = payload.get("@context").cloned()
-        // clone: need owned Value; payload is mutably borrowed later
+            && let Some(ctx_val) = context.body_context()
         {
-            self.ensure_context_urls_cached(&ctx_val).await;
+            self.ensure_context_urls_cached(ctx_val).await;
 
-            let stored = match &ctx_val {
+            let stored = match ctx_val {
                 Value::String(s) => Some(Value::String(s.clone())), // clone: need owned String for new Value; s is borrowed from ctx_val
                 Value::Array(arr) if arr.len() == 1 && arr[0].is_string() => Some(arr[0].clone()), // clone: extracting single element from array as owned Value
                 Value::Array(_) | Value::Object(_) => {

@@ -1,8 +1,5 @@
 use crate::{
-    api::{
-        handler::parse::{parse_entity_id, validate_attr_name},
-        tenant::{TenantState, TenantStateOrCreate},
-    },
+    api::tenant::{TenantState, TenantStateOrCreate},
     domain::{
         entity::{Entity, EntityPatch, EntityTypeValue},
         uri::Uri,
@@ -29,6 +26,7 @@ use crate::{
             protocol::{apply_entity_get_extension_headers, apply_entity_query_extension_headers},
         },
         response::{collection::NgsiLdCollectionResponse, single::NgsiLdResponse},
+        validation::{parse_entity_id, validate_attr_name},
     },
     jsonld::ContextSpec,
     query::{compile::expand_q_expression, q::eval::evaluate},

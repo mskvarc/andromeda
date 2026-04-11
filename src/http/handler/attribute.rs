@@ -1,10 +1,13 @@
+//! Handlers for the `/attributes` discovery endpoints.
+
 use crate::{
-    api::{handler::parse::validate_name_or_iri, tenant::TenantState},
+    api::tenant::TenantState,
     http::{
         error::problem::NgsiLdError,
         extractor::{accept::AcceptFormat, context::ContextUrl, prefer::PreferHeader, query::ValidatedQuery, via::IncomingVia},
         parameter::{DiscoveryListParams, LocalOnlyParams},
         response::single::NgsiLdResponse,
+        validation::validate_name_or_iri,
     },
     jsonld::ContextSpec,
     renderer::response::ResponseRenderer,
@@ -15,7 +18,8 @@ use axum::{
     response::{IntoResponse, Response},
 };
 
-pub async fn list(
+/// GET /ngsi-ld/v1/attributes -- Query available attributes.
+pub async fn query(
     TenantState(state): TenantState,
     OriginalUri(uri): OriginalUri,
     accept: AcceptFormat,
@@ -47,6 +51,7 @@ pub async fn list(
     Ok(NgsiLdResponse::ok(rendered).with_warnings(warnings).into_response())
 }
 
+/// GET /ngsi-ld/v1/attributes/{attr_id} -- Retrieve information about a specific attribute.
 pub async fn get(
     TenantState(state): TenantState,
     OriginalUri(uri): OriginalUri,

@@ -1,5 +1,7 @@
+//! Handlers for the `/csourceRegistrations` endpoints.
+
 use crate::{
-    api::{handler::parse::parse_csr_id, tenant::TenantState},
+    api::tenant::TenantState,
     http::{
         error::problem::NgsiLdError,
         extractor::{accept::AcceptFormatNoGeo, context::ContextUrl, jsonld::JsonLd, prefer::PreferHeader, query::ValidatedQuery},
@@ -9,6 +11,7 @@ use crate::{
             pagination::{PaginationMediaType, PaginationStyle, append_pagination_links},
             single::NgsiLdResponse,
         },
+        validation::parse_csr_id,
     },
     jsonld::ContextSpec,
     renderer::{registration::render_registration, response::ResponseRenderer},
@@ -20,6 +23,7 @@ use axum::{
 };
 use serde_json::Value;
 
+/// POST /ngsi-ld/v1/csourceRegistrations -- Register a new context source.
 pub async fn create(
     crate::api::tenant::TenantStateOrCreate(state): crate::api::tenant::TenantStateOrCreate,
     OriginalUri(uri): OriginalUri,
@@ -37,6 +41,7 @@ pub async fn create(
     Ok((StatusCode::CREATED, [("Location", format!("/ngsi-ld/v1/csourceRegistrations/{}", id))]).into_response())
 }
 
+/// GET /ngsi-ld/v1/csourceRegistrations/{registration_id} -- Retrieve a context source registration.
 pub async fn get(
     TenantState(state): TenantState,
     OriginalUri(uri): OriginalUri,
@@ -59,6 +64,7 @@ pub async fn get(
     Ok(NgsiLdResponse::ok(rendered).into_response())
 }
 
+/// GET /ngsi-ld/v1/csourceRegistrations -- Query context source registrations.
 pub async fn query(
     TenantState(state): TenantState,
     OriginalUri(uri): OriginalUri,
@@ -97,6 +103,7 @@ pub async fn query(
     Ok(response)
 }
 
+/// PATCH /ngsi-ld/v1/csourceRegistrations/{registration_id} -- Update a context source registration.
 pub async fn update(
     TenantState(state): TenantState,
     OriginalUri(uri): OriginalUri,
@@ -119,6 +126,7 @@ pub async fn update(
     Ok(StatusCode::NO_CONTENT.into_response())
 }
 
+/// DELETE /ngsi-ld/v1/csourceRegistrations/{registration_id} -- Delete a context source registration.
 pub async fn delete(TenantState(state): TenantState, OriginalUri(uri): OriginalUri, Path(registration_id): Path<String>) -> Result<Response, NgsiLdError> {
     parse_csr_id(&registration_id, &uri)?;
 

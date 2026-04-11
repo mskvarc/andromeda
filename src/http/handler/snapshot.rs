@@ -1,17 +1,19 @@
+//! Handlers for the `/snapshots` endpoints.
+
 use crate::{
     api::tenant::TenantState,
-    domain::snapshot::{SnapshotInput, SnapshotPatch, validate_snapshot_urn},
+    domain::snapshot::{SnapshotInput, SnapshotPatch},
     error::AndromedaError,
-    http::error::problem::NgsiLdError,
+    http::{error::problem::NgsiLdError, validation::parse_snapshot_id},
 };
 use axum::{
     Json,
     extract::{OriginalUri, Path},
-    http::{HeaderMap, HeaderValue, StatusCode, Uri},
+    http::{HeaderMap, HeaderValue, StatusCode},
     response::{IntoResponse, Response},
 };
-use urn::Urn;
 
+/// POST /ngsi-ld/v1/snapshots -- Create a new snapshot.
 pub async fn create(TenantState(state): TenantState, OriginalUri(uri): OriginalUri, Json(input): Json<SnapshotInput>) -> Result<Response, NgsiLdError> {
     let snapshot = state.snapshots.create(input).await.map_err(|e| e.with_instance(uri.clone()))?;
 
@@ -30,7 +32,8 @@ pub async fn create(TenantState(state): TenantState, OriginalUri(uri): OriginalU
     Ok((StatusCode::CREATED, headers, Json(body)).into_response())
 }
 
-pub async fn get_status(TenantState(state): TenantState, OriginalUri(uri): OriginalUri, Path(snapshot_id): Path<String>) -> Result<Response, NgsiLdError> {
+/// GET /ngsi-ld/v1/snapshots/{snapshot_id} -- Retrieve snapshot status.
+pub async fn get(TenantState(state): TenantState, OriginalUri(uri): OriginalUri, Path(snapshot_id): Path<String>) -> Result<Response, NgsiLdError> {
     let snapshot_id = parse_snapshot_id(&snapshot_id, &uri)?;
     let snapshot = state.snapshots.get(&snapshot_id).await.map_err(|e| e.with_instance(uri.clone()))?;
 
@@ -38,7 +41,8 @@ pub async fn get_status(TenantState(state): TenantState, OriginalUri(uri): Origi
     Ok((StatusCode::OK, Json(body)).into_response())
 }
 
-pub async fn update_status(
+/// PATCH /ngsi-ld/v1/snapshots/{snapshot_id} -- Update snapshot status.
+pub async fn update(
     TenantState(state): TenantState,
     OriginalUri(uri): OriginalUri,
     Path(snapshot_id): Path<String>,
@@ -51,6 +55,7 @@ pub async fn update_status(
     Ok((StatusCode::OK, Json(body)).into_response())
 }
 
+/// DELETE /ngsi-ld/v1/snapshots/{snapshot_id} -- Delete a snapshot.
 pub async fn delete(TenantState(state): TenantState, OriginalUri(uri): OriginalUri, Path(snapshot_id): Path<String>) -> Result<Response, NgsiLdError> {
     let snapshot_id = parse_snapshot_id(&snapshot_id, &uri)?;
     state.snapshots.delete(&snapshot_id).await.map_err(|e| e.with_instance(uri.clone()))?;
@@ -58,13 +63,15 @@ pub async fn delete(TenantState(state): TenantState, OriginalUri(uri): OriginalU
     Ok(StatusCode::NO_CONTENT.into_response())
 }
 
+/// DELETE /ngsi-ld/v1/snapshots -- Purge all snapshots.
 pub async fn purge(TenantState(state): TenantState, OriginalUri(uri): OriginalUri) -> Result<Response, NgsiLdError> {
     state.snapshots.purge().await.map_err(|e| e.with_instance(uri.clone()))?;
 
     Ok(StatusCode::NO_CONTENT.into_response())
 }
 
-pub async fn clone_snapshot(TenantState(state): TenantState, OriginalUri(uri): OriginalUri, Path(snapshot_id): Path<String>) -> Result<Response, NgsiLdError> {
+/// POST /ngsi-ld/v1/snapshots/{snapshot_id}/clone -- Clone a snapshot.
+pub async fn clone(TenantState(state): TenantState, OriginalUri(uri): OriginalUri, Path(snapshot_id): Path<String>) -> Result<Response, NgsiLdError> {
     let snapshot_id = parse_snapshot_id(&snapshot_id, &uri)?;
     let cloned = state.snapshots.clone_snapshot(&snapshot_id).await.map_err(|e| e.with_instance(uri.clone()))?;
 
@@ -81,12 +88,4 @@ pub async fn clone_snapshot(TenantState(state): TenantState, OriginalUri(uri): O
 
     let body = serde_json::to_value(&cloned).map_err(|e| AndromedaError::internal("Failed to serialize snapshot").with_source(e).with_instance(uri))?;
     Ok((StatusCode::CREATED, headers, Json(body)).into_response())
-}
-
-fn parse_snapshot_id(snapshot_id: &str, uri: &Uri) -> Result<Urn, NgsiLdError> {
-    let id = snapshot_id
-        .parse::<Urn>()
-        .map_err(|e| AndromedaError::bad_request_data(format!("Invalid snapshot id URN: {}", e)).with_instance(uri.clone()))?;
-    validate_snapshot_urn(&id).map_err(|e| AndromedaError::bad_request_data(format!("Invalid snapshot id: {}", e)).with_instance(uri.clone()))?;
-    Ok(id)
 }

@@ -117,7 +117,9 @@ pub fn tests(trials: &mut Vec<Trial>) {
         assert_eq!(resp.status, StatusCode::BAD_REQUEST);
 
         let body: serde_json::Value = resp.json();
-        assert_eq!(body["type"], "https://uri.etsi.org/ngsi-ld/errors/BadRequestData");
+        // InvalidRequest: the body is syntactically malformed JSON, consistent with
+        // all other endpoints that use the JsonLd extractor for body parsing.
+        assert_eq!(body["type"], "https://uri.etsi.org/ngsi-ld/errors/InvalidRequest");
         assert!(body["title"].is_string(), "response should contain title");
     }));
 }

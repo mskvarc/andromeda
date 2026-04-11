@@ -1,54 +1,56 @@
+//! Handlers for the `/subscriptions` endpoints.
+
 use crate::{
-    api::{
-        handler::parse::{check_json_content_type, extract_body_context, is_json_content_type, parse_list_options},
-        tenant::TenantState,
-    },
+    api::tenant::{TenantState, TenantStateOrCreate},
     http::{
         error::problem::NgsiLdError,
-        extractor::{accept::AcceptFormatNoGeo, context::ContextUrl, prefer::PreferHeader, query::ValidatedQuery},
-        parameter::{EmptyParams, csource_subscription::ListParams},
+        extractor::{accept::AcceptFormatNoGeo, context::ContextUrl, jsonld::JsonLd, prefer::PreferHeader, query::ValidatedQuery},
+        parameter::{EmptyParams, subscription::ListParams},
         response::{
             collection::NgsiLdCollectionResponse,
             pagination::{PaginationMediaType, PaginationStyle, append_pagination_links},
             single::NgsiLdResponse,
         },
+        validation::parse_list_options,
     },
     jsonld::ContextSpec,
-    renderer::{response::ResponseRenderer, subscription::render_csource_subscription},
+    renderer::{
+        response::ResponseRenderer,
+        subscription::{render_subscription, strip_jsonld_context},
+    },
 };
 use axum::{
-    body::Bytes,
     extract::{OriginalUri, Path},
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
 };
 use serde_json::Value;
 
+/// POST /ngsi-ld/v1/subscriptions -- Create a new subscription.
 pub async fn create(
-    crate::api::tenant::TenantStateOrCreate(state): crate::api::tenant::TenantStateOrCreate,
+    TenantStateOrCreate(state): TenantStateOrCreate,
     OriginalUri(uri): OriginalUri,
     headers: HeaderMap,
-    ValidatedQuery(_params): ValidatedQuery<EmptyParams>,
     context: ContextUrl,
-    body: Bytes,
+    ValidatedQuery(_params): ValidatedQuery<EmptyParams>,
+    JsonLd {
+        value: payload,
+        context: body_context,
+    }: JsonLd<Value>,
 ) -> Result<Response, NgsiLdError> {
-    if !is_json_content_type(&headers) {
-        return Ok(StatusCode::UNSUPPORTED_MEDIA_TYPE.into_response());
-    }
-    let payload: Value =
-        serde_json::from_slice(&body).map_err(|e| crate::error::AndromedaError::invalid_request(format!("Invalid JSON: {}", e)).with_instance(uri.clone()))?;
-    let service = &state.csr_subscriptions;
-    let context = if let Some(body_ctx) = extract_body_context(&payload) {
-        context.into_inner().with_body_context(Some(body_ctx))
-    } else {
-        context.into_inner()
-    };
+    let service = &state.subscriptions;
+    let base_url = headers.get("host").and_then(|v| v.to_str().ok()).map(|h| format!("http://{}", h));
+    let context = context.merge(body_context);
 
-    let id = service.create(payload, &context, None).await.map_err(|e| e.with_instance(uri.clone()))?;
+    let id = service
+        .create(payload, &context, base_url.as_deref())
+        .await
+        .map_err(|e| e.with_instance(uri.clone()))?;
 
-    Ok((StatusCode::CREATED, [("Location", id)]).into_response())
+    Ok((StatusCode::CREATED, [("Location", format!("/ngsi-ld/v1/subscriptions/{}", id))]).into_response())
 }
 
+/// GET /ngsi-ld/v1/subscriptions/{subscription_id} -- Retrieve a subscription.
 pub async fn get(
     TenantState(state): TenantState,
     OriginalUri(uri): OriginalUri,
@@ -57,7 +59,7 @@ pub async fn get(
     Path(subscription_id): Path<String>,
     ValidatedQuery(params): ValidatedQuery<ListParams>,
 ) -> Result<Response, NgsiLdError> {
-    let service = &state.csr_subscriptions;
+    let service = &state.subscriptions;
     let context: ContextSpec = context.into_inner();
     let options = parse_list_options(params.options.as_deref(), &uri)?;
 
@@ -66,13 +68,25 @@ pub async fn get(
         .await
         .map_err(|e| e.with_instance(uri.clone()))?;
 
-    render_csource_subscription(&mut subscription, options.sys_attrs);
+    render_subscription(&mut subscription, options.sys_attrs);
 
-    let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default()).render_single(subscription)?;
+    // Extract jsonldContext from body and use it for the response context
+    let response_context = if let Some(jsonld_ctx) = strip_jsonld_context(&mut subscription) {
+        if let Some(url) = jsonld_ctx.as_str() {
+            ContextSpec::from_links(vec![url.to_string()])
+        } else {
+            context
+        }
+    } else {
+        context
+    };
+
+    let rendered = ResponseRenderer::new(accept.format(), response_context, PreferHeader::default()).render_single(subscription)?;
     let response = NgsiLdResponse::ok(rendered).into_response();
     Ok(response)
 }
 
+/// GET /ngsi-ld/v1/subscriptions -- Query subscriptions.
 pub async fn query(
     TenantState(state): TenantState,
     OriginalUri(uri): OriginalUri,
@@ -80,34 +94,22 @@ pub async fn query(
     context: ContextUrl,
     ValidatedQuery(params): ValidatedQuery<ListParams>,
 ) -> Result<Response, NgsiLdError> {
-    let service = &state.csr_subscriptions;
+    let service = &state.subscriptions;
     let context: ContextSpec = context.into_inner();
     let options = parse_list_options(params.options.as_deref(), &uri)?;
 
     let limit = params.limit.unwrap_or(100);
+    let offset = params.offset.unwrap_or(0);
     if limit <= 0 {
         return Err(NgsiLdError::from(
             crate::error::AndromedaError::bad_request_data("limit must be greater than 0").with_instance(uri.clone()),
         ));
     }
-    if let Some(page) = params.page
-        && page <= 0
-    {
+    if offset < 0 {
         return Err(NgsiLdError::from(
-            crate::error::AndromedaError::bad_request_data("page must be greater than 0").with_instance(uri.clone()),
+            crate::error::AndromedaError::bad_request_data("offset must be greater than or equal to 0").with_instance(uri.clone()),
         ));
     }
-    let offset = if let Some(page) = params.page {
-        (page - 1) * limit
-    } else {
-        let offset = params.offset.unwrap_or(0);
-        if offset < 0 {
-            return Err(NgsiLdError::from(
-                crate::error::AndromedaError::bad_request_data("offset must be greater than or equal to 0").with_instance(uri.clone()),
-            ));
-        }
-        offset
-    };
 
     let (mut subscriptions, total) = service
         .list_for_response(Some(limit), Some(offset), &context)
@@ -115,7 +117,9 @@ pub async fn query(
         .map_err(|e| e.with_instance(uri.clone()))?;
 
     for sub in &mut subscriptions {
-        render_csource_subscription(sub, options.sys_attrs);
+        render_subscription(sub, options.sys_attrs);
+        // Strip jsonldContext from each subscription body
+        strip_jsonld_context(sub);
     }
 
     let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default()).render_collection(subscriptions)?;
@@ -132,42 +136,39 @@ pub async fn query(
         limit,
         offset,
         total,
-        PaginationStyle::PagePrevNext,
+        PaginationStyle::OffsetPrevNext,
         PaginationMediaType::JsonLd,
     );
     Ok(response)
 }
 
+/// PATCH /ngsi-ld/v1/subscriptions/{subscription_id} -- Update a subscription.
 pub async fn update(
     TenantState(state): TenantState,
     OriginalUri(uri): OriginalUri,
     headers: HeaderMap,
     context: ContextUrl,
     Path(subscription_id): Path<String>,
-    body: Bytes,
+    JsonLd {
+        value: payload,
+        context: body_context,
+    }: JsonLd<Value>,
 ) -> Result<Response, NgsiLdError> {
-    if check_json_content_type(&headers).is_err() {
-        return Ok(StatusCode::UNSUPPORTED_MEDIA_TYPE.into_response());
-    }
-    let payload: Value =
-        serde_json::from_slice(&body).map_err(|e| crate::error::AndromedaError::bad_request_data(format!("Invalid JSON: {}", e)).with_instance(uri.clone()))?;
-    let service = &state.csr_subscriptions;
-    let context = if let Some(body_ctx) = extract_body_context(&payload) {
-        context.into_inner().with_body_context(Some(body_ctx))
-    } else {
-        context.into_inner()
-    };
+    let service = &state.subscriptions;
+    let base_url = headers.get("host").and_then(|v| v.to_str().ok()).map(|h| format!("http://{}", h));
+    let context = context.merge(body_context);
 
     service
-        .update(&subscription_id, payload, &context, None)
+        .update(&subscription_id, payload, &context, base_url.as_deref())
         .await
         .map_err(|e| e.with_instance(uri.clone()))?;
 
     Ok(StatusCode::NO_CONTENT.into_response())
 }
 
+/// DELETE /ngsi-ld/v1/subscriptions/{subscription_id} -- Delete a subscription.
 pub async fn delete(TenantState(state): TenantState, OriginalUri(uri): OriginalUri, Path(subscription_id): Path<String>) -> Result<Response, NgsiLdError> {
-    let service = &state.csr_subscriptions;
+    let service = &state.subscriptions;
     service.delete(&subscription_id).await.map_err(|e| e.with_instance(uri.clone()))?;
 
     Ok(StatusCode::NO_CONTENT.into_response())

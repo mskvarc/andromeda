@@ -1,5 +1,7 @@
 //! Reusable HTTP model types consumed across headers, extractors, and response layers.
 
+pub mod entity_map_query;
+pub mod info;
 pub mod language;
 pub mod preference;
 pub mod quality;

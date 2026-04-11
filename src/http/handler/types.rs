@@ -1,11 +1,14 @@
+//! Handlers for the `/types` discovery endpoints.
+
 use crate::{
-    api::{handler::parse::validate_name_or_iri, tenant::TenantState},
+    api::tenant::TenantState,
     error::AndromedaError,
     http::{
         error::problem::NgsiLdError,
         extractor::{accept::AcceptFormat, context::ContextUrl, prefer::PreferHeader, query::ValidatedQuery, via::IncomingVia},
         parameter::{DiscoveryListParams, LocalOnlyParams},
         response::single::NgsiLdResponse,
+        validation::validate_name_or_iri,
     },
     jsonld::ContextSpec,
     renderer::response::ResponseRenderer,
@@ -16,7 +19,8 @@ use axum::{
     response::{IntoResponse, Response},
 };
 
-pub async fn list(
+/// GET /ngsi-ld/v1/types -- Query available entity types.
+pub async fn query(
     TenantState(state): TenantState,
     OriginalUri(uri): OriginalUri,
     accept: AcceptFormat,
@@ -74,6 +78,7 @@ pub async fn list(
     }
 }
 
+/// GET /ngsi-ld/v1/types/{type_} -- Retrieve information about a specific entity type.
 pub async fn get(
     TenantState(state): TenantState,
     OriginalUri(uri): OriginalUri,

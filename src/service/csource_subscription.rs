@@ -24,12 +24,15 @@ impl SubscriptionVariant for CsrSubscriptionVariant {
     type Change = CsourceSubscriptionChange;
 
     async fn expand_terms(&self, payload: &mut Value, context: &ContextSpec, _base_url: Option<&str>) -> Result<(), AndromedaError> {
-        // Store @context as jsonldContext (simplified — no context hosting)
+        // Store body @context as jsonldContext (simplified -- no context hosting).
+        // The body context comes from ContextSpec (set by the JsonLd extractor), not
+        // from the payload directly, since the extractor strips @context before
+        // deserialisation.
         if payload.get("jsonldContext").is_none()
-            && let Some(ctx_val) = payload.get("@context")
+            && let Some(ctx_val) = context.body_context()
         {
             let jsonld_context_value = match ctx_val {
-                Value::String(s) => Value::String(s.clone()), // clone: need owned String for new Value; original is borrowed from payload
+                Value::String(s) => Value::String(s.clone()), // clone: need owned String for new Value; original is borrowed from ContextSpec
                 Value::Array(_) | Value::Object(_) => ctx_val.clone(), // clone: need owned copy to insert into payload as jsonldContext
                 _other => Value::Null,
             };
