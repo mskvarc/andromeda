@@ -3,8 +3,9 @@ pub(crate) mod payload;
 
 use crate::{
     domain::{
-        notification::{ChangeEvent, CompiledSelector, CompiledSubscription, Notification, SubscriptionChange, TriggerReason},
+        notification::{ChangeEvent, CompiledSelector, CompiledSubscription, Notification, NotificationType, SubscriptionChange, TriggerReason},
         subscription::{EntitySelector, Subscription, SubscriptionStatus},
+        uri::{NGSI_LD_URN_NID, Uri},
     },
     jsonld::{JsonLdEngine, vocab},
     query::q,
@@ -130,26 +131,29 @@ impl NotificationWorker {
 
     async fn handle_subscription_change(&self, change: SubscriptionChange) {
         match change {
-            SubscriptionChange::Upserted(id) => match self.sub_repo.get(&id).await {
-                Ok(Some(sub)) => {
-                    let mut cache = self.cache.write().await;
-                    if sub.status == SubscriptionStatus::Active {
-                        if let Some(compiled) = compile_subscription(&sub) {
-                            cache.insert(id, Arc::new(compiled));
+            SubscriptionChange::Upserted(id) => {
+                let id_str = id.to_string(); // convert once: repo and cache both need &str / String key
+                match self.sub_repo.get(&id_str).await {
+                    Ok(Some(sub)) => {
+                        let mut cache = self.cache.write().await;
+                        if sub.status == SubscriptionStatus::Active {
+                            if let Some(compiled) = compile_subscription(&sub) {
+                                cache.insert(id_str, Arc::new(compiled));
+                            }
+                        } else {
+                            cache.remove(&id_str);
                         }
-                    } else {
-                        cache.remove(&id);
+                    }
+                    Ok(None) => {
+                        self.cache.write().await.remove(&id_str);
+                    }
+                    Err(e) => {
+                        debug!("Failed to load subscription {} for cache update: {}", id_str, e);
                     }
                 }
-                Ok(None) => {
-                    self.cache.write().await.remove(&id);
-                }
-                Err(e) => {
-                    debug!("Failed to load subscription {} for cache update: {}", id, e);
-                }
-            },
+            }
             SubscriptionChange::Deleted(id) => {
-                self.cache.write().await.remove(&id);
+                self.cache.write().await.remove(&id.to_string()); // convert: cache key is String
             }
         }
     }
@@ -170,9 +174,11 @@ impl NotificationWorker {
         }
         debug!("Found {} matching subscriptions for event {}", matching.len(), event.entity_id);
 
+        let entity_id_str = event.entity_id.to_string(); // convert once: repository methods take &str
+
         // Fetch entity data once for all matching subscriptions
         let entity_data = if !matches!(event.trigger_reason, TriggerReason::EntityDeleted | TriggerReason::AttributeDeleted) {
-            match self.entity_repo.get(&event.entity_id).await {
+            match self.entity_repo.get(&entity_id_str).await {
                 Ok(Some(data)) => Some(data),
                 Ok(None) => {
                     debug!("Entity {} no longer exists, skipping notification", event.entity_id);
@@ -184,7 +190,7 @@ impl NotificationWorker {
                 }
             }
         } else if matches!(event.trigger_reason, TriggerReason::AttributeDeleted) {
-            match self.entity_repo.get(&event.entity_id).await {
+            match self.entity_repo.get(&entity_id_str).await {
                 Ok(Some(data)) => Some(data),
                 _ => {
                     if let Some(ref snapshot) = event.entity_snapshot {
@@ -255,7 +261,7 @@ impl NotificationWorker {
             if matches!(event.trigger_reason, TriggerReason::EntityDeleted) {
                 fallback_sys_attrs
             } else {
-                match self.entity_repo.get_sys_attrs(&event.entity_id).await {
+                match self.entity_repo.get_sys_attrs(&entity_id_str).await {
                     Ok(Some(attrs)) => Some(attrs),
                     Ok(None) => fallback_sys_attrs,
                     Err(e) => {
@@ -316,10 +322,24 @@ impl NotificationWorker {
                         return;
                     }
 
+                    let notification_id = match format!("urn:{}:Notification:{}", NGSI_LD_URN_NID, Uuid::new_v4()).parse::<Uri>() {
+                        Ok(u) => u,
+                        Err(_) => {
+                            error!("Failed to construct notification URN for {}", sub_id);
+                            return;
+                        }
+                    };
+                    let sub_uri = match sub_id.parse::<Uri>() {
+                        Ok(u) => u,
+                        Err(_) => {
+                            error!("Invalid subscription URI: {}", sub_id);
+                            return;
+                        }
+                    };
                     let notification = Notification {
-                        id: format!("urn:ngsi-ld:Notification:{}", Uuid::new_v4()),
-                        type_: "Notification".to_string(),
-                        subscription_id: sub_id.clone(),
+                        id: notification_id,
+                        type_: NotificationType::default(),
+                        subscription_id: sub_uri,
                         notified_at: Utc::now(),
                         data,
                     };
@@ -481,7 +501,7 @@ mod tests {
 
     fn make_event(entity_id: &str, types: Vec<&str>, trigger: TriggerReason, attrs: Vec<&str>) -> ChangeEvent {
         ChangeEvent {
-            entity_id: entity_id.to_string(),
+            entity_id: entity_id.parse().expect("valid test URI"),
             entity_types: types.into_iter().map(String::from).collect(),
             trigger_reason: trigger,
             changed_attributes: attrs.into_iter().map(String::from).collect(),

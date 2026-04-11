@@ -1,5 +1,6 @@
 pub mod attribute;
 pub mod attribute_type;
+pub mod constant_string;
 pub mod entity;
 pub mod entity_map;
 pub mod expanded;

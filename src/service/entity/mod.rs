@@ -11,6 +11,7 @@ use crate::{
     domain::{
         entity::{Entity, EntityPatch},
         notification::{ChangeEvent, TriggerReason},
+        uri::Uri,
     },
     error::AndromedaError,
     jsonld::{ContextSpec, JsonLdEngine},
@@ -58,7 +59,7 @@ impl EntityService {
         }
     }
 
-    fn emit_attr_change(&self, entity_id: String, entity_types: Vec<String>, trigger: TriggerReason, changed_attributes: Vec<String>, previous: Option<Value>) {
+    fn emit_attr_change(&self, entity_id: Uri, entity_types: Vec<String>, trigger: TriggerReason, changed_attributes: Vec<String>, previous: Option<Value>) {
         self.emit_change(
             ChangeEvent::new(entity_id, entity_types, trigger)
                 .with_changed_attributes(changed_attributes)
@@ -96,13 +97,14 @@ impl EntityService {
             tracing::warn!(error = %e, entity_id = %id, event = "temporal_recording_failed");
         }
 
-        self.emit_change(ChangeEvent::new(id, types, TriggerReason::EntityCreated).with_changed_attributes(extract_attribute_keys(&expanded)));
+        self.emit_change(ChangeEvent::new(entity.id.clone(), types, TriggerReason::EntityCreated).with_changed_attributes(extract_attribute_keys(&expanded))); // clone: owned Uri for event
 
         Ok(urn)
     }
 
     /// Merge a partial update into an existing entity (NGSI-LD 5.6.1).
     pub async fn merge(&self, id: &Urn, patch: &EntityPatch, context: &ContextSpec) -> Result<(), AndromedaError> {
+        let entity_uri = Uri::from(id.clone()); // clone: owned Urn for Uri conversion; id is &Urn
         let id = id.to_string();
 
         let mut existing = self.repo.get(&id).await?.ok_or_else(|| AndromedaError::not_found(&id))?;
@@ -132,21 +134,28 @@ impl EntityService {
 
         for deleted_attr in &deleted_attrs {
             self.emit_attr_change(
-                id.clone(),    // clone: value needed by subsequent loop iterations and final emit
-                types.clone(), // clone: value needed by subsequent loop iterations and final emit
+                entity_uri.clone(), // clone: value needed by subsequent loop iterations and final emit
+                types.clone(),      // clone: value needed by subsequent loop iterations and final emit
                 TriggerReason::AttributeDeleted,
                 vec![deleted_attr.clone()],  // clone: owned copy from borrowed iterator
                 previous_attributes.clone(), // clone: value needed by subsequent loop iterations and final emit
             );
         }
 
-        self.emit_attr_change(id, types, TriggerReason::EntityUpdated, extract_attribute_keys(&expanded), previous_attributes);
+        self.emit_attr_change(
+            entity_uri,
+            types,
+            TriggerReason::EntityUpdated,
+            extract_attribute_keys(&expanded),
+            previous_attributes,
+        );
 
         Ok(())
     }
 
     /// Replace an entire entity with the given patch payload.
     pub async fn replace_entity(&self, id: &Urn, patch: &EntityPatch, context: &ContextSpec) -> Result<(), AndromedaError> {
+        let entity_uri = Uri::from(id.clone()); // clone: owned Urn for Uri conversion; id is &Urn
         let id = id.to_string();
 
         if self.repo.get(&id).await?.is_none() {
@@ -164,13 +173,14 @@ impl EntityService {
         }
 
         let types = self.fetch_entity_types(&id).await;
-        self.emit_change(ChangeEvent::new(id, types, TriggerReason::EntityUpdated).with_changed_attributes(extract_attribute_keys(&expanded)));
+        self.emit_change(ChangeEvent::new(entity_uri, types, TriggerReason::EntityUpdated).with_changed_attributes(extract_attribute_keys(&expanded)));
 
         Ok(())
     }
 
     /// Delete an entity by its URN.
     pub async fn delete(&self, id: &Urn) -> Result<(), AndromedaError> {
+        let entity_uri = Uri::from(id.clone()); // clone: owned Urn for Uri conversion; id is &Urn
         let id = id.to_string();
 
         let entity_snapshot = match self.repo.get(&id).await? {
@@ -196,7 +206,7 @@ impl EntityService {
         let attr_keys = extract_attribute_keys(&entity_snapshot);
         if !attr_keys.is_empty() {
             self.emit_change(
-                ChangeEvent::new(id.clone(), entity_types.clone(), TriggerReason::AttributeDeleted) // clone: value also needed by subsequent EntityDeleted emit
+                ChangeEvent::new(entity_uri.clone(), entity_types.clone(), TriggerReason::AttributeDeleted) // clone: value also needed by subsequent EntityDeleted emit
                     .with_changed_attributes(attr_keys)
                     .with_snapshot(entity_snapshot.clone()) // clone: value also needed by subsequent EntityDeleted emit
                     .with_previous(entity_snapshot.clone()) // clone: value also needed by subsequent EntityDeleted emit
@@ -205,7 +215,7 @@ impl EntityService {
         }
 
         self.emit_change(
-            ChangeEvent::new(id, entity_types, TriggerReason::EntityDeleted)
+            ChangeEvent::new(entity_uri, entity_types, TriggerReason::EntityDeleted)
                 .with_snapshot(entity_snapshot.clone()) // clone: separate ownership for snapshot and previous fields
                 .with_previous(entity_snapshot)
                 .with_sys_attrs(sys_attrs_snapshot),

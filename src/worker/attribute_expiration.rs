@@ -1,7 +1,10 @@
 //! Background worker that periodically removes expired attribute instances from entity payloads (clause 4.22).
 
 use crate::{
-    domain::notification::{ChangeEvent, TriggerReason},
+    domain::{
+        notification::{ChangeEvent, TriggerReason},
+        uri::Uri,
+    },
     repository::entity::EntityRepository,
 };
 use std::time::Duration;
@@ -48,7 +51,14 @@ impl AttributeExpirationWorker {
                         info!("Removed expired attribute instances from {} entity/entities", affected_ids.len());
                         if let Some(ref tx) = self.change_tx {
                             for id in affected_ids {
-                                let _ = tx.send(ChangeEvent::new(id, Vec::new(), TriggerReason::EntityUpdated));
+                                match id.parse::<Uri>() {
+                                    Ok(entity_uri) => {
+                                        let _ = tx.send(ChangeEvent::new(entity_uri, Vec::new(), TriggerReason::EntityUpdated));
+                                    }
+                                    Err(_) => {
+                                        error!(entity_id = %id, event = "entity_uri_parse_failed");
+                                    }
+                                }
                             }
                         }
                     }

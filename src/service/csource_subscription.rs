@@ -1,5 +1,5 @@
 use crate::{
-    domain::{notification::CsourceSubscriptionChange, subscription::Subscription},
+    domain::{notification::CsourceSubscriptionChange, subscription::Subscription, uri::Uri},
     error::AndromedaError,
     jsonld::{ContextSpec, JsonLdEngine},
     repository::csource_subscription::CsourceSubscriptionRepository,
@@ -68,11 +68,11 @@ impl SubscriptionVariant for CsrSubscriptionVariant {
         false
     }
 
-    fn make_upserted(&self, id: String) -> CsourceSubscriptionChange {
+    fn make_upserted(&self, id: Uri) -> CsourceSubscriptionChange {
         CsourceSubscriptionChange::Upserted(id)
     }
 
-    fn make_deleted(&self, id: String) -> CsourceSubscriptionChange {
+    fn make_deleted(&self, id: Uri) -> CsourceSubscriptionChange {
         CsourceSubscriptionChange::Deleted(id)
     }
 }

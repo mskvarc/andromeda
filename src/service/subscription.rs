@@ -1,5 +1,5 @@
 use crate::{
-    domain::{notification::SubscriptionChange, subscription::Subscription},
+    domain::{notification::SubscriptionChange, subscription::Subscription, uri::Uri},
     error::AndromedaError,
     jsonld::{ContextSpec, JsonLdEngine},
     repository::{jsonld_context::JsonLdContextRepository, subscription::SubscriptionRepository},
@@ -88,11 +88,11 @@ impl SubscriptionVariant for EntitySubscriptionVariant {
         true
     }
 
-    fn make_upserted(&self, id: String) -> SubscriptionChange {
+    fn make_upserted(&self, id: Uri) -> SubscriptionChange {
         SubscriptionChange::Upserted(id)
     }
 
-    fn make_deleted(&self, id: String) -> SubscriptionChange {
+    fn make_deleted(&self, id: Uri) -> SubscriptionChange {
         SubscriptionChange::Deleted(id)
     }
 }

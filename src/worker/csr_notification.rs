@@ -1,7 +1,16 @@
 use crate::{
     domain::{
-        notification::{CompiledCsrSubscription, CompiledSelector, CsourceNotification, CsourceSubscriptionChange, CsrChangeEvent, CsrTriggerReason},
+        notification::{
+            CompiledCsrSubscription,
+            CompiledSelector,
+            CsourceNotification,
+            CsourceNotificationType,
+            CsourceSubscriptionChange,
+            CsrChangeEvent,
+            CsrTriggerReason,
+        },
         subscription::{Subscription, SubscriptionStatus},
+        uri::{NGSI_LD_URN_NID, Uri},
     },
     query::q,
     repository::{
@@ -119,38 +128,41 @@ impl CsrNotificationWorker {
 
     async fn handle_subscription_change(&self, change: CsourceSubscriptionChange) {
         match change {
-            CsourceSubscriptionChange::Upserted(id) => match self.sub_repo.get(&id).await {
-                Ok(Some(sub)) => {
-                    let compiled = if sub.status == SubscriptionStatus::Active {
-                        compile_csr_subscription(&sub).map(Arc::new)
-                    } else {
-                        None
-                    };
-
-                    {
-                        let mut cache = self.cache.write().await;
-                        if let Some(ref c) = compiled {
-                            cache.insert(id.clone(), Arc::clone(c));
+            CsourceSubscriptionChange::Upserted(id) => {
+                let id_str = id.to_string(); // convert once: repo and cache both need &str / String key
+                match self.sub_repo.get(&id_str).await {
+                    Ok(Some(sub)) => {
+                        let compiled = if sub.status == SubscriptionStatus::Active {
+                            compile_csr_subscription(&sub).map(Arc::new)
                         } else {
-                            cache.remove(&id);
+                            None
+                        };
+
+                        {
+                            let mut cache = self.cache.write().await;
+                            if let Some(ref c) = compiled {
+                                cache.insert(id_str.clone(), Arc::clone(c)); // clone: id_str also needed below for send_matching_csrs_for_subscription
+                            } else {
+                                cache.remove(&id_str);
+                            }
+                        }
+
+                        // Per spec 5.11.3: after updating a subscription, send a notification
+                        // with all currently matching Context Source Registrations.
+                        if let Some(compiled_sub) = compiled {
+                            self.send_matching_csrs_for_subscription(&compiled_sub).await;
                         }
                     }
-
-                    // Per spec 5.11.3: after updating a subscription, send a notification
-                    // with all currently matching Context Source Registrations.
-                    if let Some(compiled_sub) = compiled {
-                        self.send_matching_csrs_for_subscription(&compiled_sub).await;
+                    Ok(None) => {
+                        self.cache.write().await.remove(&id_str);
+                    }
+                    Err(e) => {
+                        debug!("Failed to load CSR subscription {} for cache update: {}", id_str, e);
                     }
                 }
-                Ok(None) => {
-                    self.cache.write().await.remove(&id);
-                }
-                Err(e) => {
-                    debug!("Failed to load CSR subscription {} for cache update: {}", id, e);
-                }
-            },
+            }
             CsourceSubscriptionChange::Deleted(id) => {
-                self.cache.write().await.remove(&id);
+                self.cache.write().await.remove(&id.to_string()); // convert: cache key is String
             }
         }
     }
@@ -212,10 +224,24 @@ impl CsrNotificationWorker {
             }
         }
 
+        let notification_id = match format!("urn:{}:Notification:{}", NGSI_LD_URN_NID, Uuid::new_v4()).parse::<Uri>() {
+            Ok(u) => u,
+            Err(_) => {
+                error!("Failed to construct notification URN for {}", sub_id);
+                return;
+            }
+        };
+        let sub_uri = match sub_id.parse::<Uri>() {
+            Ok(u) => u,
+            Err(_) => {
+                error!("Invalid subscription URI: {}", sub_id);
+                return;
+            }
+        };
         let notification = CsourceNotification {
-            id: format!("urn:ngsi-ld:Notification:{}", Uuid::new_v4()),
-            type_: "CsourceNotification".to_string(),
-            subscription_id: sub_id.clone(),
+            id: notification_id,
+            type_: CsourceNotificationType::default(),
+            subscription_id: sub_uri,
             notified_at: Utc::now(),
             data: matching_csrs,
             trigger_reason: Some("newlyMatching".to_string()),
@@ -320,10 +346,24 @@ impl CsrNotificationWorker {
                     // Build notification with the CSR data, filtering information to matching entries
                     let filtered_csr = filter_csr_for_subscription(&csr_data, &compiled_sub);
 
+                    let notification_id = match format!("urn:{}:Notification:{}", NGSI_LD_URN_NID, Uuid::new_v4()).parse::<Uri>() {
+                        Ok(u) => u,
+                        Err(_) => {
+                            error!("Failed to construct notification URN for {}", sub_id);
+                            return;
+                        }
+                    };
+                    let sub_uri = match sub_id.parse::<Uri>() {
+                        Ok(u) => u,
+                        Err(_) => {
+                            error!("Invalid subscription URI: {}", sub_id);
+                            return;
+                        }
+                    };
                     let notification = CsourceNotification {
-                        id: format!("urn:ngsi-ld:Notification:{}", Uuid::new_v4()),
-                        type_: "CsourceNotification".to_string(),
-                        subscription_id: sub_id.clone(),
+                        id: notification_id,
+                        type_: CsourceNotificationType::default(),
+                        subscription_id: sub_uri,
                         notified_at: Utc::now(),
                         data: vec![filtered_csr],
                         trigger_reason: Some(trigger_reason.clone()),
@@ -449,10 +489,24 @@ impl CsrNotificationWorker {
 
         let filtered_csr = filter_csr_for_subscription(csr_data, compiled_sub);
 
+        let notification_id = match format!("urn:{}:Notification:{}", NGSI_LD_URN_NID, Uuid::new_v4()).parse::<Uri>() {
+            Ok(u) => u,
+            Err(_) => {
+                error!("Failed to construct notification URN for {}", sub_id);
+                return;
+            }
+        };
+        let sub_uri = match sub_id.parse::<Uri>() {
+            Ok(u) => u,
+            Err(_) => {
+                error!("Invalid subscription URI: {}", sub_id);
+                return;
+            }
+        };
         let notification = CsourceNotification {
-            id: format!("urn:ngsi-ld:Notification:{}", Uuid::new_v4()),
-            type_: "CsourceNotification".to_string(),
-            subscription_id: sub_id.clone(),
+            id: notification_id,
+            type_: CsourceNotificationType::default(),
+            subscription_id: sub_uri,
             notified_at: Utc::now(),
             data: vec![filtered_csr],
             trigger_reason: Some(trigger_reason.to_string()),

@@ -1,8 +1,11 @@
-use crate::{domain::{entity_map::EntityMap, uri::Uri}, error::AndromedaError, repository::entity_map::EntityMapStore};
+use crate::{
+    domain::{entity_map::EntityMap, uri::Uri},
+    error::AndromedaError,
+    repository::entity_map::EntityMapStore,
+};
 use chrono::{DateTime, Utc};
 use iso8601_duration::Duration as Iso8601Duration;
-use std::collections::HashSet;
-use std::str::FromStr;
+use std::{collections::HashSet, str::FromStr};
 use urn::Urn;
 
 /// Service for managing NGSI-LD entity maps.
@@ -55,11 +58,7 @@ impl EntityMapService {
     /// Validate that a specific entity ID exists in the given EntityMap.
     pub async fn validate_entity_in_map(&self, map_id: &Urn, entity_id: &Urn) -> Result<(), AndromedaError> {
         let map = self.retrieve(map_id).await?;
-        if map
-            .entity_ids
-            .iter()
-            .any(|id| matches!(id, Uri::Urn(candidate) if candidate == entity_id))
-        {
+        if map.entity_ids.iter().any(|id| matches!(id, Uri::Urn(candidate) if candidate == entity_id)) {
             Ok(())
         } else {
             Err(AndromedaError::not_found(entity_id.to_string()))
@@ -136,7 +135,11 @@ fn compute_entity_map_expires_at(created_at: DateTime<Utc>, lifetime: Option<&Is
 
 #[cfg(test)]
 mod tests {
-    use crate::{domain::uri::Uri, repository::entity_map::EntityMapStore, service::entity_map::{parse_entity_map_urn, parse_iso8601_duration, parse_uri_csv}};
+    use crate::{
+        domain::uri::Uri,
+        repository::entity_map::EntityMapStore,
+        service::entity_map::{parse_entity_map_urn, parse_iso8601_duration, parse_uri_csv},
+    };
     use std::str::FromStr;
     use urn::Urn;
 
@@ -148,10 +151,7 @@ mod tests {
     async fn scope_query_ids_no_existing_returns_all_map_ids() {
         let svc = make_service();
         let map = svc
-            .create(
-                vec![Uri::from_str("urn:a").expect("uri"), Uri::from_str("urn:b").expect("uri")],
-                None,
-            )
+            .create(vec![Uri::from_str("urn:a").expect("uri"), Uri::from_str("urn:b").expect("uri")], None)
             .await
             .expect("create map");
         let result = svc.scope_query_ids(&map.id, None).await.expect("scope ids");

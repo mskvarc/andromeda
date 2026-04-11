@@ -1,10 +1,11 @@
 use crate::{
-    domain::{attribute::AttributeValue, notification::SysAttrsSnapshot, scope::ScopeBuf, serde_helpers, uri::Uri},
+    domain::{attribute::AttributeValue, notification::SysAttrsSnapshot, scope::ScopeBuf, uri::Uri},
     jsonld::{JsonLdExpandable, JsonLdExpandableMacro, JsonLdTypeValue},
 };
 use chrono::{DateTime, Utc};
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
+use serde_with::skip_serializing_none;
 
 /// Single or multiple entity type values.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -48,7 +49,9 @@ impl JsonLdExpandable for ScopeValue {
 ///
 /// All spec-defined entity members are explicit fields. `@context` is excluded
 /// as it is a transport concern handled by the JSON-LD engine.
+#[skip_serializing_none]
 #[derive(Debug, Clone, Serialize, Deserialize, JsonLdExpandableMacro)]
+#[serde(rename_all = "camelCase")]
 #[jsonld(type_field)]
 pub struct Entity {
     #[jsonld(id)]
@@ -56,42 +59,38 @@ pub struct Entity {
     #[serde(rename = "type")]
     #[jsonld(type_value)]
     pub type_: EntityTypeValue,
-    #[serde(skip_serializing_if = "Option::is_none")]
     #[jsonld(property = "ngsi:scope", custom)]
     pub scope: Option<ScopeValue>,
 
     /// Entity expiration timestamp (clause 4.22).
-    #[serde(rename = "expiresAt", skip_serializing_if = "Option::is_none", with = "serde_helpers::rfc3339_option", default)]
+    #[serde(default)]
     #[jsonld(property = "ngsi:expiresAt", typed_value, datatype = "ngsi:DateTime")]
     pub expires_at: Option<DateTime<Utc>>,
 
     /// Default geospatial property (clause 4.7).
-    #[serde(skip_serializing_if = "Option::is_none")]
     #[jsonld(property = "ngsi:location", custom)]
     pub location: Option<AttributeValue>,
 
     /// Observation space geometry (clause 5.2.4).
-    #[serde(rename = "observationSpace", skip_serializing_if = "Option::is_none")]
     #[jsonld(property = "ngsi:observationSpace", custom)]
     pub observation_space: Option<AttributeValue>,
 
     /// Operation space geometry (clause 5.2.4).
-    #[serde(rename = "operationSpace", skip_serializing_if = "Option::is_none")]
     #[jsonld(property = "ngsi:operationSpace", custom)]
     pub operation_space: Option<AttributeValue>,
 
     /// System-generated creation timestamp (clause 4.8, Table 5.2.2-1).
-    #[serde(rename = "createdAt", skip_serializing_if = "Option::is_none", with = "serde_helpers::rfc3339_option", default)]
+    #[serde(default)]
     #[jsonld(property = "ngsi:createdAt", typed_value, datatype = "ngsi:DateTime")]
     pub created_at: Option<DateTime<Utc>>,
 
     /// System-generated modification timestamp (clause 4.8, Table 5.2.2-1).
-    #[serde(rename = "modifiedAt", skip_serializing_if = "Option::is_none", with = "serde_helpers::rfc3339_option", default)]
+    #[serde(default)]
     #[jsonld(property = "ngsi:modifiedAt", typed_value, datatype = "ngsi:DateTime")]
     pub modified_at: Option<DateTime<Utc>>,
 
     /// Deletion timestamp, output-only in notifications/temporal (clause 4.8).
-    #[serde(rename = "deletedAt", skip_serializing_if = "Option::is_none", with = "serde_helpers::rfc3339_option", default)]
+    #[serde(default)]
     #[jsonld(property = "ngsi:deletedAt", typed_value, datatype = "ngsi:DateTime")]
     pub deleted_at: Option<DateTime<Utc>>,
 
@@ -252,30 +251,26 @@ fn simplify_attribute_value(attr: &AttributeValue) -> serde_json::Value {
 ///
 /// System-managed timestamps (`createdAt`, `modifiedAt`, `deletedAt`) are
 /// excluded as they are not patchable.
+#[skip_serializing_none]
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct EntityPatch {
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub id: Option<Uri>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(rename = "type")]
     pub type_: Option<EntityTypeValue>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub scope: Option<ScopeValue>,
 
     /// Entity expiration timestamp (clause 4.22).
-    #[serde(rename = "expiresAt", skip_serializing_if = "Option::is_none", with = "serde_helpers::rfc3339_option", default)]
+    #[serde(default)]
     pub expires_at: Option<DateTime<Utc>>,
 
     /// Default geospatial property (clause 4.7).
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub location: Option<AttributeValue>,
 
     /// Observation space geometry (clause 5.2.4).
-    #[serde(rename = "observationSpace", skip_serializing_if = "Option::is_none")]
     pub observation_space: Option<AttributeValue>,
 
     /// Operation space geometry (clause 5.2.4).
-    #[serde(rename = "operationSpace", skip_serializing_if = "Option::is_none")]
     pub operation_space: Option<AttributeValue>,
 
     #[serde(flatten)]

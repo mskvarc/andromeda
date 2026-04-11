@@ -1,5 +1,8 @@
 use crate::{
-    domain::notification::{ChangeEvent, TriggerReason},
+    domain::{
+        notification::{ChangeEvent, TriggerReason},
+        uri::Uri,
+    },
     error::AndromedaError,
     jsonld::ContextSpec,
     service::entity::{
@@ -28,6 +31,7 @@ impl EntityService {
         no_overwrite: bool,
         context: &ContextSpec,
     ) -> Result<(Vec<String>, Vec<String>), AndromedaError> {
+        let entity_uri = Uri::from(id.clone()); // clone: owned Urn for Uri conversion; id is &Urn
         let id = id.to_string();
 
         normalize_entity_attributes(&mut fragment);
@@ -45,7 +49,9 @@ impl EntityService {
         }
 
         let entity_types = extract_entity_types(&existing);
-        self.emit_change(ChangeEvent::new(id, entity_types, TriggerReason::AttributeCreated).with_changed_attributes(extract_attribute_keys(&expanded)));
+        self.emit_change(
+            ChangeEvent::new(entity_uri, entity_types, TriggerReason::AttributeCreated).with_changed_attributes(extract_attribute_keys(&expanded)),
+        );
 
         let all_attr_keys = extract_attribute_keys(&expanded);
         Ok((all_attr_keys, not_appended))
@@ -57,6 +63,7 @@ impl EntityService {
     /// did not already exist on the entity). The handler uses this to decide
     /// between 204 and 207.
     pub async fn update_attrs(&self, id: &Urn, mut fragment: Value, context: &ContextSpec) -> Result<Vec<String>, AndromedaError> {
+        let entity_uri = Uri::from(id.clone()); // clone: owned Urn for Uri conversion; id is &Urn
         let id = id.to_string();
 
         normalize_entity_attributes(&mut fragment);
@@ -88,7 +95,7 @@ impl EntityService {
 
         for deleted_attr in &deleted_attrs {
             self.emit_attr_change(
-                id.clone(),           // clone: value needed by subsequent loop iterations and final emit
+                entity_uri.clone(),   // clone: value needed by subsequent loop iterations and final emit
                 entity_types.clone(), // clone: value needed by subsequent loop iterations and final emit
                 TriggerReason::AttributeDeleted,
                 vec![deleted_attr.clone()],  // clone: owned copy from borrowed iterator
@@ -102,7 +109,7 @@ impl EntityService {
 
         if !created_attrs.is_empty() {
             self.emit_attr_change(
-                id.clone(),           // clone: value also needed by subsequent AttributeUpdated emit
+                entity_uri.clone(),   // clone: value also needed by subsequent AttributeUpdated emit
                 entity_types.clone(), // clone: value also needed by subsequent AttributeUpdated emit
                 TriggerReason::AttributeCreated,
                 created_attrs,
@@ -111,7 +118,7 @@ impl EntityService {
         }
 
         if !updated_attrs.is_empty() {
-            self.emit_attr_change(id, entity_types, TriggerReason::AttributeUpdated, updated_attrs, previous_attributes);
+            self.emit_attr_change(entity_uri, entity_types, TriggerReason::AttributeUpdated, updated_attrs, previous_attributes);
         }
 
         Ok(not_updated)
@@ -126,6 +133,7 @@ impl EntityService {
         fragment: Value,
         context: &ContextSpec,
     ) -> Result<(), AndromedaError> {
+        let entity_uri = Uri::from(id.clone()); // clone: owned Urn for Uri conversion; id is &Urn
         let id = id.to_string();
 
         let attr_iri = self.engine.expand_term(attr_name, context).await?;
@@ -165,7 +173,7 @@ impl EntityService {
         };
 
         let entity_types = self.fetch_entity_types(&id).await;
-        self.emit_attr_change(id, entity_types, trigger, vec![attr_iri], previous_attributes);
+        self.emit_attr_change(entity_uri, entity_types, trigger, vec![attr_iri], previous_attributes);
 
         Ok(())
     }
@@ -179,6 +187,7 @@ impl EntityService {
         delete_all: bool,
         context: &ContextSpec,
     ) -> Result<(), AndromedaError> {
+        let entity_uri = Uri::from(id.clone()); // clone: owned Urn for Uri conversion; id is &Urn
         let id = id.to_string();
 
         let attr_iri = self.engine.expand_term(attr_name, context).await?;
@@ -194,10 +203,7 @@ impl EntityService {
                 for tea in &teas {
                     if let Some(dataset_id) = tea.dataset_id.as_ref() {
                         let dataset_id = dataset_id.to_string();
-                        let _ = self
-                            .temporal_recorder
-                            .record_attribute_deletion(&id, &attr_iri, Some(&dataset_id))
-                            .await;
+                        let _ = self.temporal_recorder.record_attribute_deletion(&id, &attr_iri, Some(&dataset_id)).await;
                     } else {
                         let _ = self.temporal_recorder.record_attribute_deletion(&id, &attr_iri, None).await;
                     }
@@ -211,13 +217,14 @@ impl EntityService {
         self.repo.save(&id, &existing).await?;
 
         let entity_types = self.fetch_entity_types(&id).await;
-        self.emit_attr_change(id, entity_types, TriggerReason::AttributeDeleted, vec![attr_iri], previous_attributes);
+        self.emit_attr_change(entity_uri, entity_types, TriggerReason::AttributeDeleted, vec![attr_iri], previous_attributes);
 
         Ok(())
     }
 
     /// 5.6.19 Replace Entity Attribute
     pub async fn replace_attr(&self, id: &Urn, attr_name: &str, fragment: Value, context: &ContextSpec) -> Result<(), AndromedaError> {
+        let entity_uri = Uri::from(id.clone()); // clone: owned Urn for Uri conversion; id is &Urn
         let id = id.to_string();
 
         if attr_name.starts_with('@') {
@@ -245,7 +252,7 @@ impl EntityService {
         }
 
         let entity_types = self.fetch_entity_types(&id).await;
-        self.emit_attr_change(id, entity_types, TriggerReason::AttributeUpdated, vec![attr_iri], previous_attributes);
+        self.emit_attr_change(entity_uri, entity_types, TriggerReason::AttributeUpdated, vec![attr_iri], previous_attributes);
 
         Ok(())
     }

@@ -1,5 +1,10 @@
 use crate::{
-    domain::{entity::Entity, notification::Notification, subscription::Subscription},
+    domain::{
+        entity::Entity,
+        notification::{Notification, NotificationType},
+        subscription::Subscription,
+        uri::{NGSI_LD_URN_NID, Uri},
+    },
     jsonld::{CompactOptions, ContextSpec, ContextStripping, JsonLdEngine},
     query::q,
     repository::{entity::EntityRepository, subscription::SubscriptionRepository, subscription_store::SubscriptionStore},
@@ -114,10 +119,24 @@ impl IntervalWorker {
                         return;
                     }
 
+                    let notification_id = match format!("urn:{}:Notification:{}", NGSI_LD_URN_NID, Uuid::new_v4()).parse::<Uri>() {
+                        Ok(u) => u,
+                        Err(_) => {
+                            error!("Failed to construct notification URN for {}", sub.id);
+                            return;
+                        }
+                    };
+                    let sub_uri = match sub.id.parse::<Uri>() {
+                        Ok(u) => u,
+                        Err(_) => {
+                            error!("Invalid subscription URI: {}", sub.id);
+                            return;
+                        }
+                    };
                     let notification = Notification {
-                        id: format!("urn:ngsi-ld:Notification:{}", Uuid::new_v4()),
-                        type_: "Notification".to_string(),
-                        subscription_id: sub.id.clone(),
+                        id: notification_id,
+                        type_: NotificationType::default(),
+                        subscription_id: sub_uri,
                         notified_at: Utc::now(),
                         data,
                     };

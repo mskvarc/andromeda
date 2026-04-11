@@ -1,7 +1,10 @@
 //! Background worker that periodically deletes entities whose expiresAt has passed (§4.22).
 
 use crate::{
-    domain::notification::{ChangeEvent, TriggerReason},
+    domain::{
+        notification::{ChangeEvent, TriggerReason},
+        uri::Uri,
+    },
     repository::entity::EntityRepository,
 };
 use std::time::Duration;
@@ -44,7 +47,14 @@ impl EntityExpirationWorker {
                         info!("Expired {} entity/entities", expired_ids.len());
                         if let Some(ref tx) = self.change_tx {
                             for id in expired_ids {
-                                let _ = tx.send(ChangeEvent::new(id, Vec::new(), TriggerReason::EntityDeleted));
+                                match id.parse::<Uri>() {
+                                    Ok(entity_uri) => {
+                                        let _ = tx.send(ChangeEvent::new(entity_uri, Vec::new(), TriggerReason::EntityDeleted));
+                                    }
+                                    Err(_) => {
+                                        error!(entity_id = %id, event = "entity_uri_parse_failed");
+                                    }
+                                }
                             }
                         }
                     }

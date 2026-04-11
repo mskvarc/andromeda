@@ -1,5 +1,9 @@
 use crate::{
-    domain::{notification::CsourceNotification, subscription::Subscription},
+    domain::{
+        notification::{CsourceNotification, CsourceNotificationType},
+        subscription::Subscription,
+        uri::{NGSI_LD_URN_NID, Uri},
+    },
     repository::{
         context_source_registration::ContextSourceRegistrationRepository,
         csource_subscription::CsourceSubscriptionRepository,
@@ -85,10 +89,24 @@ impl CsrIntervalWorker {
                     continue;
                 }
 
+                let notification_id = match format!("urn:{}:Notification:{}", NGSI_LD_URN_NID, Uuid::new_v4()).parse::<Uri>() {
+                    Ok(u) => u,
+                    Err(_) => {
+                        error!("Failed to construct notification URN for {}", sub.id);
+                        continue;
+                    }
+                };
+                let sub_uri = match sub.id.parse::<Uri>() {
+                    Ok(u) => u,
+                    Err(_) => {
+                        error!("Invalid subscription URI: {}", sub.id);
+                        continue;
+                    }
+                };
                 let notification = CsourceNotification {
-                    id: format!("urn:ngsi-ld:Notification:{}", Uuid::new_v4()),
-                    type_: "CsourceNotification".to_string(),
-                    subscription_id: sub.id.clone(),
+                    id: notification_id,
+                    type_: CsourceNotificationType::default(),
+                    subscription_id: sub_uri,
                     notified_at: Utc::now(),
                     data: csrs,
                     trigger_reason: None,

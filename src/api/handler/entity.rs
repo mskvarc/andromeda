@@ -3,7 +3,10 @@ use crate::{
         handler::parse::{parse_entity_id, validate_attr_name},
         tenant::{TenantState, TenantStateOrCreate},
     },
-    domain::{entity::{Entity, EntityPatch, EntityTypeValue}, uri::Uri},
+    domain::{
+        entity::{Entity, EntityPatch, EntityTypeValue},
+        uri::Uri,
+    },
     error::AndromedaError,
     http::{
         error::{
@@ -35,7 +38,6 @@ use crate::{
         response::ResponseRenderer,
     },
     service::{
-        entity_map::{parse_entity_map_urn, parse_iso8601_duration, parse_uri_csv},
         context_source_forwarding::{
             ForwardBatchProvisionRequest,
             ForwardProvisionRequest,
@@ -49,6 +51,7 @@ use crate::{
             provision_forwarding::{ForwardingModes, build_multi_status_body, first_forwarded_status, has_remote_errors},
             query::EntityQueryService,
         },
+        entity_map::{parse_entity_map_urn, parse_iso8601_duration, parse_uri_csv},
     },
     worker::notification::matching::{matches_geo_filter, matches_scope_filter},
 };
@@ -59,8 +62,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use serde_json::Value;
-use std::collections::HashSet;
-use std::str::FromStr;
+use std::{collections::HashSet, str::FromStr};
 
 pub async fn patch_no_id(OriginalUri(uri): OriginalUri) -> Result<Response, NgsiLdError> {
     Err(NgsiLdError::from(AndromedaError::bad_request_data("Entity id is required").with_instance(uri)))

@@ -46,6 +46,7 @@ pub fn matches_subscription(sub: &CompiledSubscription, event: &ChangeEvent) -> 
     }
 
     if !sub.selectors.is_empty() {
+        let entity_id_str = event.entity_id.to_string(); // convert once for string-based comparisons below
         let any_selector_matches = sub.selectors.iter().any(|sel| {
             let type_matches = if let Some(ref pattern) = sel.type_pattern {
                 event.entity_types.iter().any(|t| pattern.is_match(t))
@@ -61,14 +62,14 @@ pub fn matches_subscription(sub: &CompiledSubscription, event: &ChangeEvent) -> 
             }
 
             if let Some(ref id) = sel.id
-                && *id != event.entity_id
+                && id.as_str() != entity_id_str.as_str()
             {
                 debug!("Subscription {} selector id mismatch: selector={} event_id={}", sub.id, id, event.entity_id);
                 return false;
             }
 
             if let Some(ref pattern) = sel.id_pattern
-                && !pattern.is_match(&event.entity_id)
+                && !pattern.is_match(&entity_id_str)
             {
                 debug!(
                     "Subscription {} selector idPattern mismatch: pattern={} event_id={}",
@@ -322,8 +323,12 @@ mod tests {
     }
 
     fn make_event() -> ChangeEvent {
-        ChangeEvent::new("urn:ngsi-ld:Entity:001".to_string(), vec!["Building".to_string()], TriggerReason::EntityCreated)
-            .with_changed_attributes(vec!["temperature".to_string()])
+        ChangeEvent::new(
+            "urn:ngsi-ld:Entity:001".parse().expect("valid test URI"),
+            vec!["Building".to_string()],
+            TriggerReason::EntityCreated,
+        )
+        .with_changed_attributes(vec!["temperature".to_string()])
     }
 
     #[test]
@@ -351,7 +356,11 @@ mod tests {
     #[test]
     fn subscription_skips_wrong_trigger() {
         let sub = make_sub();
-        let event = ChangeEvent::new("urn:ngsi-ld:Entity:001".to_string(), vec!["Building".to_string()], TriggerReason::EntityDeleted);
+        let event = ChangeEvent::new(
+            "urn:ngsi-ld:Entity:001".parse().expect("valid test URI"),
+            vec!["Building".to_string()],
+            TriggerReason::EntityDeleted,
+        );
         assert!(!matches_subscription(&sub, &event));
     }
 

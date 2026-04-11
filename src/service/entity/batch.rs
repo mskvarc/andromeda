@@ -3,6 +3,7 @@ use crate::{
         entity::Entity,
         expanded,
         notification::{ChangeEvent, SysAttrsSnapshot, TriggerReason},
+        uri::Uri,
     },
     error::AndromedaError,
     jsonld::ContextSpec,
@@ -209,10 +210,17 @@ impl EntityService {
                 if let Err(e) = self.temporal_recorder.record_entity_attributes(id, expanded).await {
                     tracing::warn!(error = %e, entity_id = %id, event = "temporal_recording_failed");
                 }
-                self.emit_change(
-                    ChangeEvent::new(id.clone(), types.clone(), TriggerReason::EntityCreated) // clone: owned values for event, originals borrowed from map
-                        .with_changed_attributes(extract_attribute_keys(expanded)),
-                );
+                match id.parse::<Uri>() {
+                    Ok(entity_uri) => {
+                        self.emit_change(
+                            ChangeEvent::new(entity_uri, types.clone(), TriggerReason::EntityCreated) // clone: types borrowed from map
+                                .with_changed_attributes(extract_attribute_keys(expanded)),
+                        );
+                    }
+                    Err(_) => {
+                        tracing::error!(entity_id = %id, event = "entity_uri_parse_failed");
+                    }
+                }
             }
             success.push(id.clone()); // clone: owned String for success list
         }
@@ -262,10 +270,19 @@ impl EntityService {
                 expires_at: d.expires_at,
             };
 
+            let entity_uri: Uri = match d.id.parse() {
+                Ok(u) => u,
+                Err(_) => {
+                    tracing::error!(entity_id = %d.id, event = "entity_uri_parse_failed");
+                    success.push(d.id.clone()); // clone: owned String for success list
+                    continue;
+                }
+            };
+
             // Emit AttributeDeleted for each attribute so attributeDeleted subscriptions fire
             if !attr_keys.is_empty() {
                 self.emit_change(
-                    ChangeEvent::new(d.id.clone(), entity_types.clone(), TriggerReason::AttributeDeleted) // clone: value also needed by subsequent EntityDeleted emit
+                    ChangeEvent::new(entity_uri.clone(), entity_types.clone(), TriggerReason::AttributeDeleted) // clone: value also needed by subsequent EntityDeleted emit
                         .with_changed_attributes(attr_keys)
                         .with_snapshot(d.payload.clone()) // clone: value also needed by subsequent EntityDeleted emit
                         .with_previous(d.payload.clone()) // clone: value also needed by subsequent EntityDeleted emit
@@ -274,7 +291,7 @@ impl EntityService {
             }
 
             self.emit_change(
-                ChangeEvent::new(d.id.clone(), entity_types, TriggerReason::EntityDeleted) // clone: value also needed for success list
+                ChangeEvent::new(entity_uri, entity_types, TriggerReason::EntityDeleted)
                     .with_snapshot(d.payload.clone()) // clone: separate ownership for snapshot and previous fields
                     .with_previous(d.payload.clone()) // clone: separate ownership for snapshot and previous fields
                     .with_sys_attrs(Some(sys_attrs)),
@@ -360,10 +377,17 @@ impl EntityService {
             if let Err(e) = self.temporal_recorder.record_entity_attributes(id, expanded).await {
                 tracing::warn!(error = %e, entity_id = %id, event = "temporal_recording_failed");
             }
-            self.emit_change(
-                ChangeEvent::new(id.clone(), types.clone(), TriggerReason::EntityUpdated) // clone: owned values for event
-                    .with_changed_attributes(extract_attribute_keys(expanded)),
-            );
+            match id.parse::<Uri>() {
+                Ok(entity_uri) => {
+                    self.emit_change(
+                        ChangeEvent::new(entity_uri, types.clone(), TriggerReason::EntityUpdated) // clone: types borrowed from tuple
+                            .with_changed_attributes(extract_attribute_keys(expanded)),
+                    );
+                }
+                Err(_) => {
+                    tracing::error!(entity_id = %id, event = "entity_uri_parse_failed");
+                }
+            }
             success.push(id.clone()); // clone: owned String for success list
         }
 
@@ -422,10 +446,17 @@ impl EntityService {
             if let Err(e) = self.temporal_recorder.record_entity_attributes(id, expanded).await {
                 tracing::warn!(error = %e, entity_id = %id, event = "temporal_recording_failed");
             }
-            self.emit_change(
-                ChangeEvent::new(id.clone(), types.clone(), TriggerReason::EntityUpdated) // clone: owned values for event
-                    .with_changed_attributes(extract_attribute_keys(expanded)),
-            );
+            match id.parse::<Uri>() {
+                Ok(entity_uri) => {
+                    self.emit_change(
+                        ChangeEvent::new(entity_uri, types.clone(), TriggerReason::EntityUpdated) // clone: types borrowed from tuple
+                            .with_changed_attributes(extract_attribute_keys(expanded)),
+                    );
+                }
+                Err(_) => {
+                    tracing::error!(entity_id = %id, event = "entity_uri_parse_failed");
+                }
+            }
             success.push(id.clone()); // clone: owned String for success list
         }
 
@@ -516,10 +547,17 @@ impl EntityService {
                 } else {
                     TriggerReason::EntityUpdated
                 };
-                self.emit_change(
-                    ChangeEvent::new(id.clone(), types.clone(), trigger) // clone: owned values for event
-                        .with_changed_attributes(extract_attribute_keys(expanded)),
-                );
+                match id.parse::<Uri>() {
+                    Ok(entity_uri) => {
+                        self.emit_change(
+                            ChangeEvent::new(entity_uri, types.clone(), trigger) // clone: types borrowed from map
+                                .with_changed_attributes(extract_attribute_keys(expanded)),
+                        );
+                    }
+                    Err(_) => {
+                        tracing::error!(entity_id = %id, event = "entity_uri_parse_failed");
+                    }
+                }
             }
             success.push(id.clone()); // clone: owned String for success list
         }
@@ -601,10 +639,17 @@ impl EntityService {
                 if let Err(e) = self.temporal_recorder.record_entity_attributes(id, expanded).await {
                     tracing::warn!(error = %e, entity_id = %id, event = "temporal_recording_failed");
                 }
-                self.emit_change(
-                    ChangeEvent::new(id.clone(), types.clone(), TriggerReason::EntityCreated) // clone: owned values for event
-                        .with_changed_attributes(extract_attribute_keys(expanded)),
-                );
+                match id.parse::<Uri>() {
+                    Ok(entity_uri) => {
+                        self.emit_change(
+                            ChangeEvent::new(entity_uri, types.clone(), TriggerReason::EntityCreated) // clone: types borrowed from map
+                                .with_changed_attributes(extract_attribute_keys(expanded)),
+                        );
+                    }
+                    Err(_) => {
+                        tracing::error!(entity_id = %id, event = "entity_uri_parse_failed");
+                    }
+                }
             }
             created.push(id.clone()); // clone: owned String for created list
             success.push(id.clone()); // clone: owned String for success list
@@ -618,10 +663,17 @@ impl EntityService {
             if let Err(e) = self.temporal_recorder.record_entity_attributes(id, expanded).await {
                 tracing::warn!(error = %e, entity_id = %id, event = "temporal_recording_failed");
             }
-            self.emit_change(
-                ChangeEvent::new(id.clone(), types.clone(), TriggerReason::EntityUpdated) // clone: owned values for event
-                    .with_changed_attributes(extract_attribute_keys(expanded)),
-            );
+            match id.parse::<Uri>() {
+                Ok(entity_uri) => {
+                    self.emit_change(
+                        ChangeEvent::new(entity_uri, types.clone(), TriggerReason::EntityUpdated) // clone: types borrowed from vec
+                            .with_changed_attributes(extract_attribute_keys(expanded)),
+                    );
+                }
+                Err(_) => {
+                    tracing::error!(entity_id = %id, event = "entity_uri_parse_failed");
+                }
+            }
             success.push(id.clone()); // clone: owned String for success list
         }
 

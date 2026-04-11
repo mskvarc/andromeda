@@ -2,12 +2,22 @@
 //!
 //! Handles TEA (temporal_entity_attributes) catalog and attribute_history operations.
 
-use crate::{domain::temporal::TeaEntry, error::AndromedaError, query::sql::BindValue};
+use crate::{
+    domain::{
+        attribute_type::AttributeType,
+        temporal::{TeaEntry, ValueType},
+        uri::Uri,
+    },
+    error::AndromedaError,
+    query::sql::BindValue,
+};
 use chrono::{DateTime, Utc};
 use iref::IriBuf;
 use serde_json::Value;
-use crate::domain::{attribute_type::AttributeType, temporal::ValueType, uri::Uri};
-use sqlx::{Row, postgres::PgPool, postgres::PgRow};
+use sqlx::{
+    Row,
+    postgres::{PgPool, PgRow},
+};
 use std::str::FromStr;
 
 /// Whether to delete all instances of an attribute or a single specific instance.
@@ -360,40 +370,21 @@ impl TemporalRepository {
 
 fn parse_tea_entry(row: &PgRow) -> Result<TeaEntry, AndromedaError> {
     let attribute_name_raw: String = row.try_get("attribute_name")?;
-    let attribute_name = IriBuf::new(attribute_name_raw.clone()).map_err(|e| {
-        AndromedaError::internal(format!(
-            "Invalid temporal_entity_attributes.attribute_name '{}': {}",
-            attribute_name_raw, e
-        ))
-    })?;
+    let attribute_name = IriBuf::new(attribute_name_raw.clone())
+        .map_err(|e| AndromedaError::internal(format!("Invalid temporal_entity_attributes.attribute_name '{}': {}", attribute_name_raw, e)))?;
 
     let attribute_type_raw: String = row.try_get("attribute_type")?;
-    let attribute_type = AttributeType::from_str(&attribute_type_raw).map_err(|e| {
-        AndromedaError::internal(format!(
-            "Invalid temporal_entity_attributes.attribute_type '{}': {}",
-            attribute_type_raw, e
-        ))
-    })?;
+    let attribute_type = AttributeType::from_str(&attribute_type_raw)
+        .map_err(|e| AndromedaError::internal(format!("Invalid temporal_entity_attributes.attribute_type '{}': {}", attribute_type_raw, e)))?;
 
     let dataset_id = row
         .try_get::<Option<String>, _>("dataset_id")?
-        .map(|raw| {
-            Uri::from_str(&raw).map_err(|_| {
-                AndromedaError::internal(format!(
-                    "Invalid temporal_entity_attributes.dataset_id '{}'",
-                    raw
-                ))
-            })
-        })
+        .map(|raw| Uri::from_str(&raw).map_err(|_| AndromedaError::internal(format!("Invalid temporal_entity_attributes.dataset_id '{}'", raw))))
         .transpose()?;
 
     let value_type_raw: String = row.try_get("value_type")?;
-    let value_type = ValueType::from_str(&value_type_raw).map_err(|e| {
-        AndromedaError::internal(format!(
-            "Invalid temporal_entity_attributes.value_type '{}': {}",
-            value_type_raw, e
-        ))
-    })?;
+    let value_type = ValueType::from_str(&value_type_raw)
+        .map_err(|e| AndromedaError::internal(format!("Invalid temporal_entity_attributes.value_type '{}': {}", value_type_raw, e)))?;
 
     Ok(TeaEntry {
         attribute_name,

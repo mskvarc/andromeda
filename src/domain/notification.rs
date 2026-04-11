@@ -1,5 +1,6 @@
 use crate::{
-    domain::{serde_helpers, subscription::SubscriptionStatus},
+    constant_string,
+    domain::{subscription::SubscriptionStatus, uri::Uri},
     query::q::ast::Expr,
     renderer::SysAttrsInclusion,
     transport::endpoint::EndpointTransport,
@@ -8,8 +9,12 @@ use chrono::{DateTime, Utc};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use serde_with::skip_serializing_none;
 use std::{collections::HashSet, sync::Arc};
 use strum::{Display, EnumString};
+
+constant_string!(NotificationType, "Notification");
+constant_string!(CsourceNotificationType, "CsourceNotification");
 
 /// Origin of an entity change event (ETSI GS CIM 009 v1.9.1, clause 5.5.13).
 ///
@@ -66,7 +71,7 @@ impl TriggerReason {
 /// Represents an entity mutation that may trigger notifications.
 #[derive(Clone, Debug)]
 pub struct ChangeEvent {
-    pub entity_id: String,
+    pub entity_id: Uri,
     pub entity_types: Vec<String>,
     pub trigger_reason: TriggerReason,
     pub changed_attributes: Vec<String>,
@@ -82,7 +87,7 @@ pub struct ChangeEvent {
 }
 
 impl ChangeEvent {
-    pub fn new(entity_id: String, entity_types: Vec<String>, trigger_reason: TriggerReason) -> ChangeEvent {
+    pub fn new(entity_id: Uri, entity_types: Vec<String>, trigger_reason: TriggerReason) -> ChangeEvent {
         ChangeEvent {
             entity_id,
             entity_types,
@@ -122,10 +127,6 @@ impl ChangeEvent {
     }
 }
 
-fn default_notification_type() -> String {
-    "Notification".to_string()
-}
-
 /// NGSI-LD Notification payload (ETSI GS CIM 009 clause 5.3.1).
 ///
 /// Represents a notification sent to a subscriber when matching entity
@@ -134,16 +135,11 @@ fn default_notification_type() -> String {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Notification {
-    pub id: String,
-
-    #[serde(rename = "type", default = "default_notification_type")]
-    pub type_: String,
-
-    pub subscription_id: String,
-
-    #[serde(with = "serde_helpers::rfc3339")]
+    pub id: Uri,
+    #[serde(rename = "type")]
+    pub type_: NotificationType,
+    pub subscription_id: Uri,
     pub notified_at: DateTime<Utc>,
-
     pub data: Vec<Value>,
 }
 
@@ -165,31 +161,26 @@ pub struct CsrChangeEvent {
     pub csr_snapshot: Option<Value>,
 }
 
-fn default_csource_notification_type() -> String {
-    "CsourceNotification".to_string()
-}
-
 /// NGSI-LD CsourceNotification payload (ETSI GS CIM 009 clause 5.3.2).
 ///
 /// Represents a notification sent to a subscriber when context source
 /// registration changes occur. Contains the subscription reference,
 /// timestamp, CSR data, and the trigger reason.
+#[skip_serializing_none]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CsourceNotification {
-    pub id: String,
+    pub id: Uri,
 
-    #[serde(rename = "type", default = "default_csource_notification_type")]
-    pub type_: String,
+    #[serde(rename = "type")]
+    pub type_: CsourceNotificationType,
 
-    pub subscription_id: String,
+    pub subscription_id: Uri,
 
-    #[serde(with = "serde_helpers::rfc3339")]
     pub notified_at: DateTime<Utc>,
 
     pub data: Vec<Value>,
 
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub trigger_reason: Option<String>,
 }
 
@@ -200,15 +191,15 @@ pub struct CsourceNotification {
 /// Signals subscription CRUD changes for cache invalidation.
 #[derive(Clone, Debug)]
 pub enum SubscriptionChange {
-    Upserted(String), // subscription id
-    Deleted(String),  // subscription id
+    Upserted(Uri), // subscription id
+    Deleted(Uri),  // subscription id
 }
 
 /// Signals CSR subscription CRUD changes for cache invalidation.
 #[derive(Clone, Debug)]
 pub enum CsourceSubscriptionChange {
-    Upserted(String),
-    Deleted(String),
+    Upserted(Uri),
+    Deleted(Uri),
 }
 
 /// Pre-compiled entity selector for fast matching.

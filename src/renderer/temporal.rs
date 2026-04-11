@@ -15,8 +15,8 @@ use crate::{
     service::temporal::format_datetime,
 };
 use chrono::{DateTime, Utc};
-use iref::IriBuf;
 use indexmap::IndexMap;
+use iref::IriBuf;
 use serde_json::{Value, json};
 use sqlx::{Row, postgres::PgRow};
 use std::str::FromStr;
@@ -199,10 +199,7 @@ pub fn build_entity_temporal(
 /// Groups rows by `(attribute_name, dataset_id)` and extracts aggregation
 /// method values (avg, min, max, sum, etc.) with their bucket time ranges.
 /// Returns an ordered map of attribute name to aggregated instance(s).
-pub fn build_entity_temporal_aggregated_data(
-    rows: &[PgRow],
-    compiled: &CompiledTemporalQuery,
-) -> Result<IndexMap<String, Value>, AndromedaError> {
+pub fn build_entity_temporal_aggregated_data(rows: &[PgRow], compiled: &CompiledTemporalQuery) -> Result<IndexMap<String, Value>, AndromedaError> {
     type GroupKey = (String, Option<String>);
     let mut groups: IndexMap<GroupKey, Vec<&PgRow>> = IndexMap::with_capacity(rows.len().min(64));
 
@@ -287,8 +284,8 @@ fn parse_tea_entry(row: &PgRow) -> Result<TeaEntry, AndromedaError> {
         .transpose()?;
 
     let value_type_raw: String = row.try_get("value_type")?;
-    let value_type = ValueType::from_str(&value_type_raw)
-        .map_err(|e| AndromedaError::internal(format!("Invalid temporal value type '{}': {}", value_type_raw, e)))?;
+    let value_type =
+        ValueType::from_str(&value_type_raw).map_err(|e| AndromedaError::internal(format!("Invalid temporal value type '{}': {}", value_type_raw, e)))?;
 
     Ok(TeaEntry {
         attribute_name,

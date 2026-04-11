@@ -5,7 +5,10 @@
 //! delegated to the [`SubscriptionVariant`] trait.
 
 use crate::{
-    domain::subscription::{Subscription, SubscriptionStatus},
+    domain::{
+        subscription::{Subscription, SubscriptionStatus},
+        uri::Uri,
+    },
     error::AndromedaError,
     jsonld::{ContextSpec, JsonLdEngine},
     repository::subscription_store::{StatusUpdateFields, SubscriptionStore, compute_updated_status},
@@ -41,10 +44,10 @@ pub trait SubscriptionVariant: Send + Sync {
     fn use_entity_sub_merge_mode(&self) -> bool;
 
     /// Build an "upserted" change event.
-    fn make_upserted(&self, id: String) -> Self::Change;
+    fn make_upserted(&self, id: Uri) -> Self::Change;
 
     /// Build a "deleted" change event.
-    fn make_deleted(&self, id: String) -> Self::Change;
+    fn make_deleted(&self, id: Uri) -> Self::Change;
 }
 
 // ---------------------------------------------------------------------------
@@ -143,7 +146,12 @@ where
         );
 
         self.repo.create_subscription(&id, &fields, status).await?;
-        self.emit_change(self.variant.make_upserted(id.clone())); // clone: id is also returned via Ok(id) below
+        match id.parse::<Uri>() {
+            Ok(id_uri) => self.emit_change(self.variant.make_upserted(id_uri)),
+            Err(_) => {
+                tracing::error!(subscription_id = %id, event = "subscription_uri_parse_failed");
+            }
+        }
         Ok(id)
     }
 
@@ -225,7 +233,12 @@ where
             return Err(AndromedaError::not_found(id));
         }
 
-        self.emit_change(self.variant.make_upserted(id.to_string()));
+        match id.parse::<Uri>() {
+            Ok(id_uri) => self.emit_change(self.variant.make_upserted(id_uri)),
+            Err(_) => {
+                tracing::error!(subscription_id = %id, event = "subscription_uri_parse_failed");
+            }
+        }
         Ok(())
     }
 
@@ -240,7 +253,12 @@ where
             return Err(AndromedaError::not_found(id));
         }
 
-        self.emit_change(self.variant.make_deleted(id.to_string()));
+        match id.parse::<Uri>() {
+            Ok(id_uri) => self.emit_change(self.variant.make_deleted(id_uri)),
+            Err(_) => {
+                tracing::error!(subscription_id = %id, event = "subscription_uri_parse_failed");
+            }
+        }
         Ok(())
     }
 }

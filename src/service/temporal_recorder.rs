@@ -3,9 +3,7 @@
 //! Records attribute history whenever entities are created or modified.
 
 use crate::{
-    domain::attribute_type::AttributeType,
-    domain::temporal::ValueType,
-    domain::uri::Uri,
+    domain::{attribute_type::AttributeType, temporal::ValueType, uri::Uri},
     error::AndromedaError,
     jsonld::vocab,
     repository::temporal::{HistoryValues, InsertHistoryParams, TemporalRepository, UpdateInstanceParams},
@@ -189,12 +187,10 @@ impl TemporalRecorder {
     pub async fn record_attribute_deletion(&self, entity_id: &str, attr_iri: &str, dataset_id: Option<&str>) -> Result<(), AndromedaError> {
         // Look up the existing TEA to preserve the attribute type
         let teas = self.repo.get_teas_for_entity_attr(entity_id, attr_iri).await?;
-        let parsed_dataset_id = dataset_id.map(Uri::from_str).transpose().map_err(|_| {
-            AndromedaError::bad_request_data(format!(
-                "Invalid datasetId '{}': not a valid URI",
-                dataset_id.unwrap_or_default()
-            ))
-        })?;
+        let parsed_dataset_id = dataset_id
+            .map(Uri::from_str)
+            .transpose()
+            .map_err(|_| AndromedaError::bad_request_data(format!("Invalid datasetId '{}': not a valid URI", dataset_id.unwrap_or_default())))?;
         let attr_type = teas
             .iter()
             .find(|t| t.dataset_id.as_ref() == parsed_dataset_id.as_ref())

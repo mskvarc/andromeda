@@ -1,5 +1,8 @@
 use crate::{
-    domain::notification::{CsourceSubscriptionChange, SubscriptionChange},
+    domain::{
+        notification::{CsourceSubscriptionChange, SubscriptionChange},
+        uri::Uri,
+    },
     repository::{csource_subscription::CsourceSubscriptionRepository, subscription::SubscriptionRepository, subscription_store::SubscriptionStore},
 };
 use std::time::Duration;
@@ -44,7 +47,14 @@ impl SubscriptionExpirationWorker {
                     if !expired_ids.is_empty() {
                         info!("Expired {} subscription(s)", expired_ids.len());
                         for id in expired_ids {
-                            let _ = self.subscription_change_tx.send(SubscriptionChange::Deleted(id));
+                            match id.parse::<Uri>() {
+                                Ok(uri) => {
+                                    let _ = self.subscription_change_tx.send(SubscriptionChange::Deleted(uri));
+                                }
+                                Err(_) => {
+                                    error!("Failed to parse expired subscription ID as URI: {}", id);
+                                }
+                            }
                         }
                     }
                 }
@@ -58,7 +68,14 @@ impl SubscriptionExpirationWorker {
                     if !expired_ids.is_empty() {
                         info!("Expired {} CSR subscription(s)", expired_ids.len());
                         for id in expired_ids {
-                            let _ = self.csource_subscription_change_tx.send(CsourceSubscriptionChange::Deleted(id));
+                            match id.parse::<Uri>() {
+                                Ok(uri) => {
+                                    let _ = self.csource_subscription_change_tx.send(CsourceSubscriptionChange::Deleted(uri));
+                                }
+                                Err(_) => {
+                                    error!("Failed to parse expired CSR subscription ID as URI: {}", id);
+                                }
+                            }
                         }
                     }
                 }
