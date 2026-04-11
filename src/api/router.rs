@@ -23,11 +23,12 @@ use crate::{
         entity::EntityRepository,
         jsonld_context::JsonLdContextRepository,
         subscription::SubscriptionRepository,
+        temporal::TemporalRepository,
     },
     service::{
         context_source_registration::ContextSourceRegistrationService,
         csource_subscription::CsourceSubscriptionService,
-        entity::EntityService,
+        entity::{BatchExecutionConfig, BatchSideEffectDispatcherConfig, EntityService},
         jsonld_context::JsonLdContextService,
         subscription::SubscriptionService,
         temporal::TemporalService,
@@ -39,6 +40,7 @@ use crate::{
     },
     transport::{dispatch::TransportDispatcher, http::HttpTransportConfig, mqtt::MqttPoolConfig},
     worker::{
+        batch_side_effects::BatchSideEffectWorker,
         csr_interval::CsrIntervalWorker,
         csr_notification::CsrNotificationWorker,
         data_expiration::DataExpirationWorker,
@@ -49,6 +51,7 @@ use crate::{
 };
 use axum::{
     Router,
+    extract::DefaultBodyLimit,
     http::{StatusCode, header},
     response::IntoResponse,
     routing::{delete, get, patch, post, put},
@@ -75,7 +78,12 @@ pub async fn create_router(config: Arc<Configuration>) -> Result<Router, Androme
         tenants,
         source_identity: config.info.source_identity.clone(),
     };
-    let router = Router::new().nest("/ngsi-ld/v1", build_v1_router().merge(health_router)).with_state(app_state);
+    let max_body = config.performance.max_request_body_bytes;
+    let router = Router::new()
+        .route("/favicon.ico", get(favicon))
+        .nest("/ngsi-ld/v1", build_v1_router().merge(health_router))
+        .layer(DefaultBodyLimit::max(max_body))
+        .with_state(app_state);
     Ok(router)
 }
 
@@ -191,7 +199,6 @@ fn build_v1_router() -> Router<AppState> {
         .nest("/csourceSubscriptions", csr_subscription_routes)
         .nest("/snapshots", snapshot_routes)
         .nest("/info", info_routes)
-        .route("/favicon.ico", get(favicon))
 }
 
 pub async fn build_tenant_state(
@@ -211,6 +218,7 @@ pub async fn build_tenant_state(
     let (sub_change_tx, _) = tokio::sync::broadcast::channel::<SubscriptionChange>(256);
     let (csr_change_tx, _) = tokio::sync::broadcast::channel::<CsrChangeEvent>(256);
     let (csr_sub_change_tx, _) = tokio::sync::broadcast::channel::<CsourceSubscriptionChange>(256);
+    let mut worker_handles = Vec::new();
 
     let context_repo = Arc::new(JsonLdContextRepository::new(&pool));
     let engine = crate::jsonld::build_engine(&config.jsonld, context_repo)?;
@@ -220,7 +228,30 @@ pub async fn build_tenant_state(
         .batch_concurrency
         .unwrap_or_else(|| usize::min(config.database.max_connections as usize, 25))
         .max(1);
-    let entity_service = Arc::new(EntityService::new(&pool, engine.clone(), Some(change_tx.clone()), batch_concurrency));
+    let batch_side_effects = if let Some(threshold) = config.performance.batch_async_side_effect_threshold {
+        let (sender, receiver) = tokio::sync::mpsc::channel(config.performance.batch_side_effect_queue_capacity.max(1));
+        let temporal_repo = Arc::new(TemporalRepository::new(&pool));
+        let worker = BatchSideEffectWorker::new(temporal_repo, Some(change_tx.clone()), receiver);
+        worker_handles.push(tokio::spawn(worker.run()));
+        Some(BatchSideEffectDispatcherConfig {
+            threshold: threshold.max(1),
+            sender,
+        })
+    } else {
+        None
+    };
+    let entity_service = Arc::new(EntityService::new(
+        &pool,
+        engine.clone(),
+        Some(change_tx.clone()),
+        BatchExecutionConfig {
+            concurrency: batch_concurrency,
+            chunk_size: config.performance.batch_chunk_size.max(1),
+            large_threshold: config.performance.batch_large_threshold.max(1),
+            prepare_blocking_threshold: config.performance.batch_prepare_blocking_threshold.max(1),
+        },
+        batch_side_effects,
+    ));
     let temporal_service = Arc::new(TemporalService::new(&pool, engine.clone(), config.temporal.default_last_n));
     let context_service = Arc::new(JsonLdContextService::new(&pool, engine.clone()));
     let subscription_service = Arc::new(SubscriptionService::new(&pool, engine.clone(), Some(sub_change_tx.clone())));
@@ -233,7 +264,6 @@ pub async fn build_tenant_state(
     );
 
     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
-    let mut worker_handles = Vec::new();
 
     // Shared health probe: run only for the unnamed default runtime.
     if matches!(tenant, TenantRef::UnnamedDefault) {

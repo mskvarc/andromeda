@@ -516,7 +516,7 @@ impl EntityRepository {
     /// Duplicate IDs (entities that already exist) are silently skipped via
     /// `ON CONFLICT (id) DO NOTHING`.  Returns the IDs of successfully inserted
     /// entities; the caller compares against the input to detect conflicts.
-    pub async fn create_batch(&self, entities: &[PreparedEntityRow]) -> Result<Vec<String>, AndromedaError> {
+    pub async fn create_batch(&self, entities: Vec<PreparedEntityRow>) -> Result<Vec<String>, AndromedaError> {
         if entities.is_empty() {
             return Ok(Vec::new());
         }
@@ -596,7 +596,7 @@ impl EntityRepository {
     ///
     /// Only rows where `entities.id = d.id` are updated; non-existent IDs are
     /// silently skipped.  Returns the IDs of successfully updated entities.
-    pub async fn save_batch(&self, entities: &[PreparedEntityRow]) -> Result<Vec<String>, AndromedaError> {
+    pub async fn save_batch(&self, entities: Vec<PreparedEntityRow>) -> Result<Vec<String>, AndromedaError> {
         if entities.is_empty() {
             return Ok(Vec::new());
         }
@@ -648,7 +648,7 @@ impl EntityRepository {
     /// Uses `ON CONFLICT (id) DO UPDATE` to upsert.  Returns `(id, was_created)`
     /// pairs where `was_created` is `true` for newly inserted rows and `false`
     /// for updated rows (determined via PostgreSQL's `xmax = 0` pattern).
-    pub async fn upsert_batch(&self, entities: &[PreparedEntityRow]) -> Result<Vec<(String, bool)>, AndromedaError> {
+    pub async fn upsert_batch(&self, entities: Vec<PreparedEntityRow>) -> Result<Vec<(String, bool)>, AndromedaError> {
         if entities.is_empty() {
             return Ok(Vec::new());
         }
@@ -729,7 +729,7 @@ struct DecomposedColumns {
 
 /// Decompose a slice of [`PreparedEntityRow`] into parallel column vectors for
 /// sqlx `UNNEST` binding.
-fn decompose_rows(entities: &[PreparedEntityRow]) -> DecomposedColumns {
+fn decompose_rows(entities: Vec<PreparedEntityRow>) -> DecomposedColumns {
     let len = entities.len();
     let mut ids = Vec::with_capacity(len);
     let mut types_json = Vec::with_capacity(len);
@@ -741,13 +741,13 @@ fn decompose_rows(entities: &[PreparedEntityRow]) -> DecomposedColumns {
     let mut expires_ats: Vec<Option<DateTime<Utc>>> = Vec::with_capacity(len);
 
     for e in entities {
-        ids.push(e.id.clone()); // clone: owned String needed for sqlx bind vector
-        types_json.push(e.types_json.clone()); // clone: owned Value needed for sqlx bind vector
-        scope_paths_json.push(e.scope_paths_json.clone()); // clone: owned Value needed for sqlx bind vector
-        payloads.push(e.payload.clone()); // clone: owned Value needed for sqlx bind vector
-        locations.push(e.location.clone()); // clone: owned Option<String> needed for sqlx bind vector
-        obs_spaces.push(e.observation_space.clone()); // clone: owned Option<String> needed for sqlx bind vector
-        op_spaces.push(e.operation_space.clone()); // clone: owned Option<String> needed for sqlx bind vector
+        ids.push(e.id);
+        types_json.push(e.types_json);
+        scope_paths_json.push(e.scope_paths_json);
+        payloads.push(e.payload);
+        locations.push(e.location);
+        obs_spaces.push(e.observation_space);
+        op_spaces.push(e.operation_space);
         expires_ats.push(e.expires_at);
     }
 

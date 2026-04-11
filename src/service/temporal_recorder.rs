@@ -6,7 +6,7 @@ use crate::{
     core::error::AndromedaError,
     domain::{attribute_type::AttributeType, temporal::ValueType},
     jsonld::vocab,
-    repository::temporal::{HistoryValues, InsertHistoryParams, TemporalRepository, UpdateInstanceParams},
+    repository::temporal::{HistoryBatchEntry, HistoryValues, InsertHistoryParams, TeaBatchEntry, TemporalRepository, UpdateInstanceParams},
 };
 use chrono::{DateTime, Utc};
 use serde_json::Value;
@@ -180,6 +180,195 @@ impl TemporalRecorder {
                 observed_at,
             })
             .await?;
+
+        Ok(())
+    }
+
+    /// Record all attributes from multiple expanded entities in bulk.
+    ///
+    /// Collects all TEA entries and history rows across all entities, then
+    /// executes two bulk SQL operations (TEA upsert + history insert) instead
+    /// of N * M * 5 sequential round-trips.
+    ///
+    /// Invalid attributes are skipped with a warning rather than failing the
+    /// entire batch.
+    pub async fn record_entities_batch(&self, entities: &[(String, Value)]) -> Result<(), AndromedaError> {
+        if entities.is_empty() {
+            return Ok(());
+        }
+
+        // Phase 1: Collect all TEA entries from all entities.
+        // Each entry is paired with its "pending history" data so we can
+        // build history rows once we have the TEA UUIDs.
+        struct PendingHistory {
+            time: DateTime<Utc>,
+            db_params: DbValueParams,
+            instance_id: String,
+            observed_at: Option<DateTime<Utc>>,
+            metadata: Option<Value>,
+        }
+
+        let mut tea_entries = Vec::new();
+        let mut pending_histories: Vec<PendingHistory> = Vec::new();
+        // tea_index[i] corresponds to pending_histories[i] and maps to tea_entries index
+        let mut tea_index: Vec<usize> = Vec::new();
+
+        for (entity_id, expanded) in entities {
+            let obj = match expanded {
+                Value::Array(arr) => arr.first().and_then(|v| v.as_object()),
+                Value::Object(obj) => Some(obj),
+                _other => None,
+            };
+
+            let Some(obj) = obj else {
+                continue;
+            };
+
+            for (attr_name, attr_value) in obj {
+                if attr_name.starts_with('@') || is_system_attribute(attr_name) {
+                    continue;
+                }
+
+                // Handle scope entries as synthetic Property instances
+                if attr_name == vocab::SCOPE.as_str() {
+                    if let Some(scope_arr) = attr_value.as_array() {
+                        for scope_entry in scope_arr {
+                            if let Some(scope_val) = scope_entry.as_object().and_then(|o| o.get("@value")).and_then(|v| v.as_str()) {
+                                let tea_idx = tea_entries.len();
+                                tea_entries.push(TeaBatchEntry {
+                                    entity_id: entity_id.clone(),      // clone: owned String for batch entry
+                                    attribute_name: attr_name.clone(), // clone: owned String for batch entry
+                                    attribute_type: AttributeType::Property.short_name().to_string(),
+                                    dataset_id: None,
+                                    value_type: ValueType::String.to_string(),
+                                });
+                                let time = Utc::now();
+                                pending_histories.push(PendingHistory {
+                                    time,
+                                    db_params: DbValueParams {
+                                        value_number: None,
+                                        value_string: Some(scope_val.to_string()),
+                                        value_bool: None,
+                                        value_geo: None,
+                                        value_object: None,
+                                        value_datetime: None,
+                                        value_uri: None,
+                                    },
+                                    instance_id: format!("urn:ngsi-ld:attribute:instance:{}", uuid::Uuid::new_v4()),
+                                    observed_at: None,
+                                    metadata: None,
+                                });
+                                tea_index.push(tea_idx);
+                            }
+                        }
+                    }
+                    continue;
+                }
+
+                let instances = match attr_value {
+                    Value::Array(arr) => arr,
+                    _other => continue,
+                };
+
+                for instance in instances {
+                    let Some(inst_obj) = instance.as_object() else {
+                        continue;
+                    };
+
+                    if !is_ngsi_ld_attribute_instance(inst_obj) {
+                        continue;
+                    }
+
+                    let attribute_type = detect_attribute_type(instance);
+                    let typed_value = match extract_typed_value(instance, attribute_type) {
+                        Ok(v) => v,
+                        Err(e) => {
+                            tracing::warn!(error = %e, entity_id = %entity_id, attr = %attr_name, event = "temporal_batch_extract_failed");
+                            continue;
+                        }
+                    };
+                    let value_type = typed_value.value_type();
+                    let dataset_id = extract_dataset_id(instance);
+                    let observed_at_str = extract_observed_at(instance);
+                    let instance_id = extract_or_generate_instance_id(instance);
+                    let metadata = collect_metadata(instance);
+
+                    let time = observed_at_str
+                        .as_ref()
+                        .and_then(|s| DateTime::parse_from_rfc3339(s).map(|dt| dt.with_timezone(&Utc)).ok())
+                        .unwrap_or_else(Utc::now);
+
+                    let observed_at = observed_at_str
+                        .as_ref()
+                        .and_then(|s| DateTime::parse_from_rfc3339(s).map(|dt| dt.with_timezone(&Utc)).ok());
+
+                    let tea_idx = tea_entries.len();
+                    tea_entries.push(TeaBatchEntry {
+                        entity_id: entity_id.clone(),      // clone: owned String for batch entry
+                        attribute_name: attr_name.clone(), // clone: owned String for batch entry
+                        attribute_type: attribute_type.short_name().to_string(),
+                        dataset_id: dataset_id.map(|u| u.to_string()),
+                        value_type: value_type.to_string(),
+                    });
+                    pending_histories.push(PendingHistory {
+                        time,
+                        db_params: typed_value.into_db_params(),
+                        instance_id,
+                        observed_at,
+                        metadata,
+                    });
+                    tea_index.push(tea_idx);
+                }
+            }
+        }
+
+        if tea_entries.is_empty() {
+            return Ok(());
+        }
+
+        // Phase 2: Bulk upsert all TEA entries in a single SQL round-trip.
+        let tea_results = self.repo.upsert_tea_batch(&tea_entries).await?;
+
+        // Build a lookup map: (entity_id, attribute_name, dataset_id) -> tea_id
+        let mut tea_id_map: std::collections::HashMap<(&str, &str, Option<&str>), uuid::Uuid> = std::collections::HashMap::with_capacity(tea_results.len());
+        for r in &tea_results {
+            tea_id_map.insert((r.entity_id.as_str(), r.attribute_name.as_str(), r.dataset_id.as_deref()), r.id);
+        }
+
+        // Phase 3: Build history entries by resolving TEA UUIDs from the map.
+        let mut history_entries = Vec::with_capacity(pending_histories.len());
+        for (i, ph) in pending_histories.into_iter().enumerate() {
+            let tea_entry = &tea_entries[tea_index[i]];
+            let tea_id = match tea_id_map.get(&(tea_entry.entity_id.as_str(), tea_entry.attribute_name.as_str(), tea_entry.dataset_id.as_deref())) {
+                Some(id) => *id,
+                None => {
+                    tracing::warn!(
+                        entity_id = %tea_entry.entity_id,
+                        attr = %tea_entry.attribute_name,
+                        event = "tea_id_not_found_in_batch_result"
+                    );
+                    continue;
+                }
+            };
+
+            history_entries.push(HistoryBatchEntry {
+                time: ph.time,
+                tea_id,
+                value_number: ph.db_params.value_number,
+                value_string: ph.db_params.value_string,
+                value_bool: ph.db_params.value_bool,
+                value_geo: ph.db_params.value_geo,
+                value_object: ph.db_params.value_object,
+                value_datetime: ph.db_params.value_datetime,
+                value_uri: ph.db_params.value_uri,
+                instance_id: ph.instance_id,
+                observed_at: ph.observed_at,
+                metadata: ph.metadata,
+            });
+        }
+
+        // Phase 4: Bulk insert all history rows in a single transaction.
+        self.repo.insert_history_batch(&history_entries).await?;
 
         Ok(())
     }

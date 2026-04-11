@@ -22,9 +22,37 @@ use chrono::{DateTime, SecondsFormat, Utc};
 use serde_json::{Map, Value};
 use sqlx::postgres::PgPool;
 use std::{collections::HashSet, sync::Arc};
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, mpsc};
 use tracing::debug;
 use urn::Urn;
+
+/// Runtime tuning for batch entity execution paths.
+#[derive(Clone, Debug)]
+pub struct BatchExecutionConfig {
+    /// Maximum number of concurrent entity preparations.
+    pub concurrency: usize,
+    /// Maximum number of entities processed per chunk in large-batch mode.
+    pub chunk_size: usize,
+    /// Entity-count threshold that enables chunked large-batch processing.
+    pub large_threshold: usize,
+    /// Entity-count threshold that offloads preparation post-processing to blocking workers.
+    pub prepare_blocking_threshold: usize,
+}
+
+#[derive(Debug)]
+pub(crate) struct BatchSideEffectJob {
+    pub temporal_entities: Vec<(String, Value)>,
+    pub change_events: Vec<ChangeEvent>,
+}
+
+/// Configuration for deferred batch side-effect delivery.
+#[derive(Clone, Debug)]
+pub(crate) struct BatchSideEffectDispatcherConfig {
+    /// Minimum batch size required before dispatching work to the background queue.
+    pub threshold: usize,
+    /// Queue sender used to hand jobs to the background worker.
+    pub sender: mpsc::Sender<BatchSideEffectJob>,
+}
 
 /// Service layer for NGSI-LD entity CRUD operations.
 pub struct EntityService {
@@ -32,12 +60,22 @@ pub struct EntityService {
     temporal_recorder: TemporalRecorder,
     engine: JsonLdEngine,
     change_tx: Option<broadcast::Sender<ChangeEvent>>,
+    batch_async_side_effects: Option<BatchSideEffectDispatcherConfig>,
+    batch_chunk_size: usize,
     batch_concurrency: usize,
+    batch_large_threshold: usize,
+    batch_prepare_blocking_threshold: usize,
 }
 
 impl EntityService {
     /// Create a new entity service backed by the given connection pool.
-    pub fn new(pool: &PgPool, engine: JsonLdEngine, change_tx: Option<broadcast::Sender<ChangeEvent>>, batch_concurrency: usize) -> EntityService {
+    pub fn new(
+        pool: &PgPool,
+        engine: JsonLdEngine,
+        change_tx: Option<broadcast::Sender<ChangeEvent>>,
+        batch_config: BatchExecutionConfig,
+        batch_async_side_effects: Option<BatchSideEffectDispatcherConfig>,
+    ) -> EntityService {
         let repo = EntityRepository::new(pool);
         let temporal_repo = Arc::new(TemporalRepository::new(pool));
         let temporal_recorder = TemporalRecorder::new(temporal_repo);
@@ -49,7 +87,11 @@ impl EntityService {
             temporal_recorder,
             engine,
             change_tx,
-            batch_concurrency: batch_concurrency.max(1),
+            batch_async_side_effects,
+            batch_chunk_size: batch_config.chunk_size.max(1),
+            batch_concurrency: batch_config.concurrency.max(1),
+            batch_large_threshold: batch_config.large_threshold.max(1),
+            batch_prepare_blocking_threshold: batch_config.prepare_blocking_threshold.max(1),
         }
     }
 
@@ -72,6 +114,42 @@ impl EntityService {
             Ok(Some(stored)) => extract_entity_types(&stored),
             _other => vec![],
         }
+    }
+
+    async fn apply_batch_side_effects(&self, job: BatchSideEffectJob) {
+        let BatchSideEffectJob {
+            temporal_entities,
+            change_events,
+        } = job;
+
+        if let Err(error) = self.temporal_recorder.record_entities_batch(&temporal_entities).await {
+            tracing::warn!(error = %error, event = "temporal_batch_recording_failed");
+        }
+
+        for event in change_events {
+            self.emit_change(event);
+        }
+    }
+
+    async fn dispatch_batch_side_effects(&self, batch_size: usize, job: BatchSideEffectJob) {
+        if job.temporal_entities.is_empty() && job.change_events.is_empty() {
+            return;
+        }
+
+        if let Some(dispatcher) = &self.batch_async_side_effects
+            && batch_size >= dispatcher.threshold
+        {
+            match dispatcher.sender.try_send(job) {
+                Ok(()) => return,
+                Err(mpsc::error::TrySendError::Full(job)) | Err(mpsc::error::TrySendError::Closed(job)) => {
+                    tracing::warn!(event = "batch_side_effect_queue_unavailable", batch_size);
+                    self.apply_batch_side_effects(job).await;
+                    return;
+                }
+            }
+        }
+
+        self.apply_batch_side_effects(job).await;
     }
 
     // -------------------------------------------------------------------------

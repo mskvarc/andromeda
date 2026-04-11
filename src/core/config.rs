@@ -148,13 +148,58 @@ pub struct MultitenancyConfig {
     pub janitor_interval_seconds: u64,
 }
 
-#[derive(Config, Debug, Clone, Default)]
+#[derive(Config, Debug, Clone)]
 #[config(layer_attr(derive(Args)))]
 pub struct PerformanceConfig {
     /// Maximum concurrent entities processed in batch operations.
     /// If omitted, the runtime uses `min(database.max_connections, 25)`.
     #[config(layer_attr(arg(long = "batch-concurrency")))]
     pub batch_concurrency: Option<usize>,
+
+    /// Batch size used for chunked processing of large entity operation payloads.
+    #[config(default = 512)]
+    #[config(layer_attr(arg(long = "batch-chunk-size")))]
+    pub batch_chunk_size: usize,
+
+    /// Entity-count threshold above which the runtime switches to the large-batch path.
+    #[config(default = 512)]
+    #[config(layer_attr(arg(long = "batch-large-threshold")))]
+    pub batch_large_threshold: usize,
+
+    /// Entity-count threshold above which expensive preparation stages are moved off async workers.
+    #[config(default = 128)]
+    #[config(layer_attr(arg(long = "batch-prepare-blocking-threshold")))]
+    pub batch_prepare_blocking_threshold: usize,
+
+    /// Queue capacity for deferred batch side-effect processing jobs.
+    #[config(default = 8)]
+    #[config(layer_attr(arg(long = "batch-side-effect-queue-capacity")))]
+    pub batch_side_effect_queue_capacity: usize,
+
+    /// If set, successful batch side effects for batches at or above this size
+    /// are deferred to a background worker.
+    #[config(layer_attr(arg(long = "batch-async-side-effect-threshold")))]
+    pub batch_async_side_effect_threshold: Option<usize>,
+
+    /// Maximum HTTP request body size in bytes.
+    /// Defaults to 64 MiB. Set higher for very large batch operations.
+    #[config(default = 67_108_864)]
+    #[config(layer_attr(arg(long = "max-request-body-bytes")))]
+    pub max_request_body_bytes: usize,
+}
+
+impl Default for PerformanceConfig {
+    fn default() -> PerformanceConfig {
+        PerformanceConfig {
+            batch_concurrency: None,
+            batch_chunk_size: 512,
+            batch_large_threshold: 512,
+            batch_prepare_blocking_threshold: 128,
+            batch_side_effect_queue_capacity: 8,
+            batch_async_side_effect_threshold: None,
+            max_request_body_bytes: 67_108_864,
+        }
+    }
 }
 
 impl Configuration {

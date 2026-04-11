@@ -393,3 +393,229 @@ fn parse_tea_entry(row: &PgRow) -> Result<TeaEntry, AndromedaError> {
         value_type,
     })
 }
+
+// ---------------------------------------------------------------------------
+// Bulk batch types and operations
+// ---------------------------------------------------------------------------
+
+/// Input for a single TEA catalog entry in a bulk upsert.
+#[derive(Debug)]
+pub struct TeaBatchEntry {
+    /// Entity identifier.
+    pub entity_id: String,
+    /// Expanded IRI of the attribute.
+    pub attribute_name: String,
+    /// NGSI-LD attribute meta-type short name (e.g. "Property").
+    pub attribute_type: String,
+    /// Multi-attribute discriminator; `None` for the default instance.
+    pub dataset_id: Option<String>,
+    /// Runtime value type (e.g. "Number", "String").
+    pub value_type: String,
+}
+
+/// Result of a bulk TEA upsert: maps back to the input entry via its natural key.
+#[derive(Debug)]
+pub struct TeaBatchResult {
+    /// Surrogate UUID assigned by the database.
+    pub id: uuid::Uuid,
+    /// Entity identifier (from the input).
+    pub entity_id: String,
+    /// Attribute IRI (from the input).
+    pub attribute_name: String,
+    /// Dataset ID (from the input).
+    pub dataset_id: Option<String>,
+}
+
+/// Input for a single attribute history observation in a bulk insert.
+#[derive(Debug)]
+pub struct HistoryBatchEntry {
+    /// TimescaleDB partition key.
+    pub time: DateTime<Utc>,
+    /// Foreign key into the TEA catalog.
+    pub tea_id: uuid::Uuid,
+    /// Numeric value column.
+    pub value_number: Option<f64>,
+    /// String value column.
+    pub value_string: Option<String>,
+    /// Boolean value column.
+    pub value_bool: Option<bool>,
+    /// GeoJSON geometry string.
+    pub value_geo: Option<String>,
+    /// JSON object value column.
+    pub value_object: Option<Value>,
+    /// DateTime value column.
+    pub value_datetime: Option<DateTime<Utc>>,
+    /// URI value column (for Relationships).
+    pub value_uri: Option<String>,
+    /// Unique instance identifier.
+    pub instance_id: String,
+    /// Application-level observation timestamp.
+    pub observed_at: Option<DateTime<Utc>>,
+    /// Additional metadata (sub-attributes, unitCode, etc.).
+    pub metadata: Option<Value>,
+}
+
+impl TemporalRepository {
+    /// Bulk upsert TEA catalog entries in a single SQL round-trip using `UNNEST`.
+    ///
+    /// Returns one [`TeaBatchResult`] per input entry with the resolved UUID,
+    /// enabling the caller to build history rows without additional queries.
+    pub async fn upsert_tea_batch(&self, entries: &[TeaBatchEntry]) -> Result<Vec<TeaBatchResult>, AndromedaError> {
+        if entries.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let mut entity_ids = Vec::with_capacity(entries.len());
+        let mut attribute_names = Vec::with_capacity(entries.len());
+        let mut attribute_types = Vec::with_capacity(entries.len());
+        let mut dataset_ids: Vec<Option<String>> = Vec::with_capacity(entries.len());
+        let mut value_types = Vec::with_capacity(entries.len());
+
+        for e in entries {
+            entity_ids.push(e.entity_id.as_str());
+            attribute_names.push(e.attribute_name.as_str());
+            attribute_types.push(e.attribute_type.as_str());
+            dataset_ids.push(e.dataset_id.clone()); // clone: Option<String> for sqlx bind vector
+            value_types.push(e.value_type.as_str());
+        }
+
+        let rows = sqlx::query(
+            r#"
+            INSERT INTO temporal_entity_attributes (entity_id, attribute_name, attribute_type, dataset_id, value_type)
+            SELECT d.entity_id, d.attribute_name, d.attribute_type, d.dataset_id, d.value_type
+            FROM UNNEST($1::text[], $2::text[], $3::text[], $4::text[], $5::text[])
+                AS d(entity_id, attribute_name, attribute_type, dataset_id, value_type)
+            ON CONFLICT (entity_id, attribute_name, dataset_id) DO UPDATE
+            SET attribute_type = EXCLUDED.attribute_type, value_type = EXCLUDED.value_type
+            RETURNING id, entity_id, attribute_name, dataset_id
+            "#,
+        )
+        .bind(&entity_ids)
+        .bind(&attribute_names)
+        .bind(&attribute_types)
+        .bind(&dataset_ids)
+        .bind(&value_types)
+        .fetch_all(&self.pool)
+        .await?;
+
+        let results = rows
+            .into_iter()
+            .map(|row| TeaBatchResult {
+                id: row.get("id"),
+                entity_id: row.get("entity_id"),
+                attribute_name: row.get("attribute_name"),
+                dataset_id: row.get("dataset_id"),
+            })
+            .collect();
+        Ok(results)
+    }
+
+    /// Bulk insert attribute history rows in a single transaction.
+    ///
+    /// Performs deduplication (DELETE conflicting instance_id / observed_at rows)
+    /// then inserts all entries using `UNNEST`, all within a single transaction.
+    /// This replaces N individual `BEGIN + DELETE + INSERT + COMMIT` cycles with
+    /// a single `BEGIN + bulk DELETE + bulk INSERT + COMMIT`.
+    pub async fn insert_history_batch(&self, entries: &[HistoryBatchEntry]) -> Result<(), AndromedaError> {
+        if entries.is_empty() {
+            return Ok(());
+        }
+
+        let len = entries.len();
+        let mut times = Vec::with_capacity(len);
+        let mut tea_ids = Vec::with_capacity(len);
+        let mut value_numbers: Vec<Option<f64>> = Vec::with_capacity(len);
+        let mut value_strings: Vec<Option<String>> = Vec::with_capacity(len);
+        let mut value_bools: Vec<Option<bool>> = Vec::with_capacity(len);
+        let mut value_geos: Vec<Option<String>> = Vec::with_capacity(len);
+        let mut value_objects: Vec<Option<Value>> = Vec::with_capacity(len);
+        let mut value_datetimes: Vec<Option<DateTime<Utc>>> = Vec::with_capacity(len);
+        let mut value_uris: Vec<Option<String>> = Vec::with_capacity(len);
+        let mut instance_ids = Vec::with_capacity(len);
+        let mut observed_ats: Vec<Option<DateTime<Utc>>> = Vec::with_capacity(len);
+        let mut metadatas: Vec<Option<Value>> = Vec::with_capacity(len);
+
+        // Dedup keys for the pre-delete step
+        let mut dedup_tea_ids = Vec::with_capacity(len);
+        let mut dedup_instance_ids = Vec::with_capacity(len);
+        let mut dedup_observed_ats: Vec<Option<DateTime<Utc>>> = Vec::with_capacity(len);
+
+        for e in entries {
+            times.push(e.time);
+            tea_ids.push(e.tea_id);
+            value_numbers.push(e.value_number);
+            value_strings.push(e.value_string.clone()); // clone: owned Option<String> for sqlx bind vector
+            value_bools.push(e.value_bool);
+            value_geos.push(e.value_geo.clone()); // clone: owned Option<String> for sqlx bind vector
+            value_objects.push(e.value_object.clone()); // clone: owned Option<Value> for sqlx bind vector
+            value_datetimes.push(e.value_datetime);
+            value_uris.push(e.value_uri.clone()); // clone: owned Option<String> for sqlx bind vector
+            instance_ids.push(e.instance_id.as_str());
+            observed_ats.push(e.observed_at);
+            metadatas.push(e.metadata.clone()); // clone: owned Option<Value> for sqlx bind vector
+
+            dedup_tea_ids.push(e.tea_id);
+            dedup_instance_ids.push(e.instance_id.as_str());
+            dedup_observed_ats.push(e.observed_at);
+        }
+
+        let mut tx = self.pool.begin().await?;
+
+        // Bulk dedup: delete rows that would conflict by (tea_id, instance_id)
+        // or by (tea_id, observed_at) when observed_at is present.
+        sqlx::query(
+            r#"
+            DELETE FROM attribute_history ah
+            USING UNNEST($1::uuid[], $2::text[], $3::timestamptz[])
+                AS d(tea_id, instance_id, observed_at)
+            WHERE ah.tea_id = d.tea_id
+            AND (ah.instance_id = d.instance_id
+                 OR (d.observed_at IS NOT NULL AND ah.observed_at = d.observed_at))
+            "#,
+        )
+        .bind(&dedup_tea_ids)
+        .bind(&dedup_instance_ids)
+        .bind(&dedup_observed_ats)
+        .execute(&mut *tx)
+        .await?;
+
+        // Bulk insert all history entries
+        sqlx::query(
+            r#"
+            INSERT INTO attribute_history
+                (time, tea_id, value_number, value_string, value_bool,
+                 value_geo, value_object, value_datetime, value_uri,
+                 instance_id, observed_at, metadata)
+            SELECT
+                d.time, d.tea_id, d.value_number, d.value_string, d.value_bool,
+                ST_MakeValid(ST_SetSRID(ST_GeomFromGeoJSON(d.value_geo), 4326)),
+                d.value_object, d.value_datetime, d.value_uri,
+                d.instance_id, d.observed_at, d.metadata
+            FROM UNNEST(
+                $1::timestamptz[], $2::uuid[], $3::double precision[], $4::text[], $5::boolean[],
+                $6::text[], $7::jsonb[], $8::timestamptz[], $9::text[],
+                $10::text[], $11::timestamptz[], $12::jsonb[]
+            ) AS d(time, tea_id, value_number, value_string, value_bool,
+                   value_geo, value_object, value_datetime, value_uri,
+                   instance_id, observed_at, metadata)
+            "#,
+        )
+        .bind(&times)
+        .bind(&tea_ids)
+        .bind(&value_numbers)
+        .bind(&value_strings)
+        .bind(&value_bools)
+        .bind(&value_geos)
+        .bind(&value_objects)
+        .bind(&value_datetimes)
+        .bind(&value_uris)
+        .bind(&instance_ids)
+        .bind(&observed_ats)
+        .bind(&metadatas)
+        .execute(&mut *tx)
+        .await?;
+
+        tx.commit().await?;
+        Ok(())
+    }
+}

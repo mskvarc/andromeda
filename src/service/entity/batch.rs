@@ -2,7 +2,7 @@ use crate::{
     core::error::AndromedaError,
     domain::{
         entity::Entity,
-        expanded,
+        expanded::{self, append_entity_attrs, merge_entity, update_entity_attrs},
         notification::{ChangeEvent, SysAttrsSnapshot, TriggerReason},
         uri::Uri,
     },
@@ -10,9 +10,11 @@ use crate::{
     query::sql,
     repository::entity::PreparedEntityRow,
     service::entity::{
+        BatchSideEffectJob,
         EntityService,
         extract_attribute_keys,
         extract_entity_types,
+        extract_scopes,
         normalize_entity_attributes,
         unwrap_expanded_ref,
         validate_attribute_envelopes,
@@ -20,7 +22,8 @@ use crate::{
 };
 use futures::{StreamExt, stream};
 use serde_json::Value;
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, hash_map::Entry};
+use tokio::task;
 
 /// Domain-level result of a batch operation.
 ///
@@ -38,7 +41,7 @@ pub struct BatchResult {
 /// Pre-processed entity data ready for bulk SQL operations.
 ///
 /// Holds all fields extracted during the Rust-side preparation phase
-/// (serialization, normalization, JSON-LD expansion, validation).  The
+/// (serialization, normalization, JSON-LD expansion, validation). The
 /// data is in the exact shape required by the repository bulk methods.
 struct PreparedEntity {
     /// Entity identifier string.
@@ -49,6 +52,8 @@ struct PreparedEntity {
     types: Vec<String>,
     /// Scope values extracted from the expanded payload.
     scopes: Vec<String>,
+    /// Attribute keys changed by this request payload.
+    changed_attributes: Vec<String>,
     /// GeoJSON string for `location`, if present.
     location: Option<String>,
     /// GeoJSON string for `observationSpace`, if present.
@@ -76,48 +81,66 @@ impl PreparedEntity {
     }
 }
 
+#[derive(Clone, Copy)]
+enum PrepareExecution {
+    Inline,
+    Offload,
+}
+
+struct BatchEffectEntity {
+    changed_attributes: Vec<String>,
+    expanded: Value,
+    types: Vec<String>,
+}
+
 /// Build a [`PreparedEntityRow`] from an already-merged expanded payload.
 ///
 /// Used by update/merge/upsert flows where the caller has already produced the
 /// final merged payload and needs a row for `save_batch`.
-fn row_from_expanded(id: String, expanded: &Value) -> PreparedEntityRow {
+fn row_from_expanded(id: String, expanded: Value) -> PreparedEntityRow {
     PreparedEntityRow {
         id,
-        types_json: Value::Array(expanded::extract_types(expanded).into_iter().map(Value::String).collect()),
+        types_json: Value::Array(expanded::extract_types(&expanded).into_iter().map(Value::String).collect()),
         scope_paths_json: Value::Array(
-            expanded::extract_scopes(expanded)
+            expanded::extract_scopes(&expanded)
                 .into_iter()
                 .map(|s| Value::String(sql::scope_to_ltree(&s)))
                 .collect(),
         ),
-        payload: expanded.clone(), // clone: ownership transfer into row for SQL binding
-        location: expanded::extract_location_geojson(expanded),
-        observation_space: expanded::extract_observation_space_geojson(expanded),
-        operation_space: expanded::extract_operation_space_geojson(expanded),
-        expires_at: expanded::extract_expires_at(expanded),
+        payload: expanded.clone(),
+        location: expanded::extract_location_geojson(&expanded),
+        observation_space: expanded::extract_observation_space_geojson(&expanded),
+        operation_space: expanded::extract_operation_space_geojson(&expanded),
+        expires_at: expanded::extract_expires_at(&expanded),
     }
 }
 
 impl EntityService {
-    /// Serialize, normalize, expand, and validate a single entity, returning the
-    /// pre-processed data needed for bulk SQL operations.
-    ///
-    /// On failure, returns the entity ID paired with the error so the caller
-    /// can aggregate per-entity errors.
-    async fn prepare_entity(&self, entity: &Entity, context: &ContextSpec) -> Result<PreparedEntity, (String, AndromedaError)> {
-        let id = entity.id.to_string();
+    fn is_large_batch(&self, len: usize) -> bool {
+        len >= self.batch_large_threshold
+    }
 
-        let mut entity_json =
-            serde_json::to_value(entity).map_err(|err| (id.clone(), AndromedaError::entity_validation(format!("Invalid entity payload: {}", err))))?;
-        normalize_entity_attributes(&mut entity_json);
-        let expanded = self.engine.expand(entity_json, context).await.map_err(|err| {
-            let err: AndromedaError = err.into();
-            (id.clone(), err)
-        })?;
+    fn batch_chunk_len(&self, len: usize) -> usize {
+        if self.is_large_batch(len) {
+            self.batch_chunk_size.min(len).max(1)
+        } else {
+            len.max(1)
+        }
+    }
+
+    fn prepare_execution(&self, len: usize) -> PrepareExecution {
+        if len >= self.batch_prepare_blocking_threshold {
+            PrepareExecution::Offload
+        } else {
+            PrepareExecution::Inline
+        }
+    }
+
+    fn build_prepared_entity(id: String, expanded: Value) -> Result<PreparedEntity, (String, AndromedaError)> {
         validate_attribute_envelopes(&expanded).map_err(|err| (id.clone(), err))?;
-
+        let changed_attributes = extract_attribute_keys(&expanded);
         let types = extract_entity_types(&expanded);
-        let scopes = crate::service::entity::extract_scopes(&expanded);
+        let scopes = extract_scopes(&expanded);
         let location = expanded::extract_location_geojson(&expanded);
         let observation_space = expanded::extract_observation_space_geojson(&expanded);
         let operation_space = expanded::extract_operation_space_geojson(&expanded);
@@ -128,6 +151,7 @@ impl EntityService {
             expanded,
             types,
             scopes,
+            changed_attributes,
             location,
             observation_space,
             operation_space,
@@ -135,23 +159,435 @@ impl EntityService {
         })
     }
 
-    /// Prepare multiple entities concurrently, partitioning into successes and errors.
-    async fn prepare_entities(&self, entities: &[Entity], context: &ContextSpec) -> (Vec<PreparedEntity>, Vec<(String, AndromedaError)>) {
-        let results: Vec<_> = stream::iter(entities)
-            .map(|entity| async { self.prepare_entity(entity, context).await })
+    /// Serialize, normalize, expand, and validate a single entity, returning the
+    /// pre-processed data needed for bulk SQL operations.
+    ///
+    /// On failure, returns the entity ID paired with the error so the caller
+    /// can aggregate per-entity errors.
+    async fn prepare_entity(&self, entity: &Entity, context: &ContextSpec, execution: PrepareExecution) -> Result<PreparedEntity, (String, AndromedaError)> {
+        let id = entity.id.to_string();
+
+        let mut entity_json =
+            serde_json::to_value(entity).map_err(|err| (id.clone(), AndromedaError::entity_validation(format!("Invalid entity payload: {}", err))))?;
+        normalize_entity_attributes(&mut entity_json);
+        let expanded = self.engine.expand(entity_json, context).await.map_err(|err| {
+            let err: AndromedaError = err.into();
+            (id.clone(), err)
+        })?;
+
+        match execution {
+            PrepareExecution::Inline => Self::build_prepared_entity(id, expanded),
+            PrepareExecution::Offload => task::spawn_blocking(move || Self::build_prepared_entity(id, expanded)).await.map_err(|error| {
+                (
+                    "unknown".to_string(),
+                    AndromedaError::internal(format!("Batch preparation task failed: {error}")),
+                )
+            })?,
+        }
+    }
+
+    async fn prepare_entity_refs(&self, entities: &[&Entity], context: &ContextSpec) -> (Vec<PreparedEntity>, Vec<(String, AndromedaError)>) {
+        let execution = self.prepare_execution(entities.len());
+        let results: Vec<_> = stream::iter(entities.iter().copied())
+            .map(|entity| async move { self.prepare_entity(entity, context, execution).await })
             .buffer_unordered(self.batch_concurrency)
             .collect()
             .await;
 
-        let mut prepared = Vec::new();
+        let mut prepared = Vec::with_capacity(results.len());
         let mut errors = Vec::new();
         for result in results {
             match result {
-                Ok(p) => prepared.push(p),
-                Err(pair) => errors.push(pair),
+                Ok(entity) => prepared.push(entity),
+                Err(error) => errors.push(error),
             }
         }
         (prepared, errors)
+    }
+
+    async fn prepare_entities(&self, entities: &[Entity], context: &ContextSpec) -> (Vec<PreparedEntity>, Vec<(String, AndromedaError)>) {
+        let refs: Vec<&Entity> = entities.iter().collect();
+        self.prepare_entity_refs(&refs, context).await
+    }
+
+    fn drain_effect_entities(
+        entity_data: &mut HashMap<String, BatchEffectEntity>,
+        ids: &[String],
+        trigger_reason: TriggerReason,
+    ) -> (BatchSideEffectJob, Vec<String>) {
+        let mut change_events = Vec::with_capacity(ids.len());
+        let mut success = Vec::with_capacity(ids.len());
+        let mut temporal_entities = Vec::with_capacity(ids.len());
+
+        for id in ids {
+            let Some(effect) = entity_data.remove(id) else {
+                continue;
+            };
+
+            temporal_entities.push((id.clone(), effect.expanded));
+            match id.parse::<Uri>() {
+                Ok(entity_uri) => {
+                    change_events.push(ChangeEvent::new(entity_uri, effect.types, trigger_reason.clone()).with_changed_attributes(effect.changed_attributes));
+                }
+                Err(_error) => {
+                    tracing::error!(entity_id = %id, event = "entity_uri_parse_failed");
+                }
+            }
+            success.push(id.clone());
+        }
+
+        (
+            BatchSideEffectJob {
+                temporal_entities,
+                change_events,
+            },
+            success,
+        )
+    }
+
+    fn drain_upsert_effect_entities(
+        entity_data: &mut HashMap<String, BatchEffectEntity>,
+        upserted: Vec<(String, bool)>,
+    ) -> (BatchSideEffectJob, Vec<String>, Vec<String>) {
+        let mut change_events = Vec::with_capacity(upserted.len());
+        let mut created = Vec::new();
+        let mut success = Vec::with_capacity(upserted.len());
+        let mut temporal_entities = Vec::with_capacity(upserted.len());
+
+        for (id, was_created) in upserted {
+            let Some(effect) = entity_data.remove(&id) else {
+                continue;
+            };
+
+            let trigger_reason = if was_created {
+                created.push(id.clone());
+                TriggerReason::EntityCreated
+            } else {
+                TriggerReason::EntityUpdated
+            };
+            temporal_entities.push((id.clone(), effect.expanded));
+            match id.parse::<Uri>() {
+                Ok(entity_uri) => {
+                    change_events.push(ChangeEvent::new(entity_uri, effect.types, trigger_reason).with_changed_attributes(effect.changed_attributes));
+                }
+                Err(_error) => {
+                    tracing::error!(entity_id = %id, event = "entity_uri_parse_failed");
+                }
+            }
+            success.push(id);
+        }
+
+        (
+            BatchSideEffectJob {
+                temporal_entities,
+                change_events,
+            },
+            success,
+            created,
+        )
+    }
+
+    fn dedupe_create_entities<'a>(entities: &'a [Entity]) -> (Vec<&'a Entity>, Vec<(String, AndromedaError)>) {
+        let mut deduped = Vec::with_capacity(entities.len());
+        let mut errors = Vec::new();
+        let mut seen = HashSet::with_capacity(entities.len());
+
+        for entity in entities {
+            let id = entity.id.to_string();
+            if seen.insert(id.clone()) {
+                deduped.push(entity);
+            } else {
+                errors.push((id.clone(), AndromedaError::entity_already_exists(&id)));
+            }
+        }
+
+        (deduped, errors)
+    }
+
+    fn dedupe_upsert_entities<'a>(entities: &'a [Entity]) -> Vec<&'a Entity> {
+        let mut seen = HashSet::with_capacity(entities.len());
+        entities
+            .iter()
+            .rev()
+            .filter(|entity| seen.insert(entity.id.to_string()))
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect()
+    }
+
+    async fn batch_create_chunk(&self, entities: &[&Entity], context: &ContextSpec, original_batch_size: usize) -> Result<BatchResult, AndromedaError> {
+        let (prepared, mut errors) = self.prepare_entity_refs(entities, context).await;
+
+        if prepared.is_empty() {
+            return Ok(BatchResult { success: Vec::new(), errors });
+        }
+
+        let mut entity_data = HashMap::with_capacity(prepared.len());
+        let mut rows = Vec::with_capacity(prepared.len());
+        for prepared_entity in prepared {
+            let key = prepared_entity.id.clone();
+            match entity_data.entry(key) {
+                Entry::Occupied(entry) => {
+                    let id = entry.key().clone();
+                    errors.push((id.clone(), AndromedaError::entity_already_exists(&id)));
+                }
+                Entry::Vacant(entry) => {
+                    let effect = BatchEffectEntity {
+                        changed_attributes: prepared_entity.changed_attributes.clone(),
+                        expanded: prepared_entity.expanded.clone(),
+                        types: prepared_entity.types.clone(),
+                    };
+                    entry.insert(effect);
+                    rows.push(prepared_entity.into_row());
+                }
+            }
+        }
+
+        let inserted_ids = self.repo.create_batch(rows).await?;
+        let inserted_set: HashSet<&str> = inserted_ids.iter().map(String::as_str).collect();
+        for id in entity_data.keys() {
+            if !inserted_set.contains(id.as_str()) {
+                errors.push((id.clone(), AndromedaError::entity_already_exists(id)));
+            }
+        }
+
+        let (job, success) = Self::drain_effect_entities(&mut entity_data, &inserted_ids, TriggerReason::EntityCreated);
+        self.dispatch_batch_side_effects(original_batch_size, job).await;
+
+        Ok(BatchResult { success, errors })
+    }
+
+    async fn batch_update_chunk(
+        &self,
+        entities: &[Entity],
+        context: &ContextSpec,
+        no_overwrite: bool,
+        original_batch_size: usize,
+    ) -> Result<BatchResult, AndromedaError> {
+        let (prepared, mut errors) = self.prepare_entities(entities, context).await;
+        if prepared.is_empty() {
+            return Ok(BatchResult { success: Vec::new(), errors });
+        }
+
+        let prepared_ids: Vec<String> = prepared.iter().map(|entity| entity.id.clone()).collect();
+        let existing_map = self.repo.get_batch(&prepared_ids).await?;
+
+        let mut effect_entities = HashMap::with_capacity(prepared.len());
+        let mut save_rows = Vec::with_capacity(prepared.len());
+
+        for prepared_entity in prepared {
+            let id = prepared_entity.id;
+            let Some(mut existing) = existing_map.get(&id).cloned() else {
+                errors.push((id.clone(), AndromedaError::entity_not_found(&id)));
+                continue;
+            };
+
+            let attrs = unwrap_expanded_ref(&prepared_entity.expanded);
+            if no_overwrite {
+                let skipped = has_overlapping_attrs(&existing, attrs);
+                if let Err(message) = append_entity_attrs(&mut existing, attrs, true) {
+                    errors.push((id, AndromedaError::internal(message)));
+                    continue;
+                }
+                if skipped {
+                    errors.push((
+                        id.clone(),
+                        AndromedaError::entity_validation("Some attributes already exist and were not updated due to noOverwrite"),
+                    ));
+                }
+            } else {
+                if let Err(message) = update_entity_attrs(&mut existing, attrs) {
+                    errors.push((id, AndromedaError::internal(message)));
+                    continue;
+                }
+                if let Err(message) = append_entity_attrs(&mut existing, attrs, false) {
+                    errors.push((id, AndromedaError::internal(message)));
+                    continue;
+                }
+            }
+
+            let row = row_from_expanded(id.clone(), existing);
+            let effect = BatchEffectEntity {
+                changed_attributes: prepared_entity.changed_attributes,
+                expanded: prepared_entity.expanded,
+                types: extract_entity_types(&row.payload),
+            };
+            effect_entities.insert(id, effect);
+            save_rows.push(row);
+        }
+
+        let saved_ids = self.repo.save_batch(save_rows).await?;
+        let (job, success) = Self::drain_effect_entities(&mut effect_entities, &saved_ids, TriggerReason::EntityUpdated);
+        self.dispatch_batch_side_effects(original_batch_size, job).await;
+
+        Ok(BatchResult { success, errors })
+    }
+
+    async fn batch_merge_chunk(&self, entities: &[Entity], context: &ContextSpec, original_batch_size: usize) -> Result<BatchResult, AndromedaError> {
+        let (prepared, mut errors) = self.prepare_entities(entities, context).await;
+        if prepared.is_empty() {
+            return Ok(BatchResult { success: Vec::new(), errors });
+        }
+
+        let prepared_ids: Vec<String> = prepared.iter().map(|entity| entity.id.clone()).collect();
+        let existing_map = self.repo.get_batch(&prepared_ids).await?;
+
+        let mut effect_entities = HashMap::with_capacity(prepared.len());
+        let mut save_rows = Vec::with_capacity(prepared.len());
+
+        for prepared_entity in prepared {
+            let id = prepared_entity.id;
+            let Some(mut existing) = existing_map.get(&id).cloned() else {
+                errors.push((id.clone(), AndromedaError::entity_not_found(&id)));
+                continue;
+            };
+
+            if let Err(message) = merge_entity(&mut existing, &prepared_entity.expanded) {
+                errors.push((id, AndromedaError::internal(message)));
+                continue;
+            }
+
+            let row = row_from_expanded(id.clone(), existing);
+            let effect = BatchEffectEntity {
+                changed_attributes: prepared_entity.changed_attributes,
+                expanded: prepared_entity.expanded,
+                types: extract_entity_types(&row.payload),
+            };
+            effect_entities.insert(id, effect);
+            save_rows.push(row);
+        }
+
+        let saved_ids = self.repo.save_batch(save_rows).await?;
+        let (job, success) = Self::drain_effect_entities(&mut effect_entities, &saved_ids, TriggerReason::EntityUpdated);
+        self.dispatch_batch_side_effects(original_batch_size, job).await;
+
+        Ok(BatchResult { success, errors })
+    }
+
+    async fn batch_upsert_replace_chunk(
+        &self,
+        entities: &[&Entity],
+        context: &ContextSpec,
+        errors: &mut Vec<(String, AndromedaError)>,
+        original_batch_size: usize,
+    ) -> Result<(BatchResult, Vec<String>), AndromedaError> {
+        let (prepared, mut chunk_errors) = self.prepare_entity_refs(entities, context).await;
+        errors.append(&mut chunk_errors);
+        if prepared.is_empty() {
+            return Ok((
+                BatchResult {
+                    success: Vec::new(),
+                    errors: Vec::new(),
+                },
+                Vec::new(),
+            ));
+        }
+
+        let mut entity_data = HashMap::with_capacity(prepared.len());
+        let mut rows = Vec::with_capacity(prepared.len());
+        for prepared_entity in prepared {
+            let effect = BatchEffectEntity {
+                changed_attributes: prepared_entity.changed_attributes.clone(),
+                expanded: prepared_entity.expanded.clone(),
+                types: prepared_entity.types.clone(),
+            };
+            entity_data.insert(prepared_entity.id.clone(), effect);
+            rows.push(prepared_entity.into_row());
+        }
+
+        let upserted = self.repo.upsert_batch(rows).await?;
+        let (job, success, created) = Self::drain_upsert_effect_entities(&mut entity_data, upserted);
+        self.dispatch_batch_side_effects(original_batch_size, job).await;
+
+        Ok((BatchResult { success, errors: Vec::new() }, created))
+    }
+
+    async fn batch_upsert_update_chunk(
+        &self,
+        entities: &[&Entity],
+        context: &ContextSpec,
+        errors: &mut Vec<(String, AndromedaError)>,
+        original_batch_size: usize,
+    ) -> Result<(BatchResult, Vec<String>), AndromedaError> {
+        let (prepared, mut chunk_errors) = self.prepare_entity_refs(entities, context).await;
+        errors.append(&mut chunk_errors);
+        if prepared.is_empty() {
+            return Ok((
+                BatchResult {
+                    success: Vec::new(),
+                    errors: Vec::new(),
+                },
+                Vec::new(),
+            ));
+        }
+
+        let prepared_ids: Vec<String> = prepared.iter().map(|entity| entity.id.clone()).collect();
+        let existing_map = self.repo.get_batch(&prepared_ids).await?;
+
+        let mut created_effects = HashMap::new();
+        let mut created_rows = Vec::new();
+        let mut updated_effects = HashMap::new();
+        let mut updated_rows = Vec::new();
+
+        for prepared_entity in prepared {
+            let id = prepared_entity.id.clone();
+            if let Some(existing) = existing_map.get(&id) {
+                let mut merged = existing.clone();
+                if let Err(message) = merge_entity(&mut merged, &prepared_entity.expanded) {
+                    errors.push((id, AndromedaError::internal(message)));
+                    continue;
+                }
+
+                let row = row_from_expanded(id.clone(), merged);
+                let effect = BatchEffectEntity {
+                    changed_attributes: prepared_entity.changed_attributes,
+                    expanded: prepared_entity.expanded,
+                    types: extract_entity_types(&row.payload),
+                };
+                updated_effects.insert(id, effect);
+                updated_rows.push(row);
+            } else {
+                let effect = BatchEffectEntity {
+                    changed_attributes: prepared_entity.changed_attributes.clone(),
+                    expanded: prepared_entity.expanded.clone(),
+                    types: prepared_entity.types.clone(),
+                };
+                created_effects.insert(id.clone(), effect);
+                created_rows.push(prepared_entity.into_row());
+            }
+        }
+
+        let created_ids = if created_rows.is_empty() {
+            Vec::new()
+        } else {
+            self.repo.create_batch(created_rows).await?
+        };
+        let updated_ids = if updated_rows.is_empty() {
+            Vec::new()
+        } else {
+            self.repo.save_batch(updated_rows).await?
+        };
+
+        let (created_job, mut success, created) =
+            Self::drain_upsert_effect_entities(&mut created_effects, created_ids.into_iter().map(|id| (id, true)).collect());
+        let (updated_job, updated_success) = Self::drain_effect_entities(&mut updated_effects, &updated_ids, TriggerReason::EntityUpdated);
+        success.extend(updated_success);
+
+        let mut temporal_entities = created_job.temporal_entities;
+        temporal_entities.extend(updated_job.temporal_entities);
+        let mut change_events = created_job.change_events;
+        change_events.extend(updated_job.change_events);
+        self.dispatch_batch_side_effects(
+            original_batch_size,
+            BatchSideEffectJob {
+                temporal_entities,
+                change_events,
+            },
+        )
+        .await;
+
+        Ok((BatchResult { success, errors: Vec::new() }, created))
     }
 
     // -------------------------------------------------------------------------
@@ -159,72 +595,21 @@ impl EntityService {
     // -------------------------------------------------------------------------
 
     /// Create multiple entities in a single batch operation (NGSI-LD 5.6.7).
-    ///
-    /// Entities are prepared concurrently (JSON-LD expansion is async), then
-    /// inserted in a single SQL round-trip.  Duplicate IDs are detected via
-    /// `ON CONFLICT DO NOTHING` and reported as `AlreadyExists` errors.
     pub async fn batch_create(&self, entities: &[Entity], context: &ContextSpec) -> Result<BatchResult, AndromedaError> {
-        let (prepared, mut errors) = self.prepare_entities(entities, context).await;
-
-        if prepared.is_empty() {
+        let (deduped, mut errors) = Self::dedupe_create_entities(entities);
+        if deduped.is_empty() {
             return Ok(BatchResult { success: Vec::new(), errors });
         }
 
-        // Deduplicate by entity ID: first occurrence is kept, subsequent
-        // duplicates are reported as AlreadyExists errors (NGSI-LD 5.6.7).
-        let mut entity_data: HashMap<String, (Value, Vec<String>)> = HashMap::with_capacity(prepared.len());
-        let mut rows = Vec::with_capacity(prepared.len());
-        for p in prepared {
-            if entity_data.contains_key(&p.id) {
-                errors.push((p.id.clone(), AndromedaError::entity_already_exists(&p.id))); // clone: owned String needed for error
-                continue;
-            }
-            let id = p.id.clone(); // clone: key for lookup map, original moves into row
-            let expanded = p.expanded.clone(); // clone: kept for temporal recording + events, original moves into row
-            let types = p.types.clone(); // clone: kept for events, original moves into row
-            entity_data.insert(id, (expanded, types));
-            rows.push(p.into_row());
+        let chunk_len = self.batch_chunk_len(deduped.len());
+        let mut success = Vec::new();
+        for chunk in deduped.chunks(chunk_len) {
+            let chunk_result = self.batch_create_chunk(chunk, context, entities.len()).await?;
+            success.extend(chunk_result.success);
+            errors.extend(chunk_result.errors);
         }
-
-        let inserted_ids = self.repo.create_batch(&rows).await?;
-        let inserted_set: HashSet<&str> = inserted_ids.iter().map(String::as_str).collect();
-
-        // Entities not in the returned set already existed
-        for id in entity_data.keys() {
-            if !inserted_set.contains(id.as_str()) {
-                errors.push((id.clone(), AndromedaError::entity_already_exists(id))); // clone: owned String needed for error, original borrowed from map
-            }
-        }
-
-        // Post-insert: temporal recording + change events for successes
-        let success = self.post_create_events(&inserted_ids, &entity_data).await;
 
         Ok(BatchResult { success, errors })
-    }
-
-    /// Record temporal attributes and emit EntityCreated events for successfully created entities.
-    async fn post_create_events(&self, ids: &[String], entity_data: &HashMap<String, (Value, Vec<String>)>) -> Vec<String> {
-        let mut success = Vec::with_capacity(ids.len());
-        for id in ids {
-            if let Some((expanded, types)) = entity_data.get(id) {
-                if let Err(e) = self.temporal_recorder.record_entity_attributes(id, expanded).await {
-                    tracing::warn!(error = %e, entity_id = %id, event = "temporal_recording_failed");
-                }
-                match id.parse::<Uri>() {
-                    Ok(entity_uri) => {
-                        self.emit_change(
-                            ChangeEvent::new(entity_uri, types.clone(), TriggerReason::EntityCreated) // clone: types borrowed from map
-                                .with_changed_attributes(extract_attribute_keys(expanded)),
-                        );
-                    }
-                    Err(_) => {
-                        tracing::error!(entity_id = %id, event = "entity_uri_parse_failed");
-                    }
-                }
-            }
-            success.push(id.clone()); // clone: owned String for success list
-        }
-        success
     }
 
     // -------------------------------------------------------------------------
@@ -232,72 +617,75 @@ impl EntityService {
     // -------------------------------------------------------------------------
 
     /// Delete multiple entities by ID in a single batch operation (NGSI-LD 5.6.10).
-    ///
-    /// Deduplicates input IDs (duplicates get `NotFound` errors).  Deletes all
-    /// unique IDs in a single SQL round-trip, using the `RETURNING` clause to
-    /// obtain payloads and timestamps for change event emission.
     pub async fn batch_delete(&self, entity_ids: &[String]) -> Result<BatchResult, AndromedaError> {
-        // Deduplicate IDs: first occurrence is processed, duplicates get ResourceNotFound errors
         let mut seen = HashSet::new();
         let mut unique_ids = Vec::new();
-        let mut errors: Vec<(String, AndromedaError)> = Vec::new();
+        let mut errors = Vec::new();
         for id in entity_ids {
             if !seen.insert(id.as_str()) {
-                errors.push((id.clone(), AndromedaError::entity_not_found(id))); // clone: owned copies for error list
+                errors.push((id.clone(), AndromedaError::entity_not_found(id)));
             } else {
-                unique_ids.push(id.clone()); // clone: owned String for SQL binding
+                unique_ids.push(id.clone());
             }
         }
 
-        let deleted = self.repo.delete_batch(&unique_ids).await?;
-        let deleted_set: HashSet<&str> = deleted.iter().map(|d| d.id.as_str()).collect();
-
-        // IDs not in the returned set were not found
-        for id in &unique_ids {
-            if !deleted_set.contains(id.as_str()) {
-                errors.push((id.clone(), AndromedaError::entity_not_found(id))); // clone: owned String for error
-            }
-        }
-
-        // Emit change events for each deleted entity
-        let mut success = Vec::with_capacity(deleted.len());
-        for d in &deleted {
-            let entity_types = extract_entity_types(&d.payload);
-            let attr_keys = extract_attribute_keys(&d.payload);
-            let sys_attrs = SysAttrsSnapshot {
-                created_at: d.created_at,
-                modified_at: d.modified_at,
-                expires_at: d.expires_at,
-            };
-
-            let entity_uri: Uri = match d.id.parse() {
-                Ok(u) => u,
-                Err(_) => {
-                    tracing::error!(entity_id = %d.id, event = "entity_uri_parse_failed");
-                    success.push(d.id.clone()); // clone: owned String for success list
-                    continue;
+        let mut success = Vec::new();
+        let chunk_len = self.batch_chunk_len(unique_ids.len());
+        for chunk in unique_ids.chunks(chunk_len) {
+            let deleted = self.repo.delete_batch(chunk).await?;
+            let deleted_set: HashSet<&str> = deleted.iter().map(|entity| entity.id.as_str()).collect();
+            for id in chunk {
+                if !deleted_set.contains(id.as_str()) {
+                    errors.push((id.clone(), AndromedaError::entity_not_found(id)));
                 }
-            };
-
-            // Emit AttributeDeleted for each attribute so attributeDeleted subscriptions fire
-            if !attr_keys.is_empty() {
-                self.emit_change(
-                    ChangeEvent::new(entity_uri.clone(), entity_types.clone(), TriggerReason::AttributeDeleted) // clone: value also needed by subsequent EntityDeleted emit
-                        .with_changed_attributes(attr_keys)
-                        .with_snapshot(d.payload.clone()) // clone: value also needed by subsequent EntityDeleted emit
-                        .with_previous(d.payload.clone()) // clone: value also needed by subsequent EntityDeleted emit
-                        .with_sys_attrs(Some(sys_attrs.clone())), // clone: value also needed by subsequent EntityDeleted emit
-                );
             }
 
-            self.emit_change(
-                ChangeEvent::new(entity_uri, entity_types, TriggerReason::EntityDeleted)
-                    .with_snapshot(d.payload.clone()) // clone: separate ownership for snapshot and previous fields
-                    .with_previous(d.payload.clone()) // clone: separate ownership for snapshot and previous fields
-                    .with_sys_attrs(Some(sys_attrs)),
-            );
+            let mut change_events = Vec::with_capacity(deleted.len() * 2);
+            for deleted_entity in deleted {
+                let entity_types = extract_entity_types(&deleted_entity.payload);
+                let attr_keys = extract_attribute_keys(&deleted_entity.payload);
+                let sys_attrs = SysAttrsSnapshot {
+                    created_at: deleted_entity.created_at,
+                    modified_at: deleted_entity.modified_at,
+                    expires_at: deleted_entity.expires_at,
+                };
 
-            success.push(d.id.clone()); // clone: owned String for success list
+                let entity_uri: Uri = match deleted_entity.id.parse() {
+                    Ok(uri) => uri,
+                    Err(_error) => {
+                        tracing::error!(entity_id = %deleted_entity.id, event = "entity_uri_parse_failed");
+                        success.push(deleted_entity.id);
+                        continue;
+                    }
+                };
+
+                if !attr_keys.is_empty() {
+                    change_events.push(
+                        ChangeEvent::new(entity_uri.clone(), entity_types.clone(), TriggerReason::AttributeDeleted)
+                            .with_changed_attributes(attr_keys)
+                            .with_snapshot(deleted_entity.payload.clone())
+                            .with_previous(deleted_entity.payload.clone())
+                            .with_sys_attrs(Some(sys_attrs.clone())),
+                    );
+                }
+
+                change_events.push(
+                    ChangeEvent::new(entity_uri, entity_types, TriggerReason::EntityDeleted)
+                        .with_snapshot(deleted_entity.payload.clone())
+                        .with_previous(deleted_entity.payload)
+                        .with_sys_attrs(Some(sys_attrs)),
+                );
+                success.push(deleted_entity.id);
+            }
+
+            self.dispatch_batch_side_effects(
+                entity_ids.len(),
+                BatchSideEffectJob {
+                    temporal_entities: Vec::new(),
+                    change_events,
+                },
+            )
+            .await;
         }
 
         Ok(BatchResult { success, errors })
@@ -308,87 +696,14 @@ impl EntityService {
     // -------------------------------------------------------------------------
 
     /// Update attributes of multiple entities in a single batch operation (NGSI-LD 5.6.9).
-    ///
-    /// Entities are prepared concurrently, existing payloads fetched in a single
-    /// batch query, attributes merged in Rust, then saved in a single bulk UPDATE.
     pub async fn batch_update(&self, entities: &[Entity], context: &ContextSpec, no_overwrite: bool) -> Result<BatchResult, AndromedaError> {
-        let (prepared, mut errors) = self.prepare_entities(entities, context).await;
-
-        if prepared.is_empty() {
-            return Ok(BatchResult { success: Vec::new(), errors });
-        }
-
-        let prepared_ids: Vec<String> = prepared.iter().map(|p| p.id.clone()).collect(); // clone: owned Strings for batch query
-        let existing_map = self.repo.get_batch(&prepared_ids).await?;
-
-        let mut save_rows = Vec::new();
-        // Track which entities had their expanded payload for temporal recording + events
-        let mut entity_expanded: Vec<(String, Value, Vec<String>)> = Vec::new();
-
-        for p in prepared {
-            let id = p.id;
-
-            let Some(mut existing) = existing_map.get(&id).cloned() else {
-                // clone: owned Value for in-place mutation
-                let err = AndromedaError::entity_not_found(&id);
-                errors.push((id, err));
-                continue;
-            };
-
-            let attrs = unwrap_expanded_ref(&p.expanded);
-
-            if no_overwrite {
-                let skipped = has_overlapping_attrs(&existing, attrs);
-                if let Err(msg) = crate::domain::expanded::append_entity_attrs(&mut existing, attrs, true) {
-                    errors.push((id, AndromedaError::internal(msg)));
-                    continue;
-                }
-                if skipped {
-                    errors.push((
-                        id.clone(), // clone: id also needed below in save_rows + entity_expanded
-                        AndromedaError::entity_validation("Some attributes already exist and were not updated due to noOverwrite"),
-                    ));
-                }
-            } else {
-                if let Err(msg) = crate::domain::expanded::update_entity_attrs(&mut existing, attrs) {
-                    errors.push((id, AndromedaError::internal(msg)));
-                    continue;
-                }
-                if let Err(msg) = crate::domain::expanded::append_entity_attrs(&mut existing, attrs, false) {
-                    errors.push((id, AndromedaError::internal(msg)));
-                    continue;
-                }
-            }
-
-            save_rows.push(row_from_expanded(id.clone(), &existing)); // clone: id also needed for event tracking
-            let types = extract_entity_types(&existing);
-            entity_expanded.push((id, p.expanded, types));
-        }
-
-        let saved_ids = self.repo.save_batch(&save_rows).await?;
-        let saved_set: HashSet<&str> = saved_ids.iter().map(String::as_str).collect();
-
-        // Temporal recording + change events for saved entities
-        let mut success = Vec::with_capacity(saved_ids.len());
-        for (id, expanded, types) in &entity_expanded {
-            if !saved_set.contains(id.as_str()) {
-                continue;
-            }
-            if let Err(e) = self.temporal_recorder.record_entity_attributes(id, expanded).await {
-                tracing::warn!(error = %e, entity_id = %id, event = "temporal_recording_failed");
-            }
-            match id.parse::<Uri>() {
-                Ok(entity_uri) => {
-                    self.emit_change(
-                        ChangeEvent::new(entity_uri, types.clone(), TriggerReason::EntityUpdated) // clone: types borrowed from tuple
-                            .with_changed_attributes(extract_attribute_keys(expanded)),
-                    );
-                }
-                Err(_) => {
-                    tracing::error!(entity_id = %id, event = "entity_uri_parse_failed");
-                }
-            }
-            success.push(id.clone()); // clone: owned String for success list
+        let mut errors = Vec::new();
+        let mut success = Vec::new();
+        let chunk_len = self.batch_chunk_len(entities.len());
+        for chunk in entities.chunks(chunk_len) {
+            let chunk_result = self.batch_update_chunk(chunk, context, no_overwrite, entities.len()).await?;
+            success.extend(chunk_result.success);
+            errors.extend(chunk_result.errors);
         }
 
         Ok(BatchResult { success, errors })
@@ -399,65 +714,14 @@ impl EntityService {
     // -------------------------------------------------------------------------
 
     /// Merge partial updates into multiple entities in a single batch operation.
-    ///
-    /// Entities are prepared concurrently, existing payloads fetched in a single
-    /// batch query, deep-merged in Rust, then saved in a single bulk UPDATE.
     pub async fn batch_merge(&self, entities: &[Entity], context: &ContextSpec) -> Result<BatchResult, AndromedaError> {
-        let (prepared, mut errors) = self.prepare_entities(entities, context).await;
-
-        if prepared.is_empty() {
-            return Ok(BatchResult { success: Vec::new(), errors });
-        }
-
-        let prepared_ids: Vec<String> = prepared.iter().map(|p| p.id.clone()).collect(); // clone: owned Strings for batch query
-        let existing_map = self.repo.get_batch(&prepared_ids).await?;
-
-        let mut save_rows = Vec::new();
-        let mut entity_expanded: Vec<(String, Value, Vec<String>)> = Vec::new();
-
-        for p in prepared {
-            let id = p.id;
-
-            let Some(mut existing) = existing_map.get(&id).cloned() else {
-                // clone: owned Value for in-place mutation
-                let err = AndromedaError::entity_not_found(&id);
-                errors.push((id, err));
-                continue;
-            };
-
-            if let Err(msg) = crate::domain::expanded::merge_entity(&mut existing, &p.expanded) {
-                errors.push((id, AndromedaError::internal(msg)));
-                continue;
-            }
-
-            let types = extract_entity_types(&existing);
-            save_rows.push(row_from_expanded(id.clone(), &existing)); // clone: id also needed for event tracking
-            entity_expanded.push((id, p.expanded, types));
-        }
-
-        let saved_ids = self.repo.save_batch(&save_rows).await?;
-        let saved_set: HashSet<&str> = saved_ids.iter().map(String::as_str).collect();
-
-        let mut success = Vec::with_capacity(saved_ids.len());
-        for (id, expanded, types) in &entity_expanded {
-            if !saved_set.contains(id.as_str()) {
-                continue;
-            }
-            if let Err(e) = self.temporal_recorder.record_entity_attributes(id, expanded).await {
-                tracing::warn!(error = %e, entity_id = %id, event = "temporal_recording_failed");
-            }
-            match id.parse::<Uri>() {
-                Ok(entity_uri) => {
-                    self.emit_change(
-                        ChangeEvent::new(entity_uri, types.clone(), TriggerReason::EntityUpdated) // clone: types borrowed from tuple
-                            .with_changed_attributes(extract_attribute_keys(expanded)),
-                    );
-                }
-                Err(_) => {
-                    tracing::error!(entity_id = %id, event = "entity_uri_parse_failed");
-                }
-            }
-            success.push(id.clone()); // clone: owned String for success list
+        let mut errors = Vec::new();
+        let mut success = Vec::new();
+        let chunk_len = self.batch_chunk_len(entities.len());
+        for chunk in entities.chunks(chunk_len) {
+            let chunk_result = self.batch_merge_chunk(chunk, context, entities.len()).await?;
+            success.extend(chunk_result.success);
+            errors.extend(chunk_result.errors);
         }
 
         Ok(BatchResult { success, errors })
@@ -468,222 +732,25 @@ impl EntityService {
     // -------------------------------------------------------------------------
 
     /// Create or update multiple entities in a single batch operation (NGSI-LD 5.6.8).
-    ///
-    /// Two modes:
-    /// - **Replace** (`update_mode = false`): uses a single `INSERT ... ON CONFLICT DO UPDATE`
-    ///   to insert new entities and fully replace existing ones.
-    /// - **Update** (`update_mode = true`): fetches existing entities, merges in Rust, then uses
-    ///   `create_batch` for new entities and `save_batch` for merged entities.
-    ///
-    /// Returns the batch result and a list of IDs for newly created entities.
     pub async fn batch_upsert(&self, entities: &[Entity], context: &ContextSpec, update_mode: bool) -> Result<(BatchResult, Vec<String>), AndromedaError> {
-        // Deduplicate by entity ID, keeping the last occurrence (per NGSI-LD 5.6.8)
-        let mut seen = HashSet::new();
-        let deduped: Vec<&Entity> = entities
-            .iter()
-            .rev()
-            .filter(|e| seen.insert(e.id.to_string()))
-            .collect::<Vec<_>>()
-            .into_iter()
-            .rev()
-            .collect();
-
-        // Prepare deduped entities concurrently (cannot use prepare_entities since
-        // deduped is Vec<&Entity>, not &[Entity])
-        let results: Vec<_> = stream::iter(deduped)
-            .map(|entity| async { self.prepare_entity(entity, context).await })
-            .buffer_unordered(self.batch_concurrency)
-            .collect()
-            .await;
-
-        let mut prepared = Vec::new();
+        let deduped = Self::dedupe_upsert_entities(entities);
+        let chunk_len = self.batch_chunk_len(deduped.len());
         let mut errors = Vec::new();
-        for result in results {
-            match result {
-                Ok(p) => prepared.push(p),
-                Err(pair) => errors.push(pair),
-            }
-        }
-
-        if prepared.is_empty() {
-            return Ok((BatchResult { success: Vec::new(), errors }, Vec::new()));
-        }
-
-        if update_mode {
-            self.batch_upsert_update_mode(prepared, &mut errors).await
-        } else {
-            self.batch_upsert_replace_mode(prepared, &mut errors).await
-        }
-    }
-
-    /// Replace mode: single `INSERT ... ON CONFLICT DO UPDATE` for all entities.
-    async fn batch_upsert_replace_mode(
-        &self,
-        prepared: Vec<PreparedEntity>,
-        errors: &mut Vec<(String, AndromedaError)>,
-    ) -> Result<(BatchResult, Vec<String>), AndromedaError> {
-        let mut entity_data: HashMap<String, (Value, Vec<String>)> = HashMap::with_capacity(prepared.len());
-        let mut rows = Vec::with_capacity(prepared.len());
-        for p in prepared {
-            let id = p.id.clone(); // clone: key for lookup map, original moves into row
-            let expanded = p.expanded.clone(); // clone: kept for temporal recording + events
-            let types = p.types.clone(); // clone: kept for events
-            entity_data.insert(id, (expanded, types));
-            rows.push(p.into_row());
-        }
-
-        let upserted = self.repo.upsert_batch(&rows).await?;
-
         let mut success = Vec::new();
         let mut created = Vec::new();
-        for (id, was_created) in &upserted {
-            if let Some((expanded, types)) = entity_data.get(id) {
-                if let Err(e) = self.temporal_recorder.record_entity_attributes(id, expanded).await {
-                    tracing::warn!(error = %e, entity_id = %id, event = "temporal_recording_failed");
-                }
-                let trigger = if *was_created {
-                    created.push(id.clone()); // clone: owned String for created list
-                    TriggerReason::EntityCreated
-                } else {
-                    TriggerReason::EntityUpdated
-                };
-                match id.parse::<Uri>() {
-                    Ok(entity_uri) => {
-                        self.emit_change(
-                            ChangeEvent::new(entity_uri, types.clone(), trigger) // clone: types borrowed from map
-                                .with_changed_attributes(extract_attribute_keys(expanded)),
-                        );
-                    }
-                    Err(_) => {
-                        tracing::error!(entity_id = %id, event = "entity_uri_parse_failed");
-                    }
-                }
-            }
-            success.push(id.clone()); // clone: owned String for success list
-        }
 
-        Ok((
-            BatchResult {
-                success,
-                errors: std::mem::take(errors),
-            },
-            created,
-        ))
-    }
-
-    /// Update mode: fetch existing entities, merge in Rust, then create/save separately.
-    async fn batch_upsert_update_mode(
-        &self,
-        prepared: Vec<PreparedEntity>,
-        errors: &mut Vec<(String, AndromedaError)>,
-    ) -> Result<(BatchResult, Vec<String>), AndromedaError> {
-        let prepared_ids: Vec<String> = prepared.iter().map(|p| p.id.clone()).collect(); // clone: owned Strings for batch query
-        let existing_map = self.repo.get_batch(&prepared_ids).await?;
-
-        let mut new_rows = Vec::new();
-        let mut save_rows = Vec::new();
-        let mut new_entity_data: HashMap<String, (Value, Vec<String>)> = HashMap::new();
-        let mut updated_entity_data: Vec<(String, Value, Vec<String>)> = Vec::new();
-
-        for p in prepared {
-            let id = p.id;
-
-            if let Some(existing) = existing_map.get(&id) {
-                // Entity exists: merge and save
-                let mut merged = existing.clone(); // clone: owned Value for in-place mutation
-                if let Err(msg) = crate::domain::expanded::merge_entity(&mut merged, &p.expanded) {
-                    errors.push((id, AndromedaError::internal(msg)));
-                    continue;
-                }
-                let types = extract_entity_types(&merged);
-                save_rows.push(row_from_expanded(id.clone(), &merged)); // clone: id also needed for event tracking
-                updated_entity_data.push((id, p.expanded, types));
+        for chunk in deduped.chunks(chunk_len) {
+            let (chunk_result, mut chunk_created) = if update_mode {
+                self.batch_upsert_update_chunk(chunk, context, &mut errors, entities.len()).await?
             } else {
-                // New entity: create
-                let expanded = p.expanded;
-                let types = p.types;
-                new_rows.push(PreparedEntityRow {
-                    id: id.clone(),                                                                     // clone: id also stored in lookup map below
-                    types_json: Value::Array(types.iter().map(|t| Value::String(t.clone())).collect()), // clone: owned strings for JSON array
-                    scope_paths_json: Value::Array(p.scopes.into_iter().map(|s| Value::String(sql::scope_to_ltree(&s))).collect()),
-                    payload: expanded.clone(), // clone: kept for events in new_entity_data
-                    location: p.location,
-                    observation_space: p.observation_space,
-                    operation_space: p.operation_space,
-                    expires_at: p.expires_at,
-                });
-                new_entity_data.insert(id, (expanded, types));
-            }
+                self.batch_upsert_replace_chunk(chunk, context, &mut errors, entities.len()).await?
+            };
+            success.extend(chunk_result.success);
+            created.append(&mut chunk_created);
+            errors.extend(chunk_result.errors);
         }
 
-        // Execute both operations
-        let created_ids = if new_rows.is_empty() {
-            Vec::new()
-        } else {
-            self.repo.create_batch(&new_rows).await?
-        };
-        let saved_ids = if save_rows.is_empty() {
-            Vec::new()
-        } else {
-            self.repo.save_batch(&save_rows).await?
-        };
-
-        let saved_set: HashSet<&str> = saved_ids.iter().map(String::as_str).collect();
-
-        let mut success = Vec::new();
-        let mut created = Vec::new();
-
-        // Events for created entities
-        for id in &created_ids {
-            if let Some((expanded, types)) = new_entity_data.get(id) {
-                if let Err(e) = self.temporal_recorder.record_entity_attributes(id, expanded).await {
-                    tracing::warn!(error = %e, entity_id = %id, event = "temporal_recording_failed");
-                }
-                match id.parse::<Uri>() {
-                    Ok(entity_uri) => {
-                        self.emit_change(
-                            ChangeEvent::new(entity_uri, types.clone(), TriggerReason::EntityCreated) // clone: types borrowed from map
-                                .with_changed_attributes(extract_attribute_keys(expanded)),
-                        );
-                    }
-                    Err(_) => {
-                        tracing::error!(entity_id = %id, event = "entity_uri_parse_failed");
-                    }
-                }
-            }
-            created.push(id.clone()); // clone: owned String for created list
-            success.push(id.clone()); // clone: owned String for success list
-        }
-
-        // Events for updated entities
-        for (id, expanded, types) in &updated_entity_data {
-            if !saved_set.contains(id.as_str()) {
-                continue;
-            }
-            if let Err(e) = self.temporal_recorder.record_entity_attributes(id, expanded).await {
-                tracing::warn!(error = %e, entity_id = %id, event = "temporal_recording_failed");
-            }
-            match id.parse::<Uri>() {
-                Ok(entity_uri) => {
-                    self.emit_change(
-                        ChangeEvent::new(entity_uri, types.clone(), TriggerReason::EntityUpdated) // clone: types borrowed from vec
-                            .with_changed_attributes(extract_attribute_keys(expanded)),
-                    );
-                }
-                Err(_) => {
-                    tracing::error!(entity_id = %id, event = "entity_uri_parse_failed");
-                }
-            }
-            success.push(id.clone()); // clone: owned String for success list
-        }
-
-        Ok((
-            BatchResult {
-                success,
-                errors: std::mem::take(errors),
-            },
-            created,
-        ))
+        Ok((BatchResult { success, errors }, created))
     }
 }
 
@@ -697,7 +764,7 @@ fn has_overlapping_attrs(entity: &Value, attrs: &Value) -> bool {
     let attrs_obj = attrs.as_object();
 
     if let (Some(entity_obj), Some(attrs_obj)) = (entity_obj, attrs_obj) {
-        attrs_obj.keys().any(|k| !k.starts_with('@') && entity_obj.contains_key(k))
+        attrs_obj.keys().any(|key| !key.starts_with('@') && entity_obj.contains_key(key))
     } else {
         false
     }
