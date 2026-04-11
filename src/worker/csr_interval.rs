@@ -163,7 +163,7 @@ impl CsrIntervalWorker {
         }
     }
 
-    async fn fetch_matching_csrs(&self, sub: &Subscription) -> Result<Vec<Value>, crate::error::AndromedaError> {
+    async fn fetch_matching_csrs(&self, sub: &Subscription) -> Result<Vec<Value>, crate::core::error::AndromedaError> {
         let mut matching = Vec::new();
         let page_size: i64 = 500;
         let mut offset: i64 = 0;
@@ -175,7 +175,8 @@ impl CsrIntervalWorker {
             }
 
             for csr in page {
-                let csr_value = serde_json::to_value(&csr).map_err(|e| crate::error::AndromedaError::internal(format!("Failed to serialize CSR: {}", e)))?;
+                let csr_value =
+                    serde_json::to_value(&csr).map_err(|e| crate::core::error::AndromedaError::internal(format!("Failed to serialize CSR: {}", e)))?;
                 if matches_csr_for_subscription(&csr_value, sub) {
                     matching.push(csr_value);
                 }

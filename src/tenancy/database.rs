@@ -1,4 +1,4 @@
-use crate::{error::AndromedaError, tenancy::types::TenantName};
+use crate::{core::error::AndromedaError, tenancy::types::TenantName};
 use sqlx::{Connection, Executor, PgConnection, postgres::PgPoolOptions};
 use std::hash::{Hash, Hasher};
 use url::Url;

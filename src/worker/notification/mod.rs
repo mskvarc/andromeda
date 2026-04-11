@@ -117,7 +117,7 @@ impl NotificationWorker {
         }
     }
 
-    async fn reload_cache(&self) -> Result<(), crate::error::AndromedaError> {
+    async fn reload_cache(&self) -> Result<(), crate::core::error::AndromedaError> {
         let subscriptions = self.sub_repo.list_active().await?;
         let mut cache = self.cache.write().await;
         cache.clear();

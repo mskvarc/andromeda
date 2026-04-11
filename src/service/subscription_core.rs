@@ -2,8 +2,8 @@
 //! context-source subscriptions.
 
 use crate::{
+    core::error::AndromedaError,
     domain::subscription::Subscription,
-    error::AndromedaError,
     jsonld::{ContextSpec, JsonLdEngine},
     query::q,
     repository::subscription_store::SubscriptionFields,
@@ -31,17 +31,17 @@ fn q_has_comparison(expr: &q::ast::Expr) -> bool {
 /// Validate the common parts of a subscription create payload.
 pub fn validate_create_payload(payload: &Value) -> Result<(), AndromedaError> {
     if payload.get("notification").is_none() {
-        return Err(AndromedaError::bad_request_data("notification is required"));
+        return Err(AndromedaError::subscription_validation("notification is required"));
     }
 
     if let Some(notification) = payload.get("notification") {
         if notification.get("endpoint").is_none() {
-            return Err(AndromedaError::bad_request_data("notification.endpoint is required"));
+            return Err(AndromedaError::subscription_validation("notification.endpoint is required"));
         }
         if let Some(endpoint) = notification.get("endpoint")
             && endpoint.get("uri").is_none()
         {
-            return Err(AndromedaError::bad_request_data("notification.endpoint.uri is required"));
+            return Err(AndromedaError::subscription_validation("notification.endpoint.uri is required"));
         }
     }
 
@@ -51,7 +51,7 @@ pub fn validate_create_payload(payload: &Value) -> Result<(), AndromedaError> {
         if let Ok(expires_at) = chrono::DateTime::parse_from_rfc3339(expires_at_val)
             && expires_at <= Utc::now()
         {
-            return Err(AndromedaError::bad_request_data("expiresAt must be in the future"));
+            return Err(AndromedaError::subscription_validation("expiresAt must be in the future"));
         }
     }
 
@@ -67,7 +67,7 @@ pub fn validate_expires_at_not_in_past(payload: &Value) -> Result<(), AndromedaE
         && let Ok(expires_at) = chrono::DateTime::parse_from_rfc3339(expires_at_val)
         && expires_at <= Utc::now()
     {
-        return Err(AndromedaError::bad_request_data("expiresAt must be in the future"));
+        return Err(AndromedaError::subscription_validation("expiresAt must be in the future"));
     }
     Ok(())
 }
@@ -77,40 +77,42 @@ pub fn validate_common_fields(payload: &Value) -> Result<(), AndromedaError> {
     if let Some(type_val) = payload.get("type")
         && type_val.as_str() != Some("Subscription")
     {
-        return Err(AndromedaError::bad_request_data("type must be 'Subscription'"));
+        return Err(AndromedaError::subscription_validation("type must be 'Subscription'"));
     }
 
     // expiresAt format validation (but not future check — that's create-only per spec 5.11.2)
     if let Some(expires_at_val) = payload.get("expiresAt").and_then(|v| v.as_str())
         && chrono::DateTime::parse_from_rfc3339(expires_at_val).is_err()
     {
-        return Err(AndromedaError::bad_request_data("expiresAt must be a valid ISO 8601 date-time"));
+        return Err(AndromedaError::subscription_validation("expiresAt must be a valid ISO 8601 date-time"));
     }
 
     if payload.get("timeInterval").is_some() && payload.get("watchedAttributes").is_some() {
-        return Err(AndromedaError::bad_request_data("timeInterval and watchedAttributes are mutually exclusive"));
+        return Err(AndromedaError::subscription_validation(
+            "timeInterval and watchedAttributes are mutually exclusive",
+        ));
     }
 
     if payload.get("timeInterval").is_some() && payload.get("throttling").is_some() {
-        return Err(AndromedaError::bad_request_data("timeInterval and throttling are mutually exclusive"));
+        return Err(AndromedaError::subscription_validation("timeInterval and throttling are mutually exclusive"));
     }
 
     if let Some(throttling) = payload.get("throttling").and_then(|v| v.as_f64())
         && throttling < 0.0
     {
-        return Err(AndromedaError::bad_request_data("throttling must be greater than or equal to 0"));
+        return Err(AndromedaError::subscription_validation("throttling must be greater than or equal to 0"));
     }
 
     if let Some(time_interval) = payload.get("timeInterval").and_then(|v| v.as_f64())
         && time_interval <= 0.0
     {
-        return Err(AndromedaError::bad_request_data("timeInterval must be greater than 0"));
+        return Err(AndromedaError::subscription_validation("timeInterval must be greater than 0"));
     }
 
     if let Some(q_str) = payload.get("q").and_then(|v| v.as_str()) {
-        let expr = q::parser::parse(q_str).map_err(|e| AndromedaError::bad_request_data(format!("Invalid q expression: {}", e)))?;
+        let expr = q::parser::parse(q_str).map_err(|e| AndromedaError::subscription_validation(format!("Invalid q expression: {}", e)))?;
         if !q_has_comparison(&expr) {
-            return Err(AndromedaError::bad_request_data(
+            return Err(AndromedaError::subscription_validation(
                 "Invalid q expression: must contain at least one comparison operator",
             ));
         }
@@ -120,7 +122,7 @@ pub fn validate_common_fields(payload: &Value) -> Result<(), AndromedaError> {
         && let Some(arr) = watched.as_array()
         && arr.is_empty()
     {
-        return Err(AndromedaError::bad_request_data("watchedAttributes must not be empty"));
+        return Err(AndromedaError::subscription_validation("watchedAttributes must not be empty"));
     }
 
     Ok(())
@@ -131,22 +133,22 @@ pub fn validate_notification_fragment(payload: &Value) -> Result<(), AndromedaEr
     if let Some(notification_val) = payload.get("notification") {
         match notification_val {
             Value::Null => {
-                return Err(AndromedaError::bad_request_data("notification cannot be set to null"));
+                return Err(AndromedaError::subscription_validation("notification cannot be set to null"));
             }
             Value::Object(_) => {
                 if let Some(endpoint_val) = notification_val.get("endpoint") {
                     match endpoint_val {
                         Value::Null => {
-                            return Err(AndromedaError::bad_request_data("notification.endpoint cannot be set to null"));
+                            return Err(AndromedaError::subscription_validation("notification.endpoint cannot be set to null"));
                         }
                         Value::Object(_) => {
                             if let Some(uri_val) = endpoint_val.get("uri") {
                                 match uri_val {
                                     Value::Null => {
-                                        return Err(AndromedaError::bad_request_data("notification.endpoint.uri cannot be set to null"));
+                                        return Err(AndromedaError::subscription_validation("notification.endpoint.uri cannot be set to null"));
                                     }
                                     Value::String(s) if s.trim().is_empty() => {
-                                        return Err(AndromedaError::bad_request_data("notification.endpoint.uri must be a non-empty string"));
+                                        return Err(AndromedaError::subscription_validation("notification.endpoint.uri must be a non-empty string"));
                                     }
                                     _other => {}
                                 }
@@ -155,11 +157,11 @@ pub fn validate_notification_fragment(payload: &Value) -> Result<(), AndromedaEr
                         _other => {}
                     }
                 } else {
-                    return Err(AndromedaError::bad_request_data("notification.endpoint is required"));
+                    return Err(AndromedaError::subscription_validation("notification.endpoint is required"));
                 }
             }
             _other => {
-                return Err(AndromedaError::bad_request_data("notification must be an object"));
+                return Err(AndromedaError::subscription_validation("notification must be an object"));
             }
         }
     }
@@ -192,7 +194,7 @@ pub async fn expand_common_subscription_terms(engine: &JsonLdEngine, payload: &m
                     }
                     Err(e) => {
                         if e.is_context_not_available() {
-                            return Err(AndromedaError::map_jsonld(e, "expand_subscription"));
+                            return Err(AndromedaError::from(e));
                         }
                         warn!("Failed to expand entity selector type '{}': {}", type_val, e);
                     }
@@ -213,7 +215,7 @@ pub async fn expand_common_subscription_terms(engine: &JsonLdEngine, payload: &m
                     }
                     Err(e) => {
                         if e.is_context_not_available() {
-                            return Err(AndromedaError::map_jsonld(e, "expand_subscription"));
+                            return Err(AndromedaError::from(e));
                         }
                         warn!("Failed to expand watchedAttribute '{}': {}", term, e);
                     }
@@ -235,7 +237,7 @@ pub async fn expand_common_subscription_terms(engine: &JsonLdEngine, payload: &m
                     }
                     Err(e) => {
                         if e.is_context_not_available() {
-                            return Err(AndromedaError::map_jsonld(e, "expand_subscription"));
+                            return Err(AndromedaError::from(e));
                         }
                         warn!("Failed to expand notification attribute '{}': {}", term, e);
                     }
@@ -267,7 +269,7 @@ pub async fn expand_common_subscription_terms(engine: &JsonLdEngine, payload: &m
             }
             Err(e) => {
                 if e.is_context_not_available() {
-                    return Err(AndromedaError::map_jsonld(e, "expand_subscription"));
+                    return Err(AndromedaError::from(e));
                 }
                 warn!("Failed to expand geoQ.geoproperty '{}': {}", geoprop, e);
             }
@@ -516,13 +518,14 @@ pub fn merge_update_fields(
             .filter(|v| !v.is_null()),
         watched_attributes: payload
             .get("watchedAttributes")
-            .map(|v| serde_json::from_value(v.clone()).map_err(|e| AndromedaError::bad_request_data(format!("Invalid 'watchedAttributes': {}", e)))) // clone: serde_json::from_value consumes the Value
+            .map(|v| serde_json::from_value(v.clone()).map_err(|e| AndromedaError::subscription_validation(format!("Invalid 'watchedAttributes': {}", e)))) // clone: serde_json::from_value consumes the Value
             .transpose()?
             .or_else(|| existing.watched_attributes.clone()), // clone: fallback to existing owned value
         notification_trigger: payload
             .get("notificationTrigger")
             .map(|v| {
-                serde_json::from_value::<Vec<String>>(v.clone()).map_err(|e| AndromedaError::bad_request_data(format!("Invalid 'notificationTrigger': {}", e))) // clone: serde_json::from_value consumes the Value
+                serde_json::from_value::<Vec<String>>(v.clone())
+                    .map_err(|e| AndromedaError::subscription_validation(format!("Invalid 'notificationTrigger': {}", e))) // clone: serde_json::from_value consumes the Value
             })
             .transpose()?
             .or_else(|| existing.notification_trigger.as_ref().map(|t| t.iter().map(|nt| nt.to_string()).collect())),
@@ -538,7 +541,7 @@ pub fn merge_update_fields(
         dataset_id: if use_dataset_id {
             payload
                 .get("datasetId")
-                .map(|v| serde_json::from_value(v.clone()).map_err(|e| AndromedaError::bad_request_data(format!("Invalid 'datasetId': {}", e)))) // clone: serde_json::from_value consumes the Value
+                .map(|v| serde_json::from_value(v.clone()).map_err(|e| AndromedaError::subscription_validation(format!("Invalid 'datasetId': {}", e)))) // clone: serde_json::from_value consumes the Value
                 .transpose()?
                 .or_else(|| existing.dataset_id.clone()) // clone: fallback to existing owned value
         } else {
@@ -560,7 +563,7 @@ pub fn merge_update_fields(
             .map(|s| {
                 chrono::DateTime::parse_from_rfc3339(s)
                     .map(|dt| dt.with_timezone(&Utc))
-                    .map_err(|e| AndromedaError::bad_request_data(format!("Invalid 'expiresAt' value '{}': {}", s, e)))
+                    .map_err(|e| AndromedaError::subscription_validation(format!("Invalid 'expiresAt' value '{}': {}", s, e)))
             })
             .transpose()?
             .or(existing.expires_at),

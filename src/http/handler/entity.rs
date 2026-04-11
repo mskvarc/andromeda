@@ -1,10 +1,10 @@
 use crate::{
     api::tenant::{TenantState, TenantStateOrCreate},
+    core::error::AndromedaError,
     domain::{
         entity::{Entity, EntityPatch, EntityTypeValue},
         uri::Uri,
     },
-    error::AndromedaError,
     http::{
         error::{
             batch::{BatchEntityError, BatchOperationResult},
@@ -63,11 +63,11 @@ use serde_json::Value;
 use std::{collections::HashSet, str::FromStr};
 
 pub async fn patch_no_id(OriginalUri(uri): OriginalUri) -> Result<Response, NgsiLdError> {
-    Err(NgsiLdError::from(AndromedaError::bad_request_data("Entity id is required").with_instance(uri)))
+    Err(NgsiLdError::from(AndromedaError::entity_validation("Entity id is required").with_instance(uri)))
 }
 
 pub async fn put_no_id(OriginalUri(uri): OriginalUri) -> Result<Response, NgsiLdError> {
-    Err(NgsiLdError::from(AndromedaError::bad_request_data("Entity id is required").with_instance(uri)))
+    Err(NgsiLdError::from(AndromedaError::entity_validation("Entity id is required").with_instance(uri)))
 }
 
 pub async fn create(
@@ -93,9 +93,9 @@ pub async fn create(
     // Check for matching CSRs for distributed forwarding
     let context_url = context.link_contexts().first().map(|s| s.as_str());
     let entity_value =
-        serde_json::to_value(&entity).map_err(|e| AndromedaError::internal("Failed to serialize entity").with_source(e).with_instance(uri.clone()))?;
+        serde_json::to_value(&entity).map_err(|e| AndromedaError::internal(format!("Failed to serialize entity: {e}")).with_instance(uri.clone()))?;
     let entity_body =
-        serde_json::to_vec(&entity_value).map_err(|e| AndromedaError::internal("Failed to serialize entity").with_source(e).with_instance(uri.clone()))?;
+        serde_json::to_vec(&entity_value).map_err(|e| AndromedaError::internal(format!("Failed to serialize entity: {e}")).with_instance(uri.clone()))?;
     let entity_id = entity.id.to_string();
     let entity_type_str = match &entity.type_ {
         EntityTypeValue::Single(s) => s.clone(),
@@ -174,7 +174,7 @@ pub async fn get(
     for opt in options.split(',').map(str::trim) {
         if !opt.is_empty() && !matches!(opt, "keyValues" | "simplified" | "sysAttrs" | "concise" | "normalized") {
             return Err(NgsiLdError::from(
-                AndromedaError::invalid_request(format!("Invalid options value: '{}'", opt)).with_instance(uri.clone()),
+                AndromedaError::malformed_request(format!("Invalid options value: '{}'", opt)).with_instance(uri.clone()),
             ));
         }
     }
@@ -184,7 +184,7 @@ pub async fn get(
         && !matches!(fmt.as_str(), "normalized" | "keyValues" | "simplified" | "concise")
     {
         return Err(NgsiLdError::from(
-            AndromedaError::invalid_request(format!("Invalid format value: '{}'", fmt)).with_instance(uri.clone()),
+            AndromedaError::malformed_request(format!("Invalid format value: '{}'", fmt)).with_instance(uri.clone()),
         ));
     }
 
@@ -202,7 +202,7 @@ pub async fn get(
             .get_snapshot_entity(&snapshot_id, id.as_ref())
             .await
             .map_err(|e| e.with_instance(uri.clone()))?
-            .ok_or_else(|| NgsiLdError::from(AndromedaError::not_found(id.to_string()).with_instance(uri.clone())))?;
+            .ok_or_else(|| NgsiLdError::from(AndromedaError::entity_not_found(id.to_string()).with_instance(uri.clone())))?;
 
         let mode = params.resolve_render_mode();
         let attrs: Option<Vec<&str>> = params.attrs.as_deref().map(|s| s.split(',').map(str::trim).collect());
@@ -256,23 +256,19 @@ pub async fn get(
         let warnings = collect_warnings(&forwarded);
 
         let local_value = match local_result {
-            Ok(e) => Some(serde_json::to_value(&e).map_err(|err| {
-                AndromedaError::internal("Failed to serialize local entity")
-                    .with_source(err)
-                    .with_instance(uri.clone())
-            })?),
+            Ok(e) => Some(
+                serde_json::to_value(&e)
+                    .map_err(|err| AndromedaError::internal(format!("Failed to serialize local entity: {err}")).with_instance(uri.clone()))?,
+            ),
             Err(_) => None,
         };
 
         let merged = merge_retrieve_results(local_value, forwarded);
         let entity = match merged {
-            Some(value) => serde_json::from_value::<Entity>(value).map_err(|e| {
-                AndromedaError::internal(format!("Failed to deserialize merged entity {}", id))
-                    .with_source(e)
-                    .with_instance(uri.clone())
-            })?,
+            Some(value) => serde_json::from_value::<Entity>(value)
+                .map_err(|e| AndromedaError::internal(format!("Failed to deserialize merged entity {}: {e}", id)).with_instance(uri.clone()))?,
             None => {
-                return Err(NgsiLdError::from(AndromedaError::not_found(id.to_string()).with_instance(uri.clone())));
+                return Err(NgsiLdError::from(AndromedaError::entity_not_found(id.to_string()).with_instance(uri.clone())));
             }
         };
         (entity, warnings)
@@ -589,7 +585,7 @@ pub async fn query(
         let all_ids = service.query_ids(&compiled).await.map_err(|e| e.with_instance(uri.clone()))?;
         let typed_ids: Vec<Uri> = all_ids
             .iter()
-            .map(|id| Uri::from_str(id).map_err(|_| AndromedaError::bad_request_data(format!("Invalid entity id URI '{}'", id))))
+            .map(|id| Uri::from_str(id).map_err(|_| AndromedaError::entity_validation(format!("Invalid entity id URI '{}'", id))))
             .collect::<Result<Vec<_>, _>>()
             .map_err(|e| e.with_instance(uri.clone()))?;
         let lifetime = query
@@ -733,9 +729,9 @@ pub async fn merge(
 
     let context_url = context.link_contexts().first().map(|s| s.as_str());
     let patch_value =
-        serde_json::to_value(&patch).map_err(|e| AndromedaError::internal("Failed to serialize patch").with_source(e).with_instance(uri.clone()))?;
+        serde_json::to_value(&patch).map_err(|e| AndromedaError::internal(format!("Failed to serialize patch: {e}")).with_instance(uri.clone()))?;
     let patch_body =
-        serde_json::to_vec(&patch_value).map_err(|e| AndromedaError::internal("Failed to serialize patch").with_source(e).with_instance(uri.clone()))?;
+        serde_json::to_vec(&patch_value).map_err(|e| AndromedaError::internal(format!("Failed to serialize patch: {e}")).with_instance(uri.clone()))?;
     let entity_id = id.to_string();
 
     let (forwarded, _) = state
@@ -805,9 +801,9 @@ pub async fn update(
 
     let context_url = context.link_contexts().first().map(|s| s.as_str());
     let patch_value =
-        serde_json::to_value(&patch).map_err(|e| AndromedaError::internal("Failed to serialize patch").with_source(e).with_instance(uri.clone()))?;
+        serde_json::to_value(&patch).map_err(|e| AndromedaError::internal(format!("Failed to serialize patch: {e}")).with_instance(uri.clone()))?;
     let patch_body =
-        serde_json::to_vec(&patch_value).map_err(|e| AndromedaError::internal("Failed to serialize patch").with_source(e).with_instance(uri.clone()))?;
+        serde_json::to_vec(&patch_value).map_err(|e| AndromedaError::internal(format!("Failed to serialize patch: {e}")).with_instance(uri.clone()))?;
     let entity_id = id.to_string();
 
     let (forwarded, _) = state
@@ -873,11 +869,8 @@ pub async fn append_attrs(
 
     // Forward to matching context sources
     let context_url = context.link_contexts().first().map(|s| s.as_str());
-    let fragment_body = serde_json::to_vec(&fragment).map_err(|e| {
-        AndromedaError::internal("Failed to serialize fragment")
-            .with_source(e)
-            .with_instance(uri.clone())
-    })?;
+    let fragment_body =
+        serde_json::to_vec(&fragment).map_err(|e| AndromedaError::internal(format!("Failed to serialize fragment: {}", e)).with_instance(uri.clone()))?;
     let entity_id = id.to_string();
     let qs = if no_overwrite { "options=noOverwrite" } else { "" };
 
@@ -979,11 +972,8 @@ pub async fn update_attrs(
 
     // Forward to matching context sources
     let context_url = context.link_contexts().first().map(|s| s.as_str());
-    let fragment_body = serde_json::to_vec(&fragment).map_err(|e| {
-        AndromedaError::internal("Failed to serialize fragment")
-            .with_source(e)
-            .with_instance(uri.clone())
-    })?;
+    let fragment_body =
+        serde_json::to_vec(&fragment).map_err(|e| AndromedaError::internal(format!("Failed to serialize fragment: {}", e)).with_instance(uri.clone()))?;
     let entity_id = id.to_string();
 
     let (forwarded, _) = state
@@ -1062,11 +1052,8 @@ pub async fn partial_update_attr(
 
     // Forward to matching context sources
     let context_url = context.link_contexts().first().map(|s| s.as_str());
-    let fragment_body = serde_json::to_vec(&fragment).map_err(|e| {
-        AndromedaError::internal("Failed to serialize fragment")
-            .with_source(e)
-            .with_instance(uri.clone())
-    })?;
+    let fragment_body =
+        serde_json::to_vec(&fragment).map_err(|e| AndromedaError::internal(format!("Failed to serialize fragment: {}", e)).with_instance(uri.clone()))?;
     let entity_id = id.to_string();
     let path_suffix = format!("/attrs/{attr_id}");
     let qs = params.dataset_id.as_deref().map(|d| format!("datasetId={d}"));
@@ -1237,11 +1224,8 @@ pub async fn delete_by_query(
     }
 
     if !is_local {
-        let body = serde_json::to_vec(&entity_ids).map_err(|e| {
-            AndromedaError::internal("Failed to serialize entity IDs")
-                .with_source(e)
-                .with_instance(uri.clone())
-        })?;
+        let body = serde_json::to_vec(&entity_ids)
+            .map_err(|e| AndromedaError::internal(format!("Failed to serialize entity IDs: {}", e)).with_instance(uri.clone()))?;
         let context_url = context.link_contexts().first().map(|s| s.as_str());
         let forwarded = state
             .forwarding

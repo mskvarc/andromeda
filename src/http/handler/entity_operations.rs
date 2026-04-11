@@ -1,7 +1,7 @@
 use crate::{
     api::tenant::{TenantState, TenantStateOrCreate},
+    core::error::AndromedaError,
     domain::entity::EntityTypeValue,
-    error::AndromedaError,
     http::{
         error::{batch::BatchOperationResult, problem::NgsiLdError},
         extractor::{
@@ -38,6 +38,7 @@ use axum::{
 use serde_json::Value;
 use std::collections::HashSet;
 
+/// Handles POST query requests for batch entity retrieval (NGSI-LD 5.7.2).
 pub async fn query(
     TenantState(state): TenantState,
     OriginalUri(uri): OriginalUri,
@@ -193,6 +194,7 @@ pub async fn query(
     Ok(response.into_response())
 }
 
+/// Handles batch entity creation requests (NGSI-LD 5.6.7).
 pub async fn batch_create(
     TenantStateOrCreate(state): TenantStateOrCreate,
     OriginalUri(uri): OriginalUri,
@@ -206,7 +208,7 @@ pub async fn batch_create(
     let (entities, context, mut parse_errors) = parse_batch_entities(&body, &headers, &context, &uri)?;
 
     if entities.is_empty() && parse_errors.is_empty() {
-        return Err(AndromedaError::bad_request_data("Request body must contain a non-empty array of entities")
+        return Err(AndromedaError::entity_validation("Request body must contain a non-empty array of entities")
             .with_instance(uri.clone())
             .into());
     }
@@ -254,24 +256,19 @@ pub async fn batch_create(
     result.errors.append(&mut parse_errors);
 
     if result.errors.is_empty() {
-        let value = serde_json::to_value(&result.success).map_err(|e| {
-            AndromedaError::internal("Failed to serialize batch result")
-                .with_source(e)
-                .with_instance(uri.clone())
-        })?;
+        let value = serde_json::to_value(&result.success)
+            .map_err(|e| AndromedaError::internal(format!("Failed to serialize batch result: {}", e)).with_instance(uri.clone()))?;
         let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default()).render_batch(value)?;
         Ok(NgsiLdBatchResponse::new(StatusCode::CREATED, rendered).into_response())
     } else {
-        let value = serde_json::to_value(&result).map_err(|e| {
-            AndromedaError::internal("Failed to serialize batch result")
-                .with_source(e)
-                .with_instance(uri.clone())
-        })?;
+        let value = serde_json::to_value(&result)
+            .map_err(|e| AndromedaError::internal(format!("Failed to serialize batch result: {}", e)).with_instance(uri.clone()))?;
         let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default()).render_batch(value)?;
         Ok(NgsiLdBatchResponse::new(StatusCode::MULTI_STATUS, rendered).into_response())
     }
 }
 
+/// Handles batch entity upsert requests (NGSI-LD 5.6.8).
 pub async fn batch_upsert(
     TenantState(state): TenantState,
     OriginalUri(uri): OriginalUri,
@@ -286,7 +283,7 @@ pub async fn batch_upsert(
     let (entities, context, mut parse_errors) = parse_batch_entities(&body, &headers, &context, &uri)?;
 
     if entities.is_empty() && parse_errors.is_empty() {
-        return Err(AndromedaError::bad_request_data("Request body must contain a non-empty array of entities")
+        return Err(AndromedaError::entity_validation("Request body must contain a non-empty array of entities")
             .with_instance(uri.clone())
             .into());
     }
@@ -342,25 +339,20 @@ pub async fn batch_upsert(
         if created_ids.is_empty() {
             Ok(StatusCode::NO_CONTENT.into_response())
         } else {
-            let value = serde_json::to_value(&created_ids).map_err(|e| {
-                AndromedaError::internal("Failed to serialize batch result")
-                    .with_source(e)
-                    .with_instance(uri.clone())
-            })?;
+            let value = serde_json::to_value(&created_ids)
+                .map_err(|e| AndromedaError::internal(format!("Failed to serialize batch result: {}", e)).with_instance(uri.clone()))?;
             let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default()).render_batch(value)?;
             Ok(NgsiLdBatchResponse::new(StatusCode::CREATED, rendered).into_response())
         }
     } else {
-        let value = serde_json::to_value(&result).map_err(|e| {
-            AndromedaError::internal("Failed to serialize batch result")
-                .with_source(e)
-                .with_instance(uri.clone())
-        })?;
+        let value = serde_json::to_value(&result)
+            .map_err(|e| AndromedaError::internal(format!("Failed to serialize batch result: {}", e)).with_instance(uri.clone()))?;
         let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default()).render_batch(value)?;
         Ok(NgsiLdBatchResponse::new(StatusCode::MULTI_STATUS, rendered).into_response())
     }
 }
 
+/// Handles batch entity update requests (NGSI-LD 5.6.9).
 pub async fn batch_update(
     TenantState(state): TenantState,
     OriginalUri(uri): OriginalUri,
@@ -375,7 +367,7 @@ pub async fn batch_update(
     let (entities, context, mut parse_errors) = parse_batch_entities(&body, &headers, &context, &uri)?;
 
     if entities.is_empty() && parse_errors.is_empty() {
-        return Err(AndromedaError::bad_request_data("Request body must contain a non-empty array of entities")
+        return Err(AndromedaError::entity_validation("Request body must contain a non-empty array of entities")
             .with_instance(uri.clone())
             .into());
     }
@@ -428,16 +420,14 @@ pub async fn batch_update(
     if result.errors.is_empty() {
         Ok(StatusCode::NO_CONTENT.into_response())
     } else {
-        let value = serde_json::to_value(&result).map_err(|e| {
-            AndromedaError::internal("Failed to serialize batch result")
-                .with_source(e)
-                .with_instance(uri.clone())
-        })?;
+        let value = serde_json::to_value(&result)
+            .map_err(|e| AndromedaError::internal(format!("Failed to serialize batch result: {}", e)).with_instance(uri.clone()))?;
         let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default()).render_batch(value)?;
         Ok(NgsiLdBatchResponse::new(StatusCode::MULTI_STATUS, rendered).into_response())
     }
 }
 
+/// Handles batch entity merge requests (NGSI-LD 5.6.20).
 pub async fn batch_merge(
     TenantState(state): TenantState,
     OriginalUri(uri): OriginalUri,
@@ -451,7 +441,7 @@ pub async fn batch_merge(
     let (entities, context, mut parse_errors) = parse_batch_entities(&body, &headers, &context, &uri)?;
 
     if entities.is_empty() && parse_errors.is_empty() {
-        return Err(AndromedaError::bad_request_data("Request body must contain a non-empty array of entities")
+        return Err(AndromedaError::entity_validation("Request body must contain a non-empty array of entities")
             .with_instance(uri.clone())
             .into());
     }
@@ -498,16 +488,14 @@ pub async fn batch_merge(
     if result.errors.is_empty() {
         Ok(StatusCode::NO_CONTENT.into_response())
     } else {
-        let value = serde_json::to_value(&result).map_err(|e| {
-            AndromedaError::internal("Failed to serialize batch result")
-                .with_source(e)
-                .with_instance(uri.clone())
-        })?;
+        let value = serde_json::to_value(&result)
+            .map_err(|e| AndromedaError::internal(format!("Failed to serialize batch result: {}", e)).with_instance(uri.clone()))?;
         let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default()).render_batch(value)?;
         Ok(NgsiLdBatchResponse::new(StatusCode::MULTI_STATUS, rendered).into_response())
     }
 }
 
+/// Handles batch entity deletion requests (NGSI-LD 5.6.10).
 pub async fn batch_delete(
     TenantState(state): TenantState,
     OriginalUri(uri): OriginalUri,
@@ -519,10 +507,10 @@ pub async fn batch_delete(
     let service = &state.entities;
 
     let entity_ids: Vec<String> = serde_json::from_slice(&body)
-        .map_err(|e| AndromedaError::invalid_request(format!("Request body must be a JSON array of entity IDs: {}", e)).with_instance(uri.clone()))?;
+        .map_err(|e| AndromedaError::malformed_request(format!("Request body must be a JSON array of entity IDs: {}", e)).with_instance(uri.clone()))?;
 
     if entity_ids.is_empty() {
-        return Err(AndromedaError::bad_request_data("Request body must contain a non-empty array of entity IDs")
+        return Err(AndromedaError::entity_validation("Request body must contain a non-empty array of entity IDs")
             .with_instance(uri.clone())
             .into());
     }
@@ -574,11 +562,8 @@ pub async fn batch_delete(
     if result.errors.is_empty() {
         Ok(StatusCode::NO_CONTENT.into_response())
     } else {
-        let value = serde_json::to_value(&result).map_err(|e| {
-            AndromedaError::internal("Failed to serialize batch result")
-                .with_source(e)
-                .with_instance(uri.clone())
-        })?;
+        let value = serde_json::to_value(&result)
+            .map_err(|e| AndromedaError::internal(format!("Failed to serialize batch result: {}", e)).with_instance(uri.clone()))?;
         let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default()).render_batch(value)?;
         Ok(NgsiLdBatchResponse::new(StatusCode::MULTI_STATUS, rendered).into_response())
     }

@@ -1,9 +1,9 @@
 use crate::{
+    core::error::AndromedaError,
     domain::{
         notification::{CsrChangeEvent, CsrTriggerReason},
         temporal::{TimeProp, TimeRel},
     },
-    error::AndromedaError,
     http::parameter::query::{SharedQueryParams, csr::CsrQueryParameters},
     jsonld::{ContextSpec, JsonLdEngine},
     query::{
@@ -36,7 +36,7 @@ fn extract_create_params(payload: &Value) -> Result<CreateCsrParams<'_>, Androme
             .map(|s| {
                 DateTime::parse_from_rfc3339(s)
                     .map(|dt| dt.with_timezone(&Utc))
-                    .map_err(|e| AndromedaError::bad_request_data(format!("Invalid 'expiresAt' value '{}': {}", s, e)))
+                    .map_err(|e| AndromedaError::csr_validation(format!("Invalid 'expiresAt' value '{}': {}", s, e)))
             })
             .transpose()?,
         endpoint: payload.get("endpoint").and_then(|v| v.as_str()),
@@ -44,11 +44,11 @@ fn extract_create_params(payload: &Value) -> Result<CreateCsrParams<'_>, Androme
         mode: payload.get("mode").and_then(|v| v.as_str()).unwrap_or("inclusive"),
         operations: payload
             .get("operations")
-            .map(|v| serde_json::from_value(v.clone()).map_err(|e| AndromedaError::bad_request_data(format!("Invalid 'operations' value: {}", e)))) // clone: serde_json::from_value consumes the Value
+            .map(|v| serde_json::from_value(v.clone()).map_err(|e| AndromedaError::csr_validation(format!("Invalid 'operations' value: {}", e)))) // clone: serde_json::from_value consumes the Value
             .transpose()?,
         scope: payload
             .get("scope")
-            .map(|v| serde_json::from_value(v.clone()).map_err(|e| AndromedaError::bad_request_data(format!("Invalid 'scope' value: {}", e)))) // clone: serde_json::from_value consumes the Value
+            .map(|v| serde_json::from_value(v.clone()).map_err(|e| AndromedaError::csr_validation(format!("Invalid 'scope' value: {}", e)))) // clone: serde_json::from_value consumes the Value
             .transpose()?,
         refresh_rate: payload.get("refreshRate").and_then(|v| v.as_str()),
         management: payload.get("management"),
@@ -83,11 +83,11 @@ fn extract_update_fragment(fragment: &Value) -> Result<CsrUpdateFragment, Androm
                     Ok(None)
                 } else {
                     v.as_str()
-                        .ok_or_else(|| AndromedaError::bad_request_data("'expiresAt' must be a string"))
+                        .ok_or_else(|| AndromedaError::csr_validation("'expiresAt' must be a string"))
                         .and_then(|s| {
                             DateTime::parse_from_rfc3339(s)
                                 .map(|dt| Some(dt.with_timezone(&Utc)))
-                                .map_err(|e| AndromedaError::bad_request_data(format!("Invalid 'expiresAt' value '{}': {}", s, e)))
+                                .map_err(|e| AndromedaError::csr_validation(format!("Invalid 'expiresAt' value '{}': {}", s, e)))
                         })
                 }
             })
@@ -103,7 +103,7 @@ fn extract_update_fragment(fragment: &Value) -> Result<CsrUpdateFragment, Androm
                 } else {
                     serde_json::from_value(v.clone()) // clone: serde_json::from_value consumes the Value
                         .map(Some)
-                        .map_err(|e| AndromedaError::bad_request_data(format!("Invalid 'operations' value: {}", e)))
+                        .map_err(|e| AndromedaError::csr_validation(format!("Invalid 'operations' value: {}", e)))
                 }
             })
             .transpose()?,
@@ -115,7 +115,7 @@ fn extract_update_fragment(fragment: &Value) -> Result<CsrUpdateFragment, Androm
                 } else {
                     serde_json::from_value(v.clone()) // clone: serde_json::from_value consumes the Value
                         .map(Some)
-                        .map_err(|e| AndromedaError::bad_request_data(format!("Invalid 'scope' value: {}", e)))
+                        .map_err(|e| AndromedaError::csr_validation(format!("Invalid 'scope' value: {}", e)))
                 }
             })
             .transpose()?,
@@ -146,9 +146,9 @@ fn extract_optional_tenant_name(payload: &Value, key: &str) -> Result<Option<Opt
         Some(raw) => {
             let tenant = raw
                 .as_str()
-                .ok_or_else(|| AndromedaError::bad_request_data(format!("'{key}' must be a string")))?;
+                .ok_or_else(|| AndromedaError::csr_validation(format!("'{key}' must be a string")))?;
             let tenant_name =
-                TenantName::try_from(tenant.to_string()).map_err(|_| AndromedaError::bad_request_data(format!("'{key}' must be a non-empty string")))?;
+                TenantName::try_from(tenant.to_string()).map_err(|_| AndromedaError::csr_validation(format!("'{key}' must be a non-empty string")))?;
             Some(Some(tenant_name))
         }
     };
@@ -197,27 +197,27 @@ impl ContextSourceRegistrationService {
         if let Some(type_val) = payload.get("type")
             && type_val.as_str() != Some("ContextSourceRegistration")
         {
-            return Err(AndromedaError::bad_request_data("type must be 'ContextSourceRegistration'"));
+            return Err(AndromedaError::csr_validation("type must be 'ContextSourceRegistration'"));
         }
 
         // information is required
         if payload.get("information").is_none() {
-            return Err(AndromedaError::bad_request_data("information is required"));
+            return Err(AndromedaError::csr_validation("information is required"));
         }
 
         // endpoint is required
         if payload.get("endpoint").is_none() {
-            return Err(AndromedaError::bad_request_data("endpoint is required"));
+            return Err(AndromedaError::csr_validation("endpoint is required"));
         }
 
         // Validate expiresAt is not in the past
         if let Some(expires_at_val) = payload.get("expiresAt").and_then(|v| v.as_str()) {
             if let Ok(expires_at) = chrono::DateTime::parse_from_rfc3339(expires_at_val) {
                 if expires_at <= Utc::now() {
-                    return Err(AndromedaError::bad_request_data("expiresAt must be in the future"));
+                    return Err(AndromedaError::csr_validation("expiresAt must be in the future"));
                 }
             } else {
-                return Err(AndromedaError::bad_request_data("expiresAt must be a valid ISO 8601 date-time"));
+                return Err(AndromedaError::csr_validation("expiresAt must be a valid ISO 8601 date-time"));
             }
         }
 
@@ -225,23 +225,21 @@ impl ContextSourceRegistrationService {
         if let Some(mode) = payload.get("mode").and_then(|v| v.as_str())
             && !["inclusive", "exclusive", "redirect", "auxiliary"].contains(&mode)
         {
-            return Err(AndromedaError::bad_request_data(
-                "mode must be one of: inclusive, exclusive, redirect, auxiliary",
-            ));
+            return Err(AndromedaError::csr_validation("mode must be one of: inclusive, exclusive, redirect, auxiliary"));
         }
 
         // Validate id is a valid URI if provided
         if let Some(id) = payload.get("id").and_then(|v| v.as_str())
             && !Self::is_valid_uri(id)
         {
-            return Err(AndromedaError::bad_request_data("id must be a valid URI"));
+            return Err(AndromedaError::csr_validation("id must be a valid URI"));
         }
 
         // Determine the id
         let id = match payload.get("id").and_then(|v| v.as_str()) {
             Some(provided_id) => {
                 if self.repo.exists(provided_id).await? {
-                    return Err(AndromedaError::already_exists(provided_id));
+                    return Err(AndromedaError::csr_already_exists(provided_id));
                 }
                 provided_id.to_string()
             }
@@ -275,7 +273,7 @@ impl ContextSourceRegistrationService {
 
     /// Retrieve a single context source registration by its identifier.
     pub async fn get(&self, id: &str, context: &ContextSpec) -> Result<Value, AndromedaError> {
-        let csr = self.repo.get(id).await?.ok_or_else(|| AndromedaError::not_found(id))?;
+        let csr = self.repo.get(id).await?.ok_or_else(|| AndromedaError::csr_not_found(id))?;
 
         let mut value = serde_json::to_value(&csr).map_err(|e| AndromedaError::internal(format!("Failed to serialize CSR: {}", e)))?;
 
@@ -289,7 +287,7 @@ impl ContextSourceRegistrationService {
 
     /// Query context source registrations matching the given parameters.
     pub async fn query(&self, params: &CsrQueryParameters, context: &ContextSpec) -> Result<(Vec<Value>, i64), AndromedaError> {
-        params.validate().map_err(|e| AndromedaError::bad_request_data(e.to_string()))?;
+        params.validate().map_err(|e| AndromedaError::csr_validation(e.to_string()))?;
 
         let compiled = self.compile_csr_query(params, context).await?;
 
@@ -338,25 +336,25 @@ impl ContextSourceRegistrationService {
         let temporal = if let (Some(timerel), Some(time_at)) = (&params.timerel, &params.time_at) {
             let parsed_time_at = chrono::DateTime::parse_from_rfc3339(time_at)
                 .map(|dt| dt.with_timezone(&chrono::Utc))
-                .map_err(|_| AndromedaError::bad_request_data("Invalid timeAt: must be ISO 8601 date-time"))?;
+                .map_err(|_| AndromedaError::csr_validation("Invalid timeAt: must be ISO 8601 date-time"))?;
             let parsed_end_time_at = params
                 .end_time_at
                 .as_deref()
                 .map(|s| {
                     chrono::DateTime::parse_from_rfc3339(s)
                         .map(|dt| dt.with_timezone(&chrono::Utc))
-                        .map_err(|_| AndromedaError::bad_request_data("Invalid endTimeAt: must be ISO 8601 date-time"))
+                        .map_err(|_| AndromedaError::csr_validation("Invalid endTimeAt: must be ISO 8601 date-time"))
                 })
                 .transpose()?;
             let parsed_timerel = timerel
                 .parse::<TimeRel>()
-                .map_err(|e| AndromedaError::bad_request_data(format!("Invalid timerel: {}", e)))?;
+                .map_err(|e| AndromedaError::csr_validation(format!("Invalid timerel: {}", e)))?;
             let parsed_timeprop = params
                 .timeproperty
                 .as_deref()
                 .map(|s| s.parse::<TimeProp>())
                 .transpose()
-                .map_err(|e| AndromedaError::bad_request_data(format!("Invalid timeproperty: {}", e)))?;
+                .map_err(|e| AndromedaError::csr_validation(format!("Invalid timeproperty: {}", e)))?;
             Some(CompiledCsrTemporalFilter {
                 timerel: parsed_timerel,
                 time_at: parsed_time_at,
@@ -370,7 +368,7 @@ impl ContextSourceRegistrationService {
         // Parse q expression
         let q_expr = if let Some(ref q) = params.q {
             if !q.is_empty() {
-                Some(parser::parse(q).map_err(|e| AndromedaError::bad_request_data(format!("Invalid q parameter: {}", e)))?)
+                Some(parser::parse(q).map_err(|e| AndromedaError::csr_validation(format!("Invalid q parameter: {}", e)))?)
             } else {
                 None
             }
@@ -386,7 +384,7 @@ impl ContextSourceRegistrationService {
                 .as_deref()
                 .map(IdPattern::new)
                 .transpose()
-                .map_err(|e| AndromedaError::bad_request_data(e.to_string()))?,
+                .map_err(|e| AndromedaError::csr_validation(e.to_string()))?,
             attrs: expanded_attrs,
             q_expr,
             geo,
@@ -399,34 +397,32 @@ impl ContextSourceRegistrationService {
     /// Update an existing context source registration with the given fragment.
     pub async fn update(&self, id: &str, payload: Value, context: &ContextSpec) -> Result<(), AndromedaError> {
         if !Self::is_valid_uri(id) {
-            return Err(AndromedaError::bad_request_data(
-                "Context source registration id must be present and a valid URI",
-            ));
+            return Err(AndromedaError::csr_validation("Context source registration id must be present and a valid URI"));
         }
 
         // Validate type if present
         if let Some(type_val) = payload.get("type")
             && type_val.as_str() != Some("ContextSourceRegistration")
         {
-            return Err(AndromedaError::bad_request_data("type must be 'ContextSourceRegistration'"));
+            return Err(AndromedaError::csr_validation("type must be 'ContextSourceRegistration'"));
         }
 
         // Reject nulling out mandatory fields
         if payload.get("information").is_some_and(|v| v.is_null()) {
-            return Err(AndromedaError::bad_request_data("information must not be null"));
+            return Err(AndromedaError::csr_validation("information must not be null"));
         }
         if payload.get("endpoint").is_some_and(|v| v.is_null()) {
-            return Err(AndromedaError::bad_request_data("endpoint must not be null"));
+            return Err(AndromedaError::csr_validation("endpoint must not be null"));
         }
 
         // Validate expiresAt if present
         if let Some(expires_at_val) = payload.get("expiresAt").and_then(|v| v.as_str()) {
             if let Ok(expires_at) = chrono::DateTime::parse_from_rfc3339(expires_at_val) {
                 if expires_at <= Utc::now() {
-                    return Err(AndromedaError::bad_request_data("expiresAt must be in the future"));
+                    return Err(AndromedaError::csr_validation("expiresAt must be in the future"));
                 }
             } else {
-                return Err(AndromedaError::bad_request_data("expiresAt must be a valid ISO 8601 date-time"));
+                return Err(AndromedaError::csr_validation("expiresAt must be a valid ISO 8601 date-time"));
             }
         }
 
@@ -434,9 +430,7 @@ impl ContextSourceRegistrationService {
         if let Some(mode) = payload.get("mode").and_then(|v| v.as_str())
             && !["inclusive", "exclusive", "redirect", "auxiliary"].contains(&mode)
         {
-            return Err(AndromedaError::bad_request_data(
-                "mode must be one of: inclusive, exclusive, redirect, auxiliary",
-            ));
+            return Err(AndromedaError::csr_validation("mode must be one of: inclusive, exclusive, redirect, auxiliary"));
         }
 
         // Expand entity types and attribute names in information if present
@@ -452,7 +446,7 @@ impl ContextSourceRegistrationService {
         let updated = self.repo.update(id, &fragment).await?;
 
         if !updated {
-            return Err(AndromedaError::not_found(id));
+            return Err(AndromedaError::csr_not_found(id));
         }
 
         self.emit_csr_change(CsrChangeEvent {
@@ -467,9 +461,7 @@ impl ContextSourceRegistrationService {
     /// Delete a context source registration by its identifier.
     pub async fn delete(&self, id: &str) -> Result<(), AndromedaError> {
         if !Self::is_valid_uri(id) {
-            return Err(AndromedaError::bad_request_data(
-                "Context source registration id must be present and a valid URI",
-            ));
+            return Err(AndromedaError::csr_validation("Context source registration id must be present and a valid URI"));
         }
 
         // Fetch snapshot before deletion for notification
@@ -478,7 +470,7 @@ impl ContextSourceRegistrationService {
         let deleted = self.repo.delete(id).await?;
 
         if !deleted {
-            return Err(AndromedaError::not_found(id));
+            return Err(AndromedaError::csr_not_found(id));
         }
 
         self.emit_csr_change(CsrChangeEvent {

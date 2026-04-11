@@ -193,7 +193,7 @@ impl IntervalWorker {
         }
     }
 
-    async fn fetch_matching_entities(&self, sub: &Subscription) -> Result<Vec<Value>, crate::error::AndromedaError> {
+    async fn fetch_matching_entities(&self, sub: &Subscription) -> Result<Vec<Value>, crate::core::error::AndromedaError> {
         let mut all_entities = Vec::new();
 
         if let Some(ref selectors) = sub.entities {
@@ -235,7 +235,7 @@ impl IntervalWorker {
         Ok(all_entities)
     }
 
-    async fn prepare_notification_entities(&self, sub: &Subscription, entities: Vec<Value>) -> Result<Vec<Value>, crate::error::AndromedaError> {
+    async fn prepare_notification_entities(&self, sub: &Subscription, entities: Vec<Value>) -> Result<Vec<Value>, crate::core::error::AndromedaError> {
         let mut results = Vec::new();
         for mut entity in entities {
             if sub.notification.sys_attrs.unwrap_or(false)
@@ -276,7 +276,7 @@ impl IntervalWorker {
                             },
                         )
                         .await
-                        .map_err(|e| crate::error::AndromedaError::internal(format!("Compaction failed: {}", e)))?
+                        .map_err(|e| crate::core::error::AndromedaError::internal(format!("Compaction failed: {}", e)))?
                 }
             };
 

@@ -6,13 +6,13 @@
 //! builder methods and call [`EntityRenderer::render`] once.
 
 use crate::{
+    core::error::AndromedaError,
     domain::{
         attribute::{Attribute, AttributeValue, LanguageMapKey, LanguageMapValue, LanguageProperty},
         entity::Entity,
         serde_helpers,
         uri::Uri,
     },
-    error::AndromedaError,
     http::model::language::{LanguageFilter, LanguageRange},
 };
 use chrono::{DateTime, SecondsFormat, Utc};
@@ -245,7 +245,7 @@ fn serialize_value<T>(value: &T) -> Result<Value, AndromedaError>
 where
     T: Serialize,
 {
-    serde_json::to_value(value).map_err(|error| AndromedaError::internal("Failed to serialize response value").with_source(error))
+    serde_json::to_value(value).map_err(|error| AndromedaError::internal(format!("Failed to serialize response value: {}", error)))
 }
 
 #[derive(Debug)]

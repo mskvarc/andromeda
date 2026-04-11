@@ -1,11 +1,11 @@
 use crate::{
+    core::error::AndromedaError,
     domain::{
         entity::Entity,
         expanded,
         notification::{ChangeEvent, SysAttrsSnapshot, TriggerReason},
         uri::Uri,
     },
-    error::AndromedaError,
     jsonld::ContextSpec,
     query::sql,
     repository::entity::PreparedEntityRow,
@@ -108,7 +108,7 @@ impl EntityService {
         let id = entity.id.to_string();
 
         let mut entity_json =
-            serde_json::to_value(entity).map_err(|err| (id.clone(), AndromedaError::bad_request_data(format!("Invalid entity payload: {}", err))))?;
+            serde_json::to_value(entity).map_err(|err| (id.clone(), AndromedaError::entity_validation(format!("Invalid entity payload: {}", err))))?;
         normalize_entity_attributes(&mut entity_json);
         let expanded = self.engine.expand(entity_json, context).await.map_err(|err| {
             let err: AndromedaError = err.into();
@@ -176,7 +176,7 @@ impl EntityService {
         let mut rows = Vec::with_capacity(prepared.len());
         for p in prepared {
             if entity_data.contains_key(&p.id) {
-                errors.push((p.id.clone(), AndromedaError::already_exists(&p.id))); // clone: owned String needed for error
+                errors.push((p.id.clone(), AndromedaError::entity_already_exists(&p.id))); // clone: owned String needed for error
                 continue;
             }
             let id = p.id.clone(); // clone: key for lookup map, original moves into row
@@ -192,7 +192,7 @@ impl EntityService {
         // Entities not in the returned set already existed
         for id in entity_data.keys() {
             if !inserted_set.contains(id.as_str()) {
-                errors.push((id.clone(), AndromedaError::already_exists(id))); // clone: owned String needed for error, original borrowed from map
+                errors.push((id.clone(), AndromedaError::entity_already_exists(id))); // clone: owned String needed for error, original borrowed from map
             }
         }
 
@@ -243,7 +243,7 @@ impl EntityService {
         let mut errors: Vec<(String, AndromedaError)> = Vec::new();
         for id in entity_ids {
             if !seen.insert(id.as_str()) {
-                errors.push((id.clone(), AndromedaError::not_found(id))); // clone: owned copies for error list
+                errors.push((id.clone(), AndromedaError::entity_not_found(id))); // clone: owned copies for error list
             } else {
                 unique_ids.push(id.clone()); // clone: owned String for SQL binding
             }
@@ -255,7 +255,7 @@ impl EntityService {
         // IDs not in the returned set were not found
         for id in &unique_ids {
             if !deleted_set.contains(id.as_str()) {
-                errors.push((id.clone(), AndromedaError::not_found(id))); // clone: owned String for error
+                errors.push((id.clone(), AndromedaError::entity_not_found(id))); // clone: owned String for error
             }
         }
 
@@ -330,7 +330,7 @@ impl EntityService {
 
             let Some(mut existing) = existing_map.get(&id).cloned() else {
                 // clone: owned Value for in-place mutation
-                let err = AndromedaError::not_found(&id);
+                let err = AndromedaError::entity_not_found(&id);
                 errors.push((id, err));
                 continue;
             };
@@ -346,7 +346,7 @@ impl EntityService {
                 if skipped {
                     errors.push((
                         id.clone(), // clone: id also needed below in save_rows + entity_expanded
-                        AndromedaError::bad_request_data("Some attributes already exist and were not updated due to noOverwrite"),
+                        AndromedaError::entity_validation("Some attributes already exist and were not updated due to noOverwrite"),
                     ));
                 }
             } else {
@@ -420,7 +420,7 @@ impl EntityService {
 
             let Some(mut existing) = existing_map.get(&id).cloned() else {
                 // clone: owned Value for in-place mutation
-                let err = AndromedaError::not_found(&id);
+                let err = AndromedaError::entity_not_found(&id);
                 errors.push((id, err));
                 continue;
             };

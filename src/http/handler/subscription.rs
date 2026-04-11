@@ -102,12 +102,12 @@ pub async fn query(
     let offset = params.offset.unwrap_or(0);
     if limit <= 0 {
         return Err(NgsiLdError::from(
-            crate::error::AndromedaError::bad_request_data("limit must be greater than 0").with_instance(uri.clone()),
+            crate::core::error::AndromedaError::query_validation("limit must be greater than 0").with_instance(uri.clone()),
         ));
     }
     if offset < 0 {
         return Err(NgsiLdError::from(
-            crate::error::AndromedaError::bad_request_data("offset must be greater than or equal to 0").with_instance(uri.clone()),
+            crate::core::error::AndromedaError::query_validation("offset must be greater than or equal to 0").with_instance(uri.clone()),
         ));
     }
 

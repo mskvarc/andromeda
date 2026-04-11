@@ -4,8 +4,8 @@
 //! stored in PostgreSQL, including cloning, pagination, and expiration support.
 
 use crate::{
+    core::error::AndromedaError,
     domain::snapshot::{ExecutionResultDetails, KeyValuePair, Snapshot, SnapshotPriority, SnapshotStatus},
-    error::AndromedaError,
 };
 use chrono::{DateTime, Utc};
 use iso8601_duration::Duration as Iso8601Duration;
@@ -147,7 +147,7 @@ impl SnapshotRepository {
 
         self.get(new_id)
             .await?
-            .ok_or_else(|| AndromedaError::not_found("Cloned snapshot not found after insert".to_string()))
+            .ok_or_else(|| AndromedaError::snapshot_not_found("Cloned snapshot not found after insert".to_string()))
     }
 
     /// Update the `last_used_at` timestamp to the current time.

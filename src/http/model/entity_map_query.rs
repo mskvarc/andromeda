@@ -1,6 +1,6 @@
 //! HTTP request model types for entity map query endpoints.
 
-use crate::{error::AndromedaError, http::error::problem::NgsiLdError};
+use crate::{core::error::AndromedaError, http::error::problem::NgsiLdError};
 use serde::Deserialize;
 use serde_json::Value;
 
@@ -137,7 +137,8 @@ pub fn validate_has_filter(query: &crate::http::parameter::query::entity::Entity
 
     if !has_filter {
         return Err(NgsiLdError::from(
-            AndromedaError::bad_request_data("At least one query filter must be provided (type, attrs, q, georel, scopeQ, or id)").with_instance(uri.clone()),
+            AndromedaError::entity_map_validation("At least one query filter must be provided (type, attrs, q, georel, scopeQ, or id)")
+                .with_instance(uri.clone()),
         ));
     }
 

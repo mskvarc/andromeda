@@ -3,12 +3,12 @@
 //! Handles TEA (temporal_entity_attributes) catalog and attribute_history operations.
 
 use crate::{
+    core::error::AndromedaError,
     domain::{
         attribute_type::AttributeType,
         temporal::{TeaEntry, ValueType},
         uri::Uri,
     },
-    error::AndromedaError,
     query::sql::BindValue,
 };
 use chrono::{DateTime, Utc};
@@ -302,7 +302,7 @@ impl TemporalRepository {
         .await?;
 
         if result.is_none() {
-            return Err(AndromedaError::not_found(format!("Attribute instance {} not found", instance_id)));
+            return Err(AndromedaError::temporal_not_found(format!("Attribute instance {} not found", instance_id)));
         }
 
         Ok(())
@@ -341,7 +341,10 @@ impl TemporalRepository {
         .await?;
 
         if result.is_none() {
-            return Err(AndromedaError::not_found(format!("Attribute instance {} not found", params.instance_id)));
+            return Err(AndromedaError::temporal_not_found(format!(
+                "Attribute instance {} not found",
+                params.instance_id
+            )));
         }
 
         Ok(())

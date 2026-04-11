@@ -4,7 +4,7 @@
 //! aggregate result. They serialise directly into the JSON response body
 //! expected by the NGSI-LD specification.
 
-use crate::{error::core::AndromedaError, http::error::problem::NgsiLdErrorType, service::entity::batch::BatchResult};
+use crate::{core::error::AndromedaError, http::error::problem::NgsiLdErrorType, service::entity::batch::BatchResult};
 use serde::{
     Deserialize,
     Deserializer,
@@ -95,14 +95,14 @@ impl<'de> Visitor<'de> for BatchProblemDetailVisitor {
 
 impl BatchEntityError {
     /// Creates a [`BatchEntityError`] from a domain error, mapping the
-    /// [`AndromedaErrorKind`] to its corresponding [`NgsiLdErrorType`].
+    /// [`ErrorKind`](crate::core::error::ErrorKind) to its corresponding [`NgsiLdErrorType`].
     ///
     /// Internal errors are sanitised: the original detail is replaced with
     /// `"Internal error"` and the full error is logged at `error` level.
     pub fn from_domain_error(entity_id: &str, err: &AndromedaError) -> BatchEntityError {
         let error_type: NgsiLdErrorType = err.kind().into();
 
-        let detail = if err.kind().is_internal() {
+        let detail = if err.is_internal() {
             tracing::error!(
                 error = %err,
                 kind = ?err.kind(),
@@ -111,7 +111,7 @@ impl BatchEntityError {
             );
             "Internal error".to_string()
         } else {
-            err.message().to_string()
+            err.to_string()
         };
 
         BatchEntityError {
@@ -231,7 +231,7 @@ mod tests {
 
     #[test]
     fn from_domain_error_already_exists() {
-        let err = AndromedaError::already_exists("urn:ngsi-ld:Entity:1");
+        let err = AndromedaError::entity_already_exists("urn:ngsi-ld:Entity:1");
         let result = BatchEntityError::from_domain_error("urn:ngsi-ld:Entity:1", &err);
 
         assert_eq!(result.error.error_type, NgsiLdErrorType::AlreadyExists);
@@ -242,7 +242,7 @@ mod tests {
 
     #[test]
     fn from_domain_error_not_found() {
-        let err = AndromedaError::not_found("urn:ngsi-ld:Entity:2");
+        let err = AndromedaError::entity_not_found("urn:ngsi-ld:Entity:2");
         let result = BatchEntityError::from_domain_error("urn:ngsi-ld:Entity:2", &err);
 
         assert_eq!(result.error.error_type, NgsiLdErrorType::ResourceNotFound);
@@ -252,8 +252,8 @@ mod tests {
     }
 
     #[test]
-    fn from_domain_error_bad_request_data() {
-        let err = AndromedaError::bad_request_data("invalid payload");
+    fn from_domain_error_entity_validation() {
+        let err = AndromedaError::entity_validation("invalid payload");
         let result = BatchEntityError::from_domain_error("urn:ngsi-ld:Entity:3", &err);
 
         assert_eq!(result.error.error_type, NgsiLdErrorType::BadRequestData);
@@ -263,8 +263,8 @@ mod tests {
     }
 
     #[test]
-    fn from_domain_error_invalid_request() {
-        let err = AndromedaError::invalid_request("invalid request");
+    fn from_domain_error_malformed_request() {
+        let err = AndromedaError::malformed_request("invalid request");
         let result = BatchEntityError::from_domain_error("urn:ngsi-ld:Entity:7", &err);
 
         assert_eq!(result.error.error_type, NgsiLdErrorType::InvalidRequest);
@@ -286,26 +286,8 @@ mod tests {
     }
 
     #[test]
-    fn from_domain_error_sanitizes_repository_errors() {
-        let err = AndromedaError::repository("connection refused");
-        let result = BatchEntityError::from_domain_error("urn:ngsi-ld:Entity:repo", &err);
-
-        assert_eq!(result.error.error_type, NgsiLdErrorType::InternalError);
-        assert_eq!(result.error.detail, "Internal error");
-    }
-
-    #[test]
-    fn from_domain_error_sanitizes_external_dependency_errors() {
-        let err = AndromedaError::external_dependency("upstream timeout");
-        let result = BatchEntityError::from_domain_error("urn:ngsi-ld:Entity:ext", &err);
-
-        assert_eq!(result.error.error_type, NgsiLdErrorType::InternalError);
-        assert_eq!(result.error.detail, "Internal error");
-    }
-
-    #[test]
-    fn from_domain_error_ld_context_not_available() {
-        let err = AndromedaError::ld_context_not_available("context fetch failed");
+    fn from_domain_error_context_not_available() {
+        let err = AndromedaError::context_not_available("context fetch failed");
         let result = BatchEntityError::from_domain_error("urn:ngsi-ld:Entity:6", &err);
 
         assert_eq!(result.error.error_type, NgsiLdErrorType::LdContextNotAvailable);
@@ -316,7 +298,7 @@ mod tests {
 
     #[test]
     fn from_domain_error_preserves_entity_id() {
-        let err = AndromedaError::not_found("urn:ngsi-ld:Entity:99");
+        let err = AndromedaError::entity_not_found("urn:ngsi-ld:Entity:99");
         let result = BatchEntityError::from_domain_error("urn:ngsi-ld:Entity:99", &err);
 
         assert_eq!(result.entity_id, "urn:ngsi-ld:Entity:99");
@@ -324,7 +306,7 @@ mod tests {
 
     #[test]
     fn from_domain_error_preserves_detail_message() {
-        let err = AndromedaError::bad_request_data("missing required attribute");
+        let err = AndromedaError::entity_validation("missing required attribute");
         let result = BatchEntityError::from_domain_error("urn:ngsi-ld:Entity:5", &err);
 
         assert_eq!(result.error.detail, "missing required attribute");

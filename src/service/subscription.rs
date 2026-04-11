@@ -1,6 +1,6 @@
 use crate::{
+    core::error::AndromedaError,
     domain::{notification::SubscriptionChange, subscription::Subscription, uri::Uri},
-    error::AndromedaError,
     jsonld::{ContextSpec, JsonLdEngine},
     repository::{jsonld_context::JsonLdContextRepository, subscription::SubscriptionRepository},
     service::{
@@ -67,7 +67,7 @@ impl SubscriptionVariant for EntitySubscriptionVariant {
     }
 
     async fn serialize_for_response(&self, subscription: &Subscription, context: &ContextSpec) -> Result<Value, AndromedaError> {
-        let mut value = serde_json::to_value(subscription).map_err(|e| AndromedaError::bad_request_data(format!("Serialization failed: {}", e)))?;
+        let mut value = serde_json::to_value(subscription).map_err(|e| AndromedaError::subscription_validation(format!("Serialization failed: {}", e)))?;
 
         subscription_core::compact_subscription_iris(&self.engine, &mut value, context).await;
         subscription_core::fixup_integer_fields(&mut value);

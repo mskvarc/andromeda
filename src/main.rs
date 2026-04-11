@@ -1,7 +1,6 @@
 mod api;
 mod core;
 mod domain;
-mod error;
 mod http;
 mod jsonld;
 mod query;
@@ -13,8 +12,7 @@ mod tenancy;
 mod transport;
 mod worker;
 
-use crate::error::AndromedaError;
-use core::config::Configuration;
+use core::{config::Configuration, error::AndromedaError};
 use tracing::{Level, info};
 use tracing_subscriber::FmtSubscriber;
 

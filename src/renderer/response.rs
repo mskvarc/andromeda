@@ -13,7 +13,7 @@
 //! the response type for header construction and serialization.
 
 use crate::{
-    error::AndromedaError,
+    core::error::AndromedaError,
     http::{
         extractor::prefer::PreferHeader,
         model::{preference::GeoJsonBodyPreference, response_format::ResponseFormat},

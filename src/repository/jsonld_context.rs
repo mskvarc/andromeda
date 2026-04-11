@@ -4,11 +4,11 @@
 //! PostgreSQL, including hit tracking and the `ContextCache` trait implementation.
 
 use crate::{
+    core::error::AndromedaError,
     domain::{
         jsonld_context::{ContextKind, ContextMetadata},
         uri::{NGSI_LD_URN_NID, Uri},
     },
-    error::AndromedaError,
     jsonld::ContextCache,
 };
 use async_trait::async_trait;

@@ -1,5 +1,5 @@
 use crate::{
-    error::AndromedaError,
+    core::error::AndromedaError,
     jsonld::{ContextSpec, JsonLdEngine},
     query::compiled::{GeoQuery, GeoRel},
 };
@@ -20,7 +20,7 @@ pub async fn compile_geo_query(
         (Some(gr), Some(geom), Some(coords)) => (gr, geom, coords),
         (None, None, None) => return Ok(None),
         _ => {
-            return Err(AndromedaError::bad_request_data(
+            return Err(AndromedaError::query_validation(
                 "georel, geometry, and coordinates must all be provided together",
             ));
         }
@@ -30,7 +30,7 @@ pub async fn compile_geo_query(
     let geoproperty_iri = engine.expand_term(geoproperty, context).await?;
 
     let coordinates_value: serde_json::Value =
-        serde_json::from_str(coordinates_str).map_err(|e| AndromedaError::bad_request_data(format!("Invalid coordinates JSON: {}", e)))?;
+        serde_json::from_str(coordinates_str).map_err(|e| AndromedaError::query_validation(format!("Invalid coordinates JSON: {}", e)))?;
 
     Ok(Some(GeoQuery {
         georel: GeoRel::parse(georel_str)?,

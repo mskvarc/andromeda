@@ -3,8 +3,8 @@
 //! Records attribute history whenever entities are created or modified.
 
 use crate::{
+    core::error::AndromedaError,
     domain::{attribute_type::AttributeType, temporal::ValueType, uri::Uri},
-    error::AndromedaError,
     jsonld::vocab,
     repository::temporal::{HistoryValues, InsertHistoryParams, TemporalRepository, UpdateInstanceParams},
 };
@@ -99,7 +99,7 @@ impl TemporalRecorder {
                             match self.record_attribute_instance(entity_id, attr_name, &synthetic).await {
                                 Ok(()) => {}
                                 Err(e) => {
-                                    tracing::warn!("Failed to record scope temporal data for entity {}: {}", entity_id, e.message());
+                                    tracing::warn!("Failed to record scope temporal data for entity {}: {}", entity_id, e);
                                 }
                             }
                         }
@@ -125,7 +125,7 @@ impl TemporalRecorder {
                         // clone: method requires owned Value; inst_obj is borrowed from instances iterator
                         Ok(()) => {}
                         Err(e) => {
-                            tracing::warn!("Failed to record temporal data for entity {}: {}", entity_id, e.message());
+                            tracing::warn!("Failed to record temporal data for entity {}: {}", entity_id, e);
                         }
                     }
                 }
@@ -190,7 +190,7 @@ impl TemporalRecorder {
         let parsed_dataset_id = dataset_id
             .map(Uri::from_str)
             .transpose()
-            .map_err(|_| AndromedaError::bad_request_data(format!("Invalid datasetId '{}': not a valid URI", dataset_id.unwrap_or_default())))?;
+            .map_err(|_| AndromedaError::temporal_validation(format!("Invalid datasetId '{}': not a valid URI", dataset_id.unwrap_or_default())))?;
         let attr_type = teas
             .iter()
             .find(|t| t.dataset_id.as_ref() == parsed_dataset_id.as_ref())
@@ -342,7 +342,7 @@ fn extract_typed_value(instance: &Value, attribute_type: AttributeType) -> Resul
                 .and_then(|arr| arr.first())
                 .and_then(|obj| obj.get("@id"))
                 .and_then(|v| v.as_str())
-                .ok_or_else(|| AndromedaError::bad_request_data("Relationship missing object"))?;
+                .ok_or_else(|| AndromedaError::temporal_validation("Relationship missing object"))?;
             Ok(TypedValue::Uri(uri.to_string()))
         }
         AttributeType::GeoProperty => {
@@ -350,7 +350,7 @@ fn extract_typed_value(instance: &Value, attribute_type: AttributeType) -> Resul
                 .get(vocab::VALUE.as_str())
                 .and_then(|v| v.as_array())
                 .and_then(|arr| arr.first())
-                .ok_or_else(|| AndromedaError::bad_request_data("GeoProperty missing value"))?;
+                .ok_or_else(|| AndromedaError::temporal_validation("GeoProperty missing value"))?;
 
             let geo_str = if let Some(val) = geo_node.get("@value") {
                 match val.as_str() {
@@ -366,7 +366,7 @@ fn extract_typed_value(instance: &Value, attribute_type: AttributeType) -> Resul
             let arr = instance
                 .get(vocab::VOCAB.as_str())
                 .and_then(|v| v.as_array())
-                .ok_or_else(|| AndromedaError::bad_request_data("VocabProperty missing vocab value"))?;
+                .ok_or_else(|| AndromedaError::temporal_validation("VocabProperty missing vocab value"))?;
             if arr.len() > 1 {
                 let values: Vec<Value> = arr.iter().filter_map(|obj| obj.get("@id").or(obj.get("@value")).cloned()).collect(); // clone: need owned Values for collected Vec
                 Ok(TypedValue::Object(Value::Array(values)))
@@ -375,14 +375,14 @@ fn extract_typed_value(instance: &Value, attribute_type: AttributeType) -> Resul
                     .first()
                     .and_then(|obj| obj.get("@id").or(obj.get("@value")))
                     .and_then(|v| v.as_str())
-                    .ok_or_else(|| AndromedaError::bad_request_data("VocabProperty missing vocab value"))?;
+                    .ok_or_else(|| AndromedaError::temporal_validation("VocabProperty missing vocab value"))?;
                 Ok(TypedValue::String(vocab_val.to_string()))
             }
         }
         AttributeType::LanguageProperty => {
             let lang_map = instance
                 .get(vocab::LANGUAGE_MAP.as_str())
-                .ok_or_else(|| AndromedaError::bad_request_data("LanguageProperty missing languageMap"))?;
+                .ok_or_else(|| AndromedaError::temporal_validation("LanguageProperty missing languageMap"))?;
             Ok(TypedValue::Object(lang_map.clone())) // clone: need owned Value for TypedValue enum; lang_map is borrowed from instance
         }
         AttributeType::JsonProperty => {
@@ -391,7 +391,7 @@ fn extract_typed_value(instance: &Value, attribute_type: AttributeType) -> Resul
                 .and_then(|v| v.as_array())
                 .and_then(|arr| arr.first())
                 .and_then(|obj| obj.get("@value"))
-                .ok_or_else(|| AndromedaError::bad_request_data("JsonProperty missing json value"))?;
+                .ok_or_else(|| AndromedaError::temporal_validation("JsonProperty missing json value"))?;
             Ok(TypedValue::Object(json_val.clone())) // clone: need owned Value for TypedValue enum; json_val is borrowed from instance
         }
         AttributeType::ListProperty => {
@@ -400,7 +400,7 @@ fn extract_typed_value(instance: &Value, attribute_type: AttributeType) -> Resul
                 .and_then(|v| v.as_array())
                 .and_then(|arr| arr.first())
                 .and_then(|obj| obj.get("@list"))
-                .ok_or_else(|| AndromedaError::bad_request_data("ListProperty missing valueList"))?;
+                .ok_or_else(|| AndromedaError::temporal_validation("ListProperty missing valueList"))?;
             Ok(TypedValue::Object(list.clone())) // clone: need owned Value for TypedValue enum; list is borrowed from instance
         }
         AttributeType::ListRelationship => {
@@ -409,7 +409,7 @@ fn extract_typed_value(instance: &Value, attribute_type: AttributeType) -> Resul
                 .and_then(|v| v.as_array())
                 .and_then(|arr| arr.first())
                 .and_then(|obj| obj.get("@list"))
-                .ok_or_else(|| AndromedaError::bad_request_data("ListRelationship missing objectList"))?;
+                .ok_or_else(|| AndromedaError::temporal_validation("ListRelationship missing objectList"))?;
             let uris: Vec<Value> = list
                 .as_array()
                 .map(|arr| arr.iter().filter_map(|obj| obj.get("@id").cloned()).collect()) // clone: need owned Values for collected Vec
@@ -422,7 +422,7 @@ fn extract_typed_value(instance: &Value, attribute_type: AttributeType) -> Resul
                 .get(vocab::VALUE.as_str())
                 .and_then(|v| v.as_array())
                 .and_then(|arr| arr.first())
-                .ok_or_else(|| AndromedaError::bad_request_data("Property missing value"))?;
+                .ok_or_else(|| AndromedaError::temporal_validation("Property missing value"))?;
 
             if let Some(value) = has_value.get("@value") {
                 let type_hint = has_value.get("@type").and_then(|t| t.as_str());

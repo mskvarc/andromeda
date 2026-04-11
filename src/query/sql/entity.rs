@@ -1,7 +1,7 @@
 //! SQL generation for entity queries.
 
 use crate::{
-    error::AndromedaError,
+    core::error::AndromedaError,
     query::{
         compiled::{CompiledEntityQuery, CompiledOrderTerm, GeoQuery, OrderingGeometry},
         sql::{BindValue, BuiltQuery, EntityFilterConditionsInput, build_entity_filter_conditions, build_geo_extract},
@@ -76,7 +76,7 @@ fn build_order_clause(order_by: &[CompiledOrderTerm], geo: Option<&GeoQuery>, or
                     // orderFrom takes precedence: use the ordering geometry as reference
                     let geo_extract = build_geo_extract(&term.attr_iri, "payload");
                     let geojson_str = serde_json::to_string(&og.geometry)
-                        .map_err(|e| AndromedaError::bad_request_data(format!("Failed to serialize ordering geometry: {}", e)))?;
+                        .map_err(|e| AndromedaError::query_validation(format!("Failed to serialize ordering geometry: {}", e)))?;
                     let ref_geom = format!("ST_MakeValid(ST_SetSRID(ST_GeomFromGeoJSON('{}'), 4326))", geojson_str);
                     Ok(format!("ST_Distance({}::geography, {}::geography) {} NULLS LAST", geo_extract, ref_geom, dir))
                 } else if let Some(geo) = geo {
@@ -90,7 +90,7 @@ fn build_order_clause(order_by: &[CompiledOrderTerm], geo: Option<&GeoQuery>, or
                     Ok(format!("ST_Distance({}::geography, {}::geography) {} NULLS LAST", geo_extract, ref_geom, dir))
                 } else {
                     // Defensive: should have been caught during compilation (S5.7.2.4)
-                    Err(AndromedaError::bad_request_data(
+                    Err(AndromedaError::query_validation(
                         "Distance-based ordering requires either a geo-query or orderFrom parameter".to_string(),
                     ))
                 }

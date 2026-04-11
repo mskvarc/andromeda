@@ -1,9 +1,9 @@
 use crate::{
+    core::error::AndromedaError,
     domain::{
         attribute::{Attribute, AttributeValue},
         entity::Entity,
     },
-    error::AndromedaError,
     http::parameter::query::{SharedQueryParams, entity::EntityQueryParameters},
     jsonld::{CompactOptions, ContextSpec, JsonLdEngine},
     query::compiled::{CompiledEntityQuery, CompiledOrderTerm, GeoQuery, IcuCollation, IdPattern, OrderingGeometry, ScopeQuery},
@@ -52,7 +52,7 @@ impl EntityQueryService {
             Value::Object(map) => Some(map),
             _other => None,
         }
-        .ok_or_else(|| AndromedaError::bad_request_data("Entity data is not a JSON object"))?;
+        .ok_or_else(|| AndromedaError::entity_validation("Entity data is not a JSON object"))?;
 
         if let Some(t) = obj.remove("@type") {
             obj.insert("type".to_string(), t);
@@ -62,14 +62,14 @@ impl EntityQueryService {
             .map(|s| s.to_string())
             .or_else(|| obj.get("id").and_then(|v| v.as_str()).map(str::to_string))
             .or_else(|| obj.get("@id").and_then(|v| v.as_str()).map(str::to_string))
-            .ok_or_else(|| AndromedaError::bad_request_data("Entity missing id field"))?;
+            .ok_or_else(|| AndromedaError::entity_validation("Entity missing id field"))?;
 
         obj.remove("@id");
         obj.insert("id".to_string(), serde_json::json!(id));
 
         let val = Value::Object(obj);
 
-        let mut entity: Entity = serde_json::from_value(val).map_err(|err| AndromedaError::bad_request_data(format!("Invalid entity data: {}", err)))?;
+        let mut entity: Entity = serde_json::from_value(val).map_err(|err| AndromedaError::entity_validation(format!("Invalid entity data: {}", err)))?;
 
         // Filter out attribute instances whose expiresAt has passed (clause 4.22).
         // The background worker handles DB cleanup, but this ensures clients never
@@ -112,7 +112,7 @@ impl EntityQueryService {
                 self.filter_entity_attrs(&mut entity, &wanted_iris, context).await?;
 
                 if entity.attrs.is_empty() {
-                    return Err(AndromedaError::not_found(id_str));
+                    return Err(AndromedaError::entity_not_found(id_str));
                 }
             }
 
@@ -123,7 +123,7 @@ impl EntityQueryService {
             return Ok(entity);
         }
 
-        Err(AndromedaError::not_found(id_str))
+        Err(AndromedaError::entity_not_found(id_str))
     }
 
     /// Execute a parameterized entity query, returning matching entities and an optional total count.
@@ -306,7 +306,7 @@ impl EntityQueryService {
             .as_deref()
             .map(IdPattern::new)
             .transpose()
-            .map_err(|e| AndromedaError::bad_request_data(e.to_string()))?;
+            .map_err(|e| AndromedaError::entity_validation(e.to_string()))?;
 
         let (types, type_match_all) = if let Some(raw_types) = params.entity_type.as_deref() {
             let raw_types = raw_types.trim();
@@ -387,14 +387,14 @@ impl EntityQueryService {
         // Compile orderFrom/orderGeometry into OrderingGeometry (S5.2.43)
         let ordering_geometry = if let Some(ref order_from) = params.order_from {
             let coordinates: serde_json::Value = serde_json::from_str(order_from)
-                .map_err(|_| AndromedaError::bad_request_data(format!("Invalid orderFrom value: '{}' is not valid JSON", order_from)))?;
+                .map_err(|_| AndromedaError::entity_validation(format!("Invalid orderFrom value: '{}' is not valid JSON", order_from)))?;
             let geometry_type = params.order_geometry.as_deref().unwrap_or("Point");
             let geojson_value = serde_json::json!({
                 "type": geometry_type,
                 "coordinates": coordinates
             });
             let geometry: geojson::Geometry = serde_json::from_value(geojson_value)
-                .map_err(|e| AndromedaError::bad_request_data(format!("Invalid orderFrom/orderGeometry combination: {}", e)))?;
+                .map_err(|e| AndromedaError::entity_validation(format!("Invalid orderFrom/orderGeometry combination: {}", e)))?;
             Some(OrderingGeometry { geometry })
         } else {
             None
@@ -403,7 +403,7 @@ impl EntityQueryService {
         // Validate: distance ordering requires a reference geometry (S5.7.2.4)
         let has_distance_term = order_by.iter().any(|t| t.direction.is_distance());
         if has_distance_term && geo.is_none() && ordering_geometry.is_none() {
-            return Err(AndromedaError::bad_request_data(
+            return Err(AndromedaError::entity_validation(
                 "Distance-based ordering requires either a geo-query or orderFrom parameter".to_string(),
             ));
         }

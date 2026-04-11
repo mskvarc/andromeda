@@ -1,8 +1,8 @@
 //! SQL generation for Context Source Registration queries.
 
 use crate::{
+    core::error::AndromedaError,
     domain::temporal::{TimeProp, TimeRel},
-    error::AndromedaError,
     query::{
         compiled::{CompiledCsrQuery, GeoRel},
         q::ast::{AttrPath, CmpOp, CompareValue, Expr, Predicate},
@@ -105,7 +105,7 @@ pub fn build_csr_query<'a>(query: &'a CompiledCsrQuery) -> Result<BuiltQuery<'a>
                     parts.push(format!("ST_Distance(location::geography, {}::geography) >= {}", ref_geom, min));
                 }
                 if parts.is_empty() {
-                    return Err(AndromedaError::bad_request_data("near georel requires maxDistance or minDistance"));
+                    return Err(AndromedaError::query_validation("near georel requires maxDistance or minDistance"));
                 }
                 parts.join(" AND ")
             }
@@ -144,7 +144,7 @@ pub fn build_csr_query<'a>(query: &'a CompiledCsrQuery) -> Result<BuiltQuery<'a>
                 let end_time = temporal
                     .end_time_at
                     .as_ref()
-                    .ok_or_else(|| AndromedaError::bad_request_data("endTimeAt is required when timerel=between"))?;
+                    .ok_or_else(|| AndromedaError::query_validation("endTimeAt is required when timerel=between"))?;
                 conditions.push(format!(
                     "({col} IS NULL OR (({col}->>'startAt')::timestamptz <= ${}::timestamptz AND ({col}->>'endAt')::timestamptz >= ${}::timestamptz))",
                     param_idx + 1,
@@ -338,7 +338,7 @@ fn csr_compare_to_sql(path: &AttrPath, op: CmpOp, rhs: &CompareValue, binds: &mu
                     *param_idx += 2;
                     s
                 }
-                _ => return Err(AndromedaError::bad_request_data("Range values only supported with == and != operators")),
+                _ => return Err(AndromedaError::query_validation("Range values only supported with == and != operators")),
             };
             Ok(sql)
         }
@@ -357,7 +357,7 @@ fn csr_compare_to_sql(path: &AttrPath, op: CmpOp, rhs: &CompareValue, binds: &mu
             match op {
                 CmpOp::Equal => Ok(format!("(({extract}) IS NOT NULL AND ({}))", parts.join(" OR "), extract = extract)),
                 CmpOp::Unequal => Ok(format!("(({extract}) IS NULL OR NOT ({}))", parts.join(" OR "), extract = extract)),
-                _ => Err(AndromedaError::bad_request_data("Value lists only supported with == and != operators")),
+                _ => Err(AndromedaError::query_validation("Value lists only supported with == and != operators")),
             }
         }
     }

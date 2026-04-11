@@ -4,7 +4,7 @@
 //! used across multiple handler modules (entities, temporal, subscriptions,
 //! context source registrations, snapshots, entity maps).
 
-use crate::{domain::name::Name, error::AndromedaError, http::error::problem::NgsiLdError, renderer::SysAttrsInclusion};
+use crate::{core::error::AndromedaError, domain::name::Name, http::error::problem::NgsiLdError, renderer::SysAttrsInclusion};
 use axum::http::Uri;
 use url::Url;
 use urn::Urn;
@@ -14,7 +14,7 @@ use urn::Urn;
 /// Returns `BadRequestData` if the string is not a valid URN.
 pub fn parse_entity_id(id: &str, uri: &Uri) -> Result<Urn, NgsiLdError> {
     id.parse::<Urn>()
-        .map_err(|_| NgsiLdError::from(AndromedaError::bad_request_data("Invalid entity id: not a valid URI").with_instance(uri.clone())))
+        .map_err(|_| NgsiLdError::from(AndromedaError::entity_validation("Invalid entity id: not a valid URI").with_instance(uri.clone())))
 }
 
 /// Validate that a string is a valid NGSI-LD Name (clause 4.6.2) or a valid IRI.
@@ -32,7 +32,7 @@ pub fn parse_entity_id(id: &str, uri: &Uri) -> Result<Urn, NgsiLdError> {
 pub fn validate_name_or_iri(value: &str, uri: &Uri) -> Result<(), NgsiLdError> {
     if value.is_empty() {
         return Err(NgsiLdError::from(
-            AndromedaError::bad_request_data("Name must not be empty").with_instance(uri.clone()),
+            AndromedaError::entity_validation("Name must not be empty").with_instance(uri.clone()),
         ));
     }
     // Full IRI (HTTP, HTTPS, etc.) — pass through.
@@ -49,7 +49,7 @@ pub fn validate_name_or_iri(value: &str, uri: &Uri) -> Result<(), NgsiLdError> {
         let local = &value[colon_pos + 1..];
         if Name::new(prefix).is_err() || Name::new(local).is_err() {
             return Err(NgsiLdError::from(
-                AndromedaError::bad_request_data(format!(
+                AndromedaError::entity_validation(format!(
                     "Invalid prefixed name '{value}': both prefix and local name must conform to NGSI-LD name grammar (clause 4.6.2)"
                 ))
                 .with_instance(uri.clone()),
@@ -60,7 +60,7 @@ pub fn validate_name_or_iri(value: &str, uri: &Uri) -> Result<(), NgsiLdError> {
     // Bare name — validate against the Name grammar.
     Name::new(value).map_err(|_| {
         NgsiLdError::from(
-            AndromedaError::bad_request_data(format!("Invalid name '{value}': does not conform to NGSI-LD name grammar (clause 4.6.2)"))
+            AndromedaError::entity_validation(format!("Invalid name '{value}': does not conform to NGSI-LD name grammar (clause 4.6.2)"))
                 .with_instance(uri.clone()),
         )
     })?;
@@ -81,7 +81,7 @@ pub fn validate_attr_name(name: &str, uri: &Uri) -> Result<(), NgsiLdError> {
 pub fn validate_instance_id(id: &str, uri: &Uri) -> Result<(), NgsiLdError> {
     if id.is_empty() || Url::parse(id).is_err() {
         return Err(NgsiLdError::from(
-            AndromedaError::bad_request_data("Invalid instance id: not a valid URI").with_instance(uri.clone()),
+            AndromedaError::entity_validation("Invalid instance id: not a valid URI").with_instance(uri.clone()),
         ));
     }
     Ok(())
@@ -94,10 +94,10 @@ pub fn validate_instance_id(id: &str, uri: &Uri) -> Result<(), NgsiLdError> {
 pub fn parse_csr_id(id: &str, uri: &Uri) -> Result<(), NgsiLdError> {
     if id.starts_with("urn:") {
         id.parse::<Urn>()
-            .map_err(|_| NgsiLdError::from(AndromedaError::bad_request_data("Invalid registration id: not a valid URI").with_instance(uri.clone())))?;
+            .map_err(|_| NgsiLdError::from(AndromedaError::entity_validation("Invalid registration id: not a valid URI").with_instance(uri.clone())))?;
     } else {
         Url::parse(id)
-            .map_err(|_| NgsiLdError::from(AndromedaError::bad_request_data("Invalid registration id: not a valid URI").with_instance(uri.clone())))?;
+            .map_err(|_| NgsiLdError::from(AndromedaError::entity_validation("Invalid registration id: not a valid URI").with_instance(uri.clone())))?;
     }
     Ok(())
 }
@@ -109,9 +109,9 @@ pub fn parse_csr_id(id: &str, uri: &Uri) -> Result<(), NgsiLdError> {
 pub fn parse_snapshot_id(snapshot_id: &str, uri: &Uri) -> Result<Urn, NgsiLdError> {
     let id = snapshot_id
         .parse::<Urn>()
-        .map_err(|e| AndromedaError::bad_request_data(format!("Invalid snapshot id URN: {}", e)).with_instance(uri.clone()))?;
+        .map_err(|e| AndromedaError::entity_validation(format!("Invalid snapshot id URN: {}", e)).with_instance(uri.clone()))?;
     crate::domain::snapshot::validate_snapshot_urn(&id)
-        .map_err(|e| AndromedaError::bad_request_data(format!("Invalid snapshot id: {}", e)).with_instance(uri.clone()))?;
+        .map_err(|e| AndromedaError::entity_validation(format!("Invalid snapshot id: {}", e)).with_instance(uri.clone()))?;
     Ok(id)
 }
 
@@ -147,7 +147,7 @@ pub fn parse_list_options(options: Option<&str>, uri: &Uri) -> Result<ListOption
                 "sysAttrs" => parsed.sys_attrs = SysAttrsInclusion::Include,
                 other => {
                     return Err(NgsiLdError::from(
-                        AndromedaError::invalid_request(format!("Invalid options value: '{}'", other)).with_instance(uri.clone()),
+                        AndromedaError::malformed_request(format!("Invalid options value: '{}'", other)).with_instance(uri.clone()),
                     ));
                 }
             }

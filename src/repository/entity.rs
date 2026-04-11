@@ -4,8 +4,8 @@
 //! query execution, entity type/attribute discovery, and expiration cleanup.
 
 use crate::{
+    core::error::AndromedaError,
     domain::{expanded, notification::SysAttrsSnapshot},
-    error::AndromedaError,
     query::{
         compiled::CompiledEntityQuery,
         sql::{self, BindValue},

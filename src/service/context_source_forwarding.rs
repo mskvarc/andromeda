@@ -1,6 +1,6 @@
 use crate::{
+    core::error::AndromedaError,
     domain::registration::{ContextSourceRegistration, CsrOperation, ForwardingMode},
-    error::AndromedaError,
     http::header::{link::Link, ngsild_tenant::NgsiLdTenant, ngsild_warning::NgsiLdWarning, via::Via},
     jsonld::{ContextSpec, JsonLdEngine},
     repository::context_source_registration::ContextSourceRegistrationRepository,
@@ -1049,12 +1049,12 @@ impl ContextSourceForwardingService {
 
     /// Send a request and return the status and raw bytes.
     async fn send_request(&self, request: reqwest::RequestBuilder) -> Result<(reqwest::StatusCode, Option<String>, Vec<u8>), AndromedaError> {
-        let response = request.send().await.map_err(|e| AndromedaError::map_reqwest(e, "context_source_forward"))?;
+        let response = request.send().await?;
 
         let status = response.status();
         let warning = response.headers().get("Warning").and_then(|v| v.to_str().ok()).map(String::from);
 
-        let bytes = response.bytes().await.map_err(|e| AndromedaError::map_reqwest(e, "context_source_read_body"))?;
+        let bytes = response.bytes().await?;
 
         Ok((status, warning, bytes.to_vec()))
     }

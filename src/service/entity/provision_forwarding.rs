@@ -7,8 +7,8 @@
 //! and build multi-status responses.
 
 use crate::{
+    core::error::AndromedaError,
     domain::registration::ForwardingMode,
-    error::AndromedaError,
     http::error::batch::BatchEntityError,
     service::context_source_forwarding::ForwardedWriteResult,
 };
@@ -185,7 +185,7 @@ mod tests {
 
     #[test]
     fn build_multi_status_body_local_error_remote_success() {
-        let err = AndromedaError::not_found("urn:test:1");
+        let err = AndromedaError::entity_not_found("urn:test:1");
         let remote = vec![make_result(ForwardingMode::Inclusive, 204)];
         let body = build_multi_status_body("urn:test:1", false, Some(&err), &remote);
         let success = body["success"].as_array().expect("success array");

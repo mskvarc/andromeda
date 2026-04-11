@@ -4,12 +4,12 @@
 //! PostgreSQL, including geometry handling and additional property merging.
 
 use crate::{
+    core::error::AndromedaError,
     domain::{
         registration::{ContextSourceRegistration, CsrOperation, CsrStatus, ForwardingMode},
         scope::ScopeBuf,
         uri::NGSI_LD_URN_NID,
     },
-    error::AndromedaError,
     query::{compiled::CompiledCsrQuery, sql::csr as csr_sql},
     tenancy::types::TenantName,
 };

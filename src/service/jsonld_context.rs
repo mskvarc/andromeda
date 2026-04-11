@@ -1,9 +1,9 @@
 use crate::{
+    core::error::AndromedaError,
     domain::{
         jsonld_context::{ContextKind, ContextMetadata},
         uri::Uri,
     },
-    error::AndromedaError,
     jsonld::{
         JsonLdEngine,
         core_context::{NGSI_LD_CORE_CONTEXT_URL, NGSI_LD_CORE_CONTEXT_V19, is_ngsi_ld_core_context_url},
@@ -34,7 +34,7 @@ impl JsonLdContextService {
     /// Create a new hosted JSON-LD context from the given payload.
     pub async fn create(&self, payload: Value, base_url: Option<&str>) -> Result<Urn, AndromedaError> {
         if payload.get("@context").is_none() {
-            return Err(AndromedaError::invalid_request("Payload must contain a top-level @context field"));
+            return Err(AndromedaError::malformed_request("Payload must contain a top-level @context field"));
         }
 
         self.repo.create_hosted(payload, base_url).await
@@ -74,7 +74,7 @@ impl JsonLdContextService {
             .repo
             .get(identifier, detail_level)
             .await?
-            .ok_or_else(|| AndromedaError::not_found(identifier.to_string()))?;
+            .ok_or_else(|| AndromedaError::context_not_found(identifier.to_string()))?;
 
         // Record the access hit when serving the context payload (not for details queries)
         if detail_level == DetailLevel::Summary {
@@ -94,21 +94,21 @@ impl JsonLdContextService {
                 .repo
                 .get_kind_and_url(identifier)
                 .await?
-                .ok_or_else(|| AndromedaError::bad_request_data(format!("Context not found: {}", identifier)))?;
+                .ok_or_else(|| AndromedaError::jsonld_processing(format!("Context not found: {}", identifier)))?;
 
             let (id, kind, url) = row;
 
             if kind != ContextKind::Cached {
-                return Err(AndromedaError::bad_request_data("Cannot reload a non-cached context"));
+                return Err(AndromedaError::jsonld_processing("Cannot reload a non-cached context"));
             }
 
-            let source_url = url.ok_or_else(|| AndromedaError::bad_request_data("Cached context has no source URL"))?;
+            let source_url = url.ok_or_else(|| AndromedaError::jsonld_processing("Cached context has no source URL"))?;
 
             let resolved = self
                 .engine
                 .fetch_remote_context(&source_url)
                 .await
-                .map_err(|e| AndromedaError::ld_context_not_available(format!("Failed to re-download context from {}: {}", source_url, e)))?;
+                .map_err(|e| AndromedaError::context_not_available(format!("Failed to re-download context from {}: {}", source_url, e)))?;
 
             let new_payload = serde_json::json!({ "@context": resolved });
 
@@ -118,7 +118,7 @@ impl JsonLdContextService {
         }
 
         if !self.repo.delete(identifier).await? {
-            return Err(AndromedaError::not_found(identifier.to_string()));
+            return Err(AndromedaError::context_not_found(identifier.to_string()));
         }
         Ok(())
     }

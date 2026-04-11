@@ -5,7 +5,7 @@
 //! crate for type-safe construction; `@context` is injected post-serialization
 //! because it is an NGSI-LD extension absent from the GeoJSON spec.
 
-use crate::error::AndromedaError;
+use crate::core::error::AndromedaError;
 use geojson::{Feature, FeatureCollection, feature::Id};
 use serde_json::{Map, Value};
 
@@ -48,7 +48,7 @@ impl<'a> GeoJsonRenderer<'a> {
     /// Convert the entity JSON object payload to a GeoJSON Feature.
     pub fn render_entity(self) -> Result<Value, AndromedaError> {
         let feature = entity_to_feature(&self.payload, self.geometry_property);
-        let mut value = serde_json::to_value(feature).map_err(|e| AndromedaError::internal("Failed to serialize GeoJSON Feature").with_source(e))?;
+        let mut value = serde_json::to_value(feature).map_err(|e| AndromedaError::internal(format!("Failed to serialize GeoJSON Feature: {}", e)))?;
         if let Some(ctx) = self.context_value
             && let Some(obj) = value.as_object_mut()
         {
@@ -71,7 +71,7 @@ impl<'a> GeoJsonRenderer<'a> {
         };
 
         let mut value =
-            serde_json::to_value(collection).map_err(|e| AndromedaError::internal("Failed to serialize GeoJSON FeatureCollection").with_source(e))?;
+            serde_json::to_value(collection).map_err(|e| AndromedaError::internal(format!("Failed to serialize GeoJSON FeatureCollection: {}", e)))?;
         if let Some(ctx) = self.context_value
             && let Some(obj) = value.as_object_mut()
         {

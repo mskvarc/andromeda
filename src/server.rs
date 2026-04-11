@@ -1,4 +1,7 @@
-use crate::{api::router::create_router, core::config::Configuration, error::AndromedaError};
+use crate::{
+    api::router::create_router,
+    core::{config::Configuration, error::AndromedaError},
+};
 use axum::{ServiceExt, middleware};
 use std::sync::Arc;
 use tokio::net::TcpListener;

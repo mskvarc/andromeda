@@ -5,8 +5,8 @@
 //! and row deserialization shared by entity and context source subscriptions.
 
 use crate::{
+    core::error::AndromedaError,
     domain::subscription::{NotificationParams, NotificationStatus, Subscription, SubscriptionStatus},
-    error::AndromedaError,
 };
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -108,7 +108,7 @@ macro_rules! impl_subscription_store {
     ($type:ty, kind: $kind:literal, columns: $columns:literal, has_dataset_id: $hdi:expr) => {
         #[async_trait::async_trait]
         impl $crate::repository::subscription_store::SubscriptionStore for $type {
-            async fn get(&self, id: &str) -> Result<Option<$crate::domain::subscription::Subscription>, $crate::error::AndromedaError> {
+            async fn get(&self, id: &str) -> Result<Option<$crate::domain::subscription::Subscription>, $crate::core::error::AndromedaError> {
                 let row = sqlx::query(concat!("SELECT ", $columns, " FROM subscriptions WHERE id = $1 AND kind = '", $kind, "'"))
                     .bind(id)
                     .fetch_optional(&self.pool)
@@ -124,7 +124,7 @@ macro_rules! impl_subscription_store {
                 &self,
                 limit: Option<i64>,
                 offset: Option<i64>,
-            ) -> Result<(Vec<$crate::domain::subscription::Subscription>, i64), $crate::error::AndromedaError> {
+            ) -> Result<(Vec<$crate::domain::subscription::Subscription>, i64), $crate::core::error::AndromedaError> {
                 let limit = limit.unwrap_or(100);
                 let offset = offset.unwrap_or(0);
 
@@ -154,7 +154,7 @@ macro_rules! impl_subscription_store {
                 Ok((subscriptions, count_row.0))
             }
 
-            async fn delete(&self, id: &str) -> Result<bool, $crate::error::AndromedaError> {
+            async fn delete(&self, id: &str) -> Result<bool, $crate::core::error::AndromedaError> {
                 let result = sqlx::query(concat!("DELETE FROM subscriptions WHERE id = $1 AND kind = '", $kind, "'"))
                     .bind(id)
                     .execute(&self.pool)
@@ -163,7 +163,7 @@ macro_rules! impl_subscription_store {
                 Ok(result.rows_affected() > 0)
             }
 
-            async fn exists(&self, id: &str) -> Result<bool, $crate::error::AndromedaError> {
+            async fn exists(&self, id: &str) -> Result<bool, $crate::core::error::AndromedaError> {
                 let row: (bool,) = sqlx::query_as(concat!(
                     "SELECT EXISTS(SELECT 1 FROM subscriptions WHERE id = $1 AND kind = '",
                     $kind,
@@ -175,7 +175,7 @@ macro_rules! impl_subscription_store {
                 Ok(row.0)
             }
 
-            async fn list_active(&self) -> Result<Vec<$crate::domain::subscription::Subscription>, $crate::error::AndromedaError> {
+            async fn list_active(&self) -> Result<Vec<$crate::domain::subscription::Subscription>, $crate::core::error::AndromedaError> {
                 let rows = sqlx::query(concat!(
                     "SELECT ",
                     $columns,
@@ -191,7 +191,7 @@ macro_rules! impl_subscription_store {
                     .collect::<Result<Vec<_>, _>>()
             }
 
-            async fn claim_notification_slot(&self, id: &str, throttling_secs: Option<f64>) -> Result<bool, $crate::error::AndromedaError> {
+            async fn claim_notification_slot(&self, id: &str, throttling_secs: Option<f64>) -> Result<bool, $crate::core::error::AndromedaError> {
                 let result = if let Some(throttle) = throttling_secs {
                     sqlx::query(concat!(
                         "UPDATE subscriptions",
@@ -222,7 +222,7 @@ macro_rules! impl_subscription_store {
                 Ok(result.rows_affected() > 0)
             }
 
-            async fn mark_success(&self, id: &str) -> Result<(), $crate::error::AndromedaError> {
+            async fn mark_success(&self, id: &str) -> Result<(), $crate::core::error::AndromedaError> {
                 sqlx::query(concat!(
                     "UPDATE subscriptions SET last_success = NOW(), modified_at = NOW() WHERE id = $1 AND kind = '",
                     $kind,
@@ -234,7 +234,7 @@ macro_rules! impl_subscription_store {
                 Ok(())
             }
 
-            async fn mark_failure(&self, id: &str) -> Result<(), $crate::error::AndromedaError> {
+            async fn mark_failure(&self, id: &str) -> Result<(), $crate::core::error::AndromedaError> {
                 sqlx::query(concat!(
                     "UPDATE subscriptions SET last_failure = NOW(), modified_at = NOW() WHERE id = $1 AND kind = '",
                     $kind,
@@ -246,7 +246,7 @@ macro_rules! impl_subscription_store {
                 Ok(())
             }
 
-            async fn expire_due(&self) -> Result<Vec<String>, $crate::error::AndromedaError> {
+            async fn expire_due(&self) -> Result<Vec<String>, $crate::core::error::AndromedaError> {
                 let rows = sqlx::query(concat!(
                     "UPDATE subscriptions",
                     " SET status = 'expired', is_active = false, modified_at = NOW()",
@@ -267,7 +267,7 @@ macro_rules! impl_subscription_store {
                 id: &str,
                 fields: &$crate::repository::subscription_store::SubscriptionFields<'_>,
                 status: $crate::domain::subscription::SubscriptionStatus,
-            ) -> Result<(), $crate::error::AndromedaError> {
+            ) -> Result<(), $crate::core::error::AndromedaError> {
                 self.create(id, fields, status).await
             }
 
@@ -276,11 +276,11 @@ macro_rules! impl_subscription_store {
                 id: &str,
                 fields: &$crate::repository::subscription_store::SubscriptionFields<'_>,
                 status: $crate::domain::subscription::SubscriptionStatus,
-            ) -> Result<bool, $crate::error::AndromedaError> {
+            ) -> Result<bool, $crate::core::error::AndromedaError> {
                 self.update(id, fields, status).await
             }
 
-            async fn find_due_interval_subscriptions(&self) -> Result<Vec<$crate::domain::subscription::Subscription>, $crate::error::AndromedaError> {
+            async fn find_due_interval_subscriptions(&self) -> Result<Vec<$crate::domain::subscription::Subscription>, $crate::core::error::AndromedaError> {
                 let rows = sqlx::query(concat!(
                     "SELECT ",
                     $columns,

@@ -2,8 +2,8 @@
 
 use crate::{
     api::tenant::TenantState,
+    core::error::AndromedaError,
     domain::uri::Uri,
-    error::{AndromedaError, core::AndromedaErrorKind},
     http::{
         error::problem::NgsiLdError,
         extractor::{
@@ -38,7 +38,9 @@ use axum::{
 use serde_json::Value;
 use std::str::FromStr;
 
-/// POST /ngsi-ld/v1/temporal/entities
+/// Handles `POST /ngsi-ld/v1/temporal/entities`.
+///
+/// Creates a new temporal entity or updates an existing one from the request payload.
 pub async fn create_or_update(
     crate::api::tenant::TenantStateOrCreate(state): crate::api::tenant::TenantStateOrCreate,
     OriginalUri(uri): OriginalUri,
@@ -59,7 +61,10 @@ pub async fn create_or_update(
     }
 }
 
-/// GET /ngsi-ld/v1/temporal/entities/{id}
+/// Handles `GET /ngsi-ld/v1/temporal/entities/{id}`.
+///
+/// Retrieves a single temporal entity by its identifier, with support for snapshot
+/// scoping, entity-map scoping, and distributed context-source forwarding.
 pub async fn get(
     TenantState(state): TenantState,
     OriginalUri(uri): OriginalUri,
@@ -91,7 +96,7 @@ pub async fn get(
             .get_snapshot_temporal_entity(&snapshot_id, id.as_ref())
             .await
             .map_err(|e| e.with_instance(uri.clone()))?
-            .ok_or_else(|| NgsiLdError::from(AndromedaError::not_found(id.to_string()).with_instance(uri.clone())))?;
+            .ok_or_else(|| NgsiLdError::from(AndromedaError::temporal_not_found(id.to_string()).with_instance(uri.clone())))?;
 
         let key_values = params.is_simplified();
 
@@ -140,7 +145,7 @@ pub async fn get(
 
         let local_value = match local_result {
             Ok(result) => Some((result.value, result.content_range)),
-            Err(ref e) if e.kind() == AndromedaErrorKind::NotFound => None,
+            Err(ref e) if e.is_not_found() => None,
             Err(e) => return Err(e.with_instance(uri.clone()).into()),
         };
 
@@ -153,7 +158,7 @@ pub async fn get(
         match merged {
             Some(value) => (value, content_range, warnings),
             None => {
-                return Err(NgsiLdError::from(AndromedaError::not_found(id.to_string()).with_instance(uri.clone())));
+                return Err(NgsiLdError::from(AndromedaError::temporal_not_found(id.to_string()).with_instance(uri.clone())));
             }
         }
     };
@@ -183,7 +188,10 @@ pub async fn get(
     Ok(builder.into_response())
 }
 
-/// GET /ngsi-ld/v1/temporal/entities
+/// Handles `GET /ngsi-ld/v1/temporal/entities`.
+///
+/// Queries temporal entities matching the supplied parameters, with support for
+/// snapshot scoping, entity-map scoping, and distributed context-source forwarding.
 pub async fn query(
     TenantState(state): TenantState,
     OriginalUri(uri): OriginalUri,
@@ -298,7 +306,7 @@ pub async fn query(
         let all_ids = service.query_ids(&params, &context).await.map_err(|e| e.with_instance(uri.clone()))?;
         let typed_ids: Vec<Uri> = all_ids
             .iter()
-            .map(|id| Uri::from_str(id).map_err(|_| AndromedaError::bad_request_data(format!("Invalid entity id URI '{}'", id))))
+            .map(|id| Uri::from_str(id).map_err(|_| AndromedaError::temporal_validation(format!("Invalid entity id URI '{}'", id))))
             .collect::<Result<Vec<_>, _>>()
             .map_err(|e| e.with_instance(uri.clone()))?;
         let lifetime = params
@@ -348,7 +356,9 @@ pub async fn query(
     Ok(response.into_response())
 }
 
-/// DELETE /ngsi-ld/v1/temporal/entities/{id}
+/// Handles `DELETE /ngsi-ld/v1/temporal/entities/{id}`.
+///
+/// Deletes a temporal entity and all of its temporal attribute instances.
 pub async fn delete(TenantState(state): TenantState, OriginalUri(uri): OriginalUri, Path(id): Path<String>) -> Result<Response, NgsiLdError> {
     let service = &state.temporal;
     let id = parse_entity_id(&id, &uri)?;
@@ -356,7 +366,9 @@ pub async fn delete(TenantState(state): TenantState, OriginalUri(uri): OriginalU
     Ok(StatusCode::NO_CONTENT.into_response())
 }
 
-/// POST /ngsi-ld/v1/temporal/entities/{id}/attrs
+/// Handles `POST /ngsi-ld/v1/temporal/entities/{id}/attrs`.
+///
+/// Appends one or more temporal attributes to an existing temporal entity.
 pub async fn add_attrs(
     TenantState(state): TenantState,
     OriginalUri(uri): OriginalUri,
@@ -377,7 +389,10 @@ pub async fn add_attrs(
     Ok(StatusCode::NO_CONTENT.into_response())
 }
 
-/// DELETE /ngsi-ld/v1/temporal/entities/{id}/attrs/{attr_id}
+/// Handles `DELETE /ngsi-ld/v1/temporal/entities/{id}/attrs/{attr_id}`.
+///
+/// Deletes a temporal attribute from a temporal entity, either a single default
+/// instance or all instances when `deleteAll` is specified.
 pub async fn delete_attr(
     TenantState(state): TenantState,
     OriginalUri(uri): OriginalUri,
@@ -401,8 +416,9 @@ pub async fn delete_attr(
     Ok(StatusCode::NO_CONTENT.into_response())
 }
 
-/// PATCH /ngsi-ld/v1/temporal/entities/{id}/attrs/{attr_id}/{instance_id}
-/// PATCH /ngsi-ld/v1/temporal/entities/{id}/attrs/{attr_id}/{instance_id} -- Update an attribute instance.
+/// Handles `PATCH /ngsi-ld/v1/temporal/entities/{id}/attrs/{attr_id}/{instance_id}`.
+///
+/// Updates a specific temporal attribute instance identified by its instance ID.
 pub async fn update_attr_instance(
     TenantState(state): TenantState,
     OriginalUri(uri): OriginalUri,
@@ -428,7 +444,9 @@ pub async fn update_attr_instance(
     Ok(StatusCode::NO_CONTENT.into_response())
 }
 
-/// DELETE /ngsi-ld/v1/temporal/entities/{id}/attrs/{attr_id}/{instance_id}
+/// Handles `DELETE /ngsi-ld/v1/temporal/entities/{id}/attrs/{attr_id}/{instance_id}`.
+///
+/// Deletes a specific temporal attribute instance identified by its instance ID.
 pub async fn delete_attr_instance(
     TenantState(state): TenantState,
     OriginalUri(uri): OriginalUri,

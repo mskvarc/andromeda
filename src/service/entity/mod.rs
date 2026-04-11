@@ -8,12 +8,12 @@ pub mod provision_forwarding;
 pub mod query;
 
 use crate::{
+    core::error::AndromedaError,
     domain::{
         entity::{Entity, EntityPatch},
         notification::{ChangeEvent, TriggerReason},
         uri::Uri,
     },
-    error::AndromedaError,
     jsonld::{ContextSpec, JsonLdEngine},
     repository::{entity::EntityRepository, temporal::TemporalRepository},
     service::temporal_recorder::TemporalRecorder,
@@ -82,7 +82,7 @@ impl EntityService {
     pub async fn create(&self, entity: &Entity, context: &ContextSpec) -> Result<Urn, AndromedaError> {
         let id = entity.id.to_string();
 
-        let mut entity_json = serde_json::to_value(entity).map_err(|err| AndromedaError::bad_request_data(format!("Invalid entity payload: {}", err)))?;
+        let mut entity_json = serde_json::to_value(entity).map_err(|err| AndromedaError::entity_validation(format!("Invalid entity payload: {}", err)))?;
         normalize_entity_attributes(&mut entity_json);
         let expanded = self.engine.expand(entity_json, context).await?;
         validate_attribute_envelopes(&expanded)?;
@@ -107,11 +107,11 @@ impl EntityService {
         let entity_uri = Uri::from(id.clone()); // clone: owned Urn for Uri conversion; id is &Urn
         let id = id.to_string();
 
-        let mut existing = self.repo.get(&id).await?.ok_or_else(|| AndromedaError::not_found(&id))?;
+        let mut existing = self.repo.get(&id).await?.ok_or_else(|| AndromedaError::entity_not_found(&id))?;
         let attrs_before: HashSet<String> = extract_attribute_keys(&existing).into_iter().collect();
         let previous_attributes = self.change_tx.as_ref().map(|_| existing.clone()); // clone: snapshot before mutation for showChanges diff
 
-        let mut patch_json = serde_json::to_value(patch).map_err(|err| AndromedaError::bad_request_data(format!("Invalid patch payload: {}", err)))?;
+        let mut patch_json = serde_json::to_value(patch).map_err(|err| AndromedaError::entity_validation(format!("Invalid patch payload: {}", err)))?;
         normalize_entity_attributes(&mut patch_json);
         let expanded = self.engine.expand(patch_json, context).await?;
         validate_attribute_envelopes(&expanded)?;
@@ -159,10 +159,10 @@ impl EntityService {
         let id = id.to_string();
 
         if self.repo.get(&id).await?.is_none() {
-            return Err(AndromedaError::not_found(id));
+            return Err(AndromedaError::entity_not_found(id));
         }
 
-        let mut patch_json = serde_json::to_value(patch).map_err(|err| AndromedaError::bad_request_data(format!("Invalid patch payload: {}", err)))?;
+        let mut patch_json = serde_json::to_value(patch).map_err(|err| AndromedaError::entity_validation(format!("Invalid patch payload: {}", err)))?;
         normalize_entity_attributes(&mut patch_json);
         let expanded = self.engine.expand(patch_json, context).await?;
         validate_attribute_envelopes(&expanded)?;
@@ -185,7 +185,7 @@ impl EntityService {
 
         let entity_snapshot = match self.repo.get(&id).await? {
             Some(expanded) => expanded,
-            None => return Err(AndromedaError::not_found(id)),
+            None => return Err(AndromedaError::entity_not_found(id)),
         };
         let entity_types = extract_entity_types(&entity_snapshot);
 
@@ -199,7 +199,7 @@ impl EntityService {
         };
 
         if !self.repo.delete(&id).await? {
-            return Err(AndromedaError::not_found(id));
+            return Err(AndromedaError::entity_not_found(id));
         }
 
         // Emit AttributeDeleted for each attribute so attributeDeleted subscriptions fire
@@ -401,14 +401,14 @@ fn validate_attr_instances(attr_name: &str, value: &Value) -> Result<(), Androme
 
         if (is_property || is_geo_property) && !obj.contains_key(vocab::VALUE.as_str()) {
             let short_type = if is_geo_property { "GeoProperty" } else { "Property" };
-            return Err(AndromedaError::bad_request_data(format!(
+            return Err(AndromedaError::entity_validation(format!(
                 "{} '{}' is missing required field 'value'",
                 short_type, attr_name
             )));
         }
 
         if is_relationship && !obj.contains_key(vocab::OBJECT.as_str()) {
-            return Err(AndromedaError::bad_request_data(format!(
+            return Err(AndromedaError::entity_validation(format!(
                 "Relationship '{}' is missing required field 'object'",
                 attr_name
             )));

@@ -1,6 +1,6 @@
 use crate::{
+    core::error::AndromedaError,
     domain::{entity_map::EntityMap, uri::Uri},
-    error::AndromedaError,
     repository::entity_map::EntityMapStore,
 };
 use chrono::{DateTime, Utc};
@@ -30,7 +30,7 @@ impl EntityMapService {
 
     /// Retrieve an entity map by its identifier.
     pub async fn retrieve(&self, id: &Urn) -> Result<EntityMap, AndromedaError> {
-        self.store.get(id).await.ok_or_else(|| AndromedaError::not_found(id.to_string()))
+        self.store.get(id).await.ok_or_else(|| AndromedaError::entity_map_not_found(id.to_string()))
     }
 
     /// Update the expiration time of an existing entity map.
@@ -38,7 +38,7 @@ impl EntityMapService {
         if self.store.update(id, expires_at).await {
             Ok(())
         } else {
-            Err(AndromedaError::not_found(id.to_string()))
+            Err(AndromedaError::entity_map_not_found(id.to_string()))
         }
     }
 
@@ -61,7 +61,7 @@ impl EntityMapService {
         if map.entity_ids.iter().any(|id| matches!(id, Uri::Urn(candidate) if candidate == entity_id)) {
             Ok(())
         } else {
-            Err(AndromedaError::not_found(entity_id.to_string()))
+            Err(AndromedaError::entity_map_not_found(entity_id.to_string()))
         }
     }
 
@@ -70,7 +70,7 @@ impl EntityMapService {
         if self.store.delete(id).await {
             Ok(())
         } else {
-            Err(AndromedaError::not_found(id.to_string()))
+            Err(AndromedaError::entity_map_not_found(id.to_string()))
         }
     }
 }
@@ -83,7 +83,7 @@ pub fn parse_iso8601_duration(input: Option<&str>) -> Result<Iso8601Duration, An
         Some(raw) if !raw.trim().is_empty() => raw
             .trim()
             .parse::<Iso8601Duration>()
-            .map_err(|e| AndromedaError::bad_request_data(format!("Invalid ISO8601 duration '{}': {:?}", raw, e))),
+            .map_err(|e| AndromedaError::entity_map_validation(format!("Invalid ISO8601 duration '{}': {:?}", raw, e))),
         _ => "PT1H"
             .parse::<Iso8601Duration>()
             .map_err(|e| AndromedaError::internal(format!("Invalid default entityMapLifetime: {:?}", e))),
@@ -96,7 +96,7 @@ pub fn parse_uri_csv(input: &str) -> Result<Vec<Uri>, AndromedaError> {
         .split(',')
         .map(str::trim)
         .filter(|segment| !segment.is_empty())
-        .map(|segment| Uri::from_str(segment).map_err(|_| AndromedaError::bad_request_data(format!("Invalid URI '{}': expected URN or URL", segment))))
+        .map(|segment| Uri::from_str(segment).map_err(|_| AndromedaError::entity_map_validation(format!("Invalid URI '{}': expected URN or URL", segment))))
         .collect()
 }
 
@@ -112,7 +112,7 @@ fn build_entity_map_id() -> Result<Urn, AndromedaError> {
 pub fn parse_entity_map_urn(raw: &str) -> Result<Urn, AndromedaError> {
     let id = raw
         .parse::<Urn>()
-        .map_err(|e| AndromedaError::bad_request_data(format!("Invalid entityMap id URN: {}", e)))?;
+        .map_err(|e| AndromedaError::entity_map_validation(format!("Invalid entityMap id URN: {}", e)))?;
     validate_entity_map_urn(&id)?;
     Ok(id)
 }
@@ -121,7 +121,9 @@ pub fn validate_entity_map_urn(id: &Urn) -> Result<(), AndromedaError> {
     if id.as_str().starts_with("urn:ngsi-ld:EntityMap:") {
         Ok(())
     } else {
-        Err(AndromedaError::bad_request_data("entityMap id must use the 'urn:ngsi-ld:EntityMap:' prefix"))
+        Err(AndromedaError::entity_map_validation(
+            "entityMap id must use the 'urn:ngsi-ld:EntityMap:' prefix",
+        ))
     }
 }
 

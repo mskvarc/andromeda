@@ -2,7 +2,7 @@
 
 use crate::{
     api::tenant::TenantState,
-    error::AndromedaError,
+    core::error::AndromedaError,
     http::{
         error::problem::NgsiLdError,
         extractor::{accept::AcceptFormat, context::ContextUrl, prefer::PreferHeader, query::ValidatedQuery, via::IncomingVia},
@@ -53,11 +53,8 @@ pub async fn query(
         Ok(NgsiLdResponse::ok(rendered).with_warnings(warnings).into_response())
     } else {
         let types = service.types(&context).await.map_err(|e| e.with_instance(uri.clone()))?;
-        let local_result = serde_json::to_value(&types).map_err(|e| {
-            AndromedaError::internal("Failed to serialize types for merge")
-                .with_source(e)
-                .with_instance(uri.clone())
-        })?;
+        let local_result = serde_json::to_value(&types)
+            .map_err(|e| AndromedaError::internal(format!("Failed to serialize types for merge: {}", e)).with_instance(uri.clone()))?;
 
         let (result, warnings) = if is_local {
             (local_result, Vec::new())

@@ -1,6 +1,6 @@
 use crate::{
+    core::error::AndromedaError,
     domain::snapshot::{KeyValuePair, Snapshot, SnapshotInput, SnapshotPatch, SnapshotPriority, SnapshotStatus, validate_snapshot_urn},
-    error::AndromedaError,
     repository::snapshot::SnapshotRepository,
     transport::{
         dispatch::{DeliveryResult, TransportDispatcher, build_delivery_request},
@@ -39,14 +39,14 @@ impl SnapshotService {
             Some(snapshot_id) => snapshot_id,
             None => build_snapshot_id()?,
         };
-        validate_snapshot_urn(&id).map_err(|e| AndromedaError::bad_request_data(format!("Invalid snapshot id: {}", e)))?;
+        validate_snapshot_urn(&id).map_err(|e| AndromedaError::snapshot_validation(format!("Invalid snapshot id: {}", e)))?;
 
         if self.repo.exists(&id).await? {
-            return Err(AndromedaError::already_exists(format!("Snapshot {} already exists", id)));
+            return Err(AndromedaError::snapshot_already_exists(format!("Snapshot {} already exists", id)));
         }
 
         let priority = match input.snapshot_priority {
-            Some(value) => SnapshotPriority::try_from(value).map_err(|e| AndromedaError::bad_request_data(format!("{}", e)))?,
+            Some(value) => SnapshotPriority::try_from(value).map_err(|e| AndromedaError::snapshot_validation(format!("{}", e)))?,
             None => SnapshotPriority::default(),
         };
 
@@ -82,13 +82,13 @@ impl SnapshotService {
             .repo
             .get(id)
             .await?
-            .ok_or_else(|| AndromedaError::not_found(format!("Snapshot {} not found", id)))?;
+            .ok_or_else(|| AndromedaError::snapshot_not_found(format!("Snapshot {} not found", id)))?;
 
         if snapshot.expires_at < Utc::now() {
             if let Err(e) = self.repo.delete(id).await {
                 tracing::error!(error = %e, snapshot_id = %id, "Failed to delete expired snapshot");
             }
-            return Err(AndromedaError::not_found(format!("Snapshot {} not found", id)));
+            return Err(AndromedaError::snapshot_not_found(format!("Snapshot {} not found", id)));
         }
 
         // Touch last_used_at
@@ -104,7 +104,7 @@ impl SnapshotService {
         let existing = self.get(id).await?;
 
         let patch_priority = match patch.snapshot_priority {
-            Some(value) => Some(SnapshotPriority::try_from(value).map_err(|e| AndromedaError::bad_request_data(format!("{}", e)))?),
+            Some(value) => Some(SnapshotPriority::try_from(value).map_err(|e| AndromedaError::snapshot_validation(format!("{}", e)))?),
             None => None,
         };
 
@@ -128,7 +128,7 @@ impl SnapshotService {
     pub async fn delete(&self, id: &Urn) -> Result<(), AndromedaError> {
         let deleted = self.repo.delete(id).await?;
         if !deleted {
-            return Err(AndromedaError::not_found(format!("Snapshot {} not found", id)));
+            return Err(AndromedaError::snapshot_not_found(format!("Snapshot {} not found", id)));
         }
         Ok(())
     }
@@ -147,19 +147,19 @@ impl SnapshotService {
             .repo
             .get(id)
             .await?
-            .ok_or_else(|| AndromedaError::not_found(format!("Snapshot {} not found", id)))?;
+            .ok_or_else(|| AndromedaError::snapshot_not_found(format!("Snapshot {} not found", id)))?;
 
         if snapshot.expires_at < Utc::now() {
             if let Err(e) = self.repo.delete(id).await {
                 tracing::error!(error = %e, snapshot_id = %id, "Failed to delete expired snapshot");
             }
-            return Err(AndromedaError::not_found(format!("Snapshot {} not found", id)));
+            return Err(AndromedaError::snapshot_not_found(format!("Snapshot {} not found", id)));
         }
 
         match snapshot.status {
             SnapshotStatus::Success | SnapshotStatus::Partial => {}
             SnapshotStatus::Preparing | SnapshotStatus::Empty | SnapshotStatus::Failure => {
-                return Err(AndromedaError::not_found(format!(
+                return Err(AndromedaError::snapshot_not_found(format!(
                     "Snapshot {} is not available for querying (status: {})",
                     id, snapshot.status
                 )));

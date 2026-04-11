@@ -1,8 +1,8 @@
 //! Service layer for the NGSI-LD Temporal API.
 
 use crate::{
+    core::error::AndromedaError,
     domain::temporal::TemporalFormat,
-    error::AndromedaError,
     http::parameter::query::{SharedQueryParams, temporal::TemporalQueryParameters},
     jsonld::{CompactOptions, ContextSpec, JsonLdEngine, vocab},
     query::{
@@ -115,15 +115,15 @@ impl TemporalService {
             .as_array()
             .and_then(|arr| arr.first())
             .and_then(|v| v.as_object())
-            .ok_or_else(|| AndromedaError::bad_request_data("Entity must be a JSON object"))?;
+            .ok_or_else(|| AndromedaError::temporal_validation("Entity must be a JSON object"))?;
 
         let entity_id = entity_obj
             .get("@id")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| AndromedaError::bad_request_data("Entity missing @id"))?;
+            .ok_or_else(|| AndromedaError::temporal_validation("Entity missing @id"))?;
 
         if entity_id.is_empty() || url::Url::parse(entity_id).is_err() {
-            return Err(AndromedaError::bad_request_data("Invalid entity id"));
+            return Err(AndromedaError::temporal_validation("Invalid entity id"));
         }
 
         // Note: Per NGSI-LD spec, temporal entities can be created independently
@@ -166,7 +166,7 @@ impl TemporalService {
     /// Add temporal attributes to an existing temporal entity.
     pub async fn add_attrs(&self, entity_id: &str, payload: Value, context: &ContextSpec) -> Result<(), AndromedaError> {
         if !self.repo.tea_exists_for_entity(entity_id).await? {
-            return Err(AndromedaError::not_found(entity_id.to_string()));
+            return Err(AndromedaError::temporal_not_found(entity_id.to_string()));
         }
 
         let expanded = self.engine.expand(payload, context).await?;
@@ -181,7 +181,7 @@ impl TemporalService {
     /// Delete all temporal data for an entity.
     pub async fn delete(&self, entity_id: &str) -> Result<(), AndromedaError> {
         if !self.repo.tea_exists_for_entity(entity_id).await? {
-            return Err(AndromedaError::not_found(entity_id.to_string()));
+            return Err(AndromedaError::temporal_not_found(entity_id.to_string()));
         }
         self.repo.delete_teas_for_entity(entity_id).await?;
         Ok(())
@@ -199,12 +199,15 @@ impl TemporalService {
         let attr_iri = self.engine.expand_term(attr_id, context).await?;
 
         if !self.repo.tea_exists_for_entity(entity_id).await? {
-            return Err(AndromedaError::not_found(entity_id.to_string()));
+            return Err(AndromedaError::temporal_not_found(entity_id.to_string()));
         }
 
         let teas = self.repo.get_teas_for_entity_attr(entity_id, &attr_iri).await?;
         if teas.is_empty() {
-            return Err(AndromedaError::not_found(format!("Attribute {} not found on entity {}", attr_iri, entity_id)));
+            return Err(AndromedaError::temporal_not_found(format!(
+                "Attribute {} not found on entity {}",
+                attr_iri, entity_id
+            )));
         }
 
         self.repo.delete_tea(entity_id, &attr_iri, dataset_id, scope).await?;
@@ -223,16 +226,19 @@ impl TemporalService {
         let attr_iri = self.engine.expand_term(attr_id, context).await?;
 
         if !self.repo.tea_exists_for_entity(entity_id).await? {
-            return Err(AndromedaError::not_found(format!("Entity {} not found", entity_id)));
+            return Err(AndromedaError::temporal_not_found(format!("Entity {} not found", entity_id)));
         }
 
         let teas = self.repo.get_teas_for_entity_attr(entity_id, &attr_iri).await?;
         if teas.is_empty() {
-            return Err(AndromedaError::not_found(format!("Attribute {} not found on entity {}", attr_iri, entity_id)));
+            return Err(AndromedaError::temporal_not_found(format!(
+                "Attribute {} not found on entity {}",
+                attr_iri, entity_id
+            )));
         }
 
         if self.repo.get_instance(instance_id, entity_id, &attr_iri).await?.is_none() {
-            return Err(AndromedaError::not_found(format!("Attribute instance {} not found", instance_id)));
+            return Err(AndromedaError::temporal_not_found(format!("Attribute instance {} not found", instance_id)));
         }
 
         let expanded = self.engine.expand(payload, context).await?;
@@ -248,16 +254,19 @@ impl TemporalService {
         let attr_iri = self.engine.expand_term(attr_id, context).await?;
 
         if !self.repo.tea_exists_for_entity(entity_id).await? {
-            return Err(AndromedaError::not_found(format!("Entity {} not found", entity_id)));
+            return Err(AndromedaError::temporal_not_found(format!("Entity {} not found", entity_id)));
         }
 
         let teas = self.repo.get_teas_for_entity_attr(entity_id, &attr_iri).await?;
         if teas.is_empty() {
-            return Err(AndromedaError::not_found(format!("Attribute {} not found on entity {}", attr_iri, entity_id)));
+            return Err(AndromedaError::temporal_not_found(format!(
+                "Attribute {} not found on entity {}",
+                attr_iri, entity_id
+            )));
         }
 
         if self.repo.get_instance(instance_id, entity_id, &attr_iri).await?.is_none() {
-            return Err(AndromedaError::not_found(format!("Attribute instance {} not found", instance_id)));
+            return Err(AndromedaError::temporal_not_found(format!("Attribute instance {} not found", instance_id)));
         }
 
         self.repo.delete_instance(instance_id, entity_id, &attr_iri).await
@@ -272,7 +281,7 @@ impl TemporalService {
         params.validate(false)?;
 
         if !self.repo.tea_exists_for_entity(entity_id).await? {
-            return Err(AndromedaError::not_found(entity_id.to_string()));
+            return Err(AndromedaError::temporal_not_found(entity_id.to_string()));
         }
 
         let entity_types = if let Some(entity_payload) = self.entity_repo.get(entity_id).await? {
@@ -291,7 +300,7 @@ impl TemporalService {
 
         // When an attrs filter is specified and nothing matches, return 404
         if rows.is_empty() && !compiled.attr_filter.is_empty() {
-            return Err(AndromedaError::not_found(format!(
+            return Err(AndromedaError::temporal_not_found(format!(
                 "No temporal data found for the specified attributes on entity {}",
                 entity_id
             )));
@@ -308,11 +317,7 @@ impl TemporalService {
         }
 
         let result = build_entity_temporal(entity_id, &entity_types, &rows, &compiled)?;
-        let mut compacted = self
-            .engine
-            .compact(result.entity, context, CompactOptions::default())
-            .await
-            .map_err(|e| AndromedaError::map_jsonld(e, "temporal_compact"))?;
+        let mut compacted = self.engine.compact(result.entity, context, CompactOptions::default()).await?;
         ensure_temporal_attrs_are_arrays(&mut compacted);
 
         let value = if format == TemporalFormat::TemporalValues {
@@ -553,7 +558,7 @@ impl TemporalService {
             .as_deref()
             .map(IdPattern::new)
             .transpose()
-            .map_err(|e| AndromedaError::bad_request_data(e.to_string()))?;
+            .map_err(|e| AndromedaError::temporal_validation(e.to_string()))?;
 
         let attr_filter = crate::query::compile::expand_attrs(&params.parse_attrs(), &self.engine, context).await?;
 
@@ -634,7 +639,7 @@ impl TemporalService {
                 .map(|s| {
                     DateTime::parse_from_rfc3339(s)
                         .map(|dt| dt.with_timezone(&Utc))
-                        .map_err(|e| AndromedaError::bad_request_data(format!("Invalid timeAt: {}", e)))
+                        .map_err(|e| AndromedaError::temporal_validation(format!("Invalid timeAt: {}", e)))
                 })
                 .transpose()?,
             end_time_at: params
@@ -643,7 +648,7 @@ impl TemporalService {
                 .map(|s| {
                     DateTime::parse_from_rfc3339(s)
                         .map(|dt| dt.with_timezone(&Utc))
-                        .map_err(|e| AndromedaError::bad_request_data(format!("Invalid endTimeAt: {}", e)))
+                        .map_err(|e| AndromedaError::temporal_validation(format!("Invalid endTimeAt: {}", e)))
                 })
                 .transpose()?,
             timeproperty: params.parse_timeproperty(),

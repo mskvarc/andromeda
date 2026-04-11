@@ -1,7 +1,9 @@
 use crate::{
     api::{router::build_tenant_state, state::AndromedaState},
-    core::config::{Configuration, MultitenancyConfig},
-    error::AndromedaError,
+    core::{
+        config::{Configuration, MultitenancyConfig},
+        error::AndromedaError,
+    },
     tenancy::{
         database::{DatabaseUrl, create_database_if_missing, generate_db_name, migrate_main_db, migrate_single_tenant_db},
         types::{TenantCreationPolicy, TenantName, TenantRef, TenantStatus},
@@ -95,9 +97,7 @@ impl TenantRuntimeManager {
     /// Resolve tenant runtime state according to creation policy.
     pub async fn resolve_state(&self, tenant: &TenantRef, policy: TenantCreationPolicy) -> Result<Arc<AndromedaState>, AndromedaError> {
         if !self.multitenancy.enabled && matches!(tenant, TenantRef::Named(_)) {
-            return Err(AndromedaError::no_multi_tenant_support(
-                "NGSILD-Tenant header is not supported by this deployment",
-            ));
+            return Err(AndromedaError::multi_tenancy_not_supported());
         }
 
         if let Some(runtime) = self.runtimes.get(tenant) {

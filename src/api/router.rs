@@ -1,8 +1,7 @@
 use crate::{
     api::state::{AndromedaState, AppState},
-    core::config::Configuration,
+    core::{config::Configuration, error::AndromedaError},
     domain::notification::{ChangeEvent, CsourceSubscriptionChange, CsrChangeEvent, SubscriptionChange},
-    error::AndromedaError,
     http::handler::{
         attribute,
         csource_registration,
@@ -230,7 +229,7 @@ pub async fn build_tenant_state(
 
     let transport = Arc::new(
         TransportDispatcher::new(HttpTransportConfig::default(), MqttPoolConfig::default())
-            .map_err(|e| crate::error::AndromedaError::internal(format!("Failed to create transport dispatcher: {e}")))?,
+            .map_err(|e| crate::core::error::AndromedaError::internal(format!("Failed to create transport dispatcher: {e}")))?,
     );
 
     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);

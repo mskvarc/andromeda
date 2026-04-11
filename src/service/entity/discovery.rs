@@ -1,9 +1,9 @@
 use crate::{
+    core::error::AndromedaError,
     domain::{
         types::{AttributeDetail, EntityType, EntityTypeInfo, Types},
         uri::NGSI_LD_URN_NID,
     },
-    error::AndromedaError,
     jsonld::{CompactOptions, ContextSpec, ContextStripping, JsonLdEngine, JsonLdExpandable},
     repository::entity::EntityRepository,
 };
@@ -105,7 +105,7 @@ impl EntityDiscoveryService {
         let count = self.repo.count_by_type(&type_iri).await?;
 
         if count == 0 {
-            return Err(AndromedaError::not_found(type_name.to_string()));
+            return Err(AndromedaError::entity_not_found(type_name.to_string()));
         }
 
         // Extract unique attributes from all entities
@@ -279,7 +279,7 @@ impl EntityDiscoveryService {
             .repo
             .get_attribute_info(&attr_iri)
             .await?
-            .ok_or_else(|| AndromedaError::not_found(attr_id))?;
+            .ok_or_else(|| AndromedaError::entity_not_found(attr_id))?;
 
         let attr = crate::domain::types::Attribute {
             id: attr_iri.clone(), // clone: value also needed for attribute_name field below

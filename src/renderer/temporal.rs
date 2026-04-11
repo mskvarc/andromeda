@@ -2,13 +2,13 @@
 //! `transform_to_temporal_values`, `build_aggregated_data`, `expand_geojson`, `expand_coordinates`.
 
 use crate::{
+    core::error::AndromedaError,
     domain::{
         attribute_type::AttributeType,
         entity::Entity,
         temporal::{AggrMethod, TeaEntry, TimeRel, ValueType},
         uri::Uri,
     },
-    error::AndromedaError,
     jsonld::vocab,
     query::compiled::{CompiledTemporalQuery, LastNOrigin},
     renderer::SysAttrsInclusion,
@@ -375,7 +375,7 @@ fn history_row_to_expanded_instance(row: &PgRow, tea: &TeaEntry, sys_attrs: SysA
         ValueType::Geometry => {
             if let Ok(v) = row.try_get::<String, _>("value_geo_json") {
                 let geo: Value =
-                    serde_json::from_str(&v).map_err(|e| AndromedaError::internal("Failed to parse GeoJSON from temporal value").with_source(e))?;
+                    serde_json::from_str(&v).map_err(|e| AndromedaError::internal(format!("Failed to parse GeoJSON from temporal value: {}", e)))?;
                 let expanded = expand_geojson(&geo);
                 instance.insert(value_key.to_string(), json!([expanded]));
             }
@@ -580,7 +580,7 @@ pub fn transform_to_temporal_values(compacted: Value) -> Value {
 /// handlers that need to apply key-values mode to temporal entity responses.
 pub fn simplify_temporal_value(entity_value: Value) -> Result<Value, AndromedaError> {
     let entity: Entity = serde_json::from_value(entity_value)
-        .map_err(|e| AndromedaError::bad_request_data(format!("Failed to parse temporal entity for simplification: {}", e)))?;
+        .map_err(|e| AndromedaError::temporal_validation(format!("Failed to parse temporal entity for simplification: {}", e)))?;
     Ok(entity.simplify())
 }
 

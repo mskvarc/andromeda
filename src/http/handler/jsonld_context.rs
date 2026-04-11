@@ -2,8 +2,8 @@
 
 use crate::{
     api::tenant::TenantState,
+    core::error::AndromedaError,
     domain::jsonld_context::ContextKind,
-    error::AndromedaError,
     http::{
         error::problem::NgsiLdError,
         extractor::query::ValidatedQuery,
@@ -25,7 +25,7 @@ use serde_json::Value;
 pub async fn create(TenantState(state): TenantState, OriginalUri(uri): OriginalUri, headers: HeaderMap, body: Bytes) -> Result<Response, NgsiLdError> {
     let service = &state.contexts;
     let payload: Value =
-        serde_json::from_slice(&body).map_err(|_| AndromedaError::invalid_request("Request body is not valid JSON").with_instance(uri.clone()))?;
+        serde_json::from_slice(&body).map_err(|_| AndromedaError::malformed_request("Request body is not valid JSON").with_instance(uri.clone()))?;
 
     let base_url = headers.get("host").and_then(|v| v.to_str().ok()).map(|h| format!("http://{}", h));
 
@@ -44,8 +44,9 @@ pub async fn query(
     let kind = params
         .kind
         .map(|k| {
-            k.parse::<ContextKind>()
-                .map_err(|_| crate::error::AndromedaError::bad_request_data(format!("Invalid kind: {}. Must be one of: Cached, Hosted, ImplicitlyCreated", k)))
+            k.parse::<ContextKind>().map_err(|_| {
+                crate::core::error::AndromedaError::query_validation(format!("Invalid kind: {}. Must be one of: Cached, Hosted, ImplicitlyCreated", k))
+            })
         })
         .transpose()
         .map_err(|e| e.with_instance(uri.clone()))?;
@@ -97,7 +98,7 @@ pub async fn delete(
             return Ok(StatusCode::NO_CONTENT.into_response());
         }
         return Err(NgsiLdError::from(
-            AndromedaError::bad_request_data("Cannot delete a core context").with_instance(uri.clone()),
+            AndromedaError::jsonld_processing("Cannot delete a core context").with_instance(uri.clone()),
         ));
     }
 

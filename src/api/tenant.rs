@@ -20,9 +20,9 @@ pub struct TenantState(pub AndromedaState);
 pub struct TenantStateOrCreate(pub AndromedaState);
 
 async fn resolve(parts: &mut Parts, app: &AppState, policy: TenantCreationPolicy) -> Result<AndromedaState, NgsiLdError> {
-    let tenant = TenantHeader::from_request_parts(parts, app)
-        .await
-        .map_err(|_| NgsiLdError::from(crate::error::AndromedaError::bad_request_data("Invalid NGSILD-Tenant header").with_instance(parts.uri.clone())))?;
+    let tenant = TenantHeader::from_request_parts(parts, app).await.map_err(|_| {
+        NgsiLdError::from(crate::core::error::AndromedaError::entity_validation("Invalid NGSILD-Tenant header").with_instance(parts.uri.clone()))
+    })?;
     let tenant_ref = TenantRef::from_header(tenant.into_inner());
     let runtime = app
         .tenants

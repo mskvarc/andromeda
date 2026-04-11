@@ -8,7 +8,7 @@ pub mod entity;
 pub mod temporal;
 
 use crate::{
-    error::AndromedaError,
+    core::error::AndromedaError,
     jsonld::vocab,
     query::{
         compiled::{GeoQuery, GeoRel},
@@ -261,7 +261,7 @@ fn compare_to_sql(
                     s
                 }
                 _ => {
-                    return Err(AndromedaError::bad_request_data("Range values only supported with == and != operators"));
+                    return Err(AndromedaError::query_validation("Range values only supported with == and != operators"));
                 }
             };
             Ok(sql)
@@ -281,7 +281,7 @@ fn compare_to_sql(
             match op {
                 CmpOp::Equal => Ok(format!("({})", parts.join(" OR "))),
                 CmpOp::Unequal => Ok(format!("NOT ({})", parts.join(" OR "))),
-                _ => Err(AndromedaError::bad_request_data("Value lists only supported with == and != operators")),
+                _ => Err(AndromedaError::query_validation("Value lists only supported with == and != operators")),
             }
         }
     }
@@ -327,7 +327,7 @@ fn geo_to_sql(geo: &GeoQuery, binds: &mut Vec<BindValue<'_>>, param_idx: &mut us
                 parts.push(format!("ST_Distance({}::geography, {}::geography) >= {}", geo_extract, ref_geom, min));
             }
             if parts.is_empty() {
-                return Err(AndromedaError::bad_request_data("near georel requires maxDistance or minDistance"));
+                return Err(AndromedaError::query_validation("near georel requires maxDistance or minDistance"));
             }
             parts.join(" AND ")
         }

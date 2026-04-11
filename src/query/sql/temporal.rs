@@ -1,8 +1,8 @@
 //! SQL builder for temporal queries (Stage 1: entity IDs, Stage 2: history per entity).
 
 use crate::{
+    core::error::AndromedaError,
     domain::temporal::{AggrMethod, TemporalFormat, TimeProp, TimeRel},
-    error::AndromedaError,
     query::{
         compiled::CompiledTemporalQuery,
         sql::{BindValue, EntityFilterConditionsInput, build_entity_filter_conditions},
@@ -186,7 +186,7 @@ pub fn build_temporal_history_query<'a>(
                 let end_time = compiled
                     .end_time_at
                     .as_ref()
-                    .ok_or_else(|| AndromedaError::bad_request_data("endTimeAt required for between"))?;
+                    .ok_or_else(|| AndromedaError::query_validation("endTimeAt required for between"))?;
                 conditions.push(format!("{} >= ${}::timestamptz", time_col, *param_idx));
                 binds.push(BindValue::String(Cow::Owned(time_at.to_rfc3339())));
                 *param_idx += 1;

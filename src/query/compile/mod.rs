@@ -1,5 +1,5 @@
 use crate::{
-    error::AndromedaError,
+    core::error::AndromedaError,
     jsonld::{ContextSpec, JsonLdEngine, term_resolver},
     query::q::{ast::Expr, parser},
 };
