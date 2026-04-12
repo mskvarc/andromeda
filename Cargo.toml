@@ -89,6 +89,10 @@ name = "common"
 path = "tests/common/main.rs"
 
 [[test]]
+name = "jsonld_context"
+path = "tests/jsonld_context/main.rs"
+
+[[test]]
 name = "integration"
 path = "tests/main.rs"
 harness = false

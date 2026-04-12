@@ -4,7 +4,6 @@ mod distributed_operations;
 mod entity_map;
 mod harness;
 mod info;
-mod jsonld_context;
 mod multitenancy;
 mod spec_features;
 
@@ -21,7 +20,6 @@ fn main() {
     let mut trials = Vec::new();
 
     context_information::tests(&mut trials);
-    jsonld_context::tests(&mut trials);
     context_source::tests(&mut trials);
     distributed_operations::tests(&mut trials);
     multitenancy::tests(&mut trials);
