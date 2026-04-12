@@ -366,8 +366,7 @@ pub fn build_subscription_from_row(row: &sqlx::postgres::PgRow, dataset_id_prese
     let notification_json: Value = row.get("notification");
     let expires_at: Option<DateTime<Utc>> = row.get("expires_at");
     let throttling: Option<f64> = row.get("throttling");
-    let status_str: String = row.get("status");
-    let status: SubscriptionStatus = status_str.parse().map_err(|e: strum::ParseError| AndromedaError::internal(e.to_string()))?;
+    let status: SubscriptionStatus = row.get("status");
     let temporal_q: Option<Value> = row.get("temporal_q");
     let lang: Option<String> = row.get("lang");
     let jsonld_context: Option<String> = row.get("jsonld_context");

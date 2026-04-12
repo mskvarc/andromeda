@@ -59,8 +59,8 @@ pub struct CreateCsrParams<'a> {
     pub endpoint: Option<&'a str>,
     /// Preferred MIME type for responses from the context source.
     pub accept: Option<&'a str>,
-    /// Forwarding mode (e.g. "auxiliary", "inclusive", "redirect", "exclusive").
-    pub mode: &'a str,
+    /// Forwarding mode for distributed operations (clause 4.3.6).
+    pub mode: ForwardingMode,
     /// NGSI-LD operations supported by the context source.
     pub operations: Option<Vec<String>>,
     /// Scope values for the registration.
@@ -144,7 +144,7 @@ pub struct CsrUpdateFragment {
     /// Updated accepted MIME type.
     pub accept: Option<Option<String>>,
     /// Updated forwarding mode.
-    pub mode: Option<String>,
+    pub mode: Option<ForwardingMode>,
     /// Updated supported operations.
     pub operations: Option<Option<Vec<String>>>,
     /// Updated scope values.
@@ -358,9 +358,9 @@ impl ContextSourceRegistrationRepository {
             Some(v) => v.clone(), // clone: conditional ownership -- fragment or existing
             None => existing.accept,
         };
-        let mode_str = match &fragment.mode {
-            Some(v) => v.clone(), // clone: conditional ownership -- fragment or existing
-            None => existing.mode.unwrap_or_default().to_string(),
+        let mode = match fragment.mode {
+            Some(v) => v,
+            None => existing.mode.unwrap_or_default(),
         };
         let operations: Option<Vec<String>> = match &fragment.operations {
             Some(v) => v.clone(), // clone: conditional ownership -- fragment or existing
@@ -462,7 +462,7 @@ impl ContextSourceRegistrationRepository {
         .bind(expires_at)
         .bind(endpoint)
         .bind(accept.as_deref())
-        .bind(&mode_str)
+        .bind(mode)
         .bind(operations.as_deref())
         .bind(scope.as_deref())
         .bind(refresh_rate.as_deref())
@@ -576,10 +576,7 @@ fn row_to_csr(row: &sqlx::postgres::PgRow) -> Result<ContextSourceRegistration, 
     let expires_at: Option<DateTime<Utc>> = row.get("expires_at");
     let endpoint: String = row.get("endpoint");
     let accept: Option<String> = row.get("accept");
-    let mode_str: String = row.get("mode");
-    let mode: ForwardingMode = mode_str
-        .parse()
-        .map_err(|e: strum::ParseError| AndromedaError::internal(format!("Invalid forwarding mode '{}': {}", mode_str, e)))?;
+    let mode: ForwardingMode = row.get("mode");
     let operations: Option<Vec<CsrOperation>> = row
         .get::<Option<Vec<String>>, _>("operations")
         .or_else(|| Some(vec!["federationOps".to_string()]))
@@ -609,8 +606,7 @@ fn row_to_csr(row: &sqlx::postgres::PgRow) -> Result<ContextSourceRegistration, 
         Err(sqlx::Error::ColumnNotFound(_)) | Err(sqlx::Error::ColumnDecode { .. }) => None,
         Err(e) => return Err(AndromedaError::internal(format!("Failed to read context_source_alias column: {}", e))),
     };
-    let status_str: String = row.get("status");
-    let status: CsrStatus = status_str.parse().map_err(|e: strum::ParseError| AndromedaError::internal(e.to_string()))?;
+    let status: CsrStatus = row.get("status");
     let times_sent: i32 = row.get("times_sent");
     let times_failed: i32 = row.get("times_failed");
     let last_success: Option<DateTime<Utc>> = row.get("last_success");

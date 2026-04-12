@@ -508,12 +508,12 @@ pub struct TeaBatchEntry {
     pub entity_id: String,
     /// Expanded IRI of the attribute.
     pub attribute_name: String,
-    /// NGSI-LD attribute meta-type short name (e.g. "Property").
-    pub attribute_type: String,
+    /// NGSI-LD attribute meta-type.
+    pub attribute_type: AttributeType,
     /// Multi-attribute discriminator; `None` for the default instance.
     pub dataset_id: Option<String>,
-    /// Runtime value type (e.g. "Number", "String").
-    pub value_type: String,
+    /// Runtime value type discriminator.
+    pub value_type: ValueType,
 }
 
 /// Result of a bulk TEA upsert: maps back to the input entry via its natural key.
@@ -582,7 +582,7 @@ impl TemporalRepository {
         let mut entity_ids = Vec::with_capacity(entries.len());
         let mut attr_name_ids: Vec<i16> = Vec::with_capacity(entries.len());
         let mut attribute_types = Vec::with_capacity(entries.len());
-        let mut dataset_ids: Vec<Option<String>> = Vec::with_capacity(entries.len());
+        let mut dataset_ids = Vec::with_capacity(entries.len());
         let mut value_types = Vec::with_capacity(entries.len());
 
         for e in entries {
@@ -591,8 +591,8 @@ impl TemporalRepository {
                 .ok_or_else(|| AndromedaError::internal(format!("Attribute name '{}' not found in dictionary after resolve", e.attribute_name)))?;
             entity_ids.push(e.entity_id.as_str());
             attr_name_ids.push(*attr_id);
-            attribute_types.push(e.attribute_type.as_str());
-            dataset_ids.push(e.dataset_id.clone()); // clone: Option<String> for sqlx bind vector
+            attribute_types.push(e.attribute_type.short_name());
+            dataset_ids.push(e.dataset_id.as_deref());
             value_types.push(e.value_type.as_str());
         }
 

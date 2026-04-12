@@ -1,5 +1,5 @@
 -- ============================================================================
--- 007: Context Source Registrations (CSR)
+-- 009: Context Source Registrations (CSR)
 -- ============================================================================
 -- NGSI-LD Context Source Registration management (spec clause 5.2.9,
 -- operations 5.9.x / 5.10.x).
@@ -10,23 +10,23 @@
 -- stored locally.
 --
 -- Spatial columns (PostGIS):
---   • location          — geographic area the Context Source covers
---   • observation_space — union of all entities' observationSpace GeoProperties
---   • operation_space   — union of all entities' operationSpace GeoProperties
---   All three are GIST-indexed for efficient spatial matching during
---   distributed entity discovery.
+--   * location          -- geographic area the Context Source covers
+--   * observation_space -- union of all entities' observationSpace GeoProperties
+--   * operation_space   -- union of all entities' operationSpace GeoProperties
+--   All three are partial-GIST-indexed (WHERE ... IS NOT NULL) for efficient
+--   spatial matching during distributed entity discovery.
 --
 -- JSONB columns for dynamic/nested spec structures:
---   • information:           array of RegistrationInfo, each containing
+--   * information:           array of RegistrationInfo, each containing
 --                            entities (EntitySelector[]), propertyNames,
 --                            relationshipNames
---   • observation_interval:  TimeInterval {startAt, endAt} — temporal range
+--   * observation_interval:  TimeInterval {startAt, endAt} -- temporal range
 --                            for observedAt-based queries
---   • management_interval:   TimeInterval {startAt, endAt} — temporal range
+--   * management_interval:   TimeInterval {startAt, endAt} -- temporal range
 --                            for createdAt/modifiedAt-based queries
---   • management:            RegistrationManagementInfo (cacheDuration,
+--   * management:            RegistrationManagementInfo (cacheDuration,
 --                            reconPeriod, etc.)
---   • context_source_info:   Additional key-value metadata about the source
+--   * context_source_info:   additional key-value metadata about the source
 -- ============================================================================
 
 CREATE TABLE context_source_registrations (
@@ -42,15 +42,15 @@ CREATE TABLE context_source_registrations (
     -- Optional description
     description TEXT,
 
-    -- What the Context Source provides — array of RegistrationInfo:
-    -- [{entities: [{type, id, idPattern}], propertyNames: [...], relationshipNames: [...]}]
+    -- What the Context Source provides -- array of RegistrationInfo:
+    -- [{entities: [{type, id, idPattern}], propertyNames: [...], ...}]
     information JSONB NOT NULL,
 
     -- Multi-tenancy: the tenant identifier for requests to this Context Source.
     -- NULL means the default tenant.
     tenant TEXT,
 
-    -- Temporal range the source can provide for observedAt-based queries
+    -- Temporal range the source can provide for observedAt-based queries.
     -- Example: {"startAt": "2020-01-01T00:00:00Z", "endAt": "2025-01-01T00:00:00Z"}
     observation_interval JSONB,
 
@@ -75,12 +75,8 @@ CREATE TABLE context_source_registrations (
     -- Preferred Accept content type for requests to this source
     accept TEXT,
 
-    -- Distributed operation mode (clause 4.3.6):
-    -- "inclusive"  — merge results with local data (default)
-    -- "exclusive"  — only this source provides matching entities
-    -- "redirect"   — redirect the client to this source
-    -- "auxiliary"   — supplementary data, lower priority
-    mode TEXT NOT NULL DEFAULT 'inclusive' CHECK (mode IN ('inclusive', 'exclusive', 'redirect', 'auxiliary')),
+    -- Distributed operation mode (clause 4.3.6)
+    mode csr_mode NOT NULL DEFAULT 'inclusive',
 
     -- Subset of API operations the source supports (clause 4.20).
     -- NULL means the default "federationOps" set.
@@ -104,8 +100,11 @@ CREATE TABLE context_source_registrations (
     -- The @context URI associated with this registration
     jsonld_context TEXT,
 
-    -- Health status: "ok" or "failed"
-    status TEXT NOT NULL DEFAULT 'ok' CHECK (status IN ('ok', 'failed')),
+    -- Health status
+    status csr_status NOT NULL DEFAULT 'ok',
+
+    -- Optional human-readable alias for the context source
+    context_source_alias TEXT,
 
     -- Forwarding statistics
     times_sent INTEGER NOT NULL DEFAULT 0,
@@ -115,10 +114,25 @@ CREATE TABLE context_source_registrations (
 
     -- System-managed temporal properties
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    modified_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    modified_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+
+    -- Geometry validity constraints
+    CONSTRAINT chk_csr_location_valid
+        CHECK (location IS NULL OR ST_IsValid(location)),
+    CONSTRAINT chk_csr_observation_space_valid
+        CHECK (observation_space IS NULL OR ST_IsValid(observation_space)),
+    CONSTRAINT chk_csr_operation_space_valid
+        CHECK (operation_space IS NULL OR ST_IsValid(operation_space))
 );
 
--- Spatial matching for distributed entity discovery
-CREATE INDEX idx_csr_location ON context_source_registrations USING GIST (location);
-CREATE INDEX idx_csr_observation_space ON context_source_registrations USING GIST (observation_space);
-CREATE INDEX idx_csr_operation_space ON context_source_registrations USING GIST (operation_space);
+-- Spatial matching for distributed entity discovery (partial: excludes NULL rows)
+CREATE INDEX idx_csr_location ON context_source_registrations USING GIST (location)
+    WHERE location IS NOT NULL;
+
+-- Spatial index for observation space filtering
+CREATE INDEX idx_csr_observation_space ON context_source_registrations USING GIST (observation_space)
+    WHERE observation_space IS NOT NULL;
+
+-- Spatial index for operation space filtering
+CREATE INDEX idx_csr_operation_space ON context_source_registrations USING GIST (operation_space)
+    WHERE operation_space IS NOT NULL;

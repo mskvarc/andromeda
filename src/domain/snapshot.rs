@@ -12,9 +12,10 @@ use url::Url;
 use uuid::Uuid;
 
 /// Status of a snapshot operation (ETSI GS CIM 009 clause 5.2.41, `snapshotStatus`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, StrumDisplay, EnumString)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, StrumDisplay, EnumString, sqlx::Type)]
 #[serde(rename_all = "camelCase")]
 #[strum(serialize_all = "camelCase")]
+#[sqlx(type_name = "snapshot_status", rename_all = "lowercase")]
 pub enum SnapshotStatus {
     Preparing,
     Success,

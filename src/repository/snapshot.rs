@@ -41,7 +41,7 @@ impl SnapshotRepository {
         .bind(snapshot.snapshot_priority.as_i16())
         .bind(snapshot.endpoint.as_ref().map(Url::as_str))
         .bind(snapshot.receiver_info.as_ref().and_then(|v| serde_json::to_value(v).ok()))
-        .bind(snapshot.status.to_string())
+        .bind(snapshot.status)
         .bind(snapshot.queries_details.as_ref().and_then(|v| serde_json::to_value(v).ok()))
         .bind(snapshot.temporal_queries_details.as_ref().and_then(|v| serde_json::to_value(v).ok()))
         .bind(snapshot.created_at)
@@ -325,10 +325,7 @@ fn row_to_snapshot(row: &sqlx::postgres::PgRow) -> Result<Snapshot, AndromedaErr
         .parse::<SnapshotId>()
         .map_err(|e| AndromedaError::internal(format!("Invalid snapshot id '{}': {}", id_str, e)))?;
 
-    let status_str: String = row.try_get("status")?;
-    let status = status_str
-        .parse::<SnapshotStatus>()
-        .map_err(|e| AndromedaError::internal(format!("Invalid snapshot status '{}': {}", status_str, e)))?;
+    let status: SnapshotStatus = row.try_get("status")?;
 
     let snapshot_lifetime = row
         .try_get::<Option<String>, _>("snapshot_lifetime")?

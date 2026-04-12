@@ -238,9 +238,9 @@ impl TemporalRecorder {
                                 tea_entries.push(TeaBatchEntry {
                                     entity_id: entity_id.clone(),      // clone: owned String for batch entry
                                     attribute_name: attr_name.clone(), // clone: owned String for batch entry
-                                    attribute_type: AttributeType::Property.short_name().to_string(),
+                                    attribute_type: AttributeType::Property,
                                     dataset_id: None,
-                                    value_type: ValueType::String.to_string(),
+                                    value_type: ValueType::String,
                                 });
                                 let time = Utc::now();
                                 pending_histories.push(PendingHistory {
@@ -306,9 +306,9 @@ impl TemporalRecorder {
                     tea_entries.push(TeaBatchEntry {
                         entity_id: entity_id.clone(),      // clone: owned String for batch entry
                         attribute_name: attr_name.clone(), // clone: owned String for batch entry
-                        attribute_type: attribute_type.short_name().to_string(),
+                        attribute_type,
                         dataset_id: dataset_id.map(|u| u.to_string()),
-                        value_type: value_type.to_string(),
+                        value_type,
                     });
                     pending_histories.push(PendingHistory {
                         time,

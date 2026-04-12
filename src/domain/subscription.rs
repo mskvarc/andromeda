@@ -29,9 +29,10 @@ pub enum NotificationTrigger {
 }
 
 /// Lifecycle status of a subscription (ETSI GS CIM 009 clause 5.2.12, status member).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Display, EnumString)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Display, EnumString, sqlx::Type)]
 #[serde(rename_all = "camelCase")]
 #[strum(serialize_all = "camelCase")]
+#[sqlx(type_name = "subscription_status", rename_all = "lowercase")]
 pub enum SubscriptionStatus {
     /// The subscription is active and will generate notifications.
     Active,

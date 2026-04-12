@@ -66,7 +66,7 @@ impl SubscriptionRepository {
         .bind(fields.notification.cloned()) // clone: sqlx bind requires owned Value
         .bind(fields.expires_at)
         .bind(fields.throttling)
-        .bind(status.to_string())
+        .bind(status)
         .bind(fields.temporal_q.cloned()) // clone: sqlx bind requires owned Value
         .bind(fields.lang)
         .bind(fields.jsonld_context)
@@ -123,7 +123,7 @@ impl SubscriptionRepository {
         .bind(fields.notification.cloned()) // clone: sqlx bind requires owned Value
         .bind(fields.expires_at)
         .bind(fields.throttling)
-        .bind(status.to_string())
+        .bind(status)
         .bind(fields.lang)
         .bind(fields.jsonld_context)
         .bind(fields.local_only)

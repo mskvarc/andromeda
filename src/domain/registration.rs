@@ -10,9 +10,10 @@ use serde_json::Value;
 use strum::{Display, EnumString};
 
 /// Forwarding mode for distributed operations (ETSI GS CIM 009 clause 4.3.6 / 5.2.9).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize, Display, EnumString)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize, Display, EnumString, sqlx::Type)]
 #[serde(rename_all = "camelCase")]
 #[strum(serialize_all = "camelCase")]
+#[sqlx(type_name = "csr_mode", rename_all = "lowercase")]
 pub enum ForwardingMode {
     /// The registration supplements local data (default).
     #[default]
@@ -71,9 +72,10 @@ impl<'de> Deserialize<'de> for CsrOperation {
 }
 
 /// Health status of a context source registration (ETSI GS CIM 009 clause 5.2.9, status member).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Display, EnumString)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Display, EnumString, sqlx::Type)]
 #[serde(rename_all = "camelCase")]
 #[strum(serialize_all = "camelCase")]
+#[sqlx(type_name = "csr_status", rename_all = "lowercase")]
 pub enum CsrStatus {
     /// The context source is reachable and healthy.
     Ok,

@@ -112,8 +112,6 @@ impl JsonLdContextRepository {
 
     /// Lists JSON-LD contexts, optionally filtered by kind, as URLs or detailed metadata.
     pub async fn list(&self, kind: Option<ContextKind>, detail_level: DetailLevel) -> Result<ContextListResult, AndromedaError> {
-        let kind_str = kind.map(|k| k.to_string());
-
         match detail_level {
             DetailLevel::Full => {
                 let rows = sqlx::query(
@@ -128,10 +126,10 @@ impl JsonLdContextRepository {
                         number_of_hits,
                         extra_info
                     FROM jsonld_contexts
-                    WHERE ($1 IS NULL OR kind = $1)
+                    WHERE ($1::jsonld_context_kind IS NULL OR kind = $1)
                     "#,
                 )
-                .bind(kind_str)
+                .bind(kind)
                 .fetch_all(&self.pool)
                 .await?;
 
@@ -145,10 +143,10 @@ impl JsonLdContextRepository {
                     r#"
                     SELECT id, url
                     FROM jsonld_contexts
-                    WHERE ($1 IS NULL OR kind = $1)
+                    WHERE ($1::jsonld_context_kind IS NULL OR kind = $1)
                     "#,
                 )
-                .bind(kind_str)
+                .bind(kind)
                 .fetch_all(&self.pool)
                 .await?;
 
@@ -241,10 +239,7 @@ impl JsonLdContextRepository {
 
         if let Some(row) = row_opt {
             let id: String = row.get("id");
-            let kind_str: String = row.get("kind");
-            let kind: ContextKind = kind_str
-                .parse()
-                .map_err(|_| AndromedaError::internal(format!("Unknown context kind in database: {}", kind_str)))?;
+            let kind: ContextKind = row.get("kind");
             let url: Option<String> = row.get("url");
             Ok(Some((id, kind, url)))
         } else {
@@ -274,7 +269,7 @@ impl JsonLdContextRepository {
 fn row_to_context_metadata(row: &sqlx::postgres::PgRow) -> Result<ContextMetadata, AndromedaError> {
     let local_id_str: String = row.get("local_id");
     let url_str: Option<String> = row.get("url");
-    let kind_str: String = row.get("kind");
+    let kind: ContextKind = row.get("kind");
     let hits: i64 = row.get("number_of_hits");
 
     let local_id: Uri = local_id_str
@@ -285,10 +280,6 @@ fn row_to_context_metadata(row: &sqlx::postgres::PgRow) -> Result<ContextMetadat
         .map(|s| s.parse::<Url>())
         .transpose()
         .map_err(|e| AndromedaError::internal(format!("Invalid URL in database: {}", e)))?;
-
-    let kind: ContextKind = kind_str
-        .parse()
-        .map_err(|_| AndromedaError::internal(format!("Unknown context kind in database: {}", kind_str)))?;
 
     let created_at: DateTime<Utc> = row.get("created_at");
     let expires_at: Option<DateTime<Utc>> = row.get("expires_at");

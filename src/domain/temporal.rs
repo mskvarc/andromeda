@@ -78,6 +78,21 @@ pub enum ValueType {
     Uri,
 }
 
+impl ValueType {
+    /// Returns the canonical string representation used in persistence.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Number => "Number",
+            Self::String => "String",
+            Self::Boolean => "Boolean",
+            Self::Geometry => "Geometry",
+            Self::Object => "Object",
+            Self::DateTime => "DateTime",
+            Self::Uri => "Uri",
+        }
+    }
+}
+
 /// Aggregation methods for temporal queries (clause 4.5.19).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Display, EnumString)]
 #[strum(serialize_all = "camelCase")]

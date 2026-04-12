@@ -1,3 +1,20 @@
+-- ============================================================================
+-- 003: Helper Functions
+-- ============================================================================
+-- Functions referenced by table definitions or application queries. Must
+-- precede table migrations that use them (e.g. entities uses geom_to_geog
+-- in a GENERATED ALWAYS AS column).
+-- ============================================================================
+
+-- Immutable wrapper for geometry->geography cast.
+-- Technically STABLE in PostGIS (depends on spatial_ref_sys), but deterministic
+-- for SRID 4326. Marking IMMUTABLE enables GENERATED ALWAYS AS usage.
+-- This is a well-established PostGIS pattern for stored generated columns.
+CREATE OR REPLACE FUNCTION geom_to_geog(g geometry)
+RETURNS geography
+LANGUAGE SQL IMMUTABLE STRICT PARALLEL SAFE
+AS $$ SELECT g::geography $$;
+
 -- Remove expired attribute instances from an expanded JSON-LD entity payload.
 --
 -- The expanded payload is a JSON array with one entity object. Attribute keys
@@ -20,7 +37,7 @@ DECLARE
     instance JSONB;
     expires_value TEXT;
 BEGIN
-    -- Extract the single entity object from the array wrapper.
+    -- Extract the single entity object from the array wrapper
     entity_obj := payload->0;
 
     IF entity_obj IS NULL OR jsonb_typeof(entity_obj) != 'object' THEN
@@ -29,37 +46,37 @@ BEGIN
 
     FOR attr_key, attr_instances IN SELECT key, value FROM jsonb_each(entity_obj)
     LOOP
-        -- Preserve JSON-LD structural keys (@id, @type, @context, etc.) as-is.
+        -- Preserve JSON-LD structural keys (@id, @type, @context, etc.) as-is
         IF attr_key LIKE '@%' THEN
             result_obj := result_obj || jsonb_build_object(attr_key, attr_instances);
             CONTINUE;
         END IF;
 
-        -- For attribute arrays, filter out expired instances.
+        -- For attribute arrays, filter out expired instances
         IF jsonb_typeof(attr_instances) = 'array' THEN
             filtered_instances := '[]'::jsonb;
             FOR instance IN SELECT value FROM jsonb_array_elements(attr_instances)
             LOOP
-                -- Check if this instance has an expiresAt that is <= cutoff.
+                -- Check if this instance has an expiresAt that is <= cutoff
                 expires_value := instance
                     #>>'{https://uri.etsi.org/ngsi-ld/expiresAt,0,@value}';
 
                 IF expires_value IS NOT NULL
                    AND expires_value::timestamptz <= cutoff THEN
-                    -- Skip this expired instance.
+                    -- Skip this expired instance
                     CONTINUE;
                 END IF;
 
                 filtered_instances := filtered_instances || jsonb_build_array(instance);
             END LOOP;
 
-            -- Only keep the attribute key if at least one instance remains.
+            -- Only keep the attribute key if at least one instance remains
             IF jsonb_array_length(filtered_instances) > 0 THEN
                 result_obj := result_obj || jsonb_build_object(attr_key, filtered_instances);
             END IF;
         ELSE
-            -- Non-array values (shouldn't happen for well-formed expanded JSON-LD,
-            -- but preserve them for safety).
+            -- Non-array values (should not happen for well-formed expanded
+            -- JSON-LD, but preserve them for safety)
             result_obj := result_obj || jsonb_build_object(attr_key, attr_instances);
         END IF;
     END LOOP;

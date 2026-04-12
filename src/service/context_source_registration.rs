@@ -2,6 +2,7 @@ use crate::{
     core::error::AndromedaError,
     domain::{
         notification::{CsrChangeEvent, CsrTriggerReason},
+        registration::ForwardingMode,
         temporal::{TimeProp, TimeRel},
     },
     http::parameter::query::{SharedQueryParams, csr::CsrQueryParameters},
@@ -41,7 +42,13 @@ fn extract_create_params(payload: &Value) -> Result<CreateCsrParams<'_>, Androme
             .transpose()?,
         endpoint: payload.get("endpoint").and_then(|v| v.as_str()),
         accept: payload.get("accept").and_then(|v| v.as_str()),
-        mode: payload.get("mode").and_then(|v| v.as_str()).unwrap_or("inclusive"),
+        mode: payload
+            .get("mode")
+            .and_then(|v| v.as_str())
+            .map(|s| s.parse::<ForwardingMode>())
+            .transpose()
+            .map_err(|e| AndromedaError::csr_validation(format!("Invalid 'mode' value: {}", e)))?
+            .unwrap_or_default(),
         operations: payload
             .get("operations")
             .map(|v| serde_json::from_value(v.clone()).map_err(|e| AndromedaError::csr_validation(format!("Invalid 'operations' value: {}", e)))) // clone: serde_json::from_value consumes the Value
@@ -94,7 +101,12 @@ fn extract_update_fragment(fragment: &Value) -> Result<CsrUpdateFragment, Androm
             .transpose()?,
         endpoint: fragment.get("endpoint").and_then(|v| v.as_str()).map(|s| s.to_string()),
         accept: extract_optional_string(fragment, "accept"),
-        mode: fragment.get("mode").and_then(|v| v.as_str()).map(|s| s.to_string()),
+        mode: fragment
+            .get("mode")
+            .and_then(|v| v.as_str())
+            .map(|s| s.parse::<ForwardingMode>())
+            .transpose()
+            .map_err(|e| AndromedaError::csr_validation(format!("Invalid 'mode' value: {}", e)))?,
         operations: fragment
             .get("operations")
             .map(|v| {

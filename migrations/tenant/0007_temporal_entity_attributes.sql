@@ -1,11 +1,11 @@
 -- ============================================================================
--- 004: Temporal Entity Attributes (TEA) — Attribute Catalog
+-- 006: Temporal Entity Attributes (TEA) -- Attribute Catalog
 -- ============================================================================
 -- Normalization layer between entities and the time-series hypertable.
 --
 -- Instead of storing the full attribute name string and entity ID on every
 -- row in attribute_history (potentially millions of rows), we store a
--- compact UUID reference.  This:
+-- compact UUID reference. This:
 --   * Reduces storage by avoiding repeated TEXT in the hot time-series table
 --   * Enables efficient JOINs for temporal queries
 --   * Maps each attribute to its value_type so Rust knows which typed column
@@ -21,7 +21,7 @@
 -- only if they carry distinct datasetId values (clause 4.5.5).
 -- ============================================================================
 
--- Attribute name dictionary for normalization.
+-- Attribute name dictionary for normalization
 CREATE TABLE attribute_names (
     id SMALLINT PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
     name TEXT NOT NULL,
@@ -38,9 +38,9 @@ CREATE TABLE temporal_entity_attributes (
     -- FK into the attribute_names dictionary
     attribute_name_id SMALLINT NOT NULL REFERENCES attribute_names(id),
 
-    -- NGSI-LD attribute meta-type:
-    -- "Property", "Relationship", "GeoProperty", "VocabProperty", "LanguageProperty",
-    -- "JsonProperty", "ListProperty", "ListRelationship"
+    -- NGSI-LD attribute meta-type (clause 4.5):
+    -- "Property", "Relationship", "GeoProperty", "VocabProperty",
+    -- "LanguageProperty", "JsonProperty", "ListProperty", "ListRelationship"
     attribute_type TEXT NOT NULL CHECK (attribute_type IN (
         'Property', 'Relationship', 'GeoProperty', 'VocabProperty',
         'LanguageProperty', 'JsonProperty', 'ListProperty', 'ListRelationship'
@@ -50,13 +50,14 @@ CREATE TABLE temporal_entity_attributes (
     -- NULL means the default (un-named) instance.
     dataset_id TEXT,
 
-    -- Describes the runtime type of the value stored in attribute_history,
-    -- so the Rust layer knows which column to read/write:
+    -- Runtime type of the value stored in attribute_history, so the Rust
+    -- layer knows which column to read/write:
     -- "Number", "String", "Boolean", "Geometry", "Object", "DateTime", "Uri"
     value_type TEXT NOT NULL CHECK (value_type IN (
         'Number', 'String', 'Boolean', 'Geometry', 'Object', 'DateTime', 'Uri'
     )),
 
+    -- System-managed creation timestamp
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 
     -- Enforce NGSI-LD identity: (entity, attribute, datasetId) must be unique.
@@ -64,6 +65,6 @@ CREATE TABLE temporal_entity_attributes (
     UNIQUE NULLS NOT DISTINCT (entity_id, attribute_name_id, dataset_id)
 );
 
--- NOTE: no separate (entity_id, attribute_name_id) index is needed.  The UNIQUE
--- constraint on (entity_id, attribute_name_id, dataset_id) already covers lookups
--- by the leading (entity_id, attribute_name_id) prefix.
+-- No separate (entity_id, attribute_name_id) index is needed. The UNIQUE
+-- constraint on (entity_id, attribute_name_id, dataset_id) already covers
+-- lookups by the leading (entity_id, attribute_name_id) prefix.
