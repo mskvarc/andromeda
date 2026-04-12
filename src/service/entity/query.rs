@@ -5,6 +5,7 @@ use crate::{
         entity::Entity,
     },
     http::parameter::query::{SharedQueryParams, entity::EntityQueryParameters},
+    i18n::collation::rewrite_query_for_collation,
     jsonld::{CompactOptions, ContextSpec, JsonLdEngine},
     query::compiled::{CompiledEntityQuery, CompiledOrderTerm, GeoQuery, IcuCollation, IdPattern, OrderingGeometry, ScopeQuery},
     renderer::SysAttrsInclusion,
@@ -330,7 +331,8 @@ impl EntityQueryService {
 
         let attrs = crate::query::compile::expand_attrs(&params.parse_attrs(), &self.engine, context).await?;
 
-        let q_expr = crate::query::compile::expand_q_expression(params.q.as_deref(), &self.engine, context).await?;
+        let rewritten_q = rewrite_query_for_collation(params.q.as_deref(), &params.parse_collate_targets())?;
+        let q_expr = crate::query::compile::expand_q_expression(rewritten_q.as_deref(), &self.engine, context).await?;
 
         // Apply expandValues: expand string RHS values for specified attributes (spec 6.4.3.2)
         let q_expr = if let Some(q_expr) = q_expr {
@@ -378,7 +380,12 @@ impl EntityQueryService {
                 compiled.push(CompiledOrderTerm {
                     attr_iri,
                     direction: term.direction,
-                    collation: params.collation.as_ref().map(|c| IcuCollation::new(c.clone())), // clone: owned value for each CompiledOrderTerm in loop
+                    collation: params
+                        .collation
+                        .as_deref()
+                        .map(IcuCollation::parse)
+                        .transpose()
+                        .map_err(|error| AndromedaError::entity_validation(error.to_string()))?,
                 });
             }
             compiled

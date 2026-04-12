@@ -11,6 +11,8 @@ use crate::{
     renderer::SysAttrsInclusion,
 };
 use chrono::{DateTime, Utc};
+use langtag::LangTagBuf;
+use thiserror::Error;
 
 /// NGSI-LD scope query expression string.
 ///
@@ -43,10 +45,43 @@ impl IcuCollation {
         IcuCollation(s)
     }
 
+    /// Parses and validates an ICU collation identifier.
+    pub fn parse(raw: &str) -> Result<IcuCollation, IcuCollationError> {
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            return Err(IcuCollationError::Empty);
+        }
+
+        let tag = LangTagBuf::new(trimmed.to_string()).map_err(|source| IcuCollationError::InvalidTag {
+            value: trimmed.to_string(),
+            source,
+        })?;
+
+        if !tag.as_str().contains("-u-") {
+            return Err(IcuCollationError::MissingUnicodeExtension(trimmed.to_string()));
+        }
+
+        Ok(IcuCollation::new(trimmed.to_string()))
+    }
+
     /// Returns the inner string as a `&str`.
     pub fn as_str(&self) -> &str {
         &self.0
     }
+}
+
+#[derive(Debug, Error)]
+pub enum IcuCollationError {
+    #[error("collation identifier must not be empty")]
+    Empty,
+    #[error("collation identifier must contain Unicode extension subtags: {0}")]
+    MissingUnicodeExtension(String),
+    #[error("invalid BCP47 collation identifier '{value}'")]
+    InvalidTag {
+        value: String,
+        #[source]
+        source: langtag::InvalidLangTag<String>,
+    },
 }
 
 /// NGSI-LD entity ID pattern (validated regex).

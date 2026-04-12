@@ -4,6 +4,7 @@ use crate::{
         notification::{ChangeEvent, TriggerReason},
         uri::Uri,
     },
+    i18n::collation::augment_expanded_with_collation_metadata,
     jsonld::ContextSpec,
     service::entity::{
         EntityService,
@@ -35,7 +36,8 @@ impl EntityService {
         let id = id.to_string();
 
         normalize_entity_attributes(&mut fragment);
-        let expanded = self.engine.expand(fragment, context).await?;
+        let mut expanded = self.engine.expand(fragment, context).await?;
+        augment_expanded_with_collation_metadata(&mut expanded);
         validate_attribute_envelopes(&expanded)?;
         let attrs = unwrap_expanded_ref(&expanded);
 
@@ -67,7 +69,8 @@ impl EntityService {
         let id = id.to_string();
 
         normalize_entity_attributes(&mut fragment);
-        let expanded = self.engine.expand(fragment, context).await?;
+        let mut expanded = self.engine.expand(fragment, context).await?;
+        augment_expanded_with_collation_metadata(&mut expanded);
         validate_attribute_envelopes(&expanded)?;
         let attrs = unwrap_expanded_ref(&expanded);
 
@@ -138,7 +141,8 @@ impl EntityService {
 
         let attr_iri = self.engine.expand_term(attr_name, context).await?;
 
-        let expanded = self.engine.expand(fragment, context).await?;
+        let mut expanded = self.engine.expand(fragment, context).await?;
+        augment_expanded_with_collation_metadata(&mut expanded);
         validate_attribute_envelopes(&expanded)?;
         let attr_value = unwrap_expanded_ref(&expanded);
 
@@ -237,7 +241,8 @@ impl EntityService {
             return Err(AndromedaError::entity_validation("Scope is not a replaceable attribute"));
         }
 
-        let expanded = self.engine.expand(fragment, context).await?;
+        let mut expanded = self.engine.expand(fragment, context).await?;
+        augment_expanded_with_collation_metadata(&mut expanded);
         validate_attribute_envelopes(&expanded)?;
         let attr_value = unwrap_expanded_ref(&expanded);
 

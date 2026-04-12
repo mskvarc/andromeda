@@ -4,7 +4,7 @@ use crate::{
     http::{model::query_request::QueryRequest, parameter::query::is_valid_uri},
     impl_shared_query_params,
     query::{
-        compiled::{OrderDirection, OrderTerm},
+        compiled::{IcuCollation, OrderDirection, OrderTerm},
         error::QueryError,
     },
     renderer::{SysAttrsInclusion, entity::RenderMode},
@@ -74,6 +74,7 @@ pub struct EntityQueryParameters {
     /// Geometry type for orderFrom coordinates (S5.2.43). Defaults to "Point".
     #[serde(rename = "orderGeometry")]
     pub order_geometry: Option<String>,
+    pub collate: Option<String>,
 }
 
 impl_shared_query_params!(EntityQueryParameters {
@@ -234,7 +235,24 @@ impl EntityQueryParameters {
                 .map_err(|_| QueryError::BadRequestData(format!("Invalid orderFrom value: '{}' is not valid JSON", order_from)))?;
         }
 
+        if let Some(ref collation) = self.collation {
+            IcuCollation::parse(collation).map_err(|error| QueryError::BadRequestData(format!("Invalid collation value: {}", error)))?;
+        }
+
         Ok(())
+    }
+
+    pub fn parse_collate_targets(&self) -> Vec<String> {
+        self.collate
+            .as_deref()
+            .map(|raw| {
+                raw.split(',')
+                    .map(str::trim)
+                    .filter(|target| !target.is_empty())
+                    .map(ToOwned::to_owned)
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 }
 
@@ -309,6 +327,7 @@ impl From<QueryRequest> for EntityQueryParameters {
             collation: None,
             order_from: None,
             order_geometry: None,
+            collate: None,
         }
     }
 }

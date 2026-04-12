@@ -6,7 +6,7 @@
 
 use crate::jsonld::{
     Error,
-    core_context::{NGSI_LD_CORE_CONTEXT_URL, is_ngsi_ld_core_context_url},
+    core_context::{ANDROMEDA_CORE_CONTEXT_URL, NGSI_LD_CORE_CONTEXT_URL, is_ngsi_ld_core_context_url},
 };
 use serde_json::Value;
 use std::{collections::HashSet, sync::OnceLock};
@@ -181,7 +181,7 @@ impl ContextSpec {
         let should_strip_core = matches!(self.core_policy, CoreContextPolicy::Append | CoreContextPolicy::AppendIfNoExplicit);
 
         for url in &self.link_contexts {
-            if should_strip_core && is_ngsi_ld_core_context_url(url) {
+            if should_strip_core && (is_ngsi_ld_core_context_url(url) || url == ANDROMEDA_CORE_CONTEXT_URL) {
                 continue;
             }
             if seen.insert(url.clone()) {
@@ -196,8 +196,14 @@ impl ContextSpec {
             CoreContextPolicy::Omit | CoreContextPolicy::Only => false,
         };
 
-        if should_append_core && seen.insert(core_url.clone()) {
-            urls.push(core_url);
+        if should_append_core {
+            let andromeda_url = ANDROMEDA_CORE_CONTEXT_URL.to_string();
+            if seen.insert(andromeda_url.clone()) {
+                urls.push(andromeda_url);
+            }
+            if seen.insert(core_url.clone()) {
+                urls.push(core_url);
+            }
         }
 
         urls
@@ -237,12 +243,14 @@ pub fn resolve_context_value(document_context: Option<&Value>, spec: &ContextSpe
         }
         CoreContextPolicy::Omit => {}
         CoreContextPolicy::Append => {
-            combined.retain(|v| !v.as_str().is_some_and(is_ngsi_ld_core_context_url));
+            combined.retain(|v| !v.as_str().is_some_and(|u| is_ngsi_ld_core_context_url(u) || u == ANDROMEDA_CORE_CONTEXT_URL));
+            combined.push(Value::String(ANDROMEDA_CORE_CONTEXT_URL.to_string()));
             combined.push(Value::String(spec.effective_core_url().to_string()));
         }
         CoreContextPolicy::AppendIfNoExplicit => {
-            combined.retain(|v| !v.as_str().is_some_and(is_ngsi_ld_core_context_url));
+            combined.retain(|v| !v.as_str().is_some_and(|u| is_ngsi_ld_core_context_url(u) || u == ANDROMEDA_CORE_CONTEXT_URL));
             if combined.is_empty() {
+                combined.push(Value::String(ANDROMEDA_CORE_CONTEXT_URL.to_string()));
                 combined.push(Value::String(spec.effective_core_url().to_string()));
             }
         }
@@ -342,19 +350,20 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn context_spec_defaults_include_core() {
+    fn context_spec_defaults_include_andromeda_and_core() {
         let spec = ContextSpec::none();
         let ctx = spec.to_context_value().expect("context value");
-        assert_eq!(ctx, json!(NGSI_LD_CORE_CONTEXT_URL));
+        assert_eq!(ctx, json!([ANDROMEDA_CORE_CONTEXT_URL, NGSI_LD_CORE_CONTEXT_URL]));
     }
 
     #[test]
-    fn context_spec_link_headers_include_core() {
+    fn context_spec_link_headers_include_andromeda_and_core() {
         let spec = ContextSpec::from_links(vec!["https://example.com/context.jsonld".to_string()]);
         let links = spec.to_link_headers();
-        assert_eq!(links.len(), 2);
+        assert_eq!(links.len(), 3);
         assert_eq!(links[0], "https://example.com/context.jsonld");
-        assert_eq!(links[1], NGSI_LD_CORE_CONTEXT_URL);
+        assert_eq!(links[1], ANDROMEDA_CORE_CONTEXT_URL);
+        assert_eq!(links[2], NGSI_LD_CORE_CONTEXT_URL);
     }
 
     #[test]
@@ -381,24 +390,36 @@ mod tests {
         let links = spec.to_link_headers();
         assert_eq!(
             links,
-            vec!["https://example.com/context.jsonld".to_string(), NGSI_LD_CORE_CONTEXT_URL.to_string()]
+            vec![
+                "https://example.com/context.jsonld".to_string(),
+                ANDROMEDA_CORE_CONTEXT_URL.to_string(),
+                NGSI_LD_CORE_CONTEXT_URL.to_string(),
+            ]
         );
     }
 
     #[test]
-    fn resolve_context_merges_and_appends_core_last() {
+    fn resolve_context_merges_and_appends_andromeda_and_core_last() {
         let spec = ContextSpec::from_links(vec!["https://example.com/a".to_string()]);
         let doc_ctx = json!(["https://example.com/doc", "https://example.com/a"]);
         let resolved = resolve_context_value(Some(&doc_ctx), &spec).expect("context");
 
-        assert_eq!(resolved, json!(["https://example.com/doc", "https://example.com/a", NGSI_LD_CORE_CONTEXT_URL]));
+        assert_eq!(
+            resolved,
+            json!([
+                "https://example.com/doc",
+                "https://example.com/a",
+                ANDROMEDA_CORE_CONTEXT_URL,
+                NGSI_LD_CORE_CONTEXT_URL
+            ])
+        );
     }
 
     #[test]
-    fn appends_core_when_no_explicit_context_exists() {
+    fn appends_andromeda_and_core_when_no_explicit_context_exists() {
         let spec = ContextSpec::none();
         let resolved = resolve_context_value(None, &spec).expect("context");
-        assert_eq!(resolved, json!(NGSI_LD_CORE_CONTEXT_URL));
+        assert_eq!(resolved, json!([ANDROMEDA_CORE_CONTEXT_URL, NGSI_LD_CORE_CONTEXT_URL]));
     }
 
     #[test]
@@ -410,15 +431,21 @@ mod tests {
         ]);
         let resolved = resolve_context_value(Some(&doc_ctx), &spec).expect("context");
 
-        assert_eq!(resolved, json!(["https://example.com/compound.jsonld", NGSI_LD_CORE_CONTEXT_URL]));
+        assert_eq!(
+            resolved,
+            json!(["https://example.com/compound.jsonld", ANDROMEDA_CORE_CONTEXT_URL, NGSI_LD_CORE_CONTEXT_URL])
+        );
     }
 
     #[test]
-    fn body_context_keeps_value_and_appends_core_last() {
+    fn body_context_keeps_value_and_appends_andromeda_and_core_last() {
         let spec = ContextSpec::none().with_body_context(Some(json!("https://example.com/compound.jsonld")));
         let resolved = resolve_context_value(None, &spec).expect("context");
 
-        assert_eq!(resolved, json!(["https://example.com/compound.jsonld", NGSI_LD_CORE_CONTEXT_URL]));
+        assert_eq!(
+            resolved,
+            json!(["https://example.com/compound.jsonld", ANDROMEDA_CORE_CONTEXT_URL, NGSI_LD_CORE_CONTEXT_URL])
+        );
     }
 
     #[test]

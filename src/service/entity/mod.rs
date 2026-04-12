@@ -14,6 +14,7 @@ use crate::{
         notification::{ChangeEvent, TriggerReason},
         uri::Uri,
     },
+    i18n::collation::augment_expanded_with_collation_metadata,
     jsonld::{ContextSpec, JsonLdEngine},
     repository::{entity::EntityRepository, temporal::TemporalRepository},
     service::temporal_recorder::TemporalRecorder,
@@ -166,7 +167,8 @@ impl EntityService {
 
         let mut entity_json = serde_json::to_value(entity).map_err(|err| AndromedaError::entity_validation(format!("Invalid entity payload: {}", err)))?;
         normalize_entity_attributes(&mut entity_json);
-        let expanded = self.engine.expand(entity_json, context).await?;
+        let mut expanded = self.engine.expand(entity_json, context).await?;
+        augment_expanded_with_collation_metadata(&mut expanded);
         validate_attribute_envelopes(&expanded)?;
 
         let types = extract_entity_types(&expanded);
@@ -195,7 +197,8 @@ impl EntityService {
 
         let mut patch_json = serde_json::to_value(patch).map_err(|err| AndromedaError::entity_validation(format!("Invalid patch payload: {}", err)))?;
         normalize_entity_attributes(&mut patch_json);
-        let expanded = self.engine.expand(patch_json, context).await?;
+        let mut expanded = self.engine.expand(patch_json, context).await?;
+        augment_expanded_with_collation_metadata(&mut expanded);
         validate_attribute_envelopes(&expanded)?;
         crate::domain::expanded::merge_entity(&mut existing, &expanded).map_err(AndromedaError::internal)?;
         self.repo.save(&id, &existing).await?;
@@ -246,7 +249,8 @@ impl EntityService {
 
         let mut patch_json = serde_json::to_value(patch).map_err(|err| AndromedaError::entity_validation(format!("Invalid patch payload: {}", err)))?;
         normalize_entity_attributes(&mut patch_json);
-        let expanded = self.engine.expand(patch_json, context).await?;
+        let mut expanded = self.engine.expand(patch_json, context).await?;
+        augment_expanded_with_collation_metadata(&mut expanded);
         validate_attribute_envelopes(&expanded)?;
 
         self.repo.save(&id, &expanded).await?;

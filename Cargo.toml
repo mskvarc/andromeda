@@ -66,6 +66,8 @@ tower-http = { version = "0.6.8", features = ["normalize-path"] }
 tower-layer = "0.3.3"
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["json", "env-filter"] }
+unicode-general-category = "1.1.0"
+unicode-normalization = "0.1.25"
 url = { version = "2.5.8", features = ["serde"] }
 urn = { version = "0.7.0", features = ["serde"] }
 uuid = { version = "1.23.0", features = ["serde", "v4"] }
@@ -87,6 +89,10 @@ path = "tests/aggregation/main.rs"
 [[test]]
 name = "common"
 path = "tests/common/main.rs"
+
+[[test]]
+name = "i18n"
+path = "tests/i18n/main.rs"
 
 [[test]]
 name = "jsonld_context"

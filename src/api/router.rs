@@ -9,6 +9,7 @@ use crate::{
         entity,
         entity_map,
         entity_operations,
+        i18n,
         info,
         jsonld_context,
         snapshot,
@@ -183,6 +184,7 @@ fn build_v1_router() -> Router<AppState> {
         .route("/{snapshot_id}/clone", post(snapshot::clone));
 
     let info_routes = Router::new().route("/sourceIdentity", get(info::get));
+    let i18n_routes = Router::new().route("/entities", get(i18n::query)).route("/entities/{id}", get(i18n::get));
 
     Router::new()
         .nest("/entities", entity_routes)
@@ -199,6 +201,7 @@ fn build_v1_router() -> Router<AppState> {
         .nest("/csourceSubscriptions", csr_subscription_routes)
         .nest("/snapshots", snapshot_routes)
         .nest("/info", info_routes)
+        .nest("/i18n", i18n_routes)
 }
 
 pub async fn build_tenant_state(

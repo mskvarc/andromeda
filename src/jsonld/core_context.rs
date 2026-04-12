@@ -76,6 +76,15 @@ pub static NGSI_LD_CORE_CONTEXT_MAP: LazyLock<HashMap<&str, &str>> = LazyLock::n
     m
 });
 
+/// Andromeda broker-specific context URL.
+///
+/// Maps Andromeda-internal vocabulary terms (e.g. `collate`) to their full IRIs.
+/// Always included alongside the ETSI core context during compaction so that
+/// broker-generated metadata compacts to short names.
+pub const ANDROMEDA_CORE_CONTEXT_URL: &str = "https://andromeda.internal/context/andromeda-core-context.jsonld";
+/// Andromeda broker-specific context embedded payload.
+pub const ANDROMEDA_CORE_CONTEXT: &str = include_str!("context/andromeda-core-context.jsonld");
+
 /// W3C Data Integrity context URL.
 pub const DATA_INTEGRITY_CONTEXT_URL: &str = "https://w3id.org/security/data-integrity/v2";
 /// W3C Data Integrity context embedded payload.

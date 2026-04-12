@@ -7,6 +7,8 @@ use crate::jsonld::{
     Error,
     context::{self, ContextSpec, CoreContextPolicy},
     core_context::{
+        ANDROMEDA_CORE_CONTEXT,
+        ANDROMEDA_CORE_CONTEXT_URL,
         DATA_INTEGRITY_CONTEXT,
         DATA_INTEGRITY_CONTEXT_URL,
         NGSI_LD_CORE_CONTEXT_MAP,
@@ -472,7 +474,10 @@ impl JsonLdEngineBuilder {
             self.registry.register(url.to_string(), embedded_core.clone());
         }
 
-        let data_integrity = load_embedded_data_integrity_context()?;
+        let andromeda_core = load_embedded_context(ANDROMEDA_CORE_CONTEXT, ANDROMEDA_CORE_CONTEXT_URL)?;
+        self.registry.register(ANDROMEDA_CORE_CONTEXT_URL.to_string(), andromeda_core);
+
+        let data_integrity = load_embedded_context(DATA_INTEGRITY_CONTEXT, DATA_INTEGRITY_CONTEXT_URL)?;
         self.registry.register(DATA_INTEGRITY_CONTEXT_URL.to_string(), data_integrity);
 
         let preloaded = register_preloaded_contexts(&self.preload_contexts, &self.registry)?;
@@ -527,8 +532,9 @@ fn load_embedded_core_context(url: &str) -> Result<json_syntax::Value, Error> {
     Ok(value)
 }
 
-fn load_embedded_data_integrity_context() -> Result<json_syntax::Value, Error> {
-    let (value, _) = json_syntax::Value::parse_str(DATA_INTEGRITY_CONTEXT).map_err(|e| Error::EmbeddedContextInvalid(e.to_string()))?;
+/// Parse an embedded context payload into a [`json_syntax::Value`].
+fn load_embedded_context(payload: &str, url: &str) -> Result<json_syntax::Value, Error> {
+    let (value, _) = json_syntax::Value::parse_str(payload).map_err(|e| Error::EmbeddedContextInvalid(format!("{}: {}", url, e)))?;
     Ok(value)
 }
 

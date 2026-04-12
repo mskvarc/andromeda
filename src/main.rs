@@ -2,6 +2,7 @@ mod api;
 mod core;
 mod domain;
 mod http;
+mod i18n;
 mod jsonld;
 mod query;
 mod renderer;
