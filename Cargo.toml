@@ -175,6 +175,18 @@ name = "snapshot"
 path = "tests/snapshot/main.rs"
 
 [[test]]
+name = "extension"
+path = "tests/extension/main.rs"
+
+[[test]]
+name = "multitenancy"
+path = "tests/multitenancy/main.rs"
+
+[[test]]
+name = "notification_join"
+path = "tests/notification_join/main.rs"
+
+[[test]]
 name = "integration"
 path = "tests/main.rs"
 harness = false
