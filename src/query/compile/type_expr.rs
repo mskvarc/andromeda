@@ -160,7 +160,7 @@ impl<'a> Parser<'a> {
 
 /// Returns `true` for characters that may appear in a type name.
 /// Excludes the expression operators: `|`, `,`, `;`, `(`, `)`.
-fn is_type_char(c: char) -> bool {
+const fn is_type_char(c: char) -> bool {
     !matches!(c, '|' | ',' | ';' | '(' | ')') && !c.is_whitespace()
 }
 

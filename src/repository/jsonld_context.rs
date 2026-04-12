@@ -43,7 +43,7 @@ pub enum ContextGetResult {
     /// The raw JSON-LD context payload.
     Payload(Value),
     /// Full context metadata including usage statistics.
-    Detailed(ContextMetadata),
+    Detailed(Box<ContextMetadata>),
 }
 
 /// PostgreSQL-backed repository for JSON-LD context documents.
@@ -189,7 +189,7 @@ impl JsonLdContextRepository {
                 .await?;
 
                 match row_opt {
-                    Some(row) => Ok(Some(ContextGetResult::Detailed(row_to_context_metadata(&row)?))),
+                    Some(row) => Ok(Some(ContextGetResult::Detailed(Box::new(row_to_context_metadata(&row)?)))),
                     None => Ok(None),
                 }
             }

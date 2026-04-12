@@ -240,7 +240,7 @@ impl CsrNotificationWorker {
         };
         let notification = CsourceNotification {
             id: notification_id,
-            type_: CsourceNotificationType::default(),
+            type_: CsourceNotificationType,
             subscription_id: sub_uri,
             notified_at: Utc::now(),
             data: matching_csrs,
@@ -362,7 +362,7 @@ impl CsrNotificationWorker {
                     };
                     let notification = CsourceNotification {
                         id: notification_id,
-                        type_: CsourceNotificationType::default(),
+                        type_: CsourceNotificationType,
                         subscription_id: sub_uri,
                         notified_at: Utc::now(),
                         data: vec![filtered_csr],
@@ -505,7 +505,7 @@ impl CsrNotificationWorker {
         };
         let notification = CsourceNotification {
             id: notification_id,
-            type_: CsourceNotificationType::default(),
+            type_: CsourceNotificationType,
             subscription_id: sub_uri,
             notified_at: Utc::now(),
             data: vec![filtered_csr],

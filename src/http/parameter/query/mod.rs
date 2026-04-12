@@ -128,7 +128,7 @@ macro_rules! impl_shared_query_params {
     ($ty:ty { id: $id:ident, attrs: $attrs:ident,
               pick: $($pick:ident)?, omit: $($omit:ident)?,
               dataset_id: $($ds:ident)?, limit: $lim:ident, offset: $off:ident }) => {
-        impl crate::http::parameter::query::SharedQueryParams for $ty {
+        impl $crate::http::parameter::query::SharedQueryParams for $ty {
             fn raw_id(&self) -> Option<&str> { self.$id.as_deref() }
             fn raw_attrs(&self) -> Option<&str> { self.$attrs.as_deref() }
             fn raw_pick(&self) -> Option<&str> { impl_shared_query_params!(@opt self $($pick)?) }

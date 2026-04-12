@@ -135,7 +135,7 @@ impl IntervalWorker {
                     };
                     let notification = Notification {
                         id: notification_id,
-                        type_: NotificationType::default(),
+                        type_: NotificationType,
                         subscription_id: sub_uri,
                         notified_at: Utc::now(),
                         data,

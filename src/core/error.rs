@@ -212,7 +212,7 @@ pub enum ErrorKind {
 impl ErrorKind {
     /// Returns `true` for infrastructure errors whose details must be
     /// sanitised before sending to API clients.
-    pub fn is_internal(&self) -> bool {
+    pub const fn is_internal(&self) -> bool {
         matches!(
             self,
             ErrorKind::Database(_)
@@ -226,7 +226,7 @@ impl ErrorKind {
     }
 
     /// Returns `true` for all "not found" variants.
-    pub fn is_not_found(&self) -> bool {
+    pub const fn is_not_found(&self) -> bool {
         matches!(
             self,
             ErrorKind::EntityNotFound(_)
@@ -251,12 +251,12 @@ pub struct AndromedaError {
 
 impl AndromedaError {
     /// Returns a reference to the underlying error kind.
-    pub fn kind(&self) -> &ErrorKind {
+    pub const fn kind(&self) -> &ErrorKind {
         &self.kind
     }
 
     /// Returns the request URI associated with this error, if any.
-    pub fn instance(&self) -> Option<&Uri> {
+    pub const fn instance(&self) -> Option<&Uri> {
         self.instance.as_ref()
     }
 
@@ -267,12 +267,12 @@ impl AndromedaError {
     }
 
     /// Delegates to [`ErrorKind::is_internal`].
-    pub fn is_internal(&self) -> bool {
+    pub const fn is_internal(&self) -> bool {
         self.kind.is_internal()
     }
 
     /// Delegates to [`ErrorKind::is_not_found`].
-    pub fn is_not_found(&self) -> bool {
+    pub const fn is_not_found(&self) -> bool {
         self.kind.is_not_found()
     }
 

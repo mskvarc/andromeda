@@ -24,7 +24,7 @@ use crate::{
     },
     renderer::{entity::EntityRenderer, response::ResponseRenderer},
     service::{
-        context_source_forwarding::{CsrModeFilter, ForwardBatchProvisionRequest, ForwardingOperation, collect_warnings},
+        context_source_forwarding::{CsrModeFilter, ForwardBatchProvisionRequest, ForwardQueryRequest, ForwardingOperation, collect_warnings},
         entity::{provision_forwarding::ForwardingModes, query::EntityQueryService},
     },
 };
@@ -90,16 +90,16 @@ pub async fn query(
 
         let forwarded = state
             .forwarding
-            .forward_query(
-                entity_type,
-                entity_ids_ref,
+            .forward_query(ForwardQueryRequest {
+                entity_type_compact: entity_type,
+                entity_ids: entity_ids_ref,
                 context_url,
-                &context,
-                ForwardingOperation::QueryBatch,
-                incoming_via.as_ref(),
-                None, // csf not supported on batch query endpoint
-                CsrModeFilter::All,
-            )
+                context: &context,
+                operation: ForwardingOperation::QueryBatch,
+                incoming_via: incoming_via.as_ref(),
+                csf_expr: None, // csf not supported on batch query endpoint
+                mode_filter: CsrModeFilter::All,
+            })
             .await
             .unwrap_or_else(|e| {
                 tracing::warn!(error = %e, "Context source forwarding failed during batch query");

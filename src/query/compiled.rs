@@ -178,7 +178,7 @@ pub struct CompiledEntityQuery {
     pub scope_q: Option<ScopeQuery>,
     /// Context Source Filter expression (S6.4.3.2) for filtering which CSRs
     /// are contacted during distributed operations. Parsed with the q-expression grammar.
-    pub csf_expr: Option<Expr>,
+    pub _csf_expr: Option<Expr>,
 }
 
 /// A single term in an `orderBy` clause after context expansion.

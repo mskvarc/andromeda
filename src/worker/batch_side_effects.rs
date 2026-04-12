@@ -15,7 +15,7 @@ pub struct BatchSideEffectWorker {
 
 impl BatchSideEffectWorker {
     /// Create a new batch side-effect worker.
-    pub fn new(
+    pub const fn new(
         temporal_repo: Arc<TemporalRepository>,
         change_tx: Option<broadcast::Sender<ChangeEvent>>,
         receiver: mpsc::Receiver<BatchSideEffectJob>,

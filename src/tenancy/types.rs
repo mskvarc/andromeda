@@ -68,7 +68,7 @@ impl TenantRef {
     }
 
     /// Return the tenant name if this is a named tenant, or `None` for the unnamed default.
-    pub fn tenant_name(&self) -> Option<&TenantName> {
+    pub const fn tenant_name(&self) -> Option<&TenantName> {
         match self {
             TenantRef::UnnamedDefault => None,
             TenantRef::Named(name) => Some(name),

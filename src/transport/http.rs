@@ -213,7 +213,7 @@ impl NotificationTransport for HttpTransport {
 /// Covers all ranges that an SSRF attacker might target to reach internal
 /// services: RFC 1918, loopback, link-local, CGNAT (100.64/10), IPv6 ULA,
 /// and IPv6 link-local.
-fn is_private_ip(ip: &IpAddr) -> bool {
+const fn is_private_ip(ip: &IpAddr) -> bool {
     match ip {
         IpAddr::V4(v4) => {
             v4.is_loopback()                          // 127.0.0.0/8

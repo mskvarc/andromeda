@@ -105,7 +105,7 @@ impl CsrIntervalWorker {
                 };
                 let notification = CsourceNotification {
                     id: notification_id,
-                    type_: CsourceNotificationType::default(),
+                    type_: CsourceNotificationType,
                     subscription_id: sub_uri,
                     notified_at: Utc::now(),
                     data: csrs,

@@ -27,7 +27,7 @@ macro_rules! ngsi_ld_urn_id {
             pub const KIND: &'static str = $constant;
             const PREFIX: &'static str = concat!("urn:ngsi-ld:", $constant, ":");
 
-            pub fn as_urn(&self) -> &Urn {
+            pub const fn as_urn(&self) -> &Urn {
                 &self.0
             }
         }

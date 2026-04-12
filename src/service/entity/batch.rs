@@ -115,7 +115,7 @@ fn row_from_expanded(id: String, expanded: Value) -> (PreparedEntityRow, Vec<Str
 }
 
 impl EntityService {
-    fn is_large_batch(&self, len: usize) -> bool {
+    const fn is_large_batch(&self, len: usize) -> bool {
         len >= self.batch_large_threshold
     }
 
@@ -127,7 +127,7 @@ impl EntityService {
         }
     }
 
-    fn prepare_execution(&self, len: usize) -> PrepareExecution {
+    const fn prepare_execution(&self, len: usize) -> PrepareExecution {
         if len >= self.batch_prepare_blocking_threshold {
             PrepareExecution::Offload
         } else {
@@ -333,7 +333,7 @@ impl EntityService {
         )
     }
 
-    fn dedupe_create_entities<'a>(entities: &'a [Entity]) -> (Vec<&'a Entity>, Vec<(String, AndromedaError)>) {
+    fn dedupe_create_entities(entities: &[Entity]) -> (Vec<&Entity>, Vec<(String, AndromedaError)>) {
         let mut deduped = Vec::with_capacity(entities.len());
         let mut errors = Vec::new();
         let mut seen = HashSet::with_capacity(entities.len());
@@ -350,7 +350,7 @@ impl EntityService {
         (deduped, errors)
     }
 
-    fn dedupe_upsert_entities<'a>(entities: &'a [Entity]) -> Vec<&'a Entity> {
+    fn dedupe_upsert_entities(entities: &[Entity]) -> Vec<&Entity> {
         let mut seen = HashSet::with_capacity(entities.len());
         entities
             .iter()

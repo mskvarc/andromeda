@@ -225,6 +225,26 @@ pub struct ForwardedDiscoveryResult {
     pub warnings: Vec<NgsiLdWarning>,
 }
 
+/// Parameters for forwarding an entity query to matching context sources.
+pub struct ForwardQueryRequest<'a> {
+    /// Compact entity type for CSR matching.
+    pub entity_type_compact: Option<&'a str>,
+    /// Entity IDs to filter by.
+    pub entity_ids: Option<&'a [String]>,
+    /// JSON-LD context URL for the Link header.
+    pub context_url: Option<&'a str>,
+    /// JSON-LD context specification for term expansion.
+    pub context: &'a ContextSpec,
+    /// The NGSI-LD operation being forwarded.
+    pub operation: ForwardingOperation,
+    /// Incoming Via header for loop detection (section 6.3.18).
+    pub incoming_via: Option<&'a Via>,
+    /// Optional CSR-level context source filter expression.
+    pub csf_expr: Option<&'a Expr>,
+    /// Filter controlling which CSR forwarding modes are included.
+    pub mode_filter: CsrModeFilter,
+}
+
 /// Filter controlling which CSR forwarding modes are included in a forwarding operation.
 ///
 /// Per NGSI-LD 4.3.6.2, auxiliary CSRs should only be queried when local/primary data
@@ -271,17 +291,18 @@ impl ContextSourceForwardingService {
     /// `entity_type_compact` is the compact entity type from the query (e.g., "Vehicle").
     /// It will be expanded using the context for CSR matching.
     /// `entity_ids` are optional entity IDs to filter by (for query-by-id forwarding).
-    pub async fn forward_query(
-        &self,
-        entity_type_compact: Option<&str>,
-        entity_ids: Option<&[String]>,
-        context_url: Option<&str>,
-        context: &ContextSpec,
-        operation: ForwardingOperation,
-        incoming_via: Option<&Via>,
-        csf_expr: Option<&Expr>,
-        mode_filter: CsrModeFilter,
-    ) -> Result<Vec<ForwardedEntities>, AndromedaError> {
+    pub async fn forward_query(&self, request: ForwardQueryRequest<'_>) -> Result<Vec<ForwardedEntities>, AndromedaError> {
+        let ForwardQueryRequest {
+            entity_type_compact,
+            entity_ids,
+            context_url,
+            context,
+            operation,
+            incoming_via,
+            csf_expr,
+            mode_filter,
+        } = request;
+
         // Loop detection: if our identity is already in the Via chain, skip forwarding (section 6.3.18)
         if self.is_loop_detected(incoming_via) {
             debug!("Loop detected in Via header chain, skipping forwarding");

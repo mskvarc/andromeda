@@ -425,7 +425,7 @@ impl EntityQueryService {
             omit,
             order_by,
             scope_q: params.scope_q.as_ref().map(|s| ScopeQuery::new(s.clone())), // clone: owned value for CompiledEntityQuery struct
-            csf_expr,
+            _csf_expr: csf_expr,
         };
 
         tracing::info!("Compiled query: {:?}", compiled);

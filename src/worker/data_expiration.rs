@@ -19,7 +19,7 @@ pub struct DataExpirationWorker {
 }
 
 impl DataExpirationWorker {
-    pub fn new(
+    pub const fn new(
         entity_repo: EntityRepository,
         change_tx: Option<broadcast::Sender<ChangeEvent>>,
         interval_secs: u64,

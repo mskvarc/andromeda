@@ -182,7 +182,7 @@ mod tests {
             omit: Vec::new(),
             order_by: Vec::new(),
             scope_q: None,
-            csf_expr: None,
+            _csf_expr: None,
         }
     }
 

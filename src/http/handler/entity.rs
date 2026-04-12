@@ -40,6 +40,7 @@ use crate::{
             CsrModeFilter,
             ForwardBatchProvisionRequest,
             ForwardProvisionRequest,
+            ForwardQueryRequest,
             ForwardingOperation,
             collect_forwarded_exclusive_attrs,
             collect_warnings,
@@ -552,16 +553,16 @@ pub async fn query(
         // Phase 1: forward to primary (non-auxiliary) CSRs
         let forwarded = state
             .forwarding
-            .forward_query(
-                entity_type,
-                entity_ids_ref,
+            .forward_query(ForwardQueryRequest {
+                entity_type_compact: entity_type,
+                entity_ids: entity_ids_ref,
                 context_url,
-                &context,
-                ForwardingOperation::QueryEntity,
-                incoming_via.as_ref(),
-                csf_expr.as_ref(),
-                CsrModeFilter::ExcludeAuxiliary,
-            )
+                context: &context,
+                operation: ForwardingOperation::QueryEntity,
+                incoming_via: incoming_via.as_ref(),
+                csf_expr: csf_expr.as_ref(),
+                mode_filter: CsrModeFilter::ExcludeAuxiliary,
+            })
             .await
             .unwrap_or_default();
         let mut warnings = collect_warnings(&forwarded);
@@ -584,16 +585,16 @@ pub async fn query(
         if !merged.is_empty() {
             let aux_forwarded = state
                 .forwarding
-                .forward_query(
-                    entity_type,
-                    entity_ids_ref,
+                .forward_query(ForwardQueryRequest {
+                    entity_type_compact: entity_type,
+                    entity_ids: entity_ids_ref,
                     context_url,
-                    &context,
-                    ForwardingOperation::QueryEntity,
-                    incoming_via.as_ref(),
-                    csf_expr.as_ref(),
-                    CsrModeFilter::AuxiliaryOnly,
-                )
+                    context: &context,
+                    operation: ForwardingOperation::QueryEntity,
+                    incoming_via: incoming_via.as_ref(),
+                    csf_expr: csf_expr.as_ref(),
+                    mode_filter: CsrModeFilter::AuxiliaryOnly,
+                })
                 .await
                 .unwrap_or_default();
             if !aux_forwarded.is_empty() {

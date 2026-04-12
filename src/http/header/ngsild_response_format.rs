@@ -29,7 +29,7 @@ pub enum NgsiLdResponseFormat {
 
 impl NgsiLdResponseFormat {
     /// Return this format token as the query-parameter wire value.
-    pub fn as_query_value(&self) -> &'static str {
+    pub const fn as_query_value(&self) -> &'static str {
         match self {
             NgsiLdResponseFormat::Normalized => "normalized",
             NgsiLdResponseFormat::KeyValues => "keyValues",

@@ -369,7 +369,7 @@ enum QueryResult {
 /// - At least one succeeded with results, others failed/empty -> `Partial`
 /// - All succeeded but no results -> `Empty`
 /// - All failed -> `Failure`
-fn compute_final_status(any_success_with_results: bool, any_failure: bool, all_empty: bool) -> SnapshotStatus {
+const fn compute_final_status(any_success_with_results: bool, any_failure: bool, all_empty: bool) -> SnapshotStatus {
     if any_success_with_results && !any_failure {
         SnapshotStatus::Success
     } else if any_success_with_results && any_failure {

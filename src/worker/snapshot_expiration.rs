@@ -16,7 +16,7 @@ pub struct SnapshotExpirationWorker {
 
 impl SnapshotExpirationWorker {
     /// Create a new worker with the given interval between expiration sweeps.
-    pub fn new(repo: SnapshotRepository, interval_secs: u64) -> SnapshotExpirationWorker {
+    pub const fn new(repo: SnapshotRepository, interval_secs: u64) -> SnapshotExpirationWorker {
         SnapshotExpirationWorker {
             repo,
             interval: Duration::from_secs(interval_secs),
