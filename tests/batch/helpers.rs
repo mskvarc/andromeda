@@ -5,7 +5,8 @@ use uuid::Uuid;
 
 pub const BASE_URL: &str = "http://127.0.0.1:1056/ngsi-ld/v1";
 pub const CORE_CONTEXT: &str = "https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.8.jsonld";
-pub const TEST_SUITE_CONTEXT: &str = "https://forge.etsi.org/rep/cim/ngsi-ld-test-suite/-/raw/develop/resources/jsonld-contexts/ngsi-ld-test-suite-compound.jsonld";
+pub const TEST_SUITE_CONTEXT: &str =
+    "https://forge.etsi.org/rep/cim/ngsi-ld-test-suite/-/raw/develop/resources/jsonld-contexts/ngsi-ld-test-suite-compound.jsonld";
 const DATABASE_URL: &str = "postgres://postgres:postgres@127.0.0.1:5432/postgres";
 const TRUNCATE_ALL: &str = "\
     TRUNCATE \
@@ -183,7 +184,8 @@ pub async fn create_entity(http_client: &Client, body: &Value) -> (StatusCode, H
 pub async fn get_entity(http_client: &Client, id: &str, query: &str, with_link_context: bool) -> (StatusCode, HeaderMap, Value) {
     let encoded_id = urlencoding::encode(id);
     let sep = if query.is_empty() { "" } else { "?" };
-    let mut request = http_client.get(format!("{BASE_URL}/entities/{encoded_id}{sep}{query}"))
+    let mut request = http_client
+        .get(format!("{BASE_URL}/entities/{encoded_id}{sep}{query}"))
         .header("Accept", "application/ld+json");
 
     if with_link_context {
@@ -280,10 +282,15 @@ pub async fn batch_delete(http_client: &Client, body: &Value) -> (StatusCode, Va
     (status, body)
 }
 
-pub async fn request_raw(http_client: &Client, method: Method, path: &str, body: &[u8], content_type: Option<&str>, with_link_context: bool) -> (StatusCode, Value) {
-    let mut request = http_client
-        .request(method, format!("{BASE_URL}{path}"))
-        .body(body.to_vec());
+pub async fn request_raw(
+    http_client: &Client,
+    method: Method,
+    path: &str,
+    body: &[u8],
+    content_type: Option<&str>,
+    with_link_context: bool,
+) -> (StatusCode, Value) {
+    let mut request = http_client.request(method, format!("{BASE_URL}{path}")).body(body.to_vec());
 
     if let Some(ct) = content_type {
         request = request.header("Content-Type", ct);

@@ -123,6 +123,10 @@ name = "subscription"
 path = "tests/subscription/main.rs"
 
 [[test]]
+name = "pagination"
+path = "tests/pagination/main.rs"
+
+[[test]]
 name = "integration"
 path = "tests/main.rs"
 harness = false

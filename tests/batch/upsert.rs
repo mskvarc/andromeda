@@ -342,7 +342,15 @@ async fn batch_upsert_with_invalid_entity_returns_207() {
 #[tokio::test]
 async fn batch_upsert_invalid_json_returns_400() {
     let c = client();
-    let (status, _) = request_raw(&c, Method::POST, "/entityOperations/upsert", b"[{\"id\":\"urn:ngsi-ld:Building:x\",,}]", Some("application/ld+json"), false).await;
+    let (status, _) = request_raw(
+        &c,
+        Method::POST,
+        "/entityOperations/upsert",
+        b"[{\"id\":\"urn:ngsi-ld:Building:x\",,}]",
+        Some("application/ld+json"),
+        false,
+    )
+    .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
 }
 

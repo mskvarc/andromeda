@@ -118,7 +118,15 @@ async fn batch_create_with_existing_entity_returns_207() {
 #[tokio::test]
 async fn batch_create_invalid_json_returns_400() {
     let c = client();
-    let (status, body) = request_raw(&c, Method::POST, "/entityOperations/create", b"[{\"id\":\"urn:ngsi-ld:Building:invalid\",,\"type\":\"Building\"}]", Some("application/ld+json"), false).await;
+    let (status, body) = request_raw(
+        &c,
+        Method::POST,
+        "/entityOperations/create",
+        b"[{\"id\":\"urn:ngsi-ld:Building:invalid\",,\"type\":\"Building\"}]",
+        Some("application/ld+json"),
+        false,
+    )
+    .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert!(body["type"].as_str().is_some(), "should contain error type");
 }

@@ -207,6 +207,8 @@ impl LinkValue {
 /// Named variants used by NGSI-LD:
 /// - [`Next`](RelationType::Next) -- pagination (clause 6.3.10)
 /// - [`Prev`](RelationType::Prev) -- pagination (clause 6.3.10)
+/// - [`First`](RelationType::First) -- pagination (clause 6.3.10)
+/// - [`Last`](RelationType::Last) -- pagination (clause 6.3.10)
 ///
 /// The JSON-LD context relation (`http://www.w3.org/ns/json-ld#context`) is an
 /// extension URI and is represented as `ExtRelType`.
@@ -216,6 +218,10 @@ pub enum RelationType {
     Next,
     /// `prev` -- previous page in a paginated result (clause 6.3.10).
     Prev,
+    /// `first` -- first page in a paginated result (clause 6.3.10).
+    First,
+    /// `last` -- last page in a paginated result (clause 6.3.10).
+    Last,
     /// Any other relation type (registered name or extension URI).
     ExtRelType(String),
 }
@@ -240,6 +246,8 @@ impl fmt::Display for RelationType {
         match self {
             RelationType::Next => f.write_str("next"),
             RelationType::Prev => f.write_str("prev"),
+            RelationType::First => f.write_str("first"),
+            RelationType::Last => f.write_str("last"),
             RelationType::ExtRelType(uri) => f.write_str(uri),
         }
     }
@@ -253,6 +261,10 @@ impl FromStr for RelationType {
             RelationType::Next
         } else if s.eq_ignore_ascii_case("prev") {
             RelationType::Prev
+        } else if s.eq_ignore_ascii_case("first") {
+            RelationType::First
+        } else if s.eq_ignore_ascii_case("last") {
+            RelationType::Last
         } else {
             RelationType::ExtRelType(String::from(s))
         })
@@ -727,5 +739,40 @@ mod tests {
 
         let next_values: Vec<&str> = link.find_by_rel(RelationType::Next).map(|lv| lv.link()).collect();
         assert_eq!(next_values, vec!["/page/2", "/page/3"]);
+    }
+
+    // -- First/Last RelationType tests --
+
+    #[test]
+    fn relation_type_first_displays_correctly() {
+        assert_eq!(RelationType::First.to_string(), "first");
+    }
+
+    #[test]
+    fn relation_type_last_displays_correctly() {
+        assert_eq!(RelationType::Last.to_string(), "last");
+    }
+
+    #[test]
+    fn relation_type_first_parses_case_insensitive() {
+        assert_eq!("first".parse::<RelationType>(), Ok(RelationType::First));
+        assert_eq!("FIRST".parse::<RelationType>(), Ok(RelationType::First));
+        assert_eq!("First".parse::<RelationType>(), Ok(RelationType::First));
+    }
+
+    #[test]
+    fn relation_type_last_parses_case_insensitive() {
+        assert_eq!("last".parse::<RelationType>(), Ok(RelationType::Last));
+        assert_eq!("LAST".parse::<RelationType>(), Ok(RelationType::Last));
+        assert_eq!("Last".parse::<RelationType>(), Ok(RelationType::Last));
+    }
+
+    #[test]
+    fn parse_link_with_first_and_last_rels() {
+        let raw = r#"</page?offset=0&limit=10>; rel="first", </page?offset=40&limit=10>; rel="last""#;
+        let parsed: Link = raw.parse().expect("should parse");
+        assert_eq!(parsed.values().len(), 2);
+        assert!(parsed.values()[0].rel().unwrap().contains(&RelationType::First));
+        assert!(parsed.values()[1].rel().unwrap().contains(&RelationType::Last));
     }
 }

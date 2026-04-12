@@ -144,7 +144,15 @@ async fn batch_merge_mixed_existing_nonexisting_returns_207() {
 #[tokio::test]
 async fn batch_merge_invalid_json_returns_400() {
     let c = client();
-    let (status, _) = request_raw(&c, Method::POST, "/entityOperations/merge", b"[{\"id\":\"urn:ngsi-ld:Building:x\",,}]", Some("application/ld+json"), false).await;
+    let (status, _) = request_raw(
+        &c,
+        Method::POST,
+        "/entityOperations/merge",
+        b"[{\"id\":\"urn:ngsi-ld:Building:x\",,}]",
+        Some("application/ld+json"),
+        false,
+    )
+    .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
 }
 
