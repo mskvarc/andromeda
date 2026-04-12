@@ -87,6 +87,10 @@ name = "aggregation"
 path = "tests/aggregation/main.rs"
 
 [[test]]
+name = "batch"
+path = "tests/batch/main.rs"
+
+[[test]]
 name = "common"
 path = "tests/common/main.rs"
 

@@ -1,0 +1,162 @@
+use reqwest::{Method, StatusCode};
+use serial_test::serial;
+
+use crate::helpers::*;
+use serde_json::json;
+
+#[tokio::test]
+#[serial]
+async fn batch_merge_empty_fragment_preserves_entities_returns_204() {
+    clean_database().await;
+    let c = client();
+
+    let id1 = unique_id("urn:ngsi-ld:Building:057_01_01a");
+    let id2 = unique_id("urn:ngsi-ld:Building:057_01_01b");
+
+    for id in [&id1, &id2] {
+        let entity = building_simple_attributes(id);
+        let (status, _, _) = create_entity(&c, &entity).await;
+        assert_eq!(status, StatusCode::CREATED);
+    }
+
+    let e1 = building_minimal(&id1);
+    let e2 = building_minimal(&id2);
+    let fragments = json!([e1, e2]);
+
+    let (status, _) = batch_merge(&c, &fragments).await;
+    assert_eq!(status, StatusCode::NO_CONTENT, "batch merge should return 204");
+
+    let (status, _, body) = get_entity(&c, &id1, "", true).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["name"]["value"], "Eiffel Tower");
+}
+
+#[tokio::test]
+#[serial]
+async fn batch_merge_properties_updates_values_returns_204() {
+    clean_database().await;
+    let c = client();
+
+    let id1 = unique_id("urn:ngsi-ld:Building:057_01_02a");
+    let id2 = unique_id("urn:ngsi-ld:Building:057_01_02b");
+
+    for id in [&id1, &id2] {
+        let entity = building_simple_attributes(id);
+        create_entity(&c, &entity).await;
+    }
+
+    let e1 = building_relationship(&id1);
+    let e2 = building_relationship(&id2);
+    let fragments = json!([e1, e2]);
+
+    let (status, _) = batch_merge(&c, &fragments).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+
+    let (status, _, body) = get_entity(&c, &id1, "", true).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["locatedAt"]["object"], "urn:ngsi-ld:City:Paris");
+    assert_eq!(body["subCategory"]["value"], "tourism");
+}
+
+#[tokio::test]
+#[serial]
+async fn batch_merge_relationship_adds_to_entities_returns_204() {
+    clean_database().await;
+    let c = client();
+
+    let id1 = unique_id("urn:ngsi-ld:Building:057_01_03a");
+    let id2 = unique_id("urn:ngsi-ld:Building:057_01_03b");
+
+    for id in [&id1, &id2] {
+        let entity = building_minimal(id);
+        create_entity(&c, &entity).await;
+    }
+
+    let e1 = building_relationship(&id1);
+    let e2 = building_relationship(&id2);
+    let fragments = json!([e1, e2]);
+
+    let (status, _) = batch_merge(&c, &fragments).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+
+    let (status, _, body) = get_entity(&c, &id1, "", true).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["locatedAt"]["object"], "urn:ngsi-ld:City:Paris");
+}
+
+#[tokio::test]
+#[serial]
+async fn batch_merge_partial_preserves_sub_attributes_returns_204() {
+    clean_database().await;
+    let c = client();
+
+    let id1 = unique_id("urn:ngsi-ld:Building:057_01_04a");
+    let id2 = unique_id("urn:ngsi-ld:Building:057_01_04b");
+
+    for id in [&id1, &id2] {
+        let entity = building_simple_attributes(id);
+        create_entity(&c, &entity).await;
+    }
+
+    let e1 = building_relationship_of_property(&id1);
+    let e2 = building_relationship_of_property(&id2);
+    let fragments = json!([e1, e2]);
+
+    let (status, _) = batch_merge(&c, &fragments).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+
+    let (status, _, body) = get_entity(&c, &id1, "", true).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["airQualityLevel"]["value"], 4);
+    assert_eq!(body["airQualityLevel"]["unitCode"], "C62", "unitCode should be preserved");
+    assert_eq!(body["airQualityLevel"]["hasWeatherObserved"]["type"], "Relationship");
+}
+
+#[tokio::test]
+#[serial]
+async fn batch_merge_mixed_existing_nonexisting_returns_207() {
+    clean_database().await;
+    let c = client();
+
+    let existing_id1 = unique_id("urn:ngsi-ld:Building:057_02_01a");
+    let existing_id2 = unique_id("urn:ngsi-ld:Building:057_02_01b");
+    let nonexistent_id = unique_id("urn:ngsi-ld:Building:057_02_01c");
+
+    for id in [&existing_id1, &existing_id2] {
+        let entity = building_simple_attributes(id);
+        create_entity(&c, &entity).await;
+    }
+
+    let e1 = building_simple_attributes(&existing_id1);
+    let e2 = building_simple_attributes(&existing_id2);
+    let e3 = building_simple_attributes(&nonexistent_id);
+    let fragments = json!([e1, e2, e3]);
+
+    let (status, body) = batch_merge(&c, &fragments).await;
+    assert_eq!(status, StatusCode::MULTI_STATUS);
+
+    let success = body["success"].as_array().expect("should have success");
+    let errors = body["errors"].as_array().expect("should have errors");
+    assert_eq!(success.len(), 2);
+    assert_eq!(errors.len(), 1);
+}
+
+#[tokio::test]
+async fn batch_merge_invalid_json_returns_400() {
+    let c = client();
+    let (status, _) = request_raw(&c, Method::POST, "/entityOperations/merge", b"[{\"id\":\"urn:ngsi-ld:Building:x\",,}]", Some("application/ld+json"), false).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn batch_merge_invalid_json_ld_returns_207() {
+    let c = client();
+    let fragments = json!([{
+        "id": "urn:ngsi-ld:Building:invalid_ld",
+        "invalidField": "not a valid NGSI-LD structure",
+        "@context": TEST_SUITE_CONTEXT
+    }]);
+
+    let (status, _) = batch_merge(&c, &fragments).await;
+    assert_eq!(status, StatusCode::MULTI_STATUS, "invalid JSON-LD should return 207");
+}
