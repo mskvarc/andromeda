@@ -99,6 +99,10 @@ name = "csr_subscription"
 path = "tests/csr_subscription/main.rs"
 
 [[test]]
+name = "entity_map"
+path = "tests/entity_map/main.rs"
+
+[[test]]
 name = "i18n"
 path = "tests/i18n/main.rs"
 

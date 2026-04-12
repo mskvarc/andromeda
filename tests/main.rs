@@ -1,6 +1,5 @@
 mod context_information;
 mod distributed_operations;
-mod entity_map;
 mod harness;
 mod info;
 mod multitenancy;
@@ -21,7 +20,6 @@ fn main() {
     context_information::tests(&mut trials);
     distributed_operations::tests(&mut trials);
     multitenancy::tests(&mut trials);
-    entity_map::tests(&mut trials);
     info::tests(&mut trials);
     spec_features::tests(&mut trials);
 
