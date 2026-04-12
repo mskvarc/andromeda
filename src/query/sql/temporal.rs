@@ -345,19 +345,56 @@ fn build_aggregation_query<'a>(
         )
     };
 
+    // Unified numeric expression for type-aware aggregation (NGSI-LD 4.5.19.1).
+    // Covers Number (direct), Boolean (true=1, false=0), and Array (element count).
+    // Returns NULL for String, non-array Object, DateTime, Uri, and Geometry,
+    // which correctly produces NULL aggregation results (N/A per spec).
+    const NUMERIC_EXPR: &str = "COALESCE(\
+        ah.value_number, \
+        ah.value_bool::int::float8, \
+        CASE WHEN jsonb_typeof(ah.value_object) = 'array' \
+            THEN jsonb_array_length(ah.value_object)::float8 \
+            ELSE NULL \
+        END)";
+
     let mut agg_exprs = Vec::new();
     for m in &compiled.aggr_methods {
-        let (col, alias) = match m {
-            AggrMethod::Avg => ("AVG(ah.value_number)", "agg_avg"),
-            AggrMethod::Min => ("MIN(ah.value_number)", "agg_min"),
-            AggrMethod::Max => ("MAX(ah.value_number)", "agg_max"),
-            AggrMethod::Sum => ("SUM(ah.value_number)", "agg_sum"),
-            AggrMethod::SumSq => ("SUM(ah.value_number * ah.value_number)", "agg_sumsq"),
-            AggrMethod::StdDev => ("STDDEV(ah.value_number)", "agg_stddev"),
-            AggrMethod::TotalCount => ("COUNT(*)", "agg_total_count"),
-            AggrMethod::DistinctCount => ("COUNT(DISTINCT ah.value_number)", "agg_distinct_count_num"),
-        };
-        agg_exprs.push(format!("{} AS {}", col, alias));
+        match m {
+            AggrMethod::Avg => {
+                agg_exprs.push(format!("AVG({NUMERIC_EXPR}) AS agg_avg"));
+            }
+            AggrMethod::Min => {
+                agg_exprs.push(format!("MIN({NUMERIC_EXPR}) AS agg_min"));
+                agg_exprs.push("MIN(ah.value_string) AS agg_min_str".to_string());
+                agg_exprs.push("MIN(ah.value_datetime) AS agg_min_dt".to_string());
+            }
+            AggrMethod::Max => {
+                agg_exprs.push(format!("MAX({NUMERIC_EXPR}) AS agg_max"));
+                agg_exprs.push("MAX(ah.value_string) AS agg_max_str".to_string());
+                agg_exprs.push("MAX(ah.value_datetime) AS agg_max_dt".to_string());
+            }
+            AggrMethod::Sum => {
+                agg_exprs.push(format!("SUM({NUMERIC_EXPR}) AS agg_sum"));
+            }
+            AggrMethod::SumSq => {
+                agg_exprs.push(format!("SUM(({NUMERIC_EXPR}) * ({NUMERIC_EXPR})) AS agg_sumsq"));
+            }
+            AggrMethod::StdDev => {
+                agg_exprs.push(format!("STDDEV({NUMERIC_EXPR}) AS agg_stddev"));
+            }
+            AggrMethod::TotalCount => {
+                agg_exprs.push("COUNT(*) AS agg_total_count".to_string());
+            }
+            AggrMethod::DistinctCount => {
+                agg_exprs.push(
+                    "COUNT(DISTINCT COALESCE(\
+                        ah.value_number::text, ah.value_string, ah.value_bool::text, \
+                        ah.value_datetime::text, ah.value_uri, ah.value_object::text\
+                    )) AS agg_distinct_count"
+                        .to_string(),
+                );
+            }
+        }
     }
 
     let agg_select = if agg_exprs.is_empty() {

@@ -212,31 +212,46 @@ pub fn build_entity_temporal_aggregated_data(rows: &[PgRow], compiled: &Compiled
     let mut attrs: IndexMap<String, Vec<Value>> = IndexMap::with_capacity(groups.len());
 
     for ((attr_name, dataset_id), bucket_rows) in &groups {
+        // All rows in a group share the same attribute_type and value_type
+        // (guaranteed by SQL GROUP BY).
+        let first_row = bucket_rows
+            .first()
+            .ok_or_else(|| AndromedaError::internal("Empty bucket rows in aggregation".to_string()))?;
+        let attr_type_raw: String = first_row.try_get("attribute_type")?;
+        let value_type_raw: String = first_row.try_get("value_type")?;
+        let value_type =
+            ValueType::from_str(&value_type_raw).map_err(|e| AndromedaError::internal(format!("Invalid value type '{}': {}", value_type_raw, e)))?;
+
         let mut instance = serde_json::Map::with_capacity(2 + compiled.aggr_methods.len());
-        instance.insert("type".to_string(), json!("Property"));
+        instance.insert("type".to_string(), json!(attr_type_raw));
 
         if let Some(ds_id) = dataset_id {
             instance.insert("datasetId".to_string(), json!(ds_id));
         }
 
         for method in &compiled.aggr_methods {
-            let (key, pg_col) = match method {
-                AggrMethod::Avg => ("avg", "agg_avg"),
-                AggrMethod::Min => ("min", "agg_min"),
-                AggrMethod::Max => ("max", "agg_max"),
-                AggrMethod::Sum => ("sum", "agg_sum"),
-                AggrMethod::SumSq => ("sumsq", "agg_sumsq"),
-                AggrMethod::StdDev => ("stddev", "agg_stddev"),
-                AggrMethod::TotalCount => ("totalCount", "agg_total_count"),
-                AggrMethod::DistinctCount => ("distinctCount", "agg_distinct_count_num"),
+            let key = match method {
+                AggrMethod::Avg => "avg",
+                AggrMethod::Min => "min",
+                AggrMethod::Max => "max",
+                AggrMethod::Sum => "sum",
+                AggrMethod::SumSq => "sumsq",
+                AggrMethod::StdDev => "stddev",
+                AggrMethod::TotalCount => "totalCount",
+                AggrMethod::DistinctCount => "distinctCount",
             };
 
             let mut triples: Vec<Value> = Vec::with_capacity(bucket_rows.len());
             for row in bucket_rows {
-                let val: Value = if *method == AggrMethod::TotalCount || *method == AggrMethod::DistinctCount {
-                    row.try_get::<i64, _>(pg_col).map_or(Value::Null, |v| json!(v))
-                } else {
-                    row.try_get::<f64, _>(pg_col).map_or(Value::Null, |v| json!(v))
+                let val: Value = match method {
+                    AggrMethod::TotalCount => row.try_get::<i64, _>("agg_total_count").map_or(Value::Null, |v| json!(v)),
+                    AggrMethod::DistinctCount => row.try_get::<i64, _>("agg_distinct_count").map_or(Value::Null, |v| json!(v)),
+                    AggrMethod::Min => extract_typed_agg(row, value_type, "agg_min", "agg_min_str", "agg_min_dt"),
+                    AggrMethod::Max => extract_typed_agg(row, value_type, "agg_max", "agg_max_str", "agg_max_dt"),
+                    AggrMethod::Avg => row.try_get::<f64, _>("agg_avg").map_or(Value::Null, |v| json!(v)),
+                    AggrMethod::Sum => row.try_get::<f64, _>("agg_sum").map_or(Value::Null, |v| json!(v)),
+                    AggrMethod::SumSq => row.try_get::<f64, _>("agg_sumsq").map_or(Value::Null, |v| json!(v)),
+                    AggrMethod::StdDev => row.try_get::<f64, _>("agg_stddev").map_or(Value::Null, |v| json!(v)),
                 };
 
                 let bucket_start: Value = row
@@ -267,6 +282,21 @@ pub fn build_entity_temporal_aggregated_data(rows: &[PgRow], compiled: &Compiled
     }
 
     Ok(result)
+}
+
+/// Extract a min/max aggregation value based on the attribute's value type.
+///
+/// For String values, reads the lexicographic result from the text column.
+/// For DateTime values, reads from the timestamptz column.
+/// For numeric-compatible types (Number, Boolean, Object/Array), reads the float column.
+/// Returns null for types where min/max is not applicable (Uri, Geometry).
+fn extract_typed_agg(row: &PgRow, value_type: ValueType, num_col: &str, str_col: &str, dt_col: &str) -> Value {
+    match value_type {
+        ValueType::String => row.try_get::<String, _>(str_col).map_or(Value::Null, |v| json!(v)),
+        ValueType::DateTime => row.try_get::<DateTime<Utc>, _>(dt_col).map_or(Value::Null, |dt| json!(format_datetime(dt))),
+        ValueType::Number | ValueType::Boolean | ValueType::Object => row.try_get::<f64, _>(num_col).map_or(Value::Null, |v| json!(v)),
+        ValueType::Uri | ValueType::Geometry => Value::Null,
+    }
 }
 
 fn parse_tea_entry(row: &PgRow) -> Result<TeaEntry, AndromedaError> {
