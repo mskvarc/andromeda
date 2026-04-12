@@ -40,6 +40,15 @@ pub trait JsonLdExpandable {
     fn to_expanded(&self) -> Value;
 }
 
+impl<T> JsonLdExpandable for Box<T>
+where
+    T: JsonLdExpandable,
+{
+    fn to_expanded(&self) -> Value {
+        T::to_expanded(self)
+    }
+}
+
 /// A type that provides dynamic `@type` arrays for JSON-LD expansion.
 ///
 /// Used by types like `Entity` where `@type` is not a compile-time constant

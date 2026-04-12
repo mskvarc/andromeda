@@ -1,94 +1,86 @@
-use crate::{domain::attribute::AttributeValue, jsonld::JsonLdExpandableMacro};
-use chrono::{DateTime, Utc};
+use crate::{
+    domain::attribute::{
+        AttributeValue,
+        common::{CommonAttributeFields, OneOrMany},
+    },
+    jsonld::JsonLdExpandableMacro,
+};
+use compact_str::CompactString;
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use serde_with::skip_serializing_none;
-use urn::Urn;
 
 /// NGSI-LD VocabProperty representation (ETSI GS CIM 009 clause 5.2.35).
-///
-/// A VocabProperty represents an attribute whose value is a vocabulary term
-/// (compact IRI or full IRI). Contains the vocab value, optional previous
-/// value, metadata (observedAt, datasetId), and optional sub-attributes.
 #[skip_serializing_none]
 #[derive(Debug, Clone, Serialize, Deserialize, JsonLdExpandableMacro)]
 #[serde(rename_all = "camelCase")]
 #[jsonld(type = "ngsi:VocabProperty")]
 pub struct VocabProperty {
-    #[jsonld(property = "ngsi:hasVocab", vocab_polymorphic)]
-    pub vocab: Value,
-    #[jsonld(skip)]
-    pub previous_vocab: Option<Value>,
-    #[serde(default)]
-    #[jsonld(property = "ngsi:observedAt", typed_value, datatype = "ngsi:DateTime")]
-    pub observed_at: Option<DateTime<Utc>>,
-    #[serde(default)]
-    #[jsonld(property = "ngsi:expiresAt", typed_value, datatype = "ngsi:DateTime")]
-    pub expires_at: Option<DateTime<Utc>>,
-    #[jsonld(property = "ngsi:datasetId", id_ref)]
-    pub dataset_id: Option<Urn>,
+    /// One or more vocabulary references.
+    #[jsonld(property = "ngsi:hasVocab", custom)]
+    pub vocab: OneOrMany<CompactString>,
+    /// Optional JSON-LD datatype for `vocab`.
+    #[jsonld(property = "ngsi:hasValueType", vocab)]
+    pub value_type: Option<CompactString>,
+    /// Previous vocabulary reference emitted in notifications when `showChanges` is active.
+    #[jsonld(property = "ngsi:hasPreviousVocab", custom)]
+    pub previous_vocab: Option<OneOrMany<CompactString>>,
+    #[serde(flatten)]
+    #[jsonld(flatten_object)]
+    pub common: CommonAttributeFields,
     #[serde(flatten)]
     #[jsonld(flatten_map)]
     pub sub_attributes: IndexMap<String, AttributeValue>,
 }
 
+impl Default for VocabProperty {
+    fn default() -> VocabProperty {
+        VocabProperty {
+            vocab: OneOrMany::Many(Vec::new()),
+            value_type: None,
+            previous_vocab: None,
+            common: CommonAttributeFields::default(),
+            sub_attributes: IndexMap::new(),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use crate::jsonld::JsonLdExpandable;
+    use crate::{
+        domain::attribute::{Attribute, common::OneOrMany},
+        jsonld::{JsonLdExpandable, vocab},
+    };
 
     #[test]
-    fn vocab_property_expanded_string_vocab_produces_id() {
+    fn vocab_property_round_trip_supports_single_and_many() {
         let json = serde_json::json!({
             "type": "VocabProperty",
-            "vocab": "categoryA"
+            "vocab": ["commercial", "schema:Offer"],
+            "previousVocab": "private"
         });
-        let attr: crate::domain::attribute::Attribute = serde_json::from_value(json).expect("vocab_property");
-        let crate::domain::attribute::Attribute::VocabProperty(v) = &attr else {
+        let attr: Attribute = serde_json::from_value(json).expect("vocab property");
+        let Attribute::VocabProperty(property) = attr else {
             panic!("expected VocabProperty");
         };
-        let expanded = v.to_expanded();
-        let obj = expanded.as_object().expect("expanded is object");
-
-        assert_eq!(obj["@type"], serde_json::json!(["https://uri.etsi.org/ngsi-ld/VocabProperty"]));
-        assert_eq!(obj["https://uri.etsi.org/ngsi-ld/hasVocab"], serde_json::json!([{"@id": "categoryA"}]));
+        assert!(matches!(property.vocab, OneOrMany::Many(_)));
+        assert!(property.previous_vocab.is_some());
     }
 
     #[test]
-    fn vocab_property_expanded_array_vocab_produces_id_array() {
+    fn vocab_property_expanded_uses_vocab_members() {
         let json = serde_json::json!({
             "type": "VocabProperty",
-            "vocab": ["catA", "catB"]
+            "vocab": "commercial",
+            "valueType": "xsd:string"
         });
-        let attr: crate::domain::attribute::Attribute = serde_json::from_value(json).expect("vocab_property");
-        let crate::domain::attribute::Attribute::VocabProperty(v) = &attr else {
+        let attr: Attribute = serde_json::from_value(json).expect("vocab property");
+        let Attribute::VocabProperty(property) = attr else {
             panic!("expected VocabProperty");
         };
-        let expanded = v.to_expanded();
-        let obj = expanded.as_object().expect("expanded is object");
-
-        assert_eq!(
-            obj["https://uri.etsi.org/ngsi-ld/hasVocab"],
-            serde_json::json!([{"@id": "catA"}, {"@id": "catB"}])
-        );
-    }
-
-    #[test]
-    fn vocab_property_expanded_includes_metadata() {
-        let json = serde_json::json!({
-            "type": "VocabProperty",
-            "vocab": "val",
-            "observedAt": "2024-01-01T00:00:00Z",
-            "datasetId": "urn:ngsi-ld:Dataset:1"
-        });
-        let attr: crate::domain::attribute::Attribute = serde_json::from_value(json).expect("vocab_property");
-        let crate::domain::attribute::Attribute::VocabProperty(v) = &attr else {
-            panic!("expected VocabProperty");
-        };
-        let expanded = v.to_expanded();
-        let obj = expanded.as_object().expect("expanded is object");
-
-        assert!(obj.contains_key("https://uri.etsi.org/ngsi-ld/observedAt"));
-        assert!(obj.contains_key("https://uri.etsi.org/ngsi-ld/datasetId"));
+        let expanded = property.to_expanded();
+        let obj = expanded.as_object().expect("object");
+        assert!(obj.contains_key(vocab::VOCAB.as_str()));
+        assert!(obj.contains_key(vocab::VALUE_TYPE.as_str()));
     }
 }

@@ -312,8 +312,8 @@ impl<'a> NegotiatedProperty<'a> {
                 AvailableLanguageRange::Default => "@none".to_string(),
                 AvailableLanguageRange::Tag(tag) => tag.to_string(),
             },
-            observed_at: language_property.observed_at,
-            dataset_id: &language_property.dataset_id,
+            observed_at: language_property.common.observed_at,
+            dataset_id: &language_property.common.dataset_id,
             sub_attributes: &language_property.sub_attributes,
         }
     }

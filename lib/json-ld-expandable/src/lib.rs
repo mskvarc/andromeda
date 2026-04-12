@@ -54,8 +54,9 @@ use syn::{Data, DeriveInput, Fields, parse_macro_input, spanned::Spanned};
 ///
 /// ## Container attributes (`#[jsonld(...)]` on struct)
 ///
-/// - `type = "IRI"` - The JSON-LD @type IRI for this struct (required for structs, unless `type_field` is used)
-/// - `type_field` - Indicates @type is provided by a field marked with `type_value` (mutually exclusive with `type`)
+/// - `type = "IRI"` - The JSON-LD @type IRI for this struct (required for structs, unless `type_field` or `fragment` is used)
+/// - `type_field` - Indicates @type is provided by a field marked with `type_value` (mutually exclusive with `type` and `fragment`)
+/// - `fragment` - Expand this struct as a JSON-LD object fragment without emitting `@type`
 /// - `crate = "path"` - Custom path to the crate containing JsonLdExpandable trait
 ///   (defaults to `crate::jsonld`)
 /// - `debug` - Emit the generated code as a compile error (for debugging macro output)
@@ -77,6 +78,7 @@ use syn::{Data, DeriveInput, Fields, parse_macro_input, spanned::Spanned};
 /// - `id_ref` - Emit `{"@id": val}` for URI references (can combine with `list`)
 /// - `language_map` - Expand via `JsonLdLanguageMap::to_expanded_language_map()`
 /// - `flatten_map` - Expand map entries as separate IRI-keyed properties
+/// - `flatten_object` - Expand a nested JsonLdExpandable object and merge its properties into the parent
 /// - `custom` - Use field's `JsonLdExpandable::to_expanded()` directly
 /// - `type_value` - This field provides the dynamic @type (requires `type_field` on container)
 #[proc_macro_derive(JsonLdExpandable, attributes(jsonld))]
@@ -148,10 +150,16 @@ fn derive_struct(
              help: use `type` for a static @type, or `type_field` with a `type_value` field for dynamic @type",
         ));
     }
-    if container_attrs.type_iri.is_none() && !container_attrs.type_field {
+    if container_attrs.fragment && (container_attrs.type_iri.is_some() || container_attrs.type_field) {
         return Err(syn::Error::new(
             proc_macro2::Span::call_site(),
-            "JsonLdExpandable requires either `type` or `type_field`\n\n\
+            "jsonld attribute `fragment` is mutually exclusive with `type` and `type_field`",
+        ));
+    }
+    if container_attrs.type_iri.is_none() && !container_attrs.type_field && !container_attrs.fragment {
+        return Err(syn::Error::new(
+            proc_macro2::Span::call_site(),
+            "JsonLdExpandable requires either `type`, `type_field`, or `fragment`\n\n\
              help: add a static @type:\n  \
              #[jsonld(type = \"https://example.com/MyType\")]\n\n\
              or use dynamic @type from a field:\n  \
@@ -160,7 +168,9 @@ fn derive_struct(
              #[jsonld(type_value)]\n      \
              pub type_: MyTypeValue,\n      \
              ...\n  \
-             }",
+             }\n\n\
+             or mark this struct as a reusable fragment:\n  \
+             #[jsonld(fragment)]",
         ));
     }
 
@@ -213,6 +223,40 @@ fn derive_struct(
                     obj.insert(__key.to_string(), #trait_path::JsonLdExpandable::to_expanded(__val));
                 }
             });
+            continue;
+        }
+
+        if attrs.flatten_object {
+            let is_option = is_option_type(&field.ty);
+            if is_option {
+                property_fields.push(quote! {
+                    if let Some(ref __val) = self.#field_name {
+                        if let serde_json::Value::Object(__fragment_obj) = #trait_path::JsonLdExpandable::to_expanded(__val) {
+                            for (__key, __value) in __fragment_obj {
+                                match __key.as_str() {
+                                    "@id" | "@type" => {}
+                                    _other => {
+                                        obj.insert(__key, __value);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                });
+            } else {
+                property_fields.push(quote! {
+                    if let serde_json::Value::Object(__fragment_obj) = #trait_path::JsonLdExpandable::to_expanded(&self.#field_name) {
+                        for (__key, __value) in __fragment_obj {
+                            match __key.as_str() {
+                                "@id" | "@type" => {}
+                                _other => {
+                                    obj.insert(__key, __value);
+                                }
+                            }
+                        }
+                    }
+                });
+            }
             continue;
         }
 
@@ -505,6 +549,40 @@ fn derive_enum(
                         continue;
                     }
 
+                    if attrs.flatten_object {
+                        let is_option = is_option_type(&field.ty);
+                        if is_option {
+                            property_fields.push(quote! {
+                                if let Some(__val) = #field_name.as_ref() {
+                                    if let serde_json::Value::Object(__fragment_obj) = #trait_path::JsonLdExpandable::to_expanded(__val) {
+                                        for (__key, __value) in __fragment_obj {
+                                            match __key.as_str() {
+                                                "@id" | "@type" => {}
+                                                _other => {
+                                                    obj.insert(__key, __value);
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            });
+                        } else {
+                            property_fields.push(quote! {
+                                if let serde_json::Value::Object(__fragment_obj) = #trait_path::JsonLdExpandable::to_expanded(#field_name) {
+                                    for (__key, __value) in __fragment_obj {
+                                        match __key.as_str() {
+                                            "@id" | "@type" => {}
+                                            _other => {
+                                                obj.insert(__key, __value);
+                                            }
+                                        }
+                                    }
+                                }
+                            });
+                        }
+                        continue;
+                    }
+
                     if let Some(property_iri) = &attrs.property {
                         let is_option = is_option_type(&field.ty);
                         let value_expr = generate_field_value_expr(&attrs, field_name, is_option, trait_path);
@@ -782,6 +860,7 @@ fn resolve_iri_prefix(s: &str) -> String {
 struct ContainerAttrs {
     type_iri: Option<String>,
     type_field: bool,
+    fragment: bool,
     crate_path: Option<String>,
     /// Emit the generated code as a compile error for debugging
     debug: bool,
@@ -813,6 +892,8 @@ fn extract_container_attrs(attrs: &[syn::Attribute]) -> Result<ContainerAttrs, s
                 result.type_iri = Some(iri);
             } else if meta.path.is_ident("type_field") {
                 result.type_field = true;
+            } else if meta.path.is_ident("fragment") {
+                result.fragment = true;
             } else if meta.path.is_ident("crate") {
                 let value: syn::LitStr = meta.value()?.parse()?;
                 result.crate_path = Some(value.value());
@@ -820,7 +901,7 @@ fn extract_container_attrs(attrs: &[syn::Attribute]) -> Result<ContainerAttrs, s
                 result.debug = true;
             } else {
                 return Err(meta.error(format!(
-                    "unknown jsonld container attribute `{}`; expected `type`, `type_field`, `crate`, or `debug`",
+                    "unknown jsonld container attribute `{}`; expected `type`, `type_field`, `fragment`, `crate`, or `debug`",
                     meta.path.get_ident().map_or("?".into(), |i| i.to_string())
                 )));
             }
@@ -861,6 +942,8 @@ struct FieldAttrs {
     language_map: bool,
     /// Expand map entries as separate IRI-keyed properties
     flatten_map: bool,
+    /// Expand a nested JsonLdExpandable object and merge its properties into the parent
+    flatten_object: bool,
     /// Use field's `JsonLdExpandable::to_expanded()` directly
     custom: bool,
     /// This field provides the dynamic `@type` value
@@ -909,6 +992,8 @@ fn parse_field_attrs(attrs: &[syn::Attribute]) -> Result<FieldAttrs, syn::Error>
                 result.language_map = true;
             } else if meta.path.is_ident("flatten_map") {
                 result.flatten_map = true;
+            } else if meta.path.is_ident("flatten_object") {
+                result.flatten_object = true;
             } else if meta.path.is_ident("custom") {
                 result.custom = true;
             } else if meta.path.is_ident("type_value") {
@@ -932,7 +1017,7 @@ fn parse_field_attrs(attrs: &[syn::Attribute]) -> Result<FieldAttrs, syn::Error>
                     "unknown jsonld field attribute `{}`; expected one of: \
                      id, skip, property, nested, vec, list, vocab, vocab_vec, \
                      vocab_polymorphic, typed_value, datatype, json_value, id_ref, \
-                     language_map, flatten_map, custom, type_value",
+                     language_map, flatten_map, flatten_object, custom, type_value",
                     meta.path.get_ident().map_or("?".into(), |i| i.to_string())
                 )));
             }
@@ -953,6 +1038,7 @@ fn parse_field_attrs(attrs: &[syn::Attribute]) -> Result<FieldAttrs, syn::Error>
         ("json_value", result.json_value),
         ("language_map", result.language_map),
         ("flatten_map", result.flatten_map),
+        ("flatten_object", result.flatten_object),
         ("custom", result.custom),
     ];
     let active: Vec<&str> = value_modes.iter().filter(|(_, set)| *set).map(|(name, _)| *name).collect();
@@ -1016,6 +1102,22 @@ fn parse_field_attrs(attrs: &[syn::Attribute]) -> Result<FieldAttrs, syn::Error>
         ));
     }
 
+    if result.flatten_object && result.property.is_some() {
+        return Err(syn::Error::new(
+            span,
+            "jsonld attribute `flatten_object` cannot be combined with `property`\n\n\
+             help: `flatten_object` merges expanded object properties into the parent:\n  \
+             #[jsonld(flatten_object)]",
+        ));
+    }
+
+    if result.flatten_object && result.flatten_map {
+        return Err(syn::Error::new(
+            span,
+            "jsonld attributes `flatten_object` and `flatten_map` are mutually exclusive",
+        ));
+    }
+
     // custom requires property
     if result.custom && result.property.is_none() {
         return Err(syn::Error::new(
@@ -1051,6 +1153,7 @@ fn parse_field_attrs(attrs: &[syn::Attribute]) -> Result<FieldAttrs, syn::Error>
             || result.id_ref
             || result.language_map
             || result.flatten_map
+            || result.flatten_object
             || result.custom)
     {
         return Err(syn::Error::new(span, "jsonld attribute `type_value` cannot be combined with other attributes"));
@@ -1068,6 +1171,7 @@ fn parse_field_attrs(attrs: &[syn::Attribute]) -> Result<FieldAttrs, syn::Error>
             || result.id_ref
             || result.language_map
             || result.flatten_map
+            || result.flatten_object
             || result.custom)
     {
         return Err(syn::Error::new(span, "jsonld attribute `id` cannot be combined with other property attributes"));
@@ -1086,6 +1190,7 @@ fn parse_field_attrs(attrs: &[syn::Attribute]) -> Result<FieldAttrs, syn::Error>
             || result.id_ref
             || result.language_map
             || result.flatten_map
+            || result.flatten_object
             || result.custom
             || result.type_value)
     {

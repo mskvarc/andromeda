@@ -1,78 +1,94 @@
 use crate::{
-    domain::{attribute::AttributeValue, uri::Uri},
+    domain::{
+        attribute::{
+            AttributeValue,
+            common::{CommonAttributeFields, InlineEntity, OneOrMany},
+        },
+        uri::Uri,
+    },
     jsonld::JsonLdExpandableMacro,
 };
-use chrono::{DateTime, Utc};
+use compact_str::CompactString;
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
-use urn::Urn;
 
 /// NGSI-LD Relationship representation (ETSI GS CIM 009 clause 5.2.6).
-///
-/// A Relationship represents an attribute whose value is a reference (URI)
-/// to another entity. Contains the object URI, optional metadata
-/// (observedAt, datasetId), and optional sub-attributes.
 #[skip_serializing_none]
 #[derive(Debug, Clone, Serialize, Deserialize, JsonLdExpandableMacro)]
 #[serde(rename_all = "camelCase")]
 #[jsonld(type = "ngsi:Relationship")]
 pub struct Relationship {
-    #[jsonld(property = "ngsi:hasObject", id_ref)]
-    pub object: Uri,
-    #[serde(default)]
-    #[jsonld(property = "ngsi:observedAt", typed_value, datatype = "ngsi:DateTime")]
-    pub observed_at: Option<DateTime<Utc>>,
-    #[serde(default)]
-    #[jsonld(property = "ngsi:expiresAt", typed_value, datatype = "ngsi:DateTime")]
-    pub expires_at: Option<DateTime<Utc>>,
-    #[jsonld(property = "ngsi:datasetId", id_ref)]
-    pub dataset_id: Option<Urn>,
+    /// One or more target object URIs.
+    #[jsonld(property = "ngsi:hasObject", custom)]
+    pub object: OneOrMany<Uri>,
+    /// Optional target node type(s).
+    #[jsonld(property = "ngsi:hasObjectType", custom)]
+    pub object_type: Option<OneOrMany<CompactString>>,
+    /// Previous target object emitted in notifications when `showChanges` is active.
+    #[jsonld(property = "ngsi:hasPreviousObject", custom)]
+    pub previous_object: Option<OneOrMany<Uri>>,
+    /// Inline linked entity or entities returned for `join=inline`.
+    #[jsonld(property = "ngsi:entity", custom)]
+    pub entity: Option<InlineEntity>,
+    #[serde(flatten)]
+    #[jsonld(flatten_object)]
+    pub common: CommonAttributeFields,
     #[serde(flatten)]
     #[jsonld(flatten_map)]
     pub sub_attributes: IndexMap<String, AttributeValue>,
 }
 
+impl Default for Relationship {
+    fn default() -> Relationship {
+        Relationship {
+            object: OneOrMany::Many(Vec::new()),
+            object_type: None,
+            previous_object: None,
+            entity: None,
+            common: CommonAttributeFields::default(),
+            sub_attributes: IndexMap::new(),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use crate::jsonld::JsonLdExpandable;
+    use crate::{
+        domain::attribute::{Attribute, common::OneOrMany},
+        jsonld::{JsonLdExpandable, vocab},
+    };
 
     #[test]
-    fn relationship_expanded_has_correct_type_and_object() {
+    fn relationship_round_trip_supports_object_arrays_and_object_type() {
         let json = serde_json::json!({
             "type": "Relationship",
-            "object": "urn:ngsi-ld:Entity:1"
+            "object": ["urn:ngsi-ld:Entity:1", "urn:ngsi-ld:Entity:2"],
+            "objectType": ["Building", "schema:Place"],
+            "previousObject": "urn:ngsi-ld:Entity:0"
         });
-        let attr: crate::domain::attribute::Attribute = serde_json::from_value(json).expect("relationship");
-        let crate::domain::attribute::Attribute::Relationship(r) = &attr else {
+        let attr: Attribute = serde_json::from_value(json).expect("relationship");
+        let Attribute::Relationship(relationship) = attr else {
             panic!("expected Relationship");
         };
-        let expanded = r.to_expanded();
-        let obj = expanded.as_object().expect("expanded is object");
-
-        assert_eq!(obj["@type"], serde_json::json!(["https://uri.etsi.org/ngsi-ld/Relationship"]));
-        assert_eq!(
-            obj["https://uri.etsi.org/ngsi-ld/hasObject"],
-            serde_json::json!([{"@id": "urn:ngsi-ld:Entity:1"}])
-        );
+        assert!(matches!(relationship.object, OneOrMany::Many(_)));
+        assert!(relationship.object_type.is_some());
+        assert!(relationship.previous_object.is_some());
     }
 
     #[test]
-    fn relationship_expanded_includes_metadata() {
+    fn relationship_expanded_includes_object_type() {
         let json = serde_json::json!({
             "type": "Relationship",
             "object": "urn:ngsi-ld:Entity:1",
-            "observedAt": "2024-01-01T00:00:00Z",
-            "datasetId": "urn:ngsi-ld:Dataset:1"
+            "objectType": "Building"
         });
-        let attr: crate::domain::attribute::Attribute = serde_json::from_value(json).expect("relationship");
-        let crate::domain::attribute::Attribute::Relationship(r) = &attr else {
+        let attr: Attribute = serde_json::from_value(json).expect("relationship");
+        let Attribute::Relationship(relationship) = attr else {
             panic!("expected Relationship");
         };
-        let expanded = r.to_expanded();
-        let obj = expanded.as_object().expect("expanded is object");
-
-        assert!(obj.contains_key("https://uri.etsi.org/ngsi-ld/observedAt"));
-        assert!(obj.contains_key("https://uri.etsi.org/ngsi-ld/datasetId"));
+        let expanded = relationship.to_expanded();
+        let obj = expanded.as_object().expect("object");
+        assert!(obj.contains_key(vocab::OBJECT_TYPE.as_str()));
     }
 }

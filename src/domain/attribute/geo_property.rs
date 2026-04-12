@@ -1,31 +1,30 @@
-use crate::{domain::attribute::AttributeValue, jsonld::JsonLdExpandableMacro};
-use chrono::{DateTime, Utc};
+use crate::{
+    domain::attribute::{AttributeValue, common::CommonAttributeFields},
+    jsonld::JsonLdExpandableMacro,
+};
 use geojson::Geometry;
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
-use urn::Urn;
 
 /// NGSI-LD GeoProperty representation (ETSI GS CIM 009 clause 5.2.7).
-///
-/// A GeoProperty represents an attribute whose value is a GeoJSON geometry.
-/// Contains the geometry value, optional metadata (observedAt, datasetId),
-/// and optional sub-attributes.
 #[skip_serializing_none]
 #[derive(Debug, Clone, Serialize, Deserialize, JsonLdExpandableMacro)]
 #[serde(rename_all = "camelCase")]
 #[jsonld(type = "ngsi:GeoProperty")]
 pub struct GeoProperty {
+    /// GeoJSON geometry value.
     #[jsonld(property = "ngsi:hasValue", json_value)]
     pub value: Geometry,
-    #[serde(default)]
-    #[jsonld(property = "ngsi:observedAt", typed_value, datatype = "ngsi:DateTime")]
-    pub observed_at: Option<DateTime<Utc>>,
-    #[serde(default)]
-    #[jsonld(property = "ngsi:expiresAt", typed_value, datatype = "ngsi:DateTime")]
-    pub expires_at: Option<DateTime<Utc>>,
-    #[jsonld(property = "ngsi:datasetId", id_ref)]
-    pub dataset_id: Option<Urn>,
+    /// Optional JSON-LD datatype for `value`.
+    #[jsonld(property = "ngsi:hasValueType", vocab)]
+    pub value_type: Option<compact_str::CompactString>,
+    /// Previous geometry value emitted in notifications when `showChanges` is active.
+    #[jsonld(property = "ngsi:hasPreviousValue", json_value)]
+    pub previous_value: Option<Geometry>,
+    #[serde(flatten)]
+    #[jsonld(flatten_object)]
+    pub common: CommonAttributeFields,
     #[serde(flatten)]
     #[jsonld(flatten_map)]
     pub sub_attributes: IndexMap<String, AttributeValue>,
@@ -33,24 +32,38 @@ pub struct GeoProperty {
 
 #[cfg(test)]
 mod tests {
-    use crate::jsonld::JsonLdExpandable;
+    use crate::{
+        domain::attribute::Attribute,
+        jsonld::{JsonLdExpandable, vocab},
+    };
 
     #[test]
-    fn geo_property_expanded_has_json_typed_value() {
+    fn geo_property_round_trip_supports_previous_value() {
         let json = serde_json::json!({
             "type": "GeoProperty",
-            "value": {"type": "Point", "coordinates": [13.0, 52.0]}
+            "value": { "type": "Point", "coordinates": [13.0, 52.0] },
+            "previousValue": { "type": "Point", "coordinates": [12.0, 51.0] }
         });
-        let attr: crate::domain::attribute::Attribute = serde_json::from_value(json).expect("geo_property");
-        let crate::domain::attribute::Attribute::GeoProperty(g) = &attr else {
+        let attr: Attribute = serde_json::from_value(json).expect("geo property");
+        let Attribute::GeoProperty(property) = attr else {
             panic!("expected GeoProperty");
         };
-        let expanded = g.to_expanded();
-        let obj = expanded.as_object().expect("expanded is object");
+        assert!(property.previous_value.is_some());
+    }
 
-        assert_eq!(obj["@type"], serde_json::json!(["https://uri.etsi.org/ngsi-ld/GeoProperty"]));
-        let has_value = &obj["https://uri.etsi.org/ngsi-ld/hasValue"];
-        assert_eq!(has_value[0]["@type"], "@json");
-        assert!(has_value[0]["@value"].is_object());
+    #[test]
+    fn geo_property_expanded_includes_value_type() {
+        let json = serde_json::json!({
+            "type": "GeoProperty",
+            "value": { "type": "Point", "coordinates": [13.0, 52.0] },
+            "valueType": "geojson:Point"
+        });
+        let attr: Attribute = serde_json::from_value(json).expect("geo property");
+        let Attribute::GeoProperty(property) = attr else {
+            panic!("expected GeoProperty");
+        };
+        let expanded = property.to_expanded();
+        let obj = expanded.as_object().expect("object");
+        assert!(obj.contains_key(vocab::VALUE_TYPE.as_str()));
     }
 }

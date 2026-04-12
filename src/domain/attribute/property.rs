@@ -1,103 +1,98 @@
-use crate::{domain::attribute::AttributeValue, jsonld::JsonLdExpandableMacro};
-use chrono::{DateTime, Utc};
+use crate::{
+    domain::attribute::{
+        AttributeValue,
+        common::{CommonAttributeFields, NgsiLdValue},
+    },
+    jsonld::JsonLdExpandableMacro,
+};
+use compact_str::CompactString;
 use indexmap::IndexMap;
-use iref::IriBuf;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use serde_with::skip_serializing_none;
-use urn::Urn;
 
 /// NGSI-LD Property representation (ETSI GS CIM 009 clause 5.2.5).
-///
-/// A Property represents an attribute whose value is any JSON value.
-/// Contains the value, optional metadata (observedAt, unitCode, datasetId),
-/// and optional sub-attributes.
 #[skip_serializing_none]
 #[derive(Debug, Clone, Serialize, Deserialize, JsonLdExpandableMacro)]
 #[serde(rename_all = "camelCase")]
 #[jsonld(type = "ngsi:Property")]
 pub struct Property {
+    /// Property value.
     #[jsonld(property = "ngsi:hasValue")]
-    pub value: Value,
-    #[jsonld(property = "ngsi:unitCode")]
-    pub unit_code: Option<String>,
-    #[serde(default)]
-    #[jsonld(property = "ngsi:observedAt", typed_value, datatype = "ngsi:DateTime")]
-    pub observed_at: Option<DateTime<Utc>>,
-    #[serde(default)]
-    #[jsonld(property = "ngsi:expiresAt", typed_value, datatype = "ngsi:DateTime")]
-    pub expires_at: Option<DateTime<Utc>>,
-    #[jsonld(property = "ngsi:datasetId", id_ref)]
-    pub dataset_id: Option<Urn>,
+    pub value: NgsiLdValue,
+    /// Measurement unit code.
+    #[jsonld(property = "ngsi:unitCode", vocab)]
+    pub unit_code: Option<CompactString>,
+    /// Optional JSON-LD datatype for `value`.
+    #[jsonld(property = "ngsi:hasValueType", vocab)]
+    pub value_type: Option<CompactString>,
+    /// Previous value emitted in notifications when `showChanges` is active.
+    #[jsonld(property = "ngsi:hasPreviousValue")]
+    pub previous_value: Option<NgsiLdValue>,
+    #[serde(flatten)]
+    #[jsonld(flatten_object)]
+    pub common: CommonAttributeFields,
     #[serde(flatten)]
     #[jsonld(flatten_map)]
-    pub sub_attributes: IndexMap<IriBuf, AttributeValue>,
+    pub sub_attributes: IndexMap<CompactString, AttributeValue>,
+}
+
+impl Default for Property {
+    fn default() -> Property {
+        Property {
+            value: NgsiLdValue::Json(serde_json::Value::Null),
+            unit_code: None,
+            value_type: None,
+            previous_value: None,
+            common: CommonAttributeFields::default(),
+            sub_attributes: IndexMap::new(),
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::jsonld::JsonLdExpandable;
+    use crate::{
+        domain::attribute::Attribute,
+        jsonld::{JsonLdExpandable, vocab},
+    };
 
     #[test]
-    fn property_expanded_has_correct_type_and_value() {
+    fn property_round_trip_supports_value_type_and_previous_value() {
         let json = serde_json::json!({
             "type": "Property",
-            "value": 25
+            "value": "2018-12-04T12:00:00Z",
+            "valueType": "DateTime",
+            "previousValue": "2018-12-03T12:00:00Z",
+            "instanceId": "urn:ngsi-ld:attribute:instance:1"
         });
-        let attr: crate::domain::attribute::Attribute = serde_json::from_value(json).expect("property");
-        let crate::domain::attribute::Attribute::Property(p) = &attr else {
+        let attr: Attribute = serde_json::from_value(json).expect("property");
+        let Attribute::Property(property) = attr else {
             panic!("expected Property");
         };
-        let expanded = p.to_expanded();
-        let obj = expanded.as_object().expect("expanded is object");
-
-        assert_eq!(obj["@type"], serde_json::json!(["https://uri.etsi.org/ngsi-ld/Property"]));
-        assert_eq!(obj["https://uri.etsi.org/ngsi-ld/hasValue"], serde_json::json!([{"@value": 25}]));
+        assert!(matches!(property.value, crate::domain::attribute::common::NgsiLdValue::DateTime(_)));
+        assert_eq!(property.value_type.as_deref(), Some("DateTime"));
+        assert!(property.previous_value.is_some());
+        assert!(property.common.system.instance_id.is_some());
     }
 
     #[test]
-    fn property_expanded_includes_optional_metadata() {
+    fn property_expanded_includes_output_only_and_value_type_members() {
         let json = serde_json::json!({
             "type": "Property",
-            "value": "hello",
-            "observedAt": "2024-01-01T00:00:00Z",
-            "datasetId": "urn:ngsi-ld:Dataset:1",
-            "unitCode": "CEL"
+            "value": 25,
+            "valueType": "Integer",
+            "createdAt": "2024-01-01T00:00:00Z",
+            "modifiedAt": "2024-01-02T00:00:00Z"
         });
-        let attr: crate::domain::attribute::Attribute = serde_json::from_value(json).expect("property");
-        let crate::domain::attribute::Attribute::Property(p) = &attr else {
+        let attr: Attribute = serde_json::from_value(json).expect("property");
+        let Attribute::Property(property) = attr else {
             panic!("expected Property");
         };
-        let expanded = p.to_expanded();
-        let obj = expanded.as_object().expect("expanded is object");
-
-        assert!(obj.contains_key("https://uri.etsi.org/ngsi-ld/observedAt"));
-        assert!(obj.contains_key("https://uri.etsi.org/ngsi-ld/datasetId"));
-        assert!(obj.contains_key("https://uri.etsi.org/ngsi-ld/unitCode"));
-        // observedAt should be typed value
-        let observed = &obj["https://uri.etsi.org/ngsi-ld/observedAt"];
-        assert!(observed[0]["@type"].as_str().expect("type") == "https://uri.etsi.org/ngsi-ld/DateTime");
-        // datasetId should be id_ref
-        let dataset = &obj["https://uri.etsi.org/ngsi-ld/datasetId"];
-        assert!(dataset[0]["@id"].is_string());
-    }
-
-    #[test]
-    fn property_expanded_omits_none_metadata() {
-        let json = serde_json::json!({
-            "type": "Property",
-            "value": 42
-        });
-        let attr: crate::domain::attribute::Attribute = serde_json::from_value(json).expect("property");
-        let crate::domain::attribute::Attribute::Property(p) = &attr else {
-            panic!("expected Property");
-        };
-        let expanded = p.to_expanded();
-        let obj = expanded.as_object().expect("expanded is object");
-
-        assert!(!obj.contains_key("https://uri.etsi.org/ngsi-ld/observedAt"));
-        assert!(!obj.contains_key("https://uri.etsi.org/ngsi-ld/expiresAt"));
-        assert!(!obj.contains_key("https://uri.etsi.org/ngsi-ld/datasetId"));
-        assert!(!obj.contains_key("https://uri.etsi.org/ngsi-ld/unitCode"));
+        assert_eq!(property.value_type.as_deref(), Some("Integer"));
+        let expanded = property.to_expanded();
+        let obj = expanded.as_object().expect("object");
+        assert!(obj.contains_key(vocab::VALUE_TYPE.as_str()));
+        assert!(obj.contains_key(vocab::CREATED_AT.as_str()));
+        assert!(obj.contains_key(vocab::MODIFIED_AT.as_str()));
     }
 }

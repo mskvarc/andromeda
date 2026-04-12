@@ -1,3 +1,4 @@
+pub mod common;
 mod geo_property;
 mod json_property;
 mod language_property;
@@ -36,43 +37,43 @@ pub enum Attribute {
 impl Attribute {
     pub fn value(&self) -> serde_json::Value {
         match self {
-            Attribute::Property(p) => p.value.clone(),
-            Attribute::Relationship(r) => serde_json::Value::String(r.object.to_string()),
-            Attribute::VocabProperty(v) => v.vocab.clone(),
+            Attribute::Property(p) => serde_json::to_value(&p.value).unwrap_or_default(),
+            Attribute::Relationship(r) => serde_json::to_value(&r.object).unwrap_or_default(),
+            Attribute::VocabProperty(v) => serde_json::to_value(&v.vocab).unwrap_or_default(),
             Attribute::GeoProperty(g) => serde_json::json!(g.value),
             // Serialization of IndexMap<LanguageMapKey, LanguageMapValue> to JSON cannot fail
             // (keys serialize to strings, values to strings or arrays of strings).
             Attribute::LanguageProperty(l) => serde_json::to_value(&l.language_map).unwrap_or_default(),
             Attribute::JsonProperty(j) => j.json.clone(),
-            Attribute::ListProperty(lp) => serde_json::json!(lp.value_list),
-            Attribute::ListRelationship(lr) => serde_json::json!(lr.object_list.iter().map(|u| u.to_string()).collect::<Vec<_>>()),
+            Attribute::ListProperty(lp) => serde_json::to_value(&lp.value_list).unwrap_or_default(),
+            Attribute::ListRelationship(lr) => serde_json::to_value(&lr.object_list).unwrap_or_default(),
         }
     }
 
     /// Returns the `expiresAt` value of the underlying attribute instance, if set.
     pub const fn expires_at(&self) -> Option<DateTime<Utc>> {
         match self {
-            Attribute::Property(p) => p.expires_at,
-            Attribute::Relationship(r) => r.expires_at,
-            Attribute::VocabProperty(v) => v.expires_at,
-            Attribute::GeoProperty(g) => g.expires_at,
-            Attribute::LanguageProperty(l) => l.expires_at,
-            Attribute::JsonProperty(j) => j.expires_at,
-            Attribute::ListProperty(lp) => lp.expires_at,
-            Attribute::ListRelationship(lr) => lr.expires_at,
+            Attribute::Property(p) => p.common.expires_at,
+            Attribute::Relationship(r) => r.common.expires_at,
+            Attribute::VocabProperty(v) => v.common.expires_at,
+            Attribute::GeoProperty(g) => g.common.expires_at,
+            Attribute::LanguageProperty(l) => l.common.expires_at,
+            Attribute::JsonProperty(j) => j.common.expires_at,
+            Attribute::ListProperty(lp) => lp.common.expires_at,
+            Attribute::ListRelationship(lr) => lr.common.expires_at,
         }
     }
 
     pub fn dataset_id_string(&self) -> Option<String> {
         let uri = match self {
-            Attribute::Property(p) => p.dataset_id.as_ref(),
-            Attribute::Relationship(r) => r.dataset_id.as_ref(),
-            Attribute::VocabProperty(v) => v.dataset_id.as_ref(),
-            Attribute::GeoProperty(g) => g.dataset_id.as_ref(),
-            Attribute::LanguageProperty(l) => l.dataset_id.as_ref(),
-            Attribute::JsonProperty(j) => j.dataset_id.as_ref(),
-            Attribute::ListProperty(lp) => lp.dataset_id.as_ref(),
-            Attribute::ListRelationship(lr) => lr.dataset_id.as_ref(),
+            Attribute::Property(p) => p.common.dataset_id.as_ref(),
+            Attribute::Relationship(r) => r.common.dataset_id.as_ref(),
+            Attribute::VocabProperty(v) => v.common.dataset_id.as_ref(),
+            Attribute::GeoProperty(g) => g.common.dataset_id.as_ref(),
+            Attribute::LanguageProperty(l) => l.common.dataset_id.as_ref(),
+            Attribute::JsonProperty(j) => j.common.dataset_id.as_ref(),
+            Attribute::ListProperty(lp) => lp.common.dataset_id.as_ref(),
+            Attribute::ListRelationship(lr) => lr.common.dataset_id.as_ref(),
         };
         uri.map(|u| u.to_string())
     }
@@ -112,7 +113,7 @@ mod tests {
         let Attribute::Property(ref p) = attr else {
             panic!("expected Property");
         };
-        assert_eq!(p.expires_at, Some(Utc.with_ymd_and_hms(2030, 12, 31, 23, 59, 59).unwrap()));
+        assert_eq!(p.common.expires_at, Some(Utc.with_ymd_and_hms(2030, 12, 31, 23, 59, 59).unwrap()));
         let reserialized = serde_json::to_value(&attr).unwrap();
         assert_eq!(reserialized["expiresAt"], "2030-12-31T23:59:59Z");
     }
@@ -139,7 +140,7 @@ mod tests {
         let Attribute::Relationship(ref r) = attr else {
             panic!("expected Relationship");
         };
-        assert_eq!(r.expires_at, Some(Utc.with_ymd_and_hms(2030, 6, 15, 12, 0, 0).unwrap()));
+        assert_eq!(r.common.expires_at, Some(Utc.with_ymd_and_hms(2030, 6, 15, 12, 0, 0).unwrap()));
         let reserialized = serde_json::to_value(&attr).unwrap();
         assert_eq!(reserialized["expiresAt"], "2030-06-15T12:00:00Z");
     }
@@ -155,7 +156,7 @@ mod tests {
         let Attribute::GeoProperty(ref g) = attr else {
             panic!("expected GeoProperty");
         };
-        assert!(g.expires_at.is_some());
+        assert!(g.common.expires_at.is_some());
         let reserialized = serde_json::to_value(&attr).unwrap();
         assert_eq!(reserialized["expiresAt"], "2030-01-01T00:00:00Z");
     }
@@ -171,7 +172,7 @@ mod tests {
         let Attribute::VocabProperty(ref v) = attr else {
             panic!("expected VocabProperty");
         };
-        assert!(v.expires_at.is_some());
+        assert!(v.common.expires_at.is_some());
         let reserialized = serde_json::to_value(&attr).unwrap();
         assert_eq!(reserialized["expiresAt"], "2030-03-15T08:00:00Z");
     }
@@ -187,7 +188,7 @@ mod tests {
         let Attribute::LanguageProperty(ref l) = attr else {
             panic!("expected LanguageProperty");
         };
-        assert!(l.expires_at.is_some());
+        assert!(l.common.expires_at.is_some());
         let reserialized = serde_json::to_value(&attr).unwrap();
         assert_eq!(reserialized["expiresAt"], "2030-07-01T00:00:00Z");
     }
@@ -203,7 +204,7 @@ mod tests {
         let Attribute::JsonProperty(ref j) = attr else {
             panic!("expected JsonProperty");
         };
-        assert!(j.expires_at.is_some());
+        assert!(j.common.expires_at.is_some());
         let reserialized = serde_json::to_value(&attr).unwrap();
         assert_eq!(reserialized["expiresAt"], "2030-09-01T12:00:00Z");
     }
@@ -219,7 +220,7 @@ mod tests {
         let Attribute::ListProperty(ref lp) = attr else {
             panic!("expected ListProperty");
         };
-        assert!(lp.expires_at.is_some());
+        assert!(lp.common.expires_at.is_some());
         let reserialized = serde_json::to_value(&attr).unwrap();
         assert_eq!(reserialized["expiresAt"], "2030-11-20T06:30:00Z");
     }
@@ -235,7 +236,7 @@ mod tests {
         let Attribute::ListRelationship(ref lr) = attr else {
             panic!("expected ListRelationship");
         };
-        assert!(lr.expires_at.is_some());
+        assert!(lr.common.expires_at.is_some());
         let reserialized = serde_json::to_value(&attr).unwrap();
         assert_eq!(reserialized["expiresAt"], "2030-04-10T18:00:00Z");
     }

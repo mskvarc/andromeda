@@ -17,17 +17,17 @@ FROM chef AS builder
 
 COPY --from=planner /build/recipe.json recipe.json
 
-RUN cargo +nightly chef cook --release --recipe-path recipe.json
+RUN cargo +nightly chef cook --recipe-path recipe.json
 
 COPY . .
 
-RUN cargo +nightly build --release --bin andromeda
+RUN cargo +nightly build --bin andromeda
 
 FROM alpine:3.23
 
 RUN apk add --no-cache bash ca-certificates
 
-COPY --from=builder /build/target/release/andromeda /usr/bin/andromeda
+COPY --from=builder /build/target/debug/andromeda /usr/bin/andromeda
 
 EXPOSE 1056
 

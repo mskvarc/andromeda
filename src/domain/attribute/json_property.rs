@@ -1,56 +1,82 @@
-use crate::{domain::attribute::AttributeValue, jsonld::JsonLdExpandableMacro};
-use chrono::{DateTime, Utc};
+use crate::{
+    domain::attribute::{AttributeValue, common::CommonAttributeFields},
+    jsonld::JsonLdExpandableMacro,
+};
+use compact_str::CompactString;
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use serde_with::skip_serializing_none;
-use urn::Urn;
 
 /// NGSI-LD JsonProperty representation (ETSI GS CIM 009 clause 5.2.38).
-///
-/// A JsonProperty represents an attribute whose value is an arbitrary JSON
-/// document. Contains the JSON value, optional metadata (observedAt, datasetId),
-/// and optional sub-attributes.
 #[skip_serializing_none]
 #[derive(Debug, Clone, Serialize, Deserialize, JsonLdExpandableMacro)]
 #[serde(rename_all = "camelCase")]
 #[jsonld(type = "ngsi:JsonProperty")]
 pub struct JsonProperty {
+    /// Raw non-expandable JSON payload.
     #[jsonld(property = "ngsi:hasJSON", json_value)]
     pub json: Value,
-    #[serde(default)]
-    #[jsonld(property = "ngsi:observedAt", typed_value, datatype = "ngsi:DateTime")]
-    pub observed_at: Option<DateTime<Utc>>,
-    #[serde(default)]
-    #[jsonld(property = "ngsi:expiresAt", typed_value, datatype = "ngsi:DateTime")]
-    pub expires_at: Option<DateTime<Utc>>,
-    #[jsonld(property = "ngsi:datasetId", id_ref)]
-    pub dataset_id: Option<Urn>,
+    /// Optional JSON-LD datatype for `json`.
+    #[jsonld(property = "ngsi:hasValueType", vocab)]
+    pub value_type: Option<CompactString>,
+    /// Previous JSON payload emitted in notifications when `showChanges` is active.
+    #[jsonld(property = "ngsi:hasPreviousJson", json_value)]
+    pub previous_json: Option<Value>,
+    #[serde(flatten)]
+    #[jsonld(flatten_object)]
+    pub common: CommonAttributeFields,
     #[serde(flatten)]
     #[jsonld(flatten_map)]
     pub sub_attributes: IndexMap<String, AttributeValue>,
 }
 
+impl Default for JsonProperty {
+    fn default() -> JsonProperty {
+        JsonProperty {
+            json: Value::Null,
+            value_type: None,
+            previous_json: None,
+            common: CommonAttributeFields::default(),
+            sub_attributes: IndexMap::new(),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use crate::jsonld::JsonLdExpandable;
+    use crate::{
+        domain::attribute::Attribute,
+        jsonld::{JsonLdExpandable, vocab},
+    };
 
     #[test]
-    fn json_property_expanded_has_json_typed_value() {
+    fn json_property_round_trip_supports_previous_json() {
         let json = serde_json::json!({
             "type": "JsonProperty",
-            "json": {"key": "value", "num": 42}
+            "json": { "key": "value" },
+            "previousJson": { "key": "old" }
         });
-        let attr: crate::domain::attribute::Attribute = serde_json::from_value(json).expect("json_property");
-        let crate::domain::attribute::Attribute::JsonProperty(j) = &attr else {
+        let attr: Attribute = serde_json::from_value(json).expect("json property");
+        let Attribute::JsonProperty(property) = attr else {
             panic!("expected JsonProperty");
         };
-        let expanded = j.to_expanded();
-        let obj = expanded.as_object().expect("expanded is object");
+        assert!(property.previous_json.is_some());
+    }
 
-        assert_eq!(obj["@type"], serde_json::json!(["https://uri.etsi.org/ngsi-ld/JsonProperty"]));
-        let has_json = &obj["https://uri.etsi.org/ngsi-ld/hasJSON"];
-        assert_eq!(has_json[0]["@type"], "@json");
-        assert_eq!(has_json[0]["@value"], serde_json::json!({"key": "value", "num": 42}));
+    #[test]
+    fn json_property_expanded_includes_previous_json_member() {
+        let json = serde_json::json!({
+            "type": "JsonProperty",
+            "json": { "key": "value" },
+            "previousJson": { "key": "old" }
+        });
+        let attr: Attribute = serde_json::from_value(json).expect("json property");
+        let Attribute::JsonProperty(property) = attr else {
+            panic!("expected JsonProperty");
+        };
+        let expanded = property.to_expanded();
+        let obj = expanded.as_object().expect("object");
+        assert!(obj.contains_key(vocab::PREVIOUS_JSON.as_str()));
     }
 }
