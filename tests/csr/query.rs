@@ -4,8 +4,15 @@ use reqwest::StatusCode;
 use serial_test::serial;
 
 use crate::{
-    BAD_REQUEST_DATA_TYPE, clean_database, client, create_registration, load_expectation, load_fixture, query_registrations,
-    strip_ignored_keys, unique_id,
+    BAD_REQUEST_DATA_TYPE,
+    clean_database,
+    client,
+    create_registration,
+    load_expectation,
+    load_fixture,
+    query_registrations,
+    strip_ignored_keys,
+    unique_id,
 };
 use serde_json::Value;
 
@@ -156,10 +163,7 @@ async fn query_fully_qualified_type_without_context_returns_200() {
     let (s, _, _) = create_registration(&c, &reg).await;
     assert_eq!(s, StatusCode::CREATED);
 
-    let qs = format!(
-        "id={id}&type={}",
-        urlencoding::encode("https://ngsi-ld-test-suite/context#Building")
-    );
+    let qs = format!("id={id}&type={}", urlencoding::encode("https://ngsi-ld-test-suite/context#Building"));
     let (status, mut actual) = query_registrations(&c, &qs, None, None).await;
     assert_eq!(status, StatusCode::OK);
 
@@ -187,10 +191,7 @@ async fn query_entity_info_with_type_and_id_pattern_returns_matching() {
     let (s, _, _) = create_registration(&c, &reg).await;
     assert_eq!(s, StatusCode::CREATED);
 
-    let qs = format!(
-        "type=OffStreetParking&idPattern={}",
-        urlencoding::encode(".*downtown$")
-    );
+    let qs = format!("type=OffStreetParking&idPattern={}", urlencoding::encode(".*downtown$"));
     let (status, mut actual) = query_with_context(&c, &qs).await;
     assert_eq!(status, StatusCode::OK);
 
@@ -209,18 +210,12 @@ async fn query_registration_without_entity_info_returns_matching() {
     clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:ContextSourceRegistration:query-no-entity-info");
-    let reg = load_fixture(
-        "csource_registrations/context-source-registration-with-only-properties-information.jsonld",
-        &id,
-    );
+    let reg = load_fixture("csource_registrations/context-source-registration-with-only-properties-information.jsonld", &id);
 
     let (s, _, _) = create_registration(&c, &reg).await;
     assert_eq!(s, StatusCode::CREATED);
 
-    let qs = format!(
-        "type=OffStreetParking&idPattern={}",
-        urlencoding::encode(".*downtown$")
-    );
+    let qs = format!("type=OffStreetParking&idPattern={}", urlencoding::encode(".*downtown$"));
     let (status, mut actual) = query_with_context(&c, &qs).await;
     assert_eq!(status, StatusCode::OK);
 
@@ -411,10 +406,7 @@ async fn query_observation_interval_without_timeproperty_returns_matching() {
     let (s, _, _) = create_registration(&c, &reg).await;
     assert_eq!(s, StatusCode::CREATED);
 
-    let qs = format!(
-        "type=Building&timerel=before&timeAt={}",
-        urlencoding::encode("2021-08-01T22:00:00Z")
-    );
+    let qs = format!("type=Building&timerel=before&timeAt={}", urlencoding::encode("2021-08-01T22:00:00Z"));
     let (status, mut actual) = query_with_context(&c, &qs).await;
     assert_eq!(status, StatusCode::OK);
 

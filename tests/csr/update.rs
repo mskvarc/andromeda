@@ -3,8 +3,19 @@
 use reqwest::StatusCode;
 
 use crate::{
-    BAD_REQUEST_DATA_TYPE, INVALID_REQUEST_TYPE, RESOURCE_NOT_FOUND_TYPE, cleanup_registration, client, create_registration,
-    load_fixture, load_fixture_raw, load_fragment, request, retrieve_registration, unique_id, update_registration,
+    BAD_REQUEST_DATA_TYPE,
+    INVALID_REQUEST_TYPE,
+    RESOURCE_NOT_FOUND_TYPE,
+    cleanup_registration,
+    client,
+    create_registration,
+    load_fixture,
+    load_fixture_raw,
+    load_fragment,
+    request,
+    retrieve_registration,
+    unique_id,
+    update_registration,
     update_registration_raw,
 };
 

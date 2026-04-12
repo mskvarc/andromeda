@@ -2,10 +2,7 @@
 
 use reqwest::StatusCode;
 
-use crate::{
-    BAD_REQUEST_DATA_TYPE, client, create_registration, delete_registration, load_fixture, request, retrieve_registration,
-    unique_id,
-};
+use crate::{BAD_REQUEST_DATA_TYPE, client, create_registration, delete_registration, load_fixture, request, retrieve_registration, unique_id};
 
 // ---------------------------------------------------------------------------
 // 5.9.4 -- Delete by ID

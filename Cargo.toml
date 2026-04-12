@@ -91,6 +91,14 @@ name = "common"
 path = "tests/common/main.rs"
 
 [[test]]
+name = "csr_notification"
+path = "tests/csr_notification/main.rs"
+
+[[test]]
+name = "csr_subscription"
+path = "tests/csr_subscription/main.rs"
+
+[[test]]
 name = "i18n"
 path = "tests/i18n/main.rs"
 

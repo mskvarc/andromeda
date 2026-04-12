@@ -3,8 +3,17 @@
 use reqwest::StatusCode;
 
 use crate::{
-    BAD_REQUEST_DATA_TYPE, COMPOUND_CONTEXT_URL, RESOURCE_NOT_FOUND_TYPE, cleanup_registration, client, create_registration,
-    load_expectation, load_fixture, retrieve_registration, strip_ignored_keys, unique_id,
+    BAD_REQUEST_DATA_TYPE,
+    COMPOUND_CONTEXT_URL,
+    RESOURCE_NOT_FOUND_TYPE,
+    cleanup_registration,
+    client,
+    create_registration,
+    load_expectation,
+    load_fixture,
+    retrieve_registration,
+    strip_ignored_keys,
+    unique_id,
 };
 use serde_json::Value;
 
@@ -29,8 +38,7 @@ async fn retrieve_invalid_id_returns_400() {
 #[tokio::test]
 async fn retrieve_unknown_registration_returns_404() {
     let c = client();
-    let (status, body) =
-        retrieve_registration(&c, "urn:ngsi-ld:ContextSourceRegistration:unknownRegistration", None, None).await;
+    let (status, body) = retrieve_registration(&c, "urn:ngsi-ld:ContextSourceRegistration:unknownRegistration", None, None).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
     assert_eq!(body["type"], RESOURCE_NOT_FOUND_TYPE);
 }

@@ -45,7 +45,10 @@ const TRUNCATE_REGISTRATIONS: &str = "TRUNCATE context_source_registrations CASC
 
 async fn clean_database() {
     let pool = PgPool::connect(DATABASE_URL).await.expect("failed to connect to database for cleanup");
-    sqlx::query(TRUNCATE_REGISTRATIONS).execute(&pool).await.expect("failed to truncate registrations");
+    sqlx::query(TRUNCATE_REGISTRATIONS)
+        .execute(&pool)
+        .await
+        .expect("failed to truncate registrations");
     pool.close().await;
 }
 
@@ -220,12 +223,7 @@ async fn request(
 }
 
 /// GET /csourceRegistrations with query string. Returns (status, body).
-async fn query_registrations(
-    client: &Client,
-    query: &str,
-    accept: Option<&str>,
-    link_ctx: Option<&str>,
-) -> (StatusCode, Value) {
+async fn query_registrations(client: &Client, query: &str, accept: Option<&str>, link_ctx: Option<&str>) -> (StatusCode, Value) {
     let sep = if query.is_empty() { "" } else { "?" };
     let mut req = client.get(format!("{BASE_URL}/csourceRegistrations{sep}{query}"));
     if let Some(accept) = accept {

@@ -3,8 +3,16 @@
 use reqwest::StatusCode;
 
 use crate::{
-    BAD_REQUEST_DATA_TYPE, COMPOUND_CONTEXT_URL, cleanup_registration, client, create_registration, load_fixture, request,
-    retrieve_registration, strip_ignored_keys, unique_id,
+    BAD_REQUEST_DATA_TYPE,
+    COMPOUND_CONTEXT_URL,
+    cleanup_registration,
+    client,
+    create_registration,
+    load_fixture,
+    request,
+    retrieve_registration,
+    strip_ignored_keys,
+    unique_id,
 };
 
 // ---------------------------------------------------------------------------
@@ -234,10 +242,7 @@ async fn create_json_with_link_context_retrieve_without_context_returns_fqn() {
 
     let (status, body) = retrieve_registration(&c, &id, None, None).await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(
-        body["information"][0]["entities"][0]["type"],
-        "https://ngsi-ld-test-suite/context#Building"
-    );
+    assert_eq!(body["information"][0]["entities"][0]["type"], "https://ngsi-ld-test-suite/context#Building");
 
     cleanup_registration(&c, &id).await;
 }
@@ -361,10 +366,7 @@ async fn create_jsonld_retrieve_without_context_returns_expanded_type() {
 
     let (status, body) = retrieve_registration(&c, &id, None, None).await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(
-        body["information"][0]["entities"][0]["type"],
-        "https://ngsi-ld-test-suite/context#Vehicle"
-    );
+    assert_eq!(body["information"][0]["entities"][0]["type"], "https://ngsi-ld-test-suite/context#Vehicle");
 
     cleanup_registration(&c, &id).await;
 }
