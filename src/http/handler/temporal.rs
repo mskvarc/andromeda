@@ -19,6 +19,7 @@ use crate::{
         validation::{parse_entity_id, validate_attr_name, validate_instance_id},
     },
     jsonld::ContextSpec,
+    query::{compile::expand_q_expression, q::eval::evaluate},
     renderer::{
         response::ResponseRenderer,
         temporal::{simplify_temporal_value, simplify_temporal_values},
@@ -29,6 +30,7 @@ use crate::{
         entity_map::{parse_entity_map_urn, parse_iso8601_duration, parse_uri_csv},
         temporal::{CreateOrUpdateResult, TemporalQueryResult, TemporalService},
     },
+    worker::notification::matching::{matches_geo_filter, matches_scope_filter},
 };
 use axum::{
     extract::{OriginalUri, Path},
@@ -242,6 +244,31 @@ pub async fn query(
     }
 
     let is_local = params.is_local();
+    let entity_map_requested = params.entity_map.unwrap_or(false);
+    let split_entities = params.split_entities.unwrap_or(false) && !is_local;
+
+    // splitEntities (spec 5.7.4.4): defer q/geoQ/scopeQ filtering to post-merge
+    let deferred_q;
+    let deferred_georel;
+    let deferred_geometry;
+    let deferred_coordinates;
+    let deferred_geoproperty;
+    let deferred_scope_q;
+    if split_entities {
+        deferred_q = params.q.take();
+        deferred_georel = params.georel.take();
+        deferred_geometry = params.geometry.take();
+        deferred_coordinates = params.coordinates.take();
+        deferred_geoproperty = params.geoproperty.take();
+        deferred_scope_q = params.scope_q.take();
+    } else {
+        deferred_q = None;
+        deferred_georel = None;
+        deferred_geometry = None;
+        deferred_coordinates = None;
+        deferred_geoproperty = None;
+        deferred_scope_q = None;
+    }
 
     let result = service.query(&params, &context).await.with_instance(uri.clone())?;
     for warning in &result.warnings {
@@ -256,7 +283,8 @@ pub async fn query(
     } = result;
 
     // Distributed forwarding: query matching context sources unless local=true
-    let (entities, forwarding_warnings) = if is_local {
+    let mut remote_ids: Vec<String> = Vec::new();
+    let (mut entities, forwarding_warnings) = if is_local {
         (local_entities, Vec::new())
     } else {
         let context_url = context.link_contexts().first().map(|s| s.as_str());
@@ -280,18 +308,49 @@ pub async fn query(
             .unwrap_or_default();
         let warnings = collect_warnings(&forwarded);
 
+        // Capture remote entity IDs before merge for entityMap (spec 5.7.4.4, 5.5.14)
+        remote_ids = forwarded
+            .iter()
+            .flat_map(|f| f.entities.iter())
+            .filter_map(|v| v.get("id").and_then(Value::as_str).map(String::from))
+            .collect();
+
         let merged = TemporalService::merge_with_forwarded(local_entities, forwarded);
         (merged, warnings)
     };
 
+    // splitEntities post-merge filtering: apply deferred q/geoQ/scopeQ (spec 5.7.4.4)
+    if split_entities {
+        if let Some(ref q_str) = deferred_q
+            && let Ok(Some(q_expr)) = expand_q_expression(Some(q_str), service.engine(), &context).await
+        {
+            entities.retain(|val| evaluate(&q_expr, val));
+        }
+        if let (Some(georel), Some(geometry), Some(coordinates)) = (&deferred_georel, &deferred_geometry, &deferred_coordinates) {
+            let mut geo_val = serde_json::json!({
+                "georel": georel,
+                "geometry": geometry,
+                "coordinates": coordinates,
+            });
+            if let Some(ref geoprop) = deferred_geoproperty {
+                geo_val["geoproperty"] = Value::String(geoprop.clone());
+                // clone needed: geoprop is &String, geo_val takes ownership
+            }
+            entities.retain(|val| matches_geo_filter(&geo_val, val));
+        }
+        if let Some(ref scope_q) = deferred_scope_q {
+            entities.retain(|val| matches_scope_filter(scope_q, val));
+        }
+    }
+
     // EntityMap creation (spec 5.5.14, 5.7.4.4): if entityMap=true was requested,
     // create a new EntityMap from all matching IDs (not just the current page).
-    // splitEntities is accepted for API compatibility but not yet used for temporal
-    // post-merge filtering (the entity query handler implements this in full).
-    let _split_entities = params.split_entities;
-    let entity_map_requested = params.entity_map.unwrap_or(false);
     let entity_map_uri = if entity_map_requested {
-        let all_ids = service.query_ids(&params, &context).await.with_instance(uri.clone())?;
+        let mut all_ids = service.query_ids(&params, &context).await.with_instance(uri.clone())?;
+        // Include forwarded entity IDs in the map (spec 5.7.4.4, 5.5.14)
+        all_ids.extend(remote_ids);
+        all_ids.sort_unstable();
+        all_ids.dedup();
         let typed_ids: Vec<Uri> = all_ids
             .iter()
             .map(|id| Uri::from_str(id).map_err(|_| AndromedaError::temporal_validation(format!("Invalid entity id URI '{}'", id))))

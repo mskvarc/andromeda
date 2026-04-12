@@ -4,7 +4,11 @@
 //! preventing false positives (e.g. `application/json-patch+json` no longer
 //! matches `application/json`).
 
-use crate::{http::extractor::error::ExtractorRejection, jsonld::ContextSpec};
+use crate::{
+    http::{extractor::error::ExtractorRejection, header::link::Link, model::version::NgsiLdVersion},
+    jsonld::ContextSpec,
+    renderer::version::VersionRenderer,
+};
 use axum::{
     body::Bytes,
     extract::{FromRequest, Request},
@@ -15,7 +19,7 @@ use axum::{
 };
 use mediatype::{MediaTypeBuf, names};
 use serde::de::DeserializeOwned;
-use std::collections::HashSet;
+use std::{collections::HashSet, str::FromStr};
 
 /// Axum extractor for NGSI-LD JSON-LD request bodies.
 ///
@@ -133,6 +137,18 @@ fn strip_context_from_value(value: &mut serde_json::Value) {
     }
 }
 
+/// NGSI-LD version profile URI (clause 6.3.21, RFC 6906).
+const NGSI_LD_VERSION_PROFILE: &str = "https://uri.etsi.org/ngsi-ld/profile/version";
+
+/// Check whether any Link header carries the NGSI-LD version profile (clause 6.3.21).
+fn has_version_profile(link_headers: &[String]) -> bool {
+    link_headers.iter().any(|raw| {
+        Link::from_str(raw)
+            .ok()
+            .is_some_and(|link| link.values().iter().any(|lv| lv.profile().is_some_and(|p| p == NGSI_LD_VERSION_PROFILE)))
+    })
+}
+
 impl<S, T> FromRequest<S> for JsonLd<T>
 where
     S: Send + Sync,
@@ -155,14 +171,13 @@ where
         let is_ld_json = matches!(content_kind, ContentKind::LdJson);
         let is_plain_json = matches!(content_kind, ContentKind::Json);
 
+        // Collect raw Link header strings before the request body is consumed.
+        let link_header_strings: Vec<String> = req.headers().get_all(LINK).iter().filter_map(|v| v.to_str().ok().map(String::from)).collect();
+
         // Per NGSI-LD 6.3.5: application/ld+json MUST NOT be combined with a Link header
         // containing a JSON-LD context relation
         if is_ld_json {
-            let has_context_link = req
-                .headers()
-                .get_all(LINK)
-                .iter()
-                .any(|v| v.to_str().ok().is_some_and(|s| s.contains("http://www.w3.org/ns/json-ld#context")));
+            let has_context_link = link_header_strings.iter().any(|s| s.contains("http://www.w3.org/ns/json-ld#context"));
             if has_context_link {
                 return Err(ExtractorRejection::bad_request_data(
                     "application/ld+json must not be combined with a Link context header",
@@ -189,6 +204,13 @@ where
                 "Invalid JSON: expected object, got empty array",
                 uri.clone(),
             ));
+        }
+
+        // Clause 6.3.21: if Link header carries the version profile, apply
+        // conformance fallbacks (clause 4.3.6.8) to the incoming payload so
+        // that features from a newer spec version are adapted before validation.
+        if has_version_profile(&link_header_strings) {
+            VersionRenderer::new(NgsiLdVersion::CONFORMANT).render(&mut value);
         }
 
         // Per NGSI-LD 6.3.5: application/json MUST NOT contain @context in body

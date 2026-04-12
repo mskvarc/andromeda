@@ -111,8 +111,9 @@ impl Link {
 
 /// A single `link-value` within a `Link` header (RFC 8288 section 3).
 ///
-/// Only carries the parameters used by NGSI-LD: `rel` (forward relation types)
-/// and `type` (media type hint). All other RFC 8288 parameters are discarded
+/// Carries the parameters used by NGSI-LD: `rel` (forward relation types),
+/// `type` (media type hint), and `profile` (RFC 8288 Section 3.4,
+/// NGSI-LD Clause 6.3.21). All other RFC 8288 parameters are discarded
 /// during parsing.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct LinkValue {
@@ -122,6 +123,8 @@ pub struct LinkValue {
     rel: Option<Vec<RelationType>>,
     /// Hint on the media type of the result: `type`.
     media_type: Option<MediaTypeBuf>,
+    /// Profile URI: `profile` (RFC 8288 Section 3.4, NGSI-LD Clause 6.3.21).
+    profile: Option<Cow<'static, str>>,
 }
 
 impl LinkValue {
@@ -137,6 +140,7 @@ impl LinkValue {
             link: uri.into(),
             rel: None,
             media_type: None,
+            profile: None,
         }
     }
 
@@ -160,6 +164,11 @@ impl LinkValue {
     pub fn set_media_type(mut self, media_type: MediaTypeBuf) -> LinkValue {
         self.media_type = Some(media_type);
         self
+    }
+
+    /// Return the `profile` parameter, if present.
+    pub fn profile(&self) -> Option<&str> {
+        self.profile.as_deref()
     }
 
     /// Build a typed `LinkValue` with optional `rel` and `type` parameters.
@@ -304,6 +313,9 @@ impl fmt::Display for LinkValue {
         if let Some(ref media_type) = self.media_type {
             write!(f, "; type=\"{media_type}\"")?;
         }
+        if let Some(ref profile) = self.profile {
+            write!(f, "; profile=\"{profile}\"")?;
+        }
         Ok(())
     }
 }
@@ -345,6 +357,12 @@ impl FromStr for Link {
                         let unquoted = verify_and_trim(raw.trim(), b'"', b'"')?;
                         let mt: MediaTypeBuf = unquoted.parse().map_err(|_| LinkParseError)?;
                         link_header.media_type = Some(mt);
+                    }
+                } else if "profile".eq_ignore_ascii_case(param_name) {
+                    if link_header.profile.is_none() {
+                        let raw = param_split.next().filter(|s| !s.is_empty()).ok_or(LinkParseError)?;
+                        let unquoted = verify_and_trim(raw.trim(), b'"', b'"')?;
+                        link_header.profile = Some(Cow::Owned(unquoted.to_owned()));
                     }
                 } else {
                     // Silently ignore unknown parameters for interoperability
@@ -474,6 +492,12 @@ mod tests {
     use super::*;
 
     impl LinkValue {
+        /// Set the `profile` parameter (RFC 8288 Section 3.4, NGSI-LD Clause 6.3.21).
+        fn set_profile<T: Into<Cow<'static, str>>>(mut self, profile: T) -> LinkValue {
+            self.profile = Some(profile.into());
+            self
+        }
+
         /// Returns true if this link-value has the given relation type.
         fn has_rel(&self, rel: &RelationType) -> bool {
             self.rel().is_some_and(|rels| rels.contains(rel))
@@ -774,5 +798,46 @@ mod tests {
         assert_eq!(parsed.values().len(), 2);
         assert!(parsed.values()[0].rel().unwrap().contains(&RelationType::First));
         assert!(parsed.values()[1].rel().unwrap().contains(&RelationType::Last));
+    }
+
+    // -- Profile parameter tests (RFC 8288 Section 3.4, NGSI-LD Clause 6.3.21) --
+
+    #[test]
+    fn parse_link_with_profile_parameter() {
+        let raw = r#"<http://example.com/ctx.jsonld>; rel="http://www.w3.org/ns/json-ld#context"; type="application/ld+json"; profile="https://uri.etsi.org/ngsi-ld/profile/version""#;
+        let parsed = decode_link(raw).expect("should parse link with profile");
+        assert_eq!(parsed.values().len(), 1);
+        assert_eq!(parsed.values()[0].profile(), Some("https://uri.etsi.org/ngsi-ld/profile/version"),);
+    }
+
+    #[test]
+    fn display_link_with_profile() {
+        let lv = LinkValue::new("http://example.com/ctx.jsonld")
+            .push_rel(RelationType::jsonld_context())
+            .set_media_type("application/ld+json".parse::<MediaTypeBuf>().unwrap())
+            .set_profile("https://uri.etsi.org/ngsi-ld/profile/version");
+
+        let mut s = String::new();
+        write!(&mut s, "{lv}").expect("Display should not fail");
+        assert!(s.contains(r#"profile="https://uri.etsi.org/ngsi-ld/profile/version""#));
+    }
+
+    #[test]
+    fn profile_roundtrip() {
+        let original = LinkValue::new("http://example.com/ctx.jsonld")
+            .push_rel(RelationType::jsonld_context())
+            .set_media_type("application/ld+json".parse::<MediaTypeBuf>().unwrap())
+            .set_profile("https://uri.etsi.org/ngsi-ld/profile/version");
+        let link = Link::new(vec![original]);
+
+        let serialized = link.to_string();
+        let reparsed: Link = serialized.parse().expect("should reparse");
+        assert_eq!(link, reparsed);
+    }
+
+    #[test]
+    fn parse_link_profile_missing_value_returns_error() {
+        let raw = r#"<http://example.com/>; profile="#;
+        assert!(raw.parse::<Link>().is_err());
     }
 }

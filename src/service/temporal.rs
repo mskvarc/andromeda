@@ -105,6 +105,11 @@ impl TemporalService {
         }
     }
 
+    /// Return a reference to the underlying JSON-LD engine.
+    pub const fn engine(&self) -> &JsonLdEngine {
+        &self.engine
+    }
+
     // -------------------------------------------------------------------------
     // Write operations
     // -------------------------------------------------------------------------

@@ -123,8 +123,24 @@ name = "subscription"
 path = "tests/subscription/main.rs"
 
 [[test]]
+name = "distop_entity"
+path = "tests/distop_entity/main.rs"
+
+[[test]]
+name = "distop_temporal_entity"
+path = "tests/distop_temporal_entity/main.rs"
+
+[[test]]
+name = "distop_temporal_entity_map"
+path = "tests/distop_temporal_entity_map/main.rs"
+
+[[test]]
 name = "pagination"
 path = "tests/pagination/main.rs"
+
+[[test]]
+name = "profile"
+path = "tests/profile/main.rs"
 
 [[test]]
 name = "integration"

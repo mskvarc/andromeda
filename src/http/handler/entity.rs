@@ -507,6 +507,7 @@ pub async fn query(
     let (local_entities, total_count) = service.query(&query, &context).await.with_instance(uri.clone())?;
 
     // Distributed forwarding: query matching context sources unless local=true
+    let mut remote_ids: Vec<String> = Vec::new();
     let (mut entities, warnings) = if is_local {
         (local_entities, Vec::new())
     } else {
@@ -528,6 +529,13 @@ pub async fn query(
             .await
             .unwrap_or_default();
         let warnings = collect_warnings(&forwarded);
+
+        // Capture remote entity IDs before merge for entityMap (spec 5.7.2.4, 5.5.14)
+        remote_ids = forwarded
+            .iter()
+            .flat_map(|f| f.entities.iter())
+            .filter_map(|v| v.get("id").and_then(Value::as_str).map(String::from))
+            .collect();
 
         if forwarded.is_empty() {
             (local_entities, warnings)
@@ -572,7 +580,11 @@ pub async fn query(
     // §5.7.2: If entityMap=true, create an EntityMap and set header
     let entity_map_uri = if entity_map_requested {
         let compiled = service.compile_query_public(&query, &context).await.with_instance(uri.clone())?;
-        let all_ids = service.query_ids(&compiled).await.with_instance(uri.clone())?;
+        let mut all_ids = service.query_ids(&compiled).await.with_instance(uri.clone())?;
+        // Include forwarded entity IDs in the map (spec 5.7.2.4, 5.5.14)
+        all_ids.extend(remote_ids);
+        all_ids.sort_unstable();
+        all_ids.dedup();
         let typed_ids: Vec<Uri> = all_ids
             .iter()
             .map(|id| Uri::from_str(id).map_err(|_| AndromedaError::entity_validation(format!("Invalid entity id URI '{}'", id))))

@@ -78,7 +78,6 @@ impl ContextSpec {
         Self {
             link_contexts: Vec::new(),
             body_context: None,
-
             core_policy: CoreContextPolicy::Append,
             default_core_url: global_default_core_url(),
         }
@@ -89,7 +88,6 @@ impl ContextSpec {
         Self {
             link_contexts: Vec::new(),
             body_context: None,
-
             core_policy: CoreContextPolicy::Only,
             default_core_url: global_default_core_url(),
         }
@@ -100,7 +98,6 @@ impl ContextSpec {
         Self {
             link_contexts: links,
             body_context: None,
-
             core_policy: CoreContextPolicy::Append,
             default_core_url: global_default_core_url(),
         }
