@@ -309,24 +309,12 @@ impl EntityQueryService {
             .transpose()
             .map_err(|e| AndromedaError::entity_validation(e.to_string()))?;
 
-        let (types, type_match_all) = if let Some(raw_types) = params.entity_type.as_deref() {
-            let raw_types = raw_types.trim();
-            if raw_types.starts_with('(') && raw_types.ends_with(')') {
-                // Semicolon-separated = match-all mode (spec 4.9)
-                let inner = &raw_types[1..raw_types.len() - 1];
-                let mut expanded = Vec::new();
-                for t in inner.split(';').map(str::trim) {
-                    if !t.is_empty() {
-                        expanded.push(self.engine.expand_type(t, context).await?);
-                    }
-                }
-                (Some(expanded), true)
-            } else {
-                let expanded = crate::query::compile::expand_entity_types(raw_types, &self.engine, context).await?;
-                (Some(expanded), false)
-            }
+        let type_expr = if let Some(raw_types) = params.entity_type.as_deref() {
+            let raw = crate::query::compile::type_expr::parse(raw_types)?;
+            let expanded = crate::query::compile::expand_type_expression(&raw, &self.engine, context).await?;
+            Some(expanded)
         } else {
-            (None, false)
+            None
         };
 
         let attrs = crate::query::compile::expand_attrs(&params.parse_attrs(), &self.engine, context).await?;
@@ -415,10 +403,13 @@ impl EntityQueryService {
             ));
         }
 
+        // Parse csf (Context Source Filter) expression using q-expression grammar (S6.4.3.2)
+        let csf_expr = crate::query::compile::expand_q_expression(params.csf.as_deref(), &self.engine, context).await?;
+
         let compiled = CompiledEntityQuery {
             ids,
             id_pattern,
-            types,
+            type_expr,
             attrs,
             q_expr,
             geo,
@@ -434,7 +425,7 @@ impl EntityQueryService {
             omit,
             order_by,
             scope_q: params.scope_q.as_ref().map(|s| ScopeQuery::new(s.clone())), // clone: owned value for CompiledEntityQuery struct
-            type_match_all,
+            csf_expr,
         };
 
         tracing::info!("Compiled query: {:?}", compiled);

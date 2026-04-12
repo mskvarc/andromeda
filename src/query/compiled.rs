@@ -14,6 +14,35 @@ use chrono::{DateTime, Utc};
 use langtag::LangTagBuf;
 use thiserror::Error;
 
+/// Boolean expression over entity type IRIs (NGSI-LD S4.17).
+///
+/// Supports AND (`And`), OR (`Or`), and single type (`Type`) nodes.
+/// Constructed by parsing the `type` query parameter's selection language
+/// grammar and expanding compact type names to full IRIs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TypeExpr {
+    /// Matches entities whose types include this specific IRI.
+    Type(String),
+    /// Matches entities whose types satisfy all children (semicolon-separated).
+    And(Vec<TypeExpr>),
+    /// Matches entities whose types satisfy any child (comma/pipe-separated).
+    Or(Vec<TypeExpr>),
+}
+
+/// Purge mode for the DELETE entities-by-query operation (S5.6.21).
+///
+/// When `drop` or `keep` parameters are provided, the operation modifies
+/// entity attributes instead of deleting entire entities.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PurgeMode {
+    /// Delete entire matching entities (default behaviour).
+    DeleteEntities,
+    /// Remove the listed attributes from matching entities.
+    Drop(Vec<String>),
+    /// Retain only the listed attributes on matching entities, removing all others.
+    Keep(Vec<String>),
+}
+
 /// NGSI-LD scope query expression string.
 ///
 /// Wraps the raw scope query (`scopeQ`) parameter value, which uses
@@ -122,8 +151,9 @@ pub struct CompiledEntityQuery {
     pub ids: Option<Vec<String>>,
     /// Optional regex pattern for matching entity IDs.
     pub id_pattern: Option<IdPattern>,
-    /// Optional set of entity type IRIs to filter by.
-    pub types: Option<Vec<String>>,
+    /// Boolean expression over entity type IRIs (S4.17).
+    /// `None` when no type filter is specified.
+    pub type_expr: Option<TypeExpr>,
     /// Expanded attribute IRIs to filter by. Empty means no attribute filter.
     pub attrs: Vec<String>,
     /// Parsed `q` (query language) expression for property-level filtering.
@@ -146,9 +176,9 @@ pub struct CompiledEntityQuery {
     pub order_by: Vec<CompiledOrderTerm>,
     /// Scope query for filtering entities by their scope hierarchy.
     pub scope_q: Option<ScopeQuery>,
-    /// When true, entities must match all specified types (AND semantics).
-    /// When false, entities matching any specified type are returned (OR semantics).
-    pub type_match_all: bool,
+    /// Context Source Filter expression (S6.4.3.2) for filtering which CSRs
+    /// are contacted during distributed operations. Parsed with the q-expression grammar.
+    pub csf_expr: Option<Expr>,
 }
 
 /// A single term in an `orderBy` clause after context expansion.

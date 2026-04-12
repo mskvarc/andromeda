@@ -6,6 +6,7 @@ use crate::{
     },
     i18n::collation::augment_expanded_with_collation_metadata,
     jsonld::ContextSpec,
+    query::compiled::PurgeMode,
     service::entity::{
         EntityService,
         extract_attribute_keys,
@@ -260,5 +261,70 @@ impl EntityService {
         self.emit_attr_change(entity_uri, entity_types, TriggerReason::AttributeUpdated, vec![attr_iri], previous_attributes);
 
         Ok(())
+    }
+
+    /// Purge attributes from entities according to the given mode (S5.6.21).
+    ///
+    /// - `Drop`: remove the listed attributes from each entity
+    /// - `Keep`: retain only the listed attributes, removing all others
+    ///
+    /// Returns the number of entities modified.
+    pub async fn purge_attrs(&self, entity_ids: &[String], mode: &PurgeMode, context: &ContextSpec) -> Result<u32, AndromedaError> {
+        let attr_iris: Vec<String> = match mode {
+            PurgeMode::DeleteEntities => return Ok(0),
+            PurgeMode::Drop(attrs) | PurgeMode::Keep(attrs) => {
+                let mut expanded = Vec::with_capacity(attrs.len());
+                for attr in attrs {
+                    expanded.push(self.engine.expand_term(attr, context).await?);
+                }
+                expanded
+            }
+        };
+
+        let mut modified_count = 0u32;
+
+        for entity_id in entity_ids {
+            let Some(mut existing) = self.repo.get(entity_id).await? else {
+                continue;
+            };
+
+            let obj = match &mut existing {
+                Value::Array(arr) => arr.first_mut().and_then(|v| v.as_object_mut()),
+                Value::Object(obj) => Some(obj),
+                _other => None,
+            };
+
+            let Some(obj) = obj else {
+                continue;
+            };
+
+            let keys_to_remove: Vec<String> = match mode {
+                PurgeMode::Drop(_) => {
+                    attr_iris.iter().filter(|iri| obj.contains_key(iri.as_str())).cloned().collect() // clone: owned keys for removal
+                }
+                PurgeMode::Keep(_) => obj
+                    .keys()
+                    .filter(|k| {
+                        // Preserve JSON-LD structural keys and NGSI-LD system attrs
+                        !k.starts_with('@') && !attr_iris.iter().any(|iri| k.as_str() == iri)
+                    })
+                    .cloned() // clone: owned keys for removal
+                    .collect(),
+                PurgeMode::DeleteEntities => Vec::new(),
+            };
+
+            if keys_to_remove.is_empty() {
+                continue;
+            }
+
+            for key in &keys_to_remove {
+                obj.remove(key);
+            }
+
+            self.repo.save(entity_id, &existing).await?;
+            modified_count += 1;
+        }
+
+        Ok(modified_count)
     }
 }

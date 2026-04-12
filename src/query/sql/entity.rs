@@ -19,12 +19,11 @@ pub fn build_query<'a>(query: &'a CompiledEntityQuery) -> Result<BuiltQuery<'a>,
     let conditions = build_entity_filter_conditions(EntityFilterConditionsInput {
         ids: query.ids.as_deref(),
         id_pattern: query.id_pattern.as_ref().map(|p| p.as_str()),
-        types: query.types.as_deref(),
+        type_expr: query.type_expr.as_ref(),
         q_expr: query.q_expr.as_ref(),
         geo: query.geo.as_ref(),
         attrs: &query.attrs,
         scope_q: query.scope_q.as_ref().map(|s| s.as_str()),
-        type_match_all: query.type_match_all,
         table_prefix: "",
         binds: &mut binds,
         param_idx: &mut param_idx,
@@ -121,12 +120,11 @@ pub fn build_ids_query<'a>(query: &'a CompiledEntityQuery) -> Result<BuiltQuery<
     let conditions = build_entity_filter_conditions(EntityFilterConditionsInput {
         ids: query.ids.as_deref(),
         id_pattern: query.id_pattern.as_ref().map(|p| p.as_str()),
-        types: query.types.as_deref(),
+        type_expr: query.type_expr.as_ref(),
         q_expr: query.q_expr.as_ref(),
         geo: query.geo.as_ref(),
         attrs: &query.attrs,
         scope_q: query.scope_q.as_ref().map(|s| s.as_str()),
-        type_match_all: query.type_match_all,
         table_prefix: "",
         binds: &mut binds,
         param_idx: &mut param_idx,
@@ -160,7 +158,7 @@ pub fn build_ids_query<'a>(query: &'a CompiledEntityQuery) -> Result<BuiltQuery<
 mod tests {
     use super::*;
     use crate::query::{
-        compiled::{CompiledEntityQuery, CompiledOrderTerm, GeoQuery, GeoRel, IcuCollation, IdPattern, OrderDirection, OrderingGeometry, ScopeQuery},
+        compiled::{CompiledEntityQuery, CompiledOrderTerm, GeoQuery, GeoRel, IcuCollation, IdPattern, OrderDirection, OrderingGeometry, ScopeQuery, TypeExpr},
         q::{
             ast::{AttrPath, CmpOp, CompareValue, Expr, Predicate, Scalar},
             parser,
@@ -172,7 +170,7 @@ mod tests {
         CompiledEntityQuery {
             ids: None,
             id_pattern: None,
-            types: None,
+            type_expr: None,
             attrs: Vec::new(),
             q_expr: None,
             geo: None,
@@ -184,7 +182,7 @@ mod tests {
             omit: Vec::new(),
             order_by: Vec::new(),
             scope_q: None,
-            type_match_all: false,
+            csf_expr: None,
         }
     }
 
@@ -215,24 +213,44 @@ mod tests {
     #[test]
     fn build_with_single_type() {
         let mut q = empty_query();
-        q.types = Some(vec!["https://example.com/Vehicle".to_string()]);
+        q.type_expr = Some(TypeExpr::Type("https://example.com/Vehicle".to_string()));
         let built = build_query(&q).unwrap();
         assert!(built.sql.contains("$1 = ANY(types)"));
     }
 
     #[test]
-    fn build_with_multiple_types() {
+    fn build_with_multiple_types_or() {
         let mut q = empty_query();
-        q.types = Some(vec!["TypeA".to_string(), "TypeB".to_string()]);
+        q.type_expr = Some(TypeExpr::Or(vec![TypeExpr::Type("TypeA".to_string()), TypeExpr::Type("TypeB".to_string())]));
         let built = build_query(&q).unwrap();
-        assert!(built.sql.contains("types && $1"));
+        assert!(built.sql.contains("$1 = ANY(types) OR $2 = ANY(types)"));
+    }
+
+    #[test]
+    fn build_with_multiple_types_and() {
+        let mut q = empty_query();
+        q.type_expr = Some(TypeExpr::And(vec![TypeExpr::Type("TypeA".to_string()), TypeExpr::Type("TypeB".to_string())]));
+        let built = build_query(&q).unwrap();
+        assert!(built.sql.contains("$1 = ANY(types) AND $2 = ANY(types)"));
+    }
+
+    #[test]
+    fn build_with_mixed_type_expr() {
+        let mut q = empty_query();
+        // (Home AND Vehicle) OR Motorhome
+        q.type_expr = Some(TypeExpr::Or(vec![
+            TypeExpr::And(vec![TypeExpr::Type("Home".to_string()), TypeExpr::Type("Vehicle".to_string())]),
+            TypeExpr::Type("Motorhome".to_string()),
+        ]));
+        let built = build_query(&q).unwrap();
+        assert!(built.sql.contains("($1 = ANY(types) AND $2 = ANY(types)) OR $3 = ANY(types)"));
     }
 
     #[test]
     fn build_with_count() {
         let mut q = empty_query();
         q.count = true;
-        q.types = Some(vec!["Vehicle".to_string()]);
+        q.type_expr = Some(TypeExpr::Type("Vehicle".to_string()));
         let built = build_query(&q).unwrap();
         assert!(built.count_sql.is_some());
         assert!(built.count_sql.unwrap().starts_with("SELECT COUNT(*)"));

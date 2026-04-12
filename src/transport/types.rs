@@ -89,6 +89,12 @@ pub enum TransportError {
 
     #[error("payload size {size} exceeds limit {limit}")]
     PayloadTooLarge { size: usize, limit: usize },
+
+    #[error("delivery to {endpoint} blocked: resolves to private/reserved IP {ip}")]
+    PrivateIpBlocked { endpoint: String, ip: String },
+
+    #[error("failed to resolve host for {endpoint}: {detail}")]
+    DnsResolutionFailed { endpoint: String, detail: String },
 }
 
 /// Abstraction over notification delivery transports (HTTP, MQTT).

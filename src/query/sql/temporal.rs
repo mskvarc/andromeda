@@ -4,7 +4,7 @@ use crate::{
     core::error::AndromedaError,
     domain::temporal::{AggrMethod, TemporalFormat, TimeProp, TimeRel},
     query::{
-        compiled::CompiledTemporalQuery,
+        compiled::{CompiledTemporalQuery, TypeExpr},
         sql::{BindValue, EntityFilterConditionsInput, build_entity_filter_conditions},
     },
 };
@@ -31,15 +31,23 @@ pub fn build_stage1_entity_ids<'a>(
     binds: &mut Vec<BindValue<'a>>,
     param_idx: &mut usize,
 ) -> Result<TemporalStage1Result<'a>, AndromedaError> {
+    // Temporal queries use a flat type list; convert to TypeExpr::Or for SQL generation.
+    let type_expr = compiled.types.as_ref().map(|types| {
+        if types.len() == 1 {
+            TypeExpr::Type(types[0].clone()) // clone: owned string for TypeExpr leaf
+        } else {
+            TypeExpr::Or(types.iter().map(|t| TypeExpr::Type(t.clone())).collect()) // clone: owned strings for TypeExpr leaves
+        }
+    });
+
     let mut conditions = build_entity_filter_conditions(EntityFilterConditionsInput {
         ids: compiled.ids.as_deref(),
         id_pattern: compiled.id_pattern.as_ref().map(|p| p.as_str()),
-        types: compiled.types.as_deref(),
+        type_expr: type_expr.as_ref(),
         q_expr: compiled.q_expr.as_ref(),
         geo: compiled.geo.as_ref(),
         attrs: &[],
         scope_q: compiled.scope_q.as_ref().map(|s| s.as_str()),
-        type_match_all: false,
         table_prefix: "e",
         binds,
         param_idx,

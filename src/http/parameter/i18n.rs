@@ -104,6 +104,9 @@ pub struct LocalizedEntityQueryParams {
     #[serde(rename = "orderGeometry")]
     pub order_geometry: Option<String>,
     pub collate: Option<String>,
+    pub csf: Option<String>,
+    pub drop: Option<String>,
+    pub keep: Option<String>,
     pub locale: String,
     pub calendar: Option<String>,
     #[serde(rename = "numberingSystem")]
@@ -149,6 +152,9 @@ impl LocalizedEntityQueryParams {
             order_from: self.order_from,
             order_geometry: self.order_geometry,
             collate: self.collate,
+            csf: self.csf,
+            drop: self.drop,
+            keep: self.keep,
         }
     }
 }

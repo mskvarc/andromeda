@@ -75,6 +75,15 @@ pub struct EntityQueryParameters {
     #[serde(rename = "orderGeometry")]
     pub order_geometry: Option<String>,
     pub collate: Option<String>,
+    /// Context Source Filter expression (S6.4.3.2) for filtering which CSRs
+    /// are contacted during distributed operations. Uses the q-expression grammar.
+    pub csf: Option<String>,
+    /// Attributes to remove from matching entities during purge (S5.6.21).
+    /// Mutually exclusive with `keep`.
+    pub drop: Option<String>,
+    /// Attributes to retain on matching entities during purge (S5.6.21).
+    /// All other attributes are removed. Mutually exclusive with `drop`.
+    pub keep: Option<String>,
 }
 
 impl_shared_query_params!(EntityQueryParameters {
@@ -239,6 +248,11 @@ impl EntityQueryParameters {
             IcuCollation::parse(collation).map_err(|error| QueryError::BadRequestData(format!("Invalid collation value: {}", error)))?;
         }
 
+        // drop and keep are mutually exclusive (S5.6.21)
+        if self.drop.is_some() && self.keep.is_some() {
+            return Err(QueryError::BadRequestData("drop and keep parameters are mutually exclusive".to_string()));
+        }
+
         Ok(())
     }
 
@@ -328,6 +342,9 @@ impl From<QueryRequest> for EntityQueryParameters {
             order_from: None,
             order_geometry: None,
             collate: None,
+            csf: None,
+            drop: None,
+            keep: None,
         }
     }
 }
@@ -696,5 +713,25 @@ mod tests {
         assert!(params.join_level.is_none());
         assert!(params.scope_q.is_none());
         assert!(params.dataset_id.is_none());
+    }
+
+    #[test]
+    fn validate_rejects_drop_and_keep_together() {
+        let p = params_from_query("type=Vehicle&drop=A&keep=B");
+        let err = p.validate().expect_err("expected mutual exclusivity error");
+        assert!(matches!(err, QueryError::BadRequestData(_)));
+        assert!(err.to_string().contains("mutually exclusive"));
+    }
+
+    #[test]
+    fn validate_accepts_drop_alone() {
+        let p = params_from_query("type=Vehicle&drop=speed");
+        assert!(p.validate().is_ok());
+    }
+
+    #[test]
+    fn validate_accepts_keep_alone() {
+        let p = params_from_query("type=Vehicle&keep=speed");
+        assert!(p.validate().is_ok());
     }
 }

@@ -1,10 +1,14 @@
 use crate::{
     core::error::AndromedaError,
     jsonld::{ContextSpec, JsonLdEngine, term_resolver},
-    query::q::{ast::Expr, parser},
+    query::{
+        compiled::TypeExpr,
+        q::{ast::Expr, parser},
+    },
 };
 
 pub mod geo;
+pub mod type_expr;
 
 /// Expand a list of short attribute names to their full IRIs.
 pub async fn expand_attrs(raw: &[String], engine: &JsonLdEngine, context: &ContextSpec) -> Result<Vec<String>, AndromedaError> {
@@ -50,4 +54,29 @@ pub async fn expand_entity_types(raw_types: &str, engine: &JsonLdEngine, context
         }
     }
     Ok(expanded)
+}
+
+/// Recursively expand a raw type expression, replacing compact type names
+/// with their fully expanded IRIs via the JSON-LD context.
+pub async fn expand_type_expression(raw: &type_expr::TypeExprRaw, engine: &JsonLdEngine, context: &ContextSpec) -> Result<TypeExpr, AndromedaError> {
+    match raw {
+        type_expr::TypeExprRaw::Type(name) => {
+            let iri = engine.expand_type(name, context).await?;
+            Ok(TypeExpr::Type(iri))
+        }
+        type_expr::TypeExprRaw::And(children) => {
+            let mut expanded = Vec::with_capacity(children.len());
+            for child in children {
+                expanded.push(Box::pin(expand_type_expression(child, engine, context)).await?);
+            }
+            Ok(TypeExpr::And(expanded))
+        }
+        type_expr::TypeExprRaw::Or(children) => {
+            let mut expanded = Vec::with_capacity(children.len());
+            for child in children {
+                expanded.push(Box::pin(expand_type_expression(child, engine, context)).await?);
+            }
+            Ok(TypeExpr::Or(expanded))
+        }
+    }
 }

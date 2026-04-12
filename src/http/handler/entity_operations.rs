@@ -97,6 +97,7 @@ pub async fn query(
                 &context,
                 ForwardingOperation::QueryBatch,
                 incoming_via.as_ref(),
+                None, // csf not supported on batch query endpoint
             )
             .await
             .unwrap_or_else(|e| {

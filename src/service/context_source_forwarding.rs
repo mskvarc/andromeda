@@ -3,6 +3,7 @@ use crate::{
     domain::registration::{ContextSourceRegistration, CsrOperation, ForwardingMode},
     http::header::{link::Link, ngsild_tenant::NgsiLdTenant, ngsild_warning::NgsiLdWarning, via::Via},
     jsonld::{ContextSpec, JsonLdEngine},
+    query::q::{ast::Expr, eval::evaluate as eval_q_expr},
     repository::context_source_registration::ContextSourceRegistrationRepository,
     tenancy::types::TenantName,
 };
@@ -263,6 +264,7 @@ impl ContextSourceForwardingService {
         context: &ContextSpec,
         operation: ForwardingOperation,
         incoming_via: Option<&Via>,
+        csf_expr: Option<&Expr>,
     ) -> Result<Vec<ForwardedEntities>, AndromedaError> {
         // Loop detection: if our identity is already in the Via chain, skip forwarding (section 6.3.18)
         if self.is_loop_detected(incoming_via) {
@@ -286,6 +288,16 @@ impl ContextSourceForwardingService {
             .filter(|csr| match (&csr.context_source_alias, incoming_via) {
                 (Some(alias), Some(via)) => !via.contains_pseudonym(alias),
                 _ => true,
+            })
+            .filter(|csr| {
+                // Filter CSRs by csf expression against their additional_properties (S6.4.3.2)
+                match csf_expr {
+                    Some(expr) => match &csr.additional_properties {
+                        Some(props) => eval_q_expr(expr, props),
+                        None => false,
+                    },
+                    None => true,
+                }
             })
             .collect();
 

@@ -11,7 +11,7 @@ use crate::{
     core::error::AndromedaError,
     jsonld::vocab,
     query::{
-        compiled::{GeoQuery, GeoRel},
+        compiled::{GeoQuery, GeoRel, TypeExpr},
         q::ast::{AttrPath, CmpOp, CompareValue, Expr, Predicate, Scalar},
     },
 };
@@ -405,6 +405,30 @@ pub(crate) fn build_geo_extract_geography(geoproperty_iri: &str, payload_column:
     }
 }
 
+/// Recursively converts a `TypeExpr` into a SQL condition string.
+///
+/// - `Type(iri)` -> `$N = ANY(types_col)` (entity has this type)
+/// - `And(children)` -> `(c1 AND c2 AND ...)`
+/// - `Or(children)` -> `(c1 OR c2 OR ...)`
+fn type_expr_to_sql(expr: &TypeExpr, types_col: &str, binds: &mut Vec<BindValue<'_>>, param_idx: &mut usize) -> String {
+    match expr {
+        TypeExpr::Type(iri) => {
+            let sql = format!("${} = ANY({})", *param_idx, types_col);
+            binds.push(BindValue::String(Cow::Owned(iri.clone())));
+            *param_idx += 1;
+            sql
+        }
+        TypeExpr::And(children) => {
+            let parts: Vec<String> = children.iter().map(|c| type_expr_to_sql(c, types_col, binds, param_idx)).collect();
+            format!("({})", parts.join(" AND "))
+        }
+        TypeExpr::Or(children) => {
+            let parts: Vec<String> = children.iter().map(|c| type_expr_to_sql(c, types_col, binds, param_idx)).collect();
+            format!("({})", parts.join(" OR "))
+        }
+    }
+}
+
 fn scope_q_to_sql(scope_q: &str, binds: &mut Vec<BindValue<'_>>, param_idx: &mut usize, scopes_col: &str) -> Result<String, AndromedaError> {
     // NGSI-LD: comma is OR, semicolon is AND (higher precedence)
     // e.g. "/A;/B,/C" -> (/A AND /B) OR /C
@@ -448,13 +472,16 @@ fn single_scope_to_sql(scope: &str, binds: &mut Vec<BindValue<'_>>, param_idx: &
 /// scope query). The `table_prefix` controls column qualification: when
 /// non-empty (e.g. `"e"`), columns are qualified as `e.id`, `e.types`,
 /// `e.payload`, `e.scope_paths`; when empty, bare column names are used.
-pub struct EntityFilterConditionsInput<'q, 'b> {
+pub struct EntityFilterConditionsInput<'q, 'b, 't> {
     /// Entity IDs to filter by.
     pub ids: Option<&'q [String]>,
     /// Regex pattern for matching entity IDs.
     pub id_pattern: Option<&'q str>,
-    /// Entity type IRIs to filter by.
-    pub types: Option<&'q [String]>,
+    /// Boolean expression over entity type IRIs (S4.17).
+    /// Uses a separate lifetime because the expression may be constructed locally
+    /// from a flat type list (e.g. in temporal queries) rather than borrowed from
+    /// the compiled query.
+    pub type_expr: Option<&'t TypeExpr>,
     /// Parsed `q` expression for property-level filtering.
     pub q_expr: Option<&'q Expr>,
     /// Geo-spatial query filter.
@@ -463,8 +490,6 @@ pub struct EntityFilterConditionsInput<'q, 'b> {
     pub attrs: &'q [String],
     /// Scope query string (comma = OR, semicolon = AND).
     pub scope_q: Option<&'q str>,
-    /// When `true`, all listed types must be present (AND semantics).
-    pub type_match_all: bool,
     /// SQL table alias prefix for column references (empty for bare columns).
     pub table_prefix: &'q str,
     /// Mutable reference to the bind values vector (appended to during condition building).
@@ -479,16 +504,15 @@ pub struct EntityFilterConditionsInput<'q, 'b> {
 /// for a WHERE clause. Bind values and parameter indices are updated in-place.
 /// When `table_prefix` is empty, bare column names (`id`, `types`, `payload`,
 /// `scope_paths`) are used; otherwise they are qualified (e.g. `e.id`).
-pub fn build_entity_filter_conditions(input: EntityFilterConditionsInput<'_, '_>) -> Result<Vec<String>, AndromedaError> {
+pub fn build_entity_filter_conditions(input: EntityFilterConditionsInput<'_, '_, '_>) -> Result<Vec<String>, AndromedaError> {
     let EntityFilterConditionsInput {
         ids,
         id_pattern,
-        types,
+        type_expr,
         q_expr,
         geo,
         attrs,
         scope_q,
-        type_match_all,
         table_prefix,
         binds,
         param_idx,
@@ -521,24 +545,9 @@ pub fn build_entity_filter_conditions(input: EntityFilterConditionsInput<'_, '_>
         *param_idx += 1;
     }
 
-    if let Some(types) = types
-        && !types.is_empty()
-    {
-        if types.len() == 1 {
-            conditions.push(format!("${} = ANY({})", *param_idx, types_col));
-            binds.push(BindValue::String(Cow::Borrowed(&types[0])));
-            *param_idx += 1;
-        } else if type_match_all {
-            for t in types {
-                conditions.push(format!("${} = ANY({})", *param_idx, types_col));
-                binds.push(BindValue::String(Cow::Borrowed(t.as_str())));
-                *param_idx += 1;
-            }
-        } else {
-            conditions.push(format!("{} && ${}", types_col, *param_idx));
-            binds.push(BindValue::StringVec(Cow::Borrowed(types)));
-            *param_idx += 1;
-        }
+    if let Some(expr) = type_expr {
+        let sql = type_expr_to_sql(expr, &types_col, binds, param_idx);
+        conditions.push(sql);
     }
 
     if !attrs.is_empty() {

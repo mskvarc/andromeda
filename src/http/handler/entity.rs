@@ -29,7 +29,7 @@ use crate::{
         validation::{parse_entity_id, validate_attr_name},
     },
     jsonld::ContextSpec,
-    query::{compile::expand_q_expression, q::eval::evaluate},
+    query::{compile::expand_q_expression, compiled::PurgeMode, q::eval::evaluate},
     renderer::{
         SysAttrsInclusion,
         entity::{EntityRenderer, render_snapshot},
@@ -516,6 +516,11 @@ pub async fn query(
         let entity_ids: Option<Vec<String>> = query.id.as_deref().map(|s| s.split(',').map(|id| id.trim().to_string()).collect());
         let entity_ids_ref = entity_ids.as_deref();
 
+        // Parse csf for CSR filtering during forwarding
+        let csf_expr = expand_q_expression(query.csf.as_deref(), state.entity_query.engine(), &context)
+            .await
+            .with_instance(uri.clone())?;
+
         let forwarded = state
             .forwarding
             .forward_query(
@@ -525,6 +530,7 @@ pub async fn query(
                 &context,
                 ForwardingOperation::QueryEntity,
                 incoming_via.as_ref(),
+                csf_expr.as_ref(),
             )
             .await
             .unwrap_or_default();
@@ -1201,11 +1207,29 @@ pub async fn delete_by_query(
     let is_local = query.local.unwrap_or(false);
     let context: ContextSpec = context.into_inner();
 
+    // Determine purge mode from drop/keep parameters (S5.6.21)
+    let purge_mode = if let Some(ref drop_attrs) = query.drop {
+        PurgeMode::Drop(drop_attrs.split(',').map(|s| s.trim().to_string()).collect())
+    } else if let Some(ref keep_attrs) = query.keep {
+        PurgeMode::Keep(keep_attrs.split(',').map(|s| s.trim().to_string()).collect())
+    } else {
+        PurgeMode::DeleteEntities
+    };
+
     let compiled = state.entity_query.compile_query_uncapped(&query, &context).await.with_instance(uri.clone())?;
     let entity_ids = state.entity_query.query_ids(&compiled).await.with_instance(uri.clone())?;
 
     if entity_ids.is_empty() {
         return Ok(StatusCode::NO_CONTENT.into_response());
+    }
+
+    // When drop/keep is specified, modify attributes instead of deleting entities
+    match purge_mode {
+        PurgeMode::Drop(_) | PurgeMode::Keep(_) => {
+            state.entities.purge_attrs(&entity_ids, &purge_mode, &context).await.with_instance(uri)?;
+            return Ok(StatusCode::NO_CONTENT.into_response());
+        }
+        PurgeMode::DeleteEntities => {}
     }
 
     if !is_local {

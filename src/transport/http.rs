@@ -4,10 +4,14 @@
 //! `reqwest::Client` with proper timeout, connection pooling, and header
 //! management.
 
-use std::time::{Duration, Instant};
+use std::{
+    net::IpAddr,
+    time::{Duration, Instant},
+};
 
 use async_trait::async_trait;
 use tracing::{debug, warn};
+use url::Url;
 
 use crate::{
     http::header::{link::Link, ngsild_tenant::NgsiLdTenant},
@@ -65,6 +69,39 @@ impl HttpTransport {
     pub const fn max_payload_size(&self) -> usize {
         self.config.max_payload_size
     }
+
+    /// Resolve the endpoint host and reject delivery if any resolved IP is
+    /// private or reserved, preventing SSRF attacks against internal services.
+    async fn check_private_ip(&self, endpoint_uri: &str) -> Result<(), TransportError> {
+        let url = Url::parse(endpoint_uri).map_err(|e| TransportError::ConnectionFailed {
+            endpoint: endpoint_uri.to_string(),
+            detail: format!("invalid URL: {}", e),
+        })?;
+
+        let host = url.host_str().ok_or_else(|| TransportError::ConnectionFailed {
+            endpoint: endpoint_uri.to_string(),
+            detail: "URL has no host".to_string(),
+        })?;
+
+        let port = url.port_or_known_default().unwrap_or(80);
+        let addr_str = format!("{}:{}", host, port);
+
+        let addrs = tokio::net::lookup_host(&addr_str).await.map_err(|e| TransportError::DnsResolutionFailed {
+            endpoint: endpoint_uri.to_string(),
+            detail: e.to_string(),
+        })?;
+
+        for addr in addrs {
+            if is_private_ip(&addr.ip()) {
+                return Err(TransportError::PrivateIpBlocked {
+                    endpoint: endpoint_uri.to_string(),
+                    ip: addr.ip().to_string(),
+                });
+            }
+        }
+
+        Ok(())
+    }
 }
 
 #[async_trait]
@@ -78,12 +115,7 @@ impl NotificationTransport for HttpTransport {
         }
 
         if self.config.private_ip_blocking {
-            // Future: resolve endpoint_uri host and check against private ranges.
-            // For now, log that the check is enabled but not yet enforced.
-            debug!(
-                endpoint = %req.endpoint_uri,
-                "private IP blocking enabled (enforcement pending)"
-            );
+            self.check_private_ip(&req.endpoint_uri).await?;
         }
 
         let content_type_str = req.content_type.as_str();
@@ -172,5 +204,109 @@ impl NotificationTransport for HttpTransport {
 
     async fn shutdown(&self) {
         // reqwest::Client handles connection pool cleanup on drop.
+    }
+}
+
+/// Returns `true` if the given IP address is private, reserved, loopback,
+/// link-local, or otherwise not routable on the public internet.
+///
+/// Covers all ranges that an SSRF attacker might target to reach internal
+/// services: RFC 1918, loopback, link-local, CGNAT (100.64/10), IPv6 ULA,
+/// and IPv6 link-local.
+fn is_private_ip(ip: &IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(v4) => {
+            v4.is_loopback()                          // 127.0.0.0/8
+                || v4.is_private()                    // 10/8, 172.16/12, 192.168/16
+                || v4.is_link_local()                 // 169.254/16
+                || v4.is_unspecified()                // 0.0.0.0
+                || v4.is_broadcast()                  // 255.255.255.255
+                || v4.octets()[0] == 100              // CGNAT 100.64.0.0/10
+                    && (v4.octets()[1] & 0xC0) == 64
+        }
+        IpAddr::V6(v6) => {
+            v6.is_loopback()                          // ::1
+                || v6.is_unspecified()                // ::
+                || (v6.segments()[0] & 0xFE00) == 0xFC00  // ULA fc00::/7
+                || (v6.segments()[0] & 0xFFC0) == 0xFE80 // link-local fe80::/10
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::net::{Ipv4Addr, Ipv6Addr};
+
+    #[test]
+    fn blocks_loopback_v4() {
+        assert!(is_private_ip(&IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1))));
+    }
+
+    #[test]
+    fn blocks_private_10_range() {
+        assert!(is_private_ip(&IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1))));
+    }
+
+    #[test]
+    fn blocks_private_172_16_range() {
+        assert!(is_private_ip(&IpAddr::V4(Ipv4Addr::new(172, 16, 0, 1))));
+    }
+
+    #[test]
+    fn blocks_private_192_168_range() {
+        assert!(is_private_ip(&IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1))));
+    }
+
+    #[test]
+    fn blocks_link_local_v4() {
+        assert!(is_private_ip(&IpAddr::V4(Ipv4Addr::new(169, 254, 1, 1))));
+    }
+
+    #[test]
+    fn blocks_cgnat_range() {
+        assert!(is_private_ip(&IpAddr::V4(Ipv4Addr::new(100, 64, 0, 1))));
+    }
+
+    #[test]
+    fn blocks_unspecified_v4() {
+        assert!(is_private_ip(&IpAddr::V4(Ipv4Addr::UNSPECIFIED)));
+    }
+
+    #[test]
+    fn blocks_broadcast_v4() {
+        assert!(is_private_ip(&IpAddr::V4(Ipv4Addr::BROADCAST)));
+    }
+
+    #[test]
+    fn blocks_loopback_v6() {
+        assert!(is_private_ip(&IpAddr::V6(Ipv6Addr::LOCALHOST)));
+    }
+
+    #[test]
+    fn blocks_ula_v6() {
+        // fd00::1 is in the fc00::/7 ULA range
+        assert!(is_private_ip(&IpAddr::V6(Ipv6Addr::new(0xfd00, 0, 0, 0, 0, 0, 0, 1))));
+    }
+
+    #[test]
+    fn blocks_link_local_v6() {
+        assert!(is_private_ip(&IpAddr::V6(Ipv6Addr::new(0xfe80, 0, 0, 0, 0, 0, 0, 1))));
+    }
+
+    #[test]
+    fn allows_public_v4() {
+        assert!(!is_private_ip(&IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8))));
+    }
+
+    #[test]
+    fn allows_public_v6() {
+        assert!(!is_private_ip(&IpAddr::V6(Ipv6Addr::new(0x2001, 0x4860, 0x4860, 0, 0, 0, 0, 0x8888))));
+    }
+
+    #[test]
+    fn allows_non_cgnat_100_range() {
+        // 100.128.0.1 is outside CGNAT (100.64/10 = 100.64-100.127)
+        assert!(!is_private_ip(&IpAddr::V4(Ipv4Addr::new(100, 128, 0, 1))));
     }
 }
