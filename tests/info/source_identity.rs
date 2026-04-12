@@ -1,7 +1,7 @@
 //! Source identity retrieval tests (NGSI-LD 5.8.1, 5.5.7).
 
-use reqwest::StatusCode;
 use crate::{client, retrieve_source_identity};
+use reqwest::StatusCode;
 
 // ---------------------------------------------------------------------------
 // 5.8.1 -- Basic retrieval
@@ -35,7 +35,10 @@ async fn retrieve_source_identity_with_json_accept_returns_no_context_in_body() 
         ct.to_str().unwrap()
     );
     assert!(body.get("@context").is_none(), "application/json response should not embed @context in body");
-    assert!(headers.get("link").is_some(), "application/json response should include a Link header with the context");
+    assert!(
+        headers.get("link").is_some(),
+        "application/json response should include a Link header with the context"
+    );
 }
 
 // ---------------------------------------------------------------------------

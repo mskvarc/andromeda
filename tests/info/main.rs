@@ -10,8 +10,7 @@
 
 mod source_identity;
 
-use reqwest::header::HeaderMap;
-use reqwest::{Client, StatusCode};
+use reqwest::{Client, StatusCode, header::HeaderMap};
 use serde_json::Value;
 
 const BASE_URL: &str = "http://127.0.0.1:1056/ngsi-ld/v1";

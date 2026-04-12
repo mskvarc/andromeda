@@ -1,7 +1,5 @@
 //! Attribute info retrieval tests (NGSI-LD 5.5.12, 6.3.5).
 
-use reqwest::StatusCode;
-use serial_test::serial;
 use crate::{
     COMPOUND_CONTEXT_URL,
     RESOURCE_NOT_FOUND_TYPE,
@@ -14,6 +12,8 @@ use crate::{
     retrieve_attribute,
     unique_id,
 };
+use reqwest::StatusCode;
+use serial_test::serial;
 
 // ---------------------------------------------------------------------------
 // 5.5.12 -- Unknown attribute
@@ -123,7 +123,10 @@ async fn retrieve_attribute_info_count_reflects_all_entity_instances() {
 
     let (status, body) = retrieve_attribute(&c, "airQualityLevel", Some(COMPOUND_CONTEXT_URL)).await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["attributeCount"], 2, "attributeCount should be 2 after creating two entities with this attribute");
+    assert_eq!(
+        body["attributeCount"], 2,
+        "attributeCount should be 2 after creating two entities with this attribute"
+    );
 
     delete_entity(&c, &id1).await;
     delete_entity(&c, &id2).await;

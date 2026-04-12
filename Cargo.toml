@@ -139,6 +139,18 @@ name = "distop_temporal_entity_map"
 path = "tests/distop_temporal_entity_map/main.rs"
 
 [[test]]
+name = "distop_attributes"
+path = "tests/distop_attributes/main.rs"
+
+[[test]]
+name = "distop_types"
+path = "tests/distop_types/main.rs"
+
+[[test]]
+name = "distop_batch"
+path = "tests/distop_batch/main.rs"
+
+[[test]]
 name = "pagination"
 path = "tests/pagination/main.rs"
 

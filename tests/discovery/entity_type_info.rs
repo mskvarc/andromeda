@@ -1,8 +1,8 @@
 //! Entity type info retrieval tests (NGSI-LD 5.5.10, 6.3.5).
 
 use reqwest::StatusCode;
-use serial_test::serial;
 use serde_json::Value;
+use serial_test::serial;
 
 use crate::{
     COMPOUND_CONTEXT_URL,

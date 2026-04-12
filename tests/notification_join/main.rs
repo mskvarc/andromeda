@@ -150,10 +150,7 @@ impl NotificationReceiver {
         loop {
             {
                 let mut notifications = self.notifications.lock().await;
-                if let Some(index) = notifications
-                    .iter()
-                    .position(|n| n.body["subscriptionId"].as_str() == Some(subscription_id))
-                {
+                if let Some(index) = notifications.iter().position(|n| n.body["subscriptionId"].as_str() == Some(subscription_id)) {
                     return notifications.remove(index);
                 }
             }
@@ -317,11 +314,7 @@ async fn notification_join_level_default_is_1_when_omitted_from_subscription() {
     let notification = receiver.wait_for_subscription_notification(&subscription_id, Duration::from_secs(5)).await;
     let data = notification.body["data"].as_array().expect("data must be an array");
 
-    assert_eq!(
-        data.len(),
-        2,
-        "default joinLevel=1 must return building plus one level of linked entities"
-    );
+    assert_eq!(data.len(), 2, "default joinLevel=1 must return building plus one level of linked entities");
     let ids: Vec<&str> = data.iter().filter_map(|d| d["id"].as_str()).collect();
     assert!(ids.contains(&building_id.as_str()), "notification data must contain building");
     assert!(ids.contains(&city_id), "notification data must contain city at depth 1");
@@ -450,11 +443,7 @@ async fn notification_join_level_2_delivers_two_depth_levels_of_linked_entities(
     let notification = receiver.wait_for_subscription_notification(&subscription_id, Duration::from_secs(5)).await;
     let data = notification.body["data"].as_array().expect("data must be an array");
 
-    assert_eq!(
-        data.len(),
-        3,
-        "joinLevel=2 must return building, city, and country (three entities total)"
-    );
+    assert_eq!(data.len(), 3, "joinLevel=2 must return building, city, and country (three entities total)");
     let ids: Vec<&str> = data.iter().filter_map(|d| d["id"].as_str()).collect();
     assert!(ids.contains(&building_id.as_str()), "building must be in data");
     assert!(ids.contains(&city_id), "city at depth 1 must be in data");

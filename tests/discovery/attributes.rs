@@ -1,20 +1,10 @@
 //! Attribute list tests (NGSI-LD 5.5.11, 6.3.5).
 
 use reqwest::StatusCode;
-use serial_test::serial;
 use serde_json::Value;
+use serial_test::serial;
 
-use crate::{
-    COMPOUND_CONTEXT_URL,
-    clean_database,
-    client,
-    create_entity,
-    delete_entity,
-    list_attributes,
-    load_expectation,
-    load_fixture,
-    unique_id,
-};
+use crate::{COMPOUND_CONTEXT_URL, clean_database, client, create_entity, delete_entity, list_attributes, load_expectation, load_fixture, unique_id};
 
 fn sorted_strings(val: &Value) -> Vec<String> {
     let mut v: Vec<String> = val.as_array().unwrap().iter().map(|s| s.as_str().unwrap().to_string()).collect();

@@ -2,20 +2,10 @@
 //! Uses `?details=true` to retrieve full `Attribute` objects with type and count information.
 
 use reqwest::StatusCode;
-use serial_test::serial;
 use serde_json::Value;
+use serial_test::serial;
 
-use crate::{
-    COMPOUND_CONTEXT_URL,
-    clean_database,
-    client,
-    create_entity,
-    delete_entity,
-    list_attributes,
-    load_expectation,
-    load_fixture,
-    unique_id,
-};
+use crate::{COMPOUND_CONTEXT_URL, clean_database, client, create_entity, delete_entity, list_attributes, load_expectation, load_fixture, unique_id};
 
 fn sort_attributes(val: &Value) -> Vec<Value> {
     let mut arr: Vec<Value> = val.as_array().unwrap().clone();

@@ -90,7 +90,10 @@ fn link_header(ctx_url: &str) -> String {
 
 /// POST /entities with `application/json` body and optional Link context. Returns (status, location).
 async fn create_entity(client: &Client, body: &Value, link_ctx: Option<&str>) -> (StatusCode, Option<String>) {
-    let mut req = client.post(format!("{BASE_URL}/entities")).header("Content-Type", "application/json").json(body);
+    let mut req = client
+        .post(format!("{BASE_URL}/entities"))
+        .header("Content-Type", "application/json")
+        .json(body);
     if let Some(ctx_url) = link_ctx {
         req = req.header("Link", link_header(ctx_url));
     }

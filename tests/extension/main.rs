@@ -177,7 +177,10 @@ async fn extension_headers_response_format_query_param_overrides_header() {
     // options=normalized in query + NGSILD-Response-Format: keyValues in header → query param wins
     let (status, body) = get_entity_with_headers(&http_client, &id, "options=normalized", &[("NGSILD-Response-Format", "keyValues")]).await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["name"]["type"], "Property", "options query param must override NGSILD-Response-Format header");
+    assert_eq!(
+        body["name"]["type"], "Property",
+        "options query param must override NGSILD-Response-Format header"
+    );
 }
 
 #[serial_test::serial]
@@ -396,16 +399,14 @@ async fn extension_headers_scope_via_header_filters_entities_by_scope_path() {
     let status = create_entity(&http_client, &building_entity_with_scope(&id_b, "/Company/AreaB")).await;
     assert_eq!(status, StatusCode::CREATED);
 
-    let (status, body) = query_entities_with_headers(
-        &http_client,
-        "type=Building",
-        &[("NGSILD-Scope", "/Company/AreaA")],
-    )
-    .await;
+    let (status, body) = query_entities_with_headers(&http_client, "type=Building", &[("NGSILD-Scope", "/Company/AreaA")]).await;
     assert_eq!(status, StatusCode::OK);
 
     let arr = body.as_array().expect("query result must be an array");
     let ids: Vec<&str> = arr.iter().filter_map(|item| item["id"].as_str()).collect();
     assert!(ids.contains(&id_a.as_str()), "entity in /Company/AreaA must appear in scoped results");
-    assert!(!ids.contains(&id_b.as_str()), "entity in /Company/AreaB must be excluded from /Company/AreaA scope");
+    assert!(
+        !ids.contains(&id_b.as_str()),
+        "entity in /Company/AreaB must be excluded from /Company/AreaA scope"
+    );
 }

@@ -54,11 +54,10 @@ async fn clean_named_tenant_databases(main_db_url: &str, main_pool: &PgPool) {
     if !has_tenants_table {
         return;
     }
-    let tenant_dbs: Vec<String> =
-        sqlx::query_scalar("SELECT db_name FROM tenants WHERE is_unnamed_default = false")
-            .fetch_all(main_pool)
-            .await
-            .unwrap_or_default();
+    let tenant_dbs: Vec<String> = sqlx::query_scalar("SELECT db_name FROM tenants WHERE is_unnamed_default = false")
+        .fetch_all(main_pool)
+        .await
+        .unwrap_or_default();
     for db_name in tenant_dbs {
         let Ok(tenant_url) = replace_database_name(main_db_url, &db_name) else {
             continue;
@@ -69,9 +68,7 @@ async fn clean_named_tenant_databases(main_db_url: &str, main_pool: &PgPool) {
         let _ = sqlx::query(TRUNCATE_ALL).execute(&tenant_pool).await;
         tenant_pool.close().await;
     }
-    let _ = sqlx::query("DELETE FROM tenants WHERE is_unnamed_default = false")
-        .execute(main_pool)
-        .await;
+    let _ = sqlx::query("DELETE FROM tenants WHERE is_unnamed_default = false").execute(main_pool).await;
 }
 
 async fn reset_broker_state() {
@@ -108,9 +105,7 @@ async fn ngsi_request(
     let mut request = http_client.request(method, format!("{BASE_URL}{path}"));
 
     if accept_ld_json {
-        request = request
-            .header("Accept", "application/ld+json")
-            .header("Link", link_header());
+        request = request.header("Accept", "application/ld+json").header("Link", link_header());
     }
 
     if !tenant.is_empty() {
@@ -257,10 +252,7 @@ impl NotificationReceiver {
         loop {
             {
                 let mut notifications = self.notifications.lock().await;
-                if let Some(index) = notifications
-                    .iter()
-                    .position(|n| n.body["subscriptionId"].as_str() == Some(subscription_id))
-                {
+                if let Some(index) = notifications.iter().position(|n| n.body["subscriptionId"].as_str() == Some(subscription_id)) {
                     return notifications.remove(index);
                 }
             }
@@ -388,7 +380,15 @@ async fn multitenancy_create_operations_implicitly_create_named_tenant() {
     // 3. Create Temporal Entity
     let tenant_3 = format!("tenant-temporal-create-{}", Uuid::new_v4());
     let id_3 = unique_entity_id("urn:ngsi-ld:Vehicle:temporal-create");
-    let (status, headers, _) = ngsi_request(&http_client, Method::POST, "/temporal/entities", Some(&temporal_vehicle_entity(&id_3)), &tenant_3, false).await;
+    let (status, headers, _) = ngsi_request(
+        &http_client,
+        Method::POST,
+        "/temporal/entities",
+        Some(&temporal_vehicle_entity(&id_3)),
+        &tenant_3,
+        false,
+    )
+    .await;
     assert_eq!(status, StatusCode::CREATED);
     assert_eq!(headers.get("NGSILD-Tenant").and_then(|v| v.to_str().ok()), Some(tenant_3.as_str()));
 
@@ -414,7 +414,15 @@ async fn multitenancy_create_operations_implicitly_create_named_tenant() {
     // 5. Register Context Source
     let tenant_5 = format!("tenant-csr-create-{}", Uuid::new_v4());
     let id_5 = unique_entity_id("urn:ngsi-ld:ContextSourceRegistration:create");
-    let (status, headers, _) = ngsi_request(&http_client, Method::POST, "/csourceRegistrations", Some(&csr_registration(&id_5)), &tenant_5, false).await;
+    let (status, headers, _) = ngsi_request(
+        &http_client,
+        Method::POST,
+        "/csourceRegistrations",
+        Some(&csr_registration(&id_5)),
+        &tenant_5,
+        false,
+    )
+    .await;
     assert_eq!(status, StatusCode::CREATED);
     assert_eq!(headers.get("NGSILD-Tenant").and_then(|v| v.to_str().ok()), Some(tenant_5.as_str()));
     let (status, _, _) = ngsi_request(&http_client, Method::GET, &format!("/csourceRegistrations/{id_5}"), None, &tenant_5, true).await;
@@ -470,7 +478,15 @@ async fn multitenancy_cross_tenant_entity_access_returns_not_found() {
     let tenant_a = format!("tenant-a-{}", Uuid::new_v4());
     let tenant_b = format!("tenant-b-{}", Uuid::new_v4());
 
-    let (status, _, _) = ngsi_request(&http_client, Method::POST, "/entities", Some(&vehicle_entity(&id, "tenant-a")), &tenant_a, false).await;
+    let (status, _, _) = ngsi_request(
+        &http_client,
+        Method::POST,
+        "/entities",
+        Some(&vehicle_entity(&id, "tenant-a")),
+        &tenant_a,
+        false,
+    )
+    .await;
     assert_eq!(status, StatusCode::CREATED);
 
     // Accessing the entity from tenant B returns 404 NonexistentTenant (tenant B does not exist yet)
@@ -502,7 +518,15 @@ async fn multitenancy_unnamed_default_tenant_notifications_omit_tenant_header() 
     tokio::time::sleep(Duration::from_millis(150)).await;
 
     let entity_id = unique_entity_id("urn:ngsi-ld:Vehicle:unnamed-notif");
-    let (status, _, _) = ngsi_request(&http_client, Method::POST, "/entities", Some(&vehicle_entity(&entity_id, "unnamed-trigger")), "", false).await;
+    let (status, _, _) = ngsi_request(
+        &http_client,
+        Method::POST,
+        "/entities",
+        Some(&vehicle_entity(&entity_id, "unnamed-trigger")),
+        "",
+        false,
+    )
+    .await;
     assert_eq!(status, StatusCode::CREATED);
 
     let notification = receiver.wait_for_subscription_notification(&subscription_id, Duration::from_secs(10)).await;
@@ -536,7 +560,15 @@ async fn multitenancy_named_tenant_notifications_include_ngsild_tenant_header() 
     tokio::time::sleep(Duration::from_millis(150)).await;
 
     let entity_id = unique_entity_id("urn:ngsi-ld:Vehicle:named-notif");
-    let (status, _, _) = ngsi_request(&http_client, Method::POST, "/entities", Some(&vehicle_entity(&entity_id, "named-trigger")), &tenant, false).await;
+    let (status, _, _) = ngsi_request(
+        &http_client,
+        Method::POST,
+        "/entities",
+        Some(&vehicle_entity(&entity_id, "named-trigger")),
+        &tenant,
+        false,
+    )
+    .await;
     assert_eq!(status, StatusCode::CREATED);
 
     let notification = receiver.wait_for_subscription_notification(&subscription_id, Duration::from_secs(10)).await;
@@ -569,14 +601,32 @@ async fn multitenancy_subscription_does_not_receive_events_from_different_tenant
 
     // Create entity in tenant B — must NOT trigger subscription in tenant A
     let entity_id = unique_entity_id("urn:ngsi-ld:Vehicle:sub-isolation");
-    let (status, _, _) = ngsi_request(&http_client, Method::POST, "/entities", Some(&vehicle_entity(&entity_id, "tenant-b-entity")), &tenant_b, false).await;
+    let (status, _, _) = ngsi_request(
+        &http_client,
+        Method::POST,
+        "/entities",
+        Some(&vehicle_entity(&entity_id, "tenant-b-entity")),
+        &tenant_b,
+        false,
+    )
+    .await;
     assert_eq!(status, StatusCode::CREATED);
 
-    receiver.wait_for_no_notification_for_subscription(&subscription_id, Duration::from_secs(2)).await;
+    receiver
+        .wait_for_no_notification_for_subscription(&subscription_id, Duration::from_secs(2))
+        .await;
 
     // Create entity in tenant A — must trigger subscription in tenant A
     let entity_id_a = unique_entity_id("urn:ngsi-ld:Vehicle:sub-isolation-a");
-    let (status, _, _) = ngsi_request(&http_client, Method::POST, "/entities", Some(&vehicle_entity(&entity_id_a, "tenant-a-entity")), &tenant_a, false).await;
+    let (status, _, _) = ngsi_request(
+        &http_client,
+        Method::POST,
+        "/entities",
+        Some(&vehicle_entity(&entity_id_a, "tenant-a-entity")),
+        &tenant_a,
+        false,
+    )
+    .await;
     assert_eq!(status, StatusCode::CREATED);
 
     let notification = receiver.wait_for_subscription_notification(&subscription_id, Duration::from_secs(5)).await;

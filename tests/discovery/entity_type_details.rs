@@ -2,20 +2,10 @@
 //! Uses `?details=true` to retrieve full `EntityType` objects with attribute names.
 
 use reqwest::StatusCode;
-use serial_test::serial;
 use serde_json::Value;
+use serial_test::serial;
 
-use crate::{
-    COMPOUND_CONTEXT_URL,
-    clean_database,
-    client,
-    create_entity,
-    delete_entity,
-    list_entity_types,
-    load_expectation,
-    load_fixture,
-    unique_id,
-};
+use crate::{COMPOUND_CONTEXT_URL, clean_database, client, create_entity, delete_entity, list_entity_types, load_expectation, load_fixture, unique_id};
 
 fn sorted_strings(val: &Value) -> Vec<String> {
     let mut v: Vec<String> = val.as_array().unwrap().iter().map(|s| s.as_str().unwrap().to_string()).collect();
