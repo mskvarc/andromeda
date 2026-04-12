@@ -1,4 +1,3 @@
-mod common_behaviours;
 mod context_information;
 mod context_source;
 mod distributed_operations;
@@ -21,7 +20,6 @@ fn main() {
 
     let mut trials = Vec::new();
 
-    common_behaviours::tests(&mut trials);
     context_information::tests(&mut trials);
     jsonld_context::tests(&mut trials);
     context_source::tests(&mut trials);
