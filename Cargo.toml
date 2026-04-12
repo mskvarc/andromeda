@@ -115,6 +115,10 @@ name = "jsonld_context"
 path = "tests/jsonld_context/main.rs"
 
 [[test]]
+name = "language"
+path = "tests/language/main.rs"
+
+[[test]]
 name = "notification"
 path = "tests/notification/main.rs"
 
@@ -141,6 +145,10 @@ path = "tests/pagination/main.rs"
 [[test]]
 name = "profile"
 path = "tests/profile/main.rs"
+
+[[test]]
+name = "snapshot"
+path = "tests/snapshot/main.rs"
 
 [[test]]
 name = "integration"
