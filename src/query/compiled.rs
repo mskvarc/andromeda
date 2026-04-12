@@ -461,7 +461,8 @@ pub struct CompiledTemporalQuery {
 
     /// Scope query for filtering entities by their scope hierarchy.
     ///
-    /// Filters by CURRENT entity scopes via the `entities.scope_paths` column.
-    /// Historical scope filtering (query scope_history with timerel) is Phase 2.
+    /// For entity queries, filters by current scopes via `entities.scope_paths`.
+    /// For temporal queries, filters by historical scopes via `scope_history`,
+    /// bounded by the temporal time window (NGSI-LD 4.18).
     pub scope_q: Option<ScopeQuery>,
 }

@@ -5,7 +5,7 @@ use crate::{
     domain::temporal::{AggrMethod, TemporalFormat, TimeProp, TimeRel},
     query::{
         compiled::{CompiledTemporalQuery, TypeExpr},
-        sql::{BindValue, EntityFilterConditionsInput, build_entity_filter_conditions},
+        sql::{BindValue, EntityFilterConditionsInput, build_entity_filter_conditions, scope_q_to_temporal_sql},
     },
 };
 use std::borrow::Cow;
@@ -47,11 +47,26 @@ pub fn build_stage1_entity_ids<'a>(
         q_expr: compiled.q_expr.as_ref(),
         geo: compiled.geo.as_ref(),
         attrs: &[],
-        scope_q: compiled.scope_q.as_ref().map(|s| s.as_str()),
+        scope_q: None, // Handled below via scope_q_to_temporal_sql
         table_prefix: "e",
         binds,
         param_idx,
     })?;
+
+    // Historical scope filtering: query scope_history table within the temporal
+    // time window instead of current entity scopes (NGSI-LD 4.18).
+    if let Some(scope_q) = &compiled.scope_q {
+        let scope_sql = scope_q_to_temporal_sql(
+            scope_q.as_str(),
+            "tea.entity_id",
+            compiled.timerel.as_ref(),
+            compiled.time_at.as_ref(),
+            compiled.end_time_at.as_ref(),
+            binds,
+            param_idx,
+        )?;
+        conditions.push(scope_sql);
+    }
 
     // Attribute filter: an.name = ANY($N)
     if !compiled.attr_filter.is_empty() {
@@ -599,9 +614,8 @@ mod tests {
         let mut binds = Vec::new();
         let mut param_idx = 1;
         let result = build_stage1_entity_ids(&compiled, &mut binds, &mut param_idx).unwrap();
-        assert!(result.sql.contains("scope_paths"), "SQL should reference scope_paths column");
+        assert!(result.sql.contains("scope_history"), "SQL should reference scope_history table");
         assert!(result.sql.contains("lquery"), "SQL should contain lquery cast");
-        // Bind value should contain ltree-formatted pattern (dots not slashes)
         let has_ltree_bind = binds.iter().any(|b| match b {
             BindValue::String(s) => s.contains("Madrid.Gardens"),
             _ => false,
@@ -612,12 +626,10 @@ mod tests {
     #[test]
     fn stage1_scope_q_with_or_and_semantics() {
         let mut compiled = minimal_compiled();
-        // Per NGSI-LD: comma=OR, semicolon=AND => (/A AND /B) OR /C
         compiled.scope_q = Some(ScopeQuery::new("/A;/B,/C".to_string()));
         let mut binds = Vec::new();
         let mut param_idx = 1;
         let result = build_stage1_entity_ids(&compiled, &mut binds, &mut param_idx).unwrap();
-        // Should have AND/OR grouping in generated SQL
         assert!(result.sql.contains("AND"), "SQL should contain AND for semicolon-separated scopes");
         assert!(result.sql.contains("OR"), "SQL should contain OR for comma-separated scopes");
     }
@@ -629,11 +641,93 @@ mod tests {
         let mut binds = Vec::new();
         let mut param_idx = 1;
         let _result = build_stage1_entity_ids(&compiled, &mut binds, &mut param_idx).unwrap();
-        // The # wildcard should be converted to lquery wildcard *{1,}
         let has_wildcard_bind = binds.iter().any(|b| match b {
             BindValue::String(s) => s.contains("Madrid.*{1,}"),
             _ => false,
         });
         assert!(has_wildcard_bind, "Bind values should contain 'Madrid.*{{1,}}' for # wildcard");
+    }
+
+    #[test]
+    fn temporal_scope_q_generates_scope_history_exists() {
+        let mut compiled = minimal_compiled();
+        compiled.scope_q = Some(ScopeQuery::new("/Madrid".to_string()));
+        compiled.timerel = Some(TimeRel::Before);
+        compiled.time_at = Some(DateTime::parse_from_rfc3339("2024-06-01T00:00:00Z").unwrap().with_timezone(&Utc));
+        let mut binds = Vec::new();
+        let mut param_idx = 1;
+        let result = build_stage1_entity_ids(&compiled, &mut binds, &mut param_idx).unwrap();
+        assert!(result.sql.contains("scope_history"), "SQL should reference scope_history table");
+        assert!(result.sql.contains("sh.scope_path ~ $"), "SQL should match sh.scope_path");
+        assert!(result.sql.contains("sh.time <"), "Before timerel should use < on sh.time");
+    }
+
+    #[test]
+    fn temporal_scope_q_between() {
+        let mut compiled = minimal_compiled();
+        compiled.scope_q = Some(ScopeQuery::new("/A".to_string()));
+        compiled.timerel = Some(TimeRel::Between);
+        compiled.time_at = Some(DateTime::parse_from_rfc3339("2024-01-01T00:00:00Z").unwrap().with_timezone(&Utc));
+        compiled.end_time_at = Some(DateTime::parse_from_rfc3339("2024-06-01T00:00:00Z").unwrap().with_timezone(&Utc));
+        let mut binds = Vec::new();
+        let mut param_idx = 1;
+        let result = build_stage1_entity_ids(&compiled, &mut binds, &mut param_idx).unwrap();
+        assert!(result.sql.contains("sh.time >="), "Between should have >= on sh.time");
+        assert!(result.sql.contains("sh.time <"), "Between should have < on sh.time");
+    }
+
+    #[test]
+    fn temporal_scope_q_after() {
+        let mut compiled = minimal_compiled();
+        compiled.scope_q = Some(ScopeQuery::new("/A/#".to_string()));
+        compiled.timerel = Some(TimeRel::After);
+        compiled.time_at = Some(DateTime::parse_from_rfc3339("2024-03-01T00:00:00Z").unwrap().with_timezone(&Utc));
+        let mut binds = Vec::new();
+        let mut param_idx = 1;
+        let result = build_stage1_entity_ids(&compiled, &mut binds, &mut param_idx).unwrap();
+        assert!(result.sql.contains("sh.time >="), "After should have >= on sh.time");
+        let has_wildcard = binds.iter().any(|b| match b {
+            BindValue::String(s) => s.contains("A.*{1,}"),
+            _ => false,
+        });
+        assert!(has_wildcard, "lquery should contain A.*{{1,}} for /A/#");
+    }
+
+    #[test]
+    fn temporal_scope_q_no_timerel() {
+        let mut compiled = minimal_compiled();
+        compiled.scope_q = Some(ScopeQuery::new("/A".to_string()));
+        // No timerel/time_at set
+        let mut binds = Vec::new();
+        let mut param_idx = 1;
+        let result = build_stage1_entity_ids(&compiled, &mut binds, &mut param_idx).unwrap();
+        assert!(result.sql.contains("scope_history"), "Should still query scope_history");
+        assert!(!result.sql.contains("sh.time"), "No time bounds without timerel");
+    }
+
+    #[test]
+    fn temporal_scope_q_compound() {
+        let mut compiled = minimal_compiled();
+        compiled.scope_q = Some(ScopeQuery::new("/A;/B,/C".to_string()));
+        compiled.timerel = Some(TimeRel::Before);
+        compiled.time_at = Some(DateTime::parse_from_rfc3339("2024-06-01T00:00:00Z").unwrap().with_timezone(&Utc));
+        let mut binds = Vec::new();
+        let mut param_idx = 1;
+        let result = build_stage1_entity_ids(&compiled, &mut binds, &mut param_idx).unwrap();
+        // /A;/B -> AND, ,/C -> OR
+        assert!(result.sql.contains("AND"), "Semicolon scopes produce AND");
+        assert!(result.sql.contains("OR"), "Comma scopes produce OR");
+        // Each scope term should have its own EXISTS subquery
+        let exists_count = result.sql.matches("EXISTS").count();
+        assert_eq!(exists_count, 3, "Three scope terms should produce three EXISTS subqueries");
+    }
+
+    #[test]
+    fn no_scope_q_unchanged() {
+        let compiled = minimal_compiled();
+        let mut binds = Vec::new();
+        let mut param_idx = 1;
+        let result = build_stage1_entity_ids(&compiled, &mut binds, &mut param_idx).unwrap();
+        assert!(!result.sql.contains("scope_history"), "No scope_history reference without scopeQ");
     }
 }

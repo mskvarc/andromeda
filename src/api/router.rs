@@ -47,6 +47,7 @@ use crate::{
         data_expiration::DataExpirationWorker,
         interval::IntervalWorker,
         notification::NotificationWorker,
+        snapshot_expiration::SnapshotExpirationWorker,
         subscription_expiration::SubscriptionExpirationWorker,
     },
 };
@@ -326,6 +327,10 @@ pub async fn build_tenant_state(
     // Combined entity and attribute expiration worker (§4.22).
     let data_expiration_worker = DataExpirationWorker::new(EntityRepository::new(&pool), Some(change_tx), expiration_interval, batch_activity);
     worker_handles.push(tokio::spawn(data_expiration_worker.run()));
+
+    // Snapshot expiration worker (NGSI-LD 5.16 -- clean up expired snapshots)
+    let snapshot_expiration_worker = SnapshotExpirationWorker::new(crate::repository::snapshot::SnapshotRepository::new(&pool), expiration_interval);
+    worker_handles.push(tokio::spawn(snapshot_expiration_worker.run()));
 
     let snapshot_transport = transport.clone();
     let transport_handle = transport.clone();

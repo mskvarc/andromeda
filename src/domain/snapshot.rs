@@ -176,6 +176,92 @@ pub enum SnapshotNotificationBuildError {
     InvalidNotificationId(SnapshotNotificationIdParseError),
 }
 
+impl SnapshotStatus {
+    /// Returns whether this status can transition to the given target status.
+    ///
+    /// Only `Preparing` can transition to a terminal state. Terminal states
+    /// (`Success`, `Partial`, `Empty`, `Failure`) cannot transition further.
+    pub const fn can_transition_to(self, target: SnapshotStatus) -> bool {
+        matches!(
+            (self, target),
+            (SnapshotStatus::Preparing, SnapshotStatus::Success)
+                | (SnapshotStatus::Preparing, SnapshotStatus::Partial)
+                | (SnapshotStatus::Preparing, SnapshotStatus::Empty)
+                | (SnapshotStatus::Preparing, SnapshotStatus::Failure)
+        )
+    }
+}
+
+/// Parsed snapshot query (spec 5.2.23, Query type).
+///
+/// Used to deserialize elements of `snapshotQueries` and `snapshotTemporalQueries`.
+/// Non-temporal queries have `temporal_q: None`; temporal queries include it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SnapshotQuery {
+    /// Entity selectors restricting the query by type, ID, or ID pattern.
+    pub entities: Option<Vec<SnapshotEntitySelector>>,
+    /// NGSI-LD query expression for property-level filtering.
+    pub q: Option<String>,
+    /// Geo-spatial query filter.
+    pub geo_q: Option<SnapshotGeoQuery>,
+    /// Scope query string (comma = OR, semicolon = AND).
+    pub scope_q: Option<String>,
+    /// Attribute IRIs to include in the result.
+    pub attrs: Option<Vec<String>>,
+    /// Attribute IRIs to exclude from the result.
+    pub omit: Option<Vec<String>>,
+    /// Temporal query parameters (present only in `snapshotTemporalQueries`).
+    pub temporal_q: Option<SnapshotTemporalQuery>,
+}
+
+/// Entity selector within a snapshot query (spec 5.2.23).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SnapshotEntitySelector {
+    /// Specific entity IDs to match.
+    pub id: Option<Vec<String>>,
+    /// Regex pattern for matching entity IDs.
+    pub id_pattern: Option<String>,
+    /// Entity type to match.
+    #[serde(rename = "type")]
+    pub type_: Option<String>,
+}
+
+/// Geo-spatial query within a snapshot query (spec 5.2.23).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SnapshotGeoQuery {
+    /// Spatial relationship (e.g. "within", "near;maxDistance==1000").
+    pub georel: String,
+    /// GeoJSON geometry type (e.g. "Point", "Polygon").
+    pub geometry: String,
+    /// GeoJSON coordinates.
+    pub coordinates: Value,
+    /// IRI of the GeoProperty to query against.
+    pub geoproperty: Option<String>,
+}
+
+/// Temporal query within a snapshot temporal query (spec 5.2.23).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SnapshotTemporalQuery {
+    /// Temporal relationship ("before", "after", "between").
+    pub timerel: String,
+    /// Reference time point (ISO 8601).
+    pub time_at: String,
+    /// End time point for "between" queries (ISO 8601).
+    pub end_time_at: Option<String>,
+    /// Maximum number of temporal instances per attribute.
+    pub last_n: Option<u32>,
+    /// Temporal property to filter on ("observedAt", "createdAt", etc.).
+    pub timeproperty: Option<String>,
+    /// Aggregation methods (comma-separated).
+    pub aggr_methods: Option<String>,
+    /// ISO 8601 duration for aggregation bucket size.
+    pub aggr_period_duration: Option<String>,
+}
+
 impl Snapshot {
     /// Build a [`SnapshotNotification`] from the snapshot state.
     pub fn build_notification(&self) -> Result<SnapshotNotification, SnapshotNotificationBuildError> {
@@ -262,5 +348,93 @@ mod tests {
     fn snapshot_status_serializes_preparing() {
         let serialized = serde_json::to_string(&SnapshotStatus::Preparing).expect("serialize");
         assert_eq!(serialized, "\"preparing\"");
+    }
+
+    #[test]
+    fn status_preparing_transitions_to_success() {
+        assert!(SnapshotStatus::Preparing.can_transition_to(SnapshotStatus::Success));
+    }
+
+    #[test]
+    fn status_preparing_transitions_to_all_terminal() {
+        assert!(SnapshotStatus::Preparing.can_transition_to(SnapshotStatus::Success));
+        assert!(SnapshotStatus::Preparing.can_transition_to(SnapshotStatus::Partial));
+        assert!(SnapshotStatus::Preparing.can_transition_to(SnapshotStatus::Empty));
+        assert!(SnapshotStatus::Preparing.can_transition_to(SnapshotStatus::Failure));
+    }
+
+    #[test]
+    fn status_terminal_cannot_transition() {
+        for terminal in [SnapshotStatus::Success, SnapshotStatus::Partial, SnapshotStatus::Empty, SnapshotStatus::Failure] {
+            assert!(!terminal.can_transition_to(SnapshotStatus::Preparing));
+            assert!(!terminal.can_transition_to(SnapshotStatus::Success));
+            assert!(!terminal.can_transition_to(SnapshotStatus::Partial));
+            assert!(!terminal.can_transition_to(SnapshotStatus::Empty));
+            assert!(!terminal.can_transition_to(SnapshotStatus::Failure));
+        }
+    }
+
+    #[test]
+    fn parse_snapshot_query_minimal() {
+        use crate::domain::snapshot::SnapshotQuery;
+        let json = r#"{"entities": [{"type": "Vehicle"}]}"#;
+        let query: SnapshotQuery = serde_json::from_str(json).expect("parse");
+        assert!(query.entities.is_some());
+        let entities = query.entities.unwrap();
+        assert_eq!(entities.len(), 1);
+        assert_eq!(entities[0].type_.as_deref(), Some("Vehicle"));
+        assert!(query.q.is_none());
+        assert!(query.temporal_q.is_none());
+    }
+
+    #[test]
+    fn parse_snapshot_query_full() {
+        use crate::domain::snapshot::SnapshotQuery;
+        let json = r#"{
+            "entities": [{"type": "Vehicle", "id": ["urn:ngsi-ld:Vehicle:1"], "idPattern": "urn:.*"}],
+            "q": "speed>50",
+            "geoQ": {"georel": "within", "geometry": "Polygon", "coordinates": [[[0,0],[1,0],[1,1],[0,1],[0,0]]], "geoproperty": "location"},
+            "scopeQ": "/Madrid",
+            "attrs": ["speed", "fuel"],
+            "omit": ["name"]
+        }"#;
+        let query: SnapshotQuery = serde_json::from_str(json).expect("parse");
+        assert!(query.entities.is_some());
+        assert_eq!(query.q.as_deref(), Some("speed>50"));
+        assert!(query.geo_q.is_some());
+        let geo = query.geo_q.unwrap();
+        assert_eq!(geo.georel, "within");
+        assert_eq!(geo.geometry, "Polygon");
+        assert_eq!(query.scope_q.as_deref(), Some("/Madrid"));
+        assert_eq!(query.attrs.unwrap().len(), 2);
+        assert_eq!(query.omit.unwrap().len(), 1);
+    }
+
+    #[test]
+    fn parse_temporal_query() {
+        use crate::domain::snapshot::SnapshotQuery;
+        let json = r#"{
+            "entities": [{"type": "Vehicle"}],
+            "temporalQ": {
+                "timerel": "after",
+                "timeAt": "2024-01-01T00:00:00Z",
+                "lastN": 10,
+                "timeproperty": "observedAt"
+            }
+        }"#;
+        let query: SnapshotQuery = serde_json::from_str(json).expect("parse");
+        assert!(query.temporal_q.is_some());
+        let tq = query.temporal_q.unwrap();
+        assert_eq!(tq.timerel, "after");
+        assert_eq!(tq.time_at, "2024-01-01T00:00:00Z");
+        assert_eq!(tq.last_n, Some(10));
+        assert_eq!(tq.timeproperty.as_deref(), Some("observedAt"));
+    }
+
+    #[test]
+    fn parse_snapshot_query_rejects_invalid() {
+        use crate::domain::snapshot::SnapshotQuery;
+        let result = serde_json::from_str::<SnapshotQuery>("not valid json");
+        assert!(result.is_err());
     }
 }

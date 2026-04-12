@@ -9,12 +9,14 @@ pub mod temporal;
 
 use crate::{
     core::error::AndromedaError,
+    domain::temporal::TimeRel,
     jsonld::vocab,
     query::{
         compiled::{GeoQuery, GeoRel, TypeExpr},
         q::ast::{AttrPath, CmpOp, CompareValue, Expr, Predicate, Scalar},
     },
 };
+use chrono::{DateTime, Utc};
 use serde_json::Value;
 use std::borrow::Cow;
 
@@ -462,6 +464,101 @@ fn single_scope_to_sql(scope: &str, binds: &mut Vec<BindValue<'_>>, param_idx: &
     binds.push(BindValue::String(Cow::Owned(lquery)));
     *param_idx += 1;
     Ok(sql)
+}
+
+/// Generate a SQL condition that filters entities by historical scope presence
+/// in the `scope_history` table, bounded by the temporal query's time window.
+///
+/// Unlike `scope_q_to_sql` which filters against the current `entities.scope_paths`
+/// column, this produces an `EXISTS` subquery against `scope_history` to check
+/// whether the entity had a matching scope at any point within the temporal range.
+/// Per NGSI-LD 4.18, temporal evolution scopes are "considered valid from the time
+/// it has been set until the time it has been explicitly removed."
+pub fn scope_q_to_temporal_sql(
+    scope_q: &str,
+    entity_id_col: &str,
+    timerel: Option<&TimeRel>,
+    time_at: Option<&DateTime<Utc>>,
+    end_time_at: Option<&DateTime<Utc>>,
+    binds: &mut Vec<BindValue<'_>>,
+    param_idx: &mut usize,
+) -> Result<String, AndromedaError> {
+    // Parse the scopeQ expression into AND/OR terms (same grammar as entity scopeQ)
+    let or_terms: Vec<&str> = scope_q.split(',').map(str::trim).collect();
+    let mut or_parts = Vec::new();
+    for or_term in &or_terms {
+        let and_terms: Vec<&str> = or_term.split(';').map(str::trim).collect();
+        if and_terms.len() == 1 {
+            let part = single_scope_to_temporal_sql(and_terms[0], entity_id_col, timerel, time_at, end_time_at, binds, param_idx)?;
+            or_parts.push(part);
+        } else {
+            let mut and_parts = Vec::new();
+            for and_term in &and_terms {
+                let part = single_scope_to_temporal_sql(and_term, entity_id_col, timerel, time_at, end_time_at, binds, param_idx)?;
+                and_parts.push(part);
+            }
+            or_parts.push(format!("({})", and_parts.join(" AND ")));
+        }
+    }
+    if or_parts.len() == 1 {
+        Ok(or_parts.into_iter().next().unwrap_or_default())
+    } else {
+        Ok(format!("({})", or_parts.join(" OR ")))
+    }
+}
+
+/// Generate an `EXISTS` subquery for a single scope pattern against `scope_history`.
+fn single_scope_to_temporal_sql(
+    scope: &str,
+    entity_id_col: &str,
+    timerel: Option<&TimeRel>,
+    time_at: Option<&DateTime<Utc>>,
+    end_time_at: Option<&DateTime<Utc>>,
+    binds: &mut Vec<BindValue<'_>>,
+    param_idx: &mut usize,
+) -> Result<String, AndromedaError> {
+    let lquery = scope_to_lquery(scope);
+
+    let scope_param = *param_idx;
+    binds.push(BindValue::String(Cow::Owned(lquery)));
+    *param_idx += 1;
+
+    let mut time_conditions = Vec::new();
+    if let (Some(timerel), Some(time_at)) = (timerel, time_at) {
+        match timerel {
+            TimeRel::Before => {
+                time_conditions.push(format!("sh.time < ${}::timestamptz", *param_idx));
+                binds.push(BindValue::String(Cow::Owned(time_at.to_rfc3339())));
+                *param_idx += 1;
+            }
+            TimeRel::After => {
+                time_conditions.push(format!("sh.time >= ${}::timestamptz", *param_idx));
+                binds.push(BindValue::String(Cow::Owned(time_at.to_rfc3339())));
+                *param_idx += 1;
+            }
+            TimeRel::Between => {
+                time_conditions.push(format!("sh.time >= ${}::timestamptz", *param_idx));
+                binds.push(BindValue::String(Cow::Owned(time_at.to_rfc3339())));
+                *param_idx += 1;
+                if let Some(end_time) = end_time_at {
+                    time_conditions.push(format!("sh.time < ${}::timestamptz", *param_idx));
+                    binds.push(BindValue::String(Cow::Owned(end_time.to_rfc3339())));
+                    *param_idx += 1;
+                }
+            }
+        }
+    }
+
+    let time_clause = if time_conditions.is_empty() {
+        String::new()
+    } else {
+        format!(" AND {}", time_conditions.join(" AND "))
+    };
+
+    Ok(format!(
+        "EXISTS (SELECT 1 FROM scope_history sh WHERE sh.entity_id = {} AND sh.scope_path ~ ${}::lquery{})",
+        entity_id_col, scope_param, time_clause
+    ))
 }
 
 /// Input parameters for building shared entity filter SQL conditions.

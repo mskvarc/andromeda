@@ -225,6 +225,21 @@ pub struct ForwardedDiscoveryResult {
     pub warnings: Vec<NgsiLdWarning>,
 }
 
+/// Filter controlling which CSR forwarding modes are included in a forwarding operation.
+///
+/// Per NGSI-LD 4.3.6.2, auxiliary CSRs should only be queried when local/primary data
+/// exists. This filter enables two-phase forwarding: first query primary CSRs, then
+/// conditionally query auxiliary CSRs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CsrModeFilter {
+    /// Include all CSR modes (default, backward-compatible behaviour).
+    All,
+    /// Exclude auxiliary CSRs (primary phase of two-phase forwarding).
+    ExcludeAuxiliary,
+    /// Include only auxiliary CSRs (supplementary phase of two-phase forwarding).
+    AuxiliaryOnly,
+}
+
 /// Marker indicating an exclusive CSR matched the entity but not the requested operation.
 /// Used to detect when exclusive data exists but can't be forwarded (e.g. no redirectionOps).
 pub struct UnforwardableExclusiveCsr;
@@ -265,6 +280,7 @@ impl ContextSourceForwardingService {
         operation: ForwardingOperation,
         incoming_via: Option<&Via>,
         csf_expr: Option<&Expr>,
+        mode_filter: CsrModeFilter,
     ) -> Result<Vec<ForwardedEntities>, AndromedaError> {
         // Loop detection: if our identity is already in the Via chain, skip forwarding (section 6.3.18)
         if self.is_loop_detected(incoming_via) {
@@ -298,6 +314,12 @@ impl ContextSourceForwardingService {
                     },
                     None => true,
                 }
+            })
+            // Per spec 4.3.6.2: auxiliary CSRs only supplement existing data
+            .filter(|csr| match mode_filter {
+                CsrModeFilter::All => true,
+                CsrModeFilter::ExcludeAuxiliary => csr.mode != Some(ForwardingMode::Auxiliary),
+                CsrModeFilter::AuxiliaryOnly => csr.mode == Some(ForwardingMode::Auxiliary),
             })
             .collect();
 
@@ -393,6 +415,7 @@ impl ContextSourceForwardingService {
         context_url: Option<&str>,
         operation: ForwardingOperation,
         incoming_via: Option<&Via>,
+        mode_filter: CsrModeFilter,
     ) -> Result<Vec<ForwardedEntities>, AndromedaError> {
         if self.is_loop_detected(incoming_via) {
             debug!("Loop detected in Via header chain, skipping retrieve forwarding");
@@ -406,6 +429,12 @@ impl ContextSourceForwardingService {
             .filter(|csr| match (&csr.context_source_alias, incoming_via) {
                 (Some(alias), Some(via)) => !via.contains_pseudonym(alias),
                 _ => true,
+            })
+            // Per spec 4.3.6.2: auxiliary CSRs only supplement existing data
+            .filter(|csr| match mode_filter {
+                CsrModeFilter::All => true,
+                CsrModeFilter::ExcludeAuxiliary => csr.mode != Some(ForwardingMode::Auxiliary),
+                CsrModeFilter::AuxiliaryOnly => csr.mode == Some(ForwardingMode::Auxiliary),
             })
             .collect();
 
@@ -853,7 +882,11 @@ impl ContextSourceForwardingService {
     ///
     /// Same pattern as `forward_query()` but targets `/ngsi-ld/v1/temporal/entities`
     /// and passes through the full query string (temporal params included).
-    pub async fn forward_temporal_query(&self, req: &ForwardTemporalQueryRequest<'_>) -> Result<Vec<ForwardedEntities>, AndromedaError> {
+    pub async fn forward_temporal_query(
+        &self,
+        req: &ForwardTemporalQueryRequest<'_>,
+        mode_filter: CsrModeFilter,
+    ) -> Result<Vec<ForwardedEntities>, AndromedaError> {
         let entity_type_compact = req.entity_type_compact;
         let entity_ids = req.entity_ids;
         let query_string = req.query_string;
@@ -880,6 +913,12 @@ impl ContextSourceForwardingService {
             .filter(|csr| match (&csr.context_source_alias, incoming_via) {
                 (Some(alias), Some(via)) => !via.contains_pseudonym(alias),
                 _ => true,
+            })
+            // Per spec 4.3.6.2: auxiliary CSRs only supplement existing data
+            .filter(|csr| match mode_filter {
+                CsrModeFilter::All => true,
+                CsrModeFilter::ExcludeAuxiliary => csr.mode != Some(ForwardingMode::Auxiliary),
+                CsrModeFilter::AuxiliaryOnly => csr.mode == Some(ForwardingMode::Auxiliary),
             })
             .collect();
 
@@ -969,6 +1008,7 @@ impl ContextSourceForwardingService {
         context_url: Option<&str>,
         operation: ForwardingOperation,
         incoming_via: Option<&Via>,
+        mode_filter: CsrModeFilter,
     ) -> Result<Vec<ForwardedEntities>, AndromedaError> {
         if self.is_loop_detected(incoming_via) {
             debug!("Loop detected in Via header chain, skipping temporal retrieve forwarding");
@@ -982,6 +1022,12 @@ impl ContextSourceForwardingService {
             .filter(|csr| match (&csr.context_source_alias, incoming_via) {
                 (Some(alias), Some(via)) => !via.contains_pseudonym(alias),
                 _ => true,
+            })
+            // Per spec 4.3.6.2: auxiliary CSRs only supplement existing data
+            .filter(|csr| match mode_filter {
+                CsrModeFilter::All => true,
+                CsrModeFilter::ExcludeAuxiliary => csr.mode != Some(ForwardingMode::Auxiliary),
+                CsrModeFilter::AuxiliaryOnly => csr.mode == Some(ForwardingMode::Auxiliary),
             })
             .collect();
 
@@ -2106,5 +2152,66 @@ mod tests {
         ];
         let attrs = collect_forwarded_exclusive_attrs(&results);
         assert_eq!(attrs.len(), 2);
+    }
+
+    #[test]
+    fn csr_mode_filter_all_includes_every_mode() {
+        use crate::service::context_source_forwarding::CsrModeFilter;
+
+        let filter = CsrModeFilter::All;
+        // All should include every mode
+        assert!(matches!(filter, CsrModeFilter::All));
+    }
+
+    #[test]
+    fn csr_mode_filter_exclude_auxiliary() {
+        use crate::service::context_source_forwarding::CsrModeFilter;
+
+        let filter = CsrModeFilter::ExcludeAuxiliary;
+        assert_eq!(filter, CsrModeFilter::ExcludeAuxiliary);
+        assert_ne!(filter, CsrModeFilter::All);
+        assert_ne!(filter, CsrModeFilter::AuxiliaryOnly);
+    }
+
+    #[test]
+    fn csr_mode_filter_auxiliary_only() {
+        use crate::service::context_source_forwarding::CsrModeFilter;
+
+        let filter = CsrModeFilter::AuxiliaryOnly;
+        assert_eq!(filter, CsrModeFilter::AuxiliaryOnly);
+        assert_ne!(filter, CsrModeFilter::All);
+        assert_ne!(filter, CsrModeFilter::ExcludeAuxiliary);
+    }
+
+    #[test]
+    fn merge_query_auxiliary_does_not_add_new_entities() {
+        // Auxiliary mode should only supplement existing entities, never add new ones
+        let local = vec![serde_json::json!({"id": "urn:a", "type": "T", "speed": 100})];
+        let remote = vec![ForwardedEntities {
+            mode: ForwardingMode::Auxiliary,
+            entities: vec![
+                serde_json::json!({"id": "urn:a", "type": "T", "fuel": 50}),
+                serde_json::json!({"id": "urn:b", "type": "T", "speed": 80}), // new entity
+            ],
+            warnings: Vec::new(),
+        }];
+        let result = merge_query_results(local, remote);
+        assert_eq!(result.len(), 1, "Auxiliary should not add new entities");
+        let entity = &result[0];
+        assert_eq!(entity["id"], "urn:a");
+        assert!(entity.get("fuel").is_some(), "Auxiliary attrs should be merged");
+    }
+
+    #[test]
+    fn merge_query_primary_adds_new_entities() {
+        // Non-auxiliary modes should add new entities
+        let local = vec![serde_json::json!({"id": "urn:a", "type": "T"})];
+        let remote = vec![ForwardedEntities {
+            mode: ForwardingMode::Inclusive,
+            entities: vec![serde_json::json!({"id": "urn:b", "type": "T", "speed": 80})],
+            warnings: Vec::new(),
+        }];
+        let result = merge_query_results(local, remote);
+        assert_eq!(result.len(), 2, "Inclusive should add new entities");
     }
 }

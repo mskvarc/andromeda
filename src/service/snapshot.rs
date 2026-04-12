@@ -5,6 +5,7 @@ use crate::{
         snapshot::{KeyValuePair, Snapshot, SnapshotInput, SnapshotPatch, SnapshotPriority, SnapshotStatus},
     },
     repository::snapshot::SnapshotRepository,
+    service::snapshot_executor::SnapshotExecutor,
     transport::{
         dispatch::{DeliveryResult, TransportDispatcher, build_delivery_request},
         endpoint::EndpointTransport,
@@ -20,6 +21,7 @@ use std::sync::Arc;
 pub struct SnapshotService {
     repo: SnapshotRepository,
     transport: Option<Arc<TransportDispatcher>>,
+    executor: Option<Arc<SnapshotExecutor>>,
 }
 
 impl SnapshotService {
@@ -29,9 +31,11 @@ impl SnapshotService {
     /// dispatched to snapshots that have an `endpoint` configured
     /// (ETSI GS CIM 009 clause 5.16.6).
     pub fn new(pool: &PgPool, transport: Option<Arc<TransportDispatcher>>) -> SnapshotService {
+        let executor = Arc::new(SnapshotExecutor::new(pool));
         SnapshotService {
             repo: SnapshotRepository::new(pool),
             transport,
+            executor: Some(executor),
         }
     }
 
@@ -73,6 +77,15 @@ impl SnapshotService {
 
         self.repo.create(&snapshot).await?;
         self.send_notification_if_configured(&snapshot).await;
+
+        // Spawn background query execution (NGSI-LD 5.16.1.4)
+        if let Some(executor) = &self.executor {
+            let executor = Arc::clone(executor);
+            let snapshot_for_exec = snapshot.clone(); // clone: moved into spawned task
+            tokio::spawn(async move {
+                executor.execute(&snapshot_for_exec).await;
+            });
+        }
 
         Ok(snapshot)
     }

@@ -24,7 +24,7 @@ use crate::{
     },
     renderer::{entity::EntityRenderer, response::ResponseRenderer},
     service::{
-        context_source_forwarding::{ForwardBatchProvisionRequest, ForwardingOperation, collect_warnings},
+        context_source_forwarding::{CsrModeFilter, ForwardBatchProvisionRequest, ForwardingOperation, collect_warnings},
         entity::{provision_forwarding::ForwardingModes, query::EntityQueryService},
     },
 };
@@ -98,6 +98,7 @@ pub async fn query(
                 ForwardingOperation::QueryBatch,
                 incoming_via.as_ref(),
                 None, // csf not supported on batch query endpoint
+                CsrModeFilter::All,
             )
             .await
             .unwrap_or_else(|e| {

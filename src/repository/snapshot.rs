@@ -152,6 +152,79 @@ impl SnapshotRepository {
             .ok_or_else(|| AndromedaError::snapshot_not_found("Cloned snapshot not found after insert".to_string()))
     }
 
+    /// Update a snapshot's status and execution details after query execution.
+    ///
+    /// Enforces the status state machine: only `Preparing` -> terminal transitions are valid.
+    pub async fn update_status(
+        &self,
+        id: &SnapshotId,
+        status: SnapshotStatus,
+        queries_details: Option<&[ExecutionResultDetails]>,
+        temporal_queries_details: Option<&[ExecutionResultDetails]>,
+    ) -> Result<bool, AndromedaError> {
+        // Validate state machine: only Preparing -> terminal is valid
+        if !SnapshotStatus::Preparing.can_transition_to(status) {
+            return Err(AndromedaError::snapshot_validation(format!(
+                "Invalid status transition: preparing -> {}",
+                status
+            )));
+        }
+
+        let result = sqlx::query(
+            "UPDATE snapshots SET status = $2, queries_details = $3, temporal_queries_details = $4, modified_at = NOW() \
+             WHERE id = $1 AND status = 'preparing'",
+        )
+        .bind(id.as_str())
+        .bind(status)
+        .bind(queries_details.and_then(|d| serde_json::to_value(d).ok()))
+        .bind(temporal_queries_details.and_then(|d| serde_json::to_value(d).ok()))
+        .execute(&self.pool)
+        .await?;
+        Ok(result.rows_affected() > 0)
+    }
+
+    /// Batch insert entities into `snapshot_entities` for a completed snapshot.
+    ///
+    /// Uses `ON CONFLICT DO UPDATE` to handle re-executions gracefully.
+    pub async fn insert_entities(&self, snapshot_id: &SnapshotId, entities: &[(String, Value)]) -> Result<(), AndromedaError> {
+        for (entity_id, entity_data) in entities {
+            sqlx::query(
+                "INSERT INTO snapshot_entities (snapshot_id, entity_id, entity_data) \
+                 VALUES ($1, $2, $3) \
+                 ON CONFLICT (snapshot_id, entity_id) DO UPDATE SET entity_data = EXCLUDED.entity_data",
+            )
+            .bind(snapshot_id.as_str())
+            .bind(entity_id)
+            .bind(entity_data)
+            .execute(&self.pool)
+            .await?;
+        }
+        Ok(())
+    }
+
+    /// Batch insert temporal entities into `snapshot_temporal_entities`.
+    pub async fn insert_temporal_entities(&self, snapshot_id: &SnapshotId, entities: &[(String, Value)]) -> Result<(), AndromedaError> {
+        for (entity_id, temporal_data) in entities {
+            sqlx::query(
+                "INSERT INTO snapshot_temporal_entities (snapshot_id, entity_id, temporal_data) \
+                 VALUES ($1, $2, $3) \
+                 ON CONFLICT (snapshot_id, entity_id) DO UPDATE SET temporal_data = EXCLUDED.temporal_data",
+            )
+            .bind(snapshot_id.as_str())
+            .bind(entity_id)
+            .bind(temporal_data)
+            .execute(&self.pool)
+            .await?;
+        }
+        Ok(())
+    }
+
+    /// Delete all expired snapshots and return the count removed.
+    pub async fn delete_expired(&self) -> Result<u64, AndromedaError> {
+        let result = sqlx::query("DELETE FROM snapshots WHERE expires_at < NOW()").execute(&self.pool).await?;
+        Ok(result.rows_affected())
+    }
+
     /// Update the `last_used_at` timestamp to the current time.
     pub async fn touch_last_used(&self, id: &SnapshotId) -> Result<(), AndromedaError> {
         sqlx::query("UPDATE snapshots SET last_used_at = NOW() WHERE id = $1")
@@ -217,6 +290,101 @@ impl SnapshotRepository {
             offset,
         })
         .await
+    }
+
+    /// Query entities from the main `entities` table for snapshot population.
+    ///
+    /// Basic implementation filtering by type and/or IDs. Returns the JSONB
+    /// payload as a Value for each matching entity.
+    pub async fn query_entities_from_main(&self, entity_type: Option<&str>, entity_ids: Option<&[String]>) -> Result<Vec<Value>, AndromedaError> {
+        let mut conditions = Vec::new();
+        let mut param_idx = 1u32;
+
+        if entity_type.is_some() {
+            conditions.push(format!("${} = ANY(types)", param_idx));
+            param_idx += 1;
+        }
+
+        if let Some(ids) = entity_ids {
+            let placeholders: Vec<String> = ids.iter().enumerate().map(|(i, _)| format!("${}", param_idx + i as u32)).collect();
+            if !placeholders.is_empty() {
+                conditions.push(format!("id IN ({})", placeholders.join(", ")));
+            }
+        }
+
+        let where_clause = if conditions.is_empty() {
+            String::new()
+        } else {
+            format!(" WHERE {}", conditions.join(" AND "))
+        };
+
+        let sql = format!(
+            "SELECT jsonb_build_object('id', id, 'type', types[1], 'payload', payload) as entity_data \
+             FROM entities{} LIMIT 1000",
+            where_clause
+        );
+
+        let mut query = sqlx::query(&sql);
+        if let Some(t) = entity_type {
+            query = query.bind(t);
+        }
+        if let Some(ids) = entity_ids {
+            for id in ids {
+                query = query.bind(id);
+            }
+        }
+
+        let rows = query.fetch_all(&self.pool).await?;
+        let entities: Vec<Value> = rows.iter().filter_map(|r| r.try_get::<Value, _>("entity_data").ok()).collect();
+
+        Ok(entities)
+    }
+
+    /// Query temporal entities from the main temporal tables for snapshot population.
+    ///
+    /// Returns entity IDs that have temporal data, wrapped in a basic JSON structure.
+    pub async fn query_temporal_entities_from_main(&self, entity_type: Option<&str>, entity_ids: Option<&[String]>) -> Result<Vec<Value>, AndromedaError> {
+        let mut conditions = Vec::new();
+        let mut param_idx = 1u32;
+
+        if entity_type.is_some() {
+            conditions.push(format!("tea.entity_id IN (SELECT id FROM entities WHERE ${} = ANY(types))", param_idx));
+            param_idx += 1;
+        }
+
+        if let Some(ids) = entity_ids {
+            let placeholders: Vec<String> = ids.iter().enumerate().map(|(i, _)| format!("${}", param_idx + i as u32)).collect();
+            if !placeholders.is_empty() {
+                conditions.push(format!("tea.entity_id IN ({})", placeholders.join(", ")));
+            }
+        }
+
+        let where_clause = if conditions.is_empty() {
+            String::new()
+        } else {
+            format!(" WHERE {}", conditions.join(" AND "))
+        };
+
+        let sql = format!(
+            "SELECT DISTINCT tea.entity_id, jsonb_build_object('id', tea.entity_id) as temporal_data \
+             FROM temporal_entity_attributes tea{} LIMIT 1000",
+            where_clause
+        );
+
+        let mut query = sqlx::query(&sql);
+        if let Some(t) = entity_type {
+            query = query.bind(t);
+        }
+        if let Some(ids) = entity_ids {
+            for id in ids {
+                query = query.bind(id);
+            }
+        }
+
+        let rows = query.fetch_all(&self.pool).await?;
+        let entities: Vec<Value> = rows.iter().filter_map(|r| r.try_get::<Value, _>("temporal_data").ok()).collect();
+
+        Ok(entities)
     }
 }
 

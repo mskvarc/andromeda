@@ -37,6 +37,7 @@ use crate::{
     },
     service::{
         context_source_forwarding::{
+            CsrModeFilter,
             ForwardBatchProvisionRequest,
             ForwardProvisionRequest,
             ForwardingOperation,
@@ -238,6 +239,7 @@ pub async fn get(
         // Forward to context sources
         let context_url = context.link_contexts().first().map(|s| s.as_str());
         let query_string = uri.query().unwrap_or("");
+        // Phase 1: forward to primary (non-auxiliary) CSRs
         let forwarded = state
             .forwarding
             .forward_retrieve(
@@ -246,10 +248,11 @@ pub async fn get(
                 context_url,
                 ForwardingOperation::RetrieveEntity,
                 incoming_via.as_ref(),
+                CsrModeFilter::ExcludeAuxiliary,
             )
             .await
             .unwrap_or_default(); // Retrieve forwarding: best-effort -- missing CSR data is not fatal
-        let warnings = collect_warnings(&forwarded);
+        let mut warnings = collect_warnings(&forwarded);
 
         let local_value = match local_result {
             Ok(e) => Some(
@@ -260,6 +263,31 @@ pub async fn get(
         };
 
         let merged = merge_retrieve_results(local_value, forwarded);
+
+        // Phase 2: forward to auxiliary CSRs only if an entity was found
+        // Per spec 4.3.6.2: auxiliary context sources only supplement existing data
+        let merged = if merged.is_some() {
+            let aux_forwarded = state
+                .forwarding
+                .forward_retrieve(
+                    id.as_ref(),
+                    query_string,
+                    context_url,
+                    ForwardingOperation::RetrieveEntity,
+                    incoming_via.as_ref(),
+                    CsrModeFilter::AuxiliaryOnly,
+                )
+                .await
+                .unwrap_or_default();
+            if !aux_forwarded.is_empty() {
+                warnings.extend(collect_warnings(&aux_forwarded));
+                merge_retrieve_results(merged, aux_forwarded)
+            } else {
+                merged
+            }
+        } else {
+            merged
+        };
         let entity = match merged {
             Some(value) => serde_json::from_value::<Entity>(value)
                 .map_err(|e| AndromedaError::internal(format!("Failed to deserialize merged entity {}: {e}", id)).with_instance(uri.clone()))?,
@@ -521,6 +549,7 @@ pub async fn query(
             .await
             .with_instance(uri.clone())?;
 
+        // Phase 1: forward to primary (non-auxiliary) CSRs
         let forwarded = state
             .forwarding
             .forward_query(
@@ -531,10 +560,11 @@ pub async fn query(
                 ForwardingOperation::QueryEntity,
                 incoming_via.as_ref(),
                 csf_expr.as_ref(),
+                CsrModeFilter::ExcludeAuxiliary,
             )
             .await
             .unwrap_or_default();
-        let warnings = collect_warnings(&forwarded);
+        let mut warnings = collect_warnings(&forwarded);
 
         // Capture remote entity IDs before merge for entityMap (spec 5.7.2.4, 5.5.14)
         remote_ids = forwarded
@@ -543,10 +573,43 @@ pub async fn query(
             .filter_map(|v| v.get("id").and_then(Value::as_str).map(String::from))
             .collect();
 
-        if forwarded.is_empty() {
-            (local_entities, warnings)
+        let merged = if forwarded.is_empty() {
+            local_entities
         } else {
-            let merged = EntityQueryService::merge_with_forwarded(local_entities, forwarded, query.attrs.as_deref());
+            EntityQueryService::merge_with_forwarded(local_entities, forwarded, query.attrs.as_deref())
+        };
+
+        // Phase 2: forward to auxiliary CSRs only if primary results exist
+        // Per spec 4.3.6.2: auxiliary context sources only supplement existing data
+        if !merged.is_empty() {
+            let aux_forwarded = state
+                .forwarding
+                .forward_query(
+                    entity_type,
+                    entity_ids_ref,
+                    context_url,
+                    &context,
+                    ForwardingOperation::QueryEntity,
+                    incoming_via.as_ref(),
+                    csf_expr.as_ref(),
+                    CsrModeFilter::AuxiliaryOnly,
+                )
+                .await
+                .unwrap_or_default();
+            if !aux_forwarded.is_empty() {
+                warnings.extend(collect_warnings(&aux_forwarded));
+                let aux_remote_ids: Vec<String> = aux_forwarded
+                    .iter()
+                    .flat_map(|f| f.entities.iter())
+                    .filter_map(|v| v.get("id").and_then(Value::as_str).map(String::from))
+                    .collect();
+                remote_ids.extend(aux_remote_ids);
+                let merged = EntityQueryService::merge_with_forwarded(merged, aux_forwarded, query.attrs.as_deref());
+                (merged, warnings)
+            } else {
+                (merged, warnings)
+            }
+        } else {
             (merged, warnings)
         }
     };

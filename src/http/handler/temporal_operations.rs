@@ -12,7 +12,7 @@ use crate::{
     },
     renderer::response::ResponseRenderer,
     service::{
-        context_source_forwarding::{ForwardTemporalQueryRequest, ForwardingOperation, collect_warnings},
+        context_source_forwarding::{CsrModeFilter, ForwardTemporalQueryRequest, ForwardingOperation, collect_warnings},
         temporal::{TemporalQueryResult, TemporalService},
     },
 };
@@ -63,15 +63,18 @@ pub async fn query(
 
         let forwarded = state
             .forwarding
-            .forward_temporal_query(&ForwardTemporalQueryRequest {
-                entity_type_compact: entity_type,
-                entity_ids: entity_ids_ref,
-                query_string: "",
-                context_url,
-                context: &context,
-                operation: ForwardingOperation::QueryTemporalEntity,
-                incoming_via: incoming_via.as_ref(),
-            })
+            .forward_temporal_query(
+                &ForwardTemporalQueryRequest {
+                    entity_type_compact: entity_type,
+                    entity_ids: entity_ids_ref,
+                    query_string: "",
+                    context_url,
+                    context: &context,
+                    operation: ForwardingOperation::QueryTemporalEntity,
+                    incoming_via: incoming_via.as_ref(),
+                },
+                CsrModeFilter::All,
+            )
             .await
             .unwrap_or_default();
         let warnings = collect_warnings(&forwarded);
