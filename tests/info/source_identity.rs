@@ -1,48 +1,59 @@
-use crate::harness::{client::RequestHeaders, trial::trial};
-use libtest_mimic::Trial;
-use pretty_assertions::assert_eq;
+//! Source identity retrieval tests (NGSI-LD 5.8.1, 5.5.7).
+
 use reqwest::StatusCode;
+use crate::{client, retrieve_source_identity};
 
-const PREFIX: &str = "info::source_identity";
+// ---------------------------------------------------------------------------
+// 5.8.1 -- Basic retrieval
+// ---------------------------------------------------------------------------
 
-pub fn tests(trials: &mut Vec<Trial>) {
-    // Returns 200 with identity
-    trials.push(trial(&format!("{PREFIX}::returns_200_with_identity"), |ctx| async move {
-        let resp = ctx.client.get_source_identity(Default::default()).await;
-        assert_eq!(resp.status, StatusCode::OK);
+/// Retrieve source identity -- returns 200 with ContextSourceIdentity body (5.8.1).
+#[tokio::test]
+async fn retrieve_source_identity_returns_200_with_identity() {
+    let c = client();
+    let (status, _, body) = retrieve_source_identity(&c, None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(body["id"].as_str().is_some(), "response body should contain an id field");
+    assert_eq!(body["type"], "ContextSourceIdentity", "type field should be ContextSourceIdentity");
+}
 
-        let body: serde_json::Value = resp.json();
-        assert!(body["id"].as_str().is_some(), "response should have an id");
-        assert_eq!(body["type"], "ContextSourceIdentity", "type should be ContextSourceIdentity");
-    }));
+// ---------------------------------------------------------------------------
+// 5.8.1, 5.5.7 -- Content negotiation: application/json
+// ---------------------------------------------------------------------------
 
-    // Content negotiation: application/json
-    trials.push(trial(&format!("{PREFIX}::content_negotiation_json"), |ctx| async move {
-        let headers = RequestHeaders::new().accept("application/json");
-        let resp = ctx.client.get_source_identity(headers).await;
-        assert_eq!(resp.status, StatusCode::OK);
+/// Retrieve with application/json Accept -- content-type is application/json, no @context in body, Link header present (5.8.1, 5.5.7).
+#[tokio::test]
+async fn retrieve_source_identity_with_json_accept_returns_no_context_in_body() {
+    let c = client();
+    let (status, headers, body) = retrieve_source_identity(&c, Some("application/json")).await;
+    assert_eq!(status, StatusCode::OK);
 
-        let ct = resp.headers.get("content-type").expect("should have content-type");
-        assert!(ct.to_str().unwrap().contains("application/json"), "content-type should be application/json");
+    let ct = headers.get("content-type").expect("response should have Content-Type header");
+    assert!(
+        ct.to_str().unwrap().contains("application/json"),
+        "Content-Type should be application/json, got: {}",
+        ct.to_str().unwrap()
+    );
+    assert!(body.get("@context").is_none(), "application/json response should not embed @context in body");
+    assert!(headers.get("link").is_some(), "application/json response should include a Link header with the context");
+}
 
-        let body: serde_json::Value = resp.json();
-        assert!(body.get("@context").is_none(), "application/json should not have @context in body");
-        assert!(resp.headers.get("link").is_some(), "should have Link header for application/json");
-    }));
+// ---------------------------------------------------------------------------
+// 5.8.1, 5.5.7 -- Content negotiation: application/ld+json
+// ---------------------------------------------------------------------------
 
-    // Content negotiation: application/ld+json
-    trials.push(trial(&format!("{PREFIX}::content_negotiation_ld_json"), |ctx| async move {
-        let headers = RequestHeaders::new().accept_ld_json();
-        let resp = ctx.client.get_source_identity(headers).await;
-        assert_eq!(resp.status, StatusCode::OK);
+/// Retrieve with application/ld+json Accept -- content-type is application/ld+json, @context embedded in body (5.8.1, 5.5.7).
+#[tokio::test]
+async fn retrieve_source_identity_with_ld_json_accept_returns_context_in_body() {
+    let c = client();
+    let (status, headers, body) = retrieve_source_identity(&c, Some("application/ld+json")).await;
+    assert_eq!(status, StatusCode::OK);
 
-        let ct = resp.headers.get("content-type").expect("should have content-type");
-        assert!(
-            ct.to_str().unwrap().contains("application/ld+json"),
-            "content-type should be application/ld+json"
-        );
-
-        let body: serde_json::Value = resp.json();
-        assert!(body.get("@context").is_some(), "application/ld+json should have @context in body");
-    }));
+    let ct = headers.get("content-type").expect("response should have Content-Type header");
+    assert!(
+        ct.to_str().unwrap().contains("application/ld+json"),
+        "Content-Type should be application/ld+json, got: {}",
+        ct.to_str().unwrap()
+    );
+    assert!(body.get("@context").is_some(), "application/ld+json response should embed @context in body");
 }
