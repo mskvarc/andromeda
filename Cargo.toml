@@ -86,8 +86,8 @@ path = "tests/main.rs"
 harness = false
 
 [profile.release]
-lto = "fat"
-codegen-units = 1
+lto = "thin"
+codegen-units = 16
 opt-level = 3
 debug = true
 
