@@ -147,6 +147,30 @@ name = "profile"
 path = "tests/profile/main.rs"
 
 [[test]]
+name = "geometry"
+path = "tests/geometry/main.rs"
+
+[[test]]
+name = "list"
+path = "tests/list/main.rs"
+
+[[test]]
+name = "entity_order"
+path = "tests/entity_order/main.rs"
+
+[[test]]
+name = "expiration"
+path = "tests/expiration/main.rs"
+
+[[test]]
+name = "join"
+path = "tests/join/main.rs"
+
+[[test]]
+name = "prefer"
+path = "tests/prefer/main.rs"
+
+[[test]]
 name = "snapshot"
 path = "tests/snapshot/main.rs"
 
