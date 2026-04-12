@@ -73,7 +73,7 @@ pub struct TemporalQueryParameters {
     pub split_entities: Option<bool>,
 
     #[serde(rename = "scopeQ")]
-    pub _scope_q: Option<String>,
+    pub scope_q: Option<String>,
     #[serde(rename = "expandValues")]
     pub expand_values: Option<String>,
     #[serde(rename = "jsonKeys")]
@@ -285,7 +285,7 @@ impl From<TemporalQueryRequest> for TemporalQueryParameters {
             entity_map: None,
             entity_map_lifetime: None,
             split_entities: None,
-            _scope_q: None,
+            scope_q: None,
             expand_values: None,
             json_keys: None,
         }

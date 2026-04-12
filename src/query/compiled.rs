@@ -428,4 +428,10 @@ pub struct CompiledTemporalQuery {
 
     /// Whether to include system-generated attributes (`createdAt`, `modifiedAt`).
     pub sys_attrs: SysAttrsInclusion,
+
+    /// Scope query for filtering entities by their scope hierarchy.
+    ///
+    /// Filters by CURRENT entity scopes via the `entities.scope_paths` column.
+    /// Historical scope filtering (query scope_history with timerel) is Phase 2.
+    pub scope_q: Option<ScopeQuery>,
 }

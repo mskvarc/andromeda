@@ -6,7 +6,8 @@ use crate::{
     core::error::AndromedaError,
     domain::{attribute_type::AttributeType, temporal::ValueType},
     jsonld::vocab,
-    repository::temporal::{HistoryBatchEntry, HistoryValues, InsertHistoryParams, TeaBatchEntry, TemporalRepository, UpdateInstanceParams},
+    query::sql::scope_to_ltree,
+    repository::temporal::{HistoryBatchEntry, HistoryValues, InsertHistoryParams, ScopeHistoryEntry, TeaBatchEntry, TemporalRepository, UpdateInstanceParams},
 };
 use chrono::{DateTime, Utc};
 use serde_json::Value;
@@ -87,21 +88,20 @@ impl TemporalRecorder {
                 continue;
             }
 
-            // Handle scope specially: scope entries are @value nodes, not typed attribute instances
+            // Handle scope specially: scopes are NOT attributes -- they go to scope_history,
+            // not through the TEA/attribute_history pipeline (NGSI-LD clause 4.5.4).
             if attr_name == vocab::SCOPE.as_str() {
                 if let Some(scope_arr) = attr_value.as_array() {
                     for scope_entry in scope_arr {
                         if let Some(scope_val) = scope_entry.as_object().and_then(|o| o.get("@value")).and_then(|v| v.as_str()) {
-                            // Record as a synthetic Property-like entry
-                            let synthetic = serde_json::json!({
-                                "@type": [vocab::PROPERTY.as_str()],
-                                vocab::VALUE.as_str(): [{"@value": scope_val}]
-                            });
-                            match self.record_attribute_instance(entity_id, attr_name, &synthetic).await {
-                                Ok(()) => {}
-                                Err(e) => {
-                                    tracing::warn!("Failed to record scope temporal data for entity {}: {}", entity_id, e);
-                                }
+                            let entry = ScopeHistoryEntry {
+                                time: Utc::now(),
+                                entity_id: entity_id.to_string(),
+                                scope_path: scope_to_ltree(scope_val),
+                                instance_id: format!("urn:ngsi-ld:scope:instance:{}", uuid::Uuid::new_v4()),
+                            };
+                            if let Err(e) = self.repo.insert_scope_history(&entry).await {
+                                tracing::warn!("Failed to record scope history for entity {}: {}", entity_id, e);
                             }
                         }
                     }
@@ -212,6 +212,8 @@ impl TemporalRecorder {
         let mut pending_histories: Vec<PendingHistory> = Vec::new();
         // tea_index[i] corresponds to pending_histories[i] and maps to tea_entries index
         let mut tea_index: Vec<usize> = Vec::new();
+        // Scope entries collected separately -- bypass TEA/attribute_history pipeline.
+        let mut scope_entries: Vec<ScopeHistoryEntry> = Vec::new();
 
         for (entity_id, expanded) in entities {
             let obj = match expanded {
@@ -229,36 +231,17 @@ impl TemporalRecorder {
                     continue;
                 }
 
-                // Handle scope entries as synthetic Property instances
+                // Handle scope entries: write directly to scope_history, not attribute_history.
                 if attr_name == vocab::SCOPE.as_str() {
                     if let Some(scope_arr) = attr_value.as_array() {
                         for scope_entry in scope_arr {
                             if let Some(scope_val) = scope_entry.as_object().and_then(|o| o.get("@value")).and_then(|v| v.as_str()) {
-                                let tea_idx = tea_entries.len();
-                                tea_entries.push(TeaBatchEntry {
-                                    entity_id: entity_id.clone(),      // clone: owned String for batch entry
-                                    attribute_name: attr_name.clone(), // clone: owned String for batch entry
-                                    attribute_type: AttributeType::Property,
-                                    dataset_id: None,
-                                    value_type: ValueType::String,
+                                scope_entries.push(ScopeHistoryEntry {
+                                    time: Utc::now(),
+                                    entity_id: entity_id.clone(), // clone: owned String for batch entry
+                                    scope_path: scope_to_ltree(scope_val),
+                                    instance_id: format!("urn:ngsi-ld:scope:instance:{}", uuid::Uuid::new_v4()),
                                 });
-                                let time = Utc::now();
-                                pending_histories.push(PendingHistory {
-                                    time,
-                                    db_params: DbValueParams {
-                                        value_number: None,
-                                        value_string: Some(scope_val.to_string()),
-                                        value_bool: None,
-                                        value_geo: None,
-                                        value_object: None,
-                                        value_datetime: None,
-                                        value_uri: None,
-                                    },
-                                    instance_id: format!("urn:ngsi-ld:attribute:instance:{}", uuid::Uuid::new_v4()),
-                                    observed_at: None,
-                                    metadata: None,
-                                });
-                                tea_index.push(tea_idx);
                             }
                         }
                     }
@@ -369,6 +352,11 @@ impl TemporalRecorder {
 
         // Phase 4: Bulk insert all history rows in a single transaction.
         self.repo.insert_history_batch(&history_entries).await?;
+
+        // Phase 5: Bulk insert scope history entries (separate from attribute pipeline).
+        if !scope_entries.is_empty() {
+            self.repo.insert_scope_history_batch(&scope_entries).await?;
+        }
 
         Ok(())
     }

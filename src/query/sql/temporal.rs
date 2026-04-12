@@ -38,7 +38,7 @@ pub fn build_stage1_entity_ids<'a>(
         q_expr: compiled.q_expr.as_ref(),
         geo: compiled.geo.as_ref(),
         attrs: &[],
-        scope_q: None,
+        scope_q: compiled.scope_q.as_ref().map(|s| s.as_str()),
         type_match_all: false,
         table_prefix: "e",
         binds,
@@ -436,7 +436,7 @@ ORDER BY {}"#,
 mod tests {
     use super::*;
     use crate::{
-        query::compiled::{CompiledTemporalQuery, LastNOrigin},
+        query::compiled::{CompiledTemporalQuery, LastNOrigin, ScopeQuery},
         renderer::SysAttrsInclusion,
     };
     use chrono::{DateTime, Utc};
@@ -463,6 +463,7 @@ mod tests {
             offset: 0,
             count: false,
             sys_attrs: SysAttrsInclusion::Strip,
+            scope_q: None,
         }
     }
 
@@ -581,5 +582,50 @@ mod tests {
         let mut param_idx = 1;
         let result = build_stage1_entity_ids(&compiled, &mut binds, &mut param_idx).unwrap();
         assert!(result.sql.contains("JOIN attribute_names an ON an.id = tea.attribute_name_id"));
+    }
+
+    #[test]
+    fn stage1_includes_scope_q_filter() {
+        let mut compiled = minimal_compiled();
+        compiled.scope_q = Some(ScopeQuery::new("/Madrid/Gardens".to_string()));
+        let mut binds = Vec::new();
+        let mut param_idx = 1;
+        let result = build_stage1_entity_ids(&compiled, &mut binds, &mut param_idx).unwrap();
+        assert!(result.sql.contains("scope_paths"), "SQL should reference scope_paths column");
+        assert!(result.sql.contains("lquery"), "SQL should contain lquery cast");
+        // Bind value should contain ltree-formatted pattern (dots not slashes)
+        let has_ltree_bind = binds.iter().any(|b| match b {
+            BindValue::String(s) => s.contains("Madrid.Gardens"),
+            _ => false,
+        });
+        assert!(has_ltree_bind, "Bind values should contain 'Madrid.Gardens' in ltree format");
+    }
+
+    #[test]
+    fn stage1_scope_q_with_or_and_semantics() {
+        let mut compiled = minimal_compiled();
+        // Per NGSI-LD: comma=OR, semicolon=AND => (/A AND /B) OR /C
+        compiled.scope_q = Some(ScopeQuery::new("/A;/B,/C".to_string()));
+        let mut binds = Vec::new();
+        let mut param_idx = 1;
+        let result = build_stage1_entity_ids(&compiled, &mut binds, &mut param_idx).unwrap();
+        // Should have AND/OR grouping in generated SQL
+        assert!(result.sql.contains("AND"), "SQL should contain AND for semicolon-separated scopes");
+        assert!(result.sql.contains("OR"), "SQL should contain OR for comma-separated scopes");
+    }
+
+    #[test]
+    fn stage1_scope_q_with_wildcards() {
+        let mut compiled = minimal_compiled();
+        compiled.scope_q = Some(ScopeQuery::new("/Madrid/#".to_string()));
+        let mut binds = Vec::new();
+        let mut param_idx = 1;
+        let _result = build_stage1_entity_ids(&compiled, &mut binds, &mut param_idx).unwrap();
+        // The # wildcard should be converted to lquery wildcard *{1,}
+        let has_wildcard_bind = binds.iter().any(|b| match b {
+            BindValue::String(s) => s.contains("Madrid.*{1,}"),
+            _ => false,
+        });
+        assert!(has_wildcard_bind, "Bind values should contain 'Madrid.*{{1,}}' for # wildcard");
     }
 }

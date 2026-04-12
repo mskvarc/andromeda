@@ -7,7 +7,7 @@ use crate::{
     i18n::collation::augment_expanded_with_collation_metadata,
     jsonld::{CompactOptions, ContextSpec, JsonLdEngine, vocab},
     query::{
-        compiled::{CompiledTemporalQuery, GeoQuery, IdPattern, LastNOrigin},
+        compiled::{CompiledTemporalQuery, GeoQuery, IdPattern, LastNOrigin, ScopeQuery},
         sql::temporal::{build_stage1_entity_ids, build_temporal_history_query},
     },
     renderer::{
@@ -297,7 +297,7 @@ impl TemporalService {
         let compiled = self.compile_temporal_query(params, context).await?;
 
         let mut binds = vec![crate::query::sql::BindValue::String(Cow::Owned(entity_id.to_string()))];
-        let mut param_idx = 2;
+        let mut param_idx: usize = 2;
         let stage2 = build_temporal_history_query(1, &compiled, &mut binds, &mut param_idx)?;
 
         let rows = self.repo.execute_temporal_query(&stage2.sql, &stage2.bind_values).await?;
@@ -671,6 +671,7 @@ impl TemporalService {
             } else {
                 SysAttrsInclusion::Strip
             },
+            scope_q: params.scope_q.as_ref().map(|s| ScopeQuery::new(s.clone())), // clone: owned String for ScopeQuery wrapper
         })
     }
 

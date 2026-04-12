@@ -22,6 +22,13 @@ use serde_json::{Map, Value};
 use std::{collections::HashMap, ops::Deref};
 use urn::Urn;
 
+/// Compacted short name for the Andromeda-internal collation sub-attribute.
+///
+/// This sub-attribute is injected during entity creation for language-insensitive
+/// query matching (NGSI-LD Annex G.2) and must be stripped before returning
+/// entities to clients.
+const COLLATE_KEY: &str = "collate";
+
 /// Output representation mode for entity rendering.
 ///
 /// NGSI-LD defines three output representations beyond the internal expanded form
@@ -51,8 +58,9 @@ pub enum RenderMode {
 ///
 /// The rendering pipeline executes in order:
 /// 1. Serialize entity (with language filter if set)
-/// 2. Apply inline join (if linked entities provided)
-/// 3. Apply concise/simplified transformation (if mode != Normalized)
+/// 2. Strip broker-internal metadata (collation sub-attributes)
+/// 3. Apply inline join (if linked entities provided)
+/// 4. Apply concise/simplified transformation (if mode != Normalized)
 pub struct EntityRenderer<'a> {
     entity: &'a Entity,
     language_filter: Option<&'a LanguageFilter>,
@@ -99,8 +107,9 @@ impl<'a> EntityRenderer<'a> {
     ///
     /// Pipeline order:
     /// 1. Serialize entity (with language negotiation if filter set)
-    /// 2. Apply inline join (if linked entities provided)
-    /// 3. Apply concise/simplified transformation (if mode != Normalized)
+    /// 2. Strip broker-internal metadata (collation sub-attributes)
+    /// 3. Apply inline join (if linked entities provided)
+    /// 4. Apply concise/simplified transformation (if mode != Normalized)
     pub fn render(self) -> Result<Value, AndromedaError> {
         // Fast path: simplified without language filter or inline join can use
         // the domain-level simplify() directly, avoiding a full serialize round-trip.
@@ -148,12 +157,15 @@ impl<'a> EntityRenderer<'a> {
             Value::Object(map)
         };
 
-        // Step 2: inline join
+        // Step 2: strip broker-internal metadata (collation sub-attributes)
+        strip_internal_metadata(&mut value);
+
+        // Step 3: inline join
         if let Some(linked) = self.inline_linked_entities {
             apply_inline_join(&mut value, linked, self.language_filter)?;
         }
 
-        // Step 3: concise/simplified transformation
+        // Step 4: concise/simplified transformation
         match self.mode {
             RenderMode::Normalized => {}
             RenderMode::Concise => {
@@ -589,10 +601,31 @@ pub fn render_snapshot(mut value: Value, attrs: Option<&[&str]>, mode: RenderMod
         obj.retain(|k, _| keys_to_keep.iter().any(|keep| k.ends_with(keep)));
     }
 
+    strip_internal_metadata(&mut value);
+
     match mode {
         RenderMode::Simplified => simplify_value(&value),
         RenderMode::Concise => concise_value(&value),
         RenderMode::Normalized => value,
+    }
+}
+
+/// Recursively removes broker-internal metadata (collation sub-attributes) from
+/// a serialized entity value so that internal storage details never leak to clients.
+fn strip_internal_metadata(value: &mut Value) {
+    match value {
+        Value::Object(map) => {
+            map.remove(COLLATE_KEY);
+            for (_, v) in map.iter_mut() {
+                strip_internal_metadata(v);
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                strip_internal_metadata(item);
+            }
+        }
+        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => {}
     }
 }
 
@@ -947,6 +980,94 @@ mod tests {
         decode_percent_encoded_uris(&mut value);
         assert_eq!(value[0]["object"], "urn:x");
         assert_eq!(value[1]["object"], "urn:y");
+    }
+
+    // --- strip_internal_metadata tests ---
+
+    #[test]
+    fn renderer_strips_collate_sub_attribute_from_property() {
+        let entity = parse_entity(json!({
+            "id": "urn:ngsi-ld:Building:collate",
+            "type": "Building",
+            "name": {
+                "type": "Property",
+                "value": "Eiffel Tower",
+                "collate": {
+                    "type": "Property",
+                    "value": "eiffel tower"
+                }
+            }
+        }));
+
+        let rendered = EntityRenderer::new(&entity).render().expect("rendered entity");
+        assert!(
+            rendered["name"].get("collate").is_none(),
+            "collate sub-attribute must be stripped from response"
+        );
+        assert_eq!(rendered["name"]["value"], "Eiffel Tower");
+    }
+
+    #[test]
+    fn renderer_strips_collate_from_nested_sub_attributes() {
+        let entity = parse_entity(json!({
+            "id": "urn:ngsi-ld:Building:nested",
+            "type": "Building",
+            "name": {
+                "type": "Property",
+                "value": "Eiffel Tower",
+                "collate": {
+                    "type": "Property",
+                    "value": "eiffel tower"
+                },
+                "origin": {
+                    "type": "Property",
+                    "value": "Paris",
+                    "collate": {
+                        "type": "Property",
+                        "value": "paris"
+                    }
+                }
+            }
+        }));
+
+        let rendered = EntityRenderer::new(&entity).render().expect("rendered entity");
+        assert!(rendered["name"].get("collate").is_none());
+        assert!(rendered["name"]["origin"].get("collate").is_none());
+        assert_eq!(rendered["name"]["origin"]["value"], "Paris");
+    }
+
+    #[test]
+    fn renderer_strips_collate_in_concise_mode() {
+        let entity = parse_entity(json!({
+            "id": "urn:ngsi-ld:Building:concise",
+            "type": "Building",
+            "name": {
+                "type": "Property",
+                "value": "Tower",
+                "collate": {
+                    "type": "Property",
+                    "value": "tower"
+                }
+            }
+        }));
+
+        let rendered = EntityRenderer::new(&entity).with_mode(RenderMode::Concise).render().expect("concise");
+        assert!(rendered["name"].get("collate").is_none());
+    }
+
+    #[test]
+    fn render_snapshot_strips_collate() {
+        let value = json!({
+            "id": "urn:x", "type": "T",
+            "name": {
+                "type": "Property",
+                "value": "Tower",
+                "collate": {"type": "Property", "value": "tower"}
+            }
+        });
+        let result = render_snapshot(value, None, RenderMode::Normalized);
+        assert!(result["name"].get("collate").is_none());
+        assert_eq!(result["name"]["value"], "Tower");
     }
 
     // --- render_snapshot tests ---

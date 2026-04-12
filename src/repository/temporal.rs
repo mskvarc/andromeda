@@ -21,6 +21,23 @@ use sqlx::{
 use std::{collections::HashMap, str::FromStr, sync::Arc};
 use urn::Urn;
 
+/// A single scope history observation for an entity.
+///
+/// Scopes are recorded separately from attributes (they have no TEA catalog
+/// entry, no dataset_id, no value_type). The scope path IS the value, stored
+/// in ltree dot notation (e.g. `"Madrid.Gardens"`).
+#[derive(Debug)]
+pub struct ScopeHistoryEntry {
+    /// Observation timestamp.
+    pub time: DateTime<Utc>,
+    /// The entity this scope belongs to.
+    pub entity_id: String,
+    /// Scope path in ltree dot notation (slashes converted to dots).
+    pub scope_path: String,
+    /// Unique identifier for this scope observation instance.
+    pub instance_id: String,
+}
+
 /// Whether to delete all instances of an attribute or a single specific instance.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DeleteScope {
@@ -751,6 +768,90 @@ impl TemporalRepository {
         .bind(&instance_ids)
         .bind(&observed_ats)
         .bind(&metadatas)
+        .execute(&mut *tx)
+        .await?;
+
+        tx.commit().await?;
+        Ok(())
+    }
+
+    // -------------------------------------------------------------------------
+    // Scope History Operations
+    // -------------------------------------------------------------------------
+
+    /// Insert a single scope history observation.
+    ///
+    /// Uses `ON CONFLICT DO NOTHING` on the (entity_id, time, instance_id)
+    /// unique constraint to silently skip duplicates.
+    pub async fn insert_scope_history(&self, entry: &ScopeHistoryEntry) -> Result<(), AndromedaError> {
+        sqlx::query(
+            r#"
+            INSERT INTO scope_history (time, entity_id, scope_path, instance_id)
+            VALUES ($1, $2, $3::ltree, $4)
+            ON CONFLICT (entity_id, time, instance_id) DO NOTHING
+            "#,
+        )
+        .bind(entry.time)
+        .bind(&entry.entity_id)
+        .bind(&entry.scope_path)
+        .bind(&entry.instance_id)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+
+    /// Bulk insert scope history observations in a single transaction.
+    ///
+    /// Performs deduplication (DELETE conflicting instance_id rows) then inserts
+    /// all entries using `UNNEST`, matching the pattern from `insert_history_batch`.
+    pub async fn insert_scope_history_batch(&self, entries: &[ScopeHistoryEntry]) -> Result<(), AndromedaError> {
+        if entries.is_empty() {
+            return Ok(());
+        }
+
+        let len = entries.len();
+        let mut times = Vec::with_capacity(len);
+        let mut entity_ids = Vec::with_capacity(len);
+        let mut scope_paths = Vec::with_capacity(len);
+        let mut instance_ids = Vec::with_capacity(len);
+
+        for e in entries {
+            times.push(e.time);
+            entity_ids.push(e.entity_id.as_str());
+            scope_paths.push(e.scope_path.as_str());
+            instance_ids.push(e.instance_id.as_str());
+        }
+
+        let mut tx = self.pool.begin().await?;
+
+        // Dedup: delete by (entity_id, instance_id) using idx_scope_history_dedup.
+        sqlx::query(
+            r#"
+            DELETE FROM scope_history sh
+            USING UNNEST($1::text[], $2::text[])
+                AS d(entity_id, instance_id)
+            WHERE sh.entity_id = d.entity_id AND sh.instance_id = d.instance_id
+            "#,
+        )
+        .bind(&entity_ids)
+        .bind(&instance_ids)
+        .execute(&mut *tx)
+        .await?;
+
+        // Bulk insert all scope history entries.
+        sqlx::query(
+            r#"
+            INSERT INTO scope_history (time, entity_id, scope_path, instance_id)
+            SELECT d.time, d.entity_id, d.scope_path::ltree, d.instance_id
+            FROM UNNEST($1::timestamptz[], $2::text[], $3::text[], $4::text[])
+                AS d(time, entity_id, scope_path, instance_id)
+            "#,
+        )
+        .bind(&times)
+        .bind(&entity_ids)
+        .bind(&scope_paths)
+        .bind(&instance_ids)
         .execute(&mut *tx)
         .await?;
 
