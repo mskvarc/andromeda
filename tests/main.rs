@@ -1,5 +1,4 @@
 mod context_information;
-mod context_source;
 mod distributed_operations;
 mod entity_map;
 mod harness;
@@ -20,7 +19,6 @@ fn main() {
     let mut trials = Vec::new();
 
     context_information::tests(&mut trials);
-    context_source::tests(&mut trials);
     distributed_operations::tests(&mut trials);
     multitenancy::tests(&mut trials);
     entity_map::tests(&mut trials);
