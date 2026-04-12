@@ -111,6 +111,14 @@ name = "jsonld_context"
 path = "tests/jsonld_context/main.rs"
 
 [[test]]
+name = "notification"
+path = "tests/notification/main.rs"
+
+[[test]]
+name = "subscription"
+path = "tests/subscription/main.rs"
+
+[[test]]
 name = "integration"
 path = "tests/main.rs"
 harness = false
