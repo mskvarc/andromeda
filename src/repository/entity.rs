@@ -5,15 +5,16 @@
 
 use crate::{
     core::error::AndromedaError,
-    domain::{expanded, notification::SysAttrsSnapshot},
+    domain::{expanded, notification::SysAttrsSnapshot, outbox::NewOutboxEntry},
     query::{
         compiled::CompiledEntityQuery,
         sql::{self, BindValue},
     },
+    repository::outbox::OutboxRepository,
 };
 use chrono::{DateTime, Utc};
 use serde_json::Value;
-use sqlx::{Row, postgres::PgPool};
+use sqlx::{Executor, Row, postgres::PgPool};
 use std::collections::HashMap;
 use urn::Urn;
 
@@ -97,6 +98,34 @@ impl EntityRepository {
 
     /// Insert a new entity and return its URN identifier.
     pub async fn create(&self, id: &str, type_: &[&str], scopes: &[String], entity: &Value, expires_at: Option<DateTime<Utc>>) -> Result<Urn, AndromedaError> {
+        Self::create_impl(&self.pool, id, type_, scopes, entity, expires_at).await
+    }
+
+    /// Insert a new entity atomically with outbox entries, returning the URN.
+    pub async fn create_with_outbox(
+        &self,
+        id: &str,
+        type_: &[&str],
+        scopes: &[String],
+        entity: &Value,
+        expires_at: Option<DateTime<Utc>>,
+        outbox_entries: &[NewOutboxEntry],
+    ) -> Result<Urn, AndromedaError> {
+        let mut tx = self.pool.begin().await?;
+        let urn = Self::create_impl(&mut *tx, id, type_, scopes, entity, expires_at).await?;
+        OutboxRepository::insert_batch_in_tx(&mut tx, outbox_entries).await?;
+        tx.commit().await?;
+        Ok(urn)
+    }
+
+    async fn create_impl<'e>(
+        executor: impl Executor<'e, Database = sqlx::Postgres>,
+        id: &str,
+        type_: &[&str],
+        scopes: &[String],
+        entity: &Value,
+        expires_at: Option<DateTime<Utc>>,
+    ) -> Result<Urn, AndromedaError> {
         tracing::info!("Storing entity {} with types: {:?}", id, type_);
         let location_geojson = expanded::extract_location_geojson(entity);
         let observation_space_geojson = expanded::extract_observation_space_geojson(entity);
@@ -120,7 +149,7 @@ impl EntityRepository {
         .bind(&observation_space_geojson)
         .bind(&operation_space_geojson)
         .bind(expires_at)
-        .execute(&self.pool)
+        .execute(executor)
         .await?;
 
         Ok(id.parse::<Urn>()?)
@@ -217,6 +246,19 @@ impl EntityRepository {
     /// Automatically re-extracts types, scopes, location, and geo spaces from the payload.
     /// Preserves existing expires_at unless the payload contains a new expiresAt value.
     pub async fn save(&self, id: &str, entity: &Value) -> Result<bool, AndromedaError> {
+        Self::save_impl(&self.pool, id, entity).await
+    }
+
+    /// Save an entity atomically with outbox entries.
+    pub async fn save_with_outbox(&self, id: &str, entity: &Value, outbox_entries: &[NewOutboxEntry]) -> Result<bool, AndromedaError> {
+        let mut tx = self.pool.begin().await?;
+        let updated = Self::save_impl(&mut *tx, id, entity).await?;
+        OutboxRepository::insert_batch_in_tx(&mut tx, outbox_entries).await?;
+        tx.commit().await?;
+        Ok(updated)
+    }
+
+    async fn save_impl<'e>(executor: impl Executor<'e, Database = sqlx::Postgres>, id: &str, entity: &Value) -> Result<bool, AndromedaError> {
         let types = expanded::extract_types(entity);
         let scope_paths: Vec<String> = expanded::extract_scopes(entity).iter().map(|s| sql::scope_to_ltree(s)).collect();
         let location_geojson = expanded::extract_location_geojson(entity);
@@ -243,7 +285,7 @@ impl EntityRepository {
         .bind(&observation_space_geojson)
         .bind(&operation_space_geojson)
         .bind(expires_at)
-        .execute(&self.pool)
+        .execute(executor)
         .await?;
 
         Ok(result.rows_affected() > 0)
@@ -251,7 +293,20 @@ impl EntityRepository {
 
     /// Delete an entity by its identifier. Returns `true` if a row was removed.
     pub async fn delete(&self, id: &str) -> Result<bool, AndromedaError> {
-        let result = sqlx::query("DELETE FROM entities WHERE id = $1").bind(id).execute(&self.pool).await?;
+        Self::delete_impl(&self.pool, id).await
+    }
+
+    /// Delete an entity atomically with outbox entries.
+    pub async fn delete_with_outbox(&self, id: &str, outbox_entries: &[NewOutboxEntry]) -> Result<bool, AndromedaError> {
+        let mut tx = self.pool.begin().await?;
+        let deleted = Self::delete_impl(&mut *tx, id).await?;
+        OutboxRepository::insert_batch_in_tx(&mut tx, outbox_entries).await?;
+        tx.commit().await?;
+        Ok(deleted)
+    }
+
+    async fn delete_impl<'e>(executor: impl Executor<'e, Database = sqlx::Postgres>, id: &str) -> Result<bool, AndromedaError> {
+        let result = sqlx::query("DELETE FROM entities WHERE id = $1").bind(id).execute(executor).await?;
 
         Ok(result.rows_affected() > 0)
     }

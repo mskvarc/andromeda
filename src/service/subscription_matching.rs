@@ -1,4 +1,8 @@
 //! Subscription matching and entity-level filtering (geoQ, scopeQ, q).
+//!
+//! Pure domain logic for determining whether an entity change event matches
+//! a compiled subscription. Used by the notification worker (event-driven
+//! delivery) and the subscription cache (outbox entry generation).
 
 use crate::{
     domain::{
@@ -10,13 +14,21 @@ use crate::{
 use chrono::Utc;
 use regex::Regex;
 use serde_json::Value;
-use std::{collections::HashMap, sync::Arc};
+use std::sync::Arc;
 use tracing::debug;
 
-pub fn find_matching_subscriptions(cache: &HashMap<String, Arc<CompiledSubscription>>, event: &ChangeEvent) -> Vec<Arc<CompiledSubscription>> {
-    cache.values().filter(|sub| matches_subscription(sub, event)).cloned().collect()
+/// Find matching subscriptions from an arbitrary iterator of compiled subscriptions.
+///
+/// Filters the given subscriptions against the event using [`matches_subscription`],
+/// returning only those that match.
+pub fn find_matching(subs: impl Iterator<Item = Arc<CompiledSubscription>>, event: &ChangeEvent) -> Vec<Arc<CompiledSubscription>> {
+    subs.filter(|sub| matches_subscription(sub, event)).collect()
 }
 
+/// Determine whether a compiled subscription matches a change event.
+///
+/// Checks status, expiration, trigger, entity selectors, watched attributes,
+/// and localOnly filtering (ETSI GS CIM 009 v1.9.1, clause 5.5.13).
 pub fn matches_subscription(sub: &CompiledSubscription, event: &ChangeEvent) -> bool {
     if sub.status != SubscriptionStatus::Active {
         debug!("Subscription {} skipped: status={} (expected active)", sub.id, sub.status);
@@ -106,7 +118,10 @@ pub fn matches_subscription(sub: &CompiledSubscription, event: &ChangeEvent) -> 
     true
 }
 
-/// Evaluate q, geoQ, and scopeQ filters against the fetched entity data.
+/// Evaluate q, geoQ, scopeQ, and csf filters against the fetched entity data.
+///
+/// Returns `true` if the entity passes all configured filters on the subscription.
+/// Filters that are not configured (None) are skipped.
 pub fn matches_entity_filters(sub: &CompiledSubscription, entity_data: &Value) -> bool {
     if let Some(ref expr) = sub.compiled_q
         && !q::eval::evaluate(expr, entity_data)
@@ -139,6 +154,10 @@ pub fn matches_entity_filters(sub: &CompiledSubscription, entity_data: &Value) -
     true
 }
 
+/// Evaluate a geo-spatial filter (geoQ) against entity data.
+///
+/// Supports georel values: within, contains, intersects, disjoint, equals,
+/// overlaps, and near (with maxDistance/minDistance modifiers).
 pub fn matches_geo_filter(geo_q: &Value, entity_data: &Value) -> bool {
     use geo::algorithm::{Contains, Intersects};
 
@@ -270,6 +289,10 @@ fn haversine_distance_m(a: &geo::Geometry, b: &geo::Geometry) -> f64 {
     6_371_008.8 * c
 }
 
+/// Evaluate a scope query against entity scopes.
+///
+/// Supports AND (`;`), OR (`,`), exact match, hierarchical wildcard (`/#`),
+/// and single-level wildcard (`/+`).
 pub fn matches_scope_filter(scope_q: &str, entity_data: &Value) -> bool {
     let entity_scopes = crate::service::entity::extract_scopes(entity_data);
 

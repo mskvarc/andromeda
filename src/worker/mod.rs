@@ -4,5 +4,6 @@ pub mod csr_notification;
 pub mod data_expiration;
 pub mod interval;
 pub mod notification;
+pub mod outbox_delivery;
 pub mod snapshot_expiration;
 pub mod subscription_expiration;

@@ -43,7 +43,7 @@ pub struct SysAttrsSnapshot {
 /// Trigger reason for entity notifications (ETSI GS CIM 009 clause 5.3.3).
 ///
 /// Maps NGSI-LD entity mutation operations to spec trigger reasons.
-#[derive(Clone, Debug, Display, EnumString)]
+#[derive(Clone, Copy, Debug, Display, EnumString, PartialEq, Eq)]
 #[strum(serialize_all = "camelCase")]
 pub enum TriggerReason {
     EntityCreated,

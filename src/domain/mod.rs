@@ -8,6 +8,7 @@ pub mod jsonld_context;
 pub mod name;
 pub mod ngsi_ld_urn;
 pub mod notification;
+pub mod outbox;
 pub mod registration;
 pub mod response_format;
 pub mod scope;

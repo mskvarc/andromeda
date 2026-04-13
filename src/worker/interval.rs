@@ -21,10 +21,8 @@ use std::{sync::Arc, time::Duration};
 use tracing::{debug, error, info};
 use uuid::Uuid;
 
-use super::notification::{
-    matching::{matches_geo_filter, matches_scope_filter},
-    payload::{context_for_subscription_raw, filter_entity_attributes, normalize_compacted_entity},
-};
+use super::notification::payload::{context_for_subscription_raw, filter_entity_attributes, normalize_compacted_entity};
+use crate::service::subscription_matching::{matches_geo_filter, matches_scope_filter};
 
 const INTERVAL_NOTIFICATION_CONCURRENCY: usize = 20;
 

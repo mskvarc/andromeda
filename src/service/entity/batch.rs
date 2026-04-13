@@ -226,7 +226,7 @@ impl EntityService {
             temporal_entities.push((id.clone(), effect.expanded));
             match id.parse::<Uri>() {
                 Ok(entity_uri) => {
-                    change_events.push(ChangeEvent::new(entity_uri, effect.types, trigger_reason.clone()).with_changed_attributes(effect.changed_attributes));
+                    change_events.push(ChangeEvent::new(entity_uri, effect.types, trigger_reason).with_changed_attributes(effect.changed_attributes));
                 }
                 Err(_error) => {
                     tracing::error!(entity_id = %id, event = "entity_uri_parse_failed");
@@ -267,7 +267,7 @@ impl EntityService {
             temporal_entities.push((id.clone(), expanded));
             match id.parse::<Uri>() {
                 Ok(entity_uri) => {
-                    change_events.push(ChangeEvent::new(entity_uri, effect.types, trigger_reason.clone()).with_changed_attributes(effect.changed_attributes));
+                    change_events.push(ChangeEvent::new(entity_uri, effect.types, trigger_reason).with_changed_attributes(effect.changed_attributes));
                 }
                 Err(_error) => {
                     tracing::error!(entity_id = %id, event = "entity_uri_parse_failed");

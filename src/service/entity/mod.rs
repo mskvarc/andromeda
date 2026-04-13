@@ -12,12 +12,13 @@ use crate::{
     domain::{
         entity::{Entity, EntityPatch},
         notification::{ChangeEvent, TriggerReason},
+        outbox::NewOutboxEntry,
         uri::Uri,
     },
     i18n::collation::augment_expanded_with_collation_metadata,
     jsonld::{ContextSpec, JsonLdEngine},
     repository::{entity::EntityRepository, temporal::TemporalRepository},
-    service::temporal_recorder::TemporalRecorder,
+    service::{subscription_cache::SubscriptionCache, subscription_matching::matches_entity_filters, temporal_recorder::TemporalRecorder},
 };
 use chrono::{DateTime, SecondsFormat, Utc};
 use serde_json::{Map, Value};
@@ -26,6 +27,13 @@ use std::{collections::HashSet, sync::Arc};
 use tokio::sync::{broadcast, mpsc};
 use tracing::debug;
 use urn::Urn;
+
+/// Configuration for outbox-based notification delivery (Phase 1: dual-write).
+#[derive(Clone, Debug)]
+pub struct OutboxWriteConfig {
+    /// Shared subscription cache for matching entity mutations against subscriptions.
+    pub subscription_cache: Arc<SubscriptionCache>,
+}
 
 /// Runtime tuning for batch entity execution paths.
 #[derive(Clone, Debug)]
@@ -67,10 +75,11 @@ pub struct EntityService {
     batch_concurrency: usize,
     batch_large_threshold: usize,
     batch_prepare_blocking_threshold: usize,
+    /// Outbox write configuration, present when outbox is enabled.
+    outbox: Option<OutboxWriteConfig>,
 }
 
 impl EntityService {
-    /// Create a new entity service backed by the given connection pool.
     /// Create a new entity service backed by the given connection pool.
     pub fn new(
         pool: &PgPool,
@@ -79,6 +88,7 @@ impl EntityService {
         batch_config: BatchExecutionConfig,
         batch_async_side_effects: Option<BatchSideEffectDispatcherConfig>,
         batch_activity: BatchActivityTracker,
+        outbox: Option<OutboxWriteConfig>,
     ) -> EntityService {
         let repo = EntityRepository::new(pool);
         let temporal_repo = Arc::new(TemporalRepository::new(pool));
@@ -97,6 +107,7 @@ impl EntityService {
             batch_concurrency: batch_config.concurrency.max(1),
             batch_large_threshold: batch_config.large_threshold.max(1),
             batch_prepare_blocking_threshold: batch_config.prepare_blocking_threshold.max(1),
+            outbox,
         }
     }
 
@@ -176,7 +187,23 @@ impl EntityService {
         let scopes = extract_scopes(&expanded);
 
         let expires_at = crate::domain::expanded::extract_expires_at(&expanded);
-        let urn = self.repo.create(&id, types_refs.as_ref(), &scopes, &expanded, expires_at).await?;
+
+        let urn = if self.outbox.is_some() {
+            let outbox_entries = self.build_outbox_entries(
+                &entity.id,
+                &types,
+                TriggerReason::EntityCreated,
+                &extract_attribute_keys(&expanded),
+                Some(&expanded),
+                None,
+            );
+            self.repo
+                .create_with_outbox(&id, types_refs.as_ref(), &scopes, &expanded, expires_at, &outbox_entries)
+                .await?
+        } else {
+            self.repo.create(&id, types_refs.as_ref(), &scopes, &expanded, expires_at).await?
+        };
+
         if let Err(e) = self.temporal_recorder.record_entity_attributes(&id, &expanded).await {
             tracing::warn!(error = %e, entity_id = %id, event = "temporal_recording_failed");
         }
@@ -201,16 +228,40 @@ impl EntityService {
         augment_expanded_with_collation_metadata(&mut expanded);
         validate_attribute_envelopes(&expanded)?;
         crate::domain::expanded::merge_entity(&mut existing, &expanded).map_err(AndromedaError::internal)?;
-        self.repo.save(&id, &existing).await?;
+
+        let types = self.fetch_entity_types(&id).await;
+        let changed_attrs = extract_attribute_keys(&expanded);
+        let attrs_after: HashSet<String> = extract_attribute_keys(&existing).into_iter().collect();
+        let deleted_attrs: Vec<String> = attrs_before.difference(&attrs_after).cloned().collect(); // clone: owned strings from set difference
+
+        if self.outbox.is_some() {
+            let mut outbox_entries = Vec::new();
+            for deleted_attr in &deleted_attrs {
+                outbox_entries.extend(self.build_outbox_entries(
+                    &entity_uri,
+                    &types,
+                    TriggerReason::AttributeDeleted,
+                    std::slice::from_ref(deleted_attr),
+                    Some(&existing),
+                    previous_attributes.as_ref(),
+                ));
+            }
+            outbox_entries.extend(self.build_outbox_entries(
+                &entity_uri,
+                &types,
+                TriggerReason::EntityUpdated,
+                &changed_attrs,
+                Some(&existing),
+                previous_attributes.as_ref(),
+            ));
+            self.repo.save_with_outbox(&id, &existing, &outbox_entries).await?;
+        } else {
+            self.repo.save(&id, &existing).await?;
+        }
 
         if let Err(e) = self.temporal_recorder.record_entity_attributes(&id, &expanded).await {
             tracing::warn!(error = %e, entity_id = %id, event = "temporal_recording_failed");
         }
-
-        let types = self.fetch_entity_types(&id).await;
-
-        let attrs_after: HashSet<String> = extract_attribute_keys(&existing).into_iter().collect();
-        let deleted_attrs: Vec<String> = attrs_before.difference(&attrs_after).cloned().collect(); // clone: owned strings from set difference
 
         // Record temporal tombstones for deleted attributes
         for deleted_attr in &deleted_attrs {
@@ -227,13 +278,7 @@ impl EntityService {
             );
         }
 
-        self.emit_attr_change(
-            entity_uri,
-            types,
-            TriggerReason::EntityUpdated,
-            extract_attribute_keys(&expanded),
-            previous_attributes,
-        );
+        self.emit_attr_change(entity_uri, types, TriggerReason::EntityUpdated, changed_attrs, previous_attributes);
 
         Ok(())
     }
@@ -253,13 +298,21 @@ impl EntityService {
         augment_expanded_with_collation_metadata(&mut expanded);
         validate_attribute_envelopes(&expanded)?;
 
-        self.repo.save(&id, &expanded).await?;
+        let types = self.fetch_entity_types(&id).await;
+        let changed_attrs = extract_attribute_keys(&expanded);
+
+        if self.outbox.is_some() {
+            let outbox_entries = self.build_outbox_entries(&entity_uri, &types, TriggerReason::EntityUpdated, &changed_attrs, Some(&expanded), None);
+            self.repo.save_with_outbox(&id, &expanded, &outbox_entries).await?;
+        } else {
+            self.repo.save(&id, &expanded).await?;
+        }
+
         if let Err(e) = self.temporal_recorder.record_entity_attributes(&id, &expanded).await {
             tracing::warn!(error = %e, entity_id = %id, event = "temporal_recording_failed");
         }
 
-        let types = self.fetch_entity_types(&id).await;
-        self.emit_change(ChangeEvent::new(entity_uri, types, TriggerReason::EntityUpdated).with_changed_attributes(extract_attribute_keys(&expanded)));
+        self.emit_change(ChangeEvent::new(entity_uri, types, TriggerReason::EntityUpdated).with_changed_attributes(changed_attrs));
 
         Ok(())
     }
@@ -284,12 +337,36 @@ impl EntityService {
             }
         };
 
-        if !self.repo.delete(&id).await? {
+        let attr_keys = extract_attribute_keys(&entity_snapshot);
+
+        if self.outbox.is_some() {
+            let mut outbox_entries = Vec::new();
+            if !attr_keys.is_empty() {
+                outbox_entries.extend(self.build_outbox_entries(
+                    &entity_uri,
+                    &entity_types,
+                    TriggerReason::AttributeDeleted,
+                    &attr_keys,
+                    Some(&entity_snapshot),
+                    Some(&entity_snapshot),
+                ));
+            }
+            outbox_entries.extend(self.build_outbox_entries(
+                &entity_uri,
+                &entity_types,
+                TriggerReason::EntityDeleted,
+                &[],
+                Some(&entity_snapshot),
+                Some(&entity_snapshot),
+            ));
+            if !self.repo.delete_with_outbox(&id, &outbox_entries).await? {
+                return Err(AndromedaError::entity_not_found(id));
+            }
+        } else if !self.repo.delete(&id).await? {
             return Err(AndromedaError::entity_not_found(id));
         }
 
         // Emit AttributeDeleted for each attribute so attributeDeleted subscriptions fire
-        let attr_keys = extract_attribute_keys(&entity_snapshot);
         if !attr_keys.is_empty() {
             self.emit_change(
                 ChangeEvent::new(entity_uri.clone(), entity_types.clone(), TriggerReason::AttributeDeleted) // clone: value also needed by subsequent EntityDeleted emit
@@ -315,6 +392,59 @@ impl EntityService {
     pub async fn exists(&self, id: &Urn) -> Result<bool, AndromedaError> {
         let id = id.to_string();
         self.repo.exists(&id).await
+    }
+
+    /// Build outbox entries for matching subscriptions.
+    ///
+    /// Returns an empty vec if the subscription cache is not configured.
+    /// Performs fast in-memory matching using the shared subscription cache,
+    /// then applies entity-level filters (q, geoQ, scopeQ) for subscriptions
+    /// that have them.
+    fn build_outbox_entries(
+        &self,
+        entity_id: &Uri,
+        entity_types: &[String],
+        trigger: TriggerReason,
+        changed_attrs: &[String],
+        entity_snapshot: Option<&Value>,
+        previous_snapshot: Option<&Value>,
+    ) -> Vec<NewOutboxEntry> {
+        let Some(outbox_config) = &self.outbox else {
+            return Vec::new();
+        };
+
+        let event = ChangeEvent::new(entity_id.clone(), entity_types.to_vec(), trigger) // clone: owned Uri for ChangeEvent
+            .with_changed_attributes(changed_attrs.to_vec());
+
+        let matching = outbox_config.subscription_cache.find_matching(&event);
+
+        // Apply entity-level filters for subscriptions that have q/geoQ/scopeQ
+        let matching: Vec<_> = if let Some(data) = entity_snapshot {
+            matching.into_iter().filter(|sub| matches_entity_filters(sub, data)).collect()
+        } else {
+            matching
+        };
+
+        matching
+            .into_iter()
+            .filter_map(|sub| {
+                let subscription_id: Uri = match sub.id.parse() {
+                    Ok(uri) => uri,
+                    Err(e) => {
+                        tracing::warn!(subscription_id = %sub.id, error = %e, "Skipping outbox entry: invalid subscription URI");
+                        return None;
+                    }
+                };
+                Some(NewOutboxEntry {
+                    subscription_id,
+                    entity_id: entity_id.clone(),                  // clone: owned Uri per entry
+                    trigger,                                       // Copy
+                    entity_snapshot: entity_snapshot.cloned(),     // clone: owned Value per entry
+                    previous_snapshot: previous_snapshot.cloned(), // clone: owned Value per entry
+                    changed_attrs: changed_attrs.to_vec(),
+                })
+            })
+            .collect()
     }
 }
 

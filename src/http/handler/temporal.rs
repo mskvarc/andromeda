@@ -28,9 +28,9 @@ use crate::{
     service::{
         context_source_forwarding::{CsrModeFilter, ForwardTemporalQueryRequest, ForwardingOperation, collect_warnings, merge_temporal_retrieve_results},
         entity_map::{parse_entity_map_urn, parse_iso8601_duration, parse_uri_csv},
+        subscription_matching::{matches_geo_filter, matches_scope_filter},
         temporal::{CreateOrUpdateResult, TemporalQueryResult, TemporalService},
     },
-    worker::notification::matching::{matches_geo_filter, matches_scope_filter},
 };
 use axum::{
     extract::{OriginalUri, Path},

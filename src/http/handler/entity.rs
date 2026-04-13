@@ -52,8 +52,8 @@ use crate::{
             query::EntityQueryService,
         },
         entity_map::{parse_entity_map_urn, parse_iso8601_duration, parse_uri_csv},
+        subscription_matching::{matches_geo_filter, matches_scope_filter},
     },
-    worker::notification::matching::{matches_geo_filter, matches_scope_filter},
 };
 use axum::{
     Json,

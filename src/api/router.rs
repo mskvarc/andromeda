@@ -23,15 +23,17 @@ use crate::{
         csource_subscription::CsourceSubscriptionRepository,
         entity::EntityRepository,
         jsonld_context::JsonLdContextRepository,
+        outbox::OutboxRepository,
         subscription::SubscriptionRepository,
         temporal::TemporalRepository,
     },
     service::{
         context_source_registration::ContextSourceRegistrationService,
         csource_subscription::CsourceSubscriptionService,
-        entity::{BatchExecutionConfig, BatchSideEffectDispatcherConfig, EntityService},
+        entity::{BatchExecutionConfig, BatchSideEffectDispatcherConfig, EntityService, OutboxWriteConfig},
         jsonld_context::JsonLdContextService,
         subscription::SubscriptionService,
+        subscription_cache::SubscriptionCache,
         temporal::TemporalService,
     },
     tenancy::{
@@ -47,6 +49,7 @@ use crate::{
         data_expiration::DataExpirationWorker,
         interval::IntervalWorker,
         notification::NotificationWorker,
+        outbox_delivery::OutboxDeliveryWorker,
         snapshot_expiration::SnapshotExpirationWorker,
         subscription_expiration::SubscriptionExpirationWorker,
     },
@@ -246,6 +249,11 @@ pub async fn build_tenant_state(
     } else {
         None
     };
+    let subscription_cache = Arc::new(SubscriptionCache::new());
+    if let Err(e) = subscription_cache.reload(&SubscriptionRepository::new(&pool)).await {
+        tracing::error!("Failed to load subscription cache: {}", e);
+    }
+
     let entity_service = Arc::new(EntityService::new(
         &pool,
         engine.clone(),
@@ -258,6 +266,13 @@ pub async fn build_tenant_state(
         },
         batch_side_effects,
         batch_activity.clone(),
+        if config.outbox.enabled {
+            Some(OutboxWriteConfig {
+                subscription_cache: Arc::clone(&subscription_cache),
+            })
+        } else {
+            None
+        },
     ));
     let temporal_service = Arc::new(TemporalService::new(&pool, engine.clone(), config.temporal.default_last_n));
     let context_service = Arc::new(JsonLdContextService::new(&pool, engine.clone()));
@@ -291,9 +306,15 @@ pub async fn build_tenant_state(
             engine: engine.clone(),
             transport: transport.clone(),
             tenant: tenant.clone(),
+            subscription_cache: Arc::clone(&subscription_cache),
         },
     );
     worker_handles.push(tokio::spawn(notification_worker.run()));
+
+    if config.outbox.enabled {
+        let outbox_worker = OutboxDeliveryWorker::new(OutboxRepository::new(&pool), &config.outbox);
+        worker_handles.push(tokio::spawn(outbox_worker.run()));
+    }
 
     let expiration_interval = config.temporal.expiration_check_interval_secs;
     let subscription_expiration_worker = SubscriptionExpirationWorker::new(

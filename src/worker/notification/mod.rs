@@ -1,35 +1,28 @@
-pub(crate) mod matching;
 pub(crate) mod payload;
 
 use crate::{
     domain::{
-        notification::{ChangeEvent, CompiledSelector, CompiledSubscription, Notification, NotificationType, SubscriptionChange, TriggerReason},
-        subscription::{EntitySelector, Subscription, SubscriptionStatus},
+        notification::{ChangeEvent, CompiledSubscription, Notification, NotificationType, SubscriptionChange, TriggerReason},
         uri::{NGSI_LD_URN_NID, Uri},
     },
     jsonld::{JsonLdEngine, vocab},
-    query::q,
     renderer::SysAttrsInclusion,
     repository::{entity::EntityRepository, subscription::SubscriptionRepository, subscription_store::SubscriptionStore},
-    service::entity::{inject_sys_attrs, query::EntityQueryService},
-    transport::{
-        dispatch::{DeliveryResult, TransportDispatcher, build_delivery_request},
-        endpoint::parse_endpoint_transport,
+    service::{
+        entity::{inject_sys_attrs, query::EntityQueryService},
+        subscription_cache::SubscriptionCache,
     },
+    transport::dispatch::{DeliveryResult, TransportDispatcher, build_delivery_request},
 };
 use chrono::{SecondsFormat, Utc};
 use futures::{StreamExt, stream};
-use regex::Regex;
 use serde_json::Value;
-use std::{
-    collections::{HashMap, HashSet},
-    sync::Arc,
-};
-use tokio::sync::{RwLock, broadcast};
+use std::sync::Arc;
+use tokio::sync::broadcast;
 use tracing::{debug, error, info};
 use uuid::Uuid;
 
-use matching::{find_matching_subscriptions, matches_entity_filters};
+use crate::service::subscription_matching::matches_entity_filters;
 use payload::{NotificationBuildParams, NotificationCompactionCache, build_notification_data};
 
 const NOTIFICATION_CONCURRENCY: usize = 20;
@@ -40,7 +33,7 @@ pub struct NotificationWorker {
     sub_repo: SubscriptionRepository,
     entity_repo: EntityRepository,
     entity_query: EntityQueryService,
-    cache: Arc<RwLock<HashMap<String, Arc<CompiledSubscription>>>>,
+    cache: Arc<SubscriptionCache>,
     transport: Arc<TransportDispatcher>,
     engine: JsonLdEngine,
     tenant: crate::tenancy::types::TenantRef,
@@ -53,17 +46,22 @@ pub struct NotificationWorkerDeps {
     pub engine: JsonLdEngine,
     pub transport: Arc<TransportDispatcher>,
     pub tenant: crate::tenancy::types::TenantRef,
+    pub subscription_cache: Arc<SubscriptionCache>,
 }
 
 impl NotificationWorker {
-    pub fn new(change_rx: broadcast::Receiver<ChangeEvent>, sub_change_rx: broadcast::Receiver<SubscriptionChange>, deps: NotificationWorkerDeps) -> Self {
-        Self {
+    pub fn new(
+        change_rx: broadcast::Receiver<ChangeEvent>,
+        sub_change_rx: broadcast::Receiver<SubscriptionChange>,
+        deps: NotificationWorkerDeps,
+    ) -> NotificationWorker {
+        NotificationWorker {
             change_rx,
             sub_change_rx,
             sub_repo: deps.sub_repo,
             entity_repo: deps.entity_repo,
             entity_query: deps.entity_query,
-            cache: Arc::new(RwLock::new(HashMap::new())),
+            cache: deps.subscription_cache,
             transport: deps.transport,
             engine: deps.engine,
             tenant: deps.tenant,
@@ -77,7 +75,7 @@ impl NotificationWorker {
             error!("Failed to load subscriptions into cache: {}", e);
         }
 
-        let cache_count = self.cache.read().await.len();
+        let cache_count = self.cache.len();
         info!("NotificationWorker loaded {} active subscriptions", cache_count);
 
         loop {
@@ -118,44 +116,11 @@ impl NotificationWorker {
     }
 
     async fn reload_cache(&self) -> Result<(), crate::core::error::AndromedaError> {
-        let subscriptions = self.sub_repo.list_active().await?;
-        let mut cache = self.cache.write().await;
-        cache.clear();
-        for sub in subscriptions {
-            if let Some(compiled) = compile_subscription(&sub) {
-                cache.insert(sub.id.clone(), Arc::new(compiled));
-            }
-        }
-        Ok(())
+        self.cache.reload(&self.sub_repo).await
     }
 
     async fn handle_subscription_change(&self, change: SubscriptionChange) {
-        match change {
-            SubscriptionChange::Upserted(id) => {
-                let id_str = id.to_string(); // convert once: repo and cache both need &str / String key
-                match self.sub_repo.get(&id_str).await {
-                    Ok(Some(sub)) => {
-                        let mut cache = self.cache.write().await;
-                        if sub.status == SubscriptionStatus::Active {
-                            if let Some(compiled) = compile_subscription(&sub) {
-                                cache.insert(id_str, Arc::new(compiled));
-                            }
-                        } else {
-                            cache.remove(&id_str);
-                        }
-                    }
-                    Ok(None) => {
-                        self.cache.write().await.remove(&id_str);
-                    }
-                    Err(e) => {
-                        debug!("Failed to load subscription {} for cache update: {}", id_str, e);
-                    }
-                }
-            }
-            SubscriptionChange::Deleted(id) => {
-                self.cache.write().await.remove(&id.to_string()); // convert: cache key is String
-            }
-        }
+        self.cache.handle_change(&change, &self.sub_repo).await;
     }
 
     async fn handle_change_event(&self, event: ChangeEvent) {
@@ -163,10 +128,7 @@ impl NotificationWorker {
             "Change event received: id={}, trigger={}, types={:?}, attrs={:?}",
             event.entity_id, event.trigger_reason, event.entity_types, event.changed_attributes
         );
-        let matching = {
-            let cache = self.cache.read().await;
-            find_matching_subscriptions(&cache, &event)
-        };
+        let matching = self.cache.find_matching(&event);
 
         if matching.is_empty() {
             debug!("No matching subscriptions for event {} (trigger={})", event.entity_id, event.trigger_reason);
@@ -387,118 +349,21 @@ impl NotificationWorker {
     }
 }
 
-fn compile_subscription(sub: &Subscription) -> Option<CompiledSubscription> {
-    let selectors: Vec<CompiledSelector> = sub
-        .entities
-        .as_ref()
-        .map(|entities| entities.iter().filter_map(compile_selector).collect())
-        .unwrap_or_default();
-
-    let triggers: Vec<String> = sub.notification_trigger.as_ref().map_or_else(
-        || TriggerReason::defaults().iter().map(|s| String::from(*s)).collect(),
-        |t| t.iter().map(|nt| nt.to_string()).collect(),
-    );
-
-    let watched_attrs = sub.watched_attributes.as_ref().map(|attrs| attrs.iter().cloned().collect::<HashSet<String>>());
-
-    let compiled_q = sub.q.as_ref().and_then(|q_str| match q::parser::parse(q_str) {
-        Ok(expr) => Some(expr),
-        Err(e) => {
-            debug!("Failed to parse q filter '{}' for subscription {}: {}", q_str, sub.id, e);
-            None
-        }
-    });
-
-    let compiled_csf = sub.csf.as_ref().and_then(|csf_str| match q::parser::parse(csf_str) {
-        Ok(expr) => Some(expr),
-        Err(e) => {
-            debug!("Failed to parse csf filter '{}' for subscription {}: {}", csf_str, sub.id, e);
-            None
-        }
-    });
-
-    let endpoint_transport = match parse_endpoint_transport(&sub.notification.endpoint.uri, sub.notification.endpoint.notifier_info.as_deref()) {
-        Ok(t) => t,
-        Err(e) => {
-            debug!("Failed to parse endpoint transport for subscription {}: {}", sub.id, e);
-            return None;
-        }
-    };
-
-    Some(CompiledSubscription {
-        id: sub.id.clone(),
-        status: sub.status,
-        endpoint_uri: sub.notification.endpoint.uri.clone(),
-        endpoint_accept: sub.notification.endpoint.accept.clone(),
-        endpoint_receiver_info: sub.notification.endpoint.receiver_info.clone(),
-        endpoint_transport,
-        triggers,
-        watched_attrs,
-        selectors,
-        throttling_secs: sub.throttling,
-        time_interval_secs: sub.time_interval,
-        notification_attributes: sub.notification.attributes.clone(),
-        notification_format: sub.notification.format.map(|f| f.to_string()),
-        notification_sys_attrs: if sub.notification.sys_attrs.unwrap_or(false) {
-            SysAttrsInclusion::Include
-        } else {
-            SysAttrsInclusion::Strip
-        },
-        notification_show_changes: sub.notification.show_changes.unwrap_or(false),
-        jsonld_context: sub.jsonld_context.clone(),
-        expires_at: sub.expires_at,
-        compiled_q,
-        geo_q: sub.geo_q.clone(),
-        scope_q: sub.scope_q.clone(),
-        dataset_id: sub.dataset_id.clone(),
-        notification_join: sub.notification.join.map(|j| j.to_string()),
-        notification_join_level: sub.notification.join_level.unwrap_or(1).min(5),
-        compiled_csf,
-        local_only: sub.local_only.unwrap_or(false),
-    })
-}
-
-fn compile_selector(selector: &EntitySelector) -> Option<CompiledSelector> {
-    let id_pattern = selector.id_pattern.as_ref().and_then(|p| match Regex::new(p) {
-        Ok(r) => Some(r),
-        Err(e) => {
-            debug!("Invalid idPattern regex '{}': {}", p, e);
-            None
-        }
-    });
-
-    let type_pattern = if selector.type_.contains('|') || (selector.type_.contains('(') && selector.type_.contains(')')) {
-        let raw = selector.type_.trim();
-        let inner = raw.trim_start_matches('(').trim_end_matches(')');
-        let alternatives: Vec<&str> = inner.split('|').collect();
-        let pattern_parts: Vec<String> = alternatives.iter().map(|alt| regex::escape(alt.trim())).collect();
-        let regex_str = format!("({})", pattern_parts.join("|"));
-        match Regex::new(&regex_str) {
-            Ok(r) => Some(r),
-            Err(e) => {
-                debug!("Invalid type regex pattern '{}': {}", selector.type_, e);
-                None
-            }
-        }
-    } else {
-        None
-    };
-
-    Some(CompiledSelector {
-        id: selector.id.clone(),
-        id_pattern,
-        type_: selector.type_.clone(),
-        type_pattern,
-    })
-}
-
 #[cfg(test)]
 mod tests {
     #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::*;
-    use crate::{domain::notification::ChangeOrigin, query::q::parser, transport::endpoint::EndpointTransport};
-    use matching::matches_subscription;
+    use crate::{
+        domain::{
+            notification::{ChangeOrigin, CompiledSelector},
+            subscription::SubscriptionStatus,
+        },
+        query::q::parser,
+        service::subscription_matching::matches_subscription,
+        transport::endpoint::EndpointTransport,
+    };
     use payload::filter_entity_attributes;
+    use regex::Regex;
 
     fn make_event(entity_id: &str, types: Vec<&str>, trigger: TriggerReason, attrs: Vec<&str>) -> ChangeEvent {
         ChangeEvent {

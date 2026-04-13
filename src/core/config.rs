@@ -91,6 +91,10 @@ pub struct Configuration {
     #[config(nested)]
     #[config(layer_attr(clap(flatten)))]
     pub performance: PerformanceConfig,
+
+    #[config(nested)]
+    #[config(layer_attr(clap(flatten)))]
+    pub outbox: OutboxConfig,
 }
 
 #[derive(Config, Debug, Clone)]
@@ -186,6 +190,53 @@ pub struct PerformanceConfig {
     #[config(default = 67_108_864)]
     #[config(layer_attr(arg(long = "max-request-body-bytes")))]
     pub max_request_body_bytes: usize,
+}
+
+#[derive(Config, Debug, Clone)]
+#[config(layer_attr(derive(Args)))]
+pub struct OutboxConfig {
+    /// Enable writing outbox rows during entity mutations.
+    #[config(default = false)]
+    #[config(layer_attr(arg(skip)))]
+    pub enabled: bool,
+
+    /// Maximum retry attempts before dead-lettering.
+    #[config(default = 5)]
+    #[config(layer_attr(arg(skip)))]
+    pub max_attempts: i32,
+
+    /// Base backoff in seconds for exponential retry.
+    #[config(default = 5)]
+    #[config(layer_attr(arg(skip)))]
+    pub base_backoff_secs: u64,
+
+    /// Poll interval in seconds for the outbox delivery worker.
+    #[config(default = 1)]
+    #[config(layer_attr(arg(skip)))]
+    pub poll_interval_secs: u64,
+
+    /// Number of entries to claim per poll cycle.
+    #[config(default = 50)]
+    #[config(layer_attr(arg(skip)))]
+    pub batch_size: i32,
+
+    /// Delete delivered entries older than this many seconds.
+    #[config(default = 86400)]
+    #[config(layer_attr(arg(skip)))]
+    pub cleanup_after_secs: u64,
+}
+
+impl Default for OutboxConfig {
+    fn default() -> OutboxConfig {
+        OutboxConfig {
+            enabled: false,
+            max_attempts: 5,
+            base_backoff_secs: 5,
+            poll_interval_secs: 1,
+            batch_size: 50,
+            cleanup_after_secs: 86400,
+        }
+    }
 }
 
 impl Default for PerformanceConfig {
@@ -291,6 +342,7 @@ mod tests {
                 source_identity: "urn:ngsi-ld:ContextSourceIdentity:andromeda".to_string(),
             },
             performance: PerformanceConfig::default(),
+            outbox: OutboxConfig::default(),
         }
     }
 
@@ -395,5 +447,16 @@ mod tests {
 
         unsafe { std::env::remove_var("ANDROMEDA_PORT") };
         pretty_assertions::assert_eq!(config.andromeda.port, 7777);
+    }
+
+    #[test]
+    fn outbox_config_default_values() {
+        let config = OutboxConfig::default();
+        assert!(!config.enabled);
+        assert_eq!(config.max_attempts, 5);
+        assert_eq!(config.base_backoff_secs, 5);
+        assert_eq!(config.poll_interval_secs, 1);
+        assert_eq!(config.batch_size, 50);
+        assert_eq!(config.cleanup_after_secs, 86400);
     }
 }
