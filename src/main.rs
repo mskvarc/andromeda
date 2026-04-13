@@ -14,8 +14,12 @@ mod transport;
 mod worker;
 
 use core::{config::Configuration, error::AndromedaError};
+use mimalloc::MiMalloc;
 use tracing::{Level, info};
 use tracing_subscriber::FmtSubscriber;
+
+#[global_allocator]
+static GLOBAL: MiMalloc = MiMalloc;
 
 #[tokio::main]
 async fn main() -> Result<(), AndromedaError> {
