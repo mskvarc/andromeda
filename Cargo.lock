@@ -122,6 +122,7 @@ dependencies = [
  "strum",
  "thiserror 2.0.18",
  "tokio",
+ "tower-helmet",
  "tower-http",
  "tower-layer",
  "tracing",
@@ -4679,6 +4680,20 @@ dependencies = [
  "tower-layer",
  "tower-service",
  "tracing",
+]
+
+[[package]]
+name = "tower-helmet"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fa76b2c088863640880cfda043346286c08b59a393259227d07010839be77ccc"
+dependencies = [
+ "futures",
+ "http",
+ "lazy_static",
+ "pin-project-lite",
+ "tower-layer",
+ "tower-service",
 ]
 
 [[package]]

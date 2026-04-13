@@ -65,6 +65,7 @@ use axum_health::{Health, database::DatabaseHealthIndicator};
 use sqlx::postgres::PgPoolOptions;
 use std::sync::Arc;
 use tokio::task::JoinHandle;
+use tower_helmet::HelmetLayer;
 use tracing::info;
 
 pub async fn create_router(config: Arc<Configuration>) -> Result<Router, AndromedaError> {
@@ -88,6 +89,7 @@ pub async fn create_router(config: Arc<Configuration>) -> Result<Router, Androme
         .route("/favicon.ico", get(favicon))
         .nest("/ngsi-ld/v1", build_v1_router().merge(health_router))
         .layer(DefaultBodyLimit::max(max_body))
+        .layer(HelmetLayer::with_defaults())
         .with_state(app_state);
     Ok(router)
 }

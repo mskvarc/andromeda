@@ -63,6 +63,7 @@ static-regular-grammar = "2.0.2"
 strum = { version = "0.28.0", features = ["derive"] }
 thiserror = "2.0.18"
 tokio = { version = "1.51.1", features = ["full"] }
+tower-helmet = "0.3.0"
 tower-http = { version = "0.6.8", features = ["normalize-path"] }
 tower-layer = "0.3.3"
 tracing = "0.1.44"
