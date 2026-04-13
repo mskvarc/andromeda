@@ -1,266 +1,680 @@
 #![allow(clippy::expect_used, clippy::unwrap_used)]
-//! Distributed entity query tests: entityMap with forwarded IDs and splitEntities filtering.
+//! Distributed entity query tests.
+//!
+//! Tests querying entities across context sources with different registration modes,
+//! entityMap, and splitEntities functionality.
 
-use std::{
-    collections::HashMap,
-    sync::{
-        Arc,
-        atomic::{AtomicUsize, Ordering},
-    },
-};
-
-use axum::{extract::Request, response::IntoResponse};
-use reqwest::{Client, Method, StatusCode, header::HeaderMap};
+use reqwest::{Method, StatusCode};
 use serde_json::{Value, json};
 use serial_test::serial;
-use sqlx::PgPool;
-use tokio::sync::RwLock;
+
+use crate::helpers::{
+    BASE_URL,
+    MockServer,
+    clean_database,
+    client,
+    create_entity,
+    create_entity_local,
+    create_registration,
+    delete_entity,
+    delete_registration,
+    jsonld_link_value,
+    query_entities,
+    query_entities_post,
+    unique_id,
+    vehicle_entity,
+    vehicle_entity_different_ld,
+    vehicle_entity_second,
+    vehicle_entity_second_ld,
+    vehicle_entity_speed_only,
+    vehicle_entity_with_scope,
+    vehicle_entity_with_speed,
+    vehicle_registration,
+    vehicle_registration_speed_property,
+    vehicle_registration_with_ops,
+};
 use urlencoding::encode;
-use uuid::Uuid;
-
-const BASE_URL: &str = "http://127.0.0.1:1056/ngsi-ld/v1";
-const DATABASE_URL: &str = "postgres://postgres:postgres@127.0.0.1:5432/postgres";
-const TEST_SUITE_CONTEXT: &str = "https://forge.etsi.org/rep/cim/ngsi-ld-test-suite/-/raw/develop/resources/jsonld-contexts/ngsi-ld-test-suite.jsonld";
-
-const TRUNCATE_ALL: &str = "\
-    TRUNCATE \
-        entities, \
-        jsonld_contexts, \
-        temporal_entity_attributes, \
-        attribute_history, \
-        subscriptions, \
-        context_source_registrations, \
-        snapshots \
-    CASCADE";
 
 // ---------------------------------------------------------------------------
-// Mock context source server
+// Auxiliary mode tests
 // ---------------------------------------------------------------------------
 
-struct StubEntry {
-    status_code: u16,
-    body: Option<String>,
-    content_type: String,
-    count: AtomicUsize,
-}
+/// Query entities with auxiliary mode merges local and remote attributes.
+#[tokio::test]
+#[serial]
+async fn distop_entity_query_auxiliary_merges_local_and_remote() {
+    clean_database().await;
+    let c = client();
+    let mut mock = MockServer::start().await;
 
-struct MockState {
-    stubs: HashMap<(String, String), StubEntry>,
-    total_count: AtomicUsize,
-}
+    let entity_id = unique_id("urn:ngsi-ld:Vehicle:query-aux");
+    let reg_id = unique_id("urn:ngsi-ld:Registration:query-aux");
 
-struct MockServer {
-    port: u16,
-    state: Arc<RwLock<MockState>>,
-    shutdown: Option<tokio::sync::oneshot::Sender<()>>,
-}
+    // Create local entity (brandName=BMW, isParked2)
+    let entity = vehicle_entity_second_ld(&entity_id);
+    let (status, _) = create_entity_local(&c, &entity).await;
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
-impl MockServer {
-    async fn start() -> Self {
-        let state = Arc::new(RwLock::new(MockState {
-            stubs: HashMap::new(),
-            total_count: AtomicUsize::new(0),
-        }));
+    // Create auxiliary registration
+    let reg = vehicle_registration(&reg_id, Some(&entity_id), &mock.url(""), Some("auxiliary"));
+    let (status, _) = create_registration(&c, &reg).await;
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
-        let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
+    // Mock returns entity with brandName=Mercedes, isParked
+    let mock_entity = vehicle_entity(&entity_id);
+    let mock_array = Value::Array(vec![mock_entity]);
+    mock.set_stub_with_body(Method::GET, "/ngsi-ld/v1/entities", 200, &mock_array).await;
 
-        let handler_state = state.clone();
-        let app = axum::Router::new().fallback(move |req: Request| {
-            let state = handler_state.clone();
-            async move {
-                let method = req.method().to_string();
-                let path = req.uri().path().to_string();
+    // Query entities
+    let (status, _, body) = query_entities(&c, "type=Vehicle", &jsonld_link_value()).await;
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
 
-                let s = state.read().await;
-                s.total_count.fetch_add(1, Ordering::Relaxed);
+    let entries = body.as_array().expect("response should be array");
+    assert!(!entries.is_empty(), "should return at least one entity");
 
-                let key = (method, path);
-                if let Some(entry) = s.stubs.get(&key) {
-                    entry.count.fetch_add(1, Ordering::Relaxed);
-                    let status = axum::http::StatusCode::from_u16(entry.status_code).unwrap_or(axum::http::StatusCode::INTERNAL_SERVER_ERROR);
-                    if let Some(ref body) = entry.body {
-                        let ct = entry.content_type.clone();
-                        (status, [(axum::http::header::CONTENT_TYPE, ct)], body.clone()).into_response()
-                    } else {
-                        status.into_response()
-                    }
-                } else {
-                    axum::http::StatusCode::INTERNAL_SERVER_ERROR.into_response()
-                }
-            }
-        });
+    let first = &entries[0];
+    let obj = first.as_object().unwrap();
+    let keys: Vec<_> = obj.keys().collect();
+    assert!(obj.contains_key("brandName"), "expected brandName in {keys:?}");
+    assert!(obj.contains_key("isParked"), "expected isParked in {keys:?}");
+    assert!(obj.contains_key("isParked2"), "expected isParked2 in {keys:?}");
 
-        let listener = tokio::net::TcpListener::bind("0.0.0.0:0").await.unwrap();
-        let port = listener.local_addr().unwrap().port();
-
-        tokio::spawn(async move {
-            axum::serve(listener, app)
-                .with_graceful_shutdown(async {
-                    let _ = shutdown_rx.await;
-                })
-                .await
-                .unwrap();
-        });
-
-        Self {
-            port,
-            state,
-            shutdown: Some(shutdown_tx),
-        }
-    }
-
-    async fn set_stub_with_body(&self, method: Method, path: &str, status_code: u16, body: &Value) {
-        let mut s = self.state.write().await;
-        s.stubs.insert(
-            (method.to_string(), path.to_string()),
-            StubEntry {
-                status_code,
-                body: Some(serde_json::to_string(body).unwrap()),
-                content_type: "application/ld+json".to_string(),
-                count: AtomicUsize::new(0),
-            },
-        );
-    }
-
-    fn url(&self, path: &str) -> String {
-        format!("http://host.docker.internal:{}{path}", self.port)
-    }
-
-    fn stop(&mut self) {
-        if let Some(tx) = self.shutdown.take() {
-            let _ = tx.send(());
-        }
-    }
+    delete_entity(&c, &entity_id).await;
+    delete_registration(&c, &reg_id).await;
+    mock.stop();
 }
 
 // ---------------------------------------------------------------------------
-// Helpers
+// Exclusive mode tests
 // ---------------------------------------------------------------------------
 
-fn client() -> Client {
-    Client::new()
+/// Query entities with exclusive mode returns remote attributes.
+#[tokio::test]
+#[serial]
+async fn distop_entity_query_exclusive_returns_remote() {
+    clean_database().await;
+    let c = client();
+    let mut mock = MockServer::start().await;
+
+    let entity_id = unique_id("urn:ngsi-ld:Vehicle:query-exc");
+    let reg_id = unique_id("urn:ngsi-ld:Registration:query-exc");
+
+    // Create local entity
+    let entity = vehicle_entity(&entity_id);
+    let (status, _) = create_entity_local(&c, &entity).await;
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
+
+    // Create exclusive registration with queryEntity operation
+    let reg = vehicle_registration_speed_property(&reg_id, &entity_id, &mock.url("/broker1"), Some("exclusive"), Some(&["queryEntity"]));
+    let (status, _) = create_registration(&c, &reg).await;
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
+
+    // Mock returns entity with speed
+    let mock_entity = vehicle_entity_speed_only(&entity_id);
+    let mock_array = Value::Array(vec![mock_entity]);
+    mock.set_stub_with_body(Method::GET, "/broker1/ngsi-ld/v1/entities", 200, &mock_array).await;
+
+    // Query entities
+    let (status, _, body) = query_entities(&c, "type=Vehicle", &jsonld_link_value()).await;
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
+
+    let entries = body.as_array().expect("response should be array");
+    let entity = entries.iter().find(|e| e["id"] == entity_id).unwrap();
+    let obj = entity.as_object().unwrap();
+    assert!(
+        obj.contains_key("speed"),
+        "expected speed from exclusive source, got keys: {:?}",
+        obj.keys().collect::<Vec<_>>()
+    );
+
+    let count = mock.get_count(Method::GET, "/broker1/ngsi-ld/v1/entities").await;
+    assert!(count > 0, "mock should have been called");
+
+    delete_entity(&c, &entity_id).await;
+    delete_registration(&c, &reg_id).await;
+    mock.stop();
 }
 
-fn unique_id(prefix: &str) -> String {
-    format!("{prefix}:{}", Uuid::new_v4())
+/// Exclusive with queryEntity operation forwards correctly.
+#[tokio::test]
+#[serial]
+async fn distop_entity_query_exclusive_with_query_entity_op() {
+    clean_database().await;
+    let c = client();
+    let mut mock = MockServer::start().await;
+
+    let entity_id = unique_id("urn:ngsi-ld:Vehicle:query-exc-op1");
+    let reg_id = unique_id("urn:ngsi-ld:Registration:query-exc-op1");
+
+    // Create local entity
+    let entity = vehicle_entity(&entity_id);
+    let (status, _) = create_entity_local(&c, &entity).await;
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
+
+    // Create exclusive registration with queryEntity operation
+    let reg = vehicle_registration_speed_property(&reg_id, &entity_id, &mock.url("/broker1"), Some("exclusive"), Some(&["queryEntity"]));
+    let (status, _) = create_registration(&c, &reg).await;
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
+
+    // Mock returns entity with speed
+    let mock_entity = vehicle_entity_speed_only(&entity_id);
+    let mock_array = Value::Array(vec![mock_entity]);
+    mock.set_stub_with_body(Method::GET, "/broker1/ngsi-ld/v1/entities", 200, &mock_array).await;
+
+    // Query entities
+    let (status, _, body) = query_entities(&c, "type=Vehicle", &jsonld_link_value()).await;
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
+
+    let entries = body.as_array().expect("response should be array");
+    assert!(entries.iter().any(|e| e["id"] == entity_id));
+
+    delete_entity(&c, &entity_id).await;
+    delete_registration(&c, &reg_id).await;
+    mock.stop();
 }
 
-fn jsonld_link_value() -> String {
-    format!("<{TEST_SUITE_CONTEXT}>; rel=\"http://www.w3.org/ns/json-ld#context\"; type=\"application/ld+json\"")
-}
+/// Exclusive with queryBatch operation forwards correctly.
+#[tokio::test]
+#[serial]
+async fn distop_entity_query_exclusive_with_query_batch_op() {
+    clean_database().await;
+    let c = client();
+    let mut mock = MockServer::start().await;
 
-async fn clean_database() {
-    let pool = PgPool::connect(DATABASE_URL).await.expect("failed to connect to database for cleanup");
-    sqlx::query(TRUNCATE_ALL).execute(&pool).await.expect("failed to truncate tables");
-    pool.close().await;
-}
+    let entity_id = unique_id("urn:ngsi-ld:Vehicle:query-exc-op2");
+    let reg_id = unique_id("urn:ngsi-ld:Registration:query-exc-op2");
 
-fn vehicle_entity(id: &str) -> Value {
-    json!({
-        "id": id,
-        "type": "Vehicle",
-        "speed": {
-            "type": "Property",
-            "value": 50
-        },
-        "@context": TEST_SUITE_CONTEXT
-    })
-}
+    // Create local entity
+    let entity = vehicle_entity(&entity_id);
+    let (status, _) = create_entity_local(&c, &entity).await;
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
-fn vehicle_entity_with_speed(id: &str, speed: i64) -> Value {
-    json!({
-        "id": id,
-        "type": "Vehicle",
-        "speed": {
-            "type": "Property",
-            "value": speed
-        },
-        "@context": TEST_SUITE_CONTEXT
-    })
-}
+    // Create exclusive registration with queryBatch operation
+    let reg = vehicle_registration_speed_property(&reg_id, &entity_id, &mock.url("/broker1"), Some("exclusive"), Some(&["queryBatch"]));
+    let (status, _) = create_registration(&c, &reg).await;
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
-fn vehicle_entity_with_scope(id: &str, scope: &str) -> Value {
-    json!({
-        "id": id,
-        "type": "Vehicle",
-        "speed": {
-            "type": "Property",
-            "value": 50
-        },
-        "scope": scope,
-        "@context": TEST_SUITE_CONTEXT
-    })
-}
+    // The broker always forwards queries as GET /entities
+    let mock_entity = vehicle_entity_speed_only(&entity_id);
+    let mock_array = Value::Array(vec![mock_entity]);
+    mock.set_stub_with_body(Method::GET, "/broker1/ngsi-ld/v1/entities", 200, &mock_array).await;
 
-fn vehicle_registration(reg_id: &str, endpoint: &str, mode: &str) -> Value {
-    json!({
-        "id": reg_id,
-        "type": "ContextSourceRegistration",
-        "information": [
-            {
-                "entities": [
-                    {"type": "Vehicle"}
-                ]
-            }
-        ],
-        "endpoint": endpoint,
-        "mode": mode,
-        "operations": ["queryEntity"],
-        "@context": TEST_SUITE_CONTEXT
-    })
-}
+    // Query entities
+    let (status, _, body) = query_entities(&c, "type=Vehicle", &jsonld_link_value()).await;
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
 
-async fn create_entity(client: &Client, entity: &Value) -> (StatusCode, Option<String>) {
-    let resp = client
-        .post(format!("{BASE_URL}/entities"))
-        .header("Content-Type", "application/ld+json")
-        .json(entity)
-        .send()
-        .await
-        .expect("create_entity request failed");
-    let status = resp.status();
-    let location = resp.headers().get("location").map(|v| v.to_str().expect("non-ascii location").to_owned());
-    (status, location)
-}
+    let entries = body.as_array().expect("response should be array");
+    assert!(entries.iter().any(|e| e["id"] == entity_id));
 
-async fn create_registration(client: &Client, reg: &Value) -> (StatusCode, Option<String>) {
-    let resp = client
-        .post(format!("{BASE_URL}/csourceRegistrations"))
-        .header("Content-Type", "application/ld+json")
-        .json(reg)
-        .send()
-        .await
-        .expect("create_registration request failed");
-    let status = resp.status();
-    let location = resp.headers().get("location").map(|v| v.to_str().expect("non-ascii location").to_owned());
-    (status, location)
-}
-
-async fn query_entities(client: &Client, query: &str, link: &str) -> (StatusCode, HeaderMap, Value) {
-    let sep = if query.is_empty() { "" } else { "?" };
-    let resp = client
-        .get(format!("{BASE_URL}/entities{sep}{query}"))
-        .header("Accept", "application/json")
-        .header("Link", link)
-        .send()
-        .await
-        .expect("query_entities request failed");
-    let status = resp.status();
-    let headers = resp.headers().clone();
-    let body: Value = resp.json().await.unwrap_or_default();
-    (status, headers, body)
-}
-
-async fn delete_entity(client: &Client, id: &str) {
-    let _ = client.delete(format!("{BASE_URL}/entities/{}", encode(id))).send().await;
-}
-
-async fn delete_registration(client: &Client, id: &str) {
-    let _ = client.delete(format!("{BASE_URL}/csourceRegistrations/{}", encode(id))).send().await;
+    delete_entity(&c, &entity_id).await;
+    delete_registration(&c, &reg_id).await;
+    mock.stop();
 }
 
 // ---------------------------------------------------------------------------
-// Tests
+// Redirect mode tests
+// ---------------------------------------------------------------------------
+
+/// Query entities with redirect mode returns entity from remote.
+#[tokio::test]
+#[serial]
+async fn distop_entity_query_redirect_returns_remote() {
+    clean_database().await;
+    let c = client();
+    let mut mock = MockServer::start().await;
+
+    let entity_id = unique_id("urn:ngsi-ld:Vehicle:query-red");
+    let reg_id = unique_id("urn:ngsi-ld:Registration:query-red");
+
+    // Create redirect registration
+    let reg = vehicle_registration(&reg_id, Some(&entity_id), &mock.url("/broker1"), Some("redirect"));
+    let (status, _) = create_registration(&c, &reg).await;
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
+
+    // Mock returns entity
+    let mock_entity = vehicle_entity(&entity_id);
+    let mock_array = Value::Array(vec![mock_entity]);
+    mock.set_stub_with_body(Method::GET, "/broker1/ngsi-ld/v1/entities", 200, &mock_array).await;
+
+    // Query entities
+    let (status, _, body) = query_entities(&c, "type=Vehicle", &jsonld_link_value()).await;
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
+
+    let entries = body.as_array().expect("response should be array");
+    assert!(entries.iter().any(|e| e["id"] == entity_id));
+
+    delete_registration(&c, &reg_id).await;
+    mock.stop();
+}
+
+/// Redirect with queryEntity operation forwards correctly.
+#[tokio::test]
+#[serial]
+async fn distop_entity_query_redirect_with_query_entity_op() {
+    clean_database().await;
+    let c = client();
+    let mut mock = MockServer::start().await;
+
+    let entity_id = unique_id("urn:ngsi-ld:Vehicle:query-red-op1");
+    let reg_id = unique_id("urn:ngsi-ld:Registration:query-red-op1");
+
+    // Create redirect registration with queryEntity operation
+    let reg = vehicle_registration_with_ops(&reg_id, Some(&entity_id), &mock.url("/broker1"), Some("redirect"), &["queryEntity"]);
+    let (status, _) = create_registration(&c, &reg).await;
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
+
+    // Mock returns entity
+    let mock_entity = vehicle_entity(&entity_id);
+    let mock_array = Value::Array(vec![mock_entity]);
+    mock.set_stub_with_body(Method::GET, "/broker1/ngsi-ld/v1/entities", 200, &mock_array).await;
+
+    // Query entities
+    let (status, _, body) = query_entities(&c, "type=Vehicle", &jsonld_link_value()).await;
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
+
+    let entries = body.as_array().expect("response should be array");
+    assert!(entries.iter().any(|e| e["id"] == entity_id));
+
+    delete_registration(&c, &reg_id).await;
+    mock.stop();
+}
+
+/// Redirect with queryBatch operation forwards correctly.
+#[tokio::test]
+#[serial]
+async fn distop_entity_query_redirect_with_query_batch_op() {
+    clean_database().await;
+    let c = client();
+    let mut mock = MockServer::start().await;
+
+    let entity_id = unique_id("urn:ngsi-ld:Vehicle:query-red-op2");
+    let reg_id = unique_id("urn:ngsi-ld:Registration:query-red-op2");
+
+    // Create redirect registration with queryBatch operation
+    let reg = vehicle_registration_with_ops(&reg_id, Some(&entity_id), &mock.url("/broker1"), Some("redirect"), &["queryBatch"]);
+    let (status, _) = create_registration(&c, &reg).await;
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
+
+    // The broker always forwards queries as GET /entities
+    let mock_entity = vehicle_entity(&entity_id);
+    let mock_array = Value::Array(vec![mock_entity]);
+    mock.set_stub_with_body(Method::GET, "/broker1/ngsi-ld/v1/entities", 200, &mock_array).await;
+
+    // Query entities
+    let (status, _, body) = query_entities(&c, "type=Vehicle", &jsonld_link_value()).await;
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
+
+    let entries = body.as_array().expect("response should be array");
+    assert!(entries.iter().any(|e| e["id"] == entity_id));
+
+    delete_registration(&c, &reg_id).await;
+    mock.stop();
+}
+
+// ---------------------------------------------------------------------------
+// Inclusive mode tests
+// ---------------------------------------------------------------------------
+
+/// Query by type with inclusive registration returns entity from remote.
+#[tokio::test]
+#[serial]
+async fn distop_entity_query_inclusive_by_type() {
+    clean_database().await;
+    let c = client();
+    let mut mock = MockServer::start().await;
+
+    let entity_id = unique_id("urn:ngsi-ld:Vehicle:query-inc-type");
+    let reg_id = unique_id("urn:ngsi-ld:Registration:query-inc-type");
+
+    // Create inclusive registration (no mode = inclusive)
+    let reg = vehicle_registration(&reg_id, Some(&entity_id), &mock.url(""), None);
+    let (status, _) = create_registration(&c, &reg).await;
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
+
+    // Mock returns entity
+    let mock_entity = vehicle_entity(&entity_id);
+    let mock_array = Value::Array(vec![mock_entity]);
+    mock.set_stub_with_body(Method::GET, "/ngsi-ld/v1/entities", 200, &mock_array).await;
+
+    // Query entities
+    let (status, _, body) = query_entities(&c, "type=Vehicle", &jsonld_link_value()).await;
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
+
+    let entries = body.as_array().expect("response should be array");
+    assert!(entries.iter().any(|e| e["id"] == entity_id));
+
+    delete_registration(&c, &reg_id).await;
+    mock.stop();
+}
+
+/// Query by type with missing attribute returns empty result.
+#[tokio::test]
+#[serial]
+async fn distop_entity_query_inclusive_missing_attr_returns_empty() {
+    clean_database().await;
+    let c = client();
+    let mut mock = MockServer::start().await;
+
+    let entity_id = unique_id("urn:ngsi-ld:Vehicle:query-inc-attr");
+    let reg_id = unique_id("urn:ngsi-ld:Registration:query-inc-attr");
+
+    // Create inclusive registration
+    let reg = vehicle_registration(&reg_id, Some(&entity_id), &mock.url(""), None);
+    let (status, _) = create_registration(&c, &reg).await;
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
+
+    // Mock returns entity without speed attribute
+    let mock_entity = vehicle_entity(&entity_id);
+    let mock_array = Value::Array(vec![mock_entity]);
+    mock.set_stub_with_body(Method::GET, "/ngsi-ld/v1/entities", 200, &mock_array).await;
+
+    // Query for speed attr returns empty
+    let (status, _, body) = query_entities(&c, "type=Vehicle&attrs=speed", &jsonld_link_value()).await;
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
+
+    let entries = body.as_array().expect("response should be array");
+    assert!(entries.is_empty(), "no entity should have speed attribute, got {body:?}");
+
+    delete_registration(&c, &reg_id).await;
+    mock.stop();
+}
+
+/// Query by type and attribute with two sources returns entity with requested attribute.
+#[tokio::test]
+#[serial]
+async fn distop_entity_query_inclusive_by_type_and_attr_two_sources() {
+    clean_database().await;
+    let c = client();
+    let mut mock = MockServer::start().await;
+
+    let entity_id_local = unique_id("urn:ngsi-ld:Vehicle:query-inc-local");
+    let entity_id_remote = unique_id("urn:ngsi-ld:Vehicle:query-inc-remote");
+    let reg_id = unique_id("urn:ngsi-ld:Registration:query-inc-attr2");
+
+    // Create local entity (has brandName, isParked - no isParked2)
+    let entity = vehicle_entity(&entity_id_local);
+    let (status, _) = create_entity_local(&c, &entity).await;
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
+
+    // Create inclusive registration
+    let reg = vehicle_registration(&reg_id, Some(&entity_id_remote), &mock.url(""), None);
+    let (status, _) = create_registration(&c, &reg).await;
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
+
+    // Mock returns entity with isParked2
+    let mock_entity = vehicle_entity_second(&entity_id_remote);
+    let mock_array = Value::Array(vec![mock_entity]);
+    mock.set_stub_with_body(Method::GET, "/ngsi-ld/v1/entities", 200, &mock_array).await;
+
+    // Query for isParked2 attr
+    let (status, _, body) = query_entities(&c, "type=Vehicle&attrs=isParked2", &jsonld_link_value()).await;
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
+
+    let entries = body.as_array().expect("response should be array");
+    assert!(
+        entries.iter().any(|e| e["id"] == entity_id_remote),
+        "should contain remote entity with isParked2"
+    );
+
+    delete_entity(&c, &entity_id_local).await;
+    delete_registration(&c, &reg_id).await;
+    mock.stop();
+}
+
+/// Query by type with attribute in neither source returns empty.
+#[tokio::test]
+#[serial]
+async fn distop_entity_query_inclusive_attr_in_neither_returns_empty() {
+    clean_database().await;
+    let c = client();
+    let mut mock = MockServer::start().await;
+
+    let entity_id_local = unique_id("urn:ngsi-ld:Vehicle:query-inc-neither-local");
+    let entity_id_remote = unique_id("urn:ngsi-ld:Vehicle:query-inc-neither-remote");
+    let reg_id = unique_id("urn:ngsi-ld:Registration:query-inc-neither");
+
+    // Create local entity (has brandName, isParked2 - no speed)
+    let entity = vehicle_entity_second_ld(&entity_id_local);
+    let (status, _) = create_entity_local(&c, &entity).await;
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
+
+    // Create inclusive registration
+    let reg = vehicle_registration(&reg_id, Some(&entity_id_remote), &mock.url(""), None);
+    let (status, _) = create_registration(&c, &reg).await;
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
+
+    // Mock returns entity without speed
+    let mock_entity = vehicle_entity(&entity_id_remote);
+    let mock_array = Value::Array(vec![mock_entity]);
+    mock.set_stub_with_body(Method::GET, "/ngsi-ld/v1/entities", 200, &mock_array).await;
+
+    // Query for speed attr returns empty
+    let (status, _, body) = query_entities(&c, "type=Vehicle&attrs=speed", &jsonld_link_value()).await;
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
+
+    let entries = body.as_array().expect("response should be array");
+    assert!(entries.is_empty(), "neither entity has speed attribute, got {body:?}");
+
+    delete_entity(&c, &entity_id_local).await;
+    delete_registration(&c, &reg_id).await;
+    mock.stop();
+}
+
+/// Query merges same-ID entity from both local and remote sources.
+#[tokio::test]
+#[serial]
+async fn distop_entity_query_inclusive_merges_same_id() {
+    clean_database().await;
+    let c = client();
+    let mut mock = MockServer::start().await;
+
+    let entity_id = unique_id("urn:ngsi-ld:Vehicle:query-inc-merge");
+    let reg_id = unique_id("urn:ngsi-ld:Registration:query-inc-merge");
+
+    // Create local entity (has speed, isParked2)
+    let entity = vehicle_entity_different_ld(&entity_id);
+    let (status, _) = create_entity_local(&c, &entity).await;
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
+
+    // Create inclusive registration
+    let reg = vehicle_registration(&reg_id, Some(&entity_id), &mock.url(""), None);
+    let (status, _) = create_registration(&c, &reg).await;
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
+
+    // Mock returns entity with brandName, isParked (same ID)
+    let mock_entity = vehicle_entity(&entity_id);
+    let mock_array = Value::Array(vec![mock_entity]);
+    mock.set_stub_with_body(Method::GET, "/ngsi-ld/v1/entities", 200, &mock_array).await;
+
+    // Query entities
+    let (status, _, body) = query_entities(&c, "type=Vehicle", &jsonld_link_value()).await;
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
+
+    let entries = body.as_array().expect("response should be array");
+    // Should have single merged entity
+    let entity = entries.iter().find(|e| e["id"] == entity_id).unwrap();
+    let obj = entity.as_object().unwrap();
+    let keys: Vec<_> = obj.keys().collect();
+    assert!(obj.contains_key("brandName"), "expected brandName in {keys:?}");
+    assert!(obj.contains_key("speed"), "expected speed in {keys:?}");
+    assert!(obj.contains_key("isParked"), "expected isParked in {keys:?}");
+    assert!(obj.contains_key("isParked2"), "expected isParked2 in {keys:?}");
+
+    delete_entity(&c, &entity_id).await;
+    delete_registration(&c, &reg_id).await;
+    mock.stop();
+}
+
+/// Query with local=true and inclusive registration (no local entities) returns empty.
+#[tokio::test]
+#[serial]
+async fn distop_entity_query_inclusive_local_true_returns_empty() {
+    clean_database().await;
+    let c = client();
+    let mut mock = MockServer::start().await;
+
+    let entity_id = unique_id("urn:ngsi-ld:Vehicle:query-inc-local");
+    let reg_id = unique_id("urn:ngsi-ld:Registration:query-inc-local");
+
+    // Create inclusive registration (no local entity)
+    let reg = vehicle_registration(&reg_id, Some(&entity_id), &mock.url(""), None);
+    let (status, _) = create_registration(&c, &reg).await;
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
+
+    // Mock stub
+    let mock_entity = vehicle_entity(&entity_id);
+    let mock_array = Value::Array(vec![mock_entity]);
+    mock.set_stub_with_body(Method::GET, "/ngsi-ld/v1/entities", 200, &mock_array).await;
+
+    // Query with local=true returns empty
+    let (status, _, body) = query_entities(&c, "type=Vehicle&local=true", &jsonld_link_value()).await;
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
+
+    let entries = body.as_array().expect("response should be array");
+    assert!(entries.is_empty(), "local=true should return empty when no local entities");
+
+    delete_registration(&c, &reg_id).await;
+    mock.stop();
+}
+
+/// Query by entity ID with queryEntity operation.
+#[tokio::test]
+#[serial]
+async fn distop_entity_query_inclusive_by_id_with_query_entity_op() {
+    clean_database().await;
+    let c = client();
+    let mut mock = MockServer::start().await;
+
+    let entity_id = unique_id("urn:ngsi-ld:Vehicle:query-inc-id-op1");
+    let reg_id = unique_id("urn:ngsi-ld:Registration:query-inc-id-op1");
+
+    // Create inclusive registration with queryEntity operation
+    let reg = vehicle_registration_with_ops(&reg_id, Some(&entity_id), &mock.url(""), None, &["queryEntity"]);
+    let (status, _) = create_registration(&c, &reg).await;
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
+
+    // Mock returns entity
+    let mock_entity = vehicle_entity(&entity_id);
+    let mock_array = Value::Array(vec![mock_entity]);
+    mock.set_stub_with_body(Method::GET, "/ngsi-ld/v1/entities", 200, &mock_array).await;
+
+    // Query by ID
+    let query = format!("type=Vehicle&id={}", encode(&entity_id));
+    let (status, _, body) = query_entities(&c, &query, &jsonld_link_value()).await;
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
+
+    let entries = body.as_array().expect("response should be array");
+    assert!(entries.iter().any(|e| e["id"] == entity_id));
+
+    delete_registration(&c, &reg_id).await;
+    mock.stop();
+}
+
+/// Query by entity ID with queryBatch operation.
+#[tokio::test]
+#[serial]
+async fn distop_entity_query_inclusive_by_id_with_query_batch_op() {
+    clean_database().await;
+    let c = client();
+    let mut mock = MockServer::start().await;
+
+    let entity_id = unique_id("urn:ngsi-ld:Vehicle:query-inc-id-op2");
+    let reg_id = unique_id("urn:ngsi-ld:Registration:query-inc-id-op2");
+
+    // Create inclusive registration with queryBatch operation
+    let reg = vehicle_registration_with_ops(&reg_id, Some(&entity_id), &mock.url(""), None, &["queryBatch"]);
+    let (status, _) = create_registration(&c, &reg).await;
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
+
+    // The broker always forwards queries as GET /entities
+    let mock_entity = vehicle_entity(&entity_id);
+    let mock_array = Value::Array(vec![mock_entity]);
+    mock.set_stub_with_body(Method::GET, "/ngsi-ld/v1/entities", 200, &mock_array).await;
+
+    // Query by ID
+    let query = format!("type=Vehicle&id={}", encode(&entity_id));
+    let (status, _, body) = query_entities(&c, &query, &jsonld_link_value()).await;
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
+
+    let entries = body.as_array().expect("response should be array");
+    assert!(entries.iter().any(|e| e["id"] == entity_id));
+
+    delete_registration(&c, &reg_id).await;
+    mock.stop();
+}
+
+/// Query via POST /entityOperations/query with queryBatch operation.
+#[tokio::test]
+#[serial]
+async fn distop_entity_query_post_with_query_batch_op() {
+    clean_database().await;
+    let c = client();
+    let mut mock = MockServer::start().await;
+
+    let entity_id = unique_id("urn:ngsi-ld:Vehicle:query-post-op1");
+    let reg_id = unique_id("urn:ngsi-ld:Registration:query-post-op1");
+
+    // Create inclusive registration with queryBatch operation
+    let reg = vehicle_registration_with_ops(&reg_id, Some(&entity_id), &mock.url(""), None, &["queryBatch"]);
+    let (status, _) = create_registration(&c, &reg).await;
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
+
+    // The broker always forwards queries as GET /entities
+    let mock_entity = vehicle_entity(&entity_id);
+    let mock_array = Value::Array(vec![mock_entity]);
+    mock.set_stub_with_body(Method::GET, "/ngsi-ld/v1/entities", 200, &mock_array).await;
+
+    // Query via POST
+    let query_body = json!({
+        "entities": [{"id": entity_id, "type": "Vehicle"}]
+    });
+    let (status, _, body) = query_entities_post(&c, &query_body, &jsonld_link_value()).await;
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
+
+    let entries = body.as_array().expect("response should be array");
+    assert!(entries.iter().any(|e| e["id"] == entity_id));
+
+    delete_registration(&c, &reg_id).await;
+    mock.stop();
+}
+
+/// Query via POST /entityOperations/query with queryEntity operation.
+#[tokio::test]
+#[serial]
+async fn distop_entity_query_post_with_query_entity_op() {
+    clean_database().await;
+    let c = client();
+    let mut mock = MockServer::start().await;
+
+    let entity_id = unique_id("urn:ngsi-ld:Vehicle:query-post-op2");
+    let reg_id = unique_id("urn:ngsi-ld:Registration:query-post-op2");
+
+    // Create inclusive registration with queryEntity operation
+    let reg = vehicle_registration_with_ops(&reg_id, Some(&entity_id), &mock.url(""), None, &["queryEntity"]);
+    let (status, _) = create_registration(&c, &reg).await;
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
+
+    // Mock returns entity
+    let mock_entity = vehicle_entity(&entity_id);
+    let mock_array = Value::Array(vec![mock_entity]);
+    mock.set_stub_with_body(Method::GET, "/ngsi-ld/v1/entities", 200, &mock_array).await;
+
+    // Query via POST
+    let query_body = json!({
+        "entities": [{"id": entity_id, "type": "Vehicle"}]
+    });
+    let (status, _, body) = query_entities_post(&c, &query_body, &jsonld_link_value()).await;
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
+
+    let entries = body.as_array().expect("response should be array");
+    assert!(entries.iter().any(|e| e["id"] == entity_id));
+
+    delete_registration(&c, &reg_id).await;
+    mock.stop();
+}
+
+// ---------------------------------------------------------------------------
+// EntityMap tests
 // ---------------------------------------------------------------------------
 
 /// EntityMap from distributed query includes both local and forwarded entity IDs.
@@ -271,9 +685,9 @@ async fn distop_entity_map_includes_forwarded_entity_ids() {
     let c = client();
     let mut mock = MockServer::start().await;
 
-    let local_id = unique_id("urn:ngsi-ld:Vehicle:local");
-    let remote_id = unique_id("urn:ngsi-ld:Vehicle:remote");
-    let reg_id = unique_id("urn:ngsi-ld:Registration:distop-map");
+    let local_id = unique_id("urn:ngsi-ld:Vehicle:map-local");
+    let remote_id = unique_id("urn:ngsi-ld:Vehicle:map-remote");
+    let reg_id = unique_id("urn:ngsi-ld:Registration:map");
 
     // Create local entity
     let entity = vehicle_entity(&local_id);
@@ -286,7 +700,7 @@ async fn distop_entity_map_includes_forwarded_entity_ids() {
     mock.set_stub_with_body(Method::GET, "/ngsi-ld/v1/entities", 200, &mock_array).await;
 
     // Register context source
-    let reg = vehicle_registration(&reg_id, &mock.url(""), "auxiliary");
+    let reg = vehicle_registration(&reg_id, None, &mock.url(""), Some("auxiliary"));
     let (status, _) = create_registration(&c, &reg).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
@@ -326,14 +740,14 @@ async fn distop_entity_map_includes_forwarded_entity_ids() {
 /// EntityMap with local=true only contains local entity IDs.
 #[tokio::test]
 #[serial]
-async fn distop_entity_map_local_only_when_local_true() {
+async fn distop_entity_map_local_true_excludes_remote() {
     clean_database().await;
     let c = client();
     let mut mock = MockServer::start().await;
 
-    let local_id = unique_id("urn:ngsi-ld:Vehicle:local-only");
-    let remote_id = unique_id("urn:ngsi-ld:Vehicle:remote-only");
-    let reg_id = unique_id("urn:ngsi-ld:Registration:local-map");
+    let local_id = unique_id("urn:ngsi-ld:Vehicle:map-local-only");
+    let remote_id = unique_id("urn:ngsi-ld:Vehicle:map-remote-only");
+    let reg_id = unique_id("urn:ngsi-ld:Registration:map-local");
 
     let entity = vehicle_entity(&local_id);
     let (status, _) = create_entity(&c, &entity).await;
@@ -343,7 +757,7 @@ async fn distop_entity_map_local_only_when_local_true() {
     mock.set_stub_with_body(Method::GET, "/ngsi-ld/v1/entities", 200, &Value::Array(vec![mock_entity]))
         .await;
 
-    let reg = vehicle_registration(&reg_id, &mock.url(""), "auxiliary");
+    let reg = vehicle_registration(&reg_id, None, &mock.url(""), Some("auxiliary"));
     let (status, _) = create_registration(&c, &reg).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
@@ -371,6 +785,10 @@ async fn distop_entity_map_local_only_when_local_true() {
     mock.stop();
 }
 
+// ---------------------------------------------------------------------------
+// SplitEntities tests
+// ---------------------------------------------------------------------------
+
 /// splitEntities with q filter applies post-merge: only matching entities remain.
 #[tokio::test]
 #[serial]
@@ -392,7 +810,7 @@ async fn distop_entity_split_entities_q_filter_post_merge() {
     mock.set_stub_with_body(Method::GET, "/ngsi-ld/v1/entities", 200, &Value::Array(vec![mock_entity]))
         .await;
 
-    let reg = vehicle_registration(&reg_id, &mock.url(""), "auxiliary");
+    let reg = vehicle_registration(&reg_id, None, &mock.url(""), Some("auxiliary"));
     let (status, _) = create_registration(&c, &reg).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
@@ -438,7 +856,7 @@ async fn distop_entity_split_entities_returns_all_without_filter() {
     mock.set_stub_with_body(Method::GET, "/ngsi-ld/v1/entities", 200, &Value::Array(vec![mock_entity]))
         .await;
 
-    let reg = vehicle_registration(&reg_id, &mock.url(""), "auxiliary");
+    let reg = vehicle_registration(&reg_id, None, &mock.url(""), Some("auxiliary"));
     let (status, _) = create_registration(&c, &reg).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
@@ -478,7 +896,7 @@ async fn distop_entity_split_entities_scope_filter_post_merge() {
     mock.set_stub_with_body(Method::GET, "/ngsi-ld/v1/entities", 200, &Value::Array(vec![mock_entity]))
         .await;
 
-    let reg = vehicle_registration(&reg_id, &mock.url(""), "auxiliary");
+    let reg = vehicle_registration(&reg_id, None, &mock.url(""), Some("auxiliary"));
     let (status, _) = create_registration(&c, &reg).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
