@@ -301,11 +301,12 @@ impl TemporalService {
 
         let compiled = self.compile_temporal_query(params, context).await?;
 
-        let mut binds = vec![crate::query::sql::BindValue::String(Cow::Owned(entity_id.to_string()))];
-        let mut param_idx: usize = 2;
-        let stage2 = build_temporal_history_query(1, &compiled, &mut binds, &mut param_idx)?;
+        let stage2 = build_temporal_history_query(1, &compiled)?;
+        // Prepend entity_id to bind values (it's expected as $1)
+        let mut all_binds = vec![crate::query::sql::BindValue::String(Cow::Owned(entity_id.to_string()))];
+        all_binds.extend(stage2.bind_values);
 
-        let rows = self.repo.execute_temporal_query(&stage2.sql, &stage2.bind_values).await?;
+        let rows = self.repo.execute_temporal_query(&stage2.sql, &all_binds).await?;
 
         // When an attrs filter is specified and nothing matches, return 404
         if rows.is_empty() && !compiled.attr_filter.is_empty() {
@@ -350,9 +351,7 @@ impl TemporalService {
 
         let compiled = self.compile_temporal_query(params, context).await?;
 
-        let mut binds = Vec::new();
-        let mut param_idx = 1;
-        let stage1 = build_stage1_entity_ids(&compiled, &mut binds, &mut param_idx)?;
+        let stage1 = build_stage1_entity_ids(&compiled)?;
 
         let entity_id_rows = self.repo.execute_temporal_query(&stage1.sql, &stage1.bind_values).await?;
 
@@ -382,9 +381,7 @@ impl TemporalService {
         let is_aggregated = compiled.format == TemporalFormat::AggregatedValues;
         for entity_id in entity_ids {
             let entity_types = entity_types_map.get(&entity_id).cloned().unwrap_or_default(); // clone: owned copy needed; map is borrowed while loop continues
-            let mut binds = vec![crate::query::sql::BindValue::String(Cow::Owned(entity_id.clone()))]; // clone: entity_id used later in warnings and result building
-            let mut param_idx = 2;
-            let stage2 = match build_temporal_history_query(1, &compiled, &mut binds, &mut param_idx) {
+            let stage2 = match build_temporal_history_query(1, &compiled) {
                 Ok(s) => s,
                 Err(e) => {
                     tracing::warn!(error = %e, entity_id = %entity_id, "Failed to build temporal history query");
@@ -395,7 +392,10 @@ impl TemporalService {
                     continue;
                 }
             };
-            let rows = match self.repo.execute_temporal_query(&stage2.sql, &stage2.bind_values).await {
+            // Prepend entity_id to bind values (it's expected as $1)
+            let mut all_binds = vec![crate::query::sql::BindValue::String(Cow::Owned(entity_id.clone()))]; // clone: entity_id used later in warnings and result building
+            all_binds.extend(stage2.bind_values);
+            let rows = match self.repo.execute_temporal_query(&stage2.sql, &all_binds).await {
                 Ok(r) => r,
                 Err(e) => {
                     tracing::warn!(error = %e, entity_id = %entity_id, "Failed to execute temporal query");
@@ -538,9 +538,7 @@ impl TemporalService {
     pub async fn query_ids(&self, params: &TemporalQueryParameters, context: &ContextSpec) -> Result<Vec<String>, AndromedaError> {
         params.validate(true)?;
         let compiled = self.compile_temporal_query(params, context).await?;
-        let mut binds = Vec::new();
-        let mut param_idx = 1;
-        let stage1 = build_stage1_entity_ids(&compiled, &mut binds, &mut param_idx)?;
+        let stage1 = build_stage1_entity_ids(&compiled)?;
         let entity_id_rows = self.repo.execute_temporal_query(&stage1.sql, &stage1.bind_values).await?;
         Ok(entity_id_rows.iter().filter_map(|r| r.try_get("entity_id").ok()).collect())
     }

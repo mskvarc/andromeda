@@ -359,14 +359,6 @@ impl OrderDirection {
     pub const fn is_distance(&self) -> bool {
         matches!(self, OrderDirection::DistAsc | OrderDirection::DistDesc)
     }
-
-    /// SQL direction keyword.
-    pub const fn sql_dir(&self) -> &'static str {
-        match self {
-            OrderDirection::Asc | OrderDirection::DistAsc => "ASC",
-            OrderDirection::Desc | OrderDirection::DistDesc => "DESC",
-        }
-    }
 }
 
 /// Indicates the origin of the `lastN` limit in a temporal query.

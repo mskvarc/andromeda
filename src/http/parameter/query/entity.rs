@@ -476,14 +476,6 @@ mod tests {
     }
 
     #[test]
-    fn order_direction_sql_dir() {
-        pretty_assertions::assert_eq!(OrderDirection::Asc.sql_dir(), "ASC");
-        pretty_assertions::assert_eq!(OrderDirection::Desc.sql_dir(), "DESC");
-        pretty_assertions::assert_eq!(OrderDirection::DistAsc.sql_dir(), "ASC");
-        pretty_assertions::assert_eq!(OrderDirection::DistDesc.sql_dir(), "DESC");
-    }
-
-    #[test]
     fn parse_pick_omit() {
         let p = params_from_query("pick=id,type,speed&omit=scope");
         pretty_assertions::assert_eq!(p.parse_pick(), vec!["id", "type", "speed"]);

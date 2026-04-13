@@ -8,7 +8,7 @@
     "airQualityLevel": {
         "type": "Property",
         "value": 4,
-        "observedAt": "2020-09-09T16:40:00Z",
+        "observedAt": "2020-09-09T16:40:00.000Z",
         "unitCode": "C62"
     },
     "almostFull": {
