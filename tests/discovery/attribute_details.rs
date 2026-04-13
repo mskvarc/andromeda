@@ -1,3 +1,4 @@
+#![allow(clippy::expect_used, clippy::unwrap_used)]
 //! Attribute details tests (NGSI-LD 5.5.11).
 //! Uses `?details=true` to retrieve full `Attribute` objects with type and count information.
 
@@ -27,13 +28,13 @@ async fn list_attribute_details_without_context_returns_expanded_uris() {
 
     let entity = load_fixture("entities/building-simple-attributes.json", &id);
     let (s, _) = create_entity(&c, &entity, Some(COMPOUND_CONTEXT_URL)).await;
-    assert_eq!(s, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(s, StatusCode::CREATED);
 
     let (status, body) = list_attributes(&c, "details=true", None).await;
-    assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
 
     let expected = load_expectation("types/expectations/attribute-026-01-01.json");
-    assert_eq!(sort_attributes(&body), sort_attributes(&expected));
+    pretty_assertions::assert_eq!(sort_attributes(&body), sort_attributes(&expected));
 
     delete_entity(&c, &id).await;
 }
@@ -52,13 +53,13 @@ async fn list_attribute_details_with_context_returns_compacted_names() {
 
     let entity = load_fixture("entities/building-simple-attributes.json", &id);
     let (s, _) = create_entity(&c, &entity, Some(COMPOUND_CONTEXT_URL)).await;
-    assert_eq!(s, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(s, StatusCode::CREATED);
 
     let (status, body) = list_attributes(&c, "details=true", Some(COMPOUND_CONTEXT_URL)).await;
-    assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
 
     let expected = load_expectation("types/expectations/attribute-026-01-02.json");
-    assert_eq!(sort_attributes(&body), sort_attributes(&expected));
+    pretty_assertions::assert_eq!(sort_attributes(&body), sort_attributes(&expected));
 
     delete_entity(&c, &id).await;
 }

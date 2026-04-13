@@ -1,3 +1,4 @@
+#![allow(clippy::expect_used, clippy::unwrap_used)]
 use crate::{
     distributed_operations::prepare_registration,
     harness::{
@@ -8,7 +9,6 @@ use crate::{
     },
 };
 use libtest_mimic::Trial;
-use pretty_assertions::assert_eq;
 use reqwest::{Method, StatusCode};
 
 const PREFIX: &str = "distributed_operations::consumption::entity::via_loop_detection";
@@ -29,7 +29,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
 
         let reg = prepare_registration(REG_VEHICLE_COMPLETE, &reg_id, &entity_id, &mock.url(""), None, None, Some("cs-broker-A"));
         let resp = ctx.client.create_registration(&reg).await;
-        assert_eq!(resp.status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
         ctx.track_registration(&reg_id);
 
         let mock_entity = fixtures::load_fixture(VEHICLE_FIXTURE, &entity_id);
@@ -41,10 +41,10 @@ pub fn tests(trials: &mut Vec<Trial>) {
             .client
             .query_entities(&QueryParams::new().type_("Vehicle"), ld_headers().via("1.1 cs-broker-A"))
             .await;
-        assert_eq!(resp.status, StatusCode::OK);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::OK);
 
         let count = mock.get_count(Method::GET, "/ngsi-ld/v1/entities").await;
-        assert_eq!(count, 0, "mock should not have been called when CSR alias is in Via");
+        pretty_assertions::assert_eq!(count, 0, "mock should not have been called when CSR alias is in Via");
 
         mock.stop();
     }));
@@ -57,7 +57,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
 
         let reg = prepare_registration(REG_VEHICLE_COMPLETE, &reg_id, &entity_id, &mock.url(""), None, None, Some("cs-broker-A"));
         let resp = ctx.client.create_registration(&reg).await;
-        assert_eq!(resp.status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
         ctx.track_registration(&reg_id);
 
         let mock_entity = fixtures::load_fixture(VEHICLE_FIXTURE, &entity_id);
@@ -69,10 +69,10 @@ pub fn tests(trials: &mut Vec<Trial>) {
             .client
             .query_entities(&QueryParams::new().type_("Vehicle"), ld_headers().via("1.1 cs-broker-B"))
             .await;
-        assert_eq!(resp.status, StatusCode::OK);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::OK);
 
         let count = mock.get_count(Method::GET, "/ngsi-ld/v1/entities").await;
-        assert_eq!(count, 1, "mock should have been called when CSR alias is not in Via");
+        pretty_assertions::assert_eq!(count, 1, "mock should have been called when CSR alias is not in Via");
 
         mock.stop();
     }));
@@ -85,7 +85,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
 
         let reg = prepare_registration(REG_VEHICLE_COMPLETE, &reg_id, &entity_id, &mock.url(""), None, None, Some("cs-broker-A"));
         let resp = ctx.client.create_registration(&reg).await;
-        assert_eq!(resp.status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
         ctx.track_registration(&reg_id);
 
         let mock_entity = fixtures::load_fixture(VEHICLE_FIXTURE, &entity_id);
@@ -94,10 +94,10 @@ pub fn tests(trials: &mut Vec<Trial>) {
 
         // Query without Via header
         let resp = ctx.client.query_entities(&QueryParams::new().type_("Vehicle"), ld_headers()).await;
-        assert_eq!(resp.status, StatusCode::OK);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::OK);
 
         let count = mock.get_count(Method::GET, "/ngsi-ld/v1/entities").await;
-        assert_eq!(count, 1, "mock should have been called without Via header");
+        pretty_assertions::assert_eq!(count, 1, "mock should have been called without Via header");
 
         mock.stop();
     }));
@@ -110,7 +110,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
 
         let reg = prepare_registration(REG_VEHICLE_COMPLETE, &reg_id, &entity_id, &mock.url(""), None, None, Some("broker1"));
         let resp = ctx.client.create_registration(&reg).await;
-        assert_eq!(resp.status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
         ctx.track_registration(&reg_id);
 
         let mock_entity = fixtures::load_fixture(VEHICLE_FIXTURE, &entity_id);
@@ -122,10 +122,10 @@ pub fn tests(trials: &mut Vec<Trial>) {
             .client
             .query_entities(&QueryParams::new().type_("Vehicle"), ld_headers().via("1.1 broker10"))
             .await;
-        assert_eq!(resp.status, StatusCode::OK);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::OK);
 
         let count = mock.get_count(Method::GET, "/ngsi-ld/v1/entities").await;
-        assert_eq!(count, 1, "mock should have been called -- substring match must not trigger");
+        pretty_assertions::assert_eq!(count, 1, "mock should have been called -- substring match must not trigger");
 
         mock.stop();
     }));
@@ -139,7 +139,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
         // No contextSourceAlias
         let reg = prepare_registration(REG_VEHICLE_COMPLETE, &reg_id, &entity_id, &mock.url(""), None, None, None);
         let resp = ctx.client.create_registration(&reg).await;
-        assert_eq!(resp.status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
         ctx.track_registration(&reg_id);
 
         let mock_entity = fixtures::load_fixture(VEHICLE_FIXTURE, &entity_id);
@@ -151,10 +151,10 @@ pub fn tests(trials: &mut Vec<Trial>) {
             .client
             .query_entities(&QueryParams::new().type_("Vehicle"), ld_headers().via("1.1 whatever"))
             .await;
-        assert_eq!(resp.status, StatusCode::OK);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::OK);
 
         let count = mock.get_count(Method::GET, "/ngsi-ld/v1/entities").await;
-        assert_eq!(count, 1, "mock should have been called -- CSR has no alias");
+        pretty_assertions::assert_eq!(count, 1, "mock should have been called -- CSR has no alias");
 
         mock.stop();
     }));
@@ -170,7 +170,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
                 ld_headers().via("1.1 urn:ngsi-ld:ContextSourceIdentity:andromeda"),
             )
             .await;
-        assert_eq!(resp.status, StatusCode::OK);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::OK);
 
         // The response should be an empty array (no local entities, no forwarding)
         let body: Vec<serde_json::Value> = resp.json();

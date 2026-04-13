@@ -1,3 +1,4 @@
+#![allow(clippy::expect_used, clippy::unwrap_used)]
 //! Integration tests for NGSI-LD temporal aggregation (spec 4.5.19).
 //!
 //! Uses the standard Rust test harness with `#[tokio::test]` and raw `reqwest`.
@@ -131,7 +132,7 @@ async fn aggregated_format_requires_aggr_methods() {
     create(&client, &entity).await;
 
     let resp = get_aggregated_raw(&client, &id, "format=aggregatedValues").await;
-    assert_eq!(resp.status(), reqwest::StatusCode::BAD_REQUEST);
+    pretty_assertions::assert_eq!(resp.status(), reqwest::StatusCode::BAD_REQUEST);
 
     delete(&client, &id).await;
 }
@@ -144,7 +145,7 @@ async fn invalid_aggr_method_returns_400() {
     create(&client, &entity).await;
 
     let resp = get_aggregated_raw(&client, &id, "format=aggregatedValues&aggrMethods=bogus").await;
-    assert_eq!(resp.status(), reqwest::StatusCode::BAD_REQUEST);
+    pretty_assertions::assert_eq!(resp.status(), reqwest::StatusCode::BAD_REQUEST);
 
     delete(&client, &id).await;
 }
@@ -167,7 +168,7 @@ async fn avg_on_numeric_property() {
 
     let body = get_aggregated(&client, &id, "avg", None).await;
     let avg_val = &body["speed"]["avg"][0][0];
-    assert_eq!(avg_val.as_f64().expect("avg should be number"), 200.0);
+    pretty_assertions::assert_eq!(avg_val.as_f64().expect("avg should be number"), 200.0);
 
     delete(&client, &id).await;
 }
@@ -180,7 +181,7 @@ async fn min_on_numeric_property() {
 
     let body = get_aggregated(&client, &id, "min", None).await;
     let val = &body["speed"]["min"][0][0];
-    assert_eq!(val.as_f64().expect("min should be number"), 100.0);
+    pretty_assertions::assert_eq!(val.as_f64().expect("min should be number"), 100.0);
 
     delete(&client, &id).await;
 }
@@ -193,7 +194,7 @@ async fn max_on_numeric_property() {
 
     let body = get_aggregated(&client, &id, "max", None).await;
     let val = &body["speed"]["max"][0][0];
-    assert_eq!(val.as_f64().expect("max should be number"), 300.0);
+    pretty_assertions::assert_eq!(val.as_f64().expect("max should be number"), 300.0);
 
     delete(&client, &id).await;
 }
@@ -206,7 +207,7 @@ async fn sum_on_numeric_property() {
 
     let body = get_aggregated(&client, &id, "sum", None).await;
     let val = &body["speed"]["sum"][0][0];
-    assert_eq!(val.as_f64().expect("sum should be number"), 600.0);
+    pretty_assertions::assert_eq!(val.as_f64().expect("sum should be number"), 600.0);
 
     delete(&client, &id).await;
 }
@@ -221,7 +222,7 @@ async fn sumsq_on_numeric_property() {
 
     let body = get_aggregated(&client, &id, "sumsq", None).await;
     let val = &body["speed"]["sumsq"][0][0];
-    assert_eq!(val.as_f64().expect("sumsq should be number"), 500.0);
+    pretty_assertions::assert_eq!(val.as_f64().expect("sumsq should be number"), 500.0);
 
     delete(&client, &id).await;
 }
@@ -248,7 +249,7 @@ async fn total_count_on_numeric_property() {
 
     let body = get_aggregated(&client, &id, "totalCount", None).await;
     let val = &body["speed"]["totalCount"][0][0];
-    assert_eq!(val.as_i64().expect("totalCount should be int"), 3);
+    pretty_assertions::assert_eq!(val.as_i64().expect("totalCount should be int"), 3);
 
     delete(&client, &id).await;
 }
@@ -263,7 +264,7 @@ async fn distinct_count_on_numeric_property() {
 
     let body = get_aggregated(&client, &id, "distinctCount", None).await;
     let val = &body["speed"]["distinctCount"][0][0];
-    assert_eq!(val.as_i64().expect("distinctCount should be int"), 2);
+    pretty_assertions::assert_eq!(val.as_i64().expect("distinctCount should be int"), 2);
 
     delete(&client, &id).await;
 }
@@ -297,7 +298,7 @@ async fn sum_on_boolean_property() {
     let body = get_aggregated(&client, &id, "sum", None).await;
     let val = body["isActive"]["sum"][0][0].as_f64().expect("sum should be number");
     // sum of [true=1, false=0, true=1] = 2
-    assert_eq!(val, 2.0);
+    pretty_assertions::assert_eq!(val, 2.0);
 
     delete(&client, &id).await;
 }
@@ -310,7 +311,7 @@ async fn min_on_boolean_property() {
 
     let body = get_aggregated(&client, &id, "min", None).await;
     let val = body["isActive"]["min"][0][0].as_f64().expect("min should be number");
-    assert_eq!(val, 0.0, "min of [true, false, true] should be 0 (false)");
+    pretty_assertions::assert_eq!(val, 0.0, "min of [true, false, true] should be 0 (false)");
 
     delete(&client, &id).await;
 }
@@ -323,7 +324,7 @@ async fn max_on_boolean_property() {
 
     let body = get_aggregated(&client, &id, "max", None).await;
     let val = body["isActive"]["max"][0][0].as_f64().expect("max should be number");
-    assert_eq!(val, 1.0, "max of [true, false, true] should be 1 (true)");
+    pretty_assertions::assert_eq!(val, 1.0, "max of [true, false, true] should be 1 (true)");
 
     delete(&client, &id).await;
 }
@@ -336,7 +337,7 @@ async fn total_count_on_boolean_property() {
 
     let body = get_aggregated(&client, &id, "totalCount", None).await;
     let val = body["isActive"]["totalCount"][0][0].as_i64().expect("totalCount should be int");
-    assert_eq!(val, 3);
+    pretty_assertions::assert_eq!(val, 3);
 
     delete(&client, &id).await;
 }
@@ -350,7 +351,7 @@ async fn distinct_count_on_boolean_property() {
 
     let body = get_aggregated(&client, &id, "distinctCount", None).await;
     let val = body["isActive"]["distinctCount"][0][0].as_i64().expect("distinctCount should be int");
-    assert_eq!(val, 2);
+    pretty_assertions::assert_eq!(val, 2);
 
     delete(&client, &id).await;
 }
@@ -373,7 +374,7 @@ async fn min_on_string_property_is_lexicographic_first() {
 
     let body = get_aggregated(&client, &id, "min", None).await;
     let val = body["status"]["min"][0][0].as_str().expect("min on string should be string");
-    assert_eq!(val, "apple", "lexicographic first of [banana, apple, cherry]");
+    pretty_assertions::assert_eq!(val, "apple", "lexicographic first of [banana, apple, cherry]");
 
     delete(&client, &id).await;
 }
@@ -386,7 +387,7 @@ async fn max_on_string_property_is_lexicographic_last() {
 
     let body = get_aggregated(&client, &id, "max", None).await;
     let val = body["status"]["max"][0][0].as_str().expect("max on string should be string");
-    assert_eq!(val, "cherry", "lexicographic last of [banana, apple, cherry]");
+    pretty_assertions::assert_eq!(val, "cherry", "lexicographic last of [banana, apple, cherry]");
 
     delete(&client, &id).await;
 }
@@ -399,7 +400,7 @@ async fn total_count_on_string_property() {
 
     let body = get_aggregated(&client, &id, "totalCount", None).await;
     let val = body["status"]["totalCount"][0][0].as_i64().expect("totalCount should be int");
-    assert_eq!(val, 3);
+    pretty_assertions::assert_eq!(val, 3);
 
     delete(&client, &id).await;
 }
@@ -417,7 +418,7 @@ async fn distinct_count_on_string_property() {
 
     let body = get_aggregated(&client, &id, "distinctCount", None).await;
     let val = body["status"]["distinctCount"][0][0].as_i64().expect("distinctCount should be int");
-    assert_eq!(val, 2);
+    pretty_assertions::assert_eq!(val, 2);
 
     delete(&client, &id).await;
 }
@@ -493,7 +494,7 @@ async fn distinct_count_on_relationship() {
     let body = get_aggregated(&client, &id, "distinctCount", None).await;
     let val = body["isParked"]["distinctCount"][0][0].as_i64().expect("distinctCount should be int");
     // P1, P2 → 2 distinct targets
-    assert_eq!(val, 2);
+    pretty_assertions::assert_eq!(val, 2);
 
     delete(&client, &id).await;
 }
@@ -506,7 +507,7 @@ async fn total_count_on_relationship() {
 
     let body = get_aggregated(&client, &id, "totalCount", None).await;
     let val = body["isParked"]["totalCount"][0][0].as_i64().expect("totalCount should be int");
-    assert_eq!(val, 3);
+    pretty_assertions::assert_eq!(val, 3);
 
     delete(&client, &id).await;
 }
@@ -532,7 +533,7 @@ async fn relationship_type_preserved_in_aggregation() {
 
     let body = get_aggregated(&client, &id, "totalCount", None).await;
     let attr_type = body["isParked"]["type"].as_str().expect("type should be string");
-    assert_eq!(attr_type, "Relationship", "aggregation should preserve attribute type");
+    pretty_assertions::assert_eq!(attr_type, "Relationship", "aggregation should preserve attribute type");
 
     delete(&client, &id).await;
 }
@@ -558,19 +559,19 @@ async fn aggregation_with_period_creates_buckets() {
 
     let body = get_aggregated(&client, &id, "avg", Some("PT1H")).await;
     let buckets = body["speed"]["avg"].as_array().expect("avg should be array of buckets");
-    assert_eq!(buckets.len(), 3, "PT1H over 3 hours should create 3 buckets");
+    pretty_assertions::assert_eq!(buckets.len(), 3, "PT1H over 3 hours should create 3 buckets");
 
     // Bucket 0: avg(10, 20) = 15
     let b0_val = buckets[0][0].as_f64().expect("bucket value should be number");
-    assert_eq!(b0_val, 15.0);
+    pretty_assertions::assert_eq!(b0_val, 15.0);
 
     // Bucket 1: avg(30, 40) = 35
     let b1_val = buckets[1][0].as_f64().expect("bucket value should be number");
-    assert_eq!(b1_val, 35.0);
+    pretty_assertions::assert_eq!(b1_val, 35.0);
 
     // Bucket 2: avg(50, 60) = 55
     let b2_val = buckets[2][0].as_f64().expect("bucket value should be number");
-    assert_eq!(b2_val, 55.0);
+    pretty_assertions::assert_eq!(b2_val, 55.0);
 
     // Each bucket should have start and end timestamps
     assert!(buckets[0][1].is_string(), "bucket_start should be datetime string");
@@ -587,8 +588,8 @@ async fn aggregation_without_period_gives_single_result() {
 
     let body = get_aggregated(&client, &id, "avg", None).await;
     let buckets = body["speed"]["avg"].as_array().expect("avg should be array");
-    assert_eq!(buckets.len(), 1, "no period means single aggregate");
-    assert_eq!(buckets[0][0].as_f64().expect("avg value"), 200.0);
+    pretty_assertions::assert_eq!(buckets.len(), 1, "no period means single aggregate");
+    pretty_assertions::assert_eq!(buckets[0][0].as_f64().expect("avg value"), 200.0);
     // Without period, bucket timestamps should be null
     assert!(buckets[0][1].is_null(), "bucket_start should be null when no period");
     assert!(buckets[0][2].is_null(), "bucket_end should be null when no period");
@@ -605,8 +606,8 @@ async fn zero_duration_aggregates_whole_range() {
     // PT0S means aggregate whole range (spec 4.5.19.1)
     let body = get_aggregated(&client, &id, "avg", Some("PT0S")).await;
     let buckets = body["speed"]["avg"].as_array().expect("avg should be array");
-    assert_eq!(buckets.len(), 1, "PT0S should aggregate whole range as single result");
-    assert_eq!(buckets[0][0].as_f64().expect("avg value"), 200.0);
+    pretty_assertions::assert_eq!(buckets.len(), 1, "PT0S should aggregate whole range as single result");
+    pretty_assertions::assert_eq!(buckets[0][0].as_f64().expect("avg value"), 200.0);
 
     delete(&client, &id).await;
 }
@@ -623,10 +624,10 @@ async fn multiple_aggr_methods_in_single_query() {
 
     let body = get_aggregated(&client, &id, "avg,min,max,totalCount", None).await;
     let speed = &body["speed"];
-    assert_eq!(speed["avg"][0][0].as_f64().expect("avg"), 200.0);
-    assert_eq!(speed["min"][0][0].as_f64().expect("min"), 100.0);
-    assert_eq!(speed["max"][0][0].as_f64().expect("max"), 300.0);
-    assert_eq!(speed["totalCount"][0][0].as_i64().expect("totalCount"), 3);
+    pretty_assertions::assert_eq!(speed["avg"][0][0].as_f64().expect("avg"), 200.0);
+    pretty_assertions::assert_eq!(speed["min"][0][0].as_f64().expect("min"), 100.0);
+    pretty_assertions::assert_eq!(speed["max"][0][0].as_f64().expect("max"), 300.0);
+    pretty_assertions::assert_eq!(speed["totalCount"][0][0].as_i64().expect("totalCount"), 3);
 
     delete(&client, &id).await;
 }
@@ -651,8 +652,8 @@ async fn aggregation_across_multiple_attributes() {
     create(&client, &entity).await;
 
     let body = get_aggregated(&client, &id, "avg", None).await;
-    assert_eq!(body["speed"]["avg"][0][0].as_f64().expect("speed avg"), 150.0);
-    assert_eq!(body["fuel"]["avg"][0][0].as_f64().expect("fuel avg"), 40.0);
+    pretty_assertions::assert_eq!(body["speed"]["avg"][0][0].as_f64().expect("speed avg"), 150.0);
+    pretty_assertions::assert_eq!(body["fuel"]["avg"][0][0].as_f64().expect("fuel avg"), 40.0);
 
     delete(&client, &id).await;
 }
@@ -670,18 +671,18 @@ async fn aggregated_response_has_correct_structure() {
     let body = get_aggregated(&client, &id, "avg", None).await;
 
     // Entity-level fields
-    assert_eq!(body["id"].as_str().expect("id"), id);
-    assert_eq!(body["type"].as_str().expect("type"), "AggTestEntity");
+    pretty_assertions::assert_eq!(body["id"].as_str().expect("id"), id);
+    pretty_assertions::assert_eq!(body["type"].as_str().expect("type"), "AggTestEntity");
 
     // Attribute structure: object with type + aggregation keys
     let speed = &body["speed"];
-    assert_eq!(speed["type"].as_str().expect("attr type"), "Property");
+    pretty_assertions::assert_eq!(speed["type"].as_str().expect("attr type"), "Property");
     assert!(speed["avg"].is_array(), "aggregation key should contain array of triples");
 
     // Triple structure: [value, bucket_start, bucket_end]
     let triple = &speed["avg"][0];
     assert!(triple.is_array(), "each entry should be a triple array");
-    assert_eq!(triple.as_array().expect("array").len(), 3, "triple should have exactly 3 elements");
+    pretty_assertions::assert_eq!(triple.as_array().expect("array").len(), 3, "triple should have exactly 3 elements");
 
     delete(&client, &id).await;
 }
@@ -693,7 +694,7 @@ async fn aggregated_response_property_type_is_property() {
     create(&client, &numeric_entity(&id, "speed", NUMERIC_OBS)).await;
 
     let body = get_aggregated(&client, &id, "avg", None).await;
-    assert_eq!(body["speed"]["type"].as_str().expect("type"), "Property");
+    pretty_assertions::assert_eq!(body["speed"]["type"].as_str().expect("type"), "Property");
 
     delete(&client, &id).await;
 }
@@ -728,24 +729,24 @@ async fn mixed_property_types_aggregated_correctly() {
     let body = get_aggregated(&client, &id, "avg,min,max,totalCount,distinctCount", None).await;
 
     // Numeric: all methods work
-    assert_eq!(body["speed"]["avg"][0][0].as_f64().expect("speed avg"), 150.0);
-    assert_eq!(body["speed"]["min"][0][0].as_f64().expect("speed min"), 100.0);
-    assert_eq!(body["speed"]["max"][0][0].as_f64().expect("speed max"), 200.0);
-    assert_eq!(body["speed"]["totalCount"][0][0].as_i64().expect("speed tc"), 2);
-    assert_eq!(body["speed"]["distinctCount"][0][0].as_i64().expect("speed dc"), 2);
+    pretty_assertions::assert_eq!(body["speed"]["avg"][0][0].as_f64().expect("speed avg"), 150.0);
+    pretty_assertions::assert_eq!(body["speed"]["min"][0][0].as_f64().expect("speed min"), 100.0);
+    pretty_assertions::assert_eq!(body["speed"]["max"][0][0].as_f64().expect("speed max"), 200.0);
+    pretty_assertions::assert_eq!(body["speed"]["totalCount"][0][0].as_i64().expect("speed tc"), 2);
+    pretty_assertions::assert_eq!(body["speed"]["distinctCount"][0][0].as_i64().expect("speed dc"), 2);
 
     // String: min/max are lexicographic, avg is null
     assert!(body["status"]["avg"][0][0].is_null(), "avg on string should be null");
-    assert_eq!(body["status"]["min"][0][0].as_str().expect("status min"), "closed");
-    assert_eq!(body["status"]["max"][0][0].as_str().expect("status max"), "open");
-    assert_eq!(body["status"]["totalCount"][0][0].as_i64().expect("status tc"), 2);
-    assert_eq!(body["status"]["distinctCount"][0][0].as_i64().expect("status dc"), 2);
+    pretty_assertions::assert_eq!(body["status"]["min"][0][0].as_str().expect("status min"), "closed");
+    pretty_assertions::assert_eq!(body["status"]["max"][0][0].as_str().expect("status max"), "open");
+    pretty_assertions::assert_eq!(body["status"]["totalCount"][0][0].as_i64().expect("status tc"), 2);
+    pretty_assertions::assert_eq!(body["status"]["distinctCount"][0][0].as_i64().expect("status dc"), 2);
 
     // Relationship: avg is null, distinctCount counts targets
     assert!(body["isParked"]["avg"][0][0].is_null(), "avg on relationship should be null");
-    assert_eq!(body["isParked"]["totalCount"][0][0].as_i64().expect("rel tc"), 2);
-    assert_eq!(body["isParked"]["distinctCount"][0][0].as_i64().expect("rel dc"), 2);
-    assert_eq!(body["isParked"]["type"].as_str().expect("type"), "Relationship");
+    pretty_assertions::assert_eq!(body["isParked"]["totalCount"][0][0].as_i64().expect("rel tc"), 2);
+    pretty_assertions::assert_eq!(body["isParked"]["distinctCount"][0][0].as_i64().expect("rel dc"), 2);
+    pretty_assertions::assert_eq!(body["isParked"]["type"].as_str().expect("type"), "Relationship");
 
     delete(&client, &id).await;
 }
@@ -762,12 +763,12 @@ async fn aggregation_single_value() {
     create(&client, &numeric_entity(&id, "speed", obs)).await;
 
     let body = get_aggregated(&client, &id, "avg,min,max,sum,totalCount,distinctCount", None).await;
-    assert_eq!(body["speed"]["avg"][0][0].as_f64().expect("avg"), 42.0);
-    assert_eq!(body["speed"]["min"][0][0].as_f64().expect("min"), 42.0);
-    assert_eq!(body["speed"]["max"][0][0].as_f64().expect("max"), 42.0);
-    assert_eq!(body["speed"]["sum"][0][0].as_f64().expect("sum"), 42.0);
-    assert_eq!(body["speed"]["totalCount"][0][0].as_i64().expect("totalCount"), 1);
-    assert_eq!(body["speed"]["distinctCount"][0][0].as_i64().expect("distinctCount"), 1);
+    pretty_assertions::assert_eq!(body["speed"]["avg"][0][0].as_f64().expect("avg"), 42.0);
+    pretty_assertions::assert_eq!(body["speed"]["min"][0][0].as_f64().expect("min"), 42.0);
+    pretty_assertions::assert_eq!(body["speed"]["max"][0][0].as_f64().expect("max"), 42.0);
+    pretty_assertions::assert_eq!(body["speed"]["sum"][0][0].as_f64().expect("sum"), 42.0);
+    pretty_assertions::assert_eq!(body["speed"]["totalCount"][0][0].as_i64().expect("totalCount"), 1);
+    pretty_assertions::assert_eq!(body["speed"]["distinctCount"][0][0].as_i64().expect("distinctCount"), 1);
 
     delete(&client, &id).await;
 }
@@ -792,19 +793,16 @@ async fn aggregation_with_dataset_id() {
     let body = get_aggregated(&client, &id, "avg", None).await;
     // Two datasets should produce separate aggregation instances
     let speed = &body["speed"];
-    if speed.is_array() {
-        let arr = speed.as_array().expect("array");
-        assert_eq!(arr.len(), 2, "two datasets should produce two instances");
-        // Find the default (no datasetId) and the named one
-        let default_inst = arr.iter().find(|v| v.get("datasetId").is_none());
-        let radar_inst = arr.iter().find(|v| v.get("datasetId").is_some());
-        assert!(default_inst.is_some(), "should have default dataset instance");
-        assert!(radar_inst.is_some(), "should have radar dataset instance");
-        assert_eq!(default_inst.expect("default")["avg"][0][0].as_f64().expect("default avg"), 150.0);
-        assert_eq!(radar_inst.expect("radar")["avg"][0][0].as_f64().expect("radar avg"), 350.0);
-    } else {
-        panic!("multi-dataset should produce an array of instances");
-    }
+    assert!(speed.is_array(), "multi-dataset should produce an array of instances");
+    let arr = speed.as_array().expect("array");
+    pretty_assertions::assert_eq!(arr.len(), 2, "two datasets should produce two instances");
+    // Find the default (no datasetId) and the named one
+    let default_inst = arr.iter().find(|v| v.get("datasetId").is_none());
+    let radar_inst = arr.iter().find(|v| v.get("datasetId").is_some());
+    assert!(default_inst.is_some(), "should have default dataset instance");
+    assert!(radar_inst.is_some(), "should have radar dataset instance");
+    pretty_assertions::assert_eq!(default_inst.expect("default")["avg"][0][0].as_f64().expect("default avg"), 150.0);
+    pretty_assertions::assert_eq!(radar_inst.expect("radar")["avg"][0][0].as_f64().expect("radar avg"), 350.0);
 
     delete(&client, &id).await;
 }
@@ -818,17 +816,17 @@ async fn all_eight_methods_on_numeric() {
 
     let body = get_aggregated(&client, &id, "avg,min,max,sum,sumsq,stddev,totalCount,distinctCount", None).await;
     let s = &body["speed"];
-    assert_eq!(s["avg"][0][0].as_f64().expect("avg"), 20.0);
-    assert_eq!(s["min"][0][0].as_f64().expect("min"), 10.0);
-    assert_eq!(s["max"][0][0].as_f64().expect("max"), 30.0);
-    assert_eq!(s["sum"][0][0].as_f64().expect("sum"), 60.0);
+    pretty_assertions::assert_eq!(s["avg"][0][0].as_f64().expect("avg"), 20.0);
+    pretty_assertions::assert_eq!(s["min"][0][0].as_f64().expect("min"), 10.0);
+    pretty_assertions::assert_eq!(s["max"][0][0].as_f64().expect("max"), 30.0);
+    pretty_assertions::assert_eq!(s["sum"][0][0].as_f64().expect("sum"), 60.0);
     // sumsq = 100 + 400 + 900 = 1400
-    assert_eq!(s["sumsq"][0][0].as_f64().expect("sumsq"), 1400.0);
+    pretty_assertions::assert_eq!(s["sumsq"][0][0].as_f64().expect("sumsq"), 1400.0);
     // stddev of [10,20,30] = 10.0 (sample)
     let stddev = s["stddev"][0][0].as_f64().expect("stddev");
     assert!((stddev - 10.0).abs() < 0.01);
-    assert_eq!(s["totalCount"][0][0].as_i64().expect("totalCount"), 3);
-    assert_eq!(s["distinctCount"][0][0].as_i64().expect("distinctCount"), 3);
+    pretty_assertions::assert_eq!(s["totalCount"][0][0].as_i64().expect("totalCount"), 3);
+    pretty_assertions::assert_eq!(s["distinctCount"][0][0].as_i64().expect("distinctCount"), 3);
 
     delete(&client, &id).await;
 }
@@ -850,7 +848,7 @@ async fn aggregation_bucket_timestamps_are_consistent() {
         let start_dt = chrono::DateTime::parse_from_rfc3339(start).expect("parse start");
         let end_dt = chrono::DateTime::parse_from_rfc3339(end).expect("parse end");
         let diff = end_dt - start_dt;
-        assert_eq!(diff, chrono::Duration::hours(1), "bucket width should be exactly PT1H");
+        pretty_assertions::assert_eq!(diff, chrono::Duration::hours(1), "bucket width should be exactly PT1H");
     }
 
     delete(&client, &id).await;
@@ -865,8 +863,8 @@ async fn p0d_duration_aggregates_whole_range() {
     // P0D (zero days) should behave like PT0S -- aggregate whole range
     let body = get_aggregated(&client, &id, "avg", Some("P0D")).await;
     let buckets = body["speed"]["avg"].as_array().expect("array");
-    assert_eq!(buckets.len(), 1, "P0D should aggregate whole range");
-    assert_eq!(buckets[0][0].as_f64().expect("avg"), 200.0);
+    pretty_assertions::assert_eq!(buckets.len(), 1, "P0D should aggregate whole range");
+    pretty_assertions::assert_eq!(buckets[0][0].as_f64().expect("avg"), 200.0);
 
     delete(&client, &id).await;
 }

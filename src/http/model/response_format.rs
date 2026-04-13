@@ -72,20 +72,21 @@ impl fmt::Display for ResponseFormat {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::*;
 
     #[test]
     fn response_format_content_type_str() {
-        assert_eq!(ResponseFormat::Json.content_type_str(), "application/json");
-        assert_eq!(ResponseFormat::JsonLd.content_type_str(), "application/ld+json");
-        assert_eq!(ResponseFormat::GeoJson.content_type_str(), "application/geo+json");
+        pretty_assertions::assert_eq!(ResponseFormat::Json.content_type_str(), "application/json");
+        pretty_assertions::assert_eq!(ResponseFormat::JsonLd.content_type_str(), "application/ld+json");
+        pretty_assertions::assert_eq!(ResponseFormat::GeoJson.content_type_str(), "application/geo+json");
     }
 
     #[test]
     fn response_format_content_type_media_type() {
-        assert_eq!(ResponseFormat::Json.content_type(), APPLICATION_JSON);
-        assert_eq!(ResponseFormat::JsonLd.content_type(), APPLICATION_LD_JSON);
-        assert_eq!(ResponseFormat::GeoJson.content_type(), APPLICATION_GEO_JSON);
+        pretty_assertions::assert_eq!(ResponseFormat::Json.content_type(), APPLICATION_JSON);
+        pretty_assertions::assert_eq!(ResponseFormat::JsonLd.content_type(), APPLICATION_LD_JSON);
+        pretty_assertions::assert_eq!(ResponseFormat::GeoJson.content_type(), APPLICATION_GEO_JSON);
     }
 
     #[test]

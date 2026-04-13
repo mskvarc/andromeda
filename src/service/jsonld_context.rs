@@ -152,6 +152,7 @@ fn build_core_context_metadata(identifier: &str) -> Result<ContextMetadata, Andr
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::{build_core_context_metadata, core_context_payload, is_core_context_url};
     use crate::domain::{jsonld_context::ContextKind, uri::Uri};
     use url::Url;
@@ -167,10 +168,10 @@ mod tests {
     fn core_context_details_include_kind_and_url() {
         let identifier = "https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.6.jsonld";
         let metadata = build_core_context_metadata(identifier).expect("valid core context metadata");
-        assert_eq!(metadata.kind, ContextKind::ImplicitlyCreated);
+        pretty_assertions::assert_eq!(metadata.kind, ContextKind::ImplicitlyCreated);
         let expected_url: Url = identifier.parse().expect("valid URL");
-        assert_eq!(metadata.url, Some(expected_url.clone()));
-        assert_eq!(metadata.local_id, Uri::Url(expected_url));
+        pretty_assertions::assert_eq!(metadata.url, Some(expected_url.clone()));
+        pretty_assertions::assert_eq!(metadata.local_id, Uri::Url(expected_url));
     }
 
     #[test]

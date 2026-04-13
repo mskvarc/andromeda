@@ -109,6 +109,7 @@ pub struct CsrQueryParametersOptions {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::*;
     use crate::{http::parameter::query::SharedQueryParams, params_from_query};
 
@@ -160,26 +161,26 @@ mod tests {
     #[test]
     fn parse_options_sys_attrs() {
         let p = params_from_query("type=Vehicle&options=sysAttrs");
-        assert_eq!(p.parse_options().sys_attrs, SysAttrsInclusion::Include);
+        pretty_assertions::assert_eq!(p.parse_options().sys_attrs, SysAttrsInclusion::Include);
     }
 
     #[test]
     fn parse_options_default() {
         let p = params_from_query("type=Vehicle");
-        assert_eq!(p.parse_options().sys_attrs, SysAttrsInclusion::Strip);
+        pretty_assertions::assert_eq!(p.parse_options().sys_attrs, SysAttrsInclusion::Strip);
     }
 
     #[test]
     fn shared_params_limit_offset() {
         let p = params_from_query("type=Vehicle&limit=50&offset=10");
-        assert_eq!(p.effective_limit(), 50);
-        assert_eq!(p.effective_offset(), 10);
+        pretty_assertions::assert_eq!(p.effective_limit(), 50);
+        pretty_assertions::assert_eq!(p.effective_offset(), 10);
     }
 
     #[test]
     fn shared_params_defaults() {
         let p = params_from_query("type=Vehicle");
-        assert_eq!(p.effective_limit(), 20);
-        assert_eq!(p.effective_offset(), 0);
+        pretty_assertions::assert_eq!(p.effective_limit(), 20);
+        pretty_assertions::assert_eq!(p.effective_offset(), 0);
     }
 }

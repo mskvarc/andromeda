@@ -1,3 +1,4 @@
+#![allow(clippy::expect_used, clippy::unwrap_used)]
 use crate::helpers::{
     client,
     collect_link_headers,
@@ -32,11 +33,11 @@ async fn pagination_subscriptions_middle_page_returns_prev_and_next_in_single_li
     for id in &ids {
         let body = default_subscription(id);
         let (status, _, _) = create_subscription(&http, &body).await;
-        assert_eq!(status, StatusCode::CREATED, "setup: create subscription {id}");
+        pretty_assertions::assert_eq!(status, StatusCode::CREATED, "setup: create subscription {id}");
     }
 
     let (status, headers, _) = query_subscriptions(&http, "limit=1&offset=1", "application/ld+json").await;
-    assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
 
     let pagination = find_pagination_link_header(&headers).expect("pagination Link header present");
     assert!(pagination.contains("rel=\"prev\""), "should have prev: {pagination}");
@@ -62,11 +63,11 @@ async fn pagination_subscriptions_first_page_returns_next_only() {
     for id in &ids {
         let body = default_subscription(id);
         let (status, _, _) = create_subscription(&http, &body).await;
-        assert_eq!(status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(status, StatusCode::CREATED);
     }
 
     let (status, headers, _) = query_subscriptions(&http, "limit=1&offset=0", "application/ld+json").await;
-    assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
 
     let pagination = find_pagination_link_header(&headers).expect("pagination Link header present");
     assert!(pagination.contains("rel=\"next\""), "should have next: {pagination}");
@@ -87,11 +88,11 @@ async fn pagination_subscriptions_last_page_returns_prev_only() {
     for id in &ids {
         let body = default_subscription(id);
         let (status, _, _) = create_subscription(&http, &body).await;
-        assert_eq!(status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(status, StatusCode::CREATED);
     }
 
     let (status, headers, _) = query_subscriptions(&http, "limit=1&offset=2", "application/ld+json").await;
-    assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
 
     let pagination = find_pagination_link_header(&headers).expect("pagination Link header present");
     assert!(pagination.contains("rel=\"prev\""), "should have prev: {pagination}");
@@ -112,11 +113,11 @@ async fn pagination_subscriptions_single_page_returns_no_pagination_link() {
     for id in &ids {
         let body = default_subscription(id);
         let (status, _, _) = create_subscription(&http, &body).await;
-        assert_eq!(status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(status, StatusCode::CREATED);
     }
 
     let (status, headers, _) = query_subscriptions(&http, "limit=10&offset=0", "application/ld+json").await;
-    assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
 
     assert!(
         find_pagination_link_header(&headers).is_none(),
@@ -138,12 +139,12 @@ async fn pagination_subscriptions_context_and_pagination_are_separate_link_heade
     for id in &ids {
         let body = default_subscription(id);
         let (status, _, _) = create_subscription(&http, &body).await;
-        assert_eq!(status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(status, StatusCode::CREATED);
     }
 
     // Use application/json Accept to get context Link header back
     let (status, headers, _) = query_subscriptions(&http, "limit=1&offset=1", "application/json").await;
-    assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
 
     let all_links = collect_link_headers(&headers);
     assert!(
@@ -158,7 +159,7 @@ async fn pagination_subscriptions_context_and_pagination_are_separate_link_heade
     assert!(pagination.is_some(), "pagination Link header present");
 
     // They must be distinct header values
-    assert_ne!(context, pagination, "context and pagination Links must be separate");
+    pretty_assertions::assert_ne!(context, pagination, "context and pagination Links must be separate");
 
     for id in &ids {
         delete_subscription(&http, id).await;
@@ -175,11 +176,11 @@ async fn pagination_subscriptions_pagination_links_include_json_ld_media_type() 
     for id in &ids {
         let body = default_subscription(id);
         let (status, _, _) = create_subscription(&http, &body).await;
-        assert_eq!(status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(status, StatusCode::CREATED);
     }
 
     let (status, headers, _) = query_subscriptions(&http, "limit=1&offset=1", "application/ld+json").await;
-    assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
 
     let pagination = find_pagination_link_header(&headers).expect("pagination Link header present");
     assert!(
@@ -206,11 +207,11 @@ async fn pagination_registrations_middle_page_returns_first_last_prev_next() {
     for id in &ids {
         let body = default_registration(id);
         let (status, _, _) = create_registration(&http, &body).await;
-        assert_eq!(status, StatusCode::CREATED, "setup: create registration {id}");
+        pretty_assertions::assert_eq!(status, StatusCode::CREATED, "setup: create registration {id}");
     }
 
     let (status, headers, _) = query_registrations(&http, "type=Building&limit=1&offset=2", "application/ld+json").await;
-    assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
 
     let pagination = find_pagination_link_header(&headers).expect("pagination Link header present");
     assert!(pagination.contains("rel=\"first\""), "should have first: {pagination}");
@@ -233,11 +234,11 @@ async fn pagination_registrations_first_page_has_first_last_next_without_prev() 
     for id in &ids {
         let body = default_registration(id);
         let (status, _, _) = create_registration(&http, &body).await;
-        assert_eq!(status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(status, StatusCode::CREATED);
     }
 
     let (status, headers, _) = query_registrations(&http, "type=Building&limit=1&offset=0", "application/ld+json").await;
-    assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
 
     let pagination = find_pagination_link_header(&headers).expect("pagination Link header present");
     assert!(pagination.contains("rel=\"first\""), "should have first: {pagination}");
@@ -260,11 +261,11 @@ async fn pagination_registrations_last_page_has_first_last_prev_without_next() {
     for id in &ids {
         let body = default_registration(id);
         let (status, _, _) = create_registration(&http, &body).await;
-        assert_eq!(status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(status, StatusCode::CREATED);
     }
 
     let (status, headers, _) = query_registrations(&http, "type=Building&limit=1&offset=4", "application/ld+json").await;
-    assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
 
     let pagination = find_pagination_link_header(&headers).expect("pagination Link header present");
     assert!(pagination.contains("rel=\"first\""), "should have first: {pagination}");
@@ -287,11 +288,11 @@ async fn pagination_registrations_first_link_points_to_offset_zero() {
     for id in &ids {
         let body = default_registration(id);
         let (status, _, _) = create_registration(&http, &body).await;
-        assert_eq!(status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(status, StatusCode::CREATED);
     }
 
     let (status, headers, _) = query_registrations(&http, "type=Building&limit=2&offset=2", "application/ld+json").await;
-    assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
 
     let pagination = find_pagination_link_header(&headers).expect("pagination Link header present");
 
@@ -316,11 +317,11 @@ async fn pagination_registrations_last_link_points_to_correct_offset() {
     for id in &ids {
         let body = default_registration(id);
         let (status, _, _) = create_registration(&http, &body).await;
-        assert_eq!(status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(status, StatusCode::CREATED);
     }
 
     let (status, headers, _) = query_registrations(&http, "type=Building&limit=2&offset=0", "application/ld+json").await;
-    assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
 
     let pagination = find_pagination_link_header(&headers).expect("pagination Link header present");
 
@@ -344,11 +345,11 @@ async fn pagination_registrations_no_media_type_on_pagination_links() {
     for id in &ids {
         let body = default_registration(id);
         let (status, _, _) = create_registration(&http, &body).await;
-        assert_eq!(status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(status, StatusCode::CREATED);
     }
 
     let (status, headers, _) = query_registrations(&http, "type=Building&limit=1&offset=0", "application/ld+json").await;
-    assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
 
     let pagination = find_pagination_link_header(&headers).expect("pagination Link header present");
     assert!(
@@ -375,11 +376,11 @@ async fn pagination_link_header_urls_preserve_non_pagination_query_params() {
     for id in &ids {
         let body = default_subscription(id);
         let (status, _, _) = create_subscription(&http, &body).await;
-        assert_eq!(status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(status, StatusCode::CREATED);
     }
 
     let (status, headers, _) = query_subscriptions(&http, "limit=1&offset=1", "application/ld+json").await;
-    assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
 
     let pagination = find_pagination_link_header(&headers).expect("pagination Link header present");
     // All pagination URLs should contain limit= (preserved)
@@ -400,11 +401,11 @@ async fn pagination_each_link_value_is_parseable_rfc8288() {
     for id in &ids {
         let body = default_subscription(id);
         let (status, _, _) = create_subscription(&http, &body).await;
-        assert_eq!(status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(status, StatusCode::CREATED);
     }
 
     let (status, headers, _) = query_subscriptions(&http, "limit=1&offset=1", "application/ld+json").await;
-    assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
 
     let pagination = find_pagination_link_header(&headers).expect("pagination Link header present");
 
@@ -432,7 +433,7 @@ fn extract_link_segment<'a>(header: &'a str, rel_name: &str) -> Option<&'a str> 
 
 /// Extract URL from a link-value like `</path?query>; rel="..."`.
 fn extract_url(segment: &str) -> &str {
-    let start = segment.find('<').map(|i| i + 1).unwrap_or(0);
+    let start = segment.find('<').map_or(0, |i| i + 1);
     let end = segment.find('>').unwrap_or(segment.len());
     &segment[start..end]
 }

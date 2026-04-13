@@ -1,3 +1,4 @@
+#![allow(clippy::expect_used, clippy::unwrap_used)]
 //! CSR creation tests (NGSI-LD 5.9.2, 6.3.5)
 
 use reqwest::StatusCode;
@@ -27,18 +28,18 @@ async fn create_without_mode_and_operations_returns_201() {
     let reg = load_fixture("csource_registrations/context-source-registration.jsonld", &id);
 
     let (status, location, _) = create_registration(&c, &reg).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
     let loc = location.expect("should have Location header");
     assert!(loc.contains(&id), "Location should contain registration ID");
 
     let (status, mut actual) = retrieve_registration(&c, &id, Some("application/ld+json"), Some(COMPOUND_CONTEXT_URL)).await;
-    assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
 
     let ignored = &["@context", "createdAt", "modifiedAt", "status", "mode", "operations"];
     let mut expected = reg;
     strip_ignored_keys(&mut actual, ignored);
     strip_ignored_keys(&mut expected, ignored);
-    assert_eq!(expected, actual);
+    pretty_assertions::assert_eq!(expected, actual);
 
     cleanup_registration(&c, &id).await;
 }
@@ -51,16 +52,16 @@ async fn create_with_mode_and_operations_returns_201() {
     let reg = load_fixture("csource_registrations/context-source-registration-with-mode-and-operations.jsonld", &id);
 
     let (status, _, _) = create_registration(&c, &reg).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     let (status, mut actual) = retrieve_registration(&c, &id, Some("application/ld+json"), Some(COMPOUND_CONTEXT_URL)).await;
-    assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
 
     let ignored = &["@context", "createdAt", "modifiedAt", "status"];
     let mut expected = reg;
     strip_ignored_keys(&mut actual, ignored);
     strip_ignored_keys(&mut expected, ignored);
-    assert_eq!(expected, actual);
+    pretty_assertions::assert_eq!(expected, actual);
 
     cleanup_registration(&c, &id).await;
 }
@@ -73,16 +74,16 @@ async fn create_with_location_returns_201() {
     let reg = load_fixture("csource_registrations/context-source-registration-location.jsonld", &id);
 
     let (status, _, _) = create_registration(&c, &reg).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     let (status, mut actual) = retrieve_registration(&c, &id, Some("application/ld+json"), Some(COMPOUND_CONTEXT_URL)).await;
-    assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
 
     let ignored = &["@context", "createdAt", "modifiedAt", "status", "mode", "operations"];
     let mut expected = reg;
     strip_ignored_keys(&mut actual, ignored);
     strip_ignored_keys(&mut expected, ignored);
-    assert_eq!(expected, actual);
+    pretty_assertions::assert_eq!(expected, actual);
 
     cleanup_registration(&c, &id).await;
 }
@@ -95,16 +96,16 @@ async fn create_with_expiration_returns_201() {
     let reg = load_fixture("csource_registrations/context-source-registration-with-expiration.jsonld", &id);
 
     let (status, _, _) = create_registration(&c, &reg).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     let (status, mut actual) = retrieve_registration(&c, &id, Some("application/ld+json"), Some(COMPOUND_CONTEXT_URL)).await;
-    assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
 
     let ignored = &["@context", "createdAt", "modifiedAt", "status", "mode", "operations"];
     let mut expected = reg;
     strip_ignored_keys(&mut actual, ignored);
     strip_ignored_keys(&mut expected, ignored);
-    assert_eq!(expected, actual);
+    pretty_assertions::assert_eq!(expected, actual);
 
     cleanup_registration(&c, &id).await;
 }
@@ -116,14 +117,14 @@ async fn create_without_id_server_generates_id() {
     let reg = load_fixture("csource_registrations/context-source-registration-no-id.jsonld", "unused");
 
     let (status, location, _) = create_registration(&c, &reg).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     let loc = location.expect("should have Location header");
     assert!(!loc.is_empty(), "Location header should not be empty");
     let id = loc.rsplit('/').next().expect("Location should contain an ID");
 
     let (status, body) = retrieve_registration(&c, id, Some("application/ld+json"), Some(COMPOUND_CONTEXT_URL)).await;
-    assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
     assert!(body["id"].is_string(), "response should contain id");
 
     cleanup_registration(&c, id).await;
@@ -141,8 +142,8 @@ async fn create_with_invalid_content_returns_400() {
     let reg = load_fixture("csource_registrations/context-source-registration-invalid.jsonld", &id);
 
     let (status, _, body) = create_registration(&c, &reg).await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE);
+    pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
+    pretty_assertions::assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE);
     assert!(body["title"].is_string(), "response should contain title");
 }
 
@@ -154,7 +155,7 @@ async fn create_with_invalid_structure_returns_400() {
     let reg = load_fixture("csource_registrations/context-source-registration-invalid-structure.jsonld", &id);
 
     let (status, _, _) = create_registration(&c, &reg).await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
+    pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
 }
 
 /// Create CSR with expiration date in the past -- 400 (5.9.2).
@@ -165,7 +166,7 @@ async fn create_with_past_expiration_returns_400() {
     let reg = load_fixture("csource_registrations/context-source-registration-past-expiration.jsonld", &id);
 
     let (status, _, _) = create_registration(&c, &reg).await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
+    pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
 }
 
 // ---------------------------------------------------------------------------
@@ -180,10 +181,10 @@ async fn create_duplicate_returns_409() {
     let reg = load_fixture("csource_registrations/context-source-registration.jsonld", &id);
 
     let (status, _, _) = create_registration(&c, &reg).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     let (status, _, body) = create_registration(&c, &reg).await;
-    assert_eq!(status, StatusCode::CONFLICT);
+    pretty_assertions::assert_eq!(status, StatusCode::CONFLICT);
     assert!(body["title"].is_string(), "response should contain title");
 
     cleanup_registration(&c, &id).await;
@@ -211,11 +212,11 @@ async fn create_json_with_link_context_retrieve_with_context() {
         None,
     )
     .await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     let (status, body) = retrieve_registration(&c, &id, Some("application/ld+json"), Some(COMPOUND_CONTEXT_URL)).await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["information"][0]["entities"][0]["type"], "Building");
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(body["information"][0]["entities"][0]["type"], "Building");
 
     cleanup_registration(&c, &id).await;
 }
@@ -238,11 +239,11 @@ async fn create_json_with_link_context_retrieve_without_context_returns_fqn() {
         None,
     )
     .await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     let (status, body) = retrieve_registration(&c, &id, None, None).await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["information"][0]["entities"][0]["type"], "https://ngsi-ld-test-suite/context#Building");
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(body["information"][0]["entities"][0]["type"], "https://ngsi-ld-test-suite/context#Building");
 
     cleanup_registration(&c, &id).await;
 }
@@ -271,11 +272,11 @@ async fn create_json_default_context_retrieve_with_compound_context() {
         None,
     )
     .await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     let (status, body) = retrieve_registration(&c, &id, Some("application/ld+json"), Some(COMPOUND_CONTEXT_URL)).await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["information"][0]["entities"][0]["type"], "ngsi-ld:default-context/Building");
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(body["information"][0]["entities"][0]["type"], "ngsi-ld:default-context/Building");
 
     cleanup_registration(&c, &id).await;
 }
@@ -298,11 +299,11 @@ async fn create_json_default_context_retrieve_without_context() {
         None,
     )
     .await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     let (status, body) = retrieve_registration(&c, &id, None, None).await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["information"][0]["entities"][0]["type"], "Building");
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(body["information"][0]["entities"][0]["type"], "Building");
 
     cleanup_registration(&c, &id).await;
 }
@@ -328,8 +329,8 @@ async fn create_json_content_type_with_context_in_body_returns_400() {
         None,
     )
     .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE);
+    pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
+    pretty_assertions::assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE);
     assert!(body["title"].is_string(), "response should contain title");
 }
 
@@ -345,11 +346,11 @@ async fn create_jsonld_retrieve_with_context_returns_compacted_type() {
     let reg = load_fixture("csource_registrations/context-source-registration.jsonld", &id);
 
     let (status, _, _) = create_registration(&c, &reg).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     let (status, body) = retrieve_registration(&c, &id, Some("application/ld+json"), Some(COMPOUND_CONTEXT_URL)).await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["information"][0]["entities"][0]["type"], "Vehicle");
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(body["information"][0]["entities"][0]["type"], "Vehicle");
 
     cleanup_registration(&c, &id).await;
 }
@@ -362,11 +363,11 @@ async fn create_jsonld_retrieve_without_context_returns_expanded_type() {
     let reg = load_fixture("csource_registrations/context-source-registration.jsonld", &id);
 
     let (status, _, _) = create_registration(&c, &reg).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     let (status, body) = retrieve_registration(&c, &id, None, None).await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["information"][0]["entities"][0]["type"], "https://ngsi-ld-test-suite/context#Vehicle");
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(body["information"][0]["entities"][0]["type"], "https://ngsi-ld-test-suite/context#Vehicle");
 
     cleanup_registration(&c, &id).await;
 }
@@ -393,8 +394,8 @@ async fn create_jsonld_content_type_without_context_in_body_returns_400() {
         None,
     )
     .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE);
+    pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
+    pretty_assertions::assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE);
     assert!(body["title"].is_string(), "response should contain title");
 }
 
@@ -419,7 +420,7 @@ async fn create_jsonld_content_type_with_link_header_returns_400() {
         None,
     )
     .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE);
+    pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
+    pretty_assertions::assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE);
     assert!(body["title"].is_string(), "response should contain title");
 }

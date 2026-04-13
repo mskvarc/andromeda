@@ -1,3 +1,4 @@
+#![allow(clippy::expect_used, clippy::unwrap_used)]
 use std::{sync::Arc, time::Duration};
 
 use axum::{body::Bytes, http::HeaderMap, response::IntoResponse};
@@ -72,9 +73,8 @@ impl NotificationReceiver {
                     return notifs.remove(0);
                 }
             }
-            if tokio::time::timeout_at(deadline, self.notify.notified()).await.is_err() {
-                panic!("Timed out waiting for notification after {:?}", timeout);
-            }
+            let notified = tokio::time::timeout_at(deadline, self.notify.notified()).await;
+            assert!(notified.is_ok(), "Timed out waiting for notification after {:?}", timeout);
         }
     }
 

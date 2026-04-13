@@ -62,6 +62,7 @@ impl headers::Header for NgsiLdSnapshot {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::*;
     use crate::domain::ngsi_ld_urn::SnapshotId;
     use headers::Header;
@@ -75,13 +76,13 @@ mod tests {
     #[test]
     fn decode_valid_snapshot_urn() {
         let header = decode_from("urn:ngsi-ld:Snapshot:abc").expect("should decode");
-        assert_eq!(header.into_inner().as_str(), "urn:ngsi-ld:Snapshot:abc");
+        pretty_assertions::assert_eq!(header.into_inner().as_str(), "urn:ngsi-ld:Snapshot:abc");
     }
 
     #[test]
     fn decode_trims_whitespace() {
         let header = decode_from("  urn:ngsi-ld:Snapshot:1  ").expect("should decode");
-        assert_eq!(header.into_inner().as_str(), "urn:ngsi-ld:Snapshot:1");
+        pretty_assertions::assert_eq!(header.into_inner().as_str(), "urn:ngsi-ld:Snapshot:1");
     }
 
     #[test]
@@ -110,11 +111,11 @@ mod tests {
         let header = NgsiLdSnapshot::new(snapshot_id);
         let mut encoded = Vec::new();
         header.encode(&mut encoded);
-        assert_eq!(encoded.len(), 1);
-        assert_eq!(encoded[0].to_str().expect("valid str"), "urn:ngsi-ld:Snapshot:x");
+        pretty_assertions::assert_eq!(encoded.len(), 1);
+        pretty_assertions::assert_eq!(encoded[0].to_str().expect("valid str"), "urn:ngsi-ld:Snapshot:x");
 
         let mut iter = encoded.iter();
         let decoded = NgsiLdSnapshot::decode(&mut iter).expect("roundtrip decode");
-        assert_eq!(header, decoded);
+        pretty_assertions::assert_eq!(header, decoded);
     }
 }

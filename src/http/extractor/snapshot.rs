@@ -43,6 +43,7 @@ where
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::*;
     use axum::{extract::FromRequestParts, http::Request};
 
@@ -56,7 +57,7 @@ mod tests {
         let (mut parts, _) = req.into_parts();
         let result = SnapshotHeader::from_request_parts(&mut parts, &()).await.expect("should succeed");
         let urn = result.into_inner().expect("should have value");
-        assert_eq!(urn.as_str(), "urn:ngsi-ld:Snapshot:abc");
+        pretty_assertions::assert_eq!(urn.as_str(), "urn:ngsi-ld:Snapshot:abc");
     }
 
     #[tokio::test]

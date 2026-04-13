@@ -1,3 +1,4 @@
+#![allow(clippy::expect_used, clippy::unwrap_used)]
 use crate::{
     distributed_operations::prepare_registration,
     harness::{
@@ -8,7 +9,6 @@ use crate::{
     },
 };
 use libtest_mimic::Trial;
-use pretty_assertions::assert_eq;
 use reqwest::{Method, StatusCode};
 
 const PREFIX: &str = "distributed_operations::consumption::entity::retrieve_entity";
@@ -45,12 +45,12 @@ pub fn tests(trials: &mut Vec<Trial>) {
                     .link_context(fixtures::test_suite_context_url()),
             )
             .await;
-        assert_eq!(resp.status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
 
         // Create auxiliary registration
         let reg = prepare_registration(REG_VEHICLE_COMPLETE, &reg_id, &entity_id, &mock.url(""), Some("auxiliary"), None, None);
         let resp = ctx.client.create_registration(&reg).await;
-        assert_eq!(resp.status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
         ctx.track_registration(&reg_id);
 
         // Mock returns entity with brandName=BMW and isParked2
@@ -60,14 +60,14 @@ pub fn tests(trials: &mut Vec<Trial>) {
 
         // Retrieve entity
         let resp = ctx.client.get_entity(&entity_id, &QueryParams::new(), ld_headers()).await;
-        assert_eq!(resp.status, StatusCode::OK);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::OK);
 
         let body: serde_json::Value = resp.json();
         let obj = body.as_object().unwrap();
         let keys: Vec<_> = obj.keys().collect();
-        assert_eq!(obj.contains_key("brandName"), true, "expected brandName in {keys:?}");
-        assert_eq!(obj.contains_key("isParked"), true, "expected isParked in {keys:?}");
-        assert_eq!(obj.contains_key("isParked2"), true, "expected isParked2 in {keys:?}");
+        pretty_assertions::assert_eq!(obj.contains_key("brandName"), true, "expected brandName in {keys:?}");
+        pretty_assertions::assert_eq!(obj.contains_key("isParked"), true, "expected isParked in {keys:?}");
+        pretty_assertions::assert_eq!(obj.contains_key("isParked2"), true, "expected isParked2 in {keys:?}");
 
         mock.stop();
     }));
@@ -84,7 +84,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
             .client
             .request(Method::POST, "/entities?local=true", Some(&entity), RequestHeaders::new())
             .await;
-        assert_eq!(resp.status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
 
         // Create exclusive registration with endpoint /broker1
         // The CSR fixture has operations: ["redirectionOps"], which only matches consumption
@@ -99,7 +99,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
             None,
         );
         let resp = ctx.client.create_registration(&reg).await;
-        assert_eq!(resp.status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
         ctx.track_registration(&reg_id);
 
         // Mock returns entity with speed attribute
@@ -109,11 +109,11 @@ pub fn tests(trials: &mut Vec<Trial>) {
 
         // Retrieve entity
         let resp = ctx.client.get_entity(&entity_id, &QueryParams::new(), ld_headers()).await;
-        assert_eq!(resp.status, StatusCode::OK);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::OK);
 
         let body: serde_json::Value = resp.json();
         let obj = body.as_object().unwrap();
-        assert_eq!(
+        pretty_assertions::assert_eq!(
             obj.contains_key("speed"),
             true,
             "expected speed from exclusive source, got keys: {:?}",
@@ -133,7 +133,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
         // Create inclusive registration (no mode)
         let reg = prepare_registration(REG_VEHICLE_COMPLETE, &reg_id, &entity_id, &mock.url(""), None, None, None);
         let resp = ctx.client.create_registration(&reg).await;
-        assert_eq!(resp.status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
         ctx.track_registration(&reg_id);
 
         // Mock returns entity
@@ -143,7 +143,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
 
         // Retrieve entity
         let resp = ctx.client.get_entity(&entity_id, &QueryParams::new(), ld_headers()).await;
-        assert_eq!(resp.status, StatusCode::OK);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::OK);
 
         mock.stop();
     }));
@@ -160,12 +160,12 @@ pub fn tests(trials: &mut Vec<Trial>) {
             // Create two redirect registrations
             let reg1 = prepare_registration(REG_REDIRECTION_OPS, &reg_id1, &entity_id, &mock.url("/broker1"), Some("redirect"), None, None);
             let resp = ctx.client.create_registration(&reg1).await;
-            assert_eq!(resp.status, StatusCode::CREATED);
+            pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
             ctx.track_registration(&reg_id1);
 
             let reg2 = prepare_registration(REG_REDIRECTION_OPS, &reg_id2, &entity_id, &mock.url("/broker2"), Some("redirect"), None, None);
             let resp = ctx.client.create_registration(&reg2).await;
-            assert_eq!(resp.status, StatusCode::CREATED);
+            pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
             ctx.track_registration(&reg_id2);
 
             // broker1 returns entity with isParked
@@ -180,13 +180,13 @@ pub fn tests(trials: &mut Vec<Trial>) {
 
             // Retrieve entity
             let resp = ctx.client.get_entity(&entity_id, &QueryParams::new(), ld_headers()).await;
-            assert_eq!(resp.status, StatusCode::OK);
+            pretty_assertions::assert_eq!(resp.status, StatusCode::OK);
 
             let body: serde_json::Value = resp.json();
             let obj = body.as_object().unwrap();
             let keys: Vec<_> = obj.keys().collect();
-            assert_eq!(obj.contains_key("isParked"), true, "expected isParked in {keys:?}");
-            assert_eq!(obj.contains_key("isParked2"), true, "expected isParked2 in {keys:?}");
+            pretty_assertions::assert_eq!(obj.contains_key("isParked"), true, "expected isParked in {keys:?}");
+            pretty_assertions::assert_eq!(obj.contains_key("isParked2"), true, "expected isParked2 in {keys:?}");
 
             mock.stop();
         },
@@ -204,7 +204,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
             .client
             .request(Method::POST, "/entities?local=true", Some(&entity), RequestHeaders::new())
             .await;
-        assert_eq!(resp.status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
 
         // Create exclusive registration
         let reg = prepare_registration(
@@ -217,7 +217,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
             None,
         );
         let resp = ctx.client.create_registration(&reg).await;
-        assert_eq!(resp.status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
         ctx.track_registration(&reg_id);
 
         // Mock returns entity with speed
@@ -227,10 +227,10 @@ pub fn tests(trials: &mut Vec<Trial>) {
 
         // Retrieve with local=true
         let resp = ctx.client.get_entity(&entity_id, &QueryParams::new().local(true), ld_headers()).await;
-        assert_eq!(resp.status, StatusCode::OK);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::OK);
 
         let body: serde_json::Value = resp.json();
-        assert_eq!(
+        pretty_assertions::assert_eq!(
             body.as_object().unwrap().contains_key("speed"),
             false,
             "local=true should not include exclusive speed attribute"
@@ -250,7 +250,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
             // Create inclusive registration (entity only on remote)
             let reg = prepare_registration(REG_VEHICLE_COMPLETE, &reg_id, &entity_id, &mock.url(""), None, None, None);
             let resp = ctx.client.create_registration(&reg).await;
-            assert_eq!(resp.status, StatusCode::CREATED);
+            pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
             ctx.track_registration(&reg_id);
 
             // Mock stub (should not be called)
@@ -264,10 +264,10 @@ pub fn tests(trials: &mut Vec<Trial>) {
 
             // Retrieve with local=true → 404
             let resp = ctx.client.get_entity(&entity_id, &QueryParams::new().local(true), ld_headers()).await;
-            assert_eq!(resp.status, StatusCode::NOT_FOUND);
+            pretty_assertions::assert_eq!(resp.status, StatusCode::NOT_FOUND);
 
             // Verify no request was forwarded
-            assert_eq!(mock.get_total_count().await, 0);
+            pretty_assertions::assert_eq!(mock.get_total_count().await, 0);
 
             mock.stop();
         },
@@ -283,12 +283,12 @@ pub fn tests(trials: &mut Vec<Trial>) {
         // Create two redirect registrations
         let reg1 = prepare_registration(REG_REDIRECTION_OPS, &reg_id1, &entity_id, &mock.url("/broker1"), Some("redirect"), None, None);
         let resp = ctx.client.create_registration(&reg1).await;
-        assert_eq!(resp.status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
         ctx.track_registration(&reg_id1);
 
         let reg2 = prepare_registration(REG_REDIRECTION_OPS, &reg_id2, &entity_id, &mock.url("/broker2"), Some("redirect"), None, None);
         let resp = ctx.client.create_registration(&reg2).await;
-        assert_eq!(resp.status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
         ctx.track_registration(&reg_id2);
 
         // Set mock stubs
@@ -297,11 +297,11 @@ pub fn tests(trials: &mut Vec<Trial>) {
 
         // Retrieve with local=true → 404
         let resp = ctx.client.get_entity(&entity_id, &QueryParams::new().local(true), ld_headers()).await;
-        assert_eq!(resp.status, StatusCode::NOT_FOUND);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::NOT_FOUND);
 
         // Verify no requests forwarded
-        assert_eq!(mock.get_count(Method::GET, &format!("/broker1/ngsi-ld/v1/entities/{entity_id}")).await, 0);
-        assert_eq!(mock.get_count(Method::GET, &format!("/broker2/ngsi-ld/v1/entities/{entity_id}")).await, 0);
+        pretty_assertions::assert_eq!(mock.get_count(Method::GET, &format!("/broker1/ngsi-ld/v1/entities/{entity_id}")).await, 0);
+        pretty_assertions::assert_eq!(mock.get_count(Method::GET, &format!("/broker2/ngsi-ld/v1/entities/{entity_id}")).await, 0);
 
         mock.stop();
     }));
@@ -315,7 +315,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
         // Create inclusive registration with retrieveEntity operation
         let reg = prepare_registration(REG_VEHICLE_COMPLETE, &reg_id, &entity_id, &mock.url(""), None, Some(&["retrieveEntity"]), None);
         let resp = ctx.client.create_registration(&reg).await;
-        assert_eq!(resp.status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
         ctx.track_registration(&reg_id);
 
         // Mock returns entity
@@ -325,7 +325,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
 
         // Retrieve entity
         let resp = ctx.client.get_entity(&entity_id, &QueryParams::new(), ld_headers()).await;
-        assert_eq!(resp.status, StatusCode::OK);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::OK);
 
         mock.stop();
     }));
@@ -339,7 +339,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
         // Create inclusive registration with queryEntity operation
         let reg = prepare_registration(REG_VEHICLE_COMPLETE, &reg_id, &entity_id, &mock.url(""), None, Some(&["queryEntity"]), None);
         let resp = ctx.client.create_registration(&reg).await;
-        assert_eq!(resp.status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
         ctx.track_registration(&reg_id);
 
         // The broker always uses the retrieve path (GET /entities/{id}) regardless of the
@@ -350,7 +350,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
 
         // Retrieve entity by ID (CSR matches via queryEntity op)
         let resp = ctx.client.get_entity(&entity_id, &QueryParams::new(), ld_headers()).await;
-        assert_eq!(resp.status, StatusCode::OK);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::OK);
 
         mock.stop();
     }));
@@ -364,7 +364,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
         // Create inclusive registration with queryBatch operation
         let reg = prepare_registration(REG_VEHICLE_COMPLETE, &reg_id, &entity_id, &mock.url(""), None, Some(&["queryBatch"]), None);
         let resp = ctx.client.create_registration(&reg).await;
-        assert_eq!(resp.status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
         ctx.track_registration(&reg_id);
 
         // The broker always uses the retrieve path regardless of CSR operations field
@@ -374,7 +374,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
 
         // Retrieve entity by ID (CSR matches via queryBatch op)
         let resp = ctx.client.get_entity(&entity_id, &QueryParams::new(), ld_headers()).await;
-        assert_eq!(resp.status, StatusCode::OK);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::OK);
 
         mock.stop();
     }));

@@ -45,6 +45,7 @@ impl Default for JsonProperty {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use crate::{
         domain::attribute::Attribute,
         jsonld::{JsonLdExpandable, vocab},
@@ -59,7 +60,7 @@ mod tests {
         });
         let attr: Attribute = serde_json::from_value(json).expect("json property");
         let Attribute::JsonProperty(property) = attr else {
-            panic!("expected JsonProperty");
+            unreachable!("expected JsonProperty");
         };
         assert!(property.previous_json.is_some());
     }
@@ -73,7 +74,7 @@ mod tests {
         });
         let attr: Attribute = serde_json::from_value(json).expect("json property");
         let Attribute::JsonProperty(property) = attr else {
-            panic!("expected JsonProperty");
+            unreachable!("expected JsonProperty");
         };
         let expanded = property.to_expanded();
         let obj = expanded.as_object().expect("object");

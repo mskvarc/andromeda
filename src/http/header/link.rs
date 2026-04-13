@@ -487,6 +487,7 @@ fn verify_and_trim(s: &str, open: u8, close: u8) -> Result<&str, LinkParseError>
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use std::fmt::Write;
 
     use super::*;
@@ -529,7 +530,7 @@ mod tests {
 
         let raw = r#"<http://example.com/TheBook/chapter2>; rel="prev"; type="text/html""#;
         let parsed = decode_link(raw);
-        assert_eq!(parsed, Some(expected));
+        pretty_assertions::assert_eq!(parsed, Some(expected));
     }
 
     #[test]
@@ -540,7 +541,7 @@ mod tests {
         let raw = r#"</page/2>; rel="next", </page/0>; rel="prev""#;
         let expected = Link::new(vec![first, second]);
         let parsed = decode_link(raw);
-        assert_eq!(parsed, Some(expected));
+        pretty_assertions::assert_eq!(parsed, Some(expected));
     }
 
     #[test]
@@ -554,13 +555,13 @@ mod tests {
         ]);
 
         let parsed = decode_link(raw).expect("should parse");
-        assert_eq!(parsed, expected);
+        pretty_assertions::assert_eq!(parsed, expected);
 
         // Verify accessors
         let values = parsed.values();
-        assert_eq!(values[0].link(), "http://json-ld.org/contexts/person.jsonld");
+        pretty_assertions::assert_eq!(values[0].link(), "http://json-ld.org/contexts/person.jsonld");
         let rels = values[0].rel().expect("should have rel");
-        assert_eq!(rels[0].to_string(), "http://www.w3.org/ns/json-ld#context");
+        pretty_assertions::assert_eq!(rels[0].to_string(), "http://www.w3.org/ns/json-ld#context");
     }
 
     #[test]
@@ -569,8 +570,8 @@ mod tests {
         // This also ensures interoperability with brokers that send extra params.
         let raw = r#"<http://example.com/>; rel="next"; title="Chapter 2"; hreflang=en"#;
         let parsed = decode_link(raw).expect("should parse despite unknown params");
-        assert_eq!(parsed.values().len(), 1);
-        assert_eq!(parsed.values()[0].link(), "http://example.com/");
+        pretty_assertions::assert_eq!(parsed.values().len(), 1);
+        pretty_assertions::assert_eq!(parsed.values()[0].link(), "http://example.com/");
     }
 
     #[test]
@@ -584,7 +585,7 @@ mod tests {
         let mut header_str = String::new();
         write!(&mut header_str, "{link}").expect("Display impl should not fail");
 
-        assert_eq!(
+        pretty_assertions::assert_eq!(
             header_str,
             r#"<http://example.com/ctx.jsonld>; rel="http://www.w3.org/ns/json-ld#context"; type="application/ld+json""#,
         );
@@ -626,17 +627,17 @@ mod tests {
         let string = "some, text; \"and, more; in quotes\", or not";
         let mut split = SplitAsciiUnquoted::new(string, ";,");
 
-        assert_eq!(Some("some"), split.next());
-        assert_eq!(Some(" text"), split.next());
-        assert_eq!(Some(" \"and, more; in quotes\""), split.next());
-        assert_eq!(Some(" or not"), split.next());
-        assert_eq!(None, split.next());
+        pretty_assertions::assert_eq!(Some("some"), split.next());
+        pretty_assertions::assert_eq!(Some(" text"), split.next());
+        pretty_assertions::assert_eq!(Some(" \"and, more; in quotes\""), split.next());
+        pretty_assertions::assert_eq!(Some(" or not"), split.next());
+        pretty_assertions::assert_eq!(None, split.next());
     }
 
     #[test]
     fn verify_and_trim_valid() {
         let result = verify_and_trim(">  some string   <", b'>', b'<');
-        assert_eq!(result.ok(), Some("some string"));
+        pretty_assertions::assert_eq!(result.ok(), Some("some string"));
     }
 
     #[test]
@@ -680,13 +681,13 @@ mod tests {
         // Encode
         let mut values = Vec::new();
         link.encode(&mut values);
-        assert_eq!(values.len(), 1);
+        pretty_assertions::assert_eq!(values.len(), 1);
 
         // Decode
         let mut iter = values.iter();
         let decoded = Link::decode(&mut iter).expect("should decode");
-        assert_eq!(decoded.values().len(), 1);
-        assert_eq!(decoded.values()[0].link(), "https://example.com/ctx.jsonld");
+        pretty_assertions::assert_eq!(decoded.values().len(), 1);
+        pretty_assertions::assert_eq!(decoded.values()[0].link(), "https://example.com/ctx.jsonld");
     }
 
     #[test]
@@ -703,7 +704,7 @@ mod tests {
     #[test]
     fn relation_type_jsonld_context_constructor() {
         let rel = RelationType::jsonld_context();
-        assert_eq!(rel, RelationType::ExtRelType("http://www.w3.org/ns/json-ld#context".to_owned()));
+        pretty_assertions::assert_eq!(rel, RelationType::ExtRelType("http://www.w3.org/ns/json-ld#context".to_owned()));
     }
 
     #[test]
@@ -750,7 +751,7 @@ mod tests {
         ]);
 
         let urls: Vec<&str> = link.context_urls().collect();
-        assert_eq!(urls, vec!["https://example.com/ctx.jsonld", "https://example.com/other.jsonld"]);
+        pretty_assertions::assert_eq!(urls, vec!["https://example.com/ctx.jsonld", "https://example.com/other.jsonld"]);
     }
 
     #[test]
@@ -762,40 +763,40 @@ mod tests {
         ]);
 
         let next_values: Vec<&str> = link.find_by_rel(RelationType::Next).map(|lv| lv.link()).collect();
-        assert_eq!(next_values, vec!["/page/2", "/page/3"]);
+        pretty_assertions::assert_eq!(next_values, vec!["/page/2", "/page/3"]);
     }
 
     // -- First/Last RelationType tests --
 
     #[test]
     fn relation_type_first_displays_correctly() {
-        assert_eq!(RelationType::First.to_string(), "first");
+        pretty_assertions::assert_eq!(RelationType::First.to_string(), "first");
     }
 
     #[test]
     fn relation_type_last_displays_correctly() {
-        assert_eq!(RelationType::Last.to_string(), "last");
+        pretty_assertions::assert_eq!(RelationType::Last.to_string(), "last");
     }
 
     #[test]
     fn relation_type_first_parses_case_insensitive() {
-        assert_eq!("first".parse::<RelationType>(), Ok(RelationType::First));
-        assert_eq!("FIRST".parse::<RelationType>(), Ok(RelationType::First));
-        assert_eq!("First".parse::<RelationType>(), Ok(RelationType::First));
+        pretty_assertions::assert_eq!("first".parse::<RelationType>(), Ok(RelationType::First));
+        pretty_assertions::assert_eq!("FIRST".parse::<RelationType>(), Ok(RelationType::First));
+        pretty_assertions::assert_eq!("First".parse::<RelationType>(), Ok(RelationType::First));
     }
 
     #[test]
     fn relation_type_last_parses_case_insensitive() {
-        assert_eq!("last".parse::<RelationType>(), Ok(RelationType::Last));
-        assert_eq!("LAST".parse::<RelationType>(), Ok(RelationType::Last));
-        assert_eq!("Last".parse::<RelationType>(), Ok(RelationType::Last));
+        pretty_assertions::assert_eq!("last".parse::<RelationType>(), Ok(RelationType::Last));
+        pretty_assertions::assert_eq!("LAST".parse::<RelationType>(), Ok(RelationType::Last));
+        pretty_assertions::assert_eq!("Last".parse::<RelationType>(), Ok(RelationType::Last));
     }
 
     #[test]
     fn parse_link_with_first_and_last_rels() {
         let raw = r#"</page?offset=0&limit=10>; rel="first", </page?offset=40&limit=10>; rel="last""#;
         let parsed: Link = raw.parse().expect("should parse");
-        assert_eq!(parsed.values().len(), 2);
+        pretty_assertions::assert_eq!(parsed.values().len(), 2);
         assert!(parsed.values()[0].rel().unwrap().contains(&RelationType::First));
         assert!(parsed.values()[1].rel().unwrap().contains(&RelationType::Last));
     }
@@ -806,8 +807,8 @@ mod tests {
     fn parse_link_with_profile_parameter() {
         let raw = r#"<http://example.com/ctx.jsonld>; rel="http://www.w3.org/ns/json-ld#context"; type="application/ld+json"; profile="https://uri.etsi.org/ngsi-ld/profile/version""#;
         let parsed = decode_link(raw).expect("should parse link with profile");
-        assert_eq!(parsed.values().len(), 1);
-        assert_eq!(parsed.values()[0].profile(), Some("https://uri.etsi.org/ngsi-ld/profile/version"),);
+        pretty_assertions::assert_eq!(parsed.values().len(), 1);
+        pretty_assertions::assert_eq!(parsed.values()[0].profile(), Some("https://uri.etsi.org/ngsi-ld/profile/version"),);
     }
 
     #[test]
@@ -832,7 +833,7 @@ mod tests {
 
         let serialized = link.to_string();
         let reparsed: Link = serialized.parse().expect("should reparse");
-        assert_eq!(link, reparsed);
+        pretty_assertions::assert_eq!(link, reparsed);
     }
 
     #[test]

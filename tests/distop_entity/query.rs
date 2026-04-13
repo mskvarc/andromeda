@@ -1,3 +1,4 @@
+#![allow(clippy::expect_used, clippy::unwrap_used)]
 //! Distributed entity query tests: entityMap with forwarded IDs and splitEntities filtering.
 
 use std::{
@@ -277,7 +278,7 @@ async fn distop_entity_map_includes_forwarded_entity_ids() {
     // Create local entity
     let entity = vehicle_entity(&local_id);
     let (status, _) = create_entity(&c, &entity).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     // Mock returns remote entity
     let mock_entity = vehicle_entity(&remote_id);
@@ -287,11 +288,11 @@ async fn distop_entity_map_includes_forwarded_entity_ids() {
     // Register context source
     let reg = vehicle_registration(&reg_id, &mock.url(""), "auxiliary");
     let (status, _) = create_registration(&c, &reg).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     // Query with entityMap=true
     let (status, headers, _) = query_entities(&c, "type=Vehicle&entityMap=true", &jsonld_link_value()).await;
-    assert_eq!(status, StatusCode::CREATED, "entityMap=true should return 201 CREATED");
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED, "entityMap=true should return 201 CREATED");
 
     // Check NGSILD-EntityMap header is present
     let entity_map_header = headers.get("ngsild-entitymap");
@@ -336,7 +337,7 @@ async fn distop_entity_map_local_only_when_local_true() {
 
     let entity = vehicle_entity(&local_id);
     let (status, _) = create_entity(&c, &entity).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     let mock_entity = vehicle_entity(&remote_id);
     mock.set_stub_with_body(Method::GET, "/ngsi-ld/v1/entities", 200, &Value::Array(vec![mock_entity]))
@@ -344,11 +345,11 @@ async fn distop_entity_map_local_only_when_local_true() {
 
     let reg = vehicle_registration(&reg_id, &mock.url(""), "auxiliary");
     let (status, _) = create_registration(&c, &reg).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     // Query with local=true -- should not forward
     let (status, headers, _) = query_entities(&c, "type=Vehicle&entityMap=true&local=true", &jsonld_link_value()).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     let map_id = headers.get("ngsild-entitymap").unwrap().to_str().unwrap();
     let resp = c
@@ -385,7 +386,7 @@ async fn distop_entity_split_entities_q_filter_post_merge() {
     // Local: speed=50, remote: speed=80
     let entity = vehicle_entity_with_speed(&local_id, 50);
     let (status, _) = create_entity(&c, &entity).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     let mock_entity = vehicle_entity_with_speed(&remote_id, 80);
     mock.set_stub_with_body(Method::GET, "/ngsi-ld/v1/entities", 200, &Value::Array(vec![mock_entity]))
@@ -393,7 +394,7 @@ async fn distop_entity_split_entities_q_filter_post_merge() {
 
     let reg = vehicle_registration(&reg_id, &mock.url(""), "auxiliary");
     let (status, _) = create_registration(&c, &reg).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     // Query with splitEntities=true and q filter for speed>60
     let query = "type=Vehicle&splitEntities=true&q=speed>60";
@@ -431,7 +432,7 @@ async fn distop_entity_split_entities_returns_all_without_filter() {
 
     let entity = vehicle_entity_with_speed(&local_id, 50);
     let (status, _) = create_entity(&c, &entity).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     let mock_entity = vehicle_entity_with_speed(&remote_id, 80);
     mock.set_stub_with_body(Method::GET, "/ngsi-ld/v1/entities", 200, &Value::Array(vec![mock_entity]))
@@ -439,7 +440,7 @@ async fn distop_entity_split_entities_returns_all_without_filter() {
 
     let reg = vehicle_registration(&reg_id, &mock.url(""), "auxiliary");
     let (status, _) = create_registration(&c, &reg).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     let query = "type=Vehicle&splitEntities=true";
     let (status, _, body) = query_entities(&c, query, &jsonld_link_value()).await;
@@ -471,7 +472,7 @@ async fn distop_entity_split_entities_scope_filter_post_merge() {
     // Local: scope /Madrid, remote: scope /Barcelona
     let entity = vehicle_entity_with_scope(&local_id, "/Madrid");
     let (status, _) = create_entity(&c, &entity).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     let mock_entity = vehicle_entity_with_scope(&remote_id, "/Barcelona");
     mock.set_stub_with_body(Method::GET, "/ngsi-ld/v1/entities", 200, &Value::Array(vec![mock_entity]))
@@ -479,7 +480,7 @@ async fn distop_entity_split_entities_scope_filter_post_merge() {
 
     let reg = vehicle_registration(&reg_id, &mock.url(""), "auxiliary");
     let (status, _) = create_registration(&c, &reg).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     let query = "type=Vehicle&splitEntities=true&scopeQ=/Barcelona";
     let (status, _, body) = query_entities(&c, query, &jsonld_link_value()).await;

@@ -41,12 +41,13 @@ pub enum JoinMode {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::*;
     use std::str::FromStr;
 
     #[test]
     fn response_format_default_is_normalized() {
-        assert_eq!(ResponseFormat::default(), ResponseFormat::Normalized);
+        pretty_assertions::assert_eq!(ResponseFormat::default(), ResponseFormat::Normalized);
     }
 
     #[test]
@@ -59,7 +60,7 @@ mod tests {
         ] {
             let s = variant.to_string();
             let parsed = ResponseFormat::from_str(&s).unwrap();
-            assert_eq!(variant, parsed, "round-trip failed for {variant}");
+            pretty_assertions::assert_eq!(variant, parsed, "round-trip failed for {variant}");
         }
     }
 
@@ -73,7 +74,7 @@ mod tests {
         ] {
             let json = serde_json::to_string(&variant).unwrap();
             let parsed: ResponseFormat = serde_json::from_str(&json).unwrap();
-            assert_eq!(variant, parsed);
+            pretty_assertions::assert_eq!(variant, parsed);
         }
     }
 
@@ -90,7 +91,7 @@ mod tests {
         for variant in [JoinMode::Inline, JoinMode::Flat] {
             let s = variant.to_string();
             let parsed = JoinMode::from_str(&s).unwrap();
-            assert_eq!(variant, parsed, "round-trip failed for {variant}");
+            pretty_assertions::assert_eq!(variant, parsed, "round-trip failed for {variant}");
         }
     }
 }

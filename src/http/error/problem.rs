@@ -265,6 +265,7 @@ impl IntoResponse for NgsiLdError {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::*;
     use axum::{body::to_bytes, response::IntoResponse};
     use serde_json::Value;
@@ -293,33 +294,33 @@ mod tests {
 
     #[test]
     fn display_uses_title() {
-        assert_eq!(NgsiLdErrorType::ResourceNotFound.to_string(), "Resource not found");
+        pretty_assertions::assert_eq!(NgsiLdErrorType::ResourceNotFound.to_string(), "Resource not found");
     }
 
     #[test]
     fn error_display_combines_type_and_detail() {
         let err = NgsiLdError::new(NgsiLdErrorType::BadRequestData, "missing id", Uri::from_static("/"));
-        assert_eq!(err.to_string(), "Bad request data: missing id");
+        pretty_assertions::assert_eq!(err.to_string(), "Bad request data: missing id");
     }
 
     #[tokio::test]
     async fn into_response_produces_problem_json() {
         let err = NgsiLdError::new(NgsiLdErrorType::ResourceNotFound, "not found", Uri::from_static("/ngsi-ld/v1/entities/x"));
         let response = err.into_response();
-        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        pretty_assertions::assert_eq!(response.status(), StatusCode::NOT_FOUND);
 
         let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
         let json: Value = serde_json::from_slice(&body).unwrap();
-        assert_eq!(json["status"], 404);
-        assert_eq!(json["title"], "Resource not found");
-        assert_eq!(json["instance"], "/ngsi-ld/v1/entities/x");
+        pretty_assertions::assert_eq!(json["status"], 404);
+        pretty_assertions::assert_eq!(json["title"], "Resource not found");
+        pretty_assertions::assert_eq!(json["instance"], "/ngsi-ld/v1/entities/x");
     }
 
     #[test]
     fn malformed_request_maps_to_invalid_request() {
         let err = AndromedaError::malformed_request("bad");
         let ngsi: NgsiLdError = err.into();
-        assert_eq!(ngsi.error_type, NgsiLdErrorType::InvalidRequest);
+        pretty_assertions::assert_eq!(ngsi.error_type, NgsiLdErrorType::InvalidRequest);
     }
 
     #[tokio::test]
@@ -327,55 +328,55 @@ mod tests {
         let err = AndromedaError::malformed_request("bad request").with_instance(Uri::from_static("/ngsi-ld/v1/entities"));
         let ngsi: NgsiLdError = err.into();
         let response = ngsi.into_response();
-        assert_eq!(response.status().as_u16(), 400);
+        pretty_assertions::assert_eq!(response.status().as_u16(), 400);
 
         let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
         let json: Value = serde_json::from_slice(&body).unwrap();
-        assert_eq!(json.get("instance").and_then(|v| v.as_str()), Some("/ngsi-ld/v1/entities"));
-        assert_eq!(json.get("status").and_then(|v| v.as_u64()), Some(400));
+        pretty_assertions::assert_eq!(json.get("instance").and_then(|v| v.as_str()), Some("/ngsi-ld/v1/entities"));
+        pretty_assertions::assert_eq!(json.get("status").and_then(|v| v.as_u64()), Some(400));
     }
 
     #[test]
     fn internal_errors_are_sanitized() {
         let err = AndromedaError::internal("secret");
         let ngsi: NgsiLdError = err.into();
-        assert_eq!(ngsi.detail, "Internal error");
+        pretty_assertions::assert_eq!(ngsi.detail, "Internal error");
     }
 
     #[test]
     fn internal_error_is_sanitized() {
         let err = AndromedaError::internal("upstream timeout");
         let ngsi: NgsiLdError = err.into();
-        assert_eq!(ngsi.error_type, NgsiLdErrorType::InternalError);
-        assert_eq!(ngsi.detail, "Internal error");
+        pretty_assertions::assert_eq!(ngsi.error_type, NgsiLdErrorType::InternalError);
+        pretty_assertions::assert_eq!(ngsi.detail, "Internal error");
     }
 
     #[test]
     fn error_kind_to_ngsi_ld_error_type_mapping() {
-        assert_eq!(NgsiLdErrorType::from(&ErrorKind::MalformedRequest("x".into())), NgsiLdErrorType::InvalidRequest);
-        assert_eq!(NgsiLdErrorType::from(&ErrorKind::EntityValidation("x".into())), NgsiLdErrorType::BadRequestData);
-        assert_eq!(NgsiLdErrorType::from(&ErrorKind::EntityNotFound("x".into())), NgsiLdErrorType::ResourceNotFound);
-        assert_eq!(
+        pretty_assertions::assert_eq!(NgsiLdErrorType::from(&ErrorKind::MalformedRequest("x".into())), NgsiLdErrorType::InvalidRequest);
+        pretty_assertions::assert_eq!(NgsiLdErrorType::from(&ErrorKind::EntityValidation("x".into())), NgsiLdErrorType::BadRequestData);
+        pretty_assertions::assert_eq!(NgsiLdErrorType::from(&ErrorKind::EntityNotFound("x".into())), NgsiLdErrorType::ResourceNotFound);
+        pretty_assertions::assert_eq!(
             NgsiLdErrorType::from(&ErrorKind::EntityAlreadyExists("x".into())),
             NgsiLdErrorType::AlreadyExists
         );
-        assert_eq!(NgsiLdErrorType::from(&ErrorKind::Conflict("x".into())), NgsiLdErrorType::Conflict);
-        assert_eq!(
+        pretty_assertions::assert_eq!(NgsiLdErrorType::from(&ErrorKind::Conflict("x".into())), NgsiLdErrorType::Conflict);
+        pretty_assertions::assert_eq!(
             NgsiLdErrorType::from(&ErrorKind::ContextNotAvailable("x".into())),
             NgsiLdErrorType::LdContextNotAvailable
         );
-        assert_eq!(
+        pretty_assertions::assert_eq!(
             NgsiLdErrorType::from(&ErrorKind::MultiTenancyNotSupported),
             NgsiLdErrorType::NoMultiTenantSupport
         );
-        assert_eq!(
+        pretty_assertions::assert_eq!(
             NgsiLdErrorType::from(&ErrorKind::NonexistentTenant("x".into())),
             NgsiLdErrorType::NonexistentTenant
         );
-        assert_eq!(
+        pretty_assertions::assert_eq!(
             NgsiLdErrorType::from(&ErrorKind::OperationNotSupported("x".into())),
             NgsiLdErrorType::OperationNotSupported
         );
-        assert_eq!(NgsiLdErrorType::from(&ErrorKind::Internal("x".into())), NgsiLdErrorType::InternalError);
+        pretty_assertions::assert_eq!(NgsiLdErrorType::from(&ErrorKind::Internal("x".into())), NgsiLdErrorType::InternalError);
     }
 }

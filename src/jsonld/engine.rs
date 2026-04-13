@@ -741,6 +741,7 @@ fn normalize_context_urls_for_logging(urls: &[String]) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::*;
     use crate::jsonld::core_context::NGSI_LD_CORE_CONTEXT_V16_URL;
     use serde_json::json;
@@ -763,7 +764,7 @@ mod tests {
         assert!(result.is_ok());
         let expanded = result.unwrap();
         assert!(expanded.is_array());
-        assert_eq!(expanded[0].get("@id"), Some(&json!("urn:ngsi-ld:Vehicle:001")));
+        pretty_assertions::assert_eq!(expanded[0].get("@id"), Some(&json!("urn:ngsi-ld:Vehicle:001")));
     }
 
     #[tokio::test]
@@ -937,7 +938,7 @@ mod tests {
     async fn test_expand_already_iri() {
         let engine = test_engine();
         let iri = engine.expand_type("http://example.com/Type", &ContextSpec::none()).await.unwrap();
-        assert_eq!(iri, "http://example.com/Type");
+        pretty_assertions::assert_eq!(iri, "http://example.com/Type");
     }
 
     #[tokio::test]

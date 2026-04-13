@@ -192,13 +192,13 @@ async fn language_retrieve_exact_match_returns_property_with_lang_tag() {
     let c = client();
     let id = unique_id("urn:ngsi-ld:Building:lang-exact");
 
-    assert_eq!(create_entity(&c, &building_fr_nl(&id)).await, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(create_entity(&c, &building_fr_nl(&id)).await, StatusCode::CREATED);
 
     let (status, body) = get_entity(&c, &id, Some("fr"), None, None).await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["street"]["type"], "Property", "LanguageProperty must be projected as Property");
-    assert_eq!(body["street"]["value"], "Grand Place");
-    assert_eq!(body["street"]["lang"], "fr");
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(body["street"]["type"], "Property", "LanguageProperty must be projected as Property");
+    pretty_assertions::assert_eq!(body["street"]["value"], "Grand Place");
+    pretty_assertions::assert_eq!(body["street"]["lang"], "fr");
     assert!(body["street"].get("languageMap").is_none(), "languageMap must not be present after negotiation");
 
     delete_entity(&c, &id).await;
@@ -211,14 +211,14 @@ async fn language_retrieve_wildcard_selects_first_tagged_language() {
     let c = client();
     let id = unique_id("urn:ngsi-ld:Building:lang-wildcard");
 
-    assert_eq!(create_entity(&c, &building_fr_nl(&id)).await, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(create_entity(&c, &building_fr_nl(&id)).await, StatusCode::CREATED);
 
     let (status, body) = get_entity(&c, &id, Some("*"), None, None).await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["street"]["type"], "Property");
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(body["street"]["type"], "Property");
     // Wildcard picks first tagged entry; the map has `fr` first.
-    assert_eq!(body["street"]["value"], "Grand Place");
-    assert_eq!(body["street"]["lang"], "fr");
+    pretty_assertions::assert_eq!(body["street"]["value"], "Grand Place");
+    pretty_assertions::assert_eq!(body["street"]["lang"], "fr");
 
     delete_entity(&c, &id).await;
 }
@@ -230,13 +230,13 @@ async fn language_retrieve_ranked_preferences_select_highest_quality_match() {
     let c = client();
     let id = unique_id("urn:ngsi-ld:Building:lang-ranked");
 
-    assert_eq!(create_entity(&c, &building_fr_nl(&id)).await, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(create_entity(&c, &building_fr_nl(&id)).await, StatusCode::CREATED);
 
     // nl;q=1.0 > fr;q=0.5, so nl must win.
     let (status, body) = get_entity(&c, &id, Some("fr;q=0.5,nl"), None, None).await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["street"]["value"], "Grote Markt");
-    assert_eq!(body["street"]["lang"], "nl");
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(body["street"]["value"], "Grote Markt");
+    pretty_assertions::assert_eq!(body["street"]["lang"], "nl");
 
     delete_entity(&c, &id).await;
 }
@@ -248,12 +248,13 @@ async fn language_retrieve_no_match_returns_language_property_unchanged() {
     let c = client();
     let id = unique_id("urn:ngsi-ld:Building:lang-nomatch");
 
-    assert_eq!(create_entity(&c, &building_fr_nl(&id)).await, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(create_entity(&c, &building_fr_nl(&id)).await, StatusCode::CREATED);
 
     let (status, body) = get_entity(&c, &id, Some("ja"), None, None).await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(
-        body["street"]["type"], "LanguageProperty",
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(
+        body["street"]["type"],
+        "LanguageProperty",
         "unmatched LanguageProperty must stay as LanguageProperty"
     );
     assert!(body["street"]["languageMap"].is_object(), "languageMap must still be present");
@@ -277,13 +278,13 @@ async fn language_retrieve_wildcard_falls_back_to_at_none() {
         },
         "@context": [CORE_CONTEXT]
     });
-    assert_eq!(create_entity(&c, &entity).await, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(create_entity(&c, &entity).await, StatusCode::CREATED);
 
     let (status, body) = get_entity(&c, &id, Some("*"), None, None).await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["street"]["type"], "Property");
-    assert_eq!(body["street"]["value"], "Default Street");
-    assert_eq!(body["street"]["lang"], "@none");
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(body["street"]["type"], "Property");
+    pretty_assertions::assert_eq!(body["street"]["value"], "Default Street");
+    pretty_assertions::assert_eq!(body["street"]["lang"], "@none");
 
     delete_entity(&c, &id).await;
 }
@@ -307,13 +308,13 @@ async fn language_retrieve_range_match_prefix_selects_dialect() {
         },
         "@context": [CORE_CONTEXT]
     });
-    assert_eq!(create_entity(&c, &entity).await, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(create_entity(&c, &entity).await, StatusCode::CREATED);
 
     // `lang=fr` must match `fr-CA` via prefix range matching per BCP47.
     let (status, body) = get_entity(&c, &id, Some("fr"), None, None).await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["street"]["value"], "Rue Principale");
-    assert_eq!(body["street"]["lang"], "fr-CA");
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(body["street"]["value"], "Rue Principale");
+    pretty_assertions::assert_eq!(body["street"]["lang"], "fr-CA");
 
     delete_entity(&c, &id).await;
 }
@@ -337,12 +338,12 @@ async fn language_retrieve_exact_match_preferred_over_range_match() {
         },
         "@context": [CORE_CONTEXT]
     });
-    assert_eq!(create_entity(&c, &entity).await, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(create_entity(&c, &entity).await, StatusCode::CREATED);
 
     let (status, body) = get_entity(&c, &id, Some("fr"), None, None).await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["street"]["value"], "Grand Place", "`fr` exact match must win over `fr-CA`");
-    assert_eq!(body["street"]["lang"], "fr");
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(body["street"]["value"], "Grand Place", "`fr` exact match must win over `fr-CA`");
+    pretty_assertions::assert_eq!(body["street"]["lang"], "fr");
 
     delete_entity(&c, &id).await;
 }
@@ -354,13 +355,13 @@ async fn language_retrieve_zero_quality_excludes_preference() {
     let c = client();
     let id = unique_id("urn:ngsi-ld:Building:lang-q0");
 
-    assert_eq!(create_entity(&c, &building_fr_nl(&id)).await, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(create_entity(&c, &building_fr_nl(&id)).await, StatusCode::CREATED);
 
     // fr;q=0 means "do not want French"; nl must be selected.
     let (status, body) = get_entity(&c, &id, Some("fr;q=0,nl"), None, None).await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["street"]["value"], "Grote Markt");
-    assert_eq!(body["street"]["lang"], "nl");
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(body["street"]["value"], "Grote Markt");
+    pretty_assertions::assert_eq!(body["street"]["lang"], "nl");
 
     delete_entity(&c, &id).await;
 }
@@ -372,10 +373,10 @@ async fn language_retrieve_empty_lang_returns_400() {
     let c = client();
     let id = unique_id("urn:ngsi-ld:Building:lang-empty");
 
-    assert_eq!(create_entity(&c, &building_fr_nl(&id)).await, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(create_entity(&c, &building_fr_nl(&id)).await, StatusCode::CREATED);
 
     let (status, _) = get_entity(&c, &id, Some(""), None, None).await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
+    pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
 
     delete_entity(&c, &id).await;
 }
@@ -387,11 +388,11 @@ async fn language_retrieve_key_values_with_lang_returns_scalar_value() {
     let c = client();
     let id = unique_id("urn:ngsi-ld:Building:lang-kv");
 
-    assert_eq!(create_entity(&c, &building_fr_nl(&id)).await, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(create_entity(&c, &building_fr_nl(&id)).await, StatusCode::CREATED);
 
     let (status, body) = get_entity(&c, &id, Some("nl"), None, Some("keyValues")).await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["street"], "Grote Markt", "keyValues must return the negotiated scalar");
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(body["street"], "Grote Markt", "keyValues must return the negotiated scalar");
 
     delete_entity(&c, &id).await;
 }
@@ -403,12 +404,12 @@ async fn language_retrieve_key_values_without_lang_returns_language_map() {
     let c = client();
     let id = unique_id("urn:ngsi-ld:Building:lang-kv-nofilter");
 
-    assert_eq!(create_entity(&c, &building_fr_nl(&id)).await, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(create_entity(&c, &building_fr_nl(&id)).await, StatusCode::CREATED);
 
     let (status, body) = get_entity(&c, &id, None, None, Some("keyValues")).await;
-    assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
     assert!(body["street"].is_object(), "without lang, keyValues must return the languageMap object");
-    assert_eq!(body["street"]["fr"], "Grand Place");
+    pretty_assertions::assert_eq!(body["street"]["fr"], "Grand Place");
 
     delete_entity(&c, &id).await;
 }
@@ -420,13 +421,13 @@ async fn language_retrieve_no_lang_returns_original_language_property() {
     let c = client();
     let id = unique_id("urn:ngsi-ld:Building:lang-noparam");
 
-    assert_eq!(create_entity(&c, &building_fr_nl(&id)).await, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(create_entity(&c, &building_fr_nl(&id)).await, StatusCode::CREATED);
 
     let (status, body) = get_entity(&c, &id, None, None, None).await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["street"]["type"], "LanguageProperty");
-    assert_eq!(body["street"]["languageMap"]["fr"], "Grand Place");
-    assert_eq!(body["street"]["languageMap"]["nl"], "Grote Markt");
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(body["street"]["type"], "LanguageProperty");
+    pretty_assertions::assert_eq!(body["street"]["languageMap"]["fr"], "Grand Place");
+    pretty_assertions::assert_eq!(body["street"]["languageMap"]["nl"], "Grote Markt");
 
     delete_entity(&c, &id).await;
 }
@@ -451,15 +452,15 @@ async fn language_retrieve_sub_attributes_preserved_after_negotiation() {
         },
         "@context": [CORE_CONTEXT]
     });
-    assert_eq!(create_entity(&c, &entity).await, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(create_entity(&c, &entity).await, StatusCode::CREATED);
 
     let (status, body) = get_entity(&c, &id, Some("fr"), None, None).await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["street"]["type"], "Property");
-    assert_eq!(body["street"]["value"], "Grand Place");
-    assert_eq!(body["street"]["lang"], "fr");
-    assert_eq!(body["street"]["source"]["type"], "Property");
-    assert_eq!(body["street"]["source"]["value"], "OpenStreetMap");
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(body["street"]["type"], "Property");
+    pretty_assertions::assert_eq!(body["street"]["value"], "Grand Place");
+    pretty_assertions::assert_eq!(body["street"]["lang"], "fr");
+    pretty_assertions::assert_eq!(body["street"]["source"]["type"], "Property");
+    pretty_assertions::assert_eq!(body["street"]["source"]["value"], "OpenStreetMap");
 
     delete_entity(&c, &id).await;
 }
@@ -482,14 +483,14 @@ async fn language_retrieve_metadata_fields_preserved_after_negotiation() {
         },
         "@context": [CORE_CONTEXT]
     });
-    assert_eq!(create_entity(&c, &entity).await, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(create_entity(&c, &entity).await, StatusCode::CREATED);
 
     let (status, body) = get_entity(&c, &id, Some("fr"), None, None).await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["street"]["type"], "Property");
-    assert_eq!(body["street"]["value"], "Grand Place");
-    assert_eq!(body["street"]["observedAt"], "2024-01-01T12:00:00Z");
-    assert_eq!(body["street"]["datasetId"], "urn:ngsi-ld:Dataset:street-source");
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(body["street"]["type"], "Property");
+    pretty_assertions::assert_eq!(body["street"]["value"], "Grand Place");
+    pretty_assertions::assert_eq!(body["street"]["observedAt"], "2024-01-01T12:00:00Z");
+    pretty_assertions::assert_eq!(body["street"]["datasetId"], "urn:ngsi-ld:Dataset:street-source");
 
     delete_entity(&c, &id).await;
 }
@@ -512,20 +513,20 @@ async fn language_retrieve_mixed_types_only_language_property_negotiated() {
         "locatedIn": {"type": "Relationship", "object": "urn:ngsi-ld:City:Paris"},
         "@context": [CORE_CONTEXT]
     });
-    assert_eq!(create_entity(&c, &entity).await, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(create_entity(&c, &entity).await, StatusCode::CREATED);
 
     let (status, body) = get_entity(&c, &id, Some("fr"), None, None).await;
-    assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
     // Plain Property unchanged.
-    assert_eq!(body["name"]["type"], "Property");
-    assert_eq!(body["name"]["value"], "Eiffel Tower");
+    pretty_assertions::assert_eq!(body["name"]["type"], "Property");
+    pretty_assertions::assert_eq!(body["name"]["value"], "Eiffel Tower");
     // LanguageProperty negotiated.
-    assert_eq!(body["street"]["type"], "Property");
-    assert_eq!(body["street"]["value"], "Grand Place");
-    assert_eq!(body["street"]["lang"], "fr");
+    pretty_assertions::assert_eq!(body["street"]["type"], "Property");
+    pretty_assertions::assert_eq!(body["street"]["value"], "Grand Place");
+    pretty_assertions::assert_eq!(body["street"]["lang"], "fr");
     // Relationship unchanged.
-    assert_eq!(body["locatedIn"]["type"], "Relationship");
-    assert_eq!(body["locatedIn"]["object"], "urn:ngsi-ld:City:Paris");
+    pretty_assertions::assert_eq!(body["locatedIn"]["type"], "Relationship");
+    pretty_assertions::assert_eq!(body["locatedIn"]["object"], "urn:ngsi-ld:City:Paris");
 
     delete_entity(&c, &id).await;
 }
@@ -550,15 +551,15 @@ async fn language_retrieve_multiple_language_properties_negotiated_independently
         },
         "@context": [CORE_CONTEXT]
     });
-    assert_eq!(create_entity(&c, &entity).await, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(create_entity(&c, &entity).await, StatusCode::CREATED);
 
     // `nl` is available in both; each LanguageProperty must be negotiated independently.
     let (status, body) = get_entity(&c, &id, Some("nl"), None, None).await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["street"]["value"], "Grote Markt");
-    assert_eq!(body["street"]["lang"], "nl");
-    assert_eq!(body["description"]["value"], "Een beroemd plein");
-    assert_eq!(body["description"]["lang"], "nl");
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(body["street"]["value"], "Grote Markt");
+    pretty_assertions::assert_eq!(body["street"]["lang"], "nl");
+    pretty_assertions::assert_eq!(body["description"]["value"], "Een beroemd plein");
+    pretty_assertions::assert_eq!(body["description"]["lang"], "nl");
 
     delete_entity(&c, &id).await;
 }
@@ -582,18 +583,18 @@ async fn language_retrieve_array_value_in_language_map_preserved() {
         },
         "@context": [CORE_CONTEXT]
     });
-    assert_eq!(create_entity(&c, &entity).await, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(create_entity(&c, &entity).await, StatusCode::CREATED);
 
     let (status, body) = get_entity(&c, &id, Some("fr"), None, None).await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["street"]["type"], "Property");
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(body["street"]["type"], "Property");
 
     let value = &body["street"]["value"];
     assert!(value.is_array(), "array languageMap values must be preserved as arrays");
     let arr = value.as_array().unwrap();
-    assert_eq!(arr.len(), 2);
-    assert_eq!(arr[0], "Grand Place");
-    assert_eq!(arr[1], "Place Royale");
+    pretty_assertions::assert_eq!(arr.len(), 2);
+    pretty_assertions::assert_eq!(arr[0], "Grand Place");
+    pretty_assertions::assert_eq!(arr[1], "Place Royale");
 
     delete_entity(&c, &id).await;
 }
@@ -609,13 +610,13 @@ async fn language_header_fallback_when_lang_query_absent() {
     let c = client();
     let id = unique_id("urn:ngsi-ld:Building:lang-header");
 
-    assert_eq!(create_entity(&c, &building_fr_nl(&id)).await, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(create_entity(&c, &building_fr_nl(&id)).await, StatusCode::CREATED);
 
     let (status, body) = get_entity(&c, &id, None, Some("nl"), None).await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["street"]["type"], "Property");
-    assert_eq!(body["street"]["value"], "Grote Markt");
-    assert_eq!(body["street"]["lang"], "nl");
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(body["street"]["type"], "Property");
+    pretty_assertions::assert_eq!(body["street"]["value"], "Grote Markt");
+    pretty_assertions::assert_eq!(body["street"]["lang"], "nl");
 
     delete_entity(&c, &id).await;
 }
@@ -627,13 +628,13 @@ async fn language_header_query_param_overrides_ngsild_language_header() {
     let c = client();
     let id = unique_id("urn:ngsi-ld:Building:lang-precedence");
 
-    assert_eq!(create_entity(&c, &building_fr_nl(&id)).await, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(create_entity(&c, &building_fr_nl(&id)).await, StatusCode::CREATED);
 
     // `lang=fr` must override the `NGSILD-Language: nl` header.
     let (status, body) = get_entity(&c, &id, Some("fr"), Some("nl"), None).await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["street"]["value"], "Grand Place", "`lang` query param must override header");
-    assert_eq!(body["street"]["lang"], "fr");
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(body["street"]["value"], "Grand Place", "`lang` query param must override header");
+    pretty_assertions::assert_eq!(body["street"]["lang"], "fr");
 
     delete_entity(&c, &id).await;
 }
@@ -645,13 +646,13 @@ async fn language_header_ranked_preferences_in_ngsild_language_header() {
     let c = client();
     let id = unique_id("urn:ngsi-ld:Building:lang-header-ranked");
 
-    assert_eq!(create_entity(&c, &building_fr_nl(&id)).await, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(create_entity(&c, &building_fr_nl(&id)).await, StatusCode::CREATED);
 
     // `fr` has quality 1.0, `nl` has 0.5; `fr` must win.
     let (status, body) = get_entity(&c, &id, None, Some("nl;q=0.5,fr"), None).await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["street"]["value"], "Grand Place", "fr has higher quality (1.0 vs 0.5)");
-    assert_eq!(body["street"]["lang"], "fr");
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(body["street"]["value"], "Grand Place", "fr has higher quality (1.0 vs 0.5)");
+    pretty_assertions::assert_eq!(body["street"]["lang"], "fr");
 
     delete_entity(&c, &id).await;
 }
@@ -663,10 +664,10 @@ async fn language_header_invalid_empty_value_returns_400() {
     let c = client();
     let id = unique_id("urn:ngsi-ld:Building:lang-header-invalid");
 
-    assert_eq!(create_entity(&c, &building_fr_nl(&id)).await, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(create_entity(&c, &building_fr_nl(&id)).await, StatusCode::CREATED);
 
     let (status, _) = get_entity(&c, &id, None, Some(""), None).await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
+    pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
 
     delete_entity(&c, &id).await;
 }
@@ -682,16 +683,16 @@ async fn language_query_lang_param_applied_to_query_results() {
     let c = client();
     let id = unique_id("urn:ngsi-ld:Building:lang-query");
 
-    assert_eq!(create_entity(&c, &building_fr_nl(&id)).await, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(create_entity(&c, &building_fr_nl(&id)).await, StatusCode::CREATED);
 
     let (status, body) = query_entities(&c, "Building", Some(&id), Some("nl"), None, None).await;
-    assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
 
     let arr = body.as_array().expect("query result must be array");
-    assert_eq!(arr.len(), 1);
-    assert_eq!(arr[0]["street"]["type"], "Property");
-    assert_eq!(arr[0]["street"]["value"], "Grote Markt");
-    assert_eq!(arr[0]["street"]["lang"], "nl");
+    pretty_assertions::assert_eq!(arr.len(), 1);
+    pretty_assertions::assert_eq!(arr[0]["street"]["type"], "Property");
+    pretty_assertions::assert_eq!(arr[0]["street"]["value"], "Grote Markt");
+    pretty_assertions::assert_eq!(arr[0]["street"]["lang"], "nl");
 
     delete_entity(&c, &id).await;
 }
@@ -703,15 +704,15 @@ async fn language_query_ngsild_language_header_applied_to_query_results() {
     let c = client();
     let id = unique_id("urn:ngsi-ld:Building:lang-query-header");
 
-    assert_eq!(create_entity(&c, &building_fr_nl(&id)).await, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(create_entity(&c, &building_fr_nl(&id)).await, StatusCode::CREATED);
 
     let (status, body) = query_entities(&c, "Building", Some(&id), None, Some("fr"), None).await;
-    assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
 
     let arr = body.as_array().expect("query result must be array");
-    assert_eq!(arr.len(), 1);
-    assert_eq!(arr[0]["street"]["value"], "Grand Place");
-    assert_eq!(arr[0]["street"]["lang"], "fr");
+    pretty_assertions::assert_eq!(arr.len(), 1);
+    pretty_assertions::assert_eq!(arr[0]["street"]["value"], "Grand Place");
+    pretty_assertions::assert_eq!(arr[0]["street"]["lang"], "fr");
 
     delete_entity(&c, &id).await;
 }
@@ -723,14 +724,14 @@ async fn language_query_key_values_with_lang_returns_scalar_value() {
     let c = client();
     let id = unique_id("urn:ngsi-ld:Building:lang-query-kv");
 
-    assert_eq!(create_entity(&c, &building_fr_nl(&id)).await, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(create_entity(&c, &building_fr_nl(&id)).await, StatusCode::CREATED);
 
     let (status, body) = query_entities(&c, "Building", Some(&id), Some("nl"), None, Some("keyValues")).await;
-    assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
 
     let arr = body.as_array().expect("query result must be array");
-    assert_eq!(arr.len(), 1);
-    assert_eq!(arr[0]["street"], "Grote Markt", "keyValues with lang must return negotiated scalar");
+    pretty_assertions::assert_eq!(arr.len(), 1);
+    pretty_assertions::assert_eq!(arr[0]["street"], "Grote Markt", "keyValues with lang must return negotiated scalar");
 
     delete_entity(&c, &id).await;
 }
@@ -746,7 +747,7 @@ async fn language_batch_query_ngsild_language_header_applied_to_results() {
     let c = client();
     let id = unique_id("urn:ngsi-ld:Building:lang-batch");
 
-    assert_eq!(create_entity(&c, &building_fr_nl(&id)).await, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(create_entity(&c, &building_fr_nl(&id)).await, StatusCode::CREATED);
 
     let query_body = json!({
         "type": "Query",
@@ -754,16 +755,16 @@ async fn language_batch_query_ngsild_language_header_applied_to_results() {
         "@context": [CORE_CONTEXT]
     });
     let (status, body) = batch_query(&c, &query_body, Some("nl")).await;
-    assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
 
     let arr = body.as_array().expect("batch query result must be array");
     let our_entity = arr
         .iter()
         .find(|e| e["id"].as_str() == Some(&id))
         .expect("created entity must appear in batch query results");
-    assert_eq!(our_entity["street"]["type"], "Property");
-    assert_eq!(our_entity["street"]["value"], "Grote Markt");
-    assert_eq!(our_entity["street"]["lang"], "nl");
+    pretty_assertions::assert_eq!(our_entity["street"]["type"], "Property");
+    pretty_assertions::assert_eq!(our_entity["street"]["value"], "Grote Markt");
+    pretty_assertions::assert_eq!(our_entity["street"]["lang"], "nl");
 
     delete_entity(&c, &id).await;
 }

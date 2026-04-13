@@ -68,6 +68,7 @@ impl GetEntityParams {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::*;
 
     fn default_params() -> GetEntityParams {
@@ -91,42 +92,42 @@ mod tests {
     #[test]
     fn resolve_render_mode_default_is_normalized() {
         let params = default_params();
-        assert_eq!(params.resolve_render_mode(), RenderMode::Normalized);
+        pretty_assertions::assert_eq!(params.resolve_render_mode(), RenderMode::Normalized);
     }
 
     #[test]
     fn resolve_render_mode_format_key_values() {
         let mut params = default_params();
         params.format = Some("keyValues".to_string());
-        assert_eq!(params.resolve_render_mode(), RenderMode::Simplified);
+        pretty_assertions::assert_eq!(params.resolve_render_mode(), RenderMode::Simplified);
     }
 
     #[test]
     fn resolve_render_mode_format_simplified() {
         let mut params = default_params();
         params.format = Some("simplified".to_string());
-        assert_eq!(params.resolve_render_mode(), RenderMode::Simplified);
+        pretty_assertions::assert_eq!(params.resolve_render_mode(), RenderMode::Simplified);
     }
 
     #[test]
     fn resolve_render_mode_options_concise() {
         let mut params = default_params();
         params.options = Some("concise".to_string());
-        assert_eq!(params.resolve_render_mode(), RenderMode::Concise);
+        pretty_assertions::assert_eq!(params.resolve_render_mode(), RenderMode::Concise);
     }
 
     #[test]
     fn resolve_render_mode_format_concise() {
         let mut params = default_params();
         params.format = Some("concise".to_string());
-        assert_eq!(params.resolve_render_mode(), RenderMode::Concise);
+        pretty_assertions::assert_eq!(params.resolve_render_mode(), RenderMode::Concise);
     }
 
     #[test]
     fn resolve_render_mode_options_key_values() {
         let mut params = default_params();
         params.options = Some("keyValues".to_string());
-        assert_eq!(params.resolve_render_mode(), RenderMode::Simplified);
+        pretty_assertions::assert_eq!(params.resolve_render_mode(), RenderMode::Simplified);
     }
 
     #[test]
@@ -134,6 +135,6 @@ mod tests {
         let mut params = default_params();
         params.format = Some("keyValues".to_string());
         params.options = Some("concise".to_string());
-        assert_eq!(params.resolve_render_mode(), RenderMode::Simplified);
+        pretty_assertions::assert_eq!(params.resolve_render_mode(), RenderMode::Simplified);
     }
 }

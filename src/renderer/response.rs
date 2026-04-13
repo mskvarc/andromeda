@@ -255,6 +255,7 @@ fn format_context(ctx: Value) -> Value {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::*;
     use crate::http::extractor::prefer::PreferHeader;
     use serde_json::json;
@@ -271,8 +272,8 @@ mod tests {
             .render_single(value)
             .expect("render");
         assert!(rendered.value.get("@context").is_none());
-        assert_eq!(rendered.context_location, ContextLocation::LinkHeader);
-        assert_eq!(rendered.content_type, "application/json");
+        pretty_assertions::assert_eq!(rendered.context_location, ContextLocation::LinkHeader);
+        pretty_assertions::assert_eq!(rendered.content_type, "application/json");
     }
 
     #[test]
@@ -283,8 +284,8 @@ mod tests {
             .render_single(value)
             .expect("render");
         assert!(rendered.value.get("@context").is_some());
-        assert_eq!(rendered.context_location, ContextLocation::Body);
-        assert_eq!(rendered.content_type, "application/ld+json");
+        pretty_assertions::assert_eq!(rendered.context_location, ContextLocation::Body);
+        pretty_assertions::assert_eq!(rendered.content_type, "application/ld+json");
     }
 
     #[test]
@@ -295,7 +296,7 @@ mod tests {
             .render_collection(values)
             .expect("render");
         let items = rendered.value.as_array().expect("array");
-        assert_eq!(items.len(), 2);
+        pretty_assertions::assert_eq!(items.len(), 2);
         assert!(items[0].get("@context").is_some());
         assert!(items[1].get("@context").is_some());
     }
@@ -320,7 +321,7 @@ mod tests {
         };
         let value = json!({"id": "urn:x", "type": "T"});
         let rendered = ResponseRenderer::new(ResponseFormat::Json, ctx, prefer).render_single(value).expect("render");
-        assert_eq!(rendered.version_adaptation, VersionAdaptation::Applied);
+        pretty_assertions::assert_eq!(rendered.version_adaptation, VersionAdaptation::Applied);
     }
 
     #[test]
@@ -330,22 +331,22 @@ mod tests {
         let rendered = ResponseRenderer::new(ResponseFormat::Json, ctx, default_prefer())
             .render_single(value)
             .expect("render");
-        assert_eq!(rendered.version_adaptation, VersionAdaptation::None);
+        pretty_assertions::assert_eq!(rendered.version_adaptation, VersionAdaptation::None);
     }
 
     #[test]
     fn format_context_unwraps_single_element_array() {
-        assert_eq!(format_context(json!(["https://example.org/ctx"])), json!("https://example.org/ctx"));
+        pretty_assertions::assert_eq!(format_context(json!(["https://example.org/ctx"])), json!("https://example.org/ctx"));
     }
 
     #[test]
     fn format_context_preserves_multi_element_array() {
         let input = json!(["https://a.org", "https://b.org"]);
-        assert_eq!(format_context(input.clone()), input);
+        pretty_assertions::assert_eq!(format_context(input.clone()), input);
     }
 
     #[test]
     fn format_context_passes_through_string() {
-        assert_eq!(format_context(json!("https://example.org/ctx")), json!("https://example.org/ctx"));
+        pretty_assertions::assert_eq!(format_context(json!("https://example.org/ctx")), json!("https://example.org/ctx"));
     }
 }

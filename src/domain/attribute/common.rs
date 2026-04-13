@@ -363,19 +363,20 @@ impl JsonLdExpandable for OneOrMany<CompactString> {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::{NgsiLdDate, NgsiLdReference, NgsiLdTime, NgsiLdValue, OneOrMany, RelationshipObjectList};
     use chrono::{TimeZone, Utc};
 
     #[test]
     fn ngsi_ld_reference_accepts_short_name() {
         let value = NgsiLdReference::try_from("Temperature".to_string()).expect("short name");
-        assert_eq!(value.to_string(), "Temperature");
+        pretty_assertions::assert_eq!(value.to_string(), "Temperature");
     }
 
     #[test]
     fn ngsi_ld_reference_accepts_compact_iri() {
         let value = NgsiLdReference::try_from("schema:Vehicle".to_string()).expect("compact IRI");
-        assert_eq!(value.to_string(), "schema:Vehicle");
+        pretty_assertions::assert_eq!(value.to_string(), "schema:Vehicle");
     }
 
     #[test]
@@ -387,39 +388,39 @@ mod tests {
     #[test]
     fn ngsi_ld_date_validates_iso_date() {
         let value = NgsiLdDate::try_from("2026-04-12".to_string()).expect("date");
-        assert_eq!(value.to_string(), "2026-04-12");
+        pretty_assertions::assert_eq!(value.to_string(), "2026-04-12");
     }
 
     #[test]
     fn ngsi_ld_time_validates_utc_time() {
         let value = NgsiLdTime::try_from("12:34:56.123Z".to_string()).expect("time");
-        assert_eq!(value.to_string(), "12:34:56.123Z");
+        pretty_assertions::assert_eq!(value.to_string(), "12:34:56.123Z");
     }
 
     #[test]
     fn relationship_object_list_deserializes_string_entries() {
         let value: RelationshipObjectList = serde_json::from_value(serde_json::json!(["urn:ngsi-ld:Entity:1"])).expect("objectList");
-        assert_eq!(value.0.len(), 1);
+        pretty_assertions::assert_eq!(value.0.len(), 1);
     }
 
     #[test]
     fn relationship_object_list_deserializes_object_entries() {
         let value: RelationshipObjectList = serde_json::from_value(serde_json::json!([{ "object": "urn:ngsi-ld:Entity:1" }])).expect("objectList");
-        assert_eq!(value.0.len(), 1);
+        pretty_assertions::assert_eq!(value.0.len(), 1);
     }
 
     #[test]
     fn one_or_many_iterates_single_and_many() {
         let single = OneOrMany::One(1_u8);
         let many = OneOrMany::Many(vec![1_u8, 2_u8]);
-        assert_eq!(single.iter().count(), 1);
-        assert_eq!(many.iter().count(), 2);
+        pretty_assertions::assert_eq!(single.iter().count(), 1);
+        pretty_assertions::assert_eq!(many.iter().count(), 2);
     }
 
     #[test]
     fn ngsi_ld_value_serializes_typed_variants() {
         let value = NgsiLdValue::DateTime(Utc.with_ymd_and_hms(2026, 4, 12, 12, 0, 0).unwrap());
         let json = serde_json::to_value(&value).expect("serialize");
-        assert_eq!(json, serde_json::json!("2026-04-12T12:00:00Z"));
+        pretty_assertions::assert_eq!(json, serde_json::json!("2026-04-12T12:00:00Z"));
     }
 }

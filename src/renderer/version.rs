@@ -196,6 +196,7 @@ fn adapt_relationship_fields(obj: &mut serde_json::Map<String, Value>, target: N
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::*;
     use serde_json::json;
 
@@ -215,7 +216,7 @@ mod tests {
         });
         let original = value.clone();
         VersionRenderer::new(NgsiLdVersion::V1_9).render(&mut value);
-        assert_eq!(value, original);
+        pretty_assertions::assert_eq!(value, original);
     }
 
     #[test]
@@ -303,7 +304,7 @@ mod tests {
         });
         VersionRenderer::new(NgsiLdVersion::V1_3).render(&mut value);
         let name = value.get("name").unwrap();
-        assert_eq!(name.get("type").and_then(|t| t.as_str()), Some("Property"));
+        pretty_assertions::assert_eq!(name.get("type").and_then(|t| t.as_str()), Some("Property"));
         assert!(name.get("languageMap").is_none());
         assert!(name.get("value").is_some());
     }
@@ -338,9 +339,9 @@ mod tests {
         });
         VersionRenderer::new(NgsiLdVersion::V1_4).render(&mut value);
         let cat = value.get("category").unwrap();
-        assert_eq!(cat.get("type").and_then(|t| t.as_str()), Some("Property"));
+        pretty_assertions::assert_eq!(cat.get("type").and_then(|t| t.as_str()), Some("Property"));
         assert!(cat.get("vocab").is_none());
-        assert_eq!(cat.get("value").and_then(|v| v.as_str()), Some("commercial"));
+        pretty_assertions::assert_eq!(cat.get("value").and_then(|v| v.as_str()), Some("commercial"));
     }
 
     #[test]
@@ -355,9 +356,9 @@ mod tests {
         });
         VersionRenderer::new(NgsiLdVersion::V1_4).render(&mut value);
         let rel = value.get("refRooms").unwrap();
-        assert_eq!(rel.get("type").and_then(|t| t.as_str()), Some("Relationship"));
+        pretty_assertions::assert_eq!(rel.get("type").and_then(|t| t.as_str()), Some("Relationship"));
         assert!(rel.get("objectList").is_none());
-        assert_eq!(rel.get("object").and_then(|v| v.as_str()), Some("urn:ngsi-ld:Room:1"));
+        pretty_assertions::assert_eq!(rel.get("object").and_then(|v| v.as_str()), Some("urn:ngsi-ld:Room:1"));
     }
 
     #[test]
@@ -381,8 +382,8 @@ mod tests {
         let temp = value.get("temperature").unwrap();
         // Should be an array with only the default instance (no datasetId)
         let arr = temp.as_array().unwrap();
-        assert_eq!(arr.len(), 1);
-        assert_eq!(arr[0].get("value").and_then(|v| v.as_f64()), Some(30.0));
+        pretty_assertions::assert_eq!(arr.len(), 1);
+        pretty_assertions::assert_eq!(arr[0].get("value").and_then(|v| v.as_f64()), Some(30.0));
     }
 
     #[test]
@@ -417,7 +418,7 @@ mod tests {
         });
         VersionRenderer::new(NgsiLdVersion::V1_4).render(&mut value);
         let config = value.get("config").unwrap();
-        assert_eq!(config.get("type").and_then(|t| t.as_str()), Some("Property"));
+        pretty_assertions::assert_eq!(config.get("type").and_then(|t| t.as_str()), Some("Property"));
         assert!(config.get("json").is_none());
         assert!(config.get("value").is_some());
     }
@@ -434,9 +435,9 @@ mod tests {
         });
         VersionRenderer::new(NgsiLdVersion::V1_4).render(&mut value);
         let tags = value.get("tags").unwrap();
-        assert_eq!(tags.get("type").and_then(|t| t.as_str()), Some("Property"));
+        pretty_assertions::assert_eq!(tags.get("type").and_then(|t| t.as_str()), Some("Property"));
         assert!(tags.get("valueList").is_none());
-        assert_eq!(tags.get("value").unwrap(), &json!(["a", "b", "c"]));
+        pretty_assertions::assert_eq!(tags.get("value").unwrap(), &json!(["a", "b", "c"]));
     }
 
     #[test]

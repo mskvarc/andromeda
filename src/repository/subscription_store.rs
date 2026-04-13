@@ -431,6 +431,7 @@ pub fn build_subscription_from_row(row: &sqlx::postgres::PgRow, dataset_id_prese
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::{StatusUpdateFields, compute_updated_status};
     use crate::domain::subscription::SubscriptionStatus;
     use chrono::{Duration, Utc};
@@ -444,7 +445,7 @@ mod tests {
                 expires_at: None,
             },
         );
-        assert_eq!(status, SubscriptionStatus::Active);
+        pretty_assertions::assert_eq!(status, SubscriptionStatus::Active);
     }
 
     #[test]
@@ -456,7 +457,7 @@ mod tests {
                 expires_at: None,
             },
         );
-        assert_eq!(status, SubscriptionStatus::Paused);
+        pretty_assertions::assert_eq!(status, SubscriptionStatus::Paused);
     }
 
     #[test]
@@ -468,7 +469,7 @@ mod tests {
                 expires_at: None,
             },
         );
-        assert_eq!(status, SubscriptionStatus::Expired);
+        pretty_assertions::assert_eq!(status, SubscriptionStatus::Expired);
     }
 
     #[test]
@@ -481,7 +482,7 @@ mod tests {
                 expires_at: Some(Some(future)),
             },
         );
-        assert_eq!(status, SubscriptionStatus::Active);
+        pretty_assertions::assert_eq!(status, SubscriptionStatus::Active);
     }
 
     #[test]
@@ -494,7 +495,7 @@ mod tests {
                 expires_at: Some(Some(past)),
             },
         );
-        assert_eq!(status, SubscriptionStatus::Expired);
+        pretty_assertions::assert_eq!(status, SubscriptionStatus::Expired);
     }
 
     #[test]
@@ -506,7 +507,7 @@ mod tests {
                 expires_at: None,
             },
         );
-        assert_eq!(status, SubscriptionStatus::Active);
+        pretty_assertions::assert_eq!(status, SubscriptionStatus::Active);
     }
 
     #[test]
@@ -519,6 +520,6 @@ mod tests {
                 expires_at: Some(Some(future)),
             },
         );
-        assert_eq!(status, SubscriptionStatus::Active);
+        pretty_assertions::assert_eq!(status, SubscriptionStatus::Active);
     }
 }

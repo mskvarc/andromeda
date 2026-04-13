@@ -1,3 +1,4 @@
+#![allow(clippy::expect_used, clippy::unwrap_used)]
 use crate::{
     distributed_operations::prepare_registration,
     harness::{
@@ -8,7 +9,6 @@ use crate::{
     },
 };
 use libtest_mimic::Trial;
-use pretty_assertions::assert_eq;
 use reqwest::{Method, StatusCode};
 
 const PREFIX: &str = "distributed_operations::consumption::temporal::entity_map_temporal";
@@ -30,7 +30,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
         let entity_id = ctx.entity_id("urn:ngsi-ld:Vehicle:em_tq_create");
         let entity = fixtures::load_fixture(TEMPORAL_VEHICLE_FIXTURE, &entity_id);
         let resp = ctx.client.create_temporal_entity(&entity).await;
-        assert_eq!(resp.status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
         ctx.track_temporal_entity(&entity_id);
 
         let resp = ctx
@@ -44,7 +44,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
                 ld_headers(),
             )
             .await;
-        assert_eq!(resp.status, StatusCode::CREATED, "entityMap=true should yield 201 Created");
+        pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED, "entityMap=true should yield 201 Created");
 
         let map_header = resp.headers.get("NGSILD-EntityMap").expect("NGSILD-EntityMap header must be present");
         let map_id = map_header.to_str().unwrap();
@@ -61,8 +61,8 @@ pub fn tests(trials: &mut Vec<Trial>) {
 
         let fixture_a = fixtures::load_fixture(TEMPORAL_VEHICLE_FIXTURE, &entity_a);
         let fixture_b = fixtures::load_fixture(TEMPORAL_VEHICLE_FIXTURE, &entity_b);
-        assert_eq!(ctx.client.create_temporal_entity(&fixture_a).await.status, StatusCode::CREATED);
-        assert_eq!(ctx.client.create_temporal_entity(&fixture_b).await.status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(ctx.client.create_temporal_entity(&fixture_a).await.status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(ctx.client.create_temporal_entity(&fixture_b).await.status, StatusCode::CREATED);
         ctx.track_temporal_entity(&entity_a);
         ctx.track_temporal_entity(&entity_b);
 
@@ -78,14 +78,14 @@ pub fn tests(trials: &mut Vec<Trial>) {
                 ld_headers(),
             )
             .await;
-        assert_eq!(resp.status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
         let map_id = resp.headers.get("NGSILD-EntityMap").unwrap().to_str().unwrap().to_string();
         ctx.track_entity_map(&map_id);
 
         // Create a third entity after the map was frozen
         let entity_c = ctx.entity_id("urn:ngsi-ld:Vehicle:em_tq_scope_c");
         let fixture_c = fixtures::load_fixture(TEMPORAL_VEHICLE_FIXTURE, &entity_c);
-        assert_eq!(ctx.client.create_temporal_entity(&fixture_c).await.status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(ctx.client.create_temporal_entity(&fixture_c).await.status, StatusCode::CREATED);
         ctx.track_temporal_entity(&entity_c);
 
         // Query with the frozen EntityMap -- only A and B should appear
@@ -97,7 +97,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
                 ld_headers(),
             )
             .await;
-        assert_eq!(resp.status, StatusCode::OK);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::OK);
 
         let body: Vec<serde_json::Value> = resp.json();
         let ids: Vec<&str> = body.iter().filter_map(|e| e["id"].as_str()).collect();
@@ -112,7 +112,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
     trials.push(trial(&format!("{PREFIX}::temporal_query_entity_map_echoed_in_response"), |ctx| async move {
         let entity_id = ctx.entity_id("urn:ngsi-ld:Vehicle:em_tq_echo");
         let entity = fixtures::load_fixture(TEMPORAL_VEHICLE_FIXTURE, &entity_id);
-        assert_eq!(ctx.client.create_temporal_entity(&entity).await.status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(ctx.client.create_temporal_entity(&entity).await.status, StatusCode::CREATED);
         ctx.track_temporal_entity(&entity_id);
 
         // Create EntityMap
@@ -127,7 +127,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
                 ld_headers(),
             )
             .await;
-        assert_eq!(resp.status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
         let map_id = resp.headers.get("NGSILD-EntityMap").unwrap().to_str().unwrap().to_string();
         ctx.track_entity_map(&map_id);
 
@@ -140,7 +140,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
                 ld_headers(),
             )
             .await;
-        assert_eq!(resp.status, StatusCode::OK);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::OK);
 
         let echoed = resp
             .headers
@@ -148,7 +148,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
             .expect("NGSILD-EntityMap should be echoed in response")
             .to_str()
             .unwrap();
-        assert_eq!(echoed, map_id, "echoed EntityMap ID should match the one sent");
+        pretty_assertions::assert_eq!(echoed, map_id, "echoed EntityMap ID should match the one sent");
     }));
 
     // Test 4: temporal_retrieve_scoped_by_entity_map
@@ -156,7 +156,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
     trials.push(trial(&format!("{PREFIX}::temporal_retrieve_scoped_by_entity_map"), |ctx| async move {
         let entity_a = ctx.entity_id("urn:ngsi-ld:Vehicle:em_tr_scope_a");
         let fixture_a = fixtures::load_fixture(TEMPORAL_VEHICLE_FIXTURE, &entity_a);
-        assert_eq!(ctx.client.create_temporal_entity(&fixture_a).await.status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(ctx.client.create_temporal_entity(&fixture_a).await.status, StatusCode::CREATED);
         ctx.track_temporal_entity(&entity_a);
 
         // Create EntityMap containing only entity A
@@ -171,14 +171,14 @@ pub fn tests(trials: &mut Vec<Trial>) {
                 ld_headers(),
             )
             .await;
-        assert_eq!(resp.status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
         let map_id = resp.headers.get("NGSILD-EntityMap").unwrap().to_str().unwrap().to_string();
         ctx.track_entity_map(&map_id);
 
         // Create entity B (not in the map)
         let entity_b = ctx.entity_id("urn:ngsi-ld:Vehicle:em_tr_scope_b");
         let fixture_b = fixtures::load_fixture(TEMPORAL_VEHICLE_FIXTURE, &entity_b);
-        assert_eq!(ctx.client.create_temporal_entity(&fixture_b).await.status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(ctx.client.create_temporal_entity(&fixture_b).await.status, StatusCode::CREATED);
         ctx.track_temporal_entity(&entity_b);
 
         // Retrieve entity B using the EntityMap that only contains A
@@ -186,7 +186,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
             .client
             .get_temporal_entity_with_entity_map(&entity_b, &QueryParams::new(), &map_id, ld_headers())
             .await;
-        assert_eq!(resp.status, StatusCode::NOT_FOUND, "entity B is not in the map, should be 404");
+        pretty_assertions::assert_eq!(resp.status, StatusCode::NOT_FOUND, "entity B is not in the map, should be 404");
     }));
 
     // Test 5: temporal_retrieve_passes_with_entity_map
@@ -194,7 +194,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
     trials.push(trial(&format!("{PREFIX}::temporal_retrieve_passes_with_entity_map"), |ctx| async move {
         let entity_a = ctx.entity_id("urn:ngsi-ld:Vehicle:em_tr_pass");
         let fixture_a = fixtures::load_fixture(TEMPORAL_VEHICLE_FIXTURE, &entity_a);
-        assert_eq!(ctx.client.create_temporal_entity(&fixture_a).await.status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(ctx.client.create_temporal_entity(&fixture_a).await.status, StatusCode::CREATED);
         ctx.track_temporal_entity(&entity_a);
 
         // Create EntityMap containing entity A
@@ -209,7 +209,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
                 ld_headers(),
             )
             .await;
-        assert_eq!(resp.status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
         let map_id = resp.headers.get("NGSILD-EntityMap").unwrap().to_str().unwrap().to_string();
         ctx.track_entity_map(&map_id);
 
@@ -218,10 +218,10 @@ pub fn tests(trials: &mut Vec<Trial>) {
             .client
             .get_temporal_entity_with_entity_map(&entity_a, &QueryParams::new(), &map_id, ld_headers())
             .await;
-        assert_eq!(resp.status, StatusCode::OK, "entity A is in the map, should return 200");
+        pretty_assertions::assert_eq!(resp.status, StatusCode::OK, "entity A is in the map, should return 200");
 
         let body: serde_json::Value = resp.json();
-        assert_eq!(body["id"].as_str(), Some(entity_a.as_str()));
+        pretty_assertions::assert_eq!(body["id"].as_str(), Some(entity_a.as_str()));
 
         let echoed = resp
             .headers
@@ -229,7 +229,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
             .expect("NGSILD-EntityMap should be echoed in response")
             .to_str()
             .unwrap();
-        assert_eq!(echoed, map_id, "echoed EntityMap ID should match");
+        pretty_assertions::assert_eq!(echoed, map_id, "echoed EntityMap ID should match");
     }));
 
     // Test 6: temporal_query_entity_map_with_lifetime
@@ -237,7 +237,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
     trials.push(trial(&format!("{PREFIX}::temporal_query_entity_map_with_lifetime"), |ctx| async move {
         let entity_id = ctx.entity_id("urn:ngsi-ld:Vehicle:em_tq_lifetime");
         let entity = fixtures::load_fixture(TEMPORAL_VEHICLE_FIXTURE, &entity_id);
-        assert_eq!(ctx.client.create_temporal_entity(&entity).await.status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(ctx.client.create_temporal_entity(&entity).await.status, StatusCode::CREATED);
         ctx.track_temporal_entity(&entity_id);
 
         let resp = ctx
@@ -252,13 +252,13 @@ pub fn tests(trials: &mut Vec<Trial>) {
                 ld_headers(),
             )
             .await;
-        assert_eq!(resp.status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
         let map_id = resp.headers.get("NGSILD-EntityMap").unwrap().to_str().unwrap().to_string();
         ctx.track_entity_map(&map_id);
 
         // Retrieve the EntityMap via the dedicated endpoint
         let resp = ctx.client.get_entity_map(&map_id, ctx_headers()).await;
-        assert_eq!(resp.status, StatusCode::OK);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::OK);
         let body: serde_json::Value = resp.json();
         let expires_at_str = body["expiresAt"].as_str().expect("expiresAt should be present");
         let expires_at = chrono::DateTime::parse_from_rfc3339(expires_at_str).expect("expiresAt should be valid RFC3339");
@@ -283,13 +283,13 @@ pub fn tests(trials: &mut Vec<Trial>) {
 
             // Create local temporal entity
             let entity = fixtures::load_fixture(TEMPORAL_VEHICLE_FIXTURE, &local_entity_id);
-            assert_eq!(ctx.client.create_temporal_entity(&entity).await.status, StatusCode::CREATED);
+            pretty_assertions::assert_eq!(ctx.client.create_temporal_entity(&entity).await.status, StatusCode::CREATED);
             ctx.track_temporal_entity(&local_entity_id);
 
             // Create CSR pointing to mock
             let reg = prepare_registration(REG_VEHICLE_COMPLETE, &reg_id, &remote_entity_id, &mock.url(""), None, None, None);
             let resp = ctx.client.create_registration(&reg).await;
-            assert_eq!(resp.status, StatusCode::CREATED);
+            pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
             ctx.track_registration(&reg_id);
 
             // Mock returns a remote temporal entity
@@ -313,13 +313,13 @@ pub fn tests(trials: &mut Vec<Trial>) {
                     ld_headers(),
                 )
                 .await;
-            assert_eq!(resp.status, StatusCode::CREATED);
+            pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
             let map_id = resp.headers.get("NGSILD-EntityMap").unwrap().to_str().unwrap().to_string();
             ctx.track_entity_map(&map_id);
 
             // Retrieve the EntityMap and verify both IDs are present
             let resp = ctx.client.get_entity_map(&map_id, ctx_headers()).await;
-            assert_eq!(resp.status, StatusCode::OK);
+            pretty_assertions::assert_eq!(resp.status, StatusCode::OK);
             let body: serde_json::Value = resp.json();
             let entity_map = body["entityMap"].as_object().expect("entityMap should be an object");
             assert!(entity_map.contains_key(local_entity_id.as_str()), "EntityMap should contain local entity ID");

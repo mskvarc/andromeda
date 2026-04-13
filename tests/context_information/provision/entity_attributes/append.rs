@@ -1,10 +1,10 @@
+#![allow(clippy::expect_used, clippy::unwrap_used)]
 use crate::harness::{
     client::{QueryParams, RequestHeaders},
     fixtures,
     trial::trial,
 };
 use libtest_mimic::Trial;
-use pretty_assertions::assert_eq;
 use reqwest::{Method, StatusCode};
 
 const PREFIX: &str = "provision::entity_attributes::append";
@@ -20,7 +20,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
         let fragment = fixtures::load_fragment("entities/fragment_entities/vehicle-new-attribute-fragment.jsonld");
 
         let resp = ctx.client.append_entity_attrs(&id, &fragment).await;
-        assert_eq!(resp.status, StatusCode::NO_CONTENT);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::NO_CONTENT);
         assert!(resp.body_bytes().is_empty());
 
         let resp = ctx
@@ -32,8 +32,8 @@ pub fn tests(trials: &mut Vec<Trial>) {
             )
             .await;
         let body: serde_json::Value = resp.json();
-        assert_eq!(body["attribute_to_be_added"]["type"], "Property");
-        assert_eq!(body["attribute_to_be_added"]["value"], 23);
+        pretty_assertions::assert_eq!(body["attribute_to_be_added"]["type"], "Property");
+        pretty_assertions::assert_eq!(body["attribute_to_be_added"]["value"], 23);
         assert!(body.get("speed").is_some());
     }));
 
@@ -49,7 +49,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
             let fragment = fixtures::load_fragment("entities/fragment_entities/vehicle-speed-different-datasetid-fragment.jsonld");
 
             let resp = ctx.client.append_entity_attrs(&id, &fragment).await;
-            assert_eq!(resp.status, StatusCode::NO_CONTENT);
+            pretty_assertions::assert_eq!(resp.status, StatusCode::NO_CONTENT);
 
             let resp = ctx
                 .client
@@ -96,7 +96,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
             .client
             .request(Method::POST, "/entities/not-a-valid-uri/attrs", Some(&fragment), Default::default())
             .await;
-        assert_eq!(resp.status, StatusCode::BAD_REQUEST);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::BAD_REQUEST);
 
         let body: serde_json::Value = resp.json();
         assert!(body["type"].as_str().is_some());
@@ -114,7 +114,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
         });
 
         let resp = ctx.client.append_entity_attrs(&id, &fragment).await;
-        assert_eq!(resp.status, StatusCode::NOT_FOUND);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::NOT_FOUND);
 
         let body: serde_json::Value = resp.json();
         assert!(body["type"].as_str().is_some());
@@ -138,7 +138,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
                 Default::default(),
             )
             .await;
-        assert_eq!(resp.status, StatusCode::MULTI_STATUS);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::MULTI_STATUS);
 
         let body: serde_json::Value = resp.json();
         assert!(body.get("notUpdated").is_some() || body.get("updated").is_some());
@@ -162,7 +162,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
                 Default::default(),
             )
             .await;
-        assert_eq!(resp.status, StatusCode::NO_CONTENT);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::NO_CONTENT);
     }));
 
     // 010_05_01: Append with invalid JSON fragment returns 400
@@ -176,7 +176,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
             .client
             .request_raw(Method::POST, &format!("/entities/{id}/attrs"), b"{invalid json", "application/ld+json")
             .await;
-        assert_eq!(resp.status, StatusCode::BAD_REQUEST);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::BAD_REQUEST);
     }));
 
     // 010_06_01: Append LanguageProperty attribute
@@ -189,7 +189,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
         let fragment = fixtures::load_fragment("entities/fragment_entities/vehicle-new-language-property-fragment.jsonld");
 
         let resp = ctx.client.append_entity_attrs(&id, &fragment).await;
-        assert_eq!(resp.status, StatusCode::NO_CONTENT);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::NO_CONTENT);
 
         let resp = ctx
             .client
@@ -200,8 +200,8 @@ pub fn tests(trials: &mut Vec<Trial>) {
             )
             .await;
         let body: serde_json::Value = resp.json();
-        assert_eq!(body["street"]["type"], "LanguageProperty");
-        assert_eq!(body["street"]["languageMap"]["fr"], "Grand Place");
+        pretty_assertions::assert_eq!(body["street"]["type"], "LanguageProperty");
+        pretty_assertions::assert_eq!(body["street"]["languageMap"]["fr"], "Grand Place");
     }));
 
     // 010_07_01: Append scope with overwrite
@@ -220,7 +220,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
                     .link_context(fixtures::test_suite_context_url()),
             )
             .await;
-        assert_eq!(resp.status, StatusCode::CREATED, "create entity should return 201");
+        pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED, "create entity should return 201");
 
         let fragment = fixtures::load_fragment("entities/fragment_entities/one-scope-fragment.json");
 
@@ -235,7 +235,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
                     .link_context(fixtures::test_suite_context_url()),
             )
             .await;
-        assert_eq!(resp.status, StatusCode::NO_CONTENT);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::NO_CONTENT);
 
         let resp = ctx
             .client
@@ -246,7 +246,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
             )
             .await;
         let body: serde_json::Value = resp.json();
-        assert_eq!(body["scope"], "/CompanyA/OrganizationB/UnitC");
+        pretty_assertions::assert_eq!(body["scope"], "/CompanyA/OrganizationB/UnitC");
     }));
 
     // 010_07_02: Append scope with noOverwrite
@@ -265,7 +265,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
                     .link_context(fixtures::test_suite_context_url()),
             )
             .await;
-        assert_eq!(resp.status, StatusCode::CREATED, "create entity should return 201");
+        pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED, "create entity should return 201");
 
         let fragment = fixtures::load_fragment("entities/fragment_entities/one-scope-fragment.json");
 
@@ -303,7 +303,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
                     .link_context(fixtures::test_suite_context_url()),
             )
             .await;
-        assert_eq!(resp.status, StatusCode::NO_CONTENT);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::NO_CONTENT);
 
         let resp = ctx
             .client
@@ -314,7 +314,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
             )
             .await;
         let body: serde_json::Value = resp.json();
-        assert_eq!(body["observationSpace"]["type"], "GeoProperty");
+        pretty_assertions::assert_eq!(body["observationSpace"]["type"], "GeoProperty");
     }));
 
     // 010_09: Append operationSpace GeoProperty
@@ -337,7 +337,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
                     .link_context(fixtures::test_suite_context_url()),
             )
             .await;
-        assert_eq!(resp.status, StatusCode::NO_CONTENT);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::NO_CONTENT);
 
         let resp = ctx
             .client
@@ -348,7 +348,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
             )
             .await;
         let body: serde_json::Value = resp.json();
-        assert_eq!(body["operationSpace"]["type"], "GeoProperty");
+        pretty_assertions::assert_eq!(body["operationSpace"]["type"], "GeoProperty");
     }));
 
     // 010_10_01: Append JsonProperty attribute
@@ -361,7 +361,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
         let fragment = fixtures::load_fragment("entities/fragment_entities/vehicle-new-json-property-fragment.jsonld");
 
         let resp = ctx.client.append_entity_attrs(&id, &fragment).await;
-        assert_eq!(resp.status, StatusCode::NO_CONTENT);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::NO_CONTENT);
 
         let resp = ctx
             .client
@@ -372,7 +372,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
             )
             .await;
         let body: serde_json::Value = resp.json();
-        assert_eq!(body["jsonProperty"]["type"], "JsonProperty");
+        pretty_assertions::assert_eq!(body["jsonProperty"]["type"], "JsonProperty");
         assert!(body["jsonProperty"]["json"].is_object());
     }));
 
@@ -386,7 +386,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
         let fragment = fixtures::load_fragment("entities/fragment_entities/vehicle-new-vocab-property-fragment.jsonld");
 
         let resp = ctx.client.append_entity_attrs(&id, &fragment).await;
-        assert_eq!(resp.status, StatusCode::NO_CONTENT);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::NO_CONTENT);
 
         let resp = ctx
             .client
@@ -397,6 +397,6 @@ pub fn tests(trials: &mut Vec<Trial>) {
             )
             .await;
         let body: serde_json::Value = resp.json();
-        assert_eq!(body["vocabProperty"]["type"], "VocabProperty");
+        pretty_assertions::assert_eq!(body["vocabProperty"]["type"], "VocabProperty");
     }));
 }

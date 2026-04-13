@@ -45,6 +45,7 @@ impl headers::Header for NgsiLdResultsCount {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::*;
     use headers::Header;
 
@@ -57,7 +58,7 @@ mod tests {
     #[test]
     fn decode_valid_integer() {
         let header = decode_from("42").expect("should decode");
-        assert_eq!(header.0, 42);
+        pretty_assertions::assert_eq!(header.0, 42);
     }
 
     #[test]
@@ -75,17 +76,17 @@ mod tests {
         let header = NgsiLdResultsCount::new(100);
         let mut encoded = Vec::new();
         header.encode(&mut encoded);
-        assert_eq!(encoded.len(), 1);
-        assert_eq!(encoded[0].to_str().expect("valid str"), "100");
+        pretty_assertions::assert_eq!(encoded.len(), 1);
+        pretty_assertions::assert_eq!(encoded[0].to_str().expect("valid str"), "100");
 
         let mut iter = encoded.iter();
         let decoded = NgsiLdResultsCount::decode(&mut iter).expect("roundtrip decode");
-        assert_eq!(header, decoded);
+        pretty_assertions::assert_eq!(header, decoded);
     }
 
     #[test]
     fn decode_zero() {
         let header = decode_from("0").expect("should decode zero");
-        assert_eq!(header.0, 0);
+        pretty_assertions::assert_eq!(header.0, 0);
     }
 }

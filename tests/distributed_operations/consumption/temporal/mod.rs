@@ -1,3 +1,4 @@
+#![allow(clippy::expect_used, clippy::unwrap_used)]
 pub mod entity_map_temporal;
 pub mod query_temporal;
 pub mod retrieve_temporal;

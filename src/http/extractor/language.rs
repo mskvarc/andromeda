@@ -58,6 +58,7 @@ where
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::LanguageNegotiation;
     use axum::{extract::FromRequestParts, http::Request};
 
@@ -81,7 +82,7 @@ mod tests {
         let LanguageNegotiation(filter) = extract_from_uri("/entities?lang=fr,en;q=0.8").await;
         let filter = filter.expect("language filter present");
         let ordered = filter.ordered();
-        assert_eq!(ordered.len(), 2);
+        pretty_assertions::assert_eq!(ordered.len(), 2);
     }
 
     #[tokio::test]
@@ -89,7 +90,7 @@ mod tests {
         let LanguageNegotiation(filter) = extract_with_header("de, en;q=0.5").await;
         let filter = filter.expect("language filter present");
         let ordered = filter.ordered();
-        assert_eq!(ordered.len(), 2);
+        pretty_assertions::assert_eq!(ordered.len(), 2);
     }
 
     #[tokio::test]
@@ -103,10 +104,10 @@ mod tests {
         let LanguageNegotiation(filter) = LanguageNegotiation::from_request_parts(&mut parts, &()).await.expect("extraction");
         let filter = filter.expect("language filter present");
         let ordered = filter.ordered();
-        assert_eq!(ordered.len(), 1);
+        pretty_assertions::assert_eq!(ordered.len(), 1);
         assert!(matches!(
             ordered[0].value(),
-            crate::http::model::language::LanguageRange::Tag(tag) if tag.to_string() == "fr"
+            crate::http::model::language::LanguageRange::Tag(tag) if tag == "fr"
         ));
     }
 

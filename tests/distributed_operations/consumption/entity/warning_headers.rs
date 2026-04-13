@@ -1,3 +1,4 @@
+#![allow(clippy::expect_used, clippy::unwrap_used)]
 use crate::{
     distributed_operations::prepare_registration,
     harness::{
@@ -8,7 +9,6 @@ use crate::{
     },
 };
 use libtest_mimic::Trial;
-use pretty_assertions::assert_eq;
 use reqwest::{Method, StatusCode};
 
 const PREFIX: &str = "distributed_operations::consumption::entity::warning_headers";
@@ -41,13 +41,13 @@ pub fn tests(trials: &mut Vec<Trial>) {
 
             let reg = prepare_registration(REG_VEHICLE_COMPLETE, &reg_id, &entity_id, &mock.url(""), None, None, None);
             let resp = ctx.client.create_registration(&reg).await;
-            assert_eq!(resp.status, StatusCode::CREATED);
+            pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
             ctx.track_registration(&reg_id);
 
             mock.set_stub(Method::GET, "/ngsi-ld/v1/entities", 500).await;
 
             let resp = ctx.client.query_entities(&QueryParams::new().type_("Vehicle"), ld_headers()).await;
-            assert_eq!(resp.status, StatusCode::OK);
+            pretty_assertions::assert_eq!(resp.status, StatusCode::OK);
 
             let warnings = warning_header_values(&resp);
             assert!(!warnings.is_empty(), "expected NGSILD-Warning header, got none");
@@ -71,11 +71,11 @@ pub fn tests(trials: &mut Vec<Trial>) {
 
             let reg = prepare_registration(REG_VEHICLE_COMPLETE, &reg_id, &entity_id, &endpoint, None, None, None);
             let resp = ctx.client.create_registration(&reg).await;
-            assert_eq!(resp.status, StatusCode::CREATED);
+            pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
             ctx.track_registration(&reg_id);
 
             let resp = ctx.client.query_entities(&QueryParams::new().type_("Vehicle"), ld_headers()).await;
-            assert_eq!(resp.status, StatusCode::OK);
+            pretty_assertions::assert_eq!(resp.status, StatusCode::OK);
 
             let warnings = warning_header_values(&resp);
             assert!(!warnings.is_empty(), "expected NGSILD-Warning header, got none");
@@ -93,14 +93,14 @@ pub fn tests(trials: &mut Vec<Trial>) {
 
             let reg = prepare_registration(REG_VEHICLE_COMPLETE, &reg_id, &entity_id, &mock.url(""), None, None, None);
             let resp = ctx.client.create_registration(&reg).await;
-            assert_eq!(resp.status, StatusCode::CREATED);
+            pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
             ctx.track_registration(&reg_id);
 
             mock.set_stub_with_raw_body(Method::GET, "/ngsi-ld/v1/entities", 200, "not json at all", "text/plain")
                 .await;
 
             let resp = ctx.client.query_entities(&QueryParams::new().type_("Vehicle"), ld_headers()).await;
-            assert_eq!(resp.status, StatusCode::OK);
+            pretty_assertions::assert_eq!(resp.status, StatusCode::OK);
 
             let warnings = warning_header_values(&resp);
             assert!(!warnings.is_empty(), "expected NGSILD-Warning header, got none");
@@ -120,13 +120,13 @@ pub fn tests(trials: &mut Vec<Trial>) {
 
             let reg = prepare_registration(REG_VEHICLE_COMPLETE, &reg_id, &entity_id, &mock.url(""), None, None, None);
             let resp = ctx.client.create_registration(&reg).await;
-            assert_eq!(resp.status, StatusCode::CREATED);
+            pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
             ctx.track_registration(&reg_id);
 
             mock.set_stub(Method::GET, "/ngsi-ld/v1/entities", 404).await;
 
             let resp = ctx.client.query_entities(&QueryParams::new().type_("Vehicle"), ld_headers()).await;
-            assert_eq!(resp.status, StatusCode::OK);
+            pretty_assertions::assert_eq!(resp.status, StatusCode::OK);
 
             let warnings = warning_header_values(&resp);
             assert!(warnings.is_empty(), "expected no NGSILD-Warning header for 404, got: {warnings:?}");
@@ -149,17 +149,17 @@ pub fn tests(trials: &mut Vec<Trial>) {
                 .client
                 .request(Method::POST, "/entities?local=true", Some(&entity), RequestHeaders::new())
                 .await;
-            assert_eq!(resp.status, StatusCode::CREATED);
+            pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
 
             let reg = prepare_registration(REG_VEHICLE_COMPLETE, &reg_id, &entity_id, &mock.url(""), None, None, None);
             let resp = ctx.client.create_registration(&reg).await;
-            assert_eq!(resp.status, StatusCode::CREATED);
+            pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
             ctx.track_registration(&reg_id);
 
             mock.set_stub(Method::GET, &format!("/ngsi-ld/v1/entities/{entity_id}"), 403).await;
 
             let resp = ctx.client.get_entity(&entity_id, &QueryParams::new(), ld_headers()).await;
-            assert_eq!(resp.status, StatusCode::OK);
+            pretty_assertions::assert_eq!(resp.status, StatusCode::OK);
 
             let warnings = warning_header_values(&resp);
             assert!(!warnings.is_empty(), "expected NGSILD-Warning header, got none");
@@ -179,7 +179,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
 
             let reg = prepare_registration(REG_VEHICLE_COMPLETE, &reg_id, &entity_id, &mock.url(""), None, None, None);
             let resp = ctx.client.create_registration(&reg).await;
-            assert_eq!(resp.status, StatusCode::CREATED);
+            pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
             ctx.track_registration(&reg_id);
 
             let mock_entity = fixtures::load_fixture(VEHICLE_FIXTURE, &entity_id);
@@ -187,7 +187,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
             mock.set_stub_with_body(Method::GET, "/ngsi-ld/v1/entities", 200, &mock_array).await;
 
             let resp = ctx.client.query_entities(&QueryParams::new().type_("Vehicle"), ld_headers()).await;
-            assert_eq!(resp.status, StatusCode::OK);
+            pretty_assertions::assert_eq!(resp.status, StatusCode::OK);
 
             let warnings = warning_header_values(&resp);
             assert!(
@@ -212,7 +212,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
             // First CSR: mock returns 500
             let reg1 = prepare_registration(REG_VEHICLE_COMPLETE, &reg_id1, &entity_id, &mock1.url(""), None, None, None);
             let resp = ctx.client.create_registration(&reg1).await;
-            assert_eq!(resp.status, StatusCode::CREATED);
+            pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
             ctx.track_registration(&reg_id1);
 
             mock1.set_stub(Method::GET, "/ngsi-ld/v1/entities", 500).await;
@@ -223,11 +223,11 @@ pub fn tests(trials: &mut Vec<Trial>) {
 
             let reg2 = prepare_registration(REG_VEHICLE_COMPLETE, &reg_id2, &entity_id, &endpoint2, None, None, None);
             let resp = ctx.client.create_registration(&reg2).await;
-            assert_eq!(resp.status, StatusCode::CREATED);
+            pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
             ctx.track_registration(&reg_id2);
 
             let resp = ctx.client.query_entities(&QueryParams::new().type_("Vehicle"), ld_headers()).await;
-            assert_eq!(resp.status, StatusCode::OK);
+            pretty_assertions::assert_eq!(resp.status, StatusCode::OK);
 
             let warnings = warning_header_values(&resp);
             assert!(
@@ -254,18 +254,18 @@ pub fn tests(trials: &mut Vec<Trial>) {
                 .client
                 .request(Method::POST, "/entities?local=true", Some(&entity), RequestHeaders::new())
                 .await;
-            assert_eq!(resp.status, StatusCode::CREATED);
+            pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
 
             // CSR points to mock returning 500 -- but local=true should skip forwarding
             let reg = prepare_registration(REG_VEHICLE_COMPLETE, &reg_id, &entity_id, &mock.url(""), None, None, None);
             let resp = ctx.client.create_registration(&reg).await;
-            assert_eq!(resp.status, StatusCode::CREATED);
+            pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
             ctx.track_registration(&reg_id);
 
             mock.set_stub(Method::GET, "/ngsi-ld/v1/entities", 500).await;
 
             let resp = ctx.client.query_entities(&QueryParams::new().type_("Vehicle").local(true), ld_headers()).await;
-            assert_eq!(resp.status, StatusCode::OK);
+            pretty_assertions::assert_eq!(resp.status, StatusCode::OK);
 
             let warnings = warning_header_values(&resp);
             assert!(warnings.is_empty(), "expected no NGSILD-Warning header with local=true, got: {warnings:?}");

@@ -280,8 +280,24 @@ pub fn matches_scope_filter(scope_q: &str, entity_data: &Value) -> bool {
     })
 }
 
+fn scope_matches(pattern: &str, scope: &str) -> bool {
+    if let Some(prefix) = pattern.strip_suffix("/#") {
+        if let Some(rest) = scope.strip_prefix(prefix) {
+            rest.starts_with('/') && !rest[1..].contains('/')
+        } else {
+            false
+        }
+    } else if pattern.contains("/+") {
+        let regex_pattern = format!("^{}$", pattern.replace("/+", "/[^/]+"));
+        Regex::new(&regex_pattern).is_ok_and(|re| re.is_match(scope))
+    } else {
+        pattern == scope
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::*;
     use crate::{
         domain::{
@@ -398,20 +414,5 @@ mod tests {
         let sub = make_sub();
         let event = make_event();
         assert!(matches_subscription(&sub, &event));
-    }
-}
-
-fn scope_matches(pattern: &str, scope: &str) -> bool {
-    if let Some(prefix) = pattern.strip_suffix("/#") {
-        if let Some(rest) = scope.strip_prefix(prefix) {
-            rest.starts_with('/') && !rest[1..].contains('/')
-        } else {
-            false
-        }
-    } else if pattern.contains("/+") {
-        let regex_pattern = format!("^{}$", pattern.replace("/+", "/[^/]+"));
-        Regex::new(&regex_pattern).is_ok_and(|re| re.is_match(scope))
-    } else {
-        pattern == scope
     }
 }

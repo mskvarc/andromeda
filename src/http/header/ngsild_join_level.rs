@@ -46,6 +46,7 @@ impl headers::Header for NgsiLdJoinLevel {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::*;
     use headers::Header;
 
@@ -57,7 +58,7 @@ mod tests {
 
     #[test]
     fn decode_valid_number() {
-        assert_eq!(decode_from("3").expect("valid").into_inner(), 3);
+        pretty_assertions::assert_eq!(decode_from("3").expect("valid").into_inner(), 3);
     }
 
     #[test]

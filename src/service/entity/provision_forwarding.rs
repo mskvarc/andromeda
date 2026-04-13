@@ -95,6 +95,7 @@ pub fn first_forwarded_status(forwarded: &[ForwardedWriteResult], fallback: u16)
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::*;
 
     fn make_result(mode: ForwardingMode, status: u16) -> ForwardedWriteResult {
@@ -165,12 +166,12 @@ mod tests {
     #[test]
     fn first_forwarded_status_with_results() {
         let results = vec![make_result(ForwardingMode::Redirect, 301)];
-        assert_eq!(first_forwarded_status(&results, 204), 301);
+        pretty_assertions::assert_eq!(first_forwarded_status(&results, 204), 301);
     }
 
     #[test]
     fn first_forwarded_status_empty_uses_fallback() {
-        assert_eq!(first_forwarded_status(&[], 204), 204);
+        pretty_assertions::assert_eq!(first_forwarded_status(&[], 204), 204);
     }
 
     #[test]
@@ -179,8 +180,8 @@ mod tests {
         let body = build_multi_status_body("urn:test:1", true, None, &remote);
         let success = body["success"].as_array().expect("success array");
         let errors = body["errors"].as_array().expect("errors array");
-        assert_eq!(success.len(), 1);
-        assert_eq!(errors.len(), 1);
+        pretty_assertions::assert_eq!(success.len(), 1);
+        pretty_assertions::assert_eq!(errors.len(), 1);
     }
 
     #[test]
@@ -190,8 +191,8 @@ mod tests {
         let body = build_multi_status_body("urn:test:1", false, Some(&err), &remote);
         let success = body["success"].as_array().expect("success array");
         let errors = body["errors"].as_array().expect("errors array");
-        assert_eq!(success.len(), 1);
-        assert_eq!(errors.len(), 1);
+        pretty_assertions::assert_eq!(success.len(), 1);
+        pretty_assertions::assert_eq!(errors.len(), 1);
     }
 
     #[test]
@@ -200,7 +201,7 @@ mod tests {
         let body = build_multi_status_body("urn:test:1", true, None, &remote);
         let success = body["success"].as_array().expect("success array");
         let errors = body["errors"].as_array().expect("errors array");
-        assert_eq!(success.len(), 1);
+        pretty_assertions::assert_eq!(success.len(), 1);
         assert!(errors.is_empty());
     }
 }

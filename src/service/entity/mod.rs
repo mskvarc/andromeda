@@ -570,6 +570,7 @@ pub(crate) fn inject_attr_sys_attrs(obj: &mut Map<String, Value>, created_at_val
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::normalize_entity_attributes;
 
     #[test]
@@ -583,10 +584,10 @@ mod tests {
 
         normalize_entity_attributes(&mut payload);
 
-        assert_eq!(payload["A1"]["type"], "Property");
-        assert_eq!(payload["A1"]["value"], "value of A1");
-        assert_eq!(payload["A2"]["type"], "Property");
-        assert_eq!(payload["A2"]["value"], serde_json::json!({ "nested": true }));
+        pretty_assertions::assert_eq!(payload["A1"]["type"], "Property");
+        pretty_assertions::assert_eq!(payload["A1"]["value"], "value of A1");
+        pretty_assertions::assert_eq!(payload["A2"]["type"], "Property");
+        pretty_assertions::assert_eq!(payload["A2"]["value"], serde_json::json!({ "nested": true }));
     }
 
     #[test]
@@ -602,8 +603,8 @@ mod tests {
 
         normalize_entity_attributes(&mut payload);
 
-        assert_eq!(payload["name"]["type"], "Property");
-        assert_eq!(payload["name"]["value"], "Andromeda");
+        pretty_assertions::assert_eq!(payload["name"]["type"], "Property");
+        pretty_assertions::assert_eq!(payload["name"]["value"], "Andromeda");
     }
 
     #[test]
@@ -615,9 +616,9 @@ mod tests {
 
         normalize_entity_attributes(&mut payload);
 
-        assert_eq!(payload["A1"]["type"], "Property");
-        assert_eq!(payload["A1"]["value"], 1);
-        assert_eq!(payload["A2"]["type"], "Property");
-        assert_eq!(payload["A2"]["value"], false);
+        pretty_assertions::assert_eq!(payload["A1"]["type"], "Property");
+        pretty_assertions::assert_eq!(payload["A1"]["value"], 1);
+        pretty_assertions::assert_eq!(payload["A2"]["type"], "Property");
+        pretty_assertions::assert_eq!(payload["A2"]["value"], false);
     }
 }

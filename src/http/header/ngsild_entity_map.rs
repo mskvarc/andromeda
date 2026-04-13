@@ -61,6 +61,7 @@ impl headers::Header for NgsiLdEntityMap {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::*;
     use headers::Header;
 
@@ -73,13 +74,13 @@ mod tests {
     #[test]
     fn decode_valid_entity_map_urn() {
         let header = decode_from("urn:ngsi-ld:EntityMap:abc123").expect("should decode");
-        assert_eq!(header.as_str(), "urn:ngsi-ld:EntityMap:abc123");
+        pretty_assertions::assert_eq!(header.as_str(), "urn:ngsi-ld:EntityMap:abc123");
     }
 
     #[test]
     fn decode_trims_whitespace() {
         let header = decode_from("  urn:ngsi-ld:EntityMap:x  ").expect("should decode");
-        assert_eq!(header.as_str(), "urn:ngsi-ld:EntityMap:x");
+        pretty_assertions::assert_eq!(header.as_str(), "urn:ngsi-ld:EntityMap:x");
     }
 
     #[test]
@@ -108,11 +109,11 @@ mod tests {
         let header = NgsiLdEntityMap::new(urn);
         let mut encoded = Vec::new();
         header.encode(&mut encoded);
-        assert_eq!(encoded.len(), 1);
-        assert_eq!(encoded[0].to_str().expect("valid str"), "urn:ngsi-ld:EntityMap:test");
+        pretty_assertions::assert_eq!(encoded.len(), 1);
+        pretty_assertions::assert_eq!(encoded[0].to_str().expect("valid str"), "urn:ngsi-ld:EntityMap:test");
 
         let mut iter = encoded.iter();
         let decoded = NgsiLdEntityMap::decode(&mut iter).expect("roundtrip decode");
-        assert_eq!(header, decoded);
+        pretty_assertions::assert_eq!(header, decoded);
     }
 }

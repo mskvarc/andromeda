@@ -1,3 +1,4 @@
+#![allow(clippy::expect_used, clippy::unwrap_used)]
 use reqwest::{Method, StatusCode};
 use serial_test::serial;
 
@@ -16,7 +17,7 @@ async fn batch_merge_empty_fragment_preserves_entities_returns_204() {
     for id in [&id1, &id2] {
         let entity = building_simple_attributes(id);
         let (status, _, _) = create_entity(&c, &entity).await;
-        assert_eq!(status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(status, StatusCode::CREATED);
     }
 
     let e1 = building_minimal(&id1);
@@ -24,11 +25,11 @@ async fn batch_merge_empty_fragment_preserves_entities_returns_204() {
     let fragments = json!([e1, e2]);
 
     let (status, _) = batch_merge(&c, &fragments).await;
-    assert_eq!(status, StatusCode::NO_CONTENT, "batch merge should return 204");
+    pretty_assertions::assert_eq!(status, StatusCode::NO_CONTENT, "batch merge should return 204");
 
     let (status, _, body) = get_entity(&c, &id1, "", true).await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["name"]["value"], "Eiffel Tower");
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(body["name"]["value"], "Eiffel Tower");
 }
 
 #[tokio::test]
@@ -50,12 +51,12 @@ async fn batch_merge_properties_updates_values_returns_204() {
     let fragments = json!([e1, e2]);
 
     let (status, _) = batch_merge(&c, &fragments).await;
-    assert_eq!(status, StatusCode::NO_CONTENT);
+    pretty_assertions::assert_eq!(status, StatusCode::NO_CONTENT);
 
     let (status, _, body) = get_entity(&c, &id1, "", true).await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["locatedAt"]["object"], "urn:ngsi-ld:City:Paris");
-    assert_eq!(body["subCategory"]["value"], "tourism");
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(body["locatedAt"]["object"], "urn:ngsi-ld:City:Paris");
+    pretty_assertions::assert_eq!(body["subCategory"]["value"], "tourism");
 }
 
 #[tokio::test]
@@ -77,11 +78,11 @@ async fn batch_merge_relationship_adds_to_entities_returns_204() {
     let fragments = json!([e1, e2]);
 
     let (status, _) = batch_merge(&c, &fragments).await;
-    assert_eq!(status, StatusCode::NO_CONTENT);
+    pretty_assertions::assert_eq!(status, StatusCode::NO_CONTENT);
 
     let (status, _, body) = get_entity(&c, &id1, "", true).await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["locatedAt"]["object"], "urn:ngsi-ld:City:Paris");
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(body["locatedAt"]["object"], "urn:ngsi-ld:City:Paris");
 }
 
 #[tokio::test]
@@ -103,13 +104,13 @@ async fn batch_merge_partial_preserves_sub_attributes_returns_204() {
     let fragments = json!([e1, e2]);
 
     let (status, _) = batch_merge(&c, &fragments).await;
-    assert_eq!(status, StatusCode::NO_CONTENT);
+    pretty_assertions::assert_eq!(status, StatusCode::NO_CONTENT);
 
     let (status, _, body) = get_entity(&c, &id1, "", true).await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["airQualityLevel"]["value"], 4);
-    assert_eq!(body["airQualityLevel"]["unitCode"], "C62", "unitCode should be preserved");
-    assert_eq!(body["airQualityLevel"]["hasWeatherObserved"]["type"], "Relationship");
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(body["airQualityLevel"]["value"], 4);
+    pretty_assertions::assert_eq!(body["airQualityLevel"]["unitCode"], "C62", "unitCode should be preserved");
+    pretty_assertions::assert_eq!(body["airQualityLevel"]["hasWeatherObserved"]["type"], "Relationship");
 }
 
 #[tokio::test]
@@ -133,12 +134,12 @@ async fn batch_merge_mixed_existing_nonexisting_returns_207() {
     let fragments = json!([e1, e2, e3]);
 
     let (status, body) = batch_merge(&c, &fragments).await;
-    assert_eq!(status, StatusCode::MULTI_STATUS);
+    pretty_assertions::assert_eq!(status, StatusCode::MULTI_STATUS);
 
     let success = body["success"].as_array().expect("should have success");
     let errors = body["errors"].as_array().expect("should have errors");
-    assert_eq!(success.len(), 2);
-    assert_eq!(errors.len(), 1);
+    pretty_assertions::assert_eq!(success.len(), 2);
+    pretty_assertions::assert_eq!(errors.len(), 1);
 }
 
 #[tokio::test]
@@ -153,7 +154,7 @@ async fn batch_merge_invalid_json_returns_400() {
         false,
     )
     .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
+    pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
 }
 
 #[tokio::test]
@@ -166,5 +167,5 @@ async fn batch_merge_invalid_json_ld_returns_207() {
     }]);
 
     let (status, _) = batch_merge(&c, &fragments).await;
-    assert_eq!(status, StatusCode::MULTI_STATUS, "invalid JSON-LD should return 207");
+    pretty_assertions::assert_eq!(status, StatusCode::MULTI_STATUS, "invalid JSON-LD should return 207");
 }

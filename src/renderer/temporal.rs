@@ -621,6 +621,7 @@ pub fn simplify_temporal_values(entities: Vec<Value>) -> Result<Vec<Value>, Andr
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::*;
     use serde_json::json;
 
@@ -635,9 +636,9 @@ mod tests {
             }
         });
         let result = simplify_temporal_value(entity).expect("simplification succeeds");
-        assert_eq!(result["id"], "urn:ngsi-ld:Vehicle:1");
-        assert_eq!(result["type"], "Vehicle");
-        assert_eq!(result["speed"], 100);
+        pretty_assertions::assert_eq!(result["id"], "urn:ngsi-ld:Vehicle:1");
+        pretty_assertions::assert_eq!(result["type"], "Vehicle");
+        pretty_assertions::assert_eq!(result["speed"], 100);
     }
 
     #[test]
@@ -651,7 +652,7 @@ mod tests {
             }
         });
         let result = simplify_temporal_value(entity).expect("simplification succeeds");
-        assert_eq!(result["isParked"], "urn:ngsi-ld:Parking:1");
+        pretty_assertions::assert_eq!(result["isParked"], "urn:ngsi-ld:Parking:1");
     }
 
     #[test]
@@ -681,9 +682,9 @@ mod tests {
             }),
         ];
         let result = simplify_temporal_values(entities).expect("simplification succeeds");
-        assert_eq!(result.len(), 2);
-        assert_eq!(result[0]["speed"], 100);
-        assert_eq!(result[1]["speed"], 200);
+        pretty_assertions::assert_eq!(result.len(), 2);
+        pretty_assertions::assert_eq!(result[0]["speed"], 100);
+        pretty_assertions::assert_eq!(result[1]["speed"], 200);
     }
 
     #[test]
@@ -706,7 +707,7 @@ mod tests {
         let mut value = json!({"id": "urn:x", "type": "T", "speed": {"type": "Property", "value": 25}});
         ensure_temporal_attrs_are_arrays(&mut value);
         assert!(value["speed"].is_array());
-        assert_eq!(value["speed"][0]["value"], 25);
+        pretty_assertions::assert_eq!(value["speed"][0]["value"], 25);
     }
 
     #[test]
@@ -714,7 +715,7 @@ mod tests {
         let mut value = json!({"id": "urn:x", "type": "T", "speed": [{"type": "Property", "value": 25}]});
         let original = value.clone();
         ensure_temporal_attrs_are_arrays(&mut value);
-        assert_eq!(value, original);
+        pretty_assertions::assert_eq!(value, original);
     }
 
     #[test]
@@ -737,11 +738,11 @@ mod tests {
             ]
         });
         let result = transform_to_temporal_values(input);
-        assert_eq!(result["speed"]["type"], "Property");
+        pretty_assertions::assert_eq!(result["speed"]["type"], "Property");
         let values = result["speed"]["values"].as_array().expect("values array");
-        assert_eq!(values.len(), 2);
-        assert_eq!(values[0][0], 25);
-        assert_eq!(values[1][0], 30);
+        pretty_assertions::assert_eq!(values.len(), 2);
+        pretty_assertions::assert_eq!(values[0][0], 25);
+        pretty_assertions::assert_eq!(values[1][0], 30);
     }
 
     #[test]
@@ -756,7 +757,7 @@ mod tests {
         });
         let result = transform_to_temporal_values(input);
         let arr = result["speed"].as_array().expect("multi-dataset array");
-        assert_eq!(arr.len(), 2);
+        pretty_assertions::assert_eq!(arr.len(), 2);
     }
 
     #[test]
@@ -768,9 +769,9 @@ mod tests {
             "speed": [{"type": "Property", "value": 10, "observedAt": "t1"}]
         });
         let result = transform_to_temporal_values(input);
-        assert_eq!(result["id"], "urn:x");
-        assert_eq!(result["type"], "Vehicle");
-        assert_eq!(result["@context"], "https://example.org/ctx");
+        pretty_assertions::assert_eq!(result["id"], "urn:x");
+        pretty_assertions::assert_eq!(result["type"], "Vehicle");
+        pretty_assertions::assert_eq!(result["@context"], "https://example.org/ctx");
     }
 
     #[test]
@@ -784,9 +785,9 @@ mod tests {
             ]
         });
         let result = transform_to_temporal_values(input);
-        assert_eq!(result["isParked"]["type"], "Relationship");
+        pretty_assertions::assert_eq!(result["isParked"]["type"], "Relationship");
         let objects = result["isParked"]["objects"].as_array().expect("objects array");
-        assert_eq!(objects.len(), 2);
-        assert_eq!(objects[0][0], "urn:p1");
+        pretty_assertions::assert_eq!(objects.len(), 2);
+        pretty_assertions::assert_eq!(objects[0][0], "urn:p1");
     }
 }

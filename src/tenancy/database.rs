@@ -92,6 +92,7 @@ pub(crate) async fn migrate_single_tenant_db(database_url: &str, tenant_max_conn
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use crate::tenancy::database::DatabaseUrl;
 
     #[test]
@@ -99,14 +100,14 @@ mod tests {
         let raw = "postgres://postgres:postgres@localhost:5432/postgres";
         let parsed = match DatabaseUrl::parse(raw) {
             Ok(value) => value,
-            Err(err) => panic!("unexpected parse error: {err}"),
+            Err(err) => unreachable!("unexpected parse error: {err}"),
         };
 
         let db_name = match parsed.db_name() {
             Ok(value) => value,
-            Err(err) => panic!("unexpected db name error: {err}"),
+            Err(err) => unreachable!("unexpected db name error: {err}"),
         };
-        assert_eq!(db_name, "postgres");
+        pretty_assertions::assert_eq!(db_name, "postgres");
 
         let rebuilt = parsed.with_db_name("tenant_db");
         assert!(rebuilt.ends_with("/tenant_db"));
@@ -117,7 +118,7 @@ mod tests {
         let raw = "postgres://postgres:postgres@localhost:5432";
         let parsed = match DatabaseUrl::parse(raw) {
             Ok(value) => value,
-            Err(err) => panic!("unexpected parse error: {err}"),
+            Err(err) => unreachable!("unexpected parse error: {err}"),
         };
         assert!(parsed.db_name().is_err());
     }

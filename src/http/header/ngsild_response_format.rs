@@ -69,6 +69,7 @@ impl headers::Header for NgsiLdResponseFormat {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::*;
     use headers::Header;
 
@@ -80,9 +81,9 @@ mod tests {
 
     #[test]
     fn decode_valid_values() {
-        assert_eq!(decode_from("normalized").expect("valid"), NgsiLdResponseFormat::Normalized);
-        assert_eq!(decode_from("keyValues").expect("valid"), NgsiLdResponseFormat::KeyValues);
-        assert_eq!(decode_from("temporalValues").expect("valid"), NgsiLdResponseFormat::TemporalValues);
+        pretty_assertions::assert_eq!(decode_from("normalized").expect("valid"), NgsiLdResponseFormat::Normalized);
+        pretty_assertions::assert_eq!(decode_from("keyValues").expect("valid"), NgsiLdResponseFormat::KeyValues);
+        pretty_assertions::assert_eq!(decode_from("temporalValues").expect("valid"), NgsiLdResponseFormat::TemporalValues);
     }
 
     #[test]
@@ -97,6 +98,6 @@ mod tests {
         header.encode(&mut encoded);
         let mut iter = encoded.iter();
         let decoded = NgsiLdResponseFormat::decode(&mut iter).expect("roundtrip decode");
-        assert_eq!(decoded, header);
+        pretty_assertions::assert_eq!(decoded, header);
     }
 }

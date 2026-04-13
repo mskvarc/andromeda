@@ -631,6 +631,7 @@ fn strip_internal_metadata(value: &mut Value) {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::{EntityRenderer, RenderMode, concise_value, decode_percent_encoded_uris, render_snapshot};
     use crate::{domain::entity::Entity, http::model::language::LanguageFilter};
     use serde_json::{Value, json};
@@ -660,7 +661,7 @@ mod tests {
         let rendered = EntityRenderer::new(&entity).render().expect("rendered entity");
         let serialized = serde_json::to_value(&entity).expect("serialized entity");
 
-        assert_eq!(rendered, serialized);
+        pretty_assertions::assert_eq!(rendered, serialized);
     }
 
     #[test]
@@ -682,7 +683,7 @@ mod tests {
             .render()
             .expect("simplified entity");
 
-        assert_eq!(simplified, entity.simplify());
+        pretty_assertions::assert_eq!(simplified, entity.simplify());
     }
 
     #[test]
@@ -702,9 +703,9 @@ mod tests {
 
         let rendered = EntityRenderer::new(&entity).with_language_filter(&filter).render().expect("rendered entity");
 
-        assert_eq!(rendered["street"]["type"], "Property");
-        assert_eq!(rendered["street"]["value"], "Grand Place");
-        assert_eq!(rendered["street"]["lang"], "fr");
+        pretty_assertions::assert_eq!(rendered["street"]["type"], "Property");
+        pretty_assertions::assert_eq!(rendered["street"]["value"], "Grand Place");
+        pretty_assertions::assert_eq!(rendered["street"]["lang"], "fr");
     }
 
     #[test]
@@ -724,9 +725,9 @@ mod tests {
 
         let rendered = EntityRenderer::new(&entity).with_language_filter(&filter).render().expect("rendered entity");
 
-        assert_eq!(rendered["street"]["type"], "Property");
-        assert_eq!(rendered["street"]["value"], "Grand Place");
-        assert_eq!(rendered["street"]["lang"], "fr");
+        pretty_assertions::assert_eq!(rendered["street"]["type"], "Property");
+        pretty_assertions::assert_eq!(rendered["street"]["value"], "Grand Place");
+        pretty_assertions::assert_eq!(rendered["street"]["lang"], "fr");
     }
 
     #[test]
@@ -750,7 +751,7 @@ mod tests {
             .render()
             .expect("rendered entity");
 
-        assert_eq!(simplified["street"], "Grand Place");
+        pretty_assertions::assert_eq!(simplified["street"], "Grand Place");
     }
 
     // --- Concise rendering tests (NGSI-LD clause 4.5.1) ---
@@ -759,9 +760,9 @@ mod tests {
     fn concise_property_without_sub_attrs_collapses_to_value() {
         let input = json!({"id": "urn:x", "type": "T", "temp": {"type": "Property", "value": 25}});
         let result = concise_value(&input);
-        assert_eq!(result["temp"], json!(25));
-        assert_eq!(result["id"], "urn:x");
-        assert_eq!(result["type"], "T");
+        pretty_assertions::assert_eq!(result["temp"], json!(25));
+        pretty_assertions::assert_eq!(result["id"], "urn:x");
+        pretty_assertions::assert_eq!(result["type"], "T");
     }
 
     #[test]
@@ -778,17 +779,17 @@ mod tests {
         let result = concise_value(&input);
         let temp = result.get("temp").expect("temp");
         assert!(temp.get("type").is_none(), "type key should be removed");
-        assert_eq!(temp["value"], 121);
-        assert_eq!(temp["observedAt"], "2024-01-01T00:00:00Z");
+        pretty_assertions::assert_eq!(temp["value"], 121);
+        pretty_assertions::assert_eq!(temp["observedAt"], "2024-01-01T00:00:00Z");
         // Sub-attribute should be recursively concised
-        assert_eq!(temp["reliability"], json!(0.7));
+        pretty_assertions::assert_eq!(temp["reliability"], json!(0.7));
     }
 
     #[test]
     fn concise_relationship_without_sub_attrs() {
         let input = json!({"id": "urn:x", "type": "T", "ref": {"type": "Relationship", "object": "urn:y"}});
         let result = concise_value(&input);
-        assert_eq!(result["ref"], json!("urn:y"));
+        pretty_assertions::assert_eq!(result["ref"], json!("urn:y"));
     }
 
     #[test]
@@ -800,8 +801,8 @@ mod tests {
         let result = concise_value(&input);
         let r = result.get("ref").expect("ref");
         assert!(r.get("type").is_none());
-        assert_eq!(r["object"], "urn:y");
-        assert_eq!(r["confidence"], json!(0.9));
+        pretty_assertions::assert_eq!(r["object"], "urn:y");
+        pretty_assertions::assert_eq!(r["confidence"], json!(0.9));
     }
 
     #[test]
@@ -811,7 +812,7 @@ mod tests {
             "location": {"type": "GeoProperty", "value": {"type": "Point", "coordinates": [1, 2]}}
         });
         let result = concise_value(&input);
-        assert_eq!(result["location"], json!({"type": "Point", "coordinates": [1, 2]}));
+        pretty_assertions::assert_eq!(result["location"], json!({"type": "Point", "coordinates": [1, 2]}));
     }
 
     #[test]
@@ -821,7 +822,7 @@ mod tests {
             "name": {"type": "LanguageProperty", "languageMap": {"en": "Tower"}}
         });
         let result = concise_value(&input);
-        assert_eq!(result["name"], json!({"en": "Tower"}));
+        pretty_assertions::assert_eq!(result["name"], json!({"en": "Tower"}));
     }
 
     #[test]
@@ -831,7 +832,7 @@ mod tests {
             "config": {"type": "JsonProperty", "json": {"key": "val"}}
         });
         let result = concise_value(&input);
-        assert_eq!(result["config"], json!({"key": "val"}));
+        pretty_assertions::assert_eq!(result["config"], json!({"key": "val"}));
     }
 
     #[test]
@@ -841,7 +842,7 @@ mod tests {
             "category": {"type": "VocabProperty", "vocab": "commercial"}
         });
         let result = concise_value(&input);
-        assert_eq!(result["category"], json!("commercial"));
+        pretty_assertions::assert_eq!(result["category"], json!("commercial"));
     }
 
     #[test]
@@ -851,7 +852,7 @@ mod tests {
             "tags": {"type": "ListProperty", "valueList": ["a", "b"]}
         });
         let result = concise_value(&input);
-        assert_eq!(result["tags"], json!(["a", "b"]));
+        pretty_assertions::assert_eq!(result["tags"], json!(["a", "b"]));
     }
 
     #[test]
@@ -861,7 +862,7 @@ mod tests {
             "refs": {"type": "ListRelationship", "objectList": ["urn:a", "urn:b"]}
         });
         let result = concise_value(&input);
-        assert_eq!(result["refs"], json!(["urn:a", "urn:b"]));
+        pretty_assertions::assert_eq!(result["refs"], json!(["urn:a", "urn:b"]));
     }
 
     #[test]
@@ -874,10 +875,10 @@ mod tests {
             "temp": {"type": "Property", "value": 10}
         });
         let result = concise_value(&input);
-        assert_eq!(result["id"], "urn:x");
-        assert_eq!(result["type"], "T");
-        assert_eq!(result["scope"], json!(["/A"]));
-        assert_eq!(result["@context"], "https://example.org/ctx");
+        pretty_assertions::assert_eq!(result["id"], "urn:x");
+        pretty_assertions::assert_eq!(result["type"], "T");
+        pretty_assertions::assert_eq!(result["scope"], json!(["/A"]));
+        pretty_assertions::assert_eq!(result["@context"], "https://example.org/ctx");
     }
 
     #[test]
@@ -891,12 +892,12 @@ mod tests {
         });
         let result = concise_value(&input);
         let arr = result["temp"].as_array().expect("array");
-        assert_eq!(arr.len(), 2);
+        pretty_assertions::assert_eq!(arr.len(), 2);
         // Each instance should be concised individually -- with datasetId they have metadata
         // so they keep the value key but lose "type"
         assert!(arr[0].get("type").is_none());
-        assert_eq!(arr[0]["value"], 25);
-        assert_eq!(arr[0]["datasetId"], "urn:ds:1");
+        pretty_assertions::assert_eq!(arr[0]["value"], 25);
+        pretty_assertions::assert_eq!(arr[0]["datasetId"], "urn:ds:1");
     }
 
     #[test]
@@ -907,7 +908,7 @@ mod tests {
             "name": {"type": "Property", "value": "Tower"}
         }));
         let result = EntityRenderer::new(&entity).with_mode(RenderMode::Concise).render().expect("concise");
-        assert_eq!(result["name"], "Tower");
+        pretty_assertions::assert_eq!(result["name"], "Tower");
     }
 
     #[test]
@@ -918,7 +919,7 @@ mod tests {
             "name": {"type": "Property", "value": "Tower"}
         }));
         let result = EntityRenderer::new(&entity).with_mode(RenderMode::Simplified).render().expect("simplified");
-        assert_eq!(result["name"], "Tower");
+        pretty_assertions::assert_eq!(result["name"], "Tower");
     }
 
     #[test]
@@ -930,7 +931,7 @@ mod tests {
         }));
         let result = EntityRenderer::new(&entity).with_optional_language_filter(None).render().expect("rendered");
         let expected = serde_json::to_value(&entity).expect("serialized");
-        assert_eq!(result, expected);
+        pretty_assertions::assert_eq!(result, expected);
     }
 
     #[test]
@@ -948,7 +949,7 @@ mod tests {
             .with_optional_language_filter(Some(&filter))
             .render()
             .expect("rendered");
-        assert_eq!(result["street"]["lang"], "fr");
+        pretty_assertions::assert_eq!(result["street"]["lang"], "fr");
     }
 
     // --- decode_percent_encoded_uris tests ---
@@ -960,7 +961,7 @@ mod tests {
             "ref": {"type": "Relationship", "object": "urn%3Angsi-ld%3ABuilding%3A1"}
         });
         decode_percent_encoded_uris(&mut value);
-        assert_eq!(value["ref"]["object"], "urn:ngsi-ld:Building:1");
+        pretty_assertions::assert_eq!(value["ref"]["object"], "urn:ngsi-ld:Building:1");
     }
 
     #[test]
@@ -968,7 +969,7 @@ mod tests {
         let mut value = json!({"id": "urn:x", "type": "T", "name": {"type": "Property", "value": "test%20value"}});
         let original = value.clone();
         decode_percent_encoded_uris(&mut value);
-        assert_eq!(value, original);
+        pretty_assertions::assert_eq!(value, original);
     }
 
     #[test]
@@ -978,8 +979,8 @@ mod tests {
             {"type": "Relationship", "object": "urn:y"}
         ]);
         decode_percent_encoded_uris(&mut value);
-        assert_eq!(value[0]["object"], "urn:x");
-        assert_eq!(value[1]["object"], "urn:y");
+        pretty_assertions::assert_eq!(value[0]["object"], "urn:x");
+        pretty_assertions::assert_eq!(value[1]["object"], "urn:y");
     }
 
     // --- strip_internal_metadata tests ---
@@ -1004,7 +1005,7 @@ mod tests {
             rendered["name"].get("collate").is_none(),
             "collate sub-attribute must be stripped from response"
         );
-        assert_eq!(rendered["name"]["value"], "Eiffel Tower");
+        pretty_assertions::assert_eq!(rendered["name"]["value"], "Eiffel Tower");
     }
 
     #[test]
@@ -1033,7 +1034,7 @@ mod tests {
         let rendered = EntityRenderer::new(&entity).render().expect("rendered entity");
         assert!(rendered["name"].get("collate").is_none());
         assert!(rendered["name"]["origin"].get("collate").is_none());
-        assert_eq!(rendered["name"]["origin"]["value"], "Paris");
+        pretty_assertions::assert_eq!(rendered["name"]["origin"]["value"], "Paris");
     }
 
     #[test]
@@ -1067,7 +1068,7 @@ mod tests {
         });
         let result = render_snapshot(value, None, RenderMode::Normalized);
         assert!(result["name"].get("collate").is_none());
-        assert_eq!(result["name"]["value"], "Tower");
+        pretty_assertions::assert_eq!(result["name"]["value"], "Tower");
     }
 
     // --- render_snapshot tests ---
@@ -1086,28 +1087,28 @@ mod tests {
     fn render_snapshot_applies_simplified_mode() {
         let value = json!({"id": "urn:x", "type": "T", "name": {"type": "Property", "value": "Tower"}});
         let result = render_snapshot(value, None, RenderMode::Simplified);
-        assert_eq!(result["name"], "Tower");
+        pretty_assertions::assert_eq!(result["name"], "Tower");
     }
 
     #[test]
     fn render_snapshot_applies_concise_mode() {
         let value = json!({"id": "urn:x", "type": "T", "name": {"type": "Property", "value": "Tower"}});
         let result = render_snapshot(value, None, RenderMode::Concise);
-        assert_eq!(result["name"], "Tower");
+        pretty_assertions::assert_eq!(result["name"], "Tower");
     }
 
     #[test]
     fn render_snapshot_normalized_mode_is_identity() {
         let value = json!({"id": "urn:x", "type": "T", "name": {"type": "Property", "value": "Tower"}});
         let result = render_snapshot(value.clone(), None, RenderMode::Normalized);
-        assert_eq!(result, value);
+        pretty_assertions::assert_eq!(result, value);
     }
 
     #[test]
     fn render_snapshot_filters_then_transforms() {
         let value = json!({"id": "urn:x", "type": "T", "name": {"type": "Property", "value": "Tower"}, "temp": {"type": "Property", "value": 25}});
         let result = render_snapshot(value, Some(&["name"]), RenderMode::Simplified);
-        assert_eq!(result["name"], "Tower");
+        pretty_assertions::assert_eq!(result["name"], "Tower");
         assert!(result.get("temp").is_none());
     }
 
@@ -1134,8 +1135,8 @@ mod tests {
 
         apply_inline_join(&mut entity, &linked_map, None).expect("inline join");
         assert!(entity["hasRoom"]["entity"].is_object());
-        assert_eq!(entity["hasRoom"]["entity"]["id"], "urn:ngsi-ld:Room:1");
-        assert_eq!(entity["hasRoom"]["entity"]["name"]["value"], "Conference Room");
+        pretty_assertions::assert_eq!(entity["hasRoom"]["entity"]["id"], "urn:ngsi-ld:Room:1");
+        pretty_assertions::assert_eq!(entity["hasRoom"]["entity"]["name"]["value"], "Conference Room");
     }
 
     #[test]
@@ -1153,7 +1154,7 @@ mod tests {
 
         apply_inline_join(&mut entity, &linked_map, None).expect("inline join");
         let entity_list = entity["hasRooms"]["entityList"].as_array().expect("entityList array");
-        assert_eq!(entity_list.len(), 2);
+        pretty_assertions::assert_eq!(entity_list.len(), 2);
     }
 
     #[test]
@@ -1207,7 +1208,7 @@ mod tests {
         });
 
         apply_inline_join(&mut entity, &linked_map, None).expect("inline join");
-        assert_eq!(entity["ref"]["entity"]["id"], "urn:b");
-        assert_eq!(entity["ref"]["entity"]["ref"]["entity"]["id"], "urn:c");
+        pretty_assertions::assert_eq!(entity["ref"]["entity"]["id"], "urn:b");
+        pretty_assertions::assert_eq!(entity["ref"]["entity"]["ref"]["entity"]["id"], "urn:c");
     }
 }

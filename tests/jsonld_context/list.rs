@@ -1,3 +1,4 @@
+#![allow(clippy::expect_used, clippy::unwrap_used)]
 //! Consumption: List @contexts tests (NGSI-LD 6.25.3.3)
 
 use reqwest::StatusCode;
@@ -50,7 +51,7 @@ async fn create_one_context(c: &reqwest::Client) -> String {
         }
     });
     let (status, location, _) = create_context(c, &body).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
     location.unwrap()
 }
 
@@ -64,7 +65,7 @@ async fn create_three_contexts(c: &reqwest::Client) -> Vec<String> {
     let mut uris = Vec::new();
     for p in &payloads {
         let (status, location, _) = create_context(c, p).await;
-        assert_eq!(status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(status, StatusCode::CREATED);
         uris.push(location.unwrap());
     }
     uris
@@ -82,7 +83,7 @@ async fn create_implicit_context_for_list(c: &reqwest::Client) -> String {
         ]
     });
     let (status, location) = create_subscription(c, &sub).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
     extract_id(location.as_ref().unwrap())
 }
 
@@ -94,7 +95,7 @@ async fn list_no_contexts_no_params() {
     clean_database().await;
     let c = client();
     let (status, contexts) = list_contexts(&c, "").await;
-    assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
     assert_no_non_core(&contexts);
 }
 
@@ -104,7 +105,7 @@ async fn list_no_contexts_kind_hosted() {
     clean_database().await;
     let c = client();
     let (status, contexts) = list_contexts(&c, "kind=Hosted").await;
-    assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
     assert_no_non_core(&contexts);
 }
 
@@ -114,7 +115,7 @@ async fn list_no_contexts_kind_cached() {
     clean_database().await;
     let c = client();
     let (status, contexts) = list_contexts(&c, "kind=Cached").await;
-    assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
     assert_no_non_core(&contexts);
 }
 
@@ -124,7 +125,7 @@ async fn list_no_contexts_kind_implicitly_created() {
     clean_database().await;
     let c = client();
     let (status, contexts) = list_contexts(&c, "kind=ImplicitlyCreated").await;
-    assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
     assert_no_non_core(&contexts);
 }
 
@@ -134,7 +135,7 @@ async fn list_no_contexts_details_false() {
     clean_database().await;
     let c = client();
     let (status, contexts) = list_contexts(&c, "details=false").await;
-    assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
     assert_no_non_core(&contexts);
 }
 
@@ -144,7 +145,7 @@ async fn list_no_contexts_details_false_kind_hosted() {
     clean_database().await;
     let c = client();
     let (status, contexts) = list_contexts(&c, "details=false&kind=Hosted").await;
-    assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
     assert_no_non_core(&contexts);
 }
 
@@ -154,7 +155,7 @@ async fn list_no_contexts_details_false_kind_cached() {
     clean_database().await;
     let c = client();
     let (status, contexts) = list_contexts(&c, "details=false&kind=Cached").await;
-    assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
     assert_no_non_core(&contexts);
 }
 
@@ -164,7 +165,7 @@ async fn list_no_contexts_details_false_kind_implicitly_created() {
     clean_database().await;
     let c = client();
     let (status, contexts) = list_contexts(&c, "details=false&kind=ImplicitlyCreated").await;
-    assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
     assert_no_non_core(&contexts);
 }
 
@@ -177,7 +178,7 @@ async fn list_one_context_no_params() {
     let c = client();
     let uri = create_one_context(&c).await;
     let (status, contexts) = list_contexts(&c, "").await;
-    assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
     assert_contains(&contexts, &uri);
 }
 
@@ -188,7 +189,7 @@ async fn list_one_context_kind_hosted() {
     let c = client();
     let uri = create_one_context(&c).await;
     let (status, contexts) = list_contexts(&c, "kind=Hosted").await;
-    assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
     assert_contains(&contexts, &uri);
 }
 
@@ -199,7 +200,7 @@ async fn list_one_context_details_false() {
     let c = client();
     let uri = create_one_context(&c).await;
     let (status, contexts) = list_contexts(&c, "details=false").await;
-    assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
     assert_contains(&contexts, &uri);
 }
 
@@ -210,7 +211,7 @@ async fn list_one_context_details_false_kind_hosted() {
     let c = client();
     let uri = create_one_context(&c).await;
     let (status, contexts) = list_contexts(&c, "details=false&kind=Hosted").await;
-    assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
     assert_contains(&contexts, &uri);
 }
 
@@ -223,7 +224,7 @@ async fn list_multiple_contexts_no_params() {
     let c = client();
     let uris = create_three_contexts(&c).await;
     let (status, contexts) = list_contexts(&c, "").await;
-    assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
     assert_contains_all(&contexts, &uris);
 }
 
@@ -234,7 +235,7 @@ async fn list_multiple_contexts_kind_hosted() {
     let c = client();
     let uris = create_three_contexts(&c).await;
     let (status, contexts) = list_contexts(&c, "kind=Hosted").await;
-    assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
     assert_contains_all(&contexts, &uris);
 }
 
@@ -245,7 +246,7 @@ async fn list_multiple_contexts_details_false() {
     let c = client();
     let uris = create_three_contexts(&c).await;
     let (status, contexts) = list_contexts(&c, "details=false").await;
-    assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
     assert_contains_all(&contexts, &uris);
 }
 
@@ -256,7 +257,7 @@ async fn list_multiple_contexts_details_false_kind_hosted() {
     let c = client();
     let uris = create_three_contexts(&c).await;
     let (status, contexts) = list_contexts(&c, "details=false&kind=Hosted").await;
-    assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
     assert_contains_all(&contexts, &uris);
 }
 
@@ -272,8 +273,8 @@ async fn list_invalid_kind_returns_400() {
         .expect("request failed");
     let status = resp.status();
     let body: Value = resp.json().await.unwrap_or_default();
-    assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE);
+    pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
+    pretty_assertions::assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE);
 }
 
 #[tokio::test]
@@ -286,8 +287,8 @@ async fn list_invalid_details_returns_400() {
         .expect("request failed");
     let status = resp.status();
     let body: Value = resp.json().await.unwrap_or_default();
-    assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE);
+    pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
+    pretty_assertions::assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE);
 }
 
 #[tokio::test]
@@ -300,8 +301,8 @@ async fn list_invalid_kind_with_details_true_returns_400() {
         .expect("request failed");
     let status = resp.status();
     let body: Value = resp.json().await.unwrap_or_default();
-    assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE);
+    pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
+    pretty_assertions::assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE);
 }
 
 #[tokio::test]
@@ -314,8 +315,8 @@ async fn list_invalid_details_with_kind_hosted_returns_400() {
         .expect("request failed");
     let status = resp.status();
     let body: Value = resp.json().await.unwrap_or_default();
-    assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE);
+    pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
+    pretty_assertions::assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE);
 }
 
 #[tokio::test]
@@ -328,8 +329,8 @@ async fn list_invalid_details_and_kind_returns_400() {
         .expect("request failed");
     let status = resp.status();
     let body: Value = resp.json().await.unwrap_or_default();
-    assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE);
+    pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
+    pretty_assertions::assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE);
 }
 
 // ── 052_05: details=true ──────────────────────────────────────────
@@ -348,10 +349,10 @@ async fn list_details_true_no_kind() {
         }
     });
     let (status, _, _) = create_context(&c, &body).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     let (status, contexts) = list_contexts(&c, "details=true").await;
-    assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
 
     let hosted = contexts.iter().find(|c| c.get("kind").and_then(|k| k.as_str()) == Some("Hosted"));
     assert!(hosted.is_some(), "should have a Hosted context in detailed list");
@@ -376,10 +377,10 @@ async fn list_details_true_kind_hosted() {
         }
     });
     let (status, _, _) = create_context(&c, &body).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     let (status, contexts) = list_contexts(&c, "details=true&kind=Hosted").await;
-    assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
 
     let hosted = contexts.iter().find(|c| c.get("kind").and_then(|k| k.as_str()) == Some("Hosted"));
     assert!(hosted.is_some(), "should have a Hosted context");
@@ -400,7 +401,7 @@ async fn list_implicit_no_params() {
     let sub_id = create_implicit_context_for_list(&c).await;
 
     let (status, contexts) = list_contexts(&c, "").await;
-    assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
     assert!(
         contexts.iter().any(|v| v.as_str().is_none_or(|s| !s.contains("core-context"))),
         "should have non-core contexts (implicit)"
@@ -417,7 +418,7 @@ async fn list_implicit_kind_hosted_is_empty() {
     let sub_id = create_implicit_context_for_list(&c).await;
 
     let (status, contexts) = list_contexts(&c, "kind=Hosted").await;
-    assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
     assert!(contexts.is_empty(), "Hosted filter should not include implicit contexts");
 
     delete_subscription(&c, &sub_id).await;
@@ -431,7 +432,7 @@ async fn list_implicit_kind_cached() {
     let sub_id = create_implicit_context_for_list(&c).await;
 
     let (status, _contexts) = list_contexts(&c, "kind=Cached").await;
-    assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
     // External @context URIs may get cached -- just verify valid response
 
     delete_subscription(&c, &sub_id).await;
@@ -445,7 +446,7 @@ async fn list_implicit_kind_implicitly_created() {
     let sub_id = create_implicit_context_for_list(&c).await;
 
     let (status, contexts) = list_contexts(&c, "kind=ImplicitlyCreated").await;
-    assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
     assert!(!contexts.is_empty(), "should have ImplicitlyCreated contexts");
 
     delete_subscription(&c, &sub_id).await;
@@ -459,7 +460,7 @@ async fn list_implicit_details_false() {
     let sub_id = create_implicit_context_for_list(&c).await;
 
     let (status, contexts) = list_contexts(&c, "details=false").await;
-    assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
     assert!(
         contexts.iter().any(|v| v.as_str().is_none_or(|s| !s.contains("core-context"))),
         "should have non-core contexts (implicit)"
@@ -476,7 +477,7 @@ async fn list_implicit_details_false_kind_hosted_is_empty() {
     let sub_id = create_implicit_context_for_list(&c).await;
 
     let (status, contexts) = list_contexts(&c, "details=false&kind=Hosted").await;
-    assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
     assert!(contexts.is_empty(), "Hosted filter should not include implicit contexts");
 
     delete_subscription(&c, &sub_id).await;
@@ -490,7 +491,7 @@ async fn list_implicit_details_false_kind_cached() {
     let sub_id = create_implicit_context_for_list(&c).await;
 
     let (status, _contexts) = list_contexts(&c, "details=false&kind=Cached").await;
-    assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
     // External @context URIs may get cached -- just verify valid response
 
     delete_subscription(&c, &sub_id).await;
@@ -504,7 +505,7 @@ async fn list_implicit_details_false_kind_implicitly_created() {
     let sub_id = create_implicit_context_for_list(&c).await;
 
     let (status, contexts) = list_contexts(&c, "details=false&kind=ImplicitlyCreated").await;
-    assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
     assert!(!contexts.is_empty(), "should have ImplicitlyCreated contexts");
 
     delete_subscription(&c, &sub_id).await;
@@ -531,19 +532,19 @@ async fn list_cached_contexts_with_details() {
         "@context": [&ctx_url]
     });
     let (status, _) = create_entity(&c, &entity).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     tokio::time::sleep(std::time::Duration::from_secs(1)).await;
 
     // List with details=true and kind=Cached
     let (status, contexts) = list_contexts(&c, "details=true&kind=Cached").await;
-    assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
 
     let cached = contexts.iter().find(|c| c.get("URL").and_then(|u| u.as_str()).is_some_and(|u| u == ctx_url));
     assert!(cached.is_some(), "should find cached context in detailed list");
 
     let entry = cached.unwrap();
-    assert_eq!(entry["kind"], "Cached");
+    pretty_assertions::assert_eq!(entry["kind"], "Cached");
     assert!(entry.get("URL").is_some());
     assert!(entry.get("createdAt").is_some());
 

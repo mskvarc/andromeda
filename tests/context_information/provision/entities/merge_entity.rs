@@ -1,10 +1,10 @@
+#![allow(clippy::expect_used, clippy::unwrap_used)]
 use crate::harness::{
     client::{QueryParams, RequestHeaders},
     fixtures,
     trial::trial,
 };
 use libtest_mimic::Trial;
-use pretty_assertions::assert_eq;
 use reqwest::{Method, StatusCode};
 
 const PREFIX: &str = "provision::entities::merge";
@@ -17,18 +17,18 @@ pub fn tests(trials: &mut Vec<Trial>) {
         let id = ctx.entity_id("urn:ngsi-ld:Building:056_01_01");
         let entity = fixtures::load_fixture("entities/merge/building-merge-data.jsonld", &id);
         let resp = ctx.client.create_entity(&entity).await;
-        assert_eq!(resp.status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
 
         let fragment = fixtures::load_fixture("entities/building-minimal.jsonld", &id);
         let resp = ctx.client.merge_entity(&id, &fragment).await;
-        assert_eq!(resp.status, StatusCode::NO_CONTENT, "merge should return 204");
+        pretty_assertions::assert_eq!(resp.status, StatusCode::NO_CONTENT, "merge should return 204");
 
         // Verify entity unchanged
         let headers = RequestHeaders::new().accept_ld_json().link_context(fixtures::test_suite_context_url());
         let resp = ctx.client.get_entity(&id, &QueryParams::new(), headers).await;
         let body: serde_json::Value = resp.json();
-        assert_eq!(body["name"]["value"], "Eiffel Tower");
-        assert_eq!(body["almostFull"]["value"], false);
+        pretty_assertions::assert_eq!(body["name"]["value"], "Eiffel Tower");
+        pretty_assertions::assert_eq!(body["almostFull"]["value"], false);
     }));
 
     // 056_01_02: Merge simple properties — values should be updated
@@ -36,18 +36,18 @@ pub fn tests(trials: &mut Vec<Trial>) {
         let id = ctx.entity_id("urn:ngsi-ld:Building:056_01_02");
         let entity = fixtures::load_fixture("entities/merge/building-merge-data.jsonld", &id);
         let resp = ctx.client.create_entity(&entity).await;
-        assert_eq!(resp.status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
 
         let fragment = fixtures::load_fixture("entities/building-simple-attributes-second.jsonld", &id);
         let resp = ctx.client.merge_entity(&id, &fragment).await;
-        assert_eq!(resp.status, StatusCode::NO_CONTENT);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::NO_CONTENT);
 
         let headers = RequestHeaders::new().accept_ld_json().link_context(fixtures::test_suite_context_url());
         let resp = ctx.client.get_entity(&id, &QueryParams::new(), headers).await;
         let body: serde_json::Value = resp.json();
-        assert_eq!(body["name"]["value"], "Pisa Tower");
-        assert_eq!(body["almostFull"]["value"], true);
-        assert_eq!(body["airQualityLevel"]["value"], 6);
+        pretty_assertions::assert_eq!(body["name"]["value"], "Pisa Tower");
+        pretty_assertions::assert_eq!(body["almostFull"]["value"], true);
+        pretty_assertions::assert_eq!(body["airQualityLevel"]["value"], 6);
     }));
 
     // 056_01_03: Merge a new relationship into an existing entity
@@ -55,19 +55,19 @@ pub fn tests(trials: &mut Vec<Trial>) {
         let id = ctx.entity_id("urn:ngsi-ld:Building:056_01_03");
         let entity = fixtures::load_fixture("entities/merge/building-merge-data.jsonld", &id);
         let resp = ctx.client.create_entity(&entity).await;
-        assert_eq!(resp.status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
 
         let fragment = fixtures::load_fixture("entities/building-relationship.jsonld", &id);
         let resp = ctx.client.merge_entity(&id, &fragment).await;
-        assert_eq!(resp.status, StatusCode::NO_CONTENT);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::NO_CONTENT);
 
         let headers = RequestHeaders::new().accept_ld_json().link_context(fixtures::test_suite_context_url());
         let resp = ctx.client.get_entity(&id, &QueryParams::new(), headers).await;
         let body: serde_json::Value = resp.json();
-        assert_eq!(body["locatedAt"]["type"], "Relationship");
-        assert_eq!(body["locatedAt"]["object"], "urn:ngsi-ld:City:Paris");
+        pretty_assertions::assert_eq!(body["locatedAt"]["type"], "Relationship");
+        pretty_assertions::assert_eq!(body["locatedAt"]["object"], "urn:ngsi-ld:City:Paris");
         // Original properties should still be present
-        assert_eq!(body["name"]["value"], "Eiffel Tower");
+        pretty_assertions::assert_eq!(body["name"]["value"], "Eiffel Tower");
     }));
 
     // 056_01_04: Merge partial property data — unmentioned sub-attributes preserved
@@ -75,22 +75,22 @@ pub fn tests(trials: &mut Vec<Trial>) {
         let id = ctx.entity_id("urn:ngsi-ld:Building:056_01_04");
         let entity = fixtures::load_fixture("entities/merge/building-merge-data.jsonld", &id);
         let resp = ctx.client.create_entity(&entity).await;
-        assert_eq!(resp.status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
 
         let fragment = fixtures::load_fixture("entities/merge/building-only-airQualityLevel-value.jsonld", &id);
         let resp = ctx.client.merge_entity(&id, &fragment).await;
-        assert_eq!(resp.status, StatusCode::NO_CONTENT);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::NO_CONTENT);
 
         let headers = RequestHeaders::new().accept_ld_json().link_context(fixtures::test_suite_context_url());
         let resp = ctx.client.get_entity(&id, &QueryParams::new(), headers).await;
         let body: serde_json::Value = resp.json();
-        assert_eq!(body["airQualityLevel"]["value"], 1);
+        pretty_assertions::assert_eq!(body["airQualityLevel"]["value"], 1);
         let observed = body["airQualityLevel"]["observedAt"].as_str().unwrap();
         assert!(observed.starts_with("2024-01-01T00:00:00"), "observedAt should match: {observed}");
         // unitCode should be preserved from original
-        assert_eq!(body["airQualityLevel"]["unitCode"], "C62");
+        pretty_assertions::assert_eq!(body["airQualityLevel"]["unitCode"], "C62");
         // Other properties unchanged
-        assert_eq!(body["name"]["value"], "Eiffel Tower");
+        pretty_assertions::assert_eq!(body["name"]["value"], "Eiffel Tower");
     }));
 
     // ── 056_02: Merge entity error cases ────────────────────────────────
@@ -107,7 +107,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
         });
 
         let resp = ctx.client.merge_entity("invalidUri", &fragment).await;
-        assert_eq!(resp.status, StatusCode::BAD_REQUEST, "invalid ID should return 400");
+        pretty_assertions::assert_eq!(resp.status, StatusCode::BAD_REQUEST, "invalid ID should return 400");
     }));
 
     // 056_02_02: Merge entity without providing an ID (PATCH on collection)
@@ -143,7 +143,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
         });
 
         let resp = ctx.client.merge_entity(&id, &fragment).await;
-        assert_eq!(resp.status, StatusCode::NOT_FOUND, "non-existent entity should return 404");
+        pretty_assertions::assert_eq!(resp.status, StatusCode::NOT_FOUND, "non-existent entity should return 404");
     }));
 
     // ── 056_03: Delete attributes via NGSI-LD null ──────────────────────
@@ -153,11 +153,11 @@ pub fn tests(trials: &mut Vec<Trial>) {
         let id = ctx.entity_id("urn:ngsi-ld:Building:056_03_01");
         let entity = fixtures::load_fixture("entities/building-different-attributes-types.jsonld", &id);
         let resp = ctx.client.create_entity(&entity).await;
-        assert_eq!(resp.status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
 
         let fragment = fixtures::load_fragment("entities/fragment_entities/ngsild_null/null-property.jsonld");
         let resp = ctx.client.merge_entity(&id, &fragment).await;
-        assert_eq!(resp.status, StatusCode::NO_CONTENT);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::NO_CONTENT);
 
         let headers = RequestHeaders::new().accept_ld_json().link_context(fixtures::test_suite_context_url());
         let resp = ctx.client.get_entity(&id, &QueryParams::new(), headers).await;
@@ -174,11 +174,11 @@ pub fn tests(trials: &mut Vec<Trial>) {
         let id = ctx.entity_id("urn:ngsi-ld:Building:056_03_02");
         let entity = fixtures::load_fixture("entities/building-different-attributes-types.jsonld", &id);
         let resp = ctx.client.create_entity(&entity).await;
-        assert_eq!(resp.status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
 
         let fragment = fixtures::load_fragment("entities/fragment_entities/ngsild_null/null-relationship.jsonld");
         let resp = ctx.client.merge_entity(&id, &fragment).await;
-        assert_eq!(resp.status, StatusCode::NO_CONTENT);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::NO_CONTENT);
 
         let headers = RequestHeaders::new().accept_ld_json().link_context(fixtures::test_suite_context_url());
         let resp = ctx.client.get_entity(&id, &QueryParams::new(), headers).await;
@@ -192,11 +192,11 @@ pub fn tests(trials: &mut Vec<Trial>) {
         let id = ctx.entity_id("urn:ngsi-ld:Building:056_03_03");
         let entity = fixtures::load_fixture("entities/building-different-attributes-types.jsonld", &id);
         let resp = ctx.client.create_entity(&entity).await;
-        assert_eq!(resp.status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
 
         let fragment = fixtures::load_fragment("entities/fragment_entities/ngsild_null/null-geoproperty.jsonld");
         let resp = ctx.client.merge_entity(&id, &fragment).await;
-        assert_eq!(resp.status, StatusCode::NO_CONTENT);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::NO_CONTENT);
 
         let headers = RequestHeaders::new().accept_ld_json().link_context(fixtures::test_suite_context_url());
         let resp = ctx.client.get_entity(&id, &QueryParams::new(), headers).await;
@@ -210,11 +210,11 @@ pub fn tests(trials: &mut Vec<Trial>) {
         let id = ctx.entity_id("urn:ngsi-ld:Building:056_03_04");
         let entity = fixtures::load_fixture("entities/building-different-attributes-types.jsonld", &id);
         let resp = ctx.client.create_entity(&entity).await;
-        assert_eq!(resp.status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
 
         let fragment = fixtures::load_fragment("entities/fragment_entities/ngsild_null/null-languageproperty.jsonld");
         let resp = ctx.client.merge_entity(&id, &fragment).await;
-        assert_eq!(resp.status, StatusCode::NO_CONTENT);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::NO_CONTENT);
 
         let headers = RequestHeaders::new().accept_ld_json().link_context(fixtures::test_suite_context_url());
         let resp = ctx.client.get_entity(&id, &QueryParams::new(), headers).await;
@@ -230,11 +230,11 @@ pub fn tests(trials: &mut Vec<Trial>) {
         let id = ctx.entity_id("urn:ngsi-ld:Building:056_04_01");
         let entity = fixtures::load_fixture("entities/building-different-attributes-instances-and-types.jsonld", &id);
         let resp = ctx.client.create_entity(&entity).await;
-        assert_eq!(resp.status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
 
         let fragment = fixtures::load_fragment("entities/fragment_entities/ngsild_null/null-property-instance.jsonld");
         let resp = ctx.client.merge_entity(&id, &fragment).await;
-        assert_eq!(resp.status, StatusCode::NO_CONTENT);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::NO_CONTENT);
 
         let headers = RequestHeaders::new().accept_ld_json().link_context(fixtures::test_suite_context_url());
         let resp = ctx.client.get_entity(&id, &QueryParams::new(), headers).await;
@@ -243,10 +243,10 @@ pub fn tests(trials: &mut Vec<Trial>) {
         let name = &body["name"];
         if name.is_array() {
             let names = name.as_array().unwrap();
-            assert_eq!(names.len(), 1);
-            assert_eq!(names[0]["datasetId"], "urn:ngsi-ld:Dataset:02");
+            pretty_assertions::assert_eq!(names.len(), 1);
+            pretty_assertions::assert_eq!(names[0]["datasetId"], "urn:ngsi-ld:Dataset:02");
         } else {
-            assert_eq!(name["datasetId"], "urn:ngsi-ld:Dataset:02");
+            pretty_assertions::assert_eq!(name["datasetId"], "urn:ngsi-ld:Dataset:02");
         }
     }));
 
@@ -255,11 +255,11 @@ pub fn tests(trials: &mut Vec<Trial>) {
         let id = ctx.entity_id("urn:ngsi-ld:Building:056_04_02");
         let entity = fixtures::load_fixture("entities/building-different-attributes-instances-and-types.jsonld", &id);
         let resp = ctx.client.create_entity(&entity).await;
-        assert_eq!(resp.status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
 
         let fragment = fixtures::load_fragment("entities/fragment_entities/ngsild_null/null-relationship-instance.jsonld");
         let resp = ctx.client.merge_entity(&id, &fragment).await;
-        assert_eq!(resp.status, StatusCode::NO_CONTENT);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::NO_CONTENT);
 
         let headers = RequestHeaders::new().accept_ld_json().link_context(fixtures::test_suite_context_url());
         let resp = ctx.client.get_entity(&id, &QueryParams::new(), headers).await;
@@ -267,10 +267,10 @@ pub fn tests(trials: &mut Vec<Trial>) {
         let located = &body["locatedAt"];
         if located.is_array() {
             let items = located.as_array().unwrap();
-            assert_eq!(items.len(), 1);
-            assert_eq!(items[0]["datasetId"], "urn:ngsi-ld:Dataset:02");
+            pretty_assertions::assert_eq!(items.len(), 1);
+            pretty_assertions::assert_eq!(items[0]["datasetId"], "urn:ngsi-ld:Dataset:02");
         } else {
-            assert_eq!(located["datasetId"], "urn:ngsi-ld:Dataset:02");
+            pretty_assertions::assert_eq!(located["datasetId"], "urn:ngsi-ld:Dataset:02");
         }
     }));
 
@@ -279,11 +279,11 @@ pub fn tests(trials: &mut Vec<Trial>) {
         let id = ctx.entity_id("urn:ngsi-ld:Building:056_04_03");
         let entity = fixtures::load_fixture("entities/building-different-attributes-instances-and-types.jsonld", &id);
         let resp = ctx.client.create_entity(&entity).await;
-        assert_eq!(resp.status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
 
         let fragment = fixtures::load_fragment("entities/fragment_entities/ngsild_null/null-geoproperty-instance.jsonld");
         let resp = ctx.client.merge_entity(&id, &fragment).await;
-        assert_eq!(resp.status, StatusCode::NO_CONTENT);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::NO_CONTENT);
 
         let headers = RequestHeaders::new().accept_ld_json().link_context(fixtures::test_suite_context_url());
         let resp = ctx.client.get_entity(&id, &QueryParams::new(), headers).await;
@@ -291,10 +291,10 @@ pub fn tests(trials: &mut Vec<Trial>) {
         let loc = &body["location"];
         if loc.is_array() {
             let items = loc.as_array().unwrap();
-            assert_eq!(items.len(), 1);
-            assert_eq!(items[0]["datasetId"], "urn:ngsi-ld:Dataset:02");
+            pretty_assertions::assert_eq!(items.len(), 1);
+            pretty_assertions::assert_eq!(items[0]["datasetId"], "urn:ngsi-ld:Dataset:02");
         } else {
-            assert_eq!(loc["datasetId"], "urn:ngsi-ld:Dataset:02");
+            pretty_assertions::assert_eq!(loc["datasetId"], "urn:ngsi-ld:Dataset:02");
         }
     }));
 
@@ -303,11 +303,11 @@ pub fn tests(trials: &mut Vec<Trial>) {
         let id = ctx.entity_id("urn:ngsi-ld:Building:056_04_04");
         let entity = fixtures::load_fixture("entities/building-different-attributes-instances-and-types.jsonld", &id);
         let resp = ctx.client.create_entity(&entity).await;
-        assert_eq!(resp.status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
 
         let fragment = fixtures::load_fragment("entities/fragment_entities/ngsild_null/null-languageproperty-instance.jsonld");
         let resp = ctx.client.merge_entity(&id, &fragment).await;
-        assert_eq!(resp.status, StatusCode::NO_CONTENT);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::NO_CONTENT);
 
         let headers = RequestHeaders::new().accept_ld_json().link_context(fixtures::test_suite_context_url());
         let resp = ctx.client.get_entity(&id, &QueryParams::new(), headers).await;
@@ -315,10 +315,10 @@ pub fn tests(trials: &mut Vec<Trial>) {
         let street = &body["street"];
         if street.is_array() {
             let items = street.as_array().unwrap();
-            assert_eq!(items.len(), 1);
-            assert_eq!(items[0]["datasetId"], "urn:ngsi-ld:Dataset:02");
+            pretty_assertions::assert_eq!(items.len(), 1);
+            pretty_assertions::assert_eq!(items[0]["datasetId"], "urn:ngsi-ld:Dataset:02");
         } else {
-            assert_eq!(street["datasetId"], "urn:ngsi-ld:Dataset:02");
+            pretty_assertions::assert_eq!(street["datasetId"], "urn:ngsi-ld:Dataset:02");
         }
     }));
 
@@ -329,11 +329,11 @@ pub fn tests(trials: &mut Vec<Trial>) {
         let id = ctx.entity_id("urn:ngsi-ld:Building:056_05_01");
         let entity = fixtures::load_fixture("entities/building-different-default-attributes-instances-and-types.jsonld", &id);
         let resp = ctx.client.create_entity(&entity).await;
-        assert_eq!(resp.status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
 
         let fragment = fixtures::load_fragment("entities/fragment_entities/ngsild_null/null-property.jsonld");
         let resp = ctx.client.merge_entity(&id, &fragment).await;
-        assert_eq!(resp.status, StatusCode::NO_CONTENT);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::NO_CONTENT);
 
         let headers = RequestHeaders::new().accept_ld_json().link_context(fixtures::test_suite_context_url());
         let resp = ctx.client.get_entity(&id, &QueryParams::new(), headers).await;
@@ -347,11 +347,11 @@ pub fn tests(trials: &mut Vec<Trial>) {
         let id = ctx.entity_id("urn:ngsi-ld:Building:056_05_02");
         let entity = fixtures::load_fixture("entities/building-different-default-attributes-instances-and-types.jsonld", &id);
         let resp = ctx.client.create_entity(&entity).await;
-        assert_eq!(resp.status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
 
         let fragment = fixtures::load_fragment("entities/fragment_entities/ngsild_null/null-relationship.jsonld");
         let resp = ctx.client.merge_entity(&id, &fragment).await;
-        assert_eq!(resp.status, StatusCode::NO_CONTENT);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::NO_CONTENT);
 
         let headers = RequestHeaders::new().accept_ld_json().link_context(fixtures::test_suite_context_url());
         let resp = ctx.client.get_entity(&id, &QueryParams::new(), headers).await;
@@ -364,11 +364,11 @@ pub fn tests(trials: &mut Vec<Trial>) {
         let id = ctx.entity_id("urn:ngsi-ld:Building:056_05_03");
         let entity = fixtures::load_fixture("entities/building-different-default-attributes-instances-and-types.jsonld", &id);
         let resp = ctx.client.create_entity(&entity).await;
-        assert_eq!(resp.status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
 
         let fragment = fixtures::load_fragment("entities/fragment_entities/ngsild_null/null-geoproperty.jsonld");
         let resp = ctx.client.merge_entity(&id, &fragment).await;
-        assert_eq!(resp.status, StatusCode::NO_CONTENT);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::NO_CONTENT);
 
         let headers = RequestHeaders::new().accept_ld_json().link_context(fixtures::test_suite_context_url());
         let resp = ctx.client.get_entity(&id, &QueryParams::new(), headers).await;
@@ -383,11 +383,11 @@ pub fn tests(trials: &mut Vec<Trial>) {
             let id = ctx.entity_id("urn:ngsi-ld:Building:056_05_04");
             let entity = fixtures::load_fixture("entities/building-different-default-attributes-instances-and-types.jsonld", &id);
             let resp = ctx.client.create_entity(&entity).await;
-            assert_eq!(resp.status, StatusCode::CREATED);
+            pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
 
             let fragment = fixtures::load_fragment("entities/fragment_entities/ngsild_null/null-languageproperty.jsonld");
             let resp = ctx.client.merge_entity(&id, &fragment).await;
-            assert_eq!(resp.status, StatusCode::NO_CONTENT);
+            pretty_assertions::assert_eq!(resp.status, StatusCode::NO_CONTENT);
 
             let headers = RequestHeaders::new().accept_ld_json().link_context(fixtures::test_suite_context_url());
             let resp = ctx.client.get_entity(&id, &QueryParams::new(), headers).await;

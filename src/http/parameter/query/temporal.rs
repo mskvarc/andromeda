@@ -294,6 +294,7 @@ impl From<TemporalQueryRequest> for TemporalQueryParameters {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::*;
     use crate::{http::parameter::query::SharedQueryParams, params_from_query};
 
@@ -305,19 +306,19 @@ mod tests {
     fn parse_timerel_before() {
         let p = params_from_query("timerel=before");
         let result = p.parse_timerel().unwrap();
-        assert_eq!(result.unwrap(), TimeRel::Before);
+        pretty_assertions::assert_eq!(result.unwrap(), TimeRel::Before);
     }
 
     #[test]
     fn parse_timerel_after() {
         let p = params_from_query("timerel=after");
-        assert_eq!(p.parse_timerel().unwrap().unwrap(), TimeRel::After);
+        pretty_assertions::assert_eq!(p.parse_timerel().unwrap().unwrap(), TimeRel::After);
     }
 
     #[test]
     fn parse_timerel_between() {
         let p = params_from_query("timerel=between");
-        assert_eq!(p.parse_timerel().unwrap().unwrap(), TimeRel::Between);
+        pretty_assertions::assert_eq!(p.parse_timerel().unwrap().unwrap(), TimeRel::Between);
     }
 
     #[test]
@@ -329,31 +330,31 @@ mod tests {
     #[test]
     fn parse_timeproperty_default_is_observed_at() {
         let p = params_from_query("");
-        assert_eq!(p.parse_timeproperty(), TimeProp::Observed);
+        pretty_assertions::assert_eq!(p.parse_timeproperty(), TimeProp::Observed);
     }
 
     #[test]
     fn parse_timeproperty_created_at() {
         let p = params_from_query("timeproperty=createdAt");
-        assert_eq!(p.parse_timeproperty(), TimeProp::Created);
+        pretty_assertions::assert_eq!(p.parse_timeproperty(), TimeProp::Created);
     }
 
     #[test]
     fn parse_format_precedence_over_options() {
         let p = params_from_query("format=aggregatedValues&options=temporalValues");
-        assert_eq!(p.parse_format(), TemporalFormat::AggregatedValues);
+        pretty_assertions::assert_eq!(p.parse_format(), TemporalFormat::AggregatedValues);
     }
 
     #[test]
     fn parse_format_from_options() {
         let p = params_from_query("options=temporalValues");
-        assert_eq!(p.parse_format(), TemporalFormat::TemporalValues);
+        pretty_assertions::assert_eq!(p.parse_format(), TemporalFormat::TemporalValues);
     }
 
     #[test]
     fn parse_format_normalized_default() {
         let p = params_from_query("");
-        assert_eq!(p.parse_format(), TemporalFormat::Normalized);
+        pretty_assertions::assert_eq!(p.parse_format(), TemporalFormat::Normalized);
     }
 
     #[test]
@@ -384,7 +385,7 @@ mod tests {
     fn parse_aggr_methods_multiple() {
         let p = params_from_query("aggrMethods=avg,min,max");
         let methods = p.parse_aggr_methods().unwrap();
-        assert_eq!(methods, vec![AggrMethod::Avg, AggrMethod::Min, AggrMethod::Max]);
+        pretty_assertions::assert_eq!(methods, vec![AggrMethod::Avg, AggrMethod::Min, AggrMethod::Max]);
     }
 
     #[test]
@@ -396,13 +397,13 @@ mod tests {
     #[test]
     fn effective_limit_defaults_to_20() {
         let p = params_from_query("");
-        assert_eq!(p.effective_limit(), 20);
+        pretty_assertions::assert_eq!(p.effective_limit(), 20);
     }
 
     #[test]
     fn effective_limit_caps_at_1000() {
         let p = params_from_query("limit=5000");
-        assert_eq!(p.effective_limit(), 1000);
+        pretty_assertions::assert_eq!(p.effective_limit(), 1000);
     }
 
     #[test]
@@ -504,17 +505,17 @@ mod tests {
             local: Some(true),
         };
         let params: TemporalQueryParameters = request.into();
-        assert_eq!(params.timerel.as_deref(), Some("after"));
-        assert_eq!(params.time_at.as_deref(), Some("2024-01-01T00:00:00Z"));
-        assert_eq!(params.timeproperty.as_deref(), Some("observedAt"));
-        assert_eq!(params.aggr_methods.as_deref(), Some("avg"));
-        assert_eq!(params.aggr_period_duration.as_deref(), Some("PT1H"));
-        assert_eq!(params.attrs.as_deref(), Some("speed"));
-        assert_eq!(params.limit, Some(50));
-        assert_eq!(params.count, Some(true));
-        assert_eq!(params.format.as_deref(), Some("temporalValues"));
-        assert_eq!(params.last_n, Some(10));
-        assert_eq!(params.local, Some(true));
+        pretty_assertions::assert_eq!(params.timerel.as_deref(), Some("after"));
+        pretty_assertions::assert_eq!(params.time_at.as_deref(), Some("2024-01-01T00:00:00Z"));
+        pretty_assertions::assert_eq!(params.timeproperty.as_deref(), Some("observedAt"));
+        pretty_assertions::assert_eq!(params.aggr_methods.as_deref(), Some("avg"));
+        pretty_assertions::assert_eq!(params.aggr_period_duration.as_deref(), Some("PT1H"));
+        pretty_assertions::assert_eq!(params.attrs.as_deref(), Some("speed"));
+        pretty_assertions::assert_eq!(params.limit, Some(50));
+        pretty_assertions::assert_eq!(params.count, Some(true));
+        pretty_assertions::assert_eq!(params.format.as_deref(), Some("temporalValues"));
+        pretty_assertions::assert_eq!(params.last_n, Some(10));
+        pretty_assertions::assert_eq!(params.local, Some(true));
     }
 
     #[test]

@@ -1,10 +1,10 @@
+#![allow(clippy::expect_used, clippy::unwrap_used)]
 use crate::harness::{
     client::{QueryParams, RequestHeaders},
     fixtures,
     trial::trial,
 };
 use libtest_mimic::Trial;
-use pretty_assertions::assert_eq;
 use reqwest::{Method, StatusCode};
 
 const PREFIX: &str = "provision::temporal_attributes::add";
@@ -23,7 +23,7 @@ fn normalize(val: &mut serde_json::Value) {
             for v in arr.iter_mut() {
                 normalize(v);
             }
-            arr.sort_by(|a, b| a.to_string().cmp(&b.to_string()));
+            arr.sort_by_key(|a| a.to_string());
         }
         _ => {}
     }
@@ -40,24 +40,24 @@ pub fn tests(trials: &mut Vec<Trial>) {
         // Setup: create the temporal entity
         let entity = fixtures::load_fixture("temporal_entities/vehicle-temporal-representation.jsonld", &id);
         let resp = ctx.client.create_temporal_entity(&entity).await;
-        assert_eq!(resp.status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
 
         // Add attribute
         let fragment = fixtures::load_fragment("temporal_entities/fragments/vehicle-temporal-representation-fragment.jsonld");
         let resp = ctx.client.add_temporal_attrs(&id, &fragment).await;
-        assert_eq!(resp.status, StatusCode::NO_CONTENT, "add attrs should return 204");
+        pretty_assertions::assert_eq!(resp.status, StatusCode::NO_CONTENT, "add attrs should return 204");
         assert!(resp.body_bytes().is_empty(), "response body should be empty");
 
         // Verify
         let headers = RequestHeaders::new().accept_ld_json().link_context(fixtures::test_suite_context_url());
         let resp = ctx.client.get_temporal_entity(&id, &QueryParams::new(), headers).await;
-        assert_eq!(resp.status, StatusCode::OK);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::OK);
 
         let mut actual: serde_json::Value = resp.json();
         let mut expected = fixtures::load_fixture("temporal_entities/expectations/vehicle-temporal-representation-added-attribute.jsonld", &id);
         normalize(&mut actual);
         normalize(&mut expected);
-        assert_eq!(expected, actual);
+        pretty_assertions::assert_eq!(expected, actual);
     }));
 
     // ── 014_02: Invalid entity ID ────────────────────────────────────────
@@ -69,7 +69,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
             .client
             .request(Method::POST, "/temporal/entities//attrs", Some(&fragment), Default::default())
             .await;
-        assert_eq!(resp.status, StatusCode::BAD_REQUEST, "empty entity ID should return 400");
+        pretty_assertions::assert_eq!(resp.status, StatusCode::BAD_REQUEST, "empty entity ID should return 400");
 
         let body: serde_json::Value = resp.json();
         assert!(
@@ -83,7 +83,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
     trials.push(trial(&format!("{PREFIX}::014_02_02::add_temporal_attrs_invalid_entity_id"), |ctx| async move {
         let fragment = fixtures::load_fragment("temporal_entities/fragments/vehicle-temporal-representation-fragment.jsonld");
         let resp = ctx.client.add_temporal_attrs("invalidId", &fragment).await;
-        assert_eq!(resp.status, StatusCode::BAD_REQUEST, "invalid entity ID should return 400");
+        pretty_assertions::assert_eq!(resp.status, StatusCode::BAD_REQUEST, "invalid entity ID should return 400");
 
         let body: serde_json::Value = resp.json();
         assert!(
@@ -100,7 +100,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
         let id = format!("urn:ngsi-ld:Vehicle:014_03_01:{}", uuid::Uuid::new_v4());
         let fragment = fixtures::load_fragment("temporal_entities/fragments/vehicle-temporal-representation-fragment.jsonld");
         let resp = ctx.client.add_temporal_attrs(&id, &fragment).await;
-        assert_eq!(resp.status, StatusCode::NOT_FOUND, "non-existent entity should return 404");
+        pretty_assertions::assert_eq!(resp.status, StatusCode::NOT_FOUND, "non-existent entity should return 404");
 
         let body: serde_json::Value = resp.json();
         assert!(
@@ -120,14 +120,14 @@ pub fn tests(trials: &mut Vec<Trial>) {
         // Setup: create entity
         let entity = fixtures::load_fixture("temporal_entities/vehicle-temporal-representation.jsonld", &id);
         let resp = ctx.client.create_temporal_entity(&entity).await;
-        assert_eq!(resp.status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
 
         let raw = fixtures::load_fixture_raw("temporal_entities/fragments/vehicle-temporal-representation-invalid-json-fragment.jsonld");
         let resp = ctx
             .client
             .request_raw(Method::POST, &format!("/temporal/entities/{id}/attrs"), raw.as_bytes(), "application/ld+json")
             .await;
-        assert_eq!(resp.status, StatusCode::BAD_REQUEST, "invalid JSON should return 400");
+        pretty_assertions::assert_eq!(resp.status, StatusCode::BAD_REQUEST, "invalid JSON should return 400");
 
         let body: serde_json::Value = resp.json();
         assert!(
@@ -145,14 +145,14 @@ pub fn tests(trials: &mut Vec<Trial>) {
         // Setup: create entity
         let entity = fixtures::load_fixture("temporal_entities/vehicle-temporal-representation.jsonld", &id);
         let resp = ctx.client.create_temporal_entity(&entity).await;
-        assert_eq!(resp.status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
 
         let raw = fixtures::load_fixture_raw("temporal_entities/fragments/vehicle-temporal-representation-empty-json-fragment.jsonld");
         let resp = ctx
             .client
             .request_raw(Method::POST, &format!("/temporal/entities/{id}/attrs"), raw.as_bytes(), "application/ld+json")
             .await;
-        assert_eq!(resp.status, StatusCode::BAD_REQUEST, "empty JSON should return 400");
+        pretty_assertions::assert_eq!(resp.status, StatusCode::BAD_REQUEST, "empty JSON should return 400");
 
         let body: serde_json::Value = resp.json();
         assert!(

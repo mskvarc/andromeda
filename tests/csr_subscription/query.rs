@@ -1,3 +1,4 @@
+#![allow(clippy::expect_used, clippy::unwrap_used)]
 use crate::{
     BAD_REQUEST_DATA_TYPE,
     assert_problem_detail_type,
@@ -17,7 +18,7 @@ async fn create_subscriptions(http_client: &reqwest::Client, count: usize) {
         let subscription_id = unique_subscription_id(&format!("query-{index}"));
         let payload = csource_subscription_payload(&subscription_id);
         let (status, _, _) = create_csource_subscription(http_client, &payload).await;
-        assert_eq!(status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(status, StatusCode::CREATED);
     }
 }
 
@@ -30,11 +31,8 @@ async fn csr_subscription_query_all_returns_at_least_created_subscriptions() {
 
     let (status, body) = query_csource_subscriptions(&http_client, "").await;
 
-    assert_eq!(status, StatusCode::OK);
-    let items = match body.as_array() {
-        Some(items) => items,
-        None => panic!("expected array response, got: {body}"),
-    };
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
+    let items = body.as_array().expect("expected array response");
     assert!(items.len() >= 2, "expected at least 2 subscriptions, got {}", items.len());
 }
 
@@ -47,12 +45,9 @@ async fn csr_subscription_query_limit_1_returns_one_result() {
 
     let (status, body) = query_csource_subscriptions(&http_client, "limit=1").await;
 
-    assert_eq!(status, StatusCode::OK);
-    let items = match body.as_array() {
-        Some(items) => items,
-        None => panic!("expected array response, got: {body}"),
-    };
-    assert_eq!(items.len(), 1);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
+    let items = body.as_array().expect("expected array response");
+    pretty_assertions::assert_eq!(items.len(), 1);
 }
 
 #[tokio::test]
@@ -64,12 +59,9 @@ async fn csr_subscription_query_limit_2_returns_two_results() {
 
     let (status, body) = query_csource_subscriptions(&http_client, "limit=2").await;
 
-    assert_eq!(status, StatusCode::OK);
-    let items = match body.as_array() {
-        Some(items) => items,
-        None => panic!("expected array response, got: {body}"),
-    };
-    assert_eq!(items.len(), 2);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
+    let items = body.as_array().expect("expected array response");
+    pretty_assertions::assert_eq!(items.len(), 2);
 }
 
 #[tokio::test]
@@ -81,12 +73,9 @@ async fn csr_subscription_query_limit_above_total_returns_all_results() {
 
     let (status, body) = query_csource_subscriptions(&http_client, "limit=15").await;
 
-    assert_eq!(status, StatusCode::OK);
-    let items = match body.as_array() {
-        Some(items) => items,
-        None => panic!("expected array response, got: {body}"),
-    };
-    assert_eq!(items.len(), 3);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
+    let items = body.as_array().expect("expected array response");
+    pretty_assertions::assert_eq!(items.len(), 3);
 }
 
 #[tokio::test]
@@ -98,12 +87,9 @@ async fn csr_subscription_query_limit_1_offset_1_returns_one_result() {
 
     let (status, body) = query_csource_subscriptions(&http_client, "limit=1&offset=1").await;
 
-    assert_eq!(status, StatusCode::OK);
-    let items = match body.as_array() {
-        Some(items) => items,
-        None => panic!("expected array response, got: {body}"),
-    };
-    assert_eq!(items.len(), 1);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
+    let items = body.as_array().expect("expected array response");
+    pretty_assertions::assert_eq!(items.len(), 1);
 }
 
 #[tokio::test]
@@ -115,12 +101,9 @@ async fn csr_subscription_query_limit_2_offset_2_returns_one_result() {
 
     let (status, body) = query_csource_subscriptions(&http_client, "limit=2&offset=2").await;
 
-    assert_eq!(status, StatusCode::OK);
-    let items = match body.as_array() {
-        Some(items) => items,
-        None => panic!("expected array response, got: {body}"),
-    };
-    assert_eq!(items.len(), 1);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
+    let items = body.as_array().expect("expected array response");
+    pretty_assertions::assert_eq!(items.len(), 1);
 }
 
 #[tokio::test]
@@ -132,12 +115,9 @@ async fn csr_subscription_query_limit_15_offset_0_returns_all_results() {
 
     let (status, body) = query_csource_subscriptions(&http_client, "limit=15&offset=0").await;
 
-    assert_eq!(status, StatusCode::OK);
-    let items = match body.as_array() {
-        Some(items) => items,
-        None => panic!("expected array response, got: {body}"),
-    };
-    assert_eq!(items.len(), 3);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
+    let items = body.as_array().expect("expected array response");
+    pretty_assertions::assert_eq!(items.len(), 3);
 }
 
 #[tokio::test]
@@ -148,7 +128,7 @@ async fn csr_subscription_query_negative_limit_returns_400_bad_request_data() {
 
     let (status, body) = raw_get(&http_client, "/csourceSubscriptions?limit=-5&offset=2").await;
 
-    assert_eq!(status, StatusCode::BAD_REQUEST);
+    pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
     assert_problem_detail_type(&body, BAD_REQUEST_DATA_TYPE);
 }
 
@@ -160,7 +140,7 @@ async fn csr_subscription_query_negative_offset_returns_400_bad_request_data() {
 
     let (status, body) = raw_get(&http_client, "/csourceSubscriptions?limit=2&offset=-3").await;
 
-    assert_eq!(status, StatusCode::BAD_REQUEST);
+    pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
     assert_problem_detail_type(&body, BAD_REQUEST_DATA_TYPE);
 }
 
@@ -172,7 +152,7 @@ async fn csr_subscription_query_zero_limit_returns_400_bad_request_data() {
 
     let (status, body) = raw_get(&http_client, "/csourceSubscriptions?limit=0&offset=0").await;
 
-    assert_eq!(status, StatusCode::BAD_REQUEST);
+    pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
     assert_problem_detail_type(&body, BAD_REQUEST_DATA_TYPE);
 }
 
@@ -184,6 +164,6 @@ async fn csr_subscription_query_non_numeric_limit_returns_400_bad_request_data()
 
     let (status, body) = raw_get(&http_client, "/csourceSubscriptions?limit=abc&offset=0").await;
 
-    assert_eq!(status, StatusCode::BAD_REQUEST);
+    pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
     assert_problem_detail_type(&body, BAD_REQUEST_DATA_TYPE);
 }

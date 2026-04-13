@@ -97,6 +97,7 @@ pub fn is_ngsi_ld_core_context_url(url: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::*;
 
     #[test]

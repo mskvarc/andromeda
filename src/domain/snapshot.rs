@@ -314,6 +314,7 @@ pub struct SnapshotPatch {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use crate::domain::{
         ngsi_ld_urn::SnapshotId,
         snapshot::{SnapshotPriority, SnapshotStatus},
@@ -347,7 +348,7 @@ mod tests {
     #[test]
     fn snapshot_status_serializes_preparing() {
         let serialized = serde_json::to_string(&SnapshotStatus::Preparing).expect("serialize");
-        assert_eq!(serialized, "\"preparing\"");
+        pretty_assertions::assert_eq!(serialized, "\"preparing\"");
     }
 
     #[test]
@@ -381,8 +382,8 @@ mod tests {
         let query: SnapshotQuery = serde_json::from_str(json).expect("parse");
         assert!(query.entities.is_some());
         let entities = query.entities.unwrap();
-        assert_eq!(entities.len(), 1);
-        assert_eq!(entities[0].type_.as_deref(), Some("Vehicle"));
+        pretty_assertions::assert_eq!(entities.len(), 1);
+        pretty_assertions::assert_eq!(entities[0].type_.as_deref(), Some("Vehicle"));
         assert!(query.q.is_none());
         assert!(query.temporal_q.is_none());
     }
@@ -400,14 +401,14 @@ mod tests {
         }"#;
         let query: SnapshotQuery = serde_json::from_str(json).expect("parse");
         assert!(query.entities.is_some());
-        assert_eq!(query.q.as_deref(), Some("speed>50"));
+        pretty_assertions::assert_eq!(query.q.as_deref(), Some("speed>50"));
         assert!(query.geo_q.is_some());
         let geo = query.geo_q.unwrap();
-        assert_eq!(geo.georel, "within");
-        assert_eq!(geo.geometry, "Polygon");
-        assert_eq!(query.scope_q.as_deref(), Some("/Madrid"));
-        assert_eq!(query.attrs.unwrap().len(), 2);
-        assert_eq!(query.omit.unwrap().len(), 1);
+        pretty_assertions::assert_eq!(geo.georel, "within");
+        pretty_assertions::assert_eq!(geo.geometry, "Polygon");
+        pretty_assertions::assert_eq!(query.scope_q.as_deref(), Some("/Madrid"));
+        pretty_assertions::assert_eq!(query.attrs.unwrap().len(), 2);
+        pretty_assertions::assert_eq!(query.omit.unwrap().len(), 1);
     }
 
     #[test]
@@ -425,10 +426,10 @@ mod tests {
         let query: SnapshotQuery = serde_json::from_str(json).expect("parse");
         assert!(query.temporal_q.is_some());
         let tq = query.temporal_q.unwrap();
-        assert_eq!(tq.timerel, "after");
-        assert_eq!(tq.time_at, "2024-01-01T00:00:00Z");
-        assert_eq!(tq.last_n, Some(10));
-        assert_eq!(tq.timeproperty.as_deref(), Some("observedAt"));
+        pretty_assertions::assert_eq!(tq.timerel, "after");
+        pretty_assertions::assert_eq!(tq.time_at, "2024-01-01T00:00:00Z");
+        pretty_assertions::assert_eq!(tq.last_n, Some(10));
+        pretty_assertions::assert_eq!(tq.timeproperty.as_deref(), Some("observedAt"));
     }
 
     #[test]

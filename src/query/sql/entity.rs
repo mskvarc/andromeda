@@ -156,6 +156,7 @@ pub fn build_ids_query<'a>(query: &'a CompiledEntityQuery) -> Result<BuiltQuery<
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::*;
     use crate::query::{
         compiled::{CompiledEntityQuery, CompiledOrderTerm, GeoQuery, GeoRel, IcuCollation, IdPattern, OrderDirection, OrderingGeometry, ScopeQuery, TypeExpr},
@@ -190,7 +191,7 @@ mod tests {
     fn build_empty_query_returns_base_sql() {
         let q = empty_query();
         let built = build_query(&q).unwrap();
-        assert_eq!(built.sql, "SELECT payload FROM entities LIMIT 20 OFFSET 0");
+        pretty_assertions::assert_eq!(built.sql, "SELECT payload FROM entities LIMIT 20 OFFSET 0");
         assert!(built.count_sql.is_none());
     }
 
@@ -459,8 +460,8 @@ mod tests {
         assert!(built.sql.contains("scope_paths ~ $"), "SQL should use ltree ~ lquery operator");
         assert!(built.sql.contains("::lquery"), "SQL should cast to lquery");
         match &built.bind_values[0] {
-            BindValue::String(s) => assert_eq!(s.as_ref(), "A.B"),
-            _other => panic!("expected String bind value"),
+            BindValue::String(s) => pretty_assertions::assert_eq!(s.as_ref(), "A.B"),
+            _other => unreachable!("expected String bind value"),
         }
     }
 
@@ -471,8 +472,8 @@ mod tests {
         let built = build_query(&q).unwrap();
         assert!(built.sql.contains("scope_paths ~ $"), "SQL should use ltree ~ lquery operator");
         match &built.bind_values[0] {
-            BindValue::String(s) => assert_eq!(s.as_ref(), "A.*{1,}"),
-            _other => panic!("expected String bind value"),
+            BindValue::String(s) => pretty_assertions::assert_eq!(s.as_ref(), "A.*{1,}"),
+            _other => unreachable!("expected String bind value"),
         }
     }
 
@@ -483,7 +484,7 @@ mod tests {
         let built = build_query(&q).unwrap();
         assert!(built.sql.contains(" OR "), "SQL should contain OR for comma-separated scopes");
         let scope_count = built.sql.matches("scope_paths ~").count();
-        assert_eq!(scope_count, 2, "should have two scope_paths ~ clauses");
+        pretty_assertions::assert_eq!(scope_count, 2, "should have two scope_paths ~ clauses");
     }
 
     #[test]
@@ -493,7 +494,7 @@ mod tests {
         let built = build_query(&q).unwrap();
         assert!(built.sql.contains(" AND "), "SQL should contain AND for semicolon-separated scopes");
         let scope_count = built.sql.matches("scope_paths ~").count();
-        assert_eq!(scope_count, 2, "should have two scope_paths ~ clauses");
+        pretty_assertions::assert_eq!(scope_count, 2, "should have two scope_paths ~ clauses");
     }
 
     #[test]

@@ -115,13 +115,14 @@ ngsi_ld_urn_id!(AttributeListId, AttributeListIdParseError, "AttributeList");
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use crate::domain::ngsi_ld_urn::{AttributeListId, EntityMapId, EntityTypeListId, SnapshotId, SnapshotNotificationId};
     use urn::Urn;
 
     #[test]
     fn snapshot_id_accepts_valid_value() {
         let id: SnapshotId = "urn:ngsi-ld:Snapshot:abc".parse().expect("valid snapshot id");
-        assert_eq!(id.to_string(), "urn:ngsi-ld:Snapshot:abc");
+        pretty_assertions::assert_eq!(id.to_string(), "urn:ngsi-ld:Snapshot:abc");
     }
 
     #[test]
@@ -147,14 +148,14 @@ mod tests {
         let id: EntityMapId = "urn:ngsi-ld:EntityMap:test".parse().expect("valid entity map id");
         let serialized = serde_json::to_string(&id).expect("serialize id");
         let decoded: EntityMapId = serde_json::from_str(&serialized).expect("deserialize id");
-        assert_eq!(decoded, id);
+        pretty_assertions::assert_eq!(decoded, id);
     }
 
     #[test]
     fn try_from_urn() {
         let urn = "urn:ngsi-ld:AttributeList:1".parse::<Urn>().expect("valid urn");
         let id = AttributeListId::try_from(urn).expect("valid typed id");
-        assert_eq!(id.to_string(), "urn:ngsi-ld:AttributeList:1");
+        pretty_assertions::assert_eq!(id.to_string(), "urn:ngsi-ld:AttributeList:1");
     }
 
     #[test]

@@ -120,6 +120,7 @@ fn compute_entity_map_expires_at(created_at: DateTime<Utc>, lifetime: Option<&Is
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use crate::{
         domain::uri::Uri,
         repository::entity_map::EntityMapStore,
@@ -167,13 +168,13 @@ mod tests {
     #[test]
     fn parse_pt5m() {
         let d = parse_iso8601_duration(Some("PT5M")).expect("duration");
-        assert_eq!(d.to_string(), "PT5M");
+        pretty_assertions::assert_eq!(d.to_string(), "PT5M");
     }
 
     #[test]
     fn parse_default_none() {
         let d = parse_iso8601_duration(None).expect("duration");
-        assert_eq!(d.to_string(), "PT1H");
+        pretty_assertions::assert_eq!(d.to_string(), "PT1H");
     }
 
     #[test]
@@ -184,7 +185,7 @@ mod tests {
     #[test]
     fn parse_entity_map_urn_enforces_prefix() {
         let ok = parse_entity_map_urn("urn:ngsi-ld:EntityMap:1").expect("urn");
-        assert_eq!(ok.as_str(), "urn:ngsi-ld:EntityMap:1");
+        pretty_assertions::assert_eq!(ok.as_str(), "urn:ngsi-ld:EntityMap:1");
         assert!(parse_entity_map_urn("urn:ngsi-ld:Snapshot:1").is_err());
     }
 

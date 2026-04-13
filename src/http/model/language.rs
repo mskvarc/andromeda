@@ -226,6 +226,7 @@ pub enum LanguageFilterError {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::*;
     use crate::http::model::quality::Quality;
 
@@ -309,10 +310,10 @@ mod tests {
         .expect("non-empty");
 
         let ordered = filter.ordered();
-        assert_eq!(ordered[0].value().to_string(), "fr-CH");
-        assert_eq!(ordered[1].value().to_string(), "fr");
-        assert_eq!(ordered[2].value().to_string(), "en");
-        assert_eq!(ordered[3].value().to_string(), "*");
+        pretty_assertions::assert_eq!(ordered[0].value().to_string(), "fr-CH");
+        pretty_assertions::assert_eq!(ordered[1].value().to_string(), "fr");
+        pretty_assertions::assert_eq!(ordered[2].value().to_string(), "en");
+        pretty_assertions::assert_eq!(ordered[3].value().to_string(), "*");
     }
 
     #[test]
@@ -320,8 +321,8 @@ mod tests {
         let filter = LanguageFilter::new(vec![qv(range_tag("de"), 0), qv(range_tag("en"), 800)]).expect("non-empty");
 
         let ordered = filter.ordered();
-        assert_eq!(ordered.len(), 1);
-        assert_eq!(ordered[0].value().to_string(), "en");
+        pretty_assertions::assert_eq!(ordered.len(), 1);
+        pretty_assertions::assert_eq!(ordered[0].value().to_string(), "en");
     }
 
     #[test]
@@ -329,9 +330,9 @@ mod tests {
         let filter = LanguageFilter::new(vec![qv(range_tag("de"), 1000), qv(range_tag("en"), 1000), qv(range_tag("fr"), 1000)]).expect("non-empty");
 
         let ordered = filter.ordered();
-        assert_eq!(ordered[0].value().to_string(), "de");
-        assert_eq!(ordered[1].value().to_string(), "en");
-        assert_eq!(ordered[2].value().to_string(), "fr");
+        pretty_assertions::assert_eq!(ordered[0].value().to_string(), "de");
+        pretty_assertions::assert_eq!(ordered[1].value().to_string(), "en");
+        pretty_assertions::assert_eq!(ordered[2].value().to_string(), "fr");
     }
 
     #[test]
@@ -351,9 +352,9 @@ mod tests {
         let header = NgsiLdLanguage::decode(&mut iter).expect("valid");
         let filter = LanguageFilter::from(header);
         let ordered = filter.ordered();
-        assert_eq!(ordered.len(), 2);
-        assert_eq!(ordered[0].value().to_string(), "fr");
-        assert_eq!(ordered[1].value().to_string(), "en");
+        pretty_assertions::assert_eq!(ordered.len(), 2);
+        pretty_assertions::assert_eq!(ordered[0].value().to_string(), "fr");
+        pretty_assertions::assert_eq!(ordered[1].value().to_string(), "en");
     }
 
     // --- LanguageFilter::parse / wire format tests ---
@@ -362,20 +363,20 @@ mod tests {
     fn parse_single_tag() {
         let filter = LanguageFilter::parse("fr").expect("valid");
         let ordered = filter.ordered();
-        assert_eq!(ordered.len(), 1);
-        assert_eq!(ordered[0].value().to_string(), "fr");
-        assert_eq!(ordered[0].quality().value(), 1000);
+        pretty_assertions::assert_eq!(ordered.len(), 1);
+        pretty_assertions::assert_eq!(ordered[0].value().to_string(), "fr");
+        pretty_assertions::assert_eq!(ordered[0].quality().value(), 1000);
     }
 
     #[test]
     fn parse_ranked_preferences() {
         let filter = LanguageFilter::parse("fr-CH,fr;q=0.9,en;q=0.8,*;q=0.5").expect("valid");
         let ordered = filter.ordered();
-        assert_eq!(ordered.len(), 4);
-        assert_eq!(ordered[0].value().to_string(), "fr-CH");
-        assert_eq!(ordered[1].value().to_string(), "fr");
-        assert_eq!(ordered[2].value().to_string(), "en");
-        assert_eq!(ordered[3].value().to_string(), "*");
+        pretty_assertions::assert_eq!(ordered.len(), 4);
+        pretty_assertions::assert_eq!(ordered[0].value().to_string(), "fr-CH");
+        pretty_assertions::assert_eq!(ordered[1].value().to_string(), "fr");
+        pretty_assertions::assert_eq!(ordered[2].value().to_string(), "en");
+        pretty_assertions::assert_eq!(ordered[3].value().to_string(), "*");
     }
 
     #[test]

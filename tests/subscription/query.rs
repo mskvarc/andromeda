@@ -1,3 +1,4 @@
+#![allow(clippy::expect_used, clippy::unwrap_used)]
 use reqwest::StatusCode;
 
 use crate::helpers::{
@@ -20,11 +21,11 @@ async fn create_three_subscriptions(http_client: &reqwest::Client, suffix: &str)
     let payload3 = inactive_subscription(&id3);
 
     let (status, _, _) = create_subscription(http_client, &payload1).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
     let (status, _, _) = create_subscription(http_client, &payload2).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
     let (status, _, _) = create_subscription(http_client, &payload3).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     [id1, id2, id3]
 }
@@ -38,7 +39,7 @@ async fn subscription_query_returns_created_subscriptions_in_result_set() {
 
     let (status, _, body) = query_subscriptions(&http_client, "", true).await;
 
-    assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
     let entries = body.as_array().expect("query result should be array");
     let returned_ids = entries.iter().filter_map(|entry| entry["id"].as_str()).collect::<Vec<_>>();
 
@@ -56,9 +57,9 @@ async fn subscription_query_with_limit_one_offset_one_returns_single_item_and_pr
 
     let (status, headers, body) = query_subscriptions(&http_client, "limit=1&offset=1", false).await;
 
-    assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
     let entries = body.as_array().expect("query result should be array");
-    assert_eq!(entries.len(), 1);
+    pretty_assertions::assert_eq!(entries.len(), 1);
 
     let link = headers.get("link").and_then(|value| value.to_str().ok()).unwrap_or_default();
     assert!(link.contains("offset=0"));
@@ -75,9 +76,9 @@ async fn subscription_query_with_limit_one_offset_two_returns_single_item_and_pr
 
     let (status, headers, body) = query_subscriptions(&http_client, "limit=1&offset=2", false).await;
 
-    assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
     let entries = body.as_array().expect("query result should be array");
-    assert_eq!(entries.len(), 1);
+    pretty_assertions::assert_eq!(entries.len(), 1);
 
     let link = headers.get("link").and_then(|value| value.to_str().ok()).unwrap_or_default();
     assert!(link.contains("offset=1"));
@@ -94,7 +95,7 @@ async fn subscription_query_with_high_limit_returns_created_subscriptions() {
     for _ in 0..6 {
         let (status, _, body) = query_subscriptions(&http_client, "limit=15&offset=0", false).await;
 
-        assert_eq!(status, StatusCode::OK);
+        pretty_assertions::assert_eq!(status, StatusCode::OK);
         let entries = body.as_array().expect("query result should be array");
         let returned_ids = entries.iter().filter_map(|entry| entry["id"].as_str()).collect::<Vec<_>>();
 
@@ -105,7 +106,7 @@ async fn subscription_query_with_high_limit_returns_created_subscriptions() {
         tokio::time::sleep(std::time::Duration::from_millis(300)).await;
     }
 
-    panic!("query result did not include all created subscriptions within the retry window");
+    unreachable!("query result did not include all created subscriptions within the retry window");
 }
 
 #[serial_test::serial]
@@ -116,6 +117,6 @@ async fn subscription_query_with_invalid_parameter_returns_bad_request() {
 
     let (status, _, body) = query_subscriptions(&http_client, "invalidParam=invalidValue", false).await;
 
-    assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert_eq!(body["type"], "https://uri.etsi.org/ngsi-ld/errors/InvalidRequest");
+    pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
+    pretty_assertions::assert_eq!(body["type"], "https://uri.etsi.org/ngsi-ld/errors/InvalidRequest");
 }

@@ -1,3 +1,4 @@
+#![allow(clippy::expect_used, clippy::unwrap_used)]
 use std::time::Duration;
 
 use reqwest::StatusCode;
@@ -36,7 +37,7 @@ async fn create_show_changes_subscription(http_client: &reqwest::Client, case_id
     let mut subscription = with_show_changes(base_subscription(&subscription_id));
     set_endpoint_uri(&mut subscription, &receiver.endpoint_url());
     let (status, _, _) = create_subscription(http_client, &subscription).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     receiver.clear_notifications().await;
     subscription_id
@@ -47,7 +48,7 @@ async fn create_show_changes_trigger_subscription(http_client: &reqwest::Client,
     let mut subscription = with_notification_trigger(with_show_changes(base_subscription(&subscription_id)), &[trigger]);
     set_endpoint_uri(&mut subscription, &receiver.endpoint_url());
     let (status, _, _) = create_subscription(http_client, &subscription).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     receiver.clear_notifications().await;
     subscription_id
@@ -271,7 +272,7 @@ async fn notification_show_changes_entity_deleted_contains_previous_values_for_m
     let _ = delete_entity(&http_client, &entity_id).await;
 
     let notification = receiver.wait_for_subscription_notification(&subscription_id, Duration::from_secs(5)).await;
-    assert_eq!(notification.body["data"][0]["id"], entity_id);
+    pretty_assertions::assert_eq!(notification.body["data"][0]["id"], entity_id);
     assert!(notification.body["data"][0]["name"].get("previousValue").is_some());
     assert!(notification.body["data"][0]["locatedAt"].get("previousObject").is_some());
 }

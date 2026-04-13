@@ -1,3 +1,4 @@
+#![allow(clippy::expect_used, clippy::unwrap_used)]
 pub mod append;
 pub mod delete;
 pub mod partial_update;

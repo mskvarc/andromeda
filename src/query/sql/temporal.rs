@@ -457,6 +457,7 @@ ORDER BY {}"#,
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::*;
     use crate::{
         query::compiled::{CompiledTemporalQuery, LastNOrigin, ScopeQuery},
@@ -719,7 +720,7 @@ mod tests {
         assert!(result.sql.contains("OR"), "Comma scopes produce OR");
         // Each scope term should have its own EXISTS subquery
         let exists_count = result.sql.matches("EXISTS").count();
-        assert_eq!(exists_count, 3, "Three scope terms should produce three EXISTS subqueries");
+        pretty_assertions::assert_eq!(exists_count, 3, "Three scope terms should produce three EXISTS subqueries");
     }
 
     #[test]

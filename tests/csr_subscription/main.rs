@@ -1,3 +1,4 @@
+#![allow(clippy::expect_used, clippy::unwrap_used)]
 mod create;
 mod delete;
 mod query;
@@ -37,13 +38,8 @@ fn unique_subscription_id(scenario: &str) -> String {
 }
 
 pub async fn clean_database() {
-    let pool = match PgPool::connect(DATABASE_URL).await {
-        Ok(pool) => pool,
-        Err(err) => panic!("failed to connect to database for cleanup: {err}"),
-    };
-    if let Err(err) = sqlx::query(TRUNCATE_ALL).execute(&pool).await {
-        panic!("failed to truncate tables: {err}");
-    }
+    let pool = PgPool::connect(DATABASE_URL).await.expect("failed to connect to database for cleanup");
+    sqlx::query(TRUNCATE_ALL).execute(&pool).await.expect("failed to truncate tables");
     pool.close().await;
 }
 
@@ -55,16 +51,13 @@ async fn read_body(response: reqwest::Response) -> Value {
 }
 
 pub async fn create_csource_subscription(client: &Client, body: &Value) -> (StatusCode, Option<String>, Value) {
-    let response = match client
+    let response = client
         .post(format!("{BASE_URL}/csourceSubscriptions"))
         .header("Content-Type", "application/ld+json")
         .json(body)
         .send()
         .await
-    {
-        Ok(response) => response,
-        Err(err) => panic!("create csource subscription request failed: {err}"),
-    };
+        .expect("create csource subscription request failed");
 
     let status = response.status();
     let location = response.headers().get(LOCATION).and_then(|value| value.to_str().ok()).map(ToOwned::to_owned);
@@ -78,15 +71,12 @@ pub async fn retrieve_csource_subscription(client: &Client, subscription_id: &st
         Some(options) => format!("?options={options}"),
         None => String::new(),
     };
-    let response = match client
+    let response = client
         .get(format!("{BASE_URL}/csourceSubscriptions/{encoded_id}{query}"))
         .header("Accept", "application/ld+json")
         .send()
         .await
-    {
-        Ok(response) => response,
-        Err(err) => panic!("retrieve csource subscription request failed: {err}"),
-    };
+        .expect("retrieve csource subscription request failed");
 
     let status = response.status();
     let body = read_body(response).await;
@@ -95,15 +85,12 @@ pub async fn retrieve_csource_subscription(client: &Client, subscription_id: &st
 
 pub async fn query_csource_subscriptions(client: &Client, query: &str) -> (StatusCode, Value) {
     let separator = if query.is_empty() { "" } else { "?" };
-    let response = match client
+    let response = client
         .get(format!("{BASE_URL}/csourceSubscriptions{separator}{query}"))
         .header("Accept", "application/ld+json")
         .send()
         .await
-    {
-        Ok(response) => response,
-        Err(err) => panic!("query csource subscriptions request failed: {err}"),
-    };
+        .expect("query csource subscriptions request failed");
 
     let status = response.status();
     let body = read_body(response).await;
@@ -112,7 +99,7 @@ pub async fn query_csource_subscriptions(client: &Client, query: &str) -> (Statu
 
 pub async fn update_csource_subscription(client: &Client, subscription_id: &str, fragment: &Value) -> (StatusCode, Value) {
     let encoded_id = urlencoding::encode(subscription_id);
-    let response = match client
+    let response = client
         .patch(format!("{BASE_URL}/csourceSubscriptions/{encoded_id}"))
         .header("Content-Type", "application/json")
         .header(
@@ -122,10 +109,7 @@ pub async fn update_csource_subscription(client: &Client, subscription_id: &str,
         .json(fragment)
         .send()
         .await
-    {
-        Ok(response) => response,
-        Err(err) => panic!("update csource subscription request failed: {err}"),
-    };
+        .expect("update csource subscription request failed");
 
     let status = response.status();
     let body = read_body(response).await;
@@ -134,16 +118,13 @@ pub async fn update_csource_subscription(client: &Client, subscription_id: &str,
 
 pub async fn update_csource_subscription_raw(client: &Client, subscription_id: &str, raw_fragment: &[u8]) -> (StatusCode, Value) {
     let encoded_id = urlencoding::encode(subscription_id);
-    let response = match client
+    let response = client
         .patch(format!("{BASE_URL}/csourceSubscriptions/{encoded_id}"))
         .header("Content-Type", "application/json")
         .body(raw_fragment.to_vec())
         .send()
         .await
-    {
-        Ok(response) => response,
-        Err(err) => panic!("update csource subscription raw request failed: {err}"),
-    };
+        .expect("update csource subscription raw request failed");
 
     let status = response.status();
     let body = read_body(response).await;
@@ -152,10 +133,11 @@ pub async fn update_csource_subscription_raw(client: &Client, subscription_id: &
 
 pub async fn delete_csource_subscription(client: &Client, subscription_id: &str) -> (StatusCode, Value) {
     let encoded_id = urlencoding::encode(subscription_id);
-    let response = match client.delete(format!("{BASE_URL}/csourceSubscriptions/{encoded_id}")).send().await {
-        Ok(response) => response,
-        Err(err) => panic!("delete csource subscription request failed: {err}"),
-    };
+    let response = client
+        .delete(format!("{BASE_URL}/csourceSubscriptions/{encoded_id}"))
+        .send()
+        .await
+        .expect("delete csource subscription request failed");
 
     let status = response.status();
     let body = read_body(response).await;
@@ -269,16 +251,17 @@ pub fn update_entities_vehicle_fragment() -> Value {
 }
 
 pub async fn raw_get(client: &Client, path_and_query: &str) -> (StatusCode, Value) {
-    let response = match client.request(Method::GET, format!("{BASE_URL}{path_and_query}")).send().await {
-        Ok(response) => response,
-        Err(err) => panic!("raw get request failed: {err}"),
-    };
+    let response = client
+        .request(Method::GET, format!("{BASE_URL}{path_and_query}"))
+        .send()
+        .await
+        .expect("raw get request failed");
     let status = response.status();
     let body = read_body(response).await;
     (status, body)
 }
 
 pub fn assert_problem_detail_type(body: &Value, expected_type: &str) {
-    assert_eq!(body["type"], expected_type, "unexpected problem detail type: {body}");
+    pretty_assertions::assert_eq!(body["type"], expected_type, "unexpected problem detail type: {body}");
     assert!(body["title"].is_string(), "problem details title should be present: {body}");
 }

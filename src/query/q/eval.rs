@@ -189,6 +189,7 @@ fn entity_val_to_string(val: &Value) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::*;
     use crate::query::q::parser::parse;
 

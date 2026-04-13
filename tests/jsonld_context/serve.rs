@@ -1,3 +1,4 @@
+#![allow(clippy::expect_used, clippy::unwrap_used)]
 //! Consumption: Serve @context tests (NGSI-LD 6.25.3.4)
 
 use reqwest::StatusCode;
@@ -32,12 +33,12 @@ async fn serve_context_no_details_returns_context_body() {
     let ctx_id = create_hosted_context(&c).await;
 
     let (status, body) = get_context(&c, &ctx_id, "").await;
-    assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
 
     let ctx = body.get("@context").expect("response should contain @context");
-    assert_eq!(ctx["A1"], "urn:ngsi-ld:attributes:A1");
-    assert_eq!(ctx["A2"], "urn:ngsi-ld:attributes:A2");
-    assert_eq!(ctx["A3"], "urn:ngsi-ld:attributes:A3");
+    pretty_assertions::assert_eq!(ctx["A1"], "urn:ngsi-ld:attributes:A1");
+    pretty_assertions::assert_eq!(ctx["A2"], "urn:ngsi-ld:attributes:A2");
+    pretty_assertions::assert_eq!(ctx["A3"], "urn:ngsi-ld:attributes:A3");
 }
 
 /// 053_01_02: Serve @context with details=false -> returns @context body.
@@ -49,10 +50,10 @@ async fn serve_context_details_false_returns_context_body() {
     let ctx_id = create_hosted_context(&c).await;
 
     let (status, body) = get_context(&c, &ctx_id, "details=false").await;
-    assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
 
     let ctx = body.get("@context").expect("response should contain @context");
-    assert_eq!(ctx["A1"], "urn:ngsi-ld:attributes:A1");
+    pretty_assertions::assert_eq!(ctx["A1"], "urn:ngsi-ld:attributes:A1");
 }
 
 /// 053_02_01: Serve @context with details=true -> returns metadata.
@@ -64,9 +65,9 @@ async fn serve_context_details_true_returns_metadata() {
     let ctx_id = create_hosted_context(&c).await;
 
     let (status, body) = get_context(&c, &ctx_id, "details=true").await;
-    assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
     assert!(body.get("URL").is_some(), "detailed response should have URL");
-    assert_eq!(body["kind"], "Hosted");
+    pretty_assertions::assert_eq!(body["kind"], "Hosted");
     assert!(body.get("createdAt").is_some(), "detailed response should have createdAt");
 }
 
@@ -75,8 +76,8 @@ async fn serve_context_details_true_returns_metadata() {
 async fn serve_unknown_context_returns_404() {
     let c = client();
     let (status, body) = get_context(&c, "urn:ngsi-ld:unknown:ctx:12345", "").await;
-    assert_eq!(status, StatusCode::NOT_FOUND);
-    assert_eq!(body["type"], RESOURCE_NOT_FOUND_TYPE);
+    pretty_assertions::assert_eq!(status, StatusCode::NOT_FOUND);
+    pretty_assertions::assert_eq!(body["type"], RESOURCE_NOT_FOUND_TYPE);
 }
 
 /// 053_04_01: numberOfHits increases after using hosted context.
@@ -89,7 +90,7 @@ async fn serve_hosted_number_of_hits_increases() {
 
     // Check initial numberOfHits
     let (status, body) = get_context(&c, &ctx_id, "details=true").await;
-    assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
     let initial_hits = body["numberOfHits"].as_u64().unwrap_or(0);
     let ctx_url = body["URL"].as_str().expect("should have URL").to_string();
 
@@ -102,7 +103,7 @@ async fn serve_hosted_number_of_hits_increases() {
         "@context": [&ctx_url]
     });
     let (status, _) = create_entity(&c, &entity).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     // Check numberOfHits increased
     let (_, body) = get_context(&c, &ctx_id, "details=true").await;
@@ -129,7 +130,7 @@ async fn serve_implicitly_created_details_true() {
         ]
     });
     let (status, location) = create_subscription(&c, &sub).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
     let sub_id = extract_id(location.as_ref().unwrap());
 
     // Find the implicit context
@@ -139,8 +140,8 @@ async fn serve_implicitly_created_details_true() {
 
     // Serve with details
     let (status, body) = get_context(&c, &ctx_id, "details=true").await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["kind"], "ImplicitlyCreated");
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(body["kind"], "ImplicitlyCreated");
     assert!(body.get("URL").is_some());
     assert!(body.get("createdAt").is_some());
 
@@ -164,7 +165,7 @@ async fn serve_implicitly_created_number_of_hits_increases() {
         ]
     });
     let (status, location) = create_subscription(&c, &sub).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
     let sub_id = extract_id(location.as_ref().unwrap());
 
     // Find implicit context
@@ -186,7 +187,7 @@ async fn serve_implicitly_created_number_of_hits_increases() {
         "@context": [&ctx_url]
     });
     let (status, _) = create_entity(&c, &entity).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     // Check hits increased
     let (_, body) = get_context(&c, &ctx_id, "details=true").await;
@@ -213,12 +214,12 @@ async fn serve_cached_context_after_server_down() {
 
     // Attempt delete with reload (should fail)
     let (status, _) = crate::delete_context(&c, &cached_id, "reload=true").await;
-    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    pretty_assertions::assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
 
     // But GET should still work from cache
     let (status, body) = get_context(&c, &cached_id, "details=true").await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["kind"], "Cached");
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(body["kind"], "Cached");
     assert!(body.get("URL").is_some());
     assert!(body.get("createdAt").is_some());
 }
@@ -243,7 +244,7 @@ async fn serve_cached_number_of_hits_increases() {
         "@context": [&ctx_url]
     });
     let (status, _) = create_entity(&c, &entity).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     tokio::time::sleep(std::time::Duration::from_secs(1)).await;
 
@@ -261,7 +262,7 @@ async fn serve_cached_number_of_hits_increases() {
         "@context": [&ctx_url]
     });
     let (status, _) = create_entity(&c, &entity).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     // Check hits increased
     let (_, body) = get_context(&c, &cached_id, "details=true").await;

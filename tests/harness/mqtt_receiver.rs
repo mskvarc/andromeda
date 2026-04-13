@@ -1,3 +1,4 @@
+#![allow(clippy::expect_used, clippy::unwrap_used)]
 use std::time::Duration;
 
 use rumqttc::{AsyncClient, Event, MqttOptions, Packet, QoS};
@@ -74,9 +75,8 @@ impl MqttReceiver {
                     return msgs.remove(0);
                 }
             }
-            if tokio::time::timeout_at(deadline, self.notify.notified()).await.is_err() {
-                panic!("Timed out waiting for MQTT message after {:?}", timeout);
-            }
+            let notified = tokio::time::timeout_at(deadline, self.notify.notified()).await;
+            assert!(notified.is_ok(), "Timed out waiting for MQTT message after {:?}", timeout);
         }
     }
 

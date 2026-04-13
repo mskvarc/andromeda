@@ -128,7 +128,7 @@ async fn join_flat_includes_directly_linked_entities() {
         "@context": [TEST_SUITE_CONTEXT]
     });
     let (status, _) = create_entity(&c, &b).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     let a = json!({
         "id": id_a, "type": "Building",
@@ -136,11 +136,11 @@ async fn join_flat_includes_directly_linked_entities() {
         "@context": [TEST_SUITE_CONTEXT]
     });
     let (status, _) = create_entity(&c, &a).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     let query = format!("id={id_a}&type=Building&join=flat&joinLevel=1");
     let (status, body) = query_entities(&c, &query).await;
-    assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
     let ids = ids_from_array(&body);
     assert!(ids.contains(&id_a), "root entity must be in results");
     assert!(ids.contains(&id_b), "linked entity must be included with join=flat");
@@ -166,12 +166,12 @@ async fn join_flat_join_level_limits_traversal_depth() {
             body["linkedTo"] = json!({"type": "Relationship", "object": target});
         }
         let (status, _) = create_entity(&c, &body).await;
-        assert_eq!(status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(status, StatusCode::CREATED);
     }
 
     let query = format!("id={id_a}&type=Building&join=flat&joinLevel=1");
     let (status, body) = query_entities(&c, &query).await;
-    assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
     let ids = ids_from_array(&body);
     assert!(ids.contains(&id_a), "root entity must be present");
     assert!(ids.contains(&id_b), "level-1 entity must be present");
@@ -198,12 +198,12 @@ async fn join_flat_join_level_two_includes_two_hops() {
             body["linkedTo"] = json!({"type": "Relationship", "object": target});
         }
         let (status, _) = create_entity(&c, &body).await;
-        assert_eq!(status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(status, StatusCode::CREATED);
     }
 
     let query = format!("id={id_a}&type=Building&join=flat&joinLevel=2");
     let (status, body) = query_entities(&c, &query).await;
-    assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
     let ids = ids_from_array(&body);
     assert!(ids.contains(&id_a), "root entity must be present");
     assert!(ids.contains(&id_b), "level-1 entity must be present");
@@ -231,7 +231,7 @@ async fn join_contained_by_excludes_specified_entity_from_join_results() {
         "@context": [TEST_SUITE_CONTEXT]
     });
     let (status, _) = create_entity(&c, &entity_c).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     let entity_b = json!({
         "id": id_b, "type": "Building",
@@ -239,7 +239,7 @@ async fn join_contained_by_excludes_specified_entity_from_join_results() {
         "@context": [TEST_SUITE_CONTEXT]
     });
     let (status, _) = create_entity(&c, &entity_b).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     let entity_a = json!({
         "id": id_a, "type": "Building",
@@ -247,11 +247,11 @@ async fn join_contained_by_excludes_specified_entity_from_join_results() {
         "@context": [TEST_SUITE_CONTEXT]
     });
     let (status, _) = create_entity(&c, &entity_a).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     let query = format!("id={id_a}&type=Building&join=flat&joinLevel=2&containedBy={id_b}");
     let (status, body) = query_entities(&c, &query).await;
-    assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
     let ids = ids_from_array(&body);
     assert!(ids.contains(&id_a), "root entity must be present");
     assert!(!ids.contains(&id_b), "B must be excluded by containedBy");
@@ -274,7 +274,7 @@ async fn join_contained_by_multiple_ids_excludes_all_listed_entities() {
             "@context": [TEST_SUITE_CONTEXT]
         });
         let (status, _) = create_entity(&c, &body).await;
-        assert_eq!(status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(status, StatusCode::CREATED);
     }
 
     let entity_a = json!({
@@ -284,11 +284,11 @@ async fn join_contained_by_multiple_ids_excludes_all_listed_entities() {
         "@context": [TEST_SUITE_CONTEXT]
     });
     let (status, _) = create_entity(&c, &entity_a).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     let query = format!("id={id_a}&type=Building&join=flat&joinLevel=1&containedBy={id_b},{id_c}");
     let (status, body) = query_entities(&c, &query).await;
-    assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
     let ids = ids_from_array(&body);
     assert!(ids.contains(&id_a), "root entity must be present");
     assert!(!ids.contains(&id_b), "B must be excluded by containedBy");
@@ -315,7 +315,7 @@ async fn join_cycle_detection_does_not_infinite_loop() {
         "@context": [TEST_SUITE_CONTEXT]
     });
     let (status, _) = create_entity(&c, &x).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     let y = json!({
         "id": id_y, "type": "Building",
@@ -323,11 +323,11 @@ async fn join_cycle_detection_does_not_infinite_loop() {
         "@context": [TEST_SUITE_CONTEXT]
     });
     let (status, _) = create_entity(&c, &y).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     let query = format!("id={id_x}&type=Building&join=flat&joinLevel=5");
     let (status, body) = query_entities(&c, &query).await;
-    assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
     let ids = ids_from_array(&body);
     assert!(ids.len() >= 2, "both entities must be returned despite cycle");
 }
@@ -350,7 +350,7 @@ async fn join_single_entity_get_flat_join_returns_array_with_linked_entity() {
         "@context": [TEST_SUITE_CONTEXT]
     });
     let (status, _) = create_entity(&c, &target).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     let main_e = json!({
         "id": id_main, "type": "Building",
@@ -358,10 +358,10 @@ async fn join_single_entity_get_flat_join_returns_array_with_linked_entity() {
         "@context": [TEST_SUITE_CONTEXT]
     });
     let (status, _) = create_entity(&c, &main_e).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     let (status, body) = get_entity(&c, &id_main, "join=flat&joinLevel=1").await;
-    assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
     let arr = body.as_array().expect("flat join on single GET must return array");
     let ids: Vec<&str> = arr.iter().filter_map(|e| e["id"].as_str()).collect();
     assert!(ids.contains(&id_main.as_str()), "root entity must be present");
@@ -381,7 +381,7 @@ async fn join_single_entity_get_with_contained_by_excludes_linked_entity() {
         "@context": [TEST_SUITE_CONTEXT]
     });
     let (status, _) = create_entity(&c, &target).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     let main_e = json!({
         "id": id_main, "type": "Building",
@@ -389,11 +389,11 @@ async fn join_single_entity_get_with_contained_by_excludes_linked_entity() {
         "@context": [TEST_SUITE_CONTEXT]
     });
     let (status, _) = create_entity(&c, &main_e).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     let query = format!("join=flat&joinLevel=1&containedBy={id_target}");
     let (status, body) = get_entity(&c, &id_main, &query).await;
-    assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
     let arr = body.as_array().expect("flat join on single GET must return array");
     let ids: Vec<&str> = arr.iter().filter_map(|e| e["id"].as_str()).collect();
     assert!(ids.contains(&id_main.as_str()), "root entity must be present");
@@ -411,7 +411,7 @@ async fn join_join_level_zero_returns_only_root_entity_without_linked() {
 
     let b = json!({ "id": id_b, "type": "Building", "@context": [TEST_SUITE_CONTEXT] });
     let (status, _) = create_entity(&c, &b).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     let a = json!({
         "id": id_a, "type": "Building",
@@ -419,11 +419,11 @@ async fn join_join_level_zero_returns_only_root_entity_without_linked() {
         "@context": [TEST_SUITE_CONTEXT]
     });
     let (status, _) = create_entity(&c, &a).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     let query = format!("id={id_a}&type=Building&join=flat&joinLevel=0");
     let (status, body) = query_entities(&c, &query).await;
-    assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
     let ids = ids_from_array(&body);
     assert!(ids.contains(&id_a), "root entity must be present");
     assert!(!ids.contains(&id_b), "linked entity must be absent when joinLevel=0");

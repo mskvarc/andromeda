@@ -1,3 +1,4 @@
+#![allow(clippy::expect_used, clippy::unwrap_used)]
 //! CSR retrieval tests (NGSI-LD 5.10.1, 6.3.5)
 
 use reqwest::StatusCode;
@@ -26,8 +27,8 @@ use serde_json::Value;
 async fn retrieve_invalid_id_returns_400() {
     let c = client();
     let (status, body) = retrieve_registration(&c, "invalidUri", None, None).await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE);
+    pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
+    pretty_assertions::assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE);
 }
 
 // ---------------------------------------------------------------------------
@@ -39,8 +40,8 @@ async fn retrieve_invalid_id_returns_400() {
 async fn retrieve_unknown_registration_returns_404() {
     let c = client();
     let (status, body) = retrieve_registration(&c, "urn:ngsi-ld:ContextSourceRegistration:unknownRegistration", None, None).await;
-    assert_eq!(status, StatusCode::NOT_FOUND);
-    assert_eq!(body["type"], RESOURCE_NOT_FOUND_TYPE);
+    pretty_assertions::assert_eq!(status, StatusCode::NOT_FOUND);
+    pretty_assertions::assert_eq!(body["type"], RESOURCE_NOT_FOUND_TYPE);
 }
 
 // ---------------------------------------------------------------------------
@@ -55,17 +56,17 @@ async fn retrieve_without_context_returns_expanded_format() {
     let reg = load_fixture("csource_registrations/context-source-registration.jsonld", &id);
 
     let (status, _, _) = create_registration(&c, &reg).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     let (status, mut actual) = retrieve_registration(&c, &id, None, None).await;
-    assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
 
     let ignored = &["@context", "createdAt", "modifiedAt", "status"];
     let mut expected = load_expectation("csource_registrations/expectations/context-source-registration-expanded-format.json");
     expected["id"] = Value::String(id.clone());
     strip_ignored_keys(&mut actual, ignored);
     strip_ignored_keys(&mut expected, ignored);
-    assert_eq!(expected, actual);
+    pretty_assertions::assert_eq!(expected, actual);
 
     cleanup_registration(&c, &id).await;
 }
@@ -82,17 +83,17 @@ async fn retrieve_with_context_returns_compacted_format() {
     let reg = load_fixture("csource_registrations/context-source-registration.jsonld", &id);
 
     let (status, _, _) = create_registration(&c, &reg).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     let (status, mut actual) = retrieve_registration(&c, &id, Some("application/ld+json"), Some(COMPOUND_CONTEXT_URL)).await;
-    assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
 
     let ignored = &["@context", "createdAt", "modifiedAt", "status"];
     let mut expected = load_expectation("csource_registrations/expectations/context-source-registration.json");
     expected["id"] = Value::String(id.clone());
     strip_ignored_keys(&mut actual, ignored);
     strip_ignored_keys(&mut expected, ignored);
-    assert_eq!(expected, actual);
+    pretty_assertions::assert_eq!(expected, actual);
 
     cleanup_registration(&c, &id).await;
 }
@@ -109,17 +110,17 @@ async fn retrieve_empty_jsonld_context_returns_expanded_format() {
     let reg = load_fixture("csource_registrations/context-source-registration.jsonld", &id);
 
     let (status, _, _) = create_registration(&c, &reg).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     let (status, mut actual) = retrieve_registration(&c, &id, None, None).await;
-    assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
 
     let ignored = &["@context", "createdAt", "modifiedAt", "status"];
     let mut expected = load_expectation("csource_registrations/expectations/context-source-registration-expanded-format.json");
     expected["id"] = Value::String(id.clone());
     strip_ignored_keys(&mut actual, ignored);
     strip_ignored_keys(&mut expected, ignored);
-    assert_eq!(expected, actual);
+    pretty_assertions::assert_eq!(expected, actual);
 
     cleanup_registration(&c, &id).await;
 }
@@ -132,17 +133,17 @@ async fn retrieve_creation_time_context_returns_compacted_format() {
     let reg = load_fixture("csource_registrations/context-source-registration.jsonld", &id);
 
     let (status, _, _) = create_registration(&c, &reg).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     let (status, mut actual) = retrieve_registration(&c, &id, Some("application/ld+json"), Some(COMPOUND_CONTEXT_URL)).await;
-    assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
 
     let ignored = &["@context", "createdAt", "modifiedAt", "status"];
     let mut expected = load_expectation("csource_registrations/expectations/context-source-registration.json");
     expected["id"] = Value::String(id.clone());
     strip_ignored_keys(&mut actual, ignored);
     strip_ignored_keys(&mut expected, ignored);
-    assert_eq!(expected, actual);
+    pretty_assertions::assert_eq!(expected, actual);
 
     cleanup_registration(&c, &id).await;
 }

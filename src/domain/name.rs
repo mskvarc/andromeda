@@ -17,6 +17,7 @@ pub struct Name(str);
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::{Name, NameBuf};
 
     #[test]
@@ -57,7 +58,7 @@ mod tests {
     #[test]
     fn valid_as_str_roundtrip() {
         let name = Name::new("temperature").expect("valid name");
-        assert_eq!(name.as_str(), "temperature");
+        pretty_assertions::assert_eq!(name.as_str(), "temperature");
     }
 
     #[test]
@@ -109,7 +110,7 @@ mod tests {
     fn serde_deserialize_valid() {
         let result: Result<NameBuf, _> = serde_json::from_str("\"temperature\"");
         let name = result.expect("valid name deserializes");
-        assert_eq!(name.as_str(), "temperature");
+        pretty_assertions::assert_eq!(name.as_str(), "temperature");
     }
 
     #[test]
@@ -122,6 +123,6 @@ mod tests {
     fn serde_serialize() {
         let name = NameBuf::new("temperature".to_string()).expect("valid name");
         let json = serde_json::to_string(&name).expect("serializes");
-        assert_eq!(json, "\"temperature\"");
+        pretty_assertions::assert_eq!(json, "\"temperature\"");
     }
 }

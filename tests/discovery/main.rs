@@ -59,17 +59,17 @@ fn fixtures_dir() -> std::path::PathBuf {
 
 fn load_raw(path: &str) -> String {
     let full_path = fixtures_dir().join(path);
-    std::fs::read_to_string(&full_path).unwrap_or_else(|e| panic!("failed to read fixture {}: {e}", full_path.display()))
+    std::fs::read_to_string(&full_path).expect("failed to read fixture")
 }
 
 /// Load a fixture JSON file and replace the `id` field with the given value.
 fn load_fixture(path: &str, id: &str) -> Value {
     let contents = load_raw(path);
-    let mut value: Value = serde_json::from_str(&contents).unwrap_or_else(|e| panic!("failed to parse fixture {path}: {e}"));
-    if let Some(obj) = value.as_object_mut() {
-        if obj.contains_key("id") {
-            obj.insert("id".to_string(), Value::String(id.to_string()));
-        }
+    let mut value: Value = serde_json::from_str(&contents).expect("failed to parse fixture");
+    if let Some(obj) = value.as_object_mut()
+        && obj.contains_key("id")
+    {
+        obj.insert("id".to_string(), Value::String(id.to_string()));
     }
     value
 }
@@ -77,7 +77,7 @@ fn load_fixture(path: &str, id: &str) -> Value {
 /// Load an expectation fixture for response comparison.
 fn load_expectation(path: &str) -> Value {
     let contents = load_raw(path);
-    serde_json::from_str(&contents).unwrap_or_else(|e| panic!("failed to parse expectation {path}: {e}"))
+    serde_json::from_str(&contents).expect("failed to parse expectation")
 }
 
 // ---------------------------------------------------------------------------

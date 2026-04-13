@@ -1,3 +1,4 @@
+#![allow(clippy::expect_used, clippy::unwrap_used)]
 use crate::harness::{
     TestCtx,
     client::{NgsiLdOption, QueryParams, RequestHeaders},
@@ -5,7 +6,6 @@ use crate::harness::{
     trial::trial,
 };
 use libtest_mimic::Trial;
-use pretty_assertions::assert_eq;
 use reqwest::{Method, StatusCode, header::HeaderMap};
 
 const PREFIX: &str = "consumption::temporal::query";
@@ -28,7 +28,7 @@ fn normalize(val: &mut serde_json::Value) {
             for v in arr.iter_mut() {
                 normalize(v);
             }
-            arr.sort_by(|a, b| a.to_string().cmp(&b.to_string()));
+            arr.sort_by_key(|a| a.to_string());
         }
         _ => {}
     }
@@ -141,7 +141,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
 
         let params = QueryParams::new().type_("Vehicle").timerel("after").timeat("2020-08-01T12:04:00Z");
         let resp = ctx.client.query_temporal_entities(&params, ctx_headers()).await;
-        assert_eq!(resp.status, StatusCode::OK);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::OK);
 
         let mut actual: serde_json::Value = resp.json();
         let mut expected = fixtures::load_expectation("temporal_entities/expectations/vehicles-temporal-representation-021-01-01.jsonld");
@@ -158,7 +158,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
         }
         normalize_list(&mut actual);
         normalize_list(&mut expected);
-        assert_eq!(expected, actual);
+        pretty_assertions::assert_eq!(expected, actual);
     }));
 
     trials.push(trial(&format!("{PREFIX}::021_01_02::before"), |ctx| async move {
@@ -166,14 +166,14 @@ pub fn tests(trials: &mut Vec<Trial>) {
 
         let params = QueryParams::new().type_("Vehicle").timerel("before").timeat("2020-09-01T13:06:00Z");
         let resp = ctx.client.query_temporal_entities(&params, ctx_headers()).await;
-        assert_eq!(resp.status, StatusCode::OK);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::OK);
 
         let mut actual: serde_json::Value = resp.json();
         let mut expected = fixtures::load_expectation("temporal_entities/expectations/vehicles-temporal-representation-021-01-02.jsonld");
         replace_vehicle_ids(&mut expected, &va, &vb);
         normalize_list(&mut actual);
         normalize_list(&mut expected);
-        assert_eq!(expected, actual);
+        pretty_assertions::assert_eq!(expected, actual);
     }));
 
     trials.push(trial(&format!("{PREFIX}::021_01_03::between"), |ctx| async move {
@@ -185,14 +185,14 @@ pub fn tests(trials: &mut Vec<Trial>) {
             .timeat("2020-08-01T12:04:00Z")
             .endtimeat("2020-09-01T13:06:00Z");
         let resp = ctx.client.query_temporal_entities(&params, ctx_headers()).await;
-        assert_eq!(resp.status, StatusCode::OK);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::OK);
 
         let mut actual: serde_json::Value = resp.json();
         let mut expected = fixtures::load_expectation("temporal_entities/expectations/vehicles-temporal-representation-021-01-03.jsonld");
         replace_vehicle_ids(&mut expected, &va, &vb);
         normalize_list(&mut actual);
         normalize_list(&mut expected);
-        assert_eq!(expected, actual);
+        pretty_assertions::assert_eq!(expected, actual);
     }));
 
     // ── 021_02: Query specific attributes ─────────────────────────────────
@@ -206,14 +206,14 @@ pub fn tests(trials: &mut Vec<Trial>) {
             .timerel("after")
             .timeat("2020-07-01T12:05:00Z");
         let resp = ctx.client.query_temporal_entities(&params, ctx_headers()).await;
-        assert_eq!(resp.status, StatusCode::OK);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::OK);
 
         let mut actual: serde_json::Value = resp.json();
         let mut expected = fixtures::load_expectation("temporal_entities/expectations/vehicles-temporal-representation-021-02.jsonld");
         replace_vehicle_ids(&mut expected, &va, &vb);
         normalize_list(&mut actual);
         normalize_list(&mut expected);
-        assert_eq!(expected, actual);
+        pretty_assertions::assert_eq!(expected, actual);
     }));
 
     // ── 021_03: Query with lastN ──────────────────────────────────────────
@@ -226,14 +226,14 @@ pub fn tests(trials: &mut Vec<Trial>) {
 
         let params = QueryParams::new().type_("Vehicle").timerel("after").timeat("2020-07-01T12:05:00Z").lastn(4);
         let resp = ctx.client.query_temporal_entities(&params, ctx_headers()).await;
-        assert_eq!(resp.status, StatusCode::OK);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::OK);
 
         let mut actual: serde_json::Value = resp.json();
         let mut expected = fixtures::load_expectation("temporal_entities/expectations/vehicles-temporal-representation-021-03.jsonld");
         replace_vehicle_ids(&mut expected, &va, &vb);
         normalize_list(&mut actual);
         normalize_list(&mut expected);
-        assert_eq!(expected, actual);
+        pretty_assertions::assert_eq!(expected, actual);
     }));
 
     // ── 021_04: Query with context ────────────────────────────────────────
@@ -243,14 +243,14 @@ pub fn tests(trials: &mut Vec<Trial>) {
 
         let params = QueryParams::new().type_("Vehicle").timerel("after").timeat("2020-07-01T12:05:00Z");
         let resp = ctx.client.query_temporal_entities(&params, ctx_headers()).await;
-        assert_eq!(resp.status, StatusCode::OK);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::OK);
 
         let mut actual: serde_json::Value = resp.json();
         let mut expected = fixtures::load_expectation("temporal_entities/expectations/vehicles-temporal-representation-021-04.jsonld");
         replace_vehicle_ids(&mut expected, &va, &vb);
         normalize_list(&mut actual);
         normalize_list(&mut expected);
-        assert_eq!(expected, actual);
+        pretty_assertions::assert_eq!(expected, actual);
     }));
 
     // ── 021_05: Query by type ─────────────────────────────────────────────
@@ -263,7 +263,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
 
         let params = QueryParams::new().type_("Bus").timerel("after").timeat("2020-07-01T12:05:00Z");
         let resp = ctx.client.query_temporal_entities(&params, ctx_headers()).await;
-        assert_eq!(resp.status, StatusCode::OK);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::OK);
 
         let mut actual: serde_json::Value = resp.json();
         let mut expected = fixtures::load_expectation("temporal_entities/expectations/vehicles-temporal-representation-021-05.jsonld");
@@ -274,7 +274,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
         }
         normalize_list(&mut actual);
         normalize_list(&mut expected);
-        assert_eq!(expected, actual);
+        pretty_assertions::assert_eq!(expected, actual);
     }));
 
     // ── 021_06: Query by entity ID ────────────────────────────────────────
@@ -288,7 +288,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
             .timerel("after")
             .timeat("2020-07-01T12:05:00Z");
         let resp = ctx.client.query_temporal_entities(&params, ctx_headers()).await;
-        assert_eq!(resp.status, StatusCode::OK);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::OK);
 
         let mut actual: serde_json::Value = resp.json();
         let mut expected = fixtures::load_expectation("temporal_entities/expectations/vehicles-temporal-representation-021-06.jsonld");
@@ -299,7 +299,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
         }
         normalize_list(&mut actual);
         normalize_list(&mut expected);
-        assert_eq!(expected, actual);
+        pretty_assertions::assert_eq!(expected, actual);
         let _ = vb;
     }));
 
@@ -314,14 +314,14 @@ pub fn tests(trials: &mut Vec<Trial>) {
             .timerel("after")
             .timeat("2020-07-01T12:05:00Z");
         let resp = ctx.client.query_temporal_entities(&params, ctx_headers()).await;
-        assert_eq!(resp.status, StatusCode::OK);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::OK);
 
         let mut actual: serde_json::Value = resp.json();
         let mut expected = fixtures::load_expectation("temporal_entities/expectations/vehicles-temporal-representation-021-07.jsonld");
         replace_vehicle_ids(&mut expected, &va, &vb);
         normalize_list(&mut actual);
         normalize_list(&mut expected);
-        assert_eq!(expected, actual);
+        pretty_assertions::assert_eq!(expected, actual);
     }));
 
     // ── 021_08: Query with q filter ──────────────────────────────────────
@@ -335,14 +335,14 @@ pub fn tests(trials: &mut Vec<Trial>) {
             .timerel("after")
             .timeat("2020-07-01T12:05:00Z");
         let resp = ctx.client.query_temporal_entities(&params, ctx_headers()).await;
-        assert_eq!(resp.status, StatusCode::OK);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::OK);
 
         let mut actual: serde_json::Value = resp.json();
         let mut expected = fixtures::load_expectation("temporal_entities/expectations/vehicles-temporal-representation-021-08.jsonld");
         replace_vehicle_ids(&mut expected, &va, &vb);
         normalize_list(&mut actual);
         normalize_list(&mut expected);
-        assert_eq!(expected, actual);
+        pretty_assertions::assert_eq!(expected, actual);
     }));
 
     // ── 021_09: Geo-query ─────────────────────────────────────────────────
@@ -361,14 +361,14 @@ pub fn tests(trials: &mut Vec<Trial>) {
             .timerel("after")
             .timeat("2020-07-01T12:05:00Z");
         let resp = ctx.client.query_temporal_entities(&params, ctx_headers()).await;
-        assert_eq!(resp.status, StatusCode::OK);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::OK);
 
         let mut actual: serde_json::Value = resp.json();
         let mut expected = fixtures::load_expectation("temporal_entities/expectations/vehicles-temporal-representation-021-09-01.jsonld");
         replace_vehicle_ids(&mut expected, &va, &vb);
         normalize_list(&mut actual);
         normalize_list(&mut expected);
-        assert_eq!(expected, actual);
+        pretty_assertions::assert_eq!(expected, actual);
     }));
 
     trials.push(trial(&format!("{PREFIX}::021_09_02::geo_within"), |ctx| async move {
@@ -386,14 +386,14 @@ pub fn tests(trials: &mut Vec<Trial>) {
             .timerel("after")
             .timeat("2020-07-01T12:05:00Z");
         let resp = ctx.client.query_temporal_entities(&params, ctx_headers()).await;
-        assert_eq!(resp.status, StatusCode::OK);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::OK);
 
         let mut actual: serde_json::Value = resp.json();
         let mut expected = fixtures::load_expectation("temporal_entities/expectations/vehicles-temporal-representation-021-09-02.jsonld");
         replace_vehicle_ids(&mut expected, &va, &vb);
         normalize_list(&mut actual);
         normalize_list(&mut expected);
-        assert_eq!(expected, actual);
+        pretty_assertions::assert_eq!(expected, actual);
     }));
 
     // ── 021_11: Query with limit ──────────────────────────────────────────
@@ -413,7 +413,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
                 .timerel("after")
                 .timeat("2020-07-01T12:05:00Z");
             let resp = ctx.client.query_temporal_entities(&params, ctx_headers()).await;
-            assert_eq!(resp.status, StatusCode::OK);
+            pretty_assertions::assert_eq!(resp.status, StatusCode::OK);
             let body: Vec<serde_json::Value> = resp.json();
             assert!(body.len() <= limit_val as usize);
         }));
@@ -424,7 +424,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
     trials.push(trial(&format!("{PREFIX}::021_12_01::invalid_no_type"), |ctx| async move {
         let params = QueryParams::new().timerel("after").timeat("2020-07-01T12:05:00Z");
         let resp = ctx.client.query_temporal_entities(&params, ctx_headers()).await;
-        assert_eq!(resp.status, StatusCode::BAD_REQUEST);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::BAD_REQUEST);
         let body: serde_json::Value = resp.json();
         assert!(body["type"].as_str().unwrap_or("").contains("BadRequestData"));
         assert!(body["title"].as_str().is_some());
@@ -478,7 +478,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
                 .client
                 .request(Method::POST, "/temporal/entityOperations/query", Some(&query), headers)
                 .await;
-            assert_eq!(resp.status, StatusCode::OK);
+            pretty_assertions::assert_eq!(resp.status, StatusCode::OK);
 
             let mut actual: serde_json::Value = resp.json();
             let mut expected = fixtures::load_expectation(&format!("temporal_entities/expectations/{expectation_fixture}"));
@@ -497,7 +497,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
             }
             normalize_list(&mut actual);
             normalize_list(&mut expected);
-            assert_eq!(expected, actual);
+            pretty_assertions::assert_eq!(expected, actual);
         }));
     }
 
@@ -546,14 +546,14 @@ pub fn tests(trials: &mut Vec<Trial>) {
                 params = params.endtimeat(e);
             }
             let resp = ctx.client.query_temporal_entities(&params, ctx_headers()).await;
-            assert_eq!(resp.status, StatusCode::OK);
+            pretty_assertions::assert_eq!(resp.status, StatusCode::OK);
 
             let mut actual: serde_json::Value = resp.json();
             let mut expected = fixtures::load_expectation(&format!("temporal_entities/expectations/{expectation}"));
             replace_vehicle_ids(&mut expected, &va, &vb);
             normalize_list(&mut actual);
             normalize_list(&mut expected);
-            assert_eq!(expected, actual);
+            pretty_assertions::assert_eq!(expected, actual);
         }));
     }
 
@@ -599,9 +599,9 @@ pub fn tests(trials: &mut Vec<Trial>) {
             .client
             .request(Method::POST, "/temporal/entityOperations/query", Some(&query), headers)
             .await;
-        assert_eq!(resp.status, StatusCode::PARTIAL_CONTENT);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::PARTIAL_CONTENT);
         let (unit, _, _, _) = parse_content_range(&resp.headers);
-        assert_eq!(unit, "date-time");
+        pretty_assertions::assert_eq!(unit, "date-time");
     }));
 
     // ── 021_17: Aggregated temporal representation ────────────────────────
@@ -655,14 +655,14 @@ pub fn tests(trials: &mut Vec<Trial>) {
                 params = params.attrs(a);
             }
             let resp = ctx.client.query_temporal_entities(&params, ctx_headers()).await;
-            assert_eq!(resp.status, StatusCode::OK);
+            pretty_assertions::assert_eq!(resp.status, StatusCode::OK);
 
             let body: Vec<serde_json::Value> = resp.json();
             let mut actual = body[0].clone();
             let mut expected = fixtures::load_fixture(&format!("temporal_entities/expectations/{expectation}"), &id);
             normalize(&mut actual);
             normalize(&mut expected);
-            assert_eq!(expected, actual);
+            pretty_assertions::assert_eq!(expected, actual);
         }));
     }
 
@@ -733,7 +733,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
                 params = params.dataset_id(d);
             }
             let resp = ctx.client.query_temporal_entities(&params, ctx_headers()).await;
-            assert_eq!(resp.status, StatusCode::OK);
+            pretty_assertions::assert_eq!(resp.status, StatusCode::OK);
 
             let body: Vec<serde_json::Value> = resp.json();
             assert!(!body.is_empty(), "expected at least one entity in response");
@@ -753,7 +753,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
             };
             normalize(&mut actual);
             normalize(&mut expected);
-            assert_eq!(expected, actual);
+            pretty_assertions::assert_eq!(expected, actual);
         }));
     }
 
@@ -775,7 +775,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
             .timerel("after")
             .timeat("2020-08-01T12:04:00Z");
         let resp = ctx.client.query_temporal_entities(&params, ctx_headers()).await;
-        assert_eq!(resp.status, StatusCode::OK);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::OK);
         let body: Vec<serde_json::Value> = resp.json();
         assert!(body.is_empty(), "expected empty result set");
     }));
@@ -823,14 +823,14 @@ pub fn tests(trials: &mut Vec<Trial>) {
                 params = params.aggr_methods("sum");
             }
             let resp = ctx.client.query_temporal_entities(&params, ctx_headers()).await;
-            assert_eq!(resp.status, StatusCode::OK);
+            pretty_assertions::assert_eq!(resp.status, StatusCode::OK);
 
             let mut actual: serde_json::Value = resp.json();
             let mut expected = fixtures::load_expectation(&format!("temporal_entities/expectations/{expectation}"));
             replace_vehicle_ids(&mut expected, &va, &vb);
             normalize_list(&mut actual);
             normalize_list(&mut expected);
-            assert_eq!(expected, actual);
+            pretty_assertions::assert_eq!(expected, actual);
         }));
     }
 
@@ -860,7 +860,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
     ] {
         trials.push(trial(&format!("{PREFIX}::{suffix}::{label}"), move |ctx| async move {
             let resp = ctx.client.request(Method::GET, url, None, ctx_headers()).await;
-            assert_eq!(resp.status, StatusCode::BAD_REQUEST);
+            pretty_assertions::assert_eq!(resp.status, StatusCode::BAD_REQUEST);
             let body: serde_json::Value = resp.json();
             assert!(body["type"].as_str().unwrap_or("").contains("InvalidRequest"));
         }));
@@ -878,11 +878,11 @@ fn query_pagination_test_cases() -> Vec<(&'static str, &'static str, PaginationP
             Box::new(|| QueryParams::new().type_("Vehicle").lastn(20).timerel("before").timeat("2021-01-01T01:01:00Z")),
             Box::new(|body, headers| {
                 let (unit, range_start, range_end, size) = parse_content_range(headers);
-                assert_eq!(unit, "date-time");
-                assert_eq!(size, "20");
+                pretty_assertions::assert_eq!(unit, "date-time");
+                pretty_assertions::assert_eq!(size, "20");
                 let lrt = get_least_recent_timestamp_vehicles(body, "");
-                assert_eq!(range_start, "2021-01-01T01:01:00Z");
-                assert_eq!(range_end, lrt);
+                pretty_assertions::assert_eq!(range_start, "2021-01-01T01:01:00Z");
+                pretty_assertions::assert_eq!(range_end, lrt);
             }),
         ),
         (
@@ -898,10 +898,10 @@ fn query_pagination_test_cases() -> Vec<(&'static str, &'static str, PaginationP
             }),
             Box::new(|body, headers| {
                 let (unit, range_start, range_end, _size) = parse_content_range(headers);
-                assert_eq!(unit, "date-time");
+                pretty_assertions::assert_eq!(unit, "date-time");
                 let lrt = get_least_recent_timestamp_vehicles(body, "");
-                assert_eq!(range_start, "2021-01-01T01:01:00Z");
-                assert_eq!(range_end, lrt);
+                pretty_assertions::assert_eq!(range_start, "2021-01-01T01:01:00Z");
+                pretty_assertions::assert_eq!(range_end, lrt);
             }),
         ),
         (
@@ -910,12 +910,12 @@ fn query_pagination_test_cases() -> Vec<(&'static str, &'static str, PaginationP
             Box::new(|| QueryParams::new().type_("Vehicle").lastn(20).timerel("after").timeat("2019-01-01T01:01:00Z")),
             Box::new(|body, headers| {
                 let (unit, range_start, range_end, size) = parse_content_range(headers);
-                assert_eq!(unit, "date-time");
-                assert_eq!(size, "20");
+                pretty_assertions::assert_eq!(unit, "date-time");
+                pretty_assertions::assert_eq!(size, "20");
                 let lrt = get_least_recent_timestamp_vehicles(body, "");
                 let mrt = get_most_recent_timestamp_vehicles(body, "");
-                assert_eq!(range_start, mrt);
-                assert_eq!(range_end, lrt);
+                pretty_assertions::assert_eq!(range_start, mrt);
+                pretty_assertions::assert_eq!(range_end, lrt);
             }),
         ),
         (
@@ -924,10 +924,10 @@ fn query_pagination_test_cases() -> Vec<(&'static str, &'static str, PaginationP
             Box::new(|| QueryParams::new().type_("Vehicle").timerel("before").timeat("2021-01-01T01:01:00Z")),
             Box::new(|body, headers| {
                 let (unit, _range_start, range_end, size) = parse_content_range(headers);
-                assert_eq!(unit, "date-time");
-                assert_eq!(size, "*");
+                pretty_assertions::assert_eq!(unit, "date-time");
+                pretty_assertions::assert_eq!(size, "*");
                 let mrt = get_most_recent_timestamp_vehicles(body, "");
-                assert_eq!(range_end, mrt);
+                pretty_assertions::assert_eq!(range_end, mrt);
             }),
         ),
         (
@@ -942,10 +942,10 @@ fn query_pagination_test_cases() -> Vec<(&'static str, &'static str, PaginationP
             }),
             Box::new(|body, headers| {
                 let (unit, range_start, range_end, _size) = parse_content_range(headers);
-                assert_eq!(unit, "date-time");
+                pretty_assertions::assert_eq!(unit, "date-time");
                 let mrt = get_most_recent_timestamp_vehicles(body, "");
-                assert_eq!(range_start, "2019-01-01T01:01:00Z");
-                assert_eq!(range_end, mrt);
+                pretty_assertions::assert_eq!(range_start, "2019-01-01T01:01:00Z");
+                pretty_assertions::assert_eq!(range_end, mrt);
             }),
         ),
         (
@@ -954,10 +954,10 @@ fn query_pagination_test_cases() -> Vec<(&'static str, &'static str, PaginationP
             Box::new(|| QueryParams::new().type_("Vehicle").timerel("after").timeat("2019-01-01T01:01:00Z")),
             Box::new(|body, headers| {
                 let (unit, range_start, range_end, _size) = parse_content_range(headers);
-                assert_eq!(unit, "date-time");
+                pretty_assertions::assert_eq!(unit, "date-time");
                 let mrt = get_most_recent_timestamp_vehicles(body, "");
-                assert_eq!(range_start, "2019-01-01T01:01:00Z");
-                assert_eq!(range_end, mrt);
+                pretty_assertions::assert_eq!(range_start, "2019-01-01T01:01:00Z");
+                pretty_assertions::assert_eq!(range_end, mrt);
             }),
         ),
         (
@@ -972,10 +972,10 @@ fn query_pagination_test_cases() -> Vec<(&'static str, &'static str, PaginationP
             }),
             Box::new(|body, headers| {
                 let (unit, range_start, range_end, _size) = parse_content_range(headers);
-                assert_eq!(unit, "date-time");
+                pretty_assertions::assert_eq!(unit, "date-time");
                 let mrt = get_most_recent_timestamp_vehicles(body, "temporalValues");
-                assert_eq!(range_start, "2019-01-01T01:01:00Z");
-                assert_eq!(range_end, mrt);
+                pretty_assertions::assert_eq!(range_start, "2019-01-01T01:01:00Z");
+                pretty_assertions::assert_eq!(range_end, mrt);
             }),
         ),
         (
@@ -992,10 +992,10 @@ fn query_pagination_test_cases() -> Vec<(&'static str, &'static str, PaginationP
             }),
             Box::new(|body, headers| {
                 let (unit, range_start, range_end, _size) = parse_content_range(headers);
-                assert_eq!(unit, "date-time");
+                pretty_assertions::assert_eq!(unit, "date-time");
                 let lrt = get_least_recent_timestamp_vehicles(body, "temporalValues");
-                assert_eq!(range_start, "2021-01-01T01:01:00Z");
-                assert_eq!(range_end, lrt);
+                pretty_assertions::assert_eq!(range_start, "2021-01-01T01:01:00Z");
+                pretty_assertions::assert_eq!(range_end, lrt);
             }),
         ),
     ]

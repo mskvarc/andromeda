@@ -1,3 +1,4 @@
+#![allow(clippy::expect_used, clippy::unwrap_used)]
 use crate::harness::{
     client::{QueryParams, RequestHeaders},
     fixtures,
@@ -5,7 +6,6 @@ use crate::harness::{
     trial::trial,
 };
 use libtest_mimic::Trial;
-use pretty_assertions::assert_eq;
 use reqwest::{Method, StatusCode};
 
 use super::prepare_registration;
@@ -30,7 +30,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
             // Create inclusive registration (no mode)
             let reg = prepare_registration(REG_REDIRECTION_OPS, &reg_id, &entity_id, &mock.url(""), None);
             let resp = ctx.client.create_registration(&reg).await;
-            assert_eq!(resp.status, StatusCode::CREATED);
+            pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
             ctx.track_registration(&reg_id);
 
             // Set stub for forwarded create
@@ -39,7 +39,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
             // Create entity
             let entity = fixtures::load_fixture(VEHICLE_FIXTURE, &entity_id);
             let resp = ctx.client.create_entity(&entity).await;
-            assert_eq!(resp.status, StatusCode::CREATED);
+            pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
 
             // Verify forwarding happened
             assert!(mock.get_count(Method::POST, "/ngsi-ld/v1/entities").await > 0);
@@ -52,7 +52,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
                     RequestHeaders::new().accept_ld_json().link_context(fixtures::test_suite_context_url()),
                 )
                 .await;
-            assert_eq!(resp.status, StatusCode::OK);
+            pretty_assertions::assert_eq!(resp.status, StatusCode::OK);
             let body: Vec<serde_json::Value> = resp.json();
             assert!(body.iter().any(|e| e["id"] == entity_id));
 
@@ -72,12 +72,12 @@ pub fn tests(trials: &mut Vec<Trial>) {
             .client
             .request(Method::POST, "/entities?local=true", Some(&entity), RequestHeaders::new())
             .await;
-        assert_eq!(resp.status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
 
         // Create exclusive registration with endpoint /broker1
         let reg = prepare_registration(REG_SPEED_REDIRECTION_OPS, &reg_id, &entity_id, &mock.url("/broker1"), Some("exclusive"));
         let resp = ctx.client.create_registration(&reg).await;
-        assert_eq!(resp.status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
         ctx.track_registration(&reg_id);
 
         // Set stub for forwarded create
@@ -86,7 +86,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
         // Create entity with speed attribute
         let speed_entity = fixtures::load_fixture(VEHICLE_SPEED_FIXTURE, &entity_id);
         let resp = ctx.client.create_entity(&speed_entity).await;
-        assert_eq!(resp.status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
 
         // Verify forwarding happened
         assert!(mock.get_count(Method::POST, "/broker1/ngsi-ld/v1/entities").await > 0);
@@ -118,12 +118,12 @@ pub fn tests(trials: &mut Vec<Trial>) {
         // Create two redirect registrations
         let reg1 = prepare_registration(REG_REDIRECTION_OPS, &reg_id, &entity_id, &mock.url("/broker1"), Some("redirect"));
         let resp = ctx.client.create_registration(&reg1).await;
-        assert_eq!(resp.status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
         ctx.track_registration(&reg_id);
 
         let reg2 = prepare_registration(REG_REDIRECTION_OPS, &reg_id2, &entity_id2, &mock.url("/broker2"), Some("redirect"));
         let resp = ctx.client.create_registration(&reg2).await;
-        assert_eq!(resp.status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
         ctx.track_registration(&reg_id2);
 
         // Set stubs for both brokers
@@ -133,13 +133,13 @@ pub fn tests(trials: &mut Vec<Trial>) {
         // Create entity1 → forwarded to broker1
         let entity = fixtures::load_fixture(VEHICLE_FIXTURE, &entity_id);
         let resp = ctx.client.create_entity(&entity).await;
-        assert_eq!(resp.status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
         assert!(mock.get_count(Method::POST, "/broker1/ngsi-ld/v1/entities").await > 0);
 
         // Create entity2 → forwarded to broker2
         let entity2 = fixtures::load_fixture(VEHICLE_FIXTURE, &entity_id2);
         let resp = ctx.client.create_entity(&entity2).await;
-        assert_eq!(resp.status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
         assert!(mock.get_count(Method::POST, "/broker2/ngsi-ld/v1/entities").await > 0);
 
         mock.stop();
@@ -159,12 +159,12 @@ pub fn tests(trials: &mut Vec<Trial>) {
                 .client
                 .request(Method::POST, "/entities?local=true", Some(&entity), RequestHeaders::new())
                 .await;
-            assert_eq!(resp.status, StatusCode::CREATED);
+            pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
 
             // Create exclusive registration WITHOUT redirectionOps
             let reg = prepare_registration(REG_SPEED_DEFAULT_OPS, &reg_id, &entity_id, &mock.url("/broker1"), Some("exclusive"));
             let resp = ctx.client.create_registration(&reg).await;
-            assert_eq!(resp.status, StatusCode::CREATED);
+            pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
             ctx.track_registration(&reg_id);
 
             // Set stub (should never be called)
@@ -173,10 +173,10 @@ pub fn tests(trials: &mut Vec<Trial>) {
             // Try to create entity with speed → should fail with 409
             let speed_entity = fixtures::load_fixture(VEHICLE_SPEED_FIXTURE, &entity_id);
             let resp = ctx.client.create_entity(&speed_entity).await;
-            assert_eq!(resp.status, StatusCode::CONFLICT);
+            pretty_assertions::assert_eq!(resp.status, StatusCode::CONFLICT);
 
             // Verify forwarding did NOT happen
-            assert_eq!(mock.get_count(Method::POST, "/broker1/ngsi-ld/v1/entities").await, 0);
+            pretty_assertions::assert_eq!(mock.get_count(Method::POST, "/broker1/ngsi-ld/v1/entities").await, 0);
 
             mock.stop();
         },
@@ -190,14 +190,14 @@ pub fn tests(trials: &mut Vec<Trial>) {
         // Create inclusive registration (no entity_id in this fixture)
         let reg = prepare_registration(REG_REDIRECTION_OPS, &reg_id, "", &mock.url(""), None);
         let resp = ctx.client.create_registration(&reg).await;
-        assert_eq!(resp.status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
         ctx.track_registration(&reg_id);
 
         // Try to create entity with invalid URI id
         let mut entity = fixtures::load_fixture(VEHICLE_FIXTURE, "InvalidUriExample");
         entity["id"] = serde_json::Value::String("InvalidUriExample".to_string());
         let resp = ctx.client.create_entity(&entity).await;
-        assert_eq!(resp.status, StatusCode::BAD_REQUEST);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::BAD_REQUEST);
 
         // Verify no entity was created locally
         let resp = ctx
@@ -207,7 +207,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
                 RequestHeaders::new().accept_ld_json().link_context(fixtures::test_suite_context_url()),
             )
             .await;
-        assert_eq!(resp.status, StatusCode::OK);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::OK);
         let body: Vec<serde_json::Value> = resp.json();
         assert!(body.is_empty());
 
@@ -223,12 +223,12 @@ pub fn tests(trials: &mut Vec<Trial>) {
         // Create entity first (succeeds)
         let entity = fixtures::load_fixture(VEHICLE_FIXTURE, &entity_id);
         let resp = ctx.client.create_entity(&entity).await;
-        assert_eq!(resp.status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
 
         // Create inclusive registration
         let reg = prepare_registration(REG_REDIRECTION_OPS, &reg_id, &entity_id, &mock.url(""), None);
         let resp = ctx.client.create_registration(&reg).await;
-        assert_eq!(resp.status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
         ctx.track_registration(&reg_id);
 
         // Set stub for remote (succeeds)
@@ -237,12 +237,12 @@ pub fn tests(trials: &mut Vec<Trial>) {
         // Create same entity again → 207 (local conflict, remote success)
         let entity = fixtures::load_fixture(VEHICLE_FIXTURE, &entity_id);
         let resp = ctx.client.create_entity(&entity).await;
-        assert_eq!(resp.status, StatusCode::MULTI_STATUS);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::MULTI_STATUS);
 
         let body: serde_json::Value = resp.json();
         let errors = body["errors"].as_array().unwrap();
-        assert_eq!(errors.len(), 1);
-        assert_eq!(errors[0]["error"]["status"], 409);
+        pretty_assertions::assert_eq!(errors.len(), 1);
+        pretty_assertions::assert_eq!(errors[0]["error"]["status"], 409);
 
         // Verify forwarding still happened
         assert!(mock.get_count(Method::POST, "/ngsi-ld/v1/entities").await > 0);
@@ -259,12 +259,12 @@ pub fn tests(trials: &mut Vec<Trial>) {
         // Create entity locally first
         let entity = fixtures::load_fixture(VEHICLE_FIXTURE, &entity_id);
         let resp = ctx.client.create_entity(&entity).await;
-        assert_eq!(resp.status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
 
         // Create inclusive registration
         let reg = prepare_registration(REG_REDIRECTION_OPS, &reg_id, &entity_id, &mock.url(""), None);
         let resp = ctx.client.create_registration(&reg).await;
-        assert_eq!(resp.status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
         ctx.track_registration(&reg_id);
 
         // Set stub for remote (conflict — entity exists there too)
@@ -273,12 +273,12 @@ pub fn tests(trials: &mut Vec<Trial>) {
         // Create same entity again → 207 (both conflict)
         let entity = fixtures::load_fixture(VEHICLE_FIXTURE, &entity_id);
         let resp = ctx.client.create_entity(&entity).await;
-        assert_eq!(resp.status, StatusCode::MULTI_STATUS);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::MULTI_STATUS);
 
         let body: serde_json::Value = resp.json();
         let errors = body["errors"].as_array().unwrap();
-        assert_eq!(errors[0]["error"]["status"], 409);
-        assert_eq!(errors[1]["error"]["status"], 409);
+        pretty_assertions::assert_eq!(errors[0]["error"]["status"], 409);
+        pretty_assertions::assert_eq!(errors[1]["error"]["status"], 409);
 
         mock.stop();
     }));
@@ -294,7 +294,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
             // Create inclusive registration (no local entity)
             let reg = prepare_registration(REG_REDIRECTION_OPS, &reg_id, &entity_id, &mock.url(""), None);
             let resp = ctx.client.create_registration(&reg).await;
-            assert_eq!(resp.status, StatusCode::CREATED);
+            pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
             ctx.track_registration(&reg_id);
 
             // Set stub for remote (conflict — entity exists remotely)
@@ -303,11 +303,11 @@ pub fn tests(trials: &mut Vec<Trial>) {
             // Create entity → 207 (local success, remote conflict)
             let entity = fixtures::load_fixture(VEHICLE_FIXTURE, &entity_id);
             let resp = ctx.client.create_entity(&entity).await;
-            assert_eq!(resp.status, StatusCode::MULTI_STATUS);
+            pretty_assertions::assert_eq!(resp.status, StatusCode::MULTI_STATUS);
 
             let body: serde_json::Value = resp.json();
             let errors = body["errors"].as_array().unwrap();
-            assert_eq!(errors[0]["error"]["status"], 409);
+            pretty_assertions::assert_eq!(errors[0]["error"]["status"], 409);
 
             // Verify entity was created locally
             let resp = ctx
@@ -333,7 +333,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
         // Create inclusive registration
         let reg = prepare_registration(REG_REDIRECTION_OPS, &reg_id, &entity_id, &mock.url(""), None);
         let resp = ctx.client.create_registration(&reg).await;
-        assert_eq!(resp.status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
         ctx.track_registration(&reg_id);
 
         // Create entity with local=true → should NOT forward
@@ -342,10 +342,10 @@ pub fn tests(trials: &mut Vec<Trial>) {
             .client
             .request(Method::POST, "/entities?local=true", Some(&entity), RequestHeaders::new())
             .await;
-        assert_eq!(resp.status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
 
         // Verify no forwarding happened
-        assert_eq!(mock.get_total_count().await, 0);
+        pretty_assertions::assert_eq!(mock.get_total_count().await, 0);
 
         mock.stop();
     }));

@@ -123,7 +123,7 @@ async fn create_ordering_fixtures(client: &Client) -> (String, String, String) {
             "@context": [TEST_SUITE_CONTEXT]
         });
         let (status, _) = create_entity(client, &entity).await;
-        assert_eq!(status, StatusCode::CREATED, "create fixture {name}");
+        pretty_assertions::assert_eq!(status, StatusCode::CREATED, "create fixture {name}");
     }
 
     (id_a, id_b, id_c)
@@ -141,9 +141,9 @@ async fn entity_order_dist_asc_with_order_from_point_orders_nearest_first() {
     let (id_a, id_b, id_c) = create_ordering_fixtures(&c).await;
 
     let (status, body) = query_entities(&c, "type=Building&orderBy=location;dist-asc&orderFrom=%5B13.3986%2C52.5547%5D").await;
-    assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
     let ids = ids_from_response(&body);
-    assert_eq!(ids, vec![id_a, id_b, id_c], "entities must be ordered nearest-to-farthest from Berlin-north");
+    pretty_assertions::assert_eq!(ids, vec![id_a, id_b, id_c], "entities must be ordered nearest-to-farthest from Berlin-north");
 }
 
 // ---------------------------------------------------------------------------
@@ -158,9 +158,9 @@ async fn entity_order_dist_desc_with_order_from_point_orders_farthest_first() {
     let (id_a, id_b, id_c) = create_ordering_fixtures(&c).await;
 
     let (status, body) = query_entities(&c, "type=Building&orderBy=location;dist-desc&orderFrom=%5B13.3986%2C52.5547%5D").await;
-    assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
     let ids = ids_from_response(&body);
-    assert_eq!(ids, vec![id_c, id_b, id_a], "entities must be ordered farthest-to-nearest from Berlin-north");
+    pretty_assertions::assert_eq!(ids, vec![id_c, id_b, id_a], "entities must be ordered farthest-to-nearest from Berlin-north");
 }
 
 // ---------------------------------------------------------------------------
@@ -180,11 +180,11 @@ async fn entity_order_dist_asc_with_order_geometry_line_string_orders_by_distanc
         "type=Building&orderBy=location;dist-asc&orderFrom=%5B%5B2.3%2C48.8%5D%2C%5B2.4%2C48.9%5D%5D&orderGeometry=LineString",
     )
     .await;
-    assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
     let ids = ids_from_response(&body);
-    assert_eq!(ids[0], id_c, "C (Paris) must be nearest to the Paris-area LineString");
-    assert_eq!(ids[1], id_b, "B (Berlin south) must be second");
-    assert_eq!(ids[2], id_a, "A (Berlin north) must be farthest");
+    pretty_assertions::assert_eq!(ids[0], id_c, "C (Paris) must be nearest to the Paris-area LineString");
+    pretty_assertions::assert_eq!(ids[1], id_b, "B (Berlin south) must be second");
+    pretty_assertions::assert_eq!(ids[2], id_a, "A (Berlin north) must be farthest");
 }
 
 // ---------------------------------------------------------------------------
@@ -205,11 +205,11 @@ async fn entity_order_dist_asc_without_order_from_uses_geo_query_reference() {
         "type=Building&georel=near;maxDistance%3D%3D50000&geometry=Point&coordinates=%5B13.3986%2C52.5547%5D&orderBy=location;dist-asc",
     )
     .await;
-    assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
     let ids = ids_from_response(&body);
-    assert_eq!(ids.len(), 2, "only A and B must be within 50 km of Berlin-north");
-    assert_eq!(ids[0], id_a, "A must be nearest");
-    assert_eq!(ids[1], id_b, "B must be second");
+    pretty_assertions::assert_eq!(ids.len(), 2, "only A and B must be within 50 km of Berlin-north");
+    pretty_assertions::assert_eq!(ids[0], id_a, "A must be nearest");
+    pretty_assertions::assert_eq!(ids[1], id_b, "B must be second");
 }
 
 // ---------------------------------------------------------------------------
@@ -230,11 +230,11 @@ async fn entity_order_order_from_takes_precedence_over_geo_query_coordinates() {
         "type=Building&georel=near;maxDistance%3D%3D1000000&geometry=Point&coordinates=%5B2.3522%2C48.8566%5D&orderBy=location;dist-asc&orderFrom=%5B13.3986%2C52.5547%5D",
     )
     .await;
-    assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
     let ids = ids_from_response(&body);
     assert!(ids.len() >= 2, "at least A and B must be returned");
-    assert_eq!(ids[0], id_a, "A must be first (nearest to Berlin-north orderFrom reference)");
-    assert_eq!(ids[1], id_b, "B must be second");
+    pretty_assertions::assert_eq!(ids[0], id_a, "A must be first (nearest to Berlin-north orderFrom reference)");
+    pretty_assertions::assert_eq!(ids[1], id_b, "B must be second");
 }
 
 // ---------------------------------------------------------------------------
@@ -250,9 +250,9 @@ async fn entity_order_mixed_property_and_distance_ordering_property_takes_preced
     let (id_a, id_b, id_c) = create_ordering_fixtures(&c).await;
 
     let (status, body) = query_entities(&c, "type=Building&orderBy=name;asc,location;dist-asc&orderFrom=%5B13.3986%2C52.5547%5D").await;
-    assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
     let ids = ids_from_response(&body);
-    assert_eq!(ids, vec![id_a, id_b, id_c], "alphabetical order: Alpha, Beta, Gamma");
+    pretty_assertions::assert_eq!(ids, vec![id_a, id_b, id_c], "alphabetical order: Alpha, Beta, Gamma");
 }
 
 // ---------------------------------------------------------------------------
@@ -268,15 +268,15 @@ async fn entity_order_dist_ordering_without_any_reference_returns_bad_request() 
     create_ordering_fixtures(&c).await;
 
     let (status, body) = query_entities(&c, "type=Building&orderBy=location;dist-asc").await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert_eq!(body["type"].as_str().unwrap(), BAD_REQUEST_DATA_TYPE, "must return BadRequestData error type");
+    pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
+    pretty_assertions::assert_eq!(body["type"].as_str().unwrap(), BAD_REQUEST_DATA_TYPE, "must return BadRequestData error type");
 }
 
 #[tokio::test]
 async fn entity_order_invalid_order_from_syntax_returns_bad_request() {
     let c = client();
     let (status, _) = query_entities(&c, "type=Building&orderBy=location;dist-asc&orderFrom=notjson").await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
+    pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
 }
 
 #[tokio::test]
@@ -288,8 +288,8 @@ async fn entity_order_geometry_collection_as_order_geometry_returns_bad_request(
         "type=Building&orderBy=location;dist-asc&orderFrom=%5B8%2C40%5D&orderGeometry=GeometryCollection",
     )
     .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert_eq!(
+    pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
+    pretty_assertions::assert_eq!(
         body["type"].as_str().unwrap(),
         BAD_REQUEST_DATA_TYPE,
         "must return BadRequestData for GeometryCollection orderGeometry"
@@ -324,7 +324,7 @@ async fn entity_order_entities_without_location_excluded_from_dist_ordered_resul
         }),
     )
     .await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     let (status, _) = create_entity(
         &c,
@@ -336,11 +336,11 @@ async fn entity_order_entities_without_location_excluded_from_dist_ordered_resul
         }),
     )
     .await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     let (status, body) = query_entities(&c, "type=Building&orderBy=location;dist-asc&orderFrom=%5B13.0%2C52.0%5D").await;
     // The broker must respond without error.
-    assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
     let ids = ids_from_response(&body);
     assert!(ids.contains(&id_with), "entity with location must appear in results");
 }

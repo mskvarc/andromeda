@@ -133,11 +133,11 @@ async fn expiration_property_expires_at_preserved_on_create_retrieve() {
         "@context": [TEST_SUITE_CONTEXT]
     });
     let (status, _) = create_entity(&c, &entity).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     let (status, body) = get_entity(&c, &id, "options=sysAttrs").await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["speed"]["expiresAt"], "2099-12-31T23:59:59Z");
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(body["speed"]["expiresAt"], "2099-12-31T23:59:59Z");
 }
 
 #[tokio::test]
@@ -155,11 +155,11 @@ async fn expiration_relationship_expires_at_preserved_on_create_retrieve() {
         "@context": [TEST_SUITE_CONTEXT]
     });
     let (status, _) = create_entity(&c, &entity).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     let (status, body) = get_entity(&c, &id, "options=sysAttrs").await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["isParkedIn"]["expiresAt"], "2099-06-15T12:00:00Z");
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(body["isParkedIn"]["expiresAt"], "2099-06-15T12:00:00Z");
 }
 
 #[tokio::test]
@@ -177,11 +177,11 @@ async fn expiration_geo_property_expires_at_preserved_on_create_retrieve() {
         "@context": [TEST_SUITE_CONTEXT]
     });
     let (status, _) = create_entity(&c, &entity).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     let (status, body) = get_entity(&c, &id, "options=sysAttrs").await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["location"]["expiresAt"], "2099-01-01T00:00:00Z");
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(body["location"]["expiresAt"], "2099-01-01T00:00:00Z");
 }
 
 #[tokio::test]
@@ -199,11 +199,11 @@ async fn expiration_vocab_property_expires_at_preserved_on_create_retrieve() {
         "@context": [TEST_SUITE_CONTEXT]
     });
     let (status, _) = create_entity(&c, &entity).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     let (status, body) = get_entity(&c, &id, "options=sysAttrs").await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["category"]["expiresAt"], "2099-03-15T08:00:00Z");
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(body["category"]["expiresAt"], "2099-03-15T08:00:00Z");
 }
 
 #[tokio::test]
@@ -221,11 +221,11 @@ async fn expiration_language_property_expires_at_preserved_on_create_retrieve() 
         "@context": [TEST_SUITE_CONTEXT]
     });
     let (status, _) = create_entity(&c, &entity).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     let (status, body) = get_entity(&c, &id, "options=sysAttrs").await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["name"]["expiresAt"], "2099-07-01T00:00:00Z");
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(body["name"]["expiresAt"], "2099-07-01T00:00:00Z");
 }
 
 #[tokio::test]
@@ -243,11 +243,11 @@ async fn expiration_json_property_expires_at_preserved_on_create_retrieve() {
         "@context": [TEST_SUITE_CONTEXT]
     });
     let (status, _) = create_entity(&c, &entity).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     let (status, body) = get_entity(&c, &id, "options=sysAttrs").await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["diagnostics"]["expiresAt"], "2099-09-01T12:00:00Z");
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(body["diagnostics"]["expiresAt"], "2099-09-01T12:00:00Z");
 }
 
 #[tokio::test]
@@ -265,11 +265,11 @@ async fn expiration_list_property_expires_at_preserved_on_create_retrieve() {
         "@context": [TEST_SUITE_CONTEXT]
     });
     let (status, _) = create_entity(&c, &entity).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     let (status, body) = get_entity(&c, &id, "options=sysAttrs").await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["tags"]["expiresAt"], "2099-11-20T06:30:00Z");
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(body["tags"]["expiresAt"], "2099-11-20T06:30:00Z");
 }
 
 #[tokio::test]
@@ -287,11 +287,11 @@ async fn expiration_list_relationship_expires_at_preserved_on_create_retrieve() 
         "@context": [TEST_SUITE_CONTEXT]
     });
     let (status, _) = create_entity(&c, &entity).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     let (status, body) = get_entity(&c, &id, "options=sysAttrs").await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["connectedTo"]["expiresAt"], "2099-04-10T18:00:00Z");
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(body["connectedTo"]["expiresAt"], "2099-04-10T18:00:00Z");
 }
 
 // ---------------------------------------------------------------------------
@@ -314,13 +314,14 @@ async fn expiration_attribute_independent_of_entity_level_expires_at() {
         "@context": [TEST_SUITE_CONTEXT]
     });
     let (status, _) = create_entity(&c, &entity).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     let (status, body) = get_entity(&c, &id, "options=sysAttrs").await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["expiresAt"], "2099-01-01T00:00:00Z", "entity-level expiresAt");
-    assert_eq!(
-        body["speed"]["expiresAt"], "2098-06-01T00:00:00Z",
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(body["expiresAt"], "2099-01-01T00:00:00Z", "entity-level expiresAt");
+    pretty_assertions::assert_eq!(
+        body["speed"]["expiresAt"],
+        "2098-06-01T00:00:00Z",
         "attribute-level expiresAt differs from entity-level"
     );
 }
@@ -349,12 +350,12 @@ async fn expiration_multi_instance_different_expires_at_each_preserved() {
         "@context": [TEST_SUITE_CONTEXT]
     });
     let (status, _) = create_entity(&c, &entity).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     let (status, body) = get_entity(&c, &id, "options=sysAttrs").await;
-    assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
     let speed = body["speed"].as_array().expect("speed must be multi-instance array");
-    assert_eq!(speed.len(), 2);
+    pretty_assertions::assert_eq!(speed.len(), 2);
     let expires_values: Vec<&str> = speed.iter().filter_map(|s| s["expiresAt"].as_str()).collect();
     assert!(expires_values.contains(&"2099-12-31T23:59:59Z"), "first instance expiresAt must be preserved");
     assert!(expires_values.contains(&"2098-06-15T00:00:00Z"), "second instance expiresAt must be preserved");
@@ -375,7 +376,7 @@ async fn expiration_attribute_survives_unrelated_merge_patch() {
         "@context": [TEST_SUITE_CONTEXT]
     });
     let (status, _) = create_entity(&c, &entity).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     // Merge-patch adds an unrelated attribute; speed expiresAt must survive.
     let patch = json!({
@@ -386,12 +387,13 @@ async fn expiration_attribute_survives_unrelated_merge_patch() {
         "@context": [TEST_SUITE_CONTEXT]
     });
     let status = merge_entity(&c, &id, &patch).await;
-    assert_eq!(status, StatusCode::NO_CONTENT);
+    pretty_assertions::assert_eq!(status, StatusCode::NO_CONTENT);
 
     let (status, body) = get_entity(&c, &id, "options=sysAttrs").await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(
-        body["speed"]["expiresAt"], "2099-12-31T23:59:59Z",
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(
+        body["speed"]["expiresAt"],
+        "2099-12-31T23:59:59Z",
         "expiresAt must survive merge-patch of unrelated attrs"
     );
 }
@@ -413,11 +415,11 @@ async fn expiration_expires_at_visible_without_sys_attrs_option() {
         "@context": [TEST_SUITE_CONTEXT]
     });
     let (status, _) = create_entity(&c, &entity).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     let (status, body) = get_entity(&c, &id, "").await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["speed"]["expiresAt"], "2099-12-31T23:59:59Z", "expiresAt must be visible without sysAttrs");
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(body["speed"]["expiresAt"], "2099-12-31T23:59:59Z", "expiresAt must be visible without sysAttrs");
 }
 
 #[tokio::test]
@@ -435,7 +437,7 @@ async fn expiration_expires_at_updatable_via_merge_patch() {
         "@context": [TEST_SUITE_CONTEXT]
     });
     let (status, _) = create_entity(&c, &entity).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     let patch = json!({
         "speed": {
@@ -446,11 +448,11 @@ async fn expiration_expires_at_updatable_via_merge_patch() {
         "@context": [TEST_SUITE_CONTEXT]
     });
     let status = merge_entity(&c, &id, &patch).await;
-    assert_eq!(status, StatusCode::NO_CONTENT);
+    pretty_assertions::assert_eq!(status, StatusCode::NO_CONTENT);
 
     let (status, body) = get_entity(&c, &id, "options=sysAttrs").await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["speed"]["expiresAt"], "2099-06-30T00:00:00Z", "expiresAt must reflect merge-patch value");
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(body["speed"]["expiresAt"], "2099-06-30T00:00:00Z", "expiresAt must reflect merge-patch value");
 }
 
 // ---------------------------------------------------------------------------
@@ -489,14 +491,14 @@ async fn expiration_worker_partial_multi_instance_expired_instance_removed() {
         "@context": [TEST_SUITE_CONTEXT]
     });
     let (status, _) = create_entity(&c, &entity).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     tokio::time::sleep(std::time::Duration::from_secs(12)).await;
 
     let (status, body) = get_entity(&c, &id, "options=sysAttrs").await;
-    assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
     let speed = body["speed"].as_array().expect("speed must be multi-instance array");
-    assert_eq!(speed.len(), 2, "expired instance must be removed, 2 instances remain");
+    pretty_assertions::assert_eq!(speed.len(), 2, "expired instance must be removed, 2 instances remain");
 }
 
 #[tokio::test]
@@ -520,12 +522,12 @@ async fn expiration_worker_all_instances_expired_attribute_absent_from_entity() 
         "@context": [TEST_SUITE_CONTEXT]
     });
     let (status, _) = create_entity(&c, &entity).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     tokio::time::sleep(std::time::Duration::from_secs(12)).await;
 
     let (status, body) = get_entity(&c, &id, "options=sysAttrs").await;
-    assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
     assert!(body.get("speed").is_none(), "fully-expired attribute must be absent");
     assert!(body.get("fuel").is_some(), "attribute without expiresAt must remain");
 }
@@ -546,12 +548,12 @@ async fn expiration_worker_attribute_without_expires_at_never_removed() {
         "@context": [TEST_SUITE_CONTEXT]
     });
     let (status, _) = create_entity(&c, &entity).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     tokio::time::sleep(std::time::Duration::from_secs(12)).await;
 
     let (status, body) = get_entity(&c, &id, "").await;
-    assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
     assert!(body.get("speed").is_some(), "attribute without expiresAt must never be removed by worker");
 }
 
@@ -578,12 +580,12 @@ async fn expiration_worker_expired_location_removed_and_excluded_from_geo_querie
         "@context": [TEST_SUITE_CONTEXT]
     });
     let (status, _) = create_entity(&c, &entity).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     tokio::time::sleep(std::time::Duration::from_secs(12)).await;
 
     let (status, body) = get_entity(&c, &id, "options=sysAttrs").await;
-    assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
     assert!(body.get("location").is_none(), "expired location must be removed from entity");
     assert!(body.get("speed").is_some(), "non-expired attribute must remain");
 
@@ -593,7 +595,7 @@ async fn expiration_worker_expired_location_removed_and_excluded_from_geo_querie
         "type=Vehicle&georel=near;maxDistance%3D%3D1000&geometry=Point&coordinates=%5B13.0%2C52.0%5D",
     )
     .await;
-    assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
     let entities = body.as_array().expect("geo query must return JSON array");
     let matched = entities.iter().any(|e| e["id"].as_str() == Some(id.as_str()));
     assert!(!matched, "entity with expired location must not appear in geo query results");
@@ -622,13 +624,13 @@ async fn expiration_worker_attribute_expiry_does_not_affect_entity_level_expires
         "@context": [TEST_SUITE_CONTEXT]
     });
     let (status, _) = create_entity(&c, &entity).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     tokio::time::sleep(std::time::Duration::from_secs(12)).await;
 
     let (status, body) = get_entity(&c, &id, "options=sysAttrs").await;
-    assert_eq!(status, StatusCode::OK, "entity must still exist after attribute expiry");
+    pretty_assertions::assert_eq!(status, StatusCode::OK, "entity must still exist after attribute expiry");
     assert!(body.get("speed").is_none(), "attribute with past expiresAt must be removed");
     assert!(body.get("fuel").is_some(), "attribute without expiresAt must remain");
-    assert_eq!(body["expiresAt"], "2099-12-31T23:59:59Z", "entity-level expiresAt must be unaffected");
+    pretty_assertions::assert_eq!(body["expiresAt"], "2099-12-31T23:59:59Z", "entity-level expiresAt must be unaffected");
 }

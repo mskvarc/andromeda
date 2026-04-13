@@ -256,9 +256,8 @@ impl NotificationReceiver {
                     return notifications.remove(index);
                 }
             }
-            if tokio::time::timeout_at(deadline, self.notify.notified()).await.is_err() {
-                panic!("timed out waiting for subscription notification after {timeout:?}");
-            }
+            let notified = tokio::time::timeout_at(deadline, self.notify.notified()).await;
+            assert!(notified.is_ok(), "timed out waiting for subscription notification after {timeout:?}");
         }
     }
 
@@ -269,7 +268,7 @@ impl NotificationReceiver {
             .iter()
             .filter(|n| n.body["subscriptionId"].as_str() == Some(subscription_id))
             .count();
-        assert_eq!(count, 0, "expected no notifications for subscription {subscription_id}, got {count}");
+        pretty_assertions::assert_eq!(count, 0, "expected no notifications for subscription {subscription_id}, got {count}");
     }
 
     pub fn stop(&mut self) {
@@ -299,7 +298,7 @@ async fn multitenancy_unnamed_and_named_default_tenants_are_isolated() {
 
     // Create in unnamed default tenant (no NGSILD-Tenant header)
     let (status, create_headers, _) = ngsi_request(&http_client, Method::POST, "/entities", Some(&unnamed_entity), "", false).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
     assert!(
         create_headers.get("NGSILD-Tenant").is_none(),
         "unnamed default tenant response must omit NGSILD-Tenant header"
@@ -307,8 +306,8 @@ async fn multitenancy_unnamed_and_named_default_tenants_are_isolated() {
 
     // Create same ID in named "default" tenant
     let (status, create_headers, _) = ngsi_request(&http_client, Method::POST, "/entities", Some(&named_entity), "default", false).await;
-    assert_eq!(status, StatusCode::CREATED);
-    assert_eq!(
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(
         create_headers.get("NGSILD-Tenant").and_then(|v| v.to_str().ok()),
         Some("default"),
         "named default tenant response must include NGSILD-Tenant header"
@@ -316,13 +315,13 @@ async fn multitenancy_unnamed_and_named_default_tenants_are_isolated() {
 
     // Retrieve from unnamed default → should see unnamed version
     let (status, _, body) = ngsi_request(&http_client, Method::GET, &format!("/entities/{id}"), None, "", true).await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["name"]["value"], "unnamed-default");
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(body["name"]["value"], "unnamed-default");
 
     // Retrieve from named "default" tenant → should see named version
     let (status, _, body) = ngsi_request(&http_client, Method::GET, &format!("/entities/{id}"), None, "default", true).await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["name"]["value"], "named-default");
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(body["name"]["value"], "named-default");
 }
 
 #[serial_test::serial]
@@ -335,12 +334,13 @@ async fn multitenancy_non_create_on_unknown_tenant_returns_nonexistent_tenant_er
     let id = unique_entity_id("urn:ngsi-ld:Vehicle:noncreate");
 
     let (status, resp_headers, body) = ngsi_request(&http_client, Method::GET, &format!("/entities/{id}"), None, &tenant, true).await;
-    assert_eq!(status, StatusCode::NOT_FOUND);
-    assert_eq!(
-        body["type"], NONEXISTENT_TENANT_ERROR,
+    pretty_assertions::assert_eq!(status, StatusCode::NOT_FOUND);
+    pretty_assertions::assert_eq!(
+        body["type"],
+        NONEXISTENT_TENANT_ERROR,
         "accessing unknown tenant via non-create operation must return NonexistentTenant"
     );
-    assert_eq!(
+    pretty_assertions::assert_eq!(
         resp_headers.get("NGSILD-Tenant").and_then(|v| v.to_str().ok()),
         Some(tenant.as_str()),
         "response must echo NGSILD-Tenant header"
@@ -357,25 +357,25 @@ async fn multitenancy_create_operations_implicitly_create_named_tenant() {
     let tenant_1 = format!("tenant-create-entity-{}", Uuid::new_v4());
     let id_1 = unique_entity_id("urn:ngsi-ld:Vehicle:create-entity");
     let (status, headers, _) = ngsi_request(&http_client, Method::POST, "/entities", Some(&vehicle_entity(&id_1, "v1")), &tenant_1, false).await;
-    assert_eq!(status, StatusCode::CREATED);
-    assert_eq!(headers.get("NGSILD-Tenant").and_then(|v| v.to_str().ok()), Some(tenant_1.as_str()));
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(headers.get("NGSILD-Tenant").and_then(|v| v.to_str().ok()), Some(tenant_1.as_str()));
     let (status, _, _) = ngsi_request(&http_client, Method::GET, &format!("/entities/{id_1}"), None, &tenant_1, true).await;
-    assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
     // Entity not visible in unnamed default tenant
     let (status, _, _) = ngsi_request(&http_client, Method::GET, &format!("/entities/{id_1}"), None, "", true).await;
-    assert_eq!(status, StatusCode::NOT_FOUND);
+    pretty_assertions::assert_eq!(status, StatusCode::NOT_FOUND);
 
     // 2. Batch Entity Creation
     let tenant_2 = format!("tenant-batch-create-{}", Uuid::new_v4());
     let id_2 = unique_entity_id("urn:ngsi-ld:Vehicle:batch-create");
     let batch = json!([vehicle_entity(&id_2, "v2")]);
     let (status, headers, _) = ngsi_request(&http_client, Method::POST, "/entityOperations/create", Some(&batch), &tenant_2, false).await;
-    assert_eq!(status, StatusCode::CREATED);
-    assert_eq!(headers.get("NGSILD-Tenant").and_then(|v| v.to_str().ok()), Some(tenant_2.as_str()));
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(headers.get("NGSILD-Tenant").and_then(|v| v.to_str().ok()), Some(tenant_2.as_str()));
     let (status, _, _) = ngsi_request(&http_client, Method::GET, &format!("/entities/{id_2}"), None, &tenant_2, true).await;
-    assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
     let (status, _, _) = ngsi_request(&http_client, Method::GET, &format!("/entities/{id_2}"), None, "", true).await;
-    assert_eq!(status, StatusCode::NOT_FOUND);
+    pretty_assertions::assert_eq!(status, StatusCode::NOT_FOUND);
 
     // 3. Create Temporal Entity
     let tenant_3 = format!("tenant-temporal-create-{}", Uuid::new_v4());
@@ -389,8 +389,8 @@ async fn multitenancy_create_operations_implicitly_create_named_tenant() {
         false,
     )
     .await;
-    assert_eq!(status, StatusCode::CREATED);
-    assert_eq!(headers.get("NGSILD-Tenant").and_then(|v| v.to_str().ok()), Some(tenant_3.as_str()));
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(headers.get("NGSILD-Tenant").and_then(|v| v.to_str().ok()), Some(tenant_3.as_str()));
 
     // 4. Create Subscription
     let tenant_4 = format!("tenant-sub-create-{}", Uuid::new_v4());
@@ -404,12 +404,12 @@ async fn multitenancy_create_operations_implicitly_create_named_tenant() {
         false,
     )
     .await;
-    assert_eq!(status, StatusCode::CREATED);
-    assert_eq!(headers.get("NGSILD-Tenant").and_then(|v| v.to_str().ok()), Some(tenant_4.as_str()));
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(headers.get("NGSILD-Tenant").and_then(|v| v.to_str().ok()), Some(tenant_4.as_str()));
     let (status, _, _) = ngsi_request(&http_client, Method::GET, &format!("/subscriptions/{id_4}"), None, &tenant_4, true).await;
-    assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
     let (status, _, _) = ngsi_request(&http_client, Method::GET, &format!("/subscriptions/{id_4}"), None, "", true).await;
-    assert_eq!(status, StatusCode::NOT_FOUND);
+    pretty_assertions::assert_eq!(status, StatusCode::NOT_FOUND);
 
     // 5. Register Context Source
     let tenant_5 = format!("tenant-csr-create-{}", Uuid::new_v4());
@@ -423,12 +423,12 @@ async fn multitenancy_create_operations_implicitly_create_named_tenant() {
         false,
     )
     .await;
-    assert_eq!(status, StatusCode::CREATED);
-    assert_eq!(headers.get("NGSILD-Tenant").and_then(|v| v.to_str().ok()), Some(tenant_5.as_str()));
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(headers.get("NGSILD-Tenant").and_then(|v| v.to_str().ok()), Some(tenant_5.as_str()));
     let (status, _, _) = ngsi_request(&http_client, Method::GET, &format!("/csourceRegistrations/{id_5}"), None, &tenant_5, true).await;
-    assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
     let (status, _, _) = ngsi_request(&http_client, Method::GET, &format!("/csourceRegistrations/{id_5}"), None, "", true).await;
-    assert_eq!(status, StatusCode::NOT_FOUND);
+    pretty_assertions::assert_eq!(status, StatusCode::NOT_FOUND);
 
     // 6. Create Context Source Subscription
     let tenant_6 = format!("tenant-csr-sub-create-{}", Uuid::new_v4());
@@ -442,12 +442,12 @@ async fn multitenancy_create_operations_implicitly_create_named_tenant() {
         false,
     )
     .await;
-    assert_eq!(status, StatusCode::CREATED);
-    assert_eq!(headers.get("NGSILD-Tenant").and_then(|v| v.to_str().ok()), Some(tenant_6.as_str()));
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(headers.get("NGSILD-Tenant").and_then(|v| v.to_str().ok()), Some(tenant_6.as_str()));
     let (status, _, _) = ngsi_request(&http_client, Method::GET, &format!("/csourceSubscriptions/{id_6}"), None, &tenant_6, true).await;
-    assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
     let (status, _, _) = ngsi_request(&http_client, Method::GET, &format!("/csourceSubscriptions/{id_6}"), None, "", true).await;
-    assert_eq!(status, StatusCode::NOT_FOUND);
+    pretty_assertions::assert_eq!(status, StatusCode::NOT_FOUND);
 }
 
 #[serial_test::serial]
@@ -460,8 +460,8 @@ async fn multitenancy_named_tenant_error_response_echoes_ngsild_tenant_header() 
     // Missing required `id` field → BadRequestData, but tenant header must still be echoed
     let invalid = json!({"type": "Vehicle", "@context": [CORE_CONTEXT]});
     let (status, resp_headers, _) = ngsi_request(&http_client, Method::POST, "/entities", Some(&invalid), &tenant, false).await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert_eq!(
+    pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
+    pretty_assertions::assert_eq!(
         resp_headers.get("NGSILD-Tenant").and_then(|v| v.to_str().ok()),
         Some(tenant.as_str()),
         "error responses in named tenant must echo NGSILD-Tenant header"
@@ -487,13 +487,14 @@ async fn multitenancy_cross_tenant_entity_access_returns_not_found() {
         false,
     )
     .await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     // Accessing the entity from tenant B returns 404 NonexistentTenant (tenant B does not exist yet)
     let (status, _, body) = ngsi_request(&http_client, Method::GET, &format!("/entities/{id}"), None, &tenant_b, true).await;
-    assert_eq!(status, StatusCode::NOT_FOUND);
-    assert_eq!(
-        body["type"], NONEXISTENT_TENANT_ERROR,
+    pretty_assertions::assert_eq!(status, StatusCode::NOT_FOUND);
+    pretty_assertions::assert_eq!(
+        body["type"],
+        NONEXISTENT_TENANT_ERROR,
         "cross-tenant access to entity in non-existent tenant B must return NonexistentTenant"
     );
 }
@@ -508,7 +509,7 @@ async fn multitenancy_unnamed_default_tenant_notifications_omit_tenant_header() 
     let subscription_id = unique_subscription_id("unnamed-notif");
     let sub = entity_subscription(&subscription_id, &receiver.endpoint_url());
     let (status, resp_headers, _) = ngsi_request(&http_client, Method::POST, "/subscriptions", Some(&sub), "", false).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
     assert!(
         resp_headers.get("NGSILD-Tenant").is_none(),
         "create subscription in unnamed default tenant must omit NGSILD-Tenant header"
@@ -527,7 +528,7 @@ async fn multitenancy_unnamed_default_tenant_notifications_omit_tenant_header() 
         false,
     )
     .await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     let notification = receiver.wait_for_subscription_notification(&subscription_id, Duration::from_secs(10)).await;
     assert!(
@@ -550,8 +551,8 @@ async fn multitenancy_named_tenant_notifications_include_ngsild_tenant_header() 
     let subscription_id = unique_subscription_id("named-notif");
     let sub = entity_subscription(&subscription_id, &receiver.endpoint_url());
     let (status, resp_headers, _) = ngsi_request(&http_client, Method::POST, "/subscriptions", Some(&sub), &tenant, false).await;
-    assert_eq!(status, StatusCode::CREATED);
-    assert_eq!(
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(
         resp_headers.get("NGSILD-Tenant").and_then(|v| v.to_str().ok()),
         Some(tenant.as_str()),
         "create subscription in named tenant must include NGSILD-Tenant header"
@@ -569,10 +570,10 @@ async fn multitenancy_named_tenant_notifications_include_ngsild_tenant_header() 
         false,
     )
     .await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     let notification = receiver.wait_for_subscription_notification(&subscription_id, Duration::from_secs(10)).await;
-    assert_eq!(
+    pretty_assertions::assert_eq!(
         notification.headers.get("NGSILD-Tenant").and_then(|v| v.to_str().ok()),
         Some(tenant.as_str()),
         "notifications for named tenant must include NGSILD-Tenant header"
@@ -595,7 +596,7 @@ async fn multitenancy_subscription_does_not_receive_events_from_different_tenant
     let subscription_id = unique_subscription_id("isolation");
     let sub = entity_subscription(&subscription_id, &receiver.endpoint_url());
     let (status, _, _) = ngsi_request(&http_client, Method::POST, "/subscriptions", Some(&sub), &tenant_a, false).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     tokio::time::sleep(Duration::from_millis(150)).await;
 
@@ -610,7 +611,7 @@ async fn multitenancy_subscription_does_not_receive_events_from_different_tenant
         false,
     )
     .await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     receiver
         .wait_for_no_notification_for_subscription(&subscription_id, Duration::from_secs(2))
@@ -627,10 +628,10 @@ async fn multitenancy_subscription_does_not_receive_events_from_different_tenant
         false,
     )
     .await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     let notification = receiver.wait_for_subscription_notification(&subscription_id, Duration::from_secs(5)).await;
-    assert_eq!(notification.body["subscriptionId"], subscription_id);
+    pretty_assertions::assert_eq!(notification.body["subscriptionId"], subscription_id);
 
     receiver.stop();
 }

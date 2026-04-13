@@ -533,19 +533,20 @@ async fn fetch_and_parse(client: &Client, url: &str, max_bytes: usize) -> Result
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::*;
 
     #[test]
     fn normalizes_localhost_duplicated_jsonld_context_path() {
         let url = "http://localhost:1056/ngsi-ld/v1/ngsi-ld/v1/jsonldContexts/urn:ngsi-ld:Context:abc";
         let normalized = normalize_local_hosted_context_url(url);
-        assert_eq!(normalized, "http://localhost:1056/ngsi-ld/v1/jsonldContexts/urn:ngsi-ld:Context:abc");
+        pretty_assertions::assert_eq!(normalized, "http://localhost:1056/ngsi-ld/v1/jsonldContexts/urn:ngsi-ld:Context:abc");
     }
 
     #[test]
     fn does_not_normalize_non_local_context_url() {
         let url = "https://forge.etsi.org/ngsi-ld/v1/ngsi-ld/v1/jsonldContexts/urn:ngsi-ld:Context:abc";
-        assert_eq!(normalize_local_hosted_context_url(url), url);
+        pretty_assertions::assert_eq!(normalize_local_hosted_context_url(url), url);
     }
 
     #[test]
@@ -560,7 +561,7 @@ mod tests {
         let normalized = normalize_loaded_context_document("https://example.com/compound.jsonld", input);
         let normalized_json = json_syntax::Value::into_serde_json(normalized);
 
-        assert_eq!(
+        pretty_assertions::assert_eq!(
             normalized_json,
             serde_json::json!({
                 "@context": [
@@ -582,7 +583,7 @@ mod tests {
         let normalized = normalize_loaded_context_document("https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.9.jsonld", input);
         let normalized_json = json_syntax::Value::into_serde_json(normalized);
 
-        assert_eq!(
+        pretty_assertions::assert_eq!(
             normalized_json,
             serde_json::json!({
                 "@context": [

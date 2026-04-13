@@ -75,6 +75,7 @@ pub fn strip_jsonld_context(value: &mut Value) -> Option<Value> {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::*;
     use serde_json::json;
 
@@ -109,7 +110,7 @@ mod tests {
         });
         let mut value = original.clone();
         render_subscription(&mut value, SysAttrsInclusion::Include);
-        assert_eq!(value, original);
+        pretty_assertions::assert_eq!(value, original);
     }
 
     #[test]
@@ -120,7 +121,7 @@ mod tests {
             "isActive": false
         });
         render_subscription(&mut value, SysAttrsInclusion::Strip);
-        assert_eq!(value.get("isActive").and_then(|v| v.as_bool()), Some(false));
+        pretty_assertions::assert_eq!(value.get("isActive").and_then(|v| v.as_bool()), Some(false));
     }
 
     #[test]
@@ -131,7 +132,7 @@ mod tests {
             "localOnly": true
         });
         render_subscription(&mut value, SysAttrsInclusion::Strip);
-        assert_eq!(value.get("localOnly").and_then(|v| v.as_bool()), Some(true));
+        pretty_assertions::assert_eq!(value.get("localOnly").and_then(|v| v.as_bool()), Some(true));
     }
 
     #[test]
@@ -174,7 +175,7 @@ mod tests {
         });
         let mut value = original.clone();
         render_csource_subscription(&mut value, SysAttrsInclusion::Include);
-        assert_eq!(value, original);
+        pretty_assertions::assert_eq!(value, original);
     }
 
     #[test]
@@ -184,7 +185,7 @@ mod tests {
             "jsonldContext": "https://example.org/ctx"
         });
         let ctx = strip_jsonld_context(&mut value);
-        assert_eq!(ctx, Some(json!("https://example.org/ctx")));
+        pretty_assertions::assert_eq!(ctx, Some(json!("https://example.org/ctx")));
         assert!(value.get("jsonldContext").is_none());
     }
 

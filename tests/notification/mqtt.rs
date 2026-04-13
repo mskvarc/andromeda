@@ -1,3 +1,4 @@
+#![allow(clippy::expect_used, clippy::unwrap_used)]
 use std::time::Duration;
 
 use reqwest::StatusCode;
@@ -48,13 +49,13 @@ async fn notification_mqtt_endpoint_without_user_and_default_port_delivers_messa
     let mut subscription = subscription_with_endpoint(&subscription_id, &mqtt_uri(&topic));
     set_endpoint_uri(&mut subscription, &mqtt_uri(&topic));
     let (status, _, _) = create_subscription(&http_client, &subscription).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     let _ = append_entity_attrs(&http_client, &entity_id, &fragment_air_quality_level()).await;
 
     let message = receiver.wait_for_message(Duration::from_secs(5)).await;
-    assert_eq!(message.topic, topic);
-    assert_eq!(message.payload["body"]["subscriptionId"], subscription_id);
+    pretty_assertions::assert_eq!(message.topic, topic);
+    pretty_assertions::assert_eq!(message.payload["body"]["subscriptionId"], subscription_id);
     receiver.disconnect().await;
 }
 
@@ -78,7 +79,7 @@ async fn notification_mqtt_default_qos_delivers_message() {
 
     let _ = append_entity_attrs(&http_client, &entity_id, &fragment_air_quality_level()).await;
     let message = receiver.wait_for_message(Duration::from_secs(5)).await;
-    assert_eq!(message.payload["body"]["subscriptionId"], subscription_id);
+    pretty_assertions::assert_eq!(message.payload["body"]["subscriptionId"], subscription_id);
     receiver.disconnect().await;
 }
 
@@ -102,7 +103,7 @@ async fn notification_mqtt_qos_1_delivers_message() {
 
     let _ = append_entity_attrs(&http_client, &entity_id, &fragment_air_quality_level()).await;
     let message = receiver.wait_for_message(Duration::from_secs(5)).await;
-    assert_eq!(message.payload["body"]["subscriptionId"], subscription_id);
+    pretty_assertions::assert_eq!(message.payload["body"]["subscriptionId"], subscription_id);
     receiver.disconnect().await;
 }
 
@@ -126,7 +127,7 @@ async fn notification_mqtt_qos_2_delivers_message() {
 
     let _ = append_entity_attrs(&http_client, &entity_id, &fragment_air_quality_level()).await;
     let message = receiver.wait_for_message(Duration::from_secs(5)).await;
-    assert_eq!(message.payload["body"]["subscriptionId"], subscription_id);
+    pretty_assertions::assert_eq!(message.payload["body"]["subscriptionId"], subscription_id);
     receiver.disconnect().await;
 }
 
@@ -150,7 +151,7 @@ async fn notification_mqtt_default_protocol_delivers_message() {
 
     let _ = append_entity_attrs(&http_client, &entity_id, &fragment_air_quality_level()).await;
     let message = receiver.wait_for_message(Duration::from_secs(5)).await;
-    assert_eq!(message.payload["body"]["subscriptionId"], subscription_id);
+    pretty_assertions::assert_eq!(message.payload["body"]["subscriptionId"], subscription_id);
     receiver.disconnect().await;
 }
 
@@ -174,7 +175,7 @@ async fn notification_mqtt_version_3_1_1_delivers_message() {
 
     let _ = append_entity_attrs(&http_client, &entity_id, &fragment_air_quality_level()).await;
     let message = receiver.wait_for_message(Duration::from_secs(5)).await;
-    assert_eq!(message.payload["body"]["subscriptionId"], subscription_id);
+    pretty_assertions::assert_eq!(message.payload["body"]["subscriptionId"], subscription_id);
     receiver.disconnect().await;
 }
 
@@ -198,7 +199,7 @@ async fn notification_mqtt_version_5_0_delivers_message() {
 
     let _ = append_entity_attrs(&http_client, &entity_id, &fragment_air_quality_level()).await;
     let message = receiver.wait_for_message(Duration::from_secs(5)).await;
-    assert_eq!(message.payload["body"]["subscriptionId"], subscription_id);
+    pretty_assertions::assert_eq!(message.payload["body"]["subscriptionId"], subscription_id);
     receiver.disconnect().await;
 }
 
@@ -229,7 +230,7 @@ async fn notification_mqtt_payload_contains_metadata_and_body_envelope() {
 
     assert!(message.payload.get("metadata").is_some());
     assert!(message.payload.get("body").is_some());
-    assert_eq!(message.payload["body"]["subscriptionId"], subscription_id);
+    pretty_assertions::assert_eq!(message.payload["body"]["subscriptionId"], subscription_id);
     receiver.disconnect().await;
 }
 
@@ -255,7 +256,7 @@ async fn notification_mqtt_endpoint_with_non_default_port_and_credentials_delive
 
     let _ = append_entity_attrs(&http_client, &entity_id, &fragment_air_quality_level()).await;
     let message = receiver.wait_for_message(Duration::from_secs(5)).await;
-    assert_eq!(message.payload["body"]["subscriptionId"], subscription_id);
+    pretty_assertions::assert_eq!(message.payload["body"]["subscriptionId"], subscription_id);
     receiver.disconnect().await;
 }
 
@@ -280,7 +281,7 @@ async fn notification_mqtt_endpoint_with_username_only_delivers_message() {
 
     let _ = append_entity_attrs(&http_client, &entity_id, &fragment_air_quality_level()).await;
     let message = receiver.wait_for_message(Duration::from_secs(5)).await;
-    assert_eq!(message.payload["body"]["subscriptionId"], subscription_id);
+    pretty_assertions::assert_eq!(message.payload["body"]["subscriptionId"], subscription_id);
     receiver.disconnect().await;
 }
 
@@ -306,7 +307,7 @@ async fn notification_mqtt_endpoint_with_username_and_password_delivers_message(
 
     let _ = append_entity_attrs(&http_client, &entity_id, &fragment_air_quality_level()).await;
     let message = receiver.wait_for_message(Duration::from_secs(5)).await;
-    assert_eq!(message.payload["body"]["subscriptionId"], subscription_id);
+    pretty_assertions::assert_eq!(message.payload["body"]["subscriptionId"], subscription_id);
     receiver.disconnect().await;
 }
 
@@ -332,6 +333,6 @@ async fn notification_mqtt_endpoint_with_username_password_and_port_delivers_mes
 
     let _ = append_entity_attrs(&http_client, &entity_id, &fragment_air_quality_level()).await;
     let message = receiver.wait_for_message(Duration::from_secs(5)).await;
-    assert_eq!(message.payload["body"]["subscriptionId"], subscription_id);
+    pretty_assertions::assert_eq!(message.payload["body"]["subscriptionId"], subscription_id);
     receiver.disconnect().await;
 }

@@ -1,3 +1,4 @@
+#![allow(clippy::expect_used, clippy::unwrap_used)]
 pub mod consumption;
 pub mod provision;
 
@@ -26,16 +27,13 @@ pub(crate) fn prepare_registration(
     obj.insert("endpoint".to_string(), serde_json::Value::String(endpoint.to_string()));
 
     // Replace entity id inside information[0].entities[0].id
-    if let Some(info) = obj.get_mut("information") {
-        if let Some(first) = info.as_array_mut().and_then(|a| a.first_mut()) {
-            if let Some(entities) = first.get_mut("entities") {
-                if let Some(entity) = entities.as_array_mut().and_then(|a| a.first_mut()) {
-                    if let Some(id_field) = entity.get_mut("id") {
-                        *id_field = serde_json::Value::String(entity_id.to_string());
-                    }
-                }
-            }
-        }
+    if let Some(info) = obj.get_mut("information")
+        && let Some(first) = info.as_array_mut().and_then(|a| a.first_mut())
+        && let Some(entities) = first.get_mut("entities")
+        && let Some(entity) = entities.as_array_mut().and_then(|a| a.first_mut())
+        && let Some(id_field) = entity.get_mut("id")
+    {
+        *id_field = serde_json::Value::String(entity_id.to_string());
     }
 
     // Set mode if provided

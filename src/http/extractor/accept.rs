@@ -80,6 +80,7 @@ impl_accept_extractor!(
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::*;
     use axum::http::{Request, header::ACCEPT};
 
@@ -93,27 +94,27 @@ mod tests {
 
     #[test]
     fn exact_json() {
-        assert_eq!(parse_format("application/json", GeoJsonSupport::Allowed), Ok(ResponseFormat::Json));
+        pretty_assertions::assert_eq!(parse_format("application/json", GeoJsonSupport::Allowed), Ok(ResponseFormat::Json));
     }
 
     #[test]
     fn exact_jsonld() {
-        assert_eq!(parse_format("application/ld+json", GeoJsonSupport::Allowed), Ok(ResponseFormat::JsonLd));
+        pretty_assertions::assert_eq!(parse_format("application/ld+json", GeoJsonSupport::Allowed), Ok(ResponseFormat::JsonLd));
     }
 
     #[test]
     fn exact_geojson() {
-        assert_eq!(parse_format("application/geo+json", GeoJsonSupport::Allowed), Ok(ResponseFormat::GeoJson));
+        pretty_assertions::assert_eq!(parse_format("application/geo+json", GeoJsonSupport::Allowed), Ok(ResponseFormat::GeoJson));
     }
 
     #[test]
     fn wildcard_defaults_to_json() {
-        assert_eq!(parse_format("*/*", GeoJsonSupport::Allowed), Ok(ResponseFormat::Json));
+        pretty_assertions::assert_eq!(parse_format("*/*", GeoJsonSupport::Allowed), Ok(ResponseFormat::Json));
     }
 
     #[test]
     fn jsonld_with_params() {
-        assert_eq!(
+        pretty_assertions::assert_eq!(
             parse_format("application/ld+json; charset=utf-8", GeoJsonSupport::Allowed),
             Ok(ResponseFormat::JsonLd)
         );
@@ -122,7 +123,7 @@ mod tests {
     #[test]
     fn quality_prefers_higher() {
         // ld+json has q=0.9, json has q=1.0 (default) -> json wins
-        assert_eq!(
+        pretty_assertions::assert_eq!(
             parse_format("application/ld+json;q=0.9, application/json", GeoJsonSupport::Allowed),
             Ok(ResponseFormat::Json)
         );
@@ -130,7 +131,7 @@ mod tests {
 
     #[test]
     fn quality_prefers_jsonld_when_higher() {
-        assert_eq!(
+        pretty_assertions::assert_eq!(
             parse_format("application/json;q=0.5, application/ld+json;q=1.0", GeoJsonSupport::Allowed),
             Ok(ResponseFormat::JsonLd)
         );
@@ -153,9 +154,9 @@ mod tests {
 
     #[test]
     fn content_type_strings() {
-        assert_eq!(ResponseFormat::Json.content_type_str(), "application/json");
-        assert_eq!(ResponseFormat::JsonLd.content_type_str(), "application/ld+json");
-        assert_eq!(ResponseFormat::GeoJson.content_type_str(), "application/geo+json");
+        pretty_assertions::assert_eq!(ResponseFormat::Json.content_type_str(), "application/json");
+        pretty_assertions::assert_eq!(ResponseFormat::JsonLd.content_type_str(), "application/ld+json");
+        pretty_assertions::assert_eq!(ResponseFormat::GeoJson.content_type_str(), "application/geo+json");
     }
 
     #[test]
@@ -178,9 +179,9 @@ mod tests {
         let result = AcceptFormat::from_request_parts(&mut parts, &()).await;
         match result {
             Err(ExtractorRejection::Empty(status)) => {
-                assert_eq!(status, StatusCode::NOT_ACCEPTABLE);
+                pretty_assertions::assert_eq!(status, StatusCode::NOT_ACCEPTABLE);
             }
-            _ => panic!("expected 406 empty rejection"),
+            _ => unreachable!("expected 406 empty rejection"),
         }
     }
 
@@ -195,9 +196,9 @@ mod tests {
         let result = AcceptFormatNoGeo::from_request_parts(&mut parts, &()).await;
         match result {
             Err(ExtractorRejection::Empty(status)) => {
-                assert_eq!(status, StatusCode::NOT_ACCEPTABLE);
+                pretty_assertions::assert_eq!(status, StatusCode::NOT_ACCEPTABLE);
             }
-            _ => panic!("expected 406 empty rejection for geo+json"),
+            _ => unreachable!("expected 406 empty rejection for geo+json"),
         }
     }
 
@@ -221,7 +222,7 @@ mod tests {
             .expect("valid request");
         let (mut parts, _) = req.into_parts();
         let result = AcceptFormat::from_request_parts(&mut parts, &()).await.expect("should succeed");
-        assert_eq!(result.0, ResponseFormat::Json);
+        pretty_assertions::assert_eq!(result.0, ResponseFormat::Json);
     }
 
     #[tokio::test]
@@ -234,6 +235,6 @@ mod tests {
         let (mut parts, _) = req.into_parts();
         let result = AcceptFormat::from_request_parts(&mut parts, &()).await.expect("should succeed");
         // application/json has q=1.0 (default), application/ld+json has q=0.9
-        assert_eq!(result.0, ResponseFormat::Json);
+        pretty_assertions::assert_eq!(result.0, ResponseFormat::Json);
     }
 }

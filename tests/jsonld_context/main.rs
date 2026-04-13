@@ -248,7 +248,7 @@ async fn create_hosted_context(client: &Client) -> String {
         }
     });
     let (status, location, _) = create_context(client, &body).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
     extract_id(location.as_ref().expect("should have Location"))
 }
 
@@ -266,12 +266,12 @@ async fn create_implicit_context(client: &Client) -> (String, String) {
         ]
     });
     let (status, location) = create_subscription(client, &sub).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
     let sub_id = extract_id(location.as_ref().unwrap());
 
     // Find the implicitly created context
     let (status, contexts) = list_contexts(client, "kind=ImplicitlyCreated").await;
-    assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
     let ctx_uri = contexts
         .first()
         .expect("should have implicit context")
@@ -297,7 +297,7 @@ async fn setup_cached_context(client: &Client) -> (ContextServer, String) {
         "@context": [&ctx_url]
     });
     let (status, _) = create_entity(client, &entity).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     // Allow time for caching
     tokio::time::sleep(std::time::Duration::from_secs(1)).await;
@@ -308,7 +308,7 @@ async fn setup_cached_context(client: &Client) -> (ContextServer, String) {
 /// Find a cached context by its URL, returning its localId.
 async fn find_cached_context_id(client: &Client, ctx_url: &str) -> String {
     let (status, contexts) = list_contexts(client, "kind=Cached&details=true").await;
-    assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
     let cached_ctx = contexts
         .iter()
         .find(|c| c.get("URL").and_then(|u| u.as_str()).is_some_and(|u| u == ctx_url))

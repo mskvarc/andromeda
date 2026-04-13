@@ -16,6 +16,7 @@ pub fn validate_locale(locale: &str) -> Result<(), AndromedaError> {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::*;
 
     #[test]

@@ -118,8 +118,7 @@ impl MockServer {
         let s = self.state.read().await;
         s.stubs
             .get(&(method.to_string(), path.to_string()))
-            .map(|e| e.count.load(Ordering::Relaxed))
-            .unwrap_or(0)
+            .map_or(0, |e| e.count.load(Ordering::Relaxed))
     }
 
     fn url(&self, path: &str) -> String {
@@ -375,19 +374,19 @@ async fn distop_batch_create_exclusive_forwards_to_csr() {
     let reg_id = unique_id("urn:ngsi-ld:Registration:batch-create-exc");
 
     // Create 2 entities locally first (without speed, so they exist for the exclusive CSR to intercept)
-    assert_eq!(create_entity(&c, &vehicle_entity_mercedes(&entity_id1)).await, StatusCode::CREATED);
-    assert_eq!(create_entity(&c, &vehicle_entity_mercedes(&entity_id2)).await, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(create_entity(&c, &vehicle_entity_mercedes(&entity_id1)).await, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(create_entity(&c, &vehicle_entity_mercedes(&entity_id2)).await, StatusCode::CREATED);
 
     let reg = batch_ops_exclusive_speed_registration(&reg_id, &mock.url("/broker1"));
-    assert_eq!(create_registration(&c, &reg).await, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(create_registration(&c, &reg).await, StatusCode::CREATED);
 
     mock.set_stub(Method::POST, "/broker1/ngsi-ld/v1/entityOperations/create", 201).await;
 
     // Batch create entities with speed attribute (matches exclusive CSR scope)
     let batch = json!([vehicle_entity_speed_different(&entity_id1), vehicle_entity_speed_different(&entity_id2)]);
-    assert_eq!(batch_create(&c, &batch).await, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(batch_create(&c, &batch).await, StatusCode::CREATED);
 
-    assert_eq!(
+    pretty_assertions::assert_eq!(
         mock.get_count(Method::POST, "/broker1/ngsi-ld/v1/entityOperations/create").await,
         1,
         "exclusive CSR should receive exactly one forwarded batch create"
@@ -412,14 +411,14 @@ async fn distop_batch_create_inclusive_stores_locally_and_forwards() {
     let reg_id = unique_id("urn:ngsi-ld:Registration:batch-create-inc");
 
     let reg = batch_ops_registration(&reg_id, &mock.url(""));
-    assert_eq!(create_registration(&c, &reg).await, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(create_registration(&c, &reg).await, StatusCode::CREATED);
 
     mock.set_stub(Method::POST, "/ngsi-ld/v1/entityOperations/create", 201).await;
 
     let batch = json!([vehicle_entity_bmw(&entity_id1), vehicle_entity_bmw(&entity_id2)]);
-    assert_eq!(batch_create(&c, &batch).await, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(batch_create(&c, &batch).await, StatusCode::CREATED);
 
-    assert_eq!(
+    pretty_assertions::assert_eq!(
         mock.get_count(Method::POST, "/ngsi-ld/v1/entityOperations/create").await,
         1,
         "inclusive CSR should receive exactly one forwarded batch create"
@@ -455,23 +454,23 @@ async fn distop_batch_create_redirect_forwards_to_both_csrs() {
     let reg_id2 = unique_id("urn:ngsi-ld:Registration:batch-create-red-2");
 
     let reg1 = batch_ops_redirect_registration(&reg_id1, &mock.url("/broker1"));
-    assert_eq!(create_registration(&c, &reg1).await, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(create_registration(&c, &reg1).await, StatusCode::CREATED);
 
     let reg2 = batch_ops_redirect_registration(&reg_id2, &mock.url("/broker2"));
-    assert_eq!(create_registration(&c, &reg2).await, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(create_registration(&c, &reg2).await, StatusCode::CREATED);
 
     mock.set_stub(Method::POST, "/broker1/ngsi-ld/v1/entityOperations/create", 201).await;
     mock.set_stub(Method::POST, "/broker2/ngsi-ld/v1/entityOperations/create", 201).await;
 
     let batch = json!([vehicle_entity_bmw(&entity_id1), vehicle_entity_bmw(&entity_id2)]);
-    assert_eq!(batch_create(&c, &batch).await, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(batch_create(&c, &batch).await, StatusCode::CREATED);
 
-    assert_eq!(
+    pretty_assertions::assert_eq!(
         mock.get_count(Method::POST, "/broker1/ngsi-ld/v1/entityOperations/create").await,
         1,
         "broker1 should receive exactly one forwarded batch create"
     );
-    assert_eq!(
+    pretty_assertions::assert_eq!(
         mock.get_count(Method::POST, "/broker2/ngsi-ld/v1/entityOperations/create").await,
         1,
         "broker2 should receive exactly one forwarded batch create"
@@ -498,19 +497,19 @@ async fn distop_batch_upsert_replace_exclusive_forwards_to_csr() {
     let entity_id2 = unique_id("urn:ngsi-ld:Vehicle:batch-upsert-rep-exc-2");
     let reg_id = unique_id("urn:ngsi-ld:Registration:batch-upsert-rep-exc");
 
-    assert_eq!(create_entity(&c, &vehicle_entity_bmw(&entity_id1)).await, StatusCode::CREATED);
-    assert_eq!(create_entity(&c, &vehicle_entity_bmw(&entity_id2)).await, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(create_entity(&c, &vehicle_entity_bmw(&entity_id1)).await, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(create_entity(&c, &vehicle_entity_bmw(&entity_id2)).await, StatusCode::CREATED);
 
     let reg = batch_ops_exclusive_speed_registration(&reg_id, &mock.url("/broker1"));
-    assert_eq!(create_registration(&c, &reg).await, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(create_registration(&c, &reg).await, StatusCode::CREATED);
 
     mock.set_stub(Method::POST, "/broker1/ngsi-ld/v1/entityOperations/upsert", 204).await;
 
     // Upsert with speed entities (matches exclusive CSR propertyNames scope)
     let batch = json!([vehicle_entity_speed_different(&entity_id1), vehicle_entity_speed_different(&entity_id2)]);
-    assert_eq!(batch_upsert_replace(&c, &batch).await, StatusCode::NO_CONTENT);
+    pretty_assertions::assert_eq!(batch_upsert_replace(&c, &batch).await, StatusCode::NO_CONTENT);
 
-    assert_eq!(
+    pretty_assertions::assert_eq!(
         mock.get_count(Method::POST, "/broker1/ngsi-ld/v1/entityOperations/upsert").await,
         1,
         "exclusive CSR should receive exactly one forwarded batch upsert"
@@ -534,18 +533,18 @@ async fn distop_batch_upsert_replace_inclusive_updates_locally_and_forwards() {
     let entity_id2 = unique_id("urn:ngsi-ld:Vehicle:batch-upsert-rep-inc-2");
     let reg_id = unique_id("urn:ngsi-ld:Registration:batch-upsert-rep-inc");
 
-    assert_eq!(create_entity(&c, &vehicle_entity_mercedes(&entity_id1)).await, StatusCode::CREATED);
-    assert_eq!(create_entity(&c, &vehicle_entity_mercedes(&entity_id2)).await, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(create_entity(&c, &vehicle_entity_mercedes(&entity_id1)).await, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(create_entity(&c, &vehicle_entity_mercedes(&entity_id2)).await, StatusCode::CREATED);
 
     let reg = batch_ops_registration(&reg_id, &mock.url(""));
-    assert_eq!(create_registration(&c, &reg).await, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(create_registration(&c, &reg).await, StatusCode::CREATED);
 
     mock.set_stub(Method::POST, "/ngsi-ld/v1/entityOperations/upsert", 204).await;
 
     let batch = json!([vehicle_entity_bmw(&entity_id1), vehicle_entity_bmw(&entity_id2)]);
-    assert_eq!(batch_upsert_replace(&c, &batch).await, StatusCode::NO_CONTENT);
+    pretty_assertions::assert_eq!(batch_upsert_replace(&c, &batch).await, StatusCode::NO_CONTENT);
 
-    assert_eq!(
+    pretty_assertions::assert_eq!(
         mock.get_count(Method::POST, "/ngsi-ld/v1/entityOperations/upsert").await,
         1,
         "inclusive CSR should receive exactly one forwarded batch upsert"
@@ -553,7 +552,7 @@ async fn distop_batch_upsert_replace_inclusive_updates_locally_and_forwards() {
 
     let entities = query_vehicle_entities(&c).await;
     let entity = entities.iter().find(|e| e["id"] == entity_id1).expect("entity1 not found after upsert");
-    assert_eq!(entity["brandName"]["value"], "BMW", "entity brandName should be BMW after replace upsert");
+    pretty_assertions::assert_eq!(entity["brandName"]["value"], "BMW", "entity brandName should be BMW after replace upsert");
 
     delete_entity(&c, &entity_id1).await;
     delete_entity(&c, &entity_id2).await;
@@ -575,23 +574,23 @@ async fn distop_batch_upsert_replace_redirect_forwards_to_both_csrs() {
     let reg_id2 = unique_id("urn:ngsi-ld:Registration:batch-upsert-rep-red-2");
 
     let reg1 = batch_ops_redirect_registration(&reg_id1, &mock.url("/broker1"));
-    assert_eq!(create_registration(&c, &reg1).await, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(create_registration(&c, &reg1).await, StatusCode::CREATED);
 
     let reg2 = batch_ops_redirect_registration(&reg_id2, &mock.url("/broker2"));
-    assert_eq!(create_registration(&c, &reg2).await, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(create_registration(&c, &reg2).await, StatusCode::CREATED);
 
     mock.set_stub(Method::POST, "/broker1/ngsi-ld/v1/entityOperations/upsert", 204).await;
     mock.set_stub(Method::POST, "/broker2/ngsi-ld/v1/entityOperations/upsert", 204).await;
 
     let batch = json!([vehicle_entity_bmw(&entity_id1), vehicle_entity_bmw(&entity_id2)]);
-    assert_eq!(batch_upsert_replace(&c, &batch).await, StatusCode::NO_CONTENT);
+    pretty_assertions::assert_eq!(batch_upsert_replace(&c, &batch).await, StatusCode::NO_CONTENT);
 
-    assert_eq!(
+    pretty_assertions::assert_eq!(
         mock.get_count(Method::POST, "/broker1/ngsi-ld/v1/entityOperations/upsert").await,
         1,
         "broker1 should receive exactly one forwarded batch upsert"
     );
-    assert_eq!(
+    pretty_assertions::assert_eq!(
         mock.get_count(Method::POST, "/broker2/ngsi-ld/v1/entityOperations/upsert").await,
         1,
         "broker2 should receive exactly one forwarded batch upsert"
@@ -618,18 +617,18 @@ async fn distop_batch_upsert_update_exclusive_forwards_to_csr() {
     let entity_id2 = unique_id("urn:ngsi-ld:Vehicle:batch-upsert-upd-exc-2");
     let reg_id = unique_id("urn:ngsi-ld:Registration:batch-upsert-upd-exc");
 
-    assert_eq!(create_entity(&c, &vehicle_entity_bmw(&entity_id1)).await, StatusCode::CREATED);
-    assert_eq!(create_entity(&c, &vehicle_entity_bmw(&entity_id2)).await, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(create_entity(&c, &vehicle_entity_bmw(&entity_id1)).await, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(create_entity(&c, &vehicle_entity_bmw(&entity_id2)).await, StatusCode::CREATED);
 
     let reg = batch_ops_exclusive_speed_registration(&reg_id, &mock.url("/broker1"));
-    assert_eq!(create_registration(&c, &reg).await, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(create_registration(&c, &reg).await, StatusCode::CREATED);
 
     mock.set_stub(Method::POST, "/broker1/ngsi-ld/v1/entityOperations/upsert", 204).await;
 
     let batch = json!([vehicle_entity_speed_different(&entity_id1), vehicle_entity_speed_different(&entity_id2)]);
-    assert_eq!(batch_upsert_update(&c, &batch).await, StatusCode::NO_CONTENT);
+    pretty_assertions::assert_eq!(batch_upsert_update(&c, &batch).await, StatusCode::NO_CONTENT);
 
-    assert_eq!(
+    pretty_assertions::assert_eq!(
         mock.get_count(Method::POST, "/broker1/ngsi-ld/v1/entityOperations/upsert").await,
         1,
         "exclusive CSR should receive exactly one forwarded batch upsert (update)"
@@ -653,18 +652,18 @@ async fn distop_batch_upsert_update_inclusive_merges_locally_and_forwards() {
     let entity_id2 = unique_id("urn:ngsi-ld:Vehicle:batch-upsert-upd-inc-2");
     let reg_id = unique_id("urn:ngsi-ld:Registration:batch-upsert-upd-inc");
 
-    assert_eq!(create_entity(&c, &vehicle_entity_mercedes(&entity_id1)).await, StatusCode::CREATED);
-    assert_eq!(create_entity(&c, &vehicle_entity_mercedes(&entity_id2)).await, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(create_entity(&c, &vehicle_entity_mercedes(&entity_id1)).await, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(create_entity(&c, &vehicle_entity_mercedes(&entity_id2)).await, StatusCode::CREATED);
 
     let reg = batch_ops_registration(&reg_id, &mock.url(""));
-    assert_eq!(create_registration(&c, &reg).await, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(create_registration(&c, &reg).await, StatusCode::CREATED);
 
     mock.set_stub(Method::POST, "/ngsi-ld/v1/entityOperations/upsert", 204).await;
 
     let batch = json!([vehicle_entity_bmw(&entity_id1), vehicle_entity_bmw(&entity_id2)]);
-    assert_eq!(batch_upsert_update(&c, &batch).await, StatusCode::NO_CONTENT);
+    pretty_assertions::assert_eq!(batch_upsert_update(&c, &batch).await, StatusCode::NO_CONTENT);
 
-    assert_eq!(
+    pretty_assertions::assert_eq!(
         mock.get_count(Method::POST, "/ngsi-ld/v1/entityOperations/upsert").await,
         1,
         "inclusive CSR should receive exactly one forwarded batch upsert (update)"
@@ -672,7 +671,7 @@ async fn distop_batch_upsert_update_inclusive_merges_locally_and_forwards() {
 
     let entities = query_vehicle_entities(&c).await;
     let entity = entities.iter().find(|e| e["id"] == entity_id1).expect("entity1 not found after upsert update");
-    assert_eq!(entity["brandName"]["value"], "BMW", "entity brandName should be BMW after update upsert");
+    pretty_assertions::assert_eq!(entity["brandName"]["value"], "BMW", "entity brandName should be BMW after update upsert");
 
     delete_entity(&c, &entity_id1).await;
     delete_entity(&c, &entity_id2).await;
@@ -694,23 +693,23 @@ async fn distop_batch_upsert_update_redirect_forwards_to_both_csrs() {
     let reg_id2 = unique_id("urn:ngsi-ld:Registration:batch-upsert-upd-red-2");
 
     let reg1 = batch_ops_redirect_registration(&reg_id1, &mock.url("/broker1"));
-    assert_eq!(create_registration(&c, &reg1).await, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(create_registration(&c, &reg1).await, StatusCode::CREATED);
 
     let reg2 = batch_ops_redirect_registration(&reg_id2, &mock.url("/broker2"));
-    assert_eq!(create_registration(&c, &reg2).await, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(create_registration(&c, &reg2).await, StatusCode::CREATED);
 
     mock.set_stub(Method::POST, "/broker1/ngsi-ld/v1/entityOperations/upsert", 204).await;
     mock.set_stub(Method::POST, "/broker2/ngsi-ld/v1/entityOperations/upsert", 204).await;
 
     let batch = json!([vehicle_entity_bmw(&entity_id1), vehicle_entity_bmw(&entity_id2)]);
-    assert_eq!(batch_upsert_update(&c, &batch).await, StatusCode::NO_CONTENT);
+    pretty_assertions::assert_eq!(batch_upsert_update(&c, &batch).await, StatusCode::NO_CONTENT);
 
-    assert_eq!(
+    pretty_assertions::assert_eq!(
         mock.get_count(Method::POST, "/broker1/ngsi-ld/v1/entityOperations/upsert").await,
         1,
         "broker1 should receive exactly one forwarded batch upsert (update)"
     );
-    assert_eq!(
+    pretty_assertions::assert_eq!(
         mock.get_count(Method::POST, "/broker2/ngsi-ld/v1/entityOperations/upsert").await,
         1,
         "broker2 should receive exactly one forwarded batch upsert (update)"
@@ -737,18 +736,18 @@ async fn distop_batch_delete_inclusive_deletes_locally_and_forwards() {
     let entity_id2 = unique_id("urn:ngsi-ld:Vehicle:batch-delete-inc-2");
     let reg_id = unique_id("urn:ngsi-ld:Registration:batch-delete-inc");
 
-    assert_eq!(create_entity(&c, &vehicle_entity_bmw(&entity_id1)).await, StatusCode::CREATED);
-    assert_eq!(create_entity(&c, &vehicle_entity_bmw(&entity_id2)).await, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(create_entity(&c, &vehicle_entity_bmw(&entity_id1)).await, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(create_entity(&c, &vehicle_entity_bmw(&entity_id2)).await, StatusCode::CREATED);
 
     let reg = batch_ops_registration(&reg_id, &mock.url(""));
-    assert_eq!(create_registration(&c, &reg).await, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(create_registration(&c, &reg).await, StatusCode::CREATED);
 
     mock.set_stub(Method::POST, "/ngsi-ld/v1/entityOperations/delete", 204).await;
 
     let ids = json!([entity_id1, entity_id2]);
-    assert_eq!(batch_delete(&c, &ids).await, StatusCode::NO_CONTENT);
+    pretty_assertions::assert_eq!(batch_delete(&c, &ids).await, StatusCode::NO_CONTENT);
 
-    assert_eq!(
+    pretty_assertions::assert_eq!(
         mock.get_count(Method::POST, "/ngsi-ld/v1/entityOperations/delete").await,
         1,
         "inclusive CSR should receive exactly one forwarded batch delete"
@@ -774,18 +773,18 @@ async fn distop_batch_delete_exclusive_forwards_to_csr_and_deletes_locally() {
     let entity_id2 = unique_id("urn:ngsi-ld:Vehicle:batch-delete-exc-2");
     let reg_id = unique_id("urn:ngsi-ld:Registration:batch-delete-exc");
 
-    assert_eq!(create_entity(&c, &vehicle_entity_bmw(&entity_id1)).await, StatusCode::CREATED);
-    assert_eq!(create_entity(&c, &vehicle_entity_bmw(&entity_id2)).await, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(create_entity(&c, &vehicle_entity_bmw(&entity_id1)).await, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(create_entity(&c, &vehicle_entity_bmw(&entity_id2)).await, StatusCode::CREATED);
 
     let reg = batch_ops_exclusive_speed_registration(&reg_id, &mock.url("/broker1"));
-    assert_eq!(create_registration(&c, &reg).await, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(create_registration(&c, &reg).await, StatusCode::CREATED);
 
     mock.set_stub(Method::POST, "/broker1/ngsi-ld/v1/entityOperations/delete", 204).await;
 
     let ids = json!([entity_id1, entity_id2]);
-    assert_eq!(batch_delete(&c, &ids).await, StatusCode::NO_CONTENT);
+    pretty_assertions::assert_eq!(batch_delete(&c, &ids).await, StatusCode::NO_CONTENT);
 
-    assert_eq!(
+    pretty_assertions::assert_eq!(
         mock.get_count(Method::POST, "/broker1/ngsi-ld/v1/entityOperations/delete").await,
         1,
         "exclusive CSR should receive exactly one forwarded batch delete"
@@ -813,23 +812,23 @@ async fn distop_batch_delete_redirect_forwards_to_both_csrs() {
     let reg_id2 = unique_id("urn:ngsi-ld:Registration:batch-delete-red-2");
 
     let reg1 = batch_ops_redirect_registration(&reg_id1, &mock.url("/broker1"));
-    assert_eq!(create_registration(&c, &reg1).await, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(create_registration(&c, &reg1).await, StatusCode::CREATED);
 
     let reg2 = batch_ops_redirect_registration(&reg_id2, &mock.url("/broker2"));
-    assert_eq!(create_registration(&c, &reg2).await, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(create_registration(&c, &reg2).await, StatusCode::CREATED);
 
     mock.set_stub(Method::POST, "/broker1/ngsi-ld/v1/entityOperations/delete", 204).await;
     mock.set_stub(Method::POST, "/broker2/ngsi-ld/v1/entityOperations/delete", 204).await;
 
     let ids = json!([entity_id1, entity_id2]);
-    assert_eq!(batch_delete(&c, &ids).await, StatusCode::NO_CONTENT);
+    pretty_assertions::assert_eq!(batch_delete(&c, &ids).await, StatusCode::NO_CONTENT);
 
-    assert_eq!(
+    pretty_assertions::assert_eq!(
         mock.get_count(Method::POST, "/broker1/ngsi-ld/v1/entityOperations/delete").await,
         1,
         "broker1 should receive exactly one forwarded batch delete"
     );
-    assert_eq!(
+    pretty_assertions::assert_eq!(
         mock.get_count(Method::POST, "/broker2/ngsi-ld/v1/entityOperations/delete").await,
         1,
         "broker2 should receive exactly one forwarded batch delete"

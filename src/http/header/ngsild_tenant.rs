@@ -58,6 +58,7 @@ impl headers::Header for NgsiLdTenant {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::*;
     use headers::Header;
 
@@ -70,13 +71,13 @@ mod tests {
     #[test]
     fn decode_valid_tenant() {
         let header = decode_from("my-tenant").expect("should decode");
-        assert_eq!(header.as_str(), "my-tenant");
+        pretty_assertions::assert_eq!(header.as_str(), "my-tenant");
     }
 
     #[test]
     fn decode_trims_whitespace() {
         let header = decode_from("  tenant  ").expect("should decode");
-        assert_eq!(header.as_str(), "tenant");
+        pretty_assertions::assert_eq!(header.as_str(), "tenant");
     }
 
     #[test]
@@ -93,27 +94,27 @@ mod tests {
     fn encode_roundtrip() {
         let name = match TenantName::try_from("t1".to_string()) {
             Ok(value) => value,
-            Err(err) => panic!("unexpected tenant error: {err}"),
+            Err(err) => unreachable!("unexpected tenant error: {err}"),
         };
         let header = NgsiLdTenant::new(name);
         let mut encoded = Vec::new();
         header.encode(&mut encoded);
-        assert_eq!(encoded.len(), 1);
+        pretty_assertions::assert_eq!(encoded.len(), 1);
         let encoded_str = encoded[0].to_str();
         assert!(encoded_str.is_ok());
         let encoded_str = match encoded_str {
             Ok(value) => value,
-            Err(err) => panic!("unexpected header value error: {err}"),
+            Err(err) => unreachable!("unexpected header value error: {err}"),
         };
-        assert_eq!(encoded_str, "t1");
+        pretty_assertions::assert_eq!(encoded_str, "t1");
 
         let mut iter = encoded.iter();
         let decoded = NgsiLdTenant::decode(&mut iter);
         assert!(decoded.is_ok());
         let decoded = match decoded {
             Ok(value) => value,
-            Err(err) => panic!("unexpected roundtrip decode error: {err}"),
+            Err(err) => unreachable!("unexpected roundtrip decode error: {err}"),
         };
-        assert_eq!(header, decoded);
+        pretty_assertions::assert_eq!(header, decoded);
     }
 }

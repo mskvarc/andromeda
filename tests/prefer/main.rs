@@ -127,10 +127,10 @@ async fn prefer_geojson_retrieve_default_body_includes_context_inline() {
         "@context": [TEST_SUITE_CONTEXT]
     });
     let (status, _) = create_entity(&c, &entity).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     let (status, _, body) = get_entity(&c, &id, "application/geo+json", None, "geometryProperty=location").await;
-    assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
     assert!(body.get("@context").is_some(), "default GeoJSON response must include @context inline in body");
 
     delete_entity(&c, &id).await;
@@ -152,10 +152,10 @@ async fn prefer_geojson_retrieve_body_ld_json_includes_context_inline() {
         "@context": [TEST_SUITE_CONTEXT]
     });
     let (status, _) = create_entity(&c, &entity).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     let (status, _, body) = get_entity(&c, &id, "application/geo+json", Some("body=ld+json"), "geometryProperty=location").await;
-    assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
     assert!(body.get("@context").is_some(), "Prefer: body=ld+json must include @context inline in body");
 
     delete_entity(&c, &id).await;
@@ -177,10 +177,10 @@ async fn prefer_geojson_retrieve_body_json_moves_context_to_link_header() {
         "@context": [TEST_SUITE_CONTEXT]
     });
     let (status, _) = create_entity(&c, &entity).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     let (status, headers, body) = get_entity(&c, &id, "application/geo+json", Some("body=json"), "geometryProperty=location").await;
-    assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
     assert!(body.get("@context").is_none(), "Prefer: body=json must omit @context from body");
     assert!(
         headers.get("link").is_some(),
@@ -206,11 +206,11 @@ async fn prefer_geojson_query_body_json_removes_context_from_collection_body() {
         "@context": [TEST_SUITE_CONTEXT]
     });
     let (status, _) = create_entity(&c, &entity).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     let (status, headers, body) = query_entities(&c, "application/geo+json", Some("body=json"), "type=Building").await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["type"], "FeatureCollection");
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(body["type"], "FeatureCollection");
     assert!(
         body.get("@context").is_none(),
         "Prefer: body=json must omit @context from FeatureCollection body"
@@ -237,16 +237,16 @@ async fn prefer_version_retrieve_older_version_returns_non_authoritative_with_pr
         "@context": [TEST_SUITE_CONTEXT]
     });
     let (status, _) = create_entity(&c, &entity).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     let (status, headers, _) = get_entity(&c, &id, "application/ld+json", Some("ngsi-ld=1.3"), "").await;
-    assert_eq!(
+    pretty_assertions::assert_eq!(
         status,
         StatusCode::NON_AUTHORITATIVE_INFORMATION,
         "version preference for older version must return 203"
     );
     let pref_applied = headers.get("preference-applied").and_then(|v| v.to_str().ok());
-    assert_eq!(
+    pretty_assertions::assert_eq!(
         pref_applied,
         Some("ngsi-ld=1.9"),
         "Preference-Applied must advertise the broker's implemented version"
@@ -268,16 +268,16 @@ async fn prefer_version_query_older_version_returns_non_authoritative_with_prefe
         "@context": [TEST_SUITE_CONTEXT]
     });
     let (status, _) = create_entity(&c, &entity).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     let (status, headers, _) = query_entities(&c, "application/ld+json", Some("ngsi-ld=1.4"), "type=Building").await;
-    assert_eq!(
+    pretty_assertions::assert_eq!(
         status,
         StatusCode::NON_AUTHORITATIVE_INFORMATION,
         "version preference for older version on collection must return 203"
     );
     let pref_applied = headers.get("preference-applied").and_then(|v| v.to_str().ok());
-    assert_eq!(
+    pretty_assertions::assert_eq!(
         pref_applied,
         Some("ngsi-ld=1.9"),
         "Preference-Applied must advertise the broker's implemented version"
@@ -299,10 +299,10 @@ async fn prefer_absent_retrieve_returns_ok_without_preference_applied_header() {
         "@context": [TEST_SUITE_CONTEXT]
     });
     let (status, _) = create_entity(&c, &entity).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     let (status, headers, _) = get_entity(&c, &id, "application/ld+json", None, "").await;
-    assert_eq!(status, StatusCode::OK, "absent Prefer header must return 200");
+    pretty_assertions::assert_eq!(status, StatusCode::OK, "absent Prefer header must return 200");
     assert!(
         headers.get("preference-applied").is_none(),
         "absent Prefer header must not produce Preference-Applied response header"
@@ -327,10 +327,10 @@ async fn prefer_combined_body_json_and_version_returns_non_authoritative_without
         "@context": [TEST_SUITE_CONTEXT]
     });
     let (status, _) = create_entity(&c, &entity).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     let (status, headers, body) = get_entity(&c, &id, "application/geo+json", Some("body=json, ngsi-ld=1.3"), "geometryProperty=location").await;
-    assert_eq!(
+    pretty_assertions::assert_eq!(
         status,
         StatusCode::NON_AUTHORITATIVE_INFORMATION,
         "combined body=json + ngsi-ld=1.3 must return 203"
@@ -341,7 +341,7 @@ async fn prefer_combined_body_json_and_version_returns_non_authoritative_without
     );
     assert!(headers.get("link").is_some(), "body=json preference must add Link header even in 203 response");
     let pref_applied = headers.get("preference-applied").and_then(|v| v.to_str().ok());
-    assert_eq!(pref_applied, Some("ngsi-ld=1.9"));
+    pretty_assertions::assert_eq!(pref_applied, Some("ngsi-ld=1.9"));
 
     delete_entity(&c, &id).await;
 }
@@ -367,10 +367,10 @@ async fn prefer_version_1_0_retrieve_removes_dataset_id_from_attribute() {
         "@context": [TEST_SUITE_CONTEXT]
     });
     let (status, _) = create_entity(&c, &entity).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     let (status, _, body) = get_entity(&c, &id, "application/ld+json", Some("ngsi-ld=1.0"), "").await;
-    assert_eq!(status, StatusCode::NON_AUTHORITATIVE_INFORMATION);
+    pretty_assertions::assert_eq!(status, StatusCode::NON_AUTHORITATIVE_INFORMATION);
 
     // In v1.0 the body uses expanded IRIs; retrieve under the expanded temperature key.
     let temp_key = "https://uri.fiware.org/ns/data-models#temperature";
@@ -394,10 +394,10 @@ async fn prefer_version_1_0_retrieve_removes_scope_from_entity() {
         "@context": [TEST_SUITE_CONTEXT]
     });
     let (status, _) = create_entity(&c, &entity).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     let (status, _, body) = get_entity(&c, &id, "application/ld+json", Some("ngsi-ld=1.0"), "").await;
-    assert_eq!(status, StatusCode::NON_AUTHORITATIVE_INFORMATION);
+    pretty_assertions::assert_eq!(status, StatusCode::NON_AUTHORITATIVE_INFORMATION);
     assert!(body.get("scope").is_none(), "v1.0 adaptation must strip the scope field from the entity");
 
     delete_entity(&c, &id).await;

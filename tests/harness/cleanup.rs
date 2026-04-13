@@ -1,3 +1,4 @@
+#![allow(clippy::expect_used, clippy::unwrap_used)]
 use sqlx::PgPool;
 use url::Url;
 

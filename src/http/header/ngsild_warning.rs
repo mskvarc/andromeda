@@ -121,6 +121,7 @@ impl headers::Header for NgsiLdWarningHeader {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::*;
     use headers::Header;
 
@@ -129,8 +130,8 @@ mod tests {
         let header = NgsiLdWarningHeader::new(vec![NgsiLdWarning::MiscellaneousWarning("msg".to_string())]);
         let mut encoded = Vec::new();
         header.encode(&mut encoded);
-        assert_eq!(encoded.len(), 1);
-        assert_eq!(encoded[0].to_str().expect("valid str"), "199 - \"msg\"");
+        pretty_assertions::assert_eq!(encoded.len(), 1);
+        pretty_assertions::assert_eq!(encoded[0].to_str().expect("valid str"), "199 - \"msg\"");
     }
 
     #[test]
@@ -141,9 +142,9 @@ mod tests {
         ]);
         let mut encoded = Vec::new();
         header.encode(&mut encoded);
-        assert_eq!(encoded.len(), 2);
-        assert_eq!(encoded[0].to_str().expect("valid str"), "110 - \"cached\"");
-        assert_eq!(encoded[1].to_str().expect("valid str"), "299 - \"forbidden\"");
+        pretty_assertions::assert_eq!(encoded.len(), 2);
+        pretty_assertions::assert_eq!(encoded[0].to_str().expect("valid str"), "110 - \"cached\"");
+        pretty_assertions::assert_eq!(encoded[1].to_str().expect("valid str"), "299 - \"forbidden\"");
     }
 
     #[test]
@@ -151,7 +152,7 @@ mod tests {
         let val = HeaderValue::from_str("110 - \"cached\"").expect("valid");
         let mut iter = std::iter::once(&val);
         let header = NgsiLdWarningHeader::decode(&mut iter).expect("should decode");
-        assert_eq!(header.0.as_slice(), &[NgsiLdWarning::ResponseIsStale("cached".to_string())]);
+        pretty_assertions::assert_eq!(header.0.as_slice(), &[NgsiLdWarning::ResponseIsStale("cached".to_string())]);
     }
 
     #[test]
@@ -159,7 +160,7 @@ mod tests {
         let val = HeaderValue::from_str("111 - \"bad\"").expect("valid");
         let mut iter = std::iter::once(&val);
         let header = NgsiLdWarningHeader::decode(&mut iter).expect("should decode");
-        assert_eq!(header.0.as_slice(), &[NgsiLdWarning::RevalidationFailed("bad".to_string())]);
+        pretty_assertions::assert_eq!(header.0.as_slice(), &[NgsiLdWarning::RevalidationFailed("bad".to_string())]);
     }
 
     #[test]
@@ -167,7 +168,7 @@ mod tests {
         let val = HeaderValue::from_str("199 - \"timeout\"").expect("valid");
         let mut iter = std::iter::once(&val);
         let header = NgsiLdWarningHeader::decode(&mut iter).expect("should decode");
-        assert_eq!(header.0.as_slice(), &[NgsiLdWarning::MiscellaneousWarning("timeout".to_string())]);
+        pretty_assertions::assert_eq!(header.0.as_slice(), &[NgsiLdWarning::MiscellaneousWarning("timeout".to_string())]);
     }
 
     #[test]
@@ -175,7 +176,7 @@ mod tests {
         let val = HeaderValue::from_str("299 - \"forbidden\"").expect("valid");
         let mut iter = std::iter::once(&val);
         let header = NgsiLdWarningHeader::decode(&mut iter).expect("should decode");
-        assert_eq!(header.0.as_slice(), &[NgsiLdWarning::MiscellaneousPersistentWarning("forbidden".to_string())]);
+        pretty_assertions::assert_eq!(header.0.as_slice(), &[NgsiLdWarning::MiscellaneousPersistentWarning("forbidden".to_string())]);
     }
 
     #[test]
@@ -188,35 +189,35 @@ mod tests {
         ]);
         let mut encoded = Vec::new();
         original.encode(&mut encoded);
-        assert_eq!(encoded.len(), 4);
+        pretty_assertions::assert_eq!(encoded.len(), 4);
 
         let mut iter = encoded.iter();
         let decoded = NgsiLdWarningHeader::decode(&mut iter).expect("roundtrip decode");
-        assert_eq!(original.0, decoded.0);
+        pretty_assertions::assert_eq!(original.0, decoded.0);
     }
 
     #[test]
     fn warning_header_format_miscellaneous() {
         let w = NgsiLdWarning::MiscellaneousWarning("timeout".to_string());
-        assert_eq!(w.to_string(), "199 - \"timeout\"");
+        pretty_assertions::assert_eq!(w.to_string(), "199 - \"timeout\"");
     }
 
     #[test]
     fn warning_header_format_persistent() {
         let w = NgsiLdWarning::MiscellaneousPersistentWarning("403 Forbidden".to_string());
-        assert_eq!(w.to_string(), "299 - \"403 Forbidden\"");
+        pretty_assertions::assert_eq!(w.to_string(), "299 - \"403 Forbidden\"");
     }
 
     #[test]
     fn warning_header_format_response_is_stale() {
         let w = NgsiLdWarning::ResponseIsStale("cached data".to_string());
-        assert_eq!(w.to_string(), "110 - \"cached data\"");
+        pretty_assertions::assert_eq!(w.to_string(), "110 - \"cached data\"");
     }
 
     #[test]
     fn warning_header_format_revalidation_failed() {
         let w = NgsiLdWarning::RevalidationFailed("invalid JSON".to_string());
-        assert_eq!(w.to_string(), "111 - \"invalid JSON\"");
+        pretty_assertions::assert_eq!(w.to_string(), "111 - \"invalid JSON\"");
     }
 
     #[test]
@@ -225,9 +226,9 @@ mod tests {
         let val = HeaderValue::from_str(combined).expect("valid header value");
         let mut iter = std::iter::once(&val);
         let header = NgsiLdWarningHeader::decode(&mut iter).expect("should decode multiple");
-        assert_eq!(header.0.len(), 2);
-        assert_eq!(header.0[0], NgsiLdWarning::MiscellaneousWarning("timeout".to_string()));
-        assert_eq!(header.0[1], NgsiLdWarning::MiscellaneousPersistentWarning("forbidden".to_string()));
+        pretty_assertions::assert_eq!(header.0.len(), 2);
+        pretty_assertions::assert_eq!(header.0[0], NgsiLdWarning::MiscellaneousWarning("timeout".to_string()));
+        pretty_assertions::assert_eq!(header.0[1], NgsiLdWarning::MiscellaneousPersistentWarning("forbidden".to_string()));
     }
 
     #[test]
@@ -236,7 +237,7 @@ mod tests {
         let val = HeaderValue::from_str(raw).expect("valid header value");
         let mut iter = std::iter::once(&val);
         let header = NgsiLdWarningHeader::decode(&mut iter).expect("should decode");
-        assert_eq!(header.0.len(), 1);
-        assert_eq!(header.0[0], NgsiLdWarning::MiscellaneousWarning("timeout, retry later".to_string()));
+        pretty_assertions::assert_eq!(header.0.len(), 1);
+        pretty_assertions::assert_eq!(header.0[0], NgsiLdWarning::MiscellaneousWarning("timeout, retry later".to_string()));
     }
 }

@@ -1,10 +1,10 @@
+#![allow(clippy::expect_used, clippy::unwrap_used)]
 use crate::harness::{
     client::{QueryParams, RequestHeaders},
     fixtures,
     trial::{trial, trial_ignored},
 };
 use libtest_mimic::Trial;
-use pretty_assertions::assert_eq;
 use reqwest::{Method, StatusCode};
 
 const PREFIX: &str = "provision::entities::create";
@@ -22,14 +22,14 @@ pub fn tests(trials: &mut Vec<Trial>) {
             .link_context(fixtures::test_suite_context_url());
 
         let resp = ctx.client.request(Method::POST, "/entities", Some(&entity), headers).await;
-        assert_eq!(resp.status, StatusCode::CREATED, "create should return 201");
+        pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED, "create should return 201");
         assert!(resp.location().is_some(), "should return Location header");
 
         let resp = ctx.client.get_entity(&id, &QueryParams::new(), Default::default()).await;
-        assert_eq!(resp.status, StatusCode::OK);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::OK);
         let body: serde_json::Value = resp.json();
-        assert_eq!(body["id"], id);
-        assert_eq!(body["type"], "Building");
+        pretty_assertions::assert_eq!(body["id"], id);
+        pretty_assertions::assert_eq!(body["type"], "Building");
     }));
 
     // 001_01_02: Create entity with simple properties
@@ -38,22 +38,22 @@ pub fn tests(trials: &mut Vec<Trial>) {
         let entity = fixtures::load_fixture("entities/building-simple-attributes.jsonld", &id);
 
         let resp = ctx.client.create_entity(&entity).await;
-        assert_eq!(resp.status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
 
         let headers = RequestHeaders::new().accept_ld_json().link_context(fixtures::test_suite_context_url());
         let resp = ctx.client.get_entity(&id, &QueryParams::new(), headers).await;
-        assert_eq!(resp.status, StatusCode::OK);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::OK);
         let body: serde_json::Value = resp.json();
-        assert_eq!(body["id"], id);
-        assert_eq!(body["name"]["type"], "Property");
-        assert_eq!(body["name"]["value"], "Eiffel Tower");
-        assert_eq!(body["subCategory"]["type"], "Property");
-        assert_eq!(body["subCategory"]["value"], "tourism");
-        assert_eq!(body["airQualityLevel"]["type"], "Property");
-        assert_eq!(body["airQualityLevel"]["value"], 4);
-        assert_eq!(body["airQualityLevel"]["unitCode"], "C62");
-        assert_eq!(body["almostFull"]["type"], "Property");
-        assert_eq!(body["almostFull"]["value"], false);
+        pretty_assertions::assert_eq!(body["id"], id);
+        pretty_assertions::assert_eq!(body["name"]["type"], "Property");
+        pretty_assertions::assert_eq!(body["name"]["value"], "Eiffel Tower");
+        pretty_assertions::assert_eq!(body["subCategory"]["type"], "Property");
+        pretty_assertions::assert_eq!(body["subCategory"]["value"], "tourism");
+        pretty_assertions::assert_eq!(body["airQualityLevel"]["type"], "Property");
+        pretty_assertions::assert_eq!(body["airQualityLevel"]["value"], 4);
+        pretty_assertions::assert_eq!(body["airQualityLevel"]["unitCode"], "C62");
+        pretty_assertions::assert_eq!(body["almostFull"]["type"], "Property");
+        pretty_assertions::assert_eq!(body["almostFull"]["value"], false);
     }));
 
     // 001_01_03: Create entity with relationship properties
@@ -62,16 +62,16 @@ pub fn tests(trials: &mut Vec<Trial>) {
         let entity = fixtures::load_fixture("entities/building-relationship-of-property.jsonld", &id);
 
         let resp = ctx.client.create_entity(&entity).await;
-        assert_eq!(resp.status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
 
         let headers = RequestHeaders::new().accept_ld_json().link_context(fixtures::test_suite_context_url());
         let resp = ctx.client.get_entity(&id, &QueryParams::new(), headers).await;
-        assert_eq!(resp.status, StatusCode::OK);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::OK);
         let body: serde_json::Value = resp.json();
-        assert_eq!(body["airQualityLevel"]["type"], "Property");
-        assert_eq!(body["airQualityLevel"]["value"], 4);
-        assert_eq!(body["airQualityLevel"]["hasWeatherObserved"]["type"], "Relationship");
-        assert_eq!(
+        pretty_assertions::assert_eq!(body["airQualityLevel"]["type"], "Property");
+        pretty_assertions::assert_eq!(body["airQualityLevel"]["value"], 4);
+        pretty_assertions::assert_eq!(body["airQualityLevel"]["hasWeatherObserved"]["type"], "Relationship");
+        pretty_assertions::assert_eq!(
             body["airQualityLevel"]["hasWeatherObserved"]["object"],
             "urn:ngsi-ld:Sensor:43a1af27-4aa7-44fe-bee9-fe76d56978a4"
         );
@@ -83,16 +83,16 @@ pub fn tests(trials: &mut Vec<Trial>) {
         let entity = fixtures::load_fixture("entities/building-location-attribute.jsonld", &id);
 
         let resp = ctx.client.create_entity(&entity).await;
-        assert_eq!(resp.status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
 
         let headers = RequestHeaders::new().accept_ld_json().link_context(fixtures::test_suite_context_url());
         let resp = ctx.client.get_entity(&id, &QueryParams::new(), headers).await;
-        assert_eq!(resp.status, StatusCode::OK);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::OK);
         let body: serde_json::Value = resp.json();
-        assert_eq!(body["location"]["type"], "GeoProperty");
-        assert_eq!(body["location"]["value"]["type"], "Point");
-        assert_eq!(body["name"]["value"], "Eiffel Tower");
-        assert_eq!(body["subCategory"]["value"], "tourism");
+        pretty_assertions::assert_eq!(body["location"]["type"], "GeoProperty");
+        pretty_assertions::assert_eq!(body["location"]["value"]["type"], "Point");
+        pretty_assertions::assert_eq!(body["name"]["value"], "Eiffel Tower");
+        pretty_assertions::assert_eq!(body["subCategory"]["value"], "tourism");
     }));
 
     // 001_01_05: Create entity with non-core GeoProperty
@@ -101,14 +101,14 @@ pub fn tests(trials: &mut Vec<Trial>) {
         let entity = fixtures::load_fixture("entities/building-non-core-geoproperty-attribute.jsonld", &id);
 
         let resp = ctx.client.create_entity(&entity).await;
-        assert_eq!(resp.status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
 
         let headers = RequestHeaders::new().accept_ld_json().link_context(fixtures::test_suite_context_url());
         let resp = ctx.client.get_entity(&id, &QueryParams::new(), headers).await;
-        assert_eq!(resp.status, StatusCode::OK);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::OK);
         let body: serde_json::Value = resp.json();
-        assert_eq!(body["customLocation"]["type"], "GeoProperty");
-        assert_eq!(body["customLocation"]["value"]["type"], "Point");
+        pretty_assertions::assert_eq!(body["customLocation"]["type"], "GeoProperty");
+        pretty_assertions::assert_eq!(body["customLocation"]["value"]["type"], "Point");
     }));
 
     // ── 001_02: Invalid entity creation requests ────────────────────────
@@ -124,7 +124,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
                 "application/ld+json",
             )
             .await;
-        assert_eq!(resp.status, StatusCode::BAD_REQUEST, "malformed JSON should return 400");
+        pretty_assertions::assert_eq!(resp.status, StatusCode::BAD_REQUEST, "malformed JSON should return 400");
 
         let body: serde_json::Value = resp.json();
         assert!(body["type"].as_str().is_some(), "should contain error type");
@@ -134,7 +134,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
     // 001_02_02: Create entity with empty JSON array
     trials.push(trial(&format!("{PREFIX}::001_02_02::empty_json"), |ctx| async move {
         let resp = ctx.client.request_raw(Method::POST, "/entities", b"[]", "application/ld+json").await;
-        assert_eq!(resp.status, StatusCode::BAD_REQUEST, "empty array should return 400");
+        pretty_assertions::assert_eq!(resp.status, StatusCode::BAD_REQUEST, "empty array should return 400");
 
         let body: serde_json::Value = resp.json();
         assert!(body["type"].as_str().is_some(), "should contain error type");
@@ -153,7 +153,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
             let headers = RequestHeaders::new().content_type("application/json");
 
             let resp = ctx.client.request(Method::POST, "/entities", Some(&entity), headers).await;
-            assert_eq!(resp.status, StatusCode::BAD_REQUEST, "no context should return 400");
+            pretty_assertions::assert_eq!(resp.status, StatusCode::BAD_REQUEST, "no context should return 400");
 
             let body: serde_json::Value = resp.json();
             assert!(body["type"].as_str().is_some(), "should contain error type");
@@ -171,7 +171,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
 
         let headers = RequestHeaders::new().content_type("application/ld+json");
         let resp = ctx.client.request(Method::POST, "/entities", Some(&entity), headers).await;
-        assert_eq!(resp.status, StatusCode::BAD_REQUEST, "invalid type should return 400");
+        pretty_assertions::assert_eq!(resp.status, StatusCode::BAD_REQUEST, "invalid type should return 400");
     }));
 
     // ── 001_03: Duplicate entity ID ─────────────────────────────────────
@@ -182,10 +182,10 @@ pub fn tests(trials: &mut Vec<Trial>) {
         let entity = fixtures::load_fixture("entities/building-minimal.jsonld", &id);
 
         let resp = ctx.client.create_entity(&entity).await;
-        assert_eq!(resp.status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
 
         let resp = ctx.client.create_entity(&entity).await;
-        assert_eq!(resp.status, StatusCode::CONFLICT, "duplicate should return 409");
+        pretty_assertions::assert_eq!(resp.status, StatusCode::CONFLICT, "duplicate should return 409");
 
         let body: serde_json::Value = resp.json();
         assert!(
@@ -206,17 +206,17 @@ pub fn tests(trials: &mut Vec<Trial>) {
             .link_context(fixtures::test_suite_context_url());
 
         let resp = ctx.client.request(Method::POST, "/entities", Some(&entity), headers).await;
-        assert_eq!(resp.status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
         assert!(resp.location().is_some());
 
         let headers = RequestHeaders::new().accept_ld_json().link_context(fixtures::test_suite_context_url());
         let resp = ctx.client.get_entity(&id, &QueryParams::new(), headers).await;
-        assert_eq!(resp.status, StatusCode::OK);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::OK);
         let body: serde_json::Value = resp.json();
-        assert_eq!(body["id"], id);
-        assert_eq!(body["name"]["value"], "Eiffel Tower");
-        assert_eq!(body["subCategory"]["value"], "tourism");
-        assert_eq!(body["almostFull"]["value"], false);
+        pretty_assertions::assert_eq!(body["id"], id);
+        pretty_assertions::assert_eq!(body["name"]["value"], "Eiffel Tower");
+        pretty_assertions::assert_eq!(body["subCategory"]["value"], "tourism");
+        pretty_assertions::assert_eq!(body["almostFull"]["value"], false);
     }));
 
     // 001_04_02: Create entity with JSON content type, Link header, no @context in retrieval
@@ -229,13 +229,13 @@ pub fn tests(trials: &mut Vec<Trial>) {
             .link_context(fixtures::test_suite_context_url());
 
         let resp = ctx.client.request(Method::POST, "/entities", Some(&entity), headers).await;
-        assert_eq!(resp.status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
 
         // Retrieve without context — attributes should appear as expanded URIs
         let resp = ctx.client.get_entity(&id, &QueryParams::new(), Default::default()).await;
-        assert_eq!(resp.status, StatusCode::OK);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::OK);
         let body: serde_json::Value = resp.json();
-        assert_eq!(body["id"], id);
+        pretty_assertions::assert_eq!(body["id"], id);
     }));
 
     // ── 001_05: Default context with JSON content type ──────────────────
@@ -248,13 +248,13 @@ pub fn tests(trials: &mut Vec<Trial>) {
         let headers = RequestHeaders::new().content_type("application/json");
 
         let resp = ctx.client.request(Method::POST, "/entities", Some(&entity), headers).await;
-        assert_eq!(resp.status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
 
         let resp = ctx.client.get_entity(&id, &QueryParams::new(), Default::default()).await;
-        assert_eq!(resp.status, StatusCode::OK);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::OK);
         let body: serde_json::Value = resp.json();
-        assert_eq!(body["id"], id);
-        assert_eq!(body["type"], "Building");
+        pretty_assertions::assert_eq!(body["id"], id);
+        pretty_assertions::assert_eq!(body["type"], "Building");
     }));
 
     // 001_05_02: Create entity with JSON content type, verify default context compaction
@@ -265,14 +265,14 @@ pub fn tests(trials: &mut Vec<Trial>) {
         let headers = RequestHeaders::new().content_type("application/json");
 
         let resp = ctx.client.request(Method::POST, "/entities", Some(&entity), headers).await;
-        assert_eq!(resp.status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
 
         // Retrieve with test-suite context — attributes should be compacted
         let headers = RequestHeaders::new().accept_ld_json().link_context(fixtures::test_suite_context_url());
         let resp = ctx.client.get_entity(&id, &QueryParams::new(), headers).await;
-        assert_eq!(resp.status, StatusCode::OK);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::OK);
         let body: serde_json::Value = resp.json();
-        assert_eq!(body["name"]["value"], "Eiffel Tower");
+        pretty_assertions::assert_eq!(body["name"]["value"], "Eiffel Tower");
     }));
 
     // ── 001_06: @context in body with application/json ──────────────────
@@ -285,7 +285,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
         let headers = RequestHeaders::new().content_type("application/json");
 
         let resp = ctx.client.request(Method::POST, "/entities", Some(&entity), headers).await;
-        assert_eq!(resp.status, StatusCode::BAD_REQUEST, "@context with application/json should return 400");
+        pretty_assertions::assert_eq!(resp.status, StatusCode::BAD_REQUEST, "@context with application/json should return 400");
     }));
 
     // ── 001_07: @context from payload with application/ld+json ──────────
@@ -298,16 +298,16 @@ pub fn tests(trials: &mut Vec<Trial>) {
         let headers = RequestHeaders::new().content_type("application/ld+json");
 
         let resp = ctx.client.request(Method::POST, "/entities", Some(&entity), headers).await;
-        assert_eq!(resp.status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
         assert!(resp.location().is_some());
 
         let headers = RequestHeaders::new().accept_ld_json().link_context(fixtures::test_suite_context_url());
         let resp = ctx.client.get_entity(&id, &QueryParams::new(), headers).await;
-        assert_eq!(resp.status, StatusCode::OK);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::OK);
         let body: serde_json::Value = resp.json();
-        assert_eq!(body["name"]["value"], "Eiffel Tower");
-        assert_eq!(body["subCategory"]["value"], "tourism");
-        assert_eq!(body["almostFull"]["value"], false);
+        pretty_assertions::assert_eq!(body["name"]["value"], "Eiffel Tower");
+        pretty_assertions::assert_eq!(body["subCategory"]["value"], "tourism");
+        pretty_assertions::assert_eq!(body["almostFull"]["value"], false);
     }));
 
     // 001_07_02: Create entity with ld+json, verify context from payload is used
@@ -318,15 +318,15 @@ pub fn tests(trials: &mut Vec<Trial>) {
         let headers = RequestHeaders::new().content_type("application/ld+json");
 
         let resp = ctx.client.request(Method::POST, "/entities", Some(&entity), headers).await;
-        assert_eq!(resp.status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
 
         let headers = RequestHeaders::new().accept_ld_json().link_context(fixtures::test_suite_context_url());
         let resp = ctx.client.get_entity(&id, &QueryParams::new(), headers).await;
-        assert_eq!(resp.status, StatusCode::OK);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::OK);
         let body: serde_json::Value = resp.json();
-        assert_eq!(body["name"]["value"], "Eiffel Tower");
-        assert_eq!(body["airQualityLevel"]["value"], 4);
-        assert_eq!(body["airQualityLevel"]["unitCode"], "C62");
+        pretty_assertions::assert_eq!(body["name"]["value"], "Eiffel Tower");
+        pretty_assertions::assert_eq!(body["airQualityLevel"]["value"], 4);
+        pretty_assertions::assert_eq!(body["airQualityLevel"]["unitCode"], "C62");
     }));
 
     // ── 001_08: Missing @context with application/ld+json ───────────────
@@ -339,7 +339,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
         let headers = RequestHeaders::new().content_type("application/ld+json");
 
         let resp = ctx.client.request(Method::POST, "/entities", Some(&entity), headers).await;
-        assert_eq!(resp.status, StatusCode::BAD_REQUEST, "ld+json without @context should return 400");
+        pretty_assertions::assert_eq!(resp.status, StatusCode::BAD_REQUEST, "ld+json without @context should return 400");
     }));
 
     // ── 001_09: Link header with application/ld+json ────────────────────
@@ -354,7 +354,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
             .link_context(fixtures::test_suite_context_url());
 
         let resp = ctx.client.request(Method::POST, "/entities", Some(&entity), headers).await;
-        assert_eq!(resp.status, StatusCode::BAD_REQUEST, "Link header with ld+json should return 400");
+        pretty_assertions::assert_eq!(resp.status, StatusCode::BAD_REQUEST, "Link header with ld+json should return 400");
     }));
 
     // ── 001_10: LanguageProperty ────────────────────────────────────────
@@ -365,16 +365,16 @@ pub fn tests(trials: &mut Vec<Trial>) {
         let entity = fixtures::load_fixture("entities/building-language-property.jsonld", &id);
 
         let resp = ctx.client.create_entity(&entity).await;
-        assert_eq!(resp.status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
         assert!(resp.location().is_some());
 
         let headers = RequestHeaders::new().accept_ld_json().link_context(fixtures::test_suite_context_url());
         let resp = ctx.client.get_entity(&id, &QueryParams::new(), headers).await;
-        assert_eq!(resp.status, StatusCode::OK);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::OK);
         let body: serde_json::Value = resp.json();
-        assert_eq!(body["street"]["type"], "LanguageProperty");
-        assert_eq!(body["street"]["languageMap"]["fr"], "Grand Place");
-        assert_eq!(body["street"]["languageMap"]["nl"], "Grote Markt");
+        pretty_assertions::assert_eq!(body["street"]["type"], "LanguageProperty");
+        pretty_assertions::assert_eq!(body["street"]["languageMap"]["fr"], "Grand Place");
+        pretty_assertions::assert_eq!(body["street"]["languageMap"]["nl"], "Grote Markt");
     }));
 
     // ── 001_11: Scope property ──────────────────────────────────────────
@@ -389,12 +389,12 @@ pub fn tests(trials: &mut Vec<Trial>) {
             .link_context(fixtures::test_suite_context_url());
 
         let resp = ctx.client.request(Method::POST, "/entities", Some(&entity), headers).await;
-        assert_eq!(resp.status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
 
         let resp = ctx.client.get_entity(&id, &QueryParams::new(), Default::default()).await;
-        assert_eq!(resp.status, StatusCode::OK);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::OK);
         let body: serde_json::Value = resp.json();
-        assert_eq!(body["scope"], "/Madrid/Gardens/ParqueNorte");
+        pretty_assertions::assert_eq!(body["scope"], "/Madrid/Gardens/ParqueNorte");
     }));
 
     // 001_11_02: Create entity with multiple scopes
@@ -407,13 +407,13 @@ pub fn tests(trials: &mut Vec<Trial>) {
             .link_context(fixtures::test_suite_context_url());
 
         let resp = ctx.client.request(Method::POST, "/entities", Some(&entity), headers).await;
-        assert_eq!(resp.status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
 
         let resp = ctx.client.get_entity(&id, &QueryParams::new(), Default::default()).await;
-        assert_eq!(resp.status, StatusCode::OK);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::OK);
         let body: serde_json::Value = resp.json();
         let scopes = body["scope"].as_array().expect("scope should be an array");
-        assert_eq!(scopes.len(), 2);
+        pretty_assertions::assert_eq!(scopes.len(), 2);
     }));
 
     // ── 001_12: observationSpace GeoProperty ────────────────────────────
@@ -424,13 +424,13 @@ pub fn tests(trials: &mut Vec<Trial>) {
         let entity = fixtures::load_fixture("entities/building-observation-space-geoproperty.jsonld", &id);
 
         let resp = ctx.client.create_entity(&entity).await;
-        assert_eq!(resp.status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
 
         let headers = RequestHeaders::new().accept_ld_json().link_context(fixtures::test_suite_context_url());
         let resp = ctx.client.get_entity(&id, &QueryParams::new(), headers).await;
-        assert_eq!(resp.status, StatusCode::OK);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::OK);
         let body: serde_json::Value = resp.json();
-        assert_eq!(body["observationSpace"]["type"], "GeoProperty");
+        pretty_assertions::assert_eq!(body["observationSpace"]["type"], "GeoProperty");
     }));
 
     // ── 001_13: operationSpace GeoProperty ──────────────────────────────
@@ -441,14 +441,14 @@ pub fn tests(trials: &mut Vec<Trial>) {
         let entity = fixtures::load_fixture("entities/building-operation-space-geoproperty.jsonld", &id);
 
         let resp = ctx.client.create_entity(&entity).await;
-        assert_eq!(resp.status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
 
         let headers = RequestHeaders::new().accept_ld_json().link_context(fixtures::test_suite_context_url());
         let resp = ctx.client.get_entity(&id, &QueryParams::new(), headers).await;
-        assert_eq!(resp.status, StatusCode::OK);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::OK);
         let body: serde_json::Value = resp.json();
-        assert_eq!(body["operationSpace"]["type"], "GeoProperty");
-        assert_eq!(body["operationSpace"]["value"]["type"], "Polygon");
+        pretty_assertions::assert_eq!(body["operationSpace"]["type"], "GeoProperty");
+        pretty_assertions::assert_eq!(body["operationSpace"]["value"]["type"], "Polygon");
     }));
 
     // ── 001_14: JsonProperty ────────────────────────────────────────────
@@ -459,13 +459,13 @@ pub fn tests(trials: &mut Vec<Trial>) {
         let entity = fixtures::load_fixture("entities/building-json-property-object.jsonld", &id);
 
         let resp = ctx.client.create_entity(&entity).await;
-        assert_eq!(resp.status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
 
         let headers = RequestHeaders::new().accept_ld_json().link_context(fixtures::test_suite_context_url());
         let resp = ctx.client.get_entity(&id, &QueryParams::new(), headers).await;
-        assert_eq!(resp.status, StatusCode::OK);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::OK);
         let body: serde_json::Value = resp.json();
-        assert_eq!(body["jsonProperty"]["type"], "JsonProperty");
+        pretty_assertions::assert_eq!(body["jsonProperty"]["type"], "JsonProperty");
         assert!(body["jsonProperty"]["json"].is_object());
     }));
 
@@ -475,15 +475,15 @@ pub fn tests(trials: &mut Vec<Trial>) {
         let entity = fixtures::load_fixture("entities/building-json-property-array.jsonld", &id);
 
         let resp = ctx.client.create_entity(&entity).await;
-        assert_eq!(resp.status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
 
         let headers = RequestHeaders::new().accept_ld_json().link_context(fixtures::test_suite_context_url());
         let resp = ctx.client.get_entity(&id, &QueryParams::new(), headers).await;
-        assert_eq!(resp.status, StatusCode::OK);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::OK);
         let body: serde_json::Value = resp.json();
-        assert_eq!(body["jsonProperty"]["type"], "JsonProperty");
+        pretty_assertions::assert_eq!(body["jsonProperty"]["type"], "JsonProperty");
         assert!(body["jsonProperty"]["json"].is_array());
-        assert_eq!(body["jsonProperty"]["json"].as_array().unwrap().len(), 2);
+        pretty_assertions::assert_eq!(body["jsonProperty"]["json"].as_array().unwrap().len(), 2);
     }));
 
     // ── 001_15: VocabProperty ───────────────────────────────────────────
@@ -494,13 +494,13 @@ pub fn tests(trials: &mut Vec<Trial>) {
         let entity = fixtures::load_fixture("entities/building-vocab-property-string.jsonld", &id);
 
         let resp = ctx.client.create_entity(&entity).await;
-        assert_eq!(resp.status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
 
         let headers = RequestHeaders::new().accept_ld_json().link_context(fixtures::test_suite_context_url());
         let resp = ctx.client.get_entity(&id, &QueryParams::new(), headers).await;
-        assert_eq!(resp.status, StatusCode::OK);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::OK);
         let body: serde_json::Value = resp.json();
-        assert_eq!(body["vocabProperty"]["type"], "VocabProperty");
+        pretty_assertions::assert_eq!(body["vocabProperty"]["type"], "VocabProperty");
     }));
 
     // 001_15_02: Create entity with VocabProperty (array value)
@@ -509,12 +509,12 @@ pub fn tests(trials: &mut Vec<Trial>) {
         let entity = fixtures::load_fixture("entities/building-vocab-property-array.jsonld", &id);
 
         let resp = ctx.client.create_entity(&entity).await;
-        assert_eq!(resp.status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
 
         let headers = RequestHeaders::new().accept_ld_json().link_context(fixtures::test_suite_context_url());
         let resp = ctx.client.get_entity(&id, &QueryParams::new(), headers).await;
-        assert_eq!(resp.status, StatusCode::OK);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::OK);
         let body: serde_json::Value = resp.json();
-        assert_eq!(body["vocabProperty"]["type"], "VocabProperty");
+        pretty_assertions::assert_eq!(body["vocabProperty"]["type"], "VocabProperty");
     }));
 }

@@ -136,6 +136,7 @@ fn write_quoted(buf: &mut String, s: &str) {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::*;
     use crate::query::q::parser::parse;
 
@@ -143,35 +144,35 @@ mod tests {
     fn roundtrip_simple_compare() {
         let expr = parse("speed>50").unwrap();
         let s = serialize(&expr);
-        assert_eq!(s, "speed>50");
+        pretty_assertions::assert_eq!(s, "speed>50");
     }
 
     #[test]
     fn roundtrip_string_compare() {
         let expr = parse("brandName==\"Mercedes\"").unwrap();
         let s = serialize(&expr);
-        assert_eq!(s, "brandName==\"Mercedes\"");
+        pretty_assertions::assert_eq!(s, "brandName==\"Mercedes\"");
     }
 
     #[test]
     fn roundtrip_and() {
         let expr = parse("speed>50;brandName==\"Mercedes\"").unwrap();
         let s = serialize(&expr);
-        assert_eq!(s, "speed>50;brandName==\"Mercedes\"");
+        pretty_assertions::assert_eq!(s, "speed>50;brandName==\"Mercedes\"");
     }
 
     #[test]
     fn roundtrip_range() {
         let expr = parse("temperature==10..20").unwrap();
         let s = serialize(&expr);
-        assert_eq!(s, "temperature==10..20");
+        pretty_assertions::assert_eq!(s, "temperature==10..20");
     }
 
     #[test]
     fn roundtrip_value_list() {
         let expr = parse("color==\"red\",\"blue\"").unwrap();
         let s = serialize(&expr);
-        assert_eq!(s, "color==\"red\",\"blue\"");
+        pretty_assertions::assert_eq!(s, "color==\"red\",\"blue\"");
     }
 
     #[test]
@@ -184,14 +185,14 @@ mod tests {
         });
         let s = serialize(&expr);
         // The IRI must be quoted because it contains a dot
-        assert_eq!(s, "\"https://example.com/speed\">50");
+        pretty_assertions::assert_eq!(s, "\"https://example.com/speed\">50");
         // And it should parse back
         let parsed = parse(&s).unwrap();
         match parsed {
             Expr::Pred(Predicate::Compare { path, .. }) => {
-                assert_eq!(path.attr, "https://example.com/speed");
+                pretty_assertions::assert_eq!(path.attr, "https://example.com/speed");
             }
-            _ => panic!("expected Compare"),
+            _ => unreachable!("expected Compare"),
         }
     }
 }

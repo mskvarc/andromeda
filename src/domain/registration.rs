@@ -200,12 +200,13 @@ pub struct ContextSourceRegistration {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::*;
     use std::str::FromStr;
 
     #[test]
     fn forwarding_mode_default_is_inclusive() {
-        assert_eq!(ForwardingMode::default(), ForwardingMode::Inclusive);
+        pretty_assertions::assert_eq!(ForwardingMode::default(), ForwardingMode::Inclusive);
     }
 
     #[test]
@@ -218,7 +219,7 @@ mod tests {
         ] {
             let s = variant.to_string();
             let parsed = ForwardingMode::from_str(&s).unwrap();
-            assert_eq!(parsed, variant, "round-trip failed for {variant}");
+            pretty_assertions::assert_eq!(parsed, variant, "round-trip failed for {variant}");
         }
     }
 
@@ -227,35 +228,35 @@ mod tests {
         for variant in [CsrStatus::Ok, CsrStatus::Failed] {
             let s = variant.to_string();
             let parsed = CsrStatus::from_str(&s).unwrap();
-            assert_eq!(parsed, variant, "round-trip failed for {variant}");
+            pretty_assertions::assert_eq!(parsed, variant, "round-trip failed for {variant}");
         }
     }
 
     #[test]
     fn csr_operation_known_round_trip() {
         let op = CsrOperation::RetrieveEntity;
-        assert_eq!(op.to_string(), "retrieveEntity");
-        assert_eq!("retrieveEntity".parse::<CsrOperation>().unwrap(), op);
+        pretty_assertions::assert_eq!(op.to_string(), "retrieveEntity");
+        pretty_assertions::assert_eq!("retrieveEntity".parse::<CsrOperation>().unwrap(), op);
     }
 
     #[test]
     fn csr_operation_retrieve_temporal_entity_round_trip() {
         let op = CsrOperation::RetrieveTemporalEntity;
-        assert_eq!(op.to_string(), "retrieveTemporalEntity");
-        assert_eq!("retrieveTemporalEntity".parse::<CsrOperation>().unwrap(), op);
+        pretty_assertions::assert_eq!(op.to_string(), "retrieveTemporalEntity");
+        pretty_assertions::assert_eq!("retrieveTemporalEntity".parse::<CsrOperation>().unwrap(), op);
     }
 
     #[test]
     fn csr_operation_query_temporal_entity_round_trip() {
         let op = CsrOperation::QueryTemporalEntity;
-        assert_eq!(op.to_string(), "queryTemporalEntity");
-        assert_eq!("queryTemporalEntity".parse::<CsrOperation>().unwrap(), op);
+        pretty_assertions::assert_eq!(op.to_string(), "queryTemporalEntity");
+        pretty_assertions::assert_eq!("queryTemporalEntity".parse::<CsrOperation>().unwrap(), op);
     }
 
     #[test]
     fn csr_operation_other_preserved() {
         let op: CsrOperation = "customOp".parse().unwrap();
-        assert_eq!(op, CsrOperation::Other("customOp".to_string()));
-        assert_eq!(op.to_string(), "customOp");
+        pretty_assertions::assert_eq!(op, CsrOperation::Other("customOp".to_string()));
+        pretty_assertions::assert_eq!(op.to_string(), "customOp");
     }
 }

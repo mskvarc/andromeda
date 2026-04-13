@@ -1,3 +1,4 @@
+#![allow(clippy::expect_used, clippy::unwrap_used)]
 use crate::{
     distributed_operations::prepare_registration,
     harness::{
@@ -8,7 +9,6 @@ use crate::{
     },
 };
 use libtest_mimic::Trial;
-use pretty_assertions::assert_eq;
 use reqwest::{Method, StatusCode};
 
 const PREFIX: &str = "distributed_operations::consumption::entity::query_entities";
@@ -40,12 +40,12 @@ pub fn tests(trials: &mut Vec<Trial>) {
             .client
             .request(Method::POST, "/entities?local=true", Some(&entity), RequestHeaders::new())
             .await;
-        assert_eq!(resp.status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
 
         // Create auxiliary registration
         let reg = prepare_registration(REG_VEHICLE_COMPLETE, &reg_id, &entity_id, &mock.url(""), Some("auxiliary"), None, None);
         let resp = ctx.client.create_registration(&reg).await;
-        assert_eq!(resp.status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
         ctx.track_registration(&reg_id);
 
         // Mock returns entity with brandName=Mercedes, isParked
@@ -55,16 +55,16 @@ pub fn tests(trials: &mut Vec<Trial>) {
 
         // Query entities
         let resp = ctx.client.query_entities(&QueryParams::new().type_("Vehicle"), ld_headers()).await;
-        assert_eq!(resp.status, StatusCode::OK);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::OK);
 
         let body: Vec<serde_json::Value> = resp.json();
-        assert_eq!(body.is_empty(), false, "should return at least one entity");
+        pretty_assertions::assert_eq!(body.is_empty(), false, "should return at least one entity");
         let first = &body[0];
         let obj = first.as_object().unwrap();
         let keys: Vec<_> = obj.keys().collect();
-        assert_eq!(obj.contains_key("brandName"), true, "expected brandName in {keys:?}");
-        assert_eq!(obj.contains_key("isParked"), true, "expected isParked in {keys:?}");
-        assert_eq!(obj.contains_key("isParked2"), true, "expected isParked2 in {keys:?}");
+        pretty_assertions::assert_eq!(obj.contains_key("brandName"), true, "expected brandName in {keys:?}");
+        pretty_assertions::assert_eq!(obj.contains_key("isParked"), true, "expected isParked in {keys:?}");
+        pretty_assertions::assert_eq!(obj.contains_key("isParked2"), true, "expected isParked2 in {keys:?}");
 
         mock.stop();
     }));
@@ -81,7 +81,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
             .client
             .request(Method::POST, "/entities?local=true", Some(&entity), RequestHeaders::new())
             .await;
-        assert_eq!(resp.status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
 
         // Create exclusive registration — must specify queryEntity explicitly because
         // the fixture's redirectionOps only matches consumption ops in redirect mode
@@ -95,7 +95,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
             None,
         );
         let resp = ctx.client.create_registration(&reg).await;
-        assert_eq!(resp.status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
         ctx.track_registration(&reg_id);
 
         // Mock returns entity with speed
@@ -105,12 +105,12 @@ pub fn tests(trials: &mut Vec<Trial>) {
 
         // Query entities
         let resp = ctx.client.query_entities(&QueryParams::new().type_("Vehicle"), ld_headers()).await;
-        assert_eq!(resp.status, StatusCode::OK);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::OK);
 
         let body: Vec<serde_json::Value> = resp.json();
         let entity = body.iter().find(|e| e["id"] == entity_id).unwrap();
         let obj = entity.as_object().unwrap();
-        assert_eq!(
+        pretty_assertions::assert_eq!(
             obj.contains_key("speed"),
             true,
             "expected speed from exclusive source, got keys: {:?}",
@@ -130,7 +130,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
         // Create redirect registration
         let reg = prepare_registration(REG_VEHICLE_COMPLETE, &reg_id, &entity_id, &mock.url("/broker1"), Some("redirect"), None, None);
         let resp = ctx.client.create_registration(&reg).await;
-        assert_eq!(resp.status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
         ctx.track_registration(&reg_id);
 
         // Mock returns entity
@@ -140,7 +140,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
 
         // Query entities
         let resp = ctx.client.query_entities(&QueryParams::new().type_("Vehicle"), ld_headers()).await;
-        assert_eq!(resp.status, StatusCode::OK);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::OK);
 
         let body: Vec<serde_json::Value> = resp.json();
         assert!(body.iter().any(|e| e["id"] == entity_id));
@@ -157,7 +157,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
         // Create inclusive registration
         let reg = prepare_registration(REG_VEHICLE_COMPLETE, &reg_id, &entity_id, &mock.url(""), None, None, None);
         let resp = ctx.client.create_registration(&reg).await;
-        assert_eq!(resp.status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
         ctx.track_registration(&reg_id);
 
         // Mock returns entity
@@ -167,7 +167,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
 
         // Query entities
         let resp = ctx.client.query_entities(&QueryParams::new().type_("Vehicle"), ld_headers()).await;
-        assert_eq!(resp.status, StatusCode::OK);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::OK);
 
         let body: Vec<serde_json::Value> = resp.json();
         assert!(body.iter().any(|e| e["id"] == entity_id));
@@ -184,7 +184,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
         // Create inclusive registration
         let reg = prepare_registration(REG_VEHICLE_COMPLETE, &reg_id, &entity_id, &mock.url(""), None, None, None);
         let resp = ctx.client.create_registration(&reg).await;
-        assert_eq!(resp.status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
         ctx.track_registration(&reg_id);
 
         // Mock returns entity without speed attribute
@@ -197,10 +197,10 @@ pub fn tests(trials: &mut Vec<Trial>) {
             .client
             .query_entities(&QueryParams::new().type_("Vehicle").attrs(["speed"]), ld_headers())
             .await;
-        assert_eq!(resp.status, StatusCode::OK);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::OK);
 
         let body: Vec<serde_json::Value> = resp.json();
-        assert_eq!(body.len(), 0, "no entity should have speed attribute, got {body:?}");
+        pretty_assertions::assert_eq!(body.len(), 0, "no entity should have speed attribute, got {body:?}");
 
         mock.stop();
     }));
@@ -218,12 +218,12 @@ pub fn tests(trials: &mut Vec<Trial>) {
             .client
             .request(Method::POST, "/entities?local=true", Some(&entity), RequestHeaders::new())
             .await;
-        assert_eq!(resp.status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
 
         // Create inclusive registration
         let reg = prepare_registration(REG_VEHICLE_ENTITIES, &reg_id, &entity_id_remote, &mock.url(""), None, None, None);
         let resp = ctx.client.create_registration(&reg).await;
-        assert_eq!(resp.status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
         ctx.track_registration(&reg_id);
 
         // Mock returns entity with isParked2
@@ -236,7 +236,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
             .client
             .query_entities(&QueryParams::new().type_("Vehicle").attrs(["isParked2"]), ld_headers())
             .await;
-        assert_eq!(resp.status, StatusCode::OK);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::OK);
 
         let body: Vec<serde_json::Value> = resp.json();
         assert!(body.iter().any(|e| e["id"] == entity_id_remote), "should contain remote entity with isParked2");
@@ -257,12 +257,12 @@ pub fn tests(trials: &mut Vec<Trial>) {
             .client
             .request(Method::POST, "/entities?local=true", Some(&entity), RequestHeaders::new())
             .await;
-        assert_eq!(resp.status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
 
         // Create inclusive registration
         let reg = prepare_registration(REG_VEHICLE_COMPLETE, &reg_id, &entity_id_remote, &mock.url(""), None, None, None);
         let resp = ctx.client.create_registration(&reg).await;
-        assert_eq!(resp.status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
         ctx.track_registration(&reg_id);
 
         // Mock returns entity without speed
@@ -275,10 +275,10 @@ pub fn tests(trials: &mut Vec<Trial>) {
             .client
             .query_entities(&QueryParams::new().type_("Vehicle").attrs(["speed"]), ld_headers())
             .await;
-        assert_eq!(resp.status, StatusCode::OK);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::OK);
 
         let body: Vec<serde_json::Value> = resp.json();
-        assert_eq!(body.len(), 0, "neither entity has speed attribute, got {body:?}");
+        pretty_assertions::assert_eq!(body.len(), 0, "neither entity has speed attribute, got {body:?}");
 
         mock.stop();
     }));
@@ -295,12 +295,12 @@ pub fn tests(trials: &mut Vec<Trial>) {
             .client
             .request(Method::POST, "/entities?local=true", Some(&entity), RequestHeaders::new())
             .await;
-        assert_eq!(resp.status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
 
         // Create inclusive registration
         let reg = prepare_registration(REG_VEHICLE_COMPLETE, &reg_id, &entity_id, &mock.url(""), None, None, None);
         let resp = ctx.client.create_registration(&reg).await;
-        assert_eq!(resp.status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
         ctx.track_registration(&reg_id);
 
         // Mock returns entity with brandName, isParked (same ID)
@@ -310,17 +310,17 @@ pub fn tests(trials: &mut Vec<Trial>) {
 
         // Query entities
         let resp = ctx.client.query_entities(&QueryParams::new().type_("Vehicle"), ld_headers()).await;
-        assert_eq!(resp.status, StatusCode::OK);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::OK);
 
         let body: Vec<serde_json::Value> = resp.json();
         // Should have single merged entity
         let entity = body.iter().find(|e| e["id"] == entity_id).unwrap();
         let obj = entity.as_object().unwrap();
         let keys: Vec<_> = obj.keys().collect();
-        assert_eq!(obj.contains_key("brandName"), true, "expected brandName in {keys:?}");
-        assert_eq!(obj.contains_key("speed"), true, "expected speed in {keys:?}");
-        assert_eq!(obj.contains_key("isParked"), true, "expected isParked in {keys:?}");
-        assert_eq!(obj.contains_key("isParked2"), true, "expected isParked2 in {keys:?}");
+        pretty_assertions::assert_eq!(obj.contains_key("brandName"), true, "expected brandName in {keys:?}");
+        pretty_assertions::assert_eq!(obj.contains_key("speed"), true, "expected speed in {keys:?}");
+        pretty_assertions::assert_eq!(obj.contains_key("isParked"), true, "expected isParked in {keys:?}");
+        pretty_assertions::assert_eq!(obj.contains_key("isParked2"), true, "expected isParked2 in {keys:?}");
 
         mock.stop();
     }));
@@ -337,7 +337,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
             .client
             .request(Method::POST, "/entities?local=true", Some(&entity), RequestHeaders::new())
             .await;
-        assert_eq!(resp.status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
 
         // Create exclusive registration with queryEntity operation
         let reg = prepare_registration(
@@ -350,7 +350,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
             None,
         );
         let resp = ctx.client.create_registration(&reg).await;
-        assert_eq!(resp.status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
         ctx.track_registration(&reg_id);
 
         // Mock returns entity with speed
@@ -360,7 +360,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
 
         // Query entities
         let resp = ctx.client.query_entities(&QueryParams::new().type_("Vehicle"), ld_headers()).await;
-        assert_eq!(resp.status, StatusCode::OK);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::OK);
 
         let body: Vec<serde_json::Value> = resp.json();
         assert!(body.iter().any(|e| e["id"] == entity_id));
@@ -380,7 +380,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
             .client
             .request(Method::POST, "/entities?local=true", Some(&entity), RequestHeaders::new())
             .await;
-        assert_eq!(resp.status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
 
         // Create exclusive registration with queryBatch operation
         let reg = prepare_registration(
@@ -393,7 +393,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
             None,
         );
         let resp = ctx.client.create_registration(&reg).await;
-        assert_eq!(resp.status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
         ctx.track_registration(&reg_id);
 
         // The broker always forwards queries as GET /entities regardless of CSR operations
@@ -403,7 +403,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
 
         // Query entities
         let resp = ctx.client.query_entities(&QueryParams::new().type_("Vehicle"), ld_headers()).await;
-        assert_eq!(resp.status, StatusCode::OK);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::OK);
 
         let body: Vec<serde_json::Value> = resp.json();
         assert!(body.iter().any(|e| e["id"] == entity_id));
@@ -420,7 +420,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
         // Create inclusive registration (no local entity)
         let reg = prepare_registration(REG_VEHICLE_COMPLETE, &reg_id, &entity_id, &mock.url(""), None, None, None);
         let resp = ctx.client.create_registration(&reg).await;
-        assert_eq!(resp.status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
         ctx.track_registration(&reg_id);
 
         // Mock stub
@@ -430,10 +430,10 @@ pub fn tests(trials: &mut Vec<Trial>) {
 
         // Query with local=true → empty
         let resp = ctx.client.query_entities(&QueryParams::new().type_("Vehicle").local(true), ld_headers()).await;
-        assert_eq!(resp.status, StatusCode::OK);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::OK);
 
         let body: Vec<serde_json::Value> = resp.json();
-        assert_eq!(body.len(), 0, "local=true should return empty when no local entities");
+        pretty_assertions::assert_eq!(body.len(), 0, "local=true should return empty when no local entities");
 
         mock.stop();
     }));
@@ -455,7 +455,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
             None,
         );
         let resp = ctx.client.create_registration(&reg).await;
-        assert_eq!(resp.status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
         ctx.track_registration(&reg_id);
 
         // Mock returns entity
@@ -465,7 +465,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
 
         // Query entities
         let resp = ctx.client.query_entities(&QueryParams::new().type_("Vehicle"), ld_headers()).await;
-        assert_eq!(resp.status, StatusCode::OK);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::OK);
 
         let body: Vec<serde_json::Value> = resp.json();
         assert!(body.iter().any(|e| e["id"] == entity_id));
@@ -490,7 +490,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
             None,
         );
         let resp = ctx.client.create_registration(&reg).await;
-        assert_eq!(resp.status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
         ctx.track_registration(&reg_id);
 
         // The broker always forwards queries as GET /entities regardless of CSR operations
@@ -500,7 +500,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
 
         // Query entities
         let resp = ctx.client.query_entities(&QueryParams::new().type_("Vehicle"), ld_headers()).await;
-        assert_eq!(resp.status, StatusCode::OK);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::OK);
 
         let body: Vec<serde_json::Value> = resp.json();
         assert!(body.iter().any(|e| e["id"] == entity_id));
@@ -517,7 +517,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
         // Create inclusive registration with queryEntity operation
         let reg = prepare_registration(REG_VEHICLE_COMPLETE, &reg_id, &entity_id, &mock.url(""), None, Some(&["queryEntity"]), None);
         let resp = ctx.client.create_registration(&reg).await;
-        assert_eq!(resp.status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
         ctx.track_registration(&reg_id);
 
         // Mock returns entity
@@ -530,7 +530,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
             .client
             .query_entities(&QueryParams::new().type_("Vehicle").id(&entity_id), ld_headers())
             .await;
-        assert_eq!(resp.status, StatusCode::OK);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::OK);
 
         let body: Vec<serde_json::Value> = resp.json();
         assert!(body.iter().any(|e| e["id"] == entity_id));
@@ -547,7 +547,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
         // Create inclusive registration with queryBatch operation
         let reg = prepare_registration(REG_VEHICLE_COMPLETE, &reg_id, &entity_id, &mock.url(""), None, Some(&["queryBatch"]), None);
         let resp = ctx.client.create_registration(&reg).await;
-        assert_eq!(resp.status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
         ctx.track_registration(&reg_id);
 
         // The broker always forwards queries as GET /entities regardless of CSR operations
@@ -560,7 +560,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
             .client
             .query_entities(&QueryParams::new().type_("Vehicle").id(&entity_id), ld_headers())
             .await;
-        assert_eq!(resp.status, StatusCode::OK);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::OK);
 
         let body: Vec<serde_json::Value> = resp.json();
         assert!(body.iter().any(|e| e["id"] == entity_id));
@@ -577,7 +577,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
         // Create inclusive registration with queryBatch operation
         let reg = prepare_registration(REG_VEHICLE_COMPLETE, &reg_id, &entity_id, &mock.url(""), None, Some(&["queryBatch"]), None);
         let resp = ctx.client.create_registration(&reg).await;
-        assert_eq!(resp.status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
         ctx.track_registration(&reg_id);
 
         // The broker always forwards queries as GET /entities regardless of CSR operations
@@ -601,7 +601,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
                     .link_context(fixtures::test_suite_context_url()),
             )
             .await;
-        assert_eq!(resp.status, StatusCode::OK);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::OK);
 
         let body: Vec<serde_json::Value> = resp.json();
         assert!(body.iter().any(|e| e["id"] == entity_id));
@@ -618,7 +618,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
         // Create inclusive registration with queryEntity operation
         let reg = prepare_registration(REG_VEHICLE_COMPLETE, &reg_id, &entity_id, &mock.url(""), None, Some(&["queryEntity"]), None);
         let resp = ctx.client.create_registration(&reg).await;
-        assert_eq!(resp.status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
         ctx.track_registration(&reg_id);
 
         // Mock returns entity
@@ -642,7 +642,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
                     .link_context(fixtures::test_suite_context_url()),
             )
             .await;
-        assert_eq!(resp.status, StatusCode::OK);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::OK);
 
         let body: Vec<serde_json::Value> = resp.json();
         assert!(body.iter().any(|e| e["id"] == entity_id));

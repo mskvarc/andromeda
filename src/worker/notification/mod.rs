@@ -494,6 +494,7 @@ fn compile_selector(selector: &EntitySelector) -> Option<CompiledSelector> {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::*;
     use crate::{domain::notification::ChangeOrigin, query::q::parser, transport::endpoint::EndpointTransport};
     use matching::matches_subscription;

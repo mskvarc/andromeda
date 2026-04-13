@@ -86,6 +86,7 @@ impl From<NgsiLdLanguage> for LanguageFilter {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::*;
     use crate::http::model::quality::Quality;
     use headers::Header;
@@ -100,31 +101,31 @@ mod tests {
     #[test]
     fn decode_single_tag() {
         let header = decode_header("fr").expect("valid");
-        assert_eq!(header.0.len(), 1);
-        assert_eq!(header.0[0].value().to_string(), "fr");
-        assert_eq!(header.0[0].quality(), Quality::default());
+        pretty_assertions::assert_eq!(header.0.len(), 1);
+        pretty_assertions::assert_eq!(header.0[0].value().to_string(), "fr");
+        pretty_assertions::assert_eq!(header.0[0].quality(), Quality::default());
     }
 
     #[test]
     fn decode_tag_with_region() {
         let header = decode_header("fr-CH").expect("valid");
-        assert_eq!(header.0[0].value().to_string(), "fr-CH");
+        pretty_assertions::assert_eq!(header.0[0].value().to_string(), "fr-CH");
     }
 
     #[test]
     fn decode_wildcard() {
         let header = decode_header("*").expect("valid");
-        assert_eq!(*header.0[0].value(), LanguageRange::Wildcard);
+        pretty_assertions::assert_eq!(*header.0[0].value(), LanguageRange::Wildcard);
     }
 
     #[test]
     fn decode_multiple_with_quality() {
         let header = decode_header("fr-CH, fr;q=0.9, en;q=0.8, *;q=0.5").expect("valid");
-        assert_eq!(header.0.len(), 4);
-        assert_eq!(header.0[0].quality().value(), 1000);
-        assert_eq!(header.0[1].quality().value(), 900);
-        assert_eq!(header.0[2].quality().value(), 800);
-        assert_eq!(header.0[3].quality().value(), 500);
+        pretty_assertions::assert_eq!(header.0.len(), 4);
+        pretty_assertions::assert_eq!(header.0[0].quality().value(), 1000);
+        pretty_assertions::assert_eq!(header.0[1].quality().value(), 900);
+        pretty_assertions::assert_eq!(header.0[2].quality().value(), 800);
+        pretty_assertions::assert_eq!(header.0[3].quality().value(), 500);
     }
 
     #[test]
@@ -145,9 +146,9 @@ mod tests {
         let header = decode_header("en;q=0.5, fr;q=0.9, de").expect("valid");
         let filter = LanguageFilter::from(header);
         let ordered = filter.ordered();
-        assert_eq!(ordered[0].value().to_string(), "de");
-        assert_eq!(ordered[1].value().to_string(), "fr");
-        assert_eq!(ordered[2].value().to_string(), "en");
+        pretty_assertions::assert_eq!(ordered[0].value().to_string(), "de");
+        pretty_assertions::assert_eq!(ordered[1].value().to_string(), "fr");
+        pretty_assertions::assert_eq!(ordered[2].value().to_string(), "en");
     }
 
     #[test]
@@ -157,9 +158,9 @@ mod tests {
         let header = decode_header("de, en, fr").expect("valid");
         let filter = LanguageFilter::from(header);
         let ordered = filter.ordered();
-        assert_eq!(ordered[0].value().to_string(), "de");
-        assert_eq!(ordered[1].value().to_string(), "en");
-        assert_eq!(ordered[2].value().to_string(), "fr");
+        pretty_assertions::assert_eq!(ordered[0].value().to_string(), "de");
+        pretty_assertions::assert_eq!(ordered[1].value().to_string(), "en");
+        pretty_assertions::assert_eq!(ordered[2].value().to_string(), "fr");
     }
 
     #[test]
@@ -169,9 +170,9 @@ mod tests {
         let header = decode_header("de;q=0, en;q=0.8, *;q=0.5").expect("valid");
         let filter = LanguageFilter::from(header);
         let ordered = filter.ordered();
-        assert_eq!(ordered.len(), 2);
-        assert_eq!(ordered[0].value().to_string(), "en");
-        assert_eq!(ordered[1].value().to_string(), "*");
+        pretty_assertions::assert_eq!(ordered.len(), 2);
+        pretty_assertions::assert_eq!(ordered[0].value().to_string(), "en");
+        pretty_assertions::assert_eq!(ordered[1].value().to_string(), "*");
     }
 
     #[test]
@@ -181,6 +182,6 @@ mod tests {
         original.encode(&mut encoded);
         let mut iter = encoded.iter();
         let decoded = NgsiLdLanguage::decode(&mut iter).expect("roundtrip decode");
-        assert_eq!(original, decoded);
+        pretty_assertions::assert_eq!(original, decoded);
     }
 }

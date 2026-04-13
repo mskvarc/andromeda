@@ -1,3 +1,4 @@
+#![allow(clippy::expect_used, clippy::unwrap_used)]
 use crate::harness::{
     TestCtx,
     client::{NgsiLdOption, QueryParams, RequestHeaders},
@@ -5,7 +6,6 @@ use crate::harness::{
     trial::{trial, trial_clean_db},
 };
 use libtest_mimic::Trial;
-use pretty_assertions::assert_eq;
 use reqwest::{Method, StatusCode};
 
 const PREFIX: &str = "consumption::entity::query";
@@ -35,16 +35,16 @@ pub fn tests(trials: &mut Vec<Trial>) {
         for id in [&id1, &id2, &id3] {
             let entity = fixtures::load_fixture("entities/building-minimal.jsonld", id);
             let resp = ctx.client.create_entity(&entity).await;
-            assert_eq!(resp.status, StatusCode::CREATED);
+            pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
         }
 
         let params = QueryParams::new().id(format!("{id1},{id2}")).type_("Building");
         let resp = ctx.client.query_entities(&params, ctx_headers()).await;
-        assert_eq!(resp.status, StatusCode::OK);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::OK);
 
         let body: serde_json::Value = resp.json();
         let arr = body.as_array().expect("should return array");
-        assert_eq!(arr.len(), 2, "should return exactly 2 entities");
+        pretty_assertions::assert_eq!(arr.len(), 2, "should return exactly 2 entities");
     }));
 
     // 019_01_02: Query several entities based on the entity types
@@ -55,23 +55,23 @@ pub fn tests(trials: &mut Vec<Trial>) {
 
         let building = fixtures::load_fixture("entities/building-minimal.jsonld", &building_id);
         let resp = ctx.client.create_entity(&building).await;
-        assert_eq!(resp.status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
 
         let vehicle = fixtures::load_fixture("entities/vehicle-simple-attributes.jsonld", &vehicle_id);
         let resp = ctx.client.create_entity(&vehicle).await;
-        assert_eq!(resp.status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
 
         let parking = fixtures::load_fixture("entities/parking-simple-attributes.jsonld", &parking_id);
         let resp = ctx.client.create_entity(&parking).await;
-        assert_eq!(resp.status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
 
         let params = QueryParams::new().type_("Vehicle,OffStreetParking");
         let resp = ctx.client.query_entities(&params, ctx_headers()).await;
-        assert_eq!(resp.status, StatusCode::OK);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::OK);
 
         let body: serde_json::Value = resp.json();
         let arr = body.as_array().expect("should return array");
-        assert_eq!(arr.len(), 2, "should return vehicle and parking");
+        pretty_assertions::assert_eq!(arr.len(), 2, "should return vehicle and parking");
     }));
 
     // 019_01_03: Query several entities based on the given id pattern
@@ -82,16 +82,16 @@ pub fn tests(trials: &mut Vec<Trial>) {
         for id in [&id1, &id2] {
             let entity = fixtures::load_fixture("entities/building-minimal.jsonld", id);
             let resp = ctx.client.create_entity(&entity).await;
-            assert_eq!(resp.status, StatusCode::CREATED);
+            pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
         }
 
         let params = QueryParams::new().id_pattern("urn:ngsi-ld:Building:019_01_03.*").type_("Building");
         let resp = ctx.client.query_entities(&params, ctx_headers()).await;
-        assert_eq!(resp.status, StatusCode::OK);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::OK);
 
         let body: serde_json::Value = resp.json();
         let arr = body.as_array().expect("should return array");
-        assert_eq!(arr.len(), 2);
+        pretty_assertions::assert_eq!(arr.len(), 2);
     }));
 
     // 019_01_04: Query several entities based on attribute names
@@ -104,12 +104,12 @@ pub fn tests(trials: &mut Vec<Trial>) {
         let mut e1 = fixtures::load_fixture("entities/building-simple-attributes.jsonld", &id1);
         e1["@context"] = serde_json::json!([compound]);
         let resp = ctx.client.create_entity(&e1).await;
-        assert_eq!(resp.status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
 
         let mut e2 = fixtures::load_fixture("entities/building-minimal.jsonld", &id2);
         e2["@context"] = serde_json::json!([compound]);
         let resp = ctx.client.create_entity(&e2).await;
-        assert_eq!(resp.status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
 
         let params = QueryParams::new().attrs([
             "https://ngsi-ld-test-suite/context#airQualityLevel",
@@ -117,12 +117,12 @@ pub fn tests(trials: &mut Vec<Trial>) {
         ]);
         let headers = RequestHeaders::new().accept_ld_json().link_context(compound);
         let resp = ctx.client.query_entities(&params, headers).await;
-        assert_eq!(resp.status, StatusCode::OK);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::OK);
 
         let body: serde_json::Value = resp.json();
         let arr = body.as_array().expect("should return array");
-        assert_eq!(arr.len(), 1, "only entity with matching attrs should be returned");
-        assert_eq!(arr[0]["id"], id1);
+        pretty_assertions::assert_eq!(arr.len(), 1, "only entity with matching attrs should be returned");
+        pretty_assertions::assert_eq!(arr[0]["id"], id1);
     }));
 
     // 019_01_05: Query several entities based on a geoquery
@@ -133,7 +133,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
         for id in [&id1, &id2] {
             let entity = fixtures::load_fixture("entities/building-location-attribute.jsonld", id);
             let resp = ctx.client.create_entity(&entity).await;
-            assert_eq!(resp.status, StatusCode::CREATED);
+            pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
         }
 
         let params = QueryParams::new()
@@ -142,11 +142,11 @@ pub fn tests(trials: &mut Vec<Trial>) {
             .geometry("Point")
             .coordinates("[13.3986,52.5547]");
         let resp = ctx.client.query_entities(&params, ctx_headers()).await;
-        assert_eq!(resp.status, StatusCode::OK);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::OK);
 
         let body: serde_json::Value = resp.json();
         let arr = body.as_array().expect("should return array");
-        assert_eq!(arr.len(), 2, "both entities share the same location");
+        pretty_assertions::assert_eq!(arr.len(), 2, "both entities share the same location");
     }));
 
     // ── 019_01_06: Scope queries ─────────────────────────────────────────
@@ -157,7 +157,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
         let (id1, id2) = setup_scope_entities(&ctx, compound).await;
 
         let count = query_scope_count(&ctx, compound, "/Madrid/Gardens/ParqueNorte").await;
-        assert_eq!(count, 2);
+        pretty_assertions::assert_eq!(count, 2);
         let _ = (id1, id2);
     }));
 
@@ -167,7 +167,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
         let (id1, id2) = setup_scope_entities(&ctx, compound).await;
 
         let count = query_scope_count(&ctx, compound, "/Madrid/+/ParqueNorte").await;
-        assert_eq!(count, 2);
+        pretty_assertions::assert_eq!(count, 2);
         let _ = (id1, id2);
     }));
 
@@ -177,7 +177,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
         let (id1, id2) = setup_scope_entities(&ctx, compound).await;
 
         let count = query_scope_count(&ctx, compound, "/CompanyA/#").await;
-        assert_eq!(count, 1);
+        pretty_assertions::assert_eq!(count, 1);
         let _ = (id1, id2);
     }));
 
@@ -187,7 +187,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
         let (id1, id2) = setup_scope_entities(&ctx, compound).await;
 
         let count = query_scope_count(&ctx, compound, "/#").await;
-        assert_eq!(count, 2);
+        pretty_assertions::assert_eq!(count, 2);
         let _ = (id1, id2);
     }));
 
@@ -197,7 +197,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
         let (id1, id2) = setup_scope_entities(&ctx, compound).await;
 
         let count = query_scope_count(&ctx, compound, "/Madrid/Gardens/ParqueNorte;/CompanyA/OrganizationB/UnitC").await;
-        assert_eq!(count, 1);
+        pretty_assertions::assert_eq!(count, 1);
         let _ = (id1, id2);
     }));
 
@@ -207,7 +207,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
         let (id1, id2) = setup_scope_entities(&ctx, compound).await;
 
         let count = query_scope_count(&ctx, compound, "/Madrid/Gardens/ParqueNorte,/CompanyA/OrganizationB/UnitC").await;
-        assert_eq!(count, 2);
+        pretty_assertions::assert_eq!(count, 2);
         let _ = (id1, id2);
     }));
 
@@ -222,7 +222,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
         for id in [&id1, &id2, &id3] {
             let entity = fixtures::load_fixture("entities/building-minimal.jsonld", id);
             let resp = ctx.client.create_entity(&entity).await;
-            assert_eq!(resp.status, StatusCode::CREATED);
+            pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
         }
 
         let query_body = serde_json::json!({
@@ -230,12 +230,12 @@ pub fn tests(trials: &mut Vec<Trial>) {
             "@context": fixtures::test_suite_context_url()
         });
         let resp = ctx.client.batch_query(&query_body, Default::default()).await;
-        assert_eq!(resp.status, StatusCode::OK);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::OK);
 
         let body: serde_json::Value = resp.json();
         let arr = body.as_array().expect("should return array");
-        assert_eq!(arr.len(), 1);
-        assert_eq!(arr[0]["id"], id1);
+        pretty_assertions::assert_eq!(arr.len(), 1);
+        pretty_assertions::assert_eq!(arr[0]["id"], id1);
     }));
 
     // 019_02_02: Query several entities via POST interaction based on the entity types
@@ -249,13 +249,13 @@ pub fn tests(trials: &mut Vec<Trial>) {
         let mut building = fixtures::load_fixture("entities/building-minimal.jsonld", &building_id);
         building["@context"] = serde_json::json!([compound]);
         let resp = ctx.client.create_entity(&building).await;
-        assert_eq!(resp.status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
 
         for id in [&vehicle_id1, &vehicle_id2] {
             let mut vehicle = fixtures::load_fixture("entities/vehicle-simple-attributes.jsonld", id);
             vehicle["@context"] = serde_json::json!([compound]);
             let resp = ctx.client.create_entity(&vehicle).await;
-            assert_eq!(resp.status, StatusCode::CREATED);
+            pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
         }
 
         let query_body = serde_json::json!({
@@ -263,11 +263,11 @@ pub fn tests(trials: &mut Vec<Trial>) {
             "@context": compound
         });
         let resp = ctx.client.batch_query(&query_body, Default::default()).await;
-        assert_eq!(resp.status, StatusCode::OK);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::OK);
 
         let body: serde_json::Value = resp.json();
         let arr = body.as_array().expect("should return array");
-        assert_eq!(arr.len(), 2);
+        pretty_assertions::assert_eq!(arr.len(), 2);
     }));
 
     // 019_02_03: Query several entities via POST interaction based on the given id pattern
@@ -278,7 +278,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
         for id in [&id1, &id2] {
             let entity = fixtures::load_fixture("entities/building-minimal.jsonld", id);
             let resp = ctx.client.create_entity(&entity).await;
-            assert_eq!(resp.status, StatusCode::CREATED);
+            pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
         }
 
         let query_body = serde_json::json!({
@@ -286,11 +286,11 @@ pub fn tests(trials: &mut Vec<Trial>) {
             "@context": fixtures::test_suite_context_url()
         });
         let resp = ctx.client.batch_query(&query_body, Default::default()).await;
-        assert_eq!(resp.status, StatusCode::OK);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::OK);
 
         let body: serde_json::Value = resp.json();
         let arr = body.as_array().expect("should return array");
-        assert_eq!(arr.len(), 2);
+        pretty_assertions::assert_eq!(arr.len(), 2);
     }));
 
     // 019_02_04: Query several entities via POST interaction based on attribute names
@@ -300,22 +300,22 @@ pub fn tests(trials: &mut Vec<Trial>) {
 
         let building = fixtures::load_fixture("entities/building-minimal.jsonld", &building_id);
         let resp = ctx.client.create_entity(&building).await;
-        assert_eq!(resp.status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
 
         let vehicle = fixtures::load_fixture("entities/vehicle-simple-attributes.jsonld", &vehicle_id);
         let resp = ctx.client.create_entity(&vehicle).await;
-        assert_eq!(resp.status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
 
         let query_body = serde_json::json!({
             "attrs": ["brandName", "isParked"],
             "@context": fixtures::test_suite_context_url()
         });
         let resp = ctx.client.batch_query(&query_body, Default::default()).await;
-        assert_eq!(resp.status, StatusCode::OK);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::OK);
 
         let body: serde_json::Value = resp.json();
         let arr = body.as_array().expect("should return array");
-        assert_eq!(arr.len(), 1, "only vehicle has brandName/isParked");
+        pretty_assertions::assert_eq!(arr.len(), 1, "only vehicle has brandName/isParked");
     }));
 
     // 019_02_05: Query several entities via POST interaction asking for a GeoJSON representation
@@ -328,12 +328,12 @@ pub fn tests(trials: &mut Vec<Trial>) {
         let mut vehicle = fixtures::load_fixture("entities/vehicle-simple-attributes.jsonld", &vehicle_id);
         vehicle["@context"] = serde_json::json!([compound]);
         let resp = ctx.client.create_entity(&vehicle).await;
-        assert_eq!(resp.status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
 
         let mut parking = fixtures::load_fixture("entities/parking-simple-attributes.jsonld", &parking_id);
         parking["@context"] = serde_json::json!([compound]);
         let resp = ctx.client.create_entity(&parking).await;
-        assert_eq!(resp.status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
 
         let query_body = serde_json::json!({
             "type": "Query",
@@ -341,10 +341,10 @@ pub fn tests(trials: &mut Vec<Trial>) {
         });
         let headers = RequestHeaders::new().accept_geo_json().link_context(compound);
         let resp = ctx.client.batch_query(&query_body, headers).await;
-        assert_eq!(resp.status, StatusCode::OK);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::OK);
 
         let body: serde_json::Value = resp.json();
-        assert_eq!(body["type"], "FeatureCollection");
+        pretty_assertions::assert_eq!(body["type"], "FeatureCollection");
     }));
 
     // 019_02_06: Query two entities via POST interaction based on ids
@@ -356,7 +356,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
         for id in [&id1, &id2, &id3] {
             let entity = fixtures::load_fixture("entities/building-minimal.jsonld", id);
             let resp = ctx.client.create_entity(&entity).await;
-            assert_eq!(resp.status, StatusCode::CREATED);
+            pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
         }
 
         let query_body = serde_json::json!({
@@ -367,11 +367,11 @@ pub fn tests(trials: &mut Vec<Trial>) {
             "@context": fixtures::test_suite_context_url()
         });
         let resp = ctx.client.batch_query(&query_body, Default::default()).await;
-        assert_eq!(resp.status, StatusCode::OK);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::OK);
 
         let body: serde_json::Value = resp.json();
         let arr = body.as_array().expect("should return array");
-        assert_eq!(arr.len(), 2);
+        pretty_assertions::assert_eq!(arr.len(), 2);
     }));
 
     // ── 019_03: Invalid query params ─────────────────────────────────────
@@ -380,7 +380,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
     trials.push(trial(&format!("{PREFIX}::019_03_01::invalid_ids"), |ctx| async move {
         let params = QueryParams::new().id("thisisaninvaliduri1,thisisaninvaliduri2").type_("Building");
         let resp = ctx.client.query_entities(&params, Default::default()).await;
-        assert_eq!(resp.status, StatusCode::BAD_REQUEST);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::BAD_REQUEST);
 
         let body: serde_json::Value = resp.json();
         assert!(body["type"].as_str().unwrap().contains("BadRequestData"));
@@ -390,7 +390,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
     trials.push(trial(&format!("{PREFIX}::019_03_02::invalid_id_pattern"), |ctx| async move {
         let params = QueryParams::new().id_pattern("invalid_entity_id_pattern**").type_("Building");
         let resp = ctx.client.query_entities(&params, Default::default()).await;
-        assert_eq!(resp.status, StatusCode::BAD_REQUEST);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::BAD_REQUEST);
 
         let body: serde_json::Value = resp.json();
         assert!(body["type"].as_str().unwrap().contains("BadRequestData"));
@@ -400,7 +400,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
     trials.push(trial(&format!("{PREFIX}::019_03_03::invalid_attrs"), |ctx| async move {
         let params = QueryParams::new().attrs(["id", "type"]);
         let resp = ctx.client.query_entities(&params, Default::default()).await;
-        assert_eq!(resp.status, StatusCode::BAD_REQUEST);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::BAD_REQUEST);
 
         let body: serde_json::Value = resp.json();
         assert!(body["type"].as_str().unwrap().contains("BadRequestData"));
@@ -415,7 +415,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
             .coordinates("[-8.503,41.202]")
             .geoproperty("location");
         let resp = ctx.client.query_entities(&params, ctx_headers()).await;
-        assert_eq!(resp.status, StatusCode::BAD_REQUEST);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::BAD_REQUEST);
 
         let body: serde_json::Value = resp.json();
         assert!(body["type"].as_str().unwrap().contains("BadRequestData"));
@@ -431,7 +431,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
         for id in [&id1, &id2] {
             let entity = fixtures::load_fixture("entities/building-simple-attributes.jsonld", id);
             let resp = ctx.client.create_entity(&entity).await;
-            assert_eq!(resp.status, StatusCode::CREATED);
+            pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
         }
 
         let params = QueryParams::new()
@@ -439,11 +439,11 @@ pub fn tests(trials: &mut Vec<Trial>) {
             .type_("Building")
             .options([NgsiLdOption::KeyValues]);
         let resp = ctx.client.query_entities(&params, ctx_headers()).await;
-        assert_eq!(resp.status, StatusCode::OK);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::OK);
 
         let body: serde_json::Value = resp.json();
         let arr = body.as_array().expect("should return array");
-        assert_eq!(arr.len(), 2);
+        pretty_assertions::assert_eq!(arr.len(), 2);
         for entity in arr {
             assert!(entity["name"].is_string(), "name should be simplified");
         }
@@ -458,18 +458,18 @@ pub fn tests(trials: &mut Vec<Trial>) {
 
         let e1 = fixtures::load_fixture("entities/building-location-attribute.jsonld", &id1);
         let resp = ctx.client.create_entity(&e1).await;
-        assert_eq!(resp.status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
 
         let e2 = fixtures::load_fixture("entities/building-location-attribute.jsonld", &id2);
         let resp = ctx.client.create_entity(&e2).await;
-        assert_eq!(resp.status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
 
         let params = QueryParams::new().id(format!("{id1},{id2}")).type_("Building");
         let resp = ctx.client.query_entities(&params, accept_geojson_headers()).await;
-        assert_eq!(resp.status, StatusCode::OK);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::OK);
 
         let body: serde_json::Value = resp.json();
-        assert_eq!(body["type"], "FeatureCollection");
+        pretty_assertions::assert_eq!(body["type"], "FeatureCollection");
         assert!(body["features"].as_array().is_some());
     }));
 
@@ -484,16 +484,16 @@ pub fn tests(trials: &mut Vec<Trial>) {
         for id in [&id1, &id2, &id3] {
             let entity = fixtures::load_fixture("entities/building-minimal.jsonld", id);
             let resp = ctx.client.create_entity(&entity).await;
-            assert_eq!(resp.status, StatusCode::CREATED);
+            pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
         }
 
         let params = QueryParams::new().id(format!("{id1},{id2},{id3}")).type_("Building").limit(2);
         let resp = ctx.client.query_entities(&params, Default::default()).await;
-        assert_eq!(resp.status, StatusCode::OK);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::OK);
 
         let body: serde_json::Value = resp.json();
         let arr = body.as_array().expect("should return array");
-        assert_eq!(arr.len(), 2, "should return only 2 entities with limit=2");
+        pretty_assertions::assert_eq!(arr.len(), 2, "should return only 2 entities with limit=2");
     }));
 
     // ── 019_07: Count header ─────────────────────────────────────────────
@@ -505,15 +505,15 @@ pub fn tests(trials: &mut Vec<Trial>) {
 
         let e1 = fixtures::load_fixture("entities/building-simple-attributes.jsonld", &id1);
         let resp = ctx.client.create_entity(&e1).await;
-        assert_eq!(resp.status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
 
         let e2 = fixtures::load_fixture("entities/building-simple-attributes-second.jsonld", &id2);
         let resp = ctx.client.create_entity(&e2).await;
-        assert_eq!(resp.status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
 
         let params = QueryParams::new().type_("Building").count(true);
         let resp = ctx.client.query_entities(&params, ctx_headers()).await;
-        assert_eq!(resp.status, StatusCode::OK);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::OK);
 
         let count = resp
             .headers
@@ -521,7 +521,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
             .expect("should have NGSILD-Results-Count header")
             .to_str()
             .unwrap();
-        assert_eq!(count, "2");
+        pretty_assertions::assert_eq!(count, "2");
     }));
 
     // 019_07_02: Check count header with q parameter
@@ -531,15 +531,15 @@ pub fn tests(trials: &mut Vec<Trial>) {
 
         let e1 = fixtures::load_fixture("entities/building-simple-attributes.jsonld", &id1);
         let resp = ctx.client.create_entity(&e1).await;
-        assert_eq!(resp.status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
 
         let e2 = fixtures::load_fixture("entities/building-simple-attributes-second.jsonld", &id2);
         let resp = ctx.client.create_entity(&e2).await;
-        assert_eq!(resp.status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
 
         let params = QueryParams::new().type_("Building").q("airQualityLevel==6").count(true);
         let resp = ctx.client.query_entities(&params, ctx_headers()).await;
-        assert_eq!(resp.status, StatusCode::OK);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::OK);
 
         let count = resp
             .headers
@@ -547,7 +547,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
             .expect("should have NGSILD-Results-Count header")
             .to_str()
             .unwrap();
-        assert_eq!(count, "1");
+        pretty_assertions::assert_eq!(count, "1");
     }));
 
     // ── 019_08: Entity Type Selection Language ────────────────────────────
@@ -566,23 +566,23 @@ pub fn tests(trials: &mut Vec<Trial>) {
 
             let e1 = fixtures::load_fixture("entities/building-simple-attributes.jsonld", &id1);
             let resp = ctx.client.create_entity(&e1).await;
-            assert_eq!(resp.status, StatusCode::CREATED);
+            pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
 
             let e2 = fixtures::load_fixture("entities/building-with-different-type.jsonld", &id2);
             let resp = ctx.client.create_entity(&e2).await;
-            assert_eq!(resp.status, StatusCode::CREATED);
+            pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
 
             let e3 = fixtures::load_fixture("entities/building-with-two-types.jsonld", &id3);
             let resp = ctx.client.create_entity(&e3).await;
-            assert_eq!(resp.status, StatusCode::CREATED);
+            pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
 
             let params = QueryParams::new().type_(type_str);
             let resp = ctx.client.query_entities(&params, ctx_headers()).await;
-            assert_eq!(resp.status, StatusCode::OK);
+            pretty_assertions::assert_eq!(resp.status, StatusCode::OK);
 
             let body: serde_json::Value = resp.json();
             let arr = body.as_array().expect("should return array");
-            assert_eq!(arr.len() as u64, expected_count);
+            pretty_assertions::assert_eq!(arr.len() as u64, expected_count);
 
             let _ = (check_ids, id1, id2, id3);
         }));
@@ -619,19 +619,19 @@ pub fn tests(trials: &mut Vec<Trial>) {
 
             let e1 = fixtures::load_fixture("entities/building-simple-attributes.jsonld", &id1);
             let resp = ctx.client.create_entity(&e1).await;
-            assert_eq!(resp.status, StatusCode::CREATED);
+            pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
 
             let e2 = fixtures::load_fixture("entities/building-simple-attributes-second.jsonld", &id2);
             let resp = ctx.client.create_entity(&e2).await;
-            assert_eq!(resp.status, StatusCode::CREATED);
+            pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
 
             let e3 = fixtures::load_fixture("entities/building-simple-attributes-third.jsonld", &id3);
             let resp = ctx.client.create_entity(&e3).await;
-            assert_eq!(resp.status, StatusCode::CREATED);
+            pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
 
             let params = QueryParams::new().q(q).count(true);
             let resp = ctx.client.query_entities(&params, ctx_headers()).await;
-            assert_eq!(resp.status, StatusCode::OK);
+            pretty_assertions::assert_eq!(resp.status, StatusCode::OK);
             let count: u64 = resp
                 .headers
                 .get("NGSILD-Results-Count")
@@ -640,7 +640,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
                 .unwrap()
                 .parse()
                 .unwrap();
-            assert_eq!(count, expected_count);
+            pretty_assertions::assert_eq!(count, expected_count);
         }));
     }
 
@@ -677,15 +677,15 @@ pub fn tests(trials: &mut Vec<Trial>) {
 
             let e1 = fixtures::load_fixture("entities/building-location-attribute.jsonld", &id1);
             let resp = ctx.client.create_entity(&e1).await;
-            assert_eq!(resp.status, StatusCode::CREATED);
+            pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
 
             let e2 = fixtures::load_fixture("entities/building-location-attribute-second.jsonld", &id2);
             let resp = ctx.client.create_entity(&e2).await;
-            assert_eq!(resp.status, StatusCode::CREATED);
+            pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
 
             let e3 = fixtures::load_fixture("entities/building-location-attribute-third.jsonld", &id3);
             let resp = ctx.client.create_entity(&e3).await;
-            assert_eq!(resp.status, StatusCode::CREATED);
+            pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
 
             let params = QueryParams::new()
                 .type_("Building")
@@ -694,7 +694,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
                 .coordinates(coordinates)
                 .count(true);
             let resp = ctx.client.query_entities(&params, ctx_headers()).await;
-            assert_eq!(resp.status, StatusCode::OK);
+            pretty_assertions::assert_eq!(resp.status, StatusCode::OK);
             let count: u64 = resp
                 .headers
                 .get("NGSILD-Results-Count")
@@ -703,7 +703,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
                 .unwrap()
                 .parse()
                 .unwrap();
-            assert_eq!(count, expected_count);
+            pretty_assertions::assert_eq!(count, expected_count);
         }));
     }
 
@@ -774,11 +774,11 @@ pub fn tests(trials: &mut Vec<Trial>) {
 
             let e1 = fixtures::load_fixture("entities/building-location-polygon.jsonld", &id1);
             let resp = ctx.client.create_entity(&e1).await;
-            assert_eq!(resp.status, StatusCode::CREATED);
+            pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
 
             let e2 = fixtures::load_fixture("entities/building-location-polygon-second.jsonld", &id2);
             let resp = ctx.client.create_entity(&e2).await;
-            assert_eq!(resp.status, StatusCode::CREATED);
+            pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
 
             let params = QueryParams::new()
                 .type_("Building")
@@ -787,7 +787,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
                 .coordinates(coordinates)
                 .count(true);
             let resp = ctx.client.query_entities(&params, ctx_headers()).await;
-            assert_eq!(resp.status, StatusCode::OK);
+            pretty_assertions::assert_eq!(resp.status, StatusCode::OK);
             let count: u64 = resp
                 .headers
                 .get("NGSILD-Results-Count")
@@ -796,7 +796,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
                 .unwrap()
                 .parse()
                 .unwrap();
-            assert_eq!(count, expected_count);
+            pretty_assertions::assert_eq!(count, expected_count);
         }));
     }
 
@@ -820,7 +820,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
             let id = ctx.entity_id("urn:ngsi-ld:Building:019_12");
             let entity = fixtures::load_fixture("entities/building-multi-instances-attributes.jsonld", &id);
             let resp = ctx.client.create_entity(&entity).await;
-            assert_eq!(resp.status, StatusCode::CREATED);
+            pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
 
             let mut params = QueryParams::new().type_("Building");
             if let Some(a) = attrs {
@@ -830,11 +830,11 @@ pub fn tests(trials: &mut Vec<Trial>) {
                 params = params.dataset_id(d);
             }
             let resp = ctx.client.query_entities(&params, ctx_headers()).await;
-            assert_eq!(resp.status, StatusCode::OK);
+            pretty_assertions::assert_eq!(resp.status, StatusCode::OK);
 
             let body: serde_json::Value = resp.json();
             let arr = body.as_array().expect("should return array");
-            assert_eq!(arr.len(), 1);
+            pretty_assertions::assert_eq!(arr.len(), 1);
         }));
     }
 
@@ -846,11 +846,11 @@ pub fn tests(trials: &mut Vec<Trial>) {
 
         let params = QueryParams::new().type_("Building").join("inline").join_level(1);
         let resp = ctx.client.query_entities(&params, ctx_headers()).await;
-        assert_eq!(resp.status, StatusCode::OK);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::OK);
 
         let body: serde_json::Value = resp.json();
         let arr = body.as_array().expect("should return array");
-        assert_eq!(arr.len(), 2);
+        pretty_assertions::assert_eq!(arr.len(), 2);
         let _ = ids;
     }));
 
@@ -860,7 +860,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
 
         let params = QueryParams::new().type_("Building").join("flat").join_level(1);
         let resp = ctx.client.query_entities(&params, ctx_headers()).await;
-        assert_eq!(resp.status, StatusCode::OK);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::OK);
 
         let body: serde_json::Value = resp.json();
         let arr = body.as_array().expect("should return array");
@@ -878,11 +878,11 @@ pub fn tests(trials: &mut Vec<Trial>) {
             .join_level(1)
             .options([NgsiLdOption::KeyValues]);
         let resp = ctx.client.query_entities(&params, ctx_headers()).await;
-        assert_eq!(resp.status, StatusCode::OK);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::OK);
 
         let body: serde_json::Value = resp.json();
         let arr = body.as_array().expect("should return array");
-        assert_eq!(arr.len(), 2);
+        pretty_assertions::assert_eq!(arr.len(), 2);
         let _ = ids;
     }));
 
@@ -896,7 +896,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
             .join_level(1)
             .options([NgsiLdOption::KeyValues]);
         let resp = ctx.client.query_entities(&params, ctx_headers()).await;
-        assert_eq!(resp.status, StatusCode::OK);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::OK);
 
         let body: serde_json::Value = resp.json();
         let arr = body.as_array().expect("should return array");
@@ -916,7 +916,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
             .join_level(1)
             .options([NgsiLdOption::SysAttrs]);
         let resp = ctx.client.query_entities(&params, ctx_headers()).await;
-        assert_eq!(resp.status, StatusCode::OK);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::OK);
 
         let body: serde_json::Value = resp.json();
         let arr = body.as_array().expect("should return array");
@@ -938,7 +938,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
             .join_level(1)
             .options([NgsiLdOption::SysAttrs]);
         let resp = ctx.client.query_entities(&params, ctx_headers()).await;
-        assert_eq!(resp.status, StatusCode::OK);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::OK);
 
         let body: serde_json::Value = resp.json();
         let arr = body.as_array().expect("should return array");
@@ -956,11 +956,11 @@ pub fn tests(trials: &mut Vec<Trial>) {
 
         let params = QueryParams::new().type_("Building").join("inline").join_level(2);
         let resp = ctx.client.query_entities(&params, ctx_headers()).await;
-        assert_eq!(resp.status, StatusCode::OK);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::OK);
 
         let body: serde_json::Value = resp.json();
         let arr = body.as_array().expect("should return array");
-        assert_eq!(arr.len(), 2);
+        pretty_assertions::assert_eq!(arr.len(), 2);
         let _ = ids;
     }));
 
@@ -970,7 +970,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
 
         let params = QueryParams::new().type_("Building").join("flat").join_level(2);
         let resp = ctx.client.query_entities(&params, ctx_headers()).await;
-        assert_eq!(resp.status, StatusCode::OK);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::OK);
 
         let body: serde_json::Value = resp.json();
         let arr = body.as_array().expect("should return array");
@@ -988,11 +988,11 @@ pub fn tests(trials: &mut Vec<Trial>) {
             .join_level(2)
             .options([NgsiLdOption::KeyValues]);
         let resp = ctx.client.query_entities(&params, ctx_headers()).await;
-        assert_eq!(resp.status, StatusCode::OK);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::OK);
 
         let body: serde_json::Value = resp.json();
         let arr = body.as_array().expect("should return array");
-        assert_eq!(arr.len(), 2);
+        pretty_assertions::assert_eq!(arr.len(), 2);
         let _ = ids;
     }));
 
@@ -1006,7 +1006,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
             .join_level(2)
             .options([NgsiLdOption::KeyValues]);
         let resp = ctx.client.query_entities(&params, ctx_headers()).await;
-        assert_eq!(resp.status, StatusCode::OK);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::OK);
 
         let body: serde_json::Value = resp.json();
         let arr = body.as_array().expect("should return array");
@@ -1022,13 +1022,13 @@ async fn setup_scope_entities(ctx: &TestCtx, compound: &str) -> (String, String)
     let e1 = fixtures::load_fixture("entities/building-minimal-with-one-scope.json", &id1);
     let headers = RequestHeaders::new().content_type("application/json").link_context(compound);
     let resp = ctx.client.request(Method::POST, "/entities", Some(&e1), headers).await;
-    assert_eq!(resp.status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
 
     let id2 = ctx.entity_id("urn:ngsi-ld:Building:019_01_06b");
     let e2 = fixtures::load_fixture("entities/building-minimal-with-many-scopes.json", &id2);
     let headers = RequestHeaders::new().content_type("application/json").link_context(compound);
     let resp = ctx.client.request(Method::POST, "/entities", Some(&e2), headers).await;
-    assert_eq!(resp.status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
 
     (id1, id2)
 }
@@ -1037,7 +1037,7 @@ async fn query_scope_count(ctx: &TestCtx, compound: &str, scopeq: &str) -> usize
     let params = QueryParams::new().type_("Building").scopeq(scopeq);
     let headers = RequestHeaders::new().accept_ld_json().link_context(compound);
     let resp = ctx.client.query_entities(&params, headers).await;
-    assert_eq!(resp.status, StatusCode::OK);
+    pretty_assertions::assert_eq!(resp.status, StatusCode::OK);
     let body: serde_json::Value = resp.json();
     body.as_array().expect("should return array").len()
 }
@@ -1051,20 +1051,20 @@ async fn setup_one_level_linked_query(ctx: &TestCtx) -> Vec<String> {
     let mut b1 = fixtures::load_fixture("entities/building-relationship.jsonld", &building_id1);
     set_relationship_object(&mut b1, "locatedAt", &city_id1);
     let resp = ctx.client.create_entity(&b1).await;
-    assert_eq!(resp.status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
 
     let mut b2 = fixtures::load_fixture("entities/building-relationship.jsonld", &building_id2);
     set_relationship_object(&mut b2, "locatedAt", &city_id2);
     let resp = ctx.client.create_entity(&b2).await;
-    assert_eq!(resp.status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
 
     let c1 = fixtures::load_fixture("entities/city-minimal.jsonld", &city_id1);
     let resp = ctx.client.create_entity(&c1).await;
-    assert_eq!(resp.status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
 
     let c2 = fixtures::load_fixture("entities/city-minimal.jsonld", &city_id2);
     let resp = ctx.client.create_entity(&c2).await;
-    assert_eq!(resp.status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
 
     vec![building_id1, building_id2, city_id1, city_id2]
 }
@@ -1080,30 +1080,30 @@ async fn setup_two_level_linked_query(ctx: &TestCtx) -> Vec<String> {
     let mut b1 = fixtures::load_fixture("entities/building-relationship.jsonld", &building_id1);
     set_relationship_object(&mut b1, "locatedAt", &city_id1);
     let resp = ctx.client.create_entity(&b1).await;
-    assert_eq!(resp.status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
 
     let mut b2 = fixtures::load_fixture("entities/building-relationship.jsonld", &building_id2);
     set_relationship_object(&mut b2, "locatedAt", &city_id2);
     let resp = ctx.client.create_entity(&b2).await;
-    assert_eq!(resp.status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
 
     let mut c1 = fixtures::load_fixture("entities/city-relationship.jsonld", &city_id1);
     set_relationship_object(&mut c1, "locatedAt", &country_id1);
     let resp = ctx.client.create_entity(&c1).await;
-    assert_eq!(resp.status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
 
     let mut c2 = fixtures::load_fixture("entities/city-relationship.jsonld", &city_id2);
     set_relationship_object(&mut c2, "locatedAt", &country_id2);
     let resp = ctx.client.create_entity(&c2).await;
-    assert_eq!(resp.status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
 
     let co1 = fixtures::load_fixture("entities/country-minimal.jsonld", &country_id1);
     let resp = ctx.client.create_entity(&co1).await;
-    assert_eq!(resp.status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
 
     let co2 = fixtures::load_fixture("entities/country-minimal.jsonld", &country_id2);
     let resp = ctx.client.create_entity(&co2).await;
-    assert_eq!(resp.status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
 
     vec![building_id1, building_id2, city_id1, city_id2, country_id1, country_id2]
 }

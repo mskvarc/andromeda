@@ -47,6 +47,7 @@ impl Default for VocabProperty {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use crate::{
         domain::attribute::{Attribute, common::OneOrMany},
         jsonld::{JsonLdExpandable, vocab},
@@ -61,7 +62,7 @@ mod tests {
         });
         let attr: Attribute = serde_json::from_value(json).expect("vocab property");
         let Attribute::VocabProperty(property) = attr else {
-            panic!("expected VocabProperty");
+            unreachable!("expected VocabProperty");
         };
         assert!(matches!(property.vocab, OneOrMany::Many(_)));
         assert!(property.previous_vocab.is_some());
@@ -76,7 +77,7 @@ mod tests {
         });
         let attr: Attribute = serde_json::from_value(json).expect("vocab property");
         let Attribute::VocabProperty(property) = attr else {
-            panic!("expected VocabProperty");
+            unreachable!("expected VocabProperty");
         };
         let expanded = property.to_expanded();
         let obj = expanded.as_object().expect("object");

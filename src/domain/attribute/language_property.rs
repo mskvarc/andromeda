@@ -114,6 +114,7 @@ fn language_entry(key: &LanguageMapKey, value: &str) -> serde_json::Value {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use crate::{
         domain::attribute::{Attribute, LanguageMapKey, LanguageMapValue},
         jsonld::{JsonLdExpandable, vocab},
@@ -130,10 +131,10 @@ mod tests {
         });
         let attr: Attribute = serde_json::from_value(json).expect("language property");
         let Attribute::LanguageProperty(property) = attr else {
-            panic!("expected LanguageProperty");
+            unreachable!("expected LanguageProperty");
         };
         assert!(property.previous_language_map.is_some());
-        assert_eq!(property.value_type.as_deref(), Some("langString"));
+        pretty_assertions::assert_eq!(property.value_type.as_deref(), Some("langString"));
     }
 
     #[test]

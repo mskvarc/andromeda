@@ -664,6 +664,7 @@ pub fn unwrap_geo_property_to_string(v: &Value) -> String {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::unwrap_geo_property_to_string;
     use serde_json::json;
 
@@ -675,7 +676,7 @@ mod tests {
         });
         let result = unwrap_geo_property_to_string(&input);
         let expected: serde_json::Value = serde_json::from_str(&result).expect("valid JSON");
-        assert_eq!(expected, json!({"type": "Point", "coordinates": [1.0, 2.0]}));
+        pretty_assertions::assert_eq!(expected, json!({"type": "Point", "coordinates": [1.0, 2.0]}));
     }
 
     #[test]
@@ -683,7 +684,7 @@ mod tests {
         let input = json!({"type": "Point", "coordinates": [1.0, 2.0]});
         let result = unwrap_geo_property_to_string(&input);
         let expected: serde_json::Value = serde_json::from_str(&result).expect("valid JSON");
-        assert_eq!(expected, json!({"type": "Point", "coordinates": [1.0, 2.0]}));
+        pretty_assertions::assert_eq!(expected, json!({"type": "Point", "coordinates": [1.0, 2.0]}));
     }
 
     #[test]
@@ -694,6 +695,6 @@ mod tests {
         });
         let result = unwrap_geo_property_to_string(&input);
         let expected: serde_json::Value = serde_json::from_str(&result).expect("valid JSON");
-        assert_eq!(expected, input);
+        pretty_assertions::assert_eq!(expected, input);
     }
 }

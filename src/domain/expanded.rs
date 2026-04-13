@@ -725,6 +725,7 @@ pub fn replace_attr(entity: &mut Value, attr_iri: &str, value: &Value) -> Result
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::*;
     use chrono::Datelike;
     use serde_json::json;
@@ -761,7 +762,7 @@ mod tests {
         let instance = json!({
             "https://uri.etsi.org/ngsi-ld/datasetId": [{"@id": "urn:ngsi-ld:Dataset:A"}]
         });
-        assert_eq!(get_instance_dataset_id(&instance).as_deref(), Some("urn:ngsi-ld:Dataset:A"));
+        pretty_assertions::assert_eq!(get_instance_dataset_id(&instance).as_deref(), Some("urn:ngsi-ld:Dataset:A"));
     }
 
     #[test]
@@ -774,7 +775,7 @@ mod tests {
             ]
         }]);
         let scopes = extract_scopes(&entity);
-        assert_eq!(scopes, vec!["/Madrid", "/Traffic"]);
+        pretty_assertions::assert_eq!(scopes, vec!["/Madrid", "/Traffic"]);
     }
 
     #[test]
@@ -790,8 +791,8 @@ mod tests {
         let mut entity = json!([{"https://example.com/a": [{"@value": 1}]}]);
         let attrs = json!({"https://example.com/a": [{"@value": 99}], "https://example.com/b": [{"@value": 2}]});
         append_entity_attrs(&mut entity, &attrs, true).unwrap();
-        assert_eq!(entity[0]["https://example.com/a"][0]["@value"], 1);
-        assert_eq!(entity[0]["https://example.com/b"][0]["@value"], 2);
+        pretty_assertions::assert_eq!(entity[0]["https://example.com/a"][0]["@value"], 1);
+        pretty_assertions::assert_eq!(entity[0]["https://example.com/b"][0]["@value"], 2);
     }
 
     #[test]
@@ -820,7 +821,7 @@ mod tests {
         }]);
         let result = extract_expires_at(&entity);
         assert!(result.is_some());
-        assert_eq!(result.unwrap().year(), 2030);
+        pretty_assertions::assert_eq!(result.unwrap().year(), 2030);
     }
 
     #[test]

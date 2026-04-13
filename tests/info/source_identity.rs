@@ -1,3 +1,4 @@
+#![allow(clippy::expect_used, clippy::unwrap_used)]
 //! Source identity retrieval tests (NGSI-LD 5.8.1, 5.5.7).
 
 use crate::{client, retrieve_source_identity};
@@ -12,9 +13,9 @@ use reqwest::StatusCode;
 async fn retrieve_source_identity_returns_200_with_identity() {
     let c = client();
     let (status, _, body) = retrieve_source_identity(&c, None).await;
-    assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
     assert!(body["id"].as_str().is_some(), "response body should contain an id field");
-    assert_eq!(body["type"], "ContextSourceIdentity", "type field should be ContextSourceIdentity");
+    pretty_assertions::assert_eq!(body["type"], "ContextSourceIdentity", "type field should be ContextSourceIdentity");
 }
 
 // ---------------------------------------------------------------------------
@@ -26,7 +27,7 @@ async fn retrieve_source_identity_returns_200_with_identity() {
 async fn retrieve_source_identity_with_json_accept_returns_no_context_in_body() {
     let c = client();
     let (status, headers, body) = retrieve_source_identity(&c, Some("application/json")).await;
-    assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
 
     let ct = headers.get("content-type").expect("response should have Content-Type header");
     assert!(
@@ -50,7 +51,7 @@ async fn retrieve_source_identity_with_json_accept_returns_no_context_in_body() 
 async fn retrieve_source_identity_with_ld_json_accept_returns_context_in_body() {
     let c = client();
     let (status, headers, body) = retrieve_source_identity(&c, Some("application/ld+json")).await;
-    assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
 
     let ct = headers.get("content-type").expect("response should have Content-Type header");
     assert!(

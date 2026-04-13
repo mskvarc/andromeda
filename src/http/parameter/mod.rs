@@ -84,6 +84,7 @@ pub struct DeleteAttrParams {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::*;
 
     #[derive(Debug, Deserialize)]
@@ -95,37 +96,37 @@ mod tests {
     #[test]
     fn deserialize_option_bool_absent() {
         let result: BoolWrapper = serde_urlencoded::from_str("").unwrap();
-        assert_eq!(result.val, None);
+        pretty_assertions::assert_eq!(result.val, None);
     }
 
     #[test]
     fn deserialize_option_bool_true_lowercase() {
         let result: BoolWrapper = serde_urlencoded::from_str("val=true").unwrap();
-        assert_eq!(result.val, Some(true));
+        pretty_assertions::assert_eq!(result.val, Some(true));
     }
 
     #[test]
     fn deserialize_option_bool_true_uppercase() {
         let result: BoolWrapper = serde_urlencoded::from_str("val=TRUE").unwrap();
-        assert_eq!(result.val, Some(true));
+        pretty_assertions::assert_eq!(result.val, Some(true));
     }
 
     #[test]
     fn deserialize_option_bool_true_mixed_case() {
         let result: BoolWrapper = serde_urlencoded::from_str("val=True").unwrap();
-        assert_eq!(result.val, Some(true));
+        pretty_assertions::assert_eq!(result.val, Some(true));
     }
 
     #[test]
     fn deserialize_option_bool_false_lowercase() {
         let result: BoolWrapper = serde_urlencoded::from_str("val=false").unwrap();
-        assert_eq!(result.val, Some(false));
+        pretty_assertions::assert_eq!(result.val, Some(false));
     }
 
     #[test]
     fn deserialize_option_bool_false_uppercase() {
         let result: BoolWrapper = serde_urlencoded::from_str("val=FALSE").unwrap();
-        assert_eq!(result.val, Some(false));
+        pretty_assertions::assert_eq!(result.val, Some(false));
     }
 
     #[test]
@@ -161,25 +162,25 @@ mod tests {
     #[test]
     fn local_only_params_absent() {
         let result: LocalOnlyParams = serde_urlencoded::from_str("").unwrap();
-        assert_eq!(result.local, None);
+        pretty_assertions::assert_eq!(result.local, None);
     }
 
     #[test]
     fn local_only_params_true_lowercase() {
         let result: LocalOnlyParams = serde_urlencoded::from_str("local=true").unwrap();
-        assert_eq!(result.local, Some(true));
+        pretty_assertions::assert_eq!(result.local, Some(true));
     }
 
     #[test]
     fn local_only_params_true_uppercase() {
         let result: LocalOnlyParams = serde_urlencoded::from_str("local=TRUE").unwrap();
-        assert_eq!(result.local, Some(true));
+        pretty_assertions::assert_eq!(result.local, Some(true));
     }
 
     #[test]
     fn local_only_params_false() {
         let result: LocalOnlyParams = serde_urlencoded::from_str("local=false").unwrap();
-        assert_eq!(result.local, Some(false));
+        pretty_assertions::assert_eq!(result.local, Some(false));
     }
 
     #[test]
@@ -198,41 +199,41 @@ mod tests {
     fn discovery_list_params_defaults() {
         let result: DiscoveryListParams = serde_urlencoded::from_str("").unwrap();
         assert!(!result.details);
-        assert_eq!(result.local, None);
+        pretty_assertions::assert_eq!(result.local, None);
     }
 
     #[test]
     fn discovery_list_params_details_true() {
         let result: DiscoveryListParams = serde_urlencoded::from_str("details=true").unwrap();
         assert!(result.details);
-        assert_eq!(result.local, None);
+        pretty_assertions::assert_eq!(result.local, None);
     }
 
     #[test]
     fn discovery_list_params_both_fields() {
         let result: DiscoveryListParams = serde_urlencoded::from_str("details=true&local=false").unwrap();
         assert!(result.details);
-        assert_eq!(result.local, Some(false));
+        pretty_assertions::assert_eq!(result.local, Some(false));
     }
 
     #[test]
     fn delete_attr_params_defaults() {
         let result: DeleteAttrParams = serde_urlencoded::from_str("").unwrap();
-        assert_eq!(result.dataset_id, None);
-        assert_eq!(result.delete_all, None);
+        pretty_assertions::assert_eq!(result.dataset_id, None);
+        pretty_assertions::assert_eq!(result.delete_all, None);
     }
 
     #[test]
     fn delete_attr_params_both_fields() {
         let result: DeleteAttrParams = serde_urlencoded::from_str("datasetId=urn:test&deleteAll=true").unwrap();
-        assert_eq!(result.dataset_id.as_deref(), Some("urn:test"));
-        assert_eq!(result.delete_all, Some(true));
+        pretty_assertions::assert_eq!(result.dataset_id.as_deref(), Some("urn:test"));
+        pretty_assertions::assert_eq!(result.delete_all, Some(true));
     }
 
     #[test]
     fn delete_attr_params_delete_all_case_insensitive() {
         let result: DeleteAttrParams = serde_urlencoded::from_str("deleteAll=TRUE").unwrap();
-        assert_eq!(result.dataset_id, None);
-        assert_eq!(result.delete_all, Some(true));
+        pretty_assertions::assert_eq!(result.dataset_id, None);
+        pretty_assertions::assert_eq!(result.delete_all, Some(true));
     }
 }

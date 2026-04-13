@@ -149,6 +149,7 @@ impl From<BatchResult> for BatchOperationResult {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::*;
 
     #[test]
@@ -165,9 +166,9 @@ mod tests {
         };
 
         let json = serde_json::to_value(&result).unwrap();
-        assert_eq!(json["success"], serde_json::json!(["urn:ngsi-ld:Entity:1"]));
+        pretty_assertions::assert_eq!(json["success"], serde_json::json!(["urn:ngsi-ld:Entity:1"]));
         assert!(json["errors"].is_array());
-        assert_eq!(json["errors"][0]["entityId"], "urn:ngsi-ld:Entity:2");
+        pretty_assertions::assert_eq!(json["errors"][0]["entityId"], "urn:ngsi-ld:Entity:2");
     }
 
     #[test]
@@ -181,7 +182,7 @@ mod tests {
         };
 
         let json = serde_json::to_value(&error).unwrap();
-        assert_eq!(json["entityId"], "urn:ngsi-ld:Entity:42");
+        pretty_assertions::assert_eq!(json["entityId"], "urn:ngsi-ld:Entity:42");
         assert!(json.get("entity_id").is_none());
     }
 
@@ -193,10 +194,10 @@ mod tests {
         };
 
         let json = serde_json::to_value(&detail).unwrap();
-        assert_eq!(json["type"], "https://uri.etsi.org/ngsi-ld/errors/BadRequestData");
-        assert_eq!(json["title"], "Bad request data");
-        assert_eq!(json["status"], 400);
-        assert_eq!(json["detail"], "Invalid payload");
+        pretty_assertions::assert_eq!(json["type"], "https://uri.etsi.org/ngsi-ld/errors/BadRequestData");
+        pretty_assertions::assert_eq!(json["title"], "Bad request data");
+        pretty_assertions::assert_eq!(json["status"], 400);
+        pretty_assertions::assert_eq!(json["detail"], "Invalid payload");
         assert!(json.get("error_type").is_none());
     }
 
@@ -207,8 +208,8 @@ mod tests {
             errors: vec![],
         };
         let json = serde_json::to_value(&result).unwrap();
-        assert_eq!(json["success"], serde_json::json!([]));
-        assert_eq!(json["errors"], serde_json::json!([]));
+        pretty_assertions::assert_eq!(json["success"], serde_json::json!([]));
+        pretty_assertions::assert_eq!(json["errors"], serde_json::json!([]));
     }
 
     #[test]
@@ -226,7 +227,7 @@ mod tests {
 
         let json_str = serde_json::to_string(&original).unwrap();
         let deserialized: BatchOperationResult = serde_json::from_str(&json_str).unwrap();
-        assert_eq!(deserialized, original);
+        pretty_assertions::assert_eq!(deserialized, original);
     }
 
     #[test]
@@ -234,10 +235,10 @@ mod tests {
         let err = AndromedaError::entity_already_exists("urn:ngsi-ld:Entity:1");
         let result = BatchEntityError::from_domain_error("urn:ngsi-ld:Entity:1", &err);
 
-        assert_eq!(result.error.error_type, NgsiLdErrorType::AlreadyExists);
+        pretty_assertions::assert_eq!(result.error.error_type, NgsiLdErrorType::AlreadyExists);
         let json = serde_json::to_value(&result.error).unwrap();
-        assert_eq!(json["status"], 409);
-        assert_eq!(json["type"], "https://uri.etsi.org/ngsi-ld/errors/AlreadyExists");
+        pretty_assertions::assert_eq!(json["status"], 409);
+        pretty_assertions::assert_eq!(json["type"], "https://uri.etsi.org/ngsi-ld/errors/AlreadyExists");
     }
 
     #[test]
@@ -245,10 +246,10 @@ mod tests {
         let err = AndromedaError::entity_not_found("urn:ngsi-ld:Entity:2");
         let result = BatchEntityError::from_domain_error("urn:ngsi-ld:Entity:2", &err);
 
-        assert_eq!(result.error.error_type, NgsiLdErrorType::ResourceNotFound);
+        pretty_assertions::assert_eq!(result.error.error_type, NgsiLdErrorType::ResourceNotFound);
         let json = serde_json::to_value(&result.error).unwrap();
-        assert_eq!(json["status"], 404);
-        assert_eq!(json["type"], "https://uri.etsi.org/ngsi-ld/errors/ResourceNotFound");
+        pretty_assertions::assert_eq!(json["status"], 404);
+        pretty_assertions::assert_eq!(json["type"], "https://uri.etsi.org/ngsi-ld/errors/ResourceNotFound");
     }
 
     #[test]
@@ -256,10 +257,10 @@ mod tests {
         let err = AndromedaError::entity_validation("invalid payload");
         let result = BatchEntityError::from_domain_error("urn:ngsi-ld:Entity:3", &err);
 
-        assert_eq!(result.error.error_type, NgsiLdErrorType::BadRequestData);
+        pretty_assertions::assert_eq!(result.error.error_type, NgsiLdErrorType::BadRequestData);
         let json = serde_json::to_value(&result.error).unwrap();
-        assert_eq!(json["status"], 400);
-        assert_eq!(json["type"], "https://uri.etsi.org/ngsi-ld/errors/BadRequestData");
+        pretty_assertions::assert_eq!(json["status"], 400);
+        pretty_assertions::assert_eq!(json["type"], "https://uri.etsi.org/ngsi-ld/errors/BadRequestData");
     }
 
     #[test]
@@ -267,10 +268,10 @@ mod tests {
         let err = AndromedaError::malformed_request("invalid request");
         let result = BatchEntityError::from_domain_error("urn:ngsi-ld:Entity:7", &err);
 
-        assert_eq!(result.error.error_type, NgsiLdErrorType::InvalidRequest);
+        pretty_assertions::assert_eq!(result.error.error_type, NgsiLdErrorType::InvalidRequest);
         let json = serde_json::to_value(&result.error).unwrap();
-        assert_eq!(json["status"], 400);
-        assert_eq!(json["type"], "https://uri.etsi.org/ngsi-ld/errors/InvalidRequest");
+        pretty_assertions::assert_eq!(json["status"], 400);
+        pretty_assertions::assert_eq!(json["type"], "https://uri.etsi.org/ngsi-ld/errors/InvalidRequest");
     }
 
     #[test]
@@ -278,11 +279,11 @@ mod tests {
         let err = AndromedaError::internal("something broke");
         let result = BatchEntityError::from_domain_error("urn:ngsi-ld:Entity:4", &err);
 
-        assert_eq!(result.error.error_type, NgsiLdErrorType::InternalError);
-        assert_eq!(result.error.detail, "Internal error");
+        pretty_assertions::assert_eq!(result.error.error_type, NgsiLdErrorType::InternalError);
+        pretty_assertions::assert_eq!(result.error.detail, "Internal error");
         let json = serde_json::to_value(&result.error).unwrap();
-        assert_eq!(json["status"], 500);
-        assert_eq!(json["type"], "https://uri.etsi.org/ngsi-ld/errors/InternalError");
+        pretty_assertions::assert_eq!(json["status"], 500);
+        pretty_assertions::assert_eq!(json["type"], "https://uri.etsi.org/ngsi-ld/errors/InternalError");
     }
 
     #[test]
@@ -290,10 +291,10 @@ mod tests {
         let err = AndromedaError::context_not_available("context fetch failed");
         let result = BatchEntityError::from_domain_error("urn:ngsi-ld:Entity:6", &err);
 
-        assert_eq!(result.error.error_type, NgsiLdErrorType::LdContextNotAvailable);
+        pretty_assertions::assert_eq!(result.error.error_type, NgsiLdErrorType::LdContextNotAvailable);
         let json = serde_json::to_value(&result.error).unwrap();
-        assert_eq!(json["status"], 503);
-        assert_eq!(json["type"], "https://uri.etsi.org/ngsi-ld/errors/LdContextNotAvailable");
+        pretty_assertions::assert_eq!(json["status"], 503);
+        pretty_assertions::assert_eq!(json["type"], "https://uri.etsi.org/ngsi-ld/errors/LdContextNotAvailable");
     }
 
     #[test]
@@ -301,7 +302,7 @@ mod tests {
         let err = AndromedaError::entity_not_found("urn:ngsi-ld:Entity:99");
         let result = BatchEntityError::from_domain_error("urn:ngsi-ld:Entity:99", &err);
 
-        assert_eq!(result.entity_id, "urn:ngsi-ld:Entity:99");
+        pretty_assertions::assert_eq!(result.entity_id, "urn:ngsi-ld:Entity:99");
     }
 
     #[test]
@@ -309,21 +310,21 @@ mod tests {
         let err = AndromedaError::entity_validation("missing required attribute");
         let result = BatchEntityError::from_domain_error("urn:ngsi-ld:Entity:5", &err);
 
-        assert_eq!(result.error.detail, "missing required attribute");
+        pretty_assertions::assert_eq!(result.error.detail, "missing required attribute");
     }
 
     #[test]
     fn from_parse_error_populates_fields() {
         let err = BatchEntityError::from_parse_error("urn:ngsi-ld:Entity:1", NgsiLdErrorType::BadRequestData, "missing @context");
-        assert_eq!(err.entity_id, "urn:ngsi-ld:Entity:1");
-        assert_eq!(err.error.error_type, NgsiLdErrorType::BadRequestData);
-        assert_eq!(err.error.detail, "missing @context");
+        pretty_assertions::assert_eq!(err.entity_id, "urn:ngsi-ld:Entity:1");
+        pretty_assertions::assert_eq!(err.error.error_type, NgsiLdErrorType::BadRequestData);
+        pretty_assertions::assert_eq!(err.error.detail, "missing @context");
 
         let json = serde_json::to_value(&err.error).unwrap();
-        assert_eq!(json["type"], NgsiLdErrorType::BAD_REQUEST_DATA_URI);
-        assert_eq!(json["title"], "Bad request data");
-        assert_eq!(json["status"], 400);
-        assert_eq!(json["detail"], "missing @context");
+        pretty_assertions::assert_eq!(json["type"], NgsiLdErrorType::BAD_REQUEST_DATA_URI);
+        pretty_assertions::assert_eq!(json["title"], "Bad request data");
+        pretty_assertions::assert_eq!(json["status"], 400);
+        pretty_assertions::assert_eq!(json["detail"], "missing @context");
     }
 
     #[test]
@@ -349,8 +350,8 @@ mod tests {
             };
             let json_str = serde_json::to_string(&detail).unwrap();
             let deserialized: BatchProblemDetail = serde_json::from_str(&json_str).unwrap();
-            assert_eq!(deserialized.error_type, v);
-            assert_eq!(deserialized.detail, "test");
+            pretty_assertions::assert_eq!(deserialized.error_type, v);
+            pretty_assertions::assert_eq!(deserialized.detail, "test");
         }
     }
 }

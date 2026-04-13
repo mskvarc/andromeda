@@ -111,6 +111,7 @@ fn validate_scope_label(segment: &str) -> Result<(), ()> {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::*;
     use headers::Header;
 
@@ -123,19 +124,19 @@ mod tests {
     #[test]
     fn decode_valid_expression() {
         let header = decode_from("/A;/B,/C/#").expect("valid scope");
-        assert_eq!(header.as_str(), "/A;/B,/C/#");
+        pretty_assertions::assert_eq!(header.as_str(), "/A;/B,/C/#");
     }
 
     #[test]
     fn decode_valid_plus_wildcard() {
         let header = decode_from("/A/+/C").expect("valid scope");
-        assert_eq!(header.as_str(), "/A/+/C");
+        pretty_assertions::assert_eq!(header.as_str(), "/A/+/C");
     }
 
     #[test]
     fn decode_trims_and_normalizes_spaces() {
         let header = decode_from(" /A ; /B , /C/# ").expect("valid scope");
-        assert_eq!(header.as_str(), "/A;/B,/C/#");
+        pretty_assertions::assert_eq!(header.as_str(), "/A;/B,/C/#");
     }
 
     #[test]

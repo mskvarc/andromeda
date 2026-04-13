@@ -383,36 +383,37 @@ const fn compute_final_status(any_success_with_results: bool, any_failure: bool,
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::*;
 
     #[test]
     fn status_all_success() {
         let status = compute_final_status(true, false, false);
-        assert_eq!(status, SnapshotStatus::Success);
+        pretty_assertions::assert_eq!(status, SnapshotStatus::Success);
     }
 
     #[test]
     fn status_all_empty() {
         let status = compute_final_status(false, false, true);
-        assert_eq!(status, SnapshotStatus::Empty);
+        pretty_assertions::assert_eq!(status, SnapshotStatus::Empty);
     }
 
     #[test]
     fn status_mixed() {
         let status = compute_final_status(true, true, false);
-        assert_eq!(status, SnapshotStatus::Partial);
+        pretty_assertions::assert_eq!(status, SnapshotStatus::Partial);
     }
 
     #[test]
     fn status_all_failure() {
         let status = compute_final_status(false, true, false);
-        assert_eq!(status, SnapshotStatus::Failure);
+        pretty_assertions::assert_eq!(status, SnapshotStatus::Failure);
     }
 
     #[test]
     fn status_failure_with_all_empty() {
         // All queries failed but also marked as empty (edge case)
         let status = compute_final_status(false, true, true);
-        assert_eq!(status, SnapshotStatus::Failure);
+        pretty_assertions::assert_eq!(status, SnapshotStatus::Failure);
     }
 }

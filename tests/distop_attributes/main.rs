@@ -139,8 +139,7 @@ impl MockServer {
         let s = self.state.read().await;
         s.stubs
             .get(&(method.to_string(), path.to_string()))
-            .map(|e| e.count.load(Ordering::Relaxed))
-            .unwrap_or(0)
+            .map_or(0, |e| e.count.load(Ordering::Relaxed))
     }
 
     fn url(&self, path: &str) -> String {
@@ -283,7 +282,7 @@ async fn distop_attributes_local_skips_forwarding() {
     let reg_id = unique_id("urn:ngsi-ld:Registration:attrs-local-skip");
 
     let reg = vehicle_registration(&reg_id, &mock.url(""));
-    assert_eq!(create_registration(&c, &reg).await, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(create_registration(&c, &reg).await, StatusCode::CREATED);
 
     let mock_attrs = json!({
         "id": "urn:ngsi-ld:AttributeList:mock",
@@ -293,9 +292,9 @@ async fn distop_attributes_local_skips_forwarding() {
     mock.set_stub_with_body(Method::GET, "/ngsi-ld/v1/attributes", 200, &mock_attrs).await;
 
     let (status, _, _) = list_attributes(&c, "local=true").await;
-    assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
 
-    assert_eq!(
+    pretty_assertions::assert_eq!(
         mock.get_count(Method::GET, "/ngsi-ld/v1/attributes").await,
         0,
         "CSR should not be called when local=true"
@@ -317,10 +316,10 @@ async fn distop_attributes_merges_remote_attributes() {
     let reg_id = unique_id("urn:ngsi-ld:Registration:attrs-merge");
 
     let entity = vehicle_entity(&entity_id);
-    assert_eq!(create_entity_local(&c, &entity).await, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(create_entity_local(&c, &entity).await, StatusCode::CREATED);
 
     let reg = vehicle_registration(&reg_id, &mock.url(""));
-    assert_eq!(create_registration(&c, &reg).await, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(create_registration(&c, &reg).await, StatusCode::CREATED);
 
     // Remote returns an attribute not present locally
     let mock_attrs = json!({
@@ -331,7 +330,7 @@ async fn distop_attributes_merges_remote_attributes() {
     mock.set_stub_with_body(Method::GET, "/ngsi-ld/v1/attributes", 200, &mock_attrs).await;
 
     let (status, _, body) = list_attributes(&c, "").await;
-    assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
 
     assert!(
         mock.get_count(Method::GET, "/ngsi-ld/v1/attributes").await > 0,
@@ -359,10 +358,10 @@ async fn distop_attributes_deduplicates_attribute_list() {
     let reg_id = unique_id("urn:ngsi-ld:Registration:attrs-dedup");
 
     let entity = vehicle_entity(&entity_id);
-    assert_eq!(create_entity_local(&c, &entity).await, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(create_entity_local(&c, &entity).await, StatusCode::CREATED);
 
     let reg = vehicle_registration(&reg_id, &mock.url(""));
-    assert_eq!(create_registration(&c, &reg).await, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(create_registration(&c, &reg).await, StatusCode::CREATED);
 
     // Remote also returns brandName which already exists locally
     let mock_attrs = json!({
@@ -373,7 +372,7 @@ async fn distop_attributes_deduplicates_attribute_list() {
     mock.set_stub_with_body(Method::GET, "/ngsi-ld/v1/attributes", 200, &mock_attrs).await;
 
     let (status, _, body) = list_attributes(&c, "").await;
-    assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
 
     let attr_list = body.get("attributeList").and_then(|v| v.as_array()).expect("attributeList should be present");
     let mut seen = std::collections::HashSet::new();
@@ -400,10 +399,10 @@ async fn distop_attributes_details_merges_remote_attribute_objects() {
     let reg_id = unique_id("urn:ngsi-ld:Registration:attrs-details");
 
     let entity = vehicle_entity(&entity_id);
-    assert_eq!(create_entity_local(&c, &entity).await, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(create_entity_local(&c, &entity).await, StatusCode::CREATED);
 
     let reg = vehicle_registration(&reg_id, &mock.url(""));
-    assert_eq!(create_registration(&c, &reg).await, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(create_registration(&c, &reg).await, StatusCode::CREATED);
 
     // Remote returns a detailed attribute not present locally
     let mock_details = json!([
@@ -417,7 +416,7 @@ async fn distop_attributes_details_merges_remote_attribute_objects() {
     mock.set_stub_with_body(Method::GET, "/ngsi-ld/v1/attributes", 200, &mock_details).await;
 
     let (status, _, body) = list_attributes(&c, "details=true").await;
-    assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
 
     let arr = body.as_array().expect("details=true response should be a JSON array");
     let altitude = arr.iter().find(|v| v.get("id").and_then(|id| id.as_str()) == Some("altitude"));
@@ -439,12 +438,12 @@ async fn distop_attributes_warning_on_csr_error_response() {
     let reg_id = unique_id("urn:ngsi-ld:Registration:attrs-warn");
 
     let reg = vehicle_registration(&reg_id, &mock.url(""));
-    assert_eq!(create_registration(&c, &reg).await, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(create_registration(&c, &reg).await, StatusCode::CREATED);
 
     mock.set_stub(Method::GET, "/ngsi-ld/v1/attributes", 403).await;
 
     let (status, headers, _) = list_attributes(&c, "").await;
-    assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
 
     let warnings = warning_header_values(&headers);
     assert!(!warnings.is_empty(), "expected NGSILD-Warning header when CSR returns 403");
@@ -469,14 +468,14 @@ async fn distop_attributes_attribute_info_merges_remote_type_names() {
     let reg_id = unique_id("urn:ngsi-ld:Registration:attrs-info-merge");
 
     let entity = vehicle_entity(&entity_id);
-    assert_eq!(create_entity_local(&c, &entity).await, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(create_entity_local(&c, &entity).await, StatusCode::CREATED);
 
     let reg = vehicle_registration(&reg_id, &mock.url(""));
-    assert_eq!(create_registration(&c, &reg).await, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(create_registration(&c, &reg).await, StatusCode::CREATED);
 
     // Verify the attribute exists locally first
     let (local_status, _, _) = get_attribute(&c, "brandName", "local=true").await;
-    assert_eq!(local_status, StatusCode::OK);
+    pretty_assertions::assert_eq!(local_status, StatusCode::OK);
 
     // Remote returns attribute info with additional type names
     let mock_attr_info = json!({
@@ -489,7 +488,7 @@ async fn distop_attributes_attribute_info_merges_remote_type_names() {
         .await;
 
     let (status, _, _) = get_attribute(&c, "brandName", "").await;
-    assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
 
     delete_entity(&c, &entity_id).await;
     delete_registration(&c, &reg_id).await;
@@ -508,13 +507,13 @@ async fn distop_attributes_warning_on_csr_unreachable() {
     let endpoint = mock.url("");
 
     let reg = vehicle_registration(&reg_id, &endpoint);
-    assert_eq!(create_registration(&c, &reg).await, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(create_registration(&c, &reg).await, StatusCode::CREATED);
 
     // Stop mock to simulate unreachable CSR
     mock.stop();
 
     let (status, headers, _) = list_attributes(&c, "").await;
-    assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
 
     let warnings = warning_header_values(&headers);
     assert!(!warnings.is_empty(), "expected NGSILD-Warning header when CSR is unreachable");

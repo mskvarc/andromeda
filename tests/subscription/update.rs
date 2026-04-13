@@ -1,3 +1,4 @@
+#![allow(clippy::expect_used, clippy::unwrap_used)]
 use chrono::{Duration as ChronoDuration, Utc};
 use reqwest::{Method, StatusCode};
 
@@ -38,7 +39,7 @@ async fn subscription_update_missing_id_path_returns_method_not_allowed() {
     )
     .await;
 
-    assert_eq!(status, StatusCode::METHOD_NOT_ALLOWED);
+    pretty_assertions::assert_eq!(status, StatusCode::METHOD_NOT_ALLOWED);
 }
 
 #[serial_test::serial]
@@ -49,8 +50,8 @@ async fn subscription_update_invalid_id_returns_bad_request_data() {
 
     let (status, body) = update_subscription(&http_client, "InvalidUri", &update_fragment(), false).await;
 
-    assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE);
+    pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
+    pretty_assertions::assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE);
 }
 
 #[serial_test::serial]
@@ -61,8 +62,8 @@ async fn subscription_update_unknown_id_returns_resource_not_found() {
 
     let (status, body) = update_subscription(&http_client, "urn:ngsi-ld:Subscription:unknown", &update_fragment(), false).await;
 
-    assert_eq!(status, StatusCode::NOT_FOUND);
-    assert_eq!(body["type"], RESOURCE_NOT_FOUND_TYPE);
+    pretty_assertions::assert_eq!(status, StatusCode::NOT_FOUND);
+    pretty_assertions::assert_eq!(body["type"], RESOURCE_NOT_FOUND_TYPE);
 }
 
 #[serial_test::serial]
@@ -74,12 +75,12 @@ async fn subscription_update_invalid_fragment_returns_bad_request_data() {
     let payload = default_subscription(&subscription_id);
 
     let (status, _, _) = create_subscription(&http_client, &payload).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     let (status, body) = update_subscription(&http_client, &subscription_id, &invalid_update_fragment(), false).await;
 
-    assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE);
+    pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
+    pretty_assertions::assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE);
 }
 
 #[serial_test::serial]
@@ -91,12 +92,12 @@ async fn subscription_update_null_mandatory_properties_returns_bad_request_data(
     let payload = default_subscription(&subscription_id);
 
     let (status, _, _) = create_subscription(&http_client, &payload).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     let (status, body) = update_subscription(&http_client, &subscription_id, &null_properties_fragment(), false).await;
 
-    assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE);
+    pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
+    pretty_assertions::assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE);
 }
 
 #[serial_test::serial]
@@ -108,15 +109,15 @@ async fn subscription_update_entities_with_context_returns_no_content() {
     let payload = default_subscription(&subscription_id);
 
     let (status, _, _) = create_subscription(&http_client, &payload).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     let (status, _) = update_subscription(&http_client, &subscription_id, &vehicle_entities_fragment(), true).await;
 
-    assert_eq!(status, StatusCode::NO_CONTENT);
+    pretty_assertions::assert_eq!(status, StatusCode::NO_CONTENT);
 
     let (status, body) = retrieve_subscription(&http_client, &subscription_id, true).await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["entities"][0]["type"], "Vehicle");
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(body["entities"][0]["type"], "Vehicle");
 }
 
 #[serial_test::serial]
@@ -128,15 +129,15 @@ async fn subscription_update_entities_without_accept_context_still_updates_entit
     let payload = default_subscription(&subscription_id);
 
     let (status, _, _) = create_subscription(&http_client, &payload).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     let (status, _) = update_subscription(&http_client, &subscription_id, &vehicle_entities_fragment(), true).await;
 
-    assert_eq!(status, StatusCode::NO_CONTENT);
+    pretty_assertions::assert_eq!(status, StatusCode::NO_CONTENT);
 
     let (status, body) = retrieve_subscription(&http_client, &subscription_id, false).await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["entities"][0]["type"], "Vehicle");
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(body["entities"][0]["type"], "Vehicle");
 }
 
 #[serial_test::serial]
@@ -148,16 +149,16 @@ async fn subscription_update_notification_endpoint_returns_no_content_and_persis
     let payload = default_subscription(&subscription_id);
 
     let (status, _, _) = create_subscription(&http_client, &payload).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     let (status, _) = update_subscription(&http_client, &subscription_id, &update_fragment(), true).await;
 
-    assert_eq!(status, StatusCode::NO_CONTENT);
+    pretty_assertions::assert_eq!(status, StatusCode::NO_CONTENT);
 
     let (status, body) = retrieve_subscription(&http_client, &subscription_id, true).await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["notification"]["endpoint"]["uri"], "http://my.second.endpoint.org/notify");
-    assert_eq!(body["notification"]["format"], "keyValues");
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(body["notification"]["endpoint"]["uri"], "http://my.second.endpoint.org/notify");
+    pretty_assertions::assert_eq!(body["notification"]["format"], "keyValues");
 }
 
 #[serial_test::serial]
@@ -169,15 +170,15 @@ async fn subscription_update_paused_subscription_with_is_active_true_sets_active
     let payload = inactive_subscription(&subscription_id);
 
     let (status, _, _) = create_subscription(&http_client, &payload).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     let (status, _) = update_subscription(&http_client, &subscription_id, &activate_fragment(), false).await;
 
-    assert_eq!(status, StatusCode::NO_CONTENT);
+    pretty_assertions::assert_eq!(status, StatusCode::NO_CONTENT);
 
     let (status, body) = retrieve_subscription(&http_client, &subscription_id, false).await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["status"], "active");
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(body["status"], "active");
 }
 
 #[serial_test::serial]
@@ -189,15 +190,15 @@ async fn subscription_update_paused_subscription_with_is_active_and_future_expir
     let payload = inactive_subscription(&subscription_id);
 
     let (status, _, _) = create_subscription(&http_client, &payload).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     let (status, _) = update_subscription(&http_client, &subscription_id, &activate_with_expires_fragment(), false).await;
 
-    assert_eq!(status, StatusCode::NO_CONTENT);
+    pretty_assertions::assert_eq!(status, StatusCode::NO_CONTENT);
 
     let (status, body) = retrieve_subscription(&http_client, &subscription_id, false).await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["status"], "active");
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(body["status"], "active");
 }
 
 #[serial_test::serial]
@@ -209,15 +210,15 @@ async fn subscription_update_active_subscription_with_is_active_false_sets_pause
     let payload = default_subscription(&subscription_id);
 
     let (status, _, _) = create_subscription(&http_client, &payload).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     let (status, _) = update_subscription(&http_client, &subscription_id, &pause_fragment(), false).await;
 
-    assert_eq!(status, StatusCode::NO_CONTENT);
+    pretty_assertions::assert_eq!(status, StatusCode::NO_CONTENT);
 
     let (status, body) = retrieve_subscription(&http_client, &subscription_id, false).await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["status"], "paused");
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(body["status"], "paused");
 }
 
 #[serial_test::serial]
@@ -229,7 +230,7 @@ async fn subscription_update_expired_subscription_with_future_expires_reactivate
     let payload = default_subscription(&subscription_id);
 
     let (status, _, _) = create_subscription(&http_client, &payload).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     let expires_at = Utc::now() + ChronoDuration::seconds(5);
     let temporary_expiration = serde_json::json!({
@@ -238,16 +239,16 @@ async fn subscription_update_expired_subscription_with_future_expires_reactivate
     });
 
     let (status, _) = update_subscription(&http_client, &subscription_id, &temporary_expiration, false).await;
-    assert_eq!(status, StatusCode::NO_CONTENT);
+    pretty_assertions::assert_eq!(status, StatusCode::NO_CONTENT);
 
     tokio::time::sleep(std::time::Duration::from_secs(10)).await;
 
     let (status, _) = update_subscription(&http_client, &subscription_id, &activate_with_expires_fragment(), false).await;
-    assert_eq!(status, StatusCode::NO_CONTENT);
+    pretty_assertions::assert_eq!(status, StatusCode::NO_CONTENT);
 
     let (status, body) = retrieve_subscription(&http_client, &subscription_id, false).await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["status"], "active");
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(body["status"], "active");
 }
 
 #[serial_test::serial]
@@ -259,10 +260,10 @@ async fn subscription_update_with_past_expires_at_returns_bad_request_data() {
     let payload = default_subscription(&subscription_id);
 
     let (status, _, _) = create_subscription(&http_client, &payload).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     let (status, body) = update_subscription(&http_client, &subscription_id, &past_expires_fragment(), false).await;
 
-    assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE);
+    pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
+    pretty_assertions::assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE);
 }

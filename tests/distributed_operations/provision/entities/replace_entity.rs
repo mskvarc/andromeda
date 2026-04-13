@@ -1,6 +1,6 @@
+#![allow(clippy::expect_used, clippy::unwrap_used)]
 use crate::harness::{client::RequestHeaders, fixtures, mock_server::MockServer, trial::trial};
 use libtest_mimic::Trial;
-use pretty_assertions::assert_eq;
 use reqwest::{Method, StatusCode};
 
 use super::prepare_registration;
@@ -29,12 +29,12 @@ pub fn tests(trials: &mut Vec<Trial>) {
                 .client
                 .request(Method::POST, "/entities?local=true", Some(&entity), RequestHeaders::new())
                 .await;
-            assert_eq!(resp.status, StatusCode::CREATED);
+            pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
 
             // Create exclusive registration
             let reg = prepare_registration(REG_SPEED_REDIRECTION_OPS, &reg_id, &entity_id, &mock.url("/broker1"), Some("exclusive"));
             let resp = ctx.client.create_registration(&reg).await;
-            assert_eq!(resp.status, StatusCode::CREATED);
+            pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
             ctx.track_registration(&reg_id);
 
             // Set stub for forwarded replace
@@ -54,7 +54,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
                         .link_context(fixtures::test_suite_context_url()),
                 )
                 .await;
-            assert_eq!(resp.status, StatusCode::NO_CONTENT);
+            pretty_assertions::assert_eq!(resp.status, StatusCode::NO_CONTENT);
 
             // Verify forwarding happened
             assert!(mock.get_count(Method::PUT, &put_path).await > 0);
@@ -97,12 +97,12 @@ pub fn tests(trials: &mut Vec<Trial>) {
                         .link_context(fixtures::test_suite_context_url()),
                 )
                 .await;
-            assert_eq!(resp.status, StatusCode::CREATED);
+            pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
 
             // Create inclusive registration
             let reg = prepare_registration(REG_REDIRECTION_OPS, &reg_id, &entity_id, &mock.url(""), Some("inclusive"));
             let resp = ctx.client.create_registration(&reg).await;
-            assert_eq!(resp.status, StatusCode::CREATED);
+            pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
             ctx.track_registration(&reg_id);
 
             // Get old entity body
@@ -134,7 +134,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
                         .link_context(fixtures::test_suite_context_url()),
                 )
                 .await;
-            assert_eq!(resp.status, StatusCode::NO_CONTENT);
+            pretty_assertions::assert_eq!(resp.status, StatusCode::NO_CONTENT);
 
             // Verify entity body changed
             let resp = ctx
@@ -147,7 +147,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
                 )
                 .await;
             let new_body: serde_json::Value = resp.json();
-            assert_ne!(old_body, new_body);
+            pretty_assertions::assert_ne!(old_body, new_body);
 
             mock.stop();
         },
@@ -163,12 +163,12 @@ pub fn tests(trials: &mut Vec<Trial>) {
         // Create two redirect registrations (same entity_id for both)
         let reg1 = prepare_registration(REG_REDIRECTION_OPS, &reg_id, &entity_id, &mock.url("/broker1"), Some("redirect"));
         let resp = ctx.client.create_registration(&reg1).await;
-        assert_eq!(resp.status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
         ctx.track_registration(&reg_id);
 
         let reg2 = prepare_registration(REG_REDIRECTION_OPS, &reg_id2, &entity_id, &mock.url("/broker2"), Some("redirect"));
         let resp = ctx.client.create_registration(&reg2).await;
-        assert_eq!(resp.status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
         ctx.track_registration(&reg_id2);
 
         // Set stubs for forwarded replaces
@@ -190,11 +190,11 @@ pub fn tests(trials: &mut Vec<Trial>) {
                     .link_context(fixtures::test_suite_context_url()),
             )
             .await;
-        assert_eq!(resp.status, StatusCode::NO_CONTENT);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::NO_CONTENT);
 
         // Verify forwarding to both
-        assert_eq!(mock.get_count(Method::PUT, &put_path1).await, 1);
-        assert_eq!(mock.get_count(Method::PUT, &put_path2).await, 1);
+        pretty_assertions::assert_eq!(mock.get_count(Method::PUT, &put_path1).await, 1);
+        pretty_assertions::assert_eq!(mock.get_count(Method::PUT, &put_path2).await, 1);
 
         mock.stop();
     }));

@@ -369,6 +369,7 @@ fn escape_sql_string(s: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::*;
     use crate::{
         domain::temporal::{TimeProp, TimeRel},
@@ -412,7 +413,7 @@ mod tests {
         q.entity_type = Some("https://example.com/Vehicle".to_string());
         let built = build_csr_query(&q).unwrap();
         assert!(built.sql.contains("ent->>'type' = $1"));
-        assert_eq!(built.bind_values.len(), 1);
+        pretty_assertions::assert_eq!(built.bind_values.len(), 1);
     }
 
     #[test]
@@ -438,7 +439,7 @@ mod tests {
         let built = build_csr_query(&q).unwrap();
         assert!(built.sql.contains("propertyNames"));
         assert!(built.sql.contains("relationshipNames"));
-        assert_eq!(built.bind_values.len(), 2);
+        pretty_assertions::assert_eq!(built.bind_values.len(), 2);
     }
 
     #[test]
@@ -452,7 +453,7 @@ mod tests {
         });
         let built = build_csr_query(&q).unwrap();
         assert!(built.sql.contains("location IS NULL OR ST_Within"));
-        assert_eq!(built.bind_values.len(), 1);
+        pretty_assertions::assert_eq!(built.bind_values.len(), 1);
     }
 
     #[test]
@@ -467,7 +468,7 @@ mod tests {
         let built = build_csr_query(&q).unwrap();
         assert!(built.sql.contains("observation_interval IS NULL"));
         assert!(built.sql.contains("startAt"));
-        assert_eq!(built.bind_values.len(), 1);
+        pretty_assertions::assert_eq!(built.bind_values.len(), 1);
     }
 
     #[test]
@@ -496,7 +497,7 @@ mod tests {
         let built = build_csr_query(&q).unwrap();
         assert!(built.sql.contains("startAt"));
         assert!(built.sql.contains("endAt"));
-        assert_eq!(built.bind_values.len(), 2);
+        pretty_assertions::assert_eq!(built.bind_values.len(), 2);
     }
 
     #[test]
@@ -532,6 +533,6 @@ mod tests {
         q.attrs = Some(vec!["https://example.com/speed".to_string()]);
         let built = build_csr_query(&q).unwrap();
         assert!(built.sql.contains(" AND "));
-        assert_eq!(built.bind_values.len(), 3);
+        pretty_assertions::assert_eq!(built.bind_values.len(), 3);
     }
 }

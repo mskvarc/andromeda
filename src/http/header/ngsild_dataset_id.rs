@@ -63,6 +63,7 @@ impl headers::Header for NgsiLdDatasetId {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::*;
     use headers::Header;
 
@@ -75,15 +76,15 @@ mod tests {
     #[test]
     fn decode_single_urn() {
         let header = decode_from("urn:ngsi-ld:Dataset:one").expect("valid");
-        assert_eq!(header.as_slice().len(), 1);
+        pretty_assertions::assert_eq!(header.as_slice().len(), 1);
     }
 
     #[test]
     fn decode_csv_urns() {
         let header = decode_from("urn:ngsi-ld:Dataset:one, urn:ngsi-ld:Dataset:two").expect("valid");
-        assert_eq!(header.as_slice().len(), 2);
-        assert_eq!(header.as_slice()[0].as_str(), "urn:ngsi-ld:Dataset:one");
-        assert_eq!(header.as_slice()[1].as_str(), "urn:ngsi-ld:Dataset:two");
+        pretty_assertions::assert_eq!(header.as_slice().len(), 2);
+        pretty_assertions::assert_eq!(header.as_slice()[0].as_str(), "urn:ngsi-ld:Dataset:one");
+        pretty_assertions::assert_eq!(header.as_slice()[1].as_str(), "urn:ngsi-ld:Dataset:two");
     }
 
     #[test]

@@ -243,59 +243,60 @@ fn extract_single_value_string(node: &Value) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::*;
 
     #[test]
     fn normalize_for_collation_removes_diacritics() {
-        assert_eq!(normalize_for_collation("Schone Grusse"), "schone grusse");
-        assert_eq!(normalize_for_collation("Schone  Grusse"), "schone grusse");
+        pretty_assertions::assert_eq!(normalize_for_collation("Schone Grusse"), "schone grusse");
+        pretty_assertions::assert_eq!(normalize_for_collation("Schone  Grusse"), "schone grusse");
     }
 
     #[test]
     fn normalize_for_collation_strips_combining_marks() {
         // U+0308 = combining diaeresis; NFD of "o" = "o\u{0308}"
-        assert_eq!(normalize_for_collation("Scho\u{0308}ne Gru\u{0308}sse"), "schone grusse");
+        pretty_assertions::assert_eq!(normalize_for_collation("Scho\u{0308}ne Gru\u{0308}sse"), "schone grusse");
     }
 
     #[test]
     fn normalize_for_collation_lowercases() {
-        assert_eq!(normalize_for_collation("HELLO WORLD"), "hello world");
+        pretty_assertions::assert_eq!(normalize_for_collation("HELLO WORLD"), "hello world");
     }
 
     #[test]
     fn normalize_for_collation_collapses_whitespace() {
-        assert_eq!(normalize_for_collation("a   b  c"), "a b c");
+        pretty_assertions::assert_eq!(normalize_for_collation("a   b  c"), "a b c");
     }
 
     #[test]
     fn normalize_for_collation_handles_non_latin() {
         // CJK characters have no combining marks; pass through lowercased
         let result = normalize_for_collation("Tokyo");
-        assert_eq!(result, "tokyo");
+        pretty_assertions::assert_eq!(result, "tokyo");
     }
 
     #[test]
     fn rewrite_query_for_collation_changes_targeted_attr() {
         let rewritten = rewrite_query_for_collation(Some("name==\"Schone Grusse\""), &[String::from("name")]).unwrap();
-        assert_eq!(rewritten, Some(format!("name.\"{}\"==\"schone grusse\"", COLLATE_IRI)));
+        pretty_assertions::assert_eq!(rewritten, Some(format!("name.\"{}\"==\"schone grusse\"", COLLATE_IRI)));
     }
 
     #[test]
     fn rewrite_query_for_collation_no_targets_passthrough() {
         let rewritten = rewrite_query_for_collation(Some("name==\"test\""), &[]).unwrap();
-        assert_eq!(rewritten, Some("name==\"test\"".to_string()));
+        pretty_assertions::assert_eq!(rewritten, Some("name==\"test\"".to_string()));
     }
 
     #[test]
     fn rewrite_query_for_collation_empty_q_passthrough() {
         let rewritten = rewrite_query_for_collation(Some("  "), &[String::from("name")]).unwrap();
-        assert_eq!(rewritten, Some("  ".to_string()));
+        pretty_assertions::assert_eq!(rewritten, Some("  ".to_string()));
     }
 
     #[test]
     fn rewrite_query_for_collation_none_returns_none() {
         let rewritten = rewrite_query_for_collation(None, &[String::from("name")]).unwrap();
-        assert_eq!(rewritten, None);
+        pretty_assertions::assert_eq!(rewritten, None);
     }
 
     #[test]

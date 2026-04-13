@@ -140,6 +140,7 @@ impl headers::Header for Via {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::*;
     use headers::Header;
 
@@ -159,32 +160,32 @@ mod tests {
     #[test]
     fn decode_single_entry() {
         let via = decode_from("1.1 broker-a").expect("should decode");
-        assert_eq!(via.0.len(), 1);
-        assert_eq!(via.0[0].protocol_version, "1.1");
-        assert_eq!(via.0[0].pseudonym, "broker-a");
-        assert_eq!(via.0[0].comment, None);
+        pretty_assertions::assert_eq!(via.0.len(), 1);
+        pretty_assertions::assert_eq!(via.0[0].protocol_version, "1.1");
+        pretty_assertions::assert_eq!(via.0[0].pseudonym, "broker-a");
+        pretty_assertions::assert_eq!(via.0[0].comment, None);
     }
 
     #[test]
     fn decode_multi_entry() {
         let via = decode_from("1.1 broker-a, 1.1 broker-b").expect("should decode");
-        assert_eq!(via.0.len(), 2);
-        assert_eq!(via.0[0].pseudonym, "broker-a");
-        assert_eq!(via.0[1].pseudonym, "broker-b");
+        pretty_assertions::assert_eq!(via.0.len(), 2);
+        pretty_assertions::assert_eq!(via.0[0].pseudonym, "broker-a");
+        pretty_assertions::assert_eq!(via.0[1].pseudonym, "broker-b");
     }
 
     #[test]
     fn decode_with_full_protocol() {
         let via = decode_from("HTTP/1.1 proxy").expect("should decode");
-        assert_eq!(via.0[0].protocol_version, "HTTP/1.1");
-        assert_eq!(via.0[0].pseudonym, "proxy");
+        pretty_assertions::assert_eq!(via.0[0].protocol_version, "HTTP/1.1");
+        pretty_assertions::assert_eq!(via.0[0].pseudonym, "proxy");
     }
 
     #[test]
     fn decode_with_comment() {
         let via = decode_from("1.1 proxy (Apache)").expect("should decode");
-        assert_eq!(via.0[0].pseudonym, "proxy");
-        assert_eq!(via.0[0].comment, Some("Apache".to_string()));
+        pretty_assertions::assert_eq!(via.0[0].pseudonym, "proxy");
+        pretty_assertions::assert_eq!(via.0[0].comment, Some("Apache".to_string()));
     }
 
     #[test]
@@ -196,7 +197,7 @@ mod tests {
     fn pseudonyms_extracts_all() {
         let via = decode_from("1.1 a, 1.1 b, 1.1 c").expect("should decode");
         let pseudonyms: Vec<&str> = via.pseudonyms().collect();
-        assert_eq!(pseudonyms, vec!["a", "b", "c"]);
+        pretty_assertions::assert_eq!(pseudonyms, vec!["a", "b", "c"]);
     }
 
     #[test]
@@ -226,9 +227,9 @@ mod tests {
     #[test]
     fn append_adds_to_chain() {
         let via = Via::with_entry("1.1", "broker-a").append("1.1", "broker-b");
-        assert_eq!(via.0.len(), 2);
-        assert_eq!(via.0[0].pseudonym, "broker-a");
-        assert_eq!(via.0[1].pseudonym, "broker-b");
+        pretty_assertions::assert_eq!(via.0.len(), 2);
+        pretty_assertions::assert_eq!(via.0[0].pseudonym, "broker-a");
+        pretty_assertions::assert_eq!(via.0[1].pseudonym, "broker-b");
     }
 
     #[test]
@@ -236,11 +237,11 @@ mod tests {
         let original = Via::with_entry("1.1", "broker-a").append("1.1", "broker-b");
         let mut encoded = Vec::new();
         original.encode(&mut encoded);
-        assert_eq!(encoded.len(), 1);
+        pretty_assertions::assert_eq!(encoded.len(), 1);
 
         let mut iter = encoded.iter();
         let decoded = Via::decode(&mut iter).expect("roundtrip decode");
-        assert_eq!(original, decoded);
+        pretty_assertions::assert_eq!(original, decoded);
     }
 
     #[test]

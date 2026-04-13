@@ -156,56 +156,57 @@ impl<T: fmt::Display> fmt::Display for QualityValue<T> {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::*;
 
     #[test]
     fn new_valid_quality() {
-        assert_eq!(Quality::new(500), Some(Quality(500)));
+        pretty_assertions::assert_eq!(Quality::new(500), Some(Quality(500)));
     }
 
     #[test]
     fn new_max_quality() {
-        assert_eq!(Quality::new(1000), Some(Quality(1000)));
+        pretty_assertions::assert_eq!(Quality::new(1000), Some(Quality(1000)));
     }
 
     #[test]
     fn new_zero_quality() {
-        assert_eq!(Quality::new(0), Some(Quality(0)));
+        pretty_assertions::assert_eq!(Quality::new(0), Some(Quality(0)));
     }
 
     #[test]
     fn new_rejects_above_1000() {
-        assert_eq!(Quality::new(1001), None);
+        pretty_assertions::assert_eq!(Quality::new(1001), None);
     }
 
     #[test]
     fn default_is_max() {
-        assert_eq!(Quality::default(), Quality(1000));
+        pretty_assertions::assert_eq!(Quality::default(), Quality(1000));
     }
 
     #[test]
     fn display_max_omitted() {
-        assert_eq!(Quality(1000).to_string(), "");
+        pretty_assertions::assert_eq!(Quality(1000).to_string(), "");
     }
 
     #[test]
     fn display_zero() {
-        assert_eq!(Quality(0).to_string(), "q=0");
+        pretty_assertions::assert_eq!(Quality(0).to_string(), "q=0");
     }
 
     #[test]
     fn display_half() {
-        assert_eq!(Quality(500).to_string(), "q=0.5");
+        pretty_assertions::assert_eq!(Quality(500).to_string(), "q=0.5");
     }
 
     #[test]
     fn display_precise() {
-        assert_eq!(Quality(273).to_string(), "q=0.273");
+        pretty_assertions::assert_eq!(Quality(273).to_string(), "q=0.273");
     }
 
     #[test]
     fn display_trailing_zeros_trimmed() {
-        assert_eq!(Quality(200).to_string(), "q=0.2");
+        pretty_assertions::assert_eq!(Quality(200).to_string(), "q=0.2");
     }
 
     #[test]
@@ -216,18 +217,18 @@ mod tests {
     #[test]
     fn quality_value_default_quality() {
         let qv = QualityValue::new("foo", Quality::default());
-        assert_eq!(qv.quality().value(), 1000);
+        pretty_assertions::assert_eq!(qv.quality().value(), 1000);
     }
 
     #[test]
     fn quality_value_display_max() {
-        assert_eq!(QualityValue::new("text/html", Quality::default()).to_string(), "text/html");
+        pretty_assertions::assert_eq!(QualityValue::new("text/html", Quality::default()).to_string(), "text/html");
     }
 
     #[test]
     fn quality_value_display_with_q() {
         let qv = QualityValue::new("gzip", Quality(500));
-        assert_eq!(qv.to_string(), "gzip; q=0.5");
+        pretty_assertions::assert_eq!(qv.to_string(), "gzip; q=0.5");
     }
 
     #[test]
@@ -239,46 +240,46 @@ mod tests {
 
     #[test]
     fn parse_decimal_valid_half() {
-        assert_eq!(Quality::parse_decimal("0.5"), Ok(Quality(500)));
+        pretty_assertions::assert_eq!(Quality::parse_decimal("0.5"), Ok(Quality(500)));
     }
 
     #[test]
     fn parse_decimal_valid_zero() {
-        assert_eq!(Quality::parse_decimal("0"), Ok(Quality(0)));
+        pretty_assertions::assert_eq!(Quality::parse_decimal("0"), Ok(Quality(0)));
     }
 
     #[test]
     fn parse_decimal_valid_one() {
-        assert_eq!(Quality::parse_decimal("1"), Ok(Quality(1000)));
+        pretty_assertions::assert_eq!(Quality::parse_decimal("1"), Ok(Quality(1000)));
     }
 
     #[test]
     fn parse_decimal_valid_one_dot_zero() {
-        assert_eq!(Quality::parse_decimal("1.0"), Ok(Quality(1000)));
+        pretty_assertions::assert_eq!(Quality::parse_decimal("1.0"), Ok(Quality(1000)));
     }
 
     #[test]
     fn parse_decimal_valid_three_places() {
-        assert_eq!(Quality::parse_decimal("0.273"), Ok(Quality(273)));
+        pretty_assertions::assert_eq!(Quality::parse_decimal("0.273"), Ok(Quality(273)));
     }
 
     #[test]
     fn parse_decimal_rejects_above_one() {
-        assert_eq!(Quality::parse_decimal("1.1"), Err(QualityParseError::Invalid("1.1".to_string())));
+        pretty_assertions::assert_eq!(Quality::parse_decimal("1.1"), Err(QualityParseError::Invalid("1.1".to_string())));
     }
 
     #[test]
     fn parse_decimal_rejects_four_places() {
-        assert_eq!(Quality::parse_decimal("0.1234"), Err(QualityParseError::Invalid("0.1234".to_string())));
+        pretty_assertions::assert_eq!(Quality::parse_decimal("0.1234"), Err(QualityParseError::Invalid("0.1234".to_string())));
     }
 
     #[test]
     fn parse_decimal_rejects_empty() {
-        assert_eq!(Quality::parse_decimal(""), Err(QualityParseError::Empty));
+        pretty_assertions::assert_eq!(Quality::parse_decimal(""), Err(QualityParseError::Empty));
     }
 
     #[test]
     fn parse_decimal_rejects_non_numeric() {
-        assert_eq!(Quality::parse_decimal("abc"), Err(QualityParseError::Invalid("abc".to_string())));
+        pretty_assertions::assert_eq!(Quality::parse_decimal("abc"), Err(QualityParseError::Invalid("abc".to_string())));
     }
 }

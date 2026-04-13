@@ -220,6 +220,7 @@ pub struct Subscription {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::*;
     use std::str::FromStr;
 
@@ -235,7 +236,7 @@ mod tests {
         ] {
             let s = variant.to_string();
             let parsed = NotificationTrigger::from_str(&s).unwrap();
-            assert_eq!(parsed, variant, "round-trip failed for {variant}");
+            pretty_assertions::assert_eq!(parsed, variant, "round-trip failed for {variant}");
         }
     }
 
@@ -244,7 +245,7 @@ mod tests {
         for status in [SubscriptionStatus::Active, SubscriptionStatus::Paused, SubscriptionStatus::Expired] {
             let s = status.to_string();
             let parsed = SubscriptionStatus::from_str(&s).unwrap();
-            assert_eq!(parsed, status, "round-trip failed for {status}");
+            pretty_assertions::assert_eq!(parsed, status, "round-trip failed for {status}");
         }
     }
 
@@ -253,7 +254,7 @@ mod tests {
         for status in [NotificationStatus::Ok, NotificationStatus::Failed] {
             let s = status.to_string();
             let parsed = NotificationStatus::from_str(&s).unwrap();
-            assert_eq!(parsed, status, "round-trip failed for {status}");
+            pretty_assertions::assert_eq!(parsed, status, "round-trip failed for {status}");
         }
     }
 }

@@ -128,17 +128,17 @@ async fn geometry_collection_custom_property_uses_specified_attribute() {
         "@context": [TEST_SUITE_CONTEXT]
     });
     let (status, _) = create_entity(&c, &entity).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     let (status, _, body) = query_entities_geojson(&c, "type=Building&geometryProperty=observationPoint").await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["type"], "FeatureCollection");
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(body["type"], "FeatureCollection");
 
     let features = body["features"].as_array().expect("features must be an array");
     assert!(!features.is_empty(), "collection must contain at least one feature");
 
     let geom = &features[0]["geometry"];
-    assert_eq!(geom["type"], "Point");
+    pretty_assertions::assert_eq!(geom["type"], "Point");
     let coords = geom["coordinates"].as_array().expect("coordinates must be an array");
     let lon = coords[0].as_f64().unwrap();
     // geometryProperty=observationPoint: must use (13.3986, 52.5547), not location (0.0, 0.0)
@@ -170,11 +170,11 @@ async fn geometry_collection_absent_geometry_property_defaults_to_location_attri
         "@context": [TEST_SUITE_CONTEXT]
     });
     let (status, _) = create_entity(&c, &entity).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     // No geometryProperty param → must fall back to `location`
     let (status, _, body) = query_entities_geojson(&c, "type=Building").await;
-    assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
 
     let features = body["features"].as_array().expect("features must be an array");
     assert!(!features.is_empty(), "collection must contain at least one feature");
@@ -202,11 +202,11 @@ async fn geometry_collection_entity_with_no_location_has_null_geometry_in_featur
         "@context": [TEST_SUITE_CONTEXT]
     });
     let (status, _) = create_entity(&c, &entity).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     let (status, _, body) = query_entities_geojson(&c, "type=Building").await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["type"], "FeatureCollection");
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(body["type"], "FeatureCollection");
 
     let features = body["features"].as_array().expect("features must be an array");
     let feature = features
@@ -242,14 +242,14 @@ async fn geometry_entity_custom_geometry_property_uses_specified_attribute() {
         "@context": [TEST_SUITE_CONTEXT]
     });
     let (status, _) = create_entity(&c, &entity).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     let (status, _, body) = get_entity_geojson(&c, &id, "geometryProperty=observationPoint").await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["type"], "Feature");
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(body["type"], "Feature");
 
     let geom = &body["geometry"];
-    assert_eq!(geom["type"], "Point");
+    pretty_assertions::assert_eq!(geom["type"], "Point");
     let coords = geom["coordinates"].as_array().expect("coordinates must be an array");
     let lon = coords[0].as_f64().unwrap();
     assert!(
@@ -276,11 +276,11 @@ async fn geometry_entity_absent_geometry_property_defaults_to_location_attribute
         "@context": [TEST_SUITE_CONTEXT]
     });
     let (status, _) = create_entity(&c, &entity).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     let (status, _, body) = get_entity_geojson(&c, &id, "").await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["type"], "Feature");
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(body["type"], "Feature");
 
     let coords = &body["geometry"]["coordinates"];
     let lon = coords[0].as_f64().unwrap();
@@ -305,11 +305,11 @@ async fn geometry_entity_without_geo_attribute_returns_feature_with_null_geometr
         "@context": [TEST_SUITE_CONTEXT]
     });
     let (status, _) = create_entity(&c, &entity).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     let (status, _, body) = get_entity_geojson(&c, &id, "").await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["type"], "Feature");
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(body["type"], "Feature");
     assert!(body["geometry"].is_null(), "entity without GeoProperty must render with null geometry");
 
     delete_entity(&c, &id).await;

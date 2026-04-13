@@ -107,9 +107,9 @@ async fn i18n_entity_language_association_round_trips() {
         "@context": [{"inLanguage": "https://schema.org/inLanguage"}, CORE_CONTEXT]
     });
 
-    assert_eq!(create_entity(&client, &entity).await, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(create_entity(&client, &entity).await, StatusCode::CREATED);
     let retrieved = get_entity(&client, &id).await;
-    assert_eq!(property_value(&retrieved, "inLanguage", IN_LANGUAGE_IRI), Some(&json!("fr")));
+    pretty_assertions::assert_eq!(property_value(&retrieved, "inLanguage", IN_LANGUAGE_IRI), Some(&json!("fr")));
     delete_entity(&client, &id).await;
 }
 
@@ -128,7 +128,7 @@ async fn i18n_property_language_metadata_is_queryable() {
         "@context": [{"inLanguage": "https://schema.org/inLanguage"}, CORE_CONTEXT]
     });
 
-    assert_eq!(create_entity(&client, &entity).await, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(create_entity(&client, &entity).await, StatusCode::CREATED);
     let q = format!("\"{BOOKING_URL_IRI}\".\"{IN_LANGUAGE_IRI}\"==\"de\"");
     let query = format!("type=Hotel&q={}", urlencoding::encode(&q));
     let queried = query_entities(&client, &query).await;
@@ -159,7 +159,7 @@ async fn i18n_same_as_relationship_language_metadata_is_queryable() {
         }, CORE_CONTEXT]
     });
 
-    assert_eq!(create_entity(&client, &entity).await, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(create_entity(&client, &entity).await, StatusCode::CREATED);
     let q = format!("\"{SAME_AS_IRI}\".\"{IN_LANGUAGE_IRI}\"==\"en\"");
     let query = format!("type=Event&q={}", urlencoding::encode(&q));
     let queried = query_entities(&client, &query).await;
@@ -182,7 +182,7 @@ async fn i18n_collate_metadata_is_generated_for_string_properties() {
         "@context": [CORE_CONTEXT]
     });
 
-    assert_eq!(create_entity(&client, &entity).await, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(create_entity(&client, &entity).await, StatusCode::CREATED);
     let retrieved = get_entity(&client, &id).await;
     // Andromeda core context is always included in compaction, so `collate`
     // appears as a short name.  In compact normalized form the sub-attribute
@@ -191,7 +191,7 @@ async fn i18n_collate_metadata_is_generated_for_string_properties() {
         .get("name")
         .and_then(|name| name.get("collate"))
         .and_then(|collate| collate.get("value"));
-    assert_eq!(collate_value, Some(&json!("schone grusse")));
+    pretty_assertions::assert_eq!(collate_value, Some(&json!("schone grusse")));
     delete_entity(&client, &id).await;
 }
 
@@ -206,7 +206,7 @@ async fn i18n_collate_query_matches_normalized_rhs() {
         "@context": [CORE_CONTEXT]
     });
 
-    assert_eq!(create_entity(&client, &entity).await, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(create_entity(&client, &entity).await, StatusCode::CREATED);
     let queried = query_entities(&client, "type=Building&q=name==\"Schone Grusse\"&collate=name").await;
     assert!(
         queried
@@ -228,12 +228,12 @@ async fn l10n_localized_entity_formats_date_and_currency() {
         "@context": [CORE_CONTEXT]
     });
 
-    assert_eq!(create_entity(&client, &entity).await, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(create_entity(&client, &entity).await, StatusCode::CREATED);
     let response = get_localized_entity(&client, &id, "locale=de-DE&localizedAttrs=date,price", "application/json").await;
-    assert_eq!(response.status(), StatusCode::OK);
+    pretty_assertions::assert_eq!(response.status(), StatusCode::OK);
     let body: Value = response.json().await.expect("localized body");
-    assert_eq!(body["date"], "28.09.2020 17:13:39 UTC");
-    assert_eq!(body["price"], "1.234,50 EUR");
+    pretty_assertions::assert_eq!(body["date"], "28.09.2020 17:13:39 UTC");
+    pretty_assertions::assert_eq!(body["price"], "1.234,50 EUR");
     delete_entity(&client, &id).await;
 }
 
@@ -249,12 +249,12 @@ async fn l10n_localized_query_transforms_only_requested_attributes() {
         "@context": [CORE_CONTEXT]
     });
 
-    assert_eq!(create_entity(&client, &entity).await, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(create_entity(&client, &entity).await, StatusCode::CREATED);
     let response = query_localized_entities(&client, "type=Offer&locale=en-US&localizedAttrs=date").await;
     let results = response["results"].as_array().expect("results");
     let entry = results.iter().find(|item| read_id(item) == Some(id.as_str())).expect("entry");
-    assert_eq!(entry["date"], "2020-09-28 05:13:39 PM UTC");
-    assert_eq!(entry["name"]["value"], "Standard Offer");
+    pretty_assertions::assert_eq!(entry["date"], "2020-09-28 05:13:39 PM UTC");
+    pretty_assertions::assert_eq!(entry["name"]["value"], "Standard Offer");
     delete_entity(&client, &id).await;
 }
 
@@ -269,8 +269,8 @@ async fn l10n_localized_endpoint_rejects_ld_json_accept() {
         "@context": [CORE_CONTEXT]
     });
 
-    assert_eq!(create_entity(&client, &entity).await, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(create_entity(&client, &entity).await, StatusCode::CREATED);
     let response = get_localized_entity(&client, &id, "locale=en-US", "application/ld+json").await;
-    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    pretty_assertions::assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
     delete_entity(&client, &id).await;
 }

@@ -351,6 +351,7 @@ impl From<QueryRequest> for EntityQueryParameters {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::*;
     use crate::{http::parameter::query::SharedQueryParams, params_from_query, query::compiled::OrderDirection};
 
@@ -369,14 +370,14 @@ mod tests {
     fn parse_ids_splits_comma_separated() {
         let p = params_from_query("id=urn:a,urn:b,urn:c");
         let ids = p.parse_ids().unwrap();
-        assert_eq!(ids, vec!["urn:a", "urn:b", "urn:c"]);
+        pretty_assertions::assert_eq!(ids, vec!["urn:a", "urn:b", "urn:c"]);
     }
 
     #[test]
     fn parse_types_splits_comma_separated() {
         let p = params_from_query("type=Vehicle,Building");
         let types = parse_types(&p);
-        assert_eq!(types, vec!["Vehicle", "Building"]);
+        pretty_assertions::assert_eq!(types, vec!["Vehicle", "Building"]);
     }
 
     #[test]
@@ -389,61 +390,61 @@ mod tests {
     fn parse_attrs_splits_comma_separated() {
         let p = params_from_query("attrs=speed,temperature");
         let attrs = p.parse_attrs();
-        assert_eq!(attrs, vec!["speed", "temperature"]);
+        pretty_assertions::assert_eq!(attrs, vec!["speed", "temperature"]);
     }
 
     #[test]
     fn parse_order_by_asc_default() {
         let p = params_from_query("orderBy=temperature");
         let order = p.parse_order_by();
-        assert_eq!(order.len(), 1);
-        assert_eq!(order[0].attr, "temperature");
-        assert_eq!(order[0].direction, OrderDirection::Asc);
+        pretty_assertions::assert_eq!(order.len(), 1);
+        pretty_assertions::assert_eq!(order[0].attr, "temperature");
+        pretty_assertions::assert_eq!(order[0].direction, OrderDirection::Asc);
     }
 
     #[test]
     fn parse_order_by_desc_with_bang() {
         let p = params_from_query("orderBy=!temperature");
         let order = p.parse_order_by();
-        assert_eq!(order.len(), 1);
-        assert_eq!(order[0].attr, "temperature");
-        assert_eq!(order[0].direction, OrderDirection::Desc);
+        pretty_assertions::assert_eq!(order.len(), 1);
+        pretty_assertions::assert_eq!(order[0].attr, "temperature");
+        pretty_assertions::assert_eq!(order[0].direction, OrderDirection::Desc);
     }
 
     #[test]
     fn parse_order_by_multiple() {
         let p = params_from_query("orderBy=speed,!temperature");
         let order = p.parse_order_by();
-        assert_eq!(order.len(), 2);
-        assert_eq!(order[0].direction, OrderDirection::Asc);
-        assert_eq!(order[1].direction, OrderDirection::Desc);
+        pretty_assertions::assert_eq!(order.len(), 2);
+        pretty_assertions::assert_eq!(order[0].direction, OrderDirection::Asc);
+        pretty_assertions::assert_eq!(order[1].direction, OrderDirection::Desc);
     }
 
     #[test]
     fn parse_order_by_semicolon_asc() {
         let p = params_from_query("orderBy=temperature;asc");
         let order = p.parse_order_by();
-        assert_eq!(order.len(), 1);
-        assert_eq!(order[0].attr, "temperature");
-        assert_eq!(order[0].direction, OrderDirection::Asc);
+        pretty_assertions::assert_eq!(order.len(), 1);
+        pretty_assertions::assert_eq!(order[0].attr, "temperature");
+        pretty_assertions::assert_eq!(order[0].direction, OrderDirection::Asc);
     }
 
     #[test]
     fn parse_order_by_semicolon_desc() {
         let p = params_from_query("orderBy=temperature;desc");
         let order = p.parse_order_by();
-        assert_eq!(order.len(), 1);
-        assert_eq!(order[0].attr, "temperature");
-        assert_eq!(order[0].direction, OrderDirection::Desc);
+        pretty_assertions::assert_eq!(order.len(), 1);
+        pretty_assertions::assert_eq!(order[0].attr, "temperature");
+        pretty_assertions::assert_eq!(order[0].direction, OrderDirection::Desc);
     }
 
     #[test]
     fn parse_order_by_dist_asc() {
         let p = params_from_query("orderBy=location;dist-asc");
         let order = p.parse_order_by();
-        assert_eq!(order.len(), 1);
-        assert_eq!(order[0].attr, "location");
-        assert_eq!(order[0].direction, OrderDirection::DistAsc);
+        pretty_assertions::assert_eq!(order.len(), 1);
+        pretty_assertions::assert_eq!(order[0].attr, "location");
+        pretty_assertions::assert_eq!(order[0].direction, OrderDirection::DistAsc);
         assert!(order[0].direction.is_distance());
     }
 
@@ -451,9 +452,9 @@ mod tests {
     fn parse_order_by_dist_desc() {
         let p = params_from_query("orderBy=location;dist-desc");
         let order = p.parse_order_by();
-        assert_eq!(order.len(), 1);
-        assert_eq!(order[0].attr, "location");
-        assert_eq!(order[0].direction, OrderDirection::DistDesc);
+        pretty_assertions::assert_eq!(order.len(), 1);
+        pretty_assertions::assert_eq!(order[0].attr, "location");
+        pretty_assertions::assert_eq!(order[0].direction, OrderDirection::DistDesc);
         assert!(order[0].direction.is_distance());
     }
 
@@ -461,10 +462,10 @@ mod tests {
     fn parse_order_by_mixed_directions() {
         let p = params_from_query("orderBy=name,age;desc,location;dist-asc");
         let order = p.parse_order_by();
-        assert_eq!(order.len(), 3);
-        assert_eq!(order[0].direction, OrderDirection::Asc);
-        assert_eq!(order[1].direction, OrderDirection::Desc);
-        assert_eq!(order[2].direction, OrderDirection::DistAsc);
+        pretty_assertions::assert_eq!(order.len(), 3);
+        pretty_assertions::assert_eq!(order[0].direction, OrderDirection::Asc);
+        pretty_assertions::assert_eq!(order[1].direction, OrderDirection::Desc);
+        pretty_assertions::assert_eq!(order[2].direction, OrderDirection::DistAsc);
     }
 
     #[test]
@@ -476,35 +477,35 @@ mod tests {
 
     #[test]
     fn order_direction_sql_dir() {
-        assert_eq!(OrderDirection::Asc.sql_dir(), "ASC");
-        assert_eq!(OrderDirection::Desc.sql_dir(), "DESC");
-        assert_eq!(OrderDirection::DistAsc.sql_dir(), "ASC");
-        assert_eq!(OrderDirection::DistDesc.sql_dir(), "DESC");
+        pretty_assertions::assert_eq!(OrderDirection::Asc.sql_dir(), "ASC");
+        pretty_assertions::assert_eq!(OrderDirection::Desc.sql_dir(), "DESC");
+        pretty_assertions::assert_eq!(OrderDirection::DistAsc.sql_dir(), "ASC");
+        pretty_assertions::assert_eq!(OrderDirection::DistDesc.sql_dir(), "DESC");
     }
 
     #[test]
     fn parse_pick_omit() {
         let p = params_from_query("pick=id,type,speed&omit=scope");
-        assert_eq!(p.parse_pick(), vec!["id", "type", "speed"]);
-        assert_eq!(p.parse_omit(), vec!["scope"]);
+        pretty_assertions::assert_eq!(p.parse_pick(), vec!["id", "type", "speed"]);
+        pretty_assertions::assert_eq!(p.parse_omit(), vec!["scope"]);
     }
 
     #[test]
     fn effective_limit_defaults_to_20() {
         let p = params_from_query("");
-        assert_eq!(p.effective_limit(), 20);
+        pretty_assertions::assert_eq!(p.effective_limit(), 20);
     }
 
     #[test]
     fn effective_limit_caps_at_1000() {
         let p = params_from_query("limit=5000");
-        assert_eq!(p.effective_limit(), 1000);
+        pretty_assertions::assert_eq!(p.effective_limit(), 1000);
     }
 
     #[test]
     fn effective_offset_defaults_to_0() {
         let p = params_from_query("");
-        assert_eq!(p.effective_offset(), 0);
+        pretty_assertions::assert_eq!(p.effective_offset(), 0);
     }
 
     #[test]
@@ -525,15 +526,15 @@ mod tests {
     #[test]
     fn parse_order_from_accepted() {
         let p = params_from_query("orderFrom=%5B13.3986%2C52.5547%5D");
-        assert_eq!(p.order_from.as_deref(), Some("[13.3986,52.5547]"));
+        pretty_assertions::assert_eq!(p.order_from.as_deref(), Some("[13.3986,52.5547]"));
         assert!(p.validate().is_ok());
     }
 
     #[test]
     fn parse_order_from_with_geometry() {
         let p = params_from_query("orderFrom=%5B%5B2.3%2C48.8%5D%2C%5B2.4%2C48.9%5D%5D&orderGeometry=LineString");
-        assert_eq!(p.order_from.as_deref(), Some("[[2.3,48.8],[2.4,48.9]]"));
-        assert_eq!(p.order_geometry.as_deref(), Some("LineString"));
+        pretty_assertions::assert_eq!(p.order_from.as_deref(), Some("[[2.3,48.8],[2.4,48.9]]"));
+        pretty_assertions::assert_eq!(p.order_geometry.as_deref(), Some("LineString"));
         assert!(p.validate().is_ok());
     }
 
@@ -635,13 +636,13 @@ mod tests {
             count: Some(true),
         };
         let params: EntityQueryParameters = request.into();
-        assert_eq!(params.id.as_deref(), Some("urn:ngsi-ld:Vehicle:1"));
-        assert_eq!(params.entity_type.as_deref(), Some("Vehicle"));
-        assert_eq!(params.attrs.as_deref(), Some("speed"));
-        assert_eq!(params.q.as_deref(), Some("speed>50"));
-        assert_eq!(params.limit, Some(10));
-        assert_eq!(params.offset, Some(5));
-        assert_eq!(params.count, Some(true));
+        pretty_assertions::assert_eq!(params.id.as_deref(), Some("urn:ngsi-ld:Vehicle:1"));
+        pretty_assertions::assert_eq!(params.entity_type.as_deref(), Some("Vehicle"));
+        pretty_assertions::assert_eq!(params.attrs.as_deref(), Some("speed"));
+        pretty_assertions::assert_eq!(params.q.as_deref(), Some("speed>50"));
+        pretty_assertions::assert_eq!(params.limit, Some(10));
+        pretty_assertions::assert_eq!(params.offset, Some(5));
+        pretty_assertions::assert_eq!(params.count, Some(true));
     }
 
     #[test]
@@ -687,10 +688,10 @@ mod tests {
             count: None,
         };
         let params: EntityQueryParameters = request.into();
-        assert_eq!(params.georel.as_deref(), Some("near;maxDistance==2000"));
-        assert_eq!(params.geometry.as_deref(), Some("Point"));
+        pretty_assertions::assert_eq!(params.georel.as_deref(), Some("near;maxDistance==2000"));
+        pretty_assertions::assert_eq!(params.geometry.as_deref(), Some("Point"));
         assert!(params.coordinates.is_some());
-        assert_eq!(params.geoproperty.as_deref(), Some("location"));
+        pretty_assertions::assert_eq!(params.geoproperty.as_deref(), Some("location"));
     }
 
     #[test]

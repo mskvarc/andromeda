@@ -77,6 +77,7 @@ impl headers::Header for PreferenceApplied {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::*;
     use crate::http::model::version::NgsiLdVersion;
     use headers::Header;
@@ -91,7 +92,7 @@ mod tests {
     #[test]
     fn decode_ngsild_version() {
         let pa = decode_preference_applied("ngsi-ld=1.9");
-        assert_eq!(pa, PreferenceApplied(vec![Preference::NgsiLdVersion(NgsiLdVersion::V1_9)]));
+        pretty_assertions::assert_eq!(pa, PreferenceApplied(vec![Preference::NgsiLdVersion(NgsiLdVersion::V1_9)]));
     }
 
     #[test]
@@ -99,8 +100,8 @@ mod tests {
         let pa = PreferenceApplied::version_conformance();
         let mut encoded = Vec::new();
         pa.encode(&mut encoded);
-        assert_eq!(encoded.len(), 1);
-        assert_eq!(encoded[0].to_str().expect("valid str"), "ngsi-ld=1.9");
+        pretty_assertions::assert_eq!(encoded.len(), 1);
+        pretty_assertions::assert_eq!(encoded[0].to_str().expect("valid str"), "ngsi-ld=1.9");
     }
 
     #[test]
@@ -110,12 +111,12 @@ mod tests {
         original.encode(&mut encoded);
         let mut iter = encoded.iter();
         let decoded = PreferenceApplied::decode(&mut iter).expect("roundtrip decode");
-        assert_eq!(original, decoded);
+        pretty_assertions::assert_eq!(original, decoded);
     }
 
     #[test]
     fn version_conformance_contains_conformant() {
         let pa = PreferenceApplied::version_conformance();
-        assert_eq!(pa, PreferenceApplied(vec![Preference::NgsiLdVersion(NgsiLdVersion::CONFORMANT)]));
+        pretty_assertions::assert_eq!(pa, PreferenceApplied(vec![Preference::NgsiLdVersion(NgsiLdVersion::CONFORMANT)]));
     }
 }

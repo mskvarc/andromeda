@@ -559,6 +559,7 @@ impl From<ReqwestError> for AndromedaError {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::*;
     use sqlx::{
         Error as SqlxError,
@@ -571,42 +572,42 @@ mod tests {
     #[test]
     fn entity_not_found_display() {
         let kind = ErrorKind::EntityNotFound("urn:x".into());
-        assert_eq!(kind.to_string(), "Entity urn:x not found");
+        pretty_assertions::assert_eq!(kind.to_string(), "Entity urn:x not found");
         assert!(!kind.is_internal());
     }
 
     #[test]
     fn subscription_not_found_display() {
         let kind = ErrorKind::SubscriptionNotFound("sub1".into());
-        assert_eq!(kind.to_string(), "Subscription sub1 not found");
+        pretty_assertions::assert_eq!(kind.to_string(), "Subscription sub1 not found");
         assert!(!kind.is_internal());
     }
 
     #[test]
     fn entity_already_exists_display() {
         let kind = ErrorKind::EntityAlreadyExists("urn:x".into());
-        assert_eq!(kind.to_string(), "Entity urn:x already exists");
+        pretty_assertions::assert_eq!(kind.to_string(), "Entity urn:x already exists");
         assert!(!kind.is_internal());
     }
 
     #[test]
     fn nonexistent_tenant_display() {
         let kind = ErrorKind::NonexistentTenant("t1".into());
-        assert_eq!(kind.to_string(), "Tenant 't1' does not exist");
+        pretty_assertions::assert_eq!(kind.to_string(), "Tenant 't1' does not exist");
         assert!(!kind.is_internal());
     }
 
     #[test]
     fn multi_tenancy_not_supported_display() {
         let kind = ErrorKind::MultiTenancyNotSupported;
-        assert_eq!(kind.to_string(), "Multi-tenant support is not enabled");
+        pretty_assertions::assert_eq!(kind.to_string(), "Multi-tenant support is not enabled");
         assert!(!kind.is_internal());
     }
 
     #[test]
     fn internal_error_display() {
         let kind = ErrorKind::Internal("msg".into());
-        assert_eq!(kind.to_string(), "msg");
+        pretty_assertions::assert_eq!(kind.to_string(), "msg");
         assert!(kind.is_internal());
     }
 
@@ -614,7 +615,7 @@ mod tests {
     fn database_error_is_internal() {
         let err = SqlxError::PoolTimedOut;
         let kind = ErrorKind::Database(err);
-        assert_eq!(kind.to_string(), "Database error");
+        pretty_assertions::assert_eq!(kind.to_string(), "Database error");
         assert!(kind.is_internal());
     }
 
@@ -622,28 +623,28 @@ mod tests {
     fn io_error_is_internal() {
         let err = std::io::Error::new(std::io::ErrorKind::NotFound, "missing");
         let kind = ErrorKind::Io(err);
-        assert_eq!(kind.to_string(), "IO error");
+        pretty_assertions::assert_eq!(kind.to_string(), "IO error");
         assert!(kind.is_internal());
     }
 
     #[test]
     fn subscription_validation_display() {
         let kind = ErrorKind::SubscriptionValidation("missing".into());
-        assert_eq!(kind.to_string(), "missing");
+        pretty_assertions::assert_eq!(kind.to_string(), "missing");
         assert!(!kind.is_internal());
     }
 
     #[test]
     fn query_validation_display() {
         let kind = ErrorKind::QueryValidation("bad geo".into());
-        assert_eq!(kind.to_string(), "bad geo");
+        pretty_assertions::assert_eq!(kind.to_string(), "bad geo");
         assert!(!kind.is_internal());
     }
 
     #[test]
     fn malformed_request_display() {
         let kind = ErrorKind::MalformedRequest("bad json".into());
-        assert_eq!(kind.to_string(), "bad json");
+        pretty_assertions::assert_eq!(kind.to_string(), "bad json");
         assert!(!kind.is_internal());
     }
 
@@ -764,7 +765,7 @@ mod tests {
     fn with_instance_sets_uri() {
         let uri = Uri::from_static("/test");
         let err = AndromedaError::entity_not_found("x").with_instance(uri);
-        assert_eq!(err.instance().map(|u| u.to_string()), Some("/test".to_string()));
+        pretty_assertions::assert_eq!(err.instance().map(|u| u.to_string()), Some("/test".to_string()));
     }
 
     #[test]
@@ -787,7 +788,7 @@ mod tests {
     #[test]
     fn display_delegates_to_kind() {
         let err = AndromedaError::entity_not_found("urn:x");
-        assert_eq!(err.to_string(), "Entity urn:x not found");
+        pretty_assertions::assert_eq!(err.to_string(), "Entity urn:x not found");
     }
 
     // -- Test helpers ---------------------------------------------------------

@@ -52,6 +52,7 @@ where
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::*;
 
     #[test]
@@ -59,8 +60,8 @@ mod tests {
         let raw = r#"<https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context.jsonld>; rel="http://www.w3.org/ns/json-ld#context""#;
         let link = Link::from_str(raw).expect("should parse");
         let values = link.values();
-        assert_eq!(values.len(), 1);
-        assert_eq!(values[0].link(), "https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context.jsonld");
+        pretty_assertions::assert_eq!(values.len(), 1);
+        pretty_assertions::assert_eq!(values[0].link(), "https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context.jsonld");
         assert!(values[0].is_context_link());
     }
 
@@ -69,7 +70,7 @@ mod tests {
         let raw = r#"<https://example.com/other>; rel="stylesheet""#;
         let link = Link::from_str(raw).expect("should parse");
         let values = link.values();
-        assert_eq!(values.len(), 1);
+        pretty_assertions::assert_eq!(values.len(), 1);
         assert!(!values[0].is_context_link());
     }
 
@@ -81,7 +82,7 @@ mod tests {
 
         let context = ContextUrl::from_request_parts(&mut parts, &()).await.unwrap().into_inner();
 
-        assert_eq!(
+        pretty_assertions::assert_eq!(
             context.link_contexts(),
             &["https://example.com/a.jsonld".to_string(), "https://example.com/b.jsonld".to_string()]
         );

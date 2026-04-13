@@ -54,6 +54,7 @@ impl Default for Relationship {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use crate::{
         domain::attribute::{Attribute, common::OneOrMany},
         jsonld::{JsonLdExpandable, vocab},
@@ -69,7 +70,7 @@ mod tests {
         });
         let attr: Attribute = serde_json::from_value(json).expect("relationship");
         let Attribute::Relationship(relationship) = attr else {
-            panic!("expected Relationship");
+            unreachable!("expected Relationship");
         };
         assert!(matches!(relationship.object, OneOrMany::Many(_)));
         assert!(relationship.object_type.is_some());
@@ -85,7 +86,7 @@ mod tests {
         });
         let attr: Attribute = serde_json::from_value(json).expect("relationship");
         let Attribute::Relationship(relationship) = attr else {
-            panic!("expected Relationship");
+            unreachable!("expected Relationship");
         };
         let expanded = relationship.to_expanded();
         let obj = expanded.as_object().expect("object");

@@ -1,6 +1,6 @@
+#![allow(clippy::expect_used, clippy::unwrap_used)]
 use crate::harness::{client::RequestHeaders, fixtures, mock_server::MockServer, trial::trial};
 use libtest_mimic::Trial;
-use pretty_assertions::assert_eq;
 use reqwest::{Method, StatusCode};
 
 use super::super::entities::prepare_registration;
@@ -24,12 +24,12 @@ pub fn tests(trials: &mut Vec<Trial>) {
             // Create entity
             let entity = fixtures::load_fixture(VEHICLE_DIFFERENT_FIXTURE, &entity_id);
             let resp = ctx.client.create_entity(&entity).await;
-            assert_eq!(resp.status, StatusCode::CREATED);
+            pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
 
             // Create inclusive registration
             let reg = prepare_registration(REG_REDIRECTION_OPS, &reg_id, &entity_id, &mock.url(""), Some("inclusive"));
             let resp = ctx.client.create_registration(&reg).await;
-            assert_eq!(resp.status, StatusCode::CREATED);
+            pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
             ctx.track_registration(&reg_id);
 
             // Set stub for forwarded partial update
@@ -39,7 +39,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
             // Partial update attribute
             let fragment = fixtures::load_fragment(FRAGMENT_SPEED_DATASETID);
             let resp = ctx.client.partial_update_attr(&entity_id, "speed", &fragment).await;
-            assert_eq!(resp.status, StatusCode::NO_CONTENT);
+            pretty_assertions::assert_eq!(resp.status, StatusCode::NO_CONTENT);
 
             // Verify forwarding happened
             assert!(mock.get_count(Method::PATCH, &stub_path).await > 0);
@@ -73,12 +73,12 @@ pub fn tests(trials: &mut Vec<Trial>) {
             // Create entity
             let entity = fixtures::load_fixture(VEHICLE_DIFFERENT_FIXTURE, &entity_id);
             let resp = ctx.client.create_entity(&entity).await;
-            assert_eq!(resp.status, StatusCode::CREATED);
+            pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
 
             // Create exclusive registration
             let reg = prepare_registration(REG_SPEED_REDIRECTION_OPS, &reg_id, &entity_id, &mock.url("/broker1"), Some("exclusive"));
             let resp = ctx.client.create_registration(&reg).await;
-            assert_eq!(resp.status, StatusCode::CREATED);
+            pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
             ctx.track_registration(&reg_id);
 
             // Set stub for forwarded partial update
@@ -88,7 +88,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
             // Partial update attribute
             let fragment = fixtures::load_fragment(FRAGMENT_SPEED_DATASETID);
             let resp = ctx.client.partial_update_attr(&entity_id, "speed", &fragment).await;
-            assert_eq!(resp.status, StatusCode::NO_CONTENT);
+            pretty_assertions::assert_eq!(resp.status, StatusCode::NO_CONTENT);
 
             // Verify forwarding happened
             assert!(mock.get_count(Method::PATCH, &stub_path).await > 0);
@@ -123,12 +123,12 @@ pub fn tests(trials: &mut Vec<Trial>) {
             // Create two redirect registrations for same entity
             let reg1 = prepare_registration(REG_REDIRECTION_OPS, &reg_id1, &entity_id, &mock.url("/broker1"), Some("redirect"));
             let resp = ctx.client.create_registration(&reg1).await;
-            assert_eq!(resp.status, StatusCode::CREATED);
+            pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
             ctx.track_registration(&reg_id1);
 
             let reg2 = prepare_registration(REG_REDIRECTION_OPS, &reg_id2, &entity_id, &mock.url("/broker2"), Some("redirect"));
             let resp = ctx.client.create_registration(&reg2).await;
-            assert_eq!(resp.status, StatusCode::CREATED);
+            pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
             ctx.track_registration(&reg_id2);
 
             // Set stubs for both brokers
@@ -140,7 +140,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
             // Partial update attribute
             let fragment = fixtures::load_fragment(FRAGMENT_SPEED_DATASETID);
             let resp = ctx.client.partial_update_attr(&entity_id, "speed", &fragment).await;
-            assert_eq!(resp.status, StatusCode::NO_CONTENT);
+            pretty_assertions::assert_eq!(resp.status, StatusCode::NO_CONTENT);
 
             // Verify both stubs called
             assert!(mock.get_count(Method::PATCH, &stub_path1).await > 0);

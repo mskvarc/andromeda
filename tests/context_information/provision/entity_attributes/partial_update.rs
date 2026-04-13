@@ -1,10 +1,10 @@
+#![allow(clippy::expect_used, clippy::unwrap_used)]
 use crate::harness::{
     client::{QueryParams, RequestHeaders},
     fixtures,
     trial::trial,
 };
 use libtest_mimic::Trial;
-use pretty_assertions::assert_eq;
 use reqwest::{Method, StatusCode};
 
 const PREFIX: &str = "provision::entity_attributes::partial_update";
@@ -20,7 +20,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
         let fragment = fixtures::load_fragment("entities/fragment_entities/vehicle-isparked-fragment.jsonld");
 
         let resp = ctx.client.partial_update_attr(&id, "isParked", &fragment).await;
-        assert_eq!(resp.status, StatusCode::NO_CONTENT);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::NO_CONTENT);
 
         let resp = ctx
             .client
@@ -31,7 +31,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
             )
             .await;
         let body: serde_json::Value = resp.json();
-        assert_eq!(body["isParked"]["providedBy"]["object"], "urn:ngsi-ld:Person:JohnDoe");
+        pretty_assertions::assert_eq!(body["isParked"]["providedBy"]["object"], "urn:ngsi-ld:Person:JohnDoe");
     }));
 
     // 012_01_02: Partial update attribute with specific datasetId
@@ -54,7 +54,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
                     Default::default(),
                 )
                 .await;
-            assert_eq!(resp.status, StatusCode::NO_CONTENT);
+            pretty_assertions::assert_eq!(resp.status, StatusCode::NO_CONTENT);
         },
     ));
 
@@ -87,7 +87,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
             .client
             .request(Method::PATCH, "/entities/not-a-valid-uri/attrs/speed", Some(&fragment), Default::default())
             .await;
-        assert_eq!(resp.status, StatusCode::BAD_REQUEST);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::BAD_REQUEST);
     }));
 
     // 012_02_03: Partial update with mismatched attribute type
@@ -110,7 +110,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
                     Default::default(),
                 )
                 .await;
-            assert_eq!(resp.status, StatusCode::BAD_REQUEST);
+            pretty_assertions::assert_eq!(resp.status, StatusCode::BAD_REQUEST);
         },
     ));
 
@@ -125,7 +125,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
             .client
             .request_raw(Method::PATCH, &format!("/entities/{id}/attrs/speed"), b"{}", "application/ld+json")
             .await;
-        assert_eq!(resp.status, StatusCode::BAD_REQUEST);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::BAD_REQUEST);
     }));
 
     // 012_03_01: Partial update non-existent entity
@@ -137,7 +137,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
         });
 
         let resp = ctx.client.partial_update_attr(&id, "speed", &fragment).await;
-        assert_eq!(resp.status, StatusCode::NOT_FOUND);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::NOT_FOUND);
     }));
 
     // 012_03_02: Partial update with no default instance (no datasetId)
@@ -150,7 +150,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
         let fragment = fixtures::load_fragment("entities/fragment_entities/vehicle-speed-no-datasetid-fragment.jsonld");
 
         let resp = ctx.client.partial_update_attr(&id, "speed", &fragment).await;
-        assert_eq!(resp.status, StatusCode::NOT_FOUND);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::NOT_FOUND);
     }));
 
     // 012_03_03: Partial update with non-existent datasetId
@@ -171,7 +171,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
                 Default::default(),
             )
             .await;
-        assert_eq!(resp.status, StatusCode::NOT_FOUND);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::NOT_FOUND);
     }));
 
     // 012_03_04: Partial update non-existent attribute name
@@ -184,7 +184,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
         let fragment = fixtures::load_fragment("entities/fragment_entities/vehicle-speed-no-datasetid-fragment.jsonld");
 
         let resp = ctx.client.partial_update_attr(&id, "nonExistentAttr", &fragment).await;
-        assert_eq!(resp.status, StatusCode::NOT_FOUND);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::NOT_FOUND);
     }));
 
     // 012_04_01: Partial update LanguageProperty
@@ -197,7 +197,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
         let fragment = fixtures::load_fragment("entities/fragment_entities/building-language-property-fragment.jsonld");
 
         let resp = ctx.client.partial_update_attr(&id, "street", &fragment).await;
-        assert_eq!(resp.status, StatusCode::NO_CONTENT);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::NO_CONTENT);
 
         let resp = ctx
             .client
@@ -208,7 +208,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
             )
             .await;
         let body: serde_json::Value = resp.json();
-        assert_eq!(body["street"]["languageMap"]["es"], "Gran Lugar");
+        pretty_assertions::assert_eq!(body["street"]["languageMap"]["es"], "Gran Lugar");
     }));
 
     // 012_05_01: Delete Property via null in partial update
@@ -223,7 +223,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
             let fragment = fixtures::load_fragment("entities/fragment_entities/ngsild_null/null-property-fragment.jsonld");
 
             let resp = ctx.client.partial_update_attr(&id, "name", &fragment).await;
-            assert_eq!(resp.status, StatusCode::NO_CONTENT);
+            pretty_assertions::assert_eq!(resp.status, StatusCode::NO_CONTENT);
 
             let resp = ctx
                 .client
@@ -250,7 +250,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
             let fragment = fixtures::load_fragment("entities/fragment_entities/ngsild_null/null-relationship-fragment.jsonld");
 
             let resp = ctx.client.partial_update_attr(&id, "locatedAt", &fragment).await;
-            assert_eq!(resp.status, StatusCode::NO_CONTENT);
+            pretty_assertions::assert_eq!(resp.status, StatusCode::NO_CONTENT);
 
             let resp = ctx
                 .client
@@ -277,7 +277,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
             let fragment = fixtures::load_fragment("entities/fragment_entities/ngsild_null/null-geoproperty-fragment.jsonld");
 
             let resp = ctx.client.partial_update_attr(&id, "location", &fragment).await;
-            assert_eq!(resp.status, StatusCode::NO_CONTENT);
+            pretty_assertions::assert_eq!(resp.status, StatusCode::NO_CONTENT);
 
             let resp = ctx
                 .client
@@ -304,7 +304,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
             let fragment = fixtures::load_fragment("entities/fragment_entities/ngsild_null/null-languageproperty-fragment.jsonld");
 
             let resp = ctx.client.partial_update_attr(&id, "street", &fragment).await;
-            assert_eq!(resp.status, StatusCode::NO_CONTENT);
+            pretty_assertions::assert_eq!(resp.status, StatusCode::NO_CONTENT);
 
             let resp = ctx
                 .client
@@ -339,7 +339,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
                     Default::default(),
                 )
                 .await;
-            assert_eq!(resp.status, StatusCode::NO_CONTENT);
+            pretty_assertions::assert_eq!(resp.status, StatusCode::NO_CONTENT);
         },
     ));
 
@@ -363,7 +363,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
                     Default::default(),
                 )
                 .await;
-            assert_eq!(resp.status, StatusCode::NO_CONTENT);
+            pretty_assertions::assert_eq!(resp.status, StatusCode::NO_CONTENT);
         },
     ));
 
@@ -387,7 +387,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
                     Default::default(),
                 )
                 .await;
-            assert_eq!(resp.status, StatusCode::NO_CONTENT);
+            pretty_assertions::assert_eq!(resp.status, StatusCode::NO_CONTENT);
         },
     ));
 
@@ -411,7 +411,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
                     Default::default(),
                 )
                 .await;
-            assert_eq!(resp.status, StatusCode::NO_CONTENT);
+            pretty_assertions::assert_eq!(resp.status, StatusCode::NO_CONTENT);
         },
     ));
 
@@ -427,7 +427,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
             let fragment = fixtures::load_fragment("entities/fragment_entities/ngsild_null/null-property-fragment.jsonld");
 
             let resp = ctx.client.partial_update_attr(&id, "name", &fragment).await;
-            assert_eq!(resp.status, StatusCode::NO_CONTENT);
+            pretty_assertions::assert_eq!(resp.status, StatusCode::NO_CONTENT);
 
             let resp = ctx
                 .client
@@ -454,7 +454,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
             let fragment = fixtures::load_fragment("entities/fragment_entities/ngsild_null/null-relationship-fragment.jsonld");
 
             let resp = ctx.client.partial_update_attr(&id, "locatedAt", &fragment).await;
-            assert_eq!(resp.status, StatusCode::NO_CONTENT);
+            pretty_assertions::assert_eq!(resp.status, StatusCode::NO_CONTENT);
         },
     ));
 
@@ -470,7 +470,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
             let fragment = fixtures::load_fragment("entities/fragment_entities/ngsild_null/null-geoproperty-fragment.jsonld");
 
             let resp = ctx.client.partial_update_attr(&id, "location", &fragment).await;
-            assert_eq!(resp.status, StatusCode::NO_CONTENT);
+            pretty_assertions::assert_eq!(resp.status, StatusCode::NO_CONTENT);
         },
     ));
 
@@ -486,7 +486,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
             let fragment = fixtures::load_fragment("entities/fragment_entities/ngsild_null/null-languageproperty-fragment.jsonld");
 
             let resp = ctx.client.partial_update_attr(&id, "street", &fragment).await;
-            assert_eq!(resp.status, StatusCode::NO_CONTENT);
+            pretty_assertions::assert_eq!(resp.status, StatusCode::NO_CONTENT);
         },
     ));
 
@@ -500,7 +500,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
         let fragment = fixtures::load_fragment("entities/fragment_entities/building-json-property-fragment.jsonld");
 
         let resp = ctx.client.partial_update_attr(&id, "jsonProperty", &fragment).await;
-        assert_eq!(resp.status, StatusCode::NO_CONTENT);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::NO_CONTENT);
 
         let resp = ctx
             .client
@@ -511,7 +511,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
             )
             .await;
         let body: serde_json::Value = resp.json();
-        assert_eq!(body["jsonProperty"]["json"]["id"], "another-id");
+        pretty_assertions::assert_eq!(body["jsonProperty"]["json"]["id"], "another-id");
     }));
 
     // 012_09_01: Partial update VocabProperty
@@ -524,7 +524,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
         let fragment = fixtures::load_fragment("entities/fragment_entities/building-vocab-property-fragment.jsonld");
 
         let resp = ctx.client.partial_update_attr(&id, "vocabProperty", &fragment).await;
-        assert_eq!(resp.status, StatusCode::NO_CONTENT);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::NO_CONTENT);
 
         let resp = ctx
             .client
@@ -535,6 +535,6 @@ pub fn tests(trials: &mut Vec<Trial>) {
             )
             .await;
         let body: serde_json::Value = resp.json();
-        assert_eq!(body["vocabProperty"]["type"], "VocabProperty");
+        pretty_assertions::assert_eq!(body["vocabProperty"]["type"], "VocabProperty");
     }));
 }

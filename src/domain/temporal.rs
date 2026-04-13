@@ -119,6 +119,7 @@ pub enum AggrMethod {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::*;
     use std::str::FromStr;
 
@@ -127,13 +128,13 @@ mod tests {
         for variant in [TimeRel::Before, TimeRel::After, TimeRel::Between] {
             let s = variant.to_string();
             let parsed = TimeRel::from_str(&s).expect("parse timeRel");
-            assert_eq!(parsed, variant, "round-trip failed for {variant}");
+            pretty_assertions::assert_eq!(parsed, variant, "round-trip failed for {variant}");
         }
     }
 
     #[test]
     fn time_prop_default_is_observed_at() {
-        assert_eq!(TimeProp::default(), TimeProp::Observed);
+        pretty_assertions::assert_eq!(TimeProp::default(), TimeProp::Observed);
     }
 
     #[test]
@@ -141,7 +142,7 @@ mod tests {
         for variant in [TimeProp::Observed, TimeProp::Created, TimeProp::Modified, TimeProp::Deleted] {
             let s = variant.to_string();
             let parsed = TimeProp::from_str(&s).expect("parse timeProperty");
-            assert_eq!(parsed, variant, "round-trip failed for {variant}");
+            pretty_assertions::assert_eq!(parsed, variant, "round-trip failed for {variant}");
         }
     }
 
@@ -150,7 +151,7 @@ mod tests {
         for variant in [TemporalFormat::Normalized, TemporalFormat::TemporalValues, TemporalFormat::AggregatedValues] {
             let s = variant.to_string();
             let parsed = TemporalFormat::from_str(&s).expect("parse temporal format");
-            assert_eq!(parsed, variant, "round-trip failed for {variant}");
+            pretty_assertions::assert_eq!(parsed, variant, "round-trip failed for {variant}");
         }
     }
 
@@ -168,7 +169,7 @@ mod tests {
         ] {
             let s = variant.to_string();
             let parsed = AggrMethod::from_str(&s).expect("parse aggrMethod");
-            assert_eq!(parsed, variant, "round-trip failed for {variant}");
+            pretty_assertions::assert_eq!(parsed, variant, "round-trip failed for {variant}");
         }
     }
 
@@ -185,7 +186,7 @@ mod tests {
         ] {
             let s = variant.to_string();
             let parsed = ValueType::from_str(&s).expect("parse valueType");
-            assert_eq!(parsed, variant, "round-trip failed for {variant}");
+            pretty_assertions::assert_eq!(parsed, variant, "round-trip failed for {variant}");
         }
     }
 }

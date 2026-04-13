@@ -144,6 +144,7 @@ fn extract_geometry(obj: &Map<String, Value>, geometry_property: Option<&str>) -
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::*;
     use serde_json::json;
 
@@ -165,12 +166,12 @@ mod tests {
         ]);
 
         let geo = GeoJsonRenderer::new(entities).render_collection().expect("GeoJSON collection");
-        assert_eq!(geo["type"], "FeatureCollection");
+        pretty_assertions::assert_eq!(geo["type"], "FeatureCollection");
         let features = geo["features"].as_array().expect("features array");
-        assert_eq!(features.len(), 1);
-        assert_eq!(features[0]["geometry"]["type"], "Point");
+        pretty_assertions::assert_eq!(features.len(), 1);
+        pretty_assertions::assert_eq!(features[0]["geometry"]["type"], "Point");
         // type is in properties per NGSI-LD spec
-        assert_eq!(features[0]["properties"]["type"], "Building");
+        pretty_assertions::assert_eq!(features[0]["properties"]["type"], "Building");
         // id is NOT in properties (promoted to Feature.id)
         assert!(features[0]["properties"].get("id").is_none());
         // location IS in properties per NGSI-LD spec clause 6.3.8
@@ -181,7 +182,7 @@ mod tests {
     fn null_geometry_when_no_location() {
         let entity = json!({"id": "urn:x", "type": "T", "name": {"type": "Property", "value": "foo"}});
         let geo = GeoJsonRenderer::new(entity).render_entity().expect("GeoJSON entity");
-        assert_eq!(geo["type"], "Feature");
+        pretty_assertions::assert_eq!(geo["type"], "Feature");
         assert!(geo["geometry"].is_null());
     }
 
@@ -198,7 +199,7 @@ mod tests {
             .with_geometry_property(Some("observationSpace"))
             .render_entity()
             .expect("GeoJSON entity");
-        assert_eq!(geo["geometry"]["type"], "Polygon");
+        pretty_assertions::assert_eq!(geo["geometry"]["type"], "Polygon");
     }
 
     #[test]
@@ -208,22 +209,22 @@ mod tests {
             "location": {"type": "Point", "coordinates": [1.0, 2.0]}
         });
         let geo = GeoJsonRenderer::new(entity).render_entity().expect("GeoJSON entity");
-        assert_eq!(geo["geometry"]["type"], "Point");
-        assert_eq!(geo["geometry"]["coordinates"], json!([1.0, 2.0]));
+        pretty_assertions::assert_eq!(geo["geometry"]["type"], "Point");
+        pretty_assertions::assert_eq!(geo["geometry"]["coordinates"], json!([1.0, 2.0]));
     }
 
     #[test]
     fn feature_id_matches_entity_id() {
         let entity = json!({"id": "urn:ngsi-ld:Entity:42", "type": "T"});
         let geo = GeoJsonRenderer::new(entity).render_entity().expect("GeoJSON entity");
-        assert_eq!(geo["id"], "urn:ngsi-ld:Entity:42");
+        pretty_assertions::assert_eq!(geo["id"], "urn:ngsi-ld:Entity:42");
     }
 
     #[test]
     fn empty_array_produces_empty_collection() {
         let geo = GeoJsonRenderer::new(json!([])).render_collection().expect("GeoJSON collection");
-        assert_eq!(geo["type"], "FeatureCollection");
-        assert_eq!(geo["features"].as_array().expect("features").len(), 0);
+        pretty_assertions::assert_eq!(geo["type"], "FeatureCollection");
+        pretty_assertions::assert_eq!(geo["features"].as_array().expect("features").len(), 0);
     }
 
     #[test]
@@ -234,7 +235,7 @@ mod tests {
             .with_context(Some(ctx.clone()))
             .render_entity()
             .expect("GeoJSON entity");
-        assert_eq!(geo["@context"], ctx);
+        pretty_assertions::assert_eq!(geo["@context"], ctx);
     }
 
     #[test]
@@ -245,13 +246,13 @@ mod tests {
             .with_context(Some(ctx.clone()))
             .render_collection()
             .expect("GeoJSON collection");
-        assert_eq!(geo["@context"], ctx);
+        pretty_assertions::assert_eq!(geo["@context"], ctx);
     }
 
     #[test]
     fn non_object_entity_produces_feature_with_null_geometry() {
         let geo = GeoJsonRenderer::new(json!("bad")).render_entity().expect("GeoJSON entity");
-        assert_eq!(geo["type"], "Feature");
+        pretty_assertions::assert_eq!(geo["type"], "Feature");
         assert!(geo["geometry"].is_null());
     }
 }

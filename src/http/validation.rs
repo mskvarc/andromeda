@@ -164,6 +164,7 @@ pub fn parse_list_options(options: Option<&str>, uri: &Uri) -> Result<ListOption
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::*;
     use axum::http::Uri;
 
@@ -177,7 +178,7 @@ mod tests {
     fn parse_entity_id_valid_urn() {
         let result = parse_entity_id("urn:ngsi-ld:Entity:001", &test_uri());
         assert!(result.is_ok());
-        assert_eq!(result.expect("valid URN").to_string(), "urn:ngsi-ld:Entity:001");
+        pretty_assertions::assert_eq!(result.expect("valid URN").to_string(), "urn:ngsi-ld:Entity:001");
     }
 
     #[test]
@@ -310,21 +311,21 @@ mod tests {
     fn parse_list_options_count() {
         let opts = parse_list_options(Some("count"), &test_uri()).expect("valid options");
         assert!(opts.count);
-        assert_eq!(opts.sys_attrs, SysAttrsInclusion::Strip);
+        pretty_assertions::assert_eq!(opts.sys_attrs, SysAttrsInclusion::Strip);
     }
 
     #[test]
     fn parse_list_options_sys_attrs() {
         let opts = parse_list_options(Some("sysAttrs"), &test_uri()).expect("valid options");
         assert!(!opts.count);
-        assert_eq!(opts.sys_attrs, SysAttrsInclusion::Include);
+        pretty_assertions::assert_eq!(opts.sys_attrs, SysAttrsInclusion::Include);
     }
 
     #[test]
     fn parse_list_options_combined() {
         let opts = parse_list_options(Some("count,sysAttrs"), &test_uri()).expect("valid options");
         assert!(opts.count);
-        assert_eq!(opts.sys_attrs, SysAttrsInclusion::Include);
+        pretty_assertions::assert_eq!(opts.sys_attrs, SysAttrsInclusion::Include);
     }
 
     #[test]
@@ -336,6 +337,6 @@ mod tests {
     fn parse_list_options_none_returns_defaults() {
         let opts = parse_list_options(None, &test_uri()).expect("valid options");
         assert!(!opts.count);
-        assert_eq!(opts.sys_attrs, SysAttrsInclusion::Strip);
+        pretty_assertions::assert_eq!(opts.sys_attrs, SysAttrsInclusion::Strip);
     }
 }

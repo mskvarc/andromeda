@@ -1,3 +1,4 @@
+#![allow(clippy::expect_used, clippy::unwrap_used)]
 const CORE_CONTEXT: &str = "https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.8.jsonld";
 
 const ETSI_COMPOUND_CONTEXT_URL: &str =
@@ -8,12 +9,12 @@ const ETSI_TEST_SUITE_CONTEXT_URL: &str = "https://forge.etsi.org/rep/cim/ngsi-l
 const EGM_COMPOUND_CONTEXT_URL: &str = "https://easy-global-market.github.io/ngsild-api-data-models/ngsildTestSuite/ngsildTestSuiteV1.8-compound.jsonld";
 
 /// Returns the context URL used for test fixtures.
-pub fn test_suite_context_url() -> &'static str {
+pub const fn test_suite_context_url() -> &'static str {
     CORE_CONTEXT
 }
 
 /// Returns the compound context URL used by the ETSI NGSI-LD test suite.
-pub fn compound_context_url() -> &'static str {
+pub const fn compound_context_url() -> &'static str {
     ETSI_COMPOUND_CONTEXT_URL
 }
 
@@ -23,7 +24,7 @@ fn fixtures_dir() -> std::path::PathBuf {
 
 fn load_raw(path: &str) -> String {
     let full_path = fixtures_dir().join(path);
-    std::fs::read_to_string(&full_path).unwrap_or_else(|e| panic!("failed to read fixture {}: {e}", full_path.display()))
+    std::fs::read_to_string(&full_path).expect("failed to read fixture")
 }
 
 fn replace_context_urls(value: &mut serde_json::Value) {
@@ -47,17 +48,15 @@ fn replace_context_urls(value: &mut serde_json::Value) {
 
 fn replace_in_context(ctx: &mut serde_json::Value) {
     match ctx {
-        serde_json::Value::String(s) => {
-            if s == ETSI_COMPOUND_CONTEXT_URL || s == ETSI_TEST_SUITE_CONTEXT_URL || s == EGM_COMPOUND_CONTEXT_URL {
-                *s = CORE_CONTEXT.to_string();
-            }
+        serde_json::Value::String(s) if (s == ETSI_COMPOUND_CONTEXT_URL || s == ETSI_TEST_SUITE_CONTEXT_URL || s == EGM_COMPOUND_CONTEXT_URL) => {
+            *s = CORE_CONTEXT.to_string();
         }
         serde_json::Value::Array(arr) => {
             for item in arr.iter_mut() {
-                if let serde_json::Value::String(s) = item {
-                    if s == ETSI_COMPOUND_CONTEXT_URL || s == ETSI_TEST_SUITE_CONTEXT_URL || s == EGM_COMPOUND_CONTEXT_URL {
-                        *s = CORE_CONTEXT.to_string();
-                    }
+                if let serde_json::Value::String(s) = item
+                    && (s == ETSI_COMPOUND_CONTEXT_URL || s == ETSI_TEST_SUITE_CONTEXT_URL || s == EGM_COMPOUND_CONTEXT_URL)
+                {
+                    *s = CORE_CONTEXT.to_string();
                 }
             }
         }
@@ -69,12 +68,12 @@ fn replace_in_context(ctx: &mut serde_json::Value) {
 /// with the core NGSI-LD context URL.
 pub fn load_fixture(path: &str, id: &str) -> serde_json::Value {
     let contents = load_raw(path);
-    let mut value: serde_json::Value = serde_json::from_str(&contents).unwrap_or_else(|e| panic!("failed to parse fixture {path}: {e}"));
+    let mut value: serde_json::Value = serde_json::from_str(&contents).expect("failed to parse fixture");
 
-    if let Some(obj) = value.as_object_mut() {
-        if obj.contains_key("id") {
-            obj.insert("id".to_string(), serde_json::Value::String(id.to_string()));
-        }
+    if let Some(obj) = value.as_object_mut()
+        && obj.contains_key("id")
+    {
+        obj.insert("id".to_string(), serde_json::Value::String(id.to_string()));
     }
 
     replace_context_urls(&mut value);
@@ -85,12 +84,12 @@ pub fn load_fixture(path: &str, id: &str) -> serde_json::Value {
 /// Load a fixture file, replacing the placeholder entity ID but keeping the original context URLs.
 pub fn load_fixture_original_context(path: &str, id: &str) -> serde_json::Value {
     let contents = load_raw(path);
-    let mut value: serde_json::Value = serde_json::from_str(&contents).unwrap_or_else(|e| panic!("failed to parse fixture {path}: {e}"));
+    let mut value: serde_json::Value = serde_json::from_str(&contents).expect("failed to parse fixture");
 
-    if let Some(obj) = value.as_object_mut() {
-        if obj.contains_key("id") {
-            obj.insert("id".to_string(), serde_json::Value::String(id.to_string()));
-        }
+    if let Some(obj) = value.as_object_mut()
+        && obj.contains_key("id")
+    {
+        obj.insert("id".to_string(), serde_json::Value::String(id.to_string()));
     }
 
     value
@@ -99,7 +98,7 @@ pub fn load_fixture_original_context(path: &str, id: &str) -> serde_json::Value 
 /// Load a fragment fixture (no ID replacement, just context URL replacement).
 pub fn load_fragment(path: &str) -> serde_json::Value {
     let contents = load_raw(path);
-    let mut value: serde_json::Value = serde_json::from_str(&contents).unwrap_or_else(|e| panic!("failed to parse fixture {path}: {e}"));
+    let mut value: serde_json::Value = serde_json::from_str(&contents).expect("failed to parse fixture");
 
     replace_context_urls(&mut value);
 
@@ -109,7 +108,7 @@ pub fn load_fragment(path: &str) -> serde_json::Value {
 /// Load an expectation fixture for response comparison.
 pub fn load_expectation(path: &str) -> serde_json::Value {
     let contents = load_raw(path);
-    let mut value: serde_json::Value = serde_json::from_str(&contents).unwrap_or_else(|e| panic!("failed to parse expectation {path}: {e}"));
+    let mut value: serde_json::Value = serde_json::from_str(&contents).expect("failed to parse expectation");
 
     replace_context_urls(&mut value);
 

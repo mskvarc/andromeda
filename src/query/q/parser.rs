@@ -497,12 +497,13 @@ fn is_time(s: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::*;
 
     #[test]
     fn parse_existence() {
         let expr = parse("temperature").unwrap();
-        assert_eq!(expr, Expr::Pred(Predicate::Exists(AttrPath::simple("temperature"))));
+        pretty_assertions::assert_eq!(expr, Expr::Pred(Predicate::Exists(AttrPath::simple("temperature"))));
     }
 
     #[test]
@@ -510,11 +511,11 @@ mod tests {
         let expr = parse("temperature==20").unwrap();
         match expr {
             Expr::Pred(Predicate::Compare { path, op, rhs }) => {
-                assert_eq!(path.attr, "temperature");
-                assert_eq!(op, CmpOp::Equal);
-                assert_eq!(rhs, CompareValue::Scalar(Scalar::Number(20.into())));
+                pretty_assertions::assert_eq!(path.attr, "temperature");
+                pretty_assertions::assert_eq!(op, CmpOp::Equal);
+                pretty_assertions::assert_eq!(rhs, CompareValue::Scalar(Scalar::Number(20.into())));
             }
-            _ => panic!("expected Compare"),
+            _ => unreachable!("expected Compare"),
         }
     }
 
@@ -523,11 +524,11 @@ mod tests {
         let expr = parse("brandName!=\"Mercedes\"").unwrap();
         match expr {
             Expr::Pred(Predicate::Compare { path, op, rhs }) => {
-                assert_eq!(path.attr, "brandName");
-                assert_eq!(op, CmpOp::Unequal);
-                assert_eq!(rhs, CompareValue::Scalar(Scalar::Str("Mercedes".to_string())));
+                pretty_assertions::assert_eq!(path.attr, "brandName");
+                pretty_assertions::assert_eq!(op, CmpOp::Unequal);
+                pretty_assertions::assert_eq!(rhs, CompareValue::Scalar(Scalar::Str("Mercedes".to_string())));
             }
-            _ => panic!("expected Compare"),
+            _ => unreachable!("expected Compare"),
         }
     }
 
@@ -536,11 +537,11 @@ mod tests {
         let expr = parse("speed>50").unwrap();
         match expr {
             Expr::Pred(Predicate::Compare { path, op, rhs }) => {
-                assert_eq!(path.attr, "speed");
-                assert_eq!(op, CmpOp::Greater);
-                assert_eq!(rhs, CompareValue::Scalar(Scalar::Number(50.into())));
+                pretty_assertions::assert_eq!(path.attr, "speed");
+                pretty_assertions::assert_eq!(op, CmpOp::Greater);
+                pretty_assertions::assert_eq!(rhs, CompareValue::Scalar(Scalar::Number(50.into())));
             }
-            _ => panic!("expected Compare"),
+            _ => unreachable!("expected Compare"),
         }
     }
 
@@ -548,8 +549,8 @@ mod tests {
     fn parse_and_expression() {
         let expr = parse("speed>50;brandName!=\"Mercedes\"").unwrap();
         match expr {
-            Expr::And(terms) => assert_eq!(terms.len(), 2),
-            _ => panic!("expected And"),
+            Expr::And(terms) => pretty_assertions::assert_eq!(terms.len(), 2),
+            _ => unreachable!("expected And"),
         }
     }
 
@@ -557,8 +558,8 @@ mod tests {
     fn parse_or_expression() {
         let expr = parse("speed>50|temperature<10").unwrap();
         match expr {
-            Expr::Or(terms) => assert_eq!(terms.len(), 2),
-            _ => panic!("expected Or"),
+            Expr::Or(terms) => pretty_assertions::assert_eq!(terms.len(), 2),
+            _ => unreachable!("expected Or"),
         }
     }
 
@@ -567,13 +568,13 @@ mod tests {
         let expr = parse("a==1|b==2;c==3").unwrap();
         match expr {
             Expr::Or(terms) => {
-                assert_eq!(terms.len(), 2);
+                pretty_assertions::assert_eq!(terms.len(), 2);
                 match &terms[1] {
-                    Expr::And(and_terms) => assert_eq!(and_terms.len(), 2),
-                    _ => panic!("expected And as second OR term"),
+                    Expr::And(and_terms) => pretty_assertions::assert_eq!(and_terms.len(), 2),
+                    _ => unreachable!("expected And as second OR term"),
                 }
             }
-            _ => panic!("expected Or"),
+            _ => unreachable!("expected Or"),
         }
     }
 
@@ -582,13 +583,13 @@ mod tests {
         let expr = parse("(speed>50|rpm>3000);brandName==\"Mercedes\"").unwrap();
         match expr {
             Expr::And(terms) => {
-                assert_eq!(terms.len(), 2);
+                pretty_assertions::assert_eq!(terms.len(), 2);
                 match &terms[0] {
                     Expr::Or(_) => {}
-                    _ => panic!("expected Or inside parens"),
+                    _ => unreachable!("expected Or inside parens"),
                 }
             }
-            _ => panic!("expected And"),
+            _ => unreachable!("expected And"),
         }
     }
 
@@ -598,12 +599,12 @@ mod tests {
         match expr {
             Expr::Pred(Predicate::Compare { rhs, .. }) => match rhs {
                 CompareValue::Range { min, max } => {
-                    assert_eq!(min, Scalar::Number(10.into()));
-                    assert_eq!(max, Scalar::Number(20.into()));
+                    pretty_assertions::assert_eq!(min, Scalar::Number(10.into()));
+                    pretty_assertions::assert_eq!(max, Scalar::Number(20.into()));
                 }
-                _ => panic!("expected Range"),
+                _ => unreachable!("expected Range"),
             },
-            _ => panic!("expected Compare"),
+            _ => unreachable!("expected Compare"),
         }
     }
 
@@ -613,11 +614,11 @@ mod tests {
         match expr {
             Expr::Pred(Predicate::Compare { rhs, .. }) => match rhs {
                 CompareValue::ValueList(vals) => {
-                    assert_eq!(vals.len(), 3);
+                    pretty_assertions::assert_eq!(vals.len(), 3);
                 }
-                _ => panic!("expected ValueList"),
+                _ => unreachable!("expected ValueList"),
             },
-            _ => panic!("expected Compare"),
+            _ => unreachable!("expected Compare"),
         }
     }
 
@@ -626,10 +627,10 @@ mod tests {
         let expr = parse("brandName~=\"Merc.*\"").unwrap();
         match expr {
             Expr::Pred(Predicate::MatchPattern { path, pattern }) => {
-                assert_eq!(path.attr, "brandName");
-                assert_eq!(pattern, "Merc.*");
+                pretty_assertions::assert_eq!(path.attr, "brandName");
+                pretty_assertions::assert_eq!(pattern, "Merc.*");
             }
-            _ => panic!("expected MatchPattern"),
+            _ => unreachable!("expected MatchPattern"),
         }
     }
 
@@ -638,10 +639,10 @@ mod tests {
         let expr = parse("brandName!~=\"Merc.*\"").unwrap();
         match expr {
             Expr::Pred(Predicate::NotMatchPattern { path, pattern }) => {
-                assert_eq!(path.attr, "brandName");
-                assert_eq!(pattern, "Merc.*");
+                pretty_assertions::assert_eq!(path.attr, "brandName");
+                pretty_assertions::assert_eq!(pattern, "Merc.*");
             }
-            _ => panic!("expected NotMatchPattern"),
+            _ => unreachable!("expected NotMatchPattern"),
         }
     }
 
@@ -650,17 +651,17 @@ mod tests {
         let expr = parse("temperature.observedAt>=2017-12-24T12:00:00Z").unwrap();
         match expr {
             Expr::Pred(Predicate::Compare { path, op, rhs }) => {
-                assert_eq!(path.attr, "temperature");
-                assert_eq!(path.sub_attrs, vec!["observedAt"]);
-                assert_eq!(op, CmpOp::GreaterEq);
+                pretty_assertions::assert_eq!(path.attr, "temperature");
+                pretty_assertions::assert_eq!(path.sub_attrs, vec!["observedAt"]);
+                pretty_assertions::assert_eq!(op, CmpOp::GreaterEq);
                 match rhs {
                     CompareValue::Scalar(Scalar::DateTime(dt)) => {
                         assert!(dt.starts_with("2017-12-24T"));
                     }
-                    _ => panic!("expected DateTime scalar"),
+                    _ => unreachable!("expected DateTime scalar"),
                 }
             }
-            _ => panic!("expected Compare"),
+            _ => unreachable!("expected Compare"),
         }
     }
 
@@ -669,10 +670,10 @@ mod tests {
         let expr = parse("address[city]==\"Berlin\"").unwrap();
         match expr {
             Expr::Pred(Predicate::Compare { path, .. }) => {
-                assert_eq!(path.attr, "address");
-                assert_eq!(path.value_path, vec!["city"]);
+                pretty_assertions::assert_eq!(path.attr, "address");
+                pretty_assertions::assert_eq!(path.value_path, vec!["city"]);
             }
-            _ => panic!("expected Compare"),
+            _ => unreachable!("expected Compare"),
         }
     }
 
@@ -681,11 +682,11 @@ mod tests {
         let expr = parse("sensor.rawdata[airquality.particulate]==40").unwrap();
         match expr {
             Expr::Pred(Predicate::Compare { path, .. }) => {
-                assert_eq!(path.attr, "sensor");
-                assert_eq!(path.sub_attrs, vec!["rawdata"]);
-                assert_eq!(path.value_path, vec!["airquality", "particulate"]);
+                pretty_assertions::assert_eq!(path.attr, "sensor");
+                pretty_assertions::assert_eq!(path.sub_attrs, vec!["rawdata"]);
+                pretty_assertions::assert_eq!(path.value_path, vec!["airquality", "particulate"]);
             }
-            _ => panic!("expected Compare"),
+            _ => unreachable!("expected Compare"),
         }
     }
 
@@ -694,9 +695,9 @@ mod tests {
         let expr = parse("capacity<=10").unwrap();
         match expr {
             Expr::Pred(Predicate::Compare { op, .. }) => {
-                assert_eq!(op, CmpOp::LessEq);
+                pretty_assertions::assert_eq!(op, CmpOp::LessEq);
             }
-            _ => panic!("expected Compare"),
+            _ => unreachable!("expected Compare"),
         }
     }
 
@@ -705,13 +706,13 @@ mod tests {
         let expr = parse("(temperature>=20;temperature<=25)|capacity<=10").unwrap();
         match expr {
             Expr::Or(terms) => {
-                assert_eq!(terms.len(), 2);
+                pretty_assertions::assert_eq!(terms.len(), 2);
                 match &terms[0] {
-                    Expr::And(and_terms) => assert_eq!(and_terms.len(), 2),
-                    _ => panic!("expected And"),
+                    Expr::And(and_terms) => pretty_assertions::assert_eq!(and_terms.len(), 2),
+                    _ => unreachable!("expected And"),
                 }
             }
-            _ => panic!("expected Or"),
+            _ => unreachable!("expected Or"),
         }
     }
 
@@ -721,11 +722,11 @@ mod tests {
         match expr {
             Expr::Pred(Predicate::Compare { rhs, .. }) => match rhs {
                 CompareValue::Scalar(Scalar::Str(s)) => {
-                    assert_eq!(s, "urn:ngsi-ld:OffStreetParking:Downtown1");
+                    pretty_assertions::assert_eq!(s, "urn:ngsi-ld:OffStreetParking:Downtown1");
                 }
-                _ => panic!("expected Str"),
+                _ => unreachable!("expected Str"),
             },
-            _ => panic!("expected Compare"),
+            _ => unreachable!("expected Compare"),
         }
     }
 
@@ -735,11 +736,11 @@ mod tests {
         match expr {
             Expr::Pred(Predicate::Compare { rhs, .. }) => match rhs {
                 CompareValue::Scalar(Scalar::Number(n)) => {
-                    assert_eq!(n.as_f64(), Some(-5.0));
+                    pretty_assertions::assert_eq!(n.as_f64(), Some(-5.0));
                 }
-                _ => panic!("expected Number"),
+                _ => unreachable!("expected Number"),
             },
-            _ => panic!("expected Compare"),
+            _ => unreachable!("expected Compare"),
         }
     }
 
@@ -749,11 +750,11 @@ mod tests {
         match expr {
             Expr::Pred(Predicate::Compare { rhs, .. }) => match rhs {
                 CompareValue::Scalar(Scalar::Number(n)) => {
-                    assert_eq!(n.as_f64(), Some(23.5));
+                    pretty_assertions::assert_eq!(n.as_f64(), Some(23.5));
                 }
-                _ => panic!("expected Number"),
+                _ => unreachable!("expected Number"),
             },
-            _ => panic!("expected Compare"),
+            _ => unreachable!("expected Compare"),
         }
     }
 
@@ -762,9 +763,9 @@ mod tests {
         let expr = parse("active==true").unwrap();
         match expr {
             Expr::Pred(Predicate::Compare { rhs, .. }) => {
-                assert_eq!(rhs, CompareValue::Scalar(Scalar::Bool(true)));
+                pretty_assertions::assert_eq!(rhs, CompareValue::Scalar(Scalar::Bool(true)));
             }
-            _ => panic!("expected Compare"),
+            _ => unreachable!("expected Compare"),
         }
     }
 

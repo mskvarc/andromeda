@@ -1770,6 +1770,7 @@ pub fn merge_temporal_retrieve_results(local_entity: Option<Value>, remote_resul
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use crate::{
         domain::registration::ForwardingMode,
         service::context_source_forwarding::{
@@ -1786,25 +1787,25 @@ mod tests {
     #[test]
     fn warning_header_format_miscellaneous() {
         let w = NgsiLdWarning::MiscellaneousWarning("timeout".to_string());
-        assert_eq!(w.to_string(), "199 - \"timeout\"");
+        pretty_assertions::assert_eq!(w.to_string(), "199 - \"timeout\"");
     }
 
     #[test]
     fn warning_header_format_persistent() {
         let w = NgsiLdWarning::MiscellaneousPersistentWarning("403 Forbidden".to_string());
-        assert_eq!(w.to_string(), "299 - \"403 Forbidden\"");
+        pretty_assertions::assert_eq!(w.to_string(), "299 - \"403 Forbidden\"");
     }
 
     #[test]
     fn warning_header_format_response_is_stale_per_clause_6_3_17() {
         let w = NgsiLdWarning::ResponseIsStale("cached data".to_string());
-        assert_eq!(w.to_string(), "110 - \"cached data\"");
+        pretty_assertions::assert_eq!(w.to_string(), "110 - \"cached data\"");
     }
 
     #[test]
     fn warning_header_format_revalidation_failed_per_clause_6_3_17() {
         let w = NgsiLdWarning::RevalidationFailed("invalid JSON".to_string());
-        assert_eq!(w.to_string(), "111 - \"invalid JSON\"");
+        pretty_assertions::assert_eq!(w.to_string(), "111 - \"invalid JSON\"");
     }
 
     #[test]
@@ -1825,7 +1826,7 @@ mod tests {
             },
         ];
         let warnings = collect_warnings(&results);
-        assert_eq!(warnings.len(), 2);
+        pretty_assertions::assert_eq!(warnings.len(), 2);
         assert!(matches!(warnings[0], NgsiLdWarning::MiscellaneousWarning(_)));
         assert!(matches!(warnings[1], NgsiLdWarning::RevalidationFailed(_)));
     }
@@ -1834,7 +1835,7 @@ mod tests {
     fn merge_query_local_only() {
         let local = vec![serde_json::json!({"id": "urn:a", "type": "T", "p1": 1})];
         let result = merge_query_results(local, Vec::new());
-        assert_eq!(result.len(), 1);
+        pretty_assertions::assert_eq!(result.len(), 1);
     }
 
     #[test]
@@ -1846,7 +1847,7 @@ mod tests {
             warnings: Vec::new(),
         }];
         let result = merge_query_results(local, remote);
-        assert_eq!(result.len(), 2);
+        pretty_assertions::assert_eq!(result.len(), 2);
     }
 
     #[test]
@@ -1860,7 +1861,7 @@ mod tests {
         }];
         let result = merge_types_results(local, remote, false);
         let list = result.get("typeList").unwrap().as_array().unwrap();
-        assert_eq!(list.len(), 3);
+        pretty_assertions::assert_eq!(list.len(), 3);
         assert!(list.contains(&serde_json::json!("Vehicle")));
         assert!(list.contains(&serde_json::json!("Sensor")));
         assert!(list.contains(&serde_json::json!("Drone")));
@@ -1872,7 +1873,7 @@ mod tests {
 
         let local = serde_json::json!({"typeList": ["Vehicle"]});
         let result = merge_types_results(local.clone(), Vec::new(), false);
-        assert_eq!(result, local);
+        pretty_assertions::assert_eq!(result, local);
     }
 
     #[test]
@@ -1891,11 +1892,11 @@ mod tests {
         }];
         let result = merge_types_results(local, remote, true);
         let arr = result.as_array().unwrap();
-        assert_eq!(arr.len(), 2);
+        pretty_assertions::assert_eq!(arr.len(), 2);
 
         let vehicle = arr.iter().find(|v| v.get("id").unwrap() == "Vehicle").unwrap();
         let attrs = vehicle.get("attributeNames").unwrap().as_array().unwrap();
-        assert_eq!(attrs.len(), 3);
+        pretty_assertions::assert_eq!(attrs.len(), 3);
         assert!(attrs.contains(&serde_json::json!("fuel")));
     }
 
@@ -1910,7 +1911,7 @@ mod tests {
         }];
         let result = merge_attributes_results(local, remote, false);
         let list = result.get("attributeList").unwrap().as_array().unwrap();
-        assert_eq!(list.len(), 2);
+        pretty_assertions::assert_eq!(list.len(), 2);
     }
 
     #[test]
@@ -1936,9 +1937,9 @@ mod tests {
             warnings: Vec::new(),
         }];
         let result = merge_temporal_query_results(local, remote);
-        assert_eq!(result.len(), 1);
+        pretty_assertions::assert_eq!(result.len(), 1);
         let speed = result[0].get("speed").unwrap().as_array().unwrap();
-        assert_eq!(speed.len(), 2);
+        pretty_assertions::assert_eq!(speed.len(), 2);
     }
 
     #[test]
@@ -1965,7 +1966,7 @@ mod tests {
         }];
         let result = merge_temporal_query_results(local, remote);
         let speed = result[0].get("speed").unwrap().as_array().unwrap();
-        assert_eq!(speed.len(), 1);
+        pretty_assertions::assert_eq!(speed.len(), 1);
     }
 
     #[test]
@@ -1983,8 +1984,8 @@ mod tests {
         }];
         let result = merge_temporal_query_results(local, remote);
         // Only urn:a should be present; urn:b is not added in auxiliary mode
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0].get("id").unwrap(), "urn:a");
+        pretty_assertions::assert_eq!(result.len(), 1);
+        pretty_assertions::assert_eq!(result[0].get("id").unwrap(), "urn:a");
         // fuel should be added to urn:a
         assert!(result[0].get("fuel").is_some());
     }
@@ -2031,7 +2032,7 @@ mod tests {
         use crate::service::context_source_forwarding::build_discovery_url;
 
         let url = build_discovery_url("http://cs1.example.com", "/types", "details=true");
-        assert_eq!(url, "http://cs1.example.com/ngsi-ld/v1/types?details=true");
+        pretty_assertions::assert_eq!(url, "http://cs1.example.com/ngsi-ld/v1/types?details=true");
     }
 
     #[test]
@@ -2039,7 +2040,7 @@ mod tests {
         use crate::service::context_source_forwarding::build_discovery_url;
 
         let url = build_discovery_url("http://cs1.example.com/", "/attributes", "");
-        assert_eq!(url, "http://cs1.example.com/ngsi-ld/v1/attributes");
+        pretty_assertions::assert_eq!(url, "http://cs1.example.com/ngsi-ld/v1/attributes");
     }
 
     #[test]
@@ -2047,7 +2048,7 @@ mod tests {
         use crate::service::context_source_forwarding::build_temporal_query_url;
 
         let url = build_temporal_query_url("http://cs1.example.com", "type=Vehicle&timerel=after&timeAt=2024-01-01T00:00:00Z");
-        assert_eq!(
+        pretty_assertions::assert_eq!(
             url,
             "http://cs1.example.com/ngsi-ld/v1/temporal/entities?type=Vehicle&timerel=after&timeAt=2024-01-01T00:00:00Z"
         );
@@ -2058,7 +2059,7 @@ mod tests {
         use crate::service::context_source_forwarding::build_temporal_retrieve_url;
 
         let url = build_temporal_retrieve_url("http://cs1.example.com", "urn:ngsi-ld:Vehicle:1", "timerel=after&timeAt=2024-01-01T00:00:00Z");
-        assert_eq!(
+        pretty_assertions::assert_eq!(
             url,
             "http://cs1.example.com/ngsi-ld/v1/temporal/entities/urn:ngsi-ld:Vehicle:1?timerel=after&timeAt=2024-01-01T00:00:00Z"
         );
@@ -2079,7 +2080,7 @@ mod tests {
             },
         ];
         let warnings = collect_discovery_warnings(&results);
-        assert_eq!(warnings.len(), 1);
+        pretty_assertions::assert_eq!(warnings.len(), 1);
     }
 
     #[test]
@@ -2105,7 +2106,7 @@ mod tests {
             },
         ];
         let attrs = collect_forwarded_exclusive_attrs(&results);
-        assert_eq!(attrs.len(), 3);
+        pretty_assertions::assert_eq!(attrs.len(), 3);
         assert!(attrs.contains(&"speed".to_string()));
         assert!(attrs.contains(&"fuel".to_string()));
         assert!(attrs.contains(&"temperature".to_string()));
@@ -2120,7 +2121,7 @@ mod tests {
         });
         strip_exclusive_attrs_from_value(&mut value, &["speed".to_string(), "fuel".to_string()]);
         let obj = value.as_object().expect("is object");
-        assert_eq!(obj.len(), 1);
+        pretty_assertions::assert_eq!(obj.len(), 1);
         assert!(obj.contains_key("name"));
     }
 
@@ -2131,7 +2132,7 @@ mod tests {
         });
         strip_exclusive_attrs_from_value(&mut value, &["speed".to_string()]);
         let obj = value.as_object().expect("is object");
-        assert_eq!(obj.len(), 1);
+        pretty_assertions::assert_eq!(obj.len(), 1);
     }
 
     #[test]
@@ -2172,7 +2173,7 @@ mod tests {
             },
         ];
         let attrs = collect_forwarded_exclusive_attrs(&results);
-        assert_eq!(attrs.len(), 2);
+        pretty_assertions::assert_eq!(attrs.len(), 2);
     }
 
     #[test]
@@ -2189,9 +2190,9 @@ mod tests {
         use crate::service::context_source_forwarding::CsrModeFilter;
 
         let filter = CsrModeFilter::ExcludeAuxiliary;
-        assert_eq!(filter, CsrModeFilter::ExcludeAuxiliary);
-        assert_ne!(filter, CsrModeFilter::All);
-        assert_ne!(filter, CsrModeFilter::AuxiliaryOnly);
+        pretty_assertions::assert_eq!(filter, CsrModeFilter::ExcludeAuxiliary);
+        pretty_assertions::assert_ne!(filter, CsrModeFilter::All);
+        pretty_assertions::assert_ne!(filter, CsrModeFilter::AuxiliaryOnly);
     }
 
     #[test]
@@ -2199,9 +2200,9 @@ mod tests {
         use crate::service::context_source_forwarding::CsrModeFilter;
 
         let filter = CsrModeFilter::AuxiliaryOnly;
-        assert_eq!(filter, CsrModeFilter::AuxiliaryOnly);
-        assert_ne!(filter, CsrModeFilter::All);
-        assert_ne!(filter, CsrModeFilter::ExcludeAuxiliary);
+        pretty_assertions::assert_eq!(filter, CsrModeFilter::AuxiliaryOnly);
+        pretty_assertions::assert_ne!(filter, CsrModeFilter::All);
+        pretty_assertions::assert_ne!(filter, CsrModeFilter::ExcludeAuxiliary);
     }
 
     #[test]
@@ -2217,9 +2218,9 @@ mod tests {
             warnings: Vec::new(),
         }];
         let result = merge_query_results(local, remote);
-        assert_eq!(result.len(), 1, "Auxiliary should not add new entities");
+        pretty_assertions::assert_eq!(result.len(), 1, "Auxiliary should not add new entities");
         let entity = &result[0];
-        assert_eq!(entity["id"], "urn:a");
+        pretty_assertions::assert_eq!(entity["id"], "urn:a");
         assert!(entity.get("fuel").is_some(), "Auxiliary attrs should be merged");
     }
 
@@ -2233,6 +2234,6 @@ mod tests {
             warnings: Vec::new(),
         }];
         let result = merge_query_results(local, remote);
-        assert_eq!(result.len(), 2, "Inclusive should add new entities");
+        pretty_assertions::assert_eq!(result.len(), 2, "Inclusive should add new entities");
     }
 }

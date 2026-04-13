@@ -166,18 +166,19 @@ const fn is_type_char(c: char) -> bool {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::*;
 
     #[test]
     fn parse_single_type() {
         let expr = parse("Vehicle").unwrap();
-        assert_eq!(expr, TypeExprRaw::Type("Vehicle".to_string()));
+        pretty_assertions::assert_eq!(expr, TypeExprRaw::Type("Vehicle".to_string()));
     }
 
     #[test]
     fn parse_or_with_pipe() {
         let expr = parse("Building|House").unwrap();
-        assert_eq!(
+        pretty_assertions::assert_eq!(
             expr,
             TypeExprRaw::Or(vec![TypeExprRaw::Type("Building".to_string()), TypeExprRaw::Type("House".to_string()),])
         );
@@ -186,7 +187,7 @@ mod tests {
     #[test]
     fn parse_or_with_comma() {
         let expr = parse("Building,House").unwrap();
-        assert_eq!(
+        pretty_assertions::assert_eq!(
             expr,
             TypeExprRaw::Or(vec![TypeExprRaw::Type("Building".to_string()), TypeExprRaw::Type("House".to_string()),])
         );
@@ -195,7 +196,7 @@ mod tests {
     #[test]
     fn parse_and_with_semicolon() {
         let expr = parse("Home;Vehicle").unwrap();
-        assert_eq!(
+        pretty_assertions::assert_eq!(
             expr,
             TypeExprRaw::And(vec![TypeExprRaw::Type("Home".to_string()), TypeExprRaw::Type("Vehicle".to_string()),])
         );
@@ -204,7 +205,7 @@ mod tests {
     #[test]
     fn parse_mixed_and_or_with_grouping() {
         let expr = parse("(Home;Vehicle)|Motorhome").unwrap();
-        assert_eq!(
+        pretty_assertions::assert_eq!(
             expr,
             TypeExprRaw::Or(vec![
                 TypeExprRaw::And(vec![TypeExprRaw::Type("Home".to_string()), TypeExprRaw::Type("Vehicle".to_string()),]),
@@ -216,7 +217,7 @@ mod tests {
     #[test]
     fn parse_nested_parens() {
         let expr = parse("((A;B)|C)").unwrap();
-        assert_eq!(
+        pretty_assertions::assert_eq!(
             expr,
             TypeExprRaw::Or(vec![
                 TypeExprRaw::And(vec![TypeExprRaw::Type("A".to_string()), TypeExprRaw::Type("B".to_string()),]),
@@ -228,7 +229,7 @@ mod tests {
     #[test]
     fn parse_uri_type_name() {
         let expr = parse("https://example.com/Vehicle").unwrap();
-        assert_eq!(expr, TypeExprRaw::Type("https://example.com/Vehicle".to_string()));
+        pretty_assertions::assert_eq!(expr, TypeExprRaw::Type("https://example.com/Vehicle".to_string()));
     }
 
     #[test]
@@ -259,7 +260,7 @@ mod tests {
     fn and_higher_precedence_than_or() {
         // A|B;C should parse as A | (B AND C)
         let expr = parse("A|B;C").unwrap();
-        assert_eq!(
+        pretty_assertions::assert_eq!(
             expr,
             TypeExprRaw::Or(vec![
                 TypeExprRaw::Type("A".to_string()),
@@ -271,7 +272,7 @@ mod tests {
     #[test]
     fn multiple_or_terms() {
         let expr = parse("A|B|C").unwrap();
-        assert_eq!(
+        pretty_assertions::assert_eq!(
             expr,
             TypeExprRaw::Or(vec![
                 TypeExprRaw::Type("A".to_string()),

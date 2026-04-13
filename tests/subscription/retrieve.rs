@@ -1,3 +1,4 @@
+#![allow(clippy::expect_used, clippy::unwrap_used)]
 use reqwest::StatusCode;
 
 use crate::helpers::{
@@ -18,8 +19,8 @@ async fn subscription_retrieve_invalid_id_returns_bad_request_data() {
 
     let (status, body) = retrieve_subscription(&http_client, "InvalidUri", false).await;
 
-    assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE);
+    pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
+    pretty_assertions::assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE);
 }
 
 #[serial_test::serial]
@@ -30,8 +31,8 @@ async fn subscription_retrieve_unknown_id_returns_resource_not_found() {
 
     let (status, body) = retrieve_subscription(&http_client, "urn:ngsi-ld:Subscription:unknown", false).await;
 
-    assert_eq!(status, StatusCode::NOT_FOUND);
-    assert_eq!(body["type"], RESOURCE_NOT_FOUND_TYPE);
+    pretty_assertions::assert_eq!(status, StatusCode::NOT_FOUND);
+    pretty_assertions::assert_eq!(body["type"], RESOURCE_NOT_FOUND_TYPE);
 }
 
 #[serial_test::serial]
@@ -43,12 +44,12 @@ async fn subscription_retrieve_existing_id_returns_subscription_payload() {
     let payload = default_subscription(&subscription_id);
 
     let (status, _, _) = create_subscription(&http_client, &payload).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     let (status, body) = retrieve_subscription(&http_client, &subscription_id, true).await;
 
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["id"], subscription_id);
-    assert_eq!(body["type"], "Subscription");
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(body["id"], subscription_id);
+    pretty_assertions::assert_eq!(body["type"], "Subscription");
     assert!(body["entities"].is_array());
 }

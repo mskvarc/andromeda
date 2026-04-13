@@ -1,3 +1,4 @@
+#![allow(clippy::expect_used, clippy::unwrap_used)]
 pub mod append_entity_attrs;
 pub mod delete_entity_attrs;
 pub mod partial_update_attr;

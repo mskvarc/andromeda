@@ -1,3 +1,4 @@
+#![allow(clippy::expect_used, clippy::unwrap_used)]
 use axum::{Router, body::Bytes, http::StatusCode as AxumStatusCode, routing::post};
 use chrono::{DateTime, Duration as ChronoDuration, FixedOffset, SecondsFormat, Utc};
 use reqwest::{Client, StatusCode};
@@ -35,13 +36,8 @@ fn unique_registration_id(scenario: &str) -> String {
 }
 
 async fn clean_database() {
-    let pool = match PgPool::connect(DATABASE_URL).await {
-        Ok(pool) => pool,
-        Err(err) => panic!("failed to connect to database for cleanup: {err}"),
-    };
-    if let Err(err) = sqlx::query(TRUNCATE_ALL).execute(&pool).await {
-        panic!("failed to truncate tables: {err}");
-    }
+    let pool = PgPool::connect(DATABASE_URL).await.expect("failed to connect to database for cleanup");
+    sqlx::query(TRUNCATE_ALL).execute(&pool).await.expect("failed to truncate tables");
     pool.close().await;
 }
 
@@ -53,16 +49,13 @@ async fn read_body(response: reqwest::Response) -> Value {
 }
 
 async fn create_csource_subscription(http_client: &Client, body: &Value) -> (StatusCode, Value) {
-    let response = match http_client
+    let response = http_client
         .post(format!("{BASE_URL}/csourceSubscriptions"))
         .header("Content-Type", "application/ld+json")
         .json(body)
         .send()
         .await
-    {
-        Ok(response) => response,
-        Err(err) => panic!("create csource subscription request failed: {err}"),
-    };
+        .expect("create csource subscription request failed");
 
     let status = response.status();
     let body = read_body(response).await;
@@ -76,15 +69,12 @@ async fn retrieve_csource_subscription(http_client: &Client, subscription_id: &s
         None => String::new(),
     };
 
-    let response = match http_client
+    let response = http_client
         .get(format!("{BASE_URL}/csourceSubscriptions/{encoded_id}{query}"))
         .header("Accept", "application/ld+json")
         .send()
         .await
-    {
-        Ok(response) => response,
-        Err(err) => panic!("retrieve csource subscription request failed: {err}"),
-    };
+        .expect("retrieve csource subscription request failed");
 
     let status = response.status();
     let body = read_body(response).await;
@@ -93,7 +83,7 @@ async fn retrieve_csource_subscription(http_client: &Client, subscription_id: &s
 
 async fn update_csource_subscription(http_client: &Client, subscription_id: &str, fragment: &Value) -> (StatusCode, Value) {
     let encoded_id = urlencoding::encode(subscription_id);
-    let response = match http_client
+    let response = http_client
         .patch(format!("{BASE_URL}/csourceSubscriptions/{encoded_id}"))
         .header("Content-Type", "application/json")
         .header(
@@ -103,10 +93,7 @@ async fn update_csource_subscription(http_client: &Client, subscription_id: &str
         .json(fragment)
         .send()
         .await
-    {
-        Ok(response) => response,
-        Err(err) => panic!("update csource subscription request failed: {err}"),
-    };
+        .expect("update csource subscription request failed");
 
     let status = response.status();
     let body = read_body(response).await;
@@ -114,16 +101,13 @@ async fn update_csource_subscription(http_client: &Client, subscription_id: &str
 }
 
 async fn create_registration(http_client: &Client, body: &Value) -> (StatusCode, Value) {
-    let response = match http_client
+    let response = http_client
         .post(format!("{BASE_URL}/csourceRegistrations"))
         .header("Content-Type", "application/ld+json")
         .json(body)
         .send()
         .await
-    {
-        Ok(response) => response,
-        Err(err) => panic!("create registration request failed: {err}"),
-    };
+        .expect("create registration request failed");
 
     let status = response.status();
     let body = read_body(response).await;
@@ -132,16 +116,13 @@ async fn create_registration(http_client: &Client, body: &Value) -> (StatusCode,
 
 async fn update_registration(http_client: &Client, registration_id: &str, fragment: &Value) -> (StatusCode, Value) {
     let encoded_id = urlencoding::encode(registration_id);
-    let response = match http_client
+    let response = http_client
         .patch(format!("{BASE_URL}/csourceRegistrations/{encoded_id}"))
         .header("Content-Type", "application/json")
         .json(fragment)
         .send()
         .await
-    {
-        Ok(response) => response,
-        Err(err) => panic!("update registration request failed: {err}"),
-    };
+        .expect("update registration request failed");
 
     let status = response.status();
     let body = read_body(response).await;
@@ -382,13 +363,9 @@ fn subscription_update_vehicle_and_bus_entities_fragment() -> Value {
 }
 
 fn assert_iso_timestamp(value: &Value, field_name: &str) {
-    let value_str = match value.as_str() {
-        Some(value_str) => value_str,
-        None => panic!("{field_name} should be a string: {value}"),
-    };
-    if DateTime::<FixedOffset>::parse_from_rfc3339(value_str).is_err() {
-        panic!("{field_name} should be a valid RFC3339 timestamp: {value_str}");
-    }
+    let value_str = value.as_str().expect("timestamp field should be a string");
+    let parsed = DateTime::<FixedOffset>::parse_from_rfc3339(value_str);
+    assert!(parsed.is_ok(), "{field_name} should be a valid RFC3339 timestamp");
 }
 
 fn is_building_entity_type(entity_type: &str) -> bool {
@@ -433,14 +410,8 @@ impl NotificationReceiver {
             }),
         );
 
-        let listener = match tokio::net::TcpListener::bind("0.0.0.0:0").await {
-            Ok(listener) => listener,
-            Err(err) => panic!("failed to bind notification receiver: {err}"),
-        };
-        let port = match listener.local_addr() {
-            Ok(address) => address.port(),
-            Err(err) => panic!("failed to read notification receiver local address: {err}"),
-        };
+        let listener = tokio::net::TcpListener::bind("0.0.0.0:0").await.expect("failed to bind notification receiver");
+        let port = listener.local_addr().expect("failed to read notification receiver local address").port();
 
         tokio::spawn(async move {
             let server = axum::serve(listener, app).with_graceful_shutdown(async {
@@ -466,9 +437,8 @@ impl NotificationReceiver {
                     return guard.remove(0);
                 }
             }
-            if tokio::time::timeout_at(deadline, self.notify.notified()).await.is_err() {
-                panic!("timed out waiting for notification after {timeout:?}");
-            }
+            let notified = tokio::time::timeout_at(deadline, self.notify.notified()).await;
+            assert!(notified.is_ok(), "timed out waiting for notification after {timeout:?}");
         }
     }
 
@@ -497,15 +467,15 @@ async fn csr_notification_time_interval_subscription_sends_periodic_notification
     let registration_id = unique_registration_id("047-01-registration");
     let registration = building_and_bus_registration_payload(&registration_id);
     let (registration_status, _) = create_registration(&http_client, &registration).await;
-    assert_eq!(registration_status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(registration_status, StatusCode::CREATED);
 
     let subscription_id = unique_subscription_id("047-01-subscription");
     let subscription = time_interval_subscription_payload(&subscription_id, &receiver.endpoint_url);
     let (subscription_status, _) = create_csource_subscription(&http_client, &subscription).await;
-    assert_eq!(subscription_status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(subscription_status, StatusCode::CREATED);
 
     let notification = receiver.wait_for_notification(Duration::from_secs(15)).await;
-    assert_eq!(notification.body["subscriptionId"], subscription_id);
+    pretty_assertions::assert_eq!(notification.body["subscriptionId"], subscription_id);
 }
 
 #[tokio::test]
@@ -518,24 +488,24 @@ async fn csr_notification_subscription_creation_and_registration_update_emit_tri
     let registration_id = unique_registration_id("047-02-registration");
     let registration = building_and_bus_registration_payload(&registration_id);
     let (registration_status, _) = create_registration(&http_client, &registration).await;
-    assert_eq!(registration_status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(registration_status, StatusCode::CREATED);
 
     let subscription_id = unique_subscription_id("047-02-subscription");
     let subscription = base_subscription_payload(&subscription_id, &receiver.endpoint_url);
     let (subscription_status, _) = create_csource_subscription(&http_client, &subscription).await;
-    assert_eq!(subscription_status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(subscription_status, StatusCode::CREATED);
 
     let first_notification = receiver.wait_for_notification(Duration::from_secs(5)).await;
-    assert_eq!(first_notification.body["subscriptionId"], subscription_id);
-    assert_eq!(first_notification.body["triggerReason"], "newlyMatching");
+    pretty_assertions::assert_eq!(first_notification.body["subscriptionId"], subscription_id);
+    pretty_assertions::assert_eq!(first_notification.body["triggerReason"], "newlyMatching");
 
     let update_fragment = registration_endpoint_update_fragment();
     let (update_status, _) = update_registration(&http_client, &registration_id, &update_fragment).await;
-    assert_eq!(update_status, StatusCode::NO_CONTENT);
+    pretty_assertions::assert_eq!(update_status, StatusCode::NO_CONTENT);
 
     let second_notification = receiver.wait_for_notification(Duration::from_secs(5)).await;
-    assert_eq!(second_notification.body["subscriptionId"], subscription_id);
-    assert_eq!(second_notification.body["triggerReason"], "updated");
+    pretty_assertions::assert_eq!(second_notification.body["subscriptionId"], subscription_id);
+    pretty_assertions::assert_eq!(second_notification.body["triggerReason"], "updated");
 }
 
 #[tokio::test]
@@ -548,38 +518,26 @@ async fn csr_notification_includes_only_matching_registration_information() {
     let subscription_id = unique_subscription_id("047-03-subscription");
     let subscription = base_subscription_payload(&subscription_id, &receiver.endpoint_url);
     let (subscription_status, _) = create_csource_subscription(&http_client, &subscription).await;
-    assert_eq!(subscription_status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(subscription_status, StatusCode::CREATED);
 
     let registration_id = unique_registration_id("047-03-registration");
     let registration = building_and_bus_registration_payload(&registration_id);
     let (registration_status, _) = create_registration(&http_client, &registration).await;
-    assert_eq!(registration_status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(registration_status, StatusCode::CREATED);
 
     let notification = receiver.wait_for_notification(Duration::from_secs(5)).await;
-    assert_eq!(notification.body["subscriptionId"], subscription_id);
-    assert_eq!(notification.body["triggerReason"], "newlyMatching");
+    pretty_assertions::assert_eq!(notification.body["subscriptionId"], subscription_id);
+    pretty_assertions::assert_eq!(notification.body["triggerReason"], "newlyMatching");
 
-    let data = match notification.body["data"].as_array() {
-        Some(data) => data,
-        None => panic!("data should be an array: {}", notification.body),
-    };
+    let data = notification.body["data"].as_array().expect("data should be an array");
     assert!(!data.is_empty(), "data should not be empty");
-    let information = match data[0]["information"].as_array() {
-        Some(information) => information,
-        None => panic!("information should be an array: {}", data[0]),
-    };
-    assert_eq!(information.len(), 1, "only matching Building information should be included");
+    let information = data[0]["information"].as_array().expect("information should be an array");
+    pretty_assertions::assert_eq!(information.len(), 1, "only matching Building information should be included");
 
     for info_item in information {
-        let entities = match info_item["entities"].as_array() {
-            Some(entities) => entities,
-            None => panic!("entities should be an array: {info_item}"),
-        };
+        let entities = info_item["entities"].as_array().expect("entities should be an array");
         for entity in entities {
-            let entity_type = match entity["type"].as_str() {
-                Some(entity_type) => entity_type,
-                None => panic!("entity type should be a string: {entity}"),
-            };
+            let entity_type = entity["type"].as_str().expect("entity type should be a string");
             assert!(is_building_entity_type(entity_type), "unexpected entity type in notification: {entity_type}");
         }
     }
@@ -595,21 +553,18 @@ async fn csr_notification_has_required_csource_notification_structure() {
     let subscription_id = unique_subscription_id("047-04-subscription");
     let subscription = base_subscription_payload(&subscription_id, &receiver.endpoint_url);
     let (subscription_status, _) = create_csource_subscription(&http_client, &subscription).await;
-    assert_eq!(subscription_status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(subscription_status, StatusCode::CREATED);
 
     let registration_id = unique_registration_id("047-04-registration");
     let registration = building_and_bus_registration_payload(&registration_id);
     let (registration_status, _) = create_registration(&http_client, &registration).await;
-    assert_eq!(registration_status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(registration_status, StatusCode::CREATED);
 
     let notification = receiver.wait_for_notification(Duration::from_secs(5)).await;
-    assert_eq!(notification.body["subscriptionId"], subscription_id);
+    pretty_assertions::assert_eq!(notification.body["subscriptionId"], subscription_id);
     assert_iso_timestamp(&notification.body["notifiedAt"], "notifiedAt");
     assert!(notification.body["triggerReason"].is_string(), "triggerReason should be present");
-    let data = match notification.body["data"].as_array() {
-        Some(data) => data,
-        None => panic!("data should be an array: {}", notification.body),
-    };
+    let data = notification.body["data"].as_array().expect("data should be an array");
     assert!(!data.is_empty(), "data should not be empty");
 }
 
@@ -623,21 +578,21 @@ async fn csr_notification_success_updates_metadata_status_ok() {
     let subscription_id = unique_subscription_id("047-05-subscription");
     let subscription = base_subscription_payload(&subscription_id, &receiver.endpoint_url);
     let (subscription_status, _) = create_csource_subscription(&http_client, &subscription).await;
-    assert_eq!(subscription_status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(subscription_status, StatusCode::CREATED);
 
     let registration_id = unique_registration_id("047-05-registration");
     let registration = building_and_bus_registration_payload(&registration_id);
     let (registration_status, _) = create_registration(&http_client, &registration).await;
-    assert_eq!(registration_status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(registration_status, StatusCode::CREATED);
 
     let _ = receiver.wait_for_notification(Duration::from_secs(5)).await;
 
     tokio::time::sleep(Duration::from_millis(500)).await;
 
     let (retrieve_status, body) = retrieve_csource_subscription(&http_client, &subscription_id, Some("sysAttrs")).await;
-    assert_eq!(retrieve_status, StatusCode::OK);
-    assert_eq!(body["notification"]["timesSent"], 1);
-    assert_eq!(body["notification"]["status"], "ok");
+    pretty_assertions::assert_eq!(retrieve_status, StatusCode::OK);
+    pretty_assertions::assert_eq!(body["notification"]["timesSent"], 1);
+    pretty_assertions::assert_eq!(body["notification"]["status"], "ok");
     assert_iso_timestamp(&body["notification"]["lastNotification"], "lastNotification");
     assert_iso_timestamp(&body["notification"]["lastSuccess"], "lastSuccess");
 }
@@ -651,18 +606,18 @@ async fn csr_notification_failed_delivery_updates_metadata_status_failed() {
     let subscription_id = unique_subscription_id("047-06-subscription");
     let subscription = unreachable_endpoint_subscription_payload(&subscription_id);
     let (subscription_status, _) = create_csource_subscription(&http_client, &subscription).await;
-    assert_eq!(subscription_status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(subscription_status, StatusCode::CREATED);
 
     let registration_id = unique_registration_id("047-06-registration");
     let registration = building_and_bus_registration_payload(&registration_id);
     let (registration_status, _) = create_registration(&http_client, &registration).await;
-    assert_eq!(registration_status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(registration_status, StatusCode::CREATED);
 
     tokio::time::sleep(Duration::from_secs(3)).await;
 
     let (retrieve_status, body) = retrieve_csource_subscription(&http_client, &subscription_id, Some("sysAttrs")).await;
-    assert_eq!(retrieve_status, StatusCode::OK);
-    assert_eq!(body["notification"]["status"], "failed");
+    pretty_assertions::assert_eq!(retrieve_status, StatusCode::OK);
+    pretty_assertions::assert_eq!(body["notification"]["status"], "failed");
     assert_iso_timestamp(&body["notification"]["lastFailure"], "lastFailure");
     assert_iso_timestamp(&body["notification"]["lastNotification"], "lastNotification");
 }
@@ -677,16 +632,16 @@ async fn csr_notification_paused_subscription_does_not_emit_notifications() {
     let subscription_id = unique_subscription_id("047-07-paused-subscription");
     let subscription = base_subscription_payload(&subscription_id, &receiver.endpoint_url);
     let (subscription_status, _) = create_csource_subscription(&http_client, &subscription).await;
-    assert_eq!(subscription_status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(subscription_status, StatusCode::CREATED);
 
     let pause_fragment = subscription_update_is_active_false_fragment();
     let (update_status, _) = update_csource_subscription(&http_client, &subscription_id, &pause_fragment).await;
-    assert_eq!(update_status, StatusCode::NO_CONTENT);
+    pretty_assertions::assert_eq!(update_status, StatusCode::NO_CONTENT);
 
     let registration_id = unique_registration_id("047-07-paused-registration");
     let registration = base_registration_for_type(&registration_id, "Building");
     let (registration_status, _) = create_registration(&http_client, &registration).await;
-    assert_eq!(registration_status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(registration_status, StatusCode::CREATED);
 
     receiver.wait_for_no_notification(Duration::from_secs(5)).await;
 }
@@ -701,16 +656,16 @@ async fn csr_notification_expired_subscription_does_not_emit_notifications() {
     let subscription_id = unique_subscription_id("047-07-expired-subscription");
     let subscription = base_subscription_payload(&subscription_id, &receiver.endpoint_url);
     let (subscription_status, _) = create_csource_subscription(&http_client, &subscription).await;
-    assert_eq!(subscription_status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(subscription_status, StatusCode::CREATED);
 
     let expire_fragment = subscription_update_expires_at_past_fragment();
     let (update_status, _) = update_csource_subscription(&http_client, &subscription_id, &expire_fragment).await;
-    assert_eq!(update_status, StatusCode::NO_CONTENT);
+    pretty_assertions::assert_eq!(update_status, StatusCode::NO_CONTENT);
 
     let registration_id = unique_registration_id("047-07-expired-registration");
     let registration = base_registration_for_type(&registration_id, "Building");
     let (registration_status, _) = create_registration(&http_client, &registration).await;
-    assert_eq!(registration_status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(registration_status, StatusCode::CREATED);
 
     receiver.wait_for_no_notification(Duration::from_secs(5)).await;
 }
@@ -725,23 +680,23 @@ async fn csr_notification_matching_registration_update_emits_updated() {
     let registration_id = unique_registration_id("047-08-registration");
     let registration = building_and_bus_registration_payload(&registration_id);
     let (registration_status, _) = create_registration(&http_client, &registration).await;
-    assert_eq!(registration_status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(registration_status, StatusCode::CREATED);
 
     let subscription_id = unique_subscription_id("047-08-subscription");
     let subscription = base_subscription_payload(&subscription_id, &receiver.endpoint_url);
     let (subscription_status, _) = create_csource_subscription(&http_client, &subscription).await;
-    assert_eq!(subscription_status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(subscription_status, StatusCode::CREATED);
 
     let first_notification = receiver.wait_for_notification(Duration::from_secs(5)).await;
-    assert_eq!(first_notification.body["triggerReason"], "newlyMatching");
+    pretty_assertions::assert_eq!(first_notification.body["triggerReason"], "newlyMatching");
 
     let registration_patch = registration_endpoint_update_fragment();
     let (update_status, _) = update_registration(&http_client, &registration_id, &registration_patch).await;
-    assert_eq!(update_status, StatusCode::NO_CONTENT);
+    pretty_assertions::assert_eq!(update_status, StatusCode::NO_CONTENT);
 
     let second_notification = receiver.wait_for_notification(Duration::from_secs(5)).await;
-    assert_eq!(second_notification.body["subscriptionId"], subscription_id);
-    assert_eq!(second_notification.body["triggerReason"], "updated");
+    pretty_assertions::assert_eq!(second_notification.body["subscriptionId"], subscription_id);
+    pretty_assertions::assert_eq!(second_notification.body["triggerReason"], "updated");
 }
 
 #[tokio::test]
@@ -754,22 +709,22 @@ async fn csr_notification_non_matching_registration_update_emits_no_longer_match
     let registration_id = unique_registration_id("047-09-registration");
     let registration = building_and_bus_registration_payload(&registration_id);
     let (registration_status, _) = create_registration(&http_client, &registration).await;
-    assert_eq!(registration_status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(registration_status, StatusCode::CREATED);
 
     let subscription_id = unique_subscription_id("047-09-subscription");
     let subscription = base_subscription_payload(&subscription_id, &receiver.endpoint_url);
     let (subscription_status, _) = create_csource_subscription(&http_client, &subscription).await;
-    assert_eq!(subscription_status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(subscription_status, StatusCode::CREATED);
 
     let _ = receiver.wait_for_notification(Duration::from_secs(5)).await;
 
     let patch = registration_information_new_type_fragment();
     let (update_status, _) = update_registration(&http_client, &registration_id, &patch).await;
-    assert_eq!(update_status, StatusCode::NO_CONTENT);
+    pretty_assertions::assert_eq!(update_status, StatusCode::NO_CONTENT);
 
     let notification = receiver.wait_for_notification(Duration::from_secs(5)).await;
-    assert_eq!(notification.body["subscriptionId"], subscription_id);
-    assert_eq!(notification.body["triggerReason"], "noLongerMatching");
+    pretty_assertions::assert_eq!(notification.body["subscriptionId"], subscription_id);
+    pretty_assertions::assert_eq!(notification.body["triggerReason"], "noLongerMatching");
 }
 
 #[tokio::test]
@@ -782,16 +737,16 @@ async fn csr_notification_temporal_observed_at_matches_observation_interval() {
     let subscription_id = unique_subscription_id("047-10-subscription");
     let subscription = temporal_query_subscription_payload(&subscription_id, &receiver.endpoint_url, "observedAt");
     let (subscription_status, _) = create_csource_subscription(&http_client, &subscription).await;
-    assert_eq!(subscription_status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(subscription_status, StatusCode::CREATED);
 
     let registration_id = unique_registration_id("047-10-registration");
     let registration = observation_interval_registration_payload(&registration_id);
     let (registration_status, _) = create_registration(&http_client, &registration).await;
-    assert_eq!(registration_status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(registration_status, StatusCode::CREATED);
 
     let notification = receiver.wait_for_notification(Duration::from_secs(5)).await;
-    assert_eq!(notification.body["subscriptionId"], subscription_id);
-    assert_eq!(notification.body["triggerReason"], "newlyMatching");
+    pretty_assertions::assert_eq!(notification.body["subscriptionId"], subscription_id);
+    pretty_assertions::assert_eq!(notification.body["triggerReason"], "newlyMatching");
 }
 
 #[tokio::test]
@@ -804,16 +759,16 @@ async fn csr_notification_temporal_created_at_matches_management_interval() {
     let subscription_id = unique_subscription_id("047-11-created-subscription");
     let subscription = temporal_query_subscription_payload(&subscription_id, &receiver.endpoint_url, "createdAt");
     let (subscription_status, _) = create_csource_subscription(&http_client, &subscription).await;
-    assert_eq!(subscription_status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(subscription_status, StatusCode::CREATED);
 
     let registration_id = unique_registration_id("047-11-created-registration");
     let registration = management_interval_registration_payload(&registration_id);
     let (registration_status, _) = create_registration(&http_client, &registration).await;
-    assert_eq!(registration_status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(registration_status, StatusCode::CREATED);
 
     let notification = receiver.wait_for_notification(Duration::from_secs(5)).await;
-    assert_eq!(notification.body["subscriptionId"], subscription_id);
-    assert_eq!(notification.body["triggerReason"], "newlyMatching");
+    pretty_assertions::assert_eq!(notification.body["subscriptionId"], subscription_id);
+    pretty_assertions::assert_eq!(notification.body["triggerReason"], "newlyMatching");
 }
 
 #[tokio::test]
@@ -826,16 +781,16 @@ async fn csr_notification_temporal_modified_at_matches_management_interval() {
     let subscription_id = unique_subscription_id("047-11-modified-subscription");
     let subscription = temporal_query_subscription_payload(&subscription_id, &receiver.endpoint_url, "modifiedAt");
     let (subscription_status, _) = create_csource_subscription(&http_client, &subscription).await;
-    assert_eq!(subscription_status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(subscription_status, StatusCode::CREATED);
 
     let registration_id = unique_registration_id("047-11-modified-registration");
     let registration = management_interval_registration_payload(&registration_id);
     let (registration_status, _) = create_registration(&http_client, &registration).await;
-    assert_eq!(registration_status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(registration_status, StatusCode::CREATED);
 
     let notification = receiver.wait_for_notification(Duration::from_secs(5)).await;
-    assert_eq!(notification.body["subscriptionId"], subscription_id);
-    assert_eq!(notification.body["triggerReason"], "newlyMatching");
+    pretty_assertions::assert_eq!(notification.body["subscriptionId"], subscription_id);
+    pretty_assertions::assert_eq!(notification.body["triggerReason"], "newlyMatching");
 }
 
 #[tokio::test]
@@ -848,16 +803,16 @@ async fn csr_notification_watched_attributes_filter_matches_registration() {
     let subscription_id = unique_subscription_id("047-12-subscription");
     let subscription = watched_attributes_subscription_payload(&subscription_id, &receiver.endpoint_url);
     let (subscription_status, _) = create_csource_subscription(&http_client, &subscription).await;
-    assert_eq!(subscription_status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(subscription_status, StatusCode::CREATED);
 
     let registration_id = unique_registration_id("047-12-registration");
     let registration = detailed_building_registration_payload(&registration_id);
     let (registration_status, _) = create_registration(&http_client, &registration).await;
-    assert_eq!(registration_status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(registration_status, StatusCode::CREATED);
 
     let notification = receiver.wait_for_notification(Duration::from_secs(5)).await;
-    assert_eq!(notification.body["subscriptionId"], subscription_id);
-    assert_eq!(notification.body["triggerReason"], "newlyMatching");
+    pretty_assertions::assert_eq!(notification.body["subscriptionId"], subscription_id);
+    pretty_assertions::assert_eq!(notification.body["triggerReason"], "newlyMatching");
 }
 
 #[tokio::test]
@@ -870,16 +825,16 @@ async fn csr_notification_without_watched_attributes_matches_any_information() {
     let subscription_id = unique_subscription_id("047-13-subscription");
     let subscription = base_subscription_payload(&subscription_id, &receiver.endpoint_url);
     let (subscription_status, _) = create_csource_subscription(&http_client, &subscription).await;
-    assert_eq!(subscription_status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(subscription_status, StatusCode::CREATED);
 
     let registration_id = unique_registration_id("047-13-registration");
     let registration = detailed_building_registration_payload(&registration_id);
     let (registration_status, _) = create_registration(&http_client, &registration).await;
-    assert_eq!(registration_status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(registration_status, StatusCode::CREATED);
 
     let notification = receiver.wait_for_notification(Duration::from_secs(5)).await;
-    assert_eq!(notification.body["subscriptionId"], subscription_id);
-    assert_eq!(notification.body["triggerReason"], "newlyMatching");
+    pretty_assertions::assert_eq!(notification.body["subscriptionId"], subscription_id);
+    pretty_assertions::assert_eq!(notification.body["triggerReason"], "newlyMatching");
 }
 
 #[tokio::test]
@@ -892,16 +847,16 @@ async fn csr_notification_geoq_with_geoproperty_matches_location() {
     let subscription_id = unique_subscription_id("047-14-subscription");
     let subscription = geoq_subscription_payload(&subscription_id, &receiver.endpoint_url, true);
     let (subscription_status, _) = create_csource_subscription(&http_client, &subscription).await;
-    assert_eq!(subscription_status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(subscription_status, StatusCode::CREATED);
 
     let registration_id = unique_registration_id("047-14-registration");
     let registration = location_registration_payload(&registration_id);
     let (registration_status, _) = create_registration(&http_client, &registration).await;
-    assert_eq!(registration_status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(registration_status, StatusCode::CREATED);
 
     let notification = receiver.wait_for_notification(Duration::from_secs(5)).await;
-    assert_eq!(notification.body["subscriptionId"], subscription_id);
-    assert_eq!(notification.body["triggerReason"], "newlyMatching");
+    pretty_assertions::assert_eq!(notification.body["subscriptionId"], subscription_id);
+    pretty_assertions::assert_eq!(notification.body["triggerReason"], "newlyMatching");
 }
 
 #[tokio::test]
@@ -914,16 +869,16 @@ async fn csr_notification_geoq_without_geoproperty_defaults_to_location() {
     let subscription_id = unique_subscription_id("047-15-subscription");
     let subscription = geoq_subscription_payload(&subscription_id, &receiver.endpoint_url, false);
     let (subscription_status, _) = create_csource_subscription(&http_client, &subscription).await;
-    assert_eq!(subscription_status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(subscription_status, StatusCode::CREATED);
 
     let registration_id = unique_registration_id("047-15-registration");
     let registration = location_registration_payload(&registration_id);
     let (registration_status, _) = create_registration(&http_client, &registration).await;
-    assert_eq!(registration_status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(registration_status, StatusCode::CREATED);
 
     let notification = receiver.wait_for_notification(Duration::from_secs(5)).await;
-    assert_eq!(notification.body["subscriptionId"], subscription_id);
-    assert_eq!(notification.body["triggerReason"], "newlyMatching");
+    pretty_assertions::assert_eq!(notification.body["subscriptionId"], subscription_id);
+    pretty_assertions::assert_eq!(notification.body["triggerReason"], "newlyMatching");
 }
 
 #[tokio::test]
@@ -936,31 +891,28 @@ async fn csr_notification_subscription_update_to_vehicle_matches_vehicle_registr
     let vehicle_registration_id = unique_registration_id("047-16-vehicle-registration");
     let vehicle_registration = base_registration_for_type(&vehicle_registration_id, "Vehicle");
     let (vehicle_registration_status, _) = create_registration(&http_client, &vehicle_registration).await;
-    assert_eq!(vehicle_registration_status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(vehicle_registration_status, StatusCode::CREATED);
 
     let bus_registration_id = unique_registration_id("047-16-bus-registration");
     let bus_registration = base_registration_for_type(&bus_registration_id, "Bus");
     let (bus_registration_status, _) = create_registration(&http_client, &bus_registration).await;
-    assert_eq!(bus_registration_status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(bus_registration_status, StatusCode::CREATED);
 
     let subscription_id = unique_subscription_id("047-16-vehicle-subscription");
     let subscription = base_subscription_payload(&subscription_id, &receiver.endpoint_url);
     let (subscription_status, _) = create_csource_subscription(&http_client, &subscription).await;
-    assert_eq!(subscription_status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(subscription_status, StatusCode::CREATED);
 
     let patch = subscription_update_vehicle_entities_fragment();
     let (update_status, _) = update_csource_subscription(&http_client, &subscription_id, &patch).await;
-    assert_eq!(update_status, StatusCode::NO_CONTENT);
+    pretty_assertions::assert_eq!(update_status, StatusCode::NO_CONTENT);
 
     let notification = receiver.wait_for_notification(Duration::from_secs(5)).await;
-    assert_eq!(notification.body["subscriptionId"], subscription_id);
-    assert_eq!(notification.body["triggerReason"], "newlyMatching");
+    pretty_assertions::assert_eq!(notification.body["subscriptionId"], subscription_id);
+    pretty_assertions::assert_eq!(notification.body["triggerReason"], "newlyMatching");
 
-    let data = match notification.body["data"].as_array() {
-        Some(data) => data,
-        None => panic!("data should be an array: {}", notification.body),
-    };
-    assert_eq!(data.len(), 1);
+    let data = notification.body["data"].as_array().expect("data should be an array");
+    pretty_assertions::assert_eq!(data.len(), 1);
 }
 
 #[tokio::test]
@@ -973,31 +925,28 @@ async fn csr_notification_subscription_update_to_bus_matches_bus_registration_on
     let vehicle_registration_id = unique_registration_id("047-16-vehicle-registration-2");
     let vehicle_registration = base_registration_for_type(&vehicle_registration_id, "Vehicle");
     let (vehicle_registration_status, _) = create_registration(&http_client, &vehicle_registration).await;
-    assert_eq!(vehicle_registration_status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(vehicle_registration_status, StatusCode::CREATED);
 
     let bus_registration_id = unique_registration_id("047-16-bus-registration-2");
     let bus_registration = base_registration_for_type(&bus_registration_id, "Bus");
     let (bus_registration_status, _) = create_registration(&http_client, &bus_registration).await;
-    assert_eq!(bus_registration_status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(bus_registration_status, StatusCode::CREATED);
 
     let subscription_id = unique_subscription_id("047-16-bus-subscription");
     let subscription = base_subscription_payload(&subscription_id, &receiver.endpoint_url);
     let (subscription_status, _) = create_csource_subscription(&http_client, &subscription).await;
-    assert_eq!(subscription_status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(subscription_status, StatusCode::CREATED);
 
     let patch = subscription_update_bus_entities_fragment();
     let (update_status, _) = update_csource_subscription(&http_client, &subscription_id, &patch).await;
-    assert_eq!(update_status, StatusCode::NO_CONTENT);
+    pretty_assertions::assert_eq!(update_status, StatusCode::NO_CONTENT);
 
     let notification = receiver.wait_for_notification(Duration::from_secs(5)).await;
-    assert_eq!(notification.body["subscriptionId"], subscription_id);
-    assert_eq!(notification.body["triggerReason"], "newlyMatching");
+    pretty_assertions::assert_eq!(notification.body["subscriptionId"], subscription_id);
+    pretty_assertions::assert_eq!(notification.body["triggerReason"], "newlyMatching");
 
-    let data = match notification.body["data"].as_array() {
-        Some(data) => data,
-        None => panic!("data should be an array: {}", notification.body),
-    };
-    assert_eq!(data.len(), 1);
+    let data = notification.body["data"].as_array().expect("data should be an array");
+    pretty_assertions::assert_eq!(data.len(), 1);
 }
 
 #[tokio::test]
@@ -1010,31 +959,28 @@ async fn csr_notification_subscription_update_to_vehicle_and_bus_matches_both_re
     let vehicle_registration_id = unique_registration_id("047-16-vehicle-registration-3");
     let vehicle_registration = base_registration_for_type(&vehicle_registration_id, "Vehicle");
     let (vehicle_registration_status, _) = create_registration(&http_client, &vehicle_registration).await;
-    assert_eq!(vehicle_registration_status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(vehicle_registration_status, StatusCode::CREATED);
 
     let bus_registration_id = unique_registration_id("047-16-bus-registration-3");
     let bus_registration = base_registration_for_type(&bus_registration_id, "Bus");
     let (bus_registration_status, _) = create_registration(&http_client, &bus_registration).await;
-    assert_eq!(bus_registration_status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(bus_registration_status, StatusCode::CREATED);
 
     let subscription_id = unique_subscription_id("047-16-vehicle-and-bus-subscription");
     let subscription = base_subscription_payload(&subscription_id, &receiver.endpoint_url);
     let (subscription_status, _) = create_csource_subscription(&http_client, &subscription).await;
-    assert_eq!(subscription_status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(subscription_status, StatusCode::CREATED);
 
     let patch = subscription_update_vehicle_and_bus_entities_fragment();
     let (update_status, _) = update_csource_subscription(&http_client, &subscription_id, &patch).await;
-    assert_eq!(update_status, StatusCode::NO_CONTENT);
+    pretty_assertions::assert_eq!(update_status, StatusCode::NO_CONTENT);
 
     let notification = receiver.wait_for_notification(Duration::from_secs(5)).await;
-    assert_eq!(notification.body["subscriptionId"], subscription_id);
-    assert_eq!(notification.body["triggerReason"], "newlyMatching");
+    pretty_assertions::assert_eq!(notification.body["subscriptionId"], subscription_id);
+    pretty_assertions::assert_eq!(notification.body["triggerReason"], "newlyMatching");
 
-    let data = match notification.body["data"].as_array() {
-        Some(data) => data,
-        None => panic!("data should be an array: {}", notification.body),
-    };
-    assert_eq!(data.len(), 2);
+    let data = notification.body["data"].as_array().expect("data should be an array");
+    pretty_assertions::assert_eq!(data.len(), 2);
 }
 
 #[tokio::test]
@@ -1047,29 +993,26 @@ async fn csr_notification_metadata_times_sent_increments_after_multiple_successe
     let registration_id = unique_registration_id("extra-metadata-registration");
     let registration = building_and_bus_registration_payload(&registration_id);
     let (registration_status, _) = create_registration(&http_client, &registration).await;
-    assert_eq!(registration_status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(registration_status, StatusCode::CREATED);
 
     let subscription_id = unique_subscription_id("extra-metadata-subscription");
     let subscription = base_subscription_payload(&subscription_id, &receiver.endpoint_url);
     let (subscription_status, _) = create_csource_subscription(&http_client, &subscription).await;
-    assert_eq!(subscription_status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(subscription_status, StatusCode::CREATED);
 
     let _ = receiver.wait_for_notification(Duration::from_secs(5)).await;
 
     let update_fragment = registration_endpoint_update_fragment();
     let (update_status, _) = update_registration(&http_client, &registration_id, &update_fragment).await;
-    assert_eq!(update_status, StatusCode::NO_CONTENT);
+    pretty_assertions::assert_eq!(update_status, StatusCode::NO_CONTENT);
 
     let _ = receiver.wait_for_notification(Duration::from_secs(5)).await;
 
     tokio::time::sleep(Duration::from_millis(500)).await;
 
     let (retrieve_status, body) = retrieve_csource_subscription(&http_client, &subscription_id, Some("sysAttrs")).await;
-    assert_eq!(retrieve_status, StatusCode::OK);
-    let times_sent = match body["notification"]["timesSent"].as_i64() {
-        Some(times_sent) => times_sent,
-        None => panic!("timesSent should be an integer: {body}"),
-    };
+    pretty_assertions::assert_eq!(retrieve_status, StatusCode::OK);
+    let times_sent = body["notification"]["timesSent"].as_i64().expect("timesSent should be an integer");
     assert!(times_sent >= 2, "timesSent should be >= 2 after two successful deliveries, got {times_sent}");
     assert_iso_timestamp(&body["notification"]["lastSuccess"], "lastSuccess");
 }
@@ -1087,9 +1030,9 @@ async fn csr_notification_expires_at_in_future_results_in_active_status_before_d
     subscription["expiresAt"] = Value::String(future_expiration);
 
     let (create_status, _) = create_csource_subscription(&http_client, &subscription).await;
-    assert_eq!(create_status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(create_status, StatusCode::CREATED);
 
     let (retrieve_status, body) = retrieve_csource_subscription(&http_client, &subscription_id, None).await;
-    assert_eq!(retrieve_status, StatusCode::OK);
-    assert_eq!(body["status"], "active");
+    pretty_assertions::assert_eq!(retrieve_status, StatusCode::OK);
+    pretty_assertions::assert_eq!(body["status"], "active");
 }

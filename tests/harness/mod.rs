@@ -1,3 +1,4 @@
+#![allow(clippy::expect_used, clippy::unwrap_used)]
 pub mod cleanup;
 pub mod client;
 pub mod context_server;

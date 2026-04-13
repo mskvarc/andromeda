@@ -44,6 +44,7 @@ impl Default for ListProperty {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use crate::jsonld::JsonLdExpandable;
 
     #[test]
@@ -55,14 +56,14 @@ mod tests {
         });
         let attr: crate::domain::attribute::Attribute = serde_json::from_value(json).expect("list_property");
         let crate::domain::attribute::Attribute::ListProperty(lp) = &attr else {
-            panic!("expected ListProperty");
+            unreachable!("expected ListProperty");
         };
         let expanded = lp.to_expanded();
         let obj = expanded.as_object().expect("expanded is object");
 
-        assert_eq!(obj["@type"], serde_json::json!(["https://uri.etsi.org/ngsi-ld/ListProperty"]));
+        pretty_assertions::assert_eq!(obj["@type"], serde_json::json!(["https://uri.etsi.org/ngsi-ld/ListProperty"]));
         let has_value_list = &obj["https://uri.etsi.org/ngsi-ld/hasValueList"];
-        assert_eq!(has_value_list, &serde_json::json!([{"@list": [1, 2, 3]}]));
+        pretty_assertions::assert_eq!(has_value_list, &serde_json::json!([{"@list": [1, 2, 3]}]));
         assert!(obj.contains_key("https://uri.etsi.org/ngsi-ld/hasPreviousValueList"));
     }
 }

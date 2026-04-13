@@ -343,6 +343,7 @@ fn dedupe_contexts(contexts: Vec<Value>) -> Vec<Value> {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::*;
     use serde_json::json;
 
@@ -350,32 +351,32 @@ mod tests {
     fn context_spec_defaults_include_andromeda_and_core() {
         let spec = ContextSpec::none();
         let ctx = spec.to_context_value().expect("context value");
-        assert_eq!(ctx, json!([ANDROMEDA_CORE_CONTEXT_URL, NGSI_LD_CORE_CONTEXT_URL]));
+        pretty_assertions::assert_eq!(ctx, json!([ANDROMEDA_CORE_CONTEXT_URL, NGSI_LD_CORE_CONTEXT_URL]));
     }
 
     #[test]
     fn context_spec_link_headers_include_andromeda_and_core() {
         let spec = ContextSpec::from_links(vec!["https://example.com/context.jsonld".to_string()]);
         let links = spec.to_link_headers();
-        assert_eq!(links.len(), 3);
-        assert_eq!(links[0], "https://example.com/context.jsonld");
-        assert_eq!(links[1], ANDROMEDA_CORE_CONTEXT_URL);
-        assert_eq!(links[2], NGSI_LD_CORE_CONTEXT_URL);
+        pretty_assertions::assert_eq!(links.len(), 3);
+        pretty_assertions::assert_eq!(links[0], "https://example.com/context.jsonld");
+        pretty_assertions::assert_eq!(links[1], ANDROMEDA_CORE_CONTEXT_URL);
+        pretty_assertions::assert_eq!(links[2], NGSI_LD_CORE_CONTEXT_URL);
     }
 
     #[test]
     fn context_spec_only_core_policy() {
         let spec = ContextSpec::from_links(vec!["https://example.com/context.jsonld".to_string()]).with_core_policy(CoreContextPolicy::Only);
         let links = spec.to_link_headers();
-        assert_eq!(links, vec![NGSI_LD_CORE_CONTEXT_URL.to_string()]);
+        pretty_assertions::assert_eq!(links, vec![NGSI_LD_CORE_CONTEXT_URL.to_string()]);
     }
 
     #[test]
     fn context_spec_core_only() {
         let spec = ContextSpec::core_only();
         let ctx = spec.to_context_value().expect("context value");
-        assert_eq!(ctx, json!(NGSI_LD_CORE_CONTEXT_URL));
-        assert_eq!(spec.core_policy(), CoreContextPolicy::Only);
+        pretty_assertions::assert_eq!(ctx, json!(NGSI_LD_CORE_CONTEXT_URL));
+        pretty_assertions::assert_eq!(spec.core_policy(), CoreContextPolicy::Only);
     }
 
     #[test]
@@ -385,7 +386,7 @@ mod tests {
             "https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.6.jsonld".to_string(),
         ]);
         let links = spec.to_link_headers();
-        assert_eq!(
+        pretty_assertions::assert_eq!(
             links,
             vec![
                 "https://example.com/context.jsonld".to_string(),
@@ -401,7 +402,7 @@ mod tests {
         let doc_ctx = json!(["https://example.com/doc", "https://example.com/a"]);
         let resolved = resolve_context_value(Some(&doc_ctx), &spec).expect("context");
 
-        assert_eq!(
+        pretty_assertions::assert_eq!(
             resolved,
             json!([
                 "https://example.com/doc",
@@ -416,7 +417,7 @@ mod tests {
     fn appends_andromeda_and_core_when_no_explicit_context_exists() {
         let spec = ContextSpec::none();
         let resolved = resolve_context_value(None, &spec).expect("context");
-        assert_eq!(resolved, json!([ANDROMEDA_CORE_CONTEXT_URL, NGSI_LD_CORE_CONTEXT_URL]));
+        pretty_assertions::assert_eq!(resolved, json!([ANDROMEDA_CORE_CONTEXT_URL, NGSI_LD_CORE_CONTEXT_URL]));
     }
 
     #[test]
@@ -428,7 +429,7 @@ mod tests {
         ]);
         let resolved = resolve_context_value(Some(&doc_ctx), &spec).expect("context");
 
-        assert_eq!(
+        pretty_assertions::assert_eq!(
             resolved,
             json!(["https://example.com/compound.jsonld", ANDROMEDA_CORE_CONTEXT_URL, NGSI_LD_CORE_CONTEXT_URL])
         );
@@ -439,7 +440,7 @@ mod tests {
         let spec = ContextSpec::none().with_body_context(Some(json!("https://example.com/compound.jsonld")));
         let resolved = resolve_context_value(None, &spec).expect("context");
 
-        assert_eq!(
+        pretty_assertions::assert_eq!(
             resolved,
             json!(["https://example.com/compound.jsonld", ANDROMEDA_CORE_CONTEXT_URL, NGSI_LD_CORE_CONTEXT_URL])
         );

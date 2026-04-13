@@ -1,10 +1,10 @@
+#![allow(clippy::expect_used, clippy::unwrap_used)]
 use crate::harness::{
     client::{QueryParams, RequestHeaders},
     fixtures,
     trial::trial,
 };
 use libtest_mimic::Trial;
-use pretty_assertions::assert_eq;
 use reqwest::{Method, StatusCode};
 
 const PREFIX: &str = "provision::entity_attributes::delete";
@@ -18,7 +18,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
         ctx.client.create_entity(&entity).await;
 
         let resp = ctx.client.delete_entity_attr(&id, "speed").await;
-        assert_eq!(resp.status, StatusCode::NO_CONTENT);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::NO_CONTENT);
 
         let resp = ctx
             .client
@@ -48,7 +48,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
                 Default::default(),
             )
             .await;
-        assert_eq!(resp.status, StatusCode::NO_CONTENT);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::NO_CONTENT);
 
         let resp = ctx
             .client
@@ -73,7 +73,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
             .client
             .request(Method::DELETE, &format!("/entities/{id}/attrs/speed?deleteAll=true"), None, Default::default())
             .await;
-        assert_eq!(resp.status, StatusCode::NO_CONTENT);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::NO_CONTENT);
 
         let resp = ctx
             .client
@@ -103,7 +103,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
             .client
             .request(Method::DELETE, "/entities/not-a-valid-uri/attrs/speed", None, Default::default())
             .await;
-        assert_eq!(resp.status, StatusCode::BAD_REQUEST);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::BAD_REQUEST);
     }));
 
     // 013_02_03: Delete with missing attribute name returns 405
@@ -117,14 +117,14 @@ pub fn tests(trials: &mut Vec<Trial>) {
             .client
             .request(Method::DELETE, &format!("/entities/{id}/attrs"), None, Default::default())
             .await;
-        assert_eq!(resp.status, StatusCode::METHOD_NOT_ALLOWED);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::METHOD_NOT_ALLOWED);
     }));
 
     // 013_03_01: Delete from non-existent entity returns 404
     trials.push(trial(&format!("{PREFIX}::013_03::delete_nonexistent_entity"), |ctx| async move {
         let id = ctx.entity_id("urn:ngsi-ld:Vehicle:013_03_01");
         let resp = ctx.client.delete_entity_attr(&id, "speed").await;
-        assert_eq!(resp.status, StatusCode::NOT_FOUND);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::NOT_FOUND);
     }));
 
     // 013_03_02: Delete non-existent attribute returns 404
@@ -135,7 +135,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
         ctx.client.create_entity(&entity).await;
 
         let resp = ctx.client.delete_entity_attr(&id, "nonExistentAttr").await;
-        assert_eq!(resp.status, StatusCode::NOT_FOUND);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::NOT_FOUND);
     }));
 
     // 013_03_03: Delete with non-existent datasetId returns 404
@@ -154,7 +154,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
                 Default::default(),
             )
             .await;
-        assert_eq!(resp.status, StatusCode::NOT_FOUND);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::NOT_FOUND);
     }));
 
     // 013_04: Delete scope attribute
@@ -173,10 +173,10 @@ pub fn tests(trials: &mut Vec<Trial>) {
                     .link_context(fixtures::test_suite_context_url()),
             )
             .await;
-        assert_eq!(resp.status, StatusCode::CREATED, "create entity should return 201");
+        pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED, "create entity should return 201");
 
         let resp = ctx.client.delete_entity_attr(&id, "scope").await;
-        assert_eq!(resp.status, StatusCode::NO_CONTENT);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::NO_CONTENT);
 
         let resp = ctx
             .client
@@ -198,7 +198,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
         ctx.client.create_entity(&entity).await;
 
         let resp = ctx.client.delete_entity_attr(&id, "observationSpace").await;
-        assert_eq!(resp.status, StatusCode::NO_CONTENT);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::NO_CONTENT);
 
         let resp = ctx
             .client
@@ -220,7 +220,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
         ctx.client.create_entity(&entity).await;
 
         let resp = ctx.client.delete_entity_attr(&id, "operationSpace").await;
-        assert_eq!(resp.status, StatusCode::NO_CONTENT);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::NO_CONTENT);
 
         let resp = ctx
             .client
@@ -242,7 +242,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
         ctx.client.create_entity(&entity).await;
 
         let resp = ctx.client.delete_entity_attr(&id, "vocabProperty").await;
-        assert_eq!(resp.status, StatusCode::NO_CONTENT);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::NO_CONTENT);
 
         let resp = ctx
             .client

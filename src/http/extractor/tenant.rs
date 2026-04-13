@@ -44,6 +44,7 @@ where
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::*;
     use axum::{extract::FromRequestParts, http::Request};
 
@@ -57,7 +58,7 @@ mod tests {
         let (mut parts, _) = req.into_parts();
         let result = TenantHeader::from_request_parts(&mut parts, &()).await.expect("should succeed");
         let name = result.into_inner().expect("should have value");
-        assert_eq!(name.as_str(), "my-tenant");
+        pretty_assertions::assert_eq!(name.as_str(), "my-tenant");
     }
 
     #[tokio::test]

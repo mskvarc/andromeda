@@ -78,6 +78,7 @@ impl TenantRef {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use std::str::FromStr;
 
     use super::{TenantName, TenantRef, TenantStatus};
@@ -86,9 +87,9 @@ mod tests {
     fn tenant_name_try_from_valid() {
         let tenant = match TenantName::try_from("my-tenant".to_string()) {
             Ok(value) => value,
-            Err(err) => panic!("unexpected tenant parse error: {err}"),
+            Err(err) => unreachable!("unexpected tenant parse error: {err}"),
         };
-        assert_eq!(tenant.as_str(), "my-tenant");
+        pretty_assertions::assert_eq!(tenant.as_str(), "my-tenant");
     }
 
     #[test]
@@ -103,31 +104,31 @@ mod tests {
 
     #[test]
     fn tenant_status_display_active() {
-        assert_eq!(TenantStatus::Active.to_string(), "active");
+        pretty_assertions::assert_eq!(TenantStatus::Active.to_string(), "active");
     }
 
     #[test]
     fn tenant_status_from_str_active() {
         let parsed = match TenantStatus::from_str("active") {
             Ok(value) => value,
-            Err(err) => panic!("unexpected tenant status parse error: {err}"),
+            Err(err) => unreachable!("unexpected tenant status parse error: {err}"),
         };
-        assert_eq!(parsed, TenantStatus::Active);
+        pretty_assertions::assert_eq!(parsed, TenantStatus::Active);
     }
 
     #[test]
     fn tenant_name_from_tenant_ref_named() {
         let name = match TenantName::try_from("tenant-a".to_string()) {
             Ok(value) => value,
-            Err(err) => panic!("unexpected tenant parse error: {err}"),
+            Err(err) => unreachable!("unexpected tenant parse error: {err}"),
         };
         let tenant = TenantRef::Named(name);
         let tenant_name = tenant.tenant_name();
         let tenant_name = match tenant_name {
             Some(value) => value,
-            None => panic!("expected tenant name"),
+            None => unreachable!("expected tenant name"),
         };
-        assert_eq!(tenant_name.as_str(), "tenant-a");
+        pretty_assertions::assert_eq!(tenant_name.as_str(), "tenant-a");
     }
 
     #[test]

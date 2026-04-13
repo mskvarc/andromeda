@@ -30,6 +30,7 @@ pub fn render_registration(value: &mut Value, sys_attrs: SysAttrsInclusion) {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::*;
     use serde_json::json;
 
@@ -70,13 +71,13 @@ mod tests {
         });
         let mut value = original.clone();
         render_registration(&mut value, SysAttrsInclusion::Include);
-        assert_eq!(value, original);
+        pretty_assertions::assert_eq!(value, original);
     }
 
     #[test]
     fn render_registration_handles_non_object() {
         let mut value = json!("not an object");
         render_registration(&mut value, SysAttrsInclusion::Strip);
-        assert_eq!(value, json!("not an object"));
+        pretty_assertions::assert_eq!(value, json!("not an object"));
     }
 }

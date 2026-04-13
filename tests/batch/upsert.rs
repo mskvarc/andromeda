@@ -1,3 +1,4 @@
+#![allow(clippy::expect_used, clippy::unwrap_used)]
 use reqwest::{Method, StatusCode};
 use serial_test::serial;
 
@@ -18,10 +19,10 @@ async fn batch_upsert_new_entities_with_properties_returns_201() {
     let entities = json!([e1, e2]);
 
     let (status, body) = batch_upsert(&c, &entities, false).await;
-    assert_eq!(status, StatusCode::CREATED, "upsert of new entities should return 201");
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED, "upsert of new entities should return 201");
 
     let uris = body.as_array().expect("response should be array of URIs");
-    assert_eq!(uris.len(), 2);
+    pretty_assertions::assert_eq!(uris.len(), 2);
 }
 
 #[tokio::test]
@@ -38,7 +39,7 @@ async fn batch_upsert_new_entities_with_relationships_returns_201() {
     let entities = json!([e1, e2]);
 
     let (status, _) = batch_upsert(&c, &entities, false).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 }
 
 #[tokio::test]
@@ -55,7 +56,7 @@ async fn batch_upsert_new_entities_with_rel_of_property_returns_201() {
     let entities = json!([e1, e2]);
 
     let (status, _) = batch_upsert(&c, &entities, false).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 }
 
 #[tokio::test]
@@ -67,7 +68,7 @@ async fn batch_upsert_mixed_new_and_existing_returns_201() {
     let existing_id = unique_id("urn:ngsi-ld:Building:004_02_01_exist");
     let pre = building_simple_attributes(&existing_id);
     let (status, _, _) = create_entity(&c, &pre).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     let new_id = unique_id("urn:ngsi-ld:Building:004_02_01_new");
     let e1 = building_simple_attributes(&existing_id);
@@ -75,14 +76,14 @@ async fn batch_upsert_mixed_new_and_existing_returns_201() {
     let entities = json!([e1, e2]);
 
     let (status, _) = batch_upsert(&c, &entities, false).await;
-    assert_eq!(status, StatusCode::CREATED, "should return 201 for new entities");
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED, "should return 201 for new entities");
 
     let (status, _, body) = get_entity(&c, &existing_id, "", true).await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["name"]["value"], "Eiffel Tower");
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(body["name"]["value"], "Eiffel Tower");
 
     let (status, _, _) = get_entity(&c, &new_id, "", false).await;
-    assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
 }
 
 #[tokio::test]
@@ -94,7 +95,7 @@ async fn batch_upsert_mixed_new_and_existing_retrieval_returns_200() {
     let existing_id = unique_id("urn:ngsi-ld:Building:004_02_02_exist");
     let pre = building_minimal(&existing_id);
     let (status, _, _) = create_entity(&c, &pre).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     let new_id = unique_id("urn:ngsi-ld:Building:004_02_02_new");
     let e1 = building_simple_attributes(&existing_id);
@@ -102,16 +103,16 @@ async fn batch_upsert_mixed_new_and_existing_retrieval_returns_200() {
     let entities = json!([e1, e2]);
 
     let (status, _) = batch_upsert(&c, &entities, false).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     let (status, _, body) = get_entity(&c, &existing_id, "", true).await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["name"]["value"], "Eiffel Tower");
-    assert_eq!(body["subCategory"]["value"], "tourism");
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(body["name"]["value"], "Eiffel Tower");
+    pretty_assertions::assert_eq!(body["subCategory"]["value"], "tourism");
 
     let (status, _, body) = get_entity(&c, &new_id, "", true).await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["name"]["value"], "Eiffel Tower");
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(body["name"]["value"], "Eiffel Tower");
 }
 
 #[tokio::test]
@@ -123,7 +124,7 @@ async fn batch_upsert_mixed_with_relationships_returns_201() {
     let existing_id = unique_id("urn:ngsi-ld:Building:004_02_03_exist");
     let pre = building_minimal(&existing_id);
     let (status, _, _) = create_entity(&c, &pre).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     let new_id = unique_id("urn:ngsi-ld:Building:004_02_03_new");
     let e1 = building_relationship(&existing_id);
@@ -131,11 +132,11 @@ async fn batch_upsert_mixed_with_relationships_returns_201() {
     let entities = json!([e1, e2]);
 
     let (status, _) = batch_upsert(&c, &entities, false).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     let (status, _, body) = get_entity(&c, &existing_id, "", true).await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["locatedAt"]["type"], "Relationship");
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(body["locatedAt"]["type"], "Relationship");
 }
 
 #[tokio::test]
@@ -157,10 +158,10 @@ async fn batch_upsert_existing_replace_properties_returns_204() {
     let entities = json!([e1, e2]);
 
     let (status, _) = batch_upsert(&c, &entities, false).await;
-    assert_eq!(status, StatusCode::NO_CONTENT, "upsert of all existing should return 204");
+    pretty_assertions::assert_eq!(status, StatusCode::NO_CONTENT, "upsert of all existing should return 204");
 
     let (status, _, body) = get_entity(&c, &id1, "", true).await;
-    assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
     assert!(body.get("name").is_none(), "old attribute should be gone after replace");
     assert!(body.get("subCategory").is_none(), "old attribute should be gone after replace");
 }
@@ -179,11 +180,11 @@ async fn batch_upsert_existing_replace_relationships_returns_204() {
     let entities = json!([e1]);
 
     let (status, _) = batch_upsert(&c, &entities, false).await;
-    assert_eq!(status, StatusCode::NO_CONTENT);
+    pretty_assertions::assert_eq!(status, StatusCode::NO_CONTENT);
 
     let (status, _, body) = get_entity(&c, &id, "", true).await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["airQualityLevel"]["hasWeatherObserved"]["type"], "Relationship");
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(body["airQualityLevel"]["hasWeatherObserved"]["type"], "Relationship");
 }
 
 #[tokio::test]
@@ -200,11 +201,11 @@ async fn batch_upsert_existing_replace_rel_of_property_returns_204() {
     let entities = json!([e1]);
 
     let (status, _) = batch_upsert(&c, &entities, false).await;
-    assert_eq!(status, StatusCode::NO_CONTENT);
+    pretty_assertions::assert_eq!(status, StatusCode::NO_CONTENT);
 
     let (status, _, body) = get_entity(&c, &id, "", true).await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["name"]["value"], "Eiffel Tower");
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(body["name"]["value"], "Eiffel Tower");
 }
 
 #[tokio::test]
@@ -221,10 +222,10 @@ async fn batch_upsert_existing_replace_scope_returns_204() {
     let entities = json!([e1]);
 
     let (status, _) = batch_upsert(&c, &entities, false).await;
-    assert_eq!(status, StatusCode::NO_CONTENT);
+    pretty_assertions::assert_eq!(status, StatusCode::NO_CONTENT);
 
     let (status, _, body) = get_entity(&c, &id, "", true).await;
-    assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
     assert!(body.get("scope").is_none(), "scope should be gone after replace");
 }
 
@@ -242,7 +243,7 @@ async fn batch_upsert_existing_replace_types_returns_204() {
     let entities = json!([e1]);
 
     let (status, _) = batch_upsert(&c, &entities, false).await;
-    assert_eq!(status, StatusCode::NO_CONTENT);
+    pretty_assertions::assert_eq!(status, StatusCode::NO_CONTENT);
 }
 
 #[tokio::test]
@@ -261,12 +262,12 @@ async fn batch_upsert_with_update_option_returns_201() {
     let entities = json!([e1, e2]);
 
     let (status, _) = batch_upsert(&c, &entities, true).await;
-    assert_eq!(status, StatusCode::CREATED, "should return 201 for new entity");
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED, "should return 201 for new entity");
 
     let (status, _, body) = get_entity(&c, &existing_id, "", true).await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["subCategory"]["value"], "tourism", "subCategory should be preserved (merge, not replace)");
-    assert_eq!(body["locatedAt"]["object"], "urn:ngsi-ld:City:Paris");
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(body["subCategory"]["value"], "tourism", "subCategory should be preserved (merge, not replace)");
+    pretty_assertions::assert_eq!(body["locatedAt"]["object"], "urn:ngsi-ld:City:Paris");
 }
 
 #[tokio::test]
@@ -283,11 +284,11 @@ async fn batch_upsert_with_update_option_retrieval_returns_204() {
     let entities = json!([e1]);
 
     let (status, _) = batch_upsert(&c, &entities, true).await;
-    assert_eq!(status, StatusCode::NO_CONTENT);
+    pretty_assertions::assert_eq!(status, StatusCode::NO_CONTENT);
 
     let (status, _, body) = get_entity(&c, &existing_id, "", true).await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["airQualityLevel"]["hasWeatherObserved"]["type"], "Relationship");
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(body["airQualityLevel"]["hasWeatherObserved"]["type"], "Relationship");
 }
 
 #[tokio::test]
@@ -304,12 +305,12 @@ async fn batch_upsert_with_update_option_preserves_scope_returns_204() {
     let entities = json!([e1]);
 
     let (status, _) = batch_upsert(&c, &entities, true).await;
-    assert_eq!(status, StatusCode::NO_CONTENT);
+    pretty_assertions::assert_eq!(status, StatusCode::NO_CONTENT);
 
     let (status, _, body) = get_entity(&c, &id, "", true).await;
-    assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
     assert!(body.get("scope").is_some(), "scope should be preserved after merge");
-    assert_eq!(body["name"]["value"], "Eiffel Tower");
+    pretty_assertions::assert_eq!(body["name"]["value"], "Eiffel Tower");
 }
 
 #[tokio::test]
@@ -331,12 +332,12 @@ async fn batch_upsert_with_invalid_entity_returns_207() {
     ]);
 
     let (status, body) = batch_upsert(&c, &entities, false).await;
-    assert_eq!(status, StatusCode::MULTI_STATUS);
+    pretty_assertions::assert_eq!(status, StatusCode::MULTI_STATUS);
 
     let success = body["success"].as_array().expect("should have success");
     let errors = body["errors"].as_array().expect("should have errors");
-    assert_eq!(success.len(), 2);
-    assert_eq!(errors.len(), 1);
+    pretty_assertions::assert_eq!(success.len(), 2);
+    pretty_assertions::assert_eq!(errors.len(), 1);
 }
 
 #[tokio::test]
@@ -351,14 +352,14 @@ async fn batch_upsert_invalid_json_returns_400() {
         false,
     )
     .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
+    pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
 }
 
 #[tokio::test]
 async fn batch_upsert_empty_json_returns_400() {
     let c = client();
     let (status, _) = request_raw(&c, Method::POST, "/entityOperations/upsert", b"[]", Some("application/ld+json"), false).await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
+    pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
 }
 
 #[tokio::test]
@@ -376,7 +377,7 @@ async fn batch_upsert_duplicate_ids_returns_201() {
     let entities = json!([e1, e2, e3]);
 
     let (status, body) = batch_upsert(&c, &entities, false).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     let uris = body.as_array().expect("should be array of URIs");
     assert!(uris.len() <= 2, "should deduplicate IDs");
@@ -396,5 +397,5 @@ async fn batch_upsert_with_new_types_returns_204() {
     let entities = json!([e1]);
 
     let (status, _) = batch_upsert(&c, &entities, false).await;
-    assert_eq!(status, StatusCode::NO_CONTENT);
+    pretty_assertions::assert_eq!(status, StatusCode::NO_CONTENT);
 }

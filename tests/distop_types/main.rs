@@ -139,8 +139,7 @@ impl MockServer {
         let s = self.state.read().await;
         s.stubs
             .get(&(method.to_string(), path.to_string()))
-            .map(|e| e.count.load(Ordering::Relaxed))
-            .unwrap_or(0)
+            .map_or(0, |e| e.count.load(Ordering::Relaxed))
     }
 
     fn url(&self, path: &str) -> String {
@@ -283,7 +282,7 @@ async fn distop_types_local_skips_forwarding() {
     let reg_id = unique_id("urn:ngsi-ld:Registration:types-local-skip");
 
     let reg = vehicle_registration(&reg_id, &mock.url(""));
-    assert_eq!(create_registration(&c, &reg).await, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(create_registration(&c, &reg).await, StatusCode::CREATED);
 
     let mock_types = json!({
         "id": "urn:ngsi-ld:EntityTypeList:mock",
@@ -293,9 +292,9 @@ async fn distop_types_local_skips_forwarding() {
     mock.set_stub_with_body(Method::GET, "/ngsi-ld/v1/types", 200, &mock_types).await;
 
     let (status, _, _) = list_types(&c, "local=true").await;
-    assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
 
-    assert_eq!(
+    pretty_assertions::assert_eq!(
         mock.get_count(Method::GET, "/ngsi-ld/v1/types").await,
         0,
         "CSR should not be called when local=true"
@@ -318,10 +317,10 @@ async fn distop_types_merges_remote_types() {
 
     // Create a local entity so "Vehicle" type exists locally
     let entity = vehicle_entity(&entity_id);
-    assert_eq!(create_entity_local(&c, &entity).await, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(create_entity_local(&c, &entity).await, StatusCode::CREATED);
 
     let reg = vehicle_registration(&reg_id, &mock.url(""));
-    assert_eq!(create_registration(&c, &reg).await, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(create_registration(&c, &reg).await, StatusCode::CREATED);
 
     // Remote returns a type not present locally
     let mock_types = json!({
@@ -332,7 +331,7 @@ async fn distop_types_merges_remote_types() {
     mock.set_stub_with_body(Method::GET, "/ngsi-ld/v1/types", 200, &mock_types).await;
 
     let (status, _, body) = list_types(&c, "").await;
-    assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
 
     assert!(
         mock.get_count(Method::GET, "/ngsi-ld/v1/types").await > 0,
@@ -360,10 +359,10 @@ async fn distop_types_deduplicates_type_list() {
     let reg_id = unique_id("urn:ngsi-ld:Registration:types-dedup");
 
     let entity = vehicle_entity(&entity_id);
-    assert_eq!(create_entity_local(&c, &entity).await, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(create_entity_local(&c, &entity).await, StatusCode::CREATED);
 
     let reg = vehicle_registration(&reg_id, &mock.url(""));
-    assert_eq!(create_registration(&c, &reg).await, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(create_registration(&c, &reg).await, StatusCode::CREATED);
 
     // Remote also returns Vehicle (already exists locally)
     let mock_types = json!({
@@ -374,11 +373,11 @@ async fn distop_types_deduplicates_type_list() {
     mock.set_stub_with_body(Method::GET, "/ngsi-ld/v1/types", 200, &mock_types).await;
 
     let (status, _, body) = list_types(&c, "").await;
-    assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
 
     let type_list = body.get("typeList").and_then(|v| v.as_array()).expect("typeList should be present");
     let vehicle_count = type_list.iter().filter(|v| v.as_str() == Some("Vehicle")).count();
-    assert_eq!(vehicle_count, 1, "Vehicle should appear exactly once after deduplication; got: {type_list:?}");
+    pretty_assertions::assert_eq!(vehicle_count, 1, "Vehicle should appear exactly once after deduplication; got: {type_list:?}");
 
     delete_entity(&c, &entity_id).await;
     delete_registration(&c, &reg_id).await;
@@ -397,10 +396,10 @@ async fn distop_types_details_merges_remote_type_objects() {
     let reg_id = unique_id("urn:ngsi-ld:Registration:types-details");
 
     let entity = vehicle_entity(&entity_id);
-    assert_eq!(create_entity_local(&c, &entity).await, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(create_entity_local(&c, &entity).await, StatusCode::CREATED);
 
     let reg = vehicle_registration(&reg_id, &mock.url(""));
-    assert_eq!(create_registration(&c, &reg).await, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(create_registration(&c, &reg).await, StatusCode::CREATED);
 
     // Remote returns a detailed type not present locally
     let mock_details = json!([
@@ -414,7 +413,7 @@ async fn distop_types_details_merges_remote_type_objects() {
     mock.set_stub_with_body(Method::GET, "/ngsi-ld/v1/types", 200, &mock_details).await;
 
     let (status, _, body) = list_types(&c, "details=true").await;
-    assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
 
     let arr = body.as_array().expect("details=true response should be a JSON array");
     let drone = arr.iter().find(|v| v.get("id").and_then(|id| id.as_str()) == Some("Drone"));
@@ -436,12 +435,12 @@ async fn distop_types_warning_on_csr_error_response() {
     let reg_id = unique_id("urn:ngsi-ld:Registration:types-warn-err");
 
     let reg = vehicle_registration(&reg_id, &mock.url(""));
-    assert_eq!(create_registration(&c, &reg).await, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(create_registration(&c, &reg).await, StatusCode::CREATED);
 
     mock.set_stub(Method::GET, "/ngsi-ld/v1/types", 500).await;
 
     let (status, headers, _) = list_types(&c, "").await;
-    assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
 
     let warnings = warning_header_values(&headers);
     assert!(!warnings.is_empty(), "expected NGSILD-Warning header when CSR returns 500");
@@ -466,13 +465,13 @@ async fn distop_types_warning_on_csr_unreachable() {
     let endpoint = mock.url("");
 
     let reg = vehicle_registration(&reg_id, &endpoint);
-    assert_eq!(create_registration(&c, &reg).await, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(create_registration(&c, &reg).await, StatusCode::CREATED);
 
     // Stop mock before querying to simulate unreachable CSR
     mock.stop();
 
     let (status, headers, _) = list_types(&c, "").await;
-    assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
 
     let warnings = warning_header_values(&headers);
     assert!(!warnings.is_empty(), "expected NGSILD-Warning header when CSR is unreachable");
@@ -496,10 +495,10 @@ async fn distop_types_type_info_merges_remote_attributes() {
     let reg_id = unique_id("urn:ngsi-ld:Registration:types-info-merge");
 
     let entity = vehicle_entity(&entity_id);
-    assert_eq!(create_entity_local(&c, &entity).await, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(create_entity_local(&c, &entity).await, StatusCode::CREATED);
 
     let reg = vehicle_registration(&reg_id, &mock.url(""));
-    assert_eq!(create_registration(&c, &reg).await, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(create_registration(&c, &reg).await, StatusCode::CREATED);
 
     // Remote returns type info with extra attributes
     let mock_type_info = json!({
@@ -512,7 +511,7 @@ async fn distop_types_type_info_merges_remote_attributes() {
     mock.set_stub_with_body(Method::GET, "/ngsi-ld/v1/types/Vehicle", 200, &mock_type_info).await;
 
     let (status, _, _) = get_type(&c, "Vehicle", "").await;
-    assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
 
     delete_entity(&c, &entity_id).await;
     delete_registration(&c, &reg_id).await;

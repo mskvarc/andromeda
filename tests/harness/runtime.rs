@@ -1,3 +1,4 @@
+#![allow(clippy::expect_used, clippy::unwrap_used)]
 use std::sync::OnceLock;
 
 static RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();

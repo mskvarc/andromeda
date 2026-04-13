@@ -1,3 +1,4 @@
+#![allow(clippy::expect_used, clippy::unwrap_used)]
 use std::time::Duration;
 
 use reqwest::StatusCode;
@@ -27,14 +28,14 @@ async fn setup_join_case(http_client: &reqwest::Client, case_id: &str, receiver:
 
     let entity_id = unique_entity_id(&format!("urn:ngsi-ld:Building:{case_id}"));
     let (status, _, _) = create_entity(http_client, &building_relationship_entity(&entity_id)).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     let subscription_id = unique_subscription_id(case_id);
     let mut subscription = with_join(subscription_with_endpoint(&subscription_id, &receiver.endpoint_url()), join_mode, 1);
     set_endpoint_uri(&mut subscription, &receiver.endpoint_url());
 
     let (status, _, _) = create_subscription(http_client, &subscription).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     receiver.clear_notifications().await;
 
@@ -52,7 +53,7 @@ async fn notification_join_flat_includes_joined_entities_as_separate_data_entrie
     let _ = append_entity_attrs(&http_client, &entity_id, &fragment_name()).await;
 
     let notification = receiver.wait_for_subscription_notification(&subscription_id, Duration::from_secs(5)).await;
-    assert_eq!(notification.body["subscriptionId"], subscription_id);
+    pretty_assertions::assert_eq!(notification.body["subscriptionId"], subscription_id);
     assert!(!notification.body["data"].as_array().expect("array").is_empty());
 }
 
@@ -67,7 +68,7 @@ async fn notification_join_flat_with_sys_attrs_includes_system_attributes() {
     let _ = append_entity_attrs(&http_client, &entity_id, &fragment_name()).await;
 
     let notification = receiver.wait_for_subscription_notification(&subscription_id, Duration::from_secs(5)).await;
-    assert_eq!(notification.body["subscriptionId"], subscription_id);
+    pretty_assertions::assert_eq!(notification.body["subscriptionId"], subscription_id);
     assert!(
         notification.body["data"]
             .as_array()
@@ -104,7 +105,7 @@ async fn notification_join_flat_with_simplified_format_still_includes_joined_ent
     let _ = append_entity_attrs(&http_client, &entity_id, &fragment_name()).await;
 
     let notification = receiver.wait_for_subscription_notification(&subscription_id, Duration::from_secs(5)).await;
-    assert_eq!(notification.body["subscriptionId"], subscription_id);
+    pretty_assertions::assert_eq!(notification.body["subscriptionId"], subscription_id);
     assert!(!notification.body["data"].as_array().expect("array").is_empty());
 }
 
@@ -134,7 +135,7 @@ async fn notification_join_flat_with_selected_attributes_delivers_notification()
     let _ = append_entity_attrs(&http_client, &entity_id, &fragment_name()).await;
 
     let notification = receiver.wait_for_subscription_notification(&subscription_id, Duration::from_secs(5)).await;
-    assert_eq!(notification.body["subscriptionId"], subscription_id);
+    pretty_assertions::assert_eq!(notification.body["subscriptionId"], subscription_id);
 }
 
 #[serial_test::serial]
@@ -148,7 +149,7 @@ async fn notification_join_inline_embeds_related_entity_information() {
     let _ = append_entity_attrs(&http_client, &entity_id, &fragment_name()).await;
 
     let notification = receiver.wait_for_subscription_notification(&subscription_id, Duration::from_secs(5)).await;
-    assert_eq!(notification.body["subscriptionId"], subscription_id);
+    pretty_assertions::assert_eq!(notification.body["subscriptionId"], subscription_id);
     assert!(
         notification.body["data"]
             .as_array()
@@ -184,7 +185,7 @@ async fn notification_join_inline_with_sys_attrs_includes_system_attributes() {
     let _ = append_entity_attrs(&http_client, &entity_id, &fragment_name()).await;
 
     let notification = receiver.wait_for_subscription_notification(&subscription_id, Duration::from_secs(5)).await;
-    assert_eq!(notification.body["subscriptionId"], subscription_id);
+    pretty_assertions::assert_eq!(notification.body["subscriptionId"], subscription_id);
     assert!(notification.body["data"][0].get("createdAt").is_some());
 }
 
@@ -214,7 +215,7 @@ async fn notification_join_inline_with_simplified_format_delivers_notification()
     let _ = append_entity_attrs(&http_client, &entity_id, &fragment_name()).await;
 
     let notification = receiver.wait_for_subscription_notification(&subscription_id, Duration::from_secs(5)).await;
-    assert_eq!(notification.body["subscriptionId"], subscription_id);
+    pretty_assertions::assert_eq!(notification.body["subscriptionId"], subscription_id);
 }
 
 #[serial_test::serial]
@@ -243,5 +244,5 @@ async fn notification_join_inline_with_selected_attributes_delivers_notification
     let _ = append_entity_attrs(&http_client, &entity_id, &fragment_name()).await;
 
     let notification = receiver.wait_for_subscription_notification(&subscription_id, Duration::from_secs(5)).await;
-    assert_eq!(notification.body["subscriptionId"], subscription_id);
+    pretty_assertions::assert_eq!(notification.body["subscriptionId"], subscription_id);
 }

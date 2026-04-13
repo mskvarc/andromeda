@@ -260,6 +260,7 @@ impl Default for MultitenancyConfig {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use confique::Layer;
     use serial_test::serial;
 
@@ -303,7 +304,7 @@ mod tests {
             .as_ref()
             .and_then(|m| m.get("https://example.com/context.jsonld"))
             .expect("preload path missing");
-        assert_eq!(path, "/tmp/andromeda/config/contexts/test.jsonld");
+        pretty_assertions::assert_eq!(path, "/tmp/andromeda/config/contexts/test.jsonld");
     }
 
     #[test]
@@ -316,7 +317,7 @@ mod tests {
             .as_ref()
             .and_then(|m| m.get("https://example.com/context.jsonld"))
             .expect("preload path missing");
-        assert_eq!(path, "/opt/contexts/test.jsonld");
+        pretty_assertions::assert_eq!(path, "/opt/contexts/test.jsonld");
     }
 
     #[test]
@@ -325,7 +326,7 @@ mod tests {
         unsafe { std::env::set_var("ANDROMEDA_HOST", "192.168.1.1") };
         let config = Configuration::builder().env().load().expect("config should load");
         unsafe { std::env::remove_var("ANDROMEDA_HOST") };
-        assert_eq!(config.andromeda.host, IpAddr::from([192, 168, 1, 1]));
+        pretty_assertions::assert_eq!(config.andromeda.host, IpAddr::from([192, 168, 1, 1]));
     }
 
     #[test]
@@ -334,7 +335,7 @@ mod tests {
         unsafe { std::env::set_var("ANDROMEDA_PORT", "9999") };
         let config = Configuration::builder().env().load().expect("config should load");
         unsafe { std::env::remove_var("ANDROMEDA_PORT") };
-        assert_eq!(config.andromeda.port, 9999);
+        pretty_assertions::assert_eq!(config.andromeda.port, 9999);
     }
 
     #[test]
@@ -343,7 +344,7 @@ mod tests {
         unsafe { std::env::set_var("ANDROMEDA_DATABASE_URL", "postgres://envhost/envdb") };
         let config = Configuration::builder().env().load().expect("config should load");
         unsafe { std::env::remove_var("ANDROMEDA_DATABASE_URL") };
-        assert_eq!(config.database.url, "postgres://envhost/envdb");
+        pretty_assertions::assert_eq!(config.database.url, "postgres://envhost/envdb");
     }
 
     #[test]
@@ -352,7 +353,7 @@ mod tests {
         unsafe { std::env::set_var("ANDROMEDA_DATABASE_MAX_CONNECTIONS", "20") };
         let config = Configuration::builder().env().load().expect("config should load");
         unsafe { std::env::remove_var("ANDROMEDA_DATABASE_MAX_CONNECTIONS") };
-        assert_eq!(config.database.max_connections, 20);
+        pretty_assertions::assert_eq!(config.database.max_connections, 20);
     }
 
     #[test]
@@ -370,7 +371,7 @@ mod tests {
         unsafe { std::env::set_var("ANDROMEDA_MULTITENANCY_TENANT_DB_PREFIX", "custom_prefix") };
         let config = Configuration::builder().env().load().expect("config should load");
         unsafe { std::env::remove_var("ANDROMEDA_MULTITENANCY_TENANT_DB_PREFIX") };
-        assert_eq!(config.multitenancy.tenant_db_prefix, "custom_prefix");
+        pretty_assertions::assert_eq!(config.multitenancy.tenant_db_prefix, "custom_prefix");
     }
 
     #[test]
@@ -379,7 +380,7 @@ mod tests {
         unsafe { std::env::set_var("ANDROMEDA_JSONLD_CACHE_CAPACITY", "9999") };
         let config = Configuration::builder().env().load().expect("config should load");
         unsafe { std::env::remove_var("ANDROMEDA_JSONLD_CACHE_CAPACITY") };
-        assert_eq!(config.jsonld.cache_capacity, 1024);
+        pretty_assertions::assert_eq!(config.jsonld.cache_capacity, 1024);
     }
 
     #[test]
@@ -393,6 +394,6 @@ mod tests {
         let config = Configuration::builder().preloaded(layer).env().load().expect("config should load");
 
         unsafe { std::env::remove_var("ANDROMEDA_PORT") };
-        assert_eq!(config.andromeda.port, 7777);
+        pretty_assertions::assert_eq!(config.andromeda.port, 7777);
     }
 }

@@ -57,6 +57,7 @@ pub mod rfc3339_option {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use chrono::{TimeZone, Utc};
     use serde::{Deserialize, Serialize};
 
@@ -79,7 +80,7 @@ mod tests {
         let json = serde_json::to_string(&val).unwrap();
         assert!(json.contains("2024-06-15"));
         let parsed: TestRequired = serde_json::from_str(&json).unwrap();
-        assert_eq!(parsed.ts, dt);
+        pretty_assertions::assert_eq!(parsed.ts, dt);
     }
 
     #[test]
@@ -88,7 +89,7 @@ mod tests {
         let val = TestOptional { ts: Some(dt) };
         let json = serde_json::to_string(&val).unwrap();
         let parsed: TestOptional = serde_json::from_str(&json).unwrap();
-        assert_eq!(parsed.ts, Some(dt));
+        pretty_assertions::assert_eq!(parsed.ts, Some(dt));
     }
 
     #[test]
@@ -97,6 +98,6 @@ mod tests {
         let json = serde_json::to_string(&val).unwrap();
         assert!(!json.contains("ts"));
         let parsed: TestOptional = serde_json::from_str(&json).unwrap();
-        assert_eq!(parsed.ts, None);
+        pretty_assertions::assert_eq!(parsed.ts, None);
     }
 }

@@ -1,3 +1,4 @@
+#![allow(clippy::expect_used, clippy::unwrap_used)]
 use crate::harness::{
     client::{QueryParams, RequestHeaders},
     fixtures,
@@ -5,7 +6,6 @@ use crate::harness::{
     trial::trial,
 };
 use libtest_mimic::Trial;
-use pretty_assertions::assert_eq;
 use reqwest::{Method, StatusCode};
 
 use super::super::entities::prepare_registration;
@@ -29,12 +29,12 @@ pub fn tests(trials: &mut Vec<Trial>) {
             // Create entity with two datasetId speed attributes
             let entity = fixtures::load_fixture(VEHICLE_DELETE_FIXTURE, &entity_id);
             let resp = ctx.client.create_entity(&entity).await;
-            assert_eq!(resp.status, StatusCode::CREATED);
+            pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
 
             // Create inclusive registration
             let reg = prepare_registration(REG_REDIRECTION_OPS, &reg_id, &entity_id, &mock.url(""), Some("inclusive"));
             let resp = ctx.client.create_registration(&reg).await;
-            assert_eq!(resp.status, StatusCode::CREATED);
+            pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
             ctx.track_registration(&reg_id);
 
             // Set stub for forwarded delete
@@ -43,7 +43,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
 
             // Delete attribute (default instance, no deleteAll)
             let resp = ctx.client.delete_entity_attr(&entity_id, "speed").await;
-            assert_eq!(resp.status, StatusCode::NO_CONTENT);
+            pretty_assertions::assert_eq!(resp.status, StatusCode::NO_CONTENT);
 
             // Verify local entity still contains speed (only default instance deleted)
             let resp = ctx
@@ -76,12 +76,12 @@ pub fn tests(trials: &mut Vec<Trial>) {
                 .client
                 .request(Method::POST, "/entities?local=true", Some(&entity), RequestHeaders::new())
                 .await;
-            assert_eq!(resp.status, StatusCode::CREATED);
+            pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
 
             // Create exclusive registration
             let reg = prepare_registration(REG_SPEED_REDIRECTION_OPS, &reg_id, &entity_id, &mock.url("/broker1"), Some("exclusive"));
             let resp = ctx.client.create_registration(&reg).await;
-            assert_eq!(resp.status, StatusCode::CREATED);
+            pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
             ctx.track_registration(&reg_id);
 
             // Set stub for forwarded delete
@@ -90,7 +90,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
 
             // Delete attribute
             let resp = ctx.client.delete_entity_attr(&entity_id, "speed").await;
-            assert_eq!(resp.status, StatusCode::NO_CONTENT);
+            pretty_assertions::assert_eq!(resp.status, StatusCode::NO_CONTENT);
 
             // Verify forwarding happened
             assert!(mock.get_count(Method::DELETE, &stub_path).await > 0);
@@ -111,17 +111,17 @@ pub fn tests(trials: &mut Vec<Trial>) {
             // Create entity
             let entity = fixtures::load_fixture(VEHICLE_DELETE_FIXTURE, &entity_id);
             let resp = ctx.client.create_entity(&entity).await;
-            assert_eq!(resp.status, StatusCode::CREATED);
+            pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
 
             // Create two redirect registrations
             let reg1 = prepare_registration(REG_REDIRECTION_OPS, &reg_id1, &entity_id, &mock.url("/broker1"), Some("redirect"));
             let resp = ctx.client.create_registration(&reg1).await;
-            assert_eq!(resp.status, StatusCode::CREATED);
+            pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
             ctx.track_registration(&reg_id1);
 
             let reg2 = prepare_registration(REG_REDIRECTION_OPS, &reg_id2, &entity_id, &mock.url("/broker2"), Some("redirect"));
             let resp = ctx.client.create_registration(&reg2).await;
-            assert_eq!(resp.status, StatusCode::CREATED);
+            pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
             ctx.track_registration(&reg_id2);
 
             // Set stubs for both brokers
@@ -132,7 +132,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
 
             // Delete attribute
             let resp = ctx.client.delete_entity_attr(&entity_id, "speed").await;
-            assert_eq!(resp.status, StatusCode::NO_CONTENT);
+            pretty_assertions::assert_eq!(resp.status, StatusCode::NO_CONTENT);
 
             // Verify both stubs called
             assert!(mock.get_count(Method::DELETE, &stub_path1).await > 0);
@@ -153,12 +153,12 @@ pub fn tests(trials: &mut Vec<Trial>) {
             // Create entity with two datasetId speed attributes
             let entity = fixtures::load_fixture(VEHICLE_DELETE_FIXTURE, &entity_id);
             let resp = ctx.client.create_entity(&entity).await;
-            assert_eq!(resp.status, StatusCode::CREATED);
+            pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
 
             // Create inclusive registration
             let reg = prepare_registration(REG_REDIRECTION_OPS, &reg_id, &entity_id, &mock.url(""), Some("inclusive"));
             let resp = ctx.client.create_registration(&reg).await;
-            assert_eq!(resp.status, StatusCode::CREATED);
+            pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
             ctx.track_registration(&reg_id);
 
             // Set stub for forwarded delete
@@ -170,7 +170,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
                 .client
                 .delete_entity_attr_with_params(&entity_id, "speed", &QueryParams::new().delete_all(true))
                 .await;
-            assert_eq!(resp.status, StatusCode::NO_CONTENT);
+            pretty_assertions::assert_eq!(resp.status, StatusCode::NO_CONTENT);
 
             // Verify local entity does NOT contain speed (all instances deleted)
             let resp = ctx
@@ -203,12 +203,12 @@ pub fn tests(trials: &mut Vec<Trial>) {
                 .client
                 .request(Method::POST, "/entities?local=true", Some(&entity), RequestHeaders::new())
                 .await;
-            assert_eq!(resp.status, StatusCode::CREATED);
+            pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
 
             // Create exclusive registration
             let reg = prepare_registration(REG_SPEED_REDIRECTION_OPS, &reg_id, &entity_id, &mock.url("/broker1"), Some("exclusive"));
             let resp = ctx.client.create_registration(&reg).await;
-            assert_eq!(resp.status, StatusCode::CREATED);
+            pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
             ctx.track_registration(&reg_id);
 
             // Set stub for forwarded delete
@@ -220,7 +220,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
                 .client
                 .delete_entity_attr_with_params(&entity_id, "speed", &QueryParams::new().delete_all(true))
                 .await;
-            assert_eq!(resp.status, StatusCode::NO_CONTENT);
+            pretty_assertions::assert_eq!(resp.status, StatusCode::NO_CONTENT);
 
             // Verify forwarding happened
             assert!(mock.get_count(Method::DELETE, &stub_path).await > 0);
@@ -241,17 +241,17 @@ pub fn tests(trials: &mut Vec<Trial>) {
             // Create entity
             let entity = fixtures::load_fixture(VEHICLE_DELETE_FIXTURE, &entity_id);
             let resp = ctx.client.create_entity(&entity).await;
-            assert_eq!(resp.status, StatusCode::CREATED);
+            pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
 
             // Create two redirect registrations
             let reg1 = prepare_registration(REG_REDIRECTION_OPS, &reg_id1, &entity_id, &mock.url("/broker1"), Some("redirect"));
             let resp = ctx.client.create_registration(&reg1).await;
-            assert_eq!(resp.status, StatusCode::CREATED);
+            pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
             ctx.track_registration(&reg_id1);
 
             let reg2 = prepare_registration(REG_REDIRECTION_OPS, &reg_id2, &entity_id, &mock.url("/broker2"), Some("redirect"));
             let resp = ctx.client.create_registration(&reg2).await;
-            assert_eq!(resp.status, StatusCode::CREATED);
+            pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
             ctx.track_registration(&reg_id2);
 
             // Set stubs for both brokers
@@ -265,7 +265,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
                 .client
                 .delete_entity_attr_with_params(&entity_id, "speed", &QueryParams::new().delete_all(true))
                 .await;
-            assert_eq!(resp.status, StatusCode::NO_CONTENT);
+            pretty_assertions::assert_eq!(resp.status, StatusCode::NO_CONTENT);
 
             // Verify both stubs called
             assert!(mock.get_count(Method::DELETE, &stub_path1).await > 0);

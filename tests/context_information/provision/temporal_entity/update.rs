@@ -1,10 +1,10 @@
+#![allow(clippy::expect_used, clippy::unwrap_used)]
 use crate::harness::{
     client::{QueryParams, RequestHeaders},
     fixtures,
     trial::trial,
 };
 use libtest_mimic::Trial;
-use pretty_assertions::assert_eq;
 use reqwest::StatusCode;
 
 const PREFIX: &str = "provision::temporal::update";
@@ -23,7 +23,7 @@ fn normalize(val: &mut serde_json::Value) {
             for v in arr.iter_mut() {
                 normalize(v);
             }
-            arr.sort_by(|a, b| a.to_string().cmp(&b.to_string()));
+            arr.sort_by_key(|a| a.to_string());
         }
         _ => {}
     }
@@ -42,24 +42,24 @@ pub fn tests(trials: &mut Vec<Trial>) {
             // Setup: create the initial temporal entity
             let entity = fixtures::load_fixture("temporal_entities/vehicle-create-temporal-representation.jsonld", &id);
             let resp = ctx.client.create_temporal_entity(&entity).await;
-            assert_eq!(resp.status, StatusCode::CREATED);
+            pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
 
             // Update: POST the update payload to the same endpoint
             let update_body = fixtures::load_fixture("temporal_entities/vehicle-temporal-representation-update.jsonld", &id);
             let resp = ctx.client.create_temporal_entity(&update_body).await;
-            assert_eq!(resp.status, StatusCode::NO_CONTENT, "update should return 204");
+            pretty_assertions::assert_eq!(resp.status, StatusCode::NO_CONTENT, "update should return 204");
             assert!(resp.body_bytes().is_empty(), "response body should be empty");
 
             // Verify: retrieve and compare against expectation
             let headers = RequestHeaders::new().accept_ld_json().link_context(fixtures::test_suite_context_url());
             let resp = ctx.client.get_temporal_entity(&id, &QueryParams::new(), headers).await;
-            assert_eq!(resp.status, StatusCode::OK);
+            pretty_assertions::assert_eq!(resp.status, StatusCode::OK);
 
             let mut actual: serde_json::Value = resp.json();
             let mut expected = fixtures::load_fixture("temporal_entities/expectations/vehicle-temporal-representation-update.jsonld", &id);
             normalize(&mut actual);
             normalize(&mut expected);
-            assert_eq!(expected, actual);
+            pretty_assertions::assert_eq!(expected, actual);
         },
     ));
 }

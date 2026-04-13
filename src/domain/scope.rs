@@ -13,6 +13,7 @@ pub struct Scope(str);
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::{Scope, ScopeBuf};
 
     #[test]
@@ -58,7 +59,7 @@ mod tests {
     #[test]
     fn valid_as_str_roundtrip() {
         let scope = Scope::new("/A/B").expect("valid scope");
-        assert_eq!(scope.as_str(), "/A/B");
+        pretty_assertions::assert_eq!(scope.as_str(), "/A/B");
     }
 
     #[test]
@@ -110,7 +111,7 @@ mod tests {
     fn serde_deserialize_valid() {
         let result: Result<ScopeBuf, _> = serde_json::from_str("\"/Madrid/Gardens\"");
         let scope = result.expect("valid scope deserializes");
-        assert_eq!(scope.as_str(), "/Madrid/Gardens");
+        pretty_assertions::assert_eq!(scope.as_str(), "/Madrid/Gardens");
     }
 
     #[test]
@@ -123,6 +124,6 @@ mod tests {
     fn serde_serialize() {
         let scope = ScopeBuf::new("/Madrid".to_string()).expect("valid scope");
         let json = serde_json::to_string(&scope).expect("serializes");
-        assert_eq!(json, "\"/Madrid\"");
+        pretty_assertions::assert_eq!(json, "\"/Madrid\"");
     }
 }

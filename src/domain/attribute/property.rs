@@ -51,6 +51,7 @@ impl Default for Property {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use crate::{
         domain::attribute::Attribute,
         jsonld::{JsonLdExpandable, vocab},
@@ -67,10 +68,10 @@ mod tests {
         });
         let attr: Attribute = serde_json::from_value(json).expect("property");
         let Attribute::Property(property) = attr else {
-            panic!("expected Property");
+            unreachable!("expected Property");
         };
         assert!(matches!(property.value, crate::domain::attribute::common::NgsiLdValue::DateTime(_)));
-        assert_eq!(property.value_type.as_deref(), Some("DateTime"));
+        pretty_assertions::assert_eq!(property.value_type.as_deref(), Some("DateTime"));
         assert!(property.previous_value.is_some());
         assert!(property.common.system.instance_id.is_some());
     }
@@ -86,9 +87,9 @@ mod tests {
         });
         let attr: Attribute = serde_json::from_value(json).expect("property");
         let Attribute::Property(property) = attr else {
-            panic!("expected Property");
+            unreachable!("expected Property");
         };
-        assert_eq!(property.value_type.as_deref(), Some("Integer"));
+        pretty_assertions::assert_eq!(property.value_type.as_deref(), Some("Integer"));
         let expanded = property.to_expanded();
         let obj = expanded.as_object().expect("object");
         assert!(obj.contains_key(vocab::VALUE_TYPE.as_str()));

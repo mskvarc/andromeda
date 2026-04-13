@@ -1,3 +1,4 @@
+#![allow(clippy::expect_used, clippy::unwrap_used)]
 //! Entity type details tests (NGSI-LD 5.5.9).
 //! Uses `?details=true` to retrieve full `EntityType` objects with attribute names.
 
@@ -43,15 +44,15 @@ async fn list_entity_type_details_without_context_returns_expanded_uris() {
     let vehicle = load_fixture("entities/vehicle-simple-attributes.json", &vehicle_id);
 
     let (s, _) = create_entity(&c, &building, Some(COMPOUND_CONTEXT_URL)).await;
-    assert_eq!(s, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(s, StatusCode::CREATED);
     let (s, _) = create_entity(&c, &vehicle, Some(COMPOUND_CONTEXT_URL)).await;
-    assert_eq!(s, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(s, StatusCode::CREATED);
 
     let (status, body) = list_entity_types(&c, "details=true", None).await;
-    assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
 
     let expected = load_expectation("types/expectations/entity-type-023-01-01.json");
-    assert_eq!(sort_entity_types(&body), sort_entity_types(&expected));
+    pretty_assertions::assert_eq!(sort_entity_types(&body), sort_entity_types(&expected));
 
     delete_entity(&c, &building_id).await;
     delete_entity(&c, &vehicle_id).await;
@@ -74,15 +75,15 @@ async fn list_entity_type_details_with_context_returns_compacted_names() {
     let vehicle = load_fixture("entities/vehicle-simple-attributes.json", &vehicle_id);
 
     let (s, _) = create_entity(&c, &building, Some(COMPOUND_CONTEXT_URL)).await;
-    assert_eq!(s, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(s, StatusCode::CREATED);
     let (s, _) = create_entity(&c, &vehicle, Some(COMPOUND_CONTEXT_URL)).await;
-    assert_eq!(s, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(s, StatusCode::CREATED);
 
     let (status, body) = list_entity_types(&c, "details=true", Some(COMPOUND_CONTEXT_URL)).await;
-    assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
 
     let expected = load_expectation("types/expectations/entity-type-023-01-02.json");
-    assert_eq!(sort_entity_types(&body), sort_entity_types(&expected));
+    pretty_assertions::assert_eq!(sort_entity_types(&body), sort_entity_types(&expected));
 
     delete_entity(&c, &building_id).await;
     delete_entity(&c, &vehicle_id).await;

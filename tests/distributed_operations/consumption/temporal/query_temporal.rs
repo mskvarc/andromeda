@@ -1,3 +1,4 @@
+#![allow(clippy::expect_used, clippy::unwrap_used)]
 use crate::{
     distributed_operations::prepare_registration,
     harness::{
@@ -8,7 +9,6 @@ use crate::{
     },
 };
 use libtest_mimic::Trial;
-use pretty_assertions::assert_eq;
 use reqwest::{Method, StatusCode};
 
 const PREFIX: &str = "distributed_operations::consumption::temporal::query_temporal";
@@ -35,7 +35,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
 
         let reg = prepare_registration(REG_VEHICLE_COMPLETE, &reg_id, &entity_id, &mock.url(""), None, None, None);
         let resp = ctx.client.create_registration(&reg).await;
-        assert_eq!(resp.status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
         ctx.track_registration(&reg_id);
 
         let mock_entity = fixtures::load_fixture(TEMPORAL_VEHICLE_FIXTURE, &entity_id);
@@ -49,9 +49,9 @@ pub fn tests(trials: &mut Vec<Trial>) {
                 ld_headers(),
             )
             .await;
-        assert_eq!(resp.status, StatusCode::OK);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::OK);
 
-        assert_eq!(
+        pretty_assertions::assert_eq!(
             mock.get_count(Method::GET, "/ngsi-ld/v1/temporal/entities").await,
             0,
             "mock should not be called when local=true"
@@ -68,13 +68,13 @@ pub fn tests(trials: &mut Vec<Trial>) {
         // Create local temporal entity
         let entity = fixtures::load_fixture(TEMPORAL_VEHICLE_FIXTURE, &entity_id);
         let resp = ctx.client.create_temporal_entity(&entity).await;
-        assert_eq!(resp.status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
         ctx.track_temporal_entity(&entity_id);
 
         // Create CSR in inclusive mode (default)
         let reg = prepare_registration(REG_VEHICLE_COMPLETE, &reg_id, &entity_id, &mock.url(""), None, None, None);
         let resp = ctx.client.create_registration(&reg).await;
-        assert_eq!(resp.status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
         ctx.track_registration(&reg_id);
 
         // Mock returns temporal entity with a different attribute
@@ -93,7 +93,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
                 ld_headers(),
             )
             .await;
-        assert_eq!(resp.status, StatusCode::OK);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::OK);
 
         let body: Vec<serde_json::Value> = resp.json();
         let entity = body.iter().find(|e| e.get("id").and_then(|id| id.as_str()) == Some(&entity_id));
@@ -114,13 +114,13 @@ pub fn tests(trials: &mut Vec<Trial>) {
         // Create local temporal entity
         let entity = fixtures::load_fixture(TEMPORAL_VEHICLE_FIXTURE, &entity_id);
         let resp = ctx.client.create_temporal_entity(&entity).await;
-        assert_eq!(resp.status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
         ctx.track_temporal_entity(&entity_id);
 
         // Create CSR in auxiliary mode
         let reg = prepare_registration(REG_VEHICLE_COMPLETE, &reg_id, &entity_id, &mock.url(""), Some("auxiliary"), None, None);
         let resp = ctx.client.create_registration(&reg).await;
-        assert_eq!(resp.status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
         ctx.track_registration(&reg_id);
 
         // Mock returns a new entity (should not be added) and supplement for existing
@@ -137,7 +137,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
                 ld_headers(),
             )
             .await;
-        assert_eq!(resp.status, StatusCode::OK);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::OK);
 
         let body: Vec<serde_json::Value> = resp.json();
         // The remote-only entity should not be added in auxiliary mode
@@ -163,7 +163,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
         // Create CSR in exclusive mode
         let reg = prepare_registration(REG_VEHICLE_COMPLETE, &reg_id, &entity_id, &mock.url(""), Some("exclusive"), None, None);
         let resp = ctx.client.create_registration(&reg).await;
-        assert_eq!(resp.status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
         ctx.track_registration(&reg_id);
 
         // Mock returns temporal entity
@@ -182,7 +182,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
                 ld_headers(),
             )
             .await;
-        assert_eq!(resp.status, StatusCode::OK);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::OK);
 
         let body: Vec<serde_json::Value> = resp.json();
         let found = body.iter().any(|e| e.get("id").and_then(|id| id.as_str()) == Some(entity_id.as_str()));
@@ -198,7 +198,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
 
         let reg = prepare_registration(REG_VEHICLE_COMPLETE, &reg_id, &entity_id, &mock.url(""), None, None, None);
         let resp = ctx.client.create_registration(&reg).await;
-        assert_eq!(resp.status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
         ctx.track_registration(&reg_id);
 
         mock.set_stub(Method::GET, "/ngsi-ld/v1/temporal/entities", 500).await;
@@ -210,7 +210,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
                 ld_headers(),
             )
             .await;
-        assert_eq!(resp.status, StatusCode::OK);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::OK);
 
         let warnings = warning_header_values(&resp);
         assert!(!warnings.is_empty(), "expected NGSILD-Warning header, got none");
@@ -226,7 +226,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
 
         let reg = prepare_registration(REG_VEHICLE_COMPLETE, &reg_id, &entity_id, &mock.url(""), None, None, None);
         let resp = ctx.client.create_registration(&reg).await;
-        assert_eq!(resp.status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
         ctx.track_registration(&reg_id);
 
         let mock_entity = fixtures::load_fixture(TEMPORAL_VEHICLE_FIXTURE, &entity_id);
@@ -239,9 +239,9 @@ pub fn tests(trials: &mut Vec<Trial>) {
             .query_temporal_entities(&QueryParams::new().type_("*").timerel("after").timeat("2020-01-01T00:00:00Z"), ld_headers())
             .await;
         // Should succeed (200 OK) but not call the mock
-        assert_eq!(resp.status, StatusCode::OK);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::OK);
 
-        assert_eq!(
+        pretty_assertions::assert_eq!(
             mock.get_count(Method::GET, "/ngsi-ld/v1/temporal/entities").await,
             0,
             "mock should not be called when type=* (implies local=true)"
@@ -257,7 +257,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
 
         let reg = prepare_registration(REG_VEHICLE_COMPLETE, &reg_id, &entity_id, &mock.url(""), None, None, None);
         let resp = ctx.client.create_registration(&reg).await;
-        assert_eq!(resp.status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
         ctx.track_registration(&reg_id);
 
         // Mock returns empty array (no results)
@@ -271,7 +271,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
                 ld_headers(),
             )
             .await;
-        assert_eq!(resp.status, StatusCode::OK);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::OK);
 
         // Verify the mock received the request (temporal params passed through)
         assert!(
@@ -289,7 +289,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
 
         let reg = prepare_registration(REG_VEHICLE_COMPLETE, &reg_id, &entity_id, &mock.url(""), None, None, None);
         let resp = ctx.client.create_registration(&reg).await;
-        assert_eq!(resp.status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
         ctx.track_registration(&reg_id);
 
         mock.set_stub_with_body(Method::GET, "/ngsi-ld/v1/temporal/entities", 200, &serde_json::json!([]))
@@ -302,7 +302,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
                 ld_headers(),
             )
             .await;
-        assert_eq!(resp.status, StatusCode::OK);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::OK);
 
         // Just verify the mock was called (Via header is added internally by the broker)
         assert!(

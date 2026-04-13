@@ -1,3 +1,4 @@
+#![allow(clippy::expect_used, clippy::unwrap_used)]
 use crate::harness::{
     TestCtx,
     client::{QueryParams, RequestHeaders},
@@ -5,7 +6,6 @@ use crate::harness::{
     trial::trial,
 };
 use libtest_mimic::Trial;
-use pretty_assertions::assert_eq;
 use reqwest::{Method, StatusCode};
 
 const PREFIX: &str = "provision::temporal_attributes::delete_instance";
@@ -24,7 +24,7 @@ fn normalize(val: &mut serde_json::Value) {
             for v in arr.iter_mut() {
                 normalize(v);
             }
-            arr.sort_by(|a, b| a.to_string().cmp(&b.to_string()));
+            arr.sort_by_key(|a| a.to_string());
         }
         _ => {}
     }
@@ -41,11 +41,11 @@ async fn setup_entity_with_instance_id(ctx: &TestCtx, test_id: &str) -> (String,
 
     let entity = fixtures::load_fixture("temporal_entities/vehicle-temporal-representation.jsonld", &id);
     let resp = ctx.client.create_temporal_entity(&entity).await;
-    assert_eq!(resp.status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
 
     let headers = RequestHeaders::new().accept_ld_json().link_context(fixtures::test_suite_context_url());
     let resp = ctx.client.get_temporal_entity(&id, &QueryParams::new(), headers).await;
-    assert_eq!(resp.status, StatusCode::OK);
+    pretty_assertions::assert_eq!(resp.status, StatusCode::OK);
     let body: serde_json::Value = resp.json();
     let instance_id = extract_instance_id(&body, "speed");
 
@@ -60,13 +60,13 @@ pub fn tests(trials: &mut Vec<Trial>) {
         let (id, instance_id) = setup_entity_with_instance_id(&ctx, "017_01_01").await;
 
         let resp = ctx.client.delete_temporal_attr_instance(&id, "speed", &instance_id).await;
-        assert_eq!(resp.status, StatusCode::NO_CONTENT, "delete instance should return 204");
+        pretty_assertions::assert_eq!(resp.status, StatusCode::NO_CONTENT, "delete instance should return 204");
         assert!(resp.body_bytes().is_empty(), "response body should be empty");
 
         // Verify
         let headers = RequestHeaders::new().accept_ld_json().link_context(fixtures::test_suite_context_url());
         let resp = ctx.client.get_temporal_entity(&id, &QueryParams::new(), headers).await;
-        assert_eq!(resp.status, StatusCode::OK);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::OK);
 
         let mut actual: serde_json::Value = resp.json();
         let mut expected = fixtures::load_fixture(
@@ -75,7 +75,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
         );
         normalize(&mut actual);
         normalize(&mut expected);
-        assert_eq!(expected, actual);
+        pretty_assertions::assert_eq!(expected, actual);
     }));
 
     // ── 017_02: Invalid entity/attribute/instance IDs ────────────────────
@@ -87,7 +87,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
             let (_id, instance_id) = setup_entity_with_instance_id(&ctx, "017_02_01").await;
 
             let resp = ctx.client.delete_temporal_attr_instance("invalidId", "speed", &instance_id).await;
-            assert_eq!(resp.status, StatusCode::BAD_REQUEST, "invalid entity ID should return 400");
+            pretty_assertions::assert_eq!(resp.status, StatusCode::BAD_REQUEST, "invalid entity ID should return 400");
 
             let body: serde_json::Value = resp.json();
             assert!(
@@ -113,7 +113,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
                     Default::default(),
                 )
                 .await;
-            assert_eq!(resp.status, StatusCode::BAD_REQUEST, "empty entity ID should return 400");
+            pretty_assertions::assert_eq!(resp.status, StatusCode::BAD_REQUEST, "empty entity ID should return 400");
         },
     ));
 
@@ -124,7 +124,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
             let (_id, _instance_id) = setup_entity_with_instance_id(&ctx, "017_02_03").await;
 
             let resp = ctx.client.delete_temporal_attr_instance(&_id, "speed", "invalidId").await;
-            assert_eq!(resp.status, StatusCode::BAD_REQUEST, "invalid instance ID should return 400");
+            pretty_assertions::assert_eq!(resp.status, StatusCode::BAD_REQUEST, "invalid instance ID should return 400");
 
             let body: serde_json::Value = resp.json();
             assert!(
@@ -142,7 +142,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
             let (id, instance_id) = setup_entity_with_instance_id(&ctx, "017_02_04").await;
 
             let resp = ctx.client.delete_temporal_attr_instance(&id, "invalid(Name", &instance_id).await;
-            assert_eq!(resp.status, StatusCode::BAD_REQUEST, "invalid attr name should return 400");
+            pretty_assertions::assert_eq!(resp.status, StatusCode::BAD_REQUEST, "invalid attr name should return 400");
 
             let body: serde_json::Value = resp.json();
             assert!(
@@ -168,7 +168,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
                     Default::default(),
                 )
                 .await;
-            assert_eq!(resp.status, StatusCode::BAD_REQUEST, "empty attr name should return 400");
+            pretty_assertions::assert_eq!(resp.status, StatusCode::BAD_REQUEST, "empty attr name should return 400");
         },
     ));
 
@@ -180,7 +180,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
         |ctx| async move {
             let id = format!("urn:ngsi-ld:Vehicle:017_03_01:{}", uuid::Uuid::new_v4());
             let resp = ctx.client.delete_temporal_attr_instance(&id, "speed", "urn:ngsi-ld:Instance:nonexistent").await;
-            assert_eq!(resp.status, StatusCode::NOT_FOUND, "non-existent entity should return 404");
+            pretty_assertions::assert_eq!(resp.status, StatusCode::NOT_FOUND, "non-existent entity should return 404");
 
             let body: serde_json::Value = resp.json();
             assert!(
@@ -198,7 +198,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
             let (id, instance_id) = setup_entity_with_instance_id(&ctx, "017_03_02").await;
 
             let resp = ctx.client.delete_temporal_attr_instance(&id, "speed2", &instance_id).await;
-            assert_eq!(resp.status, StatusCode::NOT_FOUND, "non-existent attr should return 404");
+            pretty_assertions::assert_eq!(resp.status, StatusCode::NOT_FOUND, "non-existent attr should return 404");
 
             let body: serde_json::Value = resp.json();
             assert!(
@@ -216,7 +216,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
             let (id, _instance_id) = setup_entity_with_instance_id(&ctx, "017_03_03").await;
 
             let resp = ctx.client.delete_temporal_attr_instance(&id, "speed", "urn:ngsi-ld:01234567890123456789").await;
-            assert_eq!(resp.status, StatusCode::NOT_FOUND, "non-existent instance should return 404");
+            pretty_assertions::assert_eq!(resp.status, StatusCode::NOT_FOUND, "non-existent instance should return 404");
 
             let body: serde_json::Value = resp.json();
             assert!(

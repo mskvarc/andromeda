@@ -1,3 +1,4 @@
+#![allow(clippy::expect_used, clippy::unwrap_used)]
 pub mod create_entity;
 pub mod delete_entity;
 pub mod merge_entity;

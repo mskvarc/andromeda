@@ -1,10 +1,10 @@
+#![allow(clippy::expect_used, clippy::unwrap_used)]
 use crate::harness::{
     client::{QueryParams, RequestHeaders},
     fixtures,
     trial::trial,
 };
 use libtest_mimic::Trial;
-use pretty_assertions::assert_eq;
 use reqwest::{Method, StatusCode};
 
 const PREFIX: &str = "provision::entity_attributes::replace";
@@ -30,7 +30,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
                     .link_context(fixtures::test_suite_context_url()),
             )
             .await;
-        assert_eq!(resp.status, StatusCode::NO_CONTENT);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::NO_CONTENT);
 
         let resp = ctx
             .client
@@ -41,8 +41,8 @@ pub fn tests(trials: &mut Vec<Trial>) {
             )
             .await;
         let body: serde_json::Value = resp.json();
-        assert_eq!(body["isParked"]["type"], "Relationship");
-        assert_eq!(body["isParked"]["object"], "urn:ngsi-ld:OffStreetParking:Downtown2");
+        pretty_assertions::assert_eq!(body["isParked"]["type"], "Relationship");
+        pretty_assertions::assert_eq!(body["isParked"]["object"], "urn:ngsi-ld:OffStreetParking:Downtown2");
     }));
 
     // 055_01_02: Replace attribute with new type
@@ -65,7 +65,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
                     .link_context(fixtures::test_suite_context_url()),
             )
             .await;
-        assert_eq!(resp.status, StatusCode::NO_CONTENT);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::NO_CONTENT);
 
         let resp = ctx
             .client
@@ -76,7 +76,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
             )
             .await;
         let body: serde_json::Value = resp.json();
-        assert_eq!(body["isParked"]["type"], "Property");
+        pretty_assertions::assert_eq!(body["isParked"]["type"], "Property");
     }));
 
     // 055_02_01: Replace default instance of multi-instance attribute
@@ -90,7 +90,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
 
         let resp = ctx.client.replace_entity_attr(&id, "speed", &fragment).await;
         // vehicle-speed-two-datasetid has no default instance (both have datasetId), so this returns 404
-        assert_eq!(resp.status, StatusCode::NOT_FOUND);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::NOT_FOUND);
     }));
 
     // 055_02_02: Replace specific instance by datasetId
@@ -111,7 +111,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
                 Default::default(),
             )
             .await;
-        assert_eq!(resp.status, StatusCode::NO_CONTENT);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::NO_CONTENT);
     }));
 
     // 055_03_01: Replace with invalid entity ID returns 400
@@ -126,7 +126,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
             .client
             .request(Method::PUT, "/entities/not-a-valid-uri/attrs/speed", Some(&replacement), Default::default())
             .await;
-        assert_eq!(resp.status, StatusCode::BAD_REQUEST);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::BAD_REQUEST);
     }));
 
     // 055_03_02: Replace on non-existent entity returns 404
@@ -139,7 +139,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
         });
 
         let resp = ctx.client.replace_entity_attr(&id, "speed", &replacement).await;
-        assert_eq!(resp.status, StatusCode::NOT_FOUND);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::NOT_FOUND);
     }));
 
     // 055_03_03: Replace with invalid attribute name returns 400
@@ -159,7 +159,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
             .client
             .request(Method::PUT, &format!("/entities/{id}/attrs/@invalid"), Some(&replacement), Default::default())
             .await;
-        assert_eq!(resp.status, StatusCode::BAD_REQUEST);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::BAD_REQUEST);
     }));
 
     // 055_03_04: Replace non-existent attribute returns 404
@@ -176,7 +176,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
         });
 
         let resp = ctx.client.replace_entity_attr(&id, "nonExistentAttr", &replacement).await;
-        assert_eq!(resp.status, StatusCode::NOT_FOUND);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::NOT_FOUND);
     }));
 
     // 055_03_05: Replace scope attribute returns 400
@@ -195,7 +195,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
                     .link_context(fixtures::test_suite_context_url()),
             )
             .await;
-        assert_eq!(resp.status, StatusCode::CREATED, "create entity should return 201");
+        pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED, "create entity should return 201");
 
         let replacement = serde_json::json!({
             "type": "Property",
@@ -204,6 +204,6 @@ pub fn tests(trials: &mut Vec<Trial>) {
         });
 
         let resp = ctx.client.replace_entity_attr(&id, "scope", &replacement).await;
-        assert_eq!(resp.status, StatusCode::BAD_REQUEST);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::BAD_REQUEST);
     }));
 }

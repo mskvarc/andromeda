@@ -1,6 +1,6 @@
+#![allow(clippy::expect_used, clippy::unwrap_used)]
 use crate::harness::{client::RequestHeaders, fixtures, mock_server::MockServer, trial::trial};
 use libtest_mimic::Trial;
-use pretty_assertions::assert_eq;
 use reqwest::{Method, StatusCode};
 
 use super::prepare_registration;
@@ -25,12 +25,12 @@ pub fn tests(trials: &mut Vec<Trial>) {
             .client
             .request(Method::POST, "/entities?local=true", Some(&entity), RequestHeaders::new())
             .await;
-        assert_eq!(resp.status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
 
         // Create exclusive registration
         let reg = prepare_registration(REG_SPEED_REDIRECTION_OPS, &reg_id, &entity_id, &mock.url("/broker1"), Some("exclusive"));
         let resp = ctx.client.create_registration(&reg).await;
-        assert_eq!(resp.status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
         ctx.track_registration(&reg_id);
 
         // Set stub for forwarded merge
@@ -40,7 +40,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
         // Merge entity
         let merge_payload = fixtures::load_fixture(VEHICLE_SECOND_DIFFERENT, &entity_id);
         let resp = ctx.client.merge_entity(&entity_id, &merge_payload).await;
-        assert_eq!(resp.status, StatusCode::NO_CONTENT);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::NO_CONTENT);
 
         // Verify forwarding happened
         assert!(mock.get_count(Method::PATCH, &patch_path).await > 0);
@@ -70,12 +70,12 @@ pub fn tests(trials: &mut Vec<Trial>) {
         // Create entity
         let entity = fixtures::load_fixture(VEHICLE_SECOND_FIXTURE, &entity_id);
         let resp = ctx.client.create_entity(&entity).await;
-        assert_eq!(resp.status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
 
         // Create inclusive registration
         let reg = prepare_registration(REG_REDIRECTION_OPS, &reg_id, &entity_id, &mock.url(""), Some("inclusive"));
         let resp = ctx.client.create_registration(&reg).await;
-        assert_eq!(resp.status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
         ctx.track_registration(&reg_id);
 
         // Get old entity body
@@ -99,7 +99,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
         // Merge entity
         let merge_payload = fixtures::load_fixture(VEHICLE_SECOND_DIFFERENT, &entity_id);
         let resp = ctx.client.merge_entity(&entity_id, &merge_payload).await;
-        assert_eq!(resp.status, StatusCode::NO_CONTENT);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::NO_CONTENT);
 
         // Verify forwarding happened
         assert!(mock.get_count(Method::PATCH, &patch_path).await > 0);
@@ -115,8 +115,8 @@ pub fn tests(trials: &mut Vec<Trial>) {
             )
             .await;
         let new_body: serde_json::Value = resp.json();
-        assert_eq!(old_brandname, new_body["brandName"]); // brandName unchanged
-        assert_ne!(old_isparked2, new_body["isParked2"]); // isParked2 changed
+        pretty_assertions::assert_eq!(old_brandname, new_body["brandName"]); // brandName unchanged
+        pretty_assertions::assert_ne!(old_isparked2, new_body["isParked2"]); // isParked2 changed
         assert!(new_body.as_object().unwrap().contains_key("speed")); // speed added
 
         mock.stop();
@@ -132,12 +132,12 @@ pub fn tests(trials: &mut Vec<Trial>) {
         // Create two redirect registrations (same entity_id)
         let reg1 = prepare_registration(REG_REDIRECTION_OPS, &reg_id, &entity_id, &mock.url("/broker1"), Some("redirect"));
         let resp = ctx.client.create_registration(&reg1).await;
-        assert_eq!(resp.status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
         ctx.track_registration(&reg_id);
 
         let reg2 = prepare_registration(REG_REDIRECTION_OPS, &reg_id2, &entity_id, &mock.url("/broker2"), Some("redirect"));
         let resp = ctx.client.create_registration(&reg2).await;
-        assert_eq!(resp.status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
         ctx.track_registration(&reg_id2);
 
         // Set stubs for forwarded merges
@@ -149,7 +149,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
         // Merge entity
         let merge_payload = fixtures::load_fixture(VEHICLE_SECOND_DIFFERENT, &entity_id);
         let resp = ctx.client.merge_entity(&entity_id, &merge_payload).await;
-        assert_eq!(resp.status, StatusCode::NO_CONTENT);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::NO_CONTENT);
 
         // Verify forwarding to both
         assert!(mock.get_count(Method::PATCH, &patch_path1).await > 0);

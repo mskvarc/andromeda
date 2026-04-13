@@ -1,3 +1,4 @@
+#![allow(clippy::expect_used, clippy::unwrap_used)]
 //! CSR deletion tests (NGSI-LD 5.9.4)
 
 use reqwest::StatusCode;
@@ -16,13 +17,13 @@ async fn delete_existing_registration_returns_204() {
     let reg = load_fixture("csource_registrations/context-source-registration.jsonld", &id);
 
     let (status, _, _) = create_registration(&c, &reg).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     let (status, _) = delete_registration(&c, &id).await;
-    assert_eq!(status, StatusCode::NO_CONTENT);
+    pretty_assertions::assert_eq!(status, StatusCode::NO_CONTENT);
 
     let (status, _) = retrieve_registration(&c, &id, None, None).await;
-    assert_eq!(status, StatusCode::NOT_FOUND);
+    pretty_assertions::assert_eq!(status, StatusCode::NOT_FOUND);
 }
 
 // ---------------------------------------------------------------------------
@@ -34,7 +35,7 @@ async fn delete_existing_registration_returns_204() {
 async fn delete_without_id_returns_405() {
     let c = client();
     let (status, _) = request(&c, reqwest::Method::DELETE, "/csourceRegistrations/", None, None, None, None).await;
-    assert_eq!(status, StatusCode::METHOD_NOT_ALLOWED);
+    pretty_assertions::assert_eq!(status, StatusCode::METHOD_NOT_ALLOWED);
 }
 
 /// DELETE with invalid URI -- 400 (5.9.4).
@@ -42,8 +43,8 @@ async fn delete_without_id_returns_405() {
 async fn delete_invalid_uri_returns_400() {
     let c = client();
     let (status, body) = delete_registration(&c, "invalidURI").await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE);
+    pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
+    pretty_assertions::assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE);
     assert!(body["title"].is_string(), "response should contain title");
 }
 
@@ -57,6 +58,6 @@ async fn delete_unknown_registration_returns_404() {
     let c = client();
     let id = unique_id("urn:ngsi-ld:ContextSourceRegistration:delete-unknown");
     let (status, body) = delete_registration(&c, &id).await;
-    assert_eq!(status, StatusCode::NOT_FOUND);
+    pretty_assertions::assert_eq!(status, StatusCode::NOT_FOUND);
     assert!(body["title"].is_string(), "response should contain title");
 }

@@ -126,6 +126,7 @@ fn is_currency_code(value: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::*;
     use serde_json::json;
 
@@ -133,35 +134,35 @@ mod tests {
     fn localize_attribute_value_datetime_de() {
         let attr = json!({"type": "Property", "value": "2020-09-28T17:13:39Z"});
         let result = localize_attribute_value(&attr, "de-DE");
-        assert_eq!(result, Some(Value::String("28.09.2020 17:13:39 UTC".to_string())));
+        pretty_assertions::assert_eq!(result, Some(Value::String("28.09.2020 17:13:39 UTC".to_string())));
     }
 
     #[test]
     fn localize_attribute_value_datetime_en() {
         let attr = json!({"type": "Property", "value": "2020-09-28T17:13:39Z"});
         let result = localize_attribute_value(&attr, "en-US");
-        assert_eq!(result, Some(Value::String("2020-09-28 05:13:39 PM UTC".to_string())));
+        pretty_assertions::assert_eq!(result, Some(Value::String("2020-09-28 05:13:39 PM UTC".to_string())));
     }
 
     #[test]
     fn localize_attribute_value_currency_de() {
         let attr = json!({"type": "Property", "value": 1234.5, "unitCode": "EUR"});
         let result = localize_attribute_value(&attr, "de-DE");
-        assert_eq!(result, Some(Value::String("1.234,50 EUR".to_string())));
+        pretty_assertions::assert_eq!(result, Some(Value::String("1.234,50 EUR".to_string())));
     }
 
     #[test]
     fn localize_attribute_value_currency_en() {
         let attr = json!({"type": "Property", "value": 1234.5, "unitCode": "USD"});
         let result = localize_attribute_value(&attr, "en-US");
-        assert_eq!(result, Some(Value::String("USD 1,234.50".to_string())));
+        pretty_assertions::assert_eq!(result, Some(Value::String("USD 1,234.50".to_string())));
     }
 
     #[test]
     fn localize_attribute_value_skips_relationships() {
         let attr = json!({"type": "Relationship", "object": "urn:ngsi-ld:Entity:1"});
         let result = localize_attribute_value(&attr, "en-US");
-        assert_eq!(result, None);
+        pretty_assertions::assert_eq!(result, None);
     }
 
     #[test]
@@ -174,9 +175,9 @@ mod tests {
         });
         let filter: HashSet<String> = ["date".to_string()].into_iter().collect();
         let result = localize_entity_value(entity, "de-DE", Some(&filter));
-        assert_eq!(result["date"], "28.09.2020 17:13:39 UTC");
+        pretty_assertions::assert_eq!(result["date"], "28.09.2020 17:13:39 UTC");
         // name was not in filter, so it should remain unchanged
-        assert_eq!(result["name"]["value"], "test");
+        pretty_assertions::assert_eq!(result["name"]["value"], "test");
     }
 
     #[test]
@@ -186,10 +187,10 @@ mod tests {
             "type": "Offer",
             "@context": "https://example.com"
         });
-        let result = localize_entity_value(entity.clone(), "en-US", None);
-        assert_eq!(result["id"], "urn:test:1");
-        assert_eq!(result["type"], "Offer");
-        assert_eq!(result["@context"], "https://example.com");
+        let result = localize_entity_value(entity, "en-US", None);
+        pretty_assertions::assert_eq!(result["id"], "urn:test:1");
+        pretty_assertions::assert_eq!(result["type"], "Offer");
+        pretty_assertions::assert_eq!(result["@context"], "https://example.com");
     }
 
     #[test]
@@ -204,12 +205,12 @@ mod tests {
     #[test]
     fn format_number_negative() {
         let result = format_number(-1234.56, ',', '.');
-        assert_eq!(result, "-1,234.56");
+        pretty_assertions::assert_eq!(result, "-1,234.56");
     }
 
     #[test]
     fn format_number_small() {
         let result = format_number(5.0, ',', '.');
-        assert_eq!(result, "5.00");
+        pretty_assertions::assert_eq!(result, "5.00");
     }
 }

@@ -1,3 +1,4 @@
+#![allow(clippy::expect_used, clippy::unwrap_used)]
 use std::time::Duration;
 
 use reqwest::StatusCode;
@@ -39,8 +40,7 @@ use crate::helpers::{
 fn notification_contains_entity(notification: &serde_json::Value, entity_id: &str) -> bool {
     notification["data"]
         .as_array()
-        .map(|items| items.iter().any(|item| item["id"].as_str() == Some(entity_id)))
-        .unwrap_or(false)
+        .is_some_and(|items| items.iter().any(|item| item["id"].as_str() == Some(entity_id)))
 }
 
 #[serial_test::serial]
@@ -52,7 +52,7 @@ async fn notification_active_subscription_on_attribute_append_delivers_notificat
 
     let entity_id = unique_entity_id("urn:ngsi-ld:Building:046_01");
     let (status, _, _) = create_entity(&http_client, &building_simple_entity(&entity_id)).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     let subscription_id = unique_subscription_id("046_01");
     let mut subscription = with_is_active(subscription_with_endpoint(&subscription_id, &receiver.endpoint_url()), true);
@@ -60,15 +60,15 @@ async fn notification_active_subscription_on_attribute_append_delivers_notificat
     let (status, _, _) = create_subscription(&http_client, &subscription).await;
 
     receiver.clear_notifications().await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     receiver.clear_notifications().await;
 
     let (status, _) = append_entity_attrs(&http_client, &entity_id, &fragment_air_quality_level()).await;
-    assert_eq!(status, StatusCode::NO_CONTENT);
+    pretty_assertions::assert_eq!(status, StatusCode::NO_CONTENT);
 
     let notification = receiver.wait_for_subscription_notification(&subscription_id, Duration::from_secs(5)).await;
-    assert_eq!(notification.body["subscriptionId"], subscription_id);
+    pretty_assertions::assert_eq!(notification.body["subscriptionId"], subscription_id);
     assert!(notification_contains_entity(&notification.body, &entity_id));
 }
 
@@ -81,7 +81,7 @@ async fn notification_time_interval_subscription_delivers_notification_without_e
 
     let entity_id = unique_entity_id("urn:ngsi-ld:Building:046_02");
     let (status, _, _) = create_entity(&http_client, &building_simple_entity(&entity_id)).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     let subscription_id = unique_subscription_id("046_02");
     let mut subscription = with_time_interval(subscription_with_endpoint(&subscription_id, &receiver.endpoint_url()), 10);
@@ -90,12 +90,12 @@ async fn notification_time_interval_subscription_delivers_notification_without_e
     let (status, _, _) = create_subscription(&http_client, &subscription).await;
 
     receiver.clear_notifications().await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     receiver.clear_notifications().await;
 
     let notification = receiver.wait_for_subscription_notification(&subscription_id, Duration::from_secs(15)).await;
-    assert_eq!(notification.body["subscriptionId"], subscription_id);
+    pretty_assertions::assert_eq!(notification.body["subscriptionId"], subscription_id);
     assert!(notification_contains_entity(&notification.body, &entity_id));
 }
 
@@ -108,7 +108,7 @@ async fn notification_default_subscription_on_attribute_append_delivers_notifica
 
     let entity_id = unique_entity_id("urn:ngsi-ld:Building:046_03");
     let (status, _, _) = create_entity(&http_client, &building_simple_entity(&entity_id)).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     let subscription_id = unique_subscription_id("046_03");
     let mut subscription = subscription_with_endpoint(&subscription_id, &receiver.endpoint_url());
@@ -118,15 +118,15 @@ async fn notification_default_subscription_on_attribute_append_delivers_notifica
     let (status, _, _) = create_subscription(&http_client, &subscription).await;
 
     receiver.clear_notifications().await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     receiver.clear_notifications().await;
 
     let (status, _) = append_entity_attrs(&http_client, &entity_id, &fragment_air_quality_level()).await;
-    assert_eq!(status, StatusCode::NO_CONTENT);
+    pretty_assertions::assert_eq!(status, StatusCode::NO_CONTENT);
 
     let notification = receiver.wait_for_subscription_notification(&subscription_id, Duration::from_secs(5)).await;
-    assert_eq!(notification.body["subscriptionId"], subscription_id);
+    pretty_assertions::assert_eq!(notification.body["subscriptionId"], subscription_id);
 }
 
 #[serial_test::serial]
@@ -138,7 +138,7 @@ async fn notification_watched_attributes_subscription_delivers_notification_for_
 
     let entity_id = unique_entity_id("urn:ngsi-ld:Building:046_04");
     let (status, _, _) = create_entity(&http_client, &building_simple_entity(&entity_id)).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     let subscription_id = unique_subscription_id("046_04");
     let mut subscription = with_watched_attributes(subscription_with_endpoint(&subscription_id, &receiver.endpoint_url()), &["airQualityLevel"]);
@@ -147,15 +147,15 @@ async fn notification_watched_attributes_subscription_delivers_notification_for_
     let (status, _, _) = create_subscription(&http_client, &subscription).await;
 
     receiver.clear_notifications().await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     receiver.clear_notifications().await;
 
     let (status, _) = append_entity_attrs(&http_client, &entity_id, &fragment_air_quality_level()).await;
-    assert_eq!(status, StatusCode::NO_CONTENT);
+    pretty_assertions::assert_eq!(status, StatusCode::NO_CONTENT);
 
     let notification = receiver.wait_for_subscription_notification(&subscription_id, Duration::from_secs(5)).await;
-    assert_eq!(notification.body["subscriptionId"], subscription_id);
+    pretty_assertions::assert_eq!(notification.body["subscriptionId"], subscription_id);
 }
 
 #[serial_test::serial]
@@ -167,7 +167,7 @@ async fn notification_query_filter_matching_entity_delivers_notification() {
 
     let entity_id = unique_entity_id("urn:ngsi-ld:Building:046_05");
     let (status, _, _) = create_entity(&http_client, &building_simple_entity(&entity_id)).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     let subscription_id = unique_subscription_id("046_05");
     let mut subscription = with_query_filter(
@@ -179,15 +179,15 @@ async fn notification_query_filter_matching_entity_delivers_notification() {
     let (status, _, _) = create_subscription(&http_client, &subscription).await;
 
     receiver.clear_notifications().await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     receiver.clear_notifications().await;
 
     let (status, _) = append_entity_attrs(&http_client, &entity_id, &fragment_air_quality_level()).await;
-    assert_eq!(status, StatusCode::NO_CONTENT);
+    pretty_assertions::assert_eq!(status, StatusCode::NO_CONTENT);
 
     let notification = receiver.wait_for_subscription_notification(&subscription_id, Duration::from_secs(5)).await;
-    assert_eq!(notification.body["subscriptionId"], subscription_id);
+    pretty_assertions::assert_eq!(notification.body["subscriptionId"], subscription_id);
 }
 
 #[serial_test::serial]
@@ -207,16 +207,16 @@ async fn notification_entity_created_trigger_delivers_notification_on_create() {
     let (status, _, _) = create_subscription(&http_client, &subscription).await;
 
     receiver.clear_notifications().await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     receiver.clear_notifications().await;
 
     let entity_id = unique_entity_id("urn:ngsi-ld:Building:046_06");
     let (status, _, _) = create_entity(&http_client, &building_simple_entity(&entity_id)).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     let notification = receiver.wait_for_subscription_notification(&subscription_id, Duration::from_secs(5)).await;
-    assert_eq!(notification.body["subscriptionId"], subscription_id);
+    pretty_assertions::assert_eq!(notification.body["subscriptionId"], subscription_id);
     assert!(notification_contains_entity(&notification.body, &entity_id));
 }
 
@@ -238,8 +238,8 @@ async fn notification_payload_contains_type_subscription_id_notified_at_and_data
     let _ = append_entity_attrs(&http_client, &entity_id, &fragment_air_quality_level()).await;
 
     let notification = receiver.wait_for_subscription_notification(&subscription_id, Duration::from_secs(5)).await;
-    assert_eq!(notification.body["type"], "Notification");
-    assert_eq!(notification.body["subscriptionId"], subscription_id);
+    pretty_assertions::assert_eq!(notification.body["type"], "Notification");
+    pretty_assertions::assert_eq!(notification.body["subscriptionId"], subscription_id);
     let notified_at = notification.body["notifiedAt"].as_str().expect("notifiedAt string");
     assert!(chrono::DateTime::parse_from_rfc3339(notified_at).is_ok());
     assert!(notification.body["data"].is_array());
@@ -365,7 +365,7 @@ async fn notification_receiver_info_adds_custom_headers_to_notification_request(
     let _ = append_entity_attrs(&http_client, &entity_id, &fragment_air_quality_level()).await;
 
     let notification = receiver.wait_for_subscription_notification(&subscription_id, Duration::from_secs(5)).await;
-    assert_eq!(
+    pretty_assertions::assert_eq!(
         notification.headers.get("x-additional-key").and_then(|header| header.to_str().ok()),
         Some("Value")
     );
@@ -411,8 +411,8 @@ async fn notification_after_successful_delivery_subscription_times_sent_is_incre
     let _ = receiver.wait_for_subscription_notification(&subscription_id, Duration::from_secs(5)).await;
 
     let (status, body) = retrieve_subscription(&http_client, &subscription_id).await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["notification"]["timesSent"], 1);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(body["notification"]["timesSent"], 1);
 }
 
 #[serial_test::serial]
@@ -434,8 +434,8 @@ async fn notification_after_successful_delivery_subscription_status_is_ok_and_ti
     tokio::time::sleep(Duration::from_millis(200)).await;
 
     let (status, body) = retrieve_subscription(&http_client, &subscription_id).await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["notification"]["status"], "ok");
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(body["notification"]["status"], "ok");
     assert!(chrono::DateTime::parse_from_rfc3339(body["notification"]["lastNotification"].as_str().expect("lastNotification string")).is_ok());
     assert!(chrono::DateTime::parse_from_rfc3339(body["notification"]["lastSuccess"].as_str().expect("lastSuccess string")).is_ok());
 }
@@ -457,7 +457,7 @@ async fn notification_failed_delivery_sets_failed_status_and_last_failure_timest
 
     for _ in 0..10 {
         let (status, body) = retrieve_subscription(&http_client, &subscription_id).await;
-        assert_eq!(status, StatusCode::OK);
+        pretty_assertions::assert_eq!(status, StatusCode::OK);
 
         if body["notification"]["status"] == "failed" {
             assert!(chrono::DateTime::parse_from_rfc3339(body["notification"]["lastFailure"].as_str().expect("lastFailure string")).is_ok());
@@ -467,7 +467,7 @@ async fn notification_failed_delivery_sets_failed_status_and_last_failure_timest
         tokio::time::sleep(Duration::from_secs(1)).await;
     }
 
-    panic!("subscription notification status did not become failed within retry window");
+    unreachable!("subscription notification status did not become failed within retry window");
 }
 
 #[serial_test::serial]
@@ -535,7 +535,7 @@ async fn notification_entity_created_trigger_with_matching_type_selector_deliver
     let _ = create_entity(&http_client, &building_simple_entity(&entity_id)).await;
 
     let notification = receiver.wait_for_subscription_notification(&subscription_id, Duration::from_secs(5)).await;
-    assert_eq!(notification.body["subscriptionId"], subscription_id);
+    pretty_assertions::assert_eq!(notification.body["subscriptionId"], subscription_id);
 }
 
 #[serial_test::serial]
@@ -635,7 +635,7 @@ async fn notification_dataset_id_filter_emits_notification_for_matching_dataset_
     let _ = append_entity_attrs(&http_client, &entity_id, &fragment_building_name_dataset()).await;
 
     let notification = receiver.wait_for_subscription_notification(&subscription_id, Duration::from_secs(5)).await;
-    assert_eq!(notification.body["subscriptionId"], subscription_id);
+    pretty_assertions::assert_eq!(notification.body["subscriptionId"], subscription_id);
 }
 
 #[serial_test::serial]
@@ -664,7 +664,7 @@ async fn notification_subscription_jsonld_context_compacts_notification_payload(
     let _ = append_entity_attrs(&http_client, &entity_id, &fragment_building_name_dataset()).await;
 
     let notification = receiver.wait_for_subscription_notification(&subscription_id, Duration::from_secs(5)).await;
-    assert_eq!(notification.body["data"][0]["id"], entity_id);
+    pretty_assertions::assert_eq!(notification.body["data"][0]["id"], entity_id);
 }
 
 #[serial_test::serial]
@@ -688,11 +688,11 @@ async fn notification_entity_deleted_trigger_emits_deleted_entity_payload() {
     receiver.clear_notifications().await;
 
     let (status, _) = delete_entity(&http_client, &entity_id).await;
-    assert_eq!(status, StatusCode::NO_CONTENT);
+    pretty_assertions::assert_eq!(status, StatusCode::NO_CONTENT);
 
     let notification = receiver.wait_for_subscription_notification(&subscription_id, Duration::from_secs(5)).await;
-    assert_eq!(notification.body["subscriptionId"], subscription_id);
-    assert_eq!(notification.body["data"][0]["id"], entity_id);
+    pretty_assertions::assert_eq!(notification.body["subscriptionId"], subscription_id);
+    pretty_assertions::assert_eq!(notification.body["data"][0]["id"], entity_id);
     assert!(notification.body["data"][0].get("deletedAt").is_some());
 }
 
@@ -720,11 +720,11 @@ async fn notification_entity_deleted_with_sys_attrs_includes_created_and_deleted
     receiver.clear_notifications().await;
 
     let (status, _) = delete_entity(&http_client, &entity_id).await;
-    assert_eq!(status, StatusCode::NO_CONTENT);
+    pretty_assertions::assert_eq!(status, StatusCode::NO_CONTENT);
 
     let notification = receiver.wait_for_subscription_notification(&subscription_id, Duration::from_secs(5)).await;
     let entity = &notification.body["data"][0];
-    assert_eq!(entity["id"], entity_id);
+    pretty_assertions::assert_eq!(entity["id"], entity_id);
     assert!(entity.get("createdAt").is_some());
     assert!(entity.get("deletedAt").is_some());
 }

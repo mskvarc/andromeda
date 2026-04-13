@@ -1,3 +1,4 @@
+#![allow(clippy::expect_used, clippy::unwrap_used)]
 use reqwest::{
     Method,
     StatusCode,
@@ -140,7 +141,7 @@ pub enum NgsiLdOption {
 }
 
 impl NgsiLdOption {
-    fn as_str(&self) -> &str {
+    const fn as_str(&self) -> &str {
         match self {
             Self::KeyValues => "keyValues",
             Self::SysAttrs => "sysAttrs",
@@ -242,12 +243,12 @@ impl QueryParams {
         self
     }
 
-    pub fn limit(mut self, v: u32) -> Self {
+    pub const fn limit(mut self, v: u32) -> Self {
         self.limit = Some(v);
         self
     }
 
-    pub fn offset(mut self, v: u32) -> Self {
+    pub const fn offset(mut self, v: u32) -> Self {
         self.offset = Some(v);
         self
     }
@@ -272,7 +273,7 @@ impl QueryParams {
         self
     }
 
-    pub fn lastn(mut self, v: u32) -> Self {
+    pub const fn lastn(mut self, v: u32) -> Self {
         self.lastn = Some(v);
         self
     }
@@ -292,7 +293,7 @@ impl QueryParams {
         self
     }
 
-    pub fn join_level(mut self, v: u32) -> Self {
+    pub const fn join_level(mut self, v: u32) -> Self {
         self.join_level = Some(v);
         self
     }
@@ -307,7 +308,7 @@ impl QueryParams {
         self
     }
 
-    pub fn count(mut self, v: bool) -> Self {
+    pub const fn count(mut self, v: bool) -> Self {
         self.count = Some(v);
         self
     }
@@ -332,17 +333,17 @@ impl QueryParams {
         self
     }
 
-    pub fn delete_all(mut self, v: bool) -> Self {
+    pub const fn delete_all(mut self, v: bool) -> Self {
         self.delete_all = Some(v);
         self
     }
 
-    pub fn local(mut self, v: bool) -> Self {
+    pub const fn local(mut self, v: bool) -> Self {
         self.local = Some(v);
         self
     }
 
-    pub fn entity_map(mut self, v: bool) -> Self {
+    pub const fn entity_map(mut self, v: bool) -> Self {
         self.entity_map = Some(v);
         self
     }
@@ -358,7 +359,7 @@ impl QueryParams {
     }
 
     #[allow(dead_code)]
-    pub fn split_entities(mut self, v: bool) -> Self {
+    pub const fn split_entities(mut self, v: bool) -> Self {
         self.split_entities = Some(v);
         self
     }
@@ -511,7 +512,7 @@ impl ContextQueryParams {
         Self::default()
     }
 
-    pub fn details(mut self, v: bool) -> Self {
+    pub const fn details(mut self, v: bool) -> Self {
         self.details = Some(v);
         self
     }
@@ -521,7 +522,7 @@ impl ContextQueryParams {
         self
     }
 
-    pub fn reload(mut self, v: bool) -> Self {
+    pub const fn reload(mut self, v: bool) -> Self {
         self.reload = Some(v);
         self
     }

@@ -58,6 +58,7 @@ impl fmt::Display for NgsiLdVersion {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::*;
 
     #[test]
@@ -70,16 +71,16 @@ mod tests {
 
     #[test]
     fn ngsild_version_display() {
-        assert_eq!(NgsiLdVersion::V1_9.to_string(), "1.9");
+        pretty_assertions::assert_eq!(NgsiLdVersion::V1_9.to_string(), "1.9");
     }
 
     #[test]
     fn ngsild_version_parse() {
-        assert_eq!(NgsiLdVersion::parse("1.4"), Some(NgsiLdVersion::V1_4));
+        pretty_assertions::assert_eq!(NgsiLdVersion::parse("1.4"), Some(NgsiLdVersion::V1_4));
     }
 
     #[test]
     fn ngsild_version_parse_unknown() {
-        assert_eq!(NgsiLdVersion::parse("2.0"), None);
+        pretty_assertions::assert_eq!(NgsiLdVersion::parse("2.0"), None);
     }
 }

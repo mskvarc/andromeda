@@ -1,6 +1,6 @@
+#![allow(clippy::expect_used, clippy::unwrap_used)]
 use crate::harness::{client::RequestHeaders, fixtures, mock_server::MockServer, trial::trial};
 use libtest_mimic::Trial;
-use pretty_assertions::assert_eq;
 use reqwest::{Method, StatusCode};
 
 use super::super::entities::prepare_registration;
@@ -26,12 +26,12 @@ pub fn tests(trials: &mut Vec<Trial>) {
             .client
             .request(Method::POST, "/entities?local=true", Some(&entity), RequestHeaders::new())
             .await;
-        assert_eq!(resp.status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
 
         // Create exclusive registration
         let reg = prepare_registration(REG_SPEED_REDIRECTION_OPS, &reg_id, &entity_id, &mock.url("/broker1"), Some("exclusive"));
         let resp = ctx.client.create_registration(&reg).await;
-        assert_eq!(resp.status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
         ctx.track_registration(&reg_id);
 
         // Set stub for forwarded update
@@ -41,7 +41,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
         // Update entity attributes
         let fragment = fixtures::load_fragment(FRAGMENT_SPEED_DIFFERENT);
         let resp = ctx.client.update_entity_attrs(&entity_id, &fragment).await;
-        assert_eq!(resp.status, StatusCode::NO_CONTENT);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::NO_CONTENT);
 
         // Verify forwarding happened
         assert!(mock.get_count(Method::PATCH, &stub_path).await > 0);
@@ -58,7 +58,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
         // No local entity — only registration
         let reg = prepare_registration(REG_REDIRECTION_OPS, &reg_id, &entity_id, &mock.url(""), None);
         let resp = ctx.client.create_registration(&reg).await;
-        assert_eq!(resp.status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
         ctx.track_registration(&reg_id);
 
         // Set stub for forwarded update
@@ -68,7 +68,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
         // Update entity attributes — local fails (no entity), remote succeeds → 207
         let fragment = fixtures::load_fragment(FRAGMENT_BRANDNAME);
         let resp = ctx.client.update_entity_attrs(&entity_id, &fragment).await;
-        assert_eq!(resp.status, StatusCode::MULTI_STATUS);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::MULTI_STATUS);
 
         // Verify forwarding happened
         assert!(mock.get_count(Method::PATCH, &stub_path).await > 0);
@@ -86,12 +86,12 @@ pub fn tests(trials: &mut Vec<Trial>) {
         // Create two redirect registrations for same entity
         let reg1 = prepare_registration(REG_REDIRECTION_OPS, &reg_id1, &entity_id, &mock.url("/broker1"), Some("redirect"));
         let resp = ctx.client.create_registration(&reg1).await;
-        assert_eq!(resp.status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
         ctx.track_registration(&reg_id1);
 
         let reg2 = prepare_registration(REG_REDIRECTION_OPS, &reg_id2, &entity_id, &mock.url("/broker2"), Some("redirect"));
         let resp = ctx.client.create_registration(&reg2).await;
-        assert_eq!(resp.status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::CREATED);
         ctx.track_registration(&reg_id2);
 
         // Set stubs for both brokers
@@ -103,7 +103,7 @@ pub fn tests(trials: &mut Vec<Trial>) {
         // Update entity attributes
         let fragment = fixtures::load_fragment(FRAGMENT_BRANDNAME);
         let resp = ctx.client.update_entity_attrs(&entity_id, &fragment).await;
-        assert_eq!(resp.status, StatusCode::NO_CONTENT);
+        pretty_assertions::assert_eq!(resp.status, StatusCode::NO_CONTENT);
 
         // Verify both stubs called
         assert!(mock.get_count(Method::PATCH, &stub_path1).await > 0);

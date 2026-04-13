@@ -1,3 +1,4 @@
+#![allow(clippy::expect_used, clippy::unwrap_used)]
 //! Distributed temporal entity query tests: splitEntities post-merge filtering.
 
 use std::{
@@ -267,7 +268,7 @@ async fn distop_temporal_split_entities_q_filter_post_merge() {
     // Local temporal entity: speed=50
     let entity = temporal_vehicle_entity_with_speed(&local_id, 50, "2024-01-01T12:00:00Z");
     let (status, _) = create_temporal_entity(&c, &entity).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     // Mock returns temporal entity: speed=80
     let mock_entity = temporal_vehicle_entity_with_speed(&remote_id, 80, "2024-01-01T12:00:00Z");
@@ -276,7 +277,7 @@ async fn distop_temporal_split_entities_q_filter_post_merge() {
 
     let reg = vehicle_registration_temporal(&reg_id, &mock.url(""), "auxiliary");
     let (status, _) = create_registration(&c, &reg).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     // Query with splitEntities=true and q filter for speed>60
     let query = "type=Vehicle&splitEntities=true&q=speed>60";
@@ -314,7 +315,7 @@ async fn distop_temporal_split_entities_returns_all_without_filter() {
 
     let entity = temporal_vehicle_entity_with_speed(&local_id, 50, "2024-01-01T12:00:00Z");
     let (status, _) = create_temporal_entity(&c, &entity).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     let mock_entity = temporal_vehicle_entity_with_speed(&remote_id, 80, "2024-01-01T12:00:00Z");
     mock.set_stub_with_body(Method::GET, "/ngsi-ld/v1/temporal/entities", 200, &Value::Array(vec![mock_entity]))
@@ -322,7 +323,7 @@ async fn distop_temporal_split_entities_returns_all_without_filter() {
 
     let reg = vehicle_registration_temporal(&reg_id, &mock.url(""), "auxiliary");
     let (status, _) = create_registration(&c, &reg).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     let query = "type=Vehicle&splitEntities=true";
     let (status, _, body) = query_temporal_entities(&c, query, &jsonld_link_value()).await;
@@ -353,7 +354,7 @@ async fn distop_temporal_split_entities_scope_filter_post_merge() {
 
     let entity = temporal_vehicle_entity_with_scope(&local_id, "/Madrid");
     let (status, _) = create_temporal_entity(&c, &entity).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     let mock_entity = temporal_vehicle_entity_with_scope(&remote_id, "/Barcelona");
     mock.set_stub_with_body(Method::GET, "/ngsi-ld/v1/temporal/entities", 200, &Value::Array(vec![mock_entity]))
@@ -361,7 +362,7 @@ async fn distop_temporal_split_entities_scope_filter_post_merge() {
 
     let reg = vehicle_registration_temporal(&reg_id, &mock.url(""), "auxiliary");
     let (status, _) = create_registration(&c, &reg).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     let query = "type=Vehicle&splitEntities=true&scopeQ=/Barcelona";
     let (status, _, body) = query_temporal_entities(&c, query, &jsonld_link_value()).await;

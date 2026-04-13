@@ -157,11 +157,11 @@ async fn extension_headers_response_format_keyvalues_via_header_produces_simplif
 
     let id = unique_entity_id("urn:ngsi-ld:Building:ext-format-fallback");
     let status = create_entity(&http_client, &building_entity(&id, "HQ")).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     let (status, body) = get_entity_with_headers(&http_client, &id, "", &[("NGSILD-Response-Format", "keyValues")]).await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["name"], "HQ", "NGSILD-Response-Format: keyValues must produce key-value output");
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(body["name"], "HQ", "NGSILD-Response-Format: keyValues must produce key-value output");
 }
 
 #[serial_test::serial]
@@ -172,13 +172,14 @@ async fn extension_headers_response_format_query_param_overrides_header() {
 
     let id = unique_entity_id("urn:ngsi-ld:Building:ext-format-precedence");
     let status = create_entity(&http_client, &building_entity(&id, "HQ")).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     // options=normalized in query + NGSILD-Response-Format: keyValues in header → query param wins
     let (status, body) = get_entity_with_headers(&http_client, &id, "options=normalized", &[("NGSILD-Response-Format", "keyValues")]).await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(
-        body["name"]["type"], "Property",
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(
+        body["name"]["type"],
+        "Property",
         "options query param must override NGSILD-Response-Format header"
     );
 }
@@ -198,19 +199,19 @@ async fn extension_headers_response_format_normalized_without_header_returns_ful
         "@context": [CORE_CONTEXT]
     });
     let status = create_entity(&http_client, &entity).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     // No format header or query param → normalized default
     let (status, body) = get_entity_with_headers(&http_client, &id, "", &[]).await;
-    assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
     assert!(body["name"].is_object(), "default response must return full attribute object");
-    assert_eq!(body["name"]["type"], "Property");
+    pretty_assertions::assert_eq!(body["name"]["type"], "Property");
 
     // With NGSILD-Response-Format: keyValues → simplified values
     let (status, kv_body) = get_entity_with_headers(&http_client, &id, "", &[("NGSILD-Response-Format", "keyValues")]).await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(kv_body["name"], "Test Building");
-    assert_eq!(kv_body["height"], 42);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(kv_body["name"], "Test Building");
+    pretty_assertions::assert_eq!(kv_body["height"], 42);
 }
 
 // --- NGSILD-Dataset-Id ---
@@ -223,19 +224,20 @@ async fn extension_headers_dataset_id_via_header_matches_query_param_result() {
 
     let id = unique_entity_id("urn:ngsi-ld:Vehicle:ext-dataset-fallback");
     let status = create_entity(&http_client, &vehicle_entity_with_two_dataset_instances(&id)).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     let dataset = "urn:ngsi-ld:Property:gpsBxyz123-speed";
     let encoded_dataset = urlencoding::encode(dataset);
 
     let (status, header_body) = get_entity_with_headers(&http_client, &id, "", &[("NGSILD-Dataset-Id", dataset)]).await;
-    assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
 
     let (status, query_body) = get_entity_with_headers(&http_client, &id, &format!("datasetId={encoded_dataset}"), &[]).await;
-    assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
 
-    assert_eq!(
-        header_body, query_body,
+    pretty_assertions::assert_eq!(
+        header_body,
+        query_body,
         "NGSILD-Dataset-Id header must produce the same result as datasetId query param"
     );
 }
@@ -248,7 +250,7 @@ async fn extension_headers_dataset_id_query_param_overrides_header() {
 
     let id = unique_entity_id("urn:ngsi-ld:Vehicle:ext-dataset-precedence");
     let status = create_entity(&http_client, &vehicle_entity_with_two_dataset_instances(&id)).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     let query_dataset = "urn:ngsi-ld:Relationship:parked12345";
     let header_dataset = "urn:ngsi-ld:Property:gpsBxyz123-speed";
@@ -256,7 +258,7 @@ async fn extension_headers_dataset_id_query_param_overrides_header() {
 
     // Query param only — establishes baseline
     let (status, query_only_body) = get_entity_with_headers(&http_client, &id, &format!("datasetId={encoded_query_dataset}"), &[]).await;
-    assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
 
     // Both query param and a different dataset in header — query param must win
     let (status, both_body) = get_entity_with_headers(
@@ -266,10 +268,11 @@ async fn extension_headers_dataset_id_query_param_overrides_header() {
         &[("NGSILD-Dataset-Id", header_dataset)],
     )
     .await;
-    assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
 
-    assert_eq!(
-        query_only_body, both_body,
+    pretty_assertions::assert_eq!(
+        query_only_body,
+        both_body,
         "datasetId query param must take precedence over NGSILD-Dataset-Id header"
     );
 }
@@ -289,7 +292,7 @@ async fn extension_headers_join_via_header_includes_linked_entities_in_flat_resp
         "@context": [CORE_CONTEXT]
     });
     let status = create_entity(&http_client, &linked).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     let root_id = unique_entity_id("urn:ngsi-ld:Entity:ext-join-root");
     let root = json!({
@@ -299,7 +302,7 @@ async fn extension_headers_join_via_header_includes_linked_entities_in_flat_resp
         "@context": [CORE_CONTEXT]
     });
     let status = create_entity(&http_client, &root).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     let encoded_root_id = urlencoding::encode(&root_id);
     let (status, body) = query_entities_with_headers(
@@ -308,7 +311,7 @@ async fn extension_headers_join_via_header_includes_linked_entities_in_flat_resp
         &[("NGSILD-Join", "flat"), ("NGSILD-JoinLevel", "1")],
     )
     .await;
-    assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
 
     let arr = body.as_array().expect("flat join query must return an array");
     let ids: Vec<&str> = arr.iter().filter_map(|item| item["id"].as_str()).collect();
@@ -330,7 +333,7 @@ async fn extension_headers_join_level_header_limits_traversal_depth() {
         "@context": [CORE_CONTEXT]
     });
     let status = create_entity(&http_client, &leaf).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     let middle_id = unique_entity_id("urn:ngsi-ld:Entity:ext-joinlevel-middle");
     let middle = json!({
@@ -340,7 +343,7 @@ async fn extension_headers_join_level_header_limits_traversal_depth() {
         "@context": [CORE_CONTEXT]
     });
     let status = create_entity(&http_client, &middle).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     let root_id = unique_entity_id("urn:ngsi-ld:Entity:ext-joinlevel-root");
     let root = json!({
@@ -350,7 +353,7 @@ async fn extension_headers_join_level_header_limits_traversal_depth() {
         "@context": [CORE_CONTEXT]
     });
     let status = create_entity(&http_client, &root).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     let encoded_root_id = urlencoding::encode(&root_id);
 
@@ -361,7 +364,7 @@ async fn extension_headers_join_level_header_limits_traversal_depth() {
         &[("NGSILD-Join", "flat"), ("NGSILD-JoinLevel", "1")],
     )
     .await;
-    assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
     let arr_1 = body_level_1.as_array().expect("level-1 join must return array");
     let ids_1: Vec<&str> = arr_1.iter().filter_map(|item| item["id"].as_str()).collect();
     assert!(ids_1.contains(&root_id.as_str()));
@@ -375,7 +378,7 @@ async fn extension_headers_join_level_header_limits_traversal_depth() {
         &[("NGSILD-Join", "flat"), ("NGSILD-JoinLevel", "2")],
     )
     .await;
-    assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
     let arr_2 = body_level_2.as_array().expect("level-2 join must return array");
     let ids_2: Vec<&str> = arr_2.iter().filter_map(|item| item["id"].as_str()).collect();
     assert!(ids_2.contains(&root_id.as_str()));
@@ -395,12 +398,12 @@ async fn extension_headers_scope_via_header_filters_entities_by_scope_path() {
     let id_b = unique_entity_id("urn:ngsi-ld:Building:ext-scope-b");
 
     let status = create_entity(&http_client, &building_entity_with_scope(&id_a, "/Company/AreaA")).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
     let status = create_entity(&http_client, &building_entity_with_scope(&id_b, "/Company/AreaB")).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     let (status, body) = query_entities_with_headers(&http_client, "type=Building", &[("NGSILD-Scope", "/Company/AreaA")]).await;
-    assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
 
     let arr = body.as_array().expect("query result must be an array");
     let ids: Vec<&str> = arr.iter().filter_map(|item| item["id"].as_str()).collect();

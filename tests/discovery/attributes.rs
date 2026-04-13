@@ -1,3 +1,4 @@
+#![allow(clippy::expect_used, clippy::unwrap_used)]
 //! Attribute list tests (NGSI-LD 5.5.11, 6.3.5).
 
 use reqwest::StatusCode;
@@ -24,8 +25,8 @@ async fn list_attributes_empty_database_returns_empty_list() {
     let c = client();
 
     let (status, body) = list_attributes(&c, "", None).await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["type"], "AttributeList");
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(body["type"], "AttributeList");
     let attrs = body["attributeList"].as_array().expect("attributeList should be array");
     assert!(attrs.is_empty(), "expected empty attributeList on clean database, got: {attrs:?}");
 }
@@ -44,14 +45,14 @@ async fn list_attributes_without_context_returns_expanded_uris() {
 
     let entity = load_fixture("entities/building-simple-attributes.json", &id);
     let (s, _) = create_entity(&c, &entity, Some(COMPOUND_CONTEXT_URL)).await;
-    assert_eq!(s, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(s, StatusCode::CREATED);
 
     let (status, body) = list_attributes(&c, "", None).await;
-    assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
 
     let expected = load_expectation("types/expectations/attribute-list-025-01-01.json");
-    assert_eq!(body["type"], "AttributeList");
-    assert_eq!(sorted_strings(&body["attributeList"]), sorted_strings(&expected["attributeList"]));
+    pretty_assertions::assert_eq!(body["type"], "AttributeList");
+    pretty_assertions::assert_eq!(sorted_strings(&body["attributeList"]), sorted_strings(&expected["attributeList"]));
 
     delete_entity(&c, &id).await;
 }
@@ -70,14 +71,14 @@ async fn list_attributes_with_context_returns_compacted_names() {
 
     let entity = load_fixture("entities/building-simple-attributes.json", &id);
     let (s, _) = create_entity(&c, &entity, Some(COMPOUND_CONTEXT_URL)).await;
-    assert_eq!(s, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(s, StatusCode::CREATED);
 
     let (status, body) = list_attributes(&c, "", Some(COMPOUND_CONTEXT_URL)).await;
-    assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
 
     let expected = load_expectation("types/expectations/attribute-list-025-01-02.json");
-    assert_eq!(body["type"], "AttributeList");
-    assert_eq!(sorted_strings(&body["attributeList"]), sorted_strings(&expected["attributeList"]));
+    pretty_assertions::assert_eq!(body["type"], "AttributeList");
+    pretty_assertions::assert_eq!(sorted_strings(&body["attributeList"]), sorted_strings(&expected["attributeList"]));
 
     delete_entity(&c, &id).await;
 }

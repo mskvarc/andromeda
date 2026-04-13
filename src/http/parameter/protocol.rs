@@ -121,6 +121,7 @@ pub fn apply_temporal_extension_headers(params: &mut TemporalQueryParameters, pr
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::*;
     use crate::http::extractor::{prefer::PreferHeader, snapshot::SnapshotHeader};
 
@@ -150,10 +151,10 @@ mod tests {
             entity_map: None,
         };
         apply_entity_get_extension_headers(&mut params, &protocol, &uri).unwrap();
-        assert_eq!(params.format.as_deref(), Some("keyValues"));
-        assert_eq!(params.dataset_id.as_deref(), Some("urn:ds:1"));
-        assert_eq!(params.join.as_deref(), Some("inline"));
-        assert_eq!(params.join_level, Some(2));
+        pretty_assertions::assert_eq!(params.format.as_deref(), Some("keyValues"));
+        pretty_assertions::assert_eq!(params.dataset_id.as_deref(), Some("urn:ds:1"));
+        pretty_assertions::assert_eq!(params.join.as_deref(), Some("inline"));
+        pretty_assertions::assert_eq!(params.join_level, Some(2));
     }
 
     #[test]
@@ -162,7 +163,7 @@ mod tests {
         let uri: Uri = "/test".parse().unwrap();
         let mut params: TemporalQueryParameters = serde_urlencoded::from_str("format=temporalValues").unwrap();
         apply_temporal_extension_headers(&mut params, &protocol, &uri).unwrap();
-        assert_eq!(params.format.as_deref(), Some("temporalValues"));
+        pretty_assertions::assert_eq!(params.format.as_deref(), Some("temporalValues"));
     }
 
     fn build_empty_protocol() -> NgsiLdProtocolHeaders {

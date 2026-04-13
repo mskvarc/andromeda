@@ -128,6 +128,7 @@ pub fn append_pagination_links(
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::*;
     use axum::{http::StatusCode, response::IntoResponse};
 

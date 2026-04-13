@@ -1,3 +1,4 @@
+#![allow(clippy::expect_used, clippy::unwrap_used)]
 use std::time::Duration;
 
 use reqwest::StatusCode;
@@ -54,7 +55,7 @@ async fn create_attr_deleted_subscription(
 
     set_endpoint_uri(&mut subscription, &receiver.endpoint_url());
     let (status, _, _) = create_subscription(http_client, &subscription).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     receiver.clear_notifications().await;
     subscription_id
@@ -74,7 +75,7 @@ async fn notification_attribute_deleted_key_values_delivers_notification() {
 
     let _ = delete_entity_attr(&http_client, &entity_id, "name", None, None).await;
     let notification = receiver.wait_for_subscription_notification(&subscription_id, Duration::from_secs(5)).await;
-    assert_eq!(notification.body["data"][0]["id"], entity_id);
+    pretty_assertions::assert_eq!(notification.body["data"][0]["id"], entity_id);
 }
 
 #[serial_test::serial]
@@ -91,7 +92,7 @@ async fn notification_attribute_deleted_specific_watched_attribute_key_values_de
 
     let _ = delete_entity_attr(&http_client, &entity_id, "name", None, None).await;
     let notification = receiver.wait_for_subscription_notification(&subscription_id, Duration::from_secs(5)).await;
-    assert_eq!(notification.body["data"][0]["id"], entity_id);
+    pretty_assertions::assert_eq!(notification.body["data"][0]["id"], entity_id);
 }
 
 #[serial_test::serial]
@@ -124,7 +125,7 @@ async fn notification_attribute_deleted_normalized_nullifies_deleted_attribute()
 
     let _ = delete_entity_attr(&http_client, &entity_id, "name", None, None).await;
     let notification = receiver.wait_for_subscription_notification(&subscription_id, Duration::from_secs(5)).await;
-    assert_eq!(notification.body["data"][0]["name"]["value"], "urn:ngsi-ld:null");
+    pretty_assertions::assert_eq!(notification.body["data"][0]["name"]["value"], "urn:ngsi-ld:null");
 }
 
 #[serial_test::serial]
@@ -159,7 +160,7 @@ async fn notification_attribute_deleted_with_dataset_id_delivers_notification() 
 
     let _ = delete_entity_attr(&http_client, &entity_id, "name", Some("urn:ngsi-ld:Dataset:french-name"), None).await;
     let notification = receiver.wait_for_subscription_notification(&subscription_id, Duration::from_secs(5)).await;
-    assert_eq!(notification.body["data"][0]["id"], entity_id);
+    pretty_assertions::assert_eq!(notification.body["data"][0]["id"], entity_id);
 }
 
 #[serial_test::serial]
@@ -210,7 +211,7 @@ async fn notification_ngsi_ld_null_property_via_merge_triggers_attribute_deleted
 
     let _ = merge_entity(&http_client, &entity_id, &null_property_fragment()).await;
     let notification = receiver.wait_for_subscription_notification(&subscription_id, Duration::from_secs(5)).await;
-    assert_eq!(notification.body["data"][0]["name"]["value"], "urn:ngsi-ld:null");
+    pretty_assertions::assert_eq!(notification.body["data"][0]["name"]["value"], "urn:ngsi-ld:null");
 }
 
 #[serial_test::serial]
@@ -227,7 +228,7 @@ async fn notification_ngsi_ld_null_property_via_update_attrs_triggers_attribute_
 
     let _ = update_entity_attrs(&http_client, &entity_id, &null_property_fragment()).await;
     let notification = receiver.wait_for_subscription_notification(&subscription_id, Duration::from_secs(5)).await;
-    assert_eq!(notification.body["data"][0]["name"]["value"], "urn:ngsi-ld:null");
+    pretty_assertions::assert_eq!(notification.body["data"][0]["name"]["value"], "urn:ngsi-ld:null");
 }
 
 #[serial_test::serial]
@@ -244,7 +245,7 @@ async fn notification_ngsi_ld_null_property_via_partial_update_triggers_attribut
 
     let _ = partial_update_attr(&http_client, &entity_id, "name", &null_property_partial_fragment()).await;
     let notification = receiver.wait_for_subscription_notification(&subscription_id, Duration::from_secs(5)).await;
-    assert_eq!(notification.body["data"][0]["name"]["value"], "urn:ngsi-ld:null");
+    pretty_assertions::assert_eq!(notification.body["data"][0]["name"]["value"], "urn:ngsi-ld:null");
 }
 
 #[serial_test::serial]
@@ -261,7 +262,7 @@ async fn notification_ngsi_ld_null_relationship_via_merge_triggers_attribute_del
 
     let _ = merge_entity(&http_client, &entity_id, &null_relationship_fragment()).await;
     let notification = receiver.wait_for_subscription_notification(&subscription_id, Duration::from_secs(5)).await;
-    assert_eq!(notification.body["data"][0]["locatedAt"]["object"], "urn:ngsi-ld:null");
+    pretty_assertions::assert_eq!(notification.body["data"][0]["locatedAt"]["object"], "urn:ngsi-ld:null");
 }
 
 #[serial_test::serial]
@@ -278,7 +279,7 @@ async fn notification_ngsi_ld_null_relationship_via_update_attrs_triggers_attrib
 
     let _ = update_entity_attrs(&http_client, &entity_id, &null_relationship_fragment()).await;
     let notification = receiver.wait_for_subscription_notification(&subscription_id, Duration::from_secs(5)).await;
-    assert_eq!(notification.body["data"][0]["locatedAt"]["object"], "urn:ngsi-ld:null");
+    pretty_assertions::assert_eq!(notification.body["data"][0]["locatedAt"]["object"], "urn:ngsi-ld:null");
 }
 
 #[serial_test::serial]
@@ -295,7 +296,7 @@ async fn notification_ngsi_ld_null_relationship_via_partial_update_triggers_attr
 
     let _ = partial_update_attr(&http_client, &entity_id, "locatedAt", &null_relationship_partial_fragment()).await;
     let notification = receiver.wait_for_subscription_notification(&subscription_id, Duration::from_secs(5)).await;
-    assert_eq!(notification.body["data"][0]["locatedAt"]["object"], "urn:ngsi-ld:null");
+    pretty_assertions::assert_eq!(notification.body["data"][0]["locatedAt"]["object"], "urn:ngsi-ld:null");
 }
 
 #[serial_test::serial]
@@ -312,7 +313,7 @@ async fn notification_ngsi_ld_null_language_property_via_merge_triggers_attribut
 
     let _ = merge_entity(&http_client, &entity_id, &null_language_property_fragment()).await;
     let notification = receiver.wait_for_subscription_notification(&subscription_id, Duration::from_secs(5)).await;
-    assert_eq!(
+    pretty_assertions::assert_eq!(
         notification.body["data"][0]["street"]["languageMap"],
         serde_json::json!({"@none": "urn:ngsi-ld:null"})
     );
@@ -332,7 +333,7 @@ async fn notification_ngsi_ld_null_language_property_via_update_attrs_triggers_a
 
     let _ = update_entity_attrs(&http_client, &entity_id, &null_language_property_fragment()).await;
     let notification = receiver.wait_for_subscription_notification(&subscription_id, Duration::from_secs(5)).await;
-    assert_eq!(
+    pretty_assertions::assert_eq!(
         notification.body["data"][0]["street"]["languageMap"],
         serde_json::json!({"@none": "urn:ngsi-ld:null"})
     );
@@ -352,7 +353,7 @@ async fn notification_ngsi_ld_null_language_property_via_partial_update_triggers
 
     let _ = partial_update_attr(&http_client, &entity_id, "street", &null_language_property_partial_fragment()).await;
     let notification = receiver.wait_for_subscription_notification(&subscription_id, Duration::from_secs(5)).await;
-    assert_eq!(
+    pretty_assertions::assert_eq!(
         notification.body["data"][0]["street"]["languageMap"],
         serde_json::json!({"@none": "urn:ngsi-ld:null"})
     );
@@ -372,7 +373,7 @@ async fn notification_entity_deletion_with_attribute_deleted_trigger_nullifies_w
 
     let _ = delete_entity(&http_client, &entity_id).await;
     let notification = receiver.wait_for_subscription_notification(&subscription_id, Duration::from_secs(5)).await;
-    assert_eq!(notification.body["data"][0]["name"]["value"], "urn:ngsi-ld:null");
+    pretty_assertions::assert_eq!(notification.body["data"][0]["name"]["value"], "urn:ngsi-ld:null");
 }
 
 #[serial_test::serial]

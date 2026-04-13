@@ -1,3 +1,4 @@
+#![allow(clippy::expect_used, clippy::unwrap_used)]
 pub mod query_entities;
 pub mod retrieve_entity;
 pub mod via_loop_detection;

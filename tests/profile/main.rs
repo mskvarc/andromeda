@@ -94,7 +94,7 @@ async fn profile_link_header_accepted_on_entity_creation() {
 
     let link = jsonld_link_with_profile("https://uri.etsi.org/ngsi-ld/profile/version");
     let (status, _) = create_entity_with_link(&c, &entity, &link).await;
-    assert_eq!(status, StatusCode::CREATED, "entity creation with profiled Link should succeed");
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED, "entity creation with profiled Link should succeed");
 
     delete_entity(&c, &id).await;
 }
@@ -114,11 +114,11 @@ async fn profile_link_header_preserved_in_context_extraction() {
 
     let link = jsonld_link_with_profile("https://uri.etsi.org/ngsi-ld/profile/version");
     let (status, _) = create_entity_with_link(&c, &entity, &link).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     let (status, body) = get_entity(&c, &id).await;
-    assert_eq!(status, StatusCode::OK, "entity should be retrievable after creation with profiled Link");
-    assert_eq!(body["id"], id);
+    pretty_assertions::assert_eq!(status, StatusCode::OK, "entity should be retrievable after creation with profiled Link");
+    pretty_assertions::assert_eq!(body["id"], id);
 
     delete_entity(&c, &id).await;
 }
@@ -139,12 +139,12 @@ async fn profile_link_header_with_standard_context_coexist() {
     // Link with both context rel and profile
     let link = jsonld_link_with_profile("https://uri.etsi.org/ngsi-ld/profile/version");
     let (status, _) = create_entity_with_link(&c, &entity, &link).await;
-    assert_eq!(status, StatusCode::CREATED, "Link with context and profile should work together");
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED, "Link with context and profile should work together");
 
     // Verify entity is correctly created and retrievable
     let (status, body) = get_entity(&c, &id).await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["type"], "Testing");
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(body["type"], "Testing");
 
     delete_entity(&c, &id).await;
 }

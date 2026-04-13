@@ -1,3 +1,4 @@
+#![allow(clippy::expect_used, clippy::unwrap_used)]
 use crate::{
     BAD_REQUEST_DATA_TYPE,
     RESOURCE_NOT_FOUND_TYPE,
@@ -22,13 +23,13 @@ async fn csr_subscription_delete_existing_returns_204_and_resource_not_found_aft
     let payload = csource_subscription_payload(&subscription_id);
 
     let (create_status, _, _) = create_csource_subscription(&http_client, &payload).await;
-    assert_eq!(create_status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(create_status, StatusCode::CREATED);
 
     let (delete_status, _) = delete_csource_subscription(&http_client, &subscription_id).await;
-    assert_eq!(delete_status, StatusCode::NO_CONTENT);
+    pretty_assertions::assert_eq!(delete_status, StatusCode::NO_CONTENT);
 
     let (retrieve_status, _) = retrieve_csource_subscription(&http_client, &subscription_id, None).await;
-    assert_eq!(retrieve_status, StatusCode::NOT_FOUND);
+    pretty_assertions::assert_eq!(retrieve_status, StatusCode::NOT_FOUND);
 }
 
 #[tokio::test]
@@ -39,7 +40,7 @@ async fn csr_subscription_delete_invalid_uri_returns_400_bad_request_data() {
 
     let (status, body) = delete_csource_subscription(&http_client, "invalidUri").await;
 
-    assert_eq!(status, StatusCode::BAD_REQUEST);
+    pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
     assert_problem_detail_type(&body, BAD_REQUEST_DATA_TYPE);
 }
 
@@ -51,6 +52,6 @@ async fn csr_subscription_delete_unknown_id_returns_404_resource_not_found() {
 
     let (status, body) = delete_csource_subscription(&http_client, "urn:ngsi-ld:Subscription:unknownSubscription").await;
 
-    assert_eq!(status, StatusCode::NOT_FOUND);
+    pretty_assertions::assert_eq!(status, StatusCode::NOT_FOUND);
     assert_problem_detail_type(&body, RESOURCE_NOT_FOUND_TYPE);
 }

@@ -169,6 +169,7 @@ pub fn parse_endpoint_transport(uri: &str, notifier_info: Option<&[Value]>) -> R
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::*;
 
     #[test]
@@ -188,14 +189,14 @@ mod tests {
         let result = parse_endpoint_transport("mqtt://broker.example.com:1883/test/topic", None).unwrap();
         match result {
             EndpointTransport::Mqtt(config) => {
-                assert_eq!(config.host, "broker.example.com");
-                assert_eq!(config.port, 1883);
-                assert_eq!(config.topic, "test/topic");
+                pretty_assertions::assert_eq!(config.host, "broker.example.com");
+                pretty_assertions::assert_eq!(config.port, 1883);
+                pretty_assertions::assert_eq!(config.topic, "test/topic");
                 assert!(!config.use_tls);
-                assert_eq!(config.version, MqttVersion::V5);
-                assert_eq!(config.qos, MqttQoS::AtMost);
+                pretty_assertions::assert_eq!(config.version, MqttVersion::V5);
+                pretty_assertions::assert_eq!(config.qos, MqttQoS::AtMost);
             }
-            EndpointTransport::Http => panic!("Expected Mqtt transport"),
+            EndpointTransport::Http => unreachable!("Expected Mqtt transport"),
         }
     }
 
@@ -204,11 +205,11 @@ mod tests {
         let result = parse_endpoint_transport("mqtts://broker.example.com/secure/topic", None).unwrap();
         match result {
             EndpointTransport::Mqtt(config) => {
-                assert_eq!(config.port, 8883);
+                pretty_assertions::assert_eq!(config.port, 8883);
                 assert!(config.use_tls);
-                assert_eq!(config.topic, "secure/topic");
+                pretty_assertions::assert_eq!(config.topic, "secure/topic");
             }
-            EndpointTransport::Http => panic!("Expected Mqtt transport"),
+            EndpointTransport::Http => unreachable!("Expected Mqtt transport"),
         }
     }
 
@@ -217,10 +218,10 @@ mod tests {
         let result = parse_endpoint_transport("mqtt://broker.example.com/topic", None).unwrap();
         match result {
             EndpointTransport::Mqtt(config) => {
-                assert_eq!(config.port, 1883);
+                pretty_assertions::assert_eq!(config.port, 1883);
                 assert!(!config.use_tls);
             }
-            EndpointTransport::Http => panic!("Expected Mqtt transport"),
+            EndpointTransport::Http => unreachable!("Expected Mqtt transport"),
         }
     }
 
@@ -233,10 +234,10 @@ mod tests {
         let result = parse_endpoint_transport("mqtt://broker:1883/topic", Some(&notifier_info)).unwrap();
         match result {
             EndpointTransport::Mqtt(config) => {
-                assert_eq!(config.version, MqttVersion::V311);
-                assert_eq!(config.qos, MqttQoS::Exactly);
+                pretty_assertions::assert_eq!(config.version, MqttVersion::V311);
+                pretty_assertions::assert_eq!(config.qos, MqttQoS::Exactly);
             }
-            EndpointTransport::Http => panic!("Expected Mqtt transport"),
+            EndpointTransport::Http => unreachable!("Expected Mqtt transport"),
         }
     }
 
@@ -246,9 +247,9 @@ mod tests {
         let result = parse_endpoint_transport("mqtt://broker:1883/topic", Some(&notifier_info)).unwrap();
         match result {
             EndpointTransport::Mqtt(config) => {
-                assert_eq!(config.qos, MqttQoS::AtLeast);
+                pretty_assertions::assert_eq!(config.qos, MqttQoS::AtLeast);
             }
-            EndpointTransport::Http => panic!("Expected Mqtt transport"),
+            EndpointTransport::Http => unreachable!("Expected Mqtt transport"),
         }
     }
 
@@ -289,11 +290,11 @@ mod tests {
         let result = parse_endpoint_transport("mqtt://myuser:mypass@broker:1883/topic", None).unwrap();
         match result {
             EndpointTransport::Mqtt(config) => {
-                assert_eq!(config.username.as_deref(), Some("myuser"));
-                assert_eq!(config.password.as_deref(), Some("mypass"));
-                assert_eq!(config.host, "broker");
+                pretty_assertions::assert_eq!(config.username.as_deref(), Some("myuser"));
+                pretty_assertions::assert_eq!(config.password.as_deref(), Some("mypass"));
+                pretty_assertions::assert_eq!(config.host, "broker");
             }
-            EndpointTransport::Http => panic!("Expected Mqtt transport"),
+            EndpointTransport::Http => unreachable!("Expected Mqtt transport"),
         }
     }
 
@@ -302,10 +303,10 @@ mod tests {
         let result = parse_endpoint_transport("mqtt://myuser@broker/topic", None).unwrap();
         match result {
             EndpointTransport::Mqtt(config) => {
-                assert_eq!(config.username.as_deref(), Some("myuser"));
+                pretty_assertions::assert_eq!(config.username.as_deref(), Some("myuser"));
                 assert!(config.password.is_none());
             }
-            EndpointTransport::Http => panic!("Expected Mqtt transport"),
+            EndpointTransport::Http => unreachable!("Expected Mqtt transport"),
         }
     }
 
@@ -317,7 +318,7 @@ mod tests {
                 assert!(config.username.is_none());
                 assert!(config.password.is_none());
             }
-            EndpointTransport::Http => panic!("Expected Mqtt transport"),
+            EndpointTransport::Http => unreachable!("Expected Mqtt transport"),
         }
     }
 
@@ -328,9 +329,9 @@ mod tests {
             serde_json::json!({"key": "X-Custom", "value": "custom-value"}),
         ];
         let pairs = extract_key_value_pairs(Some(&infos));
-        assert_eq!(pairs.len(), 2);
-        assert_eq!(pairs[0], ("Authorization".to_string(), "Bearer token".to_string()));
-        assert_eq!(pairs[1], ("X-Custom".to_string(), "custom-value".to_string()));
+        pretty_assertions::assert_eq!(pairs.len(), 2);
+        pretty_assertions::assert_eq!(pairs[0], ("Authorization".to_string(), "Bearer token".to_string()));
+        pretty_assertions::assert_eq!(pairs[1], ("X-Custom".to_string(), "custom-value".to_string()));
     }
 
     #[test]
@@ -348,7 +349,7 @@ mod tests {
             serde_json::json!("not-an-object"),
         ];
         let pairs = extract_key_value_pairs(Some(&infos));
-        assert_eq!(pairs.len(), 1);
-        assert_eq!(pairs[0], ("Good".to_string(), "pair".to_string()));
+        pretty_assertions::assert_eq!(pairs.len(), 1);
+        pretty_assertions::assert_eq!(pairs[0], ("Good".to_string(), "pair".to_string()));
     }
 }

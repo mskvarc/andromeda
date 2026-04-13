@@ -292,6 +292,7 @@ impl EntityPatch {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::{Entity, EntityPatch};
     use crate::domain::{attribute::AttributeValue, notification::SysAttrsSnapshot};
     use chrono::{Datelike, TimeZone, Utc};
@@ -369,7 +370,7 @@ mod tests {
 
         let entity: Entity = serde_json::from_value(payload).expect("entity with expiresAt");
         assert!(entity.expires_at.is_some());
-        assert_eq!(entity.expires_at.unwrap().year(), 2030);
+        pretty_assertions::assert_eq!(entity.expires_at.unwrap().year(), 2030);
         assert!(!entity.attrs.contains_key("expiresAt"));
     }
 
@@ -578,9 +579,9 @@ mod tests {
         };
 
         let entity = entity.with_sys_attrs(&snapshot);
-        assert_eq!(entity.created_at, Some(snapshot.created_at));
-        assert_eq!(entity.modified_at, Some(snapshot.modified_at));
-        assert_eq!(entity.expires_at, Some(Utc.with_ymd_and_hms(2030, 12, 31, 23, 59, 59).unwrap()));
+        pretty_assertions::assert_eq!(entity.created_at, Some(snapshot.created_at));
+        pretty_assertions::assert_eq!(entity.modified_at, Some(snapshot.modified_at));
+        pretty_assertions::assert_eq!(entity.expires_at, Some(Utc.with_ymd_and_hms(2030, 12, 31, 23, 59, 59).unwrap()));
     }
 
     #[test]
@@ -602,7 +603,7 @@ mod tests {
 
         let entity = entity.with_sys_attrs(&snapshot);
         // User-provided expiresAt is preserved, not overwritten by snapshot
-        assert_eq!(entity.expires_at, original_expires);
+        pretty_assertions::assert_eq!(entity.expires_at, original_expires);
     }
 
     #[test]
@@ -618,8 +619,8 @@ mod tests {
         let expanded = entity.to_expanded();
         let obj = expanded.as_object().expect("expanded is object");
 
-        assert_eq!(obj["@id"], "urn:ngsi-ld:Building:001");
-        assert_eq!(obj["@type"], json!(["Building"]));
+        pretty_assertions::assert_eq!(obj["@id"], "urn:ngsi-ld:Building:001");
+        pretty_assertions::assert_eq!(obj["@type"], json!(["Building"]));
     }
 
     #[test]
@@ -635,7 +636,7 @@ mod tests {
         let expanded = entity.to_expanded();
         let obj = expanded.as_object().expect("expanded is object");
 
-        assert_eq!(obj["@type"], json!(["Building", "Venue"]));
+        pretty_assertions::assert_eq!(obj["@type"], json!(["Building", "Venue"]));
     }
 
     #[test]
@@ -653,7 +654,7 @@ mod tests {
         let obj = expanded.as_object().expect("expanded is object");
 
         let scope = &obj["https://uri.etsi.org/ngsi-ld/scope"];
-        assert_eq!(scope, &json!([{"@value": "/Madrid/Gardens"}]));
+        pretty_assertions::assert_eq!(scope, &json!([{"@value": "/Madrid/Gardens"}]));
     }
 
     #[test]
@@ -678,7 +679,7 @@ mod tests {
         // Timestamps should be typed values
         assert!(obj.contains_key("https://uri.etsi.org/ngsi-ld/createdAt"));
         let created = &obj["https://uri.etsi.org/ngsi-ld/createdAt"];
-        assert_eq!(created[0]["@type"], "https://uri.etsi.org/ngsi-ld/DateTime");
+        pretty_assertions::assert_eq!(created[0]["@type"], "https://uri.etsi.org/ngsi-ld/DateTime");
 
         // Flattened attribute
         assert!(obj.contains_key("temperature"));
@@ -739,7 +740,7 @@ mod tests {
         .unwrap();
         let exclusive = vec!["temperature".to_string()];
         assert!(patch.strip_exclusive_attrs(&exclusive));
-        assert_eq!(patch.attrs.len(), 2);
+        pretty_assertions::assert_eq!(patch.attrs.len(), 2);
     }
 
     #[test]
@@ -751,7 +752,7 @@ mod tests {
         .unwrap();
         let exclusive = vec!["speed".to_string()];
         assert!(patch.strip_exclusive_attrs(&exclusive));
-        assert_eq!(patch.attrs.len(), 1);
+        pretty_assertions::assert_eq!(patch.attrs.len(), 1);
         assert!(patch.attrs.contains_key("fuel"));
     }
 
@@ -774,6 +775,6 @@ mod tests {
         .unwrap();
         let exclusive: Vec<String> = Vec::new();
         assert!(patch.strip_exclusive_attrs(&exclusive));
-        assert_eq!(patch.attrs.len(), 1);
+        pretty_assertions::assert_eq!(patch.attrs.len(), 1);
     }
 }

@@ -134,6 +134,7 @@ impl headers::Header for Accept {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::*;
     use headers::Header;
 
@@ -147,48 +148,48 @@ mod tests {
     #[test]
     fn decode_json() {
         let accept = decode_accept("application/json").expect("valid");
-        assert_eq!(accept.0.len(), 1);
-        assert_eq!(*accept.0[0].value(), ResponseFormat::Json);
-        assert_eq!(accept.0[0].quality(), Quality::default());
+        pretty_assertions::assert_eq!(accept.0.len(), 1);
+        pretty_assertions::assert_eq!(*accept.0[0].value(), ResponseFormat::Json);
+        pretty_assertions::assert_eq!(accept.0[0].quality(), Quality::default());
     }
 
     #[test]
     fn decode_jsonld() {
         let accept = decode_accept("application/ld+json").expect("valid");
-        assert_eq!(accept.0.len(), 1);
-        assert_eq!(*accept.0[0].value(), ResponseFormat::JsonLd);
+        pretty_assertions::assert_eq!(accept.0.len(), 1);
+        pretty_assertions::assert_eq!(*accept.0[0].value(), ResponseFormat::JsonLd);
     }
 
     #[test]
     fn decode_geojson() {
         let accept = decode_accept("application/geo+json").expect("valid");
-        assert_eq!(accept.0.len(), 1);
-        assert_eq!(*accept.0[0].value(), ResponseFormat::GeoJson);
+        pretty_assertions::assert_eq!(accept.0.len(), 1);
+        pretty_assertions::assert_eq!(*accept.0[0].value(), ResponseFormat::GeoJson);
     }
 
     #[test]
     fn decode_wildcard_becomes_json() {
         let accept = decode_accept("*/*").expect("valid");
-        assert_eq!(accept.best_format(GeoJsonSupport::Allowed), Some(ResponseFormat::Json));
+        pretty_assertions::assert_eq!(accept.best_format(GeoJsonSupport::Allowed), Some(ResponseFormat::Json));
     }
 
     #[test]
     fn decode_with_quality() {
         let accept = decode_accept("application/ld+json;q=0.9, application/json").expect("valid");
         // Json has q=1.0, JsonLd has q=0.9 -> Json wins
-        assert_eq!(accept.best_format(GeoJsonSupport::Allowed), Some(ResponseFormat::Json));
+        pretty_assertions::assert_eq!(accept.best_format(GeoJsonSupport::Allowed), Some(ResponseFormat::Json));
     }
 
     #[test]
     fn decode_prefers_higher_quality() {
         let accept = decode_accept("application/json;q=0.5, application/ld+json;q=1.0").expect("valid");
-        assert_eq!(accept.best_format(GeoJsonSupport::Allowed), Some(ResponseFormat::JsonLd));
+        pretty_assertions::assert_eq!(accept.best_format(GeoJsonSupport::Allowed), Some(ResponseFormat::JsonLd));
     }
 
     #[test]
     fn decode_ignores_unsupported() {
         let accept = decode_accept("application/xml, application/json").expect("valid");
-        assert_eq!(accept.best_format(GeoJsonSupport::Allowed), Some(ResponseFormat::Json));
+        pretty_assertions::assert_eq!(accept.best_format(GeoJsonSupport::Allowed), Some(ResponseFormat::Json));
     }
 
     #[test]
@@ -206,13 +207,13 @@ mod tests {
     #[test]
     fn best_format_excludes_geojson_when_disallowed() {
         let accept = decode_accept("application/geo+json").expect("valid");
-        assert_eq!(accept.best_format(GeoJsonSupport::Disallowed), None);
+        pretty_assertions::assert_eq!(accept.best_format(GeoJsonSupport::Disallowed), None);
     }
 
     #[test]
     fn best_format_allows_geojson_when_allowed() {
         let accept = decode_accept("application/geo+json").expect("valid");
-        assert_eq!(accept.best_format(GeoJsonSupport::Allowed), Some(ResponseFormat::GeoJson));
+        pretty_assertions::assert_eq!(accept.best_format(GeoJsonSupport::Allowed), Some(ResponseFormat::GeoJson));
     }
 
     #[test]
@@ -222,6 +223,6 @@ mod tests {
         original.encode(&mut encoded);
         let mut iter = encoded.iter();
         let decoded = Accept::decode(&mut iter).expect("roundtrip decode");
-        assert_eq!(original, decoded);
+        pretty_assertions::assert_eq!(original, decoded);
     }
 }

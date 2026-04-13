@@ -192,22 +192,22 @@ async fn smoke_create_retrieve_delete_full_lifecycle() {
 
     // Create
     let (status, location) = create_entity(&c, &entity).await;
-    assert_eq!(status, StatusCode::CREATED, "create should return 201");
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED, "create should return 201");
     assert!(location.is_some(), "create should return Location header");
 
     // Retrieve
     let (status, body) = get_entity(&c, &id).await;
-    assert_eq!(status, StatusCode::OK, "get should return 200");
-    assert_eq!(body["id"], id);
-    assert_eq!(body["type"], "Vehicle");
+    pretty_assertions::assert_eq!(status, StatusCode::OK, "get should return 200");
+    pretty_assertions::assert_eq!(body["id"], id);
+    pretty_assertions::assert_eq!(body["type"], "Vehicle");
 
     // Delete
     let status = delete_entity(&c, &id).await;
-    assert_eq!(status, StatusCode::NO_CONTENT, "delete should return 204");
+    pretty_assertions::assert_eq!(status, StatusCode::NO_CONTENT, "delete should return 204");
 
     // Retrieve after delete
     let (status, _) = get_entity(&c, &id).await;
-    assert_eq!(status, StatusCode::NOT_FOUND, "get after delete should return 404");
+    pretty_assertions::assert_eq!(status, StatusCode::NOT_FOUND, "get after delete should return 404");
 }
 
 // ---------------------------------------------------------------------------
@@ -234,16 +234,16 @@ async fn invalid_parameters_post_entities_returns_400() {
         None,
     )
     .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert_eq!(body["type"], INVALID_REQUEST_TYPE);
+    pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
+    pretty_assertions::assert_eq!(body["type"], INVALID_REQUEST_TYPE);
 }
 
 #[tokio::test]
 async fn invalid_parameters_get_entities_returns_400() {
     let c = client();
     let (status, _, body) = raw_request(&c, Method::GET, "/entities?type=Building&invalidParam=invalidValue", None, None, None).await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert_eq!(body["type"], INVALID_REQUEST_TYPE);
+    pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
+    pretty_assertions::assert_eq!(body["type"], INVALID_REQUEST_TYPE);
 }
 
 #[tokio::test]
@@ -269,24 +269,24 @@ async fn invalid_parameters_post_temporal_entities_returns_400() {
         None,
     )
     .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert_eq!(body["type"], INVALID_REQUEST_TYPE);
+    pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
+    pretty_assertions::assert_eq!(body["type"], INVALID_REQUEST_TYPE);
 }
 
 #[tokio::test]
 async fn invalid_parameters_get_temporal_entities_returns_400() {
     let c = client();
     let (status, _, body) = raw_request(&c, Method::GET, "/temporal/entities?type=Building&invalidParam=invalidValue", None, None, None).await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert_eq!(body["type"], INVALID_REQUEST_TYPE);
+    pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
+    pretty_assertions::assert_eq!(body["type"], INVALID_REQUEST_TYPE);
 }
 
 #[tokio::test]
 async fn invalid_parameters_get_types_returns_400() {
     let c = client();
     let (status, _, body) = raw_request(&c, Method::GET, "/types?invalidParam=invalidValue", None, None, None).await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert_eq!(body["type"], INVALID_REQUEST_TYPE);
+    pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
+    pretty_assertions::assert_eq!(body["type"], INVALID_REQUEST_TYPE);
 }
 
 #[tokio::test]
@@ -314,16 +314,16 @@ async fn invalid_parameters_post_subscriptions_returns_400() {
         None,
     )
     .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert_eq!(body["type"], INVALID_REQUEST_TYPE);
+    pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
+    pretty_assertions::assert_eq!(body["type"], INVALID_REQUEST_TYPE);
 }
 
 #[tokio::test]
 async fn invalid_parameters_get_subscriptions_returns_400() {
     let c = client();
     let (status, _, body) = raw_request(&c, Method::GET, "/subscriptions?invalidParam=invalidValue", None, None, None).await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert_eq!(body["type"], INVALID_REQUEST_TYPE);
+    pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
+    pretty_assertions::assert_eq!(body["type"], INVALID_REQUEST_TYPE);
 }
 
 // ---------------------------------------------------------------------------
@@ -345,7 +345,7 @@ async fn unsupported_media_type_patch_entity_attr_returns_415() {
         None,
     )
     .await;
-    assert_eq!(status, StatusCode::UNSUPPORTED_MEDIA_TYPE);
+    pretty_assertions::assert_eq!(status, StatusCode::UNSUPPORTED_MEDIA_TYPE);
 }
 
 #[tokio::test]
@@ -360,21 +360,21 @@ async fn unsupported_media_type_patch_subscription_returns_415() {
         None,
     )
     .await;
-    assert_eq!(status, StatusCode::UNSUPPORTED_MEDIA_TYPE);
+    pretty_assertions::assert_eq!(status, StatusCode::UNSUPPORTED_MEDIA_TYPE);
 }
 
 #[tokio::test]
 async fn unsupported_media_type_post_entities_returns_415() {
     let c = client();
     let (status, _, _) = raw_request(&c, Method::POST, "/entities", Some(XML_DUMMY_BODY), Some("application/xml"), None).await;
-    assert_eq!(status, StatusCode::UNSUPPORTED_MEDIA_TYPE);
+    pretty_assertions::assert_eq!(status, StatusCode::UNSUPPORTED_MEDIA_TYPE);
 }
 
 #[tokio::test]
 async fn unsupported_media_type_post_subscriptions_returns_415() {
     let c = client();
     let (status, _, _) = raw_request(&c, Method::POST, "/subscriptions", Some(XML_DUMMY_BODY), Some("application/xml"), None).await;
-    assert_eq!(status, StatusCode::UNSUPPORTED_MEDIA_TYPE);
+    pretty_assertions::assert_eq!(status, StatusCode::UNSUPPORTED_MEDIA_TYPE);
 }
 
 #[tokio::test]
@@ -389,14 +389,14 @@ async fn unsupported_media_type_post_batch_create_returns_415() {
         None,
     )
     .await;
-    assert_eq!(status, StatusCode::UNSUPPORTED_MEDIA_TYPE);
+    pretty_assertions::assert_eq!(status, StatusCode::UNSUPPORTED_MEDIA_TYPE);
 }
 
 #[tokio::test]
 async fn unsupported_media_type_post_temporal_entities_returns_415() {
     let c = client();
     let (status, _, _) = raw_request(&c, Method::POST, "/temporal/entities", Some(XML_DUMMY_BODY), Some("application/xml"), None).await;
-    assert_eq!(status, StatusCode::UNSUPPORTED_MEDIA_TYPE);
+    pretty_assertions::assert_eq!(status, StatusCode::UNSUPPORTED_MEDIA_TYPE);
 }
 
 // ---------------------------------------------------------------------------
@@ -408,7 +408,7 @@ async fn unsupported_media_type_post_temporal_entities_returns_415() {
 async fn not_acceptable_get_entity_xml_returns_406() {
     let c = client();
     let (status, _, _) = raw_request(&c, Method::GET, "/entities/urn:ngsi-ld:Building:dummy", None, None, Some("application/xml")).await;
-    assert_eq!(status, StatusCode::NOT_ACCEPTABLE);
+    pretty_assertions::assert_eq!(status, StatusCode::NOT_ACCEPTABLE);
 }
 
 #[tokio::test]
@@ -423,21 +423,21 @@ async fn not_acceptable_get_subscription_xml_returns_406() {
         Some("application/xml"),
     )
     .await;
-    assert_eq!(status, StatusCode::NOT_ACCEPTABLE);
+    pretty_assertions::assert_eq!(status, StatusCode::NOT_ACCEPTABLE);
 }
 
 #[tokio::test]
 async fn not_acceptable_get_registrations_xml_returns_406() {
     let c = client();
     let (status, _, _) = raw_request(&c, Method::GET, "/csourceRegistrations?type=Building", None, None, Some("application/xml")).await;
-    assert_eq!(status, StatusCode::NOT_ACCEPTABLE);
+    pretty_assertions::assert_eq!(status, StatusCode::NOT_ACCEPTABLE);
 }
 
 #[tokio::test]
 async fn not_acceptable_get_csource_subscriptions_xml_returns_406() {
     let c = client();
     let (status, _, _) = raw_request(&c, Method::GET, "/csourceSubscriptions", None, None, Some("application/xml")).await;
-    assert_eq!(status, StatusCode::NOT_ACCEPTABLE);
+    pretty_assertions::assert_eq!(status, StatusCode::NOT_ACCEPTABLE);
 }
 
 #[tokio::test]
@@ -452,7 +452,7 @@ async fn not_acceptable_get_temporal_entities_xml_returns_406() {
         Some("application/xml"),
     )
     .await;
-    assert_eq!(status, StatusCode::NOT_ACCEPTABLE);
+    pretty_assertions::assert_eq!(status, StatusCode::NOT_ACCEPTABLE);
 }
 
 #[tokio::test]
@@ -467,7 +467,7 @@ async fn not_acceptable_get_subscription_geojson_returns_406() {
         Some("application/geo+json"),
     )
     .await;
-    assert_eq!(status, StatusCode::NOT_ACCEPTABLE);
+    pretty_assertions::assert_eq!(status, StatusCode::NOT_ACCEPTABLE);
 }
 
 #[tokio::test]
@@ -482,14 +482,14 @@ async fn not_acceptable_get_temporal_entities_geojson_returns_406() {
         Some("application/geo+json"),
     )
     .await;
-    assert_eq!(status, StatusCode::NOT_ACCEPTABLE);
+    pretty_assertions::assert_eq!(status, StatusCode::NOT_ACCEPTABLE);
 }
 
 #[tokio::test]
 async fn not_acceptable_get_registrations_geojson_returns_406() {
     let c = client();
     let (status, _, _) = raw_request(&c, Method::GET, "/csourceRegistrations?type=Building", None, None, Some("application/geo+json")).await;
-    assert_eq!(status, StatusCode::NOT_ACCEPTABLE);
+    pretty_assertions::assert_eq!(status, StatusCode::NOT_ACCEPTABLE);
 }
 
 // ---------------------------------------------------------------------------
@@ -515,7 +515,7 @@ async fn merge_patch_partial_update_entity_attr_returns_204() {
     });
 
     let (status, _) = create_entity(&c, &entity).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     let fragment = json!({"type": "Property", "value": "BMW"});
     let resp = c
@@ -525,7 +525,7 @@ async fn merge_patch_partial_update_entity_attr_returns_204() {
         .send()
         .await
         .expect("patch request failed");
-    assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+    pretty_assertions::assert_eq!(resp.status(), StatusCode::NO_CONTENT);
 
     // Cleanup
     delete_entity(&c, &id).await;
@@ -548,7 +548,7 @@ async fn merge_patch_update_subscription_returns_204() {
     });
 
     let status = create_subscription(&c, &sub).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     let update = json!({
         "type": "Subscription",
@@ -564,7 +564,7 @@ async fn merge_patch_update_subscription_returns_204() {
         .send()
         .await
         .expect("patch subscription failed");
-    assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+    pretty_assertions::assert_eq!(resp.status(), StatusCode::NO_CONTENT);
 
     // Cleanup
     delete_subscription(&c, &sub_id).await;
@@ -594,8 +594,8 @@ async fn ld_context_not_available_create_entity_returns_503() {
         None,
     )
     .await;
-    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
-    assert_eq!(body["type"], LD_CONTEXT_NOT_AVAILABLE_TYPE);
+    pretty_assertions::assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    pretty_assertions::assert_eq!(body["type"], LD_CONTEXT_NOT_AVAILABLE_TYPE);
 }
 
 #[tokio::test]
@@ -622,8 +622,8 @@ async fn ld_context_not_available_create_subscription_returns_503() {
         None,
     )
     .await;
-    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
-    assert_eq!(body["type"], LD_CONTEXT_NOT_AVAILABLE_TYPE);
+    pretty_assertions::assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    pretty_assertions::assert_eq!(body["type"], LD_CONTEXT_NOT_AVAILABLE_TYPE);
 }
 
 #[tokio::test]
@@ -655,8 +655,8 @@ async fn ld_context_not_available_create_temporal_entity_returns_503() {
         None,
     )
     .await;
-    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
-    assert_eq!(body["type"], LD_CONTEXT_NOT_AVAILABLE_TYPE);
+    pretty_assertions::assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    pretty_assertions::assert_eq!(body["type"], LD_CONTEXT_NOT_AVAILABLE_TYPE);
 }
 
 #[tokio::test]
@@ -697,8 +697,8 @@ async fn ld_context_not_available_create_registration_returns_503() {
         None,
     )
     .await;
-    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
-    assert_eq!(body["type"], LD_CONTEXT_NOT_AVAILABLE_TYPE);
+    pretty_assertions::assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    pretty_assertions::assert_eq!(body["type"], LD_CONTEXT_NOT_AVAILABLE_TYPE);
 }
 
 // ---------------------------------------------------------------------------
@@ -731,10 +731,10 @@ async fn get_without_accept_entity_returns_json_with_link() {
     });
 
     let (status, _) = create_entity(&c, &entity).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     let (status, headers, _) = raw_request(&c, Method::GET, &format!("/entities/{id}"), None, None, Some("*/*")).await;
-    assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
     assert_json_content_type(&headers);
     assert_has_link_header(&headers);
 
@@ -758,10 +758,10 @@ async fn get_without_accept_subscription_returns_json_with_link() {
     });
 
     let status = create_subscription(&c, &sub).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     let (status, headers, _) = raw_request(&c, Method::GET, &format!("/subscriptions/{sub_id}"), None, None, Some("*/*")).await;
-    assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
     assert_json_content_type(&headers);
     assert_has_link_header(&headers);
 
@@ -796,10 +796,10 @@ async fn get_without_accept_registrations_returns_json_with_link() {
     });
 
     let status = create_registration(&c, &reg).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     let (status, headers, _) = raw_request(&c, Method::GET, "/csourceRegistrations?type=Vehicle", None, None, Some("*/*")).await;
-    assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
     assert_json_content_type(&headers);
     assert_has_link_header(&headers);
 
@@ -826,7 +826,7 @@ async fn get_without_accept_temporal_entities_returns_json_with_link() {
     });
 
     let status = create_temporal_entity(&c, &entity).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     let (status, headers, _) = raw_request(
         &c,
@@ -837,7 +837,7 @@ async fn get_without_accept_temporal_entities_returns_json_with_link() {
         Some("*/*"),
     )
     .await;
-    assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
     assert_json_content_type(&headers);
     assert_has_link_header(&headers);
 
@@ -871,8 +871,8 @@ async fn unsupported_media_type_post_entities_no_content_type_returns_415() {
 async fn invalid_parameters_get_attributes_returns_400() {
     let c = client();
     let (status, _, body) = raw_request(&c, Method::GET, "/attributes?invalidParam=invalidValue", None, None, None).await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert_eq!(body["type"], INVALID_REQUEST_TYPE);
+    pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
+    pretty_assertions::assert_eq!(body["type"], INVALID_REQUEST_TYPE);
 }
 
 // NGSI-LD 6.3.5: invalid params on GET /csourceRegistrations
@@ -888,8 +888,8 @@ async fn invalid_parameters_get_registrations_returns_400() {
         None,
     )
     .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert_eq!(body["type"], INVALID_REQUEST_TYPE);
+    pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
+    pretty_assertions::assert_eq!(body["type"], INVALID_REQUEST_TYPE);
 }
 
 // NGSI-LD 6.3.4: Accept text/plain on entity endpoint -> 406
@@ -897,7 +897,7 @@ async fn invalid_parameters_get_registrations_returns_400() {
 async fn not_acceptable_get_entity_text_plain_returns_406() {
     let c = client();
     let (status, _, _) = raw_request(&c, Method::GET, "/entities/urn:ngsi-ld:Building:dummy", None, None, Some("text/plain")).await;
-    assert_eq!(status, StatusCode::NOT_ACCEPTABLE);
+    pretty_assertions::assert_eq!(status, StatusCode::NOT_ACCEPTABLE);
 }
 
 // NGSI-LD 6.3.4: unsupported Content-Type text/plain on POST
@@ -905,7 +905,7 @@ async fn not_acceptable_get_entity_text_plain_returns_406() {
 async fn unsupported_media_type_post_entities_text_plain_returns_415() {
     let c = client();
     let (status, _, _) = raw_request(&c, Method::POST, "/entities", Some(b"not json"), Some("text/plain"), None).await;
-    assert_eq!(status, StatusCode::UNSUPPORTED_MEDIA_TYPE);
+    pretty_assertions::assert_eq!(status, StatusCode::UNSUPPORTED_MEDIA_TYPE);
 }
 
 // NGSI-LD 6.3.4: Content-Type application/xml on PATCH entity -> 415
@@ -921,7 +921,7 @@ async fn unsupported_media_type_patch_entity_returns_415() {
         None,
     )
     .await;
-    assert_eq!(status, StatusCode::UNSUPPORTED_MEDIA_TYPE);
+    pretty_assertions::assert_eq!(status, StatusCode::UNSUPPORTED_MEDIA_TYPE);
 }
 
 // NGSI-LD 6.3.4: Accept application/xml on GET /types -> 406
@@ -929,7 +929,7 @@ async fn unsupported_media_type_patch_entity_returns_415() {
 async fn not_acceptable_get_types_xml_returns_406() {
     let c = client();
     let (status, _, _) = raw_request(&c, Method::GET, "/types", None, None, Some("application/xml")).await;
-    assert_eq!(status, StatusCode::NOT_ACCEPTABLE);
+    pretty_assertions::assert_eq!(status, StatusCode::NOT_ACCEPTABLE);
 }
 
 // NGSI-LD 6.3.4: Accept application/xml on GET /attributes -> 406
@@ -937,7 +937,7 @@ async fn not_acceptable_get_types_xml_returns_406() {
 async fn not_acceptable_get_attributes_xml_returns_406() {
     let c = client();
     let (status, _, _) = raw_request(&c, Method::GET, "/attributes", None, None, Some("application/xml")).await;
-    assert_eq!(status, StatusCode::NOT_ACCEPTABLE);
+    pretty_assertions::assert_eq!(status, StatusCode::NOT_ACCEPTABLE);
 }
 
 // Smoke: creating duplicate entity -> 409 Conflict
@@ -952,10 +952,10 @@ async fn smoke_create_duplicate_entity_returns_409() {
     });
 
     let (status, _) = create_entity(&c, &entity).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     let (status, _) = create_entity(&c, &entity).await;
-    assert_eq!(status, StatusCode::CONFLICT, "duplicate create should return 409");
+    pretty_assertions::assert_eq!(status, StatusCode::CONFLICT, "duplicate create should return 409");
 
     delete_entity(&c, &id).await;
 }
@@ -965,7 +965,7 @@ async fn smoke_create_duplicate_entity_returns_409() {
 async fn smoke_get_nonexistent_entity_returns_404() {
     let c = client();
     let (status, _) = get_entity(&c, "urn:ngsi-ld:Vehicle:does-not-exist").await;
-    assert_eq!(status, StatusCode::NOT_FOUND);
+    pretty_assertions::assert_eq!(status, StatusCode::NOT_FOUND);
 }
 
 // Smoke: DELETE non-existent entity -> 404
@@ -973,5 +973,5 @@ async fn smoke_get_nonexistent_entity_returns_404() {
 async fn smoke_delete_nonexistent_entity_returns_404() {
     let c = client();
     let status = delete_entity(&c, "urn:ngsi-ld:Vehicle:does-not-exist").await;
-    assert_eq!(status, StatusCode::NOT_FOUND);
+    pretty_assertions::assert_eq!(status, StatusCode::NOT_FOUND);
 }

@@ -123,19 +123,19 @@ async fn list_property_create_retrieve_normalized_returns_list_property_with_val
         "@context": [TEST_SUITE_CONTEXT]
     });
     let (status, _) = create_entity(&c, &entity).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     let (status, body) = get_entity(&c, &id, "").await;
-    assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
 
     let tags = &body["tags"];
-    assert_eq!(tags["type"], "ListProperty", "attribute type must be ListProperty");
+    pretty_assertions::assert_eq!(tags["type"], "ListProperty", "attribute type must be ListProperty");
 
     let value_list = tags["valueList"].as_array().expect("valueList must be a JSON array");
-    assert_eq!(value_list.len(), 3, "all three valueList items must be preserved");
-    assert_eq!(value_list[0], "residential");
-    assert_eq!(value_list[1], "commercial");
-    assert_eq!(value_list[2], "mixed-use");
+    pretty_assertions::assert_eq!(value_list.len(), 3, "all three valueList items must be preserved");
+    pretty_assertions::assert_eq!(value_list[0], "residential");
+    pretty_assertions::assert_eq!(value_list[1], "commercial");
+    pretty_assertions::assert_eq!(value_list[2], "mixed-use");
 
     delete_entity(&c, &id).await;
 }
@@ -156,16 +156,16 @@ async fn list_property_retrieve_key_values_returns_array() {
         "@context": [TEST_SUITE_CONTEXT]
     });
     let (status, _) = create_entity(&c, &entity).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     let (status, body) = get_entity(&c, &id, "options=keyValues").await;
-    assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
 
     let tags = body["tags"].as_array().expect("simplified ListProperty must be a JSON array");
-    assert_eq!(tags.len(), 3, "all three values must be present in simplified form");
-    assert_eq!(tags[0], 1);
-    assert_eq!(tags[1], 2);
-    assert_eq!(tags[2], 3);
+    pretty_assertions::assert_eq!(tags.len(), 3, "all three values must be present in simplified form");
+    pretty_assertions::assert_eq!(tags[0], 1);
+    pretty_assertions::assert_eq!(tags[1], 2);
+    pretty_assertions::assert_eq!(tags[2], 3);
 
     delete_entity(&c, &id).await;
 }
@@ -186,15 +186,15 @@ async fn list_property_string_values_round_trip_through_create_and_retrieve() {
         "@context": [TEST_SUITE_CONTEXT]
     });
     let (status, _) = create_entity(&c, &entity).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     let (status, body) = get_entity(&c, &id, "").await;
-    assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
 
     let value_list = body["labels"]["valueList"].as_array().expect("valueList must be present after round-trip");
-    assert_eq!(value_list.len(), 4, "all four string values must survive round-trip");
-    assert_eq!(value_list[0], "alpha");
-    assert_eq!(value_list[3], "delta");
+    pretty_assertions::assert_eq!(value_list.len(), 4, "all four string values must survive round-trip");
+    pretty_assertions::assert_eq!(value_list[0], "alpha");
+    pretty_assertions::assert_eq!(value_list[3], "delta");
 
     delete_entity(&c, &id).await;
 }
@@ -219,7 +219,7 @@ async fn list_relationship_create_retrieve_normalized_returns_list_relationship_
             "@context": [TEST_SUITE_CONTEXT]
         });
         let (status, _) = create_entity(&c, &e).await;
-        assert_eq!(status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(status, StatusCode::CREATED);
     }
 
     let id = unique_id("urn:ngsi-ld:Building:lr1");
@@ -233,16 +233,16 @@ async fn list_relationship_create_retrieve_normalized_returns_list_relationship_
         "@context": [TEST_SUITE_CONTEXT]
     });
     let (status, _) = create_entity(&c, &entity).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     let (status, body) = get_entity(&c, &id, "").await;
-    assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
 
     let has_rooms = &body["hasRooms"];
-    assert_eq!(has_rooms["type"], "ListRelationship", "attribute type must be ListRelationship");
+    pretty_assertions::assert_eq!(has_rooms["type"], "ListRelationship", "attribute type must be ListRelationship");
 
     let obj_list = has_rooms["objectList"].as_array().expect("objectList must be a JSON array");
-    assert_eq!(obj_list.len(), 2, "both target entity IDs must be present in objectList");
+    pretty_assertions::assert_eq!(obj_list.len(), 2, "both target entity IDs must be present in objectList");
 
     delete_entity(&c, &id).await;
 }
@@ -264,17 +264,17 @@ async fn list_relationship_retrieve_key_values_returns_array_of_object_ids() {
         "@context": [TEST_SUITE_CONTEXT]
     });
     let (status, _) = create_entity(&c, &entity).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     let (status, body) = get_entity(&c, &id, "options=keyValues").await;
-    assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
 
     let has_rooms = body["hasRooms"]
         .as_array()
         .expect("simplified ListRelationship must be a JSON array of object IDs");
-    assert_eq!(has_rooms.len(), 2, "both object IDs must be present in simplified objectList");
-    assert_eq!(has_rooms[0], "urn:ngsi-ld:Room:X");
-    assert_eq!(has_rooms[1], "urn:ngsi-ld:Room:Y");
+    pretty_assertions::assert_eq!(has_rooms.len(), 2, "both object IDs must be present in simplified objectList");
+    pretty_assertions::assert_eq!(has_rooms[0], "urn:ngsi-ld:Room:X");
+    pretty_assertions::assert_eq!(has_rooms[1], "urn:ngsi-ld:Room:Y");
 
     delete_entity(&c, &id).await;
 }
@@ -296,7 +296,7 @@ async fn list_relationship_join_flat_includes_linked_entities_alongside_source()
             "@context": [TEST_SUITE_CONTEXT]
         });
         let (status, _) = create_entity(&c, &e).await;
-        assert_eq!(status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(status, StatusCode::CREATED);
     }
 
     let id = unique_id("urn:ngsi-ld:Building:lrjf");
@@ -310,10 +310,10 @@ async fn list_relationship_join_flat_includes_linked_entities_alongside_source()
         "@context": [TEST_SUITE_CONTEXT]
     });
     let (status, _) = create_entity(&c, &entity).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     let (status, body) = query_entities(&c, &format!("id={id}&type=Building&join=flat&joinLevel=1")).await;
-    assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
 
     let arr = body.as_array().expect("join=flat must return a JSON array");
     assert!(
@@ -346,7 +346,7 @@ async fn list_relationship_join_inline_embeds_linked_entities_in_attribute() {
             "@context": [TEST_SUITE_CONTEXT]
         });
         let (status, _) = create_entity(&c, &e).await;
-        assert_eq!(status, StatusCode::CREATED);
+        pretty_assertions::assert_eq!(status, StatusCode::CREATED);
     }
 
     let id = unique_id("urn:ngsi-ld:Building:lrinl");
@@ -360,21 +360,22 @@ async fn list_relationship_join_inline_embeds_linked_entities_in_attribute() {
         "@context": [TEST_SUITE_CONTEXT]
     });
     let (status, _) = create_entity(&c, &entity).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     let (status, body) = get_entity(&c, &id, "join=inline&joinLevel=1").await;
-    assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
 
     let has_devices = &body["hasDevices"];
-    assert_eq!(
-        has_devices["type"], "ListRelationship",
+    pretty_assertions::assert_eq!(
+        has_devices["type"],
+        "ListRelationship",
         "attribute type must remain ListRelationship after inline join"
     );
 
     let entity_list = has_devices["entityList"]
         .as_array()
         .expect("join=inline on ListRelationship must produce entityList array");
-    assert_eq!(entity_list.len(), 2, "entityList must contain both linked Device entities");
+    pretty_assertions::assert_eq!(entity_list.len(), 2, "entityList must contain both linked Device entities");
 
     delete_entity(&c, &id).await;
 }
@@ -400,19 +401,19 @@ async fn list_relationship_with_nonexistent_targets_still_creates_with_full_obje
         "@context": [TEST_SUITE_CONTEXT]
     });
     let (status, _) = create_entity(&c, &entity).await;
-    assert_eq!(
+    pretty_assertions::assert_eq!(
         status,
         StatusCode::CREATED,
         "ListRelationship with unresolvable targets must still be accepted (no referential integrity)"
     );
 
     let (status, body) = get_entity(&c, &id, "").await;
-    assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
 
     let obj_list = body["hasRooms"]["objectList"]
         .as_array()
         .expect("objectList must be present even for non-existent targets");
-    assert_eq!(obj_list.len(), 2, "objectList must contain all referenced IDs even if targets do not exist");
+    pretty_assertions::assert_eq!(obj_list.len(), 2, "objectList must contain all referenced IDs even if targets do not exist");
 
     delete_entity(&c, &id).await;
 }

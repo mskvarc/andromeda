@@ -1,3 +1,4 @@
+#![allow(clippy::expect_used, clippy::unwrap_used)]
 use axum::{Router, body::Bytes, http::HeaderMap as AxumHeaderMap, response::IntoResponse, routing::post};
 use reqwest::{Client, StatusCode, header::HeaderMap};
 use rumqttc::{AsyncClient, Event, MqttOptions, Packet, QoS};
@@ -599,9 +600,8 @@ impl NotificationReceiver {
                 }
             }
 
-            if tokio::time::timeout_at(deadline, self.notify.notified()).await.is_err() {
-                panic!("timed out waiting for subscription notification after {timeout:?}");
-            }
+            let notified = tokio::time::timeout_at(deadline, self.notify.notified()).await;
+            assert!(notified.is_ok(), "timed out waiting for subscription notification after {timeout:?}");
         }
     }
 
@@ -612,8 +612,9 @@ impl NotificationReceiver {
             .iter()
             .filter(|notification| notification.body["subscriptionId"].as_str() == Some(subscription_id))
             .count();
-        assert_eq!(
-            matching_count, 0,
+        pretty_assertions::assert_eq!(
+            matching_count,
+            0,
             "expected no notifications for subscription {subscription_id}, received {matching_count}"
         );
     }
@@ -701,9 +702,8 @@ impl MqttReceiver {
                 }
             }
 
-            if tokio::time::timeout_at(deadline, self.notify.notified()).await.is_err() {
-                panic!("timed out waiting for mqtt message after {timeout:?}");
-            }
+            let notified = tokio::time::timeout_at(deadline, self.notify.notified()).await;
+            assert!(notified.is_ok(), "timed out waiting for mqtt message after {timeout:?}");
         }
     }
 

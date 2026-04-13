@@ -1,3 +1,4 @@
+#![allow(clippy::expect_used, clippy::unwrap_used)]
 mod context_information;
 mod distributed_operations;
 mod harness;

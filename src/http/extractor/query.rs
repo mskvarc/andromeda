@@ -55,6 +55,7 @@ fn classify_query_parse_error(error_str: &str, error_msg: String, uri: axum::htt
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::*;
     use axum::{extract::FromRequestParts, http::Request};
     use serde::Deserialize;
@@ -71,7 +72,7 @@ mod tests {
         let (mut parts, _) = req.into_parts();
         let result = ValidatedQuery::<TestParams>::from_request_parts(&mut parts, &()).await;
         let query = result.expect("should succeed");
-        assert_eq!(query.0.limit, Some(10));
+        pretty_assertions::assert_eq!(query.0.limit, Some(10));
     }
 
     #[tokio::test]

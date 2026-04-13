@@ -48,6 +48,7 @@ impl headers::Header for NgsiLdJoin {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::*;
     use headers::Header;
 
@@ -59,8 +60,8 @@ mod tests {
 
     #[test]
     fn decode_valid_modes() {
-        assert_eq!(decode_from("inline").expect("valid").into_inner(), JoinMode::Inline);
-        assert_eq!(decode_from("flat").expect("valid").into_inner(), JoinMode::Flat);
+        pretty_assertions::assert_eq!(decode_from("inline").expect("valid").into_inner(), JoinMode::Inline);
+        pretty_assertions::assert_eq!(decode_from("flat").expect("valid").into_inner(), JoinMode::Flat);
     }
 
     #[test]

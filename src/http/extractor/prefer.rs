@@ -39,6 +39,7 @@ where
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::*;
     use axum::http::Request;
 
@@ -58,63 +59,63 @@ mod tests {
     #[test]
     fn absent_header_returns_defaults() {
         let prefer = parse_from_header(None);
-        assert_eq!(prefer.geo_json_body, GeoJsonBodyPreference::LdJson);
-        assert_eq!(prefer.requested_version, None);
+        pretty_assertions::assert_eq!(prefer.geo_json_body, GeoJsonBodyPreference::LdJson);
+        pretty_assertions::assert_eq!(prefer.requested_version, None);
     }
 
     #[test]
     fn body_json_preference() {
         let prefer = parse_from_header(Some("body=json"));
-        assert_eq!(prefer.geo_json_body, GeoJsonBodyPreference::Json);
-        assert_eq!(prefer.requested_version, None);
+        pretty_assertions::assert_eq!(prefer.geo_json_body, GeoJsonBodyPreference::Json);
+        pretty_assertions::assert_eq!(prefer.requested_version, None);
     }
 
     #[test]
     fn body_ld_json_preference() {
         let prefer = parse_from_header(Some("body=ld+json"));
-        assert_eq!(prefer.geo_json_body, GeoJsonBodyPreference::LdJson);
-        assert_eq!(prefer.requested_version, None);
+        pretty_assertions::assert_eq!(prefer.geo_json_body, GeoJsonBodyPreference::LdJson);
+        pretty_assertions::assert_eq!(prefer.requested_version, None);
     }
 
     #[test]
     fn version_1_0() {
         let prefer = parse_from_header(Some("ngsi-ld=1.0"));
-        assert_eq!(prefer.geo_json_body, GeoJsonBodyPreference::LdJson);
-        assert_eq!(prefer.requested_version, Some(NgsiLdVersion::V1_0));
+        pretty_assertions::assert_eq!(prefer.geo_json_body, GeoJsonBodyPreference::LdJson);
+        pretty_assertions::assert_eq!(prefer.requested_version, Some(NgsiLdVersion::V1_0));
     }
 
     #[test]
     fn version_1_3() {
         let prefer = parse_from_header(Some("ngsi-ld=1.3"));
-        assert_eq!(prefer.geo_json_body, GeoJsonBodyPreference::LdJson);
-        assert_eq!(prefer.requested_version, Some(NgsiLdVersion::V1_3));
+        pretty_assertions::assert_eq!(prefer.geo_json_body, GeoJsonBodyPreference::LdJson);
+        pretty_assertions::assert_eq!(prefer.requested_version, Some(NgsiLdVersion::V1_3));
     }
 
     #[test]
     fn version_1_9() {
         let prefer = parse_from_header(Some("ngsi-ld=1.9"));
-        assert_eq!(prefer.geo_json_body, GeoJsonBodyPreference::LdJson);
-        assert_eq!(prefer.requested_version, Some(NgsiLdVersion::V1_9));
+        pretty_assertions::assert_eq!(prefer.geo_json_body, GeoJsonBodyPreference::LdJson);
+        pretty_assertions::assert_eq!(prefer.requested_version, Some(NgsiLdVersion::V1_9));
     }
 
     #[test]
     fn combined_preferences() {
         let prefer = parse_from_header(Some("body=json, ngsi-ld=1.4"));
-        assert_eq!(prefer.geo_json_body, GeoJsonBodyPreference::Json);
-        assert_eq!(prefer.requested_version, Some(NgsiLdVersion::V1_4));
+        pretty_assertions::assert_eq!(prefer.geo_json_body, GeoJsonBodyPreference::Json);
+        pretty_assertions::assert_eq!(prefer.requested_version, Some(NgsiLdVersion::V1_4));
     }
 
     #[test]
     fn unknown_version_ignored() {
         let prefer = parse_from_header(Some("ngsi-ld=2.5"));
-        assert_eq!(prefer.geo_json_body, GeoJsonBodyPreference::LdJson);
-        assert_eq!(prefer.requested_version, None);
+        pretty_assertions::assert_eq!(prefer.geo_json_body, GeoJsonBodyPreference::LdJson);
+        pretty_assertions::assert_eq!(prefer.requested_version, None);
     }
 
     #[test]
     fn unknown_token_ignored() {
         let prefer = parse_from_header(Some("respond-async, body=json"));
-        assert_eq!(prefer.geo_json_body, GeoJsonBodyPreference::Json);
-        assert_eq!(prefer.requested_version, None);
+        pretty_assertions::assert_eq!(prefer.geo_json_body, GeoJsonBodyPreference::Json);
+        pretty_assertions::assert_eq!(prefer.requested_version, None);
     }
 }

@@ -99,6 +99,7 @@ impl JsonLdExpandable for AttributeValue {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::*;
     use chrono::TimeZone;
 
@@ -111,11 +112,11 @@ mod tests {
         });
         let attr: Attribute = serde_json::from_value(json).unwrap();
         let Attribute::Property(ref p) = attr else {
-            panic!("expected Property");
+            unreachable!("expected Property");
         };
-        assert_eq!(p.common.expires_at, Some(Utc.with_ymd_and_hms(2030, 12, 31, 23, 59, 59).unwrap()));
+        pretty_assertions::assert_eq!(p.common.expires_at, Some(Utc.with_ymd_and_hms(2030, 12, 31, 23, 59, 59).unwrap()));
         let reserialized = serde_json::to_value(&attr).unwrap();
-        assert_eq!(reserialized["expiresAt"], "2030-12-31T23:59:59Z");
+        pretty_assertions::assert_eq!(reserialized["expiresAt"], "2030-12-31T23:59:59Z");
     }
 
     #[test]
@@ -138,11 +139,11 @@ mod tests {
         });
         let attr: Attribute = serde_json::from_value(json).unwrap();
         let Attribute::Relationship(ref r) = attr else {
-            panic!("expected Relationship");
+            unreachable!("expected Relationship");
         };
-        assert_eq!(r.common.expires_at, Some(Utc.with_ymd_and_hms(2030, 6, 15, 12, 0, 0).unwrap()));
+        pretty_assertions::assert_eq!(r.common.expires_at, Some(Utc.with_ymd_and_hms(2030, 6, 15, 12, 0, 0).unwrap()));
         let reserialized = serde_json::to_value(&attr).unwrap();
-        assert_eq!(reserialized["expiresAt"], "2030-06-15T12:00:00Z");
+        pretty_assertions::assert_eq!(reserialized["expiresAt"], "2030-06-15T12:00:00Z");
     }
 
     #[test]
@@ -154,11 +155,11 @@ mod tests {
         });
         let attr: Attribute = serde_json::from_value(json).unwrap();
         let Attribute::GeoProperty(ref g) = attr else {
-            panic!("expected GeoProperty");
+            unreachable!("expected GeoProperty");
         };
         assert!(g.common.expires_at.is_some());
         let reserialized = serde_json::to_value(&attr).unwrap();
-        assert_eq!(reserialized["expiresAt"], "2030-01-01T00:00:00Z");
+        pretty_assertions::assert_eq!(reserialized["expiresAt"], "2030-01-01T00:00:00Z");
     }
 
     #[test]
@@ -170,11 +171,11 @@ mod tests {
         });
         let attr: Attribute = serde_json::from_value(json).unwrap();
         let Attribute::VocabProperty(ref v) = attr else {
-            panic!("expected VocabProperty");
+            unreachable!("expected VocabProperty");
         };
         assert!(v.common.expires_at.is_some());
         let reserialized = serde_json::to_value(&attr).unwrap();
-        assert_eq!(reserialized["expiresAt"], "2030-03-15T08:00:00Z");
+        pretty_assertions::assert_eq!(reserialized["expiresAt"], "2030-03-15T08:00:00Z");
     }
 
     #[test]
@@ -186,11 +187,11 @@ mod tests {
         });
         let attr: Attribute = serde_json::from_value(json).unwrap();
         let Attribute::LanguageProperty(ref l) = attr else {
-            panic!("expected LanguageProperty");
+            unreachable!("expected LanguageProperty");
         };
         assert!(l.common.expires_at.is_some());
         let reserialized = serde_json::to_value(&attr).unwrap();
-        assert_eq!(reserialized["expiresAt"], "2030-07-01T00:00:00Z");
+        pretty_assertions::assert_eq!(reserialized["expiresAt"], "2030-07-01T00:00:00Z");
     }
 
     #[test]
@@ -202,11 +203,11 @@ mod tests {
         });
         let attr: Attribute = serde_json::from_value(json).unwrap();
         let Attribute::JsonProperty(ref j) = attr else {
-            panic!("expected JsonProperty");
+            unreachable!("expected JsonProperty");
         };
         assert!(j.common.expires_at.is_some());
         let reserialized = serde_json::to_value(&attr).unwrap();
-        assert_eq!(reserialized["expiresAt"], "2030-09-01T12:00:00Z");
+        pretty_assertions::assert_eq!(reserialized["expiresAt"], "2030-09-01T12:00:00Z");
     }
 
     #[test]
@@ -218,11 +219,11 @@ mod tests {
         });
         let attr: Attribute = serde_json::from_value(json).unwrap();
         let Attribute::ListProperty(ref lp) = attr else {
-            panic!("expected ListProperty");
+            unreachable!("expected ListProperty");
         };
         assert!(lp.common.expires_at.is_some());
         let reserialized = serde_json::to_value(&attr).unwrap();
-        assert_eq!(reserialized["expiresAt"], "2030-11-20T06:30:00Z");
+        pretty_assertions::assert_eq!(reserialized["expiresAt"], "2030-11-20T06:30:00Z");
     }
 
     #[test]
@@ -234,11 +235,11 @@ mod tests {
         });
         let attr: Attribute = serde_json::from_value(json).unwrap();
         let Attribute::ListRelationship(ref lr) = attr else {
-            panic!("expected ListRelationship");
+            unreachable!("expected ListRelationship");
         };
         assert!(lr.common.expires_at.is_some());
         let reserialized = serde_json::to_value(&attr).unwrap();
-        assert_eq!(reserialized["expiresAt"], "2030-04-10T18:00:00Z");
+        pretty_assertions::assert_eq!(reserialized["expiresAt"], "2030-04-10T18:00:00Z");
     }
 
     #[test]
@@ -250,7 +251,7 @@ mod tests {
             "expiresAt": "2030-06-01T00:00:00Z"
         });
         let attr: Attribute = serde_json::from_value(json).unwrap();
-        assert_eq!(attr.expires_at(), Some(dt));
+        pretty_assertions::assert_eq!(attr.expires_at(), Some(dt));
     }
 
     #[test]
@@ -260,7 +261,7 @@ mod tests {
             "value": 10
         });
         let attr: Attribute = serde_json::from_value(json).unwrap();
-        assert_eq!(attr.expires_at(), None);
+        pretty_assertions::assert_eq!(attr.expires_at(), None);
     }
 
     #[test]
@@ -274,8 +275,8 @@ mod tests {
         let obj = expanded.as_object().expect("expanded is object");
 
         // Enum delegation should produce the same output as the inner struct
-        assert_eq!(obj["@type"], serde_json::json!(["https://uri.etsi.org/ngsi-ld/Property"]));
-        assert_eq!(obj["https://uri.etsi.org/ngsi-ld/hasValue"], serde_json::json!([{"@value": 42}]));
+        pretty_assertions::assert_eq!(obj["@type"], serde_json::json!(["https://uri.etsi.org/ngsi-ld/Property"]));
+        pretty_assertions::assert_eq!(obj["https://uri.etsi.org/ngsi-ld/hasValue"], serde_json::json!([{"@value": 42}]));
     }
 
     #[test]
@@ -288,7 +289,7 @@ mod tests {
         let expanded = attr.to_expanded();
         let obj = expanded.as_object().expect("expanded is object");
 
-        assert_eq!(obj["@type"], serde_json::json!(["https://uri.etsi.org/ngsi-ld/Relationship"]));
+        pretty_assertions::assert_eq!(obj["@type"], serde_json::json!(["https://uri.etsi.org/ngsi-ld/Relationship"]));
     }
 
     #[test]
@@ -301,8 +302,8 @@ mod tests {
         let av = AttributeValue::Single(Box::new(attr));
         let expanded = av.to_expanded();
         let arr = expanded.as_array().expect("expanded is array");
-        assert_eq!(arr.len(), 1);
-        assert_eq!(arr[0]["@type"], serde_json::json!(["https://uri.etsi.org/ngsi-ld/Property"]));
+        pretty_assertions::assert_eq!(arr.len(), 1);
+        pretty_assertions::assert_eq!(arr[0]["@type"], serde_json::json!(["https://uri.etsi.org/ngsi-ld/Property"]));
     }
 
     #[test]
@@ -314,13 +315,13 @@ mod tests {
         let av = AttributeValue::Multiple(vec![a1, a2]);
         let expanded = av.to_expanded();
         let arr = expanded.as_array().expect("expanded is array");
-        assert_eq!(arr.len(), 2);
+        pretty_assertions::assert_eq!(arr.len(), 2);
     }
 
     #[test]
     fn attribute_value_raw_wraps_in_value_object() {
         let av = AttributeValue::Raw(serde_json::json!("hello"));
         let expanded = av.to_expanded();
-        assert_eq!(expanded, serde_json::json!([{"@value": "hello"}]));
+        pretty_assertions::assert_eq!(expanded, serde_json::json!([{"@value": "hello"}]));
     }
 }

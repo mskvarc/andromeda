@@ -243,6 +243,7 @@ impl AttributeType {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::*;
     use std::str::FromStr;
 
@@ -251,7 +252,7 @@ mod tests {
         for variant in AttributeType::ALL {
             let s = variant.to_string();
             let parsed = AttributeType::from_str(&s).unwrap();
-            assert_eq!(variant, parsed);
+            pretty_assertions::assert_eq!(variant, parsed);
         }
     }
 
@@ -265,7 +266,7 @@ mod tests {
 
     #[test]
     fn from_iri_suffix_slash() {
-        assert_eq!(
+        pretty_assertions::assert_eq!(
             AttributeType::from_iri_suffix("https://uri.etsi.org/ngsi-ld/Property"),
             Some(AttributeType::Property)
         );
@@ -273,7 +274,7 @@ mod tests {
 
     #[test]
     fn from_iri_suffix_hash() {
-        assert_eq!(
+        pretty_assertions::assert_eq!(
             AttributeType::from_iri_suffix("https://example.com#Relationship"),
             Some(AttributeType::Relationship)
         );
@@ -281,7 +282,7 @@ mod tests {
 
     #[test]
     fn from_iri_suffix_unknown() {
-        assert_eq!(AttributeType::from_iri_suffix("Unknown"), None);
+        pretty_assertions::assert_eq!(AttributeType::from_iri_suffix("Unknown"), None);
     }
 
     #[test]
@@ -289,7 +290,7 @@ mod tests {
         for variant in AttributeType::ALL {
             let iri = variant.iri().as_str();
             let parsed = AttributeType::from_expanded_iri(iri);
-            assert_eq!(parsed, Some(variant), "roundtrip failed for {variant}");
+            pretty_assertions::assert_eq!(parsed, Some(variant), "roundtrip failed for {variant}");
         }
     }
 
@@ -307,11 +308,11 @@ mod tests {
 
     #[test]
     fn value_key_mapping() {
-        assert_eq!(AttributeType::Property.value_key(), vocab::VALUE);
-        assert_eq!(AttributeType::Relationship.value_key(), vocab::OBJECT);
-        assert_eq!(AttributeType::VocabProperty.value_key(), vocab::VOCAB);
-        assert_eq!(AttributeType::LanguageProperty.value_key(), vocab::LANGUAGE_MAP);
-        assert_eq!(AttributeType::JsonProperty.value_key(), vocab::JSON);
+        pretty_assertions::assert_eq!(AttributeType::Property.value_key(), vocab::VALUE);
+        pretty_assertions::assert_eq!(AttributeType::Relationship.value_key(), vocab::OBJECT);
+        pretty_assertions::assert_eq!(AttributeType::VocabProperty.value_key(), vocab::VOCAB);
+        pretty_assertions::assert_eq!(AttributeType::LanguageProperty.value_key(), vocab::LANGUAGE_MAP);
+        pretty_assertions::assert_eq!(AttributeType::JsonProperty.value_key(), vocab::JSON);
     }
 
     #[test]
@@ -329,7 +330,7 @@ mod tests {
         for variant in AttributeType::ALL {
             let json = serde_json::to_string(&variant).unwrap();
             let parsed: AttributeType = serde_json::from_str(&json).unwrap();
-            assert_eq!(variant, parsed);
+            pretty_assertions::assert_eq!(variant, parsed);
         }
     }
 }

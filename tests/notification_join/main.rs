@@ -155,7 +155,7 @@ impl NotificationReceiver {
                 }
             }
             if tokio::time::timeout_at(deadline, self.notify.notified()).await.is_err() {
-                panic!("timed out waiting for subscription notification after {timeout:?}");
+                unreachable!("timed out waiting for subscription notification after {timeout:?}");
             }
         }
     }
@@ -215,7 +215,7 @@ async fn notification_join_level_3_delivers_three_depth_levels_of_linked_entitie
         "@context": [CORE_CONTEXT]
     });
     let status = create_entity(&http_client, &country).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     let city_id = "urn:ngsi-ld:City:notif-jl3-Paris";
     let city = json!({
@@ -226,7 +226,7 @@ async fn notification_join_level_3_delivers_three_depth_levels_of_linked_entitie
         "@context": [CORE_CONTEXT]
     });
     let status = create_entity(&http_client, &city).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     let building_id = unique_entity_id("urn:ngsi-ld:Building:notif-jl3");
     let building = json!({
@@ -236,15 +236,15 @@ async fn notification_join_level_3_delivers_three_depth_levels_of_linked_entitie
         "@context": [CORE_CONTEXT]
     });
     let status = create_entity(&http_client, &building).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     let subscription_id = unique_subscription_id("jl3");
     let sub = subscription_with_flat_join(&subscription_id, &receiver.endpoint_url(), Some(3));
     let status = create_subscription(&http_client, &sub).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     let status = append_entity_attrs(&http_client, &building_id, &trigger_fragment()).await;
-    assert_eq!(status, StatusCode::NO_CONTENT);
+    pretty_assertions::assert_eq!(status, StatusCode::NO_CONTENT);
 
     let notification = receiver.wait_for_subscription_notification(&subscription_id, Duration::from_secs(5)).await;
     let data = notification.body["data"].as_array().expect("data must be an array");
@@ -280,7 +280,7 @@ async fn notification_join_level_default_is_1_when_omitted_from_subscription() {
         "@context": [CORE_CONTEXT]
     });
     let status = create_entity(&http_client, &country).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     let city_id = "urn:ngsi-ld:City:notif-jldef-Berlin";
     let city = json!({
@@ -290,7 +290,7 @@ async fn notification_join_level_default_is_1_when_omitted_from_subscription() {
         "@context": [CORE_CONTEXT]
     });
     let status = create_entity(&http_client, &city).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     let building_id = unique_entity_id("urn:ngsi-ld:Building:notif-jldef");
     let building = json!({
@@ -300,21 +300,21 @@ async fn notification_join_level_default_is_1_when_omitted_from_subscription() {
         "@context": [CORE_CONTEXT]
     });
     let status = create_entity(&http_client, &building).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     // Subscription without explicit joinLevel → defaults to 1
     let subscription_id = unique_subscription_id("jldef");
     let sub = subscription_with_flat_join(&subscription_id, &receiver.endpoint_url(), None);
     let status = create_subscription(&http_client, &sub).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     let status = append_entity_attrs(&http_client, &building_id, &trigger_fragment()).await;
-    assert_eq!(status, StatusCode::NO_CONTENT);
+    pretty_assertions::assert_eq!(status, StatusCode::NO_CONTENT);
 
     let notification = receiver.wait_for_subscription_notification(&subscription_id, Duration::from_secs(5)).await;
     let data = notification.body["data"].as_array().expect("data must be an array");
 
-    assert_eq!(data.len(), 2, "default joinLevel=1 must return building plus one level of linked entities");
+    pretty_assertions::assert_eq!(data.len(), 2, "default joinLevel=1 must return building plus one level of linked entities");
     let ids: Vec<&str> = data.iter().filter_map(|d| d["id"].as_str()).collect();
     assert!(ids.contains(&building_id.as_str()), "notification data must contain building");
     assert!(ids.contains(&city_id), "notification data must contain city at depth 1");
@@ -339,7 +339,7 @@ async fn notification_join_level_1_delivers_one_depth_level_of_linked_entities()
         "@context": [CORE_CONTEXT]
     });
     let status = create_entity(&http_client, &country).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     let city_id = "urn:ngsi-ld:City:notif-jl1-Madrid";
     let city = json!({
@@ -349,7 +349,7 @@ async fn notification_join_level_1_delivers_one_depth_level_of_linked_entities()
         "@context": [CORE_CONTEXT]
     });
     let status = create_entity(&http_client, &city).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     let building_id = unique_entity_id("urn:ngsi-ld:Building:notif-jl1");
     let building = json!({
@@ -359,21 +359,21 @@ async fn notification_join_level_1_delivers_one_depth_level_of_linked_entities()
         "@context": [CORE_CONTEXT]
     });
     let status = create_entity(&http_client, &building).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     // Explicit joinLevel=1
     let subscription_id = unique_subscription_id("jl1");
     let sub = subscription_with_flat_join(&subscription_id, &receiver.endpoint_url(), Some(1));
     let status = create_subscription(&http_client, &sub).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     let status = append_entity_attrs(&http_client, &building_id, &trigger_fragment()).await;
-    assert_eq!(status, StatusCode::NO_CONTENT);
+    pretty_assertions::assert_eq!(status, StatusCode::NO_CONTENT);
 
     let notification = receiver.wait_for_subscription_notification(&subscription_id, Duration::from_secs(5)).await;
     let data = notification.body["data"].as_array().expect("data must be an array");
 
-    assert_eq!(data.len(), 2, "joinLevel=1 must return building plus the directly linked city");
+    pretty_assertions::assert_eq!(data.len(), 2, "joinLevel=1 must return building plus the directly linked city");
     let ids: Vec<&str> = data.iter().filter_map(|d| d["id"].as_str()).collect();
     assert!(ids.contains(&building_id.as_str()));
     assert!(ids.contains(&city_id));
@@ -398,7 +398,7 @@ async fn notification_join_level_2_delivers_two_depth_levels_of_linked_entities(
         "@context": [CORE_CONTEXT]
     });
     let status = create_entity(&http_client, &continent).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     let country_id = "urn:ngsi-ld:Country:notif-jl2-Italy";
     let country = json!({
@@ -409,7 +409,7 @@ async fn notification_join_level_2_delivers_two_depth_levels_of_linked_entities(
         "@context": [CORE_CONTEXT]
     });
     let status = create_entity(&http_client, &country).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     let city_id = "urn:ngsi-ld:City:notif-jl2-Rome";
     let city = json!({
@@ -419,7 +419,7 @@ async fn notification_join_level_2_delivers_two_depth_levels_of_linked_entities(
         "@context": [CORE_CONTEXT]
     });
     let status = create_entity(&http_client, &city).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     let building_id = unique_entity_id("urn:ngsi-ld:Building:notif-jl2");
     let building = json!({
@@ -429,21 +429,21 @@ async fn notification_join_level_2_delivers_two_depth_levels_of_linked_entities(
         "@context": [CORE_CONTEXT]
     });
     let status = create_entity(&http_client, &building).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     // Explicit joinLevel=2
     let subscription_id = unique_subscription_id("jl2");
     let sub = subscription_with_flat_join(&subscription_id, &receiver.endpoint_url(), Some(2));
     let status = create_subscription(&http_client, &sub).await;
-    assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     let status = append_entity_attrs(&http_client, &building_id, &trigger_fragment()).await;
-    assert_eq!(status, StatusCode::NO_CONTENT);
+    pretty_assertions::assert_eq!(status, StatusCode::NO_CONTENT);
 
     let notification = receiver.wait_for_subscription_notification(&subscription_id, Duration::from_secs(5)).await;
     let data = notification.body["data"].as_array().expect("data must be an array");
 
-    assert_eq!(data.len(), 3, "joinLevel=2 must return building, city, and country (three entities total)");
+    pretty_assertions::assert_eq!(data.len(), 3, "joinLevel=2 must return building, city, and country (three entities total)");
     let ids: Vec<&str> = data.iter().filter_map(|d| d["id"].as_str()).collect();
     assert!(ids.contains(&building_id.as_str()), "building must be in data");
     assert!(ids.contains(&city_id), "city at depth 1 must be in data");

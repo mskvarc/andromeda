@@ -1,3 +1,4 @@
+#![allow(clippy::expect_used, clippy::unwrap_used)]
 use reqwest::{Method, StatusCode};
 use serial_test::serial;
 
@@ -23,12 +24,12 @@ async fn batch_update_properties_returns_204() {
     let updates = json!([u1, u2]);
 
     let (status, _) = batch_update(&c, &updates, false).await;
-    assert_eq!(status, StatusCode::NO_CONTENT, "batch update should return 204");
+    pretty_assertions::assert_eq!(status, StatusCode::NO_CONTENT, "batch update should return 204");
 
     let (status, _, body) = get_entity(&c, &id1, "", true).await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["locatedAt"]["object"], "urn:ngsi-ld:City:Paris");
-    assert_eq!(body["name"]["value"], "Eiffel Tower");
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(body["locatedAt"]["object"], "urn:ngsi-ld:City:Paris");
+    pretty_assertions::assert_eq!(body["name"]["value"], "Eiffel Tower");
 }
 
 #[tokio::test]
@@ -50,11 +51,11 @@ async fn batch_update_relationships_returns_204() {
     let updates = json!([u1, u2]);
 
     let (status, _) = batch_update(&c, &updates, false).await;
-    assert_eq!(status, StatusCode::NO_CONTENT);
+    pretty_assertions::assert_eq!(status, StatusCode::NO_CONTENT);
 
     let (status, _, body) = get_entity(&c, &id1, "", true).await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["locatedAt"]["object"], "urn:ngsi-ld:City:Paris");
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(body["locatedAt"]["object"], "urn:ngsi-ld:City:Paris");
 }
 
 #[tokio::test]
@@ -76,7 +77,7 @@ async fn batch_update_relationship_of_property_returns_204() {
     let updates = json!([u1, u2]);
 
     let (status, _) = batch_update(&c, &updates, false).await;
-    assert_eq!(status, StatusCode::NO_CONTENT);
+    pretty_assertions::assert_eq!(status, StatusCode::NO_CONTENT);
 }
 
 #[tokio::test]
@@ -93,11 +94,11 @@ async fn batch_update_no_overwrite_existing_returns_207() {
     let updates = json!([u1]);
 
     let (status, _) = batch_update(&c, &updates, true).await;
-    assert_eq!(status, StatusCode::MULTI_STATUS, "existing attr with noOverwrite should return 207");
+    pretty_assertions::assert_eq!(status, StatusCode::MULTI_STATUS, "existing attr with noOverwrite should return 207");
 
     let (status, _, body) = get_entity(&c, &id, "", true).await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["name"]["value"], "Eiffel Tower");
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(body["name"]["value"], "Eiffel Tower");
 }
 
 #[tokio::test]
@@ -114,11 +115,11 @@ async fn batch_update_no_overwrite_new_returns_204() {
     let updates = json!([u1]);
 
     let (status, _) = batch_update(&c, &updates, true).await;
-    assert_eq!(status, StatusCode::NO_CONTENT, "new attr with noOverwrite should return 204");
+    pretty_assertions::assert_eq!(status, StatusCode::NO_CONTENT, "new attr with noOverwrite should return 204");
 
     let (status, _, body) = get_entity(&c, &id, "", true).await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["locatedAt"]["object"], "urn:ngsi-ld:City:Paris");
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(body["locatedAt"]["object"], "urn:ngsi-ld:City:Paris");
 }
 
 #[tokio::test]
@@ -135,7 +136,7 @@ async fn batch_update_no_overwrite_mixed_returns_207() {
     let updates = json!([u1]);
 
     let (status, _) = batch_update(&c, &updates, true).await;
-    assert_eq!(status, StatusCode::MULTI_STATUS);
+    pretty_assertions::assert_eq!(status, StatusCode::MULTI_STATUS);
 }
 
 #[tokio::test]
@@ -159,12 +160,12 @@ async fn batch_update_mixed_existing_nonexisting_returns_207() {
     let updates = json!([u1, u2, u3]);
 
     let (status, body) = batch_update(&c, &updates, false).await;
-    assert_eq!(status, StatusCode::MULTI_STATUS);
+    pretty_assertions::assert_eq!(status, StatusCode::MULTI_STATUS);
 
     let success = body["success"].as_array().expect("should have success");
     let errors = body["errors"].as_array().expect("should have errors");
-    assert_eq!(success.len(), 2);
-    assert_eq!(errors.len(), 1);
+    pretty_assertions::assert_eq!(success.len(), 2);
+    pretty_assertions::assert_eq!(errors.len(), 1);
 }
 
 #[tokio::test]
@@ -179,7 +180,7 @@ async fn batch_update_invalid_json_returns_400() {
         false,
     )
     .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
+    pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
 }
 
 #[tokio::test]
@@ -192,7 +193,7 @@ async fn batch_update_invalid_json_ld_returns_207() {
     }]);
 
     let (status, _) = batch_update(&c, &updates, false).await;
-    assert_eq!(status, StatusCode::MULTI_STATUS, "invalid JSON-LD should return 207");
+    pretty_assertions::assert_eq!(status, StatusCode::MULTI_STATUS, "invalid JSON-LD should return 207");
 }
 
 #[tokio::test]
@@ -209,5 +210,5 @@ async fn batch_update_entity_type_returns_204() {
     let updates = json!([u1]);
 
     let (status, _) = batch_update(&c, &updates, false).await;
-    assert_eq!(status, StatusCode::NO_CONTENT);
+    pretty_assertions::assert_eq!(status, StatusCode::NO_CONTENT);
 }

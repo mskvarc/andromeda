@@ -240,6 +240,7 @@ where
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::*;
     use axum::http::Request;
     use serde_json::Value;
@@ -255,9 +256,9 @@ mod tests {
         let result = JsonLd::<Value>::from_request(req, &()).await;
         match result {
             Err(ExtractorRejection::Empty(status)) => {
-                assert_eq!(status, StatusCode::UNSUPPORTED_MEDIA_TYPE);
+                pretty_assertions::assert_eq!(status, StatusCode::UNSUPPORTED_MEDIA_TYPE);
             }
-            _ => panic!("expected 415 empty rejection"),
+            _ => unreachable!("expected 415 empty rejection"),
         }
     }
 
@@ -273,9 +274,9 @@ mod tests {
         let result = JsonLd::<Value>::from_request(req, &()).await;
         match result {
             Err(ExtractorRejection::Empty(status)) => {
-                assert_eq!(status, StatusCode::UNSUPPORTED_MEDIA_TYPE);
+                pretty_assertions::assert_eq!(status, StatusCode::UNSUPPORTED_MEDIA_TYPE);
             }
-            _ => panic!("expected 415 for json-patch+json"),
+            _ => unreachable!("expected 415 for json-patch+json"),
         }
     }
 
@@ -318,7 +319,7 @@ mod tests {
             .unwrap();
 
         let result = JsonLd::<Value>::from_request(req, &()).await.unwrap();
-        assert_eq!(result.context.body_context(), Some(&serde_json::json!("http://example.org/context")));
+        pretty_assertions::assert_eq!(result.context.body_context(), Some(&serde_json::json!("http://example.org/context")));
         assert!(result.value.as_object().unwrap().get("@context").is_none());
     }
 
@@ -344,7 +345,7 @@ mod tests {
             .unwrap();
 
         let result = JsonLd::<Value>::from_request(req, &()).await.unwrap();
-        assert_eq!(
+        pretty_assertions::assert_eq!(
             result.context.body_context(),
             Some(&serde_json::json!(["https://example.org/a", "https://example.org/b"]))
         );

@@ -1,3 +1,4 @@
+#![allow(clippy::expect_used, clippy::unwrap_used)]
 //! Entity type list tests (NGSI-LD 5.5.9, 6.3.5).
 
 use reqwest::StatusCode;
@@ -24,8 +25,8 @@ async fn list_entity_types_empty_database_returns_empty_list() {
     let c = client();
 
     let (status, body) = list_entity_types(&c, "", None).await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["type"], "EntityTypeList");
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(body["type"], "EntityTypeList");
     let types = body["typeList"].as_array().expect("typeList should be array");
     assert!(types.is_empty(), "expected empty typeList on clean database, got: {types:?}");
 }
@@ -47,16 +48,16 @@ async fn list_entity_types_without_context_returns_expanded_uris() {
     let vehicle = load_fixture("entities/vehicle-simple-attributes.json", &vehicle_id);
 
     let (s, _) = create_entity(&c, &building, Some(COMPOUND_CONTEXT_URL)).await;
-    assert_eq!(s, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(s, StatusCode::CREATED);
     let (s, _) = create_entity(&c, &vehicle, Some(COMPOUND_CONTEXT_URL)).await;
-    assert_eq!(s, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(s, StatusCode::CREATED);
 
     let (status, body) = list_entity_types(&c, "", None).await;
-    assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
 
     let expected = load_expectation("types/expectations/entity-type-list-022-01-01.json");
-    assert_eq!(body["type"], "EntityTypeList");
-    assert_eq!(sorted_strings(&body["typeList"]), sorted_strings(&expected["typeList"]));
+    pretty_assertions::assert_eq!(body["type"], "EntityTypeList");
+    pretty_assertions::assert_eq!(sorted_strings(&body["typeList"]), sorted_strings(&expected["typeList"]));
 
     delete_entity(&c, &building_id).await;
     delete_entity(&c, &vehicle_id).await;
@@ -79,16 +80,16 @@ async fn list_entity_types_with_context_returns_compacted_names() {
     let vehicle = load_fixture("entities/vehicle-simple-attributes.json", &vehicle_id);
 
     let (s, _) = create_entity(&c, &building, Some(COMPOUND_CONTEXT_URL)).await;
-    assert_eq!(s, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(s, StatusCode::CREATED);
     let (s, _) = create_entity(&c, &vehicle, Some(COMPOUND_CONTEXT_URL)).await;
-    assert_eq!(s, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(s, StatusCode::CREATED);
 
     let (status, body) = list_entity_types(&c, "", Some(COMPOUND_CONTEXT_URL)).await;
-    assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
 
     let expected = load_expectation("types/expectations/entity-type-list-022-01-02.json");
-    assert_eq!(body["type"], "EntityTypeList");
-    assert_eq!(sorted_strings(&body["typeList"]), sorted_strings(&expected["typeList"]));
+    pretty_assertions::assert_eq!(body["type"], "EntityTypeList");
+    pretty_assertions::assert_eq!(sorted_strings(&body["typeList"]), sorted_strings(&expected["typeList"]));
 
     delete_entity(&c, &building_id).await;
     delete_entity(&c, &vehicle_id).await;

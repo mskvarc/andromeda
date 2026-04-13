@@ -40,15 +40,16 @@ impl std::str::FromStr for Uri {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::*;
 
     #[test]
     fn uri_urn_json_round_trip() {
         let uri = Uri::Urn("urn:ngsi-ld:Building:001".parse().unwrap());
         let json = serde_json::to_string(&uri).unwrap();
-        assert_eq!(json, "\"urn:ngsi-ld:Building:001\"");
+        pretty_assertions::assert_eq!(json, "\"urn:ngsi-ld:Building:001\"");
         let parsed: Uri = serde_json::from_str(&json).unwrap();
-        assert_eq!(parsed, uri);
+        pretty_assertions::assert_eq!(parsed, uri);
     }
 
     #[test]
@@ -56,13 +57,13 @@ mod tests {
         let uri = Uri::Url("https://example.com/entity/1".parse().unwrap());
         let json = serde_json::to_string(&uri).unwrap();
         let parsed: Uri = serde_json::from_str(&json).unwrap();
-        assert_eq!(parsed, uri);
+        pretty_assertions::assert_eq!(parsed, uri);
     }
 
     #[test]
     fn uri_display_format() {
         let urn_uri = Uri::Urn("urn:ngsi-ld:Thing:1".parse().unwrap());
-        assert_eq!(urn_uri.to_string(), "urn:ngsi-ld:Thing:1");
+        pretty_assertions::assert_eq!(urn_uri.to_string(), "urn:ngsi-ld:Thing:1");
     }
 
     #[test]
