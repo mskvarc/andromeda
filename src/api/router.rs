@@ -2,6 +2,7 @@ use crate::{
     api::state::{AndromedaState, AppState},
     core::{batch_activity::BatchActivityTracker, config::Configuration, error::AndromedaError},
     domain::notification::{ChangeEvent, CsourceSubscriptionChange, CsrChangeEvent, SubscriptionChange},
+    health::{Health, database::DatabaseHealthIndicator},
     http::handler::{
         attribute,
         csource_registration,
@@ -9,6 +10,7 @@ use crate::{
         entity,
         entity_map,
         entity_operations,
+        health,
         i18n,
         info,
         jsonld_context,
@@ -62,7 +64,6 @@ use axum::{
     response::IntoResponse,
     routing::{delete, get, patch, post, put},
 };
-use axum_health::{Health, database::DatabaseHealthIndicator};
 use sqlx::postgres::PgPoolOptions;
 use std::sync::Arc;
 use tokio::task::JoinHandle;
@@ -76,9 +77,9 @@ pub async fn create_router(config: Arc<Configuration>) -> Result<Router, Androme
     // Ensure unnamed default runtime is initialized at startup.
     let _ = tenants.resolve_state(&TenantRef::UnnamedDefault, TenantCreationPolicy::MustExist).await?;
 
-    let health_indicator = DatabaseHealthIndicator::new("postgres".to_owned(), tenants.main_pool().clone());
+    let health_indicator = DatabaseHealthIndicator::new(tenants.main_pool().clone());
     let health_router: Router<AppState> = Router::new()
-        .route("/health", get(axum_health::health))
+        .route("/health", get(health::check))
         .layer(Health::builder().with_indicator(health_indicator).build());
 
     let app_state = AppState {

@@ -4,6 +4,7 @@ pub mod constant_string;
 pub mod entity;
 pub mod entity_map;
 pub mod expanded;
+pub mod health;
 pub mod jsonld_context;
 pub mod name;
 pub mod ngsi_ld_urn;

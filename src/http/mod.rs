@@ -4,6 +4,7 @@ pub mod error;
 pub mod extractor;
 pub mod handler;
 pub mod header;
+pub mod layer;
 pub mod model;
 pub mod parameter;
 pub mod response;
