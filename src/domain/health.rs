@@ -59,6 +59,10 @@ pub enum HealthStatus {
 /// Names of health-checkable system components.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash, strum::Display, strum::EnumString)]
 pub enum ComponentName {
+    /// MQTT notification transport.
+    #[serde(rename = "mqtt")]
+    #[strum(serialize = "mqtt")]
+    Mqtt,
     /// PostgreSQL database backend.
     #[serde(rename = "postgresql")]
     #[strum(serialize = "postgresql")]
@@ -87,17 +91,28 @@ mod tests {
     fn sample_response() -> HealthCheckResponse {
         let id_urn = UrnBuilder::new("ngsi-ld", "HealthCheck:550e8400-e29b-41d4-a716-446655440000").build().unwrap();
 
-        let mut details = BTreeMap::new();
-        details.insert("poolSize".to_owned(), serde_json::Value::from(5));
-        details.insert("idleConnections".to_owned(), serde_json::Value::from(3));
-        details.insert("pingLatencyMs".to_owned(), serde_json::Value::from(2));
+        let mut pg_details = BTreeMap::new();
+        pg_details.insert("poolSize".to_owned(), serde_json::Value::from(5));
+        pg_details.insert("idleConnections".to_owned(), serde_json::Value::from(3));
+        pg_details.insert("pingLatencyMs".to_owned(), serde_json::Value::from(2));
+
+        let mut mqtt_details = BTreeMap::new();
+        mqtt_details.insert("activeConnections".to_owned(), serde_json::Value::from(1));
+        mqtt_details.insert("unhealthyConnections".to_owned(), serde_json::Value::from(0));
 
         let mut components = BTreeMap::new();
         components.insert(
             ComponentName::PostgreSql,
             ComponentDetail {
                 status: HealthStatus::Up,
-                details,
+                details: pg_details,
+            },
+        );
+        components.insert(
+            ComponentName::Mqtt,
+            ComponentDetail {
+                status: HealthStatus::Up,
+                details: mqtt_details,
             },
         );
 
@@ -122,6 +137,13 @@ mod tests {
             "healthCheck": {
                 "status": "up",
                 "components": {
+                    "mqtt": {
+                        "status": "up",
+                        "details": {
+                            "activeConnections": 1,
+                            "unhealthyConnections": 0
+                        }
+                    },
                     "postgresql": {
                         "status": "up",
                         "details": {
@@ -164,6 +186,17 @@ mod tests {
     fn component_name_serializes_as_postgresql() {
         let json = serde_json::to_value(ComponentName::PostgreSql).unwrap();
         pretty_assertions::assert_eq!(json, serde_json::Value::String("postgresql".to_owned()));
+    }
+
+    #[test]
+    fn component_name_mqtt_serializes_correctly() {
+        let json = serde_json::to_value(ComponentName::Mqtt).unwrap();
+        pretty_assertions::assert_eq!(json, serde_json::Value::String("mqtt".to_owned()));
+    }
+
+    #[test]
+    fn mqtt_sorts_before_postgresql() {
+        assert!(ComponentName::Mqtt < ComponentName::PostgreSql);
     }
 
     #[test]

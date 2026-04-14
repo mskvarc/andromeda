@@ -28,10 +28,42 @@ use crate::{
     },
 };
 
+/// Broker metadata collected from `$SYS` topics.
+#[derive(Debug, Default)]
+struct SysTopicData {
+    broker_uptime: Option<String>,
+    broker_version: Option<String>,
+    clients_connected: Option<String>,
+}
+
+/// Summary of a single MQTT connection's health state.
+#[derive(Debug, Clone)]
+pub struct MqttConnectionHealthSummary {
+    /// Broker hostname.
+    pub host: String,
+    /// Broker port.
+    pub port: u16,
+    /// MQTT protocol version.
+    pub version: MqttVersion,
+    /// Raw health state (0 = healthy, 1 = degraded, 2 = unhealthy).
+    pub health_state: u8,
+    /// Seconds elapsed since this connection was last known healthy.
+    pub seconds_since_healthy: u64,
+    /// Broker uptime from `$SYS/broker/uptime`, if available.
+    pub broker_uptime: Option<String>,
+    /// Broker version from `$SYS/broker/version`, if available.
+    pub broker_version: Option<String>,
+    /// Connected client count from `$SYS/broker/clients/connected`, if available.
+    pub clients_connected: Option<String>,
+}
+
 // Health state constants.
 const HEALTH_HEALTHY: u8 = 0;
 const HEALTH_DEGRADED: u8 = 1;
 const HEALTH_UNHEALTHY: u8 = 2;
+
+/// `$SYS` topics to subscribe to for broker metadata.
+const SYS_TOPICS: &[&str] = &["$SYS/broker/uptime", "$SYS/broker/version", "$SYS/broker/clients/connected"];
 
 /// Connection cache key including credentials hash.
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
@@ -103,7 +135,9 @@ struct MqttConnection {
     client: MqttClientVariant,
     health: Arc<AtomicU8>,
     last_healthy: Arc<RwLock<Instant>>,
+    sys_data: Arc<RwLock<SysTopicData>>,
     reconnect_state: tokio::sync::Mutex<ReconnectState>,
+    key: MqttConnectionKey,
     _event_loop: tokio::task::JoinHandle<()>,
 }
 
@@ -272,6 +306,7 @@ impl MqttTransportPool {
         let client_id = format!("andromeda-{}", uuid::Uuid::new_v4());
         let healthy = Arc::new(AtomicU8::new(HEALTH_HEALTHY));
         let last_healthy = Arc::new(RwLock::new(Instant::now()));
+        let sys_data = Arc::new(RwLock::new(SysTopicData::default()));
         let endpoint_str = format!("{}:{}", key.host, key.port);
 
         let version_label = config.version.to_string();
@@ -307,18 +342,34 @@ impl MqttTransportPool {
                     }
                 }
 
+                // Subscribe to $SYS topics for broker metadata (fire-and-forget).
+                for topic in SYS_TOPICS {
+                    if let Err(e) = client.subscribe(*topic, rumqttc::v5::mqttbytes::QoS::AtMostOnce).await {
+                        debug!(topic, error = %e, "failed to subscribe to $SYS topic");
+                    }
+                }
+
                 let loop_healthy = healthy.clone();
                 let loop_last_healthy = last_healthy.clone();
+                let loop_sys_data = sys_data.clone();
                 let host = key.host.clone();
                 let port = key.port;
                 let vl = version_label.clone();
                 let task = tokio::spawn(async move {
                     loop {
                         match eventloop.poll().await {
-                            Ok(_) => {
+                            Ok(event) => {
                                 loop_healthy.store(HEALTH_HEALTHY, Ordering::Release);
                                 if let Ok(mut last) = loop_last_healthy.try_write() {
                                     *last = Instant::now();
+                                }
+                                if let rumqttc::v5::Event::Incoming(rumqttc::v5::mqttbytes::v5::Packet::Publish(publish)) = &event {
+                                    if let Ok(topic) = std::str::from_utf8(&publish.topic) {
+                                        if topic.starts_with("$SYS/") {
+                                            let payload = String::from_utf8_lossy(&publish.payload).into_owned();
+                                            update_sys_data(&loop_sys_data, topic, payload);
+                                        }
+                                    }
                                 }
                             }
                             Err(e) => {
@@ -340,10 +391,12 @@ impl MqttTransportPool {
                     client: MqttClientVariant::V5 { client },
                     health: healthy,
                     last_healthy,
+                    sys_data,
                     reconnect_state: tokio::sync::Mutex::new(ReconnectState {
                         backoff_iter: self.config.reconnect_backoff.build(),
                         next_attempt_at: Instant::now(),
                     }),
+                    key: key.clone(),
                     _event_loop: task,
                 })
             }
@@ -377,18 +430,32 @@ impl MqttTransportPool {
                     }
                 }
 
+                // Subscribe to $SYS topics for broker metadata (fire-and-forget).
+                for topic in SYS_TOPICS {
+                    if let Err(e) = client.subscribe(*topic, rumqttc::QoS::AtMostOnce).await {
+                        debug!(topic, error = %e, "failed to subscribe to $SYS topic");
+                    }
+                }
+
                 let loop_healthy = healthy.clone();
                 let loop_last_healthy = last_healthy.clone();
+                let loop_sys_data = sys_data.clone();
                 let host = key.host.clone();
                 let port = key.port;
                 let vl = version_label.clone();
                 let task = tokio::spawn(async move {
                     loop {
                         match eventloop.poll().await {
-                            Ok(_) => {
+                            Ok(event) => {
                                 loop_healthy.store(HEALTH_HEALTHY, Ordering::Release);
                                 if let Ok(mut last) = loop_last_healthy.try_write() {
                                     *last = Instant::now();
+                                }
+                                if let rumqttc::Event::Incoming(rumqttc::Packet::Publish(publish)) = &event {
+                                    if publish.topic.starts_with("$SYS/") {
+                                        let payload = String::from_utf8_lossy(&publish.payload).into_owned();
+                                        update_sys_data(&loop_sys_data, &publish.topic, payload);
+                                    }
                                 }
                             }
                             Err(e) => {
@@ -410,14 +477,42 @@ impl MqttTransportPool {
                     client: MqttClientVariant::V311 { client },
                     health: healthy,
                     last_healthy,
+                    sys_data,
                     reconnect_state: tokio::sync::Mutex::new(ReconnectState {
                         backoff_iter: self.config.reconnect_backoff.build(),
                         next_attempt_at: Instant::now(),
                     }),
+                    key: key.clone(),
                     _event_loop: task,
                 })
             }
         }
+    }
+
+    /// Collect health summaries for all pooled connections.
+    pub async fn connection_health_summaries(&self) -> Vec<MqttConnectionHealthSummary> {
+        let mut summaries = Vec::with_capacity(self.connections.len());
+        for entry in self.connections.iter() {
+            let conn = entry.value();
+            let last = *conn.last_healthy.read().await;
+            let sys = conn.sys_data.read().await;
+            summaries.push(MqttConnectionHealthSummary {
+                host: conn.key.host.clone(),
+                port: conn.key.port,
+                version: conn.key.version,
+                health_state: conn.health.load(Ordering::Acquire),
+                seconds_since_healthy: last.elapsed().as_secs(),
+                broker_uptime: sys.broker_uptime.clone(),
+                broker_version: sys.broker_version.clone(),
+                clients_connected: sys.clients_connected.clone(),
+            });
+        }
+        summaries
+    }
+
+    /// Returns `true` when all connections are healthy (or pool is empty).
+    pub fn all_healthy(&self) -> bool {
+        self.connections.iter().all(|entry| entry.value().is_healthy())
     }
 
     /// Gracefully disconnect all pooled connections.
@@ -433,6 +528,18 @@ impl MqttTransportPool {
             }
         }
         self.connections.clear();
+    }
+}
+
+/// Update `$SYS` topic data from a received publish message.
+fn update_sys_data(sys_data: &Arc<RwLock<SysTopicData>>, topic: &str, payload: String) {
+    if let Ok(mut data) = sys_data.try_write() {
+        match topic {
+            "$SYS/broker/uptime" => data.broker_uptime = Some(payload),
+            "$SYS/broker/version" => data.broker_version = Some(payload),
+            "$SYS/broker/clients/connected" => data.clients_connected = Some(payload),
+            _ => {}
+        }
     }
 }
 
@@ -586,5 +693,24 @@ impl NotificationTransport for MqttTransportHandle {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::expect_used, clippy::unwrap_used)]
+    use super::*;
+
+    #[tokio::test]
+    async fn connection_health_summaries_empty_pool() {
+        let pool = MqttTransportPool::new(MqttPoolConfig::default());
+        let summaries = pool.connection_health_summaries().await;
+        assert!(summaries.is_empty());
+    }
+
+    #[test]
+    fn all_healthy_empty_pool() {
+        let pool = MqttTransportPool::new(MqttPoolConfig::default());
+        assert!(pool.all_healthy());
     }
 }

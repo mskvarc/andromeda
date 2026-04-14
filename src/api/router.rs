@@ -2,7 +2,7 @@ use crate::{
     api::state::{AndromedaState, AppState},
     core::{batch_activity::BatchActivityTracker, config::Configuration, error::AndromedaError},
     domain::notification::{ChangeEvent, CsourceSubscriptionChange, CsrChangeEvent, SubscriptionChange},
-    health::{Health, database::DatabaseHealthIndicator},
+    health::{Health, database::DatabaseHealthIndicator, mqtt::MqttHealthIndicator},
     http::handler::{
         attribute,
         csource_registration,
@@ -79,10 +79,12 @@ pub async fn create_router(config: Arc<Configuration>) -> Result<Router, Androme
     // Ensure unnamed default runtime is initialized at startup.
     let _ = tenants.resolve_state(&TenantRef::UnnamedDefault, TenantCreationPolicy::MustExist).await?;
 
-    let health_indicator = DatabaseHealthIndicator::new(tenants.main_pool().clone());
-    let health_router: Router<AppState> = Router::new()
-        .route("/health", get(health::check))
-        .layer(Health::builder().with_indicator(health_indicator).build());
+    let db_indicator = DatabaseHealthIndicator::new(tenants.main_pool().clone());
+    let mut health_builder = Health::builder().with_indicator(db_indicator);
+    if let Some(mqtt_pool) = tenants.default_mqtt_pool() {
+        health_builder = health_builder.with_indicator(MqttHealthIndicator::new(mqtt_pool));
+    }
+    let health_router: Router<AppState> = Router::new().route("/health", get(health::check)).layer(health_builder.build());
 
     let version_service = Version::new(tenants.main_pool().clone());
     let version_router: Router<AppState> = Router::new().route("/version", get(version::check)).layer(version_service);

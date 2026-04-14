@@ -5,6 +5,7 @@
 //! worst-case status.
 
 pub mod database;
+pub mod mqtt;
 
 use crate::domain::health::{ComponentDetail, ComponentName, HealthStatus};
 use std::{collections::BTreeMap, future::Future, pin::Pin, sync::Arc};
@@ -127,18 +128,23 @@ mod tests {
 
     #[tokio::test]
     async fn worst_status_wins() {
-        // Both indicators use PostgreSql name, but second overwrites first in BTreeMap.
-        // To properly test worst-status, we need distinct component names.
-        // Since we only have one variant currently, we test with a single Down indicator.
         let health = Health::builder()
+            .with_indicator(MockIndicator {
+                component: ComponentName::Mqtt,
+                status: HealthStatus::Up,
+            })
             .with_indicator(MockIndicator {
                 component: ComponentName::PostgreSql,
                 status: HealthStatus::Down,
             })
             .build();
 
-        let (status, _components) = health.check_all().await;
+        let (status, components) = health.check_all().await;
         pretty_assertions::assert_eq!(status, HealthStatus::Down);
+        assert!(components.contains_key(&ComponentName::Mqtt));
+        assert!(components.contains_key(&ComponentName::PostgreSql));
+        pretty_assertions::assert_eq!(components[&ComponentName::Mqtt].status, HealthStatus::Up);
+        pretty_assertions::assert_eq!(components[&ComponentName::PostgreSql].status, HealthStatus::Down);
     }
 
     #[test]

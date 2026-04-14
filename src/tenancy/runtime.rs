@@ -8,7 +8,7 @@ use crate::{
         database::{DatabaseUrl, create_database_if_missing, generate_db_name, migrate_main_db, migrate_single_tenant_db},
         types::{TenantCreationPolicy, TenantName, TenantRef, TenantStatus},
     },
-    transport::dispatch::TransportDispatcher,
+    transport::{dispatch::TransportDispatcher, mqtt::MqttTransportPool},
 };
 use dashmap::DashMap;
 use sqlx::{Row, postgres::PgPoolOptions};
@@ -92,6 +92,11 @@ impl TenantRuntimeManager {
     /// Returns a reference to the main PostgreSQL connection pool.
     pub const fn main_pool(&self) -> &sqlx::PgPool {
         &self.main_pool
+    }
+
+    /// Returns the MQTT connection pool from the default tenant runtime, if initialized.
+    pub fn default_mqtt_pool(&self) -> Option<Arc<MqttTransportPool>> {
+        self.runtimes.get(&TenantRef::UnnamedDefault).map(|r| Arc::clone(r.transport.mqtt_pool()))
     }
 
     /// Return all named tenants currently present in the tenant registry.
