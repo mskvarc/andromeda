@@ -456,11 +456,16 @@ async fn create_entity(client: &Client, entity: &Value) -> StatusCode {
 }
 
 async fn create_entity_json(client: &Client, entity: &Value, context_url: &str) -> StatusCode {
+    // Strip @context from body - application/json must not contain @context per NGSI-LD 6.3.5
+    let mut body = entity.clone();
+    if let Some(obj) = body.as_object_mut() {
+        obj.remove("@context");
+    }
     let resp = client
         .post(format!("{BASE_URL}/entities"))
         .header("Content-Type", "application/json")
         .header("Link", jsonld_link_header(context_url))
-        .json(entity)
+        .json(&body)
         .send()
         .await
         .expect("create_entity_json request failed");
@@ -681,38 +686,38 @@ async fn replace_entity_attr_with_datasetid(
     (status, body)
 }
 
-async fn delete_entity_attr(client: &Client, id: &str, attr_name: &str) -> (StatusCode, Value) {
+async fn delete_entity_attr(client: &Client, id: &str, attr_name: &str, link: Option<&str>) -> (StatusCode, Value) {
     let encoded = urlencoding::encode(id);
-    let resp = client
-        .delete(format!("{BASE_URL}/entities/{encoded}/attrs/{attr_name}"))
-        .send()
-        .await
-        .expect("delete_entity_attr request failed");
+    let mut req = client.delete(format!("{BASE_URL}/entities/{encoded}/attrs/{attr_name}"));
+    if let Some(ctx) = link {
+        req = req.header("Link", jsonld_link_header(ctx));
+    }
+    let resp = req.send().await.expect("delete_entity_attr request failed");
     let status = resp.status();
     let body: Value = resp.json().await.unwrap_or_default();
     (status, body)
 }
 
-async fn delete_entity_attr_with_datasetid(client: &Client, id: &str, attr_name: &str, dataset_id: &str) -> (StatusCode, Value) {
+async fn delete_entity_attr_with_datasetid(client: &Client, id: &str, attr_name: &str, dataset_id: &str, link: Option<&str>) -> (StatusCode, Value) {
     let encoded = urlencoding::encode(id);
     let encoded_dataset = urlencoding::encode(dataset_id);
-    let resp = client
-        .delete(format!("{BASE_URL}/entities/{encoded}/attrs/{attr_name}?datasetId={encoded_dataset}"))
-        .send()
-        .await
-        .expect("delete_entity_attr_with_datasetid request failed");
+    let mut req = client.delete(format!("{BASE_URL}/entities/{encoded}/attrs/{attr_name}?datasetId={encoded_dataset}"));
+    if let Some(ctx) = link {
+        req = req.header("Link", jsonld_link_header(ctx));
+    }
+    let resp = req.send().await.expect("delete_entity_attr_with_datasetid request failed");
     let status = resp.status();
     let body: Value = resp.json().await.unwrap_or_default();
     (status, body)
 }
 
-async fn delete_entity_attr_delete_all(client: &Client, id: &str, attr_name: &str) -> (StatusCode, Value) {
+async fn delete_entity_attr_delete_all(client: &Client, id: &str, attr_name: &str, link: Option<&str>) -> (StatusCode, Value) {
     let encoded = urlencoding::encode(id);
-    let resp = client
-        .delete(format!("{BASE_URL}/entities/{encoded}/attrs/{attr_name}?deleteAll=true"))
-        .send()
-        .await
-        .expect("delete_entity_attr_delete_all request failed");
+    let mut req = client.delete(format!("{BASE_URL}/entities/{encoded}/attrs/{attr_name}?deleteAll=true"));
+    if let Some(ctx) = link {
+        req = req.header("Link", jsonld_link_header(ctx));
+    }
+    let resp = req.send().await.expect("delete_entity_attr_delete_all request failed");
     let status = resp.status();
     let body: Value = resp.json().await.unwrap_or_default();
     (status, body)

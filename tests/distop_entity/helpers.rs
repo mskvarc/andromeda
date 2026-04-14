@@ -233,7 +233,8 @@ pub fn vehicle_entity_speed_only(id: &str) -> Value {
         "speed": {
             "type": "Property",
             "value": 56
-        }
+        },
+        "@context": TEST_SUITE_CONTEXT
     })
 }
 
@@ -280,8 +281,8 @@ pub fn vehicle_entity_different_ld(id: &str) -> Value {
         },
         "isParked2": {
             "type": "Relationship",
-            "object": "urn:ngsi-ld:OffStreetParking:Downtown2",
-            "observedAt": "2017-07-29T12:00:04Z"
+            "object": "urn:ngsi-ld:OffStreetParking:Downtown3",
+            "observedAt": "2018-07-29T12:00:04Z"
         },
         "@context": TEST_SUITE_CONTEXT
     })
@@ -617,11 +618,16 @@ pub async fn delete_entity_local(client: &Client, id: &str) -> StatusCode {
 }
 
 pub async fn merge_entity(client: &Client, id: &str, payload: &Value, link: &str) -> (StatusCode, Value) {
+    // Strip @context from body - application/json must not contain @context per NGSI-LD 6.3.5
+    let mut body = payload.clone();
+    if let Some(obj) = body.as_object_mut() {
+        obj.remove("@context");
+    }
     let resp = client
         .patch(format!("{BASE_URL}/entities/{}", encode(id)))
-        .header("Content-Type", "application/ld+json")
+        .header("Content-Type", "application/json")
         .header("Link", link)
-        .json(payload)
+        .json(&body)
         .send()
         .await
         .expect("merge_entity request failed");

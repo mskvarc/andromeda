@@ -246,13 +246,13 @@ async fn list_attributes(client: &Client, query: &str) -> (StatusCode, reqwest::
     (status, headers, body)
 }
 
-async fn get_attribute(client: &Client, attr_name: &str, query: &str) -> (StatusCode, reqwest::header::HeaderMap, Value) {
+async fn get_attribute(client: &Client, attr_name: &str, query: &str, context_url: Option<&str>) -> (StatusCode, reqwest::header::HeaderMap, Value) {
     let sep = if query.is_empty() { "" } else { "?" };
-    let resp = client
-        .get(format!("{BASE_URL}/attributes/{attr_name}{sep}{query}"))
-        .send()
-        .await
-        .expect("get_attribute request failed");
+    let mut request = client.get(format!("{BASE_URL}/attributes/{attr_name}{sep}{query}"));
+    if let Some(ctx) = context_url {
+        request = request.header("Link", format!(r#"<{ctx}>; rel="http://www.w3.org/ns/json-ld#context""#));
+    }
+    let resp = request.send().await.expect("get_attribute request failed");
     let status = resp.status();
     let headers = resp.headers().clone();
     let body: Value = resp.json().await.unwrap_or_default();
@@ -474,7 +474,7 @@ async fn distop_attributes_attribute_info_merges_remote_type_names() {
     pretty_assertions::assert_eq!(create_registration(&c, &reg).await, StatusCode::CREATED);
 
     // Verify the attribute exists locally first
-    let (local_status, _, _) = get_attribute(&c, "brandName", "local=true").await;
+    let (local_status, _, _) = get_attribute(&c, "brandName", "local=true", Some(COMPOUND_CONTEXT)).await;
     pretty_assertions::assert_eq!(local_status, StatusCode::OK);
 
     // Remote returns attribute info with additional type names
@@ -487,7 +487,7 @@ async fn distop_attributes_attribute_info_merges_remote_type_names() {
     mock.set_stub_with_body(Method::GET, "/ngsi-ld/v1/attributes/brandName", 200, &mock_attr_info)
         .await;
 
-    let (status, _, _) = get_attribute(&c, "brandName", "").await;
+    let (status, _, _) = get_attribute(&c, "brandName", "", Some(COMPOUND_CONTEXT)).await;
     pretty_assertions::assert_eq!(status, StatusCode::OK);
 
     delete_entity(&c, &entity_id).await;

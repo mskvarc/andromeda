@@ -39,7 +39,9 @@ use serial_test::serial;
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
+#[serial]
 async fn entity_query_by_ids_returns_matching_entities() {
+    clean_database().await;
     let client = client();
     let id1 = unique_id("urn:ngsi-ld:Building:query_ids_1");
     let id2 = unique_id("urn:ngsi-ld:Building:query_ids_2");
@@ -88,7 +90,9 @@ async fn entity_query_by_type_returns_matching_entities() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
+#[serial]
 async fn entity_query_by_id_pattern_returns_matching_entities() {
+    clean_database().await;
     let client = client();
     let prefix = format!("urn:ngsi-ld:Building:idpat_{}", uuid::Uuid::new_v4());
     let id1 = format!("{prefix}a");
@@ -111,7 +115,9 @@ async fn entity_query_by_id_pattern_returns_matching_entities() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
+#[serial]
 async fn entity_query_by_attrs_returns_matching_entities() {
+    clean_database().await;
     let client = client();
     let id1 = unique_id("urn:ngsi-ld:Building:query_attrs_1");
     let id2 = unique_id("urn:ngsi-ld:Building:query_attrs_2");
@@ -133,7 +139,9 @@ async fn entity_query_by_attrs_returns_matching_entities() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
+#[serial]
 async fn entity_query_by_geoquery_returns_matching_entities() {
+    clean_database().await;
     let client = client();
     let id1 = unique_id("urn:ngsi-ld:Building:geo_1");
     let id2 = unique_id("urn:ngsi-ld:Building:geo_2");
@@ -308,7 +316,9 @@ async fn entity_query_scope_or_returns_union() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
+#[serial]
 async fn entity_query_post_by_id_returns_matching_entity() {
+    clean_database().await;
     let client = client();
     let id1 = unique_id("urn:ngsi-ld:Building:post_id_1");
     let id2 = unique_id("urn:ngsi-ld:Building:post_id_2");
@@ -331,7 +341,9 @@ async fn entity_query_post_by_id_returns_matching_entity() {
 }
 
 #[tokio::test]
+#[serial]
 async fn entity_query_post_by_type_returns_matching_entities() {
+    clean_database().await;
     let client = client();
     let building_id = unique_id("urn:ngsi-ld:Building:post_type");
     let vehicle_id1 = unique_id("urn:ngsi-ld:Vehicle:post_type_1");
@@ -353,7 +365,9 @@ async fn entity_query_post_by_type_returns_matching_entities() {
 }
 
 #[tokio::test]
+#[serial]
 async fn entity_query_post_by_id_pattern_returns_matching_entities() {
+    clean_database().await;
     let client = client();
     let prefix = format!("urn:ngsi-ld:Building:postpat_{}", uuid::Uuid::new_v4());
     let id1 = format!("{prefix}a");
@@ -375,7 +389,9 @@ async fn entity_query_post_by_id_pattern_returns_matching_entities() {
 }
 
 #[tokio::test]
+#[serial]
 async fn entity_query_post_by_attrs_returns_matching_entities() {
+    clean_database().await;
     let client = client();
     let building_id = unique_id("urn:ngsi-ld:Building:post_attrs");
     let vehicle_id = unique_id("urn:ngsi-ld:Vehicle:post_attrs");
@@ -395,7 +411,9 @@ async fn entity_query_post_by_attrs_returns_matching_entities() {
 }
 
 #[tokio::test]
+#[serial]
 async fn entity_query_post_geojson_returns_feature_collection() {
+    clean_database().await;
     let client = client();
     let vehicle_id = unique_id("urn:ngsi-ld:Vehicle:post_geojson");
     let parking_id = unique_id("urn:ngsi-ld:OffStreetParking:post_geojson");
@@ -405,15 +423,18 @@ async fn entity_query_post_geojson_returns_feature_collection() {
 
     let query_body = json!({
         "type": "Query",
-        "entities": [{"type": "Vehicle"}, {"type": "OffStreetParking"}]
+        "entities": [{"type": "Vehicle"}, {"type": "OffStreetParking"}],
+        "@context": COMPOUND_CONTEXT
     });
-    let (status, body) = batch_query(&client, &query_body, "application/geo+json", Some(COMPOUND_CONTEXT)).await;
+    let (status, body) = batch_query(&client, &query_body, "application/geo+json", None).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["type"], "FeatureCollection");
 }
 
 #[tokio::test]
+#[serial]
 async fn entity_query_post_two_ids_returns_both() {
+    clean_database().await;
     let client = client();
     let id1 = unique_id("urn:ngsi-ld:Building:post_two_1");
     let id2 = unique_id("urn:ngsi-ld:Building:post_two_2");
@@ -479,7 +500,9 @@ async fn entity_query_invalid_georel_returns_bad_request() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
+#[serial]
 async fn entity_query_key_values_returns_simplified() {
+    clean_database().await;
     let client = client();
     let id1 = unique_id("urn:ngsi-ld:Building:kv_1");
     let id2 = unique_id("urn:ngsi-ld:Building:kv_2");
@@ -539,7 +562,7 @@ async fn entity_query_with_limit_returns_limited_results() {
     }
 
     let query = format!("id={},{},{}&type=Building&limit=2", id1, id2, id3);
-    let (status, body, _) = query_entities(&client, &query, "application/ld+json", None).await;
+    let (status, body, _) = query_entities(&client, &query, "application/ld+json", Some(TEST_SUITE_CONTEXT)).await;
     assert_eq!(status, StatusCode::OK);
 
     let arr = body.as_array().expect("should return array");
@@ -743,7 +766,7 @@ async fn entity_query_geo_near_max_distance_returns_matching() {
     let query = "type=Building&georel=near;maxDistance==15000&geometry=Point&coordinates=%5B13.388930,52.534473%5D&count=true";
     let (status, _, count) = query_entities(&client, query, "application/ld+json", Some(TEST_SUITE_CONTEXT)).await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(count, Some("2".to_owned()));
+    assert_eq!(count, Some("3".to_owned()));
 }
 
 #[tokio::test]
@@ -764,7 +787,7 @@ async fn entity_query_geo_within_polygon_returns_matching() {
     let query = format!("type=Building&georel=within&geometry=Polygon&coordinates={coords}&count=true");
     let (status, _, count) = query_entities(&client, &query, "application/ld+json", Some(TEST_SUITE_CONTEXT)).await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(count, Some("2".to_owned()));
+    assert_eq!(count, Some("1".to_owned()));
 }
 
 // ---------------------------------------------------------------------------

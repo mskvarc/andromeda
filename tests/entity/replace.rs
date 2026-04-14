@@ -8,6 +8,7 @@
 //! - Replace with scopes
 
 use crate::{
+    COMPOUND_CONTEXT,
     TEST_SUITE_CONTEXT,
     building_locatedat_and_name,
     building_simple_attributes,
@@ -37,21 +38,21 @@ async fn entity_replace_success_createdat_preserved() {
     let id = unique_id("urn:ngsi-ld:Building:replace_054_01_01");
 
     let entity = building_simple_attributes(&id);
-    let status = create_entity_json(&c, &entity, TEST_SUITE_CONTEXT).await;
+    let status = create_entity_json(&c, &entity, COMPOUND_CONTEXT).await;
     assert_eq!(status, StatusCode::CREATED);
 
     // Get createdAt before replacement
-    let (status, before) = get_entity(&c, &id, "options=sysAttrs", "application/json", None).await;
+    let (status, before) = get_entity(&c, &id, "options=sysAttrs", "application/json", Some(COMPOUND_CONTEXT)).await;
     assert_eq!(status, StatusCode::OK);
     let created_at = before["createdAt"].as_str().unwrap().to_string();
 
     // Replace entity
     let replacement = building_locatedat_and_name(&id);
-    let (status, _) = replace_entity(&c, &id, &replacement, "application/json", Some(TEST_SUITE_CONTEXT)).await;
+    let (status, _) = replace_entity(&c, &id, &replacement, "application/json", Some(COMPOUND_CONTEXT)).await;
     assert_eq!(status, StatusCode::NO_CONTENT, "replace should return 204");
 
     // Verify replacement
-    let (status, after) = get_entity(&c, &id, "options=sysAttrs", "application/json", None).await;
+    let (status, after) = get_entity(&c, &id, "options=sysAttrs", "application/json", Some(COMPOUND_CONTEXT)).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(after["name"]["value"], "Pisa Tower", "name should be updated");
     assert_eq!(after["locatedAt"]["object"], "urn:ngsi-ld:City:Pisa", "new relationship should be present");

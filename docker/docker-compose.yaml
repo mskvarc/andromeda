@@ -17,7 +17,7 @@ services:
   mosquitto:
     image: eclipse-mosquitto:2.1.2-alpine
     volumes:
-      - ../tests/fixtures/mqtt:/mosquitto/config:ro
+      - ./mosquitto:/mosquitto/config:ro
     ports:
       - "1883:1883"
     healthcheck:
@@ -41,7 +41,7 @@ services:
   mosquitto-auth:
     image: eclipse-mosquitto:2.1.2-alpine
     volumes:
-      - ../tests/fixtures/mqtt:/mosquitto/config:ro
+      - ./mosquitto:/mosquitto/config:ro
     command: ["mosquitto", "-c", "/mosquitto/config/mosquitto_with_auth.conf"]
     ports:
       - "9883:9883"

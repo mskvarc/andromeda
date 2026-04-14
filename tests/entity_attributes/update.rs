@@ -497,7 +497,8 @@ async fn attribute_update_delete_property_instance_with_null_success() {
 
     let fragment = json!({
         "name": {
-            "@value": "urn:ngsi-ld:null",
+            "type": "Property",
+            "value": "urn:ngsi-ld:null",
             "datasetId": "urn:ngsi-ld:Dataset:01"
         },
         "@context": COMPOUND_CONTEXT
@@ -524,7 +525,8 @@ async fn attribute_update_delete_relationship_instance_with_null_success() {
 
     let fragment = json!({
         "locatedAt": {
-            "@value": "urn:ngsi-ld:null",
+            "type": "Relationship",
+            "object": "urn:ngsi-ld:null",
             "datasetId": "urn:ngsi-ld:Dataset:01"
         },
         "@context": COMPOUND_CONTEXT
@@ -547,7 +549,8 @@ async fn attribute_update_delete_geo_property_instance_with_null_success() {
 
     let fragment = json!({
         "location": {
-            "@value": "urn:ngsi-ld:null",
+            "type": "GeoProperty",
+            "value": "urn:ngsi-ld:null",
             "datasetId": "urn:ngsi-ld:Dataset:01"
         },
         "@context": COMPOUND_CONTEXT
@@ -570,7 +573,10 @@ async fn attribute_update_delete_language_property_instance_with_null_success() 
 
     let fragment = json!({
         "street": {
-            "@value": "urn:ngsi-ld:null",
+            "type": "LanguageProperty",
+            "languageMap": {
+                "@none": "urn:ngsi-ld:null"
+            },
             "datasetId": "urn:ngsi-ld:Dataset:01"
         },
         "@context": COMPOUND_CONTEXT
@@ -596,7 +602,10 @@ async fn attribute_update_delete_default_property_instance_with_null_success() {
     assert_eq!(status, StatusCode::CREATED);
 
     let fragment = json!({
-        "name": "urn:ngsi-ld:null",
+        "name": {
+            "type": "Property",
+            "value": "urn:ngsi-ld:null"
+        },
         "@context": COMPOUND_CONTEXT
     });
 
@@ -620,7 +629,10 @@ async fn attribute_update_delete_default_relationship_instance_with_null_success
     assert_eq!(status, StatusCode::CREATED);
 
     let fragment = json!({
-        "locatedAt": "urn:ngsi-ld:null",
+        "locatedAt": {
+            "type": "Relationship",
+            "object": "urn:ngsi-ld:null"
+        },
         "@context": COMPOUND_CONTEXT
     });
 
@@ -640,7 +652,10 @@ async fn attribute_update_delete_default_geo_property_instance_with_null_success
     assert_eq!(status, StatusCode::CREATED);
 
     let fragment = json!({
-        "location": "urn:ngsi-ld:null",
+        "location": {
+            "type": "GeoProperty",
+            "value": "urn:ngsi-ld:null"
+        },
         "@context": COMPOUND_CONTEXT
     });
 
@@ -660,7 +675,12 @@ async fn attribute_update_delete_default_language_property_instance_with_null_su
     assert_eq!(status, StatusCode::CREATED);
 
     let fragment = json!({
-        "street": "urn:ngsi-ld:null",
+        "street": {
+            "type": "LanguageProperty",
+            "languageMap": {
+                "@none": "urn:ngsi-ld:null"
+            }
+        },
         "@context": COMPOUND_CONTEXT
     });
 

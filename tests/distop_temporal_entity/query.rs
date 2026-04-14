@@ -348,7 +348,7 @@ async fn distop_temporal_split_entities_q_filter_post_merge() {
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     // Query with splitEntities=true and q filter for speed>60
-    let query = "type=Vehicle&splitEntities=true&q=speed>60";
+    let query = "type=Vehicle&splitEntities=true&q=speed>60&timerel=before&timeAt=2030-01-01T00:00:00Z";
     let (status, _, body) = query_temporal_entities(&c, query, &jsonld_link_value()).await;
     assert!(status.is_success(), "query should succeed, got {status}");
 
@@ -393,7 +393,7 @@ async fn distop_temporal_split_entities_returns_all_without_filter() {
     let (status, _) = create_registration(&c, &reg).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
-    let query = "type=Vehicle&splitEntities=true";
+    let query = "type=Vehicle&splitEntities=true&timerel=before&timeAt=2030-01-01T00:00:00Z";
     let (status, _, body) = query_temporal_entities(&c, query, &jsonld_link_value()).await;
     assert!(status.is_success(), "query should succeed, got {status}");
 
@@ -432,7 +432,7 @@ async fn distop_temporal_split_entities_scope_filter_post_merge() {
     let (status, _) = create_registration(&c, &reg).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
-    let query = "type=Vehicle&splitEntities=true&scopeQ=/Barcelona";
+    let query = "type=Vehicle&splitEntities=true&scopeQ=/Barcelona&timerel=before&timeAt=2030-01-01T00:00:00Z";
     let (status, _, body) = query_temporal_entities(&c, query, &jsonld_link_value()).await;
     assert!(status.is_success(), "query should succeed, got {status}");
 

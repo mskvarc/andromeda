@@ -246,10 +246,15 @@ async fn list_types(client: &Client, query: &str) -> (StatusCode, reqwest::heade
     (status, headers, body)
 }
 
+fn jsonld_link_value() -> String {
+    format!("<{COMPOUND_CONTEXT}>; rel=\"http://www.w3.org/ns/json-ld#context\"; type=\"application/ld+json\"")
+}
+
 async fn get_type(client: &Client, type_name: &str, query: &str) -> (StatusCode, reqwest::header::HeaderMap, Value) {
     let sep = if query.is_empty() { "" } else { "?" };
     let resp = client
         .get(format!("{BASE_URL}/types/{type_name}{sep}{query}"))
+        .header("Link", jsonld_link_value())
         .send()
         .await
         .expect("get_type request failed");

@@ -278,9 +278,22 @@ pub fn fragment_brandname() -> Value {
 // Registration builders
 // ---------------------------------------------------------------------------
 
-/// Vehicle registration with redirection operations (createEntity, updateEntity, deleteEntity, mergeEntity, replaceEntity).
+/// Vehicle registration with entity and attribute redirection operations.
+///
+/// Includes both entity-level operations (createEntity, updateEntity, etc.) and
+/// attribute-level operations (appendAttrs, updateAttrs, partialAttrUpdate, deleteAttrs).
 pub fn vehicle_registration_redirection_ops(reg_id: &str, entity_id: Option<&str>, endpoint: &str, mode: Option<&str>) -> Value {
-    let ops = ["createEntity", "updateEntity", "deleteEntity", "mergeEntity", "replaceEntity"];
+    let ops = [
+        "createEntity",
+        "updateEntity",
+        "deleteEntity",
+        "mergeEntity",
+        "replaceEntity",
+        "appendAttrs",
+        "updateAttrs",
+        "partialAttrUpdate",
+        "deleteAttrs",
+    ];
     let mut reg = json!({
         "id": reg_id,
         "type": "ContextSourceRegistration",
@@ -306,9 +319,21 @@ pub fn vehicle_registration_redirection_ops(reg_id: &str, entity_id: Option<&str
     reg
 }
 
-/// Speed-specific registration with redirection operations.
+/// Speed-specific registration with entity and attribute redirection operations.
+///
+/// Includes both entity-level and attribute-level operations for the speed property.
 pub fn vehicle_registration_speed_redirection_ops(reg_id: &str, entity_id: &str, endpoint: &str, mode: Option<&str>) -> Value {
-    let ops = ["createEntity", "updateEntity", "deleteEntity", "mergeEntity", "replaceEntity"];
+    let ops = [
+        "createEntity",
+        "updateEntity",
+        "deleteEntity",
+        "mergeEntity",
+        "replaceEntity",
+        "appendAttrs",
+        "updateAttrs",
+        "partialAttrUpdate",
+        "deleteAttrs",
+    ];
     let mut reg = json!({
         "id": reg_id,
         "type": "ContextSourceRegistration",
@@ -441,9 +466,10 @@ pub async fn partial_update_attr(client: &Client, entity_id: &str, attr_name: &s
 }
 
 /// Delete entity attribute (DELETE /entities/{entityId}/attrs/{attrId}).
-pub async fn delete_entity_attr(client: &Client, entity_id: &str, attr_name: &str) -> StatusCode {
+pub async fn delete_entity_attr(client: &Client, entity_id: &str, attr_name: &str, link: &str) -> StatusCode {
     let resp = client
         .delete(format!("{BASE_URL}/entities/{}/attrs/{}", encode(entity_id), encode(attr_name)))
+        .header("Link", link)
         .send()
         .await
         .expect("delete_entity_attr request failed");
@@ -451,9 +477,10 @@ pub async fn delete_entity_attr(client: &Client, entity_id: &str, attr_name: &st
 }
 
 /// Delete entity attribute with deleteAll=true option.
-pub async fn delete_entity_attr_all(client: &Client, entity_id: &str, attr_name: &str) -> StatusCode {
+pub async fn delete_entity_attr_all(client: &Client, entity_id: &str, attr_name: &str, link: &str) -> StatusCode {
     let resp = client
         .delete(format!("{BASE_URL}/entities/{}/attrs/{}?deleteAll=true", encode(entity_id), encode(attr_name)))
+        .header("Link", link)
         .send()
         .await
         .expect("delete_entity_attr_all request failed");

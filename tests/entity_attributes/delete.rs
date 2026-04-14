@@ -8,6 +8,7 @@
 //! - Special attributes (scope, observationSpace, operationSpace, VocabProperty)
 
 use crate::{
+    COMPOUND_CONTEXT,
     TEST_SUITE_CONTEXT,
     building_observation_space,
     building_operation_space,
@@ -44,10 +45,10 @@ async fn attribute_delete_default_instance_success() {
     let status = create_entity(&c, &entity).await;
     assert_eq!(status, StatusCode::CREATED);
 
-    let (status, _) = delete_entity_attr(&c, &id, "speed").await;
+    let (status, _) = delete_entity_attr(&c, &id, "speed", Some(COMPOUND_CONTEXT)).await;
     assert_eq!(status, StatusCode::NO_CONTENT, "delete default instance should return 204");
 
-    let (status, body) = get_entity(&c, &id, "", "application/ld+json", Some(TEST_SUITE_CONTEXT)).await;
+    let (status, body) = get_entity(&c, &id, "", "application/ld+json", Some(COMPOUND_CONTEXT)).await;
     assert_eq!(status, StatusCode::OK);
     // Other instances with datasetId should remain
     assert!(body.get("speed").is_some(), "speed instances with datasetId should remain");
@@ -64,10 +65,10 @@ async fn attribute_delete_with_datasetid_success() {
     let status = create_entity(&c, &entity).await;
     assert_eq!(status, StatusCode::CREATED);
 
-    let (status, _) = delete_entity_attr_with_datasetid(&c, &id, "speed", "urn:ngsi-ld:Property:gpsBxyz123-speed").await;
+    let (status, _) = delete_entity_attr_with_datasetid(&c, &id, "speed", "urn:ngsi-ld:Property:gpsBxyz123-speed", Some(COMPOUND_CONTEXT)).await;
     assert_eq!(status, StatusCode::NO_CONTENT, "delete with datasetId should return 204");
 
-    let (status, body) = get_entity(&c, &id, "", "application/ld+json", Some(TEST_SUITE_CONTEXT)).await;
+    let (status, body) = get_entity(&c, &id, "", "application/ld+json", Some(COMPOUND_CONTEXT)).await;
     assert_eq!(status, StatusCode::OK);
     // Other instance should remain
     assert!(body.get("speed").is_some(), "speed instance with other datasetId should remain");
@@ -84,10 +85,10 @@ async fn attribute_delete_all_instances_success() {
     let status = create_entity(&c, &entity).await;
     assert_eq!(status, StatusCode::CREATED);
 
-    let (status, _) = delete_entity_attr_delete_all(&c, &id, "speed").await;
+    let (status, _) = delete_entity_attr_delete_all(&c, &id, "speed", Some(COMPOUND_CONTEXT)).await;
     assert_eq!(status, StatusCode::NO_CONTENT, "delete all instances should return 204");
 
-    let (status, body) = get_entity(&c, &id, "", "application/ld+json", Some(TEST_SUITE_CONTEXT)).await;
+    let (status, body) = get_entity(&c, &id, "", "application/ld+json", Some(COMPOUND_CONTEXT)).await;
     assert_eq!(status, StatusCode::OK);
     assert!(body.get("speed").is_none(), "all speed instances should be deleted");
 }
@@ -141,7 +142,7 @@ async fn attribute_delete_nonexistent_entity_returns_404() {
     let c = client();
     let id = unique_id("urn:ngsi-ld:Vehicle:delete_013_03_01");
 
-    let (status, _) = delete_entity_attr(&c, &id, "speed").await;
+    let (status, _) = delete_entity_attr(&c, &id, "speed", Some(COMPOUND_CONTEXT)).await;
     assert_eq!(status, StatusCode::NOT_FOUND, "non-existent entity should return 404");
 }
 
@@ -156,7 +157,7 @@ async fn attribute_delete_nonexistent_attribute_returns_404() {
     let status = create_entity(&c, &entity).await;
     assert_eq!(status, StatusCode::CREATED);
 
-    let (status, _) = delete_entity_attr(&c, &id, "nonExistentAttr").await;
+    let (status, _) = delete_entity_attr(&c, &id, "nonExistentAttr", Some(COMPOUND_CONTEXT)).await;
     assert_eq!(status, StatusCode::NOT_FOUND, "non-existent attribute should return 404");
 }
 
@@ -171,7 +172,7 @@ async fn attribute_delete_nonexistent_datasetid_returns_404() {
     let status = create_entity(&c, &entity).await;
     assert_eq!(status, StatusCode::CREATED);
 
-    let (status, _) = delete_entity_attr_with_datasetid(&c, &id, "speed", "urn:ngsi-ld:Dataset:nonexistent").await;
+    let (status, _) = delete_entity_attr_with_datasetid(&c, &id, "speed", "urn:ngsi-ld:Dataset:nonexistent", Some(COMPOUND_CONTEXT)).await;
     assert_eq!(status, StatusCode::NOT_FOUND, "non-existent datasetId should return 404");
 }
 
@@ -194,7 +195,7 @@ async fn attribute_delete_scope_success() {
     let status = create_entity_json(&c, &entity, TEST_SUITE_CONTEXT).await;
     assert_eq!(status, StatusCode::CREATED);
 
-    let (status, _) = delete_entity_attr(&c, &id, "scope").await;
+    let (status, _) = delete_entity_attr(&c, &id, "scope", Some(TEST_SUITE_CONTEXT)).await;
     assert_eq!(status, StatusCode::NO_CONTENT, "delete scope should return 204");
 
     let (status, body) = get_entity(&c, &id, "", "application/ld+json", Some(TEST_SUITE_CONTEXT)).await;
@@ -213,10 +214,10 @@ async fn attribute_delete_observation_space_success() {
     let status = create_entity(&c, &entity).await;
     assert_eq!(status, StatusCode::CREATED);
 
-    let (status, _) = delete_entity_attr(&c, &id, "observationSpace").await;
+    let (status, _) = delete_entity_attr(&c, &id, "observationSpace", Some(COMPOUND_CONTEXT)).await;
     assert_eq!(status, StatusCode::NO_CONTENT, "delete observationSpace should return 204");
 
-    let (status, body) = get_entity(&c, &id, "", "application/ld+json", Some(TEST_SUITE_CONTEXT)).await;
+    let (status, body) = get_entity(&c, &id, "", "application/ld+json", Some(COMPOUND_CONTEXT)).await;
     assert_eq!(status, StatusCode::OK);
     assert!(body.get("observationSpace").is_none(), "observationSpace should be deleted");
 }
@@ -232,10 +233,10 @@ async fn attribute_delete_operation_space_success() {
     let status = create_entity(&c, &entity).await;
     assert_eq!(status, StatusCode::CREATED);
 
-    let (status, _) = delete_entity_attr(&c, &id, "operationSpace").await;
+    let (status, _) = delete_entity_attr(&c, &id, "operationSpace", Some(COMPOUND_CONTEXT)).await;
     assert_eq!(status, StatusCode::NO_CONTENT, "delete operationSpace should return 204");
 
-    let (status, body) = get_entity(&c, &id, "", "application/ld+json", Some(TEST_SUITE_CONTEXT)).await;
+    let (status, body) = get_entity(&c, &id, "", "application/ld+json", Some(COMPOUND_CONTEXT)).await;
     assert_eq!(status, StatusCode::OK);
     assert!(body.get("operationSpace").is_none(), "operationSpace should be deleted");
 }
@@ -251,10 +252,10 @@ async fn attribute_delete_vocab_property_success() {
     let status = create_entity(&c, &entity).await;
     assert_eq!(status, StatusCode::CREATED);
 
-    let (status, _) = delete_entity_attr(&c, &id, "vocabProperty").await;
+    let (status, _) = delete_entity_attr(&c, &id, "vocabProperty", Some(COMPOUND_CONTEXT)).await;
     assert_eq!(status, StatusCode::NO_CONTENT, "delete VocabProperty should return 204");
 
-    let (status, body) = get_entity(&c, &id, "", "application/ld+json", Some(TEST_SUITE_CONTEXT)).await;
+    let (status, body) = get_entity(&c, &id, "", "application/ld+json", Some(COMPOUND_CONTEXT)).await;
     assert_eq!(status, StatusCode::OK);
     assert!(body.get("vocabProperty").is_none(), "vocabProperty should be deleted");
 }

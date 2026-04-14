@@ -281,7 +281,8 @@ async fn attribute_partial_update_delete_property_with_null_success() {
     assert_eq!(status, StatusCode::CREATED);
 
     let fragment = json!({
-        "@value": "urn:ngsi-ld:null",
+        "type": "Property",
+        "value": "urn:ngsi-ld:null",
         "@context": COMPOUND_CONTEXT
     });
 
@@ -305,7 +306,8 @@ async fn attribute_partial_update_delete_relationship_with_null_success() {
     assert_eq!(status, StatusCode::CREATED);
 
     let fragment = json!({
-        "@value": "urn:ngsi-ld:null",
+        "type": "Relationship",
+        "object": "urn:ngsi-ld:null",
         "@context": COMPOUND_CONTEXT
     });
 
@@ -329,7 +331,8 @@ async fn attribute_partial_update_delete_geo_property_with_null_success() {
     assert_eq!(status, StatusCode::CREATED);
 
     let fragment = json!({
-        "@value": "urn:ngsi-ld:null",
+        "type": "GeoProperty",
+        "value": "urn:ngsi-ld:null",
         "@context": COMPOUND_CONTEXT
     });
 
@@ -353,7 +356,10 @@ async fn attribute_partial_update_delete_language_property_with_null_success() {
     assert_eq!(status, StatusCode::CREATED);
 
     let fragment = json!({
-        "@value": "urn:ngsi-ld:null",
+        "type": "LanguageProperty",
+        "languageMap": {
+            "@none": "urn:ngsi-ld:null"
+        },
         "@context": COMPOUND_CONTEXT
     });
 
@@ -381,7 +387,8 @@ async fn attribute_partial_update_delete_property_instance_with_null_success() {
     assert_eq!(status, StatusCode::CREATED);
 
     let fragment = json!({
-        "@value": "urn:ngsi-ld:null",
+        "type": "Property",
+        "value": "urn:ngsi-ld:null",
         "@context": COMPOUND_CONTEXT
     });
 
@@ -401,7 +408,8 @@ async fn attribute_partial_update_delete_relationship_instance_with_null_success
     assert_eq!(status, StatusCode::CREATED);
 
     let fragment = json!({
-        "@value": "urn:ngsi-ld:null",
+        "type": "Relationship",
+        "object": "urn:ngsi-ld:null",
         "@context": COMPOUND_CONTEXT
     });
 
@@ -421,7 +429,8 @@ async fn attribute_partial_update_delete_geo_property_instance_with_null_success
     assert_eq!(status, StatusCode::CREATED);
 
     let fragment = json!({
-        "@value": "urn:ngsi-ld:null",
+        "type": "GeoProperty",
+        "value": "urn:ngsi-ld:null",
         "@context": COMPOUND_CONTEXT
     });
 
@@ -441,7 +450,10 @@ async fn attribute_partial_update_delete_language_property_instance_with_null_su
     assert_eq!(status, StatusCode::CREATED);
 
     let fragment = json!({
-        "@value": "urn:ngsi-ld:null",
+        "type": "LanguageProperty",
+        "languageMap": {
+            "@none": "urn:ngsi-ld:null"
+        },
         "@context": COMPOUND_CONTEXT
     });
 
@@ -465,7 +477,8 @@ async fn attribute_partial_update_delete_default_property_instance_with_null_suc
     assert_eq!(status, StatusCode::CREATED);
 
     let fragment = json!({
-        "@value": "urn:ngsi-ld:null",
+        "type": "Property",
+        "value": "urn:ngsi-ld:null",
         "@context": COMPOUND_CONTEXT
     });
 
@@ -489,7 +502,8 @@ async fn attribute_partial_update_delete_default_relationship_instance_with_null
     assert_eq!(status, StatusCode::CREATED);
 
     let fragment = json!({
-        "@value": "urn:ngsi-ld:null",
+        "type": "Relationship",
+        "object": "urn:ngsi-ld:null",
         "@context": COMPOUND_CONTEXT
     });
 
@@ -509,7 +523,8 @@ async fn attribute_partial_update_delete_default_geo_property_instance_with_null
     assert_eq!(status, StatusCode::CREATED);
 
     let fragment = json!({
-        "@value": "urn:ngsi-ld:null",
+        "type": "GeoProperty",
+        "value": "urn:ngsi-ld:null",
         "@context": COMPOUND_CONTEXT
     });
 
@@ -529,7 +544,10 @@ async fn attribute_partial_update_delete_default_language_property_instance_with
     assert_eq!(status, StatusCode::CREATED);
 
     let fragment = json!({
-        "@value": "urn:ngsi-ld:null",
+        "type": "LanguageProperty",
+        "languageMap": {
+            "@none": "urn:ngsi-ld:null"
+        },
         "@context": COMPOUND_CONTEXT
     });
 

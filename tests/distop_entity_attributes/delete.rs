@@ -55,7 +55,7 @@ async fn distop_entity_attrs_delete_inclusive_forwards_and_deletes_local() {
     mock.set_stub(Method::DELETE, &stub_path, 204).await;
 
     // Delete attribute (default instance)
-    let status = delete_entity_attr(&c, &entity_id, "speed").await;
+    let status = delete_entity_attr(&c, &entity_id, "speed", &jsonld_link_value()).await;
     pretty_assertions::assert_eq!(status, StatusCode::NO_CONTENT);
 
     // Verify forwarding happened
@@ -101,7 +101,7 @@ async fn distop_entity_attrs_delete_exclusive_forwards_to_context_source() {
     mock.set_stub(Method::DELETE, &stub_path, 204).await;
 
     // Delete attribute
-    let status = delete_entity_attr(&c, &entity_id, "speed").await;
+    let status = delete_entity_attr(&c, &entity_id, "speed", &jsonld_link_value()).await;
     pretty_assertions::assert_eq!(status, StatusCode::NO_CONTENT);
 
     // Verify forwarding happened
@@ -149,7 +149,7 @@ async fn distop_entity_attrs_delete_redirect_forwards_to_multiple() {
     mock.set_stub(Method::DELETE, &stub_path2, 204).await;
 
     // Delete attribute
-    let status = delete_entity_attr(&c, &entity_id, "speed").await;
+    let status = delete_entity_attr(&c, &entity_id, "speed", &jsonld_link_value()).await;
     pretty_assertions::assert_eq!(status, StatusCode::NO_CONTENT);
 
     // Verify both stubs called
@@ -191,7 +191,7 @@ async fn distop_entity_attrs_delete_all_inclusive_deletes_all_instances() {
     mock.set_stub(Method::DELETE, &stub_path, 204).await;
 
     // Delete attribute with deleteAll=true
-    let status = delete_entity_attr_all(&c, &entity_id, "speed").await;
+    let status = delete_entity_attr_all(&c, &entity_id, "speed", &jsonld_link_value()).await;
     pretty_assertions::assert_eq!(status, StatusCode::NO_CONTENT);
 
     // Verify forwarding happened
@@ -237,7 +237,7 @@ async fn distop_entity_attrs_delete_all_exclusive_forwards_to_context_source() {
     mock.set_stub(Method::DELETE, &stub_path, 204).await;
 
     // Delete attribute with deleteAll=true
-    let status = delete_entity_attr_all(&c, &entity_id, "speed").await;
+    let status = delete_entity_attr_all(&c, &entity_id, "speed", &jsonld_link_value()).await;
     pretty_assertions::assert_eq!(status, StatusCode::NO_CONTENT);
 
     // Verify forwarding happened
@@ -285,7 +285,7 @@ async fn distop_entity_attrs_delete_all_redirect_forwards_to_multiple() {
     mock.set_stub(Method::DELETE, &stub_path2, 204).await;
 
     // Delete attribute with deleteAll=true
-    let status = delete_entity_attr_all(&c, &entity_id, "speed").await;
+    let status = delete_entity_attr_all(&c, &entity_id, "speed", &jsonld_link_value()).await;
     pretty_assertions::assert_eq!(status, StatusCode::NO_CONTENT);
 
     // Verify both stubs called
@@ -310,7 +310,7 @@ async fn distop_entity_attrs_delete_not_found_returns_404() {
     let c = client();
 
     let entity_id = unique_id("urn:ngsi-ld:Vehicle:delete-notfound");
-    let status = delete_entity_attr(&c, &entity_id, "speed").await;
+    let status = delete_entity_attr(&c, &entity_id, "speed", &jsonld_link_value()).await;
     pretty_assertions::assert_eq!(status, StatusCode::NOT_FOUND);
 }
 
@@ -339,7 +339,7 @@ async fn distop_entity_attrs_delete_auxiliary_no_forwarding() {
     mock.set_stub(Method::DELETE, &stub_path, 204).await;
 
     // Delete attribute
-    let status = delete_entity_attr(&c, &entity_id, "speed").await;
+    let status = delete_entity_attr(&c, &entity_id, "speed", &jsonld_link_value()).await;
     pretty_assertions::assert_eq!(status, StatusCode::NO_CONTENT);
 
     // Verify no forwarding happened

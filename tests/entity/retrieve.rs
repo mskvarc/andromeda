@@ -11,6 +11,7 @@ use crate::{
     building_two_geometry_attributes,
     city_minimal,
     city_relationship,
+    clean_database,
     client,
     country_minimal,
     create_entity,
@@ -20,13 +21,16 @@ use crate::{
 };
 use reqwest::StatusCode;
 use serde_json::json;
+use serial_test::serial;
 
 // ---------------------------------------------------------------------------
 // Retrieve by ID
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
+#[serial]
 async fn entity_retrieve_by_id_returns_entity() {
+    clean_database().await;
     let client = client();
     let id = unique_id("urn:ngsi-ld:Building:retrieve_id");
 
@@ -45,7 +49,9 @@ async fn entity_retrieve_by_id_returns_entity() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
+#[serial]
 async fn entity_retrieve_with_attrs_filter_returns_only_requested() {
+    clean_database().await;
     let client = client();
     let id = unique_id("urn:ngsi-ld:Building:retrieve_attrs");
 
@@ -86,7 +92,9 @@ async fn entity_retrieve_not_found_returns_404() {
 }
 
 #[tokio::test]
+#[serial]
 async fn entity_retrieve_unknown_attribute_returns_404() {
+    clean_database().await;
     let client = client();
     let id = unique_id("urn:ngsi-ld:Building:unknown_attr");
 
@@ -102,7 +110,9 @@ async fn entity_retrieve_unknown_attribute_returns_404() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
+#[serial]
 async fn entity_retrieve_key_values_returns_simplified() {
+    clean_database().await;
     let client = client();
     let id = unique_id("urn:ngsi-ld:Building:kv");
 
@@ -119,7 +129,9 @@ async fn entity_retrieve_key_values_returns_simplified() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
+#[serial]
 async fn entity_retrieve_geojson_simplified_returns_feature() {
+    clean_database().await;
     let client = client();
     let id = unique_id("urn:ngsi-ld:Building:geojson_simple");
 
@@ -132,7 +144,9 @@ async fn entity_retrieve_geojson_simplified_returns_feature() {
 }
 
 #[tokio::test]
+#[serial]
 async fn entity_retrieve_geojson_normalized_returns_feature_with_properties() {
+    clean_database().await;
     let client = client();
     let id = unique_id("urn:ngsi-ld:Building:geojson_norm");
 
@@ -146,7 +160,9 @@ async fn entity_retrieve_geojson_normalized_returns_feature_with_properties() {
 }
 
 #[tokio::test]
+#[serial]
 async fn entity_retrieve_geojson_geometry_property_uses_specified() {
+    clean_database().await;
     let client = client();
     let id = unique_id("urn:ngsi-ld:Building:geojson_geoprop");
 
@@ -166,7 +182,9 @@ async fn entity_retrieve_geojson_geometry_property_uses_specified() {
 }
 
 #[tokio::test]
+#[serial]
 async fn entity_retrieve_geojson_nonexistent_geometry_property_returns_null_geometry() {
+    clean_database().await;
     let client = client();
     let id = unique_id("urn:ngsi-ld:Building:geojson_null");
 
@@ -190,7 +208,9 @@ async fn entity_retrieve_geojson_nonexistent_geometry_property_returns_null_geom
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
+#[serial]
 async fn entity_retrieve_json_empty_context_returns_expanded_terms() {
+    clean_database().await;
     let client = client();
     let id = unique_id("urn:ngsi-ld:Building:json_empty_ctx");
 
@@ -214,7 +234,9 @@ async fn entity_retrieve_json_empty_context_returns_expanded_terms() {
 }
 
 #[tokio::test]
+#[serial]
 async fn entity_retrieve_json_with_context_returns_compacted_terms() {
+    clean_database().await;
     let client = client();
     let id = unique_id("urn:ngsi-ld:Building:json_ctx");
 
@@ -239,7 +261,9 @@ async fn entity_retrieve_json_with_context_returns_compacted_terms() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
+#[serial]
 async fn entity_retrieve_lang_fr_returns_french() {
+    clean_database().await;
     let client = client();
     let id = unique_id("urn:ngsi-ld:Building:lang_fr");
 
@@ -251,7 +275,9 @@ async fn entity_retrieve_lang_fr_returns_french() {
 }
 
 #[tokio::test]
+#[serial]
 async fn entity_retrieve_lang_multi_no_ranked_returns_first_match() {
+    clean_database().await;
     let client = client();
     let id = unique_id("urn:ngsi-ld:Building:lang_multi");
 
@@ -263,7 +289,9 @@ async fn entity_retrieve_lang_multi_no_ranked_returns_first_match() {
 }
 
 #[tokio::test]
+#[serial]
 async fn entity_retrieve_lang_any_returns_any_language() {
+    clean_database().await;
     let client = client();
     let id = unique_id("urn:ngsi-ld:Building:lang_any");
 
@@ -275,7 +303,9 @@ async fn entity_retrieve_lang_any_returns_any_language() {
 }
 
 #[tokio::test]
+#[serial]
 async fn entity_retrieve_lang_ranked_preferences_returns_best_match() {
+    clean_database().await;
     let client = client();
     let id = unique_id("urn:ngsi-ld:Building:lang_ranked");
 
@@ -294,7 +324,9 @@ async fn entity_retrieve_lang_ranked_preferences_returns_best_match() {
 }
 
 #[tokio::test]
+#[serial]
 async fn entity_retrieve_lang_fr_simplified_returns_simplified() {
+    clean_database().await;
     let client = client();
     let id = unique_id("urn:ngsi-ld:Building:lang_fr_kv");
 
@@ -306,7 +338,9 @@ async fn entity_retrieve_lang_fr_simplified_returns_simplified() {
 }
 
 #[tokio::test]
+#[serial]
 async fn entity_retrieve_lang_any_simplified_returns_simplified() {
+    clean_database().await;
     let client = client();
     let id = unique_id("urn:ngsi-ld:Building:lang_any_kv");
 
@@ -322,7 +356,9 @@ async fn entity_retrieve_lang_any_simplified_returns_simplified() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
+#[serial]
 async fn entity_retrieve_observation_space_simplified_present() {
+    clean_database().await;
     let client = client();
     let id = unique_id("urn:ngsi-ld:Building:obs_space_kv");
 
@@ -335,7 +371,9 @@ async fn entity_retrieve_observation_space_simplified_present() {
 }
 
 #[tokio::test]
+#[serial]
 async fn entity_retrieve_observation_space_normalized_is_geoproperty() {
+    clean_database().await;
     let client = client();
     let id = unique_id("urn:ngsi-ld:Building:obs_space_norm");
 
@@ -353,7 +391,9 @@ async fn entity_retrieve_observation_space_normalized_is_geoproperty() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
+#[serial]
 async fn entity_retrieve_operation_space_simplified_present() {
+    clean_database().await;
     let client = client();
     let id = unique_id("urn:ngsi-ld:Building:op_space_kv");
 
@@ -366,7 +406,9 @@ async fn entity_retrieve_operation_space_simplified_present() {
 }
 
 #[tokio::test]
+#[serial]
 async fn entity_retrieve_operation_space_normalized_is_geoproperty() {
+    clean_database().await;
     let client = client();
     let id = unique_id("urn:ngsi-ld:Building:op_space_norm");
 
@@ -384,7 +426,9 @@ async fn entity_retrieve_operation_space_normalized_is_geoproperty() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
+#[serial]
 async fn entity_retrieve_inline_linked_returns_nested_entity() {
+    clean_database().await;
     let client = client();
     let building_id = unique_id("urn:ngsi-ld:Building:inline_linked");
     let city_id = unique_id("urn:ngsi-ld:City:inline_linked");
@@ -409,7 +453,9 @@ async fn entity_retrieve_inline_linked_returns_nested_entity() {
 }
 
 #[tokio::test]
+#[serial]
 async fn entity_retrieve_flat_linked_returns_array() {
+    clean_database().await;
     let client = client();
     let building_id = unique_id("urn:ngsi-ld:Building:flat_linked");
     let city_id = unique_id("urn:ngsi-ld:City:flat_linked");
@@ -428,7 +474,9 @@ async fn entity_retrieve_flat_linked_returns_array() {
 }
 
 #[tokio::test]
+#[serial]
 async fn entity_retrieve_inline_linked_simplified_returns_nested() {
+    clean_database().await;
     let client = client();
     let building_id = unique_id("urn:ngsi-ld:Building:inline_kv");
     let city_id = unique_id("urn:ngsi-ld:City:inline_kv");
@@ -452,7 +500,9 @@ async fn entity_retrieve_inline_linked_simplified_returns_nested() {
 }
 
 #[tokio::test]
+#[serial]
 async fn entity_retrieve_flat_linked_simplified_returns_array() {
+    clean_database().await;
     let client = client();
     let building_id = unique_id("urn:ngsi-ld:Building:flat_kv");
     let city_id = unique_id("urn:ngsi-ld:City:flat_kv");
@@ -482,7 +532,9 @@ async fn entity_retrieve_flat_linked_simplified_returns_array() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
+#[serial]
 async fn entity_retrieve_inline_linked_sys_attrs_includes_created_at() {
+    clean_database().await;
     let client = client();
     let building_id = unique_id("urn:ngsi-ld:Building:inline_sys");
     let city_id = unique_id("urn:ngsi-ld:City:inline_sys");
@@ -511,7 +563,9 @@ async fn entity_retrieve_inline_linked_sys_attrs_includes_created_at() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
+#[serial]
 async fn entity_retrieve_flat_linked_sys_attrs_includes_created_at() {
+    clean_database().await;
     let client = client();
     let building_id = unique_id("urn:ngsi-ld:Building:flat_sys");
     let city_id = unique_id("urn:ngsi-ld:City:flat_sys");
@@ -543,7 +597,9 @@ async fn entity_retrieve_flat_linked_sys_attrs_includes_created_at() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
+#[serial]
 async fn entity_retrieve_inline_two_level_returns_nested() {
+    clean_database().await;
     let client = client();
     let building_id = unique_id("urn:ngsi-ld:Building:two_inline");
     let city_id = unique_id("urn:ngsi-ld:City:two_inline");
@@ -569,7 +625,9 @@ async fn entity_retrieve_inline_two_level_returns_nested() {
 }
 
 #[tokio::test]
+#[serial]
 async fn entity_retrieve_flat_two_level_returns_all() {
+    clean_database().await;
     let client = client();
     let building_id = unique_id("urn:ngsi-ld:Building:two_flat");
     let city_id = unique_id("urn:ngsi-ld:City:two_flat");
@@ -590,7 +648,9 @@ async fn entity_retrieve_flat_two_level_returns_all() {
 }
 
 #[tokio::test]
+#[serial]
 async fn entity_retrieve_inline_two_level_simplified_returns_nested() {
+    clean_database().await;
     let client = client();
     let building_id = unique_id("urn:ngsi-ld:Building:two_inline_kv");
     let city_id = unique_id("urn:ngsi-ld:City:two_inline_kv");
@@ -616,7 +676,9 @@ async fn entity_retrieve_inline_two_level_simplified_returns_nested() {
 }
 
 #[tokio::test]
+#[serial]
 async fn entity_retrieve_flat_two_level_simplified_returns_all() {
+    clean_database().await;
     let client = client();
     let building_id = unique_id("urn:ngsi-ld:Building:two_flat_kv");
     let city_id = unique_id("urn:ngsi-ld:City:two_flat_kv");
@@ -648,7 +710,9 @@ async fn entity_retrieve_flat_two_level_simplified_returns_all() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
+#[serial]
 async fn entity_retrieve_inline_nonexistent_linked_returns_entity() {
+    clean_database().await;
     let client = client();
     let building_id = unique_id("urn:ngsi-ld:Building:inline_nolink");
 
@@ -670,7 +734,9 @@ async fn entity_retrieve_inline_nonexistent_linked_returns_entity() {
 }
 
 #[tokio::test]
+#[serial]
 async fn entity_retrieve_flat_nonexistent_linked_returns_entity() {
+    clean_database().await;
     let client = client();
     let building_id = unique_id("urn:ngsi-ld:Building:flat_nolink");
 
@@ -688,7 +754,9 @@ async fn entity_retrieve_flat_nonexistent_linked_returns_entity() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
+#[serial]
 async fn entity_retrieve_format_key_values_returns_simplified() {
+    clean_database().await;
     let client = client();
     let id = unique_id("urn:ngsi-ld:Building:format_kv");
 
@@ -701,7 +769,9 @@ async fn entity_retrieve_format_key_values_returns_simplified() {
 }
 
 #[tokio::test]
+#[serial]
 async fn entity_retrieve_format_simplified_returns_simplified() {
+    clean_database().await;
     let client = client();
     let id = unique_id("urn:ngsi-ld:Building:format_simple");
 
@@ -714,7 +784,9 @@ async fn entity_retrieve_format_simplified_returns_simplified() {
 }
 
 #[tokio::test]
+#[serial]
 async fn entity_retrieve_format_normalized_returns_normalized() {
+    clean_database().await;
     let client = client();
     let id = unique_id("urn:ngsi-ld:Building:format_norm");
 
@@ -727,7 +799,9 @@ async fn entity_retrieve_format_normalized_returns_normalized() {
 }
 
 #[tokio::test]
+#[serial]
 async fn entity_retrieve_options_key_values_returns_simplified() {
+    clean_database().await;
     let client = client();
     let id = unique_id("urn:ngsi-ld:Building:options_kv");
 
@@ -740,7 +814,9 @@ async fn entity_retrieve_options_key_values_returns_simplified() {
 }
 
 #[tokio::test]
+#[serial]
 async fn entity_retrieve_options_simplified_returns_simplified() {
+    clean_database().await;
     let client = client();
     let id = unique_id("urn:ngsi-ld:Building:options_simple");
 
@@ -753,7 +829,9 @@ async fn entity_retrieve_options_simplified_returns_simplified() {
 }
 
 #[tokio::test]
+#[serial]
 async fn entity_retrieve_options_normalized_returns_normalized() {
+    clean_database().await;
     let client = client();
     let id = unique_id("urn:ngsi-ld:Building:options_norm");
 

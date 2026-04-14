@@ -778,11 +778,16 @@ async fn create_entity(client: &Client, entity: &Value) -> StatusCode {
 }
 
 async fn create_entity_json(client: &Client, entity: &Value, context_url: &str) -> StatusCode {
+    // Strip @context from body - application/json must not contain @context per NGSI-LD 6.3.5
+    let mut body = entity.clone();
+    if let Some(obj) = body.as_object_mut() {
+        obj.remove("@context");
+    }
     let resp = client
         .post(format!("{BASE_URL}/entities"))
         .header("Content-Type", "application/json")
         .header("Link", jsonld_link_header(context_url))
-        .json(entity)
+        .json(&body)
         .send()
         .await
         .expect("create_entity_json request failed");
@@ -887,7 +892,17 @@ async fn replace_entity(client: &Client, id: &str, replacement: &Value, content_
     if let Some(ctx) = link {
         req = req.header("Link", jsonld_link_header(ctx));
     }
-    let resp = req.json(replacement).send().await.expect("replace_entity request failed");
+    // Strip @context from body when using application/json (must not contain @context per NGSI-LD 6.3.5)
+    let body = if content_type == "application/json" {
+        let mut b = replacement.clone();
+        if let Some(obj) = b.as_object_mut() {
+            obj.remove("@context");
+        }
+        b
+    } else {
+        replacement.clone()
+    };
+    let resp = req.json(&body).send().await.expect("replace_entity request failed");
     let status = resp.status();
     let body: Value = resp.json().await.unwrap_or_default();
     (status, body)

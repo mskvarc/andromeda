@@ -305,7 +305,12 @@ async fn distop_temporal_entity_map_includes_forwarded_ids() {
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     // Query with entityMap=true
-    let (status, headers, _) = query_temporal_entities(&c, "type=Vehicle&entityMap=true", &jsonld_link_value()).await;
+    let (status, headers, _) = query_temporal_entities(
+        &c,
+        "type=Vehicle&entityMap=true&timerel=before&timeAt=2030-01-01T00:00:00Z",
+        &jsonld_link_value(),
+    )
+    .await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED, "entityMap=true should return 201 CREATED");
 
     let entity_map_header = headers.get("ngsild-entitymap");
@@ -360,7 +365,12 @@ async fn distop_temporal_entity_map_local_only_when_local_true() {
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     // Query with local=true
-    let (status, headers, _) = query_temporal_entities(&c, "type=Vehicle&entityMap=true&local=true", &jsonld_link_value()).await;
+    let (status, headers, _) = query_temporal_entities(
+        &c,
+        "type=Vehicle&entityMap=true&timerel=before&timeAt=2030-01-01T00:00:00Z&local=true",
+        &jsonld_link_value(),
+    )
+    .await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     let map_id = headers.get("ngsild-entitymap").unwrap().to_str().unwrap();
@@ -415,7 +425,12 @@ async fn distop_temporal_entity_map_scopes_subsequent_query() {
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     // Create entity map (includes local_id, remote_id, extra_id)
-    let (status, headers, _) = query_temporal_entities(&c, "type=Vehicle&entityMap=true", &jsonld_link_value()).await;
+    let (status, headers, _) = query_temporal_entities(
+        &c,
+        "type=Vehicle&entityMap=true&timerel=before&timeAt=2030-01-01T00:00:00Z",
+        &jsonld_link_value(),
+    )
+    .await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     let map_id = headers.get("ngsild-entitymap").unwrap().to_str().unwrap();
@@ -461,7 +476,12 @@ async fn distop_temporal_entity_map_creates_map_returns_201() {
     let (status, _) = create_temporal_entity(&c, &entity).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
-    let (status, headers, _) = query_temporal_entities(&c, "type=Vehicle&entityMap=true", &jsonld_link_value()).await;
+    let (status, headers, _) = query_temporal_entities(
+        &c,
+        "type=Vehicle&entityMap=true&timerel=before&timeAt=2030-01-01T00:00:00Z",
+        &jsonld_link_value(),
+    )
+    .await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED, "entityMap=true should yield 201 Created");
 
     let map_header = headers.get("ngsild-entitymap").expect("NGSILD-EntityMap header must be present");
@@ -486,7 +506,12 @@ async fn distop_temporal_entity_map_echoed_in_response() {
     pretty_assertions::assert_eq!(create_temporal_entity(&c, &entity).await.0, StatusCode::CREATED);
 
     // Create EntityMap
-    let (status, headers, _) = query_temporal_entities(&c, "type=Vehicle&entityMap=true", &jsonld_link_value()).await;
+    let (status, headers, _) = query_temporal_entities(
+        &c,
+        "type=Vehicle&entityMap=true&timerel=before&timeAt=2030-01-01T00:00:00Z",
+        &jsonld_link_value(),
+    )
+    .await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
     let map_id = headers.get("ngsild-entitymap").unwrap().to_str().unwrap().to_string();
 
@@ -529,7 +554,12 @@ async fn distop_temporal_entity_map_retrieve_not_in_map_returns_404() {
     pretty_assertions::assert_eq!(create_temporal_entity(&c, &fixture_a).await.0, StatusCode::CREATED);
 
     // Create EntityMap containing only entity A
-    let (status, headers, _) = query_temporal_entities(&c, "type=Vehicle&entityMap=true", &jsonld_link_value()).await;
+    let (status, headers, _) = query_temporal_entities(
+        &c,
+        "type=Vehicle&entityMap=true&timerel=before&timeAt=2030-01-01T00:00:00Z",
+        &jsonld_link_value(),
+    )
+    .await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
     let map_id = headers.get("ngsild-entitymap").unwrap().to_str().unwrap().to_string();
 
@@ -560,7 +590,12 @@ async fn distop_temporal_entity_map_retrieve_in_map_succeeds() {
     pretty_assertions::assert_eq!(create_temporal_entity(&c, &fixture_a).await.0, StatusCode::CREATED);
 
     // Create EntityMap containing entity A
-    let (status, headers, _) = query_temporal_entities(&c, "type=Vehicle&entityMap=true", &jsonld_link_value()).await;
+    let (status, headers, _) = query_temporal_entities(
+        &c,
+        "type=Vehicle&entityMap=true&timerel=before&timeAt=2030-01-01T00:00:00Z",
+        &jsonld_link_value(),
+    )
+    .await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
     let map_id = headers.get("ngsild-entitymap").unwrap().to_str().unwrap().to_string();
 
@@ -595,7 +630,12 @@ async fn distop_temporal_entity_map_with_lifetime_sets_expiry() {
     pretty_assertions::assert_eq!(create_temporal_entity(&c, &entity).await.0, StatusCode::CREATED);
 
     // Create EntityMap with 5 minute lifetime
-    let (status, headers, _) = query_temporal_entities(&c, "type=Vehicle&entityMap=true&entityMapLifetime=PT5M", &jsonld_link_value()).await;
+    let (status, headers, _) = query_temporal_entities(
+        &c,
+        "type=Vehicle&entityMap=true&timerel=before&timeAt=2030-01-01T00:00:00Z&entityMapLifetime=PT5M",
+        &jsonld_link_value(),
+    )
+    .await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
     let map_id = headers.get("ngsild-entitymap").unwrap().to_str().unwrap().to_string();
 
@@ -634,7 +674,12 @@ async fn distop_temporal_entity_map_query_scoped_to_members() {
     pretty_assertions::assert_eq!(create_temporal_entity(&c, &fixture_b).await.0, StatusCode::CREATED);
 
     // Create EntityMap containing A and B
-    let (status, headers, _) = query_temporal_entities(&c, "type=Vehicle&entityMap=true", &jsonld_link_value()).await;
+    let (status, headers, _) = query_temporal_entities(
+        &c,
+        "type=Vehicle&entityMap=true&timerel=before&timeAt=2030-01-01T00:00:00Z",
+        &jsonld_link_value(),
+    )
+    .await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
     let map_id = headers.get("ngsild-entitymap").unwrap().to_str().unwrap().to_string();
 
