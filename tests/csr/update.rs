@@ -2,11 +2,13 @@
 //! CSR update tests (NGSI-LD 5.9.3)
 
 use reqwest::StatusCode;
+use serial_test::serial;
 
 use crate::{
     BAD_REQUEST_DATA_TYPE,
     INVALID_REQUEST_TYPE,
     RESOURCE_NOT_FOUND_TYPE,
+    clean_database,
     cleanup_registration,
     client,
     create_registration,
@@ -177,7 +179,9 @@ async fn update_unknown_registration_returns_404() {
 
 /// PATCH expiresAt to null removes expiration -- 204 (5.9.3).
 #[tokio::test]
+#[serial]
 async fn update_set_expires_at_to_null_removes_expiration() {
+    clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:ContextSourceRegistration:update-null-exp");
     let reg = csr_with_expiration(&id);

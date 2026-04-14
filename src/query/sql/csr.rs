@@ -6,11 +6,7 @@ use crate::{
     query::{
         compiled::{CompiledCsrQuery, GeoRel},
         q::ast::{AttrPath, CmpOp, CompareValue, Expr, Predicate, Scalar},
-        sql::{
-            BindValue,
-            BuiltQuery,
-            postgres_ext::{st_contains, st_disjoint, st_dwithin, st_equals, st_intersects, st_overlaps, st_within, validated_geom_from_geojson},
-        },
+        sql::{BindValue, BuiltQuery},
     },
 };
 use sea_query::{Alias, Condition, Expr as SeaExpr, Order, PostgresQueryBuilder, Query};
@@ -141,47 +137,36 @@ fn build_csr_conditions(query: &CompiledCsrQuery) -> Result<Condition, Andromeda
     // Geo filter: CSRs without a location still match (per NGSI-LD spec)
     if let Some(ref geo) = query.geo {
         let geojson = build_geojson(&geo.geometry, &geo.coordinates)?;
-        let location_col = SeaExpr::cust("\"location\"").into();
-        let ref_geom_expr = validated_geom_from_geojson(SeaExpr::val(&geojson).into());
+        // Escape single quotes for safe SQL embedding (geojson is valid JSON, so no unescaped quotes expected, but be defensive)
+        let geojson_escaped = geojson.replace('\'', "''");
+        // Inline the geometry directly to avoid bind parameter issues with sea-query expression composition
+        let ref_geom_sql = format!("ST_MakeValid(ST_SetSRID(ST_GeomFromGeoJSON('{}'), 4326))", geojson_escaped);
 
-        let spatial_expr = match &geo.georel {
-            GeoRel::Within => st_within(location_col, ref_geom_expr),
-            GeoRel::Contains => st_contains(location_col, ref_geom_expr),
-            GeoRel::Intersects => st_intersects(location_col, ref_geom_expr),
-            GeoRel::Disjoint => st_disjoint(location_col, ref_geom_expr),
-            GeoRel::Equals => st_equals(location_col, ref_geom_expr),
-            GeoRel::Overlaps => st_overlaps(location_col, ref_geom_expr),
+        let spatial_sql = match &geo.georel {
+            GeoRel::Within => format!("ST_Within(\"location\", {})", ref_geom_sql),
+            GeoRel::Contains => format!("ST_Contains(\"location\", {})", ref_geom_sql),
+            GeoRel::Intersects => format!("ST_Intersects(\"location\", {})", ref_geom_sql),
+            GeoRel::Disjoint => format!("ST_Disjoint(\"location\", {})", ref_geom_sql),
+            GeoRel::Equals => format!("ST_Equals(\"location\", {})", ref_geom_sql),
+            GeoRel::Overlaps => format!("ST_Overlaps(\"location\", {})", ref_geom_sql),
             GeoRel::Near { max_distance, min_distance } => {
-                let ref_geom_geo_sql = format!("ST_MakeValid(ST_SetSRID(ST_GeomFromGeoJSON('{}'), 4326))::geography", geojson);
+                let ref_geom_geo_sql = format!("{}::geography", ref_geom_sql);
 
                 let mut parts = Vec::new();
                 if let Some(max) = max_distance {
-                    parts.push(st_dwithin(
-                        SeaExpr::cust("\"location\"::geography").into(),
-                        SeaExpr::cust(&ref_geom_geo_sql).into(),
-                        *max,
-                    ));
+                    parts.push(format!("ST_DWithin(\"location\"::geography, {}, {})", ref_geom_geo_sql, max));
                 }
                 if let Some(min) = min_distance {
-                    parts.push(SeaExpr::cust(format!("ST_Distance(\"location\"::geography, {}) >= {}", ref_geom_geo_sql, min)).into());
+                    parts.push(format!("ST_Distance(\"location\"::geography, {}) >= {}", ref_geom_geo_sql, min));
                 }
                 if parts.is_empty() {
                     return Err(AndromedaError::query_validation("near georel requires maxDistance or minDistance"));
                 }
-                if parts.len() == 1 {
-                    parts.remove(0)
-                } else {
-                    let (sql1, _) = Query::select().expr(parts[0].clone()).build(PostgresQueryBuilder);
-                    let (sql2, _) = Query::select().expr(parts[1].clone()).build(PostgresQueryBuilder);
-                    SeaExpr::cust(format!("({} AND {})", sql1.trim_start_matches("SELECT "), sql2.trim_start_matches("SELECT "))).into()
-                }
+                parts.join(" AND ")
             }
         };
 
-        // Generate SQL for the spatial expression and wrap with NULL check
-        let (spatial_sql, _) = Query::select().expr(spatial_expr).build(PostgresQueryBuilder);
-        let spatial_sql_trimmed = spatial_sql.trim_start_matches("SELECT ");
-        condition = condition.add(SeaExpr::cust(format!("(\"location\" IS NULL OR {})", spatial_sql_trimmed)));
+        condition = condition.add(SeaExpr::cust(format!("(\"location\" IS NULL OR {})", spatial_sql)));
     }
 
     // Temporal filter: CSRs without the relevant interval still match (per spec)
