@@ -53,45 +53,510 @@ async fn clean_database() {
 }
 
 // ---------------------------------------------------------------------------
-// Fixture loading
+// Inline fixtures
 // ---------------------------------------------------------------------------
 
-fn fixtures_dir() -> std::path::PathBuf {
-    std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures")
+use serde_json::json;
+
+/// Basic CSR with multiple information entries (JSON-LD with @context).
+fn csr_basic_jsonld(id: &str) -> Value {
+    json!({
+        "id": id,
+        "type": "ContextSourceRegistration",
+        "information": [
+            {
+                "entities": [{"id": "urn:ngsi-ld:Vehicle:A456", "type": "Vehicle"}],
+                "propertyNames": ["brandName", "speed"],
+                "relationshipNames": ["isParked"]
+            },
+            {
+                "entities": [
+                    {"idPattern": ".*downtown$", "type": "OffStreetParking"},
+                    {"idPattern": ".*47$", "type": "OffStreetParking"}
+                ],
+                "propertyNames": ["availableSpotNumber", "totalSpotNumber"],
+                "relationshipNames": ["isNextToBuilding"]
+            }
+        ],
+        "endpoint": "http://my.csource.org:1026",
+        "@context": [COMPOUND_CONTEXT_URL]
+    })
 }
 
-fn load_raw(path: &str) -> String {
-    let full_path = fixtures_dir().join(path);
-    std::fs::read_to_string(&full_path).expect("failed to read fixture")
+/// Basic CSR without @context (plain JSON).
+fn csr_basic_json(id: &str) -> Value {
+    json!({
+        "id": id,
+        "type": "ContextSourceRegistration",
+        "information": [{"entities": [{"type": "Building"}]}],
+        "endpoint": "http://my.csource.org:1026"
+    })
 }
 
-/// Load a fixture, replace the ID placeholder, keep original @context URLs.
-fn load_fixture(path: &str, id: &str) -> Value {
-    let contents = load_raw(path);
-    let mut value: Value = serde_json::from_str(&contents).expect("failed to parse fixture");
-    if let Some(obj) = value.as_object_mut()
-        && obj.contains_key("id")
-    {
-        obj.insert("id".to_string(), Value::String(id.to_string()));
-    }
-    value
+/// CSR with explicit mode and operations.
+fn csr_with_mode_and_operations(id: &str) -> Value {
+    json!({
+        "id": id,
+        "type": "ContextSourceRegistration",
+        "information": [
+            {
+                "entities": [{"id": "urn:ngsi-ld:Vehicle:A456", "type": "Vehicle"}],
+                "propertyNames": ["brandName", "speed"],
+                "relationshipNames": ["isParked"]
+            },
+            {
+                "entities": [
+                    {"idPattern": ".*downtown$", "type": "OffStreetParking"},
+                    {"idPattern": ".*47$", "type": "OffStreetParking"}
+                ],
+                "propertyNames": ["availableSpotNumber", "totalSpotNumber"],
+                "relationshipNames": ["isNextToBuilding"]
+            }
+        ],
+        "mode": "exclusive",
+        "operations": ["queryEntity", "queryTemporal", "updateOps"],
+        "endpoint": "http://my.csource.org:1026",
+        "@context": [COMPOUND_CONTEXT_URL]
+    })
 }
 
-/// Load a fragment (no ID replacement).
-fn load_fragment(path: &str) -> Value {
-    let contents = load_raw(path);
-    serde_json::from_str(&contents).expect("failed to parse fragment")
+/// CSR with location geometry.
+fn csr_with_location(id: &str) -> Value {
+    json!({
+        "id": id,
+        "type": "ContextSourceRegistration",
+        "information": [{"entities": [{"type": "Building"}]}],
+        "location": {"type": "Point", "coordinates": [-8.521, 41.2]},
+        "endpoint": "http://my.csource.org:1026",
+        "@context": [COMPOUND_CONTEXT_URL]
+    })
 }
 
-/// Load an expectation fixture for response comparison.
-fn load_expectation(path: &str) -> Value {
-    let contents = load_raw(path);
-    serde_json::from_str(&contents).expect("failed to parse expectation")
+/// CSR with future expiration date.
+fn csr_with_expiration(id: &str) -> Value {
+    json!({
+        "id": id,
+        "type": "ContextSourceRegistration",
+        "information": [
+            {
+                "entities": [{"id": "urn:ngsi-ld:Vehicle:A456", "type": "Vehicle"}],
+                "propertyNames": ["brandName", "speed"],
+                "relationshipNames": ["isParked"]
+            },
+            {
+                "entities": [
+                    {"idPattern": ".*downtown$", "type": "OffStreetParking"},
+                    {"idPattern": ".*47$", "type": "OffStreetParking"}
+                ],
+                "propertyNames": ["availableSpotNumber", "totalSpotNumber"],
+                "relationshipNames": ["isNextToBuilding"]
+            }
+        ],
+        "endpoint": "http://my.csource.org:1026",
+        "expiresAt": "2035-11-29T14:53:15Z",
+        "@context": [COMPOUND_CONTEXT_URL]
+    })
 }
 
-/// Load a raw fixture file as a string (for malformed JSON tests).
-fn load_fixture_raw(path: &str) -> String {
-    load_raw(path)
+/// CSR without ID (server generates).
+fn csr_no_id() -> Value {
+    json!({
+        "type": "ContextSourceRegistration",
+        "information": [
+            {
+                "entities": [{"id": "urn:ngsi-ld:Vehicle:A456", "type": "Vehicle"}],
+                "propertyNames": ["brandName", "speed"],
+                "relationshipNames": ["isParked"]
+            },
+            {
+                "entities": [
+                    {"idPattern": ".*downtown$", "type": "OffStreetParking"},
+                    {"idPattern": ".*47$", "type": "OffStreetParking"}
+                ],
+                "propertyNames": ["availableSpotNumber", "totalSpotNumber"],
+                "relationshipNames": ["isNextToBuilding"]
+            }
+        ],
+        "endpoint": "http://my.csource.org:1026",
+        "@context": [COMPOUND_CONTEXT_URL]
+    })
+}
+
+/// CSR with null information (invalid).
+fn csr_invalid_null_information(id: &str) -> Value {
+    json!({
+        "id": id,
+        "type": "ContextSourceRegistration",
+        "information": null,
+        "@context": [COMPOUND_CONTEXT_URL]
+    })
+}
+
+/// CSR missing information field (invalid structure).
+fn csr_invalid_structure(id: &str) -> Value {
+    json!({
+        "id": id,
+        "type": "ContextSourceRegistration",
+        "@context": [COMPOUND_CONTEXT_URL]
+    })
+}
+
+/// CSR with past expiration date.
+fn csr_past_expiration(id: &str) -> Value {
+    json!({
+        "id": id,
+        "type": "ContextSourceRegistration",
+        "information": [
+            {
+                "entities": [{"id": "urn:ngsi-ld:Vehicle:A456", "type": "Vehicle"}],
+                "propertyNames": ["brandName", "speed"],
+                "relationshipNames": ["isParked"]
+            },
+            {
+                "entities": [
+                    {"idPattern": ".*downtown$", "type": "OffStreetParking"},
+                    {"idPattern": ".*47$", "type": "OffStreetParking"}
+                ],
+                "propertyNames": ["availableSpotNumber", "totalSpotNumber"],
+                "relationshipNames": ["isNextToBuilding"]
+            }
+        ],
+        "endpoint": "http://my.csource.org:1026",
+        "expiresAt": " 2018-11-29T14:53:15Z",
+        "@context": [COMPOUND_CONTEXT_URL]
+    })
+}
+
+/// CSR with detailed information (Building type with propertyNames and relationshipNames).
+fn csr_detailed_information(id: &str) -> Value {
+    json!({
+        "id": id,
+        "type": "ContextSourceRegistration",
+        "information": [
+            {
+                "entities": [{"type": "Building"}],
+                "propertyNames": ["name", "subCategory"],
+                "relationshipNames": ["locatedAt"]
+            }
+        ],
+        "endpoint": "http://my.csource.org:1026",
+        "@context": [COMPOUND_CONTEXT_URL]
+    })
+}
+
+/// CSR with only properties information.
+fn csr_only_properties(id: &str) -> Value {
+    json!({
+        "id": id,
+        "type": "ContextSourceRegistration",
+        "information": [{"propertyNames": ["name", "subCategory"]}],
+        "endpoint": "http://my.csource.org:1026",
+        "@context": [COMPOUND_CONTEXT_URL]
+    })
+}
+
+/// CSR with custom csource properties.
+fn csr_with_csource_properties(id: &str) -> Value {
+    json!({
+        "id": id,
+        "type": "ContextSourceRegistration",
+        "information": [{"entities": [{"type": "Building"}]}],
+        "endpoint": "http://my.csource.org:1026",
+        "csourceProperty1": "aValue",
+        "csourceProperty2": "anotherValue",
+        "@context": [COMPOUND_CONTEXT_URL]
+    })
+}
+
+/// CSR with observation interval.
+fn csr_with_observation_interval(id: &str) -> Value {
+    json!({
+        "id": id,
+        "type": "ContextSourceRegistration",
+        "information": [{"entities": [{"type": "Building"}]}],
+        "observationInterval": {
+            "startAt": "2020-08-01T22:07:00Z",
+            "endAt": "2021-08-01T21:07:00Z"
+        },
+        "endpoint": "http://my.csource.org:1026",
+        "@context": [COMPOUND_CONTEXT_URL]
+    })
+}
+
+/// CSR with management interval.
+fn csr_with_management_interval(id: &str) -> Value {
+    json!({
+        "id": id,
+        "type": "ContextSourceRegistration",
+        "information": [{"entities": [{"type": "Building"}]}],
+        "managementInterval": {
+            "startAt": "2020-08-01T22:07:00Z",
+            "endAt": "2021-08-01T21:07:00Z"
+        },
+        "endpoint": "http://my.csource.org:1026",
+        "@context": [COMPOUND_CONTEXT_URL]
+    })
+}
+
+/// Invalid JSON string (malformed).
+fn csr_invalid_json_string() -> &'static str {
+    r#"{"id": "urn:ngsi-ld:ContextSourceRegistration:randomUUID","type": "ContextSourceRegistration",,"endpoint": "http://my.new.csource.org:1026"}"#
+}
+
+/// Fragment: endpoint update.
+fn fragment_endpoint_update() -> Value {
+    json!({"endpoint": "http://my.new.csource.org:1026"})
+}
+
+/// Fragment: different type (invalid update).
+fn fragment_different_type(id: &str) -> Value {
+    json!({
+        "id": id,
+        "type": "building",
+        "information": [
+            {
+                "entities": [{"id": "urn:ngsi-ld:Vehicle:A456", "type": "Vehicle"}],
+                "propertyNames": ["brandName", "speed"],
+                "relationshipNames": ["isParked"]
+            },
+            {
+                "entities": [
+                    {"idPattern": ".*downtown$", "type": "OffStreetParking"},
+                    {"idPattern": ".*47$", "type": "OffStreetParking"}
+                ],
+                "propertyNames": ["availableSpotNumber", "totalSpotNumber"],
+                "relationshipNames": ["isNextToBuilding"]
+            }
+        ],
+        "endpoint": "http://my.csource.org:1026",
+        "location": {
+            "type": "Polygon",
+            "coordinates": [[[100.0, 0.0], [101.0, 0.0], [101.0, 1.0], [100.0, 1.0], [100.0, 0.0]]]
+        },
+        "@context": [COMPOUND_CONTEXT_URL]
+    })
+}
+
+/// Fragment: null expiresAt.
+fn fragment_null_expires_at() -> Value {
+    json!({"expiresAt": null})
+}
+
+/// Expected CSR response in expanded format.
+fn expected_csr_expanded(id: &str) -> Value {
+    json!({
+        "id": id,
+        "type": "ContextSourceRegistration",
+        "endpoint": "http://my.csource.org:1026",
+        "information": [
+            {
+                "entities": [{"id": "urn:ngsi-ld:Vehicle:A456", "type": "https://ngsi-ld-test-suite/context#Vehicle"}],
+                "propertyNames": ["https://ngsi-ld-test-suite/context#brandName", "https://ngsi-ld-test-suite/context#speed"],
+                "relationshipNames": ["isParked"]
+            },
+            {
+                "entities": [
+                    {"type": "https://ngsi-ld-test-suite/context#OffStreetParking", "idPattern": ".*downtown$"},
+                    {"type": "https://ngsi-ld-test-suite/context#OffStreetParking", "idPattern": ".*47$"}
+                ],
+                "propertyNames": ["availableSpotNumber", "totalSpotNumber"],
+                "relationshipNames": ["isNextToBuilding"]
+            }
+        ],
+        "mode": "inclusive",
+        "operations": ["federationOps"]
+    })
+}
+
+/// Expected CSR response in compacted format.
+fn expected_csr_compacted(id: &str) -> Value {
+    json!({
+        "id": id,
+        "type": "ContextSourceRegistration",
+        "information": [
+            {
+                "entities": [{"id": "urn:ngsi-ld:Vehicle:A456", "type": "Vehicle"}],
+                "propertyNames": ["brandName", "speed"],
+                "relationshipNames": ["isParked"]
+            },
+            {
+                "entities": [
+                    {"idPattern": ".*downtown$", "type": "OffStreetParking"},
+                    {"idPattern": ".*47$", "type": "OffStreetParking"}
+                ],
+                "propertyNames": ["availableSpotNumber", "totalSpotNumber"],
+                "relationshipNames": ["isNextToBuilding"]
+            }
+        ],
+        "endpoint": "http://my.csource.org:1026",
+        "mode": "inclusive",
+        "operations": ["federationOps"]
+    })
+}
+
+/// Expected query result for detailed information.
+fn expected_query_detailed(id: &str) -> Value {
+    json!([{
+        "id": id,
+        "type": "ContextSourceRegistration",
+        "information": [
+            {
+                "entities": [{"type": "Building"}],
+                "propertyNames": ["name", "subCategory"],
+                "relationshipNames": ["locatedAt"]
+            }
+        ],
+        "endpoint": "http://my.csource.org:1026",
+        "mode": "inclusive",
+        "operations": ["federationOps"]
+    }])
+}
+
+/// Expected query result for basic CSR (expanded).
+fn expected_query_basic_expanded(id: &str) -> Value {
+    json!([{
+        "id": id,
+        "type": "ContextSourceRegistration",
+        "information": [
+            {
+                "entities": [{"id": "urn:ngsi-ld:Vehicle:A456", "type": "Vehicle"}],
+                "propertyNames": ["brandName", "speed"],
+                "relationshipNames": ["isParked"]
+            },
+            {
+                "entities": [
+                    {"idPattern": ".*downtown$", "type": "OffStreetParking"},
+                    {"idPattern": ".*47$", "type": "OffStreetParking"}
+                ],
+                "propertyNames": ["availableSpotNumber", "totalSpotNumber"],
+                "relationshipNames": ["isNextToBuilding"]
+            }
+        ],
+        "endpoint": "http://my.csource.org:1026",
+        "mode": "inclusive",
+        "operations": ["federationOps"]
+    }])
+}
+
+/// Expected query result for only properties.
+fn expected_query_only_properties(id: &str) -> Value {
+    json!([{
+        "id": id,
+        "type": "ContextSourceRegistration",
+        "information": [{"propertyNames": ["name", "subCategory"]}],
+        "endpoint": "http://my.csource.org:1026",
+        "mode": "inclusive",
+        "operations": ["federationOps"]
+    }])
+}
+
+/// Expected query result with location.
+fn expected_query_with_location(id: &str) -> Value {
+    json!([{
+        "id": id,
+        "type": "ContextSourceRegistration",
+        "information": [{"entities": [{"type": "Building"}]}],
+        "location": {"type": "Point", "coordinates": [-8.521, 41.2]},
+        "endpoint": "http://my.csource.org:1026",
+        "mode": "inclusive",
+        "operations": ["federationOps"]
+    }])
+}
+
+/// Expected query result with observation interval.
+fn expected_query_with_observation_interval(id: &str) -> Value {
+    json!([{
+        "id": id,
+        "type": "ContextSourceRegistration",
+        "information": [{"entities": [{"type": "Building"}]}],
+        "observationInterval": {"startAt": "2020-08-01T22:07:00Z", "endAt": "2021-08-01T21:07:00Z"},
+        "endpoint": "http://my.csource.org:1026",
+        "mode": "inclusive",
+        "operations": ["federationOps"]
+    }])
+}
+
+/// Expected query result with management interval.
+fn expected_query_with_management_interval(id: &str) -> Value {
+    json!([{
+        "id": id,
+        "type": "ContextSourceRegistration",
+        "information": [{"entities": [{"type": "Building"}]}],
+        "managementInterval": {"startAt": "2020-08-01T22:07:00Z", "endAt": "2021-08-01T21:07:00Z"},
+        "endpoint": "http://my.csource.org:1026",
+        "mode": "inclusive",
+        "operations": ["federationOps"]
+    }])
+}
+
+/// Expected query result with csource properties.
+fn expected_query_with_csource_properties(id: &str) -> Value {
+    json!([{
+        "id": id,
+        "type": "ContextSourceRegistration",
+        "information": [{"entities": [{"type": "Building"}]}],
+        "endpoint": "http://my.csource.org:1026",
+        "mode": "inclusive",
+        "operations": ["federationOps"],
+        "csourceProperty1": "aValue",
+        "csourceProperty2": "anotherValue"
+    }])
+}
+
+/// Expected query result for multi-ID query (basic + csource properties).
+fn expected_query_multi_ids(id1: &str, id3: &str) -> Value {
+    json!([
+        {
+            "id": id1,
+            "type": "ContextSourceRegistration",
+            "information": [
+                {
+                    "entities": [{"id": "urn:ngsi-ld:Vehicle:A456", "type": "Vehicle"}],
+                    "propertyNames": ["brandName", "speed"],
+                    "relationshipNames": ["isParked"]
+                },
+                {
+                    "entities": [
+                        {"idPattern": ".*downtown$", "type": "OffStreetParking"},
+                        {"idPattern": ".*47$", "type": "OffStreetParking"}
+                    ],
+                    "propertyNames": ["availableSpotNumber", "totalSpotNumber"],
+                    "relationshipNames": ["isNextToBuilding"]
+                }
+            ],
+            "endpoint": "http://my.csource.org:1026",
+            "mode": "inclusive",
+            "operations": ["federationOps"]
+        },
+        {
+            "id": id3,
+            "type": "ContextSourceRegistration",
+            "information": [{"entities": [{"type": "Building"}]}],
+            "endpoint": "http://my.csource.org:1026",
+            "mode": "inclusive",
+            "operations": ["federationOps"],
+            "csourceProperty1": "aValue",
+            "csourceProperty2": "anotherValue"
+        }
+    ])
+}
+
+/// Expected query result for detailed information (expanded).
+fn expected_query_detailed_expanded(id: &str) -> Value {
+    json!([{
+        "id": id,
+        "type": "ContextSourceRegistration",
+        "information": [
+            {
+                "entities": [{"type": "https://ngsi-ld-test-suite/context#Building"}],
+                "propertyNames": ["https://ngsi-ld-test-suite/context#name", "https://ngsi-ld-test-suite/context#subCategory"],
+                "relationshipNames": ["locatedAt"]
+            }
+        ],
+        "endpoint": "http://my.csource.org:1026",
+        "mode": "inclusive",
+        "operations": ["federationOps"]
+    }])
 }
 
 // ---------------------------------------------------------------------------

@@ -50,34 +50,252 @@ async fn clean_database() {
 }
 
 // ---------------------------------------------------------------------------
-// Fixture loading
+// Inline fixtures
 // ---------------------------------------------------------------------------
 
-fn fixtures_dir() -> std::path::PathBuf {
-    std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures")
+use serde_json::json;
+
+/// Building entity with simple attributes (name, subCategory, airQualityLevel, almostFull).
+fn building_simple_attributes(id: &str) -> Value {
+    json!({
+        "id": id,
+        "type": "Building",
+        "name": {
+            "type": "Property",
+            "value": "Eiffel Tower"
+        },
+        "subCategory": {
+            "type": "Property",
+            "value": "tourism"
+        },
+        "airQualityLevel": {
+            "type": "Property",
+            "value": 4,
+            "unitCode": "C62",
+            "observedAt": "2020-09-09T16:40:00.000Z"
+        },
+        "almostFull": {
+            "type": "Property",
+            "value": false
+        }
+    })
 }
 
-fn load_raw(path: &str) -> String {
-    let full_path = fixtures_dir().join(path);
-    std::fs::read_to_string(&full_path).expect("failed to read fixture")
+/// Vehicle entity with simple attributes (brandName, isParked relationship).
+fn vehicle_simple_attributes(id: &str) -> Value {
+    json!({
+        "id": id,
+        "type": "Vehicle",
+        "brandName": {
+            "type": "Property",
+            "value": "Mercedes"
+        },
+        "isParked": {
+            "type": "Relationship",
+            "object": "urn:ngsi-ld:OffStreetParking:Downtown1",
+            "observedAt": "2017-07-29T12:00:04Z",
+            "providedBy": {
+                "type": "Relationship",
+                "object": "urn:ngsi-ld:Person:Bob"
+            }
+        }
+    })
 }
 
-/// Load a fixture JSON file and replace the `id` field with the given value.
-fn load_fixture(path: &str, id: &str) -> Value {
-    let contents = load_raw(path);
-    let mut value: Value = serde_json::from_str(&contents).expect("failed to parse fixture");
-    if let Some(obj) = value.as_object_mut()
-        && obj.contains_key("id")
-    {
-        obj.insert("id".to_string(), Value::String(id.to_string()));
-    }
-    value
+/// Expected attribute details without context (expanded IRIs).
+fn expected_attribute_details_expanded() -> Value {
+    json!([
+        {
+            "id": "https://ngsi-ld-test-suite/context#name",
+            "type": "Attribute",
+            "attributeName": "https://ngsi-ld-test-suite/context#name",
+            "typeNames": ["https://ngsi-ld-test-suite/context#Building"]
+        },
+        {
+            "id": "https://ngsi-ld-test-suite/context#subCategory",
+            "type": "Attribute",
+            "attributeName": "https://ngsi-ld-test-suite/context#subCategory",
+            "typeNames": ["https://ngsi-ld-test-suite/context#Building"]
+        },
+        {
+            "id": "https://ngsi-ld-test-suite/context#airQualityLevel",
+            "type": "Attribute",
+            "attributeName": "https://ngsi-ld-test-suite/context#airQualityLevel",
+            "typeNames": ["https://ngsi-ld-test-suite/context#Building"]
+        },
+        {
+            "id": "https://ngsi-ld-test-suite/context#almostFull",
+            "type": "Attribute",
+            "attributeName": "https://ngsi-ld-test-suite/context#almostFull",
+            "typeNames": ["https://ngsi-ld-test-suite/context#Building"]
+        }
+    ])
 }
 
-/// Load an expectation fixture for response comparison.
-fn load_expectation(path: &str) -> Value {
-    let contents = load_raw(path);
-    serde_json::from_str(&contents).expect("failed to parse expectation")
+/// Expected attribute details with context (compacted names).
+fn expected_attribute_details_compacted() -> Value {
+    json!([
+        {
+            "id": "https://ngsi-ld-test-suite/context#name",
+            "type": "Attribute",
+            "attributeName": "name",
+            "typeNames": ["Building"]
+        },
+        {
+            "id": "https://ngsi-ld-test-suite/context#subCategory",
+            "type": "Attribute",
+            "attributeName": "subCategory",
+            "typeNames": ["Building"]
+        },
+        {
+            "id": "https://ngsi-ld-test-suite/context#airQualityLevel",
+            "type": "Attribute",
+            "attributeName": "airQualityLevel",
+            "typeNames": ["Building"]
+        },
+        {
+            "id": "https://ngsi-ld-test-suite/context#almostFull",
+            "type": "Attribute",
+            "attributeName": "almostFull",
+            "typeNames": ["Building"]
+        }
+    ])
+}
+
+/// Expected entity type details without context (expanded IRIs).
+fn expected_entity_type_details_expanded() -> Value {
+    json!([
+        {
+            "id": "https://ngsi-ld-test-suite/context#Building",
+            "type": "EntityType",
+            "typeName": "https://ngsi-ld-test-suite/context#Building",
+            "attributeNames": [
+                "https://ngsi-ld-test-suite/context#name",
+                "https://ngsi-ld-test-suite/context#subCategory",
+                "https://ngsi-ld-test-suite/context#airQualityLevel",
+                "https://ngsi-ld-test-suite/context#almostFull"
+            ]
+        },
+        {
+            "id": "https://ngsi-ld-test-suite/context#Vehicle",
+            "type": "EntityType",
+            "typeName": "https://ngsi-ld-test-suite/context#Vehicle",
+            "attributeNames": [
+                "https://ngsi-ld-test-suite/context#brandName",
+                "isParked"
+            ]
+        }
+    ])
+}
+
+/// Expected entity type details with context (compacted names).
+fn expected_entity_type_details_compacted() -> Value {
+    json!([
+        {
+            "id": "https://ngsi-ld-test-suite/context#Building",
+            "type": "EntityType",
+            "typeName": "Building",
+            "attributeNames": ["name", "subCategory", "airQualityLevel", "almostFull"]
+        },
+        {
+            "id": "https://ngsi-ld-test-suite/context#Vehicle",
+            "type": "EntityType",
+            "typeName": "Vehicle",
+            "attributeNames": ["brandName", "isParked"]
+        }
+    ])
+}
+
+/// Expected attribute list without context (expanded IRIs).
+fn expected_attribute_list_expanded() -> Value {
+    json!({
+        "id": "urn:ngsi-ld:AttributeList:randomUUID",
+        "type": "AttributeList",
+        "attributeList": [
+            "https://ngsi-ld-test-suite/context#airQualityLevel",
+            "https://ngsi-ld-test-suite/context#almostFull",
+            "https://ngsi-ld-test-suite/context#name",
+            "https://ngsi-ld-test-suite/context#subCategory"
+        ]
+    })
+}
+
+/// Expected attribute list with context (compacted names).
+fn expected_attribute_list_compacted() -> Value {
+    json!({
+        "id": "urn:ngsi-ld:AttributeList:randomUUID",
+        "type": "AttributeList",
+        "attributeList": ["name", "subCategory", "airQualityLevel", "almostFull"]
+    })
+}
+
+/// Expected entity type list without context (expanded IRIs).
+fn expected_entity_type_list_expanded() -> Value {
+    json!({
+        "id": "urn:ngsi-ld:EntityTypeList:randomUUID",
+        "type": "EntityTypeList",
+        "typeList": [
+            "https://ngsi-ld-test-suite/context#Building",
+            "https://ngsi-ld-test-suite/context#Vehicle"
+        ]
+    })
+}
+
+/// Expected entity type list with context (compacted names).
+fn expected_entity_type_list_compacted() -> Value {
+    json!({
+        "id": "urn:ngsi-ld:EntityTypeList:randomUUID",
+        "type": "EntityTypeList",
+        "typeList": ["Building", "Vehicle"]
+    })
+}
+
+/// Expected attribute info for airQualityLevel.
+fn expected_attribute_info() -> Value {
+    json!({
+        "id": "https://ngsi-ld-test-suite/context#airQualityLevel",
+        "type": "Attribute",
+        "attributeName": "airQualityLevel",
+        "attributeCount": 1,
+        "attributeTypes": ["Property"],
+        "typeNames": ["Building"]
+    })
+}
+
+/// Expected entity type info for Building.
+fn expected_entity_type_info() -> Value {
+    json!({
+        "id": "https://ngsi-ld-test-suite/context#Building",
+        "type": "EntityTypeInfo",
+        "typeName": "Building",
+        "entityCount": 2,
+        "attributeDetails": [
+            {
+                "id": "https://ngsi-ld-test-suite/context#name",
+                "type": "Attribute",
+                "attributeName": "name",
+                "attributeTypes": ["Property"]
+            },
+            {
+                "id": "https://ngsi-ld-test-suite/context#subCategory",
+                "type": "Attribute",
+                "attributeName": "subCategory",
+                "attributeTypes": ["Property"]
+            },
+            {
+                "id": "https://ngsi-ld-test-suite/context#airQualityLevel",
+                "type": "Attribute",
+                "attributeName": "airQualityLevel",
+                "attributeTypes": ["Property"]
+            },
+            {
+                "id": "https://ngsi-ld-test-suite/context#almostFull",
+                "type": "Attribute",
+                "attributeName": "almostFull",
+                "attributeTypes": ["Property"]
+            }
+        ]
+    })
 }
 
 // ---------------------------------------------------------------------------

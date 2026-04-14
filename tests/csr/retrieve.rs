@@ -10,13 +10,13 @@ use crate::{
     cleanup_registration,
     client,
     create_registration,
-    load_expectation,
-    load_fixture,
+    csr_basic_jsonld,
+    expected_csr_compacted,
+    expected_csr_expanded,
     retrieve_registration,
     strip_ignored_keys,
     unique_id,
 };
-use serde_json::Value;
 
 // ---------------------------------------------------------------------------
 // 5.10.1 -- Retrieve with invalid ID
@@ -53,7 +53,7 @@ async fn retrieve_unknown_registration_returns_404() {
 async fn retrieve_without_context_returns_expanded_format() {
     let c = client();
     let id = unique_id("urn:ngsi-ld:ContextSourceRegistration:retrieve-expanded");
-    let reg = load_fixture("csource_registrations/context-source-registration.jsonld", &id);
+    let reg = csr_basic_jsonld(&id);
 
     let (status, _, _) = create_registration(&c, &reg).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
@@ -62,8 +62,7 @@ async fn retrieve_without_context_returns_expanded_format() {
     pretty_assertions::assert_eq!(status, StatusCode::OK);
 
     let ignored = &["@context", "createdAt", "modifiedAt", "status"];
-    let mut expected = load_expectation("csource_registrations/expectations/context-source-registration-expanded-format.json");
-    expected["id"] = Value::String(id.clone());
+    let mut expected = expected_csr_expanded(&id);
     strip_ignored_keys(&mut actual, ignored);
     strip_ignored_keys(&mut expected, ignored);
     pretty_assertions::assert_eq!(expected, actual);
@@ -80,7 +79,7 @@ async fn retrieve_without_context_returns_expanded_format() {
 async fn retrieve_with_context_returns_compacted_format() {
     let c = client();
     let id = unique_id("urn:ngsi-ld:ContextSourceRegistration:retrieve-compacted");
-    let reg = load_fixture("csource_registrations/context-source-registration.jsonld", &id);
+    let reg = csr_basic_jsonld(&id);
 
     let (status, _, _) = create_registration(&c, &reg).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
@@ -89,8 +88,7 @@ async fn retrieve_with_context_returns_compacted_format() {
     pretty_assertions::assert_eq!(status, StatusCode::OK);
 
     let ignored = &["@context", "createdAt", "modifiedAt", "status"];
-    let mut expected = load_expectation("csource_registrations/expectations/context-source-registration.json");
-    expected["id"] = Value::String(id.clone());
+    let mut expected = expected_csr_compacted(&id);
     strip_ignored_keys(&mut actual, ignored);
     strip_ignored_keys(&mut expected, ignored);
     pretty_assertions::assert_eq!(expected, actual);
@@ -107,7 +105,7 @@ async fn retrieve_with_context_returns_compacted_format() {
 async fn retrieve_empty_jsonld_context_returns_expanded_format() {
     let c = client();
     let id = unique_id("urn:ngsi-ld:ContextSourceRegistration:retrieve-empty-ctx");
-    let reg = load_fixture("csource_registrations/context-source-registration.jsonld", &id);
+    let reg = csr_basic_jsonld(&id);
 
     let (status, _, _) = create_registration(&c, &reg).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
@@ -116,8 +114,7 @@ async fn retrieve_empty_jsonld_context_returns_expanded_format() {
     pretty_assertions::assert_eq!(status, StatusCode::OK);
 
     let ignored = &["@context", "createdAt", "modifiedAt", "status"];
-    let mut expected = load_expectation("csource_registrations/expectations/context-source-registration-expanded-format.json");
-    expected["id"] = Value::String(id.clone());
+    let mut expected = expected_csr_expanded(&id);
     strip_ignored_keys(&mut actual, ignored);
     strip_ignored_keys(&mut expected, ignored);
     pretty_assertions::assert_eq!(expected, actual);
@@ -130,7 +127,7 @@ async fn retrieve_empty_jsonld_context_returns_expanded_format() {
 async fn retrieve_creation_time_context_returns_compacted_format() {
     let c = client();
     let id = unique_id("urn:ngsi-ld:ContextSourceRegistration:retrieve-creation-ctx");
-    let reg = load_fixture("csource_registrations/context-source-registration.jsonld", &id);
+    let reg = csr_basic_jsonld(&id);
 
     let (status, _, _) = create_registration(&c, &reg).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
@@ -139,8 +136,7 @@ async fn retrieve_creation_time_context_returns_compacted_format() {
     pretty_assertions::assert_eq!(status, StatusCode::OK);
 
     let ignored = &["@context", "createdAt", "modifiedAt", "status"];
-    let mut expected = load_expectation("csource_registrations/expectations/context-source-registration.json");
-    expected["id"] = Value::String(id.clone());
+    let mut expected = expected_csr_compacted(&id);
     strip_ignored_keys(&mut actual, ignored);
     strip_ignored_keys(&mut expected, ignored);
     pretty_assertions::assert_eq!(expected, actual);

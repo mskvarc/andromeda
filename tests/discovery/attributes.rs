@@ -5,7 +5,18 @@ use reqwest::StatusCode;
 use serde_json::Value;
 use serial_test::serial;
 
-use crate::{COMPOUND_CONTEXT_URL, clean_database, client, create_entity, delete_entity, list_attributes, load_expectation, load_fixture, unique_id};
+use crate::{
+    COMPOUND_CONTEXT_URL,
+    building_simple_attributes,
+    clean_database,
+    client,
+    create_entity,
+    delete_entity,
+    expected_attribute_list_compacted,
+    expected_attribute_list_expanded,
+    list_attributes,
+    unique_id,
+};
 
 fn sorted_strings(val: &Value) -> Vec<String> {
     let mut v: Vec<String> = val.as_array().unwrap().iter().map(|s| s.as_str().unwrap().to_string()).collect();
@@ -43,14 +54,14 @@ async fn list_attributes_without_context_returns_expanded_uris() {
     let c = client();
     let id = unique_id("urn:ngsi-ld:Building:attrs-no-ctx");
 
-    let entity = load_fixture("entities/building-simple-attributes.json", &id);
+    let entity = building_simple_attributes(&id);
     let (s, _) = create_entity(&c, &entity, Some(COMPOUND_CONTEXT_URL)).await;
     pretty_assertions::assert_eq!(s, StatusCode::CREATED);
 
     let (status, body) = list_attributes(&c, "", None).await;
     pretty_assertions::assert_eq!(status, StatusCode::OK);
 
-    let expected = load_expectation("types/expectations/attribute-list-025-01-01.json");
+    let expected = expected_attribute_list_expanded();
     pretty_assertions::assert_eq!(body["type"], "AttributeList");
     pretty_assertions::assert_eq!(sorted_strings(&body["attributeList"]), sorted_strings(&expected["attributeList"]));
 
@@ -69,14 +80,14 @@ async fn list_attributes_with_context_returns_compacted_names() {
     let c = client();
     let id = unique_id("urn:ngsi-ld:Building:attrs-with-ctx");
 
-    let entity = load_fixture("entities/building-simple-attributes.json", &id);
+    let entity = building_simple_attributes(&id);
     let (s, _) = create_entity(&c, &entity, Some(COMPOUND_CONTEXT_URL)).await;
     pretty_assertions::assert_eq!(s, StatusCode::CREATED);
 
     let (status, body) = list_attributes(&c, "", Some(COMPOUND_CONTEXT_URL)).await;
     pretty_assertions::assert_eq!(status, StatusCode::OK);
 
-    let expected = load_expectation("types/expectations/attribute-list-025-01-02.json");
+    let expected = expected_attribute_list_compacted();
     pretty_assertions::assert_eq!(body["type"], "AttributeList");
     pretty_assertions::assert_eq!(sorted_strings(&body["attributeList"]), sorted_strings(&expected["attributeList"]));
 

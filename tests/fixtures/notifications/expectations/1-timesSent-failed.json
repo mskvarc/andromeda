@@ -1,9 +1,0 @@
-{
-   "format": "keyValues",
-   "endpoint": {
-      "uri": "http://127.0.0.1:8085/notify",
-      "accept": "application/json"
-   },
-   "status": "failed",
-   "timesSent": 1
-}

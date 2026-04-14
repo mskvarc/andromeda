@@ -9,7 +9,15 @@ use crate::{
     cleanup_registration,
     client,
     create_registration,
-    load_fixture,
+    csr_basic_json,
+    csr_basic_jsonld,
+    csr_invalid_null_information,
+    csr_invalid_structure,
+    csr_no_id,
+    csr_past_expiration,
+    csr_with_expiration,
+    csr_with_location,
+    csr_with_mode_and_operations,
     request,
     retrieve_registration,
     strip_ignored_keys,
@@ -25,7 +33,7 @@ use crate::{
 async fn create_without_mode_and_operations_returns_201() {
     let c = client();
     let id = unique_id("urn:ngsi-ld:ContextSourceRegistration:create-basic");
-    let reg = load_fixture("csource_registrations/context-source-registration.jsonld", &id);
+    let reg = csr_basic_jsonld(&id);
 
     let (status, location, _) = create_registration(&c, &reg).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
@@ -49,7 +57,7 @@ async fn create_without_mode_and_operations_returns_201() {
 async fn create_with_mode_and_operations_returns_201() {
     let c = client();
     let id = unique_id("urn:ngsi-ld:ContextSourceRegistration:create-mode-ops");
-    let reg = load_fixture("csource_registrations/context-source-registration-with-mode-and-operations.jsonld", &id);
+    let reg = csr_with_mode_and_operations(&id);
 
     let (status, _, _) = create_registration(&c, &reg).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
@@ -71,7 +79,7 @@ async fn create_with_mode_and_operations_returns_201() {
 async fn create_with_location_returns_201() {
     let c = client();
     let id = unique_id("urn:ngsi-ld:ContextSourceRegistration:create-location");
-    let reg = load_fixture("csource_registrations/context-source-registration-location.jsonld", &id);
+    let reg = csr_with_location(&id);
 
     let (status, _, _) = create_registration(&c, &reg).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
@@ -93,7 +101,7 @@ async fn create_with_location_returns_201() {
 async fn create_with_expiration_returns_201() {
     let c = client();
     let id = unique_id("urn:ngsi-ld:ContextSourceRegistration:create-expiration");
-    let reg = load_fixture("csource_registrations/context-source-registration-with-expiration.jsonld", &id);
+    let reg = csr_with_expiration(&id);
 
     let (status, _, _) = create_registration(&c, &reg).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
@@ -114,7 +122,7 @@ async fn create_with_expiration_returns_201() {
 #[tokio::test]
 async fn create_without_id_server_generates_id() {
     let c = client();
-    let reg = load_fixture("csource_registrations/context-source-registration-no-id.jsonld", "unused");
+    let reg = csr_no_id();
 
     let (status, location, _) = create_registration(&c, &reg).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
@@ -139,7 +147,7 @@ async fn create_without_id_server_generates_id() {
 async fn create_with_invalid_content_returns_400() {
     let c = client();
     let id = unique_id("urn:ngsi-ld:ContextSourceRegistration:create-invalid");
-    let reg = load_fixture("csource_registrations/context-source-registration-invalid.jsonld", &id);
+    let reg = csr_invalid_null_information(&id);
 
     let (status, _, body) = create_registration(&c, &reg).await;
     pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
@@ -152,7 +160,7 @@ async fn create_with_invalid_content_returns_400() {
 async fn create_with_invalid_structure_returns_400() {
     let c = client();
     let id = unique_id("urn:ngsi-ld:ContextSourceRegistration:create-invalid-struct");
-    let reg = load_fixture("csource_registrations/context-source-registration-invalid-structure.jsonld", &id);
+    let reg = csr_invalid_structure(&id);
 
     let (status, _, _) = create_registration(&c, &reg).await;
     pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
@@ -163,7 +171,7 @@ async fn create_with_invalid_structure_returns_400() {
 async fn create_with_past_expiration_returns_400() {
     let c = client();
     let id = unique_id("urn:ngsi-ld:ContextSourceRegistration:create-past-exp");
-    let reg = load_fixture("csource_registrations/context-source-registration-past-expiration.jsonld", &id);
+    let reg = csr_past_expiration(&id);
 
     let (status, _, _) = create_registration(&c, &reg).await;
     pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
@@ -178,7 +186,7 @@ async fn create_with_past_expiration_returns_400() {
 async fn create_duplicate_returns_409() {
     let c = client();
     let id = unique_id("urn:ngsi-ld:ContextSourceRegistration:create-dup");
-    let reg = load_fixture("csource_registrations/context-source-registration.jsonld", &id);
+    let reg = csr_basic_jsonld(&id);
 
     let (status, _, _) = create_registration(&c, &reg).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
@@ -199,7 +207,7 @@ async fn create_duplicate_returns_409() {
 async fn create_json_with_link_context_retrieve_with_context() {
     let c = client();
     let id = unique_id("urn:ngsi-ld:ContextSourceRegistration:create-json-link");
-    let mut reg = load_fixture("csource_registrations/context-source-registration.json", &id);
+    let mut reg = csr_basic_json(&id);
     reg.as_object_mut().unwrap().remove("@context");
 
     let (status, _) = request(
@@ -226,7 +234,7 @@ async fn create_json_with_link_context_retrieve_with_context() {
 async fn create_json_with_link_context_retrieve_without_context_returns_fqn() {
     let c = client();
     let id = unique_id("urn:ngsi-ld:ContextSourceRegistration:create-json-link-noret");
-    let mut reg = load_fixture("csource_registrations/context-source-registration.json", &id);
+    let mut reg = csr_basic_json(&id);
     reg.as_object_mut().unwrap().remove("@context");
 
     let (status, _) = request(
@@ -259,7 +267,7 @@ async fn create_json_with_link_context_retrieve_without_context_returns_fqn() {
 async fn create_json_default_context_retrieve_with_compound_context() {
     let c = client();
     let id = unique_id("urn:ngsi-ld:ContextSourceRegistration:create-json-default");
-    let mut reg = load_fixture("csource_registrations/context-source-registration.json", &id);
+    let mut reg = csr_basic_json(&id);
     reg.as_object_mut().unwrap().remove("@context");
 
     let (status, _) = request(
@@ -286,7 +294,7 @@ async fn create_json_default_context_retrieve_with_compound_context() {
 async fn create_json_default_context_retrieve_without_context() {
     let c = client();
     let id = unique_id("urn:ngsi-ld:ContextSourceRegistration:create-json-default-noret");
-    let mut reg = load_fixture("csource_registrations/context-source-registration.json", &id);
+    let mut reg = csr_basic_json(&id);
     reg.as_object_mut().unwrap().remove("@context");
 
     let (status, _) = request(
@@ -317,7 +325,7 @@ async fn create_json_default_context_retrieve_without_context() {
 async fn create_json_content_type_with_context_in_body_returns_400() {
     let c = client();
     let id = unique_id("urn:ngsi-ld:ContextSourceRegistration:create-json-with-ctx");
-    let reg = load_fixture("csource_registrations/context-source-registration.jsonld", &id);
+    let reg = csr_basic_jsonld(&id);
 
     let (status, body) = request(
         &c,
@@ -343,7 +351,7 @@ async fn create_json_content_type_with_context_in_body_returns_400() {
 async fn create_jsonld_retrieve_with_context_returns_compacted_type() {
     let c = client();
     let id = unique_id("urn:ngsi-ld:ContextSourceRegistration:create-ld-with-ctx");
-    let reg = load_fixture("csource_registrations/context-source-registration.jsonld", &id);
+    let reg = csr_basic_jsonld(&id);
 
     let (status, _, _) = create_registration(&c, &reg).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
@@ -360,7 +368,7 @@ async fn create_jsonld_retrieve_with_context_returns_compacted_type() {
 async fn create_jsonld_retrieve_without_context_returns_expanded_type() {
     let c = client();
     let id = unique_id("urn:ngsi-ld:ContextSourceRegistration:create-ld-no-ctx");
-    let reg = load_fixture("csource_registrations/context-source-registration.jsonld", &id);
+    let reg = csr_basic_jsonld(&id);
 
     let (status, _, _) = create_registration(&c, &reg).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
@@ -381,7 +389,7 @@ async fn create_jsonld_retrieve_without_context_returns_expanded_type() {
 async fn create_jsonld_content_type_without_context_in_body_returns_400() {
     let c = client();
     let id = unique_id("urn:ngsi-ld:ContextSourceRegistration:create-ld-no-body-ctx");
-    let mut reg = load_fixture("csource_registrations/context-source-registration.json", &id);
+    let mut reg = csr_basic_json(&id);
     reg.as_object_mut().unwrap().remove("@context");
 
     let (status, body) = request(
@@ -408,7 +416,7 @@ async fn create_jsonld_content_type_without_context_in_body_returns_400() {
 async fn create_jsonld_content_type_with_link_header_returns_400() {
     let c = client();
     let id = unique_id("urn:ngsi-ld:ContextSourceRegistration:create-ld-link");
-    let reg = load_fixture("csource_registrations/context-source-registration.jsonld", &id);
+    let reg = csr_basic_jsonld(&id);
 
     let (status, body) = request(
         &c,

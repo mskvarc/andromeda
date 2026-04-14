@@ -8,12 +8,12 @@ use serial_test::serial;
 use crate::{
     COMPOUND_CONTEXT_URL,
     RESOURCE_NOT_FOUND_TYPE,
+    building_simple_attributes,
     clean_database,
     client,
     create_entity,
     delete_entity,
-    load_expectation,
-    load_fixture,
+    expected_entity_type_info,
     retrieve_entity_type,
     unique_id,
 };
@@ -33,7 +33,7 @@ async fn retrieve_entity_type_info_unknown_type_returns_404() {
     clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Building:type-info-404");
-    let entity = load_fixture("entities/building-simple-attributes.json", &id);
+    let entity = building_simple_attributes(&id);
 
     let (s, _) = create_entity(&c, &entity, Some(COMPOUND_CONTEXT_URL)).await;
     pretty_assertions::assert_eq!(s, StatusCode::CREATED);
@@ -60,8 +60,8 @@ async fn retrieve_entity_type_info_with_compacted_name_returns_type_info() {
     let id1 = unique_id("urn:ngsi-ld:Building:type-info-compact-a");
     let id2 = unique_id("urn:ngsi-ld:Building:type-info-compact-b");
 
-    let e1 = load_fixture("entities/building-simple-attributes.json", &id1);
-    let e2 = load_fixture("entities/building-simple-attributes.json", &id2);
+    let e1 = building_simple_attributes(&id1);
+    let e2 = building_simple_attributes(&id2);
 
     let (s, _) = create_entity(&c, &e1, Some(COMPOUND_CONTEXT_URL)).await;
     pretty_assertions::assert_eq!(s, StatusCode::CREATED);
@@ -71,7 +71,7 @@ async fn retrieve_entity_type_info_with_compacted_name_returns_type_info() {
     let (status, body) = retrieve_entity_type(&c, "Building", Some(COMPOUND_CONTEXT_URL)).await;
     pretty_assertions::assert_eq!(status, StatusCode::OK);
 
-    let expected = load_expectation("types/expectations/entity-type-info-024-01.json");
+    let expected = expected_entity_type_info();
     pretty_assertions::assert_eq!(body["type"], expected["type"]);
     pretty_assertions::assert_eq!(body["typeName"], expected["typeName"]);
     pretty_assertions::assert_eq!(body["entityCount"], expected["entityCount"]);
@@ -99,8 +99,8 @@ async fn retrieve_entity_type_info_with_expanded_name_returns_type_info() {
     let id1 = unique_id("urn:ngsi-ld:Building:type-info-expanded-a");
     let id2 = unique_id("urn:ngsi-ld:Building:type-info-expanded-b");
 
-    let e1 = load_fixture("entities/building-simple-attributes.json", &id1);
-    let e2 = load_fixture("entities/building-simple-attributes.json", &id2);
+    let e1 = building_simple_attributes(&id1);
+    let e2 = building_simple_attributes(&id2);
 
     let (s, _) = create_entity(&c, &e1, Some(COMPOUND_CONTEXT_URL)).await;
     pretty_assertions::assert_eq!(s, StatusCode::CREATED);
@@ -112,7 +112,7 @@ async fn retrieve_entity_type_info_with_expanded_name_returns_type_info() {
     let (status, body) = retrieve_entity_type(&c, expanded_type, Some(COMPOUND_CONTEXT_URL)).await;
     pretty_assertions::assert_eq!(status, StatusCode::OK);
 
-    let expected = load_expectation("types/expectations/entity-type-info-024-01.json");
+    let expected = expected_entity_type_info();
     pretty_assertions::assert_eq!(body["type"], expected["type"]);
     pretty_assertions::assert_eq!(body["typeName"], expected["typeName"]);
     pretty_assertions::assert_eq!(body["entityCount"], expected["entityCount"]);

@@ -1,9 +1,0 @@
-{
-   "notification":{
-      "format":"keyValues",
-      "endpoint":{
-         "uri":"http://my.second.endpoint.org/notify",
-         "accept":"application/json"
-      }
-   }
-}

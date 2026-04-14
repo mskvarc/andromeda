@@ -1,8 +1,0 @@
-{
-    "id": "urn:ngsi-ld:EntityTypeList:randomUUID",
-    "type": "EntityTypeList",
-    "typeList": [
-        "Building",
-        "Vehicle"
-    ]
-}

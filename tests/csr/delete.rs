@@ -3,7 +3,7 @@
 
 use reqwest::StatusCode;
 
-use crate::{BAD_REQUEST_DATA_TYPE, client, create_registration, delete_registration, load_fixture, request, retrieve_registration, unique_id};
+use crate::{BAD_REQUEST_DATA_TYPE, client, create_registration, csr_basic_jsonld, delete_registration, request, retrieve_registration, unique_id};
 
 // ---------------------------------------------------------------------------
 // 5.9.4 -- Delete by ID
@@ -14,7 +14,7 @@ use crate::{BAD_REQUEST_DATA_TYPE, client, create_registration, delete_registrat
 async fn delete_existing_registration_returns_204() {
     let c = client();
     let id = unique_id("urn:ngsi-ld:ContextSourceRegistration:delete-existing");
-    let reg = load_fixture("csource_registrations/context-source-registration.jsonld", &id);
+    let reg = csr_basic_jsonld(&id);
 
     let (status, _, _) = create_registration(&c, &reg).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);

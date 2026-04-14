@@ -1,4 +1,0 @@
-{
-    "id": "urn:ngsi-ld:Building:randomUUID",
-    "type": ["Building", "Vehicle", "Car"]
-}

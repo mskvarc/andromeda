@@ -4,12 +4,12 @@
 use crate::{
     COMPOUND_CONTEXT_URL,
     RESOURCE_NOT_FOUND_TYPE,
+    building_simple_attributes,
     clean_database,
     client,
     create_entity,
     delete_entity,
-    load_expectation,
-    load_fixture,
+    expected_attribute_info,
     retrieve_attribute,
     unique_id,
 };
@@ -27,7 +27,7 @@ async fn retrieve_attribute_info_unknown_attribute_returns_404() {
     clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Building:attr-info-404");
-    let entity = load_fixture("entities/building-simple-attributes.json", &id);
+    let entity = building_simple_attributes(&id);
 
     let (s, _) = create_entity(&c, &entity, Some(COMPOUND_CONTEXT_URL)).await;
     pretty_assertions::assert_eq!(s, StatusCode::CREATED);
@@ -53,14 +53,14 @@ async fn retrieve_attribute_info_with_compacted_name_returns_attribute_info() {
     let c = client();
     let id = unique_id("urn:ngsi-ld:Building:attr-info-compact");
 
-    let entity = load_fixture("entities/building-simple-attributes.json", &id);
+    let entity = building_simple_attributes(&id);
     let (s, _) = create_entity(&c, &entity, Some(COMPOUND_CONTEXT_URL)).await;
     pretty_assertions::assert_eq!(s, StatusCode::CREATED);
 
     let (status, body) = retrieve_attribute(&c, "airQualityLevel", Some(COMPOUND_CONTEXT_URL)).await;
     pretty_assertions::assert_eq!(status, StatusCode::OK);
 
-    let expected = load_expectation("types/expectations/attribute-027-01.json");
+    let expected = expected_attribute_info();
     pretty_assertions::assert_eq!(body["type"], expected["type"]);
     pretty_assertions::assert_eq!(body["attributeName"], expected["attributeName"]);
     pretty_assertions::assert_eq!(body["attributeCount"], expected["attributeCount"]);
@@ -82,7 +82,7 @@ async fn retrieve_attribute_info_with_expanded_name_returns_attribute_info() {
     let c = client();
     let id = unique_id("urn:ngsi-ld:Building:attr-info-expanded");
 
-    let entity = load_fixture("entities/building-simple-attributes.json", &id);
+    let entity = building_simple_attributes(&id);
     let (s, _) = create_entity(&c, &entity, Some(COMPOUND_CONTEXT_URL)).await;
     pretty_assertions::assert_eq!(s, StatusCode::CREATED);
 
@@ -91,7 +91,7 @@ async fn retrieve_attribute_info_with_expanded_name_returns_attribute_info() {
     let (status, body) = retrieve_attribute(&c, expanded_attr, Some(COMPOUND_CONTEXT_URL)).await;
     pretty_assertions::assert_eq!(status, StatusCode::OK);
 
-    let expected = load_expectation("types/expectations/attribute-027-01.json");
+    let expected = expected_attribute_info();
     pretty_assertions::assert_eq!(body["type"], expected["type"]);
     pretty_assertions::assert_eq!(body["attributeName"], expected["attributeName"]);
     pretty_assertions::assert_eq!(body["attributeCount"], expected["attributeCount"]);
@@ -114,8 +114,8 @@ async fn retrieve_attribute_info_count_reflects_all_entity_instances() {
     let id1 = unique_id("urn:ngsi-ld:Building:attr-count-a");
     let id2 = unique_id("urn:ngsi-ld:Building:attr-count-b");
 
-    let e1 = load_fixture("entities/building-simple-attributes.json", &id1);
-    let e2 = load_fixture("entities/building-simple-attributes.json", &id2);
+    let e1 = building_simple_attributes(&id1);
+    let e2 = building_simple_attributes(&id2);
 
     let (s, _) = create_entity(&c, &e1, Some(COMPOUND_CONTEXT_URL)).await;
     pretty_assertions::assert_eq!(s, StatusCode::CREATED);

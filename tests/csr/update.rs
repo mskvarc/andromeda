@@ -10,9 +10,13 @@ use crate::{
     cleanup_registration,
     client,
     create_registration,
-    load_fixture,
-    load_fixture_raw,
-    load_fragment,
+    csr_basic_jsonld,
+    csr_invalid_json_string,
+    csr_invalid_null_information,
+    csr_with_expiration,
+    fragment_different_type,
+    fragment_endpoint_update,
+    fragment_null_expires_at,
     request,
     retrieve_registration,
     unique_id,
@@ -29,12 +33,12 @@ use crate::{
 async fn update_endpoint_returns_204() {
     let c = client();
     let id = unique_id("urn:ngsi-ld:ContextSourceRegistration:update-endpoint");
-    let reg = load_fixture("csource_registrations/context-source-registration.jsonld", &id);
+    let reg = csr_basic_jsonld(&id);
 
     let (status, _, _) = create_registration(&c, &reg).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
-    let fragment = load_fragment("csource_registrations/fragments/context-source-registration-update.json");
+    let fragment = fragment_endpoint_update();
     let (status, _) = update_registration(&c, &id, &fragment, "application/json").await;
     pretty_assertions::assert_eq!(status, StatusCode::NO_CONTENT);
 
@@ -53,10 +57,7 @@ async fn update_endpoint_returns_204() {
 #[tokio::test]
 async fn update_invalid_uri_returns_400() {
     let c = client();
-    let fragment = load_fixture(
-        "csource_registrations/fragments/context-source-registration-different-type.jsonld",
-        "invalidURI",
-    );
+    let fragment = fragment_different_type("invalidURI");
 
     let (status, body) = request(
         &c,
@@ -77,12 +78,12 @@ async fn update_invalid_uri_returns_400() {
 async fn update_wrong_data_type_returns_400() {
     let c = client();
     let id = unique_id("urn:ngsi-ld:ContextSourceRegistration:update-wrong-type");
-    let reg = load_fixture("csource_registrations/context-source-registration.jsonld", &id);
+    let reg = csr_basic_jsonld(&id);
 
     let (status, _, _) = create_registration(&c, &reg).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
-    let fragment = load_fixture("csource_registrations/fragments/context-source-registration-different-type.jsonld", &id);
+    let fragment = fragment_different_type(&id);
     let (status, body) = request(
         &c,
         reqwest::Method::PATCH,
@@ -104,12 +105,12 @@ async fn update_wrong_data_type_returns_400() {
 async fn update_remove_mandatory_property_returns_400() {
     let c = client();
     let id = unique_id("urn:ngsi-ld:ContextSourceRegistration:update-remove-mand");
-    let reg = load_fixture("csource_registrations/context-source-registration.jsonld", &id);
+    let reg = csr_basic_jsonld(&id);
 
     let (status, _, _) = create_registration(&c, &reg).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
-    let fragment = load_fixture("csource_registrations/context-source-registration-invalid.jsonld", &id);
+    let fragment = csr_invalid_null_information(&id);
     let (status, body) = request(
         &c,
         reqwest::Method::PATCH,
@@ -131,12 +132,12 @@ async fn update_remove_mandatory_property_returns_400() {
 async fn update_malformed_json_returns_400() {
     let c = client();
     let id = unique_id("urn:ngsi-ld:ContextSourceRegistration:update-malformed");
-    let reg = load_fixture("csource_registrations/context-source-registration.jsonld", &id);
+    let reg = csr_basic_jsonld(&id);
 
     let (status, _, _) = create_registration(&c, &reg).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
-    let raw = load_fixture_raw("csource_registrations/context-source-registration-invalid-json.json");
+    let raw = csr_invalid_json_string();
     let (status, body) = update_registration_raw(&c, &id, raw.as_bytes(), "application/json").await;
     pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
     pretty_assertions::assert_eq!(body["type"], INVALID_REQUEST_TYPE);
@@ -154,7 +155,7 @@ async fn update_malformed_json_returns_400() {
 async fn update_unknown_registration_returns_404() {
     let c = client();
     let id = unique_id("urn:ngsi-ld:ContextSourceRegistration:update-unknown");
-    let fragment = load_fixture("csource_registrations/context-source-registration.jsonld", &id);
+    let fragment = csr_basic_jsonld(&id);
 
     let (status, body) = request(
         &c,
@@ -179,12 +180,12 @@ async fn update_unknown_registration_returns_404() {
 async fn update_set_expires_at_to_null_removes_expiration() {
     let c = client();
     let id = unique_id("urn:ngsi-ld:ContextSourceRegistration:update-null-exp");
-    let reg = load_fixture("csource_registrations/context-source-registration-with-expiration.jsonld", &id);
+    let reg = csr_with_expiration(&id);
 
     let (status, _, _) = create_registration(&c, &reg).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
-    let fragment = load_fragment("csource_registrations/fragments/context-source-registration-null-expiresAt.json");
+    let fragment = fragment_null_expires_at();
     let (status, _) = update_registration(&c, &id, &fragment, "application/json").await;
     pretty_assertions::assert_eq!(status, StatusCode::NO_CONTENT);
 
@@ -204,12 +205,12 @@ async fn update_set_expires_at_to_null_removes_expiration() {
 async fn update_without_id_in_url_returns_405() {
     let c = client();
     let id = unique_id("urn:ngsi-ld:ContextSourceRegistration:update-no-id");
-    let reg = load_fixture("csource_registrations/context-source-registration.jsonld", &id);
+    let reg = csr_basic_jsonld(&id);
 
     let (status, _, _) = create_registration(&c, &reg).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
-    let mut fragment = load_fragment("csource_registrations/fragments/context-source-registration-different-type.jsonld");
+    let mut fragment = fragment_different_type(&id);
     fragment.as_object_mut().unwrap().remove("id");
     let (status, _) = request(
         &c,

@@ -5,7 +5,19 @@ use reqwest::StatusCode;
 use serde_json::Value;
 use serial_test::serial;
 
-use crate::{COMPOUND_CONTEXT_URL, clean_database, client, create_entity, delete_entity, list_entity_types, load_expectation, load_fixture, unique_id};
+use crate::{
+    COMPOUND_CONTEXT_URL,
+    building_simple_attributes,
+    clean_database,
+    client,
+    create_entity,
+    delete_entity,
+    expected_entity_type_list_compacted,
+    expected_entity_type_list_expanded,
+    list_entity_types,
+    unique_id,
+    vehicle_simple_attributes,
+};
 
 fn sorted_strings(val: &Value) -> Vec<String> {
     let mut v: Vec<String> = val.as_array().unwrap().iter().map(|s| s.as_str().unwrap().to_string()).collect();
@@ -44,8 +56,8 @@ async fn list_entity_types_without_context_returns_expanded_uris() {
     let building_id = unique_id("urn:ngsi-ld:Building:types-no-ctx");
     let vehicle_id = unique_id("urn:ngsi-ld:Vehicle:types-no-ctx");
 
-    let building = load_fixture("entities/building-simple-attributes.json", &building_id);
-    let vehicle = load_fixture("entities/vehicle-simple-attributes.json", &vehicle_id);
+    let building = building_simple_attributes(&building_id);
+    let vehicle = vehicle_simple_attributes(&vehicle_id);
 
     let (s, _) = create_entity(&c, &building, Some(COMPOUND_CONTEXT_URL)).await;
     pretty_assertions::assert_eq!(s, StatusCode::CREATED);
@@ -55,7 +67,7 @@ async fn list_entity_types_without_context_returns_expanded_uris() {
     let (status, body) = list_entity_types(&c, "", None).await;
     pretty_assertions::assert_eq!(status, StatusCode::OK);
 
-    let expected = load_expectation("types/expectations/entity-type-list-022-01-01.json");
+    let expected = expected_entity_type_list_expanded();
     pretty_assertions::assert_eq!(body["type"], "EntityTypeList");
     pretty_assertions::assert_eq!(sorted_strings(&body["typeList"]), sorted_strings(&expected["typeList"]));
 
@@ -76,8 +88,8 @@ async fn list_entity_types_with_context_returns_compacted_names() {
     let building_id = unique_id("urn:ngsi-ld:Building:types-with-ctx");
     let vehicle_id = unique_id("urn:ngsi-ld:Vehicle:types-with-ctx");
 
-    let building = load_fixture("entities/building-simple-attributes.json", &building_id);
-    let vehicle = load_fixture("entities/vehicle-simple-attributes.json", &vehicle_id);
+    let building = building_simple_attributes(&building_id);
+    let vehicle = vehicle_simple_attributes(&vehicle_id);
 
     let (s, _) = create_entity(&c, &building, Some(COMPOUND_CONTEXT_URL)).await;
     pretty_assertions::assert_eq!(s, StatusCode::CREATED);
@@ -87,7 +99,7 @@ async fn list_entity_types_with_context_returns_compacted_names() {
     let (status, body) = list_entity_types(&c, "", Some(COMPOUND_CONTEXT_URL)).await;
     pretty_assertions::assert_eq!(status, StatusCode::OK);
 
-    let expected = load_expectation("types/expectations/entity-type-list-022-01-02.json");
+    let expected = expected_entity_type_list_compacted();
     pretty_assertions::assert_eq!(body["type"], "EntityTypeList");
     pretty_assertions::assert_eq!(sorted_strings(&body["typeList"]), sorted_strings(&expected["typeList"]));
 
