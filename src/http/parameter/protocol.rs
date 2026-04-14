@@ -31,9 +31,16 @@ pub fn dataset_header_to_csv(protocol: &NgsiLdProtocolHeaders) -> Option<String>
 /// `NGSILD-Join-Level` headers into the query parameters when the corresponding
 /// query parameter is absent.
 pub fn apply_entity_get_extension_headers(params: &mut GetEntityParams, protocol: &NgsiLdProtocolHeaders, uri: &Uri) -> Result<(), NgsiLdError> {
-    if params.format.is_none()
-        && let Some(response_format) = protocol.response_format
-    {
+    // Only apply header if neither format nor options specifies a format
+    let query_has_format = params
+        .format
+        .as_deref()
+        .is_some_and(|f| matches!(f, "normalized" | "keyValues" | "simplified" | "concise"))
+        || params
+            .options
+            .as_deref()
+            .is_some_and(|opts| opts.contains("normalized") || opts.contains("keyValues") || opts.contains("simplified") || opts.contains("concise"));
+    if !query_has_format && let Some(response_format) = protocol.response_format {
         let format_value = response_format.as_query_value();
         if !matches!(format_value, "normalized" | "keyValues" | "simplified" | "concise") {
             return Err(NgsiLdError::from(
@@ -69,9 +76,16 @@ pub fn apply_entity_query_extension_headers(params: &mut EntityQueryParameters, 
     {
         params.scope_q = Some(scope.as_str().to_string());
     }
-    if params.format.is_none()
-        && let Some(response_format) = protocol.response_format
-    {
+    // Only apply header if neither format nor options specifies a format
+    let query_has_format = params
+        .format
+        .as_deref()
+        .is_some_and(|f| matches!(f, "normalized" | "keyValues" | "simplified" | "concise"))
+        || params
+            .options
+            .as_deref()
+            .is_some_and(|opts| opts.contains("normalized") || opts.contains("keyValues") || opts.contains("simplified") || opts.contains("concise"));
+    if !query_has_format && let Some(response_format) = protocol.response_format {
         let format_value = response_format.as_query_value();
         if !matches!(format_value, "normalized" | "keyValues" | "simplified" | "concise") {
             return Err(NgsiLdError::from(

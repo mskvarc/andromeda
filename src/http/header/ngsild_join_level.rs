@@ -4,7 +4,7 @@
 
 use axum::http::{HeaderName, HeaderValue};
 
-static NGSILD_JOIN_LEVEL: HeaderName = HeaderName::from_static("ngsild-join-level");
+static NGSILD_JOIN_LEVEL: HeaderName = HeaderName::from_static("ngsild-joinlevel");
 
 /// Typed `NGSILD-Join-Level` header containing traversal depth.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

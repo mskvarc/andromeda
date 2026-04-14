@@ -173,6 +173,11 @@ where
 
         // Collect raw Link header strings before the request body is consumed.
         let link_header_strings: Vec<String> = req.headers().get_all(LINK).iter().filter_map(|v| v.to_str().ok().map(String::from)).collect();
+        for raw in &link_header_strings {
+            if Link::from_str(raw).is_err() {
+                return Err(ExtractorRejection::bad_request_data("Invalid Link header", uri.clone()));
+            }
+        }
 
         // Per NGSI-LD 6.3.5: application/ld+json MUST NOT be combined with a Link header
         // containing a JSON-LD context relation

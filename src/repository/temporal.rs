@@ -252,6 +252,23 @@ impl TemporalRepository {
         rows.iter().map(parse_tea_entry).collect()
     }
 
+    /// Distinct attribute names recorded for the given temporal entity.
+    pub async fn get_attribute_names_for_entity(&self, entity_id: &str) -> Result<Vec<String>, AndromedaError> {
+        let rows = sqlx::query(
+            r#"
+            SELECT DISTINCT an.name AS attribute_name
+            FROM temporal_entity_attributes tea
+            JOIN attribute_names an ON an.id = tea.attribute_name_id
+            WHERE tea.entity_id = $1
+            "#,
+        )
+        .bind(entity_id)
+        .fetch_all(&self.pool)
+        .await?;
+
+        Ok(rows.iter().filter_map(|row| row.try_get::<String, _>("attribute_name").ok()).collect())
+    }
+
     /// Check if any temporal data exists for an entity.
     pub async fn tea_exists_for_entity(&self, entity_id: &str) -> Result<bool, AndromedaError> {
         let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM temporal_entity_attributes WHERE entity_id = $1)")
@@ -276,8 +293,8 @@ impl TemporalRepository {
     /// - `scope: DeleteScope::All`: delete all instances of the attribute
     /// - `scope: DeleteScope::Single` with `dataset_id: None`: delete only default instance (dataset_id IS NULL)
     /// - `scope: DeleteScope::Single` with `dataset_id: Some(s)`: delete the instance with that datasetId
-    pub async fn delete_tea(&self, entity_id: &str, attribute_name: &str, dataset_id: Option<&str>, scope: DeleteScope) -> Result<(), AndromedaError> {
-        match scope {
+    pub async fn delete_tea(&self, entity_id: &str, attribute_name: &str, dataset_id: Option<&str>, scope: DeleteScope) -> Result<u64, AndromedaError> {
+        let result = match scope {
             DeleteScope::All => {
                 sqlx::query(
                     r#"
@@ -290,7 +307,7 @@ impl TemporalRepository {
                 .bind(entity_id)
                 .bind(attribute_name)
                 .execute(&self.pool)
-                .await?;
+                .await?
             }
             DeleteScope::Single => {
                 if let Some(ds_id) = dataset_id {
@@ -307,7 +324,7 @@ impl TemporalRepository {
                     .bind(attribute_name)
                     .bind(ds_id)
                     .execute(&self.pool)
-                    .await?;
+                    .await?
                 } else {
                     sqlx::query(
                         r#"
@@ -321,12 +338,12 @@ impl TemporalRepository {
                     .bind(entity_id)
                     .bind(attribute_name)
                     .execute(&self.pool)
-                    .await?;
+                    .await?
                 }
             }
-        }
+        };
 
-        Ok(())
+        Ok(result.rows_affected())
     }
 
     // -------------------------------------------------------------------------

@@ -5,7 +5,7 @@ use crate::{
     domain::temporal::TemporalFormat,
     http::parameter::query::{SharedQueryParams, temporal::TemporalQueryParameters},
     i18n::collation::augment_expanded_with_collation_metadata,
-    jsonld::{CompactOptions, ContextSpec, JsonLdEngine, vocab},
+    jsonld::{CompactOptions, ContextSpec, JsonLdEngine, term_resolver, vocab},
     query::{
         compiled::{CompiledTemporalQuery, GeoQuery, IdPattern, LastNOrigin, ScopeQuery},
         sql::temporal::{build_stage1_entity_ids, build_temporal_history_query},
@@ -33,11 +33,77 @@ use crate::{
 use chrono::{DateTime, SecondsFormat, Utc};
 use serde_json::{Value, json};
 use sqlx::Row;
-use std::{borrow::Cow, sync::Arc};
+use std::{borrow::Cow, collections::HashSet, sync::Arc};
 
 /// Format a DateTime<Utc> as ISO 8601 with second precision.
 pub(crate) fn format_datetime(dt: DateTime<Utc>) -> String {
     dt.to_rfc3339_opts(SecondsFormat::Secs, true)
+}
+
+/// Return short IRI token from fragment or last path segment.
+fn iri_short_name(iri: &str) -> Option<String> {
+    if let Some(pos) = iri.rfind('#') {
+        return Some(iri[pos + 1..].to_string());
+    }
+    iri.rfind('/').map(|pos| iri[pos + 1..].to_string())
+}
+
+/// Return whether a context spec contains explicit (client-provided) context.
+fn has_explicit_context(context: &ContextSpec) -> bool {
+    !context.link_contexts().is_empty() || context.body_context().is_some()
+}
+
+/// Normalize compacted temporal payload when no explicit context was provided.
+///
+/// This keeps top-level keys and `type` values readable by collapsing expanded IRIs
+/// to their fragment/last-path short names.
+fn normalize_temporal_payload_without_context(value: &mut Value) {
+    let reserved: HashSet<&str> = ["id", "type", "@context", "createdAt", "modifiedAt", "deletedAt"].into_iter().collect();
+
+    let Some(obj) = value.as_object_mut() else {
+        return;
+    };
+
+    if let Some(type_value) = obj.get_mut("type") {
+        match type_value {
+            Value::String(type_name) => {
+                if type_name.starts_with("http")
+                    && let Some(short) = iri_short_name(type_name)
+                {
+                    *type_name = short;
+                }
+            }
+            Value::Array(types) => {
+                for t in types {
+                    if let Some(type_name) = t.as_str()
+                        && type_name.starts_with("http")
+                        && let Some(short) = iri_short_name(type_name)
+                    {
+                        *t = Value::String(short);
+                    }
+                }
+            }
+            Value::Null | Value::Bool(_) | Value::Number(_) | Value::Object(_) => {}
+        }
+    }
+
+    let keys_to_rename: Vec<(String, String)> = obj
+        .keys()
+        .filter(|k| !reserved.contains(k.as_str()))
+        .filter_map(|key| {
+            if !key.starts_with("http") && !key.starts_with("urn:") {
+                return None;
+            }
+            iri_short_name(key).map(|short| (key.clone(), short)) // clone: keys are borrowed from map iterator
+        })
+        .filter(|(old_key, new_key)| old_key != new_key && !obj.contains_key(new_key))
+        .collect();
+
+    for (old_key, new_key) in keys_to_rename {
+        if let Some(value) = obj.remove(&old_key) {
+            obj.insert(new_key, value);
+        }
+    }
 }
 
 /// Service layer for NGSI-LD Temporal Entity operations (read and write).
@@ -132,6 +198,9 @@ impl TemporalService {
         if entity_id.is_empty() || url::Url::parse(entity_id).is_err() {
             return Err(AndromedaError::temporal_validation("Invalid entity id"));
         }
+        if entity_obj.get("@type").and_then(|v| v.as_array()).is_none_or(|types| types.is_empty()) {
+            return Err(AndromedaError::temporal_validation("Entity missing @type"));
+        }
 
         // Note: Per NGSI-LD spec, temporal entities can be created independently
         // of the main entity table. We do NOT require the entity to exist first.
@@ -153,10 +222,6 @@ impl TemporalService {
                             types.push(t_str);
                         }
                     }
-                }
-                // Fallback to "Entity" if type is missing, though NGSI-LD spec requires one
-                if types.is_empty() {
-                    types.push("https://uri.etsi.org/ngsi-ld/Entity");
                 }
 
                 // Save initial base entity using the expanded payload so that
@@ -186,6 +251,32 @@ impl TemporalService {
         self.recorder.record_entity_attributes(entity_id, expanded).await
     }
 
+    async fn resolve_attr_iri_for_entity(&self, entity_id: &str, attr_id: &str, context: &ContextSpec) -> Result<String, AndromedaError> {
+        let expanded_attr = self.engine.expand_term(attr_id, context).await?;
+
+        if !self.repo.get_teas_for_entity_attr(entity_id, &expanded_attr).await?.is_empty() {
+            return Ok(expanded_attr);
+        }
+
+        if expanded_attr != attr_id && !self.repo.get_teas_for_entity_attr(entity_id, attr_id).await?.is_empty() {
+            return Ok(attr_id.to_string());
+        }
+
+        let attr_names = self.repo.get_attribute_names_for_entity(entity_id).await?;
+        let mut matches = attr_names
+            .into_iter()
+            .filter(|name| iri_short_name(name).is_some_and(|short| short == attr_id))
+            .collect::<Vec<_>>();
+
+        if matches.len() == 1 {
+            if let Some(name) = matches.pop() {
+                return Ok(name);
+            }
+        }
+
+        Ok(expanded_attr)
+    }
+
     /// Delete all temporal data for an entity.
     pub async fn delete(&self, entity_id: &str) -> Result<(), AndromedaError> {
         if !self.repo.tea_exists_for_entity(entity_id).await? {
@@ -204,7 +295,7 @@ impl TemporalService {
         scope: DeleteScope,
         context: &ContextSpec,
     ) -> Result<(), AndromedaError> {
-        let attr_iri = self.engine.expand_term(attr_id, context).await?;
+        let attr_iri = self.resolve_attr_iri_for_entity(entity_id, attr_id, context).await?;
 
         if !self.repo.tea_exists_for_entity(entity_id).await? {
             return Err(AndromedaError::temporal_not_found(entity_id.to_string()));
@@ -218,7 +309,14 @@ impl TemporalService {
             )));
         }
 
-        self.repo.delete_tea(entity_id, &attr_iri, dataset_id, scope).await?;
+        let deleted = self.repo.delete_tea(entity_id, &attr_iri, dataset_id, scope).await?;
+        if deleted == 0 {
+            let target = match dataset_id {
+                Some(ds_id) => format!("Attribute {} with datasetId {} not found on entity {}", attr_iri, ds_id, entity_id),
+                None => format!("Attribute {} default instance not found on entity {}", attr_iri, entity_id),
+            };
+            return Err(AndromedaError::temporal_not_found(target));
+        }
         Ok(())
     }
 
@@ -231,7 +329,7 @@ impl TemporalService {
         payload: Value,
         context: &ContextSpec,
     ) -> Result<(), AndromedaError> {
-        let attr_iri = self.engine.expand_term(attr_id, context).await?;
+        let attr_iri = self.resolve_attr_iri_for_entity(entity_id, attr_id, context).await?;
 
         if !self.repo.tea_exists_for_entity(entity_id).await? {
             return Err(AndromedaError::temporal_not_found(format!("Entity {} not found", entity_id)));
@@ -260,7 +358,7 @@ impl TemporalService {
 
     /// Delete a specific attribute instance by its instance ID.
     pub async fn delete_attr_instance(&self, entity_id: &str, attr_id: &str, instance_id: &str, context: &ContextSpec) -> Result<(), AndromedaError> {
-        let attr_iri = self.engine.expand_term(attr_id, context).await?;
+        let attr_iri = self.resolve_attr_iri_for_entity(entity_id, attr_id, context).await?;
 
         if !self.repo.tea_exists_for_entity(entity_id).await? {
             return Err(AndromedaError::temporal_not_found(format!("Entity {} not found", entity_id)));
@@ -329,6 +427,9 @@ impl TemporalService {
         let result = build_entity_temporal(entity_id, &entity_types, &rows, &compiled)?;
         let mut compacted = self.engine.compact(result.entity, context, CompactOptions::default()).await?;
         ensure_temporal_attrs_are_arrays(&mut compacted);
+        if !has_explicit_context(context) {
+            normalize_temporal_payload_without_context(&mut compacted);
+        }
 
         let value = if format == TemporalFormat::TemporalValues {
             transform_to_temporal_values(compacted)
@@ -434,6 +535,9 @@ impl TemporalService {
                             match self.engine.compact(result.entity, context, CompactOptions::default()).await {
                                 Ok(mut compacted) => {
                                     ensure_temporal_attrs_are_arrays(&mut compacted);
+                                    if !has_explicit_context(context) {
+                                        normalize_temporal_payload_without_context(&mut compacted);
+                                    }
                                     let result = if compiled.format == TemporalFormat::TemporalValues {
                                         transform_to_temporal_values(compacted)
                                     } else {
@@ -506,14 +610,56 @@ impl TemporalService {
                     }
                 }
             }
+            if !iri_to_short.contains_key(attr_iri) {
+                let short = term_resolver::compact_attr_iri(&self.engine, attr_iri, context).await;
+                if short != *attr_iri {
+                    iri_to_short.insert(attr_iri.clone(), short);
+                } else if !has_explicit_context(context)
+                    && let Some(short_name) = iri_short_name(attr_iri)
+                    && short_name != *attr_iri
+                {
+                    iri_to_short.insert(attr_iri.clone(), short_name);
+                }
+            }
         }
 
         // Compact entity type by compacting a minimal type skeleton
         let type_skeleton = json!({"@id": entity_id, "@type": entity_types});
         let compacted_type = if let Ok(compacted) = self.engine.compact(type_skeleton, context, CompactOptions::default()).await {
-            compacted.as_object().and_then(|o| o.get("type")).cloned().unwrap_or(json!(entity_types)) // clone: need owned Value from borrowed compacted object
+            let mut compacted_type = compacted.as_object().and_then(|o| o.get("type")).cloned().unwrap_or(json!(entity_types)); // clone: need owned Value from borrowed compacted object
+            if !has_explicit_context(context) {
+                match &mut compacted_type {
+                    Value::String(type_name) => {
+                        if type_name.starts_with("http")
+                            && let Some(short) = iri_short_name(type_name)
+                        {
+                            *type_name = short;
+                        }
+                    }
+                    Value::Array(types) => {
+                        for type_value in types {
+                            if let Some(type_name) = type_value.as_str()
+                                && type_name.starts_with("http")
+                                && let Some(short) = iri_short_name(type_name)
+                            {
+                                *type_value = Value::String(short);
+                            }
+                        }
+                    }
+                    Value::Null | Value::Bool(_) | Value::Number(_) | Value::Object(_) => {}
+                }
+            }
+            compacted_type
         } else {
-            json!(entity_types)
+            let type_values = if has_explicit_context(context) {
+                entity_types.to_vec()
+            } else {
+                entity_types
+                    .iter()
+                    .map(|type_name| iri_short_name(type_name).unwrap_or_else(|| type_name.clone())) // clone: fallback owned String when no short form
+                    .collect()
+            };
+            json!(type_values)
         };
 
         // Build the final result
