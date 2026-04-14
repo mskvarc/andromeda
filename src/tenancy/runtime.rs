@@ -94,6 +94,18 @@ impl TenantRuntimeManager {
         &self.main_pool
     }
 
+    /// Return all named tenants currently present in the tenant registry.
+    pub async fn list_named_tenants(&self) -> Result<Vec<TenantName>, AndromedaError> {
+        let raw_names: Vec<String> = sqlx::query_scalar("SELECT name FROM tenants WHERE is_unnamed_default = FALSE AND name IS NOT NULL ORDER BY name")
+            .fetch_all(&self.main_pool)
+            .await?;
+
+        raw_names
+            .into_iter()
+            .map(|name| TenantName::try_from(name).map_err(|_| AndromedaError::internal("Invalid tenant name value found in tenant registry".to_string())))
+            .collect()
+    }
+
     /// Resolve tenant runtime state according to creation policy.
     pub async fn resolve_state(&self, tenant: &TenantRef, policy: TenantCreationPolicy) -> Result<Arc<AndromedaState>, AndromedaError> {
         if !self.multitenancy.enabled && matches!(tenant, TenantRef::Named(_)) {

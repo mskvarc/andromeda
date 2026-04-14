@@ -16,6 +16,7 @@ use crate::{
         subscription,
         temporal,
         temporal_operations,
+        tenant,
         types,
     },
     repository::{
@@ -128,6 +129,7 @@ fn build_v1_router() -> Router<AppState> {
         .route("/query", post(entity_operations::query));
 
     let types_routes = Router::new().route("/", get(types::query)).route("/{type_}", get(types::get));
+    let tenants_routes = Router::new().route("/", get(tenant::query));
 
     let attributes_routes = Router::new().route("/", get(attribute::query)).route("/{attr_id}", get(attribute::get));
 
@@ -196,6 +198,7 @@ fn build_v1_router() -> Router<AppState> {
         .nest("/entities", entity_routes)
         .nest("/entityOperations", entity_ops_routes)
         .nest("/types", types_routes)
+        .nest("/tenants", tenants_routes)
         .nest("/attributes", attributes_routes)
         .nest("/jsonldContexts", jsonld_context_routes)
         .nest("/temporal/entities", temporal_entity_routes)

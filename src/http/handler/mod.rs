@@ -13,4 +13,5 @@ pub mod snapshot;
 pub mod subscription;
 pub mod temporal;
 pub mod temporal_operations;
+pub mod tenant;
 pub mod types;

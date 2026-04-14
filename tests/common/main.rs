@@ -290,6 +290,14 @@ async fn invalid_parameters_get_types_returns_400() {
 }
 
 #[tokio::test]
+async fn invalid_parameters_get_tenants_returns_400() {
+    let c = client();
+    let (status, _, body) = raw_request(&c, Method::GET, "/tenants?invalidParam=invalidValue", None, None, None).await;
+    pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
+    pretty_assertions::assert_eq!(body["type"], INVALID_REQUEST_TYPE);
+}
+
+#[tokio::test]
 async fn invalid_parameters_post_subscriptions_returns_400() {
     let c = client();
     let sub_id = unique_id("urn:ngsi-ld:Subscription:inv-param-sub");

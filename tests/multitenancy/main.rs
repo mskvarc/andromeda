@@ -123,6 +123,18 @@ async fn ngsi_request(
     (status, headers, response_body)
 }
 
+/// GET /tenants and decode JSON body.
+async fn list_tenants(http_client: &Client) -> (StatusCode, Value) {
+    let response = http_client
+        .get(format!("{BASE_URL}/tenants"))
+        .send()
+        .await
+        .expect("list_tenants request failed");
+    let status = response.status();
+    let body = read_json_or_null(response).await;
+    (status, body)
+}
+
 fn vehicle_entity(id: &str, name: &str) -> Value {
     json!({
         "id": id,
@@ -634,4 +646,54 @@ async fn multitenancy_subscription_does_not_receive_events_from_different_tenant
     pretty_assertions::assert_eq!(notification.body["subscriptionId"], subscription_id);
 
     receiver.stop();
+}
+
+#[serial_test::serial]
+#[tokio::test]
+async fn multitenancy_tenants_endpoint_returns_tenant_list_object_shape() {
+    let http_client = client();
+    reset_broker_state().await;
+
+    let tenant_a = format!("tenant-list-a-{}", Uuid::new_v4());
+    let tenant_b = format!("tenant-list-b-{}", Uuid::new_v4());
+
+    let (status, _, _) = ngsi_request(
+        &http_client,
+        Method::POST,
+        "/entities",
+        Some(&vehicle_entity(&unique_entity_id("urn:ngsi-ld:Vehicle:tenant-list-a"), "tenant-a-entity")),
+        &tenant_a,
+        false,
+    )
+    .await;
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
+
+    let (status, _, _) = ngsi_request(
+        &http_client,
+        Method::POST,
+        "/entities",
+        Some(&vehicle_entity(&unique_entity_id("urn:ngsi-ld:Vehicle:tenant-list-b"), "tenant-b-entity")),
+        &tenant_b,
+        false,
+    )
+    .await;
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
+
+    let (status, body) = list_tenants(&http_client).await;
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(body["type"], "TenantList");
+
+    let id = body["id"].as_str().unwrap_or_default();
+    assert!(id.starts_with("urn:ngsi-ld:TenantList:"), "expected TenantList URN id, got: {id}");
+
+    let tenant_list = body["tenantList"].as_array().cloned().unwrap_or_default();
+    let tenant_values: Vec<&str> = tenant_list.iter().filter_map(|value| value.as_str()).collect();
+    assert!(
+        tenant_values.contains(&tenant_a.as_str()),
+        "tenantList must contain {tenant_a}, got: {tenant_values:?}"
+    );
+    assert!(
+        tenant_values.contains(&tenant_b.as_str()),
+        "tenantList must contain {tenant_b}, got: {tenant_values:?}"
+    );
 }
