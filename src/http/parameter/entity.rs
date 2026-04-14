@@ -18,6 +18,14 @@ pub struct PartialUpdateAttrParams {
     pub dataset_id: Option<String>,
 }
 
+/// Query parameters for `PUT /entities/{id}/attrs/{attrId}` (replace attribute).
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReplaceAttrParams {
+    #[serde(rename = "datasetId")]
+    pub dataset_id: Option<String>,
+}
+
 /// Query parameters for `GET /entities/{id}` (retrieve single entity).
 ///
 /// Supports format selection, attribute filtering, join traversal,

@@ -572,10 +572,9 @@ pub fn partial_update_attr(entity: &mut Value, attr_iri: &str, dataset_id: Optio
         return Err(format!("Attribute {} not found", attr_iri));
     }
 
-    // Determine the effective datasetId: prefer the explicit query parameter,
-    // fall back to the datasetId inside the fragment itself.
-    let fragment_ds = get_instance_dataset_id(fragment);
-    let effective_ds: Option<&str> = dataset_id.or(fragment_ds.as_deref());
+    // datasetId selection is controlled by query parameter (datasetId).
+    // A datasetId embedded in the payload does not select the target instance.
+    let effective_ds: Option<&str> = dataset_id;
 
     if instance_is_null_sentinel(fragment) {
         remove_instances_by_dataset(entity_obj, attr_iri, effective_ds);
@@ -688,12 +687,20 @@ pub fn delete_attr(entity: &mut Value, attr_iri: &str, dataset_id: Option<&str>,
 }
 
 /// Replace a single attribute (clause 5.6.19): fully replaces the attribute value.
-pub fn replace_attr(entity: &mut Value, attr_iri: &str, value: &Value) -> Result<(), String> {
+///
+/// When `dataset_id` is provided (from query parameter), it specifies which instance to replace.
+/// Otherwise, the datasetId from `value` is used to match. If neither specifies a datasetId,
+/// the default instance (without datasetId) is replaced.
+pub fn replace_attr(entity: &mut Value, attr_iri: &str, dataset_id: Option<&str>, value: &Value) -> Result<(), String> {
     let entity_obj = expanded_object_mut(entity).ok_or("Entity data is not a valid JSON-LD expanded value")?;
 
     let existing = entity_obj.get(attr_iri).ok_or_else(|| format!("Attribute {} not found", attr_iri))?;
 
-    let new_ds = get_instance_dataset_id(value);
+    // Query param datasetId takes precedence over value's datasetId
+    let target_ds: Option<String> = match dataset_id {
+        Some(ds) => Some(ds.to_string()),
+        None => get_instance_dataset_id(value),
+    };
 
     let existing_instances = existing.as_array();
 
@@ -703,7 +710,7 @@ pub fn replace_attr(entity: &mut Value, attr_iri: &str, value: &Value) -> Result
 
         for inst in instances {
             let inst_ds = get_instance_dataset_id(inst);
-            if inst_ds == new_ds {
+            if inst_ds == target_ds {
                 new_instances.push(value.clone());
                 replaced = true;
             } else {
@@ -712,7 +719,10 @@ pub fn replace_attr(entity: &mut Value, attr_iri: &str, value: &Value) -> Result
         }
 
         if !replaced {
-            return Err(format!("Attribute {} not found", attr_iri));
+            return match target_ds {
+                Some(ds) => Err(format!("Attribute {} with datasetId {} not found", attr_iri, ds)),
+                None => Err(format!("Attribute {} default instance not found", attr_iri)),
+            };
         }
 
         entity_obj.insert(attr_iri.to_string(), Value::Array(new_instances));

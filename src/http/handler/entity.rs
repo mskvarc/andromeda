@@ -22,7 +22,7 @@ use crate::{
         parameter::{
             DeleteAttrParams,
             LocalOnlyParams,
-            entity::{AppendParams, GetEntityParams, PartialUpdateAttrParams},
+            entity::{AppendParams, GetEntityParams, PartialUpdateAttrParams, ReplaceAttrParams},
             protocol::{apply_entity_get_extension_headers, apply_entity_query_extension_headers},
         },
         response::{collection::NgsiLdCollectionResponse, single::NgsiLdResponse},
@@ -580,36 +580,31 @@ pub async fn query(
             EntityQueryService::merge_with_forwarded(local_entities, forwarded, query.attrs.as_deref())
         };
 
-        // Phase 2: forward to auxiliary CSRs only if primary results exist
-        // Per spec 4.3.6.2: auxiliary context sources only supplement existing data
-        if !merged.is_empty() {
-            let aux_forwarded = state
-                .forwarding
-                .forward_query(ForwardQueryRequest {
-                    entity_type_compact: entity_type,
-                    entity_ids: entity_ids_ref,
-                    context_url,
-                    context: &context,
-                    operation: ForwardingOperation::QueryEntity,
-                    incoming_via: incoming_via.as_ref(),
-                    csf_expr: csf_expr.as_ref(),
-                    mode_filter: CsrModeFilter::AuxiliaryOnly,
-                })
-                .await
-                .unwrap_or_default();
-            if !aux_forwarded.is_empty() {
-                warnings.extend(collect_warnings(&aux_forwarded));
-                let aux_remote_ids: Vec<String> = aux_forwarded
-                    .iter()
-                    .flat_map(|f| f.entities.iter())
-                    .filter_map(|v| v.get("id").and_then(Value::as_str).map(String::from))
-                    .collect();
-                remote_ids.extend(aux_remote_ids);
-                let merged = EntityQueryService::merge_with_forwarded(merged, aux_forwarded, query.attrs.as_deref());
-                (merged, warnings)
-            } else {
-                (merged, warnings)
-            }
+        // Phase 2: forward to auxiliary CSRs and merge their entities/attributes.
+        let aux_forwarded = state
+            .forwarding
+            .forward_query(ForwardQueryRequest {
+                entity_type_compact: entity_type,
+                entity_ids: entity_ids_ref,
+                context_url,
+                context: &context,
+                operation: ForwardingOperation::QueryEntity,
+                incoming_via: incoming_via.as_ref(),
+                csf_expr: csf_expr.as_ref(),
+                mode_filter: CsrModeFilter::AuxiliaryOnly,
+            })
+            .await
+            .unwrap_or_default();
+        if !aux_forwarded.is_empty() {
+            warnings.extend(collect_warnings(&aux_forwarded));
+            let aux_remote_ids: Vec<String> = aux_forwarded
+                .iter()
+                .flat_map(|f| f.entities.iter())
+                .filter_map(|v| v.get("id").and_then(Value::as_str).map(String::from))
+                .collect();
+            remote_ids.extend(aux_remote_ids);
+            let merged = EntityQueryService::merge_with_forwarded(merged, aux_forwarded, query.attrs.as_deref());
+            (merged, warnings)
         } else {
             (merged, warnings)
         }
@@ -617,34 +612,46 @@ pub async fn query(
 
     // splitEntities post-merge filtering: apply deferred q/geoQ/scopeQ (spec 5.7.2.4)
     if split_entities {
-        if let Some(ref q_str) = deferred_q
-            && let Ok(Some(q_expr)) = expand_q_expression(Some(q_str), service.engine(), &context).await
-        {
-            entities.retain(|e| {
-                let val = serde_json::to_value(e).unwrap_or_default();
-                evaluate(&q_expr, &val)
-            });
-        }
-        if let (Some(georel), Some(geometry), Some(coordinates)) = (&deferred_georel, &deferred_geometry, &deferred_coordinates) {
-            let mut geo_val = serde_json::json!({
+        let q_expr = if let Some(ref q_str) = deferred_q {
+            expand_q_expression(Some(q_str), service.engine(), &context).await.ok().flatten()
+        } else {
+            None
+        };
+        let geo_val = if let (Some(georel), Some(geometry), Some(coordinates)) = (&deferred_georel, &deferred_geometry, &deferred_coordinates) {
+            let mut value = serde_json::json!({
                 "georel": georel,
                 "geometry": geometry,
                 "coordinates": coordinates,
             });
             if let Some(ref geoprop) = deferred_geoproperty {
-                geo_val["geoproperty"] = Value::String(geoprop.clone());
+                value["geoproperty"] = Value::String(geoprop.clone());
             }
-            entities.retain(|e| {
-                let val = serde_json::to_value(e).unwrap_or_default();
-                matches_geo_filter(&geo_val, &val)
-            });
+            Some(value)
+        } else {
+            None
+        };
+        let scope_q = deferred_scope_q.as_deref();
+
+        let mut filtered = Vec::with_capacity(entities.len());
+        for entity in entities {
+            let compact = match serde_json::to_value(&entity) {
+                Ok(value) => value,
+                Err(_) => continue,
+            };
+            let expanded = match service.engine().expand(compact, &context).await {
+                Ok(value) => value,
+                Err(_) => continue,
+            };
+
+            let q_ok = q_expr.as_ref().is_none_or(|expr| evaluate(expr, &expanded));
+            let geo_ok = geo_val.as_ref().is_none_or(|geo| matches_geo_filter(geo, &expanded));
+            let scope_ok = scope_q.is_none_or(|scope| matches_scope_filter(scope, &expanded));
+
+            if q_ok && geo_ok && scope_ok {
+                filtered.push(entity);
+            }
         }
-        if let Some(ref scope_q) = deferred_scope_q {
-            entities.retain(|e| {
-                let val = serde_json::to_value(e).unwrap_or_default();
-                matches_scope_filter(scope_q, &val)
-            });
-        }
+        entities = filtered;
     }
 
     // §5.7.2: If entityMap=true, create an EntityMap and set header
@@ -1085,6 +1092,16 @@ pub async fn update_attrs(
         fragment
     };
 
+    // Exclusive-only updates may strip all local attributes; in that case
+    // local processing is complete and only remote status matters.
+    if local_fragment.as_object().is_some_and(|obj| obj.is_empty()) {
+        if !has_remote_errors(&forwarded) {
+            return Ok(StatusCode::NO_CONTENT.into_response());
+        }
+        let body = build_multi_status_body(&entity_id, true, None, &forwarded);
+        return Ok((StatusCode::MULTI_STATUS, Json(body)).into_response());
+    }
+
     let local_result = service.update_attrs(&id, local_fragment, &context).await;
 
     if local_result.is_ok() && !has_remote_errors(&forwarded) {
@@ -1245,6 +1262,7 @@ pub async fn replace_attr(
     OriginalUri(uri): OriginalUri,
     context: ContextUrl,
     Path((id, attr_id)): Path<(String, String)>,
+    ValidatedQuery(params): ValidatedQuery<ReplaceAttrParams>,
     JsonLd {
         value: fragment,
         context: body_context,
@@ -1255,7 +1273,10 @@ pub async fn replace_attr(
     validate_attr_name(&attr_id, &uri)?;
     let context = context.merge(body_context);
 
-    service.replace_attr(&id, &attr_id, fragment, &context).await.with_instance(uri.clone())?;
+    service
+        .replace_attr(&id, &attr_id, params.dataset_id.as_deref(), fragment, &context)
+        .await
+        .with_instance(uri.clone())?;
 
     Ok(StatusCode::NO_CONTENT.into_response())
 }

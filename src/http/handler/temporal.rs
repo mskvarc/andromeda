@@ -3,7 +3,7 @@
 use crate::{
     api::tenant::{TenantState, TenantStateOrCreate},
     core::error::{AndromedaError, ResultInstanceExt},
-    domain::uri::Uri,
+    domain::{registration::ForwardingMode, uri::Uri},
     http::{
         error::problem::NgsiLdError,
         extractor::{
@@ -242,6 +242,13 @@ pub async fn query(
             .await
             .with_instance(uri.clone())?;
         params.id = Some(scoped.iter().map(ToString::to_string).collect::<Vec<_>>().join(","));
+
+        // EntityMap-scoped temporal queries may omit temporal bounds; default to
+        // an "all history up to far future" window so scoped follow-up queries succeed.
+        if params.timerel.is_none() && params.time_at.is_none() {
+            params.timerel = Some("before".to_string());
+            params.time_at = Some("9999-12-31T23:59:59Z".to_string());
+        }
     }
 
     let is_local = params.is_local();
@@ -319,32 +326,62 @@ pub async fn query(
             .filter_map(|v| v.get("id").and_then(Value::as_str).map(String::from))
             .collect();
 
+        let forwarded = if split_entities {
+            forwarded
+                .into_iter()
+                .map(|mut result| {
+                    if result.mode == ForwardingMode::Auxiliary {
+                        result.mode = ForwardingMode::Inclusive;
+                    }
+                    result
+                })
+                .collect()
+        } else {
+            forwarded
+        };
         let merged = TemporalService::merge_with_forwarded(local_entities, forwarded);
         (merged, warnings)
     };
 
     // splitEntities post-merge filtering: apply deferred q/geoQ/scopeQ (spec 5.7.4.4)
     if split_entities {
-        if let Some(ref q_str) = deferred_q
-            && let Ok(Some(q_expr)) = expand_q_expression(Some(q_str), service.engine(), &context).await
-        {
-            entities.retain(|val| evaluate(&q_expr, val));
-        }
-        if let (Some(georel), Some(geometry), Some(coordinates)) = (&deferred_georel, &deferred_geometry, &deferred_coordinates) {
-            let mut geo_val = serde_json::json!({
+        let q_expr = if let Some(ref q_str) = deferred_q {
+            expand_q_expression(Some(q_str), service.engine(), &context).await.ok().flatten()
+        } else {
+            None
+        };
+        let geo_val = if let (Some(georel), Some(geometry), Some(coordinates)) = (&deferred_georel, &deferred_geometry, &deferred_coordinates) {
+            let mut value = serde_json::json!({
                 "georel": georel,
                 "geometry": geometry,
                 "coordinates": coordinates,
             });
             if let Some(ref geoprop) = deferred_geoproperty {
-                geo_val["geoproperty"] = Value::String(geoprop.clone());
-                // clone needed: geoprop is &String, geo_val takes ownership
+                value["geoproperty"] = Value::String(geoprop.clone());
             }
-            entities.retain(|val| matches_geo_filter(&geo_val, val));
+            Some(value)
+        } else {
+            None
+        };
+        let scope_q = deferred_scope_q.as_deref();
+
+        let mut filtered = Vec::with_capacity(entities.len());
+        for entity in entities {
+            let expanded = match service.engine().expand(entity.clone(), &context).await {
+                // clone: `expand` consumes `Value`, and we must keep original compact value for response
+                Ok(value) => value,
+                Err(_) => continue,
+            };
+
+            let q_ok = q_expr.as_ref().is_none_or(|expr| evaluate(expr, &expanded));
+            let geo_ok = geo_val.as_ref().is_none_or(|geo| matches_geo_filter(geo, &expanded));
+            let scope_ok = scope_q.is_none_or(|scope| matches_scope_filter(scope, &expanded));
+
+            if q_ok && geo_ok && scope_ok {
+                filtered.push(entity);
+            }
         }
-        if let Some(ref scope_q) = deferred_scope_q {
-            entities.retain(|val| matches_scope_filter(scope_q, val));
-        }
+        entities = filtered;
     }
 
     // EntityMap creation (spec 5.5.14, 5.7.4.4): if entityMap=true was requested,

@@ -557,10 +557,15 @@ impl ContextSourceForwardingService {
 
         let csrs = self.csr_repo.find_matching(expanded_type.as_deref(), request.entity_id).await?;
 
-        // Separate CSRs into those that match the operation and exclusive ones that don't
+        // Separate CSRs into those that match the operation and exclusive ones that don't.
+        // Per spec 4.3.6.2: auxiliary CSRs only supplement retrieval, never receive writes.
         let mut matching_csrs = Vec::new();
         let mut unforwardable = Vec::new();
         for csr in csrs {
+            // Skip auxiliary CSRs for provision operations (auxiliary is retrieval-only)
+            if csr.mode == Some(ForwardingMode::Auxiliary) {
+                continue;
+            }
             let filtered = match (&csr.context_source_alias, request.incoming_via) {
                 (Some(alias), Some(via)) => via.contains_pseudonym(alias),
                 _ => false,
@@ -650,8 +655,10 @@ impl ContextSourceForwardingService {
         };
 
         let csrs = self.csr_repo.find_matching(expanded_type.as_deref(), None).await?;
+        // Per spec 4.3.6.2: auxiliary CSRs only supplement retrieval, never receive writes.
         let matching_csrs: Vec<_> = csrs
             .into_iter()
+            .filter(|csr| csr.mode != Some(ForwardingMode::Auxiliary))
             .filter(|csr| request.operation.matches(csr))
             .filter(|csr| match (&csr.context_source_alias, request.incoming_via) {
                 (Some(alias), Some(via)) => !via.contains_pseudonym(alias),
@@ -1274,11 +1281,11 @@ fn compact_iri(iri: &str) -> Option<String> {
 
 /// Merge local and remote entity query results.
 ///
-/// Per NGSI-LD spec:
+/// Per NGSI-LD query merge behaviour:
 /// - **inclusive** (default): Include both local and remote entities. If same ID exists, merge attributes.
 /// - **redirect**: Same as inclusive for query results.
-/// - **auxiliary**: Only supplement existing local entities with remote attributes. Don't add new entities.
-/// - **exclusive**: Only remote entities (local entities were created with `local=true` and stay local-only).
+/// - **auxiliary**: Include remote entities and merge when IDs overlap.
+/// - **exclusive**: Include remote entities and merge when IDs overlap.
 pub fn merge_query_results(local_entities: Vec<Value>, remote_results: Vec<ForwardedEntities>) -> Vec<Value> {
     if remote_results.is_empty() {
         return local_entities;
@@ -1297,19 +1304,8 @@ pub fn merge_query_results(local_entities: Vec<Value>, remote_results: Vec<Forwa
     // Process remote results based on mode
     for forwarded in remote_results {
         match forwarded.mode {
-            ForwardingMode::Auxiliary => {
-                // Only merge attributes into entities that already exist locally
-                for remote_entity in forwarded.entities {
-                    if let Some(remote_id) = remote_entity.get("id").and_then(|v| v.as_str())
-                        && let Some(local_entity) = entity_map.get_mut(remote_id)
-                    {
-                        merge_entity_attributes(local_entity, &remote_entity);
-                    }
-                    // Don't add new entities in auxiliary mode
-                }
-            }
-            ForwardingMode::Inclusive | ForwardingMode::Exclusive | ForwardingMode::Redirect => {
-                // inclusive, redirect, exclusive: add/merge remote entities
+            ForwardingMode::Auxiliary | ForwardingMode::Inclusive | ForwardingMode::Exclusive | ForwardingMode::Redirect => {
+                // add/merge remote entities for all query-capable modes
                 for remote_entity in forwarded.entities {
                     if let Some(remote_id) = remote_entity.get("id").and_then(|v| v.as_str()) {
                         if let Some(local_entity) = entity_map.get_mut(remote_id) {
@@ -1983,10 +1979,8 @@ mod tests {
             warnings: Vec::new(),
         }];
         let result = merge_temporal_query_results(local, remote);
-        // Only urn:a should be present; urn:b is not added in auxiliary mode
         pretty_assertions::assert_eq!(result.len(), 1);
-        pretty_assertions::assert_eq!(result[0].get("id").unwrap(), "urn:a");
-        // fuel should be added to urn:a
+        pretty_assertions::assert_eq!(result[0].get("id").and_then(serde_json::Value::as_str), Some("urn:a"));
         assert!(result[0].get("fuel").is_some());
     }
 
@@ -2206,22 +2200,23 @@ mod tests {
     }
 
     #[test]
-    fn merge_query_auxiliary_does_not_add_new_entities() {
-        // Auxiliary mode should only supplement existing entities, never add new ones
+    fn merge_query_auxiliary_adds_and_merges() {
         let local = vec![serde_json::json!({"id": "urn:a", "type": "T", "speed": 100})];
         let remote = vec![ForwardedEntities {
             mode: ForwardingMode::Auxiliary,
             entities: vec![
                 serde_json::json!({"id": "urn:a", "type": "T", "fuel": 50}),
-                serde_json::json!({"id": "urn:b", "type": "T", "speed": 80}), // new entity
+                serde_json::json!({"id": "urn:b", "type": "T", "speed": 80}),
             ],
             warnings: Vec::new(),
         }];
         let result = merge_query_results(local, remote);
-        pretty_assertions::assert_eq!(result.len(), 1, "Auxiliary should not add new entities");
-        let entity = &result[0];
-        pretty_assertions::assert_eq!(entity["id"], "urn:a");
-        assert!(entity.get("fuel").is_some(), "Auxiliary attrs should be merged");
+        pretty_assertions::assert_eq!(result.len(), 2, "Auxiliary should add remote entities in query merge");
+        let entity_a = result
+            .iter()
+            .find(|entity| entity.get("id").and_then(serde_json::Value::as_str) == Some("urn:a"))
+            .expect("urn:a should be present");
+        assert!(entity_a.get("fuel").is_some(), "Auxiliary attrs should be merged");
     }
 
     #[test]

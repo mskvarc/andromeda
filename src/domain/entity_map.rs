@@ -59,7 +59,7 @@ pub struct EntityMap {
     #[serde(rename = "type")]
     pub type_: EntityMapType,
     pub expires_at: DateTime<Utc>,
-    #[serde(skip)]
+    #[serde(rename = "ids")]
     pub entity_ids: Vec<Uri>,
     pub entity_map: IndexMap<Uri, Vec<EntityMapDatasetId>>,
     pub linked_maps: IndexMap<CompactString, EntityMapId>,

@@ -232,15 +232,27 @@ fn build_temporal_stage1_conditions(compiled: &CompiledTemporalQuery) -> Result<
         let time_col = time_column_expr_stage1(compiled.timeproperty);
         match timerel {
             TimeRel::Before => {
-                condition = condition.add(SeaExpr::cust_with_values(format!("{} < $1::timestamptz", time_col), [time_at.to_rfc3339()]));
+                condition = condition.add(SeaExpr::cust_with_exprs(
+                    "$1 < $2::timestamptz",
+                    [SeaExpr::cust(time_col), SeaExpr::val(time_at.to_rfc3339()).into()],
+                ));
             }
             TimeRel::After => {
-                condition = condition.add(SeaExpr::cust_with_values(format!("{} >= $1::timestamptz", time_col), [time_at.to_rfc3339()]));
+                condition = condition.add(SeaExpr::cust_with_exprs(
+                    "$1 >= $2::timestamptz",
+                    [SeaExpr::cust(time_col), SeaExpr::val(time_at.to_rfc3339()).into()],
+                ));
             }
             TimeRel::Between => {
-                condition = condition.add(SeaExpr::cust_with_values(format!("{} >= $1::timestamptz", time_col), [time_at.to_rfc3339()]));
+                condition = condition.add(SeaExpr::cust_with_exprs(
+                    "$1 >= $2::timestamptz",
+                    [SeaExpr::cust(time_col), SeaExpr::val(time_at.to_rfc3339()).into()],
+                ));
                 if let Some(end_time) = &compiled.end_time_at {
-                    condition = condition.add(SeaExpr::cust_with_values(format!("{} < $1::timestamptz", time_col), [end_time.to_rfc3339()]));
+                    condition = condition.add(SeaExpr::cust_with_exprs(
+                        "$1 < $2::timestamptz",
+                        [SeaExpr::cust(time_col), SeaExpr::val(end_time.to_rfc3339()).into()],
+                    ));
                 }
             }
         }
@@ -1053,6 +1065,25 @@ mod tests {
         assert!(result.sql.contains("SELECT DISTINCT"));
         assert!(result.sql.contains("\"e\".\"types\""));
         assert!(result.sql.contains("JOIN \"attribute_names\""));
+    }
+
+    #[test]
+    fn stage1_timerel_placeholder_is_offset_after_id_filters() {
+        let mut compiled = minimal_compiled();
+        compiled.ids = Some(vec!["urn:ngsi-ld:Vehicle:1".to_string(), "urn:ngsi-ld:Vehicle:2".to_string()]);
+        compiled.timerel = Some(TimeRel::Before);
+        compiled.time_at = Some(DateTime::parse_from_rfc3339("2030-01-01T00:00:00Z").unwrap().with_timezone(&Utc));
+
+        let result = build_stage1_entity_ids(&compiled).unwrap();
+
+        assert!(
+            !result.sql.contains("< $1::timestamptz"),
+            "time placeholder must not collide with earlier id-filter placeholders"
+        );
+        assert!(
+            result.sql.contains("::timestamptz"),
+            "temporal comparison should cast bind value to timestamptz"
+        );
     }
 
     #[test]

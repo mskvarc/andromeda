@@ -228,7 +228,14 @@ impl EntityService {
     }
 
     /// 5.6.19 Replace Entity Attribute
-    pub async fn replace_attr(&self, id: &Urn, attr_name: &str, fragment: Value, context: &ContextSpec) -> Result<(), AndromedaError> {
+    pub async fn replace_attr(
+        &self,
+        id: &Urn,
+        attr_name: &str,
+        dataset_id: Option<&str>,
+        fragment: Value,
+        context: &ContextSpec,
+    ) -> Result<(), AndromedaError> {
         let entity_uri = Uri::from(id.clone()); // clone: owned Urn for Uri conversion; id is &Urn
         let id = id.to_string();
 
@@ -250,7 +257,7 @@ impl EntityService {
         // Single fetch: used for showChanges and replacement
         let mut existing = self.repo.get(&id).await?.ok_or_else(|| AndromedaError::entity_not_found(&id))?;
         let previous_attributes = self.change_tx.as_ref().map(|_| existing.clone()); // clone: snapshot before mutation for showChanges diff
-        crate::domain::expanded::replace_attr(&mut existing, &attr_iri, attr_value).map_err(AndromedaError::entity_not_found)?;
+        crate::domain::expanded::replace_attr(&mut existing, &attr_iri, dataset_id, attr_value).map_err(AndromedaError::entity_not_found)?;
         self.repo.save(&id, &existing).await?;
 
         if let Err(e) = self.temporal_recorder.record_entity_attributes(&id, &expanded).await {
