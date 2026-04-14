@@ -12,7 +12,10 @@ use crate::{
         entity::{inject_sys_attrs, query::EntityQueryService},
         subscription_cache::SubscriptionCache,
     },
-    transport::dispatch::{DeliveryResult, TransportDispatcher, build_delivery_request},
+    transport::{
+        dispatch::{DeliveryResult, TransportDispatcher, build_delivery_request},
+        endpoint::EndpointTransport,
+    },
 };
 use chrono::{SecondsFormat, Utc};
 use futures::{StreamExt, stream};
@@ -120,7 +123,22 @@ impl NotificationWorker {
     }
 
     async fn handle_subscription_change(&self, change: SubscriptionChange) {
+        // Close any active SSE connection when a subscription is deleted.
+        if let SubscriptionChange::Deleted(ref id) = change {
+            self.transport.sse_registry().close(&id.to_string());
+        }
         self.cache.handle_change(&change, &self.sub_repo).await;
+
+        // After cache update, close lingering SSE connections if transport
+        // was changed away from SSE (e.g. subscription updated to HTTP).
+        if let SubscriptionChange::Upserted(ref id) = change {
+            let id_str = id.to_string();
+            if let Some(compiled) = self.cache.get(&id_str) {
+                if !matches!(compiled.endpoint_transport, EndpointTransport::Sse) {
+                    self.transport.sse_registry().close(&id_str);
+                }
+            }
+        }
     }
 
     async fn handle_change_event(&self, event: ChangeEvent) {

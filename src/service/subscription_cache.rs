@@ -88,6 +88,11 @@ impl SubscriptionCache {
         find_matching(self.inner.iter().map(|entry| Arc::clone(entry.value())), event)
     }
 
+    /// Look up a single compiled subscription by ID.
+    pub fn get(&self, id: &str) -> Option<Arc<CompiledSubscription>> {
+        self.inner.get(id).map(|entry| Arc::clone(entry.value()))
+    }
+
     /// Returns the number of cached subscriptions.
     pub fn len(&self) -> usize {
         self.inner.len()

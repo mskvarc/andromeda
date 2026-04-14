@@ -16,14 +16,16 @@ use crate::{
         endpoint::{EndpointTransport, extract_key_value_pairs},
         http::{HttpTransport, HttpTransportConfig},
         mqtt::{MqttPoolConfig, MqttTransportHandle, MqttTransportPool},
+        sse::{SseConnectionRegistry, SseNotificationEvent},
         types::{DeliveryOutcome, DeliveryRequest, NotificationTransport, TenantHeaderValue, TransportError, content_type_for_accept},
     },
 };
 
-/// Unified transport dispatcher routing to HTTP or MQTT.
+/// Unified transport dispatcher routing to HTTP, MQTT, or SSE.
 pub struct TransportDispatcher {
     http: HttpTransport,
     mqtt_pool: Arc<MqttTransportPool>,
+    sse_registry: Arc<SseConnectionRegistry>,
 }
 
 /// Result of a notification delivery attempt.
@@ -35,10 +37,14 @@ pub enum DeliveryResult {
 }
 
 impl TransportDispatcher {
-    pub fn new(http_config: HttpTransportConfig, mqtt_config: MqttPoolConfig) -> Result<TransportDispatcher, TransportError> {
+    pub fn new(
+        http_config: HttpTransportConfig,
+        mqtt_config: MqttPoolConfig,
+        sse_registry: Arc<SseConnectionRegistry>,
+    ) -> Result<TransportDispatcher, TransportError> {
         let http = HttpTransport::new(http_config)?;
         let mqtt_pool = Arc::new(MqttTransportPool::new(mqtt_config));
-        Ok(TransportDispatcher { http, mqtt_pool })
+        Ok(TransportDispatcher { http, mqtt_pool, sse_registry })
     }
 
     /// Return a transport handle for the given endpoint.
@@ -46,6 +52,7 @@ impl TransportDispatcher {
         match endpoint {
             EndpointTransport::Http => TransportHandle::Http(&self.http),
             EndpointTransport::Mqtt(config) => TransportHandle::Mqtt(self.mqtt_pool.transport_for(config)),
+            EndpointTransport::Sse => unreachable!("SSE delivery bypasses TransportHandle"),
         }
     }
 
@@ -53,8 +60,14 @@ impl TransportDispatcher {
     ///
     /// This is the primary entry point for all worker delivery. It resolves
     /// the transport, enforces payload limits, delivers, and logs the
-    /// outcome including duration and status details.
+    /// outcome including duration and status details. SSE subscriptions are
+    /// delivered via the connection registry rather than the transport trait.
     pub async fn deliver(&self, endpoint: &EndpointTransport, request: &DeliveryRequest) -> DeliveryResult {
+        // SSE: route through the connection registry instead of the transport trait.
+        if matches!(endpoint, EndpointTransport::Sse) {
+            return self.deliver_sse(request);
+        }
+
         let max_payload = self.http.max_payload_size();
         if request.payload.len() > max_payload {
             warn!(
@@ -104,9 +117,46 @@ impl TransportDispatcher {
         }
     }
 
+    /// Deliver a notification to a connected SSE client via the registry.
+    ///
+    /// Extracts the notification ID from the JSON payload for use as the SSE
+    /// `id:` field (NGSI-LD clause 5.3.1). Falls back to the subscription ID
+    /// if the payload cannot be parsed or lacks an `id` field.
+    fn deliver_sse(&self, request: &DeliveryRequest) -> DeliveryResult {
+        let data = String::from_utf8_lossy(&request.payload).into_owned();
+        // Extract notification ID from payload for SSE event identity (clause 5.3.1).
+        let event_id = serde_json::from_slice::<Value>(&request.payload)
+            .ok()
+            .and_then(|v| v.get("id")?.as_str().map(String::from))
+            .unwrap_or_else(|| request.subscription_id.clone()); // clone: fallback owned string
+        let event = SseNotificationEvent { event_id, data };
+        match self.sse_registry.try_send(&request.subscription_id, event) {
+            Ok(()) => {
+                debug!(
+                    subscription_id = %request.subscription_id,
+                    "SSE notification delivered"
+                );
+                DeliveryResult::Delivered
+            }
+            Err(e) => {
+                debug!(
+                    subscription_id = %request.subscription_id,
+                    error = %e,
+                    "SSE notification delivery failed"
+                );
+                DeliveryResult::Failed
+            }
+        }
+    }
+
     /// Access the MQTT pool for health probe spawning.
     pub const fn mqtt_pool(&self) -> &Arc<MqttTransportPool> {
         &self.mqtt_pool
+    }
+
+    /// Access the SSE connection registry.
+    pub fn sse_registry(&self) -> &Arc<SseConnectionRegistry> {
+        &self.sse_registry
     }
 
     /// Gracefully shut down all transport connections.

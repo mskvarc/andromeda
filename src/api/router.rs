@@ -15,6 +15,7 @@ use crate::{
         info,
         jsonld_context,
         snapshot,
+        sse,
         subscription,
         temporal,
         temporal_operations,
@@ -45,7 +46,7 @@ use crate::{
         runtime::TenantRuntimeManager,
         types::{TenantCreationPolicy, TenantRef},
     },
-    transport::{dispatch::TransportDispatcher, http::HttpTransportConfig, mqtt::MqttPoolConfig},
+    transport::{dispatch::TransportDispatcher, http::HttpTransportConfig, mqtt::MqttPoolConfig, sse::SseConnectionRegistry},
     version::Version,
     worker::{
         batch_side_effects::BatchSideEffectWorker,
@@ -175,7 +176,8 @@ fn build_v1_router() -> Router<AppState> {
         .route("/", get(subscription::query))
         .route("/{subscription_id}", get(subscription::get))
         .route("/{subscription_id}", patch(subscription::update))
-        .route("/{subscription_id}", delete(subscription::delete));
+        .route("/{subscription_id}", delete(subscription::delete))
+        .route("/{subscription_id}/stream", get(sse::stream));
 
     let csr_routes = Router::new()
         .route("/", post(csource_registration::create))
@@ -293,8 +295,9 @@ pub async fn build_tenant_state(
     let csr_service = Arc::new(ContextSourceRegistrationService::new(&pool, engine.clone(), Some(csr_change_tx.clone())));
     let csr_subscription_service = Arc::new(CsourceSubscriptionService::new(&pool, engine.clone(), Some(csr_sub_change_tx.clone())));
 
+    let sse_registry = Arc::new(SseConnectionRegistry::new());
     let transport = Arc::new(
-        TransportDispatcher::new(HttpTransportConfig::default(), MqttPoolConfig::default())
+        TransportDispatcher::new(HttpTransportConfig::default(), MqttPoolConfig::default(), Arc::clone(&sse_registry))
             .map_err(|e| crate::core::error::AndromedaError::internal(format!("Failed to create transport dispatcher: {e}")))?,
     );
 
@@ -403,6 +406,9 @@ pub async fn build_tenant_state(
             forwarding: forwarding_service,
             entity_maps: entity_map_service,
             snapshots: snapshot_service,
+            sse_registry,
+            sse_channel_buffer_size: config.sse.channel_buffer_size,
+            sse_keep_alive_interval_secs: config.sse.keep_alive_interval_secs,
         },
         worker_handles,
         transport_handle,

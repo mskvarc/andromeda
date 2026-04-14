@@ -11,6 +11,7 @@ pub mod i18n;
 pub mod info;
 pub mod jsonld_context;
 pub mod snapshot;
+pub mod sse;
 pub mod subscription;
 pub mod temporal;
 pub mod temporal_operations;

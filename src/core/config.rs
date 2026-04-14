@@ -95,6 +95,10 @@ pub struct Configuration {
     #[config(nested)]
     #[config(layer_attr(clap(flatten)))]
     pub outbox: OutboxConfig,
+
+    #[config(nested)]
+    #[config(layer_attr(clap(flatten)))]
+    pub sse: SseConfig,
 }
 
 #[derive(Config, Debug, Clone)]
@@ -192,6 +196,30 @@ pub struct PerformanceConfig {
     pub max_request_body_bytes: usize,
 }
 
+/// SSE (Server-Sent Events) notification transport configuration.
+#[derive(Config, Debug, Clone)]
+#[config(layer_attr(derive(Args)))]
+pub struct SseConfig {
+    /// Per-connection channel buffer size for SSE notification delivery.
+    #[config(default = 64)]
+    #[config(layer_attr(arg(skip)))]
+    pub channel_buffer_size: usize,
+
+    /// Keep-alive ping interval in seconds for idle SSE connections.
+    #[config(default = 15)]
+    #[config(layer_attr(arg(skip)))]
+    pub keep_alive_interval_secs: u64,
+}
+
+impl Default for SseConfig {
+    fn default() -> SseConfig {
+        SseConfig {
+            channel_buffer_size: 64,
+            keep_alive_interval_secs: 15,
+        }
+    }
+}
+
 #[derive(Config, Debug, Clone)]
 #[config(layer_attr(derive(Args)))]
 pub struct OutboxConfig {
@@ -260,9 +288,22 @@ impl Configuration {
 
         let mut config = Configuration::builder().preloaded(cli.config).env().file(config_file.clone()).load()?;
         normalize_preload_context_paths(&mut config, &config_file);
+        validate_sse_config(&config.sse)?;
 
         Ok(config)
     }
+}
+
+/// Validate SSE configuration values that would cause runtime panics or
+/// pathological behaviour if left unchecked.
+fn validate_sse_config(sse: &SseConfig) -> Result<(), AndromedaError> {
+    if sse.channel_buffer_size == 0 {
+        return Err(AndromedaError::internal("SSE channel_buffer_size must be at least 1"));
+    }
+    if sse.keep_alive_interval_secs == 0 {
+        return Err(AndromedaError::internal("SSE keep_alive_interval_secs must be at least 1"));
+    }
+    Ok(())
 }
 
 fn normalize_preload_context_paths(config: &mut Configuration, config_file: &Path) {
@@ -343,6 +384,7 @@ mod tests {
             },
             performance: PerformanceConfig::default(),
             outbox: OutboxConfig::default(),
+            sse: SseConfig::default(),
         }
     }
 
@@ -458,5 +500,29 @@ mod tests {
         assert_eq!(config.poll_interval_secs, 1);
         assert_eq!(config.batch_size, 50);
         assert_eq!(config.cleanup_after_secs, 86400);
+    }
+
+    #[test]
+    fn sse_channel_buffer_size_zero_rejected() {
+        let sse = SseConfig {
+            channel_buffer_size: 0,
+            keep_alive_interval_secs: 15,
+        };
+        assert!(validate_sse_config(&sse).is_err());
+    }
+
+    #[test]
+    fn sse_keep_alive_interval_zero_rejected() {
+        let sse = SseConfig {
+            channel_buffer_size: 64,
+            keep_alive_interval_secs: 0,
+        };
+        assert!(validate_sse_config(&sse).is_err());
+    }
+
+    #[test]
+    fn sse_valid_config_accepted() {
+        let sse = SseConfig::default();
+        assert!(validate_sse_config(&sse).is_ok());
     }
 }
