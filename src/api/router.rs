@@ -20,6 +20,7 @@ use crate::{
         temporal_operations,
         tenant,
         types,
+        version,
     },
     repository::{
         context_source_registration::ContextSourceRegistrationRepository,
@@ -45,6 +46,7 @@ use crate::{
         types::{TenantCreationPolicy, TenantRef},
     },
     transport::{dispatch::TransportDispatcher, http::HttpTransportConfig, mqtt::MqttPoolConfig},
+    version::Version,
     worker::{
         batch_side_effects::BatchSideEffectWorker,
         csr_interval::CsrIntervalWorker,
@@ -82,6 +84,9 @@ pub async fn create_router(config: Arc<Configuration>) -> Result<Router, Androme
         .route("/health", get(health::check))
         .layer(Health::builder().with_indicator(health_indicator).build());
 
+    let version_service = Version::new(tenants.main_pool().clone());
+    let version_router: Router<AppState> = Router::new().route("/version", get(version::check)).layer(version_service);
+
     let app_state = AppState {
         tenants,
         source_identity: config.info.source_identity.clone(),
@@ -89,7 +94,7 @@ pub async fn create_router(config: Arc<Configuration>) -> Result<Router, Androme
     let max_body = config.performance.max_request_body_bytes;
     let router = Router::new()
         .route("/favicon.ico", get(favicon))
-        .nest("/ngsi-ld/v1", build_v1_router().merge(health_router))
+        .nest("/ngsi-ld/v1", build_v1_router().merge(health_router).merge(version_router))
         .layer(DefaultBodyLimit::max(max_body))
         .layer(HelmetLayer::with_defaults())
         .with_state(app_state);

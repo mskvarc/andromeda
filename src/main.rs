@@ -12,6 +12,7 @@ mod server;
 mod service;
 mod tenancy;
 mod transport;
+mod version;
 mod worker;
 
 use core::{config::Configuration, error::AndromedaError};

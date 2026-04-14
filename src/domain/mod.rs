@@ -20,3 +20,4 @@ pub mod temporal;
 pub mod tenant;
 pub mod types;
 pub mod uri;
+pub mod version;
