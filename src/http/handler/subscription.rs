@@ -16,8 +16,9 @@ use crate::{
     },
     jsonld::ContextSpec,
     renderer::{
-        response::ResponseRenderer,
-        subscription::{render_subscription, strip_jsonld_context},
+        Renderer,
+        response::{ResponsePayload, ResponseRenderer},
+        subscription::{JsonldContextStripRenderer, SubscriptionFlavor, SubscriptionRenderer},
     },
 };
 use axum::{
@@ -61,22 +62,23 @@ pub async fn get(
     let context: ContextSpec = context.into_inner();
     let options = parse_list_options(params.options.as_deref(), &uri)?;
 
-    let mut subscription = service.get_for_response(&subscription_id, &context).await.with_instance(uri.clone())?;
+    let subscription = service.get_for_response(&subscription_id, &context).await.with_instance(uri.clone())?;
 
-    render_subscription(&mut subscription, options.sys_attrs);
+    let subscription = SubscriptionRenderer::new(subscription, SubscriptionFlavor::Local)
+        .with_sys_attrs(options.sys_attrs)
+        .render()?;
 
     // Extract jsonldContext from body and use it for the response context
-    let response_context = if let Some(jsonld_ctx) = strip_jsonld_context(&mut subscription) {
-        if let Some(url) = jsonld_ctx.as_str() {
-            ContextSpec::from_links(vec![url.to_string()])
-        } else {
-            context
-        }
-    } else {
-        context
+    let strip = JsonldContextStripRenderer::new(subscription).render()?;
+    let response_context = match strip.extracted.as_ref().and_then(|v| v.as_str()) {
+        Some(url) => ContextSpec::from_links(vec![url.to_string()]),
+        None => context,
     };
+    let subscription = strip.payload;
 
-    let rendered = ResponseRenderer::new(accept.format(), response_context, PreferHeader::default()).render_single(subscription)?;
+    let rendered = ResponseRenderer::new(accept.format(), response_context, PreferHeader::default())
+        .with_payload(ResponsePayload::Single(subscription))
+        .render()?;
     let response = NgsiLdResponse::ok(rendered).into_response();
     Ok(response)
 }
@@ -106,18 +108,25 @@ pub async fn query(
         ));
     }
 
-    let (mut subscriptions, total) = service
+    let (subscriptions, total) = service
         .list_for_response(Some(limit), Some(offset), &context)
         .await
         .with_instance(uri.clone())?;
 
-    for sub in &mut subscriptions {
-        render_subscription(sub, options.sys_attrs);
-        // Strip jsonldContext from each subscription body
-        strip_jsonld_context(sub);
-    }
+    let subscriptions = subscriptions
+        .into_iter()
+        .map(|sub| {
+            let sub = SubscriptionRenderer::new(sub, SubscriptionFlavor::Local)
+                .with_sys_attrs(options.sys_attrs)
+                .render()?;
+            // Strip jsonldContext from each subscription body
+            Ok::<_, AndromedaError>(JsonldContextStripRenderer::new(sub).render()?.payload)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
 
-    let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default()).render_collection(subscriptions)?;
+    let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default())
+        .with_payload(ResponsePayload::Collection(subscriptions))
+        .render()?;
     let mut response = NgsiLdCollectionResponse::ok(rendered);
 
     if options.count {

@@ -15,7 +15,11 @@ use crate::{
         validation::parse_list_options,
     },
     jsonld::ContextSpec,
-    renderer::{response::ResponseRenderer, subscription::render_csource_subscription},
+    renderer::{
+        Renderer,
+        response::{ResponsePayload, ResponseRenderer},
+        subscription::{SubscriptionFlavor, SubscriptionRenderer},
+    },
 };
 use axum::{
     extract::{OriginalUri, Path},
@@ -56,11 +60,15 @@ pub async fn get(
     let context: ContextSpec = context.into_inner();
     let options = parse_list_options(params.options.as_deref(), &uri)?;
 
-    let mut subscription = service.get_for_response(&subscription_id, &context).await.with_instance(uri.clone())?;
+    let subscription = service.get_for_response(&subscription_id, &context).await.with_instance(uri.clone())?;
 
-    render_csource_subscription(&mut subscription, options.sys_attrs);
+    let subscription = SubscriptionRenderer::new(subscription, SubscriptionFlavor::ContextSource)
+        .with_sys_attrs(options.sys_attrs)
+        .render()?;
 
-    let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default()).render_single(subscription)?;
+    let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default())
+        .with_payload(ResponsePayload::Single(subscription))
+        .render()?;
     let response = NgsiLdResponse::ok(rendered).into_response();
     Ok(response)
 }
@@ -102,16 +110,23 @@ pub async fn query(
         offset
     };
 
-    let (mut subscriptions, total) = service
+    let (subscriptions, total) = service
         .list_for_response(Some(limit), Some(offset), &context)
         .await
         .with_instance(uri.clone())?;
 
-    for sub in &mut subscriptions {
-        render_csource_subscription(sub, options.sys_attrs);
-    }
+    let subscriptions = subscriptions
+        .into_iter()
+        .map(|sub| {
+            SubscriptionRenderer::new(sub, SubscriptionFlavor::ContextSource)
+                .with_sys_attrs(options.sys_attrs)
+                .render()
+        })
+        .collect::<Result<Vec<_>, _>>()?;
 
-    let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default()).render_collection(subscriptions)?;
+    let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default())
+        .with_payload(ResponsePayload::Collection(subscriptions))
+        .render()?;
     let mut response = NgsiLdCollectionResponse::ok(rendered);
 
     if options.count {

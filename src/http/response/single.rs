@@ -21,7 +21,8 @@ use headers::HeaderMapExt;
 ///
 /// ```ignore
 /// let rendered = ResponseRenderer::new(format, context, prefer)
-///     .render_single(entity_value);
+///     .with_payload(ResponsePayload::Single(entity_value))
+///     .render()?;
 /// NgsiLdResponse::ok(rendered)
 ///     .with_location(location)
 ///     .into_response()

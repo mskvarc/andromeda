@@ -9,7 +9,10 @@ use crate::{
         model::info::ContextSourceIdentity,
         response::single::NgsiLdResponse,
     },
-    renderer::response::ResponseRenderer,
+    renderer::{
+        Renderer,
+        response::{ResponsePayload, ResponseRenderer},
+    },
 };
 use axum::{
     extract::{OriginalUri, State},
@@ -25,6 +28,8 @@ pub async fn get(State(state): State<AppState>, OriginalUri(uri): OriginalUri, a
     let context = context.into_inner();
     let value = serde_json::to_value(&identity)
         .map_err(|e| AndromedaError::internal(format!("Failed to serialize context source identity: {}", e)).with_instance(uri))?;
-    let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default()).render_single(value)?;
+    let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default())
+        .with_payload(ResponsePayload::Single(value))
+        .render()?;
     Ok(NgsiLdResponse::ok(rendered).into_response())
 }

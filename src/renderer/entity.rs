@@ -13,6 +13,7 @@ use crate::{
         serde_helpers,
     },
     http::model::language::{LanguageFilter, LanguageRange},
+    renderer::Renderer,
 };
 use chrono::{DateTime, SecondsFormat, Utc};
 use indexmap::IndexMap;
@@ -94,6 +95,10 @@ impl<'a> EntityRenderer<'a> {
         self.mode = mode;
         self
     }
+}
+
+impl<'a> Renderer for EntityRenderer<'a> {
+    type Output = Value;
 
     /// Execute the full rendering pipeline and return the JSON value.
     ///
@@ -101,7 +106,7 @@ impl<'a> EntityRenderer<'a> {
     /// 1. Serialize entity (with language negotiation if filter set)
     /// 2. Apply inline join (if linked entities provided)
     /// 3. Apply concise/simplified transformation (if mode != Normalized)
-    pub fn render(self) -> Result<Value, AndromedaError> {
+    fn render(self) -> Result<Value, AndromedaError> {
         // Fast path: simplified without language filter or inline join can use
         // the domain-level simplify() directly, avoiding a full serialize round-trip.
         if self.mode == RenderMode::Simplified && self.language_filter.is_none() && self.inline_linked_entities.is_none() {
@@ -325,7 +330,7 @@ impl<'a> NegotiatedProperty<'a> {
 /// attribute kind can be inferred from its value key. Sub-attributes and metadata
 /// are preserved. Entity-level keys (`id`, `type`, `scope`, `@context`) pass through
 /// unchanged.
-pub fn concise_value(val: &Value) -> Value {
+pub(crate) fn concise_value(val: &Value) -> Value {
     let Some(obj) = val.as_object() else { return val.clone() };
 
     let mut map = Map::new();
@@ -417,9 +422,10 @@ fn concise_single_instance(attr_obj: &Map<String, Value>) -> Value {
 
 /// Apply `join=inline` expansion to an already-rendered entity response.
 ///
-/// This is kept `pub` for the notification worker which operates on pre-compacted
-/// values rather than `Entity` structs.
-pub fn apply_inline_join(entity: &mut Value, linked: &HashMap<String, Entity>, language_filter: Option<&LanguageFilter>) -> Result<(), AndromedaError> {
+/// Crate-visible so that [`crate::renderer::snapshot::SnapshotRenderer`] can
+/// reuse it against pre-compacted `Value`s; [`EntityRenderer`] calls it
+/// internally for the `&Entity` path.
+pub(crate) fn apply_inline_join(entity: &mut Value, linked: &HashMap<String, Entity>, language_filter: Option<&LanguageFilter>) -> Result<(), AndromedaError> {
     let Some(obj) = entity.as_object_mut() else { return Ok(()) };
     for attr_val in obj.values_mut() {
         match attr_val {
@@ -490,9 +496,10 @@ fn inline_join_attribute_instance(
 /// Convert a normalized rendered entity value into simplified/keyValues form
 /// (NGSI-LD clause 4.5.4).
 ///
-/// This is kept `pub` for the notification worker which operates on pre-compacted
-/// values rather than `Entity` structs.
-pub fn simplify_value(val: &Value) -> Value {
+/// Crate-visible so that [`crate::renderer::snapshot::SnapshotRenderer`] can
+/// reuse it against pre-compacted `Value`s; [`EntityRenderer`] calls it
+/// internally for the `&Entity` path.
+pub(crate) fn simplify_value(val: &Value) -> Value {
     let Some(obj) = val.as_object() else { return val.clone() };
 
     let mut map = Map::new();
@@ -548,7 +555,10 @@ fn simplify_attr_value(value: &Value) -> Value {
 /// entity IDs (e.g. colons). This function decodes them for human-readable
 /// response output. Applied to JSON/LD+JSON responses but not GeoJSON (which
 /// wraps the entity in a Feature envelope).
-pub fn decode_percent_encoded_uris(value: &mut Value) {
+///
+/// Crate-visible so that [`crate::renderer::response::ResponseRenderer`] can
+/// apply this pipeline step before emitting a response.
+pub(crate) fn decode_percent_encoded_uris(value: &mut Value) {
     match value {
         Value::Object(obj) => {
             if obj.get("type").and_then(|t| t.as_str()) == Some("Relationship")
@@ -572,36 +582,11 @@ pub fn decode_percent_encoded_uris(value: &mut Value) {
     }
 }
 
-/// Render a snapshot or pre-serialized entity value by applying attribute filtering
-/// and representation mode transformation.
-///
-/// Used for snapshot-scoped responses (ETSI GS CIM 009 clause 5.5.15) where
-/// the entity data comes from frozen JSONB storage rather than the domain model.
-/// The [`EntityRenderer`] pipeline is not applicable because there is no `Entity`
-/// struct -- only a raw `Value`.
-///
-/// - `attrs`: if `Some`, only retain these attribute keys (plus `id`, `type`, `@context`).
-/// - `mode`: apply simplified/concise/normalized transformation.
-pub fn render_snapshot(mut value: Value, attrs: Option<&[&str]>, mode: RenderMode) -> Value {
-    if let Some(requested) = attrs
-        && let Some(obj) = value.as_object_mut()
-    {
-        let keys_to_keep: std::collections::HashSet<&str> = ["id", "type", "@context"].iter().copied().chain(requested.iter().copied()).collect();
-        obj.retain(|k, _| keys_to_keep.iter().any(|keep| k.ends_with(keep)));
-    }
-
-    match mode {
-        RenderMode::Simplified => simplify_value(&value),
-        RenderMode::Concise => concise_value(&value),
-        RenderMode::Normalized => value,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     #![allow(clippy::expect_used, clippy::unwrap_used)]
-    use super::{EntityRenderer, RenderMode, concise_value, decode_percent_encoded_uris, render_snapshot};
-    use crate::{domain::entity::Entity, http::model::language::LanguageFilter};
+    use super::{EntityRenderer, RenderMode, concise_value, decode_percent_encoded_uris};
+    use crate::{domain::entity::Entity, http::model::language::LanguageFilter, renderer::Renderer};
     use serde_json::{Value, json};
 
     fn parse_entity(value: Value) -> Entity {
@@ -1019,62 +1004,6 @@ mod tests {
 
         let rendered = EntityRenderer::new(&entity).with_mode(RenderMode::Concise).render().expect("concise");
         pretty_assertions::assert_eq!(rendered["name"]["collate"]["value"], "tower");
-    }
-
-    #[test]
-    fn render_snapshot_preserves_collate() {
-        let value = json!({
-            "id": "urn:x", "type": "T",
-            "name": {
-                "type": "Property",
-                "value": "Tower",
-                "collate": {"type": "Property", "value": "tower"}
-            }
-        });
-        let result = render_snapshot(value, None, RenderMode::Normalized);
-        pretty_assertions::assert_eq!(result["name"]["collate"]["value"], "tower");
-        pretty_assertions::assert_eq!(result["name"]["value"], "Tower");
-    }
-
-    // --- render_snapshot tests ---
-
-    #[test]
-    fn render_snapshot_filters_attrs() {
-        let value = json!({"id": "urn:x", "type": "T", "name": {"type": "Property", "value": "x"}, "temp": {"type": "Property", "value": 25}});
-        let result = render_snapshot(value, Some(&["name"]), RenderMode::Normalized);
-        assert!(result.get("name").is_some());
-        assert!(result.get("temp").is_none());
-        assert!(result.get("id").is_some());
-        assert!(result.get("type").is_some());
-    }
-
-    #[test]
-    fn render_snapshot_applies_simplified_mode() {
-        let value = json!({"id": "urn:x", "type": "T", "name": {"type": "Property", "value": "Tower"}});
-        let result = render_snapshot(value, None, RenderMode::Simplified);
-        pretty_assertions::assert_eq!(result["name"], "Tower");
-    }
-
-    #[test]
-    fn render_snapshot_applies_concise_mode() {
-        let value = json!({"id": "urn:x", "type": "T", "name": {"type": "Property", "value": "Tower"}});
-        let result = render_snapshot(value, None, RenderMode::Concise);
-        pretty_assertions::assert_eq!(result["name"], "Tower");
-    }
-
-    #[test]
-    fn render_snapshot_normalized_mode_is_identity() {
-        let value = json!({"id": "urn:x", "type": "T", "name": {"type": "Property", "value": "Tower"}});
-        let result = render_snapshot(value.clone(), None, RenderMode::Normalized);
-        pretty_assertions::assert_eq!(result, value);
-    }
-
-    #[test]
-    fn render_snapshot_filters_then_transforms() {
-        let value = json!({"id": "urn:x", "type": "T", "name": {"type": "Property", "value": "Tower"}, "temp": {"type": "Property", "value": 25}});
-        let result = render_snapshot(value, Some(&["name"]), RenderMode::Simplified);
-        pretty_assertions::assert_eq!(result["name"], "Tower");
-        assert!(result.get("temp").is_none());
     }
 
     // --- apply_inline_join tests (NGSI-LD clause 4.11) ---

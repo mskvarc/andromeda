@@ -22,7 +22,11 @@ use crate::{
         },
         response::{batch::NgsiLdBatchResponse, collection::NgsiLdCollectionResponse},
     },
-    renderer::{entity::EntityRenderer, response::ResponseRenderer},
+    renderer::{
+        Renderer,
+        entity::EntityRenderer,
+        response::{ResponsePayload, ResponseRenderer},
+    },
     service::{
         context_source_forwarding::{CsrModeFilter, ForwardBatchProvisionRequest, ForwardQueryRequest, ForwardingOperation, collect_warnings},
         entity::{provision_forwarding::ForwardingModes, query::EntityQueryService},
@@ -144,7 +148,8 @@ pub async fn query(
             }
             let rendered = ResponseRenderer::new(accept.format(), context, protocol.prefer)
                 .with_geometry_property(geometry_property)
-                .render_collection(all_values)?;
+                .with_payload(ResponsePayload::Collection(all_values))
+                .render()?;
             let mut response = NgsiLdCollectionResponse::ok(rendered).with_warnings(warnings);
             if let Some(count) = total_count {
                 response = response.with_total_count(count as usize);
@@ -165,7 +170,8 @@ pub async fn query(
             }
             let rendered = ResponseRenderer::new(accept.format(), context, protocol.prefer)
                 .with_geometry_property(geometry_property)
-                .render_collection(entity_values)?;
+                .with_payload(ResponsePayload::Collection(entity_values))
+                .render()?;
             let mut response = NgsiLdCollectionResponse::ok(rendered).with_warnings(warnings);
             if let Some(count) = total_count {
                 response = response.with_total_count(count as usize);
@@ -186,7 +192,8 @@ pub async fn query(
         .with_instance(uri.clone())?;
     let rendered = ResponseRenderer::new(accept.format(), context, protocol.prefer)
         .with_geometry_property(geometry_property)
-        .render_collection(entity_values)?;
+        .with_payload(ResponsePayload::Collection(entity_values))
+        .render()?;
     let mut response = NgsiLdCollectionResponse::ok(rendered).with_warnings(warnings);
     if let Some(count) = total_count {
         response = response.with_total_count(count as usize);
@@ -258,12 +265,16 @@ pub async fn batch_create(
     if result.errors.is_empty() {
         let value = serde_json::to_value(&result.success)
             .map_err(|e| AndromedaError::internal(format!("Failed to serialize batch result: {}", e)).with_instance(uri.clone()))?;
-        let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default()).render_batch(value)?;
+        let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default())
+            .with_payload(ResponsePayload::Batch(value))
+            .render()?;
         Ok(NgsiLdBatchResponse::new(StatusCode::CREATED, rendered).into_response())
     } else {
         let value = serde_json::to_value(&result)
             .map_err(|e| AndromedaError::internal(format!("Failed to serialize batch result: {}", e)).with_instance(uri.clone()))?;
-        let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default()).render_batch(value)?;
+        let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default())
+            .with_payload(ResponsePayload::Batch(value))
+            .render()?;
         Ok(NgsiLdBatchResponse::new(StatusCode::MULTI_STATUS, rendered).into_response())
     }
 }
@@ -338,13 +349,17 @@ pub async fn batch_upsert(
         } else {
             let value = serde_json::to_value(&created_ids)
                 .map_err(|e| AndromedaError::internal(format!("Failed to serialize batch result: {}", e)).with_instance(uri.clone()))?;
-            let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default()).render_batch(value)?;
+            let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default())
+                .with_payload(ResponsePayload::Batch(value))
+                .render()?;
             Ok(NgsiLdBatchResponse::new(StatusCode::CREATED, rendered).into_response())
         }
     } else {
         let value = serde_json::to_value(&result)
             .map_err(|e| AndromedaError::internal(format!("Failed to serialize batch result: {}", e)).with_instance(uri.clone()))?;
-        let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default()).render_batch(value)?;
+        let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default())
+            .with_payload(ResponsePayload::Batch(value))
+            .render()?;
         Ok(NgsiLdBatchResponse::new(StatusCode::MULTI_STATUS, rendered).into_response())
     }
 }
@@ -416,7 +431,9 @@ pub async fn batch_update(
     } else {
         let value = serde_json::to_value(&result)
             .map_err(|e| AndromedaError::internal(format!("Failed to serialize batch result: {}", e)).with_instance(uri.clone()))?;
-        let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default()).render_batch(value)?;
+        let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default())
+            .with_payload(ResponsePayload::Batch(value))
+            .render()?;
         Ok(NgsiLdBatchResponse::new(StatusCode::MULTI_STATUS, rendered).into_response())
     }
 }
@@ -484,7 +501,9 @@ pub async fn batch_merge(
     } else {
         let value = serde_json::to_value(&result)
             .map_err(|e| AndromedaError::internal(format!("Failed to serialize batch result: {}", e)).with_instance(uri.clone()))?;
-        let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default()).render_batch(value)?;
+        let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default())
+            .with_payload(ResponsePayload::Batch(value))
+            .render()?;
         Ok(NgsiLdBatchResponse::new(StatusCode::MULTI_STATUS, rendered).into_response())
     }
 }
@@ -558,7 +577,9 @@ pub async fn batch_delete(
     } else {
         let value = serde_json::to_value(&result)
             .map_err(|e| AndromedaError::internal(format!("Failed to serialize batch result: {}", e)).with_instance(uri.clone()))?;
-        let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default()).render_batch(value)?;
+        let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default())
+            .with_payload(ResponsePayload::Batch(value))
+            .render()?;
         Ok(NgsiLdBatchResponse::new(StatusCode::MULTI_STATUS, rendered).into_response())
     }
 }

@@ -7,10 +7,7 @@ use crate::{
         notification::{CompiledSubscription, TriggerReason},
     },
     jsonld::{CompactOptions, ContextSpec, ContextStripping, JsonLdEngine, vocab},
-    renderer::{
-        SysAttrsInclusion,
-        entity::{apply_inline_join, simplify_value},
-    },
+    renderer::{Renderer, SysAttrsInclusion, entity::RenderMode, snapshot::SnapshotRenderer},
     service::entity::{expanded_entity_object_mut, inject_attr_sys_attrs, query::EntityQueryService},
 };
 use chrono::{DateTime, SecondsFormat, Utc};
@@ -226,8 +223,12 @@ pub async fn build_notification_data(params: NotificationBuildParams<'_>) -> Vec
                 .await
             {
                 Ok(linked_map) => {
-                    if let Err(error) = apply_inline_join(&mut all_compacted[0], &linked_map, None) {
-                        debug!("Failed to apply join=inline to notification payload: {}", error);
+                    let payload = std::mem::take(&mut all_compacted[0]);
+                    match SnapshotRenderer::new(payload).with_inline_linked_entities(&linked_map).render() {
+                        Ok(rendered) => all_compacted[0] = rendered,
+                        Err(error) => {
+                            debug!("Failed to apply join=inline to notification payload: {}", error);
+                        }
                     }
                 }
                 Err(e) => {
@@ -243,7 +244,13 @@ pub async fn build_notification_data(params: NotificationBuildParams<'_>) -> Vec
     for item in all_compacted {
         let formatted = if is_simplified {
             if has_inline_join {
-                simplify_value(&item)
+                match SnapshotRenderer::new(item.clone()).with_mode(RenderMode::Simplified).render() {
+                    Ok(simplified) => simplified,
+                    Err(error) => {
+                        debug!("Failed to simplify inline-joined notification payload: {}", error);
+                        item
+                    }
+                }
             } else {
                 match serde_json::from_value::<Entity>(item.clone()) {
                     Ok(entity) => entity.simplify(),

@@ -11,7 +11,10 @@ use crate::{
         validation::validate_name_or_iri,
     },
     jsonld::ContextSpec,
-    renderer::response::ResponseRenderer,
+    renderer::{
+        Renderer,
+        response::{ResponsePayload, ResponseRenderer},
+    },
     service::context_source_forwarding::{collect_discovery_warnings, merge_type_info_results, merge_types_results},
 };
 use axum::{
@@ -49,7 +52,9 @@ pub async fn query(
             (merged, warnings)
         };
 
-        let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default()).render_single(result)?;
+        let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default())
+            .with_payload(ResponsePayload::Single(result))
+            .render()?;
         Ok(NgsiLdResponse::ok(rendered).with_warnings(warnings).into_response())
     } else {
         let types = service.types(&context).await.with_instance(uri.clone())?;
@@ -70,7 +75,9 @@ pub async fn query(
             (merged, warnings)
         };
 
-        let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default()).render_single(result)?;
+        let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default())
+            .with_payload(ResponsePayload::Single(result))
+            .render()?;
         Ok(NgsiLdResponse::ok(rendered).with_warnings(warnings).into_response())
     }
 }
@@ -107,6 +114,8 @@ pub async fn get(
         (merged, warnings)
     };
 
-    let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default()).render_single(result)?;
+    let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default())
+        .with_payload(ResponsePayload::Single(result))
+        .render()?;
     Ok(NgsiLdResponse::ok(rendered).with_warnings(warnings).into_response())
 }

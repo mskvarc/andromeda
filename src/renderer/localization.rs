@@ -5,46 +5,73 @@
 //! This is a presentation-layer concern: the domain model is unchanged, only
 //! the wire representation is adapted for human consumption.
 
+use crate::{core::error::AndromedaError, renderer::Renderer};
 use chrono::{DateTime, Utc};
 use serde_json::Value;
 use std::collections::HashSet;
 
-/// Localize selected attributes of an entity to display strings.
-///
-/// For each attribute in `localized_attrs` (or all non-structural attributes
-/// if `None`), attempts to convert datetime and currency values to
-/// locale-appropriate display strings.  Unrecognized or non-localizable
-/// attributes are left unchanged.
-pub fn localize_entity_value(mut value: Value, locale: &str, localized_attrs: Option<&HashSet<String>>) -> Value {
-    let Some(object) = value.as_object_mut() else {
-        return value;
-    };
+/// Renders entity attribute values into locale-specific display strings
+/// (NGSI-LD Annex G.3 i18n proxy).
+#[derive(Debug)]
+pub struct LocalizationRenderer<'a> {
+    payload: Value,
+    locale: &'a str,
+    attrs_filter: Option<&'a HashSet<String>>,
+}
 
-    let keys: Vec<String> = object.keys().cloned().collect();
-    for key in keys {
-        if matches!(key.as_str(), "id" | "type" | "@context") {
-            continue;
-        }
-
-        if let Some(filter) = localized_attrs
-            && !filter.contains(key.as_str())
-        {
-            continue;
-        }
-
-        if let Some(attr_value) = object.get_mut(&key)
-            && let Some(localized) = localize_attribute_value(attr_value, locale)
-        {
-            *attr_value = localized;
+impl<'a> LocalizationRenderer<'a> {
+    /// Create a renderer for the given entity payload and locale.
+    pub const fn new(payload: Value, locale: &'a str) -> LocalizationRenderer<'a> {
+        LocalizationRenderer {
+            payload,
+            locale,
+            attrs_filter: None,
         }
     }
 
-    value
+    /// Restrict localization to the given attribute names. When unset,
+    /// every non-structural attribute is localized.
+    pub const fn with_attrs_filter(mut self, attrs: Option<&'a HashSet<String>>) -> Self {
+        self.attrs_filter = attrs;
+        self
+    }
 }
 
-// ---------------------------------------------------------------------------
-// Private helpers
-// ---------------------------------------------------------------------------
+impl<'a> Renderer for LocalizationRenderer<'a> {
+    type Output = Value;
+
+    fn render(self) -> Result<Value, AndromedaError> {
+        let LocalizationRenderer {
+            mut payload,
+            locale,
+            attrs_filter,
+        } = self;
+        let Some(object) = payload.as_object_mut() else {
+            return Ok(payload);
+        };
+
+        let keys: Vec<String> = object.keys().cloned().collect();
+        for key in keys {
+            if matches!(key.as_str(), "id" | "type" | "@context") {
+                continue;
+            }
+
+            if let Some(filter) = attrs_filter
+                && !filter.contains(key.as_str())
+            {
+                continue;
+            }
+
+            if let Some(attr_value) = object.get_mut(&key)
+                && let Some(localized) = localize_attribute_value(attr_value, locale)
+            {
+                *attr_value = localized;
+            }
+        }
+
+        Ok(payload)
+    }
+}
 
 fn localize_attribute_value(value: &Value, locale: &str) -> Option<Value> {
     let object = value.as_object()?;
@@ -78,7 +105,10 @@ fn format_datetime_display(datetime: DateTime<Utc>, locale: &str) -> String {
     let language = locale.split('-').next().unwrap_or(locale);
     match language {
         "de" => datetime.format("%d.%m.%Y %H:%M:%S UTC").to_string(),
-        _ => datetime.format("%Y-%m-%d %I:%M:%S %p UTC").to_string(),
+        other => {
+            let _ = other;
+            datetime.format("%Y-%m-%d %I:%M:%S %p UTC").to_string()
+        }
     }
 }
 
@@ -86,7 +116,10 @@ fn format_currency_display(amount: f64, unit_code: &str, locale: &str) -> String
     let language = locale.split('-').next().unwrap_or(locale);
     let (thousands, decimal, symbol_after) = match language {
         "de" => ('.', ',', true),
-        _ => (',', '.', false),
+        other => {
+            let _ = other;
+            (',', '.', false)
+        }
     };
 
     let number = format_number(amount, thousands, decimal);
@@ -120,15 +153,15 @@ fn is_currency_code(value: &str) -> bool {
     value.len() == 3 && value.chars().all(|character| character.is_ascii_alphabetic())
 }
 
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
-
 #[cfg(test)]
 mod tests {
     #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::*;
     use serde_json::json;
+
+    fn localize(payload: Value, locale: &str, filter: Option<&HashSet<String>>) -> Value {
+        LocalizationRenderer::new(payload, locale).with_attrs_filter(filter).render().expect("render")
+    }
 
     #[test]
     fn localize_attribute_value_datetime_de() {
@@ -174,7 +207,7 @@ mod tests {
             "name": {"type": "Property", "value": "test"}
         });
         let filter: HashSet<String> = ["date".to_string()].into_iter().collect();
-        let result = localize_entity_value(entity, "de-DE", Some(&filter));
+        let result = localize(entity, "de-DE", Some(&filter));
         pretty_assertions::assert_eq!(result["date"], "28.09.2020 17:13:39 UTC");
         // name was not in filter, so it should remain unchanged
         pretty_assertions::assert_eq!(result["name"]["value"], "test");
@@ -187,7 +220,7 @@ mod tests {
             "type": "Offer",
             "@context": "https://example.com"
         });
-        let result = localize_entity_value(entity, "en-US", None);
+        let result = localize(entity, "en-US", None);
         pretty_assertions::assert_eq!(result["id"], "urn:test:1");
         pretty_assertions::assert_eq!(result["type"], "Offer");
         pretty_assertions::assert_eq!(result["@context"], "https://example.com");

@@ -7,7 +7,7 @@
 use crate::{
     http::{extractor::error::ExtractorRejection, header::link::Link, model::version::NgsiLdVersion},
     jsonld::ContextSpec,
-    renderer::version::VersionRenderer,
+    renderer::{Renderer, version::VersionRenderer},
 };
 use axum::{
     body::Bytes,
@@ -215,7 +215,10 @@ where
         // conformance fallbacks (clause 4.3.6.8) to the incoming payload so
         // that features from a newer spec version are adapted before validation.
         if has_version_profile(&link_header_strings) {
-            VersionRenderer::new(NgsiLdVersion::CONFORMANT).render(&mut value);
+            value = VersionRenderer::new(NgsiLdVersion::CONFORMANT)
+                .with_payload(value)
+                .render()
+                .map_err(|error| ExtractorRejection::invalid_request(format!("Version adaptation failed: {}", error), uri.clone()))?;
         }
 
         // Per NGSI-LD 6.3.5: application/json MUST NOT contain @context in body

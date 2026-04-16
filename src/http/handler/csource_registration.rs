@@ -15,7 +15,11 @@ use crate::{
         validation::parse_csr_id,
     },
     jsonld::ContextSpec,
-    renderer::{registration::render_registration, response::ResponseRenderer},
+    renderer::{
+        Renderer,
+        registration::RegistrationRenderer,
+        response::{ResponsePayload, ResponseRenderer},
+    },
 };
 use axum::{
     extract::{OriginalUri, Path},
@@ -57,11 +61,13 @@ pub async fn get(
     let context: ContextSpec = context.into_inner();
     let options = params.parse_options();
 
-    let mut csr = service.get(&registration_id, &context).await.with_instance(uri.clone())?;
+    let csr = service.get(&registration_id, &context).await.with_instance(uri.clone())?;
 
-    render_registration(&mut csr, options.sys_attrs);
+    let csr = RegistrationRenderer::new(csr).with_sys_attrs(options.sys_attrs).render()?;
 
-    let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default()).render_single(csr)?;
+    let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default())
+        .with_payload(ResponsePayload::Single(csr))
+        .render()?;
     Ok(NgsiLdResponse::ok(rendered).into_response())
 }
 
@@ -80,13 +86,16 @@ pub async fn query(
     let limit = params.effective_limit() as i64;
     let offset = params.effective_offset() as i64;
 
-    let (mut csrs, total) = service.query(&params, &context).await.with_instance(uri.clone())?;
+    let (csrs, total) = service.query(&params, &context).await.with_instance(uri.clone())?;
 
-    for csr in &mut csrs {
-        render_registration(csr, options.sys_attrs);
-    }
+    let csrs = csrs
+        .into_iter()
+        .map(|csr| RegistrationRenderer::new(csr).with_sys_attrs(options.sys_attrs).render())
+        .collect::<Result<Vec<_>, _>>()?;
 
-    let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default()).render_collection(csrs)?;
+    let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default())
+        .with_payload(ResponsePayload::Collection(csrs))
+        .render()?;
     let response = NgsiLdCollectionResponse::ok(rendered).with_total_count(total as usize);
 
     let mut response = response.into_response();

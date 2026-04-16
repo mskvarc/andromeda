@@ -5,9 +5,19 @@
 //! crate for type-safe construction; `@context` is injected post-serialization
 //! because it is an NGSI-LD extension absent from the GeoJSON spec.
 
-use crate::{core::error::AndromedaError, jsonld::vocab};
+use crate::{core::error::AndromedaError, jsonld::vocab, renderer::Renderer};
 use geojson::{Feature, FeatureCollection, feature::Id};
 use serde_json::{Map, Value};
+
+/// Output shape selector for [`GeoJsonRenderer`].
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum GeoJsonShape {
+    /// Render a single entity as a GeoJSON Feature.
+    #[default]
+    Feature,
+    /// Render an array of entities as a GeoJSON FeatureCollection.
+    FeatureCollection,
+}
 
 /// Renders NGSI-LD JSON objects into GeoJSON Features or FeatureCollections.
 #[derive(Debug)]
@@ -15,6 +25,7 @@ pub struct GeoJsonRenderer<'a> {
     payload: Value,
     context_value: Option<Value>,
     geometry_property: Option<&'a str>,
+    shape: GeoJsonShape,
 }
 
 impl<'a> GeoJsonRenderer<'a> {
@@ -24,6 +35,7 @@ impl<'a> GeoJsonRenderer<'a> {
             payload,
             context_value: None,
             geometry_property: None,
+            shape: GeoJsonShape::Feature,
         }
     }
 
@@ -39,33 +51,35 @@ impl<'a> GeoJsonRenderer<'a> {
         self
     }
 
-    /// Convert the entity JSON object payload to a GeoJSON Feature.
-    pub fn render_entity(self) -> Result<Value, AndromedaError> {
-        let feature = entity_to_feature(&self.payload, self.geometry_property);
-        let mut value = serde_json::to_value(feature).map_err(|e| AndromedaError::internal(format!("Failed to serialize GeoJSON Feature: {}", e)))?;
-        if let Some(ctx) = self.context_value
-            && let Some(obj) = value.as_object_mut()
-        {
-            obj.insert("@context".to_string(), ctx);
-        }
-        Ok(value)
+    /// Set the output shape (Feature for single entity, FeatureCollection for an array).
+    pub const fn with_shape(mut self, shape: GeoJsonShape) -> Self {
+        self.shape = shape;
+        self
     }
+}
 
-    /// Convert the array of entities payload to a GeoJSON FeatureCollection.
-    pub fn render_collection(self) -> Result<Value, AndromedaError> {
-        let features = match self.payload {
-            Value::Array(items) => items.iter().map(|e| entity_to_feature(e, self.geometry_property)).collect(),
-            _ => Vec::new(),
+impl<'a> Renderer for GeoJsonRenderer<'a> {
+    type Output = Value;
+
+    fn render(self) -> Result<Value, AndromedaError> {
+        let mut value = match self.shape {
+            GeoJsonShape::Feature => {
+                let feature = entity_to_feature(&self.payload, self.geometry_property);
+                serde_json::to_value(feature).map_err(|e| AndromedaError::internal(format!("Failed to serialize GeoJSON Feature: {}", e)))?
+            }
+            GeoJsonShape::FeatureCollection => {
+                let features = match &self.payload {
+                    Value::Array(items) => items.iter().map(|e| entity_to_feature(e, self.geometry_property)).collect(),
+                    Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) | Value::Object(_) => Vec::new(),
+                };
+                let collection = FeatureCollection {
+                    bbox: None,
+                    features,
+                    foreign_members: None,
+                };
+                serde_json::to_value(collection).map_err(|e| AndromedaError::internal(format!("Failed to serialize GeoJSON FeatureCollection: {}", e)))?
+            }
         };
-
-        let collection = FeatureCollection {
-            bbox: None,
-            features,
-            foreign_members: None,
-        };
-
-        let mut value =
-            serde_json::to_value(collection).map_err(|e| AndromedaError::internal(format!("Failed to serialize GeoJSON FeatureCollection: {}", e)))?;
         if let Some(ctx) = self.context_value
             && let Some(obj) = value.as_object_mut()
         {
@@ -160,7 +174,10 @@ mod tests {
             }
         ]);
 
-        let geo = GeoJsonRenderer::new(entities).render_collection().expect("GeoJSON collection");
+        let geo = GeoJsonRenderer::new(entities)
+            .with_shape(GeoJsonShape::FeatureCollection)
+            .render()
+            .expect("GeoJSON collection");
         pretty_assertions::assert_eq!(geo["type"], "FeatureCollection");
         let features = geo["features"].as_array().expect("features array");
         pretty_assertions::assert_eq!(features.len(), 1);
@@ -176,7 +193,7 @@ mod tests {
     #[test]
     fn null_geometry_when_no_location() {
         let entity = json!({"id": "urn:x", "type": "T", "name": {"type": "Property", "value": "foo"}});
-        let geo = GeoJsonRenderer::new(entity).render_entity().expect("GeoJSON entity");
+        let geo = GeoJsonRenderer::new(entity).render().expect("GeoJSON entity");
         pretty_assertions::assert_eq!(geo["type"], "Feature");
         assert!(geo["geometry"].is_null());
     }
@@ -192,7 +209,7 @@ mod tests {
         });
         let geo = GeoJsonRenderer::new(entity)
             .with_geometry_property(Some("observationSpace"))
-            .render_entity()
+            .render()
             .expect("GeoJSON entity");
         pretty_assertions::assert_eq!(geo["geometry"]["type"], "Polygon");
     }
@@ -203,7 +220,7 @@ mod tests {
             "id": "urn:x", "type": "T",
             "location": {"type": "Point", "coordinates": [1.0, 2.0]}
         });
-        let geo = GeoJsonRenderer::new(entity).render_entity().expect("GeoJSON entity");
+        let geo = GeoJsonRenderer::new(entity).render().expect("GeoJSON entity");
         pretty_assertions::assert_eq!(geo["geometry"]["type"], "Point");
         pretty_assertions::assert_eq!(geo["geometry"]["coordinates"], json!([1.0, 2.0]));
     }
@@ -211,13 +228,16 @@ mod tests {
     #[test]
     fn feature_id_matches_entity_id() {
         let entity = json!({"id": "urn:ngsi-ld:Entity:42", "type": "T"});
-        let geo = GeoJsonRenderer::new(entity).render_entity().expect("GeoJSON entity");
+        let geo = GeoJsonRenderer::new(entity).render().expect("GeoJSON entity");
         pretty_assertions::assert_eq!(geo["id"], "urn:ngsi-ld:Entity:42");
     }
 
     #[test]
     fn empty_array_produces_empty_collection() {
-        let geo = GeoJsonRenderer::new(json!([])).render_collection().expect("GeoJSON collection");
+        let geo = GeoJsonRenderer::new(json!([]))
+            .with_shape(GeoJsonShape::FeatureCollection)
+            .render()
+            .expect("GeoJSON collection");
         pretty_assertions::assert_eq!(geo["type"], "FeatureCollection");
         pretty_assertions::assert_eq!(geo["features"].as_array().expect("features").len(), 0);
     }
@@ -226,10 +246,7 @@ mod tests {
     fn context_injected_into_feature() {
         let entity = json!({"id": "urn:x", "type": "T"});
         let ctx = json!("https://example.org/ctx");
-        let geo = GeoJsonRenderer::new(entity)
-            .with_context(Some(ctx.clone()))
-            .render_entity()
-            .expect("GeoJSON entity");
+        let geo = GeoJsonRenderer::new(entity).with_context(Some(ctx.clone())).render().expect("GeoJSON entity");
         pretty_assertions::assert_eq!(geo["@context"], ctx);
     }
 
@@ -239,14 +256,15 @@ mod tests {
         let ctx = json!("https://example.org/ctx");
         let geo = GeoJsonRenderer::new(entities)
             .with_context(Some(ctx.clone()))
-            .render_collection()
+            .with_shape(GeoJsonShape::FeatureCollection)
+            .render()
             .expect("GeoJSON collection");
         pretty_assertions::assert_eq!(geo["@context"], ctx);
     }
 
     #[test]
     fn non_object_entity_produces_feature_with_null_geometry() {
-        let geo = GeoJsonRenderer::new(json!("bad")).render_entity().expect("GeoJSON entity");
+        let geo = GeoJsonRenderer::new(json!("bad")).render().expect("GeoJSON entity");
         pretty_assertions::assert_eq!(geo["type"], "Feature");
         assert!(geo["geometry"].is_null());
     }

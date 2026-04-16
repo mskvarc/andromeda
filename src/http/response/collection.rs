@@ -21,7 +21,8 @@ use headers::HeaderMapExt;
 ///
 /// ```ignore
 /// let rendered = ResponseRenderer::new(format, context, prefer)
-///     .render_collection(entity_values);
+///     .with_payload(ResponsePayload::Collection(entity_values))
+///     .render()?;
 /// NgsiLdCollectionResponse::ok(rendered)
 ///     .with_total_count(count)
 ///     .into_response()

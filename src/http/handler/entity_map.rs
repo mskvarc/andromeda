@@ -12,7 +12,10 @@ use crate::{
         validation::parse_entity_map_id,
     },
     jsonld::ContextSpec,
-    renderer::response::ResponseRenderer,
+    renderer::{
+        Renderer,
+        response::{ResponsePayload, ResponseRenderer},
+    },
     service::entity_map::parse_iso8601_duration,
 };
 use axum::{
@@ -38,7 +41,9 @@ pub async fn get(
     let map = state.entity_maps.retrieve(&entity_map_id).await.with_instance(uri.clone())?;
 
     let value = serde_json::to_value(&map).map_err(|e| AndromedaError::internal(format!("Failed to serialize entity map: {}", e)).with_instance(uri))?;
-    let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default()).render_single(value)?;
+    let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default())
+        .with_payload(ResponsePayload::Single(value))
+        .render()?;
     Ok(NgsiLdResponse::ok(rendered).into_response())
 }
 
@@ -114,7 +119,9 @@ pub async fn create_from_query(
     let map_uri = map.id.to_string();
 
     let value = serde_json::to_value(&map).map_err(|e| AndromedaError::internal(format!("Failed to serialize entity map: {}", e)).with_instance(uri))?;
-    let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default()).render_single(value)?;
+    let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default())
+        .with_payload(ResponsePayload::Single(value))
+        .render()?;
 
     Ok(NgsiLdResponse::new(StatusCode::CREATED, rendered)
         .with_location(location)
@@ -162,7 +169,9 @@ pub async fn create_from_query_post(
     let map_uri = map.id.to_string();
 
     let value = serde_json::to_value(&map).map_err(|e| AndromedaError::internal(format!("Failed to serialize entity map: {}", e)).with_instance(uri))?;
-    let rendered = ResponseRenderer::new(accept.format(), context_spec, PreferHeader::default()).render_single(value)?;
+    let rendered = ResponseRenderer::new(accept.format(), context_spec, PreferHeader::default())
+        .with_payload(ResponsePayload::Single(value))
+        .render()?;
 
     Ok(NgsiLdResponse::new(StatusCode::CREATED, rendered)
         .with_location(location)
@@ -204,7 +213,9 @@ pub async fn create_temporal_from_query(
     let map_uri = map.id.to_string();
 
     let value = serde_json::to_value(&map).map_err(|e| AndromedaError::internal(format!("Failed to serialize entity map: {}", e)).with_instance(uri))?;
-    let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default()).render_single(value)?;
+    let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default())
+        .with_payload(ResponsePayload::Single(value))
+        .render()?;
 
     Ok(NgsiLdResponse::new(StatusCode::CREATED, rendered)
         .with_location(location)
@@ -252,7 +263,9 @@ pub async fn create_temporal_from_query_post(
     let map_uri = map.id.to_string();
 
     let value = serde_json::to_value(&map).map_err(|e| AndromedaError::internal(format!("Failed to serialize entity map: {}", e)).with_instance(uri))?;
-    let rendered = ResponseRenderer::new(accept.format(), context_spec, PreferHeader::default()).render_single(value)?;
+    let rendered = ResponseRenderer::new(accept.format(), context_spec, PreferHeader::default())
+        .with_payload(ResponsePayload::Single(value))
+        .render()?;
 
     Ok(NgsiLdResponse::new(StatusCode::CREATED, rendered)
         .with_location(location)

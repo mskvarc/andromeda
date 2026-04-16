@@ -10,7 +10,10 @@ use crate::{
         parameter::query::temporal::TemporalQueryParameters,
         response::collection::NgsiLdCollectionResponse,
     },
-    renderer::response::ResponseRenderer,
+    renderer::{
+        Renderer,
+        response::{ResponsePayload, ResponseRenderer},
+    },
     service::{
         context_source_forwarding::{CsrModeFilter, ForwardTemporalQueryRequest, ForwardingOperation, collect_warnings},
         temporal::{TemporalQueryResult, TemporalService},
@@ -83,7 +86,9 @@ pub async fn query(
         (merged, warnings)
     };
 
-    let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default()).render_collection(entities)?;
+    let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default())
+        .with_payload(ResponsePayload::Collection(entities))
+        .render()?;
     let mut response = NgsiLdCollectionResponse::ok(rendered).with_warnings(forwarding_warnings);
     if let Some(count) = total_count {
         response = response.with_total_count(count as usize);

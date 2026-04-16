@@ -8,9 +8,9 @@
 //! - `@context` body injection for `application/ld+json` responses
 //! - GeoJSON Feature / FeatureCollection wrapping for `application/geo+json` responses
 //!
-//! API handlers configure the renderer via builder methods and call one of the
-//! `render_*` methods. The resulting [`RenderedOutput`] is passed directly to
-//! the response type for header construction and serialization.
+//! API handlers configure the renderer via builder methods and call
+//! [`Renderer::render`]. The resulting [`RenderedOutput`] is passed directly
+//! to the response type for header construction and serialization.
 
 use crate::{
     core::error::AndromedaError,
@@ -19,9 +19,33 @@ use crate::{
         model::{preference::GeoJsonBodyPreference, response_format::ResponseFormat},
     },
     jsonld::ContextSpec,
-    renderer::{ContextLocation, VersionAdaptation, entity::decode_percent_encoded_uris, geojson::GeoJsonRenderer, version::VersionRenderer},
+    renderer::{
+        ContextLocation,
+        Renderer,
+        VersionAdaptation,
+        entity::decode_percent_encoded_uris,
+        geojson::{GeoJsonRenderer, GeoJsonShape},
+        version::VersionRenderer,
+    },
 };
 use serde_json::Value;
+use std::mem::replace;
+
+/// Payload fed to [`ResponseRenderer`]: the three NGSI-LD response shapes.
+///
+/// The three variants are *not* interchangeable: batch results skip
+/// percent-encoded URI decoding and never participate in GeoJSON wrapping,
+/// while collections unwrap into JSON arrays with per-item `@context`
+/// injection in `ld+json`.
+#[derive(Debug)]
+pub enum ResponsePayload {
+    /// Single entity/object (e.g. GET `/entities/{id}`, GET `/types`).
+    Single(Value),
+    /// Array of entities (e.g. GET `/entities`, GET `/subscriptions`).
+    Collection(Vec<Value>),
+    /// Batch operation result (BatchOperationResult-shaped object).
+    Batch(Value),
+}
 
 /// Builder for the response rendering pipeline.
 ///
@@ -33,6 +57,7 @@ pub struct ResponseRenderer {
     context: ContextSpec,
     prefer: PreferHeader,
     geometry_property: Option<String>,
+    payload: ResponsePayload,
 }
 
 /// Output of the rendering pipeline, ready for the response type to serialize.
@@ -52,12 +77,16 @@ pub struct RenderedOutput {
 
 impl ResponseRenderer {
     /// Create a new renderer with the given format, context, and preferences.
+    ///
+    /// The payload defaults to [`ResponsePayload::Single`] with a JSON null;
+    /// call [`ResponseRenderer::with_payload`] to supply the real payload.
     pub const fn new(format: ResponseFormat, context: ContextSpec, prefer: PreferHeader) -> ResponseRenderer {
         ResponseRenderer {
             format,
             context,
             prefer,
             geometry_property: None,
+            payload: ResponsePayload::Single(Value::Null),
         }
     }
 
@@ -67,11 +96,32 @@ impl ResponseRenderer {
         self
     }
 
+    /// Set the payload to render.
+    pub fn with_payload(mut self, payload: ResponsePayload) -> Self {
+        self.payload = payload;
+        self
+    }
+}
+
+impl Renderer for ResponseRenderer {
+    type Output = RenderedOutput;
+
+    fn render(mut self) -> Result<RenderedOutput, AndromedaError> {
+        let payload = replace(&mut self.payload, ResponsePayload::Single(Value::Null));
+        match payload {
+            ResponsePayload::Single(value) => self.render_single(value),
+            ResponsePayload::Collection(values) => self.render_collection(values),
+            ResponsePayload::Batch(value) => self.render_batch(value),
+        }
+    }
+}
+
+impl ResponseRenderer {
     /// Render a single entity/object payload.
     ///
     /// Applies: URI decoding (Json/JsonLd), version adaptation, @context injection
     /// or GeoJSON wrapping depending on the response format.
-    pub fn render_single(self, mut value: Value) -> Result<RenderedOutput, AndromedaError> {
+    fn render_single(self, mut value: Value) -> Result<RenderedOutput, AndromedaError> {
         let version_adaptation = if self.prefer.requested_version.is_some() {
             VersionAdaptation::Applied
         } else {
@@ -100,7 +150,7 @@ impl ResponseRenderer {
             ResponseFormat::Json | ResponseFormat::JsonLd => {
                 decode_percent_encoded_uris(&mut value);
                 if let Some(target) = self.prefer.requested_version {
-                    VersionRenderer::new(target).render(&mut value);
+                    value = VersionRenderer::new(target).with_payload(value).render()?;
                 }
                 if self.format.include_context_in_body()
                     && let (Some(obj), Some(cv)) = (value.as_object_mut(), context_value)
@@ -110,7 +160,7 @@ impl ResponseRenderer {
             }
             ResponseFormat::GeoJson => {
                 if let Some(target) = self.prefer.requested_version {
-                    VersionRenderer::new(target).render(&mut value);
+                    value = VersionRenderer::new(target).with_payload(value).render()?;
                 }
                 let geojson_context = if self.prefer.geo_json_body == GeoJsonBodyPreference::Json {
                     None
@@ -120,7 +170,8 @@ impl ResponseRenderer {
                 value = GeoJsonRenderer::new(value)
                     .with_context(geojson_context)
                     .with_geometry_property(self.geometry_property.as_deref())
-                    .render_entity()?;
+                    .with_shape(GeoJsonShape::Feature)
+                    .render()?;
             }
         }
 
@@ -137,7 +188,7 @@ impl ResponseRenderer {
     ///
     /// Applies: URI decoding (Json/JsonLd), version adaptation, per-item @context
     /// injection or GeoJSON FeatureCollection wrapping depending on the format.
-    pub fn render_collection(self, values: Vec<Value>) -> Result<RenderedOutput, AndromedaError> {
+    fn render_collection(self, values: Vec<Value>) -> Result<RenderedOutput, AndromedaError> {
         let version_adaptation = if self.prefer.requested_version.is_some() {
             VersionAdaptation::Applied
         } else {
@@ -168,7 +219,7 @@ impl ResponseRenderer {
             ResponseFormat::Json | ResponseFormat::JsonLd => {
                 decode_percent_encoded_uris(&mut array_value);
                 if let Some(target) = self.prefer.requested_version {
-                    VersionRenderer::new(target).render(&mut array_value);
+                    array_value = VersionRenderer::new(target).with_payload(array_value).render()?;
                 }
                 if self.format.include_context_in_body()
                     && let Value::Array(ref mut items) = array_value
@@ -182,7 +233,7 @@ impl ResponseRenderer {
             }
             ResponseFormat::GeoJson => {
                 if let Some(target) = self.prefer.requested_version {
-                    VersionRenderer::new(target).render(&mut array_value);
+                    array_value = VersionRenderer::new(target).with_payload(array_value).render()?;
                 }
                 let geojson_context = if self.prefer.geo_json_body == GeoJsonBodyPreference::Json {
                     None
@@ -192,7 +243,8 @@ impl ResponseRenderer {
                 array_value = GeoJsonRenderer::new(array_value)
                     .with_context(geojson_context)
                     .with_geometry_property(self.geometry_property.as_deref())
-                    .render_collection()?;
+                    .with_shape(GeoJsonShape::FeatureCollection)
+                    .render()?;
             }
         }
 
@@ -210,7 +262,7 @@ impl ResponseRenderer {
     /// Applies: version adaptation, @context injection. No URI decoding
     /// (batch results don't contain entity Relationship objects) and no
     /// GeoJSON wrapping.
-    pub fn render_batch(self, mut value: Value) -> Result<RenderedOutput, AndromedaError> {
+    fn render_batch(self, mut value: Value) -> Result<RenderedOutput, AndromedaError> {
         let version_adaptation = if self.prefer.requested_version.is_some() {
             VersionAdaptation::Applied
         } else {
@@ -224,7 +276,7 @@ impl ResponseRenderer {
         };
 
         if let Some(target) = self.prefer.requested_version {
-            VersionRenderer::new(target).render(&mut value);
+            value = VersionRenderer::new(target).with_payload(value).render()?;
         }
         if self.format.include_context_in_body()
             && let (Some(obj), Some(cv)) = (value.as_object_mut(), context_value)
@@ -269,7 +321,8 @@ mod tests {
         let ctx = ContextSpec::from_links(vec!["https://example.org/ctx".to_string()]);
         let value = json!({"id": "urn:x", "type": "T", "name": {"type": "Property", "value": "test"}});
         let rendered = ResponseRenderer::new(ResponseFormat::Json, ctx, default_prefer())
-            .render_single(value)
+            .with_payload(ResponsePayload::Single(value))
+            .render()
             .expect("render");
         assert!(rendered.value.get("@context").is_none());
         pretty_assertions::assert_eq!(rendered.context_location, ContextLocation::LinkHeader);
@@ -281,7 +334,8 @@ mod tests {
         let ctx = ContextSpec::from_links(vec!["https://example.org/ctx".to_string()]);
         let value = json!({"id": "urn:x", "type": "T"});
         let rendered = ResponseRenderer::new(ResponseFormat::JsonLd, ctx, default_prefer())
-            .render_single(value)
+            .with_payload(ResponsePayload::Single(value))
+            .render()
             .expect("render");
         assert!(rendered.value.get("@context").is_some());
         pretty_assertions::assert_eq!(rendered.context_location, ContextLocation::Body);
@@ -293,7 +347,8 @@ mod tests {
         let ctx = ContextSpec::from_links(vec!["https://example.org/ctx".to_string()]);
         let values = vec![json!({"id": "urn:x", "type": "T"}), json!({"id": "urn:y", "type": "T"})];
         let rendered = ResponseRenderer::new(ResponseFormat::JsonLd, ctx, default_prefer())
-            .render_collection(values)
+            .with_payload(ResponsePayload::Collection(values))
+            .render()
             .expect("render");
         let items = rendered.value.as_array().expect("array");
         pretty_assertions::assert_eq!(items.len(), 2);
@@ -306,7 +361,8 @@ mod tests {
         let ctx = ContextSpec::from_links(vec!["https://example.org/ctx".to_string()]);
         let value = json!({"success": ["urn:x"], "errors": []});
         let rendered = ResponseRenderer::new(ResponseFormat::JsonLd, ctx, default_prefer())
-            .render_batch(value)
+            .with_payload(ResponsePayload::Batch(value))
+            .render()
             .expect("render");
         assert!(rendered.value.get("@context").is_some());
     }
@@ -320,7 +376,10 @@ mod tests {
             ..PreferHeader::default()
         };
         let value = json!({"id": "urn:x", "type": "T"});
-        let rendered = ResponseRenderer::new(ResponseFormat::Json, ctx, prefer).render_single(value).expect("render");
+        let rendered = ResponseRenderer::new(ResponseFormat::Json, ctx, prefer)
+            .with_payload(ResponsePayload::Single(value))
+            .render()
+            .expect("render");
         pretty_assertions::assert_eq!(rendered.version_adaptation, VersionAdaptation::Applied);
     }
 
@@ -329,7 +388,8 @@ mod tests {
         let ctx = ContextSpec::from_links(vec!["https://example.org/ctx".to_string()]);
         let value = json!({"id": "urn:x", "type": "T"});
         let rendered = ResponseRenderer::new(ResponseFormat::Json, ctx, default_prefer())
-            .render_single(value)
+            .with_payload(ResponsePayload::Single(value))
+            .render()
             .expect("render");
         pretty_assertions::assert_eq!(rendered.version_adaptation, VersionAdaptation::None);
     }

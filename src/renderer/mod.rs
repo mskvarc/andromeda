@@ -6,7 +6,10 @@
 //!
 //! - **Entity rendering** ([`entity::EntityRenderer`]) -- language negotiation,
 //!   inline join expansion, concise/simplified/normalized representation modes,
-//!   snapshot rendering, and percent-encoded URI decoding.
+//!   and percent-encoded URI decoding.
+//! - **Snapshot rendering** ([`snapshot::SnapshotRenderer`]) -- applies the
+//!   same transformations to a pre-compacted `Value` when no `Entity` struct
+//!   is available (snapshot endpoints, notification worker).
 //! - **GeoJSON mapping** ([`geojson::GeoJsonRenderer`]) -- wrapping entity JSON
 //!   in GeoJSON Feature / FeatureCollection envelopes.
 //! - **Registration rendering** ([`registration`]) -- stripping system attributes
@@ -22,11 +25,32 @@
 //! - **Version adaptation** ([`version::VersionRenderer`]) -- adapting payloads
 //!   to conform to older NGSI-LD spec versions when the client sends
 //!   `Prefer: ngsi-ld=<version>`.
-//! - **Localization** ([`l10n`]) -- locale-aware formatting of datetime and
+//! - **Localization** ([`localization`]) -- locale-aware formatting of datetime and
 //!   currency attribute values for i18n proxy endpoints (Annex G.3).
 //!
 //! API handlers configure renderers via builder methods and call `render()`.
 //! No transformation logic should live in handlers directly.
+
+use crate::core::error::AndromedaError;
+
+/// Unified rendering contract implemented by every renderer in this module.
+///
+/// Each renderer is a consuming builder: inputs flow through the constructor
+/// and `with_*` methods, then `render` produces the output. The associated
+/// [`Renderer::Output`] type preserves the distinct result shapes callers rely
+/// on (`serde_json::Value`, [`response::RenderedOutput`],
+/// [`temporal::TemporalEntityBuildResult`], etc.).
+///
+/// Infallible transformations return `Ok(...)` unconditionally; the `Result`
+/// in the signature exists so that a later fallible change does not require a
+/// breaking API adjustment.
+pub trait Renderer {
+    /// The output produced by this renderer.
+    type Output;
+
+    /// Consume the renderer and produce its output.
+    fn render(self) -> Result<Self::Output, AndromedaError>;
+}
 
 /// Whether system-generated attributes (`createdAt`, `modifiedAt`) should be
 /// included in the response or stripped before serialization.
@@ -68,9 +92,10 @@ pub enum VersionAdaptation {
 
 pub mod entity;
 pub mod geojson;
-pub mod l10n;
+pub mod localization;
 pub mod registration;
 pub mod response;
+pub mod snapshot;
 pub mod subscription;
 pub mod temporal;
 pub mod version;

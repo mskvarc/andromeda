@@ -21,8 +21,9 @@ use crate::{
     jsonld::ContextSpec,
     query::{compile::expand_q_expression, q::eval::evaluate},
     renderer::{
-        response::ResponseRenderer,
-        temporal::{simplify_temporal_value, simplify_temporal_values},
+        Renderer,
+        response::{ResponsePayload, ResponseRenderer},
+        temporal::simplify::{TemporalSimplifyPayload, TemporalSimplifyRenderer},
     },
     repository::temporal::DeleteScope,
     service::{
@@ -99,11 +100,17 @@ pub async fn get(
         let key_values = params.is_simplified();
 
         let data = if key_values {
-            simplify_temporal_value(entity_data).with_instance(uri.clone())?
+            TemporalSimplifyRenderer::new(TemporalSimplifyPayload::Single(entity_data))
+                .render()
+                .with_instance(uri.clone())?
+                .into_single()
+                .with_instance(uri.clone())?
         } else {
             entity_data
         };
-        let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default()).render_single(data)?;
+        let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default())
+            .with_payload(ResponsePayload::Single(data))
+            .render()?;
         return Ok(NgsiLdResponse::ok(rendered).with_snapshot_uri(snapshot_id).into_response());
     }
 
@@ -167,12 +174,18 @@ pub async fn get(
     };
 
     let data: Value = if key_values {
-        simplify_temporal_value(entity_value).with_instance(uri.clone())?
+        TemporalSimplifyRenderer::new(TemporalSimplifyPayload::Single(entity_value))
+            .render()
+            .with_instance(uri.clone())?
+            .into_single()
+            .with_instance(uri.clone())?
     } else {
         entity_value
     };
 
-    let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default()).render_single(data)?;
+    let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default())
+        .with_payload(ResponsePayload::Single(data))
+        .render()?;
     let mut builder = NgsiLdResponse::new(status, rendered).with_warnings(warnings);
     if let Some(map_header) = entity_map_header {
         builder = builder.with_entity_map_uri(map_header.into_inner().to_string());
@@ -220,11 +233,17 @@ pub async fn query(
             .with_instance(uri.clone())?;
 
         let values = if key_values {
-            simplify_temporal_values(entities).with_instance(uri.clone())?
+            TemporalSimplifyRenderer::new(TemporalSimplifyPayload::Collection(entities))
+                .render()
+                .with_instance(uri.clone())?
+                .into_collection()
+                .with_instance(uri.clone())?
         } else {
             entities
         };
-        let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default()).render_collection(values)?;
+        let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default())
+            .with_payload(ResponsePayload::Collection(values))
+            .render()?;
         let response = NgsiLdCollectionResponse::ok(rendered)
             .with_snapshot_uri(snapshot_id)
             .with_total_count(total as usize);
@@ -415,12 +434,18 @@ pub async fn query(
     let returned = entities.len();
 
     let values = if key_values {
-        simplify_temporal_values(entities).with_instance(uri.clone())?
+        TemporalSimplifyRenderer::new(TemporalSimplifyPayload::Collection(entities))
+            .render()
+            .with_instance(uri.clone())?
+            .into_collection()
+            .with_instance(uri.clone())?
     } else {
         entities
     };
 
-    let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default()).render_collection(values)?;
+    let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default())
+        .with_payload(ResponsePayload::Collection(values))
+        .render()?;
     let mut response = NgsiLdCollectionResponse::ok(rendered).with_status(status).with_warnings(forwarding_warnings);
     if let Some(count) = total_count {
         response = response.with_total_count(count as usize);

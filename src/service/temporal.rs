@@ -3,7 +3,10 @@
 use crate::{
     core::error::AndromedaError,
     domain::temporal::TemporalFormat,
-    http::parameter::query::{SharedQueryParams, temporal::TemporalQueryParameters},
+    http::{
+        parameter::query::{SharedQueryParams, temporal::TemporalQueryParameters},
+        response::content_range::build_content_range,
+    },
     i18n::collation::augment_expanded_with_collation_metadata,
     jsonld::{CompactOptions, ContextSpec, JsonLdEngine, term_resolver, vocab},
     query::{
@@ -11,13 +14,13 @@ use crate::{
         sql::temporal::{build_stage1_entity_ids, build_temporal_history_query},
     },
     renderer::{
+        Renderer,
         SysAttrsInclusion,
         temporal::{
-            build_content_range,
-            build_entity_temporal,
-            build_entity_temporal_aggregated_data,
-            ensure_temporal_attrs_are_arrays,
-            transform_to_temporal_values,
+            aggregation::TemporalAggregationRenderer,
+            array_normalizer::TemporalArrayNormalizer,
+            entity::TemporalEntityRenderer,
+            values::TemporalValuesRenderer,
         },
     },
     repository::{
@@ -424,15 +427,15 @@ impl TemporalService {
             });
         }
 
-        let result = build_entity_temporal(entity_id, &entity_types, &rows, &compiled)?;
-        let mut compacted = self.engine.compact(result.entity, context, CompactOptions::default()).await?;
-        ensure_temporal_attrs_are_arrays(&mut compacted);
+        let result = TemporalEntityRenderer::new(entity_id, &entity_types, &rows, &compiled).render()?;
+        let compacted = self.engine.compact(result.entity, context, CompactOptions::default()).await?;
+        let mut compacted = TemporalArrayNormalizer::new(compacted).render()?;
         if !has_explicit_context(context) {
             normalize_temporal_payload_without_context(&mut compacted);
         }
 
         let value = if format == TemporalFormat::TemporalValues {
-            transform_to_temporal_values(compacted)
+            TemporalValuesRenderer::new(compacted).render()?
         } else {
             compacted
         };
@@ -520,7 +523,7 @@ impl TemporalService {
                         }
                     }
                 } else {
-                    match build_entity_temporal(&entity_id, &entity_types, &rows, &compiled) {
+                    match TemporalEntityRenderer::new(&entity_id, &entity_types, &rows, &compiled).render() {
                         Ok(result) => {
                             if result.truncated {
                                 any_truncated = true;
@@ -533,18 +536,36 @@ impl TemporalService {
                                 overall_partition_total = Some(overall_partition_total.map_or(pt, |m: i64| m.max(pt)));
                             }
                             match self.engine.compact(result.entity, context, CompactOptions::default()).await {
-                                Ok(mut compacted) => {
-                                    ensure_temporal_attrs_are_arrays(&mut compacted);
-                                    if !has_explicit_context(context) {
-                                        normalize_temporal_payload_without_context(&mut compacted);
+                                Ok(compacted) => match TemporalArrayNormalizer::new(compacted).render() {
+                                    Ok(mut compacted) => {
+                                        if !has_explicit_context(context) {
+                                            normalize_temporal_payload_without_context(&mut compacted);
+                                        }
+                                        let result = if compiled.format == TemporalFormat::TemporalValues {
+                                            match TemporalValuesRenderer::new(compacted).render() {
+                                                Ok(values) => values,
+                                                Err(e) => {
+                                                    tracing::warn!(error = %e, entity_id = %entity_id, "Failed to render temporal values");
+                                                    warnings.push(TemporalQueryWarning {
+                                                        entity_id: entity_id.clone(),
+                                                        message: e.to_string(),
+                                                    });
+                                                    continue;
+                                                }
+                                            }
+                                        } else {
+                                            compacted
+                                        };
+                                        entities.push(result);
                                     }
-                                    let result = if compiled.format == TemporalFormat::TemporalValues {
-                                        transform_to_temporal_values(compacted)
-                                    } else {
-                                        compacted
-                                    };
-                                    entities.push(result);
-                                }
+                                    Err(e) => {
+                                        tracing::warn!(error = %e, entity_id = %entity_id, "Failed to normalize temporal arrays");
+                                        warnings.push(TemporalQueryWarning {
+                                            entity_id: entity_id.clone(),
+                                            message: e.to_string(),
+                                        });
+                                    }
+                                },
                                 Err(e) => {
                                     tracing::warn!(error = %e, entity_id = %entity_id, "Failed to compact temporal entity");
                                     warnings.push(TemporalQueryWarning {
@@ -592,7 +613,7 @@ impl TemporalService {
         context: &ContextSpec,
     ) -> Result<Value, AndromedaError> {
         // Build aggregation data keyed by attribute IRI
-        let aggr_data = build_entity_temporal_aggregated_data(rows, compiled)?;
+        let aggr_data = TemporalAggregationRenderer::new(rows, compiled).render()?;
 
         // Compact each attribute IRI individually by building a 1-key skeleton and compacting it
         let mut iri_to_short: std::collections::HashMap<String, String> = std::collections::HashMap::new();

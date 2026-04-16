@@ -12,7 +12,7 @@ use crate::{
     },
     i18n::validation::validate_locale,
     jsonld::ContextSpec,
-    renderer::{SysAttrsInclusion, l10n::localize_entity_value},
+    renderer::{Renderer, SysAttrsInclusion, localization::LocalizationRenderer},
 };
 use axum::{
     Json,
@@ -62,7 +62,7 @@ pub async fn get(
         .with_instance(uri.clone())?;
 
     let value = serde_json::to_value(entity).map_err(|error| AndromedaError::internal(format!("Failed to serialize entity: {}", error)))?;
-    let localized = localize_entity_value(value, &locale, localized_attrs.as_ref());
+    let localized = LocalizationRenderer::new(value, &locale).with_attrs_filter(localized_attrs.as_ref()).render()?;
     Ok((StatusCode::OK, Json(localized)).into_response())
 }
 
@@ -92,9 +92,9 @@ pub async fn query(
         .into_iter()
         .map(|entity| {
             let value = serde_json::to_value(entity).unwrap_or_default();
-            localize_entity_value(value, &locale, localized_attrs.as_ref())
+            LocalizationRenderer::new(value, &locale).with_attrs_filter(localized_attrs.as_ref()).render()
         })
-        .collect();
+        .collect::<Result<Vec<_>, _>>()?;
 
     let mut result = serde_json::Map::new();
     result.insert("results".to_string(), Value::Array(localized_values));
