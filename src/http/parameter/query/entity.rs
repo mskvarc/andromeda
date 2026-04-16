@@ -197,7 +197,7 @@ impl EntityQueryParameters {
             for opt in opts.split(',') {
                 let opt = opt.trim();
                 if !matches!(opt, "keyValues" | "simplified" | "sysAttrs" | "concise" | "normalized") {
-                    return Err(QueryError::InvalidRequest(format!("Invalid options value: '{}'", opt)));
+                    return Err(QueryError::ParamOptionsInvalid(opt.to_string()));
                 }
             }
         }
@@ -205,16 +205,16 @@ impl EntityQueryParameters {
         if let Some(fmt) = &self.format
             && !matches!(fmt.as_str(), "normalized" | "keyValues" | "simplified" | "concise")
         {
-            return Err(QueryError::InvalidRequest(format!("Invalid format value: '{}'", fmt)));
+            return Err(QueryError::ParamFormatInvalid(fmt.clone()));
         }
 
         if let Some(ids) = &self.id {
             for id in ids.split(',').map(str::trim) {
                 if id.is_empty() {
-                    return Err(QueryError::InvalidRequest("Invalid id: empty value in comma-separated list".to_string()));
+                    return Err(QueryError::ParamIdListEmpty);
                 }
                 if !is_valid_uri(id) {
-                    return Err(QueryError::BadRequestData(format!("Invalid id value: '{}'", id)));
+                    return Err(QueryError::ParamIdInvalid(id.to_string()));
                 }
             }
         }
@@ -222,7 +222,7 @@ impl EntityQueryParameters {
         if let Some(pattern) = &self.id_pattern
             && pattern.trim().is_empty()
         {
-            return Err(QueryError::BadRequestData("Invalid idPattern: empty value".to_string()));
+            return Err(QueryError::ParamIdPatternEmpty);
         }
 
         // Validate orderGeometry: must be a valid GeoJSON geometry type, not GeometryCollection (S5.2.43)
@@ -230,27 +230,29 @@ impl EntityQueryParameters {
             match order_geometry.as_str() {
                 "Point" | "MultiPoint" | "LineString" | "MultiLineString" | "Polygon" | "MultiPolygon" => {}
                 "GeometryCollection" => {
-                    return Err(QueryError::BadRequestData("orderGeometry does not support GeometryCollection".to_string()));
+                    return Err(QueryError::ParamOrderGeometryCollection);
                 }
                 other => {
-                    return Err(QueryError::BadRequestData(format!("Invalid orderGeometry value: '{}'", other)));
+                    return Err(QueryError::ParamOrderGeometryInvalid(other.to_string()));
                 }
             }
         }
 
         // Validate orderFrom: must be valid JSON coordinates (S5.2.43)
         if let Some(ref order_from) = self.order_from {
-            serde_json::from_str::<serde_json::Value>(order_from)
-                .map_err(|_| QueryError::BadRequestData(format!("Invalid orderFrom value: '{}' is not valid JSON", order_from)))?;
+            serde_json::from_str::<serde_json::Value>(order_from).map_err(|source| QueryError::ParamOrderFromInvalid {
+                value: order_from.clone(),
+                source,
+            })?;
         }
 
         if let Some(ref collation) = self.collation {
-            IcuCollation::parse(collation).map_err(|error| QueryError::BadRequestData(format!("Invalid collation value: {}", error)))?;
+            IcuCollation::parse(collation)?;
         }
 
         // drop and keep are mutually exclusive (S5.6.21)
         if self.drop.is_some() && self.keep.is_some() {
-            return Err(QueryError::BadRequestData("drop and keep parameters are mutually exclusive".to_string()));
+            return Err(QueryError::ParamDropKeepExclusive);
         }
 
         Ok(())
@@ -504,7 +506,7 @@ mod tests {
     fn validate_rejects_invalid_id() {
         let p = params_from_query("id=thisisaninvaliduri");
         let err = p.validate().expect_err("expected invalid id error");
-        assert!(matches!(err, QueryError::BadRequestData(_)));
+        assert!(matches!(err, QueryError::ParamIdInvalid(_)));
         assert!(err.to_string().contains("Invalid id value"));
     }
 
@@ -534,7 +536,7 @@ mod tests {
     fn validate_rejects_geometry_collection() {
         let p = params_from_query("orderFrom=%5B8%2C40%5D&orderGeometry=GeometryCollection");
         let err = p.validate().expect_err("expected GeometryCollection rejection");
-        assert!(matches!(err, QueryError::BadRequestData(_)));
+        assert!(matches!(err, QueryError::ParamOrderGeometryCollection));
         assert!(err.to_string().contains("GeometryCollection"));
     }
 
@@ -542,7 +544,7 @@ mod tests {
     fn validate_rejects_invalid_order_geometry() {
         let p = params_from_query("orderFrom=%5B8%2C40%5D&orderGeometry=Hexagon");
         let err = p.validate().expect_err("expected invalid geometry rejection");
-        assert!(matches!(err, QueryError::BadRequestData(_)));
+        assert!(matches!(err, QueryError::ParamOrderGeometryInvalid(_)));
         assert!(err.to_string().contains("Hexagon"));
     }
 
@@ -550,7 +552,7 @@ mod tests {
     fn validate_rejects_invalid_order_from_json() {
         let p = params_from_query("orderFrom=notjson");
         let err = p.validate().expect_err("expected invalid JSON rejection");
-        assert!(matches!(err, QueryError::BadRequestData(_)));
+        assert!(matches!(err, QueryError::ParamOrderFromInvalid { .. }));
         assert!(err.to_string().contains("orderFrom"));
     }
 
@@ -712,7 +714,7 @@ mod tests {
     fn validate_rejects_drop_and_keep_together() {
         let p = params_from_query("type=Vehicle&drop=A&keep=B");
         let err = p.validate().expect_err("expected mutual exclusivity error");
-        assert!(matches!(err, QueryError::BadRequestData(_)));
+        assert!(matches!(err, QueryError::ParamDropKeepExclusive));
         assert!(err.to_string().contains("mutually exclusive"));
     }
 

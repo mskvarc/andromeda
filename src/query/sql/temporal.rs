@@ -115,15 +115,15 @@ pub fn build_stage1_entity_ids(compiled: &CompiledTemporalQuery) -> Result<Built
 
     select
         .cond_where(all_conditions.clone())
-        .limit(compiled.limit as u64)
-        .offset(compiled.offset as u64);
+        .limit(compiled.pagination.limit as u64)
+        .offset(compiled.pagination.offset as u64);
 
     // Build main query SQL
     let (sql, values) = select.build(PostgresQueryBuilder);
     let bind_values = sea_values_to_bind_values(values);
 
     // Build count query if requested
-    let count_sql = if compiled.count {
+    let count_sql = if compiled.pagination.count {
         let mut count_select = Query::select();
         count_select
             .expr(Func::count(SeaExpr::cust("DISTINCT \"tea\".\"entity_id\"")))
@@ -944,7 +944,7 @@ mod tests {
     #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::*;
     use crate::{
-        query::compiled::{CompiledTemporalQuery, LastNOrigin, ScopeQuery},
+        query::compiled::{CompiledTemporalQuery, LastNOrigin, Pagination, ScopeQuery},
         renderer::SysAttrsInclusion,
     };
     use chrono::{DateTime, Utc};
@@ -967,9 +967,7 @@ mod tests {
             format: TemporalFormat::Normalized,
             aggr_methods: Vec::new(),
             aggr_period_duration: None,
-            limit: 20,
-            offset: 0,
-            count: false,
+            pagination: Pagination::DEFAULT,
             sys_attrs: SysAttrsInclusion::Strip,
             scope_q: None,
         }

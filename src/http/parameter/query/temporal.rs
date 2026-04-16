@@ -110,7 +110,7 @@ impl TemporalQueryParameters {
     pub fn parse_timerel(&self) -> Option<Result<TimeRel, QueryError>> {
         self.timerel
             .as_deref()
-            .map(|s| s.parse::<TimeRel>().map_err(|e| QueryError::BadRequestData(e.to_string())))
+            .map(|s| s.parse::<TimeRel>().map_err(|_| QueryError::ParamTimerelInvalid(s.to_string())))
     }
 
     /// Parses the `timeproperty` parameter into a `TimeProp` enum value.
@@ -153,7 +153,10 @@ impl TemporalQueryParameters {
         match self.aggr_methods.as_deref() {
             Some(s) => s
                 .split(',')
-                .map(|m| m.trim().parse::<AggrMethod>().map_err(|e| QueryError::BadRequestData(e.to_string())))
+                .map(|m| {
+                    let m = m.trim();
+                    m.parse::<AggrMethod>().map_err(|_| QueryError::ParamAggrMethodInvalid(m.to_string()))
+                })
                 .collect(),
             None => Ok(Vec::new()),
         }
@@ -180,10 +183,7 @@ impl TemporalQueryParameters {
         if let Some(f) = &self.format
             && !matches!(f.as_str(), "temporalValues" | "aggregatedValues")
         {
-            return Err(QueryError::InvalidRequest(format!(
-                "Invalid format value: '{}'. Must be 'temporalValues' or 'aggregatedValues'",
-                f
-            )));
+            return Err(QueryError::ParamFormatInvalid(f.clone()));
         }
 
         // Validate options parameter
@@ -191,31 +191,29 @@ impl TemporalQueryParameters {
             for opt in opts.split(',') {
                 let opt = opt.trim();
                 if !matches!(opt, "temporalValues" | "aggregatedValues" | "sysAttrs" | "keyValues" | "simplified" | "concise") {
-                    return Err(QueryError::InvalidRequest(format!("Invalid options value: '{}'", opt)));
+                    return Err(QueryError::ParamOptionsInvalid(opt.to_string()));
                 }
             }
         }
 
         if require_temporal {
             if self.timerel.is_none() || self.time_at.is_none() {
-                return Err(QueryError::InvalidRequest("timerel and timeAt are required for temporal query".to_string()));
+                return Err(QueryError::ParamTimerelTimeatRequired);
             }
             // At least one entity selection criterion is required for temporal query
             if self.id.is_none() && self.entity_type.is_none() && self.id_pattern.is_none() && self.attrs.is_none() && self.q.is_none() {
-                return Err(QueryError::BadRequestData(
+                return Err(QueryError::ParamOther(
                     "At least one of id, type, idPattern, attrs, or q is required for temporal query".to_string(),
                 ));
             }
         } else if self.timerel.is_some() != self.time_at.is_some() {
-            return Err(QueryError::BadRequestData("timerel and timeAt must both be present or both absent".to_string()));
+            return Err(QueryError::ParamTimerelTimeatPair);
         }
         if self.timerel.as_deref() == Some("between") && self.end_time_at.is_none() {
-            return Err(QueryError::BadRequestData("endTimeAt is required when timerel is 'between'".to_string()));
+            return Err(QueryError::ParamEndTimeAtRequired);
         }
         if self.parse_format() == TemporalFormat::AggregatedValues && self.aggr_methods.is_none() {
-            return Err(QueryError::InvalidRequest(
-                "aggrMethods is required when format is 'aggregatedValues'".to_string(),
-            ));
+            return Err(QueryError::ParamOther("aggrMethods is required when format is 'aggregatedValues'".to_string()));
         }
         Ok(())
     }

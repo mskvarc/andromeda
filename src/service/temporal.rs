@@ -10,7 +10,7 @@ use crate::{
     i18n::collation::augment_expanded_with_collation_metadata,
     jsonld::{CompactOptions, ContextSpec, JsonLdEngine, term_resolver, vocab},
     query::{
-        compiled::{CompiledTemporalQuery, GeoQuery, IdPattern, LastNOrigin, ScopeQuery},
+        compiled::{CompiledTemporalQuery, GeoQuery, IdPattern, LastNOrigin, Pagination, ScopeQuery},
         sql::temporal::{build_stage1_entity_ids, build_temporal_history_query},
     },
     renderer::{
@@ -461,7 +461,7 @@ impl TemporalService {
 
         let entity_ids: Vec<String> = entity_id_rows.iter().filter_map(|r| r.try_get("entity_id").ok()).collect();
 
-        let total_count = if compiled.count {
+        let total_count = if compiled.pagination.count {
             let count_sql = stage1.count_sql.as_ref().ok_or_else(|| AndromedaError::internal("Count SQL not built"))?;
             let count_rows = self.repo.execute_temporal_query(count_sql, &stage1.bind_values).await?;
             count_rows.first().and_then(|r| r.try_get::<i64, _>("count").ok())
@@ -833,9 +833,11 @@ impl TemporalService {
             format,
             aggr_methods: params.parse_aggr_methods()?,
             aggr_period_duration: params.aggr_period_duration.clone(), // clone: owned value for compiled query struct
-            limit: params.effective_limit(),
-            offset: params.effective_offset(),
-            count: params.count.unwrap_or(false),
+            pagination: Pagination {
+                limit: params.effective_limit(),
+                offset: params.effective_offset(),
+                count: params.count.unwrap_or(false),
+            },
             sys_attrs: if params.has_sys_attrs() {
                 SysAttrsInclusion::Include
             } else {

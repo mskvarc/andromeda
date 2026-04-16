@@ -61,8 +61,8 @@ pub fn build_csr_query(query: &CompiledCsrQuery) -> Result<BuiltQuery<'static>, 
         .from(Alias::new("context_source_registrations"))
         .cond_where(condition.clone())
         .order_by(Alias::new("created_at"), Order::Asc)
-        .limit(query.limit as u64)
-        .offset(query.offset as u64);
+        .limit(query.pagination.limit as u64)
+        .offset(query.pagination.offset as u64);
 
     let (sql, values) = select.build(PostgresQueryBuilder);
     let bind_values = sea_values_to_bind_values(values);
@@ -436,8 +436,7 @@ mod tests {
             q_expr: None,
             geo: None,
             temporal: None,
-            limit: 20,
-            offset: 0,
+            pagination: crate::query::compiled::Pagination::DEFAULT,
         }
     }
 
@@ -557,8 +556,8 @@ mod tests {
     #[test]
     fn build_with_pagination() {
         let mut q = empty_query();
-        q.limit = 50;
-        q.offset = 100;
+        q.pagination.limit = 50;
+        q.pagination.offset = 100;
         let built = build_csr_query(&q).unwrap();
         assert!(built.sql.contains("LIMIT"));
         assert!(built.sql.contains("OFFSET"));

@@ -543,9 +543,38 @@ impl From<AttributeListIdParseError> for AndromedaError {
 
 impl From<QueryError> for AndromedaError {
     fn from(err: QueryError) -> AndromedaError {
-        let kind = match err {
-            QueryError::BadRequestData(msg) => ErrorKind::QueryValidation(msg),
-            QueryError::InvalidRequest(msg) => ErrorKind::MalformedRequest(msg),
+        let kind = match &err {
+            QueryError::QEmpty
+            | QueryError::QUnterminatedString
+            | QueryError::QUnexpectedToken { .. }
+            | QueryError::QExpected { .. }
+            | QueryError::QUnexpectedChar { .. }
+            | QueryError::TypeExprEmpty
+            | QueryError::TypeExprUnexpectedEnd
+            | QueryError::TypeExprUnbalanced(_)
+            | QueryError::TypeExprUnexpected { .. }
+            | QueryError::TypeExprEmptyName(_)
+            | QueryError::GeoIncomplete
+            | QueryError::ParamOptionsInvalid(_)
+            | QueryError::ParamFormatInvalid(_)
+            | QueryError::ParamTimerelTimeatRequired
+            | QueryError::ParamTimerelTimeatPair => ErrorKind::MalformedRequest(err.to_string()),
+            QueryError::QInvalidNumber(_)
+            | QueryError::IdPatternRegex(_)
+            | QueryError::GeoUnknownRel(_)
+            | QueryError::GeoInvalidDistance { .. }
+            | QueryError::IcuCollation(_)
+            | QueryError::ParamIdInvalid(_)
+            | QueryError::ParamIdListEmpty
+            | QueryError::ParamIdPatternEmpty
+            | QueryError::ParamOrderGeometryInvalid(_)
+            | QueryError::ParamOrderGeometryCollection
+            | QueryError::ParamOrderFromInvalid { .. }
+            | QueryError::ParamDropKeepExclusive
+            | QueryError::ParamTimerelInvalid(_)
+            | QueryError::ParamAggrMethodInvalid(_)
+            | QueryError::ParamEndTimeAtRequired
+            | QueryError::ParamOther(_) => ErrorKind::QueryValidation(err.to_string()),
         };
         kind.into()
     }
@@ -740,17 +769,36 @@ mod tests {
     // -- From<QueryError> mapping ---------------------------------------------
 
     #[test]
-    fn query_error_bad_request_data_maps_to_query_validation() {
-        let err = QueryError::BadRequestData("msg".to_string());
+    fn query_error_data_variant_maps_to_query_validation() {
+        let err = QueryError::ParamIdInvalid("bad".to_string());
         let andromeda_err = AndromedaError::from(err);
         assert!(matches!(andromeda_err.kind(), ErrorKind::QueryValidation(_)));
     }
 
     #[test]
-    fn query_error_invalid_request_maps_to_malformed_request() {
-        let err = QueryError::InvalidRequest("msg".to_string());
+    fn query_error_malformed_variant_maps_to_malformed_request() {
+        let err = QueryError::TypeExprEmpty;
         let andromeda_err = AndromedaError::from(err);
         assert!(matches!(andromeda_err.kind(), ErrorKind::MalformedRequest(_)));
+    }
+
+    #[test]
+    fn query_error_geo_distance_preserves_source_chain() {
+        let err = QueryError::GeoInvalidDistance {
+            value: "nope".to_string(),
+            source: "nope".parse::<f64>().unwrap_err(),
+        };
+        // err.source() must expose the underlying ParseFloatError for callers
+        // that want to introspect the cause.
+        let source = std::error::Error::source(&err);
+        assert!(source.is_some());
+    }
+
+    #[test]
+    fn query_error_id_pattern_regex_preserves_source_chain() {
+        let err = QueryError::from(regex::Regex::new("[").unwrap_err());
+        let source = std::error::Error::source(&err);
+        assert!(source.is_some());
     }
 
     // -- AndromedaError struct tests ------------------------------------------

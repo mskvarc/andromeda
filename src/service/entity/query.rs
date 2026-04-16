@@ -7,7 +7,7 @@ use crate::{
     http::parameter::query::{SharedQueryParams, entity::EntityQueryParameters},
     i18n::collation::rewrite_query_for_collation,
     jsonld::{CompactOptions, ContextSpec, JsonLdEngine},
-    query::compiled::{CompiledEntityQuery, CompiledOrderTerm, GeoQuery, IcuCollation, IdPattern, OrderingGeometry, ScopeQuery},
+    query::compiled::{CompiledEntityQuery, CompiledOrderTerm, GeoQuery, IcuCollation, IdPattern, OrderingGeometry, Pagination, ScopeQuery},
     renderer::SysAttrsInclusion,
     repository::entity::EntityRepository,
     service::context_source_forwarding::{ForwardedEntities, merge_query_results},
@@ -403,8 +403,15 @@ impl EntityQueryService {
             ));
         }
 
-        // Parse csf (Context Source Filter) expression using q-expression grammar (S6.4.3.2)
-        let csf_expr = crate::query::compile::expand_q_expression(params.csf.as_deref(), &self.engine, context).await?;
+        let pagination = Pagination {
+            limit: if cap_limit {
+                params.effective_limit()
+            } else {
+                params.effective_limit_uncapped()
+            },
+            offset: params.effective_offset(),
+            count: opts.count,
+        };
 
         let compiled = CompiledEntityQuery {
             ids,
@@ -414,18 +421,11 @@ impl EntityQueryService {
             q_expr,
             geo,
             ordering_geometry,
-            limit: if cap_limit {
-                params.effective_limit()
-            } else {
-                params.effective_limit_uncapped()
-            },
-            offset: params.effective_offset(),
-            count: opts.count,
+            pagination,
             pick,
             omit,
             order_by,
             scope_q: params.scope_q.as_ref().map(|s| ScopeQuery::new(s.clone())), // clone: owned value for CompiledEntityQuery struct
-            _csf_expr: csf_expr,
         };
 
         tracing::info!("Compiled query: {:?}", compiled);

@@ -238,6 +238,14 @@ pub async fn build_tenant_state(
 
     migrate_tenant_db(&pool).await?;
 
+    let timescale_features = crate::repository::timescale_features::TimescaleFeatures::detect(&pool)
+        .await
+        .map_err(|e| AndromedaError::internal(format!("Failed to probe TimescaleDB features: {}", e)))?;
+    tracing::info!(
+        has_continuous_aggregates = timescale_features.has_continuous_aggregates,
+        "Detected TimescaleDB capabilities"
+    );
+
     let (change_tx, _) = tokio::sync::broadcast::channel::<ChangeEvent>(4096);
     let (sub_change_tx, _) = tokio::sync::broadcast::channel::<SubscriptionChange>(256);
     let (csr_change_tx, _) = tokio::sync::broadcast::channel::<CsrChangeEvent>(256);
@@ -256,7 +264,7 @@ pub async fn build_tenant_state(
         .max(1);
     let batch_side_effects = if let Some(threshold) = config.performance.batch_async_side_effect_threshold {
         let (sender, receiver) = tokio::sync::mpsc::channel(config.performance.batch_side_effect_queue_capacity.max(1));
-        let temporal_repo = Arc::new(TemporalRepository::new(&pool));
+        let temporal_repo = Arc::new(TemporalRepository::new(&pool).with_features(timescale_features));
         let worker = BatchSideEffectWorker::new(temporal_repo, Some(change_tx.clone()), receiver);
         worker_handles.push(tokio::spawn(worker.run()));
         Some(BatchSideEffectDispatcherConfig {

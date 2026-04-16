@@ -61,7 +61,7 @@ impl CsrQueryParameters {
         let has_filter =
             self.entity_type.is_some() || self.id.is_some() || self.id_pattern.is_some() || self.attrs.is_some() || self.q.is_some() || self.georel.is_some();
         if !has_filter {
-            return Err(QueryError::BadRequestData(
+            return Err(QueryError::ParamOther(
                 "At least one of type, id, idPattern, attrs, q, or georel must be provided".to_string(),
             ));
         }
@@ -70,7 +70,7 @@ impl CsrQueryParameters {
         if let Some(ref ids) = self.id {
             for id in ids.split(',').map(str::trim) {
                 if !id.is_empty() && !is_valid_uri(id) {
-                    return Err(QueryError::BadRequestData(format!("Invalid URI in id parameter: {}", id)));
+                    return Err(QueryError::ParamIdInvalid(id.to_string()));
                 }
             }
         }
@@ -79,21 +79,17 @@ impl CsrQueryParameters {
         if (self.georel.is_some() || self.geometry.is_some() || self.coordinates.is_some())
             && (self.georel.is_none() || self.geometry.is_none() || self.coordinates.is_none())
         {
-            return Err(QueryError::BadRequestData(
-                "Incomplete geo query: georel, geometry, and coordinates are all required".to_string(),
-            ));
+            return Err(QueryError::GeoIncomplete);
         }
 
         // Temporal query requires timeAt when timerel is present
         if self.timerel.is_some() && self.time_at.is_none() {
-            return Err(QueryError::BadRequestData(
-                "Incomplete temporal query: timeAt is required when timerel is present".to_string(),
-            ));
+            return Err(QueryError::ParamTimerelTimeatPair);
         }
 
         // between requires endTimeAt
         if self.timerel.as_deref() == Some("between") && self.end_time_at.is_none() {
-            return Err(QueryError::BadRequestData("endTimeAt is required when timerel=between".to_string()));
+            return Err(QueryError::ParamEndTimeAtRequired);
         }
 
         Ok(())
@@ -134,21 +130,21 @@ mod tests {
     fn validate_rejects_invalid_id_uri() {
         let p = params_from_query("id=notavaliduri");
         let err = p.validate().expect_err("expected error");
-        assert!(err.to_string().contains("Invalid URI"));
+        assert!(matches!(err, QueryError::ParamIdInvalid(_)));
     }
 
     #[test]
     fn validate_rejects_incomplete_geo() {
         let p = params_from_query("type=Vehicle&georel=within&geometry=Point");
         let err = p.validate().expect_err("expected error");
-        assert!(err.to_string().contains("Incomplete geo query"));
+        assert!(matches!(err, QueryError::GeoIncomplete));
     }
 
     #[test]
     fn validate_rejects_temporal_without_time_at() {
         let p = params_from_query("type=Vehicle&timerel=before");
         let err = p.validate().expect_err("expected error");
-        assert!(err.to_string().contains("timeAt is required"));
+        assert!(matches!(err, QueryError::ParamTimerelTimeatPair));
     }
 
     #[test]

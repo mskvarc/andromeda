@@ -8,7 +8,7 @@ use crate::{
     http::parameter::query::{SharedQueryParams, csr::CsrQueryParameters},
     jsonld::{ContextSpec, JsonLdEngine},
     query::{
-        compiled::{CompiledCsrQuery, CompiledCsrTemporalFilter, IdPattern},
+        compiled::{CompiledCsrQuery, CompiledCsrTemporalFilter, IdPattern, Pagination},
         q::parser,
     },
     repository::context_source_registration::{ContextSourceRegistrationRepository, CreateCsrParams, CsrUpdateFragment, unwrap_geo_property_to_string},
@@ -401,8 +401,11 @@ impl ContextSourceRegistrationService {
             q_expr,
             geo,
             temporal,
-            limit: params.effective_limit(),
-            offset: params.effective_offset(),
+            pagination: Pagination {
+                limit: params.effective_limit(),
+                offset: params.effective_offset(),
+                count: false,
+            },
         })
     }
 

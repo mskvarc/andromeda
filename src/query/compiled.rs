@@ -14,6 +14,36 @@ use chrono::{DateTime, Utc};
 use langtag::LangTagBuf;
 use thiserror::Error;
 
+/// Pagination parameters shared by every compiled query variant.
+///
+/// Consolidates the `limit`, `offset`, and `count` trio that used to be
+/// repeated on `CompiledEntityQuery`, `CompiledTemporalQuery`, and
+/// `CompiledCsrQuery`. Construct via `Pagination { ... }` or `Pagination::DEFAULT`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Pagination {
+    /// Maximum number of results to return (NGSI-LD 5.5.6).
+    pub limit: u32,
+    /// Number of results to skip for pagination (NGSI-LD 5.5.6).
+    pub offset: u32,
+    /// Whether to emit a total-count header (NGSI-LD 6.3.13).
+    pub count: bool,
+}
+
+impl Pagination {
+    /// Default pagination: limit 20, offset 0, count disabled.
+    pub const DEFAULT: Pagination = Pagination {
+        limit: 20,
+        offset: 0,
+        count: false,
+    };
+}
+
+impl Default for Pagination {
+    fn default() -> Pagination {
+        Pagination::DEFAULT
+    }
+}
+
 /// Boolean expression over entity type IRIs (NGSI-LD S4.17).
 ///
 /// Supports AND (`And`), OR (`Or`), and single type (`Type`) nodes.
@@ -123,7 +153,7 @@ pub struct IdPattern(regex::Regex);
 impl IdPattern {
     /// Creates a new `IdPattern`, validating the regex at construction time.
     pub fn new(pattern: &str) -> Result<IdPattern, QueryError> {
-        let re = regex::Regex::new(pattern).map_err(|e| QueryError::BadRequestData(format!("Invalid idPattern regex: {}", e)))?;
+        let re = regex::Regex::new(pattern)?;
         Ok(IdPattern(re))
     }
 
@@ -162,12 +192,8 @@ pub struct CompiledEntityQuery {
     pub geo: Option<GeoQuery>,
     /// Reference geometry for distance-based ordering (orderFrom/orderGeometry, S5.2.43).
     pub ordering_geometry: Option<OrderingGeometry>,
-    /// Maximum number of results to return.
-    pub limit: u32,
-    /// Number of results to skip for pagination.
-    pub offset: u32,
-    /// Whether to include a total count of matching entities in the response.
-    pub count: bool,
+    /// Result window: limit, offset, and total-count toggle.
+    pub pagination: Pagination,
     /// Expanded attribute IRIs to include in the response (per NGSI-LD 6.3.15).
     pub pick: Vec<String>,
     /// Expanded attribute IRIs to exclude from the response (per NGSI-LD 6.3.15).
@@ -176,9 +202,6 @@ pub struct CompiledEntityQuery {
     pub order_by: Vec<CompiledOrderTerm>,
     /// Scope query for filtering entities by their scope hierarchy.
     pub scope_q: Option<ScopeQuery>,
-    /// Context Source Filter expression (S6.4.3.2) for filtering which CSRs
-    /// are contacted during distributed operations. Parsed with the q-expression grammar.
-    pub _csf_expr: Option<Expr>,
 }
 
 /// A single term in an `orderBy` clause after context expansion.
@@ -267,20 +290,20 @@ impl GeoRel {
                 for part in &parts[1..] {
                     let part = part.trim();
                     if let Some(val) = part.strip_prefix("maxDistance==") {
-                        max_distance = Some(
-                            val.parse::<f64>()
-                                .map_err(|_| QueryError::BadRequestData("Invalid maxDistance value".to_string()))?,
-                        );
+                        max_distance = Some(val.parse::<f64>().map_err(|source| QueryError::GeoInvalidDistance {
+                            value: val.to_string(),
+                            source,
+                        })?);
                     } else if let Some(val) = part.strip_prefix("minDistance==") {
-                        min_distance = Some(
-                            val.parse::<f64>()
-                                .map_err(|_| QueryError::BadRequestData("Invalid minDistance value".to_string()))?,
-                        );
+                        min_distance = Some(val.parse::<f64>().map_err(|source| QueryError::GeoInvalidDistance {
+                            value: val.to_string(),
+                            source,
+                        })?);
                     }
                 }
                 Ok(GeoRel::Near { max_distance, min_distance })
             }
-            _ => Err(QueryError::BadRequestData(format!("Unknown geo relationship: {}", rel))),
+            _ => Err(QueryError::GeoUnknownRel(rel.to_string())),
         }
     }
 }
@@ -306,10 +329,8 @@ pub struct CompiledCsrQuery {
     pub geo: Option<GeoQuery>,
     /// Temporal filter against the CSR observation or management interval.
     pub temporal: Option<CompiledCsrTemporalFilter>,
-    /// Maximum number of results to return.
-    pub limit: u32,
-    /// Number of results to skip for pagination.
-    pub offset: u32,
+    /// Result window: limit, offset (count ignored for CSR queries).
+    pub pagination: Pagination,
 }
 
 /// Temporal filter component of a CSR query.
@@ -441,12 +462,8 @@ pub struct CompiledTemporalQuery {
     /// ISO 8601 duration for aggregation bucket size (e.g. `"PT1H"`).
     pub aggr_period_duration: Option<String>,
 
-    /// Maximum number of entities to return.
-    pub limit: u32,
-    /// Number of entities to skip for pagination.
-    pub offset: u32,
-    /// Whether to include a total count of matching entities in the response.
-    pub count: bool,
+    /// Result window: limit, offset, and total-count toggle.
+    pub pagination: Pagination,
 
     /// Whether to include system-generated attributes (`createdAt`, `modifiedAt`).
     pub sys_attrs: SysAttrsInclusion,

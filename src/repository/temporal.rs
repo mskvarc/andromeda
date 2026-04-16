@@ -9,13 +9,16 @@ use crate::{
         temporal::{TeaEntry, ValueType},
     },
     query::sql::BindValue,
+    repository::timescale_features::TimescaleFeatures,
 };
 use chrono::{DateTime, Utc};
 use dashmap::DashMap;
 use iref::IriBuf;
 use serde_json::Value;
 use sqlx::{
+    Postgres,
     Row,
+    Transaction,
     postgres::{PgPool, PgRow},
 };
 use std::{collections::HashMap, str::FromStr, sync::Arc};
@@ -108,15 +111,28 @@ pub struct TemporalRepository {
     /// database round-trips on every batch operation. New names are inserted
     /// on first encounter and cached for the process lifetime.
     attr_name_cache: Arc<DashMap<String, i16>>,
+    /// TSL capability probe, populated at `new_with_features` or `empty`.
+    timescale_features: TimescaleFeatures,
 }
 
 impl TemporalRepository {
     /// Creates a new repository backed by the given connection pool.
+    ///
+    /// Assumes no TSL features. For a runtime probe, call
+    /// [`TemporalRepository::with_features`] after constructing.
     pub fn new(pool: &PgPool) -> TemporalRepository {
         TemporalRepository {
             pool: pool.clone(), // clone: Arc ref-count bump (PgPool is Arc-based)
             attr_name_cache: Arc::new(DashMap::new()),
+            timescale_features: TimescaleFeatures::empty(),
         }
+    }
+
+    /// Replace the repository's TimescaleDB feature set. Intended to be called
+    /// once at startup after probing via [`TimescaleFeatures::detect`].
+    pub fn with_features(mut self, features: TimescaleFeatures) -> TemporalRepository {
+        self.timescale_features = features;
+        self
     }
 
     // -------------------------------------------------------------------------
@@ -402,6 +418,8 @@ impl TemporalRepository {
         .bind(params.values.metadata)
         .execute(&mut *tx)
         .await?;
+
+        sync_attribute_current_single(&mut tx, &params).await?;
 
         tx.commit().await?;
 
@@ -788,6 +806,8 @@ impl TemporalRepository {
         .execute(&mut *tx)
         .await?;
 
+        sync_attribute_current_batch(&mut tx, entries).await?;
+
         tx.commit().await?;
         Ok(())
     }
@@ -875,4 +895,139 @@ impl TemporalRepository {
         tx.commit().await?;
         Ok(())
     }
+}
+
+/// Upsert the `attribute_current` projection from a single `insert_history` call.
+///
+/// The projection holds one row per TEA carrying the latest typed value. The
+/// upsert joins `temporal_entity_attributes` so the denormalized entity/attr/
+/// dataset columns stay consistent, and guards the update with a
+/// `modified_at <= EXCLUDED.modified_at` clause so an out-of-order write
+/// cannot overwrite a newer current value.
+async fn sync_attribute_current_single(tx: &mut Transaction<'_, Postgres>, params: &InsertHistoryParams<'_>) -> Result<(), AndromedaError> {
+    sqlx::query(
+        r#"
+        INSERT INTO attribute_current (
+            tea_id, entity_id, attribute_name_id, dataset_id, value_type,
+            value_number, value_string, value_bool, value_geo,
+            value_object, value_datetime, value_uri, modified_at
+        )
+        SELECT tea.id, tea.entity_id, tea.attribute_name_id, tea.dataset_id, tea.value_type,
+               $2, $3, $4,
+               ST_MakeValid(ST_SetSRID(ST_GeomFromGeoJSON($5), 4326)),
+               $6, $7, $8, $9
+        FROM temporal_entity_attributes tea
+        WHERE tea.id = $1
+        ON CONFLICT (tea_id) DO UPDATE SET
+            entity_id         = EXCLUDED.entity_id,
+            attribute_name_id = EXCLUDED.attribute_name_id,
+            dataset_id        = EXCLUDED.dataset_id,
+            value_type        = EXCLUDED.value_type,
+            value_number      = EXCLUDED.value_number,
+            value_string      = EXCLUDED.value_string,
+            value_bool        = EXCLUDED.value_bool,
+            value_geo         = EXCLUDED.value_geo,
+            value_object      = EXCLUDED.value_object,
+            value_datetime    = EXCLUDED.value_datetime,
+            value_uri         = EXCLUDED.value_uri,
+            modified_at       = EXCLUDED.modified_at
+        WHERE attribute_current.modified_at <= EXCLUDED.modified_at
+        "#,
+    )
+    .bind(params.tea_id)
+    .bind(params.values.value_number)
+    .bind(params.values.value_string)
+    .bind(params.values.value_bool)
+    .bind(params.values.value_geo)
+    .bind(params.values.value_object)
+    .bind(params.values.value_datetime)
+    .bind(params.values.value_uri)
+    .bind(params.time)
+    .execute(&mut **tx)
+    .await?;
+
+    Ok(())
+}
+
+/// Upsert the `attribute_current` projection from a batched `insert_history_batch` call.
+///
+/// The batch may contain multiple rows for the same TEA. `DISTINCT ON (tea_id)
+/// ORDER BY time DESC` picks the latest per TEA in the batch before upserting;
+/// the same `modified_at` guard rejects out-of-order writes.
+async fn sync_attribute_current_batch(tx: &mut Transaction<'_, Postgres>, entries: &[HistoryBatchEntry]) -> Result<(), AndromedaError> {
+    if entries.is_empty() {
+        return Ok(());
+    }
+
+    let len = entries.len();
+    let mut tea_ids = Vec::with_capacity(len);
+    let mut times = Vec::with_capacity(len);
+    let mut value_numbers: Vec<Option<f64>> = Vec::with_capacity(len);
+    let mut value_strings: Vec<Option<&str>> = Vec::with_capacity(len);
+    let mut value_bools: Vec<Option<bool>> = Vec::with_capacity(len);
+    let mut value_geos: Vec<Option<&str>> = Vec::with_capacity(len);
+    let mut value_objects: Vec<Option<&Value>> = Vec::with_capacity(len);
+    let mut value_datetimes: Vec<Option<DateTime<Utc>>> = Vec::with_capacity(len);
+    let mut value_uris: Vec<Option<&str>> = Vec::with_capacity(len);
+
+    for e in entries {
+        tea_ids.push(e.tea_id);
+        times.push(e.time);
+        value_numbers.push(e.value_number);
+        value_strings.push(e.value_string.as_deref());
+        value_bools.push(e.value_bool);
+        value_geos.push(e.value_geo.as_deref());
+        value_objects.push(e.value_object.as_ref());
+        value_datetimes.push(e.value_datetime);
+        value_uris.push(e.value_uri.as_deref());
+    }
+
+    sqlx::query(
+        r#"
+        INSERT INTO attribute_current (
+            tea_id, entity_id, attribute_name_id, dataset_id, value_type,
+            value_number, value_string, value_bool, value_geo,
+            value_object, value_datetime, value_uri, modified_at
+        )
+        SELECT DISTINCT ON (d.tea_id)
+            d.tea_id, tea.entity_id, tea.attribute_name_id, tea.dataset_id, tea.value_type,
+            d.value_number, d.value_string, d.value_bool,
+            ST_MakeValid(ST_SetSRID(ST_GeomFromGeoJSON(d.value_geo), 4326)),
+            d.value_object, d.value_datetime, d.value_uri, d.time
+        FROM UNNEST(
+            $1::uuid[], $2::timestamptz[], $3::double precision[], $4::text[], $5::boolean[],
+            $6::text[], $7::jsonb[], $8::timestamptz[], $9::text[]
+        ) AS d(tea_id, time, value_number, value_string, value_bool,
+               value_geo, value_object, value_datetime, value_uri)
+        JOIN temporal_entity_attributes tea ON tea.id = d.tea_id
+        ORDER BY d.tea_id, d.time DESC
+        ON CONFLICT (tea_id) DO UPDATE SET
+            entity_id         = EXCLUDED.entity_id,
+            attribute_name_id = EXCLUDED.attribute_name_id,
+            dataset_id        = EXCLUDED.dataset_id,
+            value_type        = EXCLUDED.value_type,
+            value_number      = EXCLUDED.value_number,
+            value_string      = EXCLUDED.value_string,
+            value_bool        = EXCLUDED.value_bool,
+            value_geo         = EXCLUDED.value_geo,
+            value_object      = EXCLUDED.value_object,
+            value_datetime    = EXCLUDED.value_datetime,
+            value_uri         = EXCLUDED.value_uri,
+            modified_at       = EXCLUDED.modified_at
+        WHERE attribute_current.modified_at <= EXCLUDED.modified_at
+        "#,
+    )
+    .bind(&tea_ids)
+    .bind(&times)
+    .bind(&value_numbers)
+    .bind(&value_strings)
+    .bind(&value_bools)
+    .bind(&value_geos)
+    .bind(&value_objects)
+    .bind(&value_datetimes)
+    .bind(&value_uris)
+    .execute(&mut **tx)
+    .await?;
+
+    Ok(())
 }

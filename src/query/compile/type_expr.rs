@@ -26,23 +26,20 @@ pub enum TypeExprRaw {
 
 /// Parses a type selection expression string into a raw AST.
 ///
-/// Returns `QueryError::BadRequestData` if the input is syntactically invalid
-/// (empty, unbalanced parentheses, missing type names).
+/// Returns a `QueryError` variant describing the invalid production
+/// (empty input, unbalanced parentheses, missing type names).
 pub fn parse(input: &str) -> Result<TypeExprRaw, QueryError> {
     let trimmed = input.trim();
     if trimmed.is_empty() {
-        return Err(QueryError::BadRequestData("Entity type selection expression must not be empty".to_string()));
+        return Err(QueryError::TypeExprEmpty);
     }
 
     let mut parser = Parser::new(trimmed);
     let expr = parser.parse_or()?;
 
     if parser.pos < parser.input.len() {
-        return Err(QueryError::BadRequestData(format!(
-            "Unexpected character at position {}: '{}'",
-            parser.pos,
-            &parser.input[parser.pos..parser.pos + 1]
-        )));
+        let ch = parser.input[parser.pos..].chars().next().unwrap_or(' ');
+        return Err(QueryError::TypeExprUnexpected { ch, position: parser.pos });
     }
 
     Ok(expr)
@@ -112,21 +109,14 @@ impl<'a> Parser<'a> {
                 let expr = self.parse_or()?;
                 self.skip_whitespace();
                 if self.peek() != Some(')') {
-                    return Err(QueryError::BadRequestData(format!(
-                        "Expected ')' at position {}, found {:?}",
-                        self.pos,
-                        self.peek()
-                    )));
+                    return Err(QueryError::TypeExprUnbalanced(self.pos));
                 }
                 self.advance();
                 Ok(expr)
             }
             Some(c) if is_type_char(c) => self.parse_type_name(),
-            Some(c) => Err(QueryError::BadRequestData(format!(
-                "Unexpected character '{}' at position {} in type expression",
-                c, self.pos
-            ))),
-            None => Err(QueryError::BadRequestData("Unexpected end of type expression".to_string())),
+            Some(c) => Err(QueryError::TypeExprUnexpected { ch: c, position: self.pos }),
+            None => Err(QueryError::TypeExprUnexpectedEnd),
         }
     }
 
@@ -142,7 +132,7 @@ impl<'a> Parser<'a> {
         }
         let name = self.input[start..self.pos].trim();
         if name.is_empty() {
-            return Err(QueryError::BadRequestData(format!("Empty type name at position {}", start)));
+            return Err(QueryError::TypeExprEmptyName(start));
         }
         Ok(TypeExprRaw::Type(name.to_string()))
     }

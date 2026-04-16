@@ -5,8 +5,8 @@
 //! at least one filter or `local=true` must be present.
 
 use crate::{
+    core::error::{AndromedaError, ErrorKind},
     http::{extractor::error::ExtractorRejection, parameter::query::entity::EntityQueryParameters},
-    query::error::QueryError,
 };
 use axum::{extract::FromRequestParts, http::request::Parts};
 
@@ -32,10 +32,16 @@ where
         let params = serde_urlencoded::from_str::<EntityQueryParameters>(query_str)
             .map_err(|error| ExtractorRejection::invalid_request(format!("Invalid query string: {}", error), uri.clone()))?;
 
-        // Validate options and other parameter values
-        params.validate().map_err(|e| match e {
-            QueryError::BadRequestData(d) => ExtractorRejection::bad_request_data(d, uri.clone()),
-            QueryError::InvalidRequest(d) => ExtractorRejection::invalid_request(d, uri.clone()),
+        // Validate options and other parameter values. QueryError classifies
+        // each variant as either MalformedRequest or QueryValidation when
+        // converted to AndromedaError; we forward that distinction to the
+        // spec-defined InvalidRequest / BadRequestData NGSI-LD error types.
+        params.validate().map_err(|e| {
+            let andromeda: AndromedaError = e.into();
+            match andromeda.kind() {
+                ErrorKind::MalformedRequest(_) => ExtractorRejection::invalid_request(andromeda.to_string(), uri.clone()),
+                _ => ExtractorRejection::bad_request_data(andromeda.to_string(), uri.clone()),
+            }
         })?;
 
         // Per NGSI-LD spec 5.7.2.4: at least one filter OR local=true must be provided

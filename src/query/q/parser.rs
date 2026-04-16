@@ -10,16 +10,19 @@ use serde_json::Number;
 /// `|` for OR), comparison operators, range/list values, regex patterns, and
 /// nested attribute paths.
 ///
-/// Returns a `QueryError::BadRequestData` if the input is syntactically invalid.
+/// Returns a typed [`QueryError`] variant if the input is syntactically invalid.
 pub fn parse(input: &str) -> Result<Expr, QueryError> {
+    if input.trim().is_empty() {
+        return Err(QueryError::QEmpty);
+    }
     let tokens = tokenize(input)?;
     let mut parser = Parser::new(&tokens);
     let expr = parser.parse_or()?;
     if parser.pos < parser.tokens.len() {
-        return Err(QueryError::BadRequestData(format!(
-            "Unexpected token at position {}: {:?}",
-            parser.pos, parser.tokens[parser.pos]
-        )));
+        return Err(QueryError::QUnexpectedToken {
+            position: parser.pos,
+            token: format!("{:?}", parser.tokens[parser.pos]),
+        });
     }
     Ok(expr)
 }
@@ -139,7 +142,7 @@ fn tokenize(input: &str) -> Result<Vec<Token>, QueryError> {
                     }
                 }
                 if i >= chars.len() {
-                    return Err(QueryError::BadRequestData("Unterminated string in q parameter".to_string()));
+                    return Err(QueryError::QUnterminatedString);
                 }
                 i += 1;
                 let s = percent_encoding::percent_decode_str(&s).decode_utf8_lossy().into_owned();
@@ -240,10 +243,7 @@ fn tokenize(input: &str) -> Result<Vec<Token>, QueryError> {
                 }
             }
             other => {
-                return Err(QueryError::BadRequestData(format!(
-                    "Unexpected character '{}' in q parameter at position {}",
-                    other, i
-                )));
+                return Err(QueryError::QUnexpectedChar { ch: other, position: i });
             }
         }
     }
@@ -278,12 +278,10 @@ impl<'a> Parser<'a> {
             self.advance();
             Ok(())
         } else {
-            Err(QueryError::BadRequestData(format!(
-                "Expected {:?} at position {}, found {:?}",
-                expected,
-                self.pos,
-                self.peek()
-            )))
+            Err(QueryError::QExpected {
+                expected: format!("{:?}", expected),
+                found: format!("{:?}", self.peek()),
+            })
         }
     }
 
@@ -413,7 +411,10 @@ impl<'a> Parser<'a> {
         match self.advance() {
             Some(Token::Ident(s)) => Ok(s.clone()),
             Some(Token::QuotedStr(s)) => Ok(s.clone()),
-            other => Err(QueryError::BadRequestData(format!("Expected identifier, found {:?}", other))),
+            other => Err(QueryError::QExpected {
+                expected: "identifier".to_string(),
+                found: format!("{:?}", other),
+            }),
         }
     }
 
@@ -441,9 +442,7 @@ impl<'a> Parser<'a> {
     fn parse_scalar(&mut self) -> Result<Scalar, QueryError> {
         match self.advance() {
             Some(Token::NumberLit(s)) => {
-                let num: Number = s
-                    .parse::<serde_json::Number>()
-                    .map_err(|_| QueryError::BadRequestData(format!("Invalid number: {}", s)))?;
+                let num: Number = s.parse::<serde_json::Number>().map_err(|_| QueryError::QInvalidNumber(s.clone()))?;
                 Ok(Scalar::Number(num))
             }
             Some(Token::QuotedStr(s)) => {
@@ -470,7 +469,10 @@ impl<'a> Parser<'a> {
             }
             Some(Token::True) => Ok(Scalar::Bool(true)),
             Some(Token::False) => Ok(Scalar::Bool(false)),
-            other => Err(QueryError::BadRequestData(format!("Expected value, found {:?}", other))),
+            other => Err(QueryError::QExpected {
+                expected: "value".to_string(),
+                found: format!("{:?}", other),
+            }),
         }
     }
 
@@ -478,7 +480,10 @@ impl<'a> Parser<'a> {
         match self.advance() {
             Some(Token::QuotedStr(s)) => Ok(s.clone()),
             Some(Token::Ident(s)) => Ok(s.clone()),
-            other => Err(QueryError::BadRequestData(format!("Expected pattern string, found {:?}", other))),
+            other => Err(QueryError::QExpected {
+                expected: "pattern string".to_string(),
+                found: format!("{:?}", other),
+            }),
         }
     }
 }

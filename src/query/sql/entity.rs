@@ -43,8 +43,8 @@ pub fn build_query(query: &CompiledEntityQuery) -> Result<BuiltQuery<'static>, A
         .column(Entities::Payload)
         .from(Entities::Table)
         .cond_where(condition.clone())
-        .limit(query.limit as u64)
-        .offset(query.offset as u64);
+        .limit(query.pagination.limit as u64)
+        .offset(query.pagination.offset as u64);
 
     // Add ORDER BY clause
     add_order_clause(&mut select, &query.order_by, query.geo.as_ref(), query.ordering_geometry.as_ref())?;
@@ -54,7 +54,7 @@ pub fn build_query(query: &CompiledEntityQuery) -> Result<BuiltQuery<'static>, A
     let bind_values = sea_values_to_bind_values(values);
 
     // Build count query if requested
-    let count_sql = if query.count {
+    let count_sql = if query.pagination.count {
         let mut count_select = Query::select();
         count_select
             .expr(Func::count(SeaExpr::col(Asterisk)))
@@ -86,7 +86,7 @@ pub fn build_ids_query(query: &CompiledEntityQuery) -> Result<BuiltQuery<'static
         add_order_clause(&mut select, &query.order_by, query.geo.as_ref(), query.ordering_geometry.as_ref())?;
     }
 
-    select.limit(query.limit as u64).offset(query.offset as u64);
+    select.limit(query.pagination.limit as u64).offset(query.pagination.offset as u64);
 
     let (sql, values) = select.build(PostgresQueryBuilder);
     let bind_values = sea_values_to_bind_values(values);
@@ -587,14 +587,11 @@ mod tests {
             q_expr: None,
             geo: None,
             ordering_geometry: None,
-            limit: 20,
-            offset: 0,
-            count: false,
+            pagination: crate::query::compiled::Pagination::DEFAULT,
             pick: Vec::new(),
             omit: Vec::new(),
             order_by: Vec::new(),
             scope_q: None,
-            _csf_expr: None,
         }
     }
 
@@ -670,7 +667,7 @@ mod tests {
     #[test]
     fn build_with_count() {
         let mut q = empty_query();
-        q.count = true;
+        q.pagination.count = true;
         q.type_expr = Some(TypeExpr::Type("Vehicle".to_string()));
         let built = build_query(&q).unwrap();
         assert!(built.count_sql.is_some());
@@ -702,8 +699,8 @@ mod tests {
     #[test]
     fn build_with_limit_offset() {
         let mut q = empty_query();
-        q.limit = 50;
-        q.offset = 100;
+        q.pagination.limit = 50;
+        q.pagination.offset = 100;
         let built = build_query(&q).unwrap();
         assert!(built.sql.contains("LIMIT"));
         assert!(built.sql.contains("OFFSET"));
