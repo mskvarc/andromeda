@@ -5,6 +5,7 @@ use crate::{
     },
     jsonld::JsonLdExpandableMacro,
 };
+use cefact_units::UnitCode;
 use compact_str::CompactString;
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
@@ -21,7 +22,7 @@ pub struct Property {
     pub value: NgsiLdValue,
     /// Measurement unit code.
     #[jsonld(property = "ngsi:unitCode", vocab)]
-    pub unit_code: Option<CompactString>,
+    pub unit_code: Option<UnitCode>,
     /// Optional JSON-LD datatype for `value`.
     #[jsonld(property = "ngsi:hasValueType", vocab)]
     pub value_type: Option<CompactString>,
