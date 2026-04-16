@@ -9,6 +9,7 @@ use crate::{
         notification::{ChangeEvent, ChangeOrigin, CompiledSubscription},
         subscription::SubscriptionStatus,
     },
+    jsonld::vocab,
     query::q,
 };
 use chrono::Utc;
@@ -184,7 +185,7 @@ pub fn matches_geo_filter(geo_q: &Value, entity_data: &Value) -> bool {
     let geoproperty = geo_obj
         .get("geoproperty")
         .and_then(|v| v.as_str())
-        .unwrap_or("https://uri.etsi.org/ngsi-ld/location");
+        .unwrap_or(vocab::expanded::LOCATION.as_str());
 
     let ref_geojson_str = match serde_json::to_string(&serde_json::json!({
         "type": geometry_str,
@@ -259,7 +260,7 @@ fn extract_geoproperty_geojson(entity: &Value, geoproperty_iri: &str) -> Option<
     let geojson_value = prop_value
         .as_array()
         .and_then(|arr| arr.first())
-        .and_then(|inst| inst.get("https://uri.etsi.org/ngsi-ld/hasValue"))
+        .and_then(|inst| inst.get(vocab::expanded::VALUE.as_str()))
         .and_then(|v| v.as_array())
         .and_then(|arr| arr.first())
         .and_then(|v| v.get("@value"));

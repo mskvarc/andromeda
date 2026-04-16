@@ -5,7 +5,7 @@ use crate::{
         uri::Uri,
     },
     i18n::collation::augment_expanded_with_collation_metadata,
-    jsonld::ContextSpec,
+    jsonld::{ContextSpec, vocab},
     query::compiled::PurgeMode,
     service::entity::{
         EntityService,
@@ -245,7 +245,7 @@ impl EntityService {
 
         let attr_iri = self.engine.expand_term(attr_name, context).await?;
 
-        if attr_iri == "https://uri.etsi.org/ngsi-ld/scope" {
+        if attr_iri == vocab::expanded::SCOPE.as_str() {
             return Err(AndromedaError::entity_validation("Scope is not a replaceable attribute"));
         }
 

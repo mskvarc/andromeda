@@ -235,7 +235,7 @@ fn predicate_to_condition(pred: &Predicate, payload_col: &str) -> Result<Conditi
 /// Converts comparison predicate to sea-query condition.
 fn compare_to_condition(path: &AttrPath, op: CmpOp, rhs: &CompareValue, payload_col: &str) -> Result<Condition, AndromedaError> {
     let jsonpath = value_extraction_jsonpath(&path.attr, &path.sub_attrs, &path.value_path);
-    let has_object_jsonpath = value_extraction_jsonpath_with_predicate(&path.attr, &path.sub_attrs, &path.value_path, "https://uri.etsi.org/ngsi-ld/hasObject");
+    let has_object_jsonpath = value_extraction_jsonpath_with_predicate(&path.attr, &path.sub_attrs, &path.value_path, vocab::expanded::OBJECT.as_str());
 
     let extract_expr = format!("jsonb_path_query_first(\"{}\", '{}')", payload_col, escape_jsonpath(&jsonpath));
     let extract_object = format!("jsonb_path_query_first(\"{}\", '{}')", payload_col, escape_jsonpath(&has_object_jsonpath));
@@ -293,7 +293,7 @@ fn compare_to_condition(path: &AttrPath, op: CmpOp, rhs: &CompareValue, payload_
 
 /// Converts GeoQuery to sea-query condition using PostGIS helpers.
 fn geo_to_condition(geo: &GeoQuery, payload_col: &str) -> Result<Condition, AndromedaError> {
-    let is_default_location = geo.geoproperty_iri == "https://uri.etsi.org/ngsi-ld/location";
+    let is_default_location = geo.geoproperty_iri == vocab::expanded::LOCATION.as_str();
 
     // Build geometry extraction expression as SimpleExpr
     let geo_extract_expr = if is_default_location {
@@ -301,8 +301,9 @@ fn geo_to_condition(geo: &GeoQuery, payload_col: &str) -> Result<Condition, Andr
     } else {
         // For custom geoproperties, extract from JSONB and validate
         let jsonpath = format!(
-            "$[0].\"{}\"[0].\"https://uri.etsi.org/ngsi-ld/hasValue\"[0].\"@value\"",
-            escape_jsonpath_key(&geo.geoproperty_iri)
+            "$[0].\"{}\"[0].\"{}\"[0].\"@value\"",
+            escape_jsonpath_key(&geo.geoproperty_iri),
+            escape_jsonpath_key(vocab::expanded::VALUE.as_str())
         );
         let extract = SeaExpr::cust(format!("jsonb_path_query_first(\"{}\", '{}')::text", payload_col, jsonpath));
         validated_geom_from_geojson(extract.into())
@@ -326,8 +327,9 @@ fn geo_to_condition(geo: &GeoQuery, payload_col: &str) -> Result<Condition, Andr
                 "\"location_geo\"".to_string()
             } else {
                 let jsonpath = format!(
-                    "$[0].\"{}\"[0].\"https://uri.etsi.org/ngsi-ld/hasValue\"[0].\"@value\"",
-                    escape_jsonpath_key(&geo.geoproperty_iri)
+                    "$[0].\"{}\"[0].\"{}\"[0].\"@value\"",
+                    escape_jsonpath_key(&geo.geoproperty_iri),
+                    escape_jsonpath_key(vocab::expanded::VALUE.as_str())
                 );
                 format!(
                     "ST_MakeValid(ST_SetSRID(ST_GeomFromGeoJSON(jsonb_path_query_first(\"{}\", '{}')::text), 4326))::geography",
@@ -456,8 +458,9 @@ fn add_order_clause(
         } else {
             // Attribute value ordering
             let json_path = format!(
-                "$[0].\"{}\"[0].\"https://uri.etsi.org/ngsi-ld/hasValue\"[0].\"@value\"",
-                escape_jsonpath_key(&term.attr_iri)
+                "$[0].\"{}\"[0].\"{}\"[0].\"@value\"",
+                escape_jsonpath_key(&term.attr_iri),
+                escape_jsonpath_key(vocab::expanded::VALUE.as_str())
             );
             let collation = term.collation.as_ref().map(|c| format!(" COLLATE \"{}\"", c.as_str())).unwrap_or_default();
             let order_expr = format!("jsonb_path_query_first(\"payload\", '{}'){}", json_path, collation);
@@ -474,7 +477,7 @@ fn add_order_clause(
 // Helper functions
 
 fn value_extraction_jsonpath(attr_iri: &str, sub_attrs: &[String], value_path: &[String]) -> String {
-    value_extraction_jsonpath_with_predicate(attr_iri, sub_attrs, value_path, "https://uri.etsi.org/ngsi-ld/hasValue")
+    value_extraction_jsonpath_with_predicate(attr_iri, sub_attrs, value_path, vocab::expanded::VALUE.as_str())
 }
 
 fn value_extraction_jsonpath_with_predicate(attr_iri: &str, sub_attrs: &[String], value_path: &[String], predicate_iri: &str) -> String {
@@ -483,11 +486,7 @@ fn value_extraction_jsonpath_with_predicate(attr_iri: &str, sub_attrs: &[String]
         path.push_str(&format!("[0].\"{}\"", escape_jsonpath_key(sub)));
     }
     path.push_str(&format!("[0].\"{}\"[0]", escape_jsonpath_key(predicate_iri)));
-    let value_key = if predicate_iri == "https://uri.etsi.org/ngsi-ld/hasObject" {
-        "@id"
-    } else {
-        "@value"
-    };
+    let value_key = if predicate_iri == vocab::expanded::OBJECT.as_str() { "@id" } else { "@value" };
     path.push_str(&format!(".\"{}\"", value_key));
     for key in value_path {
         path.push_str(&format!(".\"{}\"", escape_jsonpath_key(key)));
@@ -512,13 +511,14 @@ fn build_geojson(geometry: &str, coordinates: &serde_json::Value) -> Result<Stri
 }
 
 fn build_geo_extract_geography(geoproperty_iri: &str) -> String {
-    let is_default_location = geoproperty_iri == "https://uri.etsi.org/ngsi-ld/location";
+    let is_default_location = geoproperty_iri == vocab::expanded::LOCATION.as_str();
     if is_default_location {
         "\"location_geo\"".to_string()
     } else {
         format!(
-            "ST_MakeValid(ST_SetSRID(ST_GeomFromGeoJSON((jsonb_path_query_first(\"payload\", '$[0].\"{}\"[0].\"https://uri.etsi.org/ngsi-ld/hasValue\"[0].\"@value\"')::text)), 4326))::geography",
-            escape_jsonpath_key(geoproperty_iri)
+            "ST_MakeValid(ST_SetSRID(ST_GeomFromGeoJSON((jsonb_path_query_first(\"payload\", '$[0].\"{}\"[0].\"{}\"[0].\"@value\"')::text)), 4326))::geography",
+            escape_jsonpath_key(geoproperty_iri),
+            escape_jsonpath_key(vocab::expanded::VALUE.as_str())
         )
     }
 }
@@ -748,10 +748,10 @@ mod tests {
             },
             geometry: "Point".to_string(),
             coordinates: serde_json::json!([13.4, 52.5]),
-            geoproperty_iri: "https://uri.etsi.org/ngsi-ld/location".to_string(),
+            geoproperty_iri: vocab::expanded::LOCATION.as_str().to_string(),
         });
         q.order_by = vec![CompiledOrderTerm {
-            attr_iri: "https://uri.etsi.org/ngsi-ld/location".to_string(),
+            attr_iri: vocab::expanded::LOCATION.as_str().to_string(),
             direction: OrderDirection::DistAsc,
             collation: None,
         }];
@@ -770,10 +770,10 @@ mod tests {
             },
             geometry: "Point".to_string(),
             coordinates: serde_json::json!([2.3, 48.8]),
-            geoproperty_iri: "https://uri.etsi.org/ngsi-ld/location".to_string(),
+            geoproperty_iri: vocab::expanded::LOCATION.as_str().to_string(),
         });
         q.order_by = vec![CompiledOrderTerm {
-            attr_iri: "https://uri.etsi.org/ngsi-ld/location".to_string(),
+            attr_iri: vocab::expanded::LOCATION.as_str().to_string(),
             direction: OrderDirection::DistDesc,
             collation: None,
         }];
@@ -786,7 +786,7 @@ mod tests {
     fn build_with_order_by_dist_without_geo_returns_error() {
         let mut q = empty_query();
         q.order_by = vec![CompiledOrderTerm {
-            attr_iri: "https://uri.etsi.org/ngsi-ld/location".to_string(),
+            attr_iri: vocab::expanded::LOCATION.as_str().to_string(),
             direction: OrderDirection::DistAsc,
             collation: None,
         }];
@@ -803,7 +803,7 @@ mod tests {
             }),
         });
         q.order_by = vec![CompiledOrderTerm {
-            attr_iri: "https://uri.etsi.org/ngsi-ld/location".to_string(),
+            attr_iri: vocab::expanded::LOCATION.as_str().to_string(),
             direction: OrderDirection::DistAsc,
             collation: None,
         }];
@@ -823,7 +823,7 @@ mod tests {
             },
             geometry: "Point".to_string(),
             coordinates: serde_json::json!([2.3522, 48.8566]),
-            geoproperty_iri: "https://uri.etsi.org/ngsi-ld/location".to_string(),
+            geoproperty_iri: vocab::expanded::LOCATION.as_str().to_string(),
         });
         q.ordering_geometry = Some(OrderingGeometry {
             geometry: geojson::Geometry::new(geojson::GeometryValue::Point {
@@ -831,7 +831,7 @@ mod tests {
             }),
         });
         q.order_by = vec![CompiledOrderTerm {
-            attr_iri: "https://uri.etsi.org/ngsi-ld/location".to_string(),
+            attr_iri: vocab::expanded::LOCATION.as_str().to_string(),
             direction: OrderDirection::DistAsc,
             collation: None,
         }];
@@ -851,7 +851,7 @@ mod tests {
             },
             geometry: "Point".to_string(),
             coordinates: serde_json::json!([13.4, 52.5]),
-            geoproperty_iri: "https://uri.etsi.org/ngsi-ld/location".to_string(),
+            geoproperty_iri: vocab::expanded::LOCATION.as_str().to_string(),
         });
         let built = build_query(&q).unwrap();
         assert!(built.sql.contains("ST_DWithin"), "should contain spatial predicate");
@@ -881,7 +881,7 @@ mod tests {
             georel: GeoRel::Within,
             geometry: "Polygon".to_string(),
             coordinates: serde_json::json!([[[0.0, 0.0], [10.0, 0.0], [10.0, 10.0], [0.0, 10.0], [0.0, 0.0]]]),
-            geoproperty_iri: "https://uri.etsi.org/ngsi-ld/location".to_string(),
+            geoproperty_iri: vocab::expanded::LOCATION.as_str().to_string(),
         });
         let built = build_query(&q).unwrap();
         assert!(built.sql.contains("ST_Within"), "should contain ST_Within spatial predicate");

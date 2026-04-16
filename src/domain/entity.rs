@@ -294,7 +294,10 @@ impl EntityPatch {
 mod tests {
     #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::{Entity, EntityPatch};
-    use crate::domain::{attribute::AttributeValue, notification::SysAttrsSnapshot};
+    use crate::{
+        domain::{attribute::AttributeValue, notification::SysAttrsSnapshot},
+        jsonld::vocab,
+    };
     use chrono::{Datelike, TimeZone, Utc};
     use serde_json::json;
 
@@ -653,7 +656,7 @@ mod tests {
         let expanded = entity.to_expanded();
         let obj = expanded.as_object().expect("expanded is object");
 
-        let scope = &obj["https://uri.etsi.org/ngsi-ld/scope"];
+        let scope = &obj[vocab::expanded::SCOPE.as_str()];
         pretty_assertions::assert_eq!(scope, &json!([{"@value": "/Madrid/Gardens"}]));
     }
 
@@ -677,9 +680,9 @@ mod tests {
         let obj = expanded.as_object().expect("expanded is object");
 
         // Timestamps should be typed values
-        assert!(obj.contains_key("https://uri.etsi.org/ngsi-ld/createdAt"));
-        let created = &obj["https://uri.etsi.org/ngsi-ld/createdAt"];
-        pretty_assertions::assert_eq!(created[0]["@type"], "https://uri.etsi.org/ngsi-ld/DateTime");
+        assert!(obj.contains_key(vocab::expanded::CREATED_AT.as_str()));
+        let created = &obj[vocab::expanded::CREATED_AT.as_str()];
+        pretty_assertions::assert_eq!(created[0]["@type"], vocab::expanded::DATE_TIME.as_str());
 
         // Flattened attribute
         assert!(obj.contains_key("temperature"));
@@ -698,14 +701,14 @@ mod tests {
         let expanded = entity.to_expanded();
         let obj = expanded.as_object().expect("expanded is object");
 
-        assert!(!obj.contains_key("https://uri.etsi.org/ngsi-ld/scope"));
-        assert!(!obj.contains_key("https://uri.etsi.org/ngsi-ld/expiresAt"));
-        assert!(!obj.contains_key("https://uri.etsi.org/ngsi-ld/location"));
-        assert!(!obj.contains_key("https://uri.etsi.org/ngsi-ld/observationSpace"));
-        assert!(!obj.contains_key("https://uri.etsi.org/ngsi-ld/operationSpace"));
-        assert!(!obj.contains_key("https://uri.etsi.org/ngsi-ld/createdAt"));
-        assert!(!obj.contains_key("https://uri.etsi.org/ngsi-ld/modifiedAt"));
-        assert!(!obj.contains_key("https://uri.etsi.org/ngsi-ld/deletedAt"));
+        assert!(!obj.contains_key(vocab::expanded::SCOPE.as_str()));
+        assert!(!obj.contains_key(vocab::expanded::EXPIRES_AT.as_str()));
+        assert!(!obj.contains_key(vocab::expanded::LOCATION.as_str()));
+        assert!(!obj.contains_key(vocab::expanded::OBSERVATION_SPACE.as_str()));
+        assert!(!obj.contains_key(vocab::expanded::OPERATION_SPACE.as_str()));
+        assert!(!obj.contains_key(vocab::expanded::CREATED_AT.as_str()));
+        assert!(!obj.contains_key(vocab::expanded::MODIFIED_AT.as_str()));
+        assert!(!obj.contains_key(vocab::expanded::DELETED_AT.as_str()));
     }
 
     #[test]
@@ -725,7 +728,7 @@ mod tests {
         let expanded = entity.to_expanded();
         let obj = expanded.as_object().expect("expanded is object");
 
-        let location = &obj["https://uri.etsi.org/ngsi-ld/location"];
+        let location = &obj[vocab::expanded::LOCATION.as_str()];
         // Location is an AttributeValue, expanded via custom
         let arr = location.as_array().expect("location is array");
         assert!(!arr.is_empty());

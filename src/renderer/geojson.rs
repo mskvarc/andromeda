@@ -5,15 +5,9 @@
 //! crate for type-safe construction; `@context` is injected post-serialization
 //! because it is an NGSI-LD extension absent from the GeoJSON spec.
 
-use crate::core::error::AndromedaError;
+use crate::{core::error::AndromedaError, jsonld::vocab};
 use geojson::{Feature, FeatureCollection, feature::Id};
 use serde_json::{Map, Value};
-
-/// Default geometry attribute keys for the `location` property.
-///
-/// When no explicit `geometryProperty` is requested, the renderer looks for
-/// these keys in order (compact and expanded forms).
-const DEFAULT_LOCATION_KEYS: &[&str] = &["location", "https://uri.etsi.org/ngsi-ld/location"];
 
 /// Renders NGSI-LD JSON objects into GeoJSON Features or FeatureCollections.
 #[derive(Debug)]
@@ -114,9 +108,10 @@ fn entity_to_feature(entity: &Value, geometry_property: Option<&str>) -> Feature
 /// Extract a GeoJSON [`geojson::Geometry`] from an entity object using the
 /// configured geometry property name.
 fn extract_geometry(obj: &Map<String, Value>, geometry_property: Option<&str>) -> Option<geojson::Geometry> {
-    let geom_key = geometry_property.unwrap_or("location");
-    let keys: &[&str] = if geom_key == "location" {
-        DEFAULT_LOCATION_KEYS
+    let geom_key = geometry_property.unwrap_or(vocab::compact::LOCATION);
+    let location_keys: &[&str] = &[vocab::compact::LOCATION, vocab::expanded::LOCATION.as_str()];
+    let keys: &[&str] = if geom_key == vocab::compact::LOCATION {
+        location_keys
     } else {
         // Single custom key -- use a local slice
         &[geom_key]
