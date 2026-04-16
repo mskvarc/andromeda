@@ -18,3 +18,4 @@ pub mod temporal_operations;
 pub mod tenant;
 pub mod types;
 pub mod version;
+pub mod ws;

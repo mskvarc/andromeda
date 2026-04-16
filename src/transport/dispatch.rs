@@ -18,14 +18,16 @@ use crate::{
         mqtt::{MqttPoolConfig, MqttTransportHandle, MqttTransportPool},
         sse::{SseConnectionRegistry, SseNotificationEvent},
         types::{DeliveryOutcome, DeliveryRequest, NotificationTransport, TenantHeaderValue, TransportError, content_type_for_accept},
+        ws::{WsConnectionRegistry, WsNotificationMessage},
     },
 };
 
-/// Unified transport dispatcher routing to HTTP, MQTT, or SSE.
+/// Unified transport dispatcher routing to HTTP, MQTT, SSE, or WebSocket.
 pub struct TransportDispatcher {
     http: HttpTransport,
     mqtt_pool: Arc<MqttTransportPool>,
     sse_registry: Arc<SseConnectionRegistry>,
+    ws_registry: Arc<WsConnectionRegistry>,
 }
 
 /// Result of a notification delivery attempt.
@@ -41,10 +43,16 @@ impl TransportDispatcher {
         http_config: HttpTransportConfig,
         mqtt_config: MqttPoolConfig,
         sse_registry: Arc<SseConnectionRegistry>,
+        ws_registry: Arc<WsConnectionRegistry>,
     ) -> Result<TransportDispatcher, TransportError> {
         let http = HttpTransport::new(http_config)?;
         let mqtt_pool = Arc::new(MqttTransportPool::new(mqtt_config));
-        Ok(TransportDispatcher { http, mqtt_pool, sse_registry })
+        Ok(TransportDispatcher {
+            http,
+            mqtt_pool,
+            sse_registry,
+            ws_registry,
+        })
     }
 
     /// Return a transport handle for the given endpoint.
@@ -53,6 +61,7 @@ impl TransportDispatcher {
             EndpointTransport::Http => TransportHandle::Http(&self.http),
             EndpointTransport::Mqtt(config) => TransportHandle::Mqtt(self.mqtt_pool.transport_for(config)),
             EndpointTransport::Sse => unreachable!("SSE delivery bypasses TransportHandle"),
+            EndpointTransport::WebSocket => unreachable!("WebSocket delivery bypasses TransportHandle"),
         }
     }
 
@@ -63,9 +72,12 @@ impl TransportDispatcher {
     /// outcome including duration and status details. SSE subscriptions are
     /// delivered via the connection registry rather than the transport trait.
     pub async fn deliver(&self, endpoint: &EndpointTransport, request: &DeliveryRequest) -> DeliveryResult {
-        // SSE: route through the connection registry instead of the transport trait.
+        // SSE / WebSocket: route through the connection registries instead of the transport trait.
         if matches!(endpoint, EndpointTransport::Sse) {
             return self.deliver_sse(request);
+        }
+        if matches!(endpoint, EndpointTransport::WebSocket) {
+            return self.deliver_ws(request);
         }
 
         let max_payload = self.http.max_payload_size();
@@ -149,6 +161,33 @@ impl TransportDispatcher {
         }
     }
 
+    /// Deliver a notification to a connected WebSocket client via the registry.
+    ///
+    /// Sends the JSON payload as a text frame. Unlike SSE, there is no
+    /// protocol-level event ID -- the notification ID lives in the JSON `id`
+    /// field.
+    fn deliver_ws(&self, request: &DeliveryRequest) -> DeliveryResult {
+        let data = String::from_utf8_lossy(&request.payload).into_owned();
+        let message = WsNotificationMessage { data };
+        match self.ws_registry.try_send(&request.subscription_id, message) {
+            Ok(()) => {
+                debug!(
+                    subscription_id = %request.subscription_id,
+                    "WebSocket notification delivered"
+                );
+                DeliveryResult::Delivered
+            }
+            Err(e) => {
+                debug!(
+                    subscription_id = %request.subscription_id,
+                    error = %e,
+                    "WebSocket notification delivery failed"
+                );
+                DeliveryResult::Failed
+            }
+        }
+    }
+
     /// Access the MQTT pool for health probe spawning.
     pub const fn mqtt_pool(&self) -> &Arc<MqttTransportPool> {
         &self.mqtt_pool
@@ -157,6 +196,11 @@ impl TransportDispatcher {
     /// Access the SSE connection registry.
     pub fn sse_registry(&self) -> &Arc<SseConnectionRegistry> {
         &self.sse_registry
+    }
+
+    /// Access the WebSocket connection registry.
+    pub fn ws_registry(&self) -> &Arc<WsConnectionRegistry> {
+        &self.ws_registry
     }
 
     /// Gracefully shut down all transport connections.

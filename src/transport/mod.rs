@@ -4,3 +4,4 @@ pub mod http;
 pub mod mqtt;
 pub mod sse;
 pub mod types;
+pub mod ws;

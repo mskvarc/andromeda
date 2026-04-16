@@ -5,26 +5,11 @@
 //! supports multiple concurrent client connections, each identified by a
 //! unique [`ConnectionId`]. Events are fanned out to all connected clients.
 
+use crate::transport::types::ConnectionId;
 use dashmap::DashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use tracing::debug;
-
-/// Unique identifier for a single SSE client connection.
-///
-/// Generated via a monotonically increasing atomic counter, guaranteeing
-/// uniqueness within a process lifetime.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct ConnectionId(u64);
-
-impl ConnectionId {
-    /// Allocate the next unique connection identifier.
-    fn next() -> ConnectionId {
-        static COUNTER: AtomicU64 = AtomicU64::new(0);
-        ConnectionId(COUNTER.fetch_add(1, Ordering::Relaxed))
-    }
-}
 
 /// A single SSE notification event to be sent to a connected client.
 #[derive(Debug, Clone)]

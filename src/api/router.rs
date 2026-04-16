@@ -22,6 +22,7 @@ use crate::{
         tenant,
         types,
         version,
+        ws,
     },
     repository::{
         context_source_registration::ContextSourceRegistrationRepository,
@@ -46,7 +47,7 @@ use crate::{
         runtime::TenantRuntimeManager,
         types::{TenantCreationPolicy, TenantRef},
     },
-    transport::{dispatch::TransportDispatcher, http::HttpTransportConfig, mqtt::MqttPoolConfig, sse::SseConnectionRegistry},
+    transport::{dispatch::TransportDispatcher, http::HttpTransportConfig, mqtt::MqttPoolConfig, sse::SseConnectionRegistry, ws::WsConnectionRegistry},
     version::Version,
     worker::{
         batch_side_effects::BatchSideEffectWorker,
@@ -177,7 +178,8 @@ fn build_v1_router() -> Router<AppState> {
         .route("/{subscription_id}", get(subscription::get))
         .route("/{subscription_id}", patch(subscription::update))
         .route("/{subscription_id}", delete(subscription::delete))
-        .route("/{subscription_id}/stream", get(sse::stream));
+        .route("/{subscription_id}/stream", get(sse::stream))
+        .route("/{subscription_id}/ws", get(ws::stream));
 
     let csr_routes = Router::new()
         .route("/", post(csource_registration::create))
@@ -296,9 +298,15 @@ pub async fn build_tenant_state(
     let csr_subscription_service = Arc::new(CsourceSubscriptionService::new(&pool, engine.clone(), Some(csr_sub_change_tx.clone())));
 
     let sse_registry = Arc::new(SseConnectionRegistry::new());
+    let ws_registry = Arc::new(WsConnectionRegistry::new());
     let transport = Arc::new(
-        TransportDispatcher::new(HttpTransportConfig::default(), MqttPoolConfig::default(), Arc::clone(&sse_registry))
-            .map_err(|e| crate::core::error::AndromedaError::internal(format!("Failed to create transport dispatcher: {e}")))?,
+        TransportDispatcher::new(
+            HttpTransportConfig::default(),
+            MqttPoolConfig::default(),
+            Arc::clone(&sse_registry),
+            Arc::clone(&ws_registry),
+        )
+        .map_err(|e| crate::core::error::AndromedaError::internal(format!("Failed to create transport dispatcher: {e}")))?,
     );
 
     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
@@ -409,6 +417,9 @@ pub async fn build_tenant_state(
             sse_registry,
             sse_channel_buffer_size: config.sse.channel_buffer_size,
             sse_keep_alive_interval_secs: config.sse.keep_alive_interval_secs,
+            ws_registry,
+            ws_channel_buffer_size: config.ws.channel_buffer_size,
+            ws_ping_interval_secs: config.ws.ping_interval_secs,
         },
         worker_handles,
         transport_handle,

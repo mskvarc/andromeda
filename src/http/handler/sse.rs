@@ -30,7 +30,8 @@ use crate::{
     http::error::problem::NgsiLdError,
     transport::{
         endpoint::{EndpointTransport, parse_endpoint_transport},
-        sse::{ConnectionId, SseConnectionRegistry},
+        sse::SseConnectionRegistry,
+        types::ConnectionId,
     },
 };
 

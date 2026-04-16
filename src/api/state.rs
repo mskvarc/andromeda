@@ -10,7 +10,7 @@ use crate::{
         subscription::SubscriptionService,
         temporal::TemporalService,
     },
-    transport::sse::SseConnectionRegistry,
+    transport::{sse::SseConnectionRegistry, ws::WsConnectionRegistry},
 };
 use std::sync::Arc;
 
@@ -32,6 +32,11 @@ pub struct AndromedaState {
     pub sse_channel_buffer_size: usize,
     /// SSE keep-alive ping interval in seconds.
     pub sse_keep_alive_interval_secs: u64,
+    pub ws_registry: Arc<WsConnectionRegistry>,
+    /// Per-connection WebSocket channel buffer size.
+    pub ws_channel_buffer_size: usize,
+    /// WebSocket ping interval in seconds.
+    pub ws_ping_interval_secs: u64,
 }
 
 #[derive(Clone)]

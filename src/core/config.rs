@@ -99,6 +99,10 @@ pub struct Configuration {
     #[config(nested)]
     #[config(layer_attr(clap(flatten)))]
     pub sse: SseConfig,
+
+    #[config(nested)]
+    #[config(layer_attr(clap(flatten)))]
+    pub ws: WsConfig,
 }
 
 #[derive(Config, Debug, Clone)]
@@ -220,6 +224,30 @@ impl Default for SseConfig {
     }
 }
 
+/// WebSocket notification transport configuration.
+#[derive(Config, Debug, Clone)]
+#[config(layer_attr(derive(Args)))]
+pub struct WsConfig {
+    /// Per-connection channel buffer size for WebSocket notification delivery.
+    #[config(default = 64)]
+    #[config(layer_attr(arg(skip)))]
+    pub channel_buffer_size: usize,
+
+    /// Ping interval in seconds for idle WebSocket connections.
+    #[config(default = 30)]
+    #[config(layer_attr(arg(skip)))]
+    pub ping_interval_secs: u64,
+}
+
+impl Default for WsConfig {
+    fn default() -> WsConfig {
+        WsConfig {
+            channel_buffer_size: 64,
+            ping_interval_secs: 30,
+        }
+    }
+}
+
 #[derive(Config, Debug, Clone)]
 #[config(layer_attr(derive(Args)))]
 pub struct OutboxConfig {
@@ -289,6 +317,7 @@ impl Configuration {
         let mut config = Configuration::builder().preloaded(cli.config).env().file(config_file.clone()).load()?;
         normalize_preload_context_paths(&mut config, &config_file);
         validate_sse_config(&config.sse)?;
+        validate_ws_config(&config.ws)?;
 
         Ok(config)
     }
@@ -302,6 +331,18 @@ fn validate_sse_config(sse: &SseConfig) -> Result<(), AndromedaError> {
     }
     if sse.keep_alive_interval_secs == 0 {
         return Err(AndromedaError::internal("SSE keep_alive_interval_secs must be at least 1"));
+    }
+    Ok(())
+}
+
+/// Validate WebSocket configuration values that would cause runtime panics or
+/// pathological behaviour if left unchecked.
+fn validate_ws_config(ws: &WsConfig) -> Result<(), AndromedaError> {
+    if ws.channel_buffer_size == 0 {
+        return Err(AndromedaError::internal("WebSocket channel_buffer_size must be at least 1"));
+    }
+    if ws.ping_interval_secs == 0 {
+        return Err(AndromedaError::internal("WebSocket ping_interval_secs must be at least 1"));
     }
     Ok(())
 }
@@ -385,6 +426,7 @@ mod tests {
             performance: PerformanceConfig::default(),
             outbox: OutboxConfig::default(),
             sse: SseConfig::default(),
+            ws: WsConfig::default(),
         }
     }
 
@@ -524,5 +566,29 @@ mod tests {
     fn sse_valid_config_accepted() {
         let sse = SseConfig::default();
         assert!(validate_sse_config(&sse).is_ok());
+    }
+
+    #[test]
+    fn ws_channel_buffer_size_zero_rejected() {
+        let ws = WsConfig {
+            channel_buffer_size: 0,
+            ping_interval_secs: 30,
+        };
+        assert!(validate_ws_config(&ws).is_err());
+    }
+
+    #[test]
+    fn ws_ping_interval_zero_rejected() {
+        let ws = WsConfig {
+            channel_buffer_size: 64,
+            ping_interval_secs: 0,
+        };
+        assert!(validate_ws_config(&ws).is_err());
+    }
+
+    #[test]
+    fn ws_valid_config_accepted() {
+        let ws = WsConfig::default();
+        assert!(validate_ws_config(&ws).is_ok());
     }
 }

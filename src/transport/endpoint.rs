@@ -61,6 +61,7 @@ pub enum EndpointTransport {
     Http,
     Mqtt(MqttEndpointConfig),
     Sse,
+    WebSocket,
 }
 
 /// Errors that can occur when parsing an endpoint URI.
@@ -105,6 +106,7 @@ pub fn parse_endpoint_transport(uri: &str, notifier_info: Option<&[Value]>) -> R
     match parsed.scheme() {
         "http" | "https" => Ok(EndpointTransport::Http),
         "sse" => Ok(EndpointTransport::Sse),
+        "ws" => Ok(EndpointTransport::WebSocket),
         "mqtt" | "mqtts" => {
             let use_tls = parsed.scheme() == "mqtts";
             let host = parsed.host_str().ok_or(EndpointParseError::MissingHost)?.to_string();
@@ -198,7 +200,7 @@ mod tests {
                 pretty_assertions::assert_eq!(config.version, MqttVersion::V5);
                 pretty_assertions::assert_eq!(config.qos, MqttQoS::AtMost);
             }
-            EndpointTransport::Http | EndpointTransport::Sse => unreachable!("Expected Mqtt transport"),
+            EndpointTransport::Http | EndpointTransport::Sse | EndpointTransport::WebSocket => unreachable!("Expected Mqtt transport"),
         }
     }
 
@@ -211,7 +213,7 @@ mod tests {
                 assert!(config.use_tls);
                 pretty_assertions::assert_eq!(config.topic, "secure/topic");
             }
-            EndpointTransport::Http | EndpointTransport::Sse => unreachable!("Expected Mqtt transport"),
+            EndpointTransport::Http | EndpointTransport::Sse | EndpointTransport::WebSocket => unreachable!("Expected Mqtt transport"),
         }
     }
 
@@ -223,7 +225,7 @@ mod tests {
                 pretty_assertions::assert_eq!(config.port, 1883);
                 assert!(!config.use_tls);
             }
-            EndpointTransport::Http | EndpointTransport::Sse => unreachable!("Expected Mqtt transport"),
+            EndpointTransport::Http | EndpointTransport::Sse | EndpointTransport::WebSocket => unreachable!("Expected Mqtt transport"),
         }
     }
 
@@ -239,7 +241,7 @@ mod tests {
                 pretty_assertions::assert_eq!(config.version, MqttVersion::V311);
                 pretty_assertions::assert_eq!(config.qos, MqttQoS::Exactly);
             }
-            EndpointTransport::Http | EndpointTransport::Sse => unreachable!("Expected Mqtt transport"),
+            EndpointTransport::Http | EndpointTransport::Sse | EndpointTransport::WebSocket => unreachable!("Expected Mqtt transport"),
         }
     }
 
@@ -251,7 +253,7 @@ mod tests {
             EndpointTransport::Mqtt(config) => {
                 pretty_assertions::assert_eq!(config.qos, MqttQoS::AtLeast);
             }
-            EndpointTransport::Http | EndpointTransport::Sse => unreachable!("Expected Mqtt transport"),
+            EndpointTransport::Http | EndpointTransport::Sse | EndpointTransport::WebSocket => unreachable!("Expected Mqtt transport"),
         }
     }
 
@@ -286,6 +288,24 @@ mod tests {
     }
 
     #[test]
+    fn parse_ws_endpoint() {
+        let result = parse_endpoint_transport("ws://internal", None).unwrap();
+        assert!(matches!(result, EndpointTransport::WebSocket));
+    }
+
+    #[test]
+    fn parse_ws_with_path() {
+        let result = parse_endpoint_transport("ws://internal/anything", None).unwrap();
+        assert!(matches!(result, EndpointTransport::WebSocket));
+    }
+
+    #[test]
+    fn parse_ws_case_insensitive_scheme() {
+        let result = parse_endpoint_transport("WS://internal", None).unwrap();
+        assert!(matches!(result, EndpointTransport::WebSocket));
+    }
+
+    #[test]
     fn parse_unsupported_scheme_rejected() {
         let result = parse_endpoint_transport("ftp://example.com/path", None);
         assert!(matches!(result, Err(EndpointParseError::UnsupportedScheme { .. })));
@@ -314,7 +334,7 @@ mod tests {
                 pretty_assertions::assert_eq!(config.password.as_deref(), Some("mypass"));
                 pretty_assertions::assert_eq!(config.host, "broker");
             }
-            EndpointTransport::Http | EndpointTransport::Sse => unreachable!("Expected Mqtt transport"),
+            EndpointTransport::Http | EndpointTransport::Sse | EndpointTransport::WebSocket => unreachable!("Expected Mqtt transport"),
         }
     }
 
@@ -326,7 +346,7 @@ mod tests {
                 pretty_assertions::assert_eq!(config.username.as_deref(), Some("myuser"));
                 assert!(config.password.is_none());
             }
-            EndpointTransport::Http | EndpointTransport::Sse => unreachable!("Expected Mqtt transport"),
+            EndpointTransport::Http | EndpointTransport::Sse | EndpointTransport::WebSocket => unreachable!("Expected Mqtt transport"),
         }
     }
 
@@ -338,7 +358,7 @@ mod tests {
                 assert!(config.username.is_none());
                 assert!(config.password.is_none());
             }
-            EndpointTransport::Http | EndpointTransport::Sse => unreachable!("Expected Mqtt transport"),
+            EndpointTransport::Http | EndpointTransport::Sse | EndpointTransport::WebSocket => unreachable!("Expected Mqtt transport"),
         }
     }
 

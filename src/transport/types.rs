@@ -4,7 +4,10 @@
 //! transports, along with all request/response/error types used across
 //! the delivery pipeline.
 
-use std::time::Duration;
+use std::{
+    sync::atomic::{AtomicU64, Ordering},
+    time::Duration,
+};
 
 use async_trait::async_trait;
 use bytes::Bytes;
@@ -14,6 +17,21 @@ use crate::{
     http::model::response_format::{APPLICATION_GEO_JSON, APPLICATION_JSON, APPLICATION_LD_JSON},
     tenancy::types::TenantName,
 };
+
+/// Unique identifier for a single streaming client connection (SSE or WebSocket).
+///
+/// Generated via a monotonically increasing atomic counter, guaranteeing
+/// uniqueness across all connection types within a process lifetime.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ConnectionId(u64);
+
+impl ConnectionId {
+    /// Allocate the next unique connection identifier.
+    pub fn next() -> ConnectionId {
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        ConnectionId(COUNTER.fetch_add(1, Ordering::Relaxed))
+    }
+}
 
 /// Resolve the notification content type from the subscription's `accept`
 /// field, falling back to `application/json`.
