@@ -67,22 +67,22 @@ pub struct InputContexts {
 }
 
 impl InputContexts {
-    /// Resolve the macro input relative to the call-site base directory.
-    pub fn resolve(base_dir: PathBuf, input: MacroInput) -> Result<InputContexts> {
+    /// Resolve the macro input using absolute paths from workspace root.
+    pub fn resolve(workspace_root: PathBuf, input: MacroInput) -> Result<InputContexts> {
         Ok(Self {
             core: resolve_input(
-                &base_dir,
+                &workspace_root,
                 "core",
                 input.core,
                 &["https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.9.jsonld"],
             )?,
             data_integrity: resolve_input(
-                &base_dir,
+                &workspace_root,
                 "data_integrity",
                 input.data_integrity,
                 &["https://w3id.org/security/data-integrity/v2"],
             )?,
-            andromeda: resolve_input(&base_dir, "andromeda", input.andromeda, &[])?,
+            andromeda: resolve_input(&workspace_root, "andromeda", input.andromeda, &[])?,
         })
     }
 
@@ -97,9 +97,11 @@ impl InputContexts {
     }
 }
 
-fn resolve_input(base_dir: &Path, label: &'static str, lit: LitStr, remote_urls: &'static [&'static str]) -> Result<InputContextFile> {
-    let relative_path = lit.value();
-    let resolved_path = base_dir.join(&relative_path);
+fn resolve_input(workspace_root: &Path, label: &'static str, lit: LitStr, remote_urls: &'static [&'static str]) -> Result<InputContextFile> {
+    let path_str = lit.value();
+    // Strip leading "/" if present, then join to workspace root
+    let relative = path_str.strip_prefix('/').unwrap_or(&path_str);
+    let resolved_path = workspace_root.join(relative);
 
     Ok(InputContextFile {
         label,

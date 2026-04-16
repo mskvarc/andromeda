@@ -22,27 +22,27 @@ impl AttributeType {
     /// Returns the expanded IRI for this attribute type.
     pub const fn iri(self) -> &'static Iri {
         match self {
-            Self::Property => vocab::PROPERTY,
-            Self::Relationship => vocab::RELATIONSHIP,
-            Self::GeoProperty => vocab::GEO_PROPERTY,
-            Self::VocabProperty => vocab::VOCAB_PROPERTY,
-            Self::LanguageProperty => vocab::LANGUAGE_PROPERTY,
-            Self::JsonProperty => vocab::JSON_PROPERTY,
-            Self::ListProperty => vocab::LIST_PROPERTY,
-            Self::ListRelationship => vocab::LIST_RELATIONSHIP,
+            Self::Property => vocab::expanded::PROPERTY,
+            Self::Relationship => vocab::expanded::RELATIONSHIP,
+            Self::GeoProperty => vocab::expanded::GEO_PROPERTY,
+            Self::VocabProperty => vocab::expanded::VOCAB_PROPERTY,
+            Self::LanguageProperty => vocab::expanded::LANGUAGE_PROPERTY,
+            Self::JsonProperty => vocab::expanded::JSON_PROPERTY,
+            Self::ListProperty => vocab::expanded::LIST_PROPERTY,
+            Self::ListRelationship => vocab::expanded::LIST_RELATIONSHIP,
         }
     }
 
     /// Returns the expanded IRI of the value container for this attribute type.
     pub const fn value_key(self) -> &'static Iri {
         match self {
-            Self::Property | Self::GeoProperty => vocab::VALUE,
-            Self::Relationship => vocab::OBJECT,
-            Self::VocabProperty => vocab::VOCAB,
-            Self::LanguageProperty => vocab::LANGUAGE_MAP,
-            Self::JsonProperty => vocab::JSON,
-            Self::ListProperty => vocab::VALUE_LIST,
-            Self::ListRelationship => vocab::OBJECT_LIST,
+            Self::Property | Self::GeoProperty => vocab::expanded::VALUE,
+            Self::Relationship => vocab::expanded::OBJECT,
+            Self::VocabProperty => vocab::expanded::VOCAB,
+            Self::LanguageProperty => vocab::expanded::LANGUAGE_MAP,
+            Self::JsonProperty => vocab::expanded::JSON,
+            Self::ListProperty => vocab::expanded::VALUE_LIST,
+            Self::ListRelationship => vocab::expanded::OBJECT_LIST,
         }
     }
 
@@ -308,11 +308,11 @@ mod tests {
 
     #[test]
     fn value_key_mapping() {
-        pretty_assertions::assert_eq!(AttributeType::Property.value_key(), vocab::VALUE);
-        pretty_assertions::assert_eq!(AttributeType::Relationship.value_key(), vocab::OBJECT);
-        pretty_assertions::assert_eq!(AttributeType::VocabProperty.value_key(), vocab::VOCAB);
-        pretty_assertions::assert_eq!(AttributeType::LanguageProperty.value_key(), vocab::LANGUAGE_MAP);
-        pretty_assertions::assert_eq!(AttributeType::JsonProperty.value_key(), vocab::JSON);
+        pretty_assertions::assert_eq!(AttributeType::Property.value_key(), vocab::expanded::VALUE);
+        pretty_assertions::assert_eq!(AttributeType::Relationship.value_key(), vocab::expanded::OBJECT);
+        pretty_assertions::assert_eq!(AttributeType::VocabProperty.value_key(), vocab::expanded::VOCAB);
+        pretty_assertions::assert_eq!(AttributeType::LanguageProperty.value_key(), vocab::expanded::LANGUAGE_MAP);
+        pretty_assertions::assert_eq!(AttributeType::JsonProperty.value_key(), vocab::expanded::JSON);
     }
 
     #[test]

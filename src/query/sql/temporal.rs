@@ -752,8 +752,8 @@ fn geo_to_condition(geo: &GeoQuery, payload_col: &str) -> Result<Condition, Andr
     // For default location, add expiration guard
     if is_default_location {
         let quoted_col = quote_col_ref(payload_col);
-        let location_iri = vocab::LOCATION.as_str();
-        let expires_at_iri = vocab::EXPIRES_AT.as_str();
+        let location_iri = vocab::expanded::LOCATION.as_str();
+        let expires_at_iri = vocab::expanded::EXPIRES_AT.as_str();
         let guard_sql = format!(
             "EXISTS (\
                 SELECT 1 FROM jsonb_array_elements({}->0->'{}') AS inst(elem) \

@@ -329,30 +329,33 @@ fn history_row_to_expanded_instance(row: &PgRow, tea: &TeaEntry, sys_attrs: SysA
 
     let value_key = tea.attribute_type.value_key().as_str();
 
-    let is_tombstone = row.try_get::<Option<String>, _>("value_string").ok().flatten().as_deref() == Some(vocab::NULL_URI.as_str());
+    let is_tombstone = row.try_get::<Option<String>, _>("value_string").ok().flatten().as_deref() == Some(vocab::expanded::NULL_URI.as_str());
 
     if is_tombstone {
-        if tea.attribute_name == vocab::SCOPE.as_str() {
+        if tea.attribute_name == vocab::expanded::SCOPE.as_str() {
             instance.insert(value_key.to_string(), json!([]));
         } else if tea.attribute_type == AttributeType::Relationship {
-            instance.insert(value_key.to_string(), json!([{"@id": vocab::NULL_URI.as_str()}]));
+            instance.insert(value_key.to_string(), json!([{"@id": vocab::expanded::NULL_URI.as_str()}]));
         } else if tea.attribute_type == AttributeType::LanguageProperty {
-            instance.insert(value_key.to_string(), json!([{"@value": vocab::NULL_URI.as_str(), "@language": "@none"}]));
+            instance.insert(
+                value_key.to_string(),
+                json!([{"@value": vocab::expanded::NULL_URI.as_str(), "@language": "@none"}]),
+            );
         } else {
-            instance.insert(value_key.to_string(), json!([{"@value": vocab::NULL_URI.as_str()}]));
+            instance.insert(value_key.to_string(), json!([{"@value": vocab::expanded::NULL_URI.as_str()}]));
         }
         if let Ok(time) = row.try_get::<DateTime<Utc>, _>("time") {
             instance.insert(
-                vocab::DELETED_AT.as_str().to_string(),
-                json!([{"@value": format_datetime(time), "@type": vocab::DATE_TIME.as_str()}]),
+                vocab::expanded::DELETED_AT.as_str().to_string(),
+                json!([{"@value": format_datetime(time), "@type": vocab::expanded::DATE_TIME.as_str()}]),
             );
         }
-        if tea.attribute_name != vocab::SCOPE.as_str() {
+        if tea.attribute_name != vocab::expanded::SCOPE.as_str() {
             let instance_id: String = row.try_get("instance_id")?;
-            instance.insert(vocab::INSTANCE_ID.as_str().to_string(), json!([{"@id": instance_id}]));
+            instance.insert(vocab::expanded::INSTANCE_ID.as_str().to_string(), json!([{"@id": instance_id}]));
         }
         if let Some(ds_id) = &tea.dataset_id {
-            instance.insert(vocab::DATASET_ID.as_str().to_string(), json!([{"@id": ds_id}]));
+            instance.insert(vocab::expanded::DATASET_ID.as_str().to_string(), json!([{"@id": ds_id}]));
         }
         return Ok(Value::Object(instance));
     }
@@ -429,7 +432,7 @@ fn history_row_to_expanded_instance(row: &PgRow, tea: &TeaEntry, sys_attrs: SysA
             if let Ok(v) = row.try_get::<DateTime<Utc>, _>("value_datetime") {
                 instance.insert(
                     value_key.to_string(),
-                    json!([{"@value": format_datetime(v), "@type": vocab::DATE_TIME.as_str()}]),
+                    json!([{"@value": format_datetime(v), "@type": vocab::expanded::DATE_TIME.as_str()}]),
                 );
             }
         }
@@ -442,8 +445,8 @@ fn history_row_to_expanded_instance(row: &PgRow, tea: &TeaEntry, sys_attrs: SysA
 
     if let Ok(Some(observed_at)) = row.try_get::<Option<DateTime<Utc>>, _>("observed_at") {
         instance.insert(
-            vocab::OBSERVED_AT.as_str().to_string(),
-            json!([{"@value": format_datetime(observed_at), "@type": vocab::DATE_TIME.as_str()}]),
+            vocab::expanded::OBSERVED_AT.as_str().to_string(),
+            json!([{"@value": format_datetime(observed_at), "@type": vocab::expanded::DATE_TIME.as_str()}]),
         );
     }
 
@@ -451,16 +454,16 @@ fn history_row_to_expanded_instance(row: &PgRow, tea: &TeaEntry, sys_attrs: SysA
         && let Ok(time) = row.try_get::<DateTime<Utc>, _>("time")
     {
         instance.insert(
-            vocab::CREATED_AT.as_str().to_string(),
-            json!([{"@value": format_datetime(time), "@type": vocab::DATE_TIME.as_str()}]),
+            vocab::expanded::CREATED_AT.as_str().to_string(),
+            json!([{"@value": format_datetime(time), "@type": vocab::expanded::DATE_TIME.as_str()}]),
         );
     }
 
     let instance_id: String = row.try_get("instance_id")?;
-    instance.insert(vocab::INSTANCE_ID.as_str().to_string(), json!([{"@id": instance_id}]));
+    instance.insert(vocab::expanded::INSTANCE_ID.as_str().to_string(), json!([{"@id": instance_id}]));
 
     if let Some(ds_id) = &tea.dataset_id {
-        instance.insert(vocab::DATASET_ID.as_str().to_string(), json!([{"@id": ds_id}]));
+        instance.insert(vocab::expanded::DATASET_ID.as_str().to_string(), json!([{"@id": ds_id}]));
     }
 
     if let Ok(Some(meta)) = row.try_get::<Option<Value>, _>("metadata")

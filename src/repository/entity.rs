@@ -196,9 +196,9 @@ impl EntityRepository {
     /// `observation_space`, `operation_space`) from the cleaned payload, nulling
     /// them if the corresponding GeoProperty was entirely removed.
     pub async fn expire_due_attributes(&self) -> Result<Vec<String>, AndromedaError> {
-        let location_iri = crate::jsonld::vocab::LOCATION.as_str();
-        let observation_space_iri = crate::jsonld::vocab::OBSERVATION_SPACE.as_str();
-        let operation_space_iri = crate::jsonld::vocab::OPERATION_SPACE.as_str();
+        let location_iri = crate::jsonld::vocab::expanded::LOCATION.as_str();
+        let observation_space_iri = crate::jsonld::vocab::expanded::OBSERVATION_SPACE.as_str();
+        let operation_space_iri = crate::jsonld::vocab::expanded::OPERATION_SPACE.as_str();
 
         let rows: Vec<(String,)> = sqlx::query_as(
             r#"

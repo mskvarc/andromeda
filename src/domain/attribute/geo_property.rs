@@ -65,6 +65,6 @@ mod tests {
         };
         let expanded = property.to_expanded();
         let obj = expanded.as_object().expect("object");
-        assert!(obj.contains_key(vocab::VALUE_TYPE.as_str()));
+        assert!(obj.contains_key(vocab::expanded::VALUE_TYPE.as_str()));
     }
 }

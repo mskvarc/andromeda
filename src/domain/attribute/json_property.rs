@@ -78,6 +78,6 @@ mod tests {
         };
         let expanded = property.to_expanded();
         let obj = expanded.as_object().expect("object");
-        assert!(obj.contains_key(vocab::PREVIOUS_JSON.as_str()));
+        assert!(obj.contains_key(vocab::expanded::PREVIOUS_JSON.as_str()));
     }
 }

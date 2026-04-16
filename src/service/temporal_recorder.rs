@@ -18,13 +18,13 @@ use urn::Urn;
 fn is_system_attribute(attr_name: &str) -> bool {
     matches!(
         attr_name,
-        value if value == vocab::CREATED_AT.as_str()
-            || value == vocab::DATASET_ID.as_str()
-            || value == vocab::DELETED_AT.as_str()
-            || value == vocab::INSTANCE_ID.as_str()
-            || value == vocab::MODIFIED_AT.as_str()
-            || value == vocab::OBSERVED_AT.as_str()
-            || value == vocab::UNIT_CODE.as_str()
+        value if value == vocab::expanded::CREATED_AT.as_str()
+            || value == vocab::expanded::DATASET_ID.as_str()
+            || value == vocab::expanded::DELETED_AT.as_str()
+            || value == vocab::expanded::INSTANCE_ID.as_str()
+            || value == vocab::expanded::MODIFIED_AT.as_str()
+            || value == vocab::expanded::OBSERVED_AT.as_str()
+            || value == vocab::expanded::UNIT_CODE.as_str()
     )
 }
 
@@ -90,7 +90,7 @@ impl TemporalRecorder {
 
             // Handle scope specially: scopes are NOT attributes -- they go to scope_history,
             // not through the TEA/attribute_history pipeline (NGSI-LD clause 4.5.4).
-            if attr_name == vocab::SCOPE.as_str() {
+            if attr_name == vocab::expanded::SCOPE.as_str() {
                 if let Some(scope_arr) = attr_value.as_array() {
                     for scope_entry in scope_arr {
                         if let Some(scope_val) = scope_entry.as_object().and_then(|o| o.get("@value")).and_then(|v| v.as_str()) {
@@ -232,7 +232,7 @@ impl TemporalRecorder {
                 }
 
                 // Handle scope entries: write directly to scope_history, not attribute_history.
-                if attr_name == vocab::SCOPE.as_str() {
+                if attr_name == vocab::expanded::SCOPE.as_str() {
                     if let Some(scope_arr) = attr_value.as_array() {
                         for scope_entry in scope_arr {
                             if let Some(scope_val) = scope_entry.as_object().and_then(|o| o.get("@value")).and_then(|v| v.as_str()) {
@@ -386,7 +386,7 @@ impl TemporalRecorder {
                 tea_id,
                 values: HistoryValues {
                     value_number: None,
-                    value_string: Some(vocab::NULL_URI.as_str()),
+                    value_string: Some(vocab::expanded::NULL_URI.as_str()),
                     value_bool: None,
                     value_geo: None,
                     value_object: None,
@@ -512,7 +512,7 @@ fn extract_typed_value(instance: &Value, attribute_type: AttributeType) -> Resul
     match attribute_type {
         AttributeType::Relationship => {
             let uri = instance
-                .get(vocab::OBJECT.as_str())
+                .get(vocab::expanded::OBJECT.as_str())
                 .and_then(|v| v.as_array())
                 .and_then(|arr| arr.first())
                 .and_then(|obj| obj.get("@id"))
@@ -522,7 +522,7 @@ fn extract_typed_value(instance: &Value, attribute_type: AttributeType) -> Resul
         }
         AttributeType::GeoProperty => {
             let geo_node = instance
-                .get(vocab::VALUE.as_str())
+                .get(vocab::expanded::VALUE.as_str())
                 .and_then(|v| v.as_array())
                 .and_then(|arr| arr.first())
                 .ok_or_else(|| AndromedaError::temporal_validation("GeoProperty missing value"))?;
@@ -539,7 +539,7 @@ fn extract_typed_value(instance: &Value, attribute_type: AttributeType) -> Resul
         }
         AttributeType::VocabProperty => {
             let arr = instance
-                .get(vocab::VOCAB.as_str())
+                .get(vocab::expanded::VOCAB.as_str())
                 .and_then(|v| v.as_array())
                 .ok_or_else(|| AndromedaError::temporal_validation("VocabProperty missing vocab value"))?;
             if arr.len() > 1 {
@@ -556,13 +556,13 @@ fn extract_typed_value(instance: &Value, attribute_type: AttributeType) -> Resul
         }
         AttributeType::LanguageProperty => {
             let lang_map = instance
-                .get(vocab::LANGUAGE_MAP.as_str())
+                .get(vocab::expanded::LANGUAGE_MAP.as_str())
                 .ok_or_else(|| AndromedaError::temporal_validation("LanguageProperty missing languageMap"))?;
             Ok(TypedValue::Object(lang_map.clone())) // clone: need owned Value for TypedValue enum; lang_map is borrowed from instance
         }
         AttributeType::JsonProperty => {
             let json_val = instance
-                .get(vocab::JSON.as_str())
+                .get(vocab::expanded::JSON.as_str())
                 .and_then(|v| v.as_array())
                 .and_then(|arr| arr.first())
                 .and_then(|obj| obj.get("@value"))
@@ -571,7 +571,7 @@ fn extract_typed_value(instance: &Value, attribute_type: AttributeType) -> Resul
         }
         AttributeType::ListProperty => {
             let list = instance
-                .get(vocab::VALUE_LIST.as_str())
+                .get(vocab::expanded::VALUE_LIST.as_str())
                 .and_then(|v| v.as_array())
                 .and_then(|arr| arr.first())
                 .and_then(|obj| obj.get("@list"))
@@ -580,7 +580,7 @@ fn extract_typed_value(instance: &Value, attribute_type: AttributeType) -> Resul
         }
         AttributeType::ListRelationship => {
             let list = instance
-                .get(vocab::OBJECT_LIST.as_str())
+                .get(vocab::expanded::OBJECT_LIST.as_str())
                 .and_then(|v| v.as_array())
                 .and_then(|arr| arr.first())
                 .and_then(|obj| obj.get("@list"))
@@ -594,7 +594,7 @@ fn extract_typed_value(instance: &Value, attribute_type: AttributeType) -> Resul
         AttributeType::Property => {
             // Property -- uses hasValue
             let has_value = instance
-                .get(vocab::VALUE.as_str())
+                .get(vocab::expanded::VALUE.as_str())
                 .and_then(|v| v.as_array())
                 .and_then(|arr| arr.first())
                 .ok_or_else(|| AndromedaError::temporal_validation("Property missing value"))?;
@@ -602,7 +602,7 @@ fn extract_typed_value(instance: &Value, attribute_type: AttributeType) -> Resul
             if let Some(value) = has_value.get("@value") {
                 let type_hint = has_value.get("@type").and_then(|t| t.as_str());
 
-                if (type_hint == Some(vocab::DATE_TIME.as_str()) || type_hint == Some(vocab::XSD_DATETIME.as_str()))
+                if (type_hint == Some(vocab::expanded::DATE_TIME.as_str()) || type_hint == Some(vocab::expanded::XSD_DATETIME.as_str()))
                     && let Some(s) = value.as_str()
                 {
                     return Ok(TypedValue::DateTime(s.to_string()));
@@ -649,7 +649,7 @@ pub(crate) fn reconstruct_geojson(node: &Value) -> String {
 
     // Extract coordinates from the expanded form
     let coordinates = obj
-        .get(vocab::COORDINATES.as_str())
+        .get(vocab::expanded::COORDINATES.as_str())
         .and_then(|v| v.as_array())
         .and_then(|arr| arr.first())
         .and_then(|v| v.get("@list").or(Some(v)))
@@ -684,7 +684,7 @@ pub(crate) fn extract_coordinates(value: &Value) -> Value {
 
 fn extract_observed_at(instance: &Value) -> Option<String> {
     instance
-        .get(vocab::OBSERVED_AT.as_str())
+        .get(vocab::expanded::OBSERVED_AT.as_str())
         .and_then(|v| v.as_array())
         .and_then(|arr| arr.first())
         .and_then(|obj| obj.get("@value"))
@@ -694,7 +694,7 @@ fn extract_observed_at(instance: &Value) -> Option<String> {
 
 fn extract_dataset_id(instance: &Value) -> Option<Urn> {
     instance
-        .get(vocab::DATASET_ID.as_str())
+        .get(vocab::expanded::DATASET_ID.as_str())
         .and_then(|v| v.as_array())
         .and_then(|arr| arr.first())
         .and_then(|obj| obj.get("@id"))
@@ -704,7 +704,7 @@ fn extract_dataset_id(instance: &Value) -> Option<Urn> {
 
 fn extract_or_generate_instance_id(instance: &Value) -> String {
     instance
-        .get(vocab::INSTANCE_ID.as_str())
+        .get(vocab::expanded::INSTANCE_ID.as_str())
         .and_then(|v| v.as_array())
         .and_then(|arr| arr.first())
         .and_then(|obj| obj.get("@id"))
@@ -716,14 +716,14 @@ fn extract_or_generate_instance_id(instance: &Value) -> String {
 fn is_metadata_skip_key(key: &str) -> bool {
     key == "@id"
         || key == "@type"
-        || key == vocab::DATASET_ID.as_str()
-        || key == vocab::JSON.as_str()
-        || key == vocab::LANGUAGE_MAP.as_str()
-        || key == vocab::OBJECT.as_str()
-        || key == vocab::VALUE.as_str()
-        || key == vocab::VOCAB.as_str()
-        || key == vocab::INSTANCE_ID.as_str()
-        || key == vocab::OBSERVED_AT.as_str()
+        || key == vocab::expanded::DATASET_ID.as_str()
+        || key == vocab::expanded::JSON.as_str()
+        || key == vocab::expanded::LANGUAGE_MAP.as_str()
+        || key == vocab::expanded::OBJECT.as_str()
+        || key == vocab::expanded::VALUE.as_str()
+        || key == vocab::expanded::VOCAB.as_str()
+        || key == vocab::expanded::INSTANCE_ID.as_str()
+        || key == vocab::expanded::OBSERVED_AT.as_str()
 }
 
 fn collect_metadata(instance: &Value) -> Option<Value> {
@@ -746,15 +746,15 @@ mod tests {
     #[test]
     fn metadata_skip_key_matches_known_values() {
         assert!(is_metadata_skip_key("@id"));
-        assert!(is_metadata_skip_key(vocab::DATASET_ID.as_str()));
-        assert!(is_metadata_skip_key(vocab::VALUE.as_str()));
+        assert!(is_metadata_skip_key(vocab::expanded::DATASET_ID.as_str()));
+        assert!(is_metadata_skip_key(vocab::expanded::VALUE.as_str()));
         assert!(!is_metadata_skip_key("https://example.com/custom"));
     }
 
     #[test]
     fn system_attribute_matches_known_values() {
-        assert!(is_system_attribute(vocab::CREATED_AT.as_str()));
-        assert!(is_system_attribute(vocab::UNIT_CODE.as_str()));
+        assert!(is_system_attribute(vocab::expanded::CREATED_AT.as_str()));
+        assert!(is_system_attribute(vocab::expanded::UNIT_CODE.as_str()));
         assert!(!is_system_attribute("https://example.com/custom"));
     }
 }

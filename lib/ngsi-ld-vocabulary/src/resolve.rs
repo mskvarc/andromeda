@@ -20,24 +20,35 @@ use std::{
 };
 use syn::LitStr;
 
-/// Resolve the base directory used for call-site-relative macro paths.
-pub fn resolve_call_site_base_dir(path_literal: &LitStr) -> syn::Result<PathBuf> {
-    if let Some(source_file_path) = path_literal.span().unwrap().source().local_file()
-        && let Some(parent) = source_file_path.parent()
-    {
-        let parent = parent.to_path_buf();
-        return Ok(std::fs::canonicalize(&parent).unwrap_or(parent));
+/// Resolve the workspace root directory for absolute path resolution.
+///
+/// Walks up from `CARGO_MANIFEST_DIR` until it finds a `Cargo.toml` containing `[workspace]`
+/// that is not inside a `target/` directory (to avoid trybuild temp directories).
+pub fn resolve_workspace_root(path_literal: &LitStr) -> syn::Result<PathBuf> {
+    let manifest_dir =
+        std::env::var("CARGO_MANIFEST_DIR").map_err(|error| syn::Error::new(path_literal.span(), format!("CARGO_MANIFEST_DIR is not set: {error}")))?;
+
+    let mut dir = PathBuf::from(&manifest_dir);
+    loop {
+        // Skip directories inside target/ (e.g., trybuild temp directories)
+        let dir_str = dir.to_string_lossy();
+        if !dir_str.contains("/target/") && !dir_str.contains("\\target\\") {
+            let cargo_toml = dir.join("Cargo.toml");
+            if cargo_toml.exists() {
+                if let Ok(content) = std::fs::read_to_string(&cargo_toml) {
+                    if content.contains("[workspace]") {
+                        return Ok(dir);
+                    }
+                }
+            }
+        }
+        if !dir.pop() {
+            return Err(syn::Error::new(
+                path_literal.span(),
+                format!("workspace root not found starting from {manifest_dir}"),
+            ));
+        }
     }
-
-    let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").map_err(|error| {
-        syn::Error::new(
-            path_literal.span(),
-            format!("unable to resolve call-site directory and CARGO_MANIFEST_DIR is not set: {error}"),
-        )
-    })?;
-    let manifest_dir = PathBuf::from(manifest_dir);
-
-    Ok(std::fs::canonicalize(&manifest_dir).unwrap_or(manifest_dir))
 }
 
 /// Read, merge, and resolve the three input contexts into a canonical vocabulary model.

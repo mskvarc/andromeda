@@ -188,9 +188,9 @@ impl NotificationWorker {
                         );
                         if let Some(obj) = bare.as_object_mut() {
                             obj.insert(
-                                vocab::DELETED_AT.as_str().to_string(),
+                                vocab::expanded::DELETED_AT.as_str().to_string(),
                                 serde_json::json!([{
-                                    "@type": vocab::DATE_TIME.as_str(),
+                                    "@type": vocab::expanded::DATE_TIME.as_str(),
                                     "@value": event.occurred_at.to_rfc3339_opts(SecondsFormat::Millis, true)
                                 }]),
                             );
@@ -203,7 +203,7 @@ impl NotificationWorker {
             }
         } else if let Some(snapshot) = event.entity_snapshot.as_deref() {
             let deleted_at_value = serde_json::json!([{
-                "@type": vocab::DATE_TIME.as_str(),
+                "@type": vocab::expanded::DATE_TIME.as_str(),
                 "@value": event.occurred_at.to_rfc3339_opts(SecondsFormat::Millis, true)
             }]);
             let mut data = match snapshot {
@@ -211,15 +211,15 @@ impl NotificationWorker {
                 other => other.clone(),
             };
             if let Some(obj) = data.as_object_mut() {
-                obj.insert(vocab::DELETED_AT.as_str().to_string(), deleted_at_value);
+                obj.insert(vocab::expanded::DELETED_AT.as_str().to_string(), deleted_at_value);
             }
             Some(serde_json::json!([data]))
         } else {
             Some(serde_json::json!([{
                 "@id": event.entity_id,
                 "@type": event.entity_types,
-                (vocab::DELETED_AT.as_str()): [{
-                    "@type": vocab::DATE_TIME.as_str(),
+                (vocab::expanded::DELETED_AT.as_str()): [{
+                    "@type": vocab::expanded::DATE_TIME.as_str(),
                     "@value": event.occurred_at.to_rfc3339_opts(SecondsFormat::Millis, true)
                 }]
             }]))

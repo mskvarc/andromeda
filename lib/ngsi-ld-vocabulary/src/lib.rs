@@ -1,5 +1,3 @@
-#![feature(proc_macro_span)]
-
 //! Proc-macro crate that generates NGSI-LD vocabulary constants from local JSON-LD contexts.
 //!
 //! The macro reads three local context files at compile time, resolves prefixes and terms
@@ -12,14 +10,14 @@ mod resolve;
 use crate::{
     codegen::generate_tokens,
     model::{InputContexts, MacroInput},
-    resolve::{load_contexts, resolve_call_site_base_dir},
+    resolve::{load_contexts, resolve_workspace_root},
 };
 use proc_macro::TokenStream;
 use syn::parse_macro_input;
 
 /// Generate NGSI-LD vocabulary constants from exactly three local JSON-LD context files.
 ///
-/// The paths are resolved relative to the macro call site.
+/// Paths are resolved as absolute paths from the workspace root.
 #[proc_macro]
 pub fn generate(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as MacroInput);
@@ -28,8 +26,8 @@ pub fn generate(input: TokenStream) -> TokenStream {
 }
 
 fn expand(input: MacroInput) -> syn::Result<proc_macro2::TokenStream> {
-    let base_dir = resolve_call_site_base_dir(&input.core)?;
-    let contexts = InputContexts::resolve(base_dir, input)?;
+    let workspace_root = resolve_workspace_root(&input.core)?;
+    let contexts = InputContexts::resolve(workspace_root, input)?;
     let resolved = load_contexts(&contexts)?;
 
     generate_tokens(&contexts, &resolved)

@@ -29,7 +29,7 @@ pub fn generate_tokens(inputs: &crate::model::InputContexts, model: &ResolvedMod
         })
         .collect::<Vec<_>>();
 
-    let term_consts = model
+    let expanded_term_consts = model
         .terms
         .iter()
         .map(|term| {
@@ -39,6 +39,20 @@ pub fn generate_tokens(inputs: &crate::model::InputContexts, model: &ResolvedMod
             quote! {
                 #[doc = #doc]
                 pub const #ident: &'static iref::Iri = static_iref::iri!(#expanded);
+            }
+        })
+        .collect::<Vec<_>>();
+
+    let compact_term_consts = model
+        .terms
+        .iter()
+        .map(|term| {
+            let ident = Ident::new(&term.const_name, Span::call_site());
+            let compact = Literal::string(&term.compact);
+            let doc = format!("`{}`", term.compact);
+            quote! {
+                #[doc = #doc]
+                pub const #ident: &'static str = #compact;
             }
         })
         .collect::<Vec<_>>();
@@ -76,7 +90,15 @@ pub fn generate_tokens(inputs: &crate::model::InputContexts, model: &ResolvedMod
             #(#prefix_consts)*
         }
 
-        #(#term_consts)*
+        /// Expanded IRI constants for all context-derived terms.
+        pub mod expanded {
+            #(#expanded_term_consts)*
+        }
+
+        /// Compact term name constants for all context-derived terms.
+        pub mod compact {
+            #(#compact_term_consts)*
+        }
 
         /// Total number of context-derived terms.
         pub const TERM_COUNT: usize = #term_count;

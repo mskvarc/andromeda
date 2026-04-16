@@ -147,6 +147,6 @@ mod tests {
         };
         let expanded = property.to_expanded();
         let obj = expanded.as_object().expect("object");
-        assert!(obj.contains_key(vocab::LANGUAGE_MAP.as_str()));
+        assert!(obj.contains_key(vocab::expanded::LANGUAGE_MAP.as_str()));
     }
 }

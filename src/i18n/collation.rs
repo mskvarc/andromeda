@@ -124,7 +124,7 @@ fn augment_attribute_instance(instance: &mut Map<String, Value>) {
 
     let keys: Vec<String> = instance.keys().cloned().collect();
     for key in keys {
-        if key.starts_with('@') || key == vocab::VALUE.as_str() || key == vocab::OBJECT.as_str() || key == COLLATE_IRI {
+        if key.starts_with('@') || key == vocab::expanded::VALUE.as_str() || key == vocab::expanded::OBJECT.as_str() || key == COLLATE_IRI {
             continue;
         }
         if let Some(value) = instance.get_mut(&key) {
@@ -135,17 +135,21 @@ fn augment_attribute_instance(instance: &mut Map<String, Value>) {
 
 fn extract_string_property_value(instance: &Map<String, Value>) -> Option<String> {
     let attr_types = instance.get("@type")?.as_array()?;
-    if !attr_types.iter().filter_map(Value::as_str).any(|value| value == vocab::PROPERTY.as_str()) {
+    if !attr_types
+        .iter()
+        .filter_map(Value::as_str)
+        .any(|value| value == vocab::expanded::PROPERTY.as_str())
+    {
         return None;
     }
 
-    extract_expanded_value_string(instance.get(vocab::VALUE.as_str())?)
+    extract_expanded_value_string(instance.get(vocab::expanded::VALUE.as_str())?)
 }
 
 fn build_collate_sub_attribute(value: String) -> Value {
     json!([{
-        "@type": [vocab::PROPERTY.as_str()],
-        (vocab::VALUE.as_str()): [{"@value": value}]
+        "@type": [vocab::expanded::PROPERTY.as_str()],
+        (vocab::expanded::VALUE.as_str()): [{"@value": value}]
     }])
 }
 

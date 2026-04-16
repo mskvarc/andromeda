@@ -467,7 +467,7 @@ pub(crate) fn extract_scopes(expanded: &Value) -> Vec<String> {
         return Vec::new();
     };
 
-    let Some(scope_value) = obj.get(vocab::SCOPE.as_str()) else {
+    let Some(scope_value) = obj.get(vocab::expanded::SCOPE.as_str()) else {
         return Vec::new();
     };
 
@@ -611,11 +611,11 @@ fn validate_attr_instances(attr_name: &str, value: &Value) -> Result<(), Androme
             .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect())
             .unwrap_or_default();
 
-        let is_property = types.iter().any(|t| *t == vocab::PROPERTY.as_str());
-        let is_geo_property = types.iter().any(|t| *t == vocab::GEO_PROPERTY.as_str());
-        let is_relationship = types.iter().any(|t| *t == vocab::RELATIONSHIP.as_str());
+        let is_property = types.iter().any(|t| *t == vocab::expanded::PROPERTY.as_str());
+        let is_geo_property = types.iter().any(|t| *t == vocab::expanded::GEO_PROPERTY.as_str());
+        let is_relationship = types.iter().any(|t| *t == vocab::expanded::RELATIONSHIP.as_str());
 
-        if (is_property || is_geo_property) && !obj.contains_key(vocab::VALUE.as_str()) {
+        if (is_property || is_geo_property) && !obj.contains_key(vocab::expanded::VALUE.as_str()) {
             let short_type = if is_geo_property { "GeoProperty" } else { "Property" };
             return Err(AndromedaError::entity_validation(format!(
                 "{} '{}' is missing required field 'value'",
@@ -623,7 +623,7 @@ fn validate_attr_instances(attr_name: &str, value: &Value) -> Result<(), Androme
             )));
         }
 
-        if is_relationship && !obj.contains_key(vocab::OBJECT.as_str()) {
+        if is_relationship && !obj.contains_key(vocab::expanded::OBJECT.as_str()) {
             return Err(AndromedaError::entity_validation(format!(
                 "Relationship '{}' is missing required field 'object'",
                 attr_name
@@ -654,23 +654,24 @@ pub(crate) fn inject_sys_attrs(entity: &mut Value, created_at: DateTime<Utc>, mo
     let default_context_prefix = format!("{}default-context/", vocab::prefix::NGSI_LD.as_str());
 
     let created_at_value = serde_json::json!([{
-        "@type": vocab::DATE_TIME.as_str(),
+        "@type": vocab::expanded::DATE_TIME.as_str(),
         "@value": created_at.to_rfc3339_opts(SecondsFormat::Millis, true)
     }]);
     let modified_at_value = serde_json::json!([{
-        "@type": vocab::DATE_TIME.as_str(),
+        "@type": vocab::expanded::DATE_TIME.as_str(),
         "@value": modified_at.to_rfc3339_opts(SecondsFormat::Millis, true)
     }]);
 
-    obj.entry(vocab::CREATED_AT.as_str().to_string()).or_insert(created_at_value.clone()); // clone: value also passed to inject_attr_sys_attrs below
-    obj.entry(vocab::MODIFIED_AT.as_str().to_string()).or_insert(modified_at_value.clone()); // clone: value also passed to inject_attr_sys_attrs below
+    obj.entry(vocab::expanded::CREATED_AT.as_str().to_string()).or_insert(created_at_value.clone()); // clone: value also passed to inject_attr_sys_attrs below
+    obj.entry(vocab::expanded::MODIFIED_AT.as_str().to_string())
+        .or_insert(modified_at_value.clone()); // clone: value also passed to inject_attr_sys_attrs below
 
     if let Some(expires_at) = expires_at.into() {
         let expires_at_value = serde_json::json!([{
-            "@type": vocab::DATE_TIME.as_str(),
+            "@type": vocab::expanded::DATE_TIME.as_str(),
             "@value": expires_at.to_rfc3339_opts(SecondsFormat::Millis, true)
         }]);
-        obj.entry(vocab::EXPIRES_AT.as_str().to_string()).or_insert(expires_at_value);
+        obj.entry(vocab::expanded::EXPIRES_AT.as_str().to_string()).or_insert(expires_at_value);
     }
 
     inject_attr_sys_attrs(obj, &created_at_value, &modified_at_value, &default_context_prefix);
@@ -692,8 +693,12 @@ pub(crate) fn inject_attr_sys_attrs(obj: &mut Map<String, Value>, created_at_val
             let Some(inst_obj) = instance.as_object_mut() else {
                 continue;
             };
-            inst_obj.entry(vocab::CREATED_AT.as_str().to_string()).or_insert(created_at_value.clone()); // clone: or_insert requires owned value, reused across loop iterations
-            inst_obj.entry(vocab::MODIFIED_AT.as_str().to_string()).or_insert(modified_at_value.clone()); // clone: or_insert requires owned value, reused across loop iterations
+            inst_obj
+                .entry(vocab::expanded::CREATED_AT.as_str().to_string())
+                .or_insert(created_at_value.clone()); // clone: or_insert requires owned value, reused across loop iterations
+            inst_obj
+                .entry(vocab::expanded::MODIFIED_AT.as_str().to_string())
+                .or_insert(modified_at_value.clone()); // clone: or_insert requires owned value, reused across loop iterations
         }
     }
 }
