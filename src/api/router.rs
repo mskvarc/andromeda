@@ -1,6 +1,6 @@
 use crate::{
     api::state::{AndromedaState, AppState},
-    core::{batch_activity::BatchActivityTracker, config::Configuration, error::AndromedaError},
+    core::{batch_activity::BatchActivityTracker, config::RuntimeConfig, error::AndromedaError},
     domain::notification::{ChangeEvent, CsourceSubscriptionChange, CsrChangeEvent, SubscriptionChange},
     health::{Health, database::DatabaseHealthIndicator, mqtt::MqttHealthIndicator},
     http::handler::{
@@ -76,7 +76,7 @@ use tokio::task::JoinHandle;
 use tower_helmet::HelmetLayer;
 use tracing::info;
 
-pub async fn create_router(config: Arc<Configuration>) -> Result<Router, AndromedaError> {
+pub async fn create_router(config: Arc<RuntimeConfig>) -> Result<Router, AndromedaError> {
     info!("Constructing router!");
     let tenants = TenantRuntimeManager::new(Arc::clone(&config)).await?;
 
@@ -250,13 +250,13 @@ fn build_v1_router() -> Router<AppState> {
 }
 
 pub async fn build_tenant_state(
-    config: &Configuration,
+    config: &RuntimeConfig,
     db_url: &str,
     tenant: TenantRef,
 ) -> Result<(AndromedaState, Vec<JoinHandle<()>>, Arc<TransportDispatcher>), AndromedaError> {
     let max_connections = match tenant {
         TenantRef::UnnamedDefault => config.database.max_connections,
-        TenantRef::Named(_) => config.multitenancy.tenant_max_connections,
+        TenantRef::Named(_) => config.tenancy.tenant_max_connections,
     };
     let pool = PgPoolOptions::new().max_connections(max_connections).connect(db_url).await?;
 
@@ -425,10 +425,7 @@ pub async fn build_tenant_state(
     let spatial_sync_worker = SpatialSyncWorker::new(spatial_change_rx, Arc::clone(&spatial_index), &pool, tenant.clone());
     worker_handles.push(tokio::spawn(spatial_sync_worker.run()));
 
-    let rebuild_secs: u64 = std::env::var("ANDROMEDA_SPATIAL_REBUILD_SECS")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(1800);
+    let rebuild_secs = config.spatial.rebuild_interval_secs;
     if rebuild_secs > 0 {
         let rebuild_index = Arc::clone(&spatial_index);
         let rebuild_pool = pool.clone();
@@ -494,11 +491,11 @@ pub async fn build_tenant_state(
             snapshots: snapshot_service,
             provenance: provenance_service,
             sse_registry,
-            sse_channel_buffer_size: config.sse.channel_buffer_size,
-            sse_keep_alive_interval_secs: config.sse.keep_alive_interval_secs,
+            sse_channel_buffer_size: config.notifications.sse.channel_buffer_size,
+            sse_keep_alive_interval_secs: config.notifications.sse.keep_alive_interval_secs,
             ws_registry,
-            ws_channel_buffer_size: config.ws.channel_buffer_size,
-            ws_ping_interval_secs: config.ws.ping_interval_secs,
+            ws_channel_buffer_size: config.notifications.ws.channel_buffer_size,
+            ws_ping_interval_secs: config.notifications.ws.ping_interval_secs,
         },
         worker_handles,
         transport_handle,

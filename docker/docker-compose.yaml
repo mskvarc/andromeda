@@ -73,19 +73,20 @@ services:
     build:
       context: ..
       dockerfile: docker/andromeda/Dockerfile
+    environment:
+      ANDROMEDA_DATABASE_URL: postgres://postgres:postgres@postgres:5432/postgres
+      ANDROMEDA_PROVENANCE_HTTPS_RESOLVER_ENABLED: "true"
     ports:
       - "1056:1056"
     depends_on:
       postgres:
         condition: service_healthy
     command:
+      - "run"
       - "--host"
       - "0.0.0.0"
       - "--port"
       - "1056"
-      - "--database-url"
-      - "postgres://postgres:postgres@postgres:5432/postgres"
-      - "--provenance-https-resolver"
     extra_hosts:
       - "host.docker.internal:host-gateway"
     healthcheck:

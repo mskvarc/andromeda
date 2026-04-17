@@ -1,4 +1,4 @@
-[andromeda]
+[server]
 host = "0.0.0.0"
 port = 1056
 
@@ -13,23 +13,62 @@ max_redirects = 5
 max_context_bytes = 2000000
 cache_capacity = 1024
 cache_ttl_seconds = 3600
+preload_contexts = {}
 
-[multitenancy]
+[temporal]
+default_last_n = 19
+expiration_check_interval_secs = 30
+
+[tenancy]
 enabled = true
 tenant_db_prefix = "andromeda_tenant"
+tenant_max_connections = 3
 runtime_idle_ttl_seconds = 900
 runtime_max_cached = 64
 janitor_interval_seconds = 30
 
+[info]
+source_identity = "urn:ngsi-ld:ContextSourceIdentity:andromeda"
+
 [performance]
 # If omitted, defaults to min(database.max_connections, 25)
 # batch_concurrency = 5
+batch_chunk_size = 512
+batch_large_threshold = 512
+batch_prepare_blocking_threshold = 128
+batch_side_effect_queue_capacity = 8
+# batch_async_side_effect_threshold = 512
+max_request_body_bytes = 67108864
+snapshot_concurrency = 4
+forward_csr_concurrency = 16
+
+[outbox]
+enabled = false
+max_attempts = 5
+base_backoff_secs = 5
+poll_interval_secs = 1
+batch_size = 50
+cleanup_after_secs = 86400
+
+[notifications.sse]
+channel_buffer_size = 64
+keep_alive_interval_secs = 15
+
+[notifications.ws]
+channel_buffer_size = 64
+ping_interval_secs = 30
+
+[spatial]
+rebuild_interval_secs = 1800
+
+[observability]
+log_level = "info"
 
 # NGSI-LD Data Integrity (ETSI GS CIM 019 v1.2.1) verification.
 #
 # Static mapping of verification-method URIs to multibase-encoded
 # public keys. Used by the in-memory StaticResolver at broker startup.
-# Leave the map empty to rely on HTTPS dereferencing (not yet wired).
+# Leave the map empty to rely on HTTPS dereferencing.
 [provenance]
-verification_methods = { }
+verification_methods = {}
 https_resolver_enabled = true

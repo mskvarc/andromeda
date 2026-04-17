@@ -36,8 +36,8 @@ pub fn build_engine(config: &crate::core::config::JsonLdConfig, l2_cache: std::s
         .cache_ttl_seconds(config.cache_ttl_seconds)
         .max_context_bytes(config.max_context_bytes)
         .with_l2_cache(l2_cache);
-    if let Some(ref preloads) = config.preload_contexts {
-        builder = builder.preload_contexts(preloads.clone());
+    if !config.preload_contexts.is_empty() {
+        builder = builder.preload_contexts(config.preload_contexts.clone());
     }
     builder.build()
 }

@@ -78,6 +78,7 @@ strum = { version = "0.28.0", features = ["derive"] }
 thiserror = "2.0.18"
 tokio = { version = "1.52.1", features = ["full"] }
 tokio-util = "0.7.18"
+toml = "0.9.12"
 tower-helmet = "0.3.0"
 tower-http = { version = "0.6.8", features = ["normalize-path"] }
 tower-layer = "0.3.3"

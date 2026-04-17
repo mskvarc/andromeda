@@ -1,7 +1,7 @@
 use crate::{
     api::{router::build_tenant_state, state::AndromedaState},
     core::{
-        config::{Configuration, MultitenancyConfig},
+        config::{RuntimeConfig, TenancyConfig},
         error::AndromedaError,
     },
     tenancy::{
@@ -46,8 +46,8 @@ impl TenantRuntime {
 
 /// Manages per-tenant database connections and worker runtimes.
 pub struct TenantRuntimeManager {
-    config: Arc<Configuration>,
-    multitenancy: MultitenancyConfig,
+    config: Arc<RuntimeConfig>,
+    tenancy: TenancyConfig,
     database_url: DatabaseUrl,
     runtimes: DashMap<TenantRef, TenantRuntime>,
     in_flight: Arc<tokio::sync::Mutex<HashSet<TenantRef>>>,
@@ -57,7 +57,7 @@ pub struct TenantRuntimeManager {
 
 impl TenantRuntimeManager {
     /// Create a new tenant runtime manager, connecting to the main database and running migrations.
-    pub async fn new(config: Arc<Configuration>) -> Result<Arc<TenantRuntimeManager>, AndromedaError> {
+    pub async fn new(config: Arc<RuntimeConfig>) -> Result<Arc<TenantRuntimeManager>, AndromedaError> {
         let main_pool = PgPoolOptions::new()
             .max_connections(config.database.max_connections)
             .connect(&config.database.url)
@@ -67,7 +67,7 @@ impl TenantRuntimeManager {
         let default_db_name = database_url.db_name()?;
 
         let manager = Arc::new(TenantRuntimeManager {
-            multitenancy: config.multitenancy.clone(),
+            tenancy: config.tenancy.clone(),
             database_url,
             default_db_name,
             config,
@@ -79,7 +79,7 @@ impl TenantRuntimeManager {
         migrate_main_db(&manager.main_pool).await?;
         manager.ensure_default_tenant_registry_row().await?;
 
-        if manager.multitenancy.enabled {
+        if manager.tenancy.enabled {
             let janitor = Arc::clone(&manager);
             tokio::spawn(async move {
                 janitor.run_janitor().await;
@@ -113,7 +113,7 @@ impl TenantRuntimeManager {
 
     /// Resolve tenant runtime state according to creation policy.
     pub async fn resolve_state(&self, tenant: &TenantRef, policy: TenantCreationPolicy) -> Result<Arc<AndromedaState>, AndromedaError> {
-        if !self.multitenancy.enabled && matches!(tenant, TenantRef::Named(_)) {
+        if !self.tenancy.enabled && matches!(tenant, TenantRef::Named(_)) {
             return Err(AndromedaError::multi_tenancy_not_supported());
         }
 
@@ -176,13 +176,13 @@ impl TenantRuntimeManager {
     }
 
     async fn run_janitor(self: Arc<Self>) {
-        let interval = Duration::from_secs(self.multitenancy.janitor_interval_seconds.max(1));
-        let ttl = Duration::from_secs(self.multitenancy.runtime_idle_ttl_seconds.max(1));
+        let interval = Duration::from_secs(self.tenancy.janitor_interval_seconds.max(1));
+        let ttl = Duration::from_secs(self.tenancy.runtime_idle_ttl_seconds.max(1));
         let mut ticker = tokio::time::interval(interval);
         loop {
             ticker.tick().await;
 
-            let excess_evictions = collect_excess_evictions(&self.runtimes, self.multitenancy.runtime_max_cached);
+            let excess_evictions = collect_excess_evictions(&self.runtimes, self.tenancy.runtime_max_cached);
             if !excess_evictions.is_empty() {
                 let trimmed = excess_evictions.len();
                 for key in excess_evictions {
@@ -190,7 +190,7 @@ impl TenantRuntimeManager {
                         shutdown_runtime(runtime).await;
                     }
                 }
-                info!(trimmed, max = self.multitenancy.runtime_max_cached, "Janitor trimmed excess tenant runtimes");
+                info!(trimmed, max = self.tenancy.runtime_max_cached, "Janitor trimmed excess tenant runtimes");
             }
 
             let now = Instant::now();
@@ -255,7 +255,7 @@ impl TenantRuntimeManager {
             return Ok(db_name);
         }
 
-        let db_name = generate_db_name(&self.multitenancy.tenant_db_prefix, tenant_name);
+        let db_name = generate_db_name(&self.tenancy.tenant_db_prefix, tenant_name);
         create_database_if_missing(&self.database_url, &db_name).await?;
 
         let status = TenantStatus::Active;
@@ -273,7 +273,7 @@ impl TenantRuntimeManager {
         tx.commit().await?;
 
         let tenant_url = self.database_url.with_db_name(&db_name);
-        migrate_single_tenant_db(&tenant_url, self.multitenancy.tenant_max_connections).await?;
+        migrate_single_tenant_db(&tenant_url, self.tenancy.tenant_max_connections).await?;
 
         Ok(db_name)
     }
