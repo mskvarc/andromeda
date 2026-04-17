@@ -183,15 +183,30 @@ fn strip_system_fields(value: &mut Value) {
 /// approach: GET the entity (verify=false) and rebuild the unsigned
 /// atomic-entity JSON from what the broker actually serialises, with
 /// system fields and ngsildproof stripped (matching the verifier path).
+fn proof_config_from_stored(stored: &Value, attribute_name: &str) -> Value {
+    let mut cfg = stored
+        .get(attribute_name)
+        .and_then(|attribute| attribute.get("ngsildproof"))
+        .and_then(|proof| proof.get("value"))
+        .cloned()
+        .expect("stored entity must contain ngsildproof.value for sealed attribute");
+    if let Value::Object(ref mut m) = cfg {
+        m.remove("proofValue");
+    }
+    cfg
+}
+
 fn broker_signing_input(stored: &Value, attribute_name: &str, proof_config: &Value) -> Vec<u8> {
     let mut attr = stored.get(attribute_name).cloned().expect("stored entity must contain the sealed attribute");
     strip_system_fields(&mut attr);
+    let sealed_head_id = attr.get("ngsildproof").and_then(|proof| proof.get("entityIdSealed")).cloned();
+    let sealed_head_type = attr.get("ngsildproof").and_then(|proof| proof.get("entityTypeSealed")).cloned();
     if let Some(obj) = attr.as_object_mut() {
         obj.remove("ngsildproof");
     }
     let mut unsigned = serde_json::Map::new();
-    unsigned.insert("id".to_string(), stored["id"].clone());
-    unsigned.insert("type".to_string(), stored["type"].clone());
+    unsigned.insert("id".to_string(), sealed_head_id.unwrap_or_else(|| stored["id"].clone()));
+    unsigned.insert("type".to_string(), sealed_head_type.unwrap_or_else(|| stored["type"].clone()));
     unsigned.insert(attribute_name.to_string(), attr);
     let hash_data = jcs_sha256(&Value::Object(unsigned));
 
@@ -205,6 +220,28 @@ fn broker_signing_input(stored: &Value, attribute_name: &str, proof_config: &Val
     buf.extend_from_slice(&hash_proof);
     buf.extend_from_slice(&hash_data);
     buf
+}
+
+fn resealed_entity_from_stored(stored: &Value, id: &str, attribute_name: &str, proof_value: &str) -> Value {
+    let mut attribute = stored.get(attribute_name).cloned().expect("stored entity must contain the sealed attribute");
+    strip_system_fields(&mut attribute);
+    let mut entity = json!({
+        "id": id,
+        "type": stored["type"].clone(),
+        attribute_name: attribute,
+        "@context": CORE_CONTEXT
+    });
+    let proof_value_slot = entity
+        .get_mut(attribute_name)
+        .and_then(Value::as_object_mut)
+        .and_then(|attribute_obj| attribute_obj.get_mut("ngsildproof"))
+        .and_then(Value::as_object_mut)
+        .and_then(|proof_obj| proof_obj.get_mut("value"))
+        .and_then(Value::as_object_mut)
+        .and_then(|proof_value_obj| proof_value_obj.get_mut("proofValue"))
+        .expect("sealed attribute must carry ngsildproof.value.proofValue");
+    *proof_value_slot = Value::String(proof_value.to_string());
+    entity
 }
 
 // ---------------------------------------------------------------------------
@@ -235,15 +272,6 @@ fn build_sealed_entity_with_suite(id: &str, cryptosuite: &str, verification_meth
 
 fn build_sealed_entity(id: &str, verification_method: &str, proof_value: &str) -> Value {
     build_sealed_entity_with_suite(id, "eddsa-jcs-2022", verification_method, proof_value)
-}
-
-fn minimal_proof_config(cryptosuite: &str, verification_method: &str) -> Value {
-    json!({
-        "type": "DataIntegrityProof",
-        "cryptosuite": cryptosuite,
-        "verificationMethod": verification_method,
-        "proofPurpose": "assertionMethod",
-    })
 }
 
 fn find_verifications(body: &Value) -> Option<&Vec<Value>> {
@@ -351,7 +379,6 @@ async fn verify_true_verified_for_valid_signature() {
     let method_uri = server.url();
 
     let id = unique_id("urn:ngsi-ld:Store:diVerified");
-    let proof_cfg = minimal_proof_config("eddsa-jcs-2022", &method_uri);
 
     // Two-pass: POST with placeholder signature, GET to learn the broker's
     // stored serialisation, sign that exact form, DELETE + re-POST with the
@@ -360,13 +387,14 @@ async fn verify_true_verified_for_valid_signature() {
     let entity = build_sealed_entity(&id, &method_uri, &placeholder);
     assert_eq!(post_entity(&c, &entity).await, StatusCode::CREATED);
     let (_, stored) = get_entity(&c, &id, "").await;
+    let proof_cfg = proof_config_from_stored(&stored, "address");
 
     let signing_input = broker_signing_input(&stored, "address", &proof_cfg);
     let sig = signing.sign(&signing_input);
     let proof_value = multibase::encode(multibase::Base::Base58Btc, sig.to_bytes());
 
     let _ = c.delete(format!("{BASE_URL}/entities/{id}")).send().await;
-    let entity = build_sealed_entity(&id, &method_uri, &proof_value);
+    let entity = resealed_entity_from_stored(&stored, &id, "address", &proof_value);
     assert_eq!(post_entity(&c, &entity).await, StatusCode::CREATED);
 
     let (_, body) = get_entity(&c, &id, "verify=true").await;
@@ -632,19 +660,19 @@ async fn ecdsa_jcs_2019_verified_for_valid_signature() {
     let method_uri = server.url();
 
     let id = unique_id("urn:ngsi-ld:Store:diEcdsaJcsOk");
-    let proof_cfg = minimal_proof_config("ecdsa-jcs-2019", &method_uri);
 
     let placeholder = multibase::encode(multibase::Base::Base58Btc, vec![0_u8; 64]);
     let entity = build_sealed_entity_with_suite(&id, "ecdsa-jcs-2019", &method_uri, &placeholder);
     assert_eq!(post_entity(&c, &entity).await, StatusCode::CREATED);
     let (_, stored) = get_entity(&c, &id, "").await;
+    let proof_cfg = proof_config_from_stored(&stored, "address");
 
     let signing_input = broker_signing_input(&stored, "address", &proof_cfg);
     let sig: P256Signature = signing.sign(&signing_input);
-    let proof_value = multibase::encode(multibase::Base::Base58Btc, sig.to_bytes().as_slice());
+    let proof_value = multibase::encode(multibase::Base::Base58Btc, sig.to_bytes());
 
     let _ = c.delete(format!("{BASE_URL}/entities/{id}")).send().await;
-    let entity = build_sealed_entity_with_suite(&id, "ecdsa-jcs-2019", &method_uri, &proof_value);
+    let entity = resealed_entity_from_stored(&stored, &id, "address", &proof_value);
     assert_eq!(post_entity(&c, &entity).await, StatusCode::CREATED);
 
     let (_, body) = get_entity(&c, &id, "verify=true").await;

@@ -52,14 +52,18 @@ pub fn parse_ngsild_proof_from_property(property: &Property) -> Result<NgsildPro
 /// entity; if the proof carried `entityIdSealed` or `entityTypeSealed`
 /// those values override the supplied head.
 pub fn reconstruct_atomic_entity(head: AtomicEntityHead, attribute_name: String, mut attribute: Attribute) -> Result<AtomicEntity, ProvenanceError> {
-    let common = common_mut(&mut attribute);
-    let proof_property = common.ngsildproof.take().ok_or(ProvenanceError::MissingNgsildProof)?;
-    // Broker-managed system fields (createdAt, modifiedAt, instanceId,
-    // deletedAt) are not part of the producer-signed atomic entity and
-    // must be excluded from the canonicalised input. The producer signs
-    // before the broker stamps these fields, so the verifier strips
-    // them before recomputing the digest.
-    common.system = AttributeSystemFields::default();
+    let proof_property = {
+        let common = common_mut(&mut attribute);
+        let proof_property = common.ngsildproof.take().ok_or(ProvenanceError::MissingNgsildProof)?;
+        // Broker-managed system fields (createdAt, modifiedAt, instanceId,
+        // deletedAt) are not part of the producer-signed atomic entity and
+        // must be excluded from the canonicalised input. The producer signs
+        // before the broker stamps these fields, so the verifier strips
+        // them before recomputing the digest.
+        common.system = AttributeSystemFields::default();
+        proof_property
+    };
+    strip_ngsildproof_sub_attribute(&mut attribute);
     let proof = parse_ngsild_proof_from_property(&proof_property)?;
 
     let AtomicEntityHead { mut id, mut type_ } = head;
@@ -111,6 +115,35 @@ fn common_mut(attribute: &mut Attribute) -> &mut CommonAttributeFields {
         Attribute::JsonProperty(a) => &mut a.common,
         Attribute::ListProperty(a) => &mut a.common,
         Attribute::ListRelationship(a) => &mut a.common,
+    }
+}
+
+fn strip_ngsildproof_sub_attribute(attribute: &mut Attribute) {
+    match attribute {
+        Attribute::Property(a) => {
+            a.sub_attributes.shift_remove("ngsildproof");
+        }
+        Attribute::Relationship(a) => {
+            a.sub_attributes.shift_remove("ngsildproof");
+        }
+        Attribute::VocabProperty(a) => {
+            a.sub_attributes.shift_remove("ngsildproof");
+        }
+        Attribute::GeoProperty(a) => {
+            a.sub_attributes.shift_remove("ngsildproof");
+        }
+        Attribute::LanguageProperty(a) => {
+            a.sub_attributes.shift_remove("ngsildproof");
+        }
+        Attribute::JsonProperty(a) => {
+            a.sub_attributes.shift_remove("ngsildproof");
+        }
+        Attribute::ListProperty(a) => {
+            a.sub_attributes.shift_remove("ngsildproof");
+        }
+        Attribute::ListRelationship(a) => {
+            a.sub_attributes.shift_remove("ngsildproof");
+        }
     }
 }
 
@@ -189,6 +222,32 @@ mod tests {
         assert!(p.common.system.created_at.is_none(), "createdAt must be stripped from signed payload");
         assert!(p.common.system.modified_at.is_none(), "modifiedAt must be stripped");
         assert!(p.common.system.instance_id.is_none(), "instanceId must be stripped");
+    }
+
+    #[test]
+    fn reconstruct_atomic_entity_strips_ngsildproof_from_json_parsed_sub_attributes() {
+        let sealed: Attribute = serde_json::from_value(serde_json::json!({
+            "type": "Property",
+            "value": 42,
+            "ngsildproof": {
+                "type": "Property",
+                "value": {
+                    "type": "DataIntegrityProof",
+                    "cryptosuite": "eddsa-jcs-2022",
+                    "verificationMethod": "https://example.com/keys/1",
+                    "proofPurpose": "assertionMethod",
+                    "proofValue": "z3MvGcVxzRzzpKF1HA11EjvfPZsN8NAb7kXBRfeTm3CFg2Ek4DTPeBoU65yTPewGhP7FP1p"
+                }
+            }
+        }))
+        .unwrap();
+        let head = AtomicEntityHead {
+            id: Uri::from_str("urn:ngsi-ld:Store:002").unwrap(),
+            type_: EntityTypeValue::Single("Store".into()),
+        };
+        let ae = reconstruct_atomic_entity(head, "t".to_string(), sealed).expect("reconstruct");
+        let rendered = serde_json::to_value(&ae.attribute).expect("serialize");
+        assert!(rendered.get("ngsildproof").is_none(), "ngsildproof must be stripped from signed payload");
     }
 
     #[test]
