@@ -4,3 +4,4 @@
 conductor
 results*
 *.stderr
+/grammar/.generated/

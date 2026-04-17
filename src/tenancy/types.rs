@@ -1,31 +1,66 @@
-/// Error returned when constructing a [`TenantName`] from an empty string.
-#[derive(Debug, Clone, thiserror::Error)]
-#[error("tenant name must not be empty")]
-pub struct EmptyTenantName;
+use derive_more::Display;
+use serde::{Deserialize, Serialize};
+use static_regular_grammar::RegularGrammar;
 
-/// A validated, non-empty tenant identifier.
+/// Maximum tenant identifier length, chosen to fit inside a Postgres
+/// schema/database identifier (63 chars, minus an 8-char hash suffix and
+/// separator used by tenant database naming in [`crate::tenancy::database`]).
+const MAX_TENANT_LEN: usize = 50;
+
+/// Grammar-validated tenant label (FIWARE convention).
 ///
-/// Wraps a `String` that is guaranteed to be non-empty after trimming.
-/// Used in `TenantRef::Named` and the `NGSILD-Tenant` header.
-#[derive(Clone, Debug, Eq, PartialEq, Hash, derive_more::Display, serde::Serialize, serde::Deserialize)]
-#[serde(try_from = "String")]
-pub struct TenantName(String);
+/// Matches `[A-Za-z_][A-Za-z0-9_]*` via ABNF. Length is bounded separately
+/// by [`TenantName`] since ABNF regular grammars cannot cheaply encode
+/// upper bounds.
+#[derive(RegularGrammar, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[grammar(
+    file = "grammar/.generated/tenant.abnf",
+    sized(TenantLabelBuf, derive(Debug, Display, PartialEq, Eq, PartialOrd, Ord, Hash))
+)]
+struct TenantLabel(str);
+
+/// Error returned when a tenant identifier fails validation.
+#[derive(Debug, Clone, thiserror::Error)]
+pub enum InvalidTenantName {
+    /// Input is empty or violates the tenant character grammar.
+    #[error("tenant name must match [A-Za-z_][A-Za-z0-9_]*")]
+    InvalidSyntax,
+    /// Input exceeds [`MAX_TENANT_LEN`] characters.
+    #[error("tenant name must be at most {MAX_TENANT_LEN} characters")]
+    TooLong,
+}
+
+/// A validated tenant identifier.
+///
+/// Combines the ABNF grammar check ([`TenantLabel`]) with an upper-bound
+/// length limit so that the value is safe to use as a Postgres identifier
+/// component.
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Display, Serialize, Deserialize)]
+#[serde(try_from = "String", into = "String")]
+pub struct TenantName(TenantLabelBuf);
 
 impl TenantName {
     /// Return the tenant name as a string slice.
     pub fn as_str(&self) -> &str {
-        &self.0
+        self.0.as_str()
     }
 }
 
 impl TryFrom<String> for TenantName {
-    type Error = EmptyTenantName;
+    type Error = InvalidTenantName;
 
-    fn try_from(s: String) -> Result<TenantName, EmptyTenantName> {
-        if s.trim().is_empty() {
-            return Err(EmptyTenantName);
+    fn try_from(value: String) -> Result<TenantName, InvalidTenantName> {
+        if value.len() > MAX_TENANT_LEN {
+            return Err(InvalidTenantName::TooLong);
         }
-        Ok(TenantName(s))
+        let label = TenantLabelBuf::new(value).map_err(|_| InvalidTenantName::InvalidSyntax)?;
+        Ok(TenantName(label))
+    }
+}
+
+impl From<TenantName> for String {
+    fn from(value: TenantName) -> String {
+        value.0.into_string()
     }
 }
 
@@ -81,25 +116,57 @@ mod tests {
     #![allow(clippy::expect_used, clippy::unwrap_used)]
     use std::str::FromStr;
 
-    use super::{TenantName, TenantRef, TenantStatus};
+    use super::{MAX_TENANT_LEN, TenantName, TenantRef, TenantStatus};
 
     #[test]
-    fn tenant_name_try_from_valid() {
-        let tenant = match TenantName::try_from("my-tenant".to_string()) {
+    fn tenant_name_valid_plain() {
+        let tenant = match TenantName::try_from("tenant1".to_string()) {
             Ok(value) => value,
             Err(err) => unreachable!("unexpected tenant parse error: {err}"),
         };
-        pretty_assertions::assert_eq!(tenant.as_str(), "my-tenant");
+        pretty_assertions::assert_eq!(tenant.as_str(), "tenant1");
     }
 
     #[test]
-    fn tenant_name_try_from_empty() {
+    fn tenant_name_valid_leading_underscore() {
+        assert!(TenantName::try_from("_internal".to_string()).is_ok());
+    }
+
+    #[test]
+    fn tenant_name_valid_mixed_case() {
+        assert!(TenantName::try_from("A_B".to_string()).is_ok());
+    }
+
+    #[test]
+    fn tenant_name_rejects_leading_digit() {
+        assert!(TenantName::try_from("1tenant".to_string()).is_err());
+    }
+
+    #[test]
+    fn tenant_name_rejects_hyphen() {
+        assert!(TenantName::try_from("a-b".to_string()).is_err());
+    }
+
+    #[test]
+    fn tenant_name_rejects_space() {
+        assert!(TenantName::try_from("a b".to_string()).is_err());
+    }
+
+    #[test]
+    fn tenant_name_rejects_empty() {
         assert!(TenantName::try_from(String::new()).is_err());
     }
 
     #[test]
-    fn tenant_name_try_from_whitespace() {
-        assert!(TenantName::try_from("  ".to_string()).is_err());
+    fn tenant_name_rejects_over_length() {
+        let over = "a".repeat(MAX_TENANT_LEN + 1);
+        assert!(TenantName::try_from(over).is_err());
+    }
+
+    #[test]
+    fn tenant_name_accepts_max_length() {
+        let at_max = "a".repeat(MAX_TENANT_LEN);
+        assert!(TenantName::try_from(at_max).is_ok());
     }
 
     #[test]
@@ -118,7 +185,7 @@ mod tests {
 
     #[test]
     fn tenant_name_from_tenant_ref_named() {
-        let name = match TenantName::try_from("tenant-a".to_string()) {
+        let name = match TenantName::try_from("tenant_a".to_string()) {
             Ok(value) => value,
             Err(err) => unreachable!("unexpected tenant parse error: {err}"),
         };
@@ -128,7 +195,7 @@ mod tests {
             Some(value) => value,
             None => unreachable!("expected tenant name"),
         };
-        pretty_assertions::assert_eq!(tenant_name.as_str(), "tenant-a");
+        pretty_assertions::assert_eq!(tenant_name.as_str(), "tenant_a");
     }
 
     #[test]

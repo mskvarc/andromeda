@@ -103,9 +103,9 @@ pub async fn create(
     let context_url = context.link_contexts().first().map(|s| s.as_str());
     let entity_body = serde_json::to_vec(&entity).map_err(|e| AndromedaError::internal(format!("Failed to serialize entity: {e}")).with_instance(&uri))?;
     let entity_id = entity.id.to_string();
-    let entity_type_str = match &entity.type_ {
-        EntityTypeValue::Single(s) => s.clone(),
-        EntityTypeValue::Multiple(v) => v.first().cloned().unwrap_or_default(),
+    let entity_type_str: &str = match &entity.type_ {
+        EntityTypeValue::Single(s) => s.as_str(),
+        EntityTypeValue::Multiple(v) => v.first().map_or("", String::as_str),
     };
 
     let (forwarded, _) = state

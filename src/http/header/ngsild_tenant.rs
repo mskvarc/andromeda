@@ -70,8 +70,13 @@ mod tests {
 
     #[test]
     fn decode_valid_tenant() {
-        let header = decode_from("my-tenant").expect("should decode");
-        pretty_assertions::assert_eq!(header.as_str(), "my-tenant");
+        let header = decode_from("my_tenant").expect("should decode");
+        pretty_assertions::assert_eq!(header.as_str(), "my_tenant");
+    }
+
+    #[test]
+    fn decode_rejects_invalid_syntax() {
+        assert!(decode_from("bad-tenant").is_err());
     }
 
     #[test]

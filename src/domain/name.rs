@@ -2,17 +2,20 @@ use static_regular_grammar::RegularGrammar;
 
 /// A validated NGSI-LD short name (ETSI GS CIM 009 v1.9.1, clause 4.6.2).
 ///
-/// A name starts with a Unicode letter and is followed by zero or more
-/// Unicode letters, digits, or underscores. Examples: `"temperature"`,
-/// `"Building"`, `"speed_limit"`.
+/// A name starts with a Unicode letter followed by zero or more Unicode
+/// letters, digits, or underscores; optionally suffixed with a colon and a
+/// second such body (the `prefix:localName` form from the spec).
+/// Examples: `"temperature"`, `"Building"`, `"speed_limit"`, `"ngsild:speed"`.
 ///
-/// This type validates short names only, not expanded IRIs. For values
-/// that may contain IRIs after JSON-LD expansion, use the appropriate
-/// IRI type or `String`.
+/// This type validates short/compact names only, not expanded IRIs.
 ///
 /// This is an unsized type. Use [`NameBuf`] for owned values.
 #[derive(RegularGrammar, PartialEq, Eq, PartialOrd, Ord, Hash)]
-#[grammar(file = "grammar/name.abnf", sized(NameBuf, derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash)), serde)]
+#[grammar(
+    file = "grammar/.generated/name.abnf",
+    sized(NameBuf, derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash)),
+    serde
+)]
 pub struct Name(str);
 
 #[cfg(test)]
@@ -62,6 +65,21 @@ mod tests {
     }
 
     #[test]
+    fn valid_prefixed_name() {
+        assert!(Name::new("ngsild:speed").is_ok());
+    }
+
+    #[test]
+    fn valid_prefixed_schema() {
+        assert!(Name::new("schema:sensor42").is_ok());
+    }
+
+    #[test]
+    fn valid_prefixed_minimal() {
+        assert!(Name::new("x:y").is_ok());
+    }
+
+    #[test]
     fn invalid_empty() {
         assert!(Name::new("").is_err());
     }
@@ -97,8 +115,28 @@ mod tests {
     }
 
     #[test]
-    fn invalid_contains_colon() {
-        assert!(Name::new("urn:thing").is_err());
+    fn invalid_trailing_colon() {
+        assert!(Name::new("a:").is_err());
+    }
+
+    #[test]
+    fn invalid_leading_colon() {
+        assert!(Name::new(":a").is_err());
+    }
+
+    #[test]
+    fn invalid_double_colon() {
+        assert!(Name::new("a:b:c").is_err());
+    }
+
+    #[test]
+    fn invalid_rhs_starts_digit() {
+        assert!(Name::new("a:1b").is_err());
+    }
+
+    #[test]
+    fn invalid_prefix_starts_digit() {
+        assert!(Name::new("1a:b").is_err());
     }
 
     #[test]
@@ -124,5 +162,12 @@ mod tests {
         let name = NameBuf::new("temperature".to_string()).expect("valid name");
         let json = serde_json::to_string(&name).expect("serializes");
         pretty_assertions::assert_eq!(json, "\"temperature\"");
+    }
+
+    #[test]
+    fn serde_serialize_prefixed() {
+        let name = NameBuf::new("ngsild:speed".to_string()).expect("valid prefixed name");
+        let json = serde_json::to_string(&name).expect("serializes");
+        pretty_assertions::assert_eq!(json, "\"ngsild:speed\"");
     }
 }

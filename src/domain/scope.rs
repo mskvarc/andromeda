@@ -8,7 +8,11 @@ use static_regular_grammar::RegularGrammar;
 ///
 /// This is an unsized type. Use [`ScopeBuf`] for owned values.
 #[derive(RegularGrammar, PartialEq, Eq, PartialOrd, Ord, Hash)]
-#[grammar(file = "grammar/scope.abnf", sized(ScopeBuf, derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash)), serde)]
+#[grammar(
+    file = "grammar/.generated/scope.abnf",
+    sized(ScopeBuf, derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash)),
+    serde
+)]
 pub struct Scope(str);
 
 #[cfg(test)]
