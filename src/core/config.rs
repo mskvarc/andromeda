@@ -103,6 +103,30 @@ pub struct Configuration {
     #[config(nested)]
     #[config(layer_attr(clap(flatten)))]
     pub ws: WsConfig,
+
+    #[config(nested)]
+    #[config(layer_attr(clap(flatten)))]
+    pub provenance: ProvenanceConfig,
+}
+
+/// NGSI-LD Data Integrity (ETSI GS CIM 019) configuration. The
+/// `verification_methods` map binds verification-method URIs to
+/// multibase-encoded public keys used by the static resolver. When
+/// empty, only the HTTPS resolver applies and `verify=true` requests
+/// dereference the verification method URL to fetch the key at runtime.
+#[derive(Config, Debug, Clone)]
+#[config(layer_attr(derive(Args)))]
+pub struct ProvenanceConfig {
+    #[config(default = {})]
+    #[config(layer_attr(arg(skip)))]
+    pub verification_methods: HashMap<String, String>,
+
+    /// When true, unknown verification-method URIs are dereferenced
+    /// over HTTPS to fetch the `publicKeyMultibase` of a DID-document
+    /// or JWK-style response. Off by default.
+    #[config(default = false)]
+    #[config(layer_attr(arg(long = "provenance-https-resolver", action = clap::ArgAction::SetTrue)))]
+    pub https_resolver_enabled: bool,
 }
 
 #[derive(Config, Debug, Clone)]
@@ -446,6 +470,10 @@ mod tests {
             outbox: OutboxConfig::default(),
             sse: SseConfig::default(),
             ws: WsConfig::default(),
+            provenance: ProvenanceConfig {
+                verification_methods: HashMap::new(),
+                https_resolver_enabled: false,
+            },
         }
     }
 

@@ -11,6 +11,7 @@ pub mod csource_subscription;
 pub mod entity;
 pub mod entity_map;
 pub mod jsonld_context;
+pub mod provenance;
 pub mod snapshot;
 pub mod snapshot_executor;
 /// In-memory R-tree spatial indexes for geo-query and subscription matching.

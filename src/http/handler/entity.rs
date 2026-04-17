@@ -362,11 +362,27 @@ pub async fn get(
         .with_mode(mode)
         .render()
         .with_instance(&uri)?;
+    let entity_value = attach_proof_verification(entity_value, &entity, params.verify.unwrap_or(false), &state.provenance).await;
     let rendered = ResponseRenderer::new(accept.format(), context, prefer)
         .with_geometry_property(params.geometry_property.clone())
         .with_payload(ResponsePayload::Single(entity_value))
         .render()?;
     Ok(NgsiLdResponse::ok(rendered).with_warnings(warnings).into_response())
+}
+
+/// Attach an `ngsildproofVerification` sidecar to a rendered entity
+/// JSON when the client opted in via `verify=true`.
+async fn attach_proof_verification(mut rendered: Value, entity: &Entity, verify: bool, service: &crate::service::provenance::ProvenanceService) -> Value {
+    if !verify {
+        return rendered;
+    }
+    let results = service.verify_entity(entity).await;
+    if let Value::Object(ref mut obj) = rendered
+        && let Ok(value) = serde_json::to_value(&results)
+    {
+        obj.insert("ngsildproofVerification".to_string(), value);
+    }
+    rendered
 }
 
 pub async fn delete(

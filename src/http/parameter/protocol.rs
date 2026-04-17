@@ -163,6 +163,7 @@ mod tests {
             join_level: Some(2),
             contained_by: None,
             entity_map: None,
+            verify: None,
         };
         apply_entity_get_extension_headers(&mut params, &protocol, &uri).unwrap();
         pretty_assertions::assert_eq!(params.format.as_deref(), Some("keyValues"));

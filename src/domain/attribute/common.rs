@@ -415,6 +415,76 @@ mod tests {
         pretty_assertions::assert_eq!(many.iter().count(), 2);
     }
 
+    /// INT-3 preservation: every attribute variant's Common field set
+    /// must carry `ngsildproof` through a serde round-trip unmodified.
+    /// The repository stores entities as JSON; if the model round-trips,
+    /// the repository round-trips.
+    #[test]
+    fn ngsildproof_survives_round_trip_across_attribute_variants() {
+        use crate::domain::attribute::Attribute;
+
+        let proof_shape = serde_json::json!({
+            "type": "Property",
+            "value": {
+                "type": "DataIntegrityProof",
+                "cryptosuite": "eddsa-jcs-2022",
+                "verificationMethod": "https://example.com/keys/1",
+                "proofPurpose": "assertionMethod",
+                "proofValue": "z3MvGcVxzRzzpKF1HA11EjvfPZsN8NAb7kXBRfeTm3CFg2Ek4DTPeBoU65yTPewGhP7FP1p"
+            }
+        });
+
+        let variants = [
+            serde_json::json!({"type": "Property", "value": 25, "ngsildproof": proof_shape.clone()}),
+            serde_json::json!({"type": "Relationship", "object": "urn:ngsi-ld:Entity:1", "ngsildproof": proof_shape.clone()}),
+            serde_json::json!({"type": "GeoProperty", "value": {"type": "Point", "coordinates": [1.0, 2.0]}, "ngsildproof": proof_shape.clone()}),
+            serde_json::json!({"type": "VocabProperty", "vocab": "cat1", "ngsildproof": proof_shape.clone()}),
+            serde_json::json!({"type": "LanguageProperty", "languageMap": {"en": "hello"}, "ngsildproof": proof_shape.clone()}),
+            serde_json::json!({"type": "JsonProperty", "json": {"k": "v"}, "ngsildproof": proof_shape.clone()}),
+            serde_json::json!({"type": "ListProperty", "valueList": [1, 2, 3], "ngsildproof": proof_shape.clone()}),
+            serde_json::json!({"type": "ListRelationship", "objectList": ["urn:ngsi-ld:Entity:1"], "ngsildproof": proof_shape.clone()}),
+        ];
+
+        for original in variants {
+            let attr: Attribute = serde_json::from_value(original.clone()).expect("parse");
+            let reserialized = serde_json::to_value(&attr).expect("serialize");
+            pretty_assertions::assert_eq!(
+                reserialized.get("ngsildproof"),
+                original.get("ngsildproof"),
+                "ngsildproof lost for variant {}",
+                original.get("type").and_then(serde_json::Value::as_str).unwrap_or("?")
+            );
+        }
+    }
+
+    #[test]
+    fn ngsildproof_survives_entity_level_round_trip() {
+        use crate::domain::entity::Entity;
+
+        let original = serde_json::json!({
+            "id": "urn:ngsi-ld:Store:002",
+            "type": "Store",
+            "address": {
+                "type": "Property",
+                "value": 1,
+                "ngsildproof": {
+                    "type": "Property",
+                    "value": {
+                        "type": "DataIntegrityProof",
+                        "cryptosuite": "eddsa-jcs-2022",
+                        "verificationMethod": "https://example.com/keys/1",
+                        "proofPurpose": "assertionMethod",
+                        "proofValue": "z3MvGcVxzRzzpKF1HA11EjvfPZsN8NAb7kXBRfeTm3CFg2Ek4DTPeBoU65yTPewGhP7FP1p"
+                    }
+                }
+            }
+        });
+
+        let entity: Entity = serde_json::from_value(original.clone()).expect("parse");
+        let roundtrip = serde_json::to_value(&entity).expect("serialize");
+        pretty_assertions::assert_eq!(roundtrip["address"]["ngsildproof"], original["address"]["ngsildproof"]);
+    }
+
     #[test]
     fn ngsi_ld_value_serializes_typed_variants() {
         let value = NgsiLdValue::DateTime(Utc.with_ymd_and_hms(2026, 4, 12, 12, 0, 0).unwrap());

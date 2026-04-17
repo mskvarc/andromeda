@@ -85,6 +85,9 @@ services:
       - "1056"
       - "--database-url"
       - "postgres://postgres:postgres@postgres:5432/postgres"
+      - "--provenance-https-resolver"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     healthcheck:
       test:
         [

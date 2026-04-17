@@ -47,6 +47,7 @@ impl LocalizedEntityGetParams {
             join_level: self.join_level,
             contained_by: self.contained_by,
             entity_map: self.entity_map,
+            verify: None,
         }
     }
 }

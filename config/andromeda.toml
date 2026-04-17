@@ -24,3 +24,12 @@ janitor_interval_seconds = 30
 [performance]
 # If omitted, defaults to min(database.max_connections, 25)
 # batch_concurrency = 5
+
+# NGSI-LD Data Integrity (ETSI GS CIM 019 v1.2.1) verification.
+#
+# Static mapping of verification-method URIs to multibase-encoded
+# public keys. Used by the in-memory StaticResolver at broker startup.
+# Leave the map empty to rely on HTTPS dereferencing (not yet wired).
+[provenance]
+verification_methods = { }
+https_resolver_enabled = true

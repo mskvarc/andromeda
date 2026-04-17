@@ -1110,4 +1110,58 @@ mod tests {
         pretty_assertions::assert_eq!(entity["ref"]["entity"]["id"], "urn:b");
         pretty_assertions::assert_eq!(entity["ref"]["entity"]["ref"]["entity"]["id"], "urn:c");
     }
+
+    fn sealed_entity() -> Entity {
+        parse_entity(json!({
+            "id": "urn:ngsi-ld:Store:002",
+            "type": "Store",
+            "address": {
+                "type": "Property",
+                "value": 1,
+                "ngsildproof": {
+                    "type": "Property",
+                    "value": {
+                        "type": "DataIntegrityProof",
+                        "cryptosuite": "eddsa-jcs-2022",
+                        "verificationMethod": "https://example.com/keys/1",
+                        "proofPurpose": "assertionMethod",
+                        "proofValue": "z3MvGcVxzRzzpKF1HA11EjvfPZsN8NAb7kXBRfeTm3CFg2Ek4DTPeBoU65yTPewGhP7FP1p"
+                    }
+                }
+            }
+        }))
+    }
+
+    #[test]
+    fn normalized_render_emits_ngsildproof_subproperty() {
+        let entity = sealed_entity();
+        let rendered = EntityRenderer::new(&entity).with_mode(RenderMode::Normalized).render().expect("normalized");
+        let proof = &rendered["address"]["ngsildproof"];
+        pretty_assertions::assert_eq!(proof["type"], "Property");
+        pretty_assertions::assert_eq!(proof["value"]["type"], "DataIntegrityProof");
+        pretty_assertions::assert_eq!(proof["value"]["cryptosuite"], "eddsa-jcs-2022");
+    }
+
+    #[test]
+    fn concise_render_preserves_ngsildproof_subproperty() {
+        let entity = sealed_entity();
+        let rendered = EntityRenderer::new(&entity).with_mode(RenderMode::Concise).render().expect("concise");
+        let proof = &rendered["address"]["ngsildproof"];
+        assert!(!proof.is_null(), "ngsildproof must survive concise rendering (INT-3)");
+        // Concise strips the redundant Property envelope: the proof's
+        // DataIntegrityProof object surfaces directly under ngsildproof.
+        pretty_assertions::assert_eq!(proof["cryptosuite"], "eddsa-jcs-2022");
+        pretty_assertions::assert_eq!(proof["type"], "DataIntegrityProof");
+    }
+
+    #[test]
+    fn simplified_render_drops_ngsildproof_acknowledged_loss() {
+        let entity = sealed_entity();
+        let rendered = EntityRenderer::new(&entity).with_mode(RenderMode::Simplified).render().expect("simplified");
+        let address = &rendered["address"];
+        assert!(
+            address.get("ngsildproof").is_none(),
+            "simplified keyValues discards sub-properties including ngsildproof"
+        );
+    }
 }
