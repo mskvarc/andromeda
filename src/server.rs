@@ -1,6 +1,7 @@
 use crate::{
     api::router::create_router,
     core::{config::RuntimeConfig, error::AndromedaError},
+    http::layer::stack::apply_http_middleware,
 };
 use axum::{ServiceExt, middleware};
 use std::sync::Arc;
@@ -14,6 +15,7 @@ pub async fn run(config: RuntimeConfig) -> Result<(), AndromedaError> {
     let router = create_router(Arc::clone(&config))
         .await?
         .layer(middleware::from_fn(crate::api::tenant::echo_tenant_header_middleware));
+    let router = apply_http_middleware(router, &config.http);
 
     // NormalizePathLayer must be outermost — applied before routing so that
     // trailing slashes are stripped before axum matches routes.

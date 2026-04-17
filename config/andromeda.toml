@@ -2,6 +2,12 @@
 host = "0.0.0.0"
 port = 1056
 
+[http]
+request_timeout_secs = 30
+response_compression = "enabled"
+request_decompression = "enabled"
+cors = "permissive"
+
 [database]
 url = "postgres://postgres:postgres@localhost:5432/postgres"
 max_connections = 5

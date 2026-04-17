@@ -26,6 +26,48 @@ pub struct ServerConfig {
     pub port: u16,
 }
 
+/// Shared on/off switch for HTTP middleware features.
+#[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, Display, EnumString, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+#[strum(serialize_all = "lowercase", ascii_case_insensitive)]
+pub enum HttpFeatureMode {
+    Disabled,
+    #[default]
+    Enabled,
+}
+
+/// CORS mode for the broker's HTTP edge.
+#[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, Display, EnumString, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+#[strum(serialize_all = "lowercase", ascii_case_insensitive)]
+pub enum CorsMode {
+    Disabled,
+    #[default]
+    Permissive,
+}
+
+/// HTTP middleware configuration applied to all broker routes.
+#[derive(Config, Debug, Clone, Serialize)]
+pub struct HttpConfig {
+    /// Maximum wall-clock time for a single HTTP request before the broker
+    /// returns `408 Request Timeout`.
+    #[config(env = "ANDROMEDA_HTTP_REQUEST_TIMEOUT_SECS", default = 30)]
+    pub request_timeout_secs: u64,
+
+    /// Whether the broker compresses eligible HTTP responses.
+    #[config(env = "ANDROMEDA_HTTP_RESPONSE_COMPRESSION", default = "enabled")]
+    pub response_compression: HttpFeatureMode,
+
+    /// Whether the broker accepts compressed HTTP request bodies and
+    /// transparently decompresses them for handlers.
+    #[config(env = "ANDROMEDA_HTTP_REQUEST_DECOMPRESSION", default = "enabled")]
+    pub request_decompression: HttpFeatureMode,
+
+    /// CORS policy for browser-facing clients.
+    #[config(env = "ANDROMEDA_HTTP_CORS", default = "permissive")]
+    pub cors: CorsMode,
+}
+
 #[derive(Config, Debug, Clone, Serialize)]
 pub struct DatabaseConfig {
     #[config(env = "ANDROMEDA_DATABASE_URL", default = "postgres://postgres:postgres@localhost:5432/postgres")]
@@ -270,6 +312,9 @@ pub struct RuntimeConfig {
     pub server: ServerConfig,
 
     #[config(nested)]
+    pub http: HttpConfig,
+
+    #[config(nested)]
     pub database: DatabaseConfig,
 
     #[config(nested)]
@@ -347,6 +392,9 @@ fn parse_string_map_json(input: &str) -> Result<HashMap<String, String>, serde_j
 fn validate_config(config: &RuntimeConfig) -> Result<(), AndromedaError> {
     if config.server.port == 0 {
         return Err(AndromedaError::internal("server.port must be greater than 0"));
+    }
+    if config.http.request_timeout_secs == 0 {
+        return Err(AndromedaError::internal("http.request_timeout_secs must be at least 1"));
     }
     if config.database.url.is_empty() {
         return Err(AndromedaError::internal("database.url must not be empty"));
@@ -491,6 +539,12 @@ mod tests {
                 host: "127.0.0.1".parse().unwrap(),
                 port: 1056,
             },
+            http: HttpConfig {
+                request_timeout_secs: 30,
+                response_compression: HttpFeatureMode::Enabled,
+                request_decompression: HttpFeatureMode::Enabled,
+                cors: CorsMode::Permissive,
+            },
             database: DatabaseConfig {
                 url: "postgres://postgres:postgres@localhost:5432/postgres".to_string(),
                 max_connections: 5,
@@ -629,6 +683,24 @@ mod tests {
 
     #[test]
     #[serial]
+    fn env_parses_http_response_compression_mode() {
+        unsafe { std::env::set_var("ANDROMEDA_HTTP_RESPONSE_COMPRESSION", "disabled") };
+        let config = RuntimeConfig::builder().env().load().expect("config should load");
+        unsafe { std::env::remove_var("ANDROMEDA_HTTP_RESPONSE_COMPRESSION") };
+        pretty_assertions::assert_eq!(config.http.response_compression, HttpFeatureMode::Disabled);
+    }
+
+    #[test]
+    #[serial]
+    fn env_parses_http_cors_mode() {
+        unsafe { std::env::set_var("ANDROMEDA_HTTP_CORS", "disabled") };
+        let config = RuntimeConfig::builder().env().load().expect("config should load");
+        unsafe { std::env::remove_var("ANDROMEDA_HTTP_CORS") };
+        pretty_assertions::assert_eq!(config.http.cors, CorsMode::Disabled);
+    }
+
+    #[test]
+    #[serial]
     fn env_parses_json_maps_for_hashmap_fields() {
         unsafe {
             std::env::set_var(
@@ -722,6 +794,14 @@ port = 1600
     fn validate_rejects_zero_spatial_rebuild_interval() {
         let mut config = test_runtime_config_with_preload("contexts/test.jsonld");
         config.spatial.rebuild_interval_secs = 0;
+
+        assert!(validate_config(&config).is_err());
+    }
+
+    #[test]
+    fn validate_rejects_zero_http_request_timeout() {
+        let mut config = test_runtime_config_with_preload("contexts/test.jsonld");
+        config.http.request_timeout_secs = 0;
 
         assert!(validate_config(&config).is_err());
     }

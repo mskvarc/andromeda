@@ -79,8 +79,9 @@ thiserror = "2.0.18"
 tokio = { version = "1.52.1", features = ["full"] }
 tokio-util = "0.7.18"
 toml = "0.9.12"
+tower = { version = "0.5.3", features = ["util"] }
 tower-helmet = "0.3.0"
-tower-http = { version = "0.6.8", features = ["normalize-path"] }
+tower-http = { version = "0.6.8", features = ["compression-full", "cors", "decompression-full", "normalize-path", "request-id", "sensitive-headers", "timeout", "trace", "util"] }
 tower-layer = "0.3.3"
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["json", "env-filter"] }
@@ -95,6 +96,7 @@ shadow-rs = "1.7.1"
 
 [dev-dependencies]
 criterion = { version = "0.5.1", features = ["async_tokio", "html_reports"] }
+flate2 = "1.1.5"
 futures = "0.3.32"
 libtest-mimic = "0.8.2"
 pretty_assertions = "1.4.1"
