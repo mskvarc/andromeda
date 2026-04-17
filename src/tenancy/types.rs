@@ -9,7 +9,7 @@ const MAX_TENANT_LEN: usize = 50;
 
 /// Grammar-validated tenant label (FIWARE convention).
 ///
-/// Matches `[A-Za-z_][A-Za-z0-9_]*` via ABNF. Length is bounded separately
+/// Matches `[A-Za-z_][A-Za-z0-9_-]*` via ABNF. Length is bounded separately
 /// by [`TenantName`] since ABNF regular grammars cannot cheaply encode
 /// upper bounds.
 #[derive(RegularGrammar, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -23,7 +23,7 @@ struct TenantLabel(str);
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum InvalidTenantName {
     /// Input is empty or violates the tenant character grammar.
-    #[error("tenant name must match [A-Za-z_][A-Za-z0-9_]*")]
+    #[error("tenant name must match [A-Za-z_][A-Za-z0-9_-]*")]
     InvalidSyntax,
     /// Input exceeds [`MAX_TENANT_LEN`] characters.
     #[error("tenant name must be at most {MAX_TENANT_LEN} characters")]
@@ -143,8 +143,13 @@ mod tests {
     }
 
     #[test]
-    fn tenant_name_rejects_hyphen() {
-        assert!(TenantName::try_from("a-b".to_string()).is_err());
+    fn tenant_name_valid_with_hyphen() {
+        assert!(TenantName::try_from("tenant-a".to_string()).is_ok());
+    }
+
+    #[test]
+    fn tenant_name_rejects_leading_hyphen() {
+        assert!(TenantName::try_from("-tenant".to_string()).is_err());
     }
 
     #[test]

@@ -52,13 +52,13 @@ mod tests {
     async fn valid_tenant_header_extracts_name() {
         let req = Request::builder()
             .uri("/test")
-            .header("NGSILD-Tenant", "my_tenant")
+            .header("NGSILD-Tenant", "my-tenant")
             .body(())
             .expect("valid request");
         let (mut parts, _) = req.into_parts();
         let result = TenantHeader::from_request_parts(&mut parts, &()).await.expect("should succeed");
         let name = result.into_inner().expect("should have value");
-        pretty_assertions::assert_eq!(name.as_str(), "my_tenant");
+        pretty_assertions::assert_eq!(name.as_str(), "my-tenant");
     }
 
     #[tokio::test]

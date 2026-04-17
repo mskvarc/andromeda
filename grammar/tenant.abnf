@@ -1,10 +1,9 @@
 ; Tenant identifier (FIWARE convention, matches Orion-LD / Scorpio).
 ;
-; Restricts tenants to `[A-Za-z_][A-Za-z0-9_]{0,49}` so they are safe as
-; Postgres database / schema names. The 50-char maximum is enforced by the
-; Rust wrapper since ABNF regular grammars cannot cheaply encode upper
-; length bounds.
+; Restricts tenants to `[A-Za-z_][A-Za-z0-9_-]{0,49}`. The 50-char maximum
+; is enforced by the Rust wrapper since ABNF regular grammars cannot
+; cheaply encode upper length bounds.
 
 TenantName  = tenantStart *tenantChar
 tenantStart = %x41-5A / %x61-7A / %x5F            ; A-Z a-z _
-tenantChar  = %x30-39 / %x41-5A / %x61-7A / %x5F  ; 0-9 A-Z a-z _
+tenantChar  = %x30-39 / %x41-5A / %x61-7A / %x5F / %x2D  ; 0-9 A-Z a-z _ -
