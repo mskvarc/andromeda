@@ -16,6 +16,9 @@
 --                           for scope path matching
 --   * pg_trgm            -- trigram similarity indexes for text pattern
 --                           matching (available but not indexed by default)
+--   * btree_gist         -- enables GIST indexes on scalar types (e.g. SMALLINT)
+--                           alongside geometry columns, used for composite
+--                           (attribute_name_id, value_geo) indexes
 --   * pg_stat_statements -- query performance monitoring; requires
 --                           shared_preload_libraries configuration, graceful
 --                           fallback if unavailable
@@ -25,6 +28,7 @@ CREATE EXTENSION IF NOT EXISTS postgis;
 CREATE EXTENSION IF NOT EXISTS timescaledb;
 CREATE EXTENSION IF NOT EXISTS ltree;
 CREATE EXTENSION IF NOT EXISTS pg_trgm;
+CREATE EXTENSION IF NOT EXISTS btree_gist;
 
 DO $$
 BEGIN

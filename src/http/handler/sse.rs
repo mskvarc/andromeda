@@ -86,7 +86,7 @@ impl Stream for SseEventStream {
 /// by the notification worker.
 pub async fn stream(TenantState(state): TenantState, OriginalUri(uri): OriginalUri, Path(subscription_id): Path<String>) -> Result<Response, NgsiLdError> {
     // Validate subscription exists.
-    let subscription = state.subscriptions.get(&subscription_id).await.with_instance(uri.clone())?;
+    let subscription = state.subscriptions.get(&subscription_id).await.with_instance(&uri)?;
 
     // Validate subscription uses SSE transport via the canonical parser
     // (handles case-insensitive URI schemes like SSE://).
@@ -101,7 +101,7 @@ pub async fn stream(TenantState(state): TenantState, OriginalUri(uri): OriginalU
             AndromedaError::subscription_validation(
                 "Subscription endpoint is not an SSE transport. Only subscriptions with sse:// endpoint URI support streaming.",
             )
-            .with_instance(uri.clone()),
+            .with_instance(&uri),
         ));
     }
 

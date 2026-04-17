@@ -16,12 +16,16 @@ use iso8601_duration::Duration as Iso8601Duration;
 use serde_json::Value;
 use sqlx::postgres::PgPool;
 use std::sync::Arc;
+use tokio::sync::Semaphore;
 
 /// Service for managing NGSI-LD entity snapshots.
 pub struct SnapshotService {
     repo: SnapshotRepository,
     transport: Option<Arc<TransportDispatcher>>,
     executor: Option<Arc<SnapshotExecutor>>,
+    /// Bounds the number of concurrent snapshot executions so a burst of
+    /// `POST /snapshots` calls cannot saturate the database pool.
+    execution_semaphore: Arc<Semaphore>,
 }
 
 impl SnapshotService {
@@ -30,12 +34,13 @@ impl SnapshotService {
     /// When `transport` is provided, snapshot status notifications are
     /// dispatched to snapshots that have an `endpoint` configured
     /// (ETSI GS CIM 009 clause 5.16.6).
-    pub fn new(pool: &PgPool, transport: Option<Arc<TransportDispatcher>>) -> SnapshotService {
+    pub fn new(pool: &PgPool, transport: Option<Arc<TransportDispatcher>>, snapshot_concurrency: usize) -> SnapshotService {
         let executor = Arc::new(SnapshotExecutor::new(pool));
         SnapshotService {
             repo: SnapshotRepository::new(pool),
             transport,
             executor: Some(executor),
+            execution_semaphore: Arc::new(Semaphore::new(snapshot_concurrency.max(1))),
         }
     }
 
@@ -78,11 +83,19 @@ impl SnapshotService {
         self.repo.create(&snapshot).await?;
         self.send_notification_if_configured(&snapshot).await;
 
-        // Spawn background query execution (NGSI-LD 5.16.1.4)
+        // Spawn background query execution (NGSI-LD 5.16.1.4). A semaphore
+        // bounds concurrent executions so a burst of create requests cannot
+        // saturate the database pool; the spawned task acquires a permit
+        // before running and queues behind existing executions otherwise.
         if let Some(executor) = &self.executor {
             let executor = Arc::clone(executor);
-            let snapshot_for_exec = snapshot.clone(); // clone: moved into spawned task
+            let semaphore = Arc::clone(&self.execution_semaphore);
+            let snapshot_for_exec = snapshot.clone();
             tokio::spawn(async move {
+                let _permit = match semaphore.acquire_owned().await {
+                    Ok(p) => p,
+                    Err(_) => return,
+                };
                 executor.execute(&snapshot_for_exec).await;
             });
         }

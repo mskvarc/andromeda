@@ -15,9 +15,25 @@ use serde_json::Value;
 use std::{
     collections::HashSet,
     hash::{Hash, Hasher},
+    sync::Arc,
 };
 use tokio::sync::Mutex;
 use tracing::debug;
+
+/// Cached output of `resolve_linked_entities` + per-entity JSON
+/// serialization. Shared across subscriptions that issue the same
+/// `(root_entity, join_level, sys_attrs, context)` resolution during a
+/// single event fan-out so the DB round-trips and serialization work run
+/// only once per distinct resolution shape.
+#[derive(Debug)]
+pub struct ResolvedLinkedEntities {
+    /// Entities keyed by URI, as returned by `resolve_linked_entities`.
+    pub by_id: Arc<std::collections::HashMap<String, Entity>>,
+    /// `Vec<Value>` matching `by_id.values()` pre-serialized once. Used by the
+    /// `join=flat` notification path to append linked entities to the
+    /// notification data array.
+    pub as_values: Arc<Vec<Value>>,
+}
 
 pub struct NotificationBuildParams<'a> {
     pub engine: &'a JsonLdEngine,
@@ -34,6 +50,7 @@ pub struct NotificationBuildParams<'a> {
 #[derive(Default)]
 pub struct NotificationCompactionCache {
     entries: Mutex<std::collections::HashMap<u64, Value>>,
+    linked_entities: Mutex<std::collections::HashMap<u64, ResolvedLinkedEntities>>,
 }
 
 pub async fn build_notification_data(params: NotificationBuildParams<'_>) -> Vec<Value> {
@@ -183,48 +200,45 @@ pub async fn build_notification_data(params: NotificationBuildParams<'_>) -> Vec
 
     let mut all_compacted = vec![compacted];
     if let Some(ref join) = sub.notification_join {
-        if join == "flat" {
-            if let Ok(main_entity) = serde_json::from_value::<Entity>(all_compacted[0].clone()) {
-                let sys_attrs = sub.notification_sys_attrs;
-                match entity_query
-                    .resolve_linked_entities(
-                        &[main_entity],
-                        sub.notification_join_level,
-                        sys_attrs,
-                        &context,
-                        &std::collections::HashSet::new(),
-                    )
-                    .await
-                {
-                    Ok(linked_map) => {
-                        for linked_entity in linked_map.values() {
-                            if let Ok(linked_val) = serde_json::to_value(linked_entity) {
-                                all_compacted.push(linked_val);
-                            }
-                        }
+        if join == "flat"
+            && let Ok(main_entity) = serde_json::from_value::<Entity>(all_compacted[0].clone())
+        {
+            match resolve_linked_cached(
+                entity_query,
+                &main_entity,
+                sub.notification_join_level,
+                sub.notification_sys_attrs,
+                &context,
+                compaction_cache,
+            )
+            .await
+            {
+                Ok(resolved) => {
+                    all_compacted.reserve(resolved.as_values.len());
+                    for linked_val in resolved.as_values.iter() {
+                        all_compacted.push(linked_val.clone());
                     }
-                    Err(e) => {
-                        debug!("Failed to resolve linked entities for join=flat: {}", e);
-                    }
+                }
+                Err(e) => {
+                    debug!("Failed to resolve linked entities for join=flat: {}", e);
                 }
             }
         } else if join == "inline"
             && let Ok(main_entity) = serde_json::from_value::<Entity>(all_compacted[0].clone())
         {
-            let sys_attrs = sub.notification_sys_attrs;
-            match entity_query
-                .resolve_linked_entities(
-                    &[main_entity],
-                    sub.notification_join_level,
-                    sys_attrs,
-                    &context,
-                    &std::collections::HashSet::new(),
-                )
-                .await
+            match resolve_linked_cached(
+                entity_query,
+                &main_entity,
+                sub.notification_join_level,
+                sub.notification_sys_attrs,
+                &context,
+                compaction_cache,
+            )
+            .await
             {
-                Ok(linked_map) => {
+                Ok(resolved) => {
                     let payload = std::mem::take(&mut all_compacted[0]);
-                    match SnapshotRenderer::new(payload).with_inline_linked_entities(&linked_map).render() {
+                    match SnapshotRenderer::new(payload).with_inline_linked_entities(&resolved.by_id).render() {
                         Ok(rendered) => all_compacted[0] = rendered,
                         Err(error) => {
                             debug!("Failed to apply join=inline to notification payload: {}", error);
@@ -269,6 +283,79 @@ pub async fn build_notification_data(params: NotificationBuildParams<'_>) -> Vec
     }
 
     result
+}
+
+/// Resolve and pre-serialize linked entities, caching by
+/// `(root_entity_id, join_level, sys_attrs, context_digest)` on the shared
+/// [`NotificationCompactionCache`]. The first subscription in a fan-out pays
+/// the cost; subsequent subscriptions with the same resolution shape read
+/// from the cache.
+async fn resolve_linked_cached(
+    entity_query: &EntityQueryService,
+    main_entity: &Entity,
+    join_level: u32,
+    sys_attrs: SysAttrsInclusion,
+    context: &ContextSpec,
+    cache: Option<&NotificationCompactionCache>,
+) -> Result<ResolvedLinkedEntities, crate::core::error::AndromedaError> {
+    // Compute cache key even when no cache is provided -- cheap and keeps the
+    // code path uniform with the cached branch.
+    let key = linked_resolution_cache_key(main_entity, join_level, sys_attrs, context);
+    if let Some(cache) = cache {
+        let cached = cache.linked_entities.lock().await;
+        if let Some(hit) = cached.get(&key) {
+            return Ok(ResolvedLinkedEntities {
+                by_id: Arc::clone(&hit.by_id),
+                as_values: Arc::clone(&hit.as_values),
+            });
+        }
+    }
+
+    let linked_map = entity_query
+        .resolve_linked_entities(std::slice::from_ref(main_entity), join_level, sys_attrs, context, &HashSet::new())
+        .await?;
+    let values: Vec<Value> = linked_map
+        .values()
+        .filter_map(|entity| match serde_json::to_value(entity) {
+            Ok(v) => Some(v),
+            Err(e) => {
+                debug!("Failed to serialize linked entity: {}", e);
+                None
+            }
+        })
+        .collect();
+    let resolved = ResolvedLinkedEntities {
+        by_id: Arc::new(linked_map),
+        as_values: Arc::new(values),
+    };
+
+    if let Some(cache) = cache {
+        let mut cached = cache.linked_entities.lock().await;
+        cached.entry(key).or_insert_with(|| ResolvedLinkedEntities {
+            by_id: Arc::clone(&resolved.by_id),
+            as_values: Arc::clone(&resolved.as_values),
+        });
+    }
+
+    Ok(resolved)
+}
+
+fn linked_resolution_cache_key(main_entity: &Entity, join_level: u32, sys_attrs: SysAttrsInclusion, context: &ContextSpec) -> u64 {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    main_entity.id.to_string().hash(&mut hasher);
+    hasher.write_u32(join_level);
+    hasher.write_u8(match sys_attrs {
+        SysAttrsInclusion::Include => 1,
+        SysAttrsInclusion::Strip => 0,
+    });
+    match context.to_context_value() {
+        Some(ctx_val) => {
+            hasher.write_u8(1);
+            hash_json_value(&ctx_val, &mut hasher);
+        }
+        None => hasher.write_u8(0),
+    }
+    hasher.finish()
 }
 
 async fn compact_entity_with_cache(

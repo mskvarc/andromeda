@@ -49,14 +49,14 @@ pub struct BatchExecutionConfig {
 }
 
 #[derive(Debug)]
-pub(crate) struct BatchSideEffectJob {
+pub struct BatchSideEffectJob {
     pub temporal_entities: Vec<(String, Value)>,
     pub change_events: Vec<ChangeEvent>,
 }
 
 /// Configuration for deferred batch side-effect delivery.
 #[derive(Clone, Debug)]
-pub(crate) struct BatchSideEffectDispatcherConfig {
+pub struct BatchSideEffectDispatcherConfig {
     /// Minimum batch size required before dispatching work to the background queue.
     pub threshold: usize,
     /// Queue sender used to hand jobs to the background worker.

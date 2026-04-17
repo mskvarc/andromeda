@@ -35,7 +35,7 @@ pub async fn query(
     let context: ContextSpec = context.into_inner();
     let is_local = params.local.unwrap_or(false);
 
-    let local_result = service.attributes(params.details, &context).await.with_instance(uri.clone())?;
+    let local_result = service.attributes(params.details, &context).await.with_instance(&uri)?;
 
     let (result, warnings) = if is_local {
         (local_result, Vec::new())
@@ -72,7 +72,7 @@ pub async fn get(
     let context: ContextSpec = context.into_inner();
     let is_local = params.local.unwrap_or(false);
 
-    let local_result = service.attribute_info(&attr_id, &context).await.with_instance(uri.clone())?;
+    let local_result = service.attribute_info(&attr_id, &context).await.with_instance(&uri)?;
 
     let (result, warnings) = if is_local {
         (local_result, Vec::new())

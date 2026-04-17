@@ -137,8 +137,7 @@ pub fn validate_has_filter(query: &crate::http::parameter::query::entity::Entity
 
     if !has_filter {
         return Err(NgsiLdError::from(
-            AndromedaError::entity_map_validation("At least one query filter must be provided (type, attrs, q, georel, scopeQ, or id)")
-                .with_instance(uri.clone()),
+            AndromedaError::entity_map_validation("At least one query filter must be provided (type, attrs, q, georel, scopeQ, or id)").with_instance(&uri),
         ));
     }
 

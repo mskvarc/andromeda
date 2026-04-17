@@ -22,7 +22,10 @@ use tracing::{debug, error, info};
 use uuid::Uuid;
 
 use super::notification::payload::{context_for_subscription_raw, filter_entity_attributes, normalize_compacted_entity};
-use crate::service::subscription_matching::{matches_geo_filter, matches_scope_filter};
+use crate::service::{
+    subscription_cache::{compile_geo_q, compile_scope_q},
+    subscription_matching::{matches_compiled_geo_query, matches_compiled_scope_pattern},
+};
 
 const INTERVAL_NOTIFICATION_CONCURRENCY: usize = 20;
 
@@ -318,7 +321,10 @@ fn apply_subscription_filters(sub: &Subscription, entities: Vec<Value>) -> Vec<V
         }
     });
 
-    let has_filters = compiled_q.is_some() || sub.geo_q.is_some() || sub.scope_q.is_some();
+    let compiled_geo = sub.geo_q.as_ref().and_then(|v| compile_geo_q(v, &sub.id));
+    let compiled_scope = sub.scope_q.as_deref().map(compile_scope_q);
+
+    let has_filters = compiled_q.is_some() || compiled_geo.is_some() || compiled_scope.is_some();
     if !has_filters {
         return entities;
     }
@@ -331,13 +337,13 @@ fn apply_subscription_filters(sub: &Subscription, entities: Vec<Value>) -> Vec<V
             {
                 return false;
             }
-            if let Some(ref geo_q) = sub.geo_q
-                && !matches_geo_filter(geo_q, entity)
+            if let Some(ref geo_q) = compiled_geo
+                && !matches_compiled_geo_query(geo_q, entity)
             {
                 return false;
             }
-            if let Some(ref scope_q) = sub.scope_q
-                && !matches_scope_filter(scope_q, entity)
+            if let Some(ref scope_q) = compiled_scope
+                && !matches_compiled_scope_pattern(scope_q, entity)
             {
                 return false;
             }

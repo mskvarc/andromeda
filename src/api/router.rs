@@ -247,9 +247,15 @@ pub async fn build_tenant_state(
     );
 
     let (change_tx, _) = tokio::sync::broadcast::channel::<ChangeEvent>(4096);
-    let (sub_change_tx, _) = tokio::sync::broadcast::channel::<SubscriptionChange>(256);
-    let (csr_change_tx, _) = tokio::sync::broadcast::channel::<CsrChangeEvent>(256);
-    let (csr_sub_change_tx, _) = tokio::sync::broadcast::channel::<CsourceSubscriptionChange>(256);
+    // Subscription / CSR / CSR-subscription change channels carry burst
+    // traffic during mass updates: an operator uploading N subscriptions in
+    // quick succession, or a federation refresh touching many CSRs. At 256
+    // the buffer would overflow and force subscription caches to fall back
+    // to a full reload; 1024 holds the burst without forcing reloads while
+    // still bounding memory use.
+    let (sub_change_tx, _) = tokio::sync::broadcast::channel::<SubscriptionChange>(1024);
+    let (csr_change_tx, _) = tokio::sync::broadcast::channel::<CsrChangeEvent>(1024);
+    let (csr_sub_change_tx, _) = tokio::sync::broadcast::channel::<CsourceSubscriptionChange>(1024);
     let mut worker_handles = Vec::new();
 
     let context_repo = Arc::new(JsonLdContextRepository::new(&pool));
@@ -402,12 +408,17 @@ pub async fn build_tenant_state(
         &pool,
         engine,
         config.info.source_identity.clone(),
+        config.performance.forward_csr_concurrency,
     )?);
 
     let entity_map_store = crate::repository::entity_map::EntityMapStore::new();
     let entity_map_service = Arc::new(crate::service::entity_map::EntityMapService::new(entity_map_store));
 
-    let snapshot_service = Arc::new(crate::service::snapshot::SnapshotService::new(&pool, Some(snapshot_transport)));
+    let snapshot_service = Arc::new(crate::service::snapshot::SnapshotService::new(
+        &pool,
+        Some(snapshot_transport),
+        config.performance.snapshot_concurrency,
+    ));
 
     Ok((
         AndromedaState {

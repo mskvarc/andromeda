@@ -24,12 +24,11 @@ use serde_json::Value;
 /// POST /ngsi-ld/v1/jsonldContexts -- Create a hosted JSON-LD context.
 pub async fn create(TenantState(state): TenantState, OriginalUri(uri): OriginalUri, headers: HeaderMap, body: Bytes) -> Result<Response, NgsiLdError> {
     let service = &state.contexts;
-    let payload: Value =
-        serde_json::from_slice(&body).map_err(|_| AndromedaError::malformed_request("Request body is not valid JSON").with_instance(uri.clone()))?;
+    let payload: Value = serde_json::from_slice(&body).map_err(|_| AndromedaError::malformed_request("Request body is not valid JSON").with_instance(&uri))?;
 
     let base_url = headers.get("host").and_then(|v| v.to_str().ok()).map(|h| format!("http://{}", h));
 
-    let id = service.create(payload, base_url.as_deref()).await.with_instance(uri.clone())?;
+    let id = service.create(payload, base_url.as_deref()).await.with_instance(&uri)?;
 
     Ok((StatusCode::CREATED, [("Location", format!("/ngsi-ld/v1/jsonldContexts/{}", id))]).into_response())
 }
@@ -48,7 +47,7 @@ pub async fn query(
                 .map_err(|_| AndromedaError::query_validation(format!("Invalid kind: {}. Must be one of: Cached, Hosted, ImplicitlyCreated", k)))
         })
         .transpose()
-        .with_instance(uri.clone())?;
+        .with_instance(&uri)?;
 
     let detail_level = if params.details.unwrap_or(false) {
         DetailLevel::Full
@@ -56,7 +55,7 @@ pub async fn query(
         DetailLevel::Summary
     };
 
-    let result = service.list(kind, detail_level).await.with_instance(uri.clone())?;
+    let result = service.list(kind, detail_level).await.with_instance(&uri)?;
 
     Ok((StatusCode::OK, Json(result)).into_response())
 }
@@ -75,7 +74,7 @@ pub async fn get(
         DetailLevel::Summary
     };
 
-    let result = service.get(&context_id, detail_level).await.with_instance(uri.clone())?;
+    let result = service.get(&context_id, detail_level).await.with_instance(&uri)?;
 
     Ok((StatusCode::OK, Json(result)).into_response())
 }
@@ -97,11 +96,11 @@ pub async fn delete(
             return Ok(StatusCode::NO_CONTENT.into_response());
         }
         return Err(NgsiLdError::from(
-            AndromedaError::jsonld_processing("Cannot delete a core context").with_instance(uri.clone()),
+            AndromedaError::jsonld_processing("Cannot delete a core context").with_instance(&uri),
         ));
     }
 
-    service.delete(&context_id, reload).await.with_instance(uri.clone())?;
+    service.delete(&context_id, reload).await.with_instance(&uri)?;
 
     Ok(StatusCode::NO_CONTENT.into_response())
 }

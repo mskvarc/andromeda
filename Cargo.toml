@@ -81,6 +81,7 @@ uuid = { version = "1.23.1", features = ["serde", "v4"] }
 shadow-rs = "1.7.1"
 
 [dev-dependencies]
+criterion = { version = "0.5.1", features = ["async_tokio", "html_reports"] }
 futures = "0.3.32"
 libtest-mimic = "0.8.2"
 pretty_assertions = "1.4.1"

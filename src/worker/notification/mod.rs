@@ -422,8 +422,8 @@ mod tests {
             jsonld_context: None,
             expires_at: None,
             compiled_q: None,
-            geo_q: None,
-            scope_q: None,
+            compiled_geo_q: None,
+            compiled_scope_q: None,
             dataset_id: None,
             notification_join: None,
             notification_join_level: 1,
@@ -675,49 +675,55 @@ mod tests {
     #[test]
     fn matches_entity_filters_scope_exact() {
         let mut sub = make_sub("sub1", vec![], vec!["attributeUpdated"], None);
-        sub.scope_q = Some("/Spain".to_string());
+        sub.compiled_scope_q = Some(crate::service::subscription_cache::compile_scope_q("/Spain"));
         assert!(matches_entity_filters(&sub, &entity_with_geo_and_scope()));
     }
 
     #[test]
     fn matches_entity_filters_scope_no_match() {
         let mut sub = make_sub("sub1", vec![], vec!["attributeUpdated"], None);
-        sub.scope_q = Some("/France".to_string());
+        sub.compiled_scope_q = Some(crate::service::subscription_cache::compile_scope_q("/France"));
         assert!(!matches_entity_filters(&sub, &entity_with_geo_and_scope()));
     }
 
     #[test]
     fn matches_entity_filters_scope_hash_wildcard() {
         let mut sub = make_sub("sub1", vec![], vec!["attributeUpdated"], None);
-        sub.scope_q = Some("/Madrid/#".to_string());
+        sub.compiled_scope_q = Some(crate::service::subscription_cache::compile_scope_q("/Madrid/#"));
         assert!(matches_entity_filters(&sub, &entity_with_geo_and_scope()));
     }
 
     #[test]
     fn matches_entity_filters_scope_and() {
         let mut sub = make_sub("sub1", vec![], vec!["attributeUpdated"], None);
-        sub.scope_q = Some("/Spain;/Madrid/Gardens".to_string());
+        sub.compiled_scope_q = Some(crate::service::subscription_cache::compile_scope_q("/Spain;/Madrid/Gardens"));
         assert!(matches_entity_filters(&sub, &entity_with_geo_and_scope()));
     }
 
     #[test]
     fn matches_entity_filters_scope_or() {
         let mut sub = make_sub("sub1", vec![], vec!["attributeUpdated"], None);
-        sub.scope_q = Some("/France,/Spain".to_string());
+        sub.compiled_scope_q = Some(crate::service::subscription_cache::compile_scope_q("/France,/Spain"));
         assert!(matches_entity_filters(&sub, &entity_with_geo_and_scope()));
     }
 
     #[test]
     fn matches_entity_filters_geo_near() {
         let mut sub = make_sub("sub1", vec![], vec!["attributeUpdated"], None);
-        sub.geo_q = Some(serde_json::json!({"georel": "near;maxDistance==100000", "geometry": "Point", "coordinates": "[8.6724, 49.3988]"}));
+        sub.compiled_geo_q = crate::service::subscription_cache::compile_geo_q(
+            &serde_json::json!({"georel": "near;maxDistance==100000", "geometry": "Point", "coordinates": "[8.6724, 49.3988]"}),
+            "test",
+        );
         assert!(matches_entity_filters(&sub, &entity_with_geo_and_scope()));
     }
 
     #[test]
     fn matches_entity_filters_geo_near_too_far() {
         let mut sub = make_sub("sub1", vec![], vec!["attributeUpdated"], None);
-        sub.geo_q = Some(serde_json::json!({"georel": "near;maxDistance==10", "geometry": "Point", "coordinates": "[8.6724, 49.3988]"}));
+        sub.compiled_geo_q = crate::service::subscription_cache::compile_geo_q(
+            &serde_json::json!({"georel": "near;maxDistance==10", "geometry": "Point", "coordinates": "[8.6724, 49.3988]"}),
+            "test",
+        );
         assert!(!matches_entity_filters(&sub, &entity_with_geo_and_scope()));
     }
 

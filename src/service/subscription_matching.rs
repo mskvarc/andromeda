@@ -6,14 +6,13 @@
 
 use crate::{
     domain::{
-        notification::{ChangeEvent, ChangeOrigin, CompiledSubscription},
+        notification::{ChangeEvent, ChangeOrigin, CompiledGeoQuery, CompiledGeoRel, CompiledScopePattern, CompiledScopeTerm, CompiledSubscription},
         subscription::SubscriptionStatus,
     },
     jsonld::vocab,
     query::q,
 };
 use chrono::Utc;
-use regex::Regex;
 use serde_json::Value;
 use std::sync::Arc;
 use tracing::debug;
@@ -131,15 +130,15 @@ pub fn matches_entity_filters(sub: &CompiledSubscription, entity_data: &Value) -
         return false;
     }
 
-    if let Some(ref geo_q) = sub.geo_q
-        && !matches_geo_filter(geo_q, entity_data)
+    if let Some(ref geo_q) = sub.compiled_geo_q
+        && !matches_compiled_geo_query(geo_q, entity_data)
     {
         debug!("Subscription {} skipped: geoQ filter did not match entity", sub.id);
         return false;
     }
 
-    if let Some(ref scope_q) = sub.scope_q
-        && !matches_scope_filter(scope_q, entity_data)
+    if let Some(ref scope_q) = sub.compiled_scope_q
+        && !matches_compiled_scope_pattern(scope_q, entity_data)
     {
         debug!("Subscription {} skipped: scopeQ filter did not match entity", sub.id);
         return false;
@@ -155,58 +154,16 @@ pub fn matches_entity_filters(sub: &CompiledSubscription, entity_data: &Value) -
     true
 }
 
-/// Evaluate a geo-spatial filter (geoQ) against entity data.
+/// Evaluate a pre-compiled geo-spatial filter against entity data.
 ///
-/// Supports georel values: within, contains, intersects, disjoint, equals,
-/// overlaps, and near (with maxDistance/minDistance modifiers).
-pub fn matches_geo_filter(geo_q: &Value, entity_data: &Value) -> bool {
+/// Accepts the [`CompiledGeoQuery`] produced once at subscription compile
+/// time so event matching does not re-parse the GeoJSON reference geometry
+/// or georel operator.
+pub fn matches_compiled_geo_query(geo_q: &CompiledGeoQuery, entity_data: &Value) -> bool {
     use geo::algorithm::{Contains, Intersects};
 
-    let geo_obj = match geo_q.as_object() {
-        Some(o) => o,
-        None => return true,
-    };
-
-    let georel_str = match geo_obj.get("georel").and_then(|v| v.as_str()) {
-        Some(s) => s,
-        None => return true,
-    };
-    let geometry_str = match geo_obj.get("geometry").and_then(|v| v.as_str()) {
-        Some(s) => s,
-        None => return true,
-    };
-    let coordinates_str = match geo_obj.get("coordinates").and_then(|v| v.as_str()) {
-        Some(s) => s,
-        None => match geo_obj.get("coordinates") {
-            Some(v) if v.is_array() => &v.to_string(),
-            _ => return true,
-        },
-    };
-    let geoproperty = geo_obj
-        .get("geoproperty")
-        .and_then(|v| v.as_str())
-        .unwrap_or(vocab::expanded::LOCATION.as_str());
-
-    let ref_geojson_str = match serde_json::to_string(&serde_json::json!({
-        "type": geometry_str,
-        "coordinates": serde_json::from_str::<Value>(coordinates_str).unwrap_or(Value::Null)
-    })) {
-        Ok(s) => s,
-        Err(_) => return true,
-    };
-
-    let ref_geom: geo::Geometry = match ref_geojson_str.parse::<geojson::GeoJson>() {
-        Ok(geojson::GeoJson::Geometry(g)) => match geo::Geometry::try_from(g) {
-            Ok(geom) => geom,
-            Err(_) => return true,
-        },
-        _ => return true,
-    };
-
-    let entity_geojson = extract_geoproperty_geojson(entity_data, geoproperty);
-    let entity_geojson_str = match entity_geojson {
-        Some(s) => s,
-        None => return false,
+    let Some(entity_geojson_str) = extract_geoproperty_geojson(entity_data, &geo_q.geoproperty_iri) else {
+        return false;
     };
 
     let entity_geom: geo::Geometry = match entity_geojson_str.parse::<geojson::GeoJson>() {
@@ -217,35 +174,21 @@ pub fn matches_geo_filter(geo_q: &Value, entity_data: &Value) -> bool {
         _ => return false,
     };
 
-    let parts: Vec<&str> = georel_str.split(';').collect();
-    let rel = parts[0].trim();
+    let ref_geom = &geo_q.ref_geometry;
 
-    match rel {
-        "within" => ref_geom.contains(&entity_geom),
-        "contains" => entity_geom.contains(&ref_geom),
-        "intersects" => entity_geom.intersects(&ref_geom),
-        "disjoint" => !entity_geom.intersects(&ref_geom),
-        "equals" => entity_geom.contains(&ref_geom) && ref_geom.contains(&entity_geom),
-        "overlaps" => entity_geom.intersects(&ref_geom),
-        "near" => {
-            let mut max_distance: Option<f64> = None;
-            let mut min_distance: Option<f64> = None;
-            for part in &parts[1..] {
-                let part = part.trim();
-                if let Some(val) = part.strip_prefix("maxDistance==") {
-                    max_distance = val.parse().ok();
-                } else if let Some(val) = part.strip_prefix("minDistance==") {
-                    min_distance = val.parse().ok();
-                }
-            }
-
-            let distance = haversine_distance_m(&entity_geom, &ref_geom);
-
+    match geo_q.georel {
+        CompiledGeoRel::Within => ref_geom.contains(&entity_geom),
+        CompiledGeoRel::Contains => entity_geom.contains(ref_geom),
+        CompiledGeoRel::Intersects => entity_geom.intersects(ref_geom),
+        CompiledGeoRel::Disjoint => !entity_geom.intersects(ref_geom),
+        CompiledGeoRel::Equals => entity_geom.contains(ref_geom) && ref_geom.contains(&entity_geom),
+        CompiledGeoRel::Overlaps => entity_geom.intersects(ref_geom),
+        CompiledGeoRel::Near { max_distance, min_distance } => {
+            let distance = haversine_distance_m(&entity_geom, ref_geom);
             let max_ok = max_distance.is_none_or(|max| distance <= max);
             let min_ok = min_distance.is_none_or(|min| distance >= min);
             max_ok && min_ok
         }
-        _ => true,
     }
 }
 
@@ -290,32 +233,32 @@ fn haversine_distance_m(a: &geo::Geometry, b: &geo::Geometry) -> f64 {
     6_371_008.8 * c
 }
 
-/// Evaluate a scope query against entity scopes.
+/// Evaluate a pre-compiled scope query against entity scopes.
 ///
-/// Supports AND (`;`), OR (`,`), exact match, hierarchical wildcard (`/#`),
-/// and single-level wildcard (`/+`).
-pub fn matches_scope_filter(scope_q: &str, entity_data: &Value) -> bool {
+/// Accepts the [`CompiledScopePattern`] built once at subscription compile
+/// time, so event matching does not re-split the pattern string or recompile
+/// `/+` regexes on every event.
+pub fn matches_compiled_scope_pattern(pattern: &CompiledScopePattern, entity_data: &Value) -> bool {
     let entity_scopes = crate::service::entity::extract_scopes(entity_data);
 
-    let or_terms: Vec<&str> = scope_q.split(',').map(str::trim).collect();
-    or_terms.iter().any(|or_term| {
-        let and_terms: Vec<&str> = or_term.split(';').map(str::trim).collect();
-        and_terms.iter().all(|pattern| entity_scopes.iter().any(|scope| scope_matches(pattern, scope)))
+    pattern.or_terms.iter().any(|and_terms| {
+        and_terms
+            .iter()
+            .all(|term| entity_scopes.iter().any(|scope| compiled_scope_term_matches(term, scope)))
     })
 }
 
-fn scope_matches(pattern: &str, scope: &str) -> bool {
-    if let Some(prefix) = pattern.strip_suffix("/#") {
-        if let Some(rest) = scope.strip_prefix(prefix) {
-            rest.starts_with('/') && !rest[1..].contains('/')
-        } else {
-            false
+fn compiled_scope_term_matches(term: &CompiledScopeTerm, scope: &str) -> bool {
+    match term {
+        CompiledScopeTerm::Exact(p) => p == scope,
+        CompiledScopeTerm::HierarchicalWildcard { prefix } => {
+            if let Some(rest) = scope.strip_prefix(prefix.as_str()) {
+                rest.starts_with('/') && !rest[1..].contains('/')
+            } else {
+                false
+            }
         }
-    } else if pattern.contains("/+") {
-        let regex_pattern = format!("^{}$", pattern.replace("/+", "/[^/]+"));
-        Regex::new(&regex_pattern).is_ok_and(|re| re.is_match(scope))
-    } else {
-        pattern == scope
+        CompiledScopeTerm::Regex(re) => re.is_match(scope),
     }
 }
 
@@ -352,8 +295,8 @@ mod tests {
             jsonld_context: None,
             expires_at: None,
             compiled_q: None,
-            geo_q: None,
-            scope_q: None,
+            compiled_geo_q: None,
+            compiled_scope_q: None,
             dataset_id: None,
             notification_join: None,
             notification_join_level: 1,

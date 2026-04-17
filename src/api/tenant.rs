@@ -23,9 +23,9 @@ pub struct TenantStateOrCreate(pub AndromedaState);
 async fn resolve(parts: &mut Parts, app: &AppState, policy: TenantCreationPolicy) -> Result<AndromedaState, NgsiLdError> {
     let tenant = TenantHeader::from_request_parts(parts, app)
         .await
-        .map_err(|_| NgsiLdError::from(AndromedaError::entity_validation("Invalid NGSILD-Tenant header").with_instance(parts.uri.clone())))?;
+        .map_err(|_| NgsiLdError::from(AndromedaError::entity_validation("Invalid NGSILD-Tenant header").with_instance(&parts.uri)))?;
     let tenant_ref = TenantRef::from_header(tenant.into_inner());
-    let runtime = app.tenants.resolve_state(&tenant_ref, policy).await.with_instance(parts.uri.clone())?;
+    let runtime = app.tenants.resolve_state(&tenant_ref, policy).await.with_instance(&parts.uri)?;
     Ok((*runtime).clone())
 }
 

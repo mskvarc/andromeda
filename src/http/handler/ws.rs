@@ -55,7 +55,7 @@ pub async fn stream(
     ws: axum::extract::WebSocketUpgrade,
 ) -> Result<Response, NgsiLdError> {
     // Validate subscription exists.
-    let subscription = state.subscriptions.get(&subscription_id).await.with_instance(uri.clone())?;
+    let subscription = state.subscriptions.get(&subscription_id).await.with_instance(&uri)?;
 
     // Validate subscription uses WebSocket transport via the canonical parser.
     let is_ws = parse_endpoint_transport(
@@ -69,7 +69,7 @@ pub async fn stream(
             AndromedaError::subscription_validation(
                 "Subscription endpoint is not a WebSocket transport. Only subscriptions with ws:// endpoint URI support WebSocket streaming.",
             )
-            .with_instance(uri.clone()),
+            .with_instance(&uri),
         ));
     }
 

@@ -10,6 +10,7 @@ use std::{
 };
 
 use async_trait::async_trait;
+use moka::future::Cache;
 use tracing::{debug, warn};
 use url::Url;
 
@@ -18,6 +19,27 @@ use crate::{
     transport::types::{DeliveryOutcome, DeliveryRequest, NotificationTransport, TransportError},
 };
 use headers::Header;
+
+/// TTL for the DNS private-IP check cache.
+///
+/// Short by design: keeps the SSRF guard effective against DNS rebinding
+/// while still eliminating the per-delivery `lookup_host` round-trip for
+/// hot notification endpoints.
+const DNS_CHECK_TTL: Duration = Duration::from_secs(60);
+
+/// Maximum entries in the DNS check cache.
+const DNS_CHECK_CAPACITY: u64 = 1024;
+
+/// Outcome of a private-IP guard lookup, cached short-term for hot endpoints.
+#[derive(Debug, Clone)]
+enum PrivateIpCheck {
+    /// The host resolved to only public, non-reserved IPs.
+    Allowed,
+    /// The host resolved to a private/reserved IP — reject with this detail.
+    Blocked { ip: String },
+    /// DNS resolution failed — reject with this detail.
+    DnsFailed { detail: String },
+}
 
 /// Configuration for the HTTP notification transport.
 #[derive(Debug, Clone)]
@@ -41,6 +63,10 @@ impl Default for HttpTransportConfig {
 pub struct HttpTransport {
     client: reqwest::Client,
     config: HttpTransportConfig,
+    /// Short-TTL cache of private-IP guard outcomes keyed by `host:port`.
+    /// Collapses repeated `lookup_host` round-trips for fan-out deliveries
+    /// without undermining the SSRF guard.
+    dns_cache: Cache<String, PrivateIpCheck>,
 }
 
 impl HttpTransport {
@@ -62,7 +88,8 @@ impl HttpTransport {
                     }
                 }
             })?;
-        Ok(HttpTransport { client, config })
+        let dns_cache = Cache::builder().max_capacity(DNS_CHECK_CAPACITY).time_to_live(DNS_CHECK_TTL).build();
+        Ok(HttpTransport { client, config, dns_cache })
     }
 
     /// Maximum payload size this transport will accept for delivery.
@@ -72,6 +99,10 @@ impl HttpTransport {
 
     /// Resolve the endpoint host and reject delivery if any resolved IP is
     /// private or reserved, preventing SSRF attacks against internal services.
+    ///
+    /// Results are cached for [`DNS_CHECK_TTL`] per `host:port` so fan-out
+    /// deliveries to the same endpoint skip the DNS round-trip. The short
+    /// TTL keeps the SSRF guard effective against DNS rebinding.
     async fn check_private_ip(&self, endpoint_uri: &str) -> Result<(), TransportError> {
         let url = Url::parse(endpoint_uri).map_err(|e| TransportError::ConnectionFailed {
             endpoint: endpoint_uri.to_string(),
@@ -86,21 +117,39 @@ impl HttpTransport {
         let port = url.port_or_known_default().unwrap_or(80);
         let addr_str = format!("{}:{}", host, port);
 
-        let addrs = tokio::net::lookup_host(&addr_str).await.map_err(|e| TransportError::DnsResolutionFailed {
-            endpoint: endpoint_uri.to_string(),
-            detail: e.to_string(),
-        })?;
+        let outcome = if let Some(cached) = self.dns_cache.get(&addr_str).await {
+            cached
+        } else {
+            let computed = resolve_private_ip_outcome(&addr_str).await;
+            self.dns_cache.insert(addr_str.clone(), computed.clone()).await;
+            computed
+        };
 
-        for addr in addrs {
-            if is_private_ip(&addr.ip()) {
-                return Err(TransportError::PrivateIpBlocked {
-                    endpoint: endpoint_uri.to_string(),
-                    ip: addr.ip().to_string(),
-                });
-            }
+        match outcome {
+            PrivateIpCheck::Allowed => Ok(()),
+            PrivateIpCheck::Blocked { ip } => Err(TransportError::PrivateIpBlocked {
+                endpoint: endpoint_uri.to_string(),
+                ip,
+            }),
+            PrivateIpCheck::DnsFailed { detail } => Err(TransportError::DnsResolutionFailed {
+                endpoint: endpoint_uri.to_string(),
+                detail,
+            }),
         }
+    }
+}
 
-        Ok(())
+async fn resolve_private_ip_outcome(addr_str: &str) -> PrivateIpCheck {
+    match tokio::net::lookup_host(addr_str).await {
+        Ok(addrs) => {
+            for addr in addrs {
+                if is_private_ip(&addr.ip()) {
+                    return PrivateIpCheck::Blocked { ip: addr.ip().to_string() };
+                }
+            }
+            PrivateIpCheck::Allowed
+        }
+        Err(e) => PrivateIpCheck::DnsFailed { detail: e.to_string() },
     }
 }
 

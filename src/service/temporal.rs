@@ -28,7 +28,7 @@ use crate::{
         temporal::{DeleteScope, TemporalRepository},
     },
     service::{
-        context_source_forwarding::{ForwardedEntities, merge_temporal_query_results},
+        context_source_forwarding::{ForwardedTemporalEntities, merge_temporal_query_results},
         entity::extract_entity_types,
         temporal_recorder::TemporalRecorder,
     },
@@ -714,7 +714,7 @@ impl TemporalService {
     ///
     /// Returns the merged entity values and any warnings generated during forwarding.
     /// When the forwarded list is empty, returns the local entities unchanged.
-    pub fn merge_with_forwarded(local_entities: Vec<Value>, forwarded: Vec<ForwardedEntities>) -> Vec<Value> {
+    pub fn merge_with_forwarded(local_entities: Vec<Value>, forwarded: Vec<ForwardedTemporalEntities>) -> Vec<Value> {
         if forwarded.is_empty() {
             local_entities
         } else {

@@ -325,7 +325,7 @@ mod tests {
 
     #[tokio::test]
     async fn response_includes_instance_and_status() {
-        let err = AndromedaError::malformed_request("bad request").with_instance(Uri::from_static("/ngsi-ld/v1/entities"));
+        let err = AndromedaError::malformed_request("bad request").with_instance(&Uri::from_static("/ngsi-ld/v1/entities"));
         let ngsi: NgsiLdError = err.into();
         let response = ngsi.into_response();
         pretty_assertions::assert_eq!(response.status().as_u16(), 400);

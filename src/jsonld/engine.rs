@@ -5,7 +5,7 @@
 
 use crate::jsonld::{
     Error,
-    context::{self, ContextSpec, CoreContextPolicy},
+    context::{self, ContextSpec},
     core_context::{
         ANDROMEDA_CORE_CONTEXT,
         ANDROMEDA_CORE_CONTEXT_URL,
@@ -122,15 +122,14 @@ impl JsonLdEngine {
     /// Returns [`Error::Expansion`] on expansion failure, or a context-loading
     /// error variant if a required context could not be fetched.
     pub async fn expand(&self, document: serde_json::Value, context: &ContextSpec) -> Result<serde_json::Value, Error> {
-        let had_explicit_core_context = has_explicit_core_context(&document, context);
         let mut document = context::apply_context(document, context)?;
         resolve_relative_context_urls(&mut document);
-        let applied_context = extract_applied_context(&document);
-        let context_urls = extract_context_urls(&document);
-        let normalized_context_urls = normalize_context_urls_for_logging(&context_urls);
-        let core_appended_by_resolver = context.core_policy() == CoreContextPolicy::Append
-            && !had_explicit_core_context
-            && normalized_context_urls.iter().any(|url| url == NGSI_LD_CORE_CONTEXT_URL);
+
+        // Diagnostic-only fields (applied_context, context_urls, normalized_context_urls)
+        // are expensive recursive traversals with repeated clones. Keep the happy
+        // path zero-alloc for diagnostics; only clone the document's `@context`
+        // for the error branch, since `from_serde_json` consumes the full doc.
+        let diag_context = document.get("@context").cloned();
         let syntax_value = json_syntax::Value::from_serde_json(document);
         let remote_doc: RemoteDocument<IriIndex> = RemoteDocument::new(None, None, syntax_value);
 
@@ -139,10 +138,12 @@ impl JsonLdEngine {
         let expanded = match remote_doc.expand_with(&mut vocabulary, &*self.loader).await {
             Ok(expanded) => expanded,
             Err(err) => {
+                let context_urls = diag_context.as_ref().map(extract_context_urls_from_ctx).unwrap_or_default();
+                let normalized_context_urls = normalize_context_urls_for_logging(&context_urls);
                 tracing::warn!(
-                    "JSON-LD expansion failed. core_appended_by_resolver={}; applied_context={:?}; context_urls={:?}; normalized_context_urls={:?}; error={:?}",
-                    core_appended_by_resolver,
-                    applied_context,
+                    "JSON-LD expansion failed. core_policy={:?}; applied_context={:?}; context_urls={:?}; normalized_context_urls={:?}; error={:?}",
+                    context.core_policy(),
+                    diag_context,
                     context_urls,
                     normalized_context_urls,
                     err
@@ -607,7 +608,9 @@ fn is_full_iri(term: &str) -> bool {
     term.starts_with("http://") || term.starts_with("https://") || term.starts_with("urn:")
 }
 
-fn extract_context_urls(document: &serde_json::Value) -> Vec<String> {
+/// Collect context URLs directly from a `@context` node (used on the error
+/// path, when the container document has already been consumed).
+fn extract_context_urls_from_ctx(ctx: &serde_json::Value) -> Vec<String> {
     fn collect(value: &serde_json::Value, out: &mut Vec<String>) {
         match value {
             serde_json::Value::String(url) => out.push(url.clone()),
@@ -626,51 +629,8 @@ fn extract_context_urls(document: &serde_json::Value) -> Vec<String> {
     }
 
     let mut urls = Vec::new();
-    if let Some(ctx) = document.get("@context") {
-        collect(ctx, &mut urls);
-    }
+    collect(ctx, &mut urls);
     urls
-}
-
-fn extract_applied_context(document: &serde_json::Value) -> Option<serde_json::Value> {
-    match document {
-        serde_json::Value::Object(map) => map.get("@context").cloned(),
-        serde_json::Value::Array(items) => {
-            let contexts: Vec<_> = items
-                .iter()
-                .filter_map(|item| item.as_object().and_then(|obj| obj.get("@context")).cloned())
-                .collect();
-            if contexts.is_empty() {
-                None
-            } else {
-                Some(serde_json::Value::Array(contexts))
-            }
-        }
-        serde_json::Value::Null | serde_json::Value::Bool(_) | serde_json::Value::Number(_) | serde_json::Value::String(_) => None,
-    }
-}
-
-fn has_explicit_core_context(original_document: &serde_json::Value, spec: &ContextSpec) -> bool {
-    if spec.link_contexts().iter().any(|url| is_ngsi_ld_core_context_url(url)) {
-        return true;
-    }
-
-    if let Some(body_context) = spec.body_context()
-        && context_value_contains_core_url(body_context)
-    {
-        return true;
-    }
-
-    original_document.get("@context").is_some_and(context_value_contains_core_url)
-}
-
-fn context_value_contains_core_url(value: &serde_json::Value) -> bool {
-    match value {
-        serde_json::Value::String(url) => is_ngsi_ld_core_context_url(url),
-        serde_json::Value::Array(items) => items.iter().any(context_value_contains_core_url),
-        serde_json::Value::Object(map) => map.get("@context").is_some_and(context_value_contains_core_url),
-        serde_json::Value::Null | serde_json::Value::Bool(_) | serde_json::Value::Number(_) => false,
-    }
 }
 
 /// Resolve relative context URLs in the document's `@context` before

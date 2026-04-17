@@ -13,7 +13,7 @@ use crate::{
     },
 };
 use chrono::{DateTime, Utc};
-use sqlx::{Row, postgres::PgPool};
+use sqlx::{QueryBuilder, Row, postgres::PgPool};
 use std::str::FromStr;
 
 /// Repository for notification outbox persistence operations.
@@ -30,27 +30,29 @@ impl OutboxRepository {
 
     /// Insert a batch of outbox entries within an existing transaction.
     ///
-    /// Inserts entries sequentially within the caller's transaction. While not
-    /// using UNNEST (SQLx lacks support for 2D arrays needed for `TEXT[][]`),
-    /// the single transaction minimises round-trip overhead.
+    /// Builds a single multi-row `INSERT ... VALUES (...), (...), ...` via
+    /// [`sqlx::QueryBuilder::push_values`], collapsing N round-trips into one.
+    /// 2D `TEXT[][]` binds would also work for this shape, but `push_values`
+    /// avoids the sqlx limitation around nested arrays by emitting each row as
+    /// an explicit `VALUES` tuple.
     pub async fn insert_batch_in_tx(tx: &mut sqlx::Transaction<'_, sqlx::Postgres>, entries: &[NewOutboxEntry]) -> Result<(), AndromedaError> {
-        for entry in entries {
-            sqlx::query(
-                r#"
-                INSERT INTO notification_outbox
-                    (subscription_id, entity_id, trigger, entity_snapshot, previous_snapshot, changed_attrs)
-                VALUES ($1, $2, $3, $4, $5, $6)
-                "#,
-            )
-            .bind(entry.subscription_id.to_string())
-            .bind(entry.entity_id.to_string())
-            .bind(entry.trigger.to_string())
-            .bind(&entry.entity_snapshot)
-            .bind(&entry.previous_snapshot)
-            .bind(&entry.changed_attrs)
-            .execute(&mut **tx)
-            .await?;
+        if entries.is_empty() {
+            return Ok(());
         }
+
+        let mut builder: QueryBuilder<'_, sqlx::Postgres> = QueryBuilder::new(
+            "INSERT INTO notification_outbox \
+             (subscription_id, entity_id, trigger, entity_snapshot, previous_snapshot, changed_attrs) ",
+        );
+        builder.push_values(entries, |mut b, entry| {
+            b.push_bind(entry.subscription_id.to_string())
+                .push_bind(entry.entity_id.to_string())
+                .push_bind(entry.trigger.to_string())
+                .push_bind(&entry.entity_snapshot)
+                .push_bind(&entry.previous_snapshot)
+                .push_bind(&entry.changed_attrs);
+        });
+        builder.build().execute(&mut **tx).await?;
 
         Ok(())
     }

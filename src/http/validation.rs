@@ -22,7 +22,7 @@ use urn::Urn;
 /// Returns `BadRequestData` if the string is not a valid URN.
 pub fn parse_entity_id(id: &str, uri: &Uri) -> Result<Urn, NgsiLdError> {
     id.parse::<Urn>()
-        .map_err(|_| NgsiLdError::from(AndromedaError::entity_validation("Invalid entity id: not a valid URI").with_instance(uri.clone())))
+        .map_err(|_| NgsiLdError::from(AndromedaError::entity_validation("Invalid entity id: not a valid URI").with_instance(&uri)))
 }
 
 /// Validate that a string is a valid NGSI-LD Name (clause 4.6.2) or a valid IRI.
@@ -40,7 +40,7 @@ pub fn parse_entity_id(id: &str, uri: &Uri) -> Result<Urn, NgsiLdError> {
 pub fn validate_name_or_iri(value: &str, uri: &Uri) -> Result<(), NgsiLdError> {
     if value.is_empty() {
         return Err(NgsiLdError::from(
-            AndromedaError::entity_validation("Name must not be empty").with_instance(uri.clone()),
+            AndromedaError::entity_validation("Name must not be empty").with_instance(&uri),
         ));
     }
     // Full IRI (HTTP, HTTPS, etc.) — pass through.
@@ -60,7 +60,7 @@ pub fn validate_name_or_iri(value: &str, uri: &Uri) -> Result<(), NgsiLdError> {
                 AndromedaError::entity_validation(format!(
                     "Invalid prefixed name '{value}': both prefix and local name must conform to NGSI-LD name grammar (clause 4.6.2)"
                 ))
-                .with_instance(uri.clone()),
+                .with_instance(&uri),
             ));
         }
         return Ok(());
@@ -68,8 +68,7 @@ pub fn validate_name_or_iri(value: &str, uri: &Uri) -> Result<(), NgsiLdError> {
     // Bare name — validate against the Name grammar.
     Name::new(value).map_err(|_| {
         NgsiLdError::from(
-            AndromedaError::entity_validation(format!("Invalid name '{value}': does not conform to NGSI-LD name grammar (clause 4.6.2)"))
-                .with_instance(uri.clone()),
+            AndromedaError::entity_validation(format!("Invalid name '{value}': does not conform to NGSI-LD name grammar (clause 4.6.2)")).with_instance(&uri),
         )
     })?;
     Ok(())
@@ -89,7 +88,7 @@ pub fn validate_attr_name(name: &str, uri: &Uri) -> Result<(), NgsiLdError> {
 pub fn validate_instance_id(id: &str, uri: &Uri) -> Result<(), NgsiLdError> {
     if id.is_empty() || Url::parse(id).is_err() {
         return Err(NgsiLdError::from(
-            AndromedaError::entity_validation("Invalid instance id: not a valid URI").with_instance(uri.clone()),
+            AndromedaError::entity_validation("Invalid instance id: not a valid URI").with_instance(&uri),
         ));
     }
     Ok(())
@@ -102,10 +101,9 @@ pub fn validate_instance_id(id: &str, uri: &Uri) -> Result<(), NgsiLdError> {
 pub fn parse_csr_id(id: &str, uri: &Uri) -> Result<(), NgsiLdError> {
     if id.starts_with("urn:") {
         id.parse::<Urn>()
-            .map_err(|_| NgsiLdError::from(AndromedaError::entity_validation("Invalid registration id: not a valid URI").with_instance(uri.clone())))?;
+            .map_err(|_| NgsiLdError::from(AndromedaError::entity_validation("Invalid registration id: not a valid URI").with_instance(&uri)))?;
     } else {
-        Url::parse(id)
-            .map_err(|_| NgsiLdError::from(AndromedaError::entity_validation("Invalid registration id: not a valid URI").with_instance(uri.clone())))?;
+        Url::parse(id).map_err(|_| NgsiLdError::from(AndromedaError::entity_validation("Invalid registration id: not a valid URI").with_instance(&uri)))?;
     }
     Ok(())
 }
@@ -153,7 +151,7 @@ pub fn parse_list_options(options: Option<&str>, uri: &Uri) -> Result<ListOption
                 "sysAttrs" => parsed.sys_attrs = SysAttrsInclusion::Include,
                 other => {
                     return Err(NgsiLdError::from(
-                        AndromedaError::malformed_request(format!("Invalid options value: '{}'", other)).with_instance(uri.clone()),
+                        AndromedaError::malformed_request(format!("Invalid options value: '{}'", other)).with_instance(&uri),
                     ));
                 }
             }

@@ -54,7 +54,8 @@ use crate::{
             query::EntityQueryService,
         },
         entity_map::{parse_entity_map_urn, parse_iso8601_duration, parse_uri_csv},
-        subscription_matching::{matches_geo_filter, matches_scope_filter},
+        subscription_cache::{compile_geo_q, compile_scope_q},
+        subscription_matching::{matches_compiled_geo_query, matches_compiled_scope_pattern},
     },
 };
 use axum::{
@@ -67,11 +68,15 @@ use serde_json::Value;
 use std::{collections::HashSet, str::FromStr};
 
 pub async fn patch_no_id(OriginalUri(uri): OriginalUri) -> Result<Response, NgsiLdError> {
-    Err(NgsiLdError::from(AndromedaError::entity_validation("Entity id is required").with_instance(uri)))
+    Err(NgsiLdError::from(
+        AndromedaError::entity_validation("Entity id is required").with_instance(&uri),
+    ))
 }
 
 pub async fn put_no_id(OriginalUri(uri): OriginalUri) -> Result<Response, NgsiLdError> {
-    Err(NgsiLdError::from(AndromedaError::entity_validation("Entity id is required").with_instance(uri)))
+    Err(NgsiLdError::from(
+        AndromedaError::entity_validation("Entity id is required").with_instance(&uri),
+    ))
 }
 
 pub async fn create(
@@ -90,16 +95,13 @@ pub async fn create(
     let is_local = params.local.unwrap_or(false);
 
     if is_local {
-        let id = service.create(&entity, &context).await.with_instance(uri.clone())?;
+        let id = service.create(&entity, &context).await.with_instance(&uri)?;
         return Ok((StatusCode::CREATED, [("Location", format!("/ngsi-ld/v1/entities/{}", id))]).into_response());
     }
 
     // Check for matching CSRs for distributed forwarding
     let context_url = context.link_contexts().first().map(|s| s.as_str());
-    let entity_value =
-        serde_json::to_value(&entity).map_err(|e| AndromedaError::internal(format!("Failed to serialize entity: {e}")).with_instance(uri.clone()))?;
-    let entity_body =
-        serde_json::to_vec(&entity_value).map_err(|e| AndromedaError::internal(format!("Failed to serialize entity: {e}")).with_instance(uri.clone()))?;
+    let entity_body = serde_json::to_vec(&entity).map_err(|e| AndromedaError::internal(format!("Failed to serialize entity: {e}")).with_instance(&uri))?;
     let entity_id = entity.id.to_string();
     let entity_type_str = match &entity.type_ {
         EntityTypeValue::Single(s) => s.clone(),
@@ -121,10 +123,10 @@ pub async fn create(
             incoming_via: incoming_via.as_ref(),
         })
         .await
-        .with_instance(uri.clone())?;
+        .with_instance(&uri)?;
 
     if forwarded.is_empty() {
-        let id = service.create(&entity, &context).await.with_instance(uri.clone())?;
+        let id = service.create(&entity, &context).await.with_instance(&uri)?;
         return Ok((StatusCode::CREATED, [("Location", format!("/ngsi-ld/v1/entities/{}", id))]).into_response());
     }
 
@@ -151,7 +153,7 @@ pub async fn create(
         return Ok((StatusCode::MULTI_STATUS, Json(body)).into_response());
     }
 
-    let id = service.create(&entity, &context).await.with_instance(uri.clone())?;
+    let id = service.create(&entity, &context).await.with_instance(&uri)?;
     Ok((StatusCode::CREATED, [("Location", format!("/ngsi-ld/v1/entities/{}", id))]).into_response())
 }
 
@@ -178,7 +180,7 @@ pub async fn get(
     for opt in options.split(',').map(str::trim) {
         if !opt.is_empty() && !matches!(opt, "keyValues" | "simplified" | "sysAttrs" | "concise" | "normalized") {
             return Err(NgsiLdError::from(
-                AndromedaError::malformed_request(format!("Invalid options value: '{}'", opt)).with_instance(uri.clone()),
+                AndromedaError::malformed_request(format!("Invalid options value: '{}'", opt)).with_instance(&uri),
             ));
         }
     }
@@ -188,21 +190,21 @@ pub async fn get(
         && !matches!(fmt.as_str(), "normalized" | "keyValues" | "simplified" | "concise")
     {
         return Err(NgsiLdError::from(
-            AndromedaError::malformed_request(format!("Invalid format value: '{}'", fmt)).with_instance(uri.clone()),
+            AndromedaError::malformed_request(format!("Invalid format value: '{}'", fmt)).with_instance(&uri),
         ));
     }
 
     // Snapshot scoping (ETSI GS CIM 009 clause 5.5.15, 6.3.22): if NGSILD-Snapshot header
     // is present, retrieve entity from the snapshot's frozen data and return early.
     if let Some(snapshot_id) = snapshot.into_inner() {
-        let _snap = state.snapshots.validate_for_scoping(&snapshot_id).await.with_instance(uri.clone())?;
+        let _snap = state.snapshots.validate_for_scoping(&snapshot_id).await.with_instance(&uri)?;
 
         let entity_data = state
             .snapshots
             .get_snapshot_entity(&snapshot_id, id.as_ref())
             .await
-            .with_instance(uri.clone())?
-            .ok_or_else(|| NgsiLdError::from(AndromedaError::entity_not_found(id.to_string()).with_instance(uri.clone())))?;
+            .with_instance(&uri)?
+            .ok_or_else(|| NgsiLdError::from(AndromedaError::entity_not_found(id.to_string()).with_instance(&uri)))?;
 
         let mode = params.resolve_render_mode();
         let attrs: Option<Vec<&str>> = params.attrs.as_deref().map(|s| s.split(',').map(str::trim).collect());
@@ -240,7 +242,7 @@ pub async fn get(
 
     // If local=true, skip distributed forwarding
     let (entity, warnings) = if is_local {
-        let entity = local_result.with_instance(uri.clone())?;
+        let entity = local_result.with_instance(&uri)?;
         (entity, Vec::new())
     } else {
         // Forward to context sources
@@ -261,15 +263,9 @@ pub async fn get(
             .unwrap_or_default(); // Retrieve forwarding: best-effort -- missing CSR data is not fatal
         let mut warnings = collect_warnings(&forwarded);
 
-        let local_value = match local_result {
-            Ok(e) => Some(
-                serde_json::to_value(&e)
-                    .map_err(|err| AndromedaError::internal(format!("Failed to serialize local entity: {err}")).with_instance(uri.clone()))?,
-            ),
-            Err(_) => None,
-        };
+        let local_entity = local_result.ok();
 
-        let merged = merge_retrieve_results(local_value, forwarded);
+        let merged = merge_retrieve_results(local_entity, forwarded);
 
         // Phase 2: forward to auxiliary CSRs only if an entity was found
         // Per spec 4.3.6.2: auxiliary context sources only supplement existing data
@@ -296,10 +292,9 @@ pub async fn get(
             merged
         };
         let entity = match merged {
-            Some(value) => serde_json::from_value::<Entity>(value)
-                .map_err(|e| AndromedaError::internal(format!("Failed to deserialize merged entity {}: {e}", id)).with_instance(uri.clone()))?,
+            Some(entity) => entity,
             None => {
-                return Err(NgsiLdError::from(AndromedaError::entity_not_found(id.to_string()).with_instance(uri.clone())));
+                return Err(NgsiLdError::from(AndromedaError::entity_not_found(id.to_string()).with_instance(&uri)));
             }
         };
         (entity, warnings)
@@ -321,7 +316,7 @@ pub async fn get(
         let linked = service
             .resolve_linked_entities(std::slice::from_ref(&entity), join_level, sys_attrs, &context, &contained_by)
             .await
-            .with_instance(uri.clone())?;
+            .with_instance(&uri)?;
 
         if join_mode == Some("flat") {
             // Flat: always return array of [root, ...linked] per NGSI-LD spec
@@ -331,7 +326,7 @@ pub async fn get(
                     .with_optional_language_filter(language_filter.as_ref())
                     .with_mode(mode)
                     .render()
-                    .with_instance(uri.clone())?,
+                    .with_instance(&uri)?,
             );
             for linked_entity in linked.values() {
                 all_entities.push(
@@ -339,7 +334,7 @@ pub async fn get(
                         .with_optional_language_filter(language_filter.as_ref())
                         .with_mode(mode)
                         .render()
-                        .with_instance(uri.clone())?,
+                        .with_instance(&uri)?,
                 );
             }
             let rendered = ResponseRenderer::new(accept.format(), context, prefer)
@@ -353,7 +348,7 @@ pub async fn get(
                 .with_inline_linked_entities(&linked)
                 .with_mode(mode)
                 .render()
-                .with_instance(uri.clone())?;
+                .with_instance(&uri)?;
             let rendered = ResponseRenderer::new(accept.format(), context, prefer)
                 .with_geometry_property(params.geometry_property.clone())
                 .with_payload(ResponsePayload::Single(entity_value))
@@ -366,7 +361,7 @@ pub async fn get(
         .with_optional_language_filter(language_filter.as_ref())
         .with_mode(mode)
         .render()
-        .with_instance(uri.clone())?;
+        .with_instance(&uri)?;
     let rendered = ResponseRenderer::new(accept.format(), context, prefer)
         .with_geometry_property(params.geometry_property.clone())
         .with_payload(ResponsePayload::Single(entity_value))
@@ -387,7 +382,7 @@ pub async fn delete(
     let is_local = params.local.unwrap_or(false);
 
     if is_local {
-        service.delete(&id).await.with_instance(uri.clone())?;
+        service.delete(&id).await.with_instance(&uri)?;
         return Ok(StatusCode::NO_CONTENT.into_response());
     }
 
@@ -410,7 +405,7 @@ pub async fn delete(
             incoming_via: incoming_via.as_ref(),
         })
         .await
-        .with_instance(uri.clone())?;
+        .with_instance(&uri)?;
 
     // Per spec 4.3.6.3: if an exclusive CSR exists but doesn't support this operation,
     // delete locally but return 207 to indicate exclusive data could not be cleaned up.
@@ -421,7 +416,7 @@ pub async fn delete(
     }
 
     if forwarded.is_empty() {
-        service.delete(&id).await.with_instance(uri.clone())?;
+        service.delete(&id).await.with_instance(&uri)?;
         return Ok(StatusCode::NO_CONTENT.into_response());
     }
 
@@ -451,7 +446,7 @@ pub async fn delete(
         return Ok((StatusCode::MULTI_STATUS, Json(body)).into_response());
     }
 
-    service.delete(&id).await.with_instance(uri.clone())?;
+    service.delete(&id).await.with_instance(&uri)?;
     Ok(StatusCode::NO_CONTENT.into_response())
 }
 
@@ -466,7 +461,7 @@ pub async fn query(
     let service = &state.entity_query;
     let context: ContextSpec = context.into_inner();
     apply_entity_query_extension_headers(&mut query, &protocol, &uri)?;
-    query.validate().with_instance(uri.clone()).map_err(NgsiLdError::from)?;
+    query.validate().with_instance(&uri).map_err(NgsiLdError::from)?;
     let language_filter = protocol.language_filter;
     let prefer = protocol.prefer;
     let snapshot = protocol.snapshot;
@@ -476,7 +471,7 @@ pub async fn query(
     // Snapshot scoping (ETSI GS CIM 009 clause 5.5.15, 6.3.22): if NGSILD-Snapshot header
     // is present, query entities from the snapshot's frozen data and return early.
     if let Some(snapshot_id) = snapshot.into_inner() {
-        let _snap = state.snapshots.validate_for_scoping(&snapshot_id).await.with_instance(uri.clone())?;
+        let _snap = state.snapshots.validate_for_scoping(&snapshot_id).await.with_instance(&uri)?;
 
         let entity_type = query.entity_type.as_deref();
         let entity_ids: Option<Vec<String>> = query.id.as_deref().map(|s| s.split(',').map(|id| id.trim().to_string()).collect());
@@ -487,7 +482,7 @@ pub async fn query(
             .snapshots
             .query_snapshot_entities(&snapshot_id, entity_type, entity_ids.as_deref(), limit, offset)
             .await
-            .with_instance(uri.clone())?;
+            .with_instance(&uri)?;
 
         let opts = query.parse_options();
         let attrs: Option<Vec<&str>> = query.attrs.as_deref().map(|s| s.split(',').map(str::trim).collect());
@@ -514,13 +509,9 @@ pub async fn query(
 
     // §5.5.9.3: If NGSILD-EntityMap header present, scope query to that map's entity IDs
     if let Some(ref map_id) = entity_map_header {
-        let map_urn = parse_entity_map_urn(map_id.as_str()).with_instance(uri.clone())?;
-        let scoped_input = query.id.as_deref().map(parse_uri_csv).transpose().with_instance(uri.clone())?;
-        let scoped = state
-            .entity_maps
-            .scope_query_ids(&map_urn, scoped_input.as_deref())
-            .await
-            .with_instance(uri.clone())?;
+        let map_urn = parse_entity_map_urn(map_id.as_str()).with_instance(&uri)?;
+        let scoped_input = query.id.as_deref().map(parse_uri_csv).transpose().with_instance(&uri)?;
+        let scoped = state.entity_maps.scope_query_ids(&map_urn, scoped_input.as_deref()).await.with_instance(&uri)?;
         query.id = Some(scoped.iter().map(ToString::to_string).collect::<Vec<_>>().join(","));
     }
 
@@ -552,7 +543,7 @@ pub async fn query(
         deferred_scope_q = None;
     }
 
-    let (local_entities, total_count) = service.query(&query, &context).await.with_instance(uri.clone())?;
+    let (local_entities, total_count) = service.query(&query, &context).await.with_instance(&uri)?;
 
     // Distributed forwarding: query matching context sources unless local=true
     let mut remote_ids: Vec<String> = Vec::new();
@@ -567,7 +558,7 @@ pub async fn query(
         // Parse csf for CSR filtering during forwarding
         let csf_expr = expand_q_expression(query.csf.as_deref(), state.entity_query.engine(), &context)
             .await
-            .with_instance(uri.clone())?;
+            .with_instance(&uri)?;
 
         // Phase 1: forward to primary (non-auxiliary) CSRs
         let forwarded = state
@@ -587,11 +578,7 @@ pub async fn query(
         let mut warnings = collect_warnings(&forwarded);
 
         // Capture remote entity IDs before merge for entityMap (spec 5.7.2.4, 5.5.14)
-        remote_ids = forwarded
-            .iter()
-            .flat_map(|f| f.entities.iter())
-            .filter_map(|v| v.get("id").and_then(Value::as_str).map(String::from))
-            .collect();
+        remote_ids = forwarded.iter().flat_map(|f| f.entities.iter()).map(|e| e.id.to_string()).collect();
 
         let merged = if forwarded.is_empty() {
             local_entities
@@ -616,11 +603,7 @@ pub async fn query(
             .unwrap_or_default();
         if !aux_forwarded.is_empty() {
             warnings.extend(collect_warnings(&aux_forwarded));
-            let aux_remote_ids: Vec<String> = aux_forwarded
-                .iter()
-                .flat_map(|f| f.entities.iter())
-                .filter_map(|v| v.get("id").and_then(Value::as_str).map(String::from))
-                .collect();
+            let aux_remote_ids: Vec<String> = aux_forwarded.iter().flat_map(|f| f.entities.iter()).map(|e| e.id.to_string()).collect();
             remote_ids.extend(aux_remote_ids);
             let merged = EntityQueryService::merge_with_forwarded(merged, aux_forwarded, query.attrs.as_deref());
             (merged, warnings)
@@ -649,7 +632,8 @@ pub async fn query(
         } else {
             None
         };
-        let scope_q = deferred_scope_q.as_deref();
+        let compiled_scope = deferred_scope_q.as_deref().map(compile_scope_q);
+        let compiled_geo = geo_val.as_ref().and_then(|v| compile_geo_q(v, "split-entities"));
 
         let mut filtered = Vec::with_capacity(entities.len());
         for entity in entities {
@@ -663,8 +647,8 @@ pub async fn query(
             };
 
             let q_ok = q_expr.as_ref().is_none_or(|expr| evaluate(expr, &expanded));
-            let geo_ok = geo_val.as_ref().is_none_or(|geo| matches_geo_filter(geo, &expanded));
-            let scope_ok = scope_q.is_none_or(|scope| matches_scope_filter(scope, &expanded));
+            let geo_ok = compiled_geo.as_ref().is_none_or(|geo| matches_compiled_geo_query(geo, &expanded));
+            let scope_ok = compiled_scope.as_ref().is_none_or(|scope| matches_compiled_scope_pattern(scope, &expanded));
 
             if q_ok && geo_ok && scope_ok {
                 filtered.push(entity);
@@ -675,8 +659,8 @@ pub async fn query(
 
     // §5.7.2: If entityMap=true, create an EntityMap and set header
     let entity_map_uri = if entity_map_requested {
-        let compiled = service.compile_query_public(&query, &context).await.with_instance(uri.clone())?;
-        let mut all_ids = service.query_ids(&compiled).await.with_instance(uri.clone())?;
+        let compiled = service.compile_query_public(&query, &context).await.with_instance(&uri)?;
+        let mut all_ids = service.query_ids(&compiled).await.with_instance(&uri)?;
         // Include forwarded entity IDs in the map (spec 5.7.2.4, 5.5.14)
         all_ids.extend(remote_ids);
         all_ids.sort_unstable();
@@ -685,14 +669,14 @@ pub async fn query(
             .iter()
             .map(|id| Uri::from_str(id).map_err(|_| AndromedaError::entity_validation(format!("Invalid entity id URI '{}'", id))))
             .collect::<Result<Vec<_>, _>>()
-            .with_instance(uri.clone())?;
+            .with_instance(&uri)?;
         let lifetime = query
             .entity_map_lifetime
             .as_deref()
             .map(|raw| parse_iso8601_duration(Some(raw)))
             .transpose()
-            .with_instance(uri.clone())?;
-        let map = state.entity_maps.create(typed_ids, lifetime.as_ref()).await.with_instance(uri.clone())?;
+            .with_instance(&uri)?;
+        let map = state.entity_maps.create(typed_ids, lifetime.as_ref()).await.with_instance(&uri)?;
         Some(map.id.to_string())
     } else if entity_map_header.is_some() {
         // Echo the same map back in the response header
@@ -716,7 +700,7 @@ pub async fn query(
         let linked = service
             .resolve_linked_entities(&entities, join_level, opts.sys_attrs, &context, &contained_by)
             .await
-            .with_instance(uri.clone())?;
+            .with_instance(&uri)?;
 
         if join_mode == Some("flat") {
             let mut all_values: Vec<Value> = Vec::new();
@@ -726,7 +710,7 @@ pub async fn query(
                         .with_optional_language_filter(language_filter.as_ref())
                         .with_mode(opts.render_mode)
                         .render()
-                        .with_instance(uri.clone())?,
+                        .with_instance(&uri)?,
                 );
             }
             for linked_entity in linked.values() {
@@ -735,7 +719,7 @@ pub async fn query(
                         .with_optional_language_filter(language_filter.as_ref())
                         .with_mode(opts.render_mode)
                         .render()
-                        .with_instance(uri.clone())?,
+                        .with_instance(&uri)?,
                 );
             }
             let rendered = ResponseRenderer::new(accept.format(), context, prefer)
@@ -760,7 +744,7 @@ pub async fn query(
                         .with_inline_linked_entities(&linked)
                         .with_mode(opts.render_mode)
                         .render()
-                        .with_instance(uri.clone())?,
+                        .with_instance(&uri)?,
                 );
             }
             let rendered = ResponseRenderer::new(accept.format(), context, prefer)
@@ -787,7 +771,7 @@ pub async fn query(
                 .render()
         })
         .collect::<Result<Vec<_>, _>>()
-        .with_instance(uri.clone())?;
+        .with_instance(&uri)?;
     let rendered_output = ResponseRenderer::new(accept.format(), context, prefer)
         .with_geometry_property(query.geometry_property.clone())
         .with_payload(ResponsePayload::Collection(rendered))
@@ -820,15 +804,12 @@ pub async fn merge(
     let is_local = params.local.unwrap_or(false);
 
     if is_local {
-        service.merge(&id, &patch, &context).await.with_instance(uri.clone())?;
+        service.merge(&id, &patch, &context).await.with_instance(&uri)?;
         return Ok(StatusCode::NO_CONTENT.into_response());
     }
 
     let context_url = context.link_contexts().first().map(|s| s.as_str());
-    let patch_value =
-        serde_json::to_value(&patch).map_err(|e| AndromedaError::internal(format!("Failed to serialize patch: {e}")).with_instance(uri.clone()))?;
-    let patch_body =
-        serde_json::to_vec(&patch_value).map_err(|e| AndromedaError::internal(format!("Failed to serialize patch: {e}")).with_instance(uri.clone()))?;
+    let patch_body = serde_json::to_vec(&patch).map_err(|e| AndromedaError::internal(format!("Failed to serialize patch: {e}")).with_instance(&uri))?;
     let entity_id = id.to_string();
 
     let (forwarded, _) = state
@@ -846,10 +827,10 @@ pub async fn merge(
             incoming_via: incoming_via.as_ref(),
         })
         .await
-        .with_instance(uri.clone())?;
+        .with_instance(&uri)?;
 
     if forwarded.is_empty() {
-        service.merge(&id, &patch, &context).await.with_instance(uri.clone())?;
+        service.merge(&id, &patch, &context).await.with_instance(&uri)?;
         return Ok(StatusCode::NO_CONTENT.into_response());
     }
 
@@ -862,15 +843,11 @@ pub async fn merge(
 
     // Per spec 4.3.6.3: exclusive attributes shall not be held locally.
     let exclusive_attrs = collect_forwarded_exclusive_attrs(&forwarded);
-    if !exclusive_attrs.is_empty() {
-        let mut filtered_patch = patch.clone(); // clone: need modified copy; original consumed by forwarding
-        if !filtered_patch.strip_exclusive_attrs(&exclusive_attrs) {
-            return Ok(StatusCode::NO_CONTENT.into_response());
-        }
-        service.merge(&id, &filtered_patch, &context).await.with_instance(uri.clone())?;
-    } else {
-        service.merge(&id, &patch, &context).await.with_instance(uri.clone())?;
+    let mut patch = patch;
+    if !exclusive_attrs.is_empty() && !patch.strip_exclusive_attrs(&exclusive_attrs) {
+        return Ok(StatusCode::NO_CONTENT.into_response());
     }
+    service.merge(&id, &patch, &context).await.with_instance(&uri)?;
     Ok(StatusCode::NO_CONTENT.into_response())
 }
 
@@ -892,15 +869,12 @@ pub async fn update(
     let is_local = params.local.unwrap_or(false);
 
     if is_local {
-        service.replace_entity(&id, &patch, &context).await.with_instance(uri.clone())?;
+        service.replace_entity(&id, &patch, &context).await.with_instance(&uri)?;
         return Ok(StatusCode::NO_CONTENT.into_response());
     }
 
     let context_url = context.link_contexts().first().map(|s| s.as_str());
-    let patch_value =
-        serde_json::to_value(&patch).map_err(|e| AndromedaError::internal(format!("Failed to serialize patch: {e}")).with_instance(uri.clone()))?;
-    let patch_body =
-        serde_json::to_vec(&patch_value).map_err(|e| AndromedaError::internal(format!("Failed to serialize patch: {e}")).with_instance(uri.clone()))?;
+    let patch_body = serde_json::to_vec(&patch).map_err(|e| AndromedaError::internal(format!("Failed to serialize patch: {e}")).with_instance(&uri))?;
     let entity_id = id.to_string();
 
     let (forwarded, _) = state
@@ -918,10 +892,10 @@ pub async fn update(
             incoming_via: incoming_via.as_ref(),
         })
         .await
-        .with_instance(uri.clone())?;
+        .with_instance(&uri)?;
 
     if forwarded.is_empty() {
-        service.replace_entity(&id, &patch, &context).await.with_instance(uri.clone())?;
+        service.replace_entity(&id, &patch, &context).await.with_instance(&uri)?;
         return Ok(StatusCode::NO_CONTENT.into_response());
     }
 
@@ -934,13 +908,11 @@ pub async fn update(
 
     // Per spec 4.3.6.3: exclusive attributes shall not be held locally.
     let exclusive_attrs = collect_forwarded_exclusive_attrs(&forwarded);
+    let mut patch = patch;
     if !exclusive_attrs.is_empty() {
-        let mut filtered_patch = patch.clone(); // clone: need modified copy; original consumed by forwarding
-        filtered_patch.strip_exclusive_attrs(&exclusive_attrs);
-        service.replace_entity(&id, &filtered_patch, &context).await.with_instance(uri.clone())?;
-    } else {
-        service.replace_entity(&id, &patch, &context).await.with_instance(uri.clone())?;
+        patch.strip_exclusive_attrs(&exclusive_attrs);
     }
+    service.replace_entity(&id, &patch, &context).await.with_instance(&uri)?;
     Ok(StatusCode::NO_CONTENT.into_response())
 }
 
@@ -964,7 +936,7 @@ pub async fn append_attrs(
     // Forward to matching context sources
     let context_url = context.link_contexts().first().map(|s| s.as_str());
     let fragment_body =
-        serde_json::to_vec(&fragment).map_err(|e| AndromedaError::internal(format!("Failed to serialize fragment: {}", e)).with_instance(uri.clone()))?;
+        serde_json::to_vec(&fragment).map_err(|e| AndromedaError::internal(format!("Failed to serialize fragment: {}", e)).with_instance(&uri))?;
     let entity_id = id.to_string();
     let qs = if no_overwrite { "options=noOverwrite" } else { "" };
 
@@ -983,11 +955,11 @@ pub async fn append_attrs(
             incoming_via: incoming_via.as_ref(),
         })
         .await
-        .with_instance(uri.clone())?;
+        .with_instance(&uri)?;
 
     if forwarded.is_empty() {
         // No matching CSRs — append locally
-        let (all_attrs, not_appended) = service.append_attrs(&id, fragment, no_overwrite, &context).await.with_instance(uri.clone())?;
+        let (all_attrs, not_appended) = service.append_attrs(&id, fragment, no_overwrite, &context).await.with_instance(&uri)?;
 
         if not_appended.is_empty() {
             return Ok(StatusCode::NO_CONTENT.into_response());
@@ -1009,13 +981,10 @@ pub async fn append_attrs(
 
     // Per spec 4.3.6.3: exclusive attributes shall not be held locally.
     let exclusive_attrs = collect_forwarded_exclusive_attrs(&forwarded);
-    let local_fragment = if !exclusive_attrs.is_empty() {
-        let mut filtered = fragment.clone(); // clone: need modified copy; original consumed by forwarding
-        strip_exclusive_attrs_from_value(&mut filtered, &exclusive_attrs);
-        filtered
-    } else {
-        fragment
-    };
+    let mut local_fragment = fragment;
+    if !exclusive_attrs.is_empty() {
+        strip_exclusive_attrs_from_value(&mut local_fragment, &exclusive_attrs);
+    }
 
     // Apply locally (ignore errors for inclusive -- remote already succeeded)
     let local_result = service.append_attrs(&id, local_fragment, no_overwrite, &context).await;
@@ -1064,7 +1033,7 @@ pub async fn update_attrs(
     // Forward to matching context sources
     let context_url = context.link_contexts().first().map(|s| s.as_str());
     let fragment_body =
-        serde_json::to_vec(&fragment).map_err(|e| AndromedaError::internal(format!("Failed to serialize fragment: {}", e)).with_instance(uri.clone()))?;
+        serde_json::to_vec(&fragment).map_err(|e| AndromedaError::internal(format!("Failed to serialize fragment: {}", e)).with_instance(&uri))?;
     let entity_id = id.to_string();
 
     let (forwarded, _) = state
@@ -1082,11 +1051,11 @@ pub async fn update_attrs(
             incoming_via: incoming_via.as_ref(),
         })
         .await
-        .with_instance(uri.clone())?;
+        .with_instance(&uri)?;
 
     if forwarded.is_empty() {
         // No matching CSRs — update locally
-        let not_updated = service.update_attrs(&id, fragment, &context).await.with_instance(uri.clone())?;
+        let not_updated = service.update_attrs(&id, fragment, &context).await.with_instance(&uri)?;
         if not_updated.is_empty() {
             return Ok(StatusCode::NO_CONTENT.into_response());
         }
@@ -1106,13 +1075,10 @@ pub async fn update_attrs(
 
     // Strip exclusive attributes before local update
     let exclusive_attrs = collect_forwarded_exclusive_attrs(&forwarded);
-    let local_fragment = if !exclusive_attrs.is_empty() {
-        let mut filtered = fragment.clone(); // clone: need modified copy; original consumed by forwarding
-        strip_exclusive_attrs_from_value(&mut filtered, &exclusive_attrs);
-        filtered
-    } else {
-        fragment
-    };
+    let mut local_fragment = fragment;
+    if !exclusive_attrs.is_empty() {
+        strip_exclusive_attrs_from_value(&mut local_fragment, &exclusive_attrs);
+    }
 
     // Exclusive-only updates may strip all local attributes; in that case
     // local processing is complete and only remote status matters.
@@ -1154,7 +1120,7 @@ pub async fn partial_update_attr(
     // Forward to matching context sources
     let context_url = context.link_contexts().first().map(|s| s.as_str());
     let fragment_body =
-        serde_json::to_vec(&fragment).map_err(|e| AndromedaError::internal(format!("Failed to serialize fragment: {}", e)).with_instance(uri.clone()))?;
+        serde_json::to_vec(&fragment).map_err(|e| AndromedaError::internal(format!("Failed to serialize fragment: {}", e)).with_instance(&uri))?;
     let entity_id = id.to_string();
     let path_suffix = format!("/attrs/{attr_id}");
     let qs = params.dataset_id.as_deref().map(|d| format!("datasetId={d}"));
@@ -1174,14 +1140,14 @@ pub async fn partial_update_attr(
             incoming_via: incoming_via.as_ref(),
         })
         .await
-        .with_instance(uri.clone())?;
+        .with_instance(&uri)?;
 
     if forwarded.is_empty() {
         // No matching CSRs — update locally
         service
             .partial_update_attr(&id, &attr_id, params.dataset_id.as_deref(), fragment, &context)
             .await
-            .with_instance(uri.clone())?;
+            .with_instance(&uri)?;
         return Ok(StatusCode::NO_CONTENT.into_response());
     }
 
@@ -1252,13 +1218,13 @@ pub async fn delete_attr(
             incoming_via: incoming_via.as_ref(),
         })
         .await
-        .with_instance(uri.clone())?;
+        .with_instance(&uri)?;
 
     if forwarded.is_empty() {
         service
             .delete_attr(&id, &attr_id, params.dataset_id.as_deref(), delete_all, &context)
             .await
-            .with_instance(uri.clone())?;
+            .with_instance(&uri)?;
         return Ok(StatusCode::NO_CONTENT.into_response());
     }
 
@@ -1298,7 +1264,7 @@ pub async fn replace_attr(
     service
         .replace_attr(&id, &attr_id, params.dataset_id.as_deref(), fragment, &context)
         .await
-        .with_instance(uri.clone())?;
+        .with_instance(&uri)?;
 
     Ok(StatusCode::NO_CONTENT.into_response())
 }
@@ -1323,8 +1289,8 @@ pub async fn delete_by_query(
         PurgeMode::DeleteEntities
     };
 
-    let compiled = state.entity_query.compile_query_uncapped(&query, &context).await.with_instance(uri.clone())?;
-    let entity_ids = state.entity_query.query_ids(&compiled).await.with_instance(uri.clone())?;
+    let compiled = state.entity_query.compile_query_uncapped(&query, &context).await.with_instance(&uri)?;
+    let entity_ids = state.entity_query.query_ids(&compiled).await.with_instance(&uri)?;
 
     if entity_ids.is_empty() {
         return Ok(StatusCode::NO_CONTENT.into_response());
@@ -1333,15 +1299,15 @@ pub async fn delete_by_query(
     // When drop/keep is specified, modify attributes instead of deleting entities
     match purge_mode {
         PurgeMode::Drop(_) | PurgeMode::Keep(_) => {
-            state.entities.purge_attrs(&entity_ids, &purge_mode, &context).await.with_instance(uri)?;
+            state.entities.purge_attrs(&entity_ids, &purge_mode, &context).await.with_instance(&uri)?;
             return Ok(StatusCode::NO_CONTENT.into_response());
         }
         PurgeMode::DeleteEntities => {}
     }
 
     if !is_local {
-        let body = serde_json::to_vec(&entity_ids)
-            .map_err(|e| AndromedaError::internal(format!("Failed to serialize entity IDs: {}", e)).with_instance(uri.clone()))?;
+        let body =
+            serde_json::to_vec(&entity_ids).map_err(|e| AndromedaError::internal(format!("Failed to serialize entity IDs: {}", e)).with_instance(&uri))?;
         let context_url = context.link_contexts().first().map(|s| s.as_str());
         let forwarded = state
             .forwarding
@@ -1356,13 +1322,13 @@ pub async fn delete_by_query(
                 incoming_via: incoming_via.as_ref(),
             })
             .await
-            .with_instance(uri.clone())?;
+            .with_instance(&uri)?;
 
         let modes = ForwardingModes::from_results(&forwarded);
 
         if modes.has_redirect {
             let Some(first) = forwarded.first() else {
-                return Err(NgsiLdError::from(AndromedaError::internal("Expected forwarded result").with_instance(uri)));
+                return Err(NgsiLdError::from(AndromedaError::internal("Expected forwarded result").with_instance(&uri)));
             };
             let status = StatusCode::from_u16(first.status).unwrap_or(StatusCode::NO_CONTENT);
             if let Some(ref resp_body) = first.body {
@@ -1379,7 +1345,7 @@ pub async fn delete_by_query(
         }
     }
 
-    let batch = state.entities.batch_delete(&entity_ids).await.with_instance(uri.clone())?;
+    let batch = state.entities.batch_delete(&entity_ids).await.with_instance(&uri)?;
     let result: BatchOperationResult = batch.into();
 
     if result.errors.is_empty() {

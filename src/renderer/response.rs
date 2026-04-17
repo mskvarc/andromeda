@@ -29,7 +29,7 @@ use crate::{
     },
 };
 use serde_json::Value;
-use std::mem::replace;
+use std::{mem::replace, sync::Arc};
 
 /// Payload fed to [`ResponseRenderer`]: the three NGSI-LD response shapes.
 ///
@@ -222,11 +222,18 @@ impl ResponseRenderer {
                     array_value = VersionRenderer::new(target).with_payload(array_value).render()?;
                 }
                 if self.format.include_context_in_body()
+                    && let Some(cv) = context_value
                     && let Value::Array(ref mut items) = array_value
                 {
+                    // Format once, share across items via Arc so the injected
+                    // value is not recloned per entity. `Value::Array` and
+                    // `Value::Object` internally hold owned data, so cloning
+                    // the Arc payload is still required at insert time, but
+                    // `format_context` runs once.
+                    let formatted = Arc::new(format_context(cv));
                     for item in items.iter_mut() {
-                        if let (Some(obj), Some(cv)) = (item.as_object_mut(), context_value.clone()) {
-                            obj.insert("@context".to_string(), format_context(cv));
+                        if let Some(obj) = item.as_object_mut() {
+                            obj.insert("@context".to_string(), (*formatted).clone());
                         }
                     }
                 }

@@ -7,7 +7,7 @@ use crate::{
     domain::{attribute_type::AttributeType, temporal::ValueType},
     jsonld::vocab,
     query::sql::scope_to_ltree,
-    repository::temporal::{HistoryBatchEntry, HistoryValues, InsertHistoryParams, ScopeHistoryEntry, TeaBatchEntry, TemporalRepository, UpdateInstanceParams},
+    repository::temporal::{HistoryBatchEntry, HistoryValues, ScopeHistoryEntry, TeaBatchEntry, TemporalRepository, UpdateInstanceParams},
 };
 use chrono::{DateTime, Utc};
 use serde_json::Value;
@@ -136,7 +136,11 @@ impl TemporalRecorder {
         Ok(())
     }
 
-    /// Record a single expanded attribute instance.
+    /// Record a single expanded attribute instance through the batch write path.
+    ///
+    /// Routes a single observation through [`TemporalRepository::upsert_tea_batch`]
+    /// and [`TemporalRepository::insert_history_batch`] so that the single- and
+    /// bulk-ingest code paths share identical SQL and dedup semantics.
     pub async fn record_attribute_instance(&self, entity_id: &str, attr_name: &str, instance: &Value) -> Result<(), AndromedaError> {
         let attribute_type = detect_attribute_type(instance);
         let typed_value = extract_typed_value(instance, attribute_type)?;
@@ -155,30 +159,38 @@ impl TemporalRecorder {
             .as_ref()
             .and_then(|s| DateTime::parse_from_rfc3339(s).map(|dt| dt.with_timezone(&Utc)).ok());
 
-        let tea_id = self
-            .repo
-            .upsert_tea(entity_id, attr_name, attribute_type, dataset_id.as_ref(), value_type)
-            .await?;
+        let dataset_id_str = dataset_id.as_ref().map(ToString::to_string);
+        let tea_entries = [TeaBatchEntry {
+            entity_id: entity_id.to_owned(),
+            attribute_name: attr_name.to_owned(),
+            attribute_type,
+            dataset_id: dataset_id_str,
+            value_type,
+        }];
+        let tea_results = self.repo.upsert_tea_batch(&tea_entries).await?;
+        let tea_id = tea_results
+            .into_iter()
+            .next()
+            .ok_or_else(|| AndromedaError::internal("upsert_tea_batch returned no rows for single entry".to_string()))?
+            .id;
 
         let p = typed_value.into_db_params();
 
         self.repo
-            .insert_history(InsertHistoryParams {
+            .insert_history_batch(&[HistoryBatchEntry {
                 time,
                 tea_id,
-                values: HistoryValues {
-                    value_number: p.value_number,
-                    value_string: p.value_string.as_deref(),
-                    value_bool: p.value_bool,
-                    value_geo: p.value_geo.as_deref(),
-                    value_object: p.value_object.as_ref(),
-                    value_datetime: p.value_datetime,
-                    value_uri: p.value_uri.as_deref(),
-                    metadata: metadata.as_ref(),
-                },
-                instance_id: &instance_id,
+                value_number: p.value_number,
+                value_string: p.value_string,
+                value_bool: p.value_bool,
+                value_geo: p.value_geo,
+                value_object: p.value_object,
+                value_datetime: p.value_datetime,
+                value_uri: p.value_uri,
+                instance_id,
                 observed_at,
-            })
+                metadata,
+            }])
             .await?;
 
         Ok(())
@@ -372,31 +384,41 @@ impl TemporalRecorder {
             .or_else(|| teas.first())
             .map_or(AttributeType::Property, |t| t.attribute_type);
 
-        let tea_id = self
+        let dataset_id_str = parsed_dataset_id.as_ref().map(ToString::to_string);
+        let tea_results = self
             .repo
-            .upsert_tea(entity_id, attr_iri, attr_type, parsed_dataset_id.as_ref(), ValueType::String)
+            .upsert_tea_batch(&[TeaBatchEntry {
+                entity_id: entity_id.to_owned(),
+                attribute_name: attr_iri.to_owned(),
+                attribute_type: attr_type,
+                dataset_id: dataset_id_str,
+                value_type: ValueType::String,
+            }])
             .await?;
+        let tea_id = tea_results
+            .into_iter()
+            .next()
+            .ok_or_else(|| AndromedaError::internal("upsert_tea_batch returned no rows for deletion tombstone".to_string()))?
+            .id;
 
         let now = Utc::now();
         let instance_id = format!("urn:ngsi-ld:attribute:instance:{}", uuid::Uuid::new_v4());
 
         self.repo
-            .insert_history(InsertHistoryParams {
+            .insert_history_batch(&[HistoryBatchEntry {
                 time: now,
                 tea_id,
-                values: HistoryValues {
-                    value_number: None,
-                    value_string: Some(vocab::expanded::NULL_URI.as_str()),
-                    value_bool: None,
-                    value_geo: None,
-                    value_object: None,
-                    value_datetime: None,
-                    value_uri: None,
-                    metadata: None,
-                },
-                instance_id: &instance_id,
+                value_number: None,
+                value_string: Some(vocab::expanded::NULL_URI.as_str().to_owned()),
+                value_bool: None,
+                value_geo: None,
+                value_object: None,
+                value_datetime: None,
+                value_uri: None,
+                instance_id,
                 observed_at: None,
-            })
+                metadata: None,
+            }])
             .await?;
 
         Ok(())

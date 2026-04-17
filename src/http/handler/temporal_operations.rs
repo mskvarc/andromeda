@@ -15,7 +15,7 @@ use crate::{
         response::{ResponsePayload, ResponseRenderer},
     },
     service::{
-        context_source_forwarding::{CsrModeFilter, ForwardTemporalQueryRequest, ForwardingOperation, collect_warnings},
+        context_source_forwarding::{CsrModeFilter, ForwardTemporalQueryRequest, ForwardingOperation, collect_temporal_warnings},
         temporal::{TemporalQueryResult, TemporalService},
     },
 };
@@ -44,7 +44,7 @@ pub async fn query(
 
     let is_local = params.is_local();
 
-    let result = service.query(&params, &context).await.with_instance(uri.clone())?;
+    let result = service.query(&params, &context).await.with_instance(&uri)?;
     for warning in &result.warnings {
         tracing::debug!(entity_id = %warning.entity_id, message = %warning.message, "Temporal batch query warning");
     }
@@ -80,7 +80,7 @@ pub async fn query(
             )
             .await
             .unwrap_or_default();
-        let warnings = collect_warnings(&forwarded);
+        let warnings = collect_temporal_warnings(&forwarded);
 
         let merged = TemporalService::merge_with_forwarded(local_entities, forwarded);
         (merged, warnings)

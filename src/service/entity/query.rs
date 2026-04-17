@@ -7,7 +7,10 @@ use crate::{
     http::parameter::query::{SharedQueryParams, entity::EntityQueryParameters},
     i18n::collation::rewrite_query_for_collation,
     jsonld::{CompactOptions, ContextSpec, JsonLdEngine},
-    query::compiled::{CompiledEntityQuery, CompiledOrderTerm, GeoQuery, IcuCollation, IdPattern, OrderingGeometry, Pagination, ScopeQuery},
+    query::{
+        compiled::{CompiledEntityQuery, CompiledOrderTerm, GeoQuery, IcuCollation, IdPattern, OrderingGeometry, Pagination, ScopeQuery},
+        compiled_cache::{CompiledQueryCache, CompiledQueryKey},
+    },
     renderer::SysAttrsInclusion,
     repository::entity::EntityRepository,
     service::context_source_forwarding::{ForwardedEntities, merge_query_results},
@@ -18,6 +21,7 @@ use std::{
     collections::{HashMap, HashSet},
     future::Future,
     pin::Pin,
+    sync::Arc,
 };
 use urn::Urn;
 
@@ -25,6 +29,7 @@ use urn::Urn;
 pub struct EntityQueryService {
     repo: EntityRepository,
     engine: JsonLdEngine,
+    compiled_cache: CompiledQueryCache,
 }
 
 type ResolveLinkedResult = Result<HashMap<String, Entity>, AndromedaError>;
@@ -34,7 +39,11 @@ impl EntityQueryService {
     /// Create a new entity query service backed by the given connection pool.
     pub fn new(pool: &PgPool, engine: JsonLdEngine) -> EntityQueryService {
         let repo = EntityRepository::new(pool);
-        EntityQueryService { repo, engine }
+        EntityQueryService {
+            repo,
+            engine,
+            compiled_cache: CompiledQueryCache::new(),
+        }
     }
 
     /// Return a reference to the underlying JSON-LD engine.
@@ -129,7 +138,7 @@ impl EntityQueryService {
 
     /// Execute a parameterized entity query, returning matching entities and an optional total count.
     pub async fn query(&self, query: &EntityQueryParameters, context: &ContextSpec) -> Result<(Vec<Entity>, Option<i64>), AndromedaError> {
-        let compiled = self.compile_query(query, context, true).await?;
+        let compiled = self.compile_query_cached(query, context, true).await?;
         let query_result = self.repo.query_compiled(&compiled).await?;
         let sys_attrs = query.parse_options().sys_attrs;
 
@@ -183,17 +192,34 @@ impl EntityQueryService {
     }
 
     /// Recursively resolve linked entities up to the given join level.
+    ///
+    /// The recursive work runs through [`Self::resolve_linked_inner`] on an
+    /// owned `contained_by` set that is mutated in place as each level adds
+    /// the ids it has just resolved; no per-level HashSet clone occurs and
+    /// recursion walks `&Entity` references instead of cloning entities.
     pub fn resolve_linked_entities<'a>(
         &'a self,
         entities: &'a [Entity],
         join_level: u32,
         sys_attrs: SysAttrsInclusion,
         context: &'a ContextSpec,
-        contained_by: &'a HashSet<String>,
+        contained_by: &HashSet<String>,
     ) -> ResolveLinkedFuture<'a> {
         const MAX_JOIN_LEVEL: u32 = 5;
         let join_level = join_level.min(MAX_JOIN_LEVEL);
+        let refs: Vec<&'a Entity> = entities.iter().collect();
+        let owned = contained_by.clone();
+        Box::pin(self.resolve_linked_inner(refs, join_level, sys_attrs, context, owned))
+    }
 
+    fn resolve_linked_inner<'a>(
+        &'a self,
+        entities: Vec<&'a Entity>,
+        join_level: u32,
+        sys_attrs: SysAttrsInclusion,
+        context: &'a ContextSpec,
+        mut contained_by: HashSet<String>,
+    ) -> Pin<Box<dyn Future<Output = ResolveLinkedResult> + Send + 'a>> {
         Box::pin(async move {
             if join_level == 0 {
                 return Ok(HashMap::new());
@@ -202,13 +228,12 @@ impl EntityQueryService {
             let mut linked_ids: HashSet<String> = HashSet::new();
             let entity_ids: HashSet<String> = entities.iter().map(|e| e.id.to_string()).collect();
 
-            for entity in entities {
+            for entity in &entities {
                 collect_relationship_objects(entity, &mut linked_ids);
             }
             linked_ids.retain(|id| !entity_ids.contains(id) && !contained_by.contains(id));
 
-            // Batch-fetch all linked entities in one query instead of N+1
-            let linked_id_vec: Vec<String> = linked_ids.iter().cloned().collect(); // clone: owned strings from HashSet for batch query API
+            let linked_id_vec: Vec<String> = linked_ids.into_iter().collect();
             let batch_payloads = self.repo.get_batch(&linked_id_vec).await?;
 
             let batch_sys_attrs = if sys_attrs == SysAttrsInclusion::Include {
@@ -235,13 +260,13 @@ impl EntityQueryService {
             }
 
             if join_level > 1 && !linked_map.is_empty() {
-                let level2_entities: Vec<Entity> = linked_map.values().cloned().collect(); // clone: owned entities for recursive resolution
-                let mut next_contained_by: HashSet<String> = contained_by.clone(); // clone: owned set for recursive call, caller retains original
-                next_contained_by.extend(entity_ids);
-                next_contained_by.extend(linked_map.keys().cloned()); // clone: owned keys for extending set
-                let level2_linked = self
-                    .resolve_linked_entities(&level2_entities, join_level - 1, sys_attrs, context, &next_contained_by)
-                    .await?;
+                contained_by.extend(entity_ids);
+                contained_by.reserve(linked_map.len());
+                for key in linked_map.keys() {
+                    contained_by.insert(key.clone());
+                }
+                let level2_refs: Vec<&Entity> = linked_map.values().collect();
+                let level2_linked = self.resolve_linked_inner(level2_refs, join_level - 1, sys_attrs, context, contained_by).await?;
                 linked_map.extend(level2_linked);
             }
 
@@ -255,12 +280,29 @@ impl EntityQueryService {
 
     /// Compile an entity query with the default limit cap applied.
     pub async fn compile_query_public(&self, params: &EntityQueryParameters, context: &ContextSpec) -> Result<CompiledEntityQuery, AndromedaError> {
-        self.compile_query(params, context, true).await
+        let arc = self.compile_query_cached(params, context, true).await?;
+        Ok(Arc::unwrap_or_clone(arc))
     }
 
     /// Compile an entity query without applying a limit cap.
     pub async fn compile_query_uncapped(&self, params: &EntityQueryParameters, context: &ContextSpec) -> Result<CompiledEntityQuery, AndromedaError> {
-        self.compile_query(params, context, false).await
+        let arc = self.compile_query_cached(params, context, false).await?;
+        Ok(Arc::unwrap_or_clone(arc))
+    }
+
+    /// Cache-aware compilation entry point used by every caller.
+    ///
+    /// First consults the in-memory [`CompiledQueryCache`] keyed on the
+    /// request parameters and the active JSON-LD context fingerprint; on miss,
+    /// compiles and stores the result.
+    async fn compile_query_cached(
+        &self,
+        params: &EntityQueryParameters,
+        context: &ContextSpec,
+        cap_limit: bool,
+    ) -> Result<Arc<CompiledEntityQuery>, AndromedaError> {
+        let key = CompiledQueryKey::from_params(params, context, cap_limit);
+        self.compiled_cache.get_or_compile(key, || self.compile_query(params, context, cap_limit)).await
     }
 
     /// Execute a compiled query returning only entity IDs.
@@ -270,22 +312,12 @@ impl EntityQueryService {
 
     /// Merge local query results with forwarded context source results.
     ///
-    /// Handles the conversion round-trip (Entity -> Value -> merge -> Entity)
-    /// and post-merge attrs filtering per spec 5.7.2: context sources return
-    /// all attributes, so filtering must happen after merge.
+    /// The merge stays in the typed domain model throughout; forwarded entities
+    /// were already parsed to [`Entity`] at the CSR boundary, so no `Value`
+    /// round-trip occurs. Per spec 5.7.2, the optional `attrs_filter` is
+    /// applied after merge (context sources return all attributes).
     pub fn merge_with_forwarded(local_entities: Vec<Entity>, forwarded: Vec<ForwardedEntities>, attrs_filter: Option<&str>) -> Vec<Entity> {
-        let local_values: Vec<Value> = local_entities.iter().map(|e| serde_json::to_value(e).unwrap_or_default()).collect();
-        let merged_values = merge_query_results(local_values, forwarded);
-        let mut result = Vec::new();
-        for val in merged_values {
-            match serde_json::from_value::<Entity>(val) {
-                Ok(e) => result.push(e),
-                Err(err) => {
-                    tracing::debug!("Failed to deserialize merged entity: {}", err);
-                }
-            }
-        }
-        // Per spec 5.7.2: apply attrs filter to merged results
+        let mut result = merge_query_results(local_entities, forwarded);
         if let Some(attrs_str) = attrs_filter {
             let requested: Vec<&str> = attrs_str.split(',').map(str::trim).collect();
             for entity in &mut result {

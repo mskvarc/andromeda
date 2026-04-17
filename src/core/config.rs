@@ -198,6 +198,23 @@ pub struct PerformanceConfig {
     #[config(default = 67_108_864)]
     #[config(layer_attr(arg(long = "max-request-body-bytes")))]
     pub max_request_body_bytes: usize,
+
+    /// Maximum number of concurrent snapshot executions (NGSI-LD clause
+    /// 5.16.1.4). Snapshot creation spawns a background task that runs the
+    /// configured queries; without a bound, a burst of create requests could
+    /// saturate the database pool.
+    #[config(default = 4)]
+    #[config(layer_attr(arg(long = "snapshot-concurrency")))]
+    pub snapshot_concurrency: usize,
+
+    /// Maximum number of parallel context-source forwarding requests per
+    /// NGSI-LD operation. Each matching CSR generates one outbound HTTP
+    /// request; without parallelism, wall-time equals the sum of CSR
+    /// latencies. The default is tuned to saturate a typical WAN link
+    /// without overwhelming downstream CSRs.
+    #[config(default = 16)]
+    #[config(layer_attr(arg(long = "forward-csr-concurrency")))]
+    pub forward_csr_concurrency: usize,
 }
 
 /// SSE (Server-Sent Events) notification transport configuration.
@@ -305,6 +322,8 @@ impl Default for PerformanceConfig {
             batch_side_effect_queue_capacity: 8,
             batch_async_side_effect_threshold: None,
             max_request_body_bytes: 67_108_864,
+            snapshot_concurrency: 4,
+            forward_csr_concurrency: 16,
         }
     }
 }

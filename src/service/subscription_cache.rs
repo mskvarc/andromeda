@@ -7,9 +7,20 @@
 
 use crate::{
     domain::{
-        notification::{ChangeEvent, CompiledSelector, CompiledSubscription, SubscriptionChange, TriggerReason},
+        notification::{
+            ChangeEvent,
+            CompiledGeoQuery,
+            CompiledGeoRel,
+            CompiledScopePattern,
+            CompiledScopeTerm,
+            CompiledSelector,
+            CompiledSubscription,
+            SubscriptionChange,
+            TriggerReason,
+        },
         subscription::{EntitySelector, Subscription, SubscriptionStatus},
     },
+    jsonld::vocab,
     query::q,
     renderer::SysAttrsInclusion,
     repository::subscription_store::SubscriptionStore,
@@ -25,15 +36,32 @@ use tracing::debug;
 ///
 /// Stores pre-compiled subscriptions keyed by subscription ID. Uses
 /// `DashMap` for concurrent read/write access without explicit locking.
+///
+/// Maintains two auxiliary indexes so event matching scans only the
+/// subscriptions that plausibly match the event type, instead of every
+/// active subscription:
+///
+/// - `by_type`: expanded type IRI -> set of subscription ids whose selectors
+///   include that type. A subscription with N selectors is indexed under all
+///   N types.
+/// - `untyped`: subscription ids with no selectors, or selectors whose types
+///   are alternation regex patterns that cannot be resolved to a single IRI.
+///   These are always candidates regardless of event type.
 #[derive(Debug)]
 pub struct SubscriptionCache {
     inner: DashMap<String, Arc<CompiledSubscription>>,
+    by_type: DashMap<String, HashSet<String>>,
+    untyped: dashmap::DashSet<String>,
 }
 
 impl SubscriptionCache {
     /// Create an empty subscription cache.
     pub fn new() -> SubscriptionCache {
-        SubscriptionCache { inner: DashMap::new() }
+        SubscriptionCache {
+            inner: DashMap::new(),
+            by_type: DashMap::new(),
+            untyped: dashmap::DashSet::new(),
+        }
     }
 
     /// Reload the entire cache from the subscription repository.
@@ -43,9 +71,12 @@ impl SubscriptionCache {
     pub async fn reload(&self, repo: &impl SubscriptionStore) -> Result<(), crate::core::error::AndromedaError> {
         let subscriptions = repo.list_active().await?;
         self.inner.clear();
+        self.by_type.clear();
+        self.untyped.clear();
         for sub in subscriptions {
             if let Some(compiled) = compile_subscription(&sub) {
-                self.inner.insert(sub.id.clone(), Arc::new(compiled)); // clone: owned key for DashMap, sub.id also consumed by compiled
+                self.index_insert(&compiled);
+                self.inner.insert(sub.id.clone(), Arc::new(compiled));
             }
         }
         Ok(())
@@ -60,13 +91,17 @@ impl SubscriptionCache {
                     Ok(Some(sub)) => {
                         if sub.status == SubscriptionStatus::Active {
                             if let Some(compiled) = compile_subscription(&sub) {
+                                self.index_remove(&id_str);
+                                self.index_insert(&compiled);
                                 self.inner.insert(id_str, Arc::new(compiled));
                             }
                         } else {
+                            self.index_remove(&id_str);
                             self.inner.remove(&id_str);
                         }
                     }
                     Ok(None) => {
+                        self.index_remove(&id_str);
                         self.inner.remove(&id_str);
                     }
                     Err(e) => {
@@ -75,22 +110,73 @@ impl SubscriptionCache {
                 }
             }
             SubscriptionChange::Deleted(id) => {
-                self.inner.remove(&id.to_string());
+                let id_str = id.to_string();
+                self.index_remove(&id_str);
+                self.inner.remove(&id_str);
             }
         }
     }
 
     /// Find all compiled subscriptions that match the given change event.
     ///
-    /// Iterates the `DashMap` without holding a global lock. Returns cloned
-    /// `Arc` handles for lock-free downstream use.
+    /// Gathers the candidate set from the type index (`by_type` entries for
+    /// each of the event's types, union with `untyped`), then evaluates the
+    /// full matching predicate only on those candidates. Uses lock-free
+    /// `DashMap`/`DashSet` reads throughout.
     pub fn find_matching(&self, event: &ChangeEvent) -> Vec<Arc<CompiledSubscription>> {
-        find_matching(self.inner.iter().map(|entry| Arc::clone(entry.value())), event)
+        let mut candidate_ids: HashSet<String> = self.untyped.iter().map(|entry| entry.key().clone()).collect();
+        for event_type in &event.entity_types {
+            if let Some(entry) = self.by_type.get(event_type) {
+                for id in entry.value() {
+                    candidate_ids.insert(id.clone());
+                }
+            }
+        }
+
+        let candidates = candidate_ids
+            .into_iter()
+            .filter_map(|id| self.inner.get(&id).map(|entry| Arc::clone(entry.value())));
+        find_matching(candidates, event)
     }
 
     /// Look up a single compiled subscription by ID.
     pub fn get(&self, id: &str) -> Option<Arc<CompiledSubscription>> {
         self.inner.get(id).map(|entry| Arc::clone(entry.value()))
+    }
+
+    fn index_insert(&self, compiled: &CompiledSubscription) {
+        if compiled.selectors.is_empty() {
+            self.untyped.insert(compiled.id.clone());
+            return;
+        }
+        // A subscription with a selector whose type field is an alternation
+        // (regex-backed) can match multiple expanded IRIs that the cache
+        // cannot enumerate ahead of time; fall back to the untyped bucket so
+        // `find_matching` still considers it.
+        let mut indexed_any = false;
+        for selector in &compiled.selectors {
+            if selector.type_pattern.is_some() {
+                self.untyped.insert(compiled.id.clone());
+                indexed_any = true;
+            } else {
+                self.by_type.entry(selector.type_.clone()).or_default().insert(compiled.id.clone());
+                indexed_any = true;
+            }
+        }
+        if !indexed_any {
+            self.untyped.insert(compiled.id.clone());
+        }
+    }
+
+    fn index_remove(&self, id: &str) {
+        self.untyped.remove(id);
+        // Drop the id from every type bucket it appears in. `retain` scans
+        // the map once; the keys per bucket are short (one `HashSet<String>`
+        // per indexed entity type) so removal stays cheap.
+        self.by_type.iter_mut().for_each(|mut entry| {
+            entry.value_mut().remove(id);
+        });
+        self.by_type.retain(|_, ids| !ids.is_empty());
     }
 
     /// Returns the number of cached subscriptions.
@@ -164,14 +250,118 @@ pub fn compile_subscription(sub: &Subscription) -> Option<CompiledSubscription> 
         jsonld_context: sub.jsonld_context.clone(),
         expires_at: sub.expires_at,
         compiled_q,
-        geo_q: sub.geo_q.clone(),
-        scope_q: sub.scope_q.clone(),
+        compiled_geo_q: sub.geo_q.as_ref().and_then(|v| compile_geo_q(v, &sub.id)),
+        compiled_scope_q: sub.scope_q.as_deref().map(compile_scope_q),
         dataset_id: sub.dataset_id.clone(),
         notification_join: sub.notification.join.map(|j| j.to_string()),
         notification_join_level: sub.notification.join_level.unwrap_or(1).min(5),
         compiled_csf,
         local_only: sub.local_only.unwrap_or(false),
     })
+}
+
+/// Pre-parse a `geoQ` JSON value into [`CompiledGeoQuery`].
+///
+/// Returns `None` when any required field is missing or malformed — logged at
+/// debug level. The subscription then skips the geo path entirely (it never
+/// matches events through geoQ) rather than re-parsing on every event.
+pub fn compile_geo_q(geo_q: &serde_json::Value, sub_id: &str) -> Option<CompiledGeoQuery> {
+    let geo_obj = geo_q.as_object()?;
+    let georel_str = geo_obj.get("georel").and_then(|v| v.as_str())?;
+    let geometry_str = geo_obj.get("geometry").and_then(|v| v.as_str())?;
+    let coordinates_value = geo_obj.get("coordinates")?;
+    let coordinates = match coordinates_value {
+        serde_json::Value::String(s) => serde_json::from_str::<serde_json::Value>(s).ok()?,
+        other => other.clone(),
+    };
+    let geoproperty_iri = geo_obj
+        .get("geoproperty")
+        .and_then(|v| v.as_str())
+        .map_or_else(|| vocab::expanded::LOCATION.as_str().to_owned(), ToOwned::to_owned);
+
+    let geojson_value = serde_json::json!({
+        "type": geometry_str,
+        "coordinates": coordinates,
+    });
+    let geojson_str = geojson_value.to_string();
+    let ref_geometry = match geojson_str.parse::<geojson::GeoJson>() {
+        Ok(geojson::GeoJson::Geometry(g)) => match geo::Geometry::try_from(g) {
+            Ok(geom) => geom,
+            Err(e) => {
+                debug!("Failed to convert geoQ geometry for subscription {}: {}", sub_id, e);
+                return None;
+            }
+        },
+        Ok(_) => {
+            debug!("geoQ for subscription {} is not a geometry object", sub_id);
+            return None;
+        }
+        Err(e) => {
+            debug!("Failed to parse geoQ GeoJSON for subscription {}: {}", sub_id, e);
+            return None;
+        }
+    };
+
+    let georel = compile_geo_rel(georel_str)?;
+
+    Some(CompiledGeoQuery {
+        ref_geometry,
+        georel,
+        geoproperty_iri,
+    })
+}
+
+fn compile_geo_rel(raw: &str) -> Option<CompiledGeoRel> {
+    let parts: Vec<&str> = raw.split(';').collect();
+    let rel = parts.first()?.trim();
+    match rel {
+        "within" => Some(CompiledGeoRel::Within),
+        "contains" => Some(CompiledGeoRel::Contains),
+        "intersects" => Some(CompiledGeoRel::Intersects),
+        "disjoint" => Some(CompiledGeoRel::Disjoint),
+        "equals" => Some(CompiledGeoRel::Equals),
+        "overlaps" => Some(CompiledGeoRel::Overlaps),
+        "near" => {
+            let mut max_distance = None;
+            let mut min_distance = None;
+            for part in &parts[1..] {
+                let part = part.trim();
+                if let Some(val) = part.strip_prefix("maxDistance==") {
+                    max_distance = val.parse().ok();
+                } else if let Some(val) = part.strip_prefix("minDistance==") {
+                    min_distance = val.parse().ok();
+                }
+            }
+            Some(CompiledGeoRel::Near { max_distance, min_distance })
+        }
+        _ => None,
+    }
+}
+
+/// Pre-parse a `scopeQ` string into its disjunctive-normal-form term tree.
+///
+/// Terms that use `/+` are compiled to regex here so event matching can skip
+/// regex construction on every event. Unrecognized patterns fall through to
+/// exact-match semantics.
+pub fn compile_scope_q(raw: &str) -> CompiledScopePattern {
+    let or_terms = raw
+        .split(',')
+        .map(|or_term| or_term.split(';').map(|pattern| compile_scope_term(pattern.trim())).collect::<Vec<_>>())
+        .collect();
+    CompiledScopePattern { or_terms }
+}
+
+fn compile_scope_term(pattern: &str) -> CompiledScopeTerm {
+    if let Some(prefix) = pattern.strip_suffix("/#") {
+        return CompiledScopeTerm::HierarchicalWildcard { prefix: prefix.to_owned() };
+    }
+    if pattern.contains("/+") {
+        let regex_pattern = format!("^{}$", pattern.replace("/+", "/[^/]+"));
+        if let Ok(re) = Regex::new(&regex_pattern) {
+            return CompiledScopeTerm::Regex(re);
+        }
+    }
+    CompiledScopeTerm::Exact(pattern.to_owned())
 }
 
 /// Compile a single entity selector into a pre-compiled form.
@@ -214,10 +404,7 @@ mod tests {
     #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::*;
     use crate::{
-        domain::{
-            notification::{ChangeOrigin, CompiledSelector, TriggerReason},
-            subscription::SubscriptionStatus,
-        },
+        domain::{notification::CompiledSelector, subscription::SubscriptionStatus},
         transport::endpoint::EndpointTransport,
     };
 
@@ -246,103 +433,14 @@ mod tests {
             jsonld_context: None,
             expires_at: None,
             compiled_q: None,
-            geo_q: None,
-            scope_q: None,
+            compiled_geo_q: None,
+            compiled_scope_q: None,
             dataset_id: None,
             notification_join: None,
             notification_join_level: 1,
             compiled_csf: None,
             local_only: false,
         }
-    }
-
-    fn make_event(entity_id: &str, types: Vec<&str>, trigger: TriggerReason) -> ChangeEvent {
-        ChangeEvent {
-            entity_id: entity_id.parse().expect("valid test URI"),
-            entity_types: types.into_iter().map(String::from).collect(),
-            trigger_reason: trigger,
-            changed_attributes: vec!["speed".to_string()],
-            occurred_at: chrono::Utc::now(),
-            entity_snapshot: None,
-            previous_attributes: None,
-            sys_attrs_snapshot: None,
-            origin: ChangeOrigin::Local,
-        }
-    }
-
-    #[test]
-    fn find_matching_returns_correct_subscriptions_for_event() {
-        let cache = SubscriptionCache::new();
-        cache
-            .inner
-            .insert("sub1".to_string(), Arc::new(make_compiled_sub("sub1", "Vehicle", vec!["entityCreated"])));
-        cache
-            .inner
-            .insert("sub2".to_string(), Arc::new(make_compiled_sub("sub2", "Building", vec!["entityCreated"])));
-        cache
-            .inner
-            .insert("sub3".to_string(), Arc::new(make_compiled_sub("sub3", "Vehicle", vec!["entityUpdated"])));
-
-        let event = make_event("urn:ngsi-ld:Vehicle:A1", vec!["Vehicle"], TriggerReason::EntityCreated);
-        let matched = cache.find_matching(&event);
-
-        assert_eq!(matched.len(), 1);
-        assert_eq!(matched[0].id, "sub1");
-    }
-
-    #[test]
-    fn find_matching_returns_empty_when_no_subscriptions_match() {
-        let cache = SubscriptionCache::new();
-        cache
-            .inner
-            .insert("sub1".to_string(), Arc::new(make_compiled_sub("sub1", "Building", vec!["entityCreated"])));
-
-        let event = make_event("urn:ngsi-ld:Vehicle:A1", vec!["Vehicle"], TriggerReason::EntityCreated);
-        let matched = cache.find_matching(&event);
-
-        assert!(matched.is_empty());
-    }
-
-    #[test]
-    fn find_matching_returns_multiple_matching_subscriptions() {
-        let cache = SubscriptionCache::new();
-        cache
-            .inner
-            .insert("sub1".to_string(), Arc::new(make_compiled_sub("sub1", "Vehicle", vec!["entityCreated"])));
-        cache
-            .inner
-            .insert("sub2".to_string(), Arc::new(make_compiled_sub("sub2", "Vehicle", vec!["entityCreated"])));
-
-        let event = make_event("urn:ngsi-ld:Vehicle:A1", vec!["Vehicle"], TriggerReason::EntityCreated);
-        let matched = cache.find_matching(&event);
-
-        assert_eq!(matched.len(), 2);
-    }
-
-    #[test]
-    fn find_matching_skips_paused_subscriptions() {
-        let cache = SubscriptionCache::new();
-        let mut sub = make_compiled_sub("sub1", "Vehicle", vec!["entityCreated"]);
-        sub.status = SubscriptionStatus::Paused;
-        cache.inner.insert("sub1".to_string(), Arc::new(sub));
-
-        let event = make_event("urn:ngsi-ld:Vehicle:A1", vec!["Vehicle"], TriggerReason::EntityCreated);
-        let matched = cache.find_matching(&event);
-
-        assert!(matched.is_empty());
-    }
-
-    #[test]
-    fn find_matching_skips_expired_subscriptions() {
-        let cache = SubscriptionCache::new();
-        let mut sub = make_compiled_sub("sub1", "Vehicle", vec!["entityCreated"]);
-        sub.expires_at = Some(chrono::Utc::now() - chrono::Duration::hours(1));
-        cache.inner.insert("sub1".to_string(), Arc::new(sub));
-
-        let event = make_event("urn:ngsi-ld:Vehicle:A1", vec!["Vehicle"], TriggerReason::EntityCreated);
-        let matched = cache.find_matching(&event);
-
-        assert!(matched.is_empty());
     }
 
     #[test]

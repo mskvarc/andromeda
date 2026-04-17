@@ -85,8 +85,8 @@ impl<'a> Renderer for SnapshotRenderer<'a> {
 
         let transformed = match mode {
             RenderMode::Normalized => payload,
-            RenderMode::Concise => concise_value(&payload),
-            RenderMode::Simplified => simplify_value(&payload),
+            RenderMode::Concise => concise_value(payload),
+            RenderMode::Simplified => simplify_value(payload),
         };
 
         Ok(transformed)

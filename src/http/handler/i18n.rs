@@ -33,9 +33,9 @@ pub async fn get(
     ValidatedQuery(params): ValidatedQuery<LocalizedEntityGetParams>,
 ) -> Result<Response, NgsiLdError> {
     reject_ld_json_accept(&headers, &uri)?;
-    validate_locale(&params.locale).with_instance(uri.clone())?;
-    validate_optional_token(params.calendar.as_deref(), "calendar").with_instance(uri.clone())?;
-    validate_optional_token(params.numbering_system.as_deref(), "numberingSystem").with_instance(uri.clone())?;
+    validate_locale(&params.locale).with_instance(&uri)?;
+    validate_optional_token(params.calendar.as_deref(), "calendar").with_instance(&uri)?;
+    validate_optional_token(params.numbering_system.as_deref(), "numberingSystem").with_instance(&uri)?;
     let locale = params.locale.clone();
     let localized_attrs = localized_attr_filter(params.localized_attrs.as_deref());
 
@@ -59,7 +59,7 @@ pub async fn get(
     let entity = service
         .get_inner(&id, &attrs, SysAttrsInclusion::Strip, &dataset_ids, &context)
         .await
-        .with_instance(uri.clone())?;
+        .with_instance(&uri)?;
 
     let value = serde_json::to_value(entity).map_err(|error| AndromedaError::internal(format!("Failed to serialize entity: {}", error)))?;
     let localized = LocalizationRenderer::new(value, &locale).with_attrs_filter(localized_attrs.as_ref()).render()?;
@@ -75,19 +75,19 @@ pub async fn query(
     ValidatedQuery(params): ValidatedQuery<LocalizedEntityQueryParams>,
 ) -> Result<Response, NgsiLdError> {
     reject_ld_json_accept(&headers, &uri)?;
-    validate_locale(&params.locale).with_instance(uri.clone())?;
-    validate_optional_token(params.calendar.as_deref(), "calendar").with_instance(uri.clone())?;
-    validate_optional_token(params.numbering_system.as_deref(), "numberingSystem").with_instance(uri.clone())?;
+    validate_locale(&params.locale).with_instance(&uri)?;
+    validate_optional_token(params.calendar.as_deref(), "calendar").with_instance(&uri)?;
+    validate_optional_token(params.numbering_system.as_deref(), "numberingSystem").with_instance(&uri)?;
 
     let locale = params.locale.clone();
     let localized_attrs = localized_attr_filter(params.localized_attrs.as_deref());
     let mut query = params.into_entity_query();
     apply_entity_query_extension_headers(&mut query, &protocol, &uri)?;
-    query.validate().with_instance(uri.clone())?;
+    query.validate().with_instance(&uri)?;
 
     let service = &state.entity_query;
     let context: ContextSpec = context.into_inner();
-    let (entities, total_count) = service.query(&query, &context).await.with_instance(uri.clone())?;
+    let (entities, total_count) = service.query(&query, &context).await.with_instance(&uri)?;
     let localized_values: Vec<Value> = entities
         .into_iter()
         .map(|entity| {
@@ -110,7 +110,7 @@ fn reject_ld_json_accept(headers: &HeaderMap, uri: &axum::http::Uri) -> Result<(
     };
     if accept_value.contains("application/ld+json") {
         return Err(NgsiLdError::from(
-            AndromedaError::from(ErrorKind::OperationNotSupported("Localized endpoints only return application/json".to_string())).with_instance(uri.clone()),
+            AndromedaError::from(ErrorKind::OperationNotSupported("Localized endpoints only return application/json".to_string())).with_instance(&uri),
         ));
     }
     Ok(())

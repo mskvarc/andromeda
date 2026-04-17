@@ -42,7 +42,7 @@ pub async fn create(
     let service = &state.csr_subscriptions;
     let context = context.merge(body_context);
 
-    let id = service.create(payload, &context, None).await.with_instance(uri.clone())?;
+    let id = service.create(payload, &context, None).await.with_instance(&uri)?;
 
     Ok((StatusCode::CREATED, [("Location", id)]).into_response())
 }
@@ -60,7 +60,7 @@ pub async fn get(
     let context: ContextSpec = context.into_inner();
     let options = parse_list_options(params.options.as_deref(), &uri)?;
 
-    let subscription = service.get_for_response(&subscription_id, &context).await.with_instance(uri.clone())?;
+    let subscription = service.get_for_response(&subscription_id, &context).await.with_instance(&uri)?;
 
     let subscription = SubscriptionRenderer::new(subscription, SubscriptionFlavor::ContextSource)
         .with_sys_attrs(options.sys_attrs)
@@ -88,14 +88,14 @@ pub async fn query(
     let limit = params.limit.unwrap_or(100);
     if limit <= 0 {
         return Err(NgsiLdError::from(
-            AndromedaError::query_validation("limit must be greater than 0").with_instance(uri.clone()),
+            AndromedaError::query_validation("limit must be greater than 0").with_instance(&uri),
         ));
     }
     if let Some(page) = params.page
         && page <= 0
     {
         return Err(NgsiLdError::from(
-            AndromedaError::query_validation("page must be greater than 0").with_instance(uri.clone()),
+            AndromedaError::query_validation("page must be greater than 0").with_instance(&uri),
         ));
     }
     let offset = if let Some(page) = params.page {
@@ -104,16 +104,13 @@ pub async fn query(
         let offset = params.offset.unwrap_or(0);
         if offset < 0 {
             return Err(NgsiLdError::from(
-                AndromedaError::query_validation("offset must be greater than or equal to 0").with_instance(uri.clone()),
+                AndromedaError::query_validation("offset must be greater than or equal to 0").with_instance(&uri),
             ));
         }
         offset
     };
 
-    let (subscriptions, total) = service
-        .list_for_response(Some(limit), Some(offset), &context)
-        .await
-        .with_instance(uri.clone())?;
+    let (subscriptions, total) = service.list_for_response(Some(limit), Some(offset), &context).await.with_instance(&uri)?;
 
     let subscriptions = subscriptions
         .into_iter()
@@ -160,7 +157,7 @@ pub async fn update(
     let service = &state.csr_subscriptions;
     let context = context.merge(body_context);
 
-    service.update(&subscription_id, payload, &context, None).await.with_instance(uri.clone())?;
+    service.update(&subscription_id, payload, &context, None).await.with_instance(&uri)?;
 
     Ok(StatusCode::NO_CONTENT.into_response())
 }
@@ -168,7 +165,7 @@ pub async fn update(
 /// DELETE /ngsi-ld/v1/csourceSubscriptions/{subscription_id} -- Delete a context source subscription.
 pub async fn delete(TenantState(state): TenantState, OriginalUri(uri): OriginalUri, Path(subscription_id): Path<String>) -> Result<Response, NgsiLdError> {
     let service = &state.csr_subscriptions;
-    service.delete(&subscription_id).await.with_instance(uri.clone())?;
+    service.delete(&subscription_id).await.with_instance(&uri)?;
 
     Ok(StatusCode::NO_CONTENT.into_response())
 }

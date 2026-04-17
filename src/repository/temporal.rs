@@ -71,21 +71,6 @@ pub struct HistoryValues<'a> {
     pub metadata: Option<&'a Value>,
 }
 
-/// Parameters for inserting a single observation into attribute history.
-#[derive(Debug)]
-pub struct InsertHistoryParams<'a> {
-    /// Timestamp used for the TimescaleDB partition key.
-    pub time: DateTime<Utc>,
-    /// Foreign key referencing the temporal entity attribute catalog entry.
-    pub tea_id: uuid::Uuid,
-    /// Typed value columns for this observation.
-    pub values: HistoryValues<'a>,
-    /// Unique identifier for this attribute instance.
-    pub instance_id: &'a str,
-    /// Application-level observation timestamp, if provided.
-    pub observed_at: Option<DateTime<Utc>>,
-}
-
 /// Parameters for modifying an existing attribute instance in history.
 #[derive(Debug)]
 pub struct UpdateInstanceParams<'a> {
@@ -138,30 +123,6 @@ impl TemporalRepository {
     // -------------------------------------------------------------------------
     // Attribute name dictionary
     // -------------------------------------------------------------------------
-
-    /// Resolve a single attribute name to its dictionary ID, inserting if new.
-    ///
-    /// Returns from the in-process cache on hit; on miss, inserts into the
-    /// database with `DO NOTHING` and then SELECTs the ID.
-    async fn resolve_attribute_name_id(&self, name: &str) -> Result<i16, AndromedaError> {
-        if let Some(id) = self.attr_name_cache.get(name) {
-            return Ok(*id);
-        }
-
-        // Insert only genuinely new names (no exclusive lock on existing rows).
-        sqlx::query("INSERT INTO attribute_names (name) VALUES ($1) ON CONFLICT (name) DO NOTHING")
-            .bind(name)
-            .execute(&self.pool)
-            .await?;
-
-        let id: i16 = sqlx::query_scalar("SELECT id FROM attribute_names WHERE name = $1")
-            .bind(name)
-            .fetch_one(&self.pool)
-            .await?;
-
-        self.attr_name_cache.insert(name.to_owned(), id);
-        Ok(id)
-    }
 
     /// Bulk-resolve attribute names to dictionary IDs, inserting new names.
     ///
@@ -217,37 +178,6 @@ impl TemporalRepository {
     // -------------------------------------------------------------------------
     // TEA (Temporal Entity Attributes) Operations
     // -------------------------------------------------------------------------
-
-    /// Find or create a catalog entry, returns UUID.
-    pub async fn upsert_tea(
-        &self,
-        entity_id: &str,
-        attribute_name: &str,
-        attribute_type: AttributeType,
-        dataset_id: Option<&Urn>,
-        value_type: ValueType,
-    ) -> Result<uuid::Uuid, AndromedaError> {
-        let attr_name_id = self.resolve_attribute_name_id(attribute_name).await?;
-
-        let id: uuid::Uuid = sqlx::query_scalar(
-            r#"
-            INSERT INTO temporal_entity_attributes (entity_id, attribute_name_id, attribute_type, dataset_id, value_type)
-            VALUES ($1, $2, $3, $4, $5)
-            ON CONFLICT (entity_id, attribute_name_id, dataset_id) DO UPDATE
-            SET attribute_type = EXCLUDED.attribute_type, value_type = EXCLUDED.value_type
-            RETURNING id
-            "#,
-        )
-        .bind(entity_id)
-        .bind(attr_name_id)
-        .bind(attribute_type.short_name())
-        .bind(dataset_id.map(ToString::to_string))
-        .bind(value_type.to_string())
-        .fetch_one(&self.pool)
-        .await?;
-
-        Ok(id)
-    }
 
     /// TEA entries for a specific attribute.
     pub async fn get_teas_for_entity_attr(&self, entity_id: &str, attribute_name: &str) -> Result<Vec<TeaEntry>, AndromedaError> {
@@ -365,66 +295,6 @@ impl TemporalRepository {
     // -------------------------------------------------------------------------
     // Attribute History Operations
     // -------------------------------------------------------------------------
-
-    /// Insert one observation into attribute_history.
-    /// Only one value column should be non-NULL, determined by the TEA's value_type.
-    ///
-    /// Deduplication: removes conflicting rows before insertion. Two dedup axes:
-    ///   1. Same (tea_id, instance_id) -- entity update re-records the same attribute instance
-    ///   2. Same (tea_id, observed_at) -- temporal create_or_update merges at the same timestamp
-    ///
-    /// Note: INSERT ON CONFLICT is not viable here because TimescaleDB requires
-    /// the partitioning column (`time`) in all unique constraints, but dedup keys
-    /// do not include `time` (instance_id may appear at a new timestamp, observed_at
-    /// may differ from `time`).
-    pub async fn insert_history(&self, params: InsertHistoryParams<'_>) -> Result<(), AndromedaError> {
-        let mut tx = self.pool.begin().await?;
-
-        // Dedup axis 1: same instance_id (uses idx_attribute_history_dedup).
-        sqlx::query("DELETE FROM attribute_history WHERE tea_id = $1 AND instance_id = $2")
-            .bind(params.tea_id)
-            .bind(params.instance_id)
-            .execute(&mut *tx)
-            .await?;
-
-        // Dedup axis 2: same observed_at (uses idx_attribute_history_observed_at).
-        if let Some(obs) = params.observed_at {
-            sqlx::query("DELETE FROM attribute_history WHERE tea_id = $1 AND observed_at = $2")
-                .bind(params.tea_id)
-                .bind(obs)
-                .execute(&mut *tx)
-                .await?;
-        }
-
-        sqlx::query(
-            r#"
-            INSERT INTO attribute_history
-                (time, tea_id, value_number, value_string, value_bool, value_geo, value_object, value_datetime, value_uri, instance_id, observed_at, metadata)
-            VALUES
-                ($1, $2, $3, $4, $5, ST_MakeValid(ST_SetSRID(ST_GeomFromGeoJSON($6), 4326)), $7, $8, $9, $10, $11, $12)
-            "#,
-        )
-        .bind(params.time)
-        .bind(params.tea_id)
-        .bind(params.values.value_number)
-        .bind(params.values.value_string)
-        .bind(params.values.value_bool)
-        .bind(params.values.value_geo)
-        .bind(params.values.value_object)
-        .bind(params.values.value_datetime)
-        .bind(params.values.value_uri)
-        .bind(params.instance_id)
-        .bind(params.observed_at)
-        .bind(params.values.metadata)
-        .execute(&mut *tx)
-        .await?;
-
-        sync_attribute_current_single(&mut tx, &params).await?;
-
-        tx.commit().await?;
-
-        Ok(())
-    }
 
     /// Execute a dynamically-built temporal query. Returns raw rows for the service to map.
     pub async fn execute_temporal_query(&self, sql: &str, binds: &[BindValue<'_>]) -> Result<Vec<sqlx::postgres::PgRow>, AndromedaError> {
@@ -895,58 +765,6 @@ impl TemporalRepository {
         tx.commit().await?;
         Ok(())
     }
-}
-
-/// Upsert the `attribute_current` projection from a single `insert_history` call.
-///
-/// The projection holds one row per TEA carrying the latest typed value. The
-/// upsert joins `temporal_entity_attributes` so the denormalized entity/attr/
-/// dataset columns stay consistent, and guards the update with a
-/// `modified_at <= EXCLUDED.modified_at` clause so an out-of-order write
-/// cannot overwrite a newer current value.
-async fn sync_attribute_current_single(tx: &mut Transaction<'_, Postgres>, params: &InsertHistoryParams<'_>) -> Result<(), AndromedaError> {
-    sqlx::query(
-        r#"
-        INSERT INTO attribute_current (
-            tea_id, entity_id, attribute_name_id, dataset_id, value_type,
-            value_number, value_string, value_bool, value_geo,
-            value_object, value_datetime, value_uri, modified_at
-        )
-        SELECT tea.id, tea.entity_id, tea.attribute_name_id, tea.dataset_id, tea.value_type,
-               $2, $3, $4,
-               ST_MakeValid(ST_SetSRID(ST_GeomFromGeoJSON($5), 4326)),
-               $6, $7, $8, $9
-        FROM temporal_entity_attributes tea
-        WHERE tea.id = $1
-        ON CONFLICT (tea_id) DO UPDATE SET
-            entity_id         = EXCLUDED.entity_id,
-            attribute_name_id = EXCLUDED.attribute_name_id,
-            dataset_id        = EXCLUDED.dataset_id,
-            value_type        = EXCLUDED.value_type,
-            value_number      = EXCLUDED.value_number,
-            value_string      = EXCLUDED.value_string,
-            value_bool        = EXCLUDED.value_bool,
-            value_geo         = EXCLUDED.value_geo,
-            value_object      = EXCLUDED.value_object,
-            value_datetime    = EXCLUDED.value_datetime,
-            value_uri         = EXCLUDED.value_uri,
-            modified_at       = EXCLUDED.modified_at
-        WHERE attribute_current.modified_at <= EXCLUDED.modified_at
-        "#,
-    )
-    .bind(params.tea_id)
-    .bind(params.values.value_number)
-    .bind(params.values.value_string)
-    .bind(params.values.value_bool)
-    .bind(params.values.value_geo)
-    .bind(params.values.value_object)
-    .bind(params.values.value_datetime)
-    .bind(params.values.value_uri)
-    .bind(params.time)
-    .execute(&mut **tx)
-    .await?;
-
-    Ok(())
 }
 
 /// Upsert the `attribute_current` projection from a batched `insert_history_batch` call.

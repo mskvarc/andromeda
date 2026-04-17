@@ -162,10 +162,10 @@ impl<'a> Renderer for EntityRenderer<'a> {
         match self.mode {
             RenderMode::Normalized => {}
             RenderMode::Concise => {
-                value = concise_value(&value);
+                value = concise_value(value);
             }
             RenderMode::Simplified => {
-                value = simplify_value(&value);
+                value = simplify_value(value);
             }
         }
 
@@ -330,17 +330,20 @@ impl<'a> NegotiatedProperty<'a> {
 /// attribute kind can be inferred from its value key. Sub-attributes and metadata
 /// are preserved. Entity-level keys (`id`, `type`, `scope`, `@context`) pass through
 /// unchanged.
-pub(crate) fn concise_value(val: &Value) -> Value {
-    let Some(obj) = val.as_object() else { return val.clone() };
+///
+/// Consumes `val` to avoid deep-cloning the entity tree; pass `value.clone()`
+/// at the call site if the caller still needs the original.
+pub(crate) fn concise_value(val: Value) -> Value {
+    let Value::Object(obj) = val else { return val };
 
-    let mut map = Map::new();
+    let mut map = Map::with_capacity(obj.len());
     for (key, value) in obj {
         match key.as_str() {
             "id" | "type" | "scope" | "@context" | "createdAt" | "modifiedAt" | "deletedAt" | "expiresAt" => {
-                map.insert(key.clone(), value.clone());
+                map.insert(key, value);
             }
             _ => {
-                map.insert(key.clone(), concise_attr_value(value));
+                map.insert(key, concise_attr_value(value));
             }
         }
     }
@@ -348,19 +351,19 @@ pub(crate) fn concise_value(val: &Value) -> Value {
 }
 
 /// Apply concise transformation to an attribute value (single instance or multi-attribute array).
-fn concise_attr_value(value: &Value) -> Value {
+fn concise_attr_value(value: Value) -> Value {
     match value {
         Value::Object(attr_obj) => concise_single_instance(attr_obj),
         Value::Array(items) => Value::Array(
             items
-                .iter()
+                .into_iter()
                 .map(|item| match item {
                     Value::Object(attr_obj) => concise_single_instance(attr_obj),
-                    other => other.clone(),
+                    other => other,
                 })
                 .collect(),
         ),
-        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => value.clone(),
+        other @ (Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_)) => other,
     }
 }
 
@@ -371,10 +374,10 @@ fn concise_attr_value(value: &Value) -> Value {
 ///   (Property -> value, Relationship -> `{"object": ...}`, etc.)
 /// - If sub-attributes exist: keep as object but remove the `"type"` key,
 ///   recursively concise sub-attributes
-fn concise_single_instance(attr_obj: &Map<String, Value>) -> Value {
-    let attr_type = attr_obj.get("type").and_then(Value::as_str);
+fn concise_single_instance(mut attr_obj: Map<String, Value>) -> Value {
+    let attr_type = attr_obj.get("type").and_then(Value::as_str).map(ToOwned::to_owned);
 
-    let value_key = match attr_type {
+    let value_key = match attr_type.as_deref() {
         Some("Property") | Some("GeoProperty") => "value",
         Some("Relationship") => "object",
         Some("LanguageProperty") => "languageMap",
@@ -383,16 +386,17 @@ fn concise_single_instance(attr_obj: &Map<String, Value>) -> Value {
         Some("ListProperty") => "valueList",
         Some("ListRelationship") => "objectList",
         // Unknown type -- pass through unchanged
-        Some(_) | None => return Value::Object(attr_obj.clone()),
+        Some(_) | None => return Value::Object(attr_obj),
     };
 
     // Check if the attribute has only `type` + value key (bare minimum for collapse)
     let is_bare = attr_obj.len() == 2 && attr_obj.contains_key("type") && attr_obj.contains_key(value_key);
 
     if is_bare {
-        attr_obj.get(value_key).cloned().unwrap_or_else(|| Value::Object(attr_obj.clone()))
+        attr_obj.remove(value_key).unwrap_or_else(|| Value::Object(attr_obj))
     } else {
-        // Has metadata and/or sub-attributes: remove "type", recursively concise sub-attrs
+        // Has metadata and/or sub-attributes: remove "type", recursively concise sub-attrs.
+        attr_obj.remove("type");
         let metadata_keys: &[&str] = &[
             value_key,
             "observedAt",
@@ -404,16 +408,13 @@ fn concise_single_instance(attr_obj: &Map<String, Value>) -> Value {
             "expiresAt",
             "instanceId",
         ];
-        let mut result = Map::new();
+        let mut result = Map::with_capacity(attr_obj.len());
         for (k, v) in attr_obj {
-            if k == "type" {
-                continue;
-            }
             if metadata_keys.contains(&k.as_str()) {
-                result.insert(k.clone(), v.clone());
+                result.insert(k, v);
             } else {
                 // Sub-attribute: recursively concise
-                result.insert(k.clone(), concise_attr_value(v));
+                result.insert(k, concise_attr_value(v));
             }
         }
         Value::Object(result)
@@ -499,53 +500,57 @@ fn inline_join_attribute_instance(
 /// Crate-visible so that [`crate::renderer::snapshot::SnapshotRenderer`] can
 /// reuse it against pre-compacted `Value`s; [`EntityRenderer`] calls it
 /// internally for the `&Entity` path.
-pub(crate) fn simplify_value(val: &Value) -> Value {
-    let Some(obj) = val.as_object() else { return val.clone() };
+///
+/// Consumes `val` to avoid deep-cloning the entity tree; pass `value.clone()`
+/// at the call site if the caller still needs the original.
+pub(crate) fn simplify_value(val: Value) -> Value {
+    let Value::Object(obj) = val else { return val };
 
-    let mut map = Map::new();
+    let mut map = Map::with_capacity(obj.len());
     for (key, value) in obj {
         match key.as_str() {
             "id" | "type" | "scope" | "@context" => {
-                map.insert(key.clone(), value.clone());
+                map.insert(key, value);
             }
             _ => {
-                map.insert(key.clone(), simplify_attr_value(value));
+                map.insert(key, simplify_attr_value(value));
             }
         }
     }
     Value::Object(map)
 }
 
-fn simplify_attr_value(value: &Value) -> Value {
+fn simplify_attr_value(value: Value) -> Value {
     match value {
-        Value::Object(attr_obj) => match attr_obj.get("type").and_then(Value::as_str) {
-            Some("Relationship") => {
-                if let Some(entity) = attr_obj.get("entity") {
-                    simplify_value(entity)
-                } else {
-                    attr_obj.get("object").cloned().unwrap_or_else(|| Value::Object(attr_obj.clone()))
+        Value::Object(mut attr_obj) => {
+            let attr_type = attr_obj.get("type").and_then(Value::as_str).map(ToOwned::to_owned);
+            match attr_type.as_deref() {
+                Some("Relationship") => {
+                    if let Some(entity) = attr_obj.remove("entity") {
+                        simplify_value(entity)
+                    } else {
+                        attr_obj.remove("object").unwrap_or_else(|| Value::Object(attr_obj))
+                    }
                 }
-            }
-            Some("Property") | Some("GeoProperty") | Some("VocabProperty") => attr_obj.get("value").cloned().unwrap_or_else(|| Value::Object(attr_obj.clone())),
-            Some("LanguageProperty") => attr_obj.get("languageMap").cloned().unwrap_or_else(|| Value::Object(attr_obj.clone())),
-            Some("JsonProperty") => attr_obj.get("json").cloned().unwrap_or_else(|| Value::Object(attr_obj.clone())),
-            Some("ListProperty") => attr_obj.get("valueList").cloned().unwrap_or_else(|| Value::Object(attr_obj.clone())),
-            Some("ListRelationship") => {
-                if let Some(entity_list) = attr_obj.get("entityList") {
-                    Value::Array(
-                        entity_list
-                            .as_array()
-                            .map(|items| items.iter().map(simplify_value).collect())
-                            .unwrap_or_default(),
-                    )
-                } else {
-                    attr_obj.get("objectList").cloned().unwrap_or_else(|| Value::Object(attr_obj.clone()))
+                Some("Property") | Some("GeoProperty") | Some("VocabProperty") => attr_obj.remove("value").unwrap_or_else(|| Value::Object(attr_obj)),
+                Some("LanguageProperty") => attr_obj.remove("languageMap").unwrap_or_else(|| Value::Object(attr_obj)),
+                Some("JsonProperty") => attr_obj.remove("json").unwrap_or_else(|| Value::Object(attr_obj)),
+                Some("ListProperty") => attr_obj.remove("valueList").unwrap_or_else(|| Value::Object(attr_obj)),
+                Some("ListRelationship") => {
+                    if let Some(entity_list) = attr_obj.remove("entityList") {
+                        match entity_list {
+                            Value::Array(items) => Value::Array(items.into_iter().map(simplify_value).collect()),
+                            other => other,
+                        }
+                    } else {
+                        attr_obj.remove("objectList").unwrap_or_else(|| Value::Object(attr_obj))
+                    }
                 }
+                Some(_) | None => Value::Object(attr_obj),
             }
-            Some(_) | None => Value::Object(attr_obj.clone()),
-        },
-        Value::Array(items) => Value::Array(items.iter().map(simplify_attr_value).collect()),
-        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => value.clone(),
+        }
+        Value::Array(items) => Value::Array(items.into_iter().map(simplify_attr_value).collect()),
+        other @ (Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_)) => other,
     }
 }
 
@@ -712,7 +717,7 @@ mod tests {
     #[test]
     fn concise_property_without_sub_attrs_collapses_to_value() {
         let input = json!({"id": "urn:x", "type": "T", "temp": {"type": "Property", "value": 25}});
-        let result = concise_value(&input);
+        let result = concise_value(input);
         pretty_assertions::assert_eq!(result["temp"], json!(25));
         pretty_assertions::assert_eq!(result["id"], "urn:x");
         pretty_assertions::assert_eq!(result["type"], "T");
@@ -729,7 +734,7 @@ mod tests {
                 "reliability": {"type": "Property", "value": 0.7}
             }
         });
-        let result = concise_value(&input);
+        let result = concise_value(input);
         let temp = result.get("temp").expect("temp");
         assert!(temp.get("type").is_none(), "type key should be removed");
         pretty_assertions::assert_eq!(temp["value"], 121);
@@ -741,7 +746,7 @@ mod tests {
     #[test]
     fn concise_relationship_without_sub_attrs() {
         let input = json!({"id": "urn:x", "type": "T", "ref": {"type": "Relationship", "object": "urn:y"}});
-        let result = concise_value(&input);
+        let result = concise_value(input);
         pretty_assertions::assert_eq!(result["ref"], json!("urn:y"));
     }
 
@@ -751,7 +756,7 @@ mod tests {
             "id": "urn:x", "type": "T",
             "ref": {"type": "Relationship", "object": "urn:y", "confidence": {"type": "Property", "value": 0.9}}
         });
-        let result = concise_value(&input);
+        let result = concise_value(input);
         let r = result.get("ref").expect("ref");
         assert!(r.get("type").is_none());
         pretty_assertions::assert_eq!(r["object"], "urn:y");
@@ -764,7 +769,7 @@ mod tests {
             "id": "urn:x", "type": "T",
             "location": {"type": "GeoProperty", "value": {"type": "Point", "coordinates": [1, 2]}}
         });
-        let result = concise_value(&input);
+        let result = concise_value(input);
         pretty_assertions::assert_eq!(result["location"], json!({"type": "Point", "coordinates": [1, 2]}));
     }
 
@@ -774,7 +779,7 @@ mod tests {
             "id": "urn:x", "type": "T",
             "name": {"type": "LanguageProperty", "languageMap": {"en": "Tower"}}
         });
-        let result = concise_value(&input);
+        let result = concise_value(input);
         pretty_assertions::assert_eq!(result["name"], json!({"en": "Tower"}));
     }
 
@@ -784,7 +789,7 @@ mod tests {
             "id": "urn:x", "type": "T",
             "config": {"type": "JsonProperty", "json": {"key": "val"}}
         });
-        let result = concise_value(&input);
+        let result = concise_value(input);
         pretty_assertions::assert_eq!(result["config"], json!({"key": "val"}));
     }
 
@@ -794,7 +799,7 @@ mod tests {
             "id": "urn:x", "type": "T",
             "category": {"type": "VocabProperty", "vocab": "commercial"}
         });
-        let result = concise_value(&input);
+        let result = concise_value(input);
         pretty_assertions::assert_eq!(result["category"], json!("commercial"));
     }
 
@@ -804,7 +809,7 @@ mod tests {
             "id": "urn:x", "type": "T",
             "tags": {"type": "ListProperty", "valueList": ["a", "b"]}
         });
-        let result = concise_value(&input);
+        let result = concise_value(input);
         pretty_assertions::assert_eq!(result["tags"], json!(["a", "b"]));
     }
 
@@ -814,7 +819,7 @@ mod tests {
             "id": "urn:x", "type": "T",
             "refs": {"type": "ListRelationship", "objectList": ["urn:a", "urn:b"]}
         });
-        let result = concise_value(&input);
+        let result = concise_value(input);
         pretty_assertions::assert_eq!(result["refs"], json!(["urn:a", "urn:b"]));
     }
 
@@ -827,7 +832,7 @@ mod tests {
             "@context": "https://example.org/ctx",
             "temp": {"type": "Property", "value": 10}
         });
-        let result = concise_value(&input);
+        let result = concise_value(input);
         pretty_assertions::assert_eq!(result["id"], "urn:x");
         pretty_assertions::assert_eq!(result["type"], "T");
         pretty_assertions::assert_eq!(result["scope"], json!(["/A"]));
@@ -843,7 +848,7 @@ mod tests {
                 {"type": "Property", "value": 30, "datasetId": "urn:ds:2"}
             ]
         });
-        let result = concise_value(&input);
+        let result = concise_value(input);
         let arr = result["temp"].as_array().expect("array");
         pretty_assertions::assert_eq!(arr.len(), 2);
         // Each instance should be concised individually -- with datasetId they have metadata

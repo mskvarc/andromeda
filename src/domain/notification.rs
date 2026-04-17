@@ -250,12 +250,69 @@ pub struct CompiledSubscription {
     pub jsonld_context: Option<String>,
     pub expires_at: Option<DateTime<Utc>>,
     pub compiled_q: Option<Expr>,
-    pub geo_q: Option<Value>,
-    pub scope_q: Option<String>,
+    /// Pre-parsed geometry + georel from the `geoQ` parameter, if set.
+    /// `None` when the subscription does not carry a `geoQ` filter or the
+    /// filter could not be parsed at compile time (in which case the
+    /// subscription never matches an entity through the geo path).
+    pub compiled_geo_q: Option<CompiledGeoQuery>,
+    /// Pre-parsed `scopeQ` pattern tree, if set.
+    pub compiled_scope_q: Option<CompiledScopePattern>,
     pub dataset_id: Option<Vec<String>>,
     pub notification_join: Option<String>,
     pub notification_join_level: u32,
     pub compiled_csf: Option<Expr>,
     /// When true, this subscription only matches locally-stored entities (clause 5.5.13).
     pub local_only: bool,
+}
+
+/// Pre-compiled `geoQ` query (ETSI GS CIM 009 clause 4.10).
+///
+/// Stores the reference geometry parsed into `geo::Geometry`, the georel
+/// operator pre-parsed with its modifier distances, and the expanded IRI of
+/// the geoproperty to evaluate against. Built once in `compile_subscription`
+/// so event matching does not re-parse GeoJSON on every event.
+#[derive(Debug, Clone)]
+pub struct CompiledGeoQuery {
+    /// Reference geometry the entity geometry is compared against.
+    pub ref_geometry: geo::Geometry,
+    /// Parsed georel operator + distance modifiers.
+    pub georel: CompiledGeoRel,
+    /// Expanded IRI of the entity geoproperty to read.
+    pub geoproperty_iri: String,
+}
+
+/// Parsed `georel` value including `near` distance modifiers.
+#[derive(Debug, Clone, PartialEq)]
+pub enum CompiledGeoRel {
+    Within,
+    Contains,
+    Intersects,
+    Disjoint,
+    Equals,
+    Overlaps,
+    Near { max_distance: Option<f64>, min_distance: Option<f64> },
+}
+
+/// Pre-parsed `scopeQ` pattern (ETSI GS CIM 009 clause 4.18).
+///
+/// The raw scopeQ string uses `,` for OR and `;` for AND between terms; each
+/// term may be an exact scope path, a hierarchical wildcard (`/#`), or a
+/// single-level wildcard (`/+`). Splitting and regex pre-compilation happen
+/// once at subscription load time.
+#[derive(Debug, Clone)]
+pub struct CompiledScopePattern {
+    /// Disjunction of conjunctions: the outer `Vec` is OR, the inner is AND.
+    pub or_terms: Vec<Vec<CompiledScopeTerm>>,
+}
+
+/// A single term in a compiled scope pattern.
+#[derive(Debug, Clone)]
+pub enum CompiledScopeTerm {
+    /// Exact match against a scope path.
+    Exact(String),
+    /// Hierarchical wildcard `<prefix>/#` — matches any path whose prefix
+    /// equals the stored prefix followed by a single additional segment.
+    HierarchicalWildcard { prefix: String },
+    /// `/+` wildcard expressed as a compiled regex.
+    Regex(Regex),
 }

@@ -261,8 +261,8 @@ impl AndromedaError {
     }
 
     /// Attaches a request URI for RFC 7807 `instance` field.
-    pub fn with_instance(mut self, instance: Uri) -> AndromedaError {
-        self.instance = Some(instance);
+    pub fn with_instance(mut self, instance: &Uri) -> AndromedaError {
+        self.instance = Some(instance.clone());
         self
     }
 
@@ -416,14 +416,17 @@ impl AndromedaError {
 /// Extension methods for attaching HTTP request URI context to fallible results.
 pub trait ResultInstanceExt<T, E> {
     /// Converts the error into [`AndromedaError`] and attaches `instance`.
-    fn with_instance(self, instance: Uri) -> Result<T, AndromedaError>;
+    ///
+    /// Takes the URI by reference so handlers avoid eagerly cloning on every
+    /// request; the clone only happens when the error branch runs.
+    fn with_instance(self, instance: &Uri) -> Result<T, AndromedaError>;
 }
 
 impl<T, E> ResultInstanceExt<T, E> for Result<T, E>
 where
     E: Into<AndromedaError>,
 {
-    fn with_instance(self, instance: Uri) -> Result<T, AndromedaError> {
+    fn with_instance(self, instance: &Uri) -> Result<T, AndromedaError> {
         self.map_err(|error| error.into().with_instance(instance))
     }
 }
@@ -556,9 +559,7 @@ impl From<QueryError> for AndromedaError {
             | QueryError::TypeExprEmptyName(_)
             | QueryError::GeoIncomplete
             | QueryError::ParamOptionsInvalid(_)
-            | QueryError::ParamFormatInvalid(_)
-            | QueryError::ParamTimerelTimeatRequired
-            | QueryError::ParamTimerelTimeatPair => ErrorKind::MalformedRequest(err.to_string()),
+            | QueryError::ParamFormatInvalid(_) => ErrorKind::MalformedRequest(err.to_string()),
             QueryError::QInvalidNumber(_)
             | QueryError::IdPatternRegex(_)
             | QueryError::GeoUnknownRel(_)
@@ -572,6 +573,8 @@ impl From<QueryError> for AndromedaError {
             | QueryError::ParamOrderFromInvalid { .. }
             | QueryError::ParamDropKeepExclusive
             | QueryError::ParamTimerelInvalid(_)
+            | QueryError::ParamTimerelTimeatRequired
+            | QueryError::ParamTimerelTimeatPair
             | QueryError::ParamAggrMethodInvalid(_)
             | QueryError::ParamEndTimeAtRequired
             | QueryError::ParamOther(_) => ErrorKind::QueryValidation(err.to_string()),
@@ -812,7 +815,7 @@ mod tests {
     #[test]
     fn with_instance_sets_uri() {
         let uri = Uri::from_static("/test");
-        let err = AndromedaError::entity_not_found("x").with_instance(uri);
+        let err = AndromedaError::entity_not_found("x").with_instance(&uri);
         pretty_assertions::assert_eq!(err.instance().map(|u| u.to_string()), Some("/test".to_string()));
     }
 

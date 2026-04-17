@@ -41,7 +41,7 @@ pub async fn create(
     let service = &state.csr;
     let context = context.merge(body_context);
 
-    let id = service.create(payload, &context).await.with_instance(uri.clone())?;
+    let id = service.create(payload, &context).await.with_instance(&uri)?;
 
     Ok((StatusCode::CREATED, [("Location", format!("/ngsi-ld/v1/csourceRegistrations/{}", id))]).into_response())
 }
@@ -61,7 +61,7 @@ pub async fn get(
     let context: ContextSpec = context.into_inner();
     let options = params.parse_options();
 
-    let csr = service.get(&registration_id, &context).await.with_instance(uri.clone())?;
+    let csr = service.get(&registration_id, &context).await.with_instance(&uri)?;
 
     let csr = RegistrationRenderer::new(csr).with_sys_attrs(options.sys_attrs).render()?;
 
@@ -86,7 +86,7 @@ pub async fn query(
     let limit = params.effective_limit() as i64;
     let offset = params.effective_offset() as i64;
 
-    let (csrs, total) = service.query(&params, &context).await.with_instance(uri.clone())?;
+    let (csrs, total) = service.query(&params, &context).await.with_instance(&uri)?;
 
     let csrs = csrs
         .into_iter()
@@ -126,7 +126,7 @@ pub async fn update(
 
     let service = &state.csr;
     let context = context.merge(body_context);
-    service.update(&registration_id, payload, &context).await.with_instance(uri.clone())?;
+    service.update(&registration_id, payload, &context).await.with_instance(&uri)?;
 
     Ok(StatusCode::NO_CONTENT.into_response())
 }
@@ -136,7 +136,7 @@ pub async fn delete(TenantState(state): TenantState, OriginalUri(uri): OriginalU
     parse_csr_id(&registration_id, &uri)?;
 
     let service = &state.csr;
-    service.delete(&registration_id).await.with_instance(uri.clone())?;
+    service.delete(&registration_id).await.with_instance(&uri)?;
 
     Ok(StatusCode::NO_CONTENT.into_response())
 }

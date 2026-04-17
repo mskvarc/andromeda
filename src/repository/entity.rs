@@ -312,33 +312,42 @@ impl EntityRepository {
     }
 
     /// Execute a compiled entity query and return matching payloads with an optional total count.
+    ///
+    /// When the compiled query requests a total count, the main SQL statement
+    /// carries a `COUNT(*) OVER ()` window column that is read from any
+    /// returned row, saving a round-trip. The dedicated `count_sql` only runs
+    /// when the result set is empty, since the window function does not
+    /// materialize on zero rows.
     pub async fn query_compiled(&self, compiled: &CompiledEntityQuery) -> Result<QueryResult, AndromedaError> {
         let built = sql::entity::build_query(compiled)?;
 
         tracing::info!("Built SQL: {} with binds: {:?}", built.sql, built.bind_values);
 
-        let rows = self.execute_dynamic_query(&built.sql, &built.bind_values).await?;
+        let (rows, window_count) = self.execute_dynamic_query(&built.sql, &built.bind_values, built.count_sql.is_some()).await?;
 
-        let total_count = if let Some(count_sql) = &built.count_sql {
-            let count = self.execute_count_query(count_sql, &built.bind_values).await?;
-            Some(count)
-        } else {
-            None
+        let total_count = match (&built.count_sql, window_count, rows.is_empty()) {
+            (Some(_), Some(count), _) => Some(count),
+            (Some(count_sql), None, true) => Some(self.execute_count_query(count_sql, &built.bind_values).await?),
+            (Some(_), None, false) | (None, _, _) => None,
         };
 
         Ok(QueryResult { rows, total_count })
     }
 
-    async fn execute_dynamic_query(&self, sql: &str, binds: &[BindValue<'_>]) -> Result<Vec<Value>, AndromedaError> {
+    async fn execute_dynamic_query(&self, sql: &str, binds: &[BindValue<'_>], read_total_count: bool) -> Result<(Vec<Value>, Option<i64>), AndromedaError> {
         let query = crate::bind_values!(sqlx::query(sql), binds);
 
         let rows = query.fetch_all(&self.pool).await?;
+        let mut total_count: Option<i64> = None;
         let mut results = Vec::with_capacity(rows.len());
         for row in rows {
+            if read_total_count && total_count.is_none() {
+                total_count = row.try_get::<i64, _>(sql::entity::TOTAL_COUNT_COLUMN).ok();
+            }
             let data: Value = row.try_get("payload")?;
             results.push(data);
         }
-        Ok(results)
+        Ok((results, total_count))
     }
 
     async fn execute_count_query(&self, sql: &str, binds: &[BindValue<'_>]) -> Result<i64, AndromedaError> {
@@ -738,7 +747,7 @@ impl EntityRepository {
 /// Parallel column vectors extracted from [`PreparedEntityRow`] slices for
 /// sqlx `UNNEST` binding.
 #[derive(Debug)]
-pub(crate) struct PreparedEntityColumns {
+pub struct PreparedEntityColumns {
     pub ids: Vec<String>,
     pub types_json: Vec<Value>,
     pub scope_paths_json: Vec<Value>,

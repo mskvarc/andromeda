@@ -1,12 +1,16 @@
 use crate::{
     core::error::AndromedaError,
-    domain::registration::{ContextSourceRegistration, CsrOperation, ForwardingMode},
+    domain::{
+        entity::Entity,
+        registration::{ContextSourceRegistration, CsrOperation, ForwardingMode},
+    },
     http::header::{link::Link, ngsild_tenant::NgsiLdTenant, ngsild_warning::NgsiLdWarning, via::Via},
     jsonld::{ContextSpec, JsonLdEngine},
     query::q::{ast::Expr, eval::evaluate as eval_q_expr},
     repository::context_source_registration::ContextSourceRegistrationRepository,
     tenancy::types::TenantName,
 };
+use futures::{StreamExt, stream};
 use headers::Header;
 use serde_json::Value;
 use sqlx::postgres::PgPool;
@@ -19,6 +23,8 @@ pub struct ContextSourceForwardingService {
     engine: JsonLdEngine,
     /// Context Source Identity (hostAlias) for Via header (§6.3.18).
     source_identity: String,
+    /// Maximum number of parallel CSR fan-out HTTP requests per operation.
+    csr_concurrency: usize,
 }
 
 /// The NGSI-LD operation being performed, used to filter CSRs by their `operations` field.
@@ -132,11 +138,29 @@ enum ForwardGetOutcome {
     NetworkError(String),
 }
 
-/// Result from a single context source forwarding attempt.
+/// Result from a single context source forwarding attempt for entity paths.
+///
+/// The raw HTTP payload is parsed into strongly-typed [`Entity`] values at the
+/// CSR boundary so merge logic can operate on typed data without a
+/// `Value` → `Entity` round-trip.
 pub struct ForwardedEntities {
     /// The forwarding mode of the matched context source registration.
     pub mode: ForwardingMode,
-    /// Entities returned by the context source.
+    /// Entities returned by the context source, parsed to the typed domain model.
+    pub entities: Vec<Entity>,
+    /// Warnings generated during the forwarding attempt.
+    pub warnings: Vec<NgsiLdWarning>,
+}
+
+/// Result from a single context source forwarding attempt for temporal paths.
+///
+/// Temporal entities carry arrays of attribute-instance observations whose
+/// shape is not a direct match for the domain [`Entity`] type, so this variant
+/// keeps the payload as `serde_json::Value`.
+pub struct ForwardedTemporalEntities {
+    /// The forwarding mode of the matched context source registration.
+    pub mode: ForwardingMode,
+    /// Temporal entity payloads returned by the context source.
     pub entities: Vec<Value>,
     /// Warnings generated during the forwarding attempt.
     pub warnings: Vec<NgsiLdWarning>,
@@ -266,7 +290,7 @@ pub struct UnforwardableExclusiveCsr;
 
 impl ContextSourceForwardingService {
     /// Create a new context source forwarding service with the given source identity for Via headers.
-    pub fn new(pool: &PgPool, engine: JsonLdEngine, source_identity: String) -> Result<ContextSourceForwardingService, AndromedaError> {
+    pub fn new(pool: &PgPool, engine: JsonLdEngine, source_identity: String, csr_concurrency: usize) -> Result<ContextSourceForwardingService, AndromedaError> {
         let http_client = reqwest::ClientBuilder::new()
             .http1_title_case_headers()
             .no_gzip()
@@ -283,6 +307,7 @@ impl ContextSourceForwardingService {
             csr_repo,
             engine,
             source_identity,
+            csr_concurrency: csr_concurrency.max(1),
         })
     }
 
@@ -352,76 +377,77 @@ impl ContextSourceForwardingService {
         // Context sources return all attributes; attribute filtering is done locally after merge
         let forwarding_qs = build_forwarding_query_string(entity_type_compact, entity_ids);
 
-        let mut results = Vec::new();
-        for csr in matching_csrs {
-            let url = build_query_url(&csr.endpoint, &forwarding_qs);
-            debug!("Forwarding entity query to context source {}: {}", csr.id, url);
+        let forwarding_qs_ref = &forwarding_qs;
+        let results: Vec<ForwardedEntities> = stream::iter(matching_csrs)
+            .map(|csr| async move {
+                let url = build_query_url(&csr.endpoint, forwarding_qs_ref);
+                debug!("Forwarding entity query to context source {}: {}", csr.id, url);
 
-            let mode = csr.mode.unwrap_or_default();
-            match self.forward_get(&url, context_url, csr.tenant.as_ref(), incoming_via).await {
-                ForwardGetOutcome::Success(Value::Array(arr), cs_warnings) => {
-                    results.push(ForwardedEntities {
-                        mode,
-                        entities: arr,
-                        warnings: cs_warnings,
-                    });
+                let mode = csr.mode.unwrap_or_default();
+                match self.forward_get(&url, context_url, csr.tenant.as_ref(), incoming_via).await {
+                    ForwardGetOutcome::Success(Value::Array(arr), cs_warnings) => {
+                        let (entities, parse_warnings) = parse_forwarded_entities(&csr.id, arr);
+                        let mut warnings = cs_warnings;
+                        warnings.extend(parse_warnings);
+                        Some(ForwardedEntities { mode, entities, warnings })
+                    }
+                    ForwardGetOutcome::Success(obj @ Value::Object(_), cs_warnings) => {
+                        let (entities, parse_warnings) = parse_forwarded_entities(&csr.id, vec![obj]);
+                        let mut warnings = cs_warnings;
+                        warnings.extend(parse_warnings);
+                        Some(ForwardedEntities { mode, entities, warnings })
+                    }
+                    ForwardGetOutcome::Success(_other, _) => {
+                        warn!("Context source {} returned unexpected response type", csr.id);
+                        Some(ForwardedEntities {
+                            mode,
+                            entities: Vec::new(),
+                            warnings: vec![NgsiLdWarning::RevalidationFailed(format!(
+                                "Context source {} returned unexpected response type",
+                                csr.id
+                            ))],
+                        })
+                    }
+                    ForwardGetOutcome::NotFound => None,
+                    ForwardGetOutcome::InvalidPayload(msg) => {
+                        warn!("Context source {} returned invalid payload: {}", csr.id, msg);
+                        Some(ForwardedEntities {
+                            mode,
+                            entities: Vec::new(),
+                            warnings: vec![NgsiLdWarning::RevalidationFailed(format!(
+                                "Context source {} returned invalid payload: {}",
+                                csr.id, msg
+                            ))],
+                        })
+                    }
+                    ForwardGetOutcome::ErrorStatus(status) => {
+                        warn!("Context source {} returned HTTP {}", csr.id, status);
+                        Some(ForwardedEntities {
+                            mode,
+                            entities: Vec::new(),
+                            warnings: vec![NgsiLdWarning::MiscellaneousPersistentWarning(format!(
+                                "Context source {} returned HTTP {}",
+                                csr.id, status
+                            ))],
+                        })
+                    }
+                    ForwardGetOutcome::NetworkError(msg) => {
+                        warn!("Failed to forward query to context source {}: {}", csr.id, msg);
+                        Some(ForwardedEntities {
+                            mode,
+                            entities: Vec::new(),
+                            warnings: vec![NgsiLdWarning::MiscellaneousWarning(format!(
+                                "Context source {} did not respond: {}",
+                                csr.id, msg
+                            ))],
+                        })
+                    }
                 }
-                ForwardGetOutcome::Success(obj @ Value::Object(_), cs_warnings) => {
-                    results.push(ForwardedEntities {
-                        mode,
-                        entities: vec![obj],
-                        warnings: cs_warnings,
-                    });
-                }
-                ForwardGetOutcome::Success(_other, _) => {
-                    warn!("Context source {} returned unexpected response type", csr.id);
-                    results.push(ForwardedEntities {
-                        mode,
-                        entities: Vec::new(),
-                        warnings: vec![NgsiLdWarning::RevalidationFailed(format!(
-                            "Context source {} returned unexpected response type",
-                            csr.id
-                        ))],
-                    });
-                }
-                ForwardGetOutcome::NotFound => {
-                    // 404 is not abnormal per spec clause 6.3.17
-                }
-                ForwardGetOutcome::InvalidPayload(msg) => {
-                    warn!("Context source {} returned invalid payload: {}", csr.id, msg);
-                    results.push(ForwardedEntities {
-                        mode,
-                        entities: Vec::new(),
-                        warnings: vec![NgsiLdWarning::RevalidationFailed(format!(
-                            "Context source {} returned invalid payload: {}",
-                            csr.id, msg
-                        ))],
-                    });
-                }
-                ForwardGetOutcome::ErrorStatus(status) => {
-                    warn!("Context source {} returned HTTP {}", csr.id, status);
-                    results.push(ForwardedEntities {
-                        mode,
-                        entities: Vec::new(),
-                        warnings: vec![NgsiLdWarning::MiscellaneousPersistentWarning(format!(
-                            "Context source {} returned HTTP {}",
-                            csr.id, status
-                        ))],
-                    });
-                }
-                ForwardGetOutcome::NetworkError(msg) => {
-                    warn!("Failed to forward query to context source {}: {}", csr.id, msg);
-                    results.push(ForwardedEntities {
-                        mode,
-                        entities: Vec::new(),
-                        warnings: vec![NgsiLdWarning::MiscellaneousWarning(format!(
-                            "Context source {} did not respond: {}",
-                            csr.id, msg
-                        ))],
-                    });
-                }
-            }
-        }
+            })
+            .buffer_unordered(self.csr_concurrency)
+            .filter_map(|entry| async move { entry })
+            .collect()
+            .await;
 
         Ok(results)
     }
@@ -463,70 +489,70 @@ impl ContextSourceForwardingService {
             return Ok(Vec::new());
         }
 
-        let mut results = Vec::new();
-        for csr in matching_csrs {
-            let url = build_retrieve_url(&csr.endpoint, entity_id, query_string);
-            debug!("Forwarding entity retrieve to context source {}: {}", csr.id, url);
+        let results: Vec<ForwardedEntities> = stream::iter(matching_csrs)
+            .map(|csr| async move {
+                let url = build_retrieve_url(&csr.endpoint, entity_id, query_string);
+                debug!("Forwarding entity retrieve to context source {}: {}", csr.id, url);
 
-            let mode = csr.mode.unwrap_or_default();
-            match self.forward_get(&url, context_url, csr.tenant.as_ref(), incoming_via).await {
-                ForwardGetOutcome::Success(obj @ Value::Object(_), cs_warnings) => {
-                    results.push(ForwardedEntities {
-                        mode,
-                        entities: vec![obj],
-                        warnings: cs_warnings,
-                    });
+                let mode = csr.mode.unwrap_or_default();
+                match self.forward_get(&url, context_url, csr.tenant.as_ref(), incoming_via).await {
+                    ForwardGetOutcome::Success(obj @ Value::Object(_), cs_warnings) => {
+                        let (entities, parse_warnings) = parse_forwarded_entities(&csr.id, vec![obj]);
+                        let mut warnings = cs_warnings;
+                        warnings.extend(parse_warnings);
+                        Some(ForwardedEntities { mode, entities, warnings })
+                    }
+                    ForwardGetOutcome::Success(_other, _) => {
+                        warn!("Context source {} returned non-object for entity retrieve", csr.id);
+                        Some(ForwardedEntities {
+                            mode,
+                            entities: Vec::new(),
+                            warnings: vec![NgsiLdWarning::RevalidationFailed(format!(
+                                "Context source {} returned non-object for entity retrieve",
+                                csr.id
+                            ))],
+                        })
+                    }
+                    ForwardGetOutcome::NotFound => None,
+                    ForwardGetOutcome::InvalidPayload(msg) => {
+                        warn!("Context source {} returned invalid payload: {}", csr.id, msg);
+                        Some(ForwardedEntities {
+                            mode,
+                            entities: Vec::new(),
+                            warnings: vec![NgsiLdWarning::RevalidationFailed(format!(
+                                "Context source {} returned invalid payload: {}",
+                                csr.id, msg
+                            ))],
+                        })
+                    }
+                    ForwardGetOutcome::ErrorStatus(status) => {
+                        warn!("Context source {} returned HTTP {}", csr.id, status);
+                        Some(ForwardedEntities {
+                            mode,
+                            entities: Vec::new(),
+                            warnings: vec![NgsiLdWarning::MiscellaneousPersistentWarning(format!(
+                                "Context source {} returned HTTP {}",
+                                csr.id, status
+                            ))],
+                        })
+                    }
+                    ForwardGetOutcome::NetworkError(msg) => {
+                        warn!("Failed to forward retrieve to context source {}: {}", csr.id, msg);
+                        Some(ForwardedEntities {
+                            mode,
+                            entities: Vec::new(),
+                            warnings: vec![NgsiLdWarning::MiscellaneousWarning(format!(
+                                "Context source {} did not respond: {}",
+                                csr.id, msg
+                            ))],
+                        })
+                    }
                 }
-                ForwardGetOutcome::Success(_other, _) => {
-                    // Single entity retrieval expects an object; anything else is invalid
-                    warn!("Context source {} returned non-object for entity retrieve", csr.id);
-                    results.push(ForwardedEntities {
-                        mode,
-                        entities: Vec::new(),
-                        warnings: vec![NgsiLdWarning::RevalidationFailed(format!(
-                            "Context source {} returned non-object for entity retrieve",
-                            csr.id
-                        ))],
-                    });
-                }
-                ForwardGetOutcome::NotFound => {
-                    // 404 is not abnormal per spec clause 6.3.17
-                }
-                ForwardGetOutcome::InvalidPayload(msg) => {
-                    warn!("Context source {} returned invalid payload: {}", csr.id, msg);
-                    results.push(ForwardedEntities {
-                        mode,
-                        entities: Vec::new(),
-                        warnings: vec![NgsiLdWarning::RevalidationFailed(format!(
-                            "Context source {} returned invalid payload: {}",
-                            csr.id, msg
-                        ))],
-                    });
-                }
-                ForwardGetOutcome::ErrorStatus(status) => {
-                    warn!("Context source {} returned HTTP {}", csr.id, status);
-                    results.push(ForwardedEntities {
-                        mode,
-                        entities: Vec::new(),
-                        warnings: vec![NgsiLdWarning::MiscellaneousPersistentWarning(format!(
-                            "Context source {} returned HTTP {}",
-                            csr.id, status
-                        ))],
-                    });
-                }
-                ForwardGetOutcome::NetworkError(msg) => {
-                    warn!("Failed to forward retrieve to context source {}: {}", csr.id, msg);
-                    results.push(ForwardedEntities {
-                        mode,
-                        entities: Vec::new(),
-                        warnings: vec![NgsiLdWarning::MiscellaneousWarning(format!(
-                            "Context source {} did not respond: {}",
-                            csr.id, msg
-                        ))],
-                    });
-                }
-            }
-        }
+            })
+            .buffer_unordered(self.csr_concurrency)
+            .filter_map(|entry| async move { entry })
+            .collect()
+            .await;
 
         Ok(results)
     }
@@ -585,54 +611,59 @@ impl ContextSourceForwardingService {
             return Ok((Vec::new(), unforwardable));
         }
 
-        let mut results = Vec::new();
-        for csr in matching_csrs {
-            let url = if request.method == reqwest::Method::POST && request.path_suffix.is_none() {
-                // Entity create: POST /entities (no entity ID in path)
-                build_create_url(&csr.endpoint)
-            } else {
-                let id = request.entity_id.unwrap_or("");
-                let encoded_id = percent_encoding::utf8_percent_encode(id, PATH_ENCODE_SET).to_string();
-                let base = csr.endpoint.trim_end_matches('/');
-                let suffix = request.path_suffix.unwrap_or("");
-                match request.query_string {
-                    Some(qs) if !qs.is_empty() => format!("{base}/ngsi-ld/v1/entities/{encoded_id}{suffix}?{qs}"),
-                    _ => format!("{base}/ngsi-ld/v1/entities/{encoded_id}{suffix}"),
-                }
-            };
-            debug!("Forwarding {} to context source {}: {}", request.method, csr.id, url);
+        let request_ref = &request;
+        let results: Vec<ForwardedWriteResult> = stream::iter(matching_csrs)
+            .map(|csr| async move {
+                let url = if request_ref.method == reqwest::Method::POST && request_ref.path_suffix.is_none() {
+                    build_create_url(&csr.endpoint)
+                } else {
+                    let id = request_ref.entity_id.unwrap_or("");
+                    let encoded_id = percent_encoding::utf8_percent_encode(id, PATH_ENCODE_SET).to_string();
+                    let base = csr.endpoint.trim_end_matches('/');
+                    let suffix = request_ref.path_suffix.unwrap_or("");
+                    match request_ref.query_string {
+                        Some(qs) if !qs.is_empty() => format!("{base}/ngsi-ld/v1/entities/{encoded_id}{suffix}?{qs}"),
+                        _ => format!("{base}/ngsi-ld/v1/entities/{encoded_id}{suffix}"),
+                    }
+                };
+                debug!("Forwarding {} to context source {}: {}", request_ref.method, csr.id, url);
 
-            let exclusive_attrs = if csr.mode == Some(ForwardingMode::Exclusive) {
-                collect_exclusive_attrs(&csr)
-            } else {
-                Vec::new()
-            };
+                let exclusive_attrs = if csr.mode == Some(ForwardingMode::Exclusive) {
+                    collect_exclusive_attrs(&csr)
+                } else {
+                    Vec::new()
+                };
 
-            match self
-                .forward_write(
-                    &url,
-                    request.method.clone(), // clone: reqwest::Method is reused across loop iterations
-                    request.body,
-                    request.context_url,
-                    csr.tenant.as_ref(),
-                    request.incoming_via,
-                )
-                .await
-            {
-                Ok((status, response_body)) => {
-                    let mode = csr.mode.unwrap_or_default();
-                    results.push(ForwardedWriteResult {
-                        mode,
-                        status,
-                        body: response_body,
-                        exclusive_attrs,
-                    });
+                match self
+                    .forward_write(
+                        &url,
+                        request_ref.method.clone(),
+                        request_ref.body,
+                        request_ref.context_url,
+                        csr.tenant.as_ref(),
+                        request_ref.incoming_via,
+                    )
+                    .await
+                {
+                    Ok((status, response_body)) => {
+                        let mode = csr.mode.unwrap_or_default();
+                        Some(ForwardedWriteResult {
+                            mode,
+                            status,
+                            body: response_body,
+                            exclusive_attrs,
+                        })
+                    }
+                    Err(e) => {
+                        warn!("Failed to forward {} to context source {}: {}", request_ref.method, csr.id, e);
+                        None
+                    }
                 }
-                Err(e) => {
-                    warn!("Failed to forward {} to context source {}: {}", request.method, csr.id, e);
-                }
-            }
-        }
+            })
+            .buffer_unordered(self.csr_concurrency)
+            .filter_map(|entry| async move { entry })
+            .collect()
+            .await;
 
         Ok((results, unforwardable))
     }
@@ -670,46 +701,52 @@ impl ContextSourceForwardingService {
             return Ok(Vec::new());
         }
 
-        let mut results = Vec::new();
-        for csr in matching_csrs {
-            let base = csr.endpoint.trim_end_matches('/');
-            let url = match request.query_string {
-                Some(qs) if !qs.is_empty() => format!("{base}/ngsi-ld/v1{}?{qs}", request.batch_path),
-                _ => format!("{base}/ngsi-ld/v1{}", request.batch_path),
-            };
-            debug!("Forwarding batch {} to context source {}: {}", request.batch_path, csr.id, url);
+        let request_ref = &request;
+        let results: Vec<ForwardedWriteResult> = stream::iter(matching_csrs)
+            .map(|csr| async move {
+                let base = csr.endpoint.trim_end_matches('/');
+                let url = match request_ref.query_string {
+                    Some(qs) if !qs.is_empty() => format!("{base}/ngsi-ld/v1{}?{qs}", request_ref.batch_path),
+                    _ => format!("{base}/ngsi-ld/v1{}", request_ref.batch_path),
+                };
+                debug!("Forwarding batch {} to context source {}: {}", request_ref.batch_path, csr.id, url);
 
-            let exclusive_attrs = if csr.mode == Some(ForwardingMode::Exclusive) {
-                collect_exclusive_attrs(&csr)
-            } else {
-                Vec::new()
-            };
+                let exclusive_attrs = if csr.mode == Some(ForwardingMode::Exclusive) {
+                    collect_exclusive_attrs(&csr)
+                } else {
+                    Vec::new()
+                };
 
-            match self
-                .forward_write(
-                    &url,
-                    reqwest::Method::POST,
-                    Some(request.body),
-                    request.context_url,
-                    csr.tenant.as_ref(),
-                    request.incoming_via,
-                )
-                .await
-            {
-                Ok((status, response_body)) => {
-                    let mode = csr.mode.unwrap_or_default();
-                    results.push(ForwardedWriteResult {
-                        mode,
-                        status,
-                        body: response_body,
-                        exclusive_attrs,
-                    });
+                match self
+                    .forward_write(
+                        &url,
+                        reqwest::Method::POST,
+                        Some(request_ref.body),
+                        request_ref.context_url,
+                        csr.tenant.as_ref(),
+                        request_ref.incoming_via,
+                    )
+                    .await
+                {
+                    Ok((status, response_body)) => {
+                        let mode = csr.mode.unwrap_or_default();
+                        Some(ForwardedWriteResult {
+                            mode,
+                            status,
+                            body: response_body,
+                            exclusive_attrs,
+                        })
+                    }
+                    Err(e) => {
+                        warn!("Failed to forward batch to context source {}: {}", csr.id, e);
+                        None
+                    }
                 }
-                Err(e) => {
-                    warn!("Failed to forward batch to context source {}: {}", csr.id, e);
-                }
-            }
-        }
+            })
+            .buffer_unordered(self.csr_concurrency)
+            .filter_map(|entry| async move { entry })
+            .collect()
+            .await;
 
         Ok(results)
     }
@@ -914,7 +951,7 @@ impl ContextSourceForwardingService {
         &self,
         req: &ForwardTemporalQueryRequest<'_>,
         mode_filter: CsrModeFilter,
-    ) -> Result<Vec<ForwardedEntities>, AndromedaError> {
+    ) -> Result<Vec<ForwardedTemporalEntities>, AndromedaError> {
         let entity_type_compact = req.entity_type_compact;
         let entity_ids = req.entity_ids;
         let query_string = req.query_string;
@@ -954,74 +991,74 @@ impl ContextSourceForwardingService {
             return Ok(Vec::new());
         }
 
-        let mut results = Vec::new();
-        for csr in matching_csrs {
-            let url = build_temporal_query_url(&csr.endpoint, query_string);
-            debug!("Forwarding temporal query to context source {}: {}", csr.id, url);
+        let results: Vec<ForwardedTemporalEntities> = stream::iter(matching_csrs)
+            .map(|csr| async move {
+                let url = build_temporal_query_url(&csr.endpoint, query_string);
+                debug!("Forwarding temporal query to context source {}: {}", csr.id, url);
 
-            let mode = csr.mode.unwrap_or_default();
-            match self.forward_get(&url, context_url, csr.tenant.as_ref(), incoming_via).await {
-                ForwardGetOutcome::Success(Value::Array(arr), cs_warnings) => {
-                    results.push(ForwardedEntities {
+                let mode = csr.mode.unwrap_or_default();
+                match self.forward_get(&url, context_url, csr.tenant.as_ref(), incoming_via).await {
+                    ForwardGetOutcome::Success(Value::Array(arr), cs_warnings) => Some(ForwardedTemporalEntities {
                         mode,
                         entities: arr,
                         warnings: cs_warnings,
-                    });
-                }
-                ForwardGetOutcome::Success(obj @ Value::Object(_), cs_warnings) => {
-                    results.push(ForwardedEntities {
+                    }),
+                    ForwardGetOutcome::Success(obj @ Value::Object(_), cs_warnings) => Some(ForwardedTemporalEntities {
                         mode,
                         entities: vec![obj],
                         warnings: cs_warnings,
-                    });
+                    }),
+                    ForwardGetOutcome::Success(_other, _) => {
+                        warn!("Context source {} returned unexpected temporal response type", csr.id);
+                        Some(ForwardedTemporalEntities {
+                            mode,
+                            entities: Vec::new(),
+                            warnings: vec![NgsiLdWarning::RevalidationFailed(format!(
+                                "Context source {} returned unexpected response type",
+                                csr.id
+                            ))],
+                        })
+                    }
+                    ForwardGetOutcome::NotFound => None,
+                    ForwardGetOutcome::InvalidPayload(msg) => {
+                        warn!("Context source {} returned invalid temporal payload: {}", csr.id, msg);
+                        Some(ForwardedTemporalEntities {
+                            mode,
+                            entities: Vec::new(),
+                            warnings: vec![NgsiLdWarning::RevalidationFailed(format!(
+                                "Context source {} returned invalid payload: {}",
+                                csr.id, msg
+                            ))],
+                        })
+                    }
+                    ForwardGetOutcome::ErrorStatus(status) => {
+                        warn!("Context source {} returned HTTP {} for temporal query", csr.id, status);
+                        Some(ForwardedTemporalEntities {
+                            mode,
+                            entities: Vec::new(),
+                            warnings: vec![NgsiLdWarning::MiscellaneousPersistentWarning(format!(
+                                "Context source {} returned HTTP {}",
+                                csr.id, status
+                            ))],
+                        })
+                    }
+                    ForwardGetOutcome::NetworkError(msg) => {
+                        warn!("Failed to forward temporal query to context source {}: {}", csr.id, msg);
+                        Some(ForwardedTemporalEntities {
+                            mode,
+                            entities: Vec::new(),
+                            warnings: vec![NgsiLdWarning::MiscellaneousWarning(format!(
+                                "Context source {} did not respond: {}",
+                                csr.id, msg
+                            ))],
+                        })
+                    }
                 }
-                ForwardGetOutcome::Success(_other, _) => {
-                    warn!("Context source {} returned unexpected temporal response type", csr.id);
-                    results.push(ForwardedEntities {
-                        mode,
-                        entities: Vec::new(),
-                        warnings: vec![NgsiLdWarning::RevalidationFailed(format!(
-                            "Context source {} returned unexpected response type",
-                            csr.id
-                        ))],
-                    });
-                }
-                ForwardGetOutcome::NotFound => {}
-                ForwardGetOutcome::InvalidPayload(msg) => {
-                    warn!("Context source {} returned invalid temporal payload: {}", csr.id, msg);
-                    results.push(ForwardedEntities {
-                        mode,
-                        entities: Vec::new(),
-                        warnings: vec![NgsiLdWarning::RevalidationFailed(format!(
-                            "Context source {} returned invalid payload: {}",
-                            csr.id, msg
-                        ))],
-                    });
-                }
-                ForwardGetOutcome::ErrorStatus(status) => {
-                    warn!("Context source {} returned HTTP {} for temporal query", csr.id, status);
-                    results.push(ForwardedEntities {
-                        mode,
-                        entities: Vec::new(),
-                        warnings: vec![NgsiLdWarning::MiscellaneousPersistentWarning(format!(
-                            "Context source {} returned HTTP {}",
-                            csr.id, status
-                        ))],
-                    });
-                }
-                ForwardGetOutcome::NetworkError(msg) => {
-                    warn!("Failed to forward temporal query to context source {}: {}", csr.id, msg);
-                    results.push(ForwardedEntities {
-                        mode,
-                        entities: Vec::new(),
-                        warnings: vec![NgsiLdWarning::MiscellaneousWarning(format!(
-                            "Context source {} did not respond: {}",
-                            csr.id, msg
-                        ))],
-                    });
-                }
-            }
-        }
+            })
+            .buffer_unordered(self.csr_concurrency)
+            .filter_map(|entry| async move { entry })
+            .collect()
+            .await;
 
         Ok(results)
     }
@@ -1037,7 +1074,7 @@ impl ContextSourceForwardingService {
         operation: ForwardingOperation,
         incoming_via: Option<&Via>,
         mode_filter: CsrModeFilter,
-    ) -> Result<Vec<ForwardedEntities>, AndromedaError> {
+    ) -> Result<Vec<ForwardedTemporalEntities>, AndromedaError> {
         if self.is_loop_detected(incoming_via) {
             debug!("Loop detected in Via header chain, skipping temporal retrieve forwarding");
             return Ok(Vec::new());
@@ -1063,67 +1100,69 @@ impl ContextSourceForwardingService {
             return Ok(Vec::new());
         }
 
-        let mut results = Vec::new();
-        for csr in matching_csrs {
-            let url = build_temporal_retrieve_url(&csr.endpoint, entity_id, query_string);
-            debug!("Forwarding temporal retrieve to context source {}: {}", csr.id, url);
+        let results: Vec<ForwardedTemporalEntities> = stream::iter(matching_csrs)
+            .map(|csr| async move {
+                let url = build_temporal_retrieve_url(&csr.endpoint, entity_id, query_string);
+                debug!("Forwarding temporal retrieve to context source {}: {}", csr.id, url);
 
-            let mode = csr.mode.unwrap_or_default();
-            match self.forward_get(&url, context_url, csr.tenant.as_ref(), incoming_via).await {
-                ForwardGetOutcome::Success(obj @ Value::Object(_), cs_warnings) => {
-                    results.push(ForwardedEntities {
+                let mode = csr.mode.unwrap_or_default();
+                match self.forward_get(&url, context_url, csr.tenant.as_ref(), incoming_via).await {
+                    ForwardGetOutcome::Success(obj @ Value::Object(_), cs_warnings) => Some(ForwardedTemporalEntities {
                         mode,
                         entities: vec![obj],
                         warnings: cs_warnings,
-                    });
+                    }),
+                    ForwardGetOutcome::Success(_other, _) => {
+                        warn!("Context source {} returned non-object for temporal retrieve", csr.id);
+                        Some(ForwardedTemporalEntities {
+                            mode,
+                            entities: Vec::new(),
+                            warnings: vec![NgsiLdWarning::RevalidationFailed(format!(
+                                "Context source {} returned non-object for temporal entity retrieve",
+                                csr.id
+                            ))],
+                        })
+                    }
+                    ForwardGetOutcome::NotFound => None,
+                    ForwardGetOutcome::InvalidPayload(msg) => {
+                        warn!("Context source {} returned invalid temporal payload: {}", csr.id, msg);
+                        Some(ForwardedTemporalEntities {
+                            mode,
+                            entities: Vec::new(),
+                            warnings: vec![NgsiLdWarning::RevalidationFailed(format!(
+                                "Context source {} returned invalid payload: {}",
+                                csr.id, msg
+                            ))],
+                        })
+                    }
+                    ForwardGetOutcome::ErrorStatus(status) => {
+                        warn!("Context source {} returned HTTP {} for temporal retrieve", csr.id, status);
+                        Some(ForwardedTemporalEntities {
+                            mode,
+                            entities: Vec::new(),
+                            warnings: vec![NgsiLdWarning::MiscellaneousPersistentWarning(format!(
+                                "Context source {} returned HTTP {}",
+                                csr.id, status
+                            ))],
+                        })
+                    }
+                    ForwardGetOutcome::NetworkError(msg) => {
+                        warn!("Failed to forward temporal retrieve to context source {}: {}", csr.id, msg);
+                        Some(ForwardedTemporalEntities {
+                            mode,
+                            entities: Vec::new(),
+                            warnings: vec![NgsiLdWarning::MiscellaneousWarning(format!(
+                                "Context source {} did not respond: {}",
+                                csr.id, msg
+                            ))],
+                        })
+                    }
                 }
-                ForwardGetOutcome::Success(_other, _) => {
-                    warn!("Context source {} returned non-object for temporal retrieve", csr.id);
-                    results.push(ForwardedEntities {
-                        mode,
-                        entities: Vec::new(),
-                        warnings: vec![NgsiLdWarning::RevalidationFailed(format!(
-                            "Context source {} returned non-object for temporal entity retrieve",
-                            csr.id
-                        ))],
-                    });
-                }
-                ForwardGetOutcome::NotFound => {}
-                ForwardGetOutcome::InvalidPayload(msg) => {
-                    warn!("Context source {} returned invalid temporal payload: {}", csr.id, msg);
-                    results.push(ForwardedEntities {
-                        mode,
-                        entities: Vec::new(),
-                        warnings: vec![NgsiLdWarning::RevalidationFailed(format!(
-                            "Context source {} returned invalid payload: {}",
-                            csr.id, msg
-                        ))],
-                    });
-                }
-                ForwardGetOutcome::ErrorStatus(status) => {
-                    warn!("Context source {} returned HTTP {} for temporal retrieve", csr.id, status);
-                    results.push(ForwardedEntities {
-                        mode,
-                        entities: Vec::new(),
-                        warnings: vec![NgsiLdWarning::MiscellaneousPersistentWarning(format!(
-                            "Context source {} returned HTTP {}",
-                            csr.id, status
-                        ))],
-                    });
-                }
-                ForwardGetOutcome::NetworkError(msg) => {
-                    warn!("Failed to forward temporal retrieve to context source {}: {}", csr.id, msg);
-                    results.push(ForwardedEntities {
-                        mode,
-                        entities: Vec::new(),
-                        warnings: vec![NgsiLdWarning::MiscellaneousWarning(format!(
-                            "Context source {} did not respond: {}",
-                            csr.id, msg
-                        ))],
-                    });
-                }
-            }
-        }
+            })
+            .buffer_unordered(self.csr_concurrency)
+            .filter_map(|entry| async move { entry })
+            .collect()
+            .await;
 
         Ok(results)
     }
@@ -1279,6 +1318,27 @@ fn compact_iri(iri: &str) -> Option<String> {
     }
 }
 
+/// Parse forwarded raw values into strongly-typed [`Entity`] at the CSR
+/// boundary. Drops items that fail to deserialize and returns a warning per
+/// skipped item so the service layer can surface the failure to clients.
+fn parse_forwarded_entities(csr_id: &str, values: Vec<Value>) -> (Vec<Entity>, Vec<NgsiLdWarning>) {
+    let mut entities = Vec::with_capacity(values.len());
+    let mut warnings = Vec::new();
+    for value in values {
+        match serde_json::from_value::<Entity>(value) {
+            Ok(e) => entities.push(e),
+            Err(err) => {
+                warn!("Context source {} returned entity that failed to parse: {}", csr_id, err);
+                warnings.push(NgsiLdWarning::RevalidationFailed(format!(
+                    "Context source {} returned entity that failed to parse: {}",
+                    csr_id, err
+                )));
+            }
+        }
+    }
+    (entities, warnings)
+}
+
 /// Merge local and remote entity query results.
 ///
 /// Per NGSI-LD query merge behaviour:
@@ -1286,33 +1346,26 @@ fn compact_iri(iri: &str) -> Option<String> {
 /// - **redirect**: Same as inclusive for query results.
 /// - **auxiliary**: Include remote entities and merge when IDs overlap.
 /// - **exclusive**: Include remote entities and merge when IDs overlap.
-pub fn merge_query_results(local_entities: Vec<Value>, remote_results: Vec<ForwardedEntities>) -> Vec<Value> {
+pub fn merge_query_results(local_entities: Vec<Entity>, remote_results: Vec<ForwardedEntities>) -> Vec<Entity> {
     if remote_results.is_empty() {
         return local_entities;
     }
 
-    // Build a map of entity ID -> entity value for dedup/merge
-    let mut entity_map: indexmap::IndexMap<String, Value> = indexmap::IndexMap::new();
+    let mut entity_map: indexmap::IndexMap<String, Entity> = indexmap::IndexMap::with_capacity(local_entities.len());
 
-    // Add local entities first
     for entity in local_entities {
-        if let Some(id) = entity.get("id").and_then(|v| v.as_str()) {
-            entity_map.insert(id.to_string(), entity);
-        }
+        entity_map.insert(entity.id.to_string(), entity);
     }
 
-    // Process remote results based on mode
     for forwarded in remote_results {
         match forwarded.mode {
             ForwardingMode::Auxiliary | ForwardingMode::Inclusive | ForwardingMode::Exclusive | ForwardingMode::Redirect => {
-                // add/merge remote entities for all query-capable modes
                 for remote_entity in forwarded.entities {
-                    if let Some(remote_id) = remote_entity.get("id").and_then(|v| v.as_str()) {
-                        if let Some(local_entity) = entity_map.get_mut(remote_id) {
-                            merge_entity_attributes(local_entity, &remote_entity);
-                        } else {
-                            entity_map.insert(remote_id.to_string(), remote_entity);
-                        }
+                    let remote_id = remote_entity.id.to_string();
+                    if let Some(local_entity) = entity_map.get_mut(&remote_id) {
+                        merge_entity_attributes(local_entity, remote_entity);
+                    } else {
+                        entity_map.insert(remote_id, remote_entity);
                     }
                 }
             }
@@ -1323,26 +1376,37 @@ pub fn merge_query_results(local_entities: Vec<Value>, remote_results: Vec<Forwa
 }
 
 /// Merge remote entity's attributes into a local entity.
-/// Remote attributes that don't exist locally are added.
-/// Local attributes take precedence (are not overwritten).
-fn merge_entity_attributes(local: &mut Value, remote: &Value) {
-    if let (Some(local_obj), Some(remote_obj)) = (local.as_object_mut(), remote.as_object()) {
-        for (key, value) in remote_obj {
-            // Skip metadata fields
-            if key == "id" || key == "type" || key == "@context" {
-                continue;
-            }
-            // Only add attributes that don't exist locally
-            if !local_obj.contains_key(key) {
-                local_obj.insert(key.clone(), value.clone()); // clone: owned key-value pair for merging remote attributes into local entity
-            }
+///
+/// Only attribute keys missing locally are filled from the remote copy; local
+/// attributes take precedence. Top-level metadata (`id`, `type`, `@context`)
+/// is untouched. Non-`attrs` fields (`location`, `observationSpace`,
+/// `operationSpace`, `scope`, `expiresAt`) are copied only if unset locally.
+fn merge_entity_attributes(local: &mut Entity, remote: Entity) {
+    for (key, value) in remote.attrs {
+        if !local.attrs.contains_key(&key) {
+            local.attrs.insert(key, value);
         }
+    }
+    if local.location.is_none() {
+        local.location = remote.location;
+    }
+    if local.observation_space.is_none() {
+        local.observation_space = remote.observation_space;
+    }
+    if local.operation_space.is_none() {
+        local.operation_space = remote.operation_space;
+    }
+    if local.scope.is_none() {
+        local.scope = remote.scope;
+    }
+    if local.expires_at.is_none() {
+        local.expires_at = remote.expires_at;
     }
 }
 
 /// Merge remote entity results for a single entity retrieval.
 /// Returns the merged entity or None if no entity found from any source.
-pub fn merge_retrieve_results(local_entity: Option<Value>, remote_results: Vec<ForwardedEntities>) -> Option<Value> {
+pub fn merge_retrieve_results(local_entity: Option<Entity>, remote_results: Vec<ForwardedEntities>) -> Option<Entity> {
     let mut result = local_entity;
 
     for forwarded in remote_results {
@@ -1350,7 +1414,7 @@ pub fn merge_retrieve_results(local_entity: Option<Value>, remote_results: Vec<F
         for remote_entity in forwarded.entities {
             match &mut result {
                 Some(existing) => {
-                    merge_entity_attributes(existing, &remote_entity);
+                    merge_entity_attributes(existing, remote_entity);
                 }
                 None => {
                     if !is_auxiliary {
@@ -1364,9 +1428,13 @@ pub fn merge_retrieve_results(local_entity: Option<Value>, remote_results: Vec<F
     result
 }
 
-/// Collect all warnings from forwarded results, preserving typed variants
-/// for header serialization in the response layer.
+/// Collect all warnings from forwarded entity results.
 pub fn collect_warnings(results: &[ForwardedEntities]) -> Vec<NgsiLdWarning> {
+    results.iter().flat_map(|r| r.warnings.iter().cloned()).collect()
+}
+
+/// Collect all warnings from forwarded temporal-entity results.
+pub fn collect_temporal_warnings(results: &[ForwardedTemporalEntities]) -> Vec<NgsiLdWarning> {
     results.iter().flat_map(|r| r.warnings.iter().cloned()).collect()
 }
 
@@ -1636,7 +1704,7 @@ pub fn merge_attribute_info_results(local: Value, remote: Vec<ForwardedDiscovery
 /// Same mode-based logic as `merge_query_results` but for temporal entities.
 /// For same-entity merges, temporal attribute instance arrays are unioned
 /// rather than replaced (temporal entities carry attribute history).
-pub fn merge_temporal_query_results(local_entities: Vec<Value>, remote_results: Vec<ForwardedEntities>) -> Vec<Value> {
+pub fn merge_temporal_query_results(local_entities: Vec<Value>, remote_results: Vec<ForwardedTemporalEntities>) -> Vec<Value> {
     if remote_results.is_empty() {
         return local_entities;
     }
@@ -1742,7 +1810,7 @@ fn merge_temporal_instances(local: &mut Value, remote: &Value) {
 /// Merge remote temporal entity results for a single entity retrieval.
 ///
 /// Returns the merged temporal entity or None if no entity found from any source.
-pub fn merge_temporal_retrieve_results(local_entity: Option<Value>, remote_results: Vec<ForwardedEntities>) -> Option<Value> {
+pub fn merge_temporal_retrieve_results(local_entity: Option<Value>, remote_results: Vec<ForwardedTemporalEntities>) -> Option<Value> {
     let mut result = local_entity;
 
     for forwarded in remote_results {
@@ -1771,6 +1839,7 @@ mod tests {
         domain::registration::ForwardingMode,
         service::context_source_forwarding::{
             ForwardedEntities,
+            ForwardedTemporalEntities,
             ForwardedWriteResult,
             NgsiLdWarning,
             collect_forwarded_exclusive_attrs,
@@ -1779,6 +1848,10 @@ mod tests {
             strip_exclusive_attrs_from_value,
         },
     };
+
+    fn entity_from_json(value: serde_json::Value) -> crate::domain::entity::Entity {
+        serde_json::from_value(value).expect("test entity fixture")
+    }
 
     #[test]
     fn warning_header_format_miscellaneous() {
@@ -1817,7 +1890,7 @@ mod tests {
             },
             ForwardedEntities {
                 mode: ForwardingMode::Inclusive,
-                entities: vec![serde_json::json!({"id": "urn:a"})],
+                entities: vec![entity_from_json(serde_json::json!({"id": "urn:a", "type": "T"}))],
                 warnings: Vec::new(),
             },
         ];
@@ -1829,17 +1902,17 @@ mod tests {
 
     #[test]
     fn merge_query_local_only() {
-        let local = vec![serde_json::json!({"id": "urn:a", "type": "T", "p1": 1})];
+        let local = vec![entity_from_json(serde_json::json!({"id": "urn:a", "type": "T", "p1": 1}))];
         let result = merge_query_results(local, Vec::new());
         pretty_assertions::assert_eq!(result.len(), 1);
     }
 
     #[test]
     fn merge_query_adds_remote_entities() {
-        let local = vec![serde_json::json!({"id": "urn:a", "type": "T"})];
+        let local = vec![entity_from_json(serde_json::json!({"id": "urn:a", "type": "T"}))];
         let remote = vec![ForwardedEntities {
             mode: ForwardingMode::Inclusive,
-            entities: vec![serde_json::json!({"id": "urn:b", "type": "T"})],
+            entities: vec![entity_from_json(serde_json::json!({"id": "urn:b", "type": "T"}))],
             warnings: Vec::new(),
         }];
         let result = merge_query_results(local, remote);
@@ -1921,7 +1994,7 @@ mod tests {
                 {"type": "Property", "value": 10, "instanceId": "urn:i1", "observedAt": "2024-01-01T00:00:00Z"}
             ]
         })];
-        let remote = vec![ForwardedEntities {
+        let remote = vec![ForwardedTemporalEntities {
             mode: ForwardingMode::Inclusive,
             entities: vec![serde_json::json!({
                 "id": "urn:a",
@@ -1949,7 +2022,7 @@ mod tests {
                 {"type": "Property", "value": 10, "instanceId": "urn:i1"}
             ]
         })];
-        let remote = vec![ForwardedEntities {
+        let remote = vec![ForwardedTemporalEntities {
             mode: ForwardingMode::Inclusive,
             entities: vec![serde_json::json!({
                 "id": "urn:a",
@@ -1970,7 +2043,7 @@ mod tests {
         use crate::service::context_source_forwarding::merge_temporal_query_results;
 
         let local = vec![serde_json::json!({"id": "urn:a", "type": "T", "speed": [{"value": 10}]})];
-        let remote = vec![ForwardedEntities {
+        let remote = vec![ForwardedTemporalEntities {
             mode: ForwardingMode::Auxiliary,
             entities: vec![
                 serde_json::json!({"id": "urn:a", "type": "T", "fuel": [{"value": 50}]}),
@@ -1993,7 +2066,7 @@ mod tests {
             "type": "T",
             "speed": [{"value": 10, "instanceId": "urn:i1"}]
         }));
-        let remote = vec![ForwardedEntities {
+        let remote = vec![ForwardedTemporalEntities {
             mode: ForwardingMode::Inclusive,
             entities: vec![serde_json::json!({
                 "id": "urn:a",
@@ -2012,7 +2085,7 @@ mod tests {
     fn merge_temporal_retrieve_remote_only() {
         use crate::service::context_source_forwarding::merge_temporal_retrieve_results;
 
-        let remote = vec![ForwardedEntities {
+        let remote = vec![ForwardedTemporalEntities {
             mode: ForwardingMode::Inclusive,
             entities: vec![serde_json::json!({"id": "urn:a", "type": "T", "speed": [{"value": 10}]})],
             warnings: Vec::new(),
@@ -2201,31 +2274,28 @@ mod tests {
 
     #[test]
     fn merge_query_auxiliary_adds_and_merges() {
-        let local = vec![serde_json::json!({"id": "urn:a", "type": "T", "speed": 100})];
+        let local = vec![entity_from_json(serde_json::json!({"id": "urn:a", "type": "T", "speed": 100}))];
         let remote = vec![ForwardedEntities {
             mode: ForwardingMode::Auxiliary,
             entities: vec![
-                serde_json::json!({"id": "urn:a", "type": "T", "fuel": 50}),
-                serde_json::json!({"id": "urn:b", "type": "T", "speed": 80}),
+                entity_from_json(serde_json::json!({"id": "urn:a", "type": "T", "fuel": 50})),
+                entity_from_json(serde_json::json!({"id": "urn:b", "type": "T", "speed": 80})),
             ],
             warnings: Vec::new(),
         }];
         let result = merge_query_results(local, remote);
         pretty_assertions::assert_eq!(result.len(), 2, "Auxiliary should add remote entities in query merge");
-        let entity_a = result
-            .iter()
-            .find(|entity| entity.get("id").and_then(serde_json::Value::as_str) == Some("urn:a"))
-            .expect("urn:a should be present");
-        assert!(entity_a.get("fuel").is_some(), "Auxiliary attrs should be merged");
+        let entity_a = result.iter().find(|entity| entity.id.to_string() == "urn:a").expect("urn:a should be present");
+        assert!(entity_a.attrs.contains_key("fuel"), "Auxiliary attrs should be merged");
     }
 
     #[test]
     fn merge_query_primary_adds_new_entities() {
         // Non-auxiliary modes should add new entities
-        let local = vec![serde_json::json!({"id": "urn:a", "type": "T"})];
+        let local = vec![entity_from_json(serde_json::json!({"id": "urn:a", "type": "T"}))];
         let remote = vec![ForwardedEntities {
             mode: ForwardingMode::Inclusive,
-            entities: vec![serde_json::json!({"id": "urn:b", "type": "T", "speed": 80})],
+            entities: vec![entity_from_json(serde_json::json!({"id": "urn:b", "type": "T", "speed": 80}))],
             warnings: Vec::new(),
         }];
         let result = merge_query_results(local, remote);

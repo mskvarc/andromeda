@@ -39,12 +39,19 @@ pub fn build_query(query: &CompiledEntityQuery) -> Result<BuiltQuery<'static>, A
     let condition = build_entity_conditions(query)?;
 
     let mut select = Query::select();
-    select
-        .column(Entities::Payload)
-        .from(Entities::Table)
-        .cond_where(condition.clone())
-        .limit(query.pagination.limit as u64)
-        .offset(query.pagination.offset as u64);
+    select.column(Entities::Payload).from(Entities::Table).cond_where(condition.clone());
+
+    // When a total count is requested, piggyback it on every row as
+    // `COUNT(*) OVER ()` so the common case runs in a single round-trip.
+    // The count column is constant across the result set (PostgreSQL evaluates
+    // the unbounded partition once), so the repository reads it from any row.
+    // A zero-row result still needs the fallback `count_sql` because the
+    // window function returns no rows when the filter matches nothing.
+    if query.pagination.count {
+        select.expr_as(SeaExpr::cust("COUNT(*) OVER ()"), sea_query::Alias::new(TOTAL_COUNT_COLUMN));
+    }
+
+    select.limit(query.pagination.limit as u64).offset(query.pagination.offset as u64);
 
     // Add ORDER BY clause
     add_order_clause(&mut select, &query.order_by, query.geo.as_ref(), query.ordering_geometry.as_ref())?;
@@ -53,7 +60,7 @@ pub fn build_query(query: &CompiledEntityQuery) -> Result<BuiltQuery<'static>, A
     let (sql, values) = select.build(PostgresQueryBuilder);
     let bind_values = sea_values_to_bind_values(values);
 
-    // Build count query if requested
+    // Fallback count query covers the zero-row edge case described above.
     let count_sql = if query.pagination.count {
         let mut count_select = Query::select();
         count_select
@@ -68,6 +75,11 @@ pub fn build_query(query: &CompiledEntityQuery) -> Result<BuiltQuery<'static>, A
 
     Ok(BuiltQuery { sql, count_sql, bind_values })
 }
+
+/// Column name used for the window-function count attached to each row of a
+/// paginated entity query when `count=true`. Kept in sync with the repository
+/// read path in [`crate::repository::entity::EntityRepository::query_compiled`].
+pub const TOTAL_COUNT_COLUMN: &str = "total_count";
 
 /// Builds a parameterized SQL query to retrieve only entity IDs from the `entities` table.
 ///

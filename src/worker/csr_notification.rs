@@ -24,14 +24,12 @@ use crate::{
     },
 };
 use chrono::Utc;
+use dashmap::DashMap;
 use futures::{StreamExt, stream};
 use regex::Regex;
 use serde_json::Value;
-use std::{
-    collections::{HashMap, HashSet},
-    sync::Arc,
-};
-use tokio::sync::{RwLock, broadcast};
+use std::{collections::HashSet, sync::Arc};
+use tokio::sync::broadcast;
 use tracing::{debug, error, info};
 use uuid::Uuid;
 
@@ -42,7 +40,7 @@ pub struct CsrNotificationWorker {
     sub_change_rx: broadcast::Receiver<CsourceSubscriptionChange>,
     sub_repo: CsourceSubscriptionRepository,
     csr_repo: ContextSourceRegistrationRepository,
-    cache: Arc<RwLock<HashMap<String, Arc<CompiledCsrSubscription>>>>,
+    cache: DashMap<String, Arc<CompiledCsrSubscription>>,
     transport: Arc<TransportDispatcher>,
     tenant: crate::tenancy::types::TenantRef,
 }
@@ -61,7 +59,7 @@ impl CsrNotificationWorker {
             sub_change_rx,
             sub_repo,
             csr_repo,
-            cache: Arc::new(RwLock::new(HashMap::new())),
+            cache: DashMap::new(),
             transport,
             tenant,
         }
@@ -74,8 +72,7 @@ impl CsrNotificationWorker {
             error!("Failed to load CSR subscriptions into cache: {}", e);
         }
 
-        let cache_count = self.cache.read().await.len();
-        info!("CsrNotificationWorker loaded {} active CSR subscriptions", cache_count);
+        info!("CsrNotificationWorker loaded {} active CSR subscriptions", self.cache.len());
 
         loop {
             tokio::select! {
@@ -116,11 +113,10 @@ impl CsrNotificationWorker {
 
     async fn reload_cache(&self) -> Result<(), crate::core::error::AndromedaError> {
         let subscriptions = self.sub_repo.list_active().await?;
-        let mut cache = self.cache.write().await;
-        cache.clear();
+        self.cache.clear();
         for sub in subscriptions {
             if let Some(compiled) = compile_csr_subscription(&sub) {
-                cache.insert(sub.id.clone(), Arc::new(compiled));
+                self.cache.insert(sub.id.clone(), Arc::new(compiled));
             }
         }
         Ok(())
@@ -129,7 +125,7 @@ impl CsrNotificationWorker {
     async fn handle_subscription_change(&self, change: CsourceSubscriptionChange) {
         match change {
             CsourceSubscriptionChange::Upserted(id) => {
-                let id_str = id.to_string(); // convert once: repo and cache both need &str / String key
+                let id_str = id.to_string();
                 match self.sub_repo.get(&id_str).await {
                     Ok(Some(sub)) => {
                         let compiled = if sub.status == SubscriptionStatus::Active {
@@ -138,13 +134,10 @@ impl CsrNotificationWorker {
                             None
                         };
 
-                        {
-                            let mut cache = self.cache.write().await;
-                            if let Some(ref c) = compiled {
-                                cache.insert(id_str.clone(), Arc::clone(c)); // clone: id_str also needed below for send_matching_csrs_for_subscription
-                            } else {
-                                cache.remove(&id_str);
-                            }
+                        if let Some(ref c) = compiled {
+                            self.cache.insert(id_str, Arc::clone(c));
+                        } else {
+                            self.cache.remove(&id_str);
                         }
 
                         // Per spec 5.11.3: after updating a subscription, send a notification
@@ -154,7 +147,7 @@ impl CsrNotificationWorker {
                         }
                     }
                     Ok(None) => {
-                        self.cache.write().await.remove(&id_str);
+                        self.cache.remove(&id_str);
                     }
                     Err(e) => {
                         debug!("Failed to load CSR subscription {} for cache update: {}", id_str, e);
@@ -162,7 +155,7 @@ impl CsrNotificationWorker {
                 }
             }
             CsourceSubscriptionChange::Deleted(id) => {
-                self.cache.write().await.remove(&id.to_string()); // convert: cache key is String
+                self.cache.remove(&id.to_string());
             }
         }
     }
@@ -317,10 +310,7 @@ impl CsrNotificationWorker {
             None => return,
         };
 
-        let matching = {
-            let cache = self.cache.read().await;
-            find_matching_csr_subscriptions(&cache, &csr_data)
-        };
+        let matching = find_matching_csr_subscriptions(&self.cache, &csr_data);
 
         if matching.is_empty() {
             return;
@@ -428,10 +418,8 @@ impl CsrNotificationWorker {
             }
         };
 
-        let cache = self.cache.read().await;
-        let matched_before = find_matching_csr_subscriptions(&cache, pre_update);
-        let matched_after = find_matching_csr_subscriptions(&cache, &post_update);
-        drop(cache);
+        let matched_before = find_matching_csr_subscriptions(&self.cache, pre_update);
+        let matched_after = find_matching_csr_subscriptions(&self.cache, &post_update);
 
         let after_ids: HashSet<&str> = matched_after.iter().map(|s| s.id.as_str()).collect();
         let before_ids: HashSet<&str> = matched_before.iter().map(|s| s.id.as_str()).collect();
@@ -613,8 +601,17 @@ fn compile_csr_subscription(sub: &Subscription) -> Option<CompiledCsrSubscriptio
     })
 }
 
-fn find_matching_csr_subscriptions(cache: &HashMap<String, Arc<CompiledCsrSubscription>>, csr_data: &Value) -> Vec<Arc<CompiledCsrSubscription>> {
-    cache.values().filter(|sub| matches_csr_subscription(sub, csr_data)).cloned().collect()
+fn find_matching_csr_subscriptions(cache: &DashMap<String, Arc<CompiledCsrSubscription>>, csr_data: &Value) -> Vec<Arc<CompiledCsrSubscription>> {
+    cache
+        .iter()
+        .filter_map(|entry| {
+            if matches_csr_subscription(entry.value(), csr_data) {
+                Some(Arc::clone(entry.value()))
+            } else {
+                None
+            }
+        })
+        .collect()
 }
 
 /// Match a CSR subscription against a CSR's data.

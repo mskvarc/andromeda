@@ -27,9 +27,16 @@ use crate::{
     },
     repository::temporal::DeleteScope,
     service::{
-        context_source_forwarding::{CsrModeFilter, ForwardTemporalQueryRequest, ForwardingOperation, collect_warnings, merge_temporal_retrieve_results},
+        context_source_forwarding::{
+            CsrModeFilter,
+            ForwardTemporalQueryRequest,
+            ForwardingOperation,
+            collect_temporal_warnings,
+            merge_temporal_retrieve_results,
+        },
         entity_map::{parse_entity_map_urn, parse_iso8601_duration, parse_uri_csv},
-        subscription_matching::{matches_geo_filter, matches_scope_filter},
+        subscription_cache::{compile_geo_q, compile_scope_q},
+        subscription_matching::{matches_compiled_geo_query, matches_compiled_scope_pattern},
         temporal::{CreateOrUpdateResult, TemporalQueryResult, TemporalService},
     },
 };
@@ -56,7 +63,7 @@ pub async fn create_or_update(
 ) -> Result<Response, NgsiLdError> {
     let service = &state.temporal;
     let context = context.merge(body_context);
-    let result = service.create_or_update(payload, &context).await.with_instance(uri.clone())?;
+    let result = service.create_or_update(payload, &context).await.with_instance(&uri)?;
 
     match result {
         CreateOrUpdateResult::Created(id) => Ok((StatusCode::CREATED, [("Location", format!("/ngsi-ld/v1/temporal/entities/{}", id))]).into_response()),
@@ -88,23 +95,23 @@ pub async fn get(
     // Snapshot scoping (ETSI GS CIM 009 clause 5.5.15, 6.3.22): if NGSILD-Snapshot header
     // is present, retrieve temporal entity from the snapshot's frozen data and return early.
     if let Some(snapshot_id) = snapshot.into_inner() {
-        let _snap = state.snapshots.validate_for_scoping(&snapshot_id).await.with_instance(uri.clone())?;
+        let _snap = state.snapshots.validate_for_scoping(&snapshot_id).await.with_instance(&uri)?;
 
         let entity_data = state
             .snapshots
             .get_snapshot_temporal_entity(&snapshot_id, id.as_ref())
             .await
-            .with_instance(uri.clone())?
-            .ok_or_else(|| NgsiLdError::from(AndromedaError::temporal_not_found(id.to_string()).with_instance(uri.clone())))?;
+            .with_instance(&uri)?
+            .ok_or_else(|| NgsiLdError::from(AndromedaError::temporal_not_found(id.to_string()).with_instance(&uri)))?;
 
         let key_values = params.is_simplified();
 
         let data = if key_values {
             TemporalSimplifyRenderer::new(TemporalSimplifyPayload::Single(entity_data))
                 .render()
-                .with_instance(uri.clone())?
+                .with_instance(&uri)?
                 .into_single()
-                .with_instance(uri.clone())?
+                .with_instance(&uri)?
         } else {
             entity_data
         };
@@ -117,8 +124,8 @@ pub async fn get(
     // EntityMap scoping (spec 5.7.3.4): if NGSILD-EntityMap header is present,
     // only entities in the map are accessible. Return 404 if not in the map.
     if let Some(ref map_id) = entity_map_header {
-        let map_urn = parse_entity_map_urn(map_id.as_str()).with_instance(uri.clone())?;
-        state.entity_maps.validate_entity_in_map(&map_urn, &id).await.with_instance(uri.clone())?;
+        let map_urn = parse_entity_map_urn(map_id.as_str()).with_instance(&uri)?;
+        state.entity_maps.validate_entity_in_map(&map_urn, &id).await.with_instance(&uri)?;
     }
 
     let is_local = params.is_local();
@@ -126,7 +133,7 @@ pub async fn get(
     let local_result = service.get(id.as_ref(), &params, &context).await;
 
     let (entity_value, content_range, warnings) = if is_local {
-        let result = local_result.with_instance(uri.clone())?;
+        let result = local_result.with_instance(&uri)?;
         (result.value, result.content_range, Vec::new())
     } else {
         let context_url = context.link_contexts().first().map(|s| s.as_str());
@@ -143,12 +150,12 @@ pub async fn get(
             )
             .await
             .unwrap_or_default();
-        let warnings = collect_warnings(&forwarded);
+        let warnings = collect_temporal_warnings(&forwarded);
 
         let local_value = match local_result {
             Ok(result) => Some((result.value, result.content_range)),
             Err(ref e) if e.is_not_found() => None,
-            Err(e) => return Err(e.with_instance(uri.clone()).into()),
+            Err(e) => return Err(e.with_instance(&uri).into()),
         };
 
         let (local_entity, content_range) = match local_value {
@@ -160,7 +167,7 @@ pub async fn get(
         match merged {
             Some(value) => (value, content_range, warnings),
             None => {
-                return Err(NgsiLdError::from(AndromedaError::temporal_not_found(id.to_string()).with_instance(uri.clone())));
+                return Err(NgsiLdError::from(AndromedaError::temporal_not_found(id.to_string()).with_instance(&uri)));
             }
         }
     };
@@ -176,9 +183,9 @@ pub async fn get(
     let data: Value = if key_values {
         TemporalSimplifyRenderer::new(TemporalSimplifyPayload::Single(entity_value))
             .render()
-            .with_instance(uri.clone())?
+            .with_instance(&uri)?
             .into_single()
-            .with_instance(uri.clone())?
+            .with_instance(&uri)?
     } else {
         entity_value
     };
@@ -219,7 +226,7 @@ pub async fn query(
     // Snapshot scoping (ETSI GS CIM 009 clause 5.5.15, 6.3.22): if NGSILD-Snapshot header
     // is present, query temporal entities from the snapshot's frozen data and return early.
     if let Some(snapshot_id) = snapshot.into_inner() {
-        let _snap = state.snapshots.validate_for_scoping(&snapshot_id).await.with_instance(uri.clone())?;
+        let _snap = state.snapshots.validate_for_scoping(&snapshot_id).await.with_instance(&uri)?;
 
         let entity_type = params.entity_type.as_deref();
         let entity_ids: Option<Vec<String>> = params.id.as_deref().map(|s| s.split(',').map(|id| id.trim().to_string()).collect());
@@ -230,14 +237,14 @@ pub async fn query(
             .snapshots
             .query_snapshot_temporal_entities(&snapshot_id, entity_type, entity_ids.as_deref(), limit, offset)
             .await
-            .with_instance(uri.clone())?;
+            .with_instance(&uri)?;
 
         let values = if key_values {
             TemporalSimplifyRenderer::new(TemporalSimplifyPayload::Collection(entities))
                 .render()
-                .with_instance(uri.clone())?
+                .with_instance(&uri)?
                 .into_collection()
-                .with_instance(uri.clone())?
+                .with_instance(&uri)?
         } else {
             entities
         };
@@ -253,13 +260,9 @@ pub async fn query(
     // EntityMap scoping (spec 5.5.14): if NGSILD-EntityMap header is present,
     // scope the query to only the entity IDs in the map.
     if let Some(ref map_id) = entity_map_header {
-        let map_urn = parse_entity_map_urn(map_id.as_str()).with_instance(uri.clone())?;
-        let scoped_input = params.id.as_deref().map(parse_uri_csv).transpose().with_instance(uri.clone())?;
-        let scoped = state
-            .entity_maps
-            .scope_query_ids(&map_urn, scoped_input.as_deref())
-            .await
-            .with_instance(uri.clone())?;
+        let map_urn = parse_entity_map_urn(map_id.as_str()).with_instance(&uri)?;
+        let scoped_input = params.id.as_deref().map(parse_uri_csv).transpose().with_instance(&uri)?;
+        let scoped = state.entity_maps.scope_query_ids(&map_urn, scoped_input.as_deref()).await.with_instance(&uri)?;
         params.id = Some(scoped.iter().map(ToString::to_string).collect::<Vec<_>>().join(","));
 
         // EntityMap-scoped temporal queries may omit temporal bounds; default to
@@ -297,7 +300,7 @@ pub async fn query(
         deferred_scope_q = None;
     }
 
-    let result = service.query(&params, &context).await.with_instance(uri.clone())?;
+    let result = service.query(&params, &context).await.with_instance(&uri)?;
     for warning in &result.warnings {
         tracing::debug!(entity_id = %warning.entity_id, message = %warning.message, "Temporal query warning");
     }
@@ -336,7 +339,7 @@ pub async fn query(
             )
             .await
             .unwrap_or_default();
-        let warnings = collect_warnings(&forwarded);
+        let warnings = collect_temporal_warnings(&forwarded);
 
         // Capture remote entity IDs before merge for entityMap (spec 5.7.4.4, 5.5.14)
         remote_ids = forwarded
@@ -382,7 +385,8 @@ pub async fn query(
         } else {
             None
         };
-        let scope_q = deferred_scope_q.as_deref();
+        let compiled_scope = deferred_scope_q.as_deref().map(compile_scope_q);
+        let compiled_geo = geo_val.as_ref().and_then(|v| compile_geo_q(v, "split-entities"));
 
         let mut filtered = Vec::with_capacity(entities.len());
         for entity in entities {
@@ -393,8 +397,8 @@ pub async fn query(
             };
 
             let q_ok = q_expr.as_ref().is_none_or(|expr| evaluate(expr, &expanded));
-            let geo_ok = geo_val.as_ref().is_none_or(|geo| matches_geo_filter(geo, &expanded));
-            let scope_ok = scope_q.is_none_or(|scope| matches_scope_filter(scope, &expanded));
+            let geo_ok = compiled_geo.as_ref().is_none_or(|geo| matches_compiled_geo_query(geo, &expanded));
+            let scope_ok = compiled_scope.as_ref().is_none_or(|scope| matches_compiled_scope_pattern(scope, &expanded));
 
             if q_ok && geo_ok && scope_ok {
                 filtered.push(entity);
@@ -406,7 +410,7 @@ pub async fn query(
     // EntityMap creation (spec 5.5.14, 5.7.4.4): if entityMap=true was requested,
     // create a new EntityMap from all matching IDs (not just the current page).
     let entity_map_uri = if entity_map_requested {
-        let mut all_ids = service.query_ids(&params, &context).await.with_instance(uri.clone())?;
+        let mut all_ids = service.query_ids(&params, &context).await.with_instance(&uri)?;
         // Include forwarded entity IDs in the map (spec 5.7.4.4, 5.5.14)
         all_ids.extend(remote_ids);
         all_ids.sort_unstable();
@@ -415,14 +419,14 @@ pub async fn query(
             .iter()
             .map(|id| Uri::from_str(id).map_err(|_| AndromedaError::temporal_validation(format!("Invalid entity id URI '{}'", id))))
             .collect::<Result<Vec<_>, _>>()
-            .with_instance(uri.clone())?;
+            .with_instance(&uri)?;
         let lifetime = params
             .entity_map_lifetime
             .as_deref()
             .map(|raw| parse_iso8601_duration(Some(raw)))
             .transpose()
-            .with_instance(uri.clone())?;
-        let map = state.entity_maps.create(typed_ids, lifetime.as_ref()).await.with_instance(uri.clone())?;
+            .with_instance(&uri)?;
+        let map = state.entity_maps.create(typed_ids, lifetime.as_ref()).await.with_instance(&uri)?;
         Some(map.id.to_string())
     } else if entity_map_header.is_some() {
         entity_map_header.map(|h| h.into_inner().to_string())
@@ -436,9 +440,9 @@ pub async fn query(
     let values = if key_values {
         TemporalSimplifyRenderer::new(TemporalSimplifyPayload::Collection(entities))
             .render()
-            .with_instance(uri.clone())?
+            .with_instance(&uri)?
             .into_collection()
-            .with_instance(uri.clone())?
+            .with_instance(&uri)?
     } else {
         entities
     };
@@ -471,7 +475,7 @@ pub async fn query(
 pub async fn delete(TenantState(state): TenantState, OriginalUri(uri): OriginalUri, Path(id): Path<String>) -> Result<Response, NgsiLdError> {
     let service = &state.temporal;
     let id = parse_entity_id(&id, &uri)?;
-    service.delete(id.as_ref()).await.with_instance(uri.clone())?;
+    service.delete(id.as_ref()).await.with_instance(&uri)?;
     Ok(StatusCode::NO_CONTENT.into_response())
 }
 
@@ -491,7 +495,7 @@ pub async fn add_attrs(
     let service = &state.temporal;
     let id = parse_entity_id(&id, &uri)?;
     let context = context.merge(body_context);
-    service.add_attrs(id.as_ref(), payload, &context).await.with_instance(uri.clone())?;
+    service.add_attrs(id.as_ref(), payload, &context).await.with_instance(&uri)?;
     Ok(StatusCode::NO_CONTENT.into_response())
 }
 
@@ -518,7 +522,7 @@ pub async fn delete_attr(
     service
         .delete_attr(id.as_ref(), &attr_id, params.dataset_id.as_deref(), scope, &context)
         .await
-        .with_instance(uri.clone())?;
+        .with_instance(&uri)?;
     Ok(StatusCode::NO_CONTENT.into_response())
 }
 
@@ -546,7 +550,7 @@ pub async fn update_attr_instance(
     service
         .modify_attr_instance(id.as_ref(), &attr_id, &instance_id, payload, &context)
         .await
-        .with_instance(uri.clone())?;
+        .with_instance(&uri)?;
     Ok(StatusCode::NO_CONTENT.into_response())
 }
 
@@ -568,6 +572,6 @@ pub async fn delete_attr_instance(
     service
         .delete_attr_instance(id.as_ref(), &attr_id, &instance_id, &context)
         .await
-        .with_instance(uri.clone())?;
+        .with_instance(&uri)?;
     Ok(StatusCode::NO_CONTENT.into_response())
 }
