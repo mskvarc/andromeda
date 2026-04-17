@@ -1,11 +1,10 @@
 use crate::{
-    domain::{entity::Entity, name::NameBuf, uri::Uri},
+    domain::{entity::Entity, geometry::Wkb, name::NameBuf, uri::Uri},
     jsonld::{JsonLdExpandable, JsonLdExpandableMacro},
 };
 use chrono::{DateTime, Utc};
 use compact_str::CompactString;
 use derive_more::{AsRef, Deref, Display, From};
-use geojson::Geometry;
 use iref::IriBuf;
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error as _};
 use serde_json::Value;
@@ -203,8 +202,8 @@ pub enum NgsiLdValue {
     Date(NgsiLdDate),
     /// A Time value.
     Time(NgsiLdTime),
-    /// A GeoJSON geometry value.
-    Geometry(Geometry),
+    /// A geometry value, carried as canonical WKB internally.
+    Geometry(Wkb),
 }
 
 impl Serialize for NgsiLdValue {
@@ -302,11 +301,10 @@ fn parse_relationship_object_entry(value: &Value) -> Result<Uri, String> {
     Uri::from_str(object).map_err(|error| error.to_string())
 }
 
-fn try_geometry(value: &Value) -> Option<Geometry> {
-    value
-        .as_object()
-        .and_then(|object| object.get("type").zip(object.get("coordinates")).map(|_pair| value.clone()))
-        .and_then(|value| serde_json::from_value(value).ok())
+fn try_geometry(value: &Value) -> Option<Wkb> {
+    let object = value.as_object()?;
+    object.get("type").zip(object.get("coordinates"))?;
+    Wkb::from_geojson_value(value).ok()
 }
 
 fn validate_reference(value: &str) -> Result<(), NgsiLdReferenceError> {

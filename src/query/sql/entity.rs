@@ -446,8 +446,12 @@ fn add_order_clause(
         if term.direction.is_distance() {
             // Distance-based ordering
             let (geo_col, ref_geom) = if let Some(og) = ordering_geometry {
-                let geojson_str = serde_json::to_string(&og.geometry)
-                    .map_err(|e| AndromedaError::query_validation(format!("Failed to serialize ordering geometry: {}", e)))?;
+                let geojson = og
+                    .geometry
+                    .to_geojson()
+                    .map_err(|e| AndromedaError::query_validation(format!("Failed to decode ordering geometry: {}", e)))?;
+                let geojson_str =
+                    serde_json::to_string(&geojson).map_err(|e| AndromedaError::query_validation(format!("Failed to serialize ordering geometry: {}", e)))?;
                 let geo_col = build_geo_extract_geography(&term.attr_iri);
                 let ref_geom = format!("ST_MakeValid(ST_SetSRID(ST_GeomFromGeoJSON('{}'), 4326))", geojson_str);
                 (geo_col, ref_geom)
@@ -806,11 +810,12 @@ mod tests {
     #[test]
     fn build_with_order_by_dist_with_ordering_geometry() {
         let mut q = empty_query();
-        q.ordering_geometry = Some(OrderingGeometry {
-            geometry: geojson::Geometry::new(geojson::GeometryValue::Point {
-                coordinates: vec![13.3986, 52.5547].into(),
-            }),
-        });
+        let wkb = crate::domain::geometry::Wkb::from_geojson_value(&serde_json::json!({
+            "type": "Point",
+            "coordinates": [13.3986, 52.5547],
+        }))
+        .unwrap();
+        q.ordering_geometry = Some(OrderingGeometry::new(wkb));
         q.order_by = vec![CompiledOrderTerm {
             attr_iri: vocab::expanded::LOCATION.as_str().to_string(),
             direction: OrderDirection::DistAsc,
@@ -834,11 +839,12 @@ mod tests {
             coordinates: serde_json::json!([2.3522, 48.8566]),
             geoproperty_iri: vocab::expanded::LOCATION.as_str().to_string(),
         });
-        q.ordering_geometry = Some(OrderingGeometry {
-            geometry: geojson::Geometry::new(geojson::GeometryValue::Point {
-                coordinates: vec![13.3986, 52.5547].into(),
-            }),
-        });
+        let wkb = crate::domain::geometry::Wkb::from_geojson_value(&serde_json::json!({
+            "type": "Point",
+            "coordinates": [13.3986, 52.5547],
+        }))
+        .unwrap();
+        q.ordering_geometry = Some(OrderingGeometry::new(wkb));
         q.order_by = vec![CompiledOrderTerm {
             attr_iri: vocab::expanded::LOCATION.as_str().to_string(),
             direction: OrderDirection::DistAsc,

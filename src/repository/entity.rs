@@ -127,17 +127,17 @@ impl EntityRepository {
         expires_at: Option<DateTime<Utc>>,
     ) -> Result<Urn, AndromedaError> {
         tracing::info!("Storing entity {} with types: {:?}", id, type_);
-        let location_geojson = expanded::extract_location_geojson(entity);
-        let observation_space_geojson = expanded::extract_observation_space_geojson(entity);
-        let operation_space_geojson = expanded::extract_operation_space_geojson(entity);
+        let location_wkb = expanded::extract_location_wkb(entity);
+        let observation_space_wkb = expanded::extract_observation_space_wkb(entity);
+        let operation_space_wkb = expanded::extract_operation_space_wkb(entity);
         let scope_paths: Vec<String> = scopes.iter().map(|s| sql::scope_to_ltree(s)).collect();
         sqlx::query(
             r#"
             INSERT INTO entities (id, types, scope_paths, payload, location, observation_space, operation_space, expires_at)
             VALUES ($1, $2, $3::ltree[], $4,
-                    CASE WHEN $5 IS NOT NULL THEN ST_MakeValid(ST_SetSRID(ST_GeomFromGeoJSON($5), 4326)) ELSE NULL END,
-                    CASE WHEN $6 IS NOT NULL THEN ST_MakeValid(ST_SetSRID(ST_GeomFromGeoJSON($6), 4326)) ELSE NULL END,
-                    CASE WHEN $7 IS NOT NULL THEN ST_MakeValid(ST_SetSRID(ST_GeomFromGeoJSON($7), 4326)) ELSE NULL END,
+                    CASE WHEN $5 IS NOT NULL THEN ST_MakeValid(ST_GeomFromEWKB($5)) ELSE NULL END,
+                    CASE WHEN $6 IS NOT NULL THEN ST_MakeValid(ST_GeomFromEWKB($6)) ELSE NULL END,
+                    CASE WHEN $7 IS NOT NULL THEN ST_MakeValid(ST_GeomFromEWKB($7)) ELSE NULL END,
                     $8)
             "#,
         )
@@ -145,9 +145,9 @@ impl EntityRepository {
         .bind(type_)
         .bind(&scope_paths)
         .bind(entity)
-        .bind(&location_geojson)
-        .bind(&observation_space_geojson)
-        .bind(&operation_space_geojson)
+        .bind(location_wkb)
+        .bind(observation_space_wkb)
+        .bind(operation_space_wkb)
         .bind(expires_at)
         .execute(executor)
         .await?;
@@ -261,17 +261,17 @@ impl EntityRepository {
     async fn save_impl<'e>(executor: impl Executor<'e, Database = sqlx::Postgres>, id: &str, entity: &Value) -> Result<bool, AndromedaError> {
         let types = expanded::extract_types(entity);
         let scope_paths: Vec<String> = expanded::extract_scopes(entity).iter().map(|s| sql::scope_to_ltree(s)).collect();
-        let location_geojson = expanded::extract_location_geojson(entity);
-        let observation_space_geojson = expanded::extract_observation_space_geojson(entity);
-        let operation_space_geojson = expanded::extract_operation_space_geojson(entity);
+        let location_wkb = expanded::extract_location_wkb(entity);
+        let observation_space_wkb = expanded::extract_observation_space_wkb(entity);
+        let operation_space_wkb = expanded::extract_operation_space_wkb(entity);
         let expires_at = expanded::extract_expires_at(entity);
         let result = sqlx::query(
             r#"
             UPDATE entities
             SET payload = $2, types = $3, scope_paths = $4::ltree[],
-                location = CASE WHEN $5 IS NOT NULL THEN ST_MakeValid(ST_SetSRID(ST_GeomFromGeoJSON($5), 4326)) ELSE NULL END,
-                observation_space = CASE WHEN $6 IS NOT NULL THEN ST_MakeValid(ST_SetSRID(ST_GeomFromGeoJSON($6), 4326)) ELSE NULL END,
-                operation_space = CASE WHEN $7 IS NOT NULL THEN ST_MakeValid(ST_SetSRID(ST_GeomFromGeoJSON($7), 4326)) ELSE NULL END,
+                location = CASE WHEN $5 IS NOT NULL THEN ST_MakeValid(ST_GeomFromEWKB($5)) ELSE NULL END,
+                observation_space = CASE WHEN $6 IS NOT NULL THEN ST_MakeValid(ST_GeomFromEWKB($6)) ELSE NULL END,
+                operation_space = CASE WHEN $7 IS NOT NULL THEN ST_MakeValid(ST_GeomFromEWKB($7)) ELSE NULL END,
                 modified_at = NOW(),
                 expires_at = COALESCE($8, expires_at)
             WHERE id = $1
@@ -281,9 +281,9 @@ impl EntityRepository {
         .bind(entity)
         .bind(&types)
         .bind(&scope_paths)
-        .bind(&location_geojson)
-        .bind(&observation_space_geojson)
-        .bind(&operation_space_geojson)
+        .bind(location_wkb)
+        .bind(observation_space_wkb)
+        .bind(operation_space_wkb)
         .bind(expires_at)
         .execute(executor)
         .await?;

@@ -273,7 +273,7 @@ pub struct CompiledSubscription {
 /// so event matching does not re-parse GeoJSON on every event.
 #[derive(Debug, Clone)]
 pub struct CompiledGeoQuery {
-    /// Reference geometry the entity geometry is compared against.
+    /// Reference geometry the entity geometry is compared against. Authoritative decoded form.
     pub ref_geometry: geo::Geometry,
     /// Parsed georel operator + distance modifiers.
     pub georel: CompiledGeoRel,

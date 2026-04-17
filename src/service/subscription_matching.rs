@@ -162,16 +162,12 @@ pub fn matches_entity_filters(sub: &CompiledSubscription, entity_data: &Value) -
 pub fn matches_compiled_geo_query(geo_q: &CompiledGeoQuery, entity_data: &Value) -> bool {
     use geo::algorithm::{Contains, Intersects};
 
-    let Some(entity_geojson_str) = extract_geoproperty_geojson(entity_data, &geo_q.geoproperty_iri) else {
+    let Some(entity_wkb) = extract_geoproperty_wkb(entity_data, &geo_q.geoproperty_iri) else {
         return false;
     };
 
-    let entity_geom: geo::Geometry = match entity_geojson_str.parse::<geojson::GeoJson>() {
-        Ok(geojson::GeoJson::Geometry(g)) => match geo::Geometry::try_from(g) {
-            Ok(geom) => geom,
-            Err(_) => return false,
-        },
-        _ => return false,
+    let Ok(entity_geom) = entity_wkb.to_geo() else {
+        return false;
     };
 
     let ref_geom = &geo_q.ref_geometry;
@@ -192,7 +188,7 @@ pub fn matches_compiled_geo_query(geo_q: &CompiledGeoQuery, entity_data: &Value)
     }
 }
 
-fn extract_geoproperty_geojson(entity: &Value, geoproperty_iri: &str) -> Option<String> {
+fn extract_geoproperty_wkb(entity: &Value, geoproperty_iri: &str) -> Option<crate::domain::geometry::Wkb> {
     let obj = match entity {
         Value::Array(arr) => arr.first().and_then(|v| v.as_object()),
         Value::Object(obj) => Some(obj),
@@ -206,11 +202,14 @@ fn extract_geoproperty_geojson(entity: &Value, geoproperty_iri: &str) -> Option<
         .and_then(|inst| inst.get(vocab::expanded::VALUE.as_str()))
         .and_then(|v| v.as_array())
         .and_then(|arr| arr.first())
-        .and_then(|v| v.get("@value"));
+        .and_then(|v| v.get("@value"))?;
 
     match geojson_value {
-        Some(Value::String(s)) => Some(s.clone()),
-        Some(val) if val.is_object() => Some(val.to_string()),
+        Value::String(s) => {
+            let parsed: Value = serde_json::from_str(s).ok()?;
+            crate::domain::geometry::Wkb::from_geojson_value(&parsed).ok()
+        }
+        val if val.is_object() => crate::domain::geometry::Wkb::from_geojson_value(val).ok(),
         _ => None,
     }
 }

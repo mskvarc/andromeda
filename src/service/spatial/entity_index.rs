@@ -6,36 +6,46 @@
 //! semantics of [`crate::service::subscription_matching::matches_compiled_geo_query`].
 
 use crate::{
+    domain::geometry::Wkb,
     query::compiled::GeoRel,
     service::spatial::{SpatialKey, distance::haversine_distance_m},
 };
 use dashmap::DashMap;
-use geo::algorithm::{BoundingRect, Contains, Intersects};
+use geo::algorithm::{Contains, Intersects};
 use parking_lot::RwLock;
 use rstar::{AABB, PointDistance, RTree, RTreeObject};
 use std::{collections::HashSet, sync::Arc};
 use urn::Urn;
 
 /// A single entity's geometry, indexed under one [`SpatialKey`].
+///
+/// The geometry is held as canonical WKB; the R-tree prefilter uses the cached
+/// envelope so no decode is paid for entries that fail the AABB test. Only
+/// surviving candidates pay the WKB→`geo::Geometry` decode inside the exact
+/// predicate step.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SpatialEntry {
     /// URN of the entity whose geoproperty this entry represents.
     pub entity_id: Urn,
-    /// The entity geometry as `geo::Geometry<f64>`.
-    pub geometry: geo::Geometry<f64>,
-    /// Axis-aligned bounding box of [`Self::geometry`] (cached for rstar).
+    /// Canonical WKB of the entity geometry.
+    pub geometry_wkb: Wkb,
+    /// Axis-aligned bounding box of the decoded geometry (cached for rstar).
     pub envelope: AABB<[f64; 2]>,
 }
 
 impl SpatialEntry {
-    /// Build a new entry, computing the AABB from the geometry.
+    /// Build a new entry, decoding once to compute the AABB and then retaining only WKB.
     ///
     /// Returns `None` if the geometry has no bounding rectangle (empty
     /// collections or degenerate inputs).
-    pub fn new(entity_id: Urn, geometry: geo::Geometry<f64>) -> Option<SpatialEntry> {
-        let rect = geometry.bounding_rect()?;
+    pub fn new(entity_id: Urn, geometry_wkb: Wkb) -> Option<SpatialEntry> {
+        let rect = geometry_wkb.bounding_rect()?;
         let envelope = AABB::from_corners([rect.min().x, rect.min().y], [rect.max().x, rect.max().y]);
-        Some(SpatialEntry { entity_id, geometry, envelope })
+        Some(SpatialEntry {
+            entity_id,
+            geometry_wkb,
+            envelope,
+        })
     }
 }
 
@@ -85,8 +95,8 @@ impl SpatialEntityIndex {
     }
 
     /// Insert or overwrite an entry for `entity_id` under `key`.
-    pub fn insert(&self, key: SpatialKey, entity_id: Urn, geometry: geo::Geometry<f64>) {
-        let Some(entry) = SpatialEntry::new(entity_id.clone(), geometry) else {
+    pub fn insert(&self, key: SpatialKey, entity_id: Urn, geometry_wkb: Wkb) {
+        let Some(entry) = SpatialEntry::new(entity_id.clone(), geometry_wkb) else {
             return;
         };
 
@@ -155,10 +165,11 @@ fn evaluate(tree: &RTree<SpatialEntry>, georel: &GeoRel, ref_geom: &geo::Geometr
     match georel {
         GeoRel::Near { max_distance, min_distance } => {
             // Near requires scanning all entries (no bbox cutoff works for `min`).
-            // The tree still filters by bbox for the geometry-path cases above,
-            // but for near we fall back to a full scan limited to this partition.
             for entry in tree.iter() {
-                let d = haversine_distance_m(&entry.geometry, ref_geom);
+                let Ok(entry_geom) = entry.geometry_wkb.to_geo() else {
+                    continue;
+                };
+                let d = haversine_distance_m(&entry_geom, ref_geom);
                 let max_ok = max_distance.is_none_or(|m| d <= m);
                 let min_ok = min_distance.is_none_or(|m| d >= m);
                 if max_ok && min_ok {
@@ -167,24 +178,30 @@ fn evaluate(tree: &RTree<SpatialEntry>, georel: &GeoRel, ref_geom: &geo::Geometr
             }
         }
         GeoRel::Disjoint => {
-            // Disjoint = not intersects. Must consider every entry, since
-            // entries outside any reference bbox also qualify.
+            // Disjoint = not intersects. Must consider every entry.
             for entry in tree.iter() {
-                if !entry.geometry.intersects(ref_geom) {
+                let Ok(entry_geom) = entry.geometry_wkb.to_geo() else {
+                    continue;
+                };
+                if !entry_geom.intersects(ref_geom) {
                     out.insert(entry.entity_id.clone());
                 }
             }
         }
         _ => {
             let ref_env = geometry_envelope(ref_geom);
+            // AABB prefilter — no decode paid for entries that fail the envelope test.
             let candidates: Vec<&SpatialEntry> = tree.locate_in_envelope_intersecting(&ref_env).collect();
             for entry in candidates {
+                let Ok(entry_geom) = entry.geometry_wkb.to_geo() else {
+                    continue;
+                };
                 let matched = match georel {
-                    GeoRel::Within => ref_geom.contains(&entry.geometry),
-                    GeoRel::Contains => entry.geometry.contains(ref_geom),
-                    GeoRel::Intersects => entry.geometry.intersects(ref_geom),
-                    GeoRel::Equals => entry.geometry.contains(ref_geom) && ref_geom.contains(&entry.geometry),
-                    GeoRel::Overlaps => entry.geometry.intersects(ref_geom),
+                    GeoRel::Within => ref_geom.contains(&entry_geom),
+                    GeoRel::Contains => entry_geom.contains(ref_geom),
+                    GeoRel::Intersects => entry_geom.intersects(ref_geom),
+                    GeoRel::Equals => entry_geom.contains(ref_geom) && ref_geom.contains(&entry_geom),
+                    GeoRel::Overlaps => entry_geom.intersects(ref_geom),
                     GeoRel::Near { .. } | GeoRel::Disjoint => false,
                 };
                 if matched {
@@ -198,6 +215,7 @@ fn evaluate(tree: &RTree<SpatialEntry>, georel: &GeoRel, ref_geom: &geo::Geometr
 }
 
 fn geometry_envelope(g: &geo::Geometry<f64>) -> AABB<[f64; 2]> {
+    use geo::algorithm::BoundingRect;
     match g.bounding_rect() {
         Some(rect) => AABB::from_corners([rect.min().x, rect.min().y], [rect.max().x, rect.max().y]),
         None => AABB::from_corners([f64::NEG_INFINITY, f64::NEG_INFINITY], [f64::INFINITY, f64::INFINITY]),
@@ -238,11 +256,19 @@ mod tests {
         geo::Geometry::Polygon(Polygon::new(LineString::from(coords), Vec::new()))
     }
 
+    fn wkb_point(x: f64, y: f64) -> Wkb {
+        Wkb::from_geo(&point(x, y)).expect("point WKB")
+    }
+
+    fn wkb_square(cx: f64, cy: f64, half: f64) -> Wkb {
+        Wkb::from_geo(&square(cx, cy, half)).expect("square WKB")
+    }
+
     #[test]
     fn insert_then_query_within_returns_id() {
         let idx = SpatialEntityIndex::new();
         let id = urn("urn:ngsi-ld:Vehicle:A");
-        idx.insert(key(), id.clone(), point(0.0, 0.0));
+        idx.insert(key(), id.clone(), wkb_point(0.0, 0.0));
         let got = idx.query(&key(), &GeoRel::Within, &square(0.0, 0.0, 1.0));
         assert_eq!(got, Some(HashSet::from([id])));
     }
@@ -251,7 +277,7 @@ mod tests {
     fn insert_then_query_disjoint_returns_empty_when_overlapping() {
         let idx = SpatialEntityIndex::new();
         let id = urn("urn:ngsi-ld:Vehicle:A");
-        idx.insert(key(), id, square(0.0, 0.0, 2.0));
+        idx.insert(key(), id, wkb_square(0.0, 0.0, 2.0));
         let got = idx.query(&key(), &GeoRel::Disjoint, &square(0.0, 0.0, 1.0));
         assert_eq!(got, Some(HashSet::new()));
     }
@@ -261,7 +287,7 @@ mod tests {
         let idx = SpatialEntityIndex::new();
         let id = urn("urn:ngsi-ld:Vehicle:A");
         // 2 km east at the equator is ~0.01797 degrees of longitude
-        idx.insert(key(), id.clone(), point(0.01797, 0.0));
+        idx.insert(key(), id.clone(), wkb_point(0.01797, 0.0));
 
         let ref_geom = point(0.0, 0.0);
         let tight = GeoRel::Near {
@@ -284,9 +310,9 @@ mod tests {
         let b = urn("urn:ngsi-ld:Vehicle:500m");
         let c = urn("urn:ngsi-ld:Vehicle:2000m");
         // ~0.001 deg = ~111 m; scale accordingly
-        idx.insert(key(), a, point(0.0009, 0.0));
-        idx.insert(key(), b.clone(), point(0.0045, 0.0));
-        idx.insert(key(), c, point(0.018, 0.0));
+        idx.insert(key(), a, wkb_point(0.0009, 0.0));
+        idx.insert(key(), b.clone(), wkb_point(0.0045, 0.0));
+        idx.insert(key(), c, wkb_point(0.018, 0.0));
 
         let georel = GeoRel::Near {
             max_distance: Some(1_000.0),
@@ -300,7 +326,7 @@ mod tests {
     fn remove_clears_entry() {
         let idx = SpatialEntityIndex::new();
         let id = urn("urn:ngsi-ld:Vehicle:A");
-        idx.insert(key(), id.clone(), point(0.0, 0.0));
+        idx.insert(key(), id.clone(), wkb_point(0.0, 0.0));
         idx.remove(&id);
         let got = idx.query(&key(), &GeoRel::Intersects, &square(-10.0, -10.0, 20.0));
         assert_eq!(got, Some(HashSet::new()));
@@ -320,9 +346,9 @@ mod tests {
         let mut entries = Vec::new();
         for i in 0..50 {
             let id = urn(&format!("urn:ngsi-ld:V:{i}"));
-            let geom = point(i as f64 * 0.001, 0.0);
-            idx_a.insert(key(), id.clone(), geom.clone());
-            if let Some(entry) = SpatialEntry::new(id, geom) {
+            let wkb = wkb_point(i as f64 * 0.001, 0.0);
+            idx_a.insert(key(), id.clone(), wkb.clone());
+            if let Some(entry) = SpatialEntry::new(id, wkb) {
                 entries.push(entry);
             }
         }
@@ -338,7 +364,7 @@ mod tests {
     fn polygon_entity_contains_point_ref() {
         let idx = SpatialEntityIndex::new();
         let id = urn("urn:ngsi-ld:Building:Hall");
-        idx.insert(key(), id.clone(), square(0.0, 0.0, 1.0));
+        idx.insert(key(), id.clone(), wkb_square(0.0, 0.0, 1.0));
         let got = idx.query(&key(), &GeoRel::Contains, &point(0.5, 0.5));
         assert_eq!(got, Some(HashSet::from([id])));
     }
@@ -347,7 +373,7 @@ mod tests {
     fn equals_requires_bidirectional_containment() {
         let idx = SpatialEntityIndex::new();
         let id = urn("urn:ngsi-ld:Region:A");
-        idx.insert(key(), id.clone(), square(0.0, 0.0, 1.0));
+        idx.insert(key(), id.clone(), wkb_square(0.0, 0.0, 1.0));
 
         let same = square(0.0, 0.0, 1.0);
         let bigger = square(0.0, 0.0, 2.0);
@@ -360,7 +386,7 @@ mod tests {
     fn overlaps_matches_partial_intersection() {
         let idx = SpatialEntityIndex::new();
         let id = urn("urn:ngsi-ld:Region:A");
-        idx.insert(key(), id.clone(), square(0.0, 0.0, 1.0));
+        idx.insert(key(), id.clone(), wkb_square(0.0, 0.0, 1.0));
         let got = idx.query(&key(), &GeoRel::Overlaps, &square(0.5, 0.5, 1.0));
         assert_eq!(got, Some(HashSet::from([id])));
     }
@@ -369,8 +395,8 @@ mod tests {
     fn insert_twice_overwrites_previous_geometry() {
         let idx = SpatialEntityIndex::new();
         let id = urn("urn:ngsi-ld:Vehicle:A");
-        idx.insert(key(), id.clone(), point(0.0, 0.0));
-        idx.insert(key(), id.clone(), point(10.0, 10.0));
+        idx.insert(key(), id.clone(), wkb_point(0.0, 0.0));
+        idx.insert(key(), id.clone(), wkb_point(10.0, 10.0));
 
         let near_origin = idx.query(&key(), &GeoRel::Intersects, &square(0.0, 0.0, 0.5)).unwrap_or_default();
         let near_ten = idx.query(&key(), &GeoRel::Intersects, &square(10.0, 10.0, 0.5)).unwrap_or_default();

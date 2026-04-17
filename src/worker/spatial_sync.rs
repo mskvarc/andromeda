@@ -119,7 +119,7 @@ impl SpatialSyncWorker {
             let Some(geojson_str) = extract_geoproperty_geojson(obj, &iri) else {
                 continue;
             };
-            let Some(geom) = parse_geojson(&geojson_str) else {
+            let Some(wkb) = parse_wkb(&geojson_str) else {
                 continue;
             };
             let Ok(geoproperty_iri) = IriBuf::new(iri) else {
@@ -131,7 +131,7 @@ impl SpatialSyncWorker {
                     continue;
                 };
                 let key = SpatialKey::new(self.tenant.clone(), type_iri, geoproperty_iri.clone());
-                self.index.insert(key, urn.clone(), geom.clone());
+                self.index.insert(key, urn.clone(), wkb.clone());
             }
         }
     }
@@ -162,10 +162,7 @@ fn extract_geoproperty_geojson(obj: &serde_json::Map<String, Value>, iri: &str) 
     }
 }
 
-fn parse_geojson(raw: &str) -> Option<geo::Geometry<f64>> {
-    let parsed: geojson::GeoJson = raw.parse().ok()?;
-    match parsed {
-        geojson::GeoJson::Geometry(g) => geo::Geometry::try_from(g).ok(),
-        geojson::GeoJson::Feature(_) | geojson::GeoJson::FeatureCollection(_) => None,
-    }
+fn parse_wkb(raw: &str) -> Option<crate::domain::geometry::Wkb> {
+    let value: Value = serde_json::from_str(raw).ok()?;
+    crate::domain::geometry::Wkb::from_geojson_value(&value).ok()
 }

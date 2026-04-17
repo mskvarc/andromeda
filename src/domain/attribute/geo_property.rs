@@ -1,8 +1,10 @@
 use crate::{
-    domain::attribute::{AttributeValue, common::CommonAttributeFields},
+    domain::{
+        attribute::{AttributeValue, common::CommonAttributeFields},
+        geometry::Wkb,
+    },
     jsonld::JsonLdExpandableMacro,
 };
-use geojson::Geometry;
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
@@ -13,15 +15,15 @@ use serde_with::skip_serializing_none;
 #[serde(rename_all = "camelCase")]
 #[jsonld(type = "ngsi:GeoProperty")]
 pub struct GeoProperty {
-    /// GeoJSON geometry value.
+    /// Geometry value, stored internally as canonical WKB and serialized as GeoJSON at the wire boundary.
     #[jsonld(property = "ngsi:hasValue", json_value)]
-    pub value: Geometry,
+    pub value: Wkb,
     /// Optional JSON-LD datatype for `value`.
     #[jsonld(property = "ngsi:hasValueType", vocab)]
     pub value_type: Option<compact_str::CompactString>,
     /// Previous geometry value emitted in notifications when `showChanges` is active.
     #[jsonld(property = "ngsi:hasPreviousValue", json_value)]
-    pub previous_value: Option<Geometry>,
+    pub previous_value: Option<Wkb>,
     #[serde(flatten)]
     #[jsonld(flatten_object)]
     pub common: CommonAttributeFields,

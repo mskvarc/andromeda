@@ -7,6 +7,7 @@
 
 use crate::{
     core::error::AndromedaError,
+    domain::geometry::Wkb,
     jsonld::vocab,
     service::spatial::{
         SpatialKey,
@@ -14,6 +15,7 @@ use crate::{
     },
     tenancy::types::TenantRef,
 };
+use bytes::Bytes;
 use iref::IriBuf;
 use sqlx::PgPool;
 use std::{collections::HashMap, sync::Arc, time::Instant};
@@ -24,12 +26,11 @@ use urn::Urn;
 /// grouped and bulk-loaded per `(tenant, type, location)` partition.
 pub async fn warmup_location(index: &Arc<SpatialEntityIndex>, pool: &PgPool, tenant: &TenantRef) -> Result<WarmupStats, AndromedaError> {
     let started = Instant::now();
-    let rows = sqlx::query_as::<_, (String, Vec<String>, String)>(
-        "SELECT id, types, ST_AsGeoJSON(location)::TEXT AS geojson FROM entities WHERE location IS NOT NULL",
-    )
-    .fetch_all(pool)
-    .await
-    .map_err(|e| AndromedaError::internal(format!("spatial warmup query failed: {}", e)))?;
+    // PostGIS returns the column binary-encoded as EWKB — read as bytea, skip the GeoJSON round-trip.
+    let rows = sqlx::query_as::<_, (String, Vec<String>, Vec<u8>)>("SELECT id, types, location::bytea FROM entities WHERE location IS NOT NULL")
+        .fetch_all(pool)
+        .await
+        .map_err(|e| AndromedaError::internal(format!("spatial warmup query failed: {}", e)))?;
 
     let Ok(location_iri) = IriBuf::new(vocab::expanded::LOCATION.as_str().to_string()) else {
         return Err(AndromedaError::internal("spatial warmup: LOCATION IRI invalid"));
@@ -37,18 +38,16 @@ pub async fn warmup_location(index: &Arc<SpatialEntityIndex>, pool: &PgPool, ten
 
     let mut per_type: HashMap<IriBuf, Vec<SpatialEntry>> = HashMap::new();
 
-    for (id_raw, types, geojson_raw) in rows {
+    for (id_raw, types, ewkb_bytes) in rows {
         let Ok(urn) = id_raw.parse::<Urn>() else {
             continue;
         };
-        let Some(geom) = parse_geojson(&geojson_raw) else {
-            continue;
-        };
+        let wkb = Wkb::from_postgis_bytes(Bytes::from(ewkb_bytes));
         for t in &types {
             let Ok(type_iri) = IriBuf::new(t.clone()) else {
                 continue;
             };
-            let Some(entry) = SpatialEntry::new(urn.clone(), geom.clone()) else {
+            let Some(entry) = SpatialEntry::new(urn.clone(), wkb.clone()) else {
                 continue;
             };
             per_type.entry(type_iri).or_default().push(entry);
@@ -107,12 +106,4 @@ pub struct WarmupStats {
     pub partition_count: usize,
     /// Total number of entries bulk-loaded across all partitions.
     pub total_entries: usize,
-}
-
-fn parse_geojson(raw: &str) -> Option<geo::Geometry<f64>> {
-    let parsed: geojson::GeoJson = raw.parse().ok()?;
-    match parsed {
-        geojson::GeoJson::Geometry(g) => geo::Geometry::try_from(g).ok(),
-        geojson::GeoJson::Feature(_) | geojson::GeoJson::FeatureCollection(_) => None,
-    }
 }

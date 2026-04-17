@@ -6,7 +6,10 @@
 //! has been parsed into an AST.
 
 use crate::{
-    domain::temporal::{AggrMethod, TemporalFormat, TimeProp, TimeRel},
+    domain::{
+        geometry::Wkb,
+        temporal::{AggrMethod, TemporalFormat, TimeProp, TimeRel},
+    },
     query::{error::QueryError, q::ast::Expr},
     renderer::SysAttrsInclusion,
 };
@@ -222,8 +225,15 @@ pub struct CompiledOrderTerm {
 /// reference point instead of the geo-query geometry.
 #[derive(Debug, Clone, PartialEq)]
 pub struct OrderingGeometry {
-    /// The parsed GeoJSON geometry combining type and coordinates.
-    pub geometry: geojson::Geometry,
+    /// Canonical WKB form bound directly into SQL distance predicates.
+    pub geometry: Wkb,
+}
+
+impl OrderingGeometry {
+    /// Wrap a canonical WKB geometry into an ordering reference.
+    pub const fn new(geometry: Wkb) -> OrderingGeometry {
+        OrderingGeometry { geometry }
+    }
 }
 
 /// A compiled geo-spatial query, per NGSI-LD 4.10.

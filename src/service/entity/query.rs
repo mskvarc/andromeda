@@ -430,9 +430,9 @@ impl EntityQueryService {
                 "type": geometry_type,
                 "coordinates": coordinates
             });
-            let geometry: geojson::Geometry = serde_json::from_value(geojson_value)
+            let wkb = crate::domain::geometry::Wkb::from_geojson_value(&geojson_value)
                 .map_err(|e| AndromedaError::entity_validation(format!("Invalid orderFrom/orderGeometry combination: {}", e)))?;
-            Some(OrderingGeometry { geometry })
+            Some(OrderingGeometry::new(wkb))
         } else {
             None
         };

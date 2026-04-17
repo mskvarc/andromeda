@@ -5,7 +5,7 @@
 //! functions with no I/O — the caller is responsible for loading and persisting
 //! the entity.
 
-use crate::jsonld::vocab;
+use crate::{domain::geometry::Wkb, jsonld::vocab};
 use iref::Iri;
 use serde_json::{Map, Value};
 
@@ -148,6 +148,27 @@ pub fn extract_observation_space_geojson(expanded: &Value) -> Option<String> {
 /// (expanded form, ETSI GS CIM 009 clause 5.2.4).
 pub fn extract_operation_space_geojson(expanded: &Value) -> Option<String> {
     extract_geo_property_geojson(expanded, vocab::expanded::OPERATION_SPACE)
+}
+
+/// Extract the entity's `location` GeoProperty decoded into canonical [`Wkb`].
+pub fn extract_location_wkb(expanded: &Value) -> Option<Wkb> {
+    extract_geo_property_wkb(expanded, vocab::expanded::LOCATION)
+}
+
+/// Extract the entity's `observationSpace` GeoProperty decoded into canonical [`Wkb`].
+pub fn extract_observation_space_wkb(expanded: &Value) -> Option<Wkb> {
+    extract_geo_property_wkb(expanded, vocab::expanded::OBSERVATION_SPACE)
+}
+
+/// Extract the entity's `operationSpace` GeoProperty decoded into canonical [`Wkb`].
+pub fn extract_operation_space_wkb(expanded: &Value) -> Option<Wkb> {
+    extract_geo_property_wkb(expanded, vocab::expanded::OPERATION_SPACE)
+}
+
+fn extract_geo_property_wkb(expanded: &Value, iri: &'static Iri) -> Option<Wkb> {
+    let geojson_str = extract_geo_property_geojson(expanded, iri)?;
+    let value: Value = serde_json::from_str(&geojson_str).ok()?;
+    Wkb::from_geojson_value(&value).ok()
 }
 
 /// Generic GeoProperty GeoJSON extraction for a given IRI key.
