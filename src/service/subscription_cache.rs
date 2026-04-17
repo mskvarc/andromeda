@@ -24,10 +24,18 @@ use crate::{
     query::q,
     renderer::SysAttrsInclusion,
     repository::subscription_store::SubscriptionStore,
-    service::subscription_matching::find_matching,
+    service::{
+        spatial::{
+            SpatialKey,
+            subscription_index::{SpatialSubscriptionIndex, SubEntry},
+        },
+        subscription_matching::find_matching,
+    },
+    tenancy::types::TenantRef,
     transport::endpoint::parse_endpoint_transport,
 };
 use dashmap::DashMap;
+use iref::IriBuf;
 use regex::Regex;
 use std::{collections::HashSet, sync::Arc};
 use tracing::debug;
@@ -52,15 +60,25 @@ pub struct SubscriptionCache {
     inner: DashMap<String, Arc<CompiledSubscription>>,
     by_type: DashMap<String, HashSet<String>>,
     untyped: dashmap::DashSet<String>,
+    spatial: Arc<SpatialSubscriptionIndex>,
+    tenant: TenantRef,
 }
 
 impl SubscriptionCache {
-    /// Create an empty subscription cache.
-    pub fn new() -> SubscriptionCache {
+    /// Create an empty subscription cache scoped to the given tenant.
+    pub fn new(tenant: TenantRef) -> SubscriptionCache {
+        SubscriptionCache::with_spatial(tenant, Arc::new(SpatialSubscriptionIndex::new()))
+    }
+
+    /// Create an empty subscription cache that writes its geo index into
+    /// the given shared [`SpatialSubscriptionIndex`].
+    pub fn with_spatial(tenant: TenantRef, spatial: Arc<SpatialSubscriptionIndex>) -> SubscriptionCache {
         SubscriptionCache {
             inner: DashMap::new(),
             by_type: DashMap::new(),
             untyped: dashmap::DashSet::new(),
+            spatial,
+            tenant,
         }
     }
 
@@ -144,7 +162,19 @@ impl SubscriptionCache {
         self.inner.get(id).map(|entry| Arc::clone(entry.value()))
     }
 
+    /// Tenant scope of this cache (used by callers building [`SpatialKey`]s
+    /// against the shared geo index).
+    pub const fn tenant(&self) -> &TenantRef {
+        &self.tenant
+    }
+
+    /// Shared handle to the geo index this cache populates.
+    pub fn spatial(&self) -> Arc<SpatialSubscriptionIndex> {
+        Arc::clone(&self.spatial)
+    }
+
     fn index_insert(&self, compiled: &CompiledSubscription) {
+        self.spatial_insert(compiled);
         if compiled.selectors.is_empty() {
             self.untyped.insert(compiled.id.clone());
             return;
@@ -169,6 +199,7 @@ impl SubscriptionCache {
     }
 
     fn index_remove(&self, id: &str) {
+        self.spatial.remove(id);
         self.untyped.remove(id);
         // Drop the id from every type bucket it appears in. `retain` scans
         // the map once; the keys per bucket are short (one `HashSet<String>`
@@ -182,6 +213,59 @@ impl SubscriptionCache {
     /// Returns the number of cached subscriptions.
     pub fn len(&self) -> usize {
         self.inner.len()
+    }
+
+    fn spatial_insert(&self, compiled: &CompiledSubscription) {
+        let Some(geo_q) = compiled.compiled_geo_q.as_ref() else {
+            return;
+        };
+        let Ok(geoproperty_iri) = IriBuf::new(geo_q.geoproperty_iri.clone()) else {
+            debug!(
+                "Subscription {} spatial index skipped: invalid geoproperty IRI '{}'",
+                compiled.id, geo_q.geoproperty_iri
+            );
+            return;
+        };
+
+        let Some(entry) = SubEntry::from_compiled(compiled.id.clone(), geo_q) else {
+            debug!("Subscription {} spatial index skipped: geometry has no bounding rect", compiled.id);
+            return;
+        };
+
+        // A subscription without selectors matches every type; index under a
+        // synthetic wildcard key so find_matching can look it up regardless
+        // of event type. Concretely-typed subscriptions index under every
+        // selector type they name. Pattern-typed selectors fall back to the
+        // wildcard bucket -- matches the `untyped` fallback used by the
+        // by_type index.
+        let mut indexed_any_type = false;
+        for selector in &compiled.selectors {
+            if selector.type_pattern.is_some() {
+                continue;
+            }
+            match IriBuf::new(selector.type_.clone()) {
+                Ok(type_iri) => {
+                    let key = SpatialKey::new(self.tenant.clone(), type_iri, geoproperty_iri.clone());
+                    self.spatial.insert(key, entry.clone());
+                    indexed_any_type = true;
+                }
+                Err(_) => {
+                    debug!(
+                        "Subscription {} spatial index skipped selector type '{}': not a valid IRI",
+                        compiled.id, selector.type_
+                    );
+                }
+            }
+        }
+        if !indexed_any_type {
+            // No concrete type selector -> index under a wildcard type IRI so
+            // the cache can still reach the subscription when the caller
+            // enumerates keys for cross-type matching.
+            if let Ok(wildcard) = IriBuf::new("urn:andromeda:spatial:any-type".to_string()) {
+                let key = SpatialKey::new(self.tenant.clone(), wildcard, geoproperty_iri);
+                self.spatial.insert(key, entry);
+            }
+        }
     }
 }
 
@@ -445,7 +529,7 @@ mod tests {
 
     #[test]
     fn len_reflects_cache_size() {
-        let cache = SubscriptionCache::new();
+        let cache = SubscriptionCache::new(TenantRef::UnnamedDefault);
         assert_eq!(cache.len(), 0);
 
         cache

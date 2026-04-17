@@ -6,4 +6,6 @@ pub mod interval;
 pub mod notification;
 pub mod outbox_delivery;
 pub mod snapshot_expiration;
+/// Keeps the entity spatial index in sync with broadcast `ChangeEvent`s.
+pub mod spatial_sync;
 pub mod subscription_expiration;

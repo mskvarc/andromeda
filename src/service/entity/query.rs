@@ -13,8 +13,13 @@ use crate::{
     },
     renderer::SysAttrsInclusion,
     repository::entity::EntityRepository,
-    service::context_source_forwarding::{ForwardedEntities, merge_query_results},
+    service::{
+        context_source_forwarding::{ForwardedEntities, merge_query_results},
+        spatial::{SpatialKey, build_ref_geometry, entity_index::SpatialEntityIndex, flatten_or_type_iris},
+    },
+    tenancy::types::TenantRef,
 };
+use iref::IriBuf;
 use serde_json::Value;
 use sqlx::postgres::PgPool;
 use std::{
@@ -30,6 +35,8 @@ pub struct EntityQueryService {
     repo: EntityRepository,
     engine: JsonLdEngine,
     compiled_cache: CompiledQueryCache,
+    spatial: Arc<SpatialEntityIndex>,
+    tenant: TenantRef,
 }
 
 type ResolveLinkedResult = Result<HashMap<String, Entity>, AndromedaError>;
@@ -37,12 +44,14 @@ type ResolveLinkedFuture<'a> = Pin<Box<dyn Future<Output = ResolveLinkedResult> 
 
 impl EntityQueryService {
     /// Create a new entity query service backed by the given connection pool.
-    pub fn new(pool: &PgPool, engine: JsonLdEngine) -> EntityQueryService {
+    pub fn new(pool: &PgPool, engine: JsonLdEngine, spatial: Arc<SpatialEntityIndex>, tenant: TenantRef) -> EntityQueryService {
         let repo = EntityRepository::new(pool);
         EntityQueryService {
             repo,
             engine,
             compiled_cache: CompiledQueryCache::new(),
+            spatial,
+            tenant,
         }
     }
 
@@ -139,7 +148,8 @@ impl EntityQueryService {
     /// Execute a parameterized entity query, returning matching entities and an optional total count.
     pub async fn query(&self, query: &EntityQueryParameters, context: &ContextSpec) -> Result<(Vec<Entity>, Option<i64>), AndromedaError> {
         let compiled = self.compile_query_cached(query, context, true).await?;
-        let query_result = self.repo.query_compiled(&compiled).await?;
+        let compiled_for_repo = self.spatial_prefilter(&compiled);
+        let query_result = self.repo.query_compiled(&compiled_for_repo).await?;
         let sys_attrs = query.parse_options().sys_attrs;
 
         // Batch-fetch sys_attrs for all entities in one query instead of N+1
@@ -463,6 +473,68 @@ impl EntityQueryService {
         tracing::info!("Compiled query: {:?}", compiled);
 
         Ok(compiled)
+    }
+
+    /// Consult [`SpatialEntityIndex`] to narrow `compiled.ids` before SQL,
+    /// and drop `compiled.geo` when the index was able to produce an
+    /// authoritative candidate set.
+    ///
+    /// Falls through (returns the original `Arc` unchanged) when the query
+    /// is not geo-accelerated: no `geo`, complex `type_expr` (`And`), cold
+    /// partition, or a reference geometry the `geo` crate can't parse. SQL
+    /// still runs with the full georel filter in those cases.
+    fn spatial_prefilter(&self, compiled: &Arc<CompiledEntityQuery>) -> Arc<CompiledEntityQuery> {
+        let Some(ref geo_q) = compiled.geo else {
+            return Arc::clone(compiled);
+        };
+        let Some(ref type_expr) = compiled.type_expr else {
+            return Arc::clone(compiled);
+        };
+        let Some(type_iris) = flatten_or_type_iris(type_expr) else {
+            return Arc::clone(compiled);
+        };
+        let Ok(geoproperty_iri) = IriBuf::new(geo_q.geoproperty_iri.clone()) else {
+            return Arc::clone(compiled);
+        };
+        let Some(ref_geom) = build_ref_geometry(geo_q) else {
+            return Arc::clone(compiled);
+        };
+
+        let mut any_warm = false;
+        let mut union: HashSet<Urn> = HashSet::new();
+        for type_iri in type_iris {
+            let key = SpatialKey::new(self.tenant.clone(), type_iri, geoproperty_iri.clone());
+            let Some(candidates) = self.spatial.query(&key, &geo_q.georel, &ref_geom) else {
+                // Any cold partition forces a fall-through: we would otherwise
+                // silently return an empty or incomplete set for that type.
+                return Arc::clone(compiled);
+            };
+            any_warm = true;
+            union.extend(candidates);
+        }
+        if !any_warm {
+            return Arc::clone(compiled);
+        }
+
+        let candidate_ids: Vec<String> = union.into_iter().map(|u| u.to_string()).collect();
+
+        let final_ids = match &compiled.ids {
+            Some(user_ids) => {
+                let user_set: HashSet<&str> = user_ids.iter().map(String::as_str).collect();
+                candidate_ids.into_iter().filter(|id| user_set.contains(id.as_str())).collect()
+            }
+            None => candidate_ids,
+        };
+
+        let mut cloned = (**compiled).clone();
+        cloned.ids = Some(final_ids);
+        cloned.geo = None;
+        tracing::debug!(
+            "spatial prefilter hit: {} candidate(s) for geoQ={:?}",
+            cloned.ids.as_ref().map_or(0, Vec::len),
+            geo_q.georel
+        );
+        Arc::new(cloned)
     }
 
     async fn compile_geo_query(&self, params: &EntityQueryParameters, context: &ContextSpec) -> Result<Option<GeoQuery>, AndromedaError> {

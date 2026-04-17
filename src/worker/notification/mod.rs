@@ -25,8 +25,10 @@ use tokio::sync::broadcast;
 use tracing::{debug, error, info};
 use uuid::Uuid;
 
-use crate::service::subscription_matching::matches_entity_filters;
+use crate::service::{spatial::SpatialKey, subscription_matching::matches_entity_filters};
+use iref::IriBuf;
 use payload::{NotificationBuildParams, NotificationCompactionCache, build_notification_data};
+use std::collections::HashSet;
 
 const NOTIFICATION_CONCURRENCY: usize = 20;
 
@@ -227,7 +229,8 @@ impl NotificationWorker {
 
         let matching: Vec<Arc<CompiledSubscription>> = if !matches!(event.trigger_reason, TriggerReason::EntityDeleted) {
             if let Some(ref data) = entity_data {
-                matching.into_iter().filter(|sub| matches_entity_filters(sub, data)).collect()
+                let geo_filtered = self.spatial_narrow(matching, data, &event.entity_types);
+                geo_filtered.into_iter().filter(|sub| matches_entity_filters(sub, data)).collect()
             } else {
                 matching
             }
@@ -369,6 +372,97 @@ impl NotificationWorker {
             .buffer_unordered(NOTIFICATION_CONCURRENCY)
             .collect()
             .await;
+    }
+
+    /// Narrow `matching` to subscriptions whose pre-compiled `geoQ` actually
+    /// has the entity in scope, by consulting the spatial subscription index.
+    ///
+    /// Subscriptions without a `compiled_geo_q` are kept verbatim. The index
+    /// returns the same answer the exact predicate would, so the downstream
+    /// `matches_entity_filters` call still re-checks for safety but evaluates
+    /// far fewer geometries when many geo-enabled subscriptions exist but
+    /// few overlap any given entity.
+    fn spatial_narrow(&self, matching: Vec<Arc<CompiledSubscription>>, entity_data: &Value, entity_types: &[String]) -> Vec<Arc<CompiledSubscription>> {
+        let spatial = self.cache.spatial();
+        let tenant = self.cache.tenant().clone();
+
+        // Cache geoproperty IRI -> entity geometry to avoid re-parsing per
+        // subscription that targets the same property.
+        let mut geom_cache: std::collections::HashMap<String, geo::Geometry<f64>> = std::collections::HashMap::new();
+        let mut survivors: HashSet<String> = HashSet::new();
+        let mut non_geo: Vec<Arc<CompiledSubscription>> = Vec::new();
+
+        for sub in matching {
+            let Some(ref geo_q) = sub.compiled_geo_q else {
+                non_geo.push(sub);
+                continue;
+            };
+
+            let entity_geom = if let Some(g) = geom_cache.get(&geo_q.geoproperty_iri) {
+                Some(g.clone())
+            } else {
+                let parsed = extract_entity_geometry(entity_data, &geo_q.geoproperty_iri);
+                if let Some(ref g) = parsed {
+                    geom_cache.insert(geo_q.geoproperty_iri.clone(), g.clone());
+                }
+                parsed
+            };
+
+            let Some(entity_geom) = entity_geom else {
+                // Entity has no value for this geoproperty -> sub cannot match.
+                continue;
+            };
+
+            let Ok(geoproperty_iri) = IriBuf::new(geo_q.geoproperty_iri.clone()) else {
+                survivors.insert(sub.id.clone());
+                non_geo.push(sub);
+                continue;
+            };
+
+            let mut matched_any = false;
+            for type_name in entity_types {
+                let Ok(type_iri) = IriBuf::new(type_name.clone()) else {
+                    continue;
+                };
+                let key = SpatialKey::new(tenant.clone(), type_iri, geoproperty_iri.clone());
+                let cands = spatial.candidates(&key, &entity_geom);
+                if cands.iter().any(|c| c == &sub.id) {
+                    matched_any = true;
+                    break;
+                }
+            }
+            if matched_any && survivors.insert(sub.id.clone()) {
+                non_geo.push(sub);
+            }
+        }
+
+        non_geo
+    }
+}
+
+fn extract_entity_geometry(entity_data: &Value, geoproperty_iri: &str) -> Option<geo::Geometry<f64>> {
+    let obj = match entity_data {
+        Value::Array(arr) => arr.first().and_then(Value::as_object),
+        Value::Object(obj) => Some(obj),
+        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => None,
+    }?;
+    let prop_value = obj.get(geoproperty_iri)?;
+    let geojson_value = prop_value
+        .as_array()
+        .and_then(|arr| arr.first())
+        .and_then(|inst| inst.get(vocab::expanded::VALUE.as_str()))
+        .and_then(|v| v.as_array())
+        .and_then(|arr| arr.first())
+        .and_then(|v| v.get("@value"))?;
+    let geojson_str = match geojson_value {
+        Value::String(s) => s.clone(),
+        Value::Object(_) => geojson_value.to_string(),
+        Value::Array(_) | Value::Bool(_) | Value::Null | Value::Number(_) => return None,
+    };
+    let parsed: geojson::GeoJson = geojson_str.parse().ok()?;
+    match parsed {
+        geojson::GeoJson::Geometry(g) => geo::Geometry::try_from(g).ok(),
+        geojson::GeoJson::Feature(_) | geojson::GeoJson::FeatureCollection(_) => None,
     }
 }
 

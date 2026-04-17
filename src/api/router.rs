@@ -38,6 +38,7 @@ use crate::{
         csource_subscription::CsourceSubscriptionService,
         entity::{BatchExecutionConfig, BatchSideEffectDispatcherConfig, EntityService, OutboxWriteConfig},
         jsonld_context::JsonLdContextService,
+        spatial::{entity_index::SpatialEntityIndex, warmup},
         subscription::SubscriptionService,
         subscription_cache::SubscriptionCache,
         temporal::TemporalService,
@@ -58,6 +59,7 @@ use crate::{
         notification::NotificationWorker,
         outbox_delivery::OutboxDeliveryWorker,
         snapshot_expiration::SnapshotExpirationWorker,
+        spatial_sync::SpatialSyncWorker,
         subscription_expiration::SubscriptionExpirationWorker,
     },
 };
@@ -280,9 +282,14 @@ pub async fn build_tenant_state(
     } else {
         None
     };
-    let subscription_cache = Arc::new(SubscriptionCache::new());
+    let subscription_cache = Arc::new(SubscriptionCache::new(tenant.clone()));
     if let Err(e) = subscription_cache.reload(&SubscriptionRepository::new(&pool)).await {
         tracing::error!("Failed to load subscription cache: {}", e);
+    }
+
+    let spatial_index = Arc::new(SpatialEntityIndex::new());
+    if let Err(e) = warmup::warmup_location(&spatial_index, &pool, &tenant).await {
+        tracing::warn!("spatial warmup failed: {}", e);
     }
 
     let entity_service = Arc::new(EntityService::new(
@@ -333,7 +340,8 @@ pub async fn build_tenant_state(
     // Keep shutdown sender alive so an eventual graceful shutdown can signal the probe.
     let _shutdown_tx = shutdown_tx;
 
-    let notification_entity_query = crate::service::entity::query::EntityQueryService::new(&pool, engine.clone());
+    let spatial_change_rx = change_tx.subscribe();
+    let notification_entity_query = crate::service::entity::query::EntityQueryService::new(&pool, engine.clone(), Arc::clone(&spatial_index), tenant.clone());
     let notification_worker = NotificationWorker::new(
         change_tx.subscribe(),
         sub_change_tx.subscribe(),
@@ -391,17 +399,42 @@ pub async fn build_tenant_state(
     let snapshot_expiration_worker = SnapshotExpirationWorker::new(crate::repository::snapshot::SnapshotRepository::new(&pool), expiration_interval);
     worker_handles.push(tokio::spawn(snapshot_expiration_worker.run()));
 
+    // Spatial index: event-driven incremental sync + periodic bulk rebuild.
+    let spatial_sync_worker = SpatialSyncWorker::new(spatial_change_rx, Arc::clone(&spatial_index), &pool, tenant.clone());
+    worker_handles.push(tokio::spawn(spatial_sync_worker.run()));
+
+    let rebuild_secs: u64 = std::env::var("ANDROMEDA_SPATIAL_REBUILD_SECS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(1800);
+    if rebuild_secs > 0 {
+        let rebuild_index = Arc::clone(&spatial_index);
+        let rebuild_pool = pool.clone();
+        let rebuild_tenant = tenant.clone();
+        worker_handles.push(tokio::spawn(warmup::periodic_rebuild(
+            rebuild_index,
+            rebuild_pool,
+            rebuild_tenant,
+            std::time::Duration::from_secs(rebuild_secs),
+        )));
+    }
+
     let snapshot_transport = transport.clone();
     let transport_handle = transport.clone();
     let csr_interval_worker = CsrIntervalWorker::new(
         CsourceSubscriptionRepository::new(&pool),
         ContextSourceRegistrationRepository::new(&pool),
         transport,
-        tenant,
+        tenant.clone(),
     );
     worker_handles.push(tokio::spawn(csr_interval_worker.run()));
 
-    let entity_query_service = Arc::new(crate::service::entity::query::EntityQueryService::new(&pool, engine.clone()));
+    let entity_query_service = Arc::new(crate::service::entity::query::EntityQueryService::new(
+        &pool,
+        engine.clone(),
+        Arc::clone(&spatial_index),
+        tenant,
+    ));
     let entity_discovery_service = Arc::new(crate::service::entity::discovery::EntityDiscoveryService::new(&pool, engine.clone()));
 
     let forwarding_service = Arc::new(crate::service::context_source_forwarding::ContextSourceForwardingService::new(

@@ -13,6 +13,8 @@ pub mod entity_map;
 pub mod jsonld_context;
 pub mod snapshot;
 pub mod snapshot_executor;
+/// In-memory R-tree spatial indexes for geo-query and subscription matching.
+pub mod spatial;
 pub mod subscription;
 pub mod subscription_base;
 /// Shared subscription cache for fast in-memory event matching.
