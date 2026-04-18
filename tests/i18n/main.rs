@@ -10,7 +10,7 @@ use serde_json::{Value, json};
 use uuid::Uuid;
 
 const BASE_URL: &str = "http://127.0.0.1:1056/ngsi-ld/v1";
-const CORE_CONTEXT: &str = "https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.8.jsonld";
+const CORE_CONTEXT: &str = "https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.9.jsonld";
 const IN_LANGUAGE_IRI: &str = "https://schema.org/inLanguage";
 const SAME_AS_IRI: &str = "https://schema.org/sameAs";
 const BOOKING_URL_IRI: &str = "https://uri.etsi.org/ngsi-ld/default-context/bookingUrl";

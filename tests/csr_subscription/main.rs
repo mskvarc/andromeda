@@ -12,7 +12,7 @@ use uuid::Uuid;
 
 const BASE_URL: &str = "http://127.0.0.1:1056/ngsi-ld/v1";
 const DATABASE_URL: &str = "postgres://postgres:postgres@127.0.0.1:5432/postgres";
-const CORE_CONTEXT: &str = "https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.8.jsonld";
+const CORE_CONTEXT: &str = "https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.9.jsonld";
 const BAD_REQUEST_DATA_TYPE: &str = "https://uri.etsi.org/ngsi-ld/errors/BadRequestData";
 const INVALID_REQUEST_TYPE: &str = "https://uri.etsi.org/ngsi-ld/errors/InvalidRequest";
 const RESOURCE_NOT_FOUND_TYPE: &str = "https://uri.etsi.org/ngsi-ld/errors/ResourceNotFound";

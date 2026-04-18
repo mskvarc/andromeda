@@ -5,7 +5,7 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 pub const BASE_URL: &str = "http://127.0.0.1:1056/ngsi-ld/v1";
-pub const CORE_CONTEXT: &str = "https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.8.jsonld";
+pub const CORE_CONTEXT: &str = "https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.9.jsonld";
 pub const TEST_SUITE_CONTEXT: &str =
     "https://forge.etsi.org/rep/cim/ngsi-ld-test-suite/-/raw/develop/resources/jsonld-contexts/ngsi-ld-test-suite-compound.jsonld";
 const DATABASE_URL: &str = "postgres://postgres:postgres@127.0.0.1:5432/postgres";

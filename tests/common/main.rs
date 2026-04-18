@@ -16,7 +16,7 @@ use serde_json::{Value, json};
 use uuid::Uuid;
 
 const BASE_URL: &str = "http://127.0.0.1:1056/ngsi-ld/v1";
-const CORE_CONTEXT: &str = "https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.8.jsonld";
+const CORE_CONTEXT: &str = "https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.9.jsonld";
 const UNRETRIEVABLE_CONTEXT: &str = "https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-non-existing.jsonld";
 const INVALID_REQUEST_TYPE: &str = "https://uri.etsi.org/ngsi-ld/errors/InvalidRequest";
 const LD_CONTEXT_NOT_AVAILABLE_TYPE: &str = "https://uri.etsi.org/ngsi-ld/errors/LdContextNotAvailable";

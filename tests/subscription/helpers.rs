@@ -5,7 +5,7 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 pub const BASE_URL: &str = "http://127.0.0.1:1056/ngsi-ld/v1";
-pub const CORE_CONTEXT: &str = "https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.8.jsonld";
+pub const CORE_CONTEXT: &str = "https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.9.jsonld";
 pub const BAD_REQUEST_DATA_TYPE: &str = "https://uri.etsi.org/ngsi-ld/errors/BadRequestData";
 pub const RESOURCE_NOT_FOUND_TYPE: &str = "https://uri.etsi.org/ngsi-ld/errors/ResourceNotFound";
 pub const ALREADY_EXISTS_TYPE: &str = "https://uri.etsi.org/ngsi-ld/errors/AlreadyExists";
