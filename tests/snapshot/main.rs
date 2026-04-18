@@ -111,6 +111,17 @@ async fn purge_snapshots(client: &Client) -> StatusCode {
         .status()
 }
 
+async fn purge_snapshots_with_q(client: &Client, q: &str) -> (StatusCode, Value) {
+    let resp = client
+        .delete(format!("{BASE_URL}/snapshots?q={}", urlencoding::encode(q)))
+        .send()
+        .await
+        .expect("purge_snapshots_with_q request failed");
+    let status = resp.status();
+    let body: Value = resp.json().await.unwrap_or_default();
+    (status, body)
+}
+
 async fn clone_snapshot(client: &Client, id: &str) -> (StatusCode, Value) {
     let resp = client
         .post(format!("{BASE_URL}/snapshots/{id}/clone"))
@@ -504,7 +515,8 @@ async fn snapshot_api_clone_returns_201_with_new_id_and_inherited_priority() {
 
 #[tokio::test]
 #[serial]
-async fn snapshot_api_purge_returns_204() {
+async fn snapshot_api_purge_without_q_returns_400() {
+    // Clause 5.16.7 / 6.36.3.2: DELETE /snapshots requires a `q` query parameter.
     clean_database().await;
     let c = client();
 
@@ -513,7 +525,84 @@ async fn snapshot_api_purge_returns_204() {
         pretty_assertions::assert_eq!(status, StatusCode::CREATED);
     }
 
-    pretty_assertions::assert_eq!(purge_snapshots(&c).await, StatusCode::NO_CONTENT);
+    pretty_assertions::assert_eq!(purge_snapshots(&c).await, StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+#[serial]
+async fn snapshot_api_purge_no_match_returns_404() {
+    // Clause 6.36.3.2: no matching snapshot -> 404 ResourceNotFound.
+    clean_database().await;
+    let c = client();
+
+    let (status, _, _) = create_snapshot(&c, &json!({"snapshotLifetime": "PT1H", "snapshotPriority": 5})).await;
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
+
+    let (status, body) = purge_snapshots_with_q(&c, "snapshotPriority==10").await;
+    pretty_assertions::assert_eq!(status, StatusCode::NOT_FOUND);
+    pretty_assertions::assert_eq!(
+        body["type"].as_str(),
+        Some("https://uri.etsi.org/ngsi-ld/errors/ResourceNotFound")
+    );
+}
+
+#[tokio::test]
+#[serial]
+async fn snapshot_api_purge_full_match_returns_204() {
+    // Clause 6.36.3.2: all matched snapshots deleted -> 204.
+    clean_database().await;
+    let c = client();
+
+    for _ in 0..3 {
+        let (status, _, _) = create_snapshot(&c, &json!({"snapshotLifetime": "PT1H", "snapshotPriority": 5})).await;
+        pretty_assertions::assert_eq!(status, StatusCode::CREATED);
+    }
+
+    let (status, _) = purge_snapshots_with_q(&c, "snapshotPriority==5").await;
+    pretty_assertions::assert_eq!(status, StatusCode::NO_CONTENT);
+
+    // Subsequent purge with same filter should now return 404.
+    let (status, _) = purge_snapshots_with_q(&c, "snapshotPriority==5").await;
+    pretty_assertions::assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+#[serial]
+async fn snapshot_api_purge_malformed_q_returns_400() {
+    // Clause 6.3.2: invalid `q` expression -> 400 BadRequestData.
+    clean_database().await;
+    let c = client();
+
+    let (status, body) = purge_snapshots_with_q(&c, "bogusField==value").await;
+    pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
+    pretty_assertions::assert_eq!(
+        body["type"].as_str(),
+        Some("https://uri.etsi.org/ngsi-ld/errors/BadRequestData")
+    );
+}
+
+#[tokio::test]
+#[serial]
+async fn snapshot_api_purge_by_priority_does_not_touch_other_priorities() {
+    // Clause 5.16.7: purge must only delete snapshots matching the filter.
+    clean_database().await;
+    let c = client();
+
+    let (_, _, keep) = create_snapshot(&c, &json!({"snapshotLifetime": "PT1H", "snapshotPriority": 9})).await;
+    let keep_id = keep["id"].as_str().unwrap().to_string();
+
+    for _ in 0..2 {
+        let (status, _, _) = create_snapshot(&c, &json!({"snapshotLifetime": "PT1H", "snapshotPriority": 1})).await;
+        pretty_assertions::assert_eq!(status, StatusCode::CREATED);
+    }
+
+    let (status, _) = purge_snapshots_with_q(&c, "snapshotPriority==1").await;
+    pretty_assertions::assert_eq!(status, StatusCode::NO_CONTENT);
+
+    let (status, _) = get_snapshot(&c, &keep_id).await;
+    pretty_assertions::assert_eq!(status, StatusCode::OK, "non-matching snapshot must survive purge");
+
+    delete_snapshot(&c, &keep_id).await;
 }
 
 #[tokio::test]

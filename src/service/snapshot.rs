@@ -3,7 +3,9 @@ use crate::{
     domain::{
         ngsi_ld_urn::SnapshotId,
         snapshot::{KeyValuePair, Snapshot, SnapshotInput, SnapshotPatch, SnapshotPriority, SnapshotStatus},
+        snapshot_filter::SnapshotPurgeFilter,
     },
+    http::error::{batch::BatchEntityError, problem::NgsiLdErrorType},
     repository::snapshot::SnapshotRepository,
     service::snapshot_executor::SnapshotExecutor,
     transport::{
@@ -160,9 +162,45 @@ impl SnapshotService {
         Ok(())
     }
 
-    /// Delete all snapshots and return the number of rows removed.
-    pub async fn purge(&self) -> Result<u64, AndromedaError> {
-        self.repo.delete_all().await
+    /// Purge snapshots matching a typed filter (ETSI GS CIM 009 clause 5.16.7).
+    ///
+    /// Matches candidate identifiers, then deletes each row individually so
+    /// per-row failures can be surfaced in a 207 Multi-Status response
+    /// (clause 6.36.3.2). Returns a [`PurgeOutcome`] describing the result:
+    ///
+    /// - [`PurgeOutcome::NoMatch`] when no snapshots match (maps to 404).
+    /// - [`PurgeOutcome::FullSuccess`] when every matched row was deleted
+    ///   (maps to 204).
+    /// - [`PurgeOutcome::Partial`] when at least one row succeeded and at
+    ///   least one failed (maps to 207).
+    pub async fn purge_by_query(&self, filter: &SnapshotPurgeFilter) -> Result<PurgeOutcome, AndromedaError> {
+        let matched = self.repo.match_by_filter(filter).await?;
+        if matched.is_empty() {
+            return Ok(PurgeOutcome::NoMatch);
+        }
+
+        let mut successes = Vec::new();
+        let mut failures = Vec::new();
+
+        for id in matched {
+            match self.repo.delete_one(&id).await {
+                Ok(true) => successes.push(id),
+                Ok(false) => failures.push(BatchEntityError::from_parse_error(
+                    id.as_str(),
+                    NgsiLdErrorType::ResourceNotFound,
+                    "Snapshot removed concurrently before purge",
+                )),
+                Err(error) => failures.push(BatchEntityError::from_domain_error(id.as_str(), &error)),
+            }
+        }
+
+        if failures.is_empty() {
+            Ok(PurgeOutcome::FullSuccess)
+        } else if successes.is_empty() {
+            Ok(PurgeOutcome::AllFailed { failures })
+        } else {
+            Ok(PurgeOutcome::Partial { successes, failures })
+        }
     }
 
     /// Validate a snapshot for header-based scoping (ETSI GS CIM 009 clause 5.5.15).
@@ -311,6 +349,27 @@ impl SnapshotService {
             }
         }
     }
+}
+
+/// Outcome of [`SnapshotService::purge_by_query`] (ETSI GS CIM 009 clause 6.36.3.2).
+#[derive(Debug)]
+pub enum PurgeOutcome {
+    /// No snapshots matched the filter (maps to 404 ResourceNotFound).
+    NoMatch,
+    /// Every matched snapshot was deleted (maps to 204 No Content).
+    FullSuccess,
+    /// All matched snapshots failed to delete (still 207 with only errors).
+    AllFailed {
+        /// Per-snapshot error entries for the multi-status body.
+        failures: Vec<BatchEntityError>,
+    },
+    /// Some succeeded and some failed (maps to 207 Multi-Status).
+    Partial {
+        /// Identifiers of successfully deleted snapshots.
+        successes: Vec<SnapshotId>,
+        /// Per-snapshot error entries for the multi-status body.
+        failures: Vec<BatchEntityError>,
+    },
 }
 
 fn build_snapshot_id() -> Result<SnapshotId, AndromedaError> {

@@ -4,7 +4,15 @@ use crate::{
     api::tenant::TenantState,
     core::error::{AndromedaError, ResultInstanceExt},
     domain::snapshot::{SnapshotInput, SnapshotPatch},
-    http::{error::problem::NgsiLdError, validation::parse_snapshot_id},
+    http::{
+        error::{
+            batch::BatchOperationResult,
+            problem::{NgsiLdError, NgsiLdErrorType},
+        },
+        extractor::snapshot_purge_q::SnapshotPurgeQ,
+        validation::parse_snapshot_id,
+    },
+    service::snapshot::PurgeOutcome,
 };
 use axum::{
     Json,
@@ -60,11 +68,45 @@ pub async fn delete(TenantState(state): TenantState, OriginalUri(uri): OriginalU
     Ok(StatusCode::NO_CONTENT.into_response())
 }
 
-/// DELETE /ngsi-ld/v1/snapshots -- Purge all snapshots.
-pub async fn purge(TenantState(state): TenantState, OriginalUri(uri): OriginalUri) -> Result<Response, NgsiLdError> {
-    state.snapshots.purge().await.with_instance(&uri)?;
+/// DELETE /ngsi-ld/v1/snapshots -- Purge snapshots selected by a `q` filter.
+///
+/// Implements ETSI GS CIM 009 v1.9.1 clauses 5.16.7 and 6.36.3.2:
+///
+/// - Missing or malformed `q` -> 400 BadRequestData (handled by the
+///   [`SnapshotPurgeQ`] extractor).
+/// - No matches -> 404 ResourceNotFound.
+/// - All matches deleted -> 204 No Content.
+/// - At least one deletion failed -> 207 Multi-Status with a
+///   [`BatchOperationResult`] body.
+pub async fn purge(
+    TenantState(state): TenantState,
+    OriginalUri(uri): OriginalUri,
+    SnapshotPurgeQ(filter): SnapshotPurgeQ,
+) -> Result<Response, NgsiLdError> {
+    let outcome = state.snapshots.purge_by_query(&filter).await.with_instance(&uri)?;
 
-    Ok(StatusCode::NO_CONTENT.into_response())
+    match outcome {
+        PurgeOutcome::NoMatch => Err(NgsiLdError::new(
+            NgsiLdErrorType::ResourceNotFound,
+            "No snapshots matched the purge query",
+            uri,
+        )),
+        PurgeOutcome::FullSuccess => Ok(StatusCode::NO_CONTENT.into_response()),
+        PurgeOutcome::AllFailed { failures } => {
+            let body = BatchOperationResult {
+                success: Vec::new(),
+                errors: failures,
+            };
+            Ok((StatusCode::MULTI_STATUS, Json(body)).into_response())
+        }
+        PurgeOutcome::Partial { successes, failures } => {
+            let body = BatchOperationResult {
+                success: successes.iter().map(|id| id.as_str().to_string()).collect(),
+                errors: failures,
+            };
+            Ok((StatusCode::MULTI_STATUS, Json(body)).into_response())
+        }
+    }
 }
 
 /// POST /ngsi-ld/v1/snapshots/{snapshot_id}/clone -- Clone a snapshot.

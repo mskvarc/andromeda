@@ -18,6 +18,7 @@ pub mod response_format;
 pub mod scope;
 pub mod serde_helpers;
 pub mod snapshot;
+pub mod snapshot_filter;
 pub mod subscription;
 pub mod temporal;
 pub mod tenant;

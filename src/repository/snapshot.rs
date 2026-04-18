@@ -8,12 +8,13 @@ use crate::{
     domain::{
         ngsi_ld_urn::SnapshotId,
         snapshot::{ExecutionResultDetails, KeyValuePair, Snapshot, SnapshotPriority, SnapshotStatus},
+        snapshot_filter::{Conjunction, SnapshotPurgeFilter, SnapshotValue},
     },
 };
 use chrono::{DateTime, Utc};
 use iso8601_duration::Duration as Iso8601Duration;
 use serde_json::Value;
-use sqlx::{Row, postgres::PgPool};
+use sqlx::{QueryBuilder, Row, postgres::PgPool};
 use url::Url;
 
 /// Repository for persisting and querying snapshot records.
@@ -103,10 +104,71 @@ impl SnapshotRepository {
         Ok(result.rows_affected() > 0)
     }
 
-    /// Delete all snapshots and return the number of rows removed.
-    pub async fn delete_all(&self) -> Result<u64, AndromedaError> {
-        let result = sqlx::query("DELETE FROM snapshots").execute(&self.pool).await?;
-        Ok(result.rows_affected())
+    /// Return the identifiers of all snapshots matching the given purge filter
+    /// (ETSI GS CIM 009 clause 5.16.7).
+    ///
+    /// The filter is compiled to a parameterised `SELECT id FROM snapshots`
+    /// via [`sqlx::QueryBuilder`]; no string concatenation is performed on
+    /// user-supplied values.
+    pub async fn match_by_filter(&self, filter: &SnapshotPurgeFilter) -> Result<Vec<SnapshotId>, AndromedaError> {
+        let separator = match filter.conjunction {
+            Conjunction::And => " AND ",
+            Conjunction::Or => " OR ",
+        };
+
+        let mut qb: QueryBuilder<sqlx::Postgres> = QueryBuilder::new("SELECT id FROM snapshots WHERE ");
+        let mut first = true;
+        for term in &filter.terms {
+            if !first {
+                qb.push(separator);
+            }
+            first = false;
+            qb.push(term.field.sql_column());
+            qb.push(" ");
+            qb.push(term.op.sql());
+            qb.push(" ");
+            match &term.value {
+                SnapshotValue::Id(id) => {
+                    qb.push_bind(id.as_str().to_string());
+                }
+                SnapshotValue::Priority(priority) => {
+                    qb.push_bind(priority.as_i16());
+                }
+                SnapshotValue::Status(status) => {
+                    qb.push_bind(*status);
+                }
+                SnapshotValue::Endpoint(url) => {
+                    qb.push_bind(url.as_str().to_string());
+                }
+                SnapshotValue::DateTime(dt) => {
+                    qb.push_bind(*dt);
+                }
+            }
+        }
+
+        let rows = qb.build().fetch_all(&self.pool).await?;
+        let mut ids = Vec::with_capacity(rows.len());
+        for row in &rows {
+            let raw: String = row.try_get("id")?;
+            let parsed = raw
+                .parse::<SnapshotId>()
+                .map_err(|e| AndromedaError::internal(format!("Invalid snapshot id '{raw}' in snapshots table: {e}")))?;
+            ids.push(parsed);
+        }
+        Ok(ids)
+    }
+
+    /// Delete a single snapshot by identifier, returning `true` if a row was removed.
+    ///
+    /// Used by the per-row purge loop so individual failures can be reported
+    /// in a 207 Multi-Status response without aborting the whole operation
+    /// (clause 6.36.3.2).
+    pub async fn delete_one(&self, id: &SnapshotId) -> Result<bool, AndromedaError> {
+        let result = sqlx::query("DELETE FROM snapshots WHERE id = $1")
+            .bind(id.as_str())
+            .execute(&self.pool)
+            .await?;
+        Ok(result.rows_affected() > 0)
     }
 
     /// Duplicate a snapshot (metadata, entities, and temporal data) under a new identifier and expiration.
