@@ -1,20 +1,16 @@
-//! Persistence layer for the notification outbox.
+//! SQL-only repository for the notification outbox.
 //!
-//! Provides transactional batch inserts (for atomic dual-write with entity
-//! mutations) and delivery-lifecycle operations (claim, mark delivered/failed,
-//! cleanup).
+//! Executes parameterised queries and returns persistence-shaped row
+//! structs. Parsing into domain types is the responsibility of
+//! [`super::mapper`].
 
 use crate::{
     core::error::AndromedaError,
-    domain::{
-        notification::TriggerReason,
-        outbox::{NewOutboxEntry, OutboxEntry, OutboxEntryId, WorkerInstanceId},
-        uri::Uri,
-    },
+    domain::outbox::{NewOutboxEntry, OutboxEntryId, WorkerInstanceId},
+    repository::outbox::rows::OutboxEntryRow,
 };
 use chrono::{DateTime, Utc};
-use sqlx::{QueryBuilder, Row, postgres::PgPool};
-use std::str::FromStr;
+use sqlx::{QueryBuilder, postgres::PgPool};
 
 /// Repository for notification outbox persistence operations.
 #[derive(Debug)]
@@ -32,9 +28,6 @@ impl OutboxRepository {
     ///
     /// Builds a single multi-row `INSERT ... VALUES (...), (...), ...` via
     /// [`sqlx::QueryBuilder::push_values`], collapsing N round-trips into one.
-    /// 2D `TEXT[][]` binds would also work for this shape, but `push_values`
-    /// avoids the sqlx limitation around nested arrays by emitting each row as
-    /// an explicit `VALUES` tuple.
     pub async fn insert_batch_in_tx(tx: &mut sqlx::Transaction<'_, sqlx::Postgres>, entries: &[NewOutboxEntry]) -> Result<(), AndromedaError> {
         if entries.is_empty() {
             return Ok(());
@@ -60,10 +53,10 @@ impl OutboxRepository {
     /// Claim a batch of pending outbox entries for delivery.
     ///
     /// Uses `FOR UPDATE SKIP LOCKED` for safe concurrent worker access.
-    /// Updates `claimed_at` and `claimed_by` on claimed rows and returns them.
-    /// Only claims entries with `attempt_count < max_attempts`.
-    pub async fn claim_pending(&self, worker_id: &WorkerInstanceId, batch_size: i32, max_attempts: i32) -> Result<Vec<OutboxEntry>, AndromedaError> {
-        let rows = sqlx::query(
+    /// Returns persistence-shaped rows; callers invoke
+    /// [`super::mapper::row_to_domain`] to obtain the domain type.
+    pub async fn claim_pending(&self, worker_id: &WorkerInstanceId, batch_size: i32, max_attempts: i32) -> Result<Vec<OutboxEntryRow>, AndromedaError> {
+        let rows = sqlx::query_as::<_, OutboxEntryRow>(
             r#"
             WITH claimable AS (
                 SELECT id
@@ -92,25 +85,25 @@ impl OutboxRepository {
         .fetch_all(&self.pool)
         .await?;
 
-        rows.iter().map(row_to_outbox_entry).collect()
+        Ok(rows)
     }
 
-    /// Mark an outbox entry as successfully delivered.
-    pub async fn mark_delivered(&self, id: OutboxEntryId) -> Result<(), AndromedaError> {
+    /// Mark an outbox entry as successfully delivered. Returns rows affected.
+    pub async fn mark_delivered(&self, id: OutboxEntryId) -> Result<u64, AndromedaError> {
         let id_val = id.into_inner();
-        sqlx::query("UPDATE notification_outbox SET delivered_at = NOW() WHERE id = $1")
+        let result = sqlx::query("UPDATE notification_outbox SET delivered_at = NOW() WHERE id = $1")
             .bind(id_val)
             .execute(&self.pool)
             .await?;
-        Ok(())
+        Ok(result.rows_affected())
     }
 
     /// Mark an outbox entry as failed, incrementing the attempt counter and
     /// scheduling a retry at `next_attempt_at`. Clears the claim so another
-    /// worker can pick it up.
-    pub async fn mark_failed(&self, id: OutboxEntryId, error: &str, next_attempt_at: DateTime<Utc>) -> Result<(), AndromedaError> {
+    /// worker can pick it up. Returns rows affected.
+    pub async fn mark_failed(&self, id: OutboxEntryId, error: &str, next_attempt_at: DateTime<Utc>) -> Result<u64, AndromedaError> {
         let id_val = id.into_inner();
-        sqlx::query(
+        let result = sqlx::query(
             r#"
             UPDATE notification_outbox
             SET attempt_count = attempt_count + 1,
@@ -126,7 +119,7 @@ impl OutboxRepository {
         .bind(next_attempt_at)
         .execute(&self.pool)
         .await?;
-        Ok(())
+        Ok(result.rows_affected())
     }
 
     /// Delete delivered outbox entries older than the given cutoff timestamp.
@@ -139,41 +132,3 @@ impl OutboxRepository {
         Ok(result.rows_affected())
     }
 }
-
-/// Convert a database row to an [`OutboxEntry`].
-fn row_to_outbox_entry(row: &sqlx::postgres::PgRow) -> Result<OutboxEntry, AndromedaError> {
-    let trigger_str: String = row.get("trigger");
-    let trigger = TriggerReason::from_str(&trigger_str).map_err(|e| AndromedaError::internal(format!("Invalid trigger reason '{}': {}", trigger_str, e)))?;
-
-    let subscription_id_str: String = row.get("subscription_id");
-    let subscription_id: Uri = subscription_id_str
-        .parse()
-        .map_err(|e| AndromedaError::internal(format!("Invalid subscription URI '{}': {}", subscription_id_str, e)))?;
-
-    let entity_id_str: String = row.get("entity_id");
-    let entity_id: Uri = entity_id_str
-        .parse()
-        .map_err(|e| AndromedaError::internal(format!("Invalid entity URI '{}': {}", entity_id_str, e)))?;
-
-    let claimed_by: Option<WorkerInstanceId> = row.get::<Option<String>, _>("claimed_by").map(WorkerInstanceId::from);
-
-    Ok(OutboxEntry {
-        id: OutboxEntryId::from(row.get::<i64, _>("id")),
-        subscription_id,
-        entity_id,
-        trigger,
-        entity_snapshot: row.get("entity_snapshot"),
-        previous_snapshot: row.get("previous_snapshot"),
-        changed_attrs: row.get("changed_attrs"),
-        created_at: row.get("created_at"),
-        claimed_at: row.get("claimed_at"),
-        claimed_by,
-        delivered_at: row.get("delivered_at"),
-        delivery_error: row.get("delivery_error"),
-        attempt_count: row.get("attempt_count"),
-        next_attempt_at: row.get("next_attempt_at"),
-    })
-}
-
-// Note: OutboxRepository methods require a database connection for testing.
-// Integration tests covering these methods are in the main integration test suite.

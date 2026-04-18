@@ -1,14 +1,18 @@
 use crate::{
     core::error::AndromedaError,
     domain::{
-        jsonld_context::{ContextKind, ContextMetadata},
+        jsonld_context::{ContextGetResult, ContextKind, ContextListResult, ContextMetadata},
         uri::Uri,
     },
     jsonld::{
         JsonLdEngine,
         core_context::{NGSI_LD_CORE_CONTEXT_URL, NGSI_LD_CORE_CONTEXT_V19, is_ngsi_ld_core_context_url},
     },
-    repository::jsonld_context::{ContextGetResult, ContextListResult, DetailLevel, JsonLdContextRepository},
+    repository::jsonld_context::{
+        mapper::row_to_metadata,
+        params::{DetailLevel, ListContextsParams},
+        repo::{FetchedContext, JsonLdContextRepository, ListedContexts},
+    },
 };
 use chrono::Utc;
 use serde_json::Value;
@@ -43,9 +47,27 @@ impl JsonLdContextService {
     /// List available JSON-LD contexts, optionally filtered by kind and with detailed metadata.
     pub async fn list(&self, kind: Option<ContextKind>, detail_level: DetailLevel) -> Result<Value, AndromedaError> {
         let include_core = kind.is_none() || kind == Some(ContextKind::ImplicitlyCreated);
-        let result = self.repo.list(kind, detail_level).await?;
+        let kind_ref = kind.as_ref();
+        let params = ListContextsParams {
+            kind: kind_ref,
+            detail_level,
+            after: None,
+            limit: LIST_DEFAULT_LIMIT,
+        };
+        let listed = self.repo.list(params).await?;
 
-        match result {
+        let dto = match listed {
+            ListedContexts::Detailed(rows) => {
+                let metas: Result<Vec<ContextMetadata>, AndromedaError> = rows
+                    .into_iter()
+                    .map(|r| row_to_metadata(r).map_err(|e| AndromedaError::internal(e.to_string())))
+                    .collect();
+                ContextListResult::Detailed(metas?)
+            }
+            ListedContexts::Summary(rows) => ContextListResult::Urls(rows.into_iter().map(|r| r.url.unwrap_or(r.id)).collect()),
+        };
+
+        match dto {
             ContextListResult::Detailed(mut metas) => {
                 if include_core {
                     metas.push(build_core_context_metadata(NGSI_LD_CORE_CONTEXT_URL)?);
@@ -70,16 +92,23 @@ impl JsonLdContextService {
             };
         }
 
-        let result = self
+        let fetched = self
             .repo
             .get(identifier, detail_level)
             .await?
             .ok_or_else(|| AndromedaError::context_not_found(identifier.to_string()))?;
 
-        // Record the access hit when serving the context payload (not for details queries)
         if detail_level == DetailLevel::Summary {
             let _ = self.repo.record_access(identifier).await;
         }
+
+        let result = match fetched {
+            FetchedContext::Detailed(row) => {
+                let meta = row_to_metadata(*row).map_err(|e| AndromedaError::internal(e.to_string()))?;
+                ContextGetResult::Detailed(Box::new(meta))
+            }
+            FetchedContext::Payload(value) => ContextGetResult::Payload(value),
+        };
 
         match result {
             ContextGetResult::Detailed(meta) => Ok(serde_json::to_value(meta)?),
@@ -117,12 +146,15 @@ impl JsonLdContextService {
             return Ok(());
         }
 
-        if !self.repo.delete(identifier).await? {
+        if self.repo.delete(identifier).await? == 0 {
             return Err(AndromedaError::context_not_found(identifier.to_string()));
         }
         Ok(())
     }
 }
+
+/// Default page size for `list()` keyset pagination.
+const LIST_DEFAULT_LIMIT: u32 = 1000;
 
 fn is_core_context_url(identifier: &str) -> bool {
     is_ngsi_ld_core_context_url(identifier)

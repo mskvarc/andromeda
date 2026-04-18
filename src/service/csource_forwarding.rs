@@ -7,7 +7,7 @@ use crate::{
     http::header::{link::Link, ngsild_tenant::NgsiLdTenant, ngsild_warning::NgsiLdWarning, via::Via},
     jsonld::{ContextSpec, JsonLdEngine},
     query::q::{ast::Expr, eval::evaluate as eval_q_expr},
-    repository::context_source_registration::ContextSourceRegistrationRepository,
+    repository::csource_registration::repo::CsourceRegistrationRepository,
     tenancy::types::TenantName,
 };
 use futures::{StreamExt, stream};
@@ -17,9 +17,9 @@ use sqlx::postgres::PgPool;
 use tracing::{debug, warn};
 
 /// Service for forwarding NGSI-LD operations to registered context sources.
-pub struct ContextSourceForwardingService {
+pub struct CsourceForwardingService {
     http_client: reqwest::Client,
-    csr_repo: ContextSourceRegistrationRepository,
+    csr_repo: CsourceRegistrationRepository,
     engine: JsonLdEngine,
     /// Context Source Identity (hostAlias) for Via header (§6.3.18).
     source_identity: String,
@@ -288,9 +288,9 @@ pub enum CsrModeFilter {
 /// Used to detect when exclusive data exists but can't be forwarded (e.g. no redirectionOps).
 pub struct UnforwardableExclusiveCsr;
 
-impl ContextSourceForwardingService {
+impl CsourceForwardingService {
     /// Create a new context source forwarding service with the given source identity for Via headers.
-    pub fn new(pool: &PgPool, engine: JsonLdEngine, source_identity: String, csr_concurrency: usize) -> Result<ContextSourceForwardingService, AndromedaError> {
+    pub fn new(pool: &PgPool, engine: JsonLdEngine, source_identity: String, csr_concurrency: usize) -> Result<CsourceForwardingService, AndromedaError> {
         let http_client = reqwest::ClientBuilder::new()
             .http1_title_case_headers()
             .no_gzip()
@@ -301,8 +301,8 @@ impl ContextSourceForwardingService {
             .timeout(std::time::Duration::from_secs(5))
             .build()
             .map_err(|e| AndromedaError::internal(format!("Failed to create HTTP client for context source forwarding: {}", e)))?;
-        let csr_repo = ContextSourceRegistrationRepository::new(pool);
-        Ok(ContextSourceForwardingService {
+        let csr_repo = CsourceRegistrationRepository::new(pool);
+        Ok(CsourceForwardingService {
             http_client,
             csr_repo,
             engine,
@@ -873,13 +873,29 @@ impl ContextSourceForwardingService {
             return Vec::new();
         }
 
-        let csrs = match self.csr_repo.find_all_active().await {
-            Ok(csrs) => csrs,
-            Err(e) => {
-                warn!("Failed to load active CSRs for discovery forwarding: {}", e);
-                return Vec::new();
+        // Keyset-paginate through all active CSRs; discovery forwarding must
+        // consider every registration, but the repository caps each round-trip
+        // so a runaway CSR table cannot blow up memory.
+        const PAGE: u32 = 500;
+        let mut csrs = Vec::new();
+        let mut cursor: Option<String> = None;
+        loop {
+            let page = match self.csr_repo.find_all_active(cursor.as_deref(), PAGE).await {
+                Ok(page) => page,
+                Err(e) => {
+                    warn!("Failed to load active CSRs for discovery forwarding: {}", e);
+                    return Vec::new();
+                }
+            };
+            if page.is_empty() {
+                break;
             }
-        };
+            cursor = page.last().map(|c| c.id.clone()); // clone: own String for next loop cursor
+            csrs.extend(page);
+            if csrs.len() % usize::try_from(PAGE).unwrap_or(usize::MAX) != 0 {
+                break;
+            }
+        }
 
         if csrs.is_empty() {
             return Vec::new();
@@ -1837,7 +1853,7 @@ mod tests {
     #![allow(clippy::expect_used, clippy::unwrap_used)]
     use crate::{
         domain::registration::ForwardingMode,
-        service::context_source_forwarding::{
+        service::csource_forwarding::{
             ForwardedEntities,
             ForwardedTemporalEntities,
             ForwardedWriteResult,
@@ -1921,7 +1937,7 @@ mod tests {
 
     #[test]
     fn merge_simple_types_deduplicates() {
-        use crate::service::context_source_forwarding::{ForwardedDiscoveryResult, merge_types_results};
+        use crate::service::csource_forwarding::{ForwardedDiscoveryResult, merge_types_results};
 
         let local = serde_json::json!({"id": "urn:types", "type": "EntityTypeList", "typeList": ["Vehicle", "Sensor"]});
         let remote = vec![ForwardedDiscoveryResult {
@@ -1938,7 +1954,7 @@ mod tests {
 
     #[test]
     fn merge_simple_types_no_remote_returns_local() {
-        use crate::service::context_source_forwarding::merge_types_results;
+        use crate::service::csource_forwarding::merge_types_results;
 
         let local = serde_json::json!({"typeList": ["Vehicle"]});
         let result = merge_types_results(local.clone(), Vec::new(), false);
@@ -1947,7 +1963,7 @@ mod tests {
 
     #[test]
     fn merge_detailed_types_unions_attribute_names() {
-        use crate::service::context_source_forwarding::{ForwardedDiscoveryResult, merge_types_results};
+        use crate::service::csource_forwarding::{ForwardedDiscoveryResult, merge_types_results};
 
         let local = serde_json::json!([
             {"id": "Vehicle", "type": "EntityType", "attributeNames": ["speed", "location"]}
@@ -1971,7 +1987,7 @@ mod tests {
 
     #[test]
     fn merge_simple_attributes_deduplicates() {
-        use crate::service::context_source_forwarding::{ForwardedDiscoveryResult, merge_attributes_results};
+        use crate::service::csource_forwarding::{ForwardedDiscoveryResult, merge_attributes_results};
 
         let local = serde_json::json!({"id": "urn:attrs", "type": "AttributeList", "attributeList": ["speed"]});
         let remote = vec![ForwardedDiscoveryResult {
@@ -1985,7 +2001,7 @@ mod tests {
 
     #[test]
     fn merge_temporal_query_unions_instances_for_same_entity() {
-        use crate::service::context_source_forwarding::merge_temporal_query_results;
+        use crate::service::csource_forwarding::merge_temporal_query_results;
 
         let local = vec![serde_json::json!({
             "id": "urn:a",
@@ -2013,7 +2029,7 @@ mod tests {
 
     #[test]
     fn merge_temporal_query_deduplicates_by_instance_id() {
-        use crate::service::context_source_forwarding::merge_temporal_query_results;
+        use crate::service::csource_forwarding::merge_temporal_query_results;
 
         let local = vec![serde_json::json!({
             "id": "urn:a",
@@ -2040,7 +2056,7 @@ mod tests {
 
     #[test]
     fn merge_temporal_query_auxiliary_only_supplements_existing() {
-        use crate::service::context_source_forwarding::merge_temporal_query_results;
+        use crate::service::csource_forwarding::merge_temporal_query_results;
 
         let local = vec![serde_json::json!({"id": "urn:a", "type": "T", "speed": [{"value": 10}]})];
         let remote = vec![ForwardedTemporalEntities {
@@ -2059,7 +2075,7 @@ mod tests {
 
     #[test]
     fn merge_temporal_retrieve_combines_remote_attributes() {
-        use crate::service::context_source_forwarding::merge_temporal_retrieve_results;
+        use crate::service::csource_forwarding::merge_temporal_retrieve_results;
 
         let local = Some(serde_json::json!({
             "id": "urn:a",
@@ -2083,7 +2099,7 @@ mod tests {
 
     #[test]
     fn merge_temporal_retrieve_remote_only() {
-        use crate::service::context_source_forwarding::merge_temporal_retrieve_results;
+        use crate::service::csource_forwarding::merge_temporal_retrieve_results;
 
         let remote = vec![ForwardedTemporalEntities {
             mode: ForwardingMode::Inclusive,
@@ -2096,7 +2112,7 @@ mod tests {
 
     #[test]
     fn build_discovery_url_with_query_string() {
-        use crate::service::context_source_forwarding::build_discovery_url;
+        use crate::service::csource_forwarding::build_discovery_url;
 
         let url = build_discovery_url("http://cs1.example.com", "/types", "details=true");
         pretty_assertions::assert_eq!(url, "http://cs1.example.com/ngsi-ld/v1/types?details=true");
@@ -2104,7 +2120,7 @@ mod tests {
 
     #[test]
     fn build_discovery_url_without_query_string() {
-        use crate::service::context_source_forwarding::build_discovery_url;
+        use crate::service::csource_forwarding::build_discovery_url;
 
         let url = build_discovery_url("http://cs1.example.com/", "/attributes", "");
         pretty_assertions::assert_eq!(url, "http://cs1.example.com/ngsi-ld/v1/attributes");
@@ -2112,7 +2128,7 @@ mod tests {
 
     #[test]
     fn build_temporal_query_url_with_params() {
-        use crate::service::context_source_forwarding::build_temporal_query_url;
+        use crate::service::csource_forwarding::build_temporal_query_url;
 
         let url = build_temporal_query_url("http://cs1.example.com", "type=Vehicle&timerel=after&timeAt=2024-01-01T00:00:00Z");
         pretty_assertions::assert_eq!(
@@ -2123,7 +2139,7 @@ mod tests {
 
     #[test]
     fn build_temporal_retrieve_url_with_id() {
-        use crate::service::context_source_forwarding::build_temporal_retrieve_url;
+        use crate::service::csource_forwarding::build_temporal_retrieve_url;
 
         let url = build_temporal_retrieve_url("http://cs1.example.com", "urn:ngsi-ld:Vehicle:1", "timerel=after&timeAt=2024-01-01T00:00:00Z");
         pretty_assertions::assert_eq!(
@@ -2134,7 +2150,7 @@ mod tests {
 
     #[test]
     fn collect_discovery_warnings_aggregates() {
-        use crate::service::context_source_forwarding::{ForwardedDiscoveryResult, collect_discovery_warnings};
+        use crate::service::csource_forwarding::{ForwardedDiscoveryResult, collect_discovery_warnings};
 
         let results = vec![
             ForwardedDiscoveryResult {
@@ -2245,7 +2261,7 @@ mod tests {
 
     #[test]
     fn csr_mode_filter_all_includes_every_mode() {
-        use crate::service::context_source_forwarding::CsrModeFilter;
+        use crate::service::csource_forwarding::CsrModeFilter;
 
         let filter = CsrModeFilter::All;
         // All should include every mode
@@ -2254,7 +2270,7 @@ mod tests {
 
     #[test]
     fn csr_mode_filter_exclude_auxiliary() {
-        use crate::service::context_source_forwarding::CsrModeFilter;
+        use crate::service::csource_forwarding::CsrModeFilter;
 
         let filter = CsrModeFilter::ExcludeAuxiliary;
         pretty_assertions::assert_eq!(filter, CsrModeFilter::ExcludeAuxiliary);
@@ -2264,7 +2280,7 @@ mod tests {
 
     #[test]
     fn csr_mode_filter_auxiliary_only() {
-        use crate::service::context_source_forwarding::CsrModeFilter;
+        use crate::service::csource_forwarding::CsrModeFilter;
 
         let filter = CsrModeFilter::AuxiliaryOnly;
         pretty_assertions::assert_eq!(filter, CsrModeFilter::AuxiliaryOnly);

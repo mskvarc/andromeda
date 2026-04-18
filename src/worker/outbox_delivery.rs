@@ -4,7 +4,11 @@
 //! notifications via the transport layer, and marks entries as delivered
 //! or failed. Periodically cleans up old delivered entries.
 
-use crate::{core::config::OutboxConfig, domain::outbox::WorkerInstanceId, repository::outbox::OutboxRepository};
+use crate::{
+    core::config::OutboxConfig,
+    domain::outbox::WorkerInstanceId,
+    repository::outbox::{mapper::row_to_domain, repo::OutboxRepository},
+};
 use chrono::{Duration, Utc};
 use std::time::Duration as StdDuration;
 use tracing::{debug, error, info};
@@ -71,13 +75,24 @@ impl OutboxDeliveryWorker {
     }
 
     async fn poll_and_deliver(&self) {
-        let entries = match self.repo.claim_pending(&self.worker_id, self.batch_size, self.max_attempts).await {
-            Ok(entries) => entries,
+        let rows = match self.repo.claim_pending(&self.worker_id, self.batch_size, self.max_attempts).await {
+            Ok(rows) => rows,
             Err(e) => {
                 error!(error = %e, "Failed to claim outbox entries");
                 return;
             }
         };
+
+        let entries: Vec<_> = rows
+            .into_iter()
+            .filter_map(|row| match row_to_domain(row) {
+                Ok(entry) => Some(entry),
+                Err(e) => {
+                    error!(error = %e, "Failed to map outbox row to domain entry");
+                    None
+                }
+            })
+            .collect();
 
         if entries.is_empty() {
             return;

@@ -25,15 +25,9 @@ use crate::{
         response::{ResponsePayload, ResponseRenderer},
         temporal::simplify::{TemporalSimplifyPayload, TemporalSimplifyRenderer},
     },
-    repository::temporal::DeleteScope,
+    repository::temporal::params::DeleteScope,
     service::{
-        context_source_forwarding::{
-            CsrModeFilter,
-            ForwardTemporalQueryRequest,
-            ForwardingOperation,
-            collect_temporal_warnings,
-            merge_temporal_retrieve_results,
-        },
+        csource_forwarding::{CsrModeFilter, ForwardTemporalQueryRequest, ForwardingOperation, collect_temporal_warnings, merge_temporal_retrieve_results},
         entity_map::{parse_entity_map_urn, parse_iso8601_duration, parse_uri_csv},
         subscription_cache::{compile_geo_q, compile_scope_q},
         subscription_matching::{matches_compiled_geo_query, matches_compiled_scope_pattern},

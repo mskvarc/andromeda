@@ -10,9 +10,16 @@ use crate::{
         subscription::{Subscription, SubscriptionStatus},
         uri::Uri,
     },
-    jsonld::{ContextSpec, JsonLdEngine},
-    repository::subscription_store::{StatusUpdateFields, SubscriptionStore, compute_updated_status},
-    service::subscription_core,
+    jsonld::{
+        ContextSpec,
+        JsonLdEngine,
+        term_resolver::{is_valid_uri, validate_jsonld_context_value},
+    },
+    repository::{
+        subscription::repo::SubscriptionRepository,
+        subscription_store::{params::StatusUpdateFields, repo::SubscriptionStore},
+    },
+    service::{subscription_core, subscription_status::compute_updated_status},
     transport::endpoint::parse_endpoint_transport,
 };
 use async_trait::async_trait;
@@ -101,7 +108,7 @@ where
 
         let id = match payload.get("id").and_then(|v| v.as_str()) {
             Some(provided_id) => {
-                if provided_id.trim().is_empty() || !crate::jsonld::term_resolver::is_valid_uri(provided_id) {
+                if provided_id.trim().is_empty() || !is_valid_uri(provided_id) {
                     return Err(AndromedaError::subscription_validation("Subscription id must be present and a valid URI"));
                 }
                 if self.repo.exists(provided_id).await? {
@@ -109,11 +116,11 @@ where
                 }
                 provided_id.to_string()
             }
-            None => crate::repository::subscription::SubscriptionRepository::generate_id()?,
+            None => SubscriptionRepository::generate_id()?,
         };
 
         if let Some(ctx_value) = payload.get("jsonldContext") {
-            crate::jsonld::term_resolver::validate_jsonld_context_value(&self.engine, ctx_value).await?;
+            validate_jsonld_context_value(&self.engine, ctx_value).await?;
         }
 
         self.variant.expand_terms(&mut payload, context, base_url).await?;
@@ -161,7 +168,7 @@ where
 
     /// Retrieve a subscription by its identifier.
     pub async fn get(&self, id: &str) -> Result<Subscription, AndromedaError> {
-        if id.is_empty() || !crate::jsonld::term_resolver::is_valid_uri(id) {
+        if id.is_empty() || !is_valid_uri(id) {
             return Err(AndromedaError::subscription_validation("Subscription id must be a valid URI"));
         }
         self.repo.get(id).await?.ok_or_else(|| AndromedaError::subscription_not_found(id))
@@ -185,7 +192,7 @@ where
 
     /// Update an existing subscription with the given fragment payload.
     pub async fn update(&self, id: &str, mut payload: Value, context: &ContextSpec, base_url: Option<&str>) -> Result<(), AndromedaError> {
-        if id.is_empty() || !crate::jsonld::term_resolver::is_valid_uri(id) {
+        if id.is_empty() || !is_valid_uri(id) {
             return Err(AndromedaError::subscription_validation("Subscription id must be present and a valid URI"));
         }
 
@@ -212,7 +219,7 @@ where
         subscription_core::validate_notification_fragment(&payload)?;
 
         if let Some(ctx_value) = payload.get("jsonldContext") {
-            crate::jsonld::term_resolver::validate_jsonld_context_value(&self.engine, ctx_value).await?;
+            validate_jsonld_context_value(&self.engine, ctx_value).await?;
         }
 
         self.variant.expand_terms(&mut payload, context, base_url).await?;
@@ -233,7 +240,7 @@ where
         );
 
         let updated = self.repo.update_subscription(id, &fields, status).await?;
-        if !updated {
+        if updated == 0 {
             return Err(AndromedaError::subscription_not_found(id));
         }
 
@@ -248,12 +255,12 @@ where
 
     /// Delete a subscription by its identifier.
     pub async fn delete(&self, id: &str) -> Result<(), AndromedaError> {
-        if id.is_empty() || !crate::jsonld::term_resolver::is_valid_uri(id) {
+        if id.is_empty() || !is_valid_uri(id) {
             return Err(AndromedaError::subscription_validation("Subscription id must be present and a valid URI"));
         }
 
         let deleted = self.repo.delete(id).await?;
-        if !deleted {
+        if deleted == 0 {
             return Err(AndromedaError::subscription_not_found(id));
         }
 

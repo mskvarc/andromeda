@@ -57,7 +57,7 @@ impl WsConnectionRegistry {
         let token = CancellationToken::new();
         self.connections
             .entry(subscription_id.to_string())
-            .or_insert_with(DashMap::new)
+            .or_default()
             .insert(conn_id, (tx, token.clone())); // clone: CancellationToken is Arc-based
         (conn_id, rx, token)
     }

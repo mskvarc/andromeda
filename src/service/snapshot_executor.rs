@@ -1,7 +1,7 @@
 //! Snapshot query executor (ETSI GS CIM 009 v1.9.1 clause 5.16.1.4).
 //!
 //! Orchestrates [`EntityQueryService`], [`TemporalService`], and
-//! [`ContextSourceForwardingService`] to populate a snapshot's frozen data
+//! [`CsourceForwardingService`] to populate a snapshot's frozen data
 //! using the full NGSI-LD query pipeline.
 //!
 //! A [`SnapshotQuery`] (clause 5.2.23) is translated into an
@@ -26,10 +26,11 @@ use crate::{
     },
     http::parameter::query::{entity::EntityQueryParameters, temporal::TemporalQueryParameters},
     jsonld::ContextSpec,
-    repository::snapshot::SnapshotRepository,
+    repository::snapshot::{params::SnapshotEntityInput, repo::SnapshotRepository},
     service::{
-        context_source_forwarding::{ContextSourceForwardingService, CsrModeFilter, ForwardQueryRequest, ForwardingOperation},
+        csource_forwarding::{CsourceForwardingService, CsrModeFilter, ForwardQueryRequest, ForwardingOperation},
         entity::query::EntityQueryService,
+        snapshot_status::validate_preparing_transition,
         temporal::TemporalService,
     },
 };
@@ -46,7 +47,7 @@ pub struct SnapshotExecutor {
     snapshot_repo: SnapshotRepository,
     entity_query: Arc<EntityQueryService>,
     temporal: Arc<TemporalService>,
-    forwarding: Arc<ContextSourceForwardingService>,
+    forwarding: Arc<CsourceForwardingService>,
 }
 
 /// Failure modes when translating a [`SnapshotQuery`] into the pipeline-level
@@ -68,7 +69,7 @@ impl SnapshotExecutor {
         pool: &PgPool,
         entity_query: Arc<EntityQueryService>,
         temporal: Arc<TemporalService>,
-        forwarding: Arc<ContextSourceForwardingService>,
+        forwarding: Arc<CsourceForwardingService>,
     ) -> SnapshotExecutor {
         SnapshotExecutor {
             snapshot_repo: SnapshotRepository::new(pool),
@@ -114,6 +115,10 @@ impl SnapshotExecutor {
             Some(temporal_queries_details.as_slice())
         };
 
+        if let Err(e) = validate_preparing_transition(final_status) {
+            error!(snapshot_id = %snapshot.id, error = %e, "Invalid status transition requested");
+            return;
+        }
         if let Err(e) = self.snapshot_repo.update_status(&snapshot.id, final_status, qd, tqd).await {
             error!(
                 snapshot_id = %snapshot.id,
@@ -149,10 +154,7 @@ impl SnapshotExecutor {
 
         // Aggregate CSR-forwarded results (clause 5.13 + 5.16.1). Failures here
         // do not fail the snapshot query; they are logged and ignored.
-        let entity_ids: Option<Vec<String>> = params
-            .id
-            .as_deref()
-            .map(|raw| raw.split(',').map(|item| item.trim().to_string()).collect());
+        let entity_ids: Option<Vec<String>> = params.id.as_deref().map(|raw| raw.split(',').map(|item| item.trim().to_string()).collect());
         let forwarded = self
             .forwarding
             .forward_query(ForwardQueryRequest {
@@ -190,8 +192,9 @@ impl SnapshotExecutor {
             .collect();
 
         let count = pairs.len();
-        if !pairs.is_empty()
-            && let Err(error) = self.snapshot_repo.insert_entities(snapshot_id, &pairs).await
+        let inputs: Vec<SnapshotEntityInput<'_>> = pairs.iter().map(|(id, data)| SnapshotEntityInput { entity_id: id, data }).collect();
+        if !inputs.is_empty()
+            && let Err(error) = self.snapshot_repo.insert_entities(snapshot_id, &inputs).await
         {
             error!(snapshot_id = %snapshot_id, query_index = idx, error = %error, "Failed to store snapshot entity query results");
             return failure_detail(format!("Failed to store results: {error}"));
@@ -230,8 +233,9 @@ impl SnapshotExecutor {
             .collect();
 
         let count = pairs.len();
-        if !pairs.is_empty()
-            && let Err(error) = self.snapshot_repo.insert_temporal_entities(snapshot_id, &pairs).await
+        let inputs: Vec<SnapshotEntityInput<'_>> = pairs.iter().map(|(id, data)| SnapshotEntityInput { entity_id: id, data }).collect();
+        if !inputs.is_empty()
+            && let Err(error) = self.snapshot_repo.insert_temporal_entities(snapshot_id, &inputs).await
         {
             error!(snapshot_id = %snapshot_id, query_index = idx, error = %error, "Failed to store snapshot temporal query results");
             return failure_detail(format!("Failed to store results: {error}"));
@@ -241,7 +245,7 @@ impl SnapshotExecutor {
     }
 }
 
-fn update_aggregate_flags(detail: &ExecutionResultDetails, any_success_with_results: &mut bool, any_failure: &mut bool, all_empty: &mut bool) {
+const fn update_aggregate_flags(detail: &ExecutionResultDetails, any_success_with_results: &mut bool, any_failure: &mut bool, all_empty: &mut bool) {
     match detail.result_status {
         ExecutionResultStatus::Success => {
             *any_success_with_results = true;
@@ -252,7 +256,7 @@ fn update_aggregate_flags(detail: &ExecutionResultDetails, any_success_with_resu
     }
 }
 
-fn success_detail(count: usize) -> ExecutionResultDetails {
+const fn success_detail(count: usize) -> ExecutionResultDetails {
     ExecutionResultDetails {
         result_status: if count > 0 {
             ExecutionResultStatus::Success
@@ -382,7 +386,12 @@ pub fn snapshot_query_to_temporal_params(query: &SnapshotQuery) -> Result<Tempor
     })
 }
 
-fn flatten_selectors(selectors: Option<&[SnapshotEntitySelector]>) -> Result<(Vec<String>, Vec<String>, Option<String>), SnapshotQueryTranslationError> {
+/// Tuple of `(ids, types, id_pattern)` extracted from a set of snapshot
+/// entity selectors. A type alias keeps the `flatten_selectors` return type
+/// readable.
+type FlattenedSelectors = (Vec<String>, Vec<String>, Option<String>);
+
+fn flatten_selectors(selectors: Option<&[SnapshotEntitySelector]>) -> Result<FlattenedSelectors, SnapshotQueryTranslationError> {
     let mut ids: Vec<String> = Vec::new();
     let mut types: Vec<String> = Vec::new();
     let mut id_pattern: Option<String> = None;

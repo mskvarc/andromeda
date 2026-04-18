@@ -1,6 +1,6 @@
 use crate::{
     domain::notification::ChangeEvent,
-    repository::temporal::TemporalRepository,
+    repository::temporal::repo::TemporalRepository,
     service::{entity::BatchSideEffectJob, temporal_recorder::TemporalRecorder},
 };
 use std::sync::Arc;

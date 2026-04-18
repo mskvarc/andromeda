@@ -1,0 +1,150 @@
+//! Three-way merge of existing CSR state + partial update fragment into a
+//! fully-resolved set of update values.
+//!
+//! Pure service-layer logic: no I/O, no SQL. The repository applies the
+//! produced [`ResolvedCsrUpdate`] as an unconditional UPDATE.
+
+use crate::{
+    core::error::AndromedaError,
+    domain::registration::{ContextSourceRegistration, ForwardingMode},
+    repository::csource_registration::params::CsrUpdateFragment,
+    tenancy::types::TenantName,
+};
+use chrono::{DateTime, Utc};
+use serde_json::Value;
+
+/// Fully-resolved CSR update values for a single row. Every field carries
+/// the final value that will be written, with merge semantics already
+/// applied.
+#[derive(Debug)]
+pub struct ResolvedCsrUpdate {
+    /// New `registration_name` value (nullable).
+    pub registration_name: Option<String>,
+    /// New `description` value (nullable).
+    pub description: Option<String>,
+    /// New `information` array, serialised as JSON.
+    pub information: Value,
+    /// New `tenant` value.
+    pub tenant: Option<TenantName>,
+    /// New `observation_interval` object.
+    pub observation_interval: Option<Value>,
+    /// New `management_interval` object.
+    pub management_interval: Option<Value>,
+    /// New `expires_at` timestamp.
+    pub expires_at: Option<DateTime<Utc>>,
+    /// New `endpoint` (required).
+    pub endpoint: String,
+    /// New `accept` MIME type.
+    pub accept: Option<String>,
+    /// New forwarding mode.
+    pub mode: ForwardingMode,
+    /// New supported operations list.
+    pub operations: Option<Vec<String>>,
+    /// New scope strings.
+    pub scope: Option<Vec<String>>,
+    /// New refresh-rate duration string.
+    pub refresh_rate: Option<String>,
+    /// New management object.
+    pub management: Option<Value>,
+    /// New context-source-info object.
+    pub context_source_info: Option<Value>,
+    /// New JSON-LD context identifier.
+    pub jsonld_context: Option<String>,
+    /// New Via alias pseudonym.
+    pub context_source_alias: Option<String>,
+    /// New non-standard-properties blob (after shallow merge).
+    pub additional_properties: Option<Value>,
+    /// New `location` GeoJSON string.
+    pub location_geojson: Option<String>,
+    /// New `observation_space` GeoJSON string.
+    pub observation_space_geojson: Option<String>,
+    /// New `operation_space` GeoJSON string.
+    pub operation_space_geojson: Option<String>,
+}
+
+/// Apply a partial `CsrUpdateFragment` on top of an existing CSR, producing
+/// a fully-resolved set of column values for a repository UPDATE.
+///
+/// Every `.clone()` below is a fragment-side borrow → owned value for the
+/// resolved output: the fragment is passed by `&`, the existing row is owned
+/// and consumed, and the producer needs to yield a single owned
+/// [`ResolvedCsrUpdate`] either way. There is no `&`/`Cow` alternative
+/// because the repository takes `&ResolvedCsrUpdate` and the struct fields
+/// are `Option<T>`/`String`/`Value` without lifetime parameters.
+pub fn apply_fragment(existing: ContextSourceRegistration, fragment: &CsrUpdateFragment) -> Result<ResolvedCsrUpdate, AndromedaError> {
+    let registration_name = fragment.registration_name.clone().unwrap_or(existing.registration_name); // clone: own fragment side; existing moves
+    let description = fragment.description.clone().unwrap_or(existing.description); // clone: own fragment side; existing moves
+    let information: Value = match fragment.information.as_ref() {
+        Some(v) => v.clone(), // clone: own fragment Value; existing path serialises typed info
+        None => serde_json::to_value(&existing.information)?,
+    };
+    let tenant = fragment.tenant.clone().unwrap_or(existing.tenant); // clone: own fragment side; existing moves
+    let observation_interval = fragment.observation_interval.clone().unwrap_or(existing.observation_interval); // clone: own fragment side
+    let management_interval = fragment.management_interval.clone().unwrap_or(existing.management_interval); // clone: own fragment side
+    let expires_at = fragment.expires_at.unwrap_or(existing.expires_at);
+    let endpoint = fragment.endpoint.clone().unwrap_or(existing.endpoint); // clone: own fragment side; existing moves
+    let accept = fragment.accept.clone().unwrap_or(existing.accept); // clone: own fragment side; existing moves
+    let mode = fragment.mode.unwrap_or_else(|| existing.mode.unwrap_or_default());
+    let operations = fragment
+        .operations
+        .clone() // clone: own fragment side; existing path constructs fresh Vec<String>
+        .unwrap_or_else(|| existing.operations.map(|ops| ops.into_iter().map(|op| op.to_string()).collect()));
+    let scope = fragment
+        .scope
+        .clone() // clone: own fragment side; existing path constructs fresh Vec<String>
+        .unwrap_or_else(|| existing.scope.map(|v| v.into_iter().map(|s| s.to_string()).collect()));
+    let refresh_rate = fragment.refresh_rate.clone().unwrap_or(existing.refresh_rate); // clone: own fragment side
+    let management = fragment.management.clone().unwrap_or(existing.management); // clone: own fragment side
+    let context_source_info = fragment.context_source_info.clone().unwrap_or(existing.context_source_info); // clone: own fragment side
+    let jsonld_context = fragment.jsonld_context.clone().unwrap_or(existing.jsonld_context); // clone: own fragment side
+    let context_source_alias = fragment.context_source_alias.clone().unwrap_or(existing.context_source_alias); // clone: own fragment side
+
+    let additional_properties = match (existing.additional_properties, &fragment.additional_properties) {
+        (Some(existing_val), Some(new_val)) => {
+            let mut merged = existing_val;
+            if let (Some(m), Some(n)) = (merged.as_object_mut(), new_val.as_object()) {
+                for (k, v) in n {
+                    m.insert(k.clone(), v.clone()); // clone: owned key/value for merged map insertion
+                }
+            }
+            Some(merged)
+        }
+        (None, Some(new_val)) => Some(new_val.clone()), // clone: own fragment Value
+        (Some(existing_val), None) => Some(existing_val),
+        (None, None) => None,
+    };
+
+    let location_geojson = fragment.location.clone().unwrap_or_else(|| existing.location.map(|v| v.to_string())); // clone: own fragment side
+    let observation_space_geojson = fragment
+        .observation_space
+        .clone()
+        .unwrap_or_else(|| existing.observation_space.map(|v| v.to_string())); // clone: own fragment side
+    let operation_space_geojson = fragment
+        .operation_space
+        .clone()
+        .unwrap_or_else(|| existing.operation_space.map(|v| v.to_string())); // clone: own fragment side
+
+    Ok(ResolvedCsrUpdate {
+        registration_name,
+        description,
+        information,
+        tenant,
+        observation_interval,
+        management_interval,
+        expires_at,
+        endpoint,
+        accept,
+        mode,
+        operations,
+        scope,
+        refresh_rate,
+        management,
+        context_source_info,
+        jsonld_context,
+        context_source_alias,
+        additional_properties,
+        location_geojson,
+        observation_space_geojson,
+        operation_space_geojson,
+    })
+}

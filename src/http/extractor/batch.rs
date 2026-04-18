@@ -97,7 +97,7 @@ pub fn parse_batch_entities(
     let content_type_raw = headers.get(CONTENT_TYPE).and_then(|v| v.to_str().ok()).unwrap_or("");
 
     let content_kind = classify_batch_content_type(content_type_raw)
-        .ok_or_else(|| AndromedaError::malformed_request(format!("Unsupported Media Type: {}", content_type_raw)).with_instance(&uri))?;
+        .ok_or_else(|| AndromedaError::malformed_request(format!("Unsupported Media Type: {}", content_type_raw)).with_instance(uri))?;
 
     let is_ld_json = matches!(content_kind, ContentKind::LdJson);
     let is_plain_json = matches!(content_kind, ContentKind::Json);
@@ -111,28 +111,28 @@ pub fn parse_batch_entities(
         if has_context_link {
             return Err(
                 AndromedaError::malformed_request("application/ld+json must not be combined with a Link context header")
-                    .with_instance(&uri)
+                    .with_instance(uri)
                     .into(),
             );
         }
     }
 
     if body.is_empty() {
-        return Err(AndromedaError::malformed_request("Request body shall not be empty").with_instance(&uri).into());
+        return Err(AndromedaError::malformed_request("Request body shall not be empty").with_instance(uri).into());
     }
 
-    let value: Value = serde_json::from_slice(body).map_err(|e| AndromedaError::malformed_request(format!("Invalid JSON: {}", e)).with_instance(&uri))?;
+    let value: Value = serde_json::from_slice(body).map_err(|e| AndromedaError::malformed_request(format!("Invalid JSON: {}", e)).with_instance(uri))?;
 
     let items = match value {
         Value::Array(arr) if arr.is_empty() => {
             return Err(AndromedaError::malformed_request("Request body must contain a non-empty array of entities")
-                .with_instance(&uri)
+                .with_instance(uri)
                 .into());
         }
         Value::Array(arr) => arr,
         _ => {
             return Err(AndromedaError::malformed_request("Request body must be a JSON array of entities")
-                .with_instance(&uri)
+                .with_instance(uri)
                 .into());
         }
     };

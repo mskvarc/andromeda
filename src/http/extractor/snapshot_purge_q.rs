@@ -32,9 +32,9 @@ where
         let query_str = parts.uri.query().unwrap_or("");
         let raw: RawPurgeQuery = serde_urlencoded::from_str(query_str)
             .map_err(|error| ExtractorRejection::bad_request_data(format!("Invalid query parameters: {error}"), uri.clone()))?;
-        let q_value = raw
-            .q
-            .ok_or_else(|| ExtractorRejection::bad_request_data("DELETE /snapshots requires a 'q' query parameter (ETSI GS CIM 009 clause 5.16.7)", uri.clone()))?;
+        let q_value = raw.q.ok_or_else(|| {
+            ExtractorRejection::bad_request_data("DELETE /snapshots requires a 'q' query parameter (ETSI GS CIM 009 clause 5.16.7)", uri.clone())
+        })?;
         let filter = parse_snapshot_q(&q_value).map_err(|error| ExtractorRejection::bad_request_data(format!("Invalid snapshot purge q: {error}"), uri))?;
         Ok(SnapshotPurgeQ(filter))
     }
@@ -56,10 +56,7 @@ mod tests {
 
     #[tokio::test]
     async fn malformed_q_produces_bad_request_data() {
-        let req = Request::builder()
-            .uri("/ngsi-ld/v1/snapshots?q=bogus")
-            .body(())
-            .expect("request");
+        let req = Request::builder().uri("/ngsi-ld/v1/snapshots?q=bogus").body(()).expect("request");
         let (mut parts, _) = req.into_parts();
         let result = SnapshotPurgeQ::from_request_parts(&mut parts, &()).await;
         assert!(matches!(result, Err(ExtractorRejection::BadRequestData { .. })));
@@ -67,10 +64,7 @@ mod tests {
 
     #[tokio::test]
     async fn valid_q_parses_filter() {
-        let req = Request::builder()
-            .uri("/ngsi-ld/v1/snapshots?q=status%3D%3Dsuccess")
-            .body(())
-            .expect("request");
+        let req = Request::builder().uri("/ngsi-ld/v1/snapshots?q=status%3D%3Dsuccess").body(()).expect("request");
         let (mut parts, _) = req.into_parts();
         let SnapshotPurgeQ(filter) = SnapshotPurgeQ::from_request_parts(&mut parts, &()).await.expect("should parse");
         pretty_assertions::assert_eq!(filter.terms.len(), 1);

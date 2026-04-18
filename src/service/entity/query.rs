@@ -12,9 +12,9 @@ use crate::{
         compiled_cache::{CompiledQueryCache, CompiledQueryKey},
     },
     renderer::SysAttrsInclusion,
-    repository::entity::EntityRepository,
+    repository::entity::repo::EntityRepository,
     service::{
-        context_source_forwarding::{ForwardedEntities, merge_query_results},
+        csource_forwarding::{ForwardedEntities, merge_query_results},
         spatial::{SpatialKey, build_ref_geometry, entity_index::SpatialEntityIndex, flatten_or_type_iris},
     },
     tenancy::types::TenantRef,

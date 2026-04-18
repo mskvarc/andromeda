@@ -7,7 +7,7 @@ use crate::{
     },
     jsonld::{CompactOptions, ContextSpec, ContextStripping, JsonLdEngine},
     query::q,
-    repository::{entity::EntityRepository, subscription::SubscriptionRepository, subscription_store::SubscriptionStore},
+    repository::{entity::repo::EntityRepository, subscription::repo::SubscriptionRepository, subscription_store::repo::SubscriptionStore},
     service::entity::inject_sys_attrs,
     transport::{
         dispatch::{DeliveryResult, TransportDispatcher, build_delivery_request},

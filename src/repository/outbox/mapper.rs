@@ -1,0 +1,75 @@
+//! Row-to-domain mapping for the notification outbox.
+//!
+//! Converts a persistence-shaped [`OutboxEntryRow`] into the domain
+//! [`OutboxEntry`] by fallibly parsing URIs and the trigger reason.
+
+use crate::{
+    domain::{
+        notification::TriggerReason,
+        outbox::{OutboxEntry, OutboxEntryId, WorkerInstanceId},
+        uri::Uri,
+    },
+    repository::outbox::rows::OutboxEntryRow,
+};
+use std::str::FromStr;
+use thiserror::Error;
+
+/// Errors produced while mapping an outbox row to the domain type.
+#[derive(Debug, Error)]
+pub enum OutboxMapperError {
+    /// Stored trigger reason is not a known variant.
+    #[error("invalid trigger reason '{value}': {source}")]
+    Trigger {
+        /// Raw database value.
+        value: String,
+        /// Underlying parse error.
+        #[source]
+        source: strum::ParseError,
+    },
+    /// Stored subscription identifier is not a valid URI.
+    #[error("invalid subscription URI '{value}'")]
+    SubscriptionUri {
+        /// Raw database value.
+        value: String,
+    },
+    /// Stored entity identifier is not a valid URI.
+    #[error("invalid entity URI '{value}'")]
+    EntityUri {
+        /// Raw database value.
+        value: String,
+    },
+}
+
+/// Convert a persistence-shaped row into the domain [`OutboxEntry`].
+pub fn row_to_domain(row: OutboxEntryRow) -> Result<OutboxEntry, OutboxMapperError> {
+    let trigger = TriggerReason::from_str(&row.trigger).map_err(|source| OutboxMapperError::Trigger {
+        value: row.trigger.clone(),
+        source,
+    })?;
+
+    let subscription_id: Uri = row.subscription_id.parse().map_err(|_| OutboxMapperError::SubscriptionUri {
+        value: row.subscription_id.clone(),
+    })?;
+
+    let entity_id: Uri = row
+        .entity_id
+        .parse()
+        .map_err(|_| OutboxMapperError::EntityUri { value: row.entity_id.clone() })?;
+
+    Ok(OutboxEntry {
+        id: OutboxEntryId::from(row.id),
+        subscription_id,
+        entity_id,
+        trigger,
+        entity_snapshot: row.entity_snapshot,
+        previous_snapshot: row.previous_snapshot,
+        changed_attrs: row.changed_attrs,
+        created_at: row.created_at,
+        claimed_at: row.claimed_at,
+        claimed_by: row.claimed_by.map(WorkerInstanceId::from),
+        delivered_at: row.delivered_at,
+        delivery_error: row.delivery_error,
+        attempt_count: row.attempt_count,
+        next_attempt_at: row.next_attempt_at,
+    })
+}

@@ -94,7 +94,7 @@ pub async fn stream(TenantState(state): TenantState, OriginalUri(uri): OriginalU
         &subscription.notification.endpoint.uri,
         subscription.notification.endpoint.notifier_info.as_deref(),
     )
-    .map_or(false, |t| matches!(t, EndpointTransport::Sse));
+    .is_ok_and(|t| matches!(t, EndpointTransport::Sse));
 
     if !is_sse {
         return Err(NgsiLdError::from(

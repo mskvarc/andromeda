@@ -38,7 +38,7 @@ use crate::{
         snapshot::SnapshotRenderer,
     },
     service::{
-        context_source_forwarding::{
+        csource_forwarding::{
             CsrModeFilter,
             ForwardBatchProvisionRequest,
             ForwardProvisionRequest,
@@ -112,7 +112,7 @@ pub async fn create(
         .forwarding
         .forward_provision(ForwardProvisionRequest {
             entity_id: Some(&entity_id),
-            entity_type_compact: Some(&entity_type_str),
+            entity_type_compact: Some(entity_type_str),
             method: reqwest::Method::POST,
             body: Some(&entity_body),
             context_url,
@@ -475,332 +475,332 @@ pub async fn query(
     EntityQuery(mut query): EntityQuery,
 ) -> Result<Response, NgsiLdError> {
     Box::pin(async move {
-    let service = &state.entity_query;
-    let context: ContextSpec = context.into_inner();
-    apply_entity_query_extension_headers(&mut query, &protocol, &uri)?;
-    query.validate().with_instance(&uri).map_err(NgsiLdError::from)?;
-    let language_filter = protocol.language_filter;
-    let prefer = protocol.prefer;
-    let snapshot = protocol.snapshot;
-    let incoming_via = protocol.incoming_via;
-    let entity_map_header = protocol.entity_map;
+        let service = &state.entity_query;
+        let context: ContextSpec = context.into_inner();
+        apply_entity_query_extension_headers(&mut query, &protocol, &uri)?;
+        query.validate().with_instance(&uri).map_err(NgsiLdError::from)?;
+        let language_filter = protocol.language_filter;
+        let prefer = protocol.prefer;
+        let snapshot = protocol.snapshot;
+        let incoming_via = protocol.incoming_via;
+        let entity_map_header = protocol.entity_map;
 
-    // Snapshot scoping (ETSI GS CIM 009 clause 5.5.15, 6.3.22): if NGSILD-Snapshot header
-    // is present, query entities from the snapshot's frozen data and return early.
-    if let Some(snapshot_id) = snapshot.into_inner() {
-        let _snap = state.snapshots.validate_for_scoping(&snapshot_id).await.with_instance(&uri)?;
+        // Snapshot scoping (ETSI GS CIM 009 clause 5.5.15, 6.3.22): if NGSILD-Snapshot header
+        // is present, query entities from the snapshot's frozen data and return early.
+        if let Some(snapshot_id) = snapshot.into_inner() {
+            let _snap = state.snapshots.validate_for_scoping(&snapshot_id).await.with_instance(&uri)?;
 
-        let entity_type = query.entity_type.as_deref();
-        let entity_ids: Option<Vec<String>> = query.id.as_deref().map(|s| s.split(',').map(|id| id.trim().to_string()).collect());
-        let limit = query.limit.unwrap_or(100) as i64;
-        let offset = query.offset.unwrap_or(0) as i64;
+            let entity_type = query.entity_type.as_deref();
+            let entity_ids: Option<Vec<String>> = query.id.as_deref().map(|s| s.split(',').map(|id| id.trim().to_string()).collect());
+            let limit = query.limit.unwrap_or(100) as i64;
+            let offset = query.offset.unwrap_or(0) as i64;
 
-        let (entities, total) = state
-            .snapshots
-            .query_snapshot_entities(&snapshot_id, entity_type, entity_ids.as_deref(), limit, offset)
-            .await
-            .with_instance(&uri)?;
+            let (entities, total) = state
+                .snapshots
+                .query_snapshot_entities(&snapshot_id, entity_type, entity_ids.as_deref(), limit, offset)
+                .await
+                .with_instance(&uri)?;
+
+            let opts = query.parse_options();
+            let attrs: Option<Vec<&str>> = query.attrs.as_deref().map(|s| s.split(',').map(str::trim).collect());
+            let filtered: Vec<Value> = entities
+                .into_iter()
+                .map(|v| {
+                    SnapshotRenderer::new(v)
+                        .with_attrs_filter(attrs.as_deref())
+                        .with_mode(opts.render_mode)
+                        .render()
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+
+            let rendered = ResponseRenderer::new(accept.format(), context, prefer)
+                .with_geometry_property(query.geometry_property.clone())
+                .with_payload(ResponsePayload::Collection(filtered))
+                .render()?;
+            let response = NgsiLdCollectionResponse::ok(rendered)
+                .with_snapshot_uri(snapshot_id)
+                .with_total_count(total as usize);
+
+            return Ok(response.into_response());
+        }
+
+        // §5.5.9.3: If NGSILD-EntityMap header present, scope query to that map's entity IDs
+        if let Some(ref map_id) = entity_map_header {
+            let map_urn = parse_entity_map_urn(map_id.as_str()).with_instance(&uri)?;
+            let scoped_input = query.id.as_deref().map(parse_uri_csv).transpose().with_instance(&uri)?;
+            let scoped = state.entity_maps.scope_query_ids(&map_urn, scoped_input.as_deref()).await.with_instance(&uri)?;
+            query.id = Some(scoped.iter().map(ToString::to_string).collect::<Vec<_>>().join(","));
+        }
 
         let opts = query.parse_options();
-        let attrs: Option<Vec<&str>> = query.attrs.as_deref().map(|s| s.split(',').map(str::trim).collect());
-        let filtered: Vec<Value> = entities
-            .into_iter()
-            .map(|v| {
-                SnapshotRenderer::new(v)
-                    .with_attrs_filter(attrs.as_deref())
+        let is_local = query.local.unwrap_or(false);
+        let entity_map_requested = query.entity_map.unwrap_or(false);
+        let split_entities = query.split_entities.unwrap_or(false) && !is_local;
+
+        // splitEntities (spec 5.7.2.4): defer q/geoQ/scopeQ filtering to post-merge
+        let deferred_q;
+        let deferred_georel;
+        let deferred_geometry;
+        let deferred_coordinates;
+        let deferred_geoproperty;
+        let deferred_scope_q;
+        if split_entities {
+            deferred_q = query.q.take();
+            deferred_georel = query.georel.take();
+            deferred_geometry = query.geometry.take();
+            deferred_coordinates = query.coordinates.take();
+            deferred_geoproperty = query.geoproperty.take();
+            deferred_scope_q = query.scope_q.take();
+        } else {
+            deferred_q = None;
+            deferred_georel = None;
+            deferred_geometry = None;
+            deferred_coordinates = None;
+            deferred_geoproperty = None;
+            deferred_scope_q = None;
+        }
+
+        let (local_entities, total_count) = service.query(&query, &context).await.with_instance(&uri)?;
+
+        // Distributed forwarding: query matching context sources unless local=true
+        let mut remote_ids: Vec<String> = Vec::new();
+        let (mut entities, warnings) = if is_local {
+            (local_entities, Vec::new())
+        } else {
+            let context_url = context.link_contexts().first().map(|s| s.as_str());
+            let entity_type = query.entity_type.as_deref();
+            let entity_ids: Option<Vec<String>> = query.id.as_deref().map(|s| s.split(',').map(|id| id.trim().to_string()).collect());
+            let entity_ids_ref = entity_ids.as_deref();
+
+            // Parse csf for CSR filtering during forwarding
+            let csf_expr = expand_q_expression(query.csf.as_deref(), state.entity_query.engine(), &context)
+                .await
+                .with_instance(&uri)?;
+
+            // Phase 1: forward to primary (non-auxiliary) CSRs
+            let forwarded = state
+                .forwarding
+                .forward_query(ForwardQueryRequest {
+                    entity_type_compact: entity_type,
+                    entity_ids: entity_ids_ref,
+                    context_url,
+                    context: &context,
+                    operation: ForwardingOperation::QueryEntity,
+                    incoming_via: incoming_via.as_ref(),
+                    csf_expr: csf_expr.as_ref(),
+                    mode_filter: CsrModeFilter::ExcludeAuxiliary,
+                })
+                .await
+                .unwrap_or_default();
+            let mut warnings = collect_warnings(&forwarded);
+
+            // Capture remote entity IDs before merge for entityMap (spec 5.7.2.4, 5.5.14)
+            remote_ids = forwarded.iter().flat_map(|f| f.entities.iter()).map(|e| e.id.to_string()).collect();
+
+            let merged = if forwarded.is_empty() {
+                local_entities
+            } else {
+                EntityQueryService::merge_with_forwarded(local_entities, forwarded, query.attrs.as_deref())
+            };
+
+            // Phase 2: forward to auxiliary CSRs and merge their entities/attributes.
+            let aux_forwarded = state
+                .forwarding
+                .forward_query(ForwardQueryRequest {
+                    entity_type_compact: entity_type,
+                    entity_ids: entity_ids_ref,
+                    context_url,
+                    context: &context,
+                    operation: ForwardingOperation::QueryEntity,
+                    incoming_via: incoming_via.as_ref(),
+                    csf_expr: csf_expr.as_ref(),
+                    mode_filter: CsrModeFilter::AuxiliaryOnly,
+                })
+                .await
+                .unwrap_or_default();
+            if !aux_forwarded.is_empty() {
+                warnings.extend(collect_warnings(&aux_forwarded));
+                let aux_remote_ids: Vec<String> = aux_forwarded.iter().flat_map(|f| f.entities.iter()).map(|e| e.id.to_string()).collect();
+                remote_ids.extend(aux_remote_ids);
+                let merged = EntityQueryService::merge_with_forwarded(merged, aux_forwarded, query.attrs.as_deref());
+                (merged, warnings)
+            } else {
+                (merged, warnings)
+            }
+        };
+
+        // splitEntities post-merge filtering: apply deferred q/geoQ/scopeQ (spec 5.7.2.4)
+        if split_entities {
+            let q_expr = if let Some(ref q_str) = deferred_q {
+                expand_q_expression(Some(q_str), service.engine(), &context).await.ok().flatten()
+            } else {
+                None
+            };
+            let geo_val = if let (Some(georel), Some(geometry), Some(coordinates)) = (&deferred_georel, &deferred_geometry, &deferred_coordinates) {
+                let mut value = serde_json::json!({
+                    "georel": georel,
+                    "geometry": geometry,
+                    "coordinates": coordinates,
+                });
+                if let Some(ref geoprop) = deferred_geoproperty {
+                    value["geoproperty"] = Value::String(geoprop.clone());
+                }
+                Some(value)
+            } else {
+                None
+            };
+            let compiled_scope = deferred_scope_q.as_deref().map(compile_scope_q);
+            let compiled_geo = geo_val.as_ref().and_then(|v| compile_geo_q(v, "split-entities"));
+
+            let mut filtered = Vec::with_capacity(entities.len());
+            for entity in entities {
+                let compact = match serde_json::to_value(&entity) {
+                    Ok(value) => value,
+                    Err(_) => continue,
+                };
+                let expanded = match service.engine().expand(compact, &context).await {
+                    Ok(value) => value,
+                    Err(_) => continue,
+                };
+
+                let q_ok = q_expr.as_ref().is_none_or(|expr| evaluate(expr, &expanded));
+                let geo_ok = compiled_geo.as_ref().is_none_or(|geo| matches_compiled_geo_query(geo, &expanded));
+                let scope_ok = compiled_scope.as_ref().is_none_or(|scope| matches_compiled_scope_pattern(scope, &expanded));
+
+                if q_ok && geo_ok && scope_ok {
+                    filtered.push(entity);
+                }
+            }
+            entities = filtered;
+        }
+
+        // §5.7.2: If entityMap=true, create an EntityMap and set header
+        let entity_map_uri = if entity_map_requested {
+            let compiled = service.compile_query_public(&query, &context).await.with_instance(&uri)?;
+            let mut all_ids = service.query_ids(&compiled).await.with_instance(&uri)?;
+            // Include forwarded entity IDs in the map (spec 5.7.2.4, 5.5.14)
+            all_ids.extend(remote_ids);
+            all_ids.sort_unstable();
+            all_ids.dedup();
+            let typed_ids: Vec<Uri> = all_ids
+                .iter()
+                .map(|id| Uri::from_str(id).map_err(|_| AndromedaError::entity_validation(format!("Invalid entity id URI '{}'", id))))
+                .collect::<Result<Vec<_>, _>>()
+                .with_instance(&uri)?;
+            let lifetime = query
+                .entity_map_lifetime
+                .as_deref()
+                .map(|raw| parse_iso8601_duration(Some(raw)))
+                .transpose()
+                .with_instance(&uri)?;
+            let map = state.entity_maps.create(typed_ids, lifetime.as_ref()).await.with_instance(&uri)?;
+            Some(map.id.to_string())
+        } else if entity_map_header.is_some() {
+            // Echo the same map back in the response header
+            entity_map_header.map(|h| h.into_inner().to_string())
+        } else {
+            None
+        };
+
+        let status = if entity_map_requested { StatusCode::CREATED } else { StatusCode::OK };
+
+        // Handle join
+        let join_mode = query.join.as_deref();
+        let join_level = query.join_level.unwrap_or(1);
+        let contained_by: HashSet<String> = query
+            .contained_by
+            .as_deref()
+            .map(|s| s.split(',').map(|id| id.trim().to_string()).collect())
+            .unwrap_or_default();
+
+        if matches!(join_mode, Some("inline") | Some("flat")) {
+            let linked = service
+                .resolve_linked_entities(&entities, join_level, opts.sys_attrs, &context, &contained_by)
+                .await
+                .with_instance(&uri)?;
+
+            if join_mode == Some("flat") {
+                let mut all_values: Vec<Value> = Vec::new();
+                for entity in &entities {
+                    all_values.push(
+                        EntityRenderer::new(entity)
+                            .with_optional_language_filter(language_filter.as_ref())
+                            .with_mode(opts.render_mode)
+                            .render()
+                            .with_instance(&uri)?,
+                    );
+                }
+                for linked_entity in linked.values() {
+                    all_values.push(
+                        EntityRenderer::new(linked_entity)
+                            .with_optional_language_filter(language_filter.as_ref())
+                            .with_mode(opts.render_mode)
+                            .render()
+                            .with_instance(&uri)?,
+                    );
+                }
+                let rendered = ResponseRenderer::new(accept.format(), context, prefer)
+                    .with_geometry_property(query.geometry_property.clone())
+                    .with_payload(ResponsePayload::Collection(all_values))
+                    .render()?;
+                let mut response = NgsiLdCollectionResponse::ok(rendered).with_status(status).with_warnings(warnings);
+                if let Some(count) = total_count {
+                    response = response.with_total_count(count as usize);
+                }
+                if let Some(ref map_uri) = entity_map_uri {
+                    response = response.with_entity_map_uri(map_uri.clone());
+                }
+                return Ok(response.into_response());
+            } else {
+                // Inline: renderer handles join + mode transformation
+                let mut entity_values: Vec<Value> = Vec::new();
+                for entity in &entities {
+                    entity_values.push(
+                        EntityRenderer::new(entity)
+                            .with_optional_language_filter(language_filter.as_ref())
+                            .with_inline_linked_entities(&linked)
+                            .with_mode(opts.render_mode)
+                            .render()
+                            .with_instance(&uri)?,
+                    );
+                }
+                let rendered = ResponseRenderer::new(accept.format(), context, prefer)
+                    .with_geometry_property(query.geometry_property.clone())
+                    .with_payload(ResponsePayload::Collection(entity_values))
+                    .render()?;
+                let mut response = NgsiLdCollectionResponse::ok(rendered).with_status(status).with_warnings(warnings);
+                if let Some(count) = total_count {
+                    response = response.with_total_count(count as usize);
+                }
+                if let Some(ref map_uri) = entity_map_uri {
+                    response = response.with_entity_map_uri(map_uri.clone());
+                }
+                return Ok(response.into_response());
+            }
+        }
+
+        let rendered = entities
+            .iter()
+            .map(|entity| {
+                EntityRenderer::new(entity)
+                    .with_optional_language_filter(language_filter.as_ref())
                     .with_mode(opts.render_mode)
                     .render()
             })
-            .collect::<Result<Vec<_>, _>>()?;
-
-        let rendered = ResponseRenderer::new(accept.format(), context, prefer)
-            .with_geometry_property(query.geometry_property.clone())
-            .with_payload(ResponsePayload::Collection(filtered))
-            .render()?;
-        let response = NgsiLdCollectionResponse::ok(rendered)
-            .with_snapshot_uri(snapshot_id)
-            .with_total_count(total as usize);
-
-        return Ok(response.into_response());
-    }
-
-    // §5.5.9.3: If NGSILD-EntityMap header present, scope query to that map's entity IDs
-    if let Some(ref map_id) = entity_map_header {
-        let map_urn = parse_entity_map_urn(map_id.as_str()).with_instance(&uri)?;
-        let scoped_input = query.id.as_deref().map(parse_uri_csv).transpose().with_instance(&uri)?;
-        let scoped = state.entity_maps.scope_query_ids(&map_urn, scoped_input.as_deref()).await.with_instance(&uri)?;
-        query.id = Some(scoped.iter().map(ToString::to_string).collect::<Vec<_>>().join(","));
-    }
-
-    let opts = query.parse_options();
-    let is_local = query.local.unwrap_or(false);
-    let entity_map_requested = query.entity_map.unwrap_or(false);
-    let split_entities = query.split_entities.unwrap_or(false) && !is_local;
-
-    // splitEntities (spec 5.7.2.4): defer q/geoQ/scopeQ filtering to post-merge
-    let deferred_q;
-    let deferred_georel;
-    let deferred_geometry;
-    let deferred_coordinates;
-    let deferred_geoproperty;
-    let deferred_scope_q;
-    if split_entities {
-        deferred_q = query.q.take();
-        deferred_georel = query.georel.take();
-        deferred_geometry = query.geometry.take();
-        deferred_coordinates = query.coordinates.take();
-        deferred_geoproperty = query.geoproperty.take();
-        deferred_scope_q = query.scope_q.take();
-    } else {
-        deferred_q = None;
-        deferred_georel = None;
-        deferred_geometry = None;
-        deferred_coordinates = None;
-        deferred_geoproperty = None;
-        deferred_scope_q = None;
-    }
-
-    let (local_entities, total_count) = service.query(&query, &context).await.with_instance(&uri)?;
-
-    // Distributed forwarding: query matching context sources unless local=true
-    let mut remote_ids: Vec<String> = Vec::new();
-    let (mut entities, warnings) = if is_local {
-        (local_entities, Vec::new())
-    } else {
-        let context_url = context.link_contexts().first().map(|s| s.as_str());
-        let entity_type = query.entity_type.as_deref();
-        let entity_ids: Option<Vec<String>> = query.id.as_deref().map(|s| s.split(',').map(|id| id.trim().to_string()).collect());
-        let entity_ids_ref = entity_ids.as_deref();
-
-        // Parse csf for CSR filtering during forwarding
-        let csf_expr = expand_q_expression(query.csf.as_deref(), state.entity_query.engine(), &context)
-            .await
-            .with_instance(&uri)?;
-
-        // Phase 1: forward to primary (non-auxiliary) CSRs
-        let forwarded = state
-            .forwarding
-            .forward_query(ForwardQueryRequest {
-                entity_type_compact: entity_type,
-                entity_ids: entity_ids_ref,
-                context_url,
-                context: &context,
-                operation: ForwardingOperation::QueryEntity,
-                incoming_via: incoming_via.as_ref(),
-                csf_expr: csf_expr.as_ref(),
-                mode_filter: CsrModeFilter::ExcludeAuxiliary,
-            })
-            .await
-            .unwrap_or_default();
-        let mut warnings = collect_warnings(&forwarded);
-
-        // Capture remote entity IDs before merge for entityMap (spec 5.7.2.4, 5.5.14)
-        remote_ids = forwarded.iter().flat_map(|f| f.entities.iter()).map(|e| e.id.to_string()).collect();
-
-        let merged = if forwarded.is_empty() {
-            local_entities
-        } else {
-            EntityQueryService::merge_with_forwarded(local_entities, forwarded, query.attrs.as_deref())
-        };
-
-        // Phase 2: forward to auxiliary CSRs and merge their entities/attributes.
-        let aux_forwarded = state
-            .forwarding
-            .forward_query(ForwardQueryRequest {
-                entity_type_compact: entity_type,
-                entity_ids: entity_ids_ref,
-                context_url,
-                context: &context,
-                operation: ForwardingOperation::QueryEntity,
-                incoming_via: incoming_via.as_ref(),
-                csf_expr: csf_expr.as_ref(),
-                mode_filter: CsrModeFilter::AuxiliaryOnly,
-            })
-            .await
-            .unwrap_or_default();
-        if !aux_forwarded.is_empty() {
-            warnings.extend(collect_warnings(&aux_forwarded));
-            let aux_remote_ids: Vec<String> = aux_forwarded.iter().flat_map(|f| f.entities.iter()).map(|e| e.id.to_string()).collect();
-            remote_ids.extend(aux_remote_ids);
-            let merged = EntityQueryService::merge_with_forwarded(merged, aux_forwarded, query.attrs.as_deref());
-            (merged, warnings)
-        } else {
-            (merged, warnings)
-        }
-    };
-
-    // splitEntities post-merge filtering: apply deferred q/geoQ/scopeQ (spec 5.7.2.4)
-    if split_entities {
-        let q_expr = if let Some(ref q_str) = deferred_q {
-            expand_q_expression(Some(q_str), service.engine(), &context).await.ok().flatten()
-        } else {
-            None
-        };
-        let geo_val = if let (Some(georel), Some(geometry), Some(coordinates)) = (&deferred_georel, &deferred_geometry, &deferred_coordinates) {
-            let mut value = serde_json::json!({
-                "georel": georel,
-                "geometry": geometry,
-                "coordinates": coordinates,
-            });
-            if let Some(ref geoprop) = deferred_geoproperty {
-                value["geoproperty"] = Value::String(geoprop.clone());
-            }
-            Some(value)
-        } else {
-            None
-        };
-        let compiled_scope = deferred_scope_q.as_deref().map(compile_scope_q);
-        let compiled_geo = geo_val.as_ref().and_then(|v| compile_geo_q(v, "split-entities"));
-
-        let mut filtered = Vec::with_capacity(entities.len());
-        for entity in entities {
-            let compact = match serde_json::to_value(&entity) {
-                Ok(value) => value,
-                Err(_) => continue,
-            };
-            let expanded = match service.engine().expand(compact, &context).await {
-                Ok(value) => value,
-                Err(_) => continue,
-            };
-
-            let q_ok = q_expr.as_ref().is_none_or(|expr| evaluate(expr, &expanded));
-            let geo_ok = compiled_geo.as_ref().is_none_or(|geo| matches_compiled_geo_query(geo, &expanded));
-            let scope_ok = compiled_scope.as_ref().is_none_or(|scope| matches_compiled_scope_pattern(scope, &expanded));
-
-            if q_ok && geo_ok && scope_ok {
-                filtered.push(entity);
-            }
-        }
-        entities = filtered;
-    }
-
-    // §5.7.2: If entityMap=true, create an EntityMap and set header
-    let entity_map_uri = if entity_map_requested {
-        let compiled = service.compile_query_public(&query, &context).await.with_instance(&uri)?;
-        let mut all_ids = service.query_ids(&compiled).await.with_instance(&uri)?;
-        // Include forwarded entity IDs in the map (spec 5.7.2.4, 5.5.14)
-        all_ids.extend(remote_ids);
-        all_ids.sort_unstable();
-        all_ids.dedup();
-        let typed_ids: Vec<Uri> = all_ids
-            .iter()
-            .map(|id| Uri::from_str(id).map_err(|_| AndromedaError::entity_validation(format!("Invalid entity id URI '{}'", id))))
             .collect::<Result<Vec<_>, _>>()
             .with_instance(&uri)?;
-        let lifetime = query
-            .entity_map_lifetime
-            .as_deref()
-            .map(|raw| parse_iso8601_duration(Some(raw)))
-            .transpose()
-            .with_instance(&uri)?;
-        let map = state.entity_maps.create(typed_ids, lifetime.as_ref()).await.with_instance(&uri)?;
-        Some(map.id.to_string())
-    } else if entity_map_header.is_some() {
-        // Echo the same map back in the response header
-        entity_map_header.map(|h| h.into_inner().to_string())
-    } else {
-        None
-    };
-
-    let status = if entity_map_requested { StatusCode::CREATED } else { StatusCode::OK };
-
-    // Handle join
-    let join_mode = query.join.as_deref();
-    let join_level = query.join_level.unwrap_or(1);
-    let contained_by: HashSet<String> = query
-        .contained_by
-        .as_deref()
-        .map(|s| s.split(',').map(|id| id.trim().to_string()).collect())
-        .unwrap_or_default();
-
-    if matches!(join_mode, Some("inline") | Some("flat")) {
-        let linked = service
-            .resolve_linked_entities(&entities, join_level, opts.sys_attrs, &context, &contained_by)
-            .await
-            .with_instance(&uri)?;
-
-        if join_mode == Some("flat") {
-            let mut all_values: Vec<Value> = Vec::new();
-            for entity in &entities {
-                all_values.push(
-                    EntityRenderer::new(entity)
-                        .with_optional_language_filter(language_filter.as_ref())
-                        .with_mode(opts.render_mode)
-                        .render()
-                        .with_instance(&uri)?,
-                );
-            }
-            for linked_entity in linked.values() {
-                all_values.push(
-                    EntityRenderer::new(linked_entity)
-                        .with_optional_language_filter(language_filter.as_ref())
-                        .with_mode(opts.render_mode)
-                        .render()
-                        .with_instance(&uri)?,
-                );
-            }
-            let rendered = ResponseRenderer::new(accept.format(), context, prefer)
-                .with_geometry_property(query.geometry_property.clone())
-                .with_payload(ResponsePayload::Collection(all_values))
-                .render()?;
-            let mut response = NgsiLdCollectionResponse::ok(rendered).with_status(status).with_warnings(warnings);
-            if let Some(count) = total_count {
-                response = response.with_total_count(count as usize);
-            }
-            if let Some(ref map_uri) = entity_map_uri {
-                response = response.with_entity_map_uri(map_uri.clone());
-            }
-            return Ok(response.into_response());
-        } else {
-            // Inline: renderer handles join + mode transformation
-            let mut entity_values: Vec<Value> = Vec::new();
-            for entity in &entities {
-                entity_values.push(
-                    EntityRenderer::new(entity)
-                        .with_optional_language_filter(language_filter.as_ref())
-                        .with_inline_linked_entities(&linked)
-                        .with_mode(opts.render_mode)
-                        .render()
-                        .with_instance(&uri)?,
-                );
-            }
-            let rendered = ResponseRenderer::new(accept.format(), context, prefer)
-                .with_geometry_property(query.geometry_property.clone())
-                .with_payload(ResponsePayload::Collection(entity_values))
-                .render()?;
-            let mut response = NgsiLdCollectionResponse::ok(rendered).with_status(status).with_warnings(warnings);
-            if let Some(count) = total_count {
-                response = response.with_total_count(count as usize);
-            }
-            if let Some(ref map_uri) = entity_map_uri {
-                response = response.with_entity_map_uri(map_uri.clone());
-            }
-            return Ok(response.into_response());
+        let rendered_output = ResponseRenderer::new(accept.format(), context, prefer)
+            .with_geometry_property(query.geometry_property.clone())
+            .with_payload(ResponsePayload::Collection(rendered))
+            .render()?;
+        let mut response = NgsiLdCollectionResponse::ok(rendered_output).with_status(status).with_warnings(warnings);
+        if let Some(count) = total_count {
+            response = response.with_total_count(count as usize);
         }
-    }
-
-    let rendered = entities
-        .iter()
-        .map(|entity| {
-            EntityRenderer::new(entity)
-                .with_optional_language_filter(language_filter.as_ref())
-                .with_mode(opts.render_mode)
-                .render()
-        })
-        .collect::<Result<Vec<_>, _>>()
-        .with_instance(&uri)?;
-    let rendered_output = ResponseRenderer::new(accept.format(), context, prefer)
-        .with_geometry_property(query.geometry_property.clone())
-        .with_payload(ResponsePayload::Collection(rendered))
-        .render()?;
-    let mut response = NgsiLdCollectionResponse::ok(rendered_output).with_status(status).with_warnings(warnings);
-    if let Some(count) = total_count {
-        response = response.with_total_count(count as usize);
-    }
-    if let Some(ref map_uri) = entity_map_uri {
-        response = response.with_entity_map_uri(map_uri.clone());
-    }
-    Ok(response.into_response())
+        if let Some(ref map_uri) = entity_map_uri {
+            response = response.with_entity_map_uri(map_uri.clone());
+        }
+        Ok(response.into_response())
     })
     .await
 }

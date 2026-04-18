@@ -11,7 +11,11 @@ use crate::{
         compiled::{CompiledCsrQuery, CompiledCsrTemporalFilter, IdPattern, Pagination},
         q::parser,
     },
-    repository::context_source_registration::{ContextSourceRegistrationRepository, CreateCsrParams, CsrUpdateFragment, unwrap_geo_property_to_string},
+    repository::csource_registration::{
+        params::{CreateCsrParams, CsrUpdateFragment},
+        repo::CsourceRegistrationRepository,
+    },
+    service::{csource_extract::unwrap_geo_property_to_string, csource_merge::apply_fragment},
     tenancy::types::TenantName,
 };
 use chrono::{DateTime, Utc};
@@ -28,9 +32,13 @@ fn extract_create_params(payload: &Value) -> Result<CreateCsrParams<'_>, Androme
         tenant: payload.get("tenant").and_then(|v| v.as_str()),
         observation_interval: payload.get("observationInterval"),
         management_interval: payload.get("managementInterval"),
-        location: payload.get("location"),
-        observation_space: payload.get("observationSpace"),
-        operation_space: payload.get("operationSpace"),
+        location_geojson: payload.get("location").map(crate::service::csource_extract::unwrap_geo_property_to_string),
+        observation_space_geojson: payload
+            .get("observationSpace")
+            .map(crate::service::csource_extract::unwrap_geo_property_to_string),
+        operation_space_geojson: payload
+            .get("operationSpace")
+            .map(crate::service::csource_extract::unwrap_geo_property_to_string),
         expires_at: payload
             .get("expiresAt")
             .and_then(|v| v.as_str())
@@ -179,18 +187,18 @@ fn extract_additional_properties(payload: &Value) -> Option<Value> {
 }
 
 /// Service for managing NGSI-LD context source registrations.
-pub struct ContextSourceRegistrationService {
-    repo: ContextSourceRegistrationRepository,
+pub struct CsourceRegistrationService {
+    repo: CsourceRegistrationRepository,
     engine: JsonLdEngine,
     csr_change_tx: Option<broadcast::Sender<CsrChangeEvent>>,
 }
 
-impl ContextSourceRegistrationService {
+impl CsourceRegistrationService {
     /// Create a new context source registration service backed by the given database pool.
-    pub fn new(pool: &PgPool, engine: JsonLdEngine, csr_change_tx: Option<broadcast::Sender<CsrChangeEvent>>) -> ContextSourceRegistrationService {
-        let repo = ContextSourceRegistrationRepository::new(pool);
+    pub fn new(pool: &PgPool, engine: JsonLdEngine, csr_change_tx: Option<broadcast::Sender<CsrChangeEvent>>) -> CsourceRegistrationService {
+        let repo = CsourceRegistrationRepository::new(pool);
         debug!("Context source registration service created!");
-        ContextSourceRegistrationService { repo, engine, csr_change_tx }
+        CsourceRegistrationService { repo, engine, csr_change_tx }
     }
 
     fn emit_csr_change(&self, event: CsrChangeEvent) {
@@ -255,7 +263,7 @@ impl ContextSourceRegistrationService {
                 }
                 provided_id.to_string()
             }
-            None => ContextSourceRegistrationRepository::generate_id()?,
+            None => CsourceRegistrationRepository::generate_id()?,
         };
 
         // Validate that remote @context is reachable by expanding a minimal document
@@ -458,9 +466,14 @@ impl ContextSourceRegistrationService {
         let pre_update_snapshot = self.repo.get(id).await?.map(|csr| serde_json::to_value(&csr).unwrap_or(Value::Null));
 
         let fragment = extract_update_fragment(&payload)?;
-        let updated = self.repo.update(id, &fragment).await?;
+        let existing = match self.repo.get(id).await? {
+            Some(csr) => csr,
+            None => return Err(AndromedaError::csr_not_found(id)),
+        };
+        let resolved = apply_fragment(existing, &fragment)?;
+        let updated = self.repo.update(id, &resolved).await?;
 
-        if !updated {
+        if updated == 0 {
             return Err(AndromedaError::csr_not_found(id));
         }
 
@@ -484,7 +497,7 @@ impl ContextSourceRegistrationService {
 
         let deleted = self.repo.delete(id).await?;
 
-        if !deleted {
+        if deleted == 0 {
             return Err(AndromedaError::csr_not_found(id));
         }
 

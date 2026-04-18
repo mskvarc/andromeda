@@ -14,10 +14,11 @@ use crate::{
     },
     query::q,
     repository::{
-        context_source_registration::ContextSourceRegistrationRepository,
-        csource_subscription::CsourceSubscriptionRepository,
-        subscription_store::SubscriptionStore,
+        csource_registration::repo::CsourceRegistrationRepository,
+        csource_subscription::repo::CsourceSubscriptionRepository,
+        subscription_store::repo::SubscriptionStore,
     },
+    service::subscription_throttle::ceiling_for_throttle,
     transport::{
         dispatch::{DeliveryResult, TransportDispatcher, build_delivery_request},
         endpoint::parse_endpoint_transport,
@@ -39,7 +40,7 @@ pub struct CsrNotificationWorker {
     csr_change_rx: broadcast::Receiver<CsrChangeEvent>,
     sub_change_rx: broadcast::Receiver<CsourceSubscriptionChange>,
     sub_repo: CsourceSubscriptionRepository,
-    csr_repo: ContextSourceRegistrationRepository,
+    csr_repo: CsourceRegistrationRepository,
     cache: DashMap<String, Arc<CompiledCsrSubscription>>,
     transport: Arc<TransportDispatcher>,
     tenant: crate::tenancy::types::TenantRef,
@@ -50,7 +51,7 @@ impl CsrNotificationWorker {
         csr_change_rx: broadcast::Receiver<CsrChangeEvent>,
         sub_change_rx: broadcast::Receiver<CsourceSubscriptionChange>,
         sub_repo: CsourceSubscriptionRepository,
-        csr_repo: ContextSourceRegistrationRepository,
+        csr_repo: CsourceRegistrationRepository,
         transport: Arc<TransportDispatcher>,
         tenant: crate::tenancy::types::TenantRef,
     ) -> Self {
@@ -208,7 +209,11 @@ impl CsrNotificationWorker {
             return;
         }
 
-        match self.sub_repo.claim_notification_slot(sub_id, compiled_sub.throttling_secs).await {
+        match self
+            .sub_repo
+            .claim_notification_slot(sub_id, ceiling_for_throttle(Utc::now(), compiled_sub.throttling_secs))
+            .await
+        {
             Ok(true) => {}
             Ok(false) => return,
             Err(e) => {
@@ -324,7 +329,11 @@ impl CsrNotificationWorker {
                 async move {
                     let sub_id = compiled_sub.id.clone();
 
-                    match self.sub_repo.claim_notification_slot(&sub_id, compiled_sub.throttling_secs).await {
+                    match self
+                        .sub_repo
+                        .claim_notification_slot(&sub_id, ceiling_for_throttle(Utc::now(), compiled_sub.throttling_secs))
+                        .await
+                    {
                         Ok(true) => {}
                         Ok(false) => return,
                         Err(e) => {
@@ -466,7 +475,11 @@ impl CsrNotificationWorker {
     async fn send_csr_notification(&self, compiled_sub: &CompiledCsrSubscription, csr_data: &Value, trigger_reason: &str) {
         let sub_id = &compiled_sub.id;
 
-        match self.sub_repo.claim_notification_slot(sub_id, compiled_sub.throttling_secs).await {
+        match self
+            .sub_repo
+            .claim_notification_slot(sub_id, ceiling_for_throttle(Utc::now(), compiled_sub.throttling_secs))
+            .await
+        {
             Ok(true) => {}
             Ok(false) => return,
             Err(e) => {

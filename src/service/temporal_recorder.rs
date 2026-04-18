@@ -7,7 +7,10 @@ use crate::{
     domain::{attribute_type::AttributeType, temporal::ValueType},
     jsonld::vocab,
     query::sql::scope_to_ltree,
-    repository::temporal::{HistoryBatchEntry, HistoryValues, ScopeHistoryEntry, TeaBatchEntry, TemporalRepository, UpdateInstanceParams},
+    repository::temporal::{
+        params::{HistoryBatchEntry, HistoryValues, ScopeHistoryEntry, TeaBatchEntry, UpdateInstanceParams},
+        repo::TemporalRepository,
+    },
 };
 use chrono::{DateTime, Utc};
 use serde_json::Value;

@@ -7,10 +7,11 @@ use crate::{
     },
     jsonld::{JsonLdEngine, vocab},
     renderer::SysAttrsInclusion,
-    repository::{entity::EntityRepository, subscription::SubscriptionRepository, subscription_store::SubscriptionStore},
+    repository::{entity::repo::EntityRepository, subscription::repo::SubscriptionRepository, subscription_store::repo::SubscriptionStore},
     service::{
         entity::{inject_sys_attrs, query::EntityQueryService},
         subscription_cache::SubscriptionCache,
+        subscription_throttle::ceiling_for_throttle,
     },
     transport::{
         dispatch::{DeliveryResult, TransportDispatcher, build_delivery_request},
@@ -273,7 +274,11 @@ impl NotificationWorker {
                 async move {
                     let sub_id = compiled_sub.id.clone();
 
-                    match self.sub_repo.claim_notification_slot(&sub_id, compiled_sub.throttling_secs).await {
+                    match self
+                        .sub_repo
+                        .claim_notification_slot(&sub_id, ceiling_for_throttle(Utc::now(), compiled_sub.throttling_secs))
+                        .await
+                    {
                         Ok(true) => {}
                         Ok(false) => return,
                         Err(e) => {

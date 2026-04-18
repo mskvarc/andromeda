@@ -1,4 +1,4 @@
-use crate::repository::subscription_store::SubscriptionStore;
+use crate::repository::subscription_store::repo::SubscriptionStore;
 use std::time::Duration;
 use tokio::sync::broadcast;
 use tracing::{error, info};

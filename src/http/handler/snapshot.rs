@@ -78,19 +78,11 @@ pub async fn delete(TenantState(state): TenantState, OriginalUri(uri): OriginalU
 /// - All matches deleted -> 204 No Content.
 /// - At least one deletion failed -> 207 Multi-Status with a
 ///   [`BatchOperationResult`] body.
-pub async fn purge(
-    TenantState(state): TenantState,
-    OriginalUri(uri): OriginalUri,
-    SnapshotPurgeQ(filter): SnapshotPurgeQ,
-) -> Result<Response, NgsiLdError> {
+pub async fn purge(TenantState(state): TenantState, OriginalUri(uri): OriginalUri, SnapshotPurgeQ(filter): SnapshotPurgeQ) -> Result<Response, NgsiLdError> {
     let outcome = state.snapshots.purge_by_query(&filter).await.with_instance(&uri)?;
 
     match outcome {
-        PurgeOutcome::NoMatch => Err(NgsiLdError::new(
-            NgsiLdErrorType::ResourceNotFound,
-            "No snapshots matched the purge query",
-            uri,
-        )),
+        PurgeOutcome::NoMatch => Err(NgsiLdError::new(NgsiLdErrorType::ResourceNotFound, "No snapshots matched the purge query", uri)),
         PurgeOutcome::FullSuccess => Ok(StatusCode::NO_CONTENT.into_response()),
         PurgeOutcome::AllFailed { failures } => {
             let body = BatchOperationResult {

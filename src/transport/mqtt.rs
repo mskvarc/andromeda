@@ -363,13 +363,12 @@ impl MqttTransportPool {
                                 if let Ok(mut last) = loop_last_healthy.try_write() {
                                     *last = Instant::now();
                                 }
-                                if let rumqttc::v5::Event::Incoming(rumqttc::v5::mqttbytes::v5::Packet::Publish(publish)) = &event {
-                                    if let Ok(topic) = std::str::from_utf8(&publish.topic) {
-                                        if topic.starts_with("$SYS/") {
-                                            let payload = String::from_utf8_lossy(&publish.payload).into_owned();
-                                            update_sys_data(&loop_sys_data, topic, payload);
-                                        }
-                                    }
+                                if let rumqttc::v5::Event::Incoming(rumqttc::v5::mqttbytes::v5::Packet::Publish(publish)) = &event
+                                    && let Ok(topic) = std::str::from_utf8(&publish.topic)
+                                    && topic.starts_with("$SYS/")
+                                {
+                                    let payload = String::from_utf8_lossy(&publish.payload).into_owned();
+                                    update_sys_data(&loop_sys_data, topic, payload);
                                 }
                             }
                             Err(e) => {
@@ -451,11 +450,11 @@ impl MqttTransportPool {
                                 if let Ok(mut last) = loop_last_healthy.try_write() {
                                     *last = Instant::now();
                                 }
-                                if let rumqttc::Event::Incoming(rumqttc::Packet::Publish(publish)) = &event {
-                                    if publish.topic.starts_with("$SYS/") {
-                                        let payload = String::from_utf8_lossy(&publish.payload).into_owned();
-                                        update_sys_data(&loop_sys_data, &publish.topic, payload);
-                                    }
+                                if let rumqttc::Event::Incoming(rumqttc::Packet::Publish(publish)) = &event
+                                    && publish.topic.starts_with("$SYS/")
+                                {
+                                    let payload = String::from_utf8_lossy(&publish.payload).into_owned();
+                                    update_sys_data(&loop_sys_data, &publish.topic, payload);
                                 }
                             }
                             Err(e) => {

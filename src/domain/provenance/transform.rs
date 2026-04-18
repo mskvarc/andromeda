@@ -105,7 +105,7 @@ pub fn reconstruct_atomic_entity_from_entity(entity: &Entity, attribute_name: &s
     reconstruct_atomic_entity(head, attribute_name.to_string(), attribute)
 }
 
-fn common_mut(attribute: &mut Attribute) -> &mut CommonAttributeFields {
+const fn common_mut(attribute: &mut Attribute) -> &mut CommonAttributeFields {
     match attribute {
         Attribute::Property(a) => &mut a.common,
         Attribute::Relationship(a) => &mut a.common,

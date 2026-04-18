@@ -29,7 +29,7 @@ use crate::{
         response::{ResponsePayload, ResponseRenderer},
     },
     service::{
-        context_source_forwarding::{CsrModeFilter, ForwardBatchProvisionRequest, ForwardQueryRequest, ForwardingOperation, collect_warnings},
+        csource_forwarding::{CsrModeFilter, ForwardBatchProvisionRequest, ForwardQueryRequest, ForwardingOperation, collect_warnings},
         entity::{provision_forwarding::ForwardingModes, query::EntityQueryService},
     },
 };
@@ -68,10 +68,7 @@ pub async fn query(
     if let Some(snapshot_id) = snapshot_id {
         state.snapshots.validate_for_scoping(&snapshot_id).await.with_instance(&uri)?;
         let entity_type = params.entity_type.as_deref();
-        let entity_ids: Option<Vec<String>> = params
-            .id
-            .as_deref()
-            .map(|s| s.split(',').map(|id| id.trim().to_string()).collect());
+        let entity_ids: Option<Vec<String>> = params.id.as_deref().map(|s| s.split(',').map(|id| id.trim().to_string()).collect());
         let limit = i64::from(params.limit.unwrap_or(1000));
         let offset = i64::from(params.offset.unwrap_or(0));
         let (entities, _total) = state

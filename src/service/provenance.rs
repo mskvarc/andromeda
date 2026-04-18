@@ -249,7 +249,7 @@ fn single_attribute(value: &AttributeValue) -> Option<Attribute> {
     }
 }
 
-fn has_ngsildproof(attribute: &Attribute) -> bool {
+const fn has_ngsildproof(attribute: &Attribute) -> bool {
     let common = match attribute {
         Attribute::Property(a) => &a.common,
         Attribute::Relationship(a) => &a.common,

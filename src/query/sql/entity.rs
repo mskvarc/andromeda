@@ -58,7 +58,7 @@ pub fn build_query(query: &CompiledEntityQuery) -> Result<BuiltQuery<'static>, A
 
     // Build main query
     let (sql, values) = select.build(PostgresQueryBuilder);
-    let bind_values = sea_values_to_bind_values(values);
+    let bind_values = sea_values_to_bind_values(values)?;
 
     // Fallback count query covers the zero-row edge case described above.
     let count_sql = if query.pagination.count {
@@ -78,7 +78,7 @@ pub fn build_query(query: &CompiledEntityQuery) -> Result<BuiltQuery<'static>, A
 
 /// Column name used for the window-function count attached to each row of a
 /// paginated entity query when `count=true`. Kept in sync with the repository
-/// read path in [`crate::repository::entity::EntityRepository::query_compiled`].
+/// read path in [`crate::repository::entity::repo::EntityRepository::query_compiled`].
 pub const TOTAL_COUNT_COLUMN: &str = "total_count";
 
 /// Builds a parameterized SQL query to retrieve only entity IDs from the `entities` table.
@@ -101,7 +101,7 @@ pub fn build_ids_query(query: &CompiledEntityQuery) -> Result<BuiltQuery<'static
     select.limit(query.pagination.limit as u64).offset(query.pagination.offset as u64);
 
     let (sql, values) = select.build(PostgresQueryBuilder);
-    let bind_values = sea_values_to_bind_values(values);
+    let bind_values = sea_values_to_bind_values(values)?;
 
     Ok(BuiltQuery {
         sql,
@@ -115,10 +115,10 @@ fn build_entity_conditions(query: &CompiledEntityQuery) -> Result<Condition, And
     let mut condition = Condition::all();
 
     // ID filter: id = ANY($N)
-    if let Some(ids) = &query.ids {
-        if !ids.is_empty() {
-            condition = condition.add(SeaExpr::col(Entities::Id).is_in(ids.clone()));
-        }
+    if let Some(ids) = &query.ids
+        && !ids.is_empty()
+    {
+        condition = condition.add(SeaExpr::col(Entities::Id).is_in(ids.clone()));
     }
 
     // ID pattern filter: id ~ $N
@@ -309,7 +309,7 @@ fn geo_to_condition(geo: &GeoQuery, payload_col: &str) -> Result<Condition, Andr
 
     // Build geometry extraction expression as SimpleExpr
     let geo_extract_expr = if is_default_location {
-        SeaExpr::cust("\"location\"").into()
+        SeaExpr::cust("\"location\"")
     } else {
         // For custom geoproperties, extract from JSONB and validate
         let jsonpath = format!(
@@ -318,7 +318,7 @@ fn geo_to_condition(geo: &GeoQuery, payload_col: &str) -> Result<Condition, Andr
             escape_jsonpath_key(vocab::expanded::VALUE.as_str())
         );
         let extract = SeaExpr::cust(format!("jsonb_path_query_first(\"{}\", '{}')::text", payload_col, jsonpath));
-        validated_geom_from_geojson(extract.into())
+        validated_geom_from_geojson(extract)
     };
 
     // Build reference geometry from GeoJSON using helper
@@ -352,11 +352,11 @@ fn geo_to_condition(geo: &GeoQuery, payload_col: &str) -> Result<Condition, Andr
 
             let mut parts = Vec::new();
             if let Some(max) = max_distance {
-                parts.push(st_dwithin(SeaExpr::cust(&geo_col_sql).into(), SeaExpr::cust(&ref_geom_geo_sql).into(), *max));
+                parts.push(st_dwithin(SeaExpr::cust(&geo_col_sql), SeaExpr::cust(&ref_geom_geo_sql), *max));
             }
             if let Some(min) = min_distance {
                 // ST_Distance for minDistance check - use raw SQL since we don't have a helper
-                parts.push(SeaExpr::cust(format!("ST_Distance({}, {}) >= {}", geo_col_sql, ref_geom_geo_sql, min)).into());
+                parts.push(SeaExpr::cust(format!("ST_Distance({}, {}) >= {}", geo_col_sql, ref_geom_geo_sql, min)));
             }
             if parts.is_empty() {
                 return Err(AndromedaError::query_validation("near georel requires maxDistance or minDistance"));
@@ -370,7 +370,7 @@ fn geo_to_condition(geo: &GeoQuery, payload_col: &str) -> Result<Condition, Andr
                 let second = parts.remove(0);
                 let (sql1, _) = Query::select().expr(first).build(PostgresQueryBuilder);
                 let (sql2, _) = Query::select().expr(second).build(PostgresQueryBuilder);
-                SeaExpr::cust(format!("({} AND {})", sql1.trim_start_matches("SELECT "), sql2.trim_start_matches("SELECT "))).into()
+                SeaExpr::cust(format!("({} AND {})", sql1.trim_start_matches("SELECT "), sql2.trim_start_matches("SELECT ")))
             }
         }
     };
@@ -560,24 +560,26 @@ fn scalar_to_value(scalar: &Scalar) -> (&'static str, String) {
 }
 
 /// Converts sea-query Values to BindValue vector for repository compatibility.
-fn sea_values_to_bind_values(values: sea_query::Values) -> Vec<BindValue<'static>> {
+fn sea_values_to_bind_values(values: sea_query::Values) -> Result<Vec<BindValue<'static>>, AndromedaError> {
     values
         .0
         .into_iter()
         .map(|v| match v {
-            sea_query::Value::String(Some(s)) => BindValue::String(Cow::Owned(s.to_string())),
-            sea_query::Value::Int(Some(i)) => BindValue::I64(i64::from(i)),
-            sea_query::Value::BigInt(Some(i)) => BindValue::I64(i),
-            sea_query::Value::BigUnsigned(Some(u)) => BindValue::I64(u as i64),
-            sea_query::Value::Unsigned(Some(u)) => BindValue::I64(i64::from(u)),
-            sea_query::Value::TinyInt(Some(i)) => BindValue::I64(i64::from(i)),
-            sea_query::Value::TinyUnsigned(Some(u)) => BindValue::I64(i64::from(u)),
-            sea_query::Value::SmallInt(Some(i)) => BindValue::I64(i64::from(i)),
-            sea_query::Value::SmallUnsigned(Some(u)) => BindValue::I64(i64::from(u)),
-            sea_query::Value::Bool(Some(b)) => BindValue::String(Cow::Owned(b.to_string())),
-            sea_query::Value::Double(Some(f)) => BindValue::String(Cow::Owned(f.to_string())),
-            sea_query::Value::Float(Some(f)) => BindValue::String(Cow::Owned(f.to_string())),
-            other => panic!("unexpected sea_query::Value variant in bind conversion: {:?}", other),
+            sea_query::Value::String(Some(s)) => Ok(BindValue::String(Cow::Owned(s.to_string()))),
+            sea_query::Value::Int(Some(i)) => Ok(BindValue::I64(i64::from(i))),
+            sea_query::Value::BigInt(Some(i)) => Ok(BindValue::I64(i)),
+            sea_query::Value::BigUnsigned(Some(u)) => Ok(BindValue::I64(u as i64)),
+            sea_query::Value::Unsigned(Some(u)) => Ok(BindValue::I64(i64::from(u))),
+            sea_query::Value::TinyInt(Some(i)) => Ok(BindValue::I64(i64::from(i))),
+            sea_query::Value::TinyUnsigned(Some(u)) => Ok(BindValue::I64(i64::from(u))),
+            sea_query::Value::SmallInt(Some(i)) => Ok(BindValue::I64(i64::from(i))),
+            sea_query::Value::SmallUnsigned(Some(u)) => Ok(BindValue::I64(i64::from(u))),
+            sea_query::Value::Bool(Some(b)) => Ok(BindValue::String(Cow::Owned(b.to_string()))),
+            sea_query::Value::Double(Some(f)) => Ok(BindValue::String(Cow::Owned(f.to_string()))),
+            sea_query::Value::Float(Some(f)) => Ok(BindValue::String(Cow::Owned(f.to_string()))),
+            other => Err(AndromedaError::internal(format!(
+                "unexpected sea_query::Value variant in bind conversion: {other:?}"
+            ))),
         })
         .collect()
 }

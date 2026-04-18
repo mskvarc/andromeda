@@ -6,11 +6,12 @@ use crate::{
         snapshot_filter::SnapshotPurgeFilter,
     },
     http::error::{batch::BatchEntityError, problem::NgsiLdErrorType},
-    repository::snapshot::SnapshotRepository,
+    repository::snapshot::repo::SnapshotRepository,
     service::{
-        context_source_forwarding::ContextSourceForwardingService,
+        csource_forwarding::CsourceForwardingService,
         entity::query::EntityQueryService,
         snapshot_executor::SnapshotExecutor,
+        snapshot_prepare::to_insert_params,
         temporal::TemporalService,
     },
     transport::{
@@ -46,7 +47,7 @@ impl SnapshotService {
         transport: Option<Arc<TransportDispatcher>>,
         entity_query: Arc<EntityQueryService>,
         temporal: Arc<TemporalService>,
-        forwarding: Arc<ContextSourceForwardingService>,
+        forwarding: Arc<CsourceForwardingService>,
         snapshot_concurrency: usize,
     ) -> SnapshotService {
         let executor = Arc::new(SnapshotExecutor::new(pool, entity_query, temporal, forwarding));
@@ -94,7 +95,7 @@ impl SnapshotService {
             last_used_at: None,
         };
 
-        self.repo.create(&snapshot).await?;
+        self.repo.create(to_insert_params(&snapshot)?).await?;
         self.send_notification_if_configured(&snapshot).await;
 
         // Spawn background query execution (NGSI-LD 5.16.1.4). A semaphore
@@ -168,7 +169,7 @@ impl SnapshotService {
     /// Delete a snapshot by its identifier.
     pub async fn delete(&self, id: &SnapshotId) -> Result<(), AndromedaError> {
         let deleted = self.repo.delete(id).await?;
-        if !deleted {
+        if deleted == 0 {
             return Err(AndromedaError::snapshot_not_found(format!("Snapshot {} not found", id)));
         }
         Ok(())
@@ -196,8 +197,8 @@ impl SnapshotService {
 
         for id in matched {
             match self.repo.delete_one(&id).await {
-                Ok(true) => successes.push(id),
-                Ok(false) => failures.push(BatchEntityError::from_parse_error(
+                Ok(n) if n > 0 => successes.push(id),
+                Ok(_) => failures.push(BatchEntityError::from_parse_error(
                     id.as_str(),
                     NgsiLdErrorType::ResourceNotFound,
                     "Snapshot removed concurrently before purge",

@@ -20,7 +20,7 @@ pub struct Version {
 
 impl Version {
     /// Create a new [`Version`] service with the given database pool.
-    pub fn new(pool: PgPool) -> Version {
+    pub const fn new(pool: PgPool) -> Version {
         Version { pool }
     }
 

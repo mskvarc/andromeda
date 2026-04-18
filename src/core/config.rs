@@ -438,10 +438,10 @@ fn validate_config(config: &RuntimeConfig) -> Result<(), AndromedaError> {
     if config.info.source_identity.is_empty() {
         return Err(AndromedaError::internal("info.source_identity must not be empty"));
     }
-    if let Some(batch_concurrency) = config.performance.batch_concurrency {
-        if batch_concurrency == 0 {
-            return Err(AndromedaError::internal("performance.batch_concurrency must be at least 1"));
-        }
+    if let Some(batch_concurrency) = config.performance.batch_concurrency
+        && batch_concurrency == 0
+    {
+        return Err(AndromedaError::internal("performance.batch_concurrency must be at least 1"));
     }
     if config.performance.batch_chunk_size == 0 {
         return Err(AndromedaError::internal("performance.batch_chunk_size must be at least 1"));
@@ -455,10 +455,10 @@ fn validate_config(config: &RuntimeConfig) -> Result<(), AndromedaError> {
     if config.performance.batch_side_effect_queue_capacity == 0 {
         return Err(AndromedaError::internal("performance.batch_side_effect_queue_capacity must be at least 1"));
     }
-    if let Some(threshold) = config.performance.batch_async_side_effect_threshold {
-        if threshold == 0 {
-            return Err(AndromedaError::internal("performance.batch_async_side_effect_threshold must be at least 1"));
-        }
+    if let Some(threshold) = config.performance.batch_async_side_effect_threshold
+        && threshold == 0
+    {
+        return Err(AndromedaError::internal("performance.batch_async_side_effect_threshold must be at least 1"));
     }
     if config.performance.max_request_body_bytes == 0 {
         return Err(AndromedaError::internal("performance.max_request_body_bytes must be at least 1"));

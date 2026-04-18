@@ -1,3 +1,8 @@
+// The workspace-wide `clippy.toml` bans direct `Value` inspection for the
+// repository layer in the main `andromeda` crate; this proc-macro crate uses
+// `Value::get` etc. legitimately on externally-supplied JSON-LD contexts.
+#![allow(clippy::disallowed_methods)]
+
 //! Proc-macro crate that generates NGSI-LD vocabulary constants from local JSON-LD contexts.
 //!
 //! The macro reads three local context files at compile time, resolves prefixes and terms

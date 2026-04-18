@@ -24,12 +24,12 @@ use crate::{
         },
     },
     repository::{
-        entity::EntityRepository,
-        temporal::{DeleteScope, TemporalRepository},
+        entity::repo::EntityRepository,
+        temporal::{params::DeleteScope, repo::TemporalRepository},
     },
     service::{
-        context_source_forwarding::{ForwardedTemporalEntities, merge_temporal_query_results},
-        entity::extract_entity_types,
+        csource_forwarding::{ForwardedTemporalEntities, merge_temporal_query_results},
+        entity::{extract::create_entity, extract_entity_types},
         temporal_recorder::TemporalRecorder,
     },
 };
@@ -230,7 +230,7 @@ impl TemporalService {
                 // Save initial base entity using the expanded payload so that
                 // extract_entity_types() can find @type in the stored JSON.
                 let expires_at = crate::domain::expanded::extract_expires_at(&expanded);
-                let _ = self.entity_repo.create(entity_id, &types, &[], &expanded, expires_at).await;
+                let _ = create_entity(&self.entity_repo, entity_id, &types, &[], &expanded, expires_at).await;
             }
 
             self.recorder.record_entity_attributes(entity_id, &expanded).await?;
@@ -271,10 +271,10 @@ impl TemporalService {
             .filter(|name| iri_short_name(name).is_some_and(|short| short == attr_id))
             .collect::<Vec<_>>();
 
-        if matches.len() == 1 {
-            if let Some(name) = matches.pop() {
-                return Ok(name);
-            }
+        if matches.len() == 1
+            && let Some(name) = matches.pop()
+        {
+            return Ok(name);
         }
 
         Ok(expanded_attr)

@@ -2,6 +2,8 @@ mod attrs;
 pub mod batch;
 /// Entity type and attribute discovery operations.
 pub mod discovery;
+/// Service-side `Value` extraction and persistence-params builders.
+pub mod extract;
 /// Provision (write) forwarding mode classification and multi-status helpers.
 pub mod provision_forwarding;
 /// Entity query and retrieval operations.
@@ -17,8 +19,13 @@ use crate::{
     },
     i18n::collation::augment_expanded_with_collation_metadata,
     jsonld::{ContextSpec, JsonLdEngine},
-    repository::{entity::EntityRepository, temporal::TemporalRepository},
-    service::{subscription_cache::SubscriptionCache, subscription_matching::matches_entity_filters, temporal_recorder::TemporalRecorder},
+    repository::{entity::repo::EntityRepository, temporal::repo::TemporalRepository},
+    service::{
+        entity::extract::{create_entity, create_entity_with_outbox, save_entity, save_entity_with_outbox},
+        subscription_cache::SubscriptionCache,
+        subscription_matching::matches_entity_filters,
+        temporal_recorder::TemporalRecorder,
+    },
 };
 use chrono::{DateTime, SecondsFormat, Utc};
 use serde_json::{Map, Value};
@@ -197,11 +204,9 @@ impl EntityService {
                 Some(&expanded),
                 None,
             );
-            self.repo
-                .create_with_outbox(&id, types_refs.as_ref(), &scopes, &expanded, expires_at, &outbox_entries)
-                .await?
+            create_entity_with_outbox(&self.repo, &id, types_refs.as_ref(), &scopes, &expanded, expires_at, &outbox_entries).await?
         } else {
-            self.repo.create(&id, types_refs.as_ref(), &scopes, &expanded, expires_at).await?
+            create_entity(&self.repo, &id, types_refs.as_ref(), &scopes, &expanded, expires_at).await?
         };
 
         if let Err(e) = self.temporal_recorder.record_entity_attributes(&id, &expanded).await {
@@ -254,9 +259,9 @@ impl EntityService {
                 Some(&existing),
                 previous_attributes.as_ref(),
             ));
-            self.repo.save_with_outbox(&id, &existing, &outbox_entries).await?;
+            save_entity_with_outbox(&self.repo, &id, &existing, &outbox_entries).await?;
         } else {
-            self.repo.save(&id, &existing).await?;
+            save_entity(&self.repo, &id, &existing).await?;
         }
 
         if let Err(e) = self.temporal_recorder.record_entity_attributes(&id, &expanded).await {
@@ -303,9 +308,9 @@ impl EntityService {
 
         if self.outbox.is_some() {
             let outbox_entries = self.build_outbox_entries(&entity_uri, &types, TriggerReason::EntityUpdated, &changed_attrs, Some(&expanded), None);
-            self.repo.save_with_outbox(&id, &expanded, &outbox_entries).await?;
+            save_entity_with_outbox(&self.repo, &id, &expanded, &outbox_entries).await?;
         } else {
-            self.repo.save(&id, &expanded).await?;
+            save_entity(&self.repo, &id, &expanded).await?;
         }
 
         if let Err(e) = self.temporal_recorder.record_entity_attributes(&id, &expanded).await {
@@ -359,10 +364,10 @@ impl EntityService {
                 Some(&entity_snapshot),
                 Some(&entity_snapshot),
             ));
-            if !self.repo.delete_with_outbox(&id, &outbox_entries).await? {
+            if self.repo.delete_with_outbox(&id, &outbox_entries).await? == 0 {
                 return Err(AndromedaError::entity_not_found(id));
             }
-        } else if !self.repo.delete(&id).await? {
+        } else if self.repo.delete(&id).await? == 0 {
             return Err(AndromedaError::entity_not_found(id));
         }
 

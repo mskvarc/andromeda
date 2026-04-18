@@ -120,7 +120,7 @@ pub fn build_stage1_entity_ids(compiled: &CompiledTemporalQuery) -> Result<Built
 
     // Build main query SQL
     let (sql, values) = select.build(PostgresQueryBuilder);
-    let bind_values = sea_values_to_bind_values(values);
+    let bind_values = sea_values_to_bind_values(values)?;
 
     // Build count query if requested
     let count_sql = if compiled.pagination.count {
@@ -165,10 +165,10 @@ fn build_entity_conditions_for_temporal(compiled: &CompiledTemporalQuery) -> Res
     let mut condition = Condition::all();
 
     // ID filter: e.id = ANY($N)
-    if let Some(ids) = &compiled.ids {
-        if !ids.is_empty() {
-            condition = condition.add(SeaExpr::col((E, Entities::Id)).is_in(ids.clone()));
-        }
+    if let Some(ids) = &compiled.ids
+        && !ids.is_empty()
+    {
+        condition = condition.add(SeaExpr::col((E, Entities::Id)).is_in(ids.clone()));
     }
 
     // ID pattern filter: e.id ~ $N
@@ -708,7 +708,7 @@ fn geo_to_condition(geo: &GeoQuery, payload_col: &str) -> Result<Condition, Andr
     };
 
     let geojson = build_geojson(&geo.geometry, &geo.coordinates)?;
-    let geo_extract_expr = SeaExpr::cust(&geo_extract_sql).into();
+    let geo_extract_expr = SeaExpr::cust(&geo_extract_sql);
     let ref_geom_expr = validated_geom_from_geojson(SeaExpr::val(&geojson).into());
 
     // Build spatial condition using PostGIS helpers
@@ -733,10 +733,10 @@ fn geo_to_condition(geo: &GeoQuery, payload_col: &str) -> Result<Condition, Andr
 
             let mut parts = Vec::new();
             if let Some(max) = max_distance {
-                parts.push(st_dwithin(SeaExpr::cust(&geo_col_sql).into(), SeaExpr::cust(&ref_geom_geo_sql).into(), *max));
+                parts.push(st_dwithin(SeaExpr::cust(&geo_col_sql), SeaExpr::cust(&ref_geom_geo_sql), *max));
             }
             if let Some(min) = min_distance {
-                parts.push(SeaExpr::cust(format!("ST_Distance({}, {}) >= {}", geo_col_sql, ref_geom_geo_sql, min)).into());
+                parts.push(SeaExpr::cust(format!("ST_Distance({}, {}) >= {}", geo_col_sql, ref_geom_geo_sql, min)));
             }
             if parts.is_empty() {
                 return Err(AndromedaError::query_validation("near georel requires maxDistance or minDistance"));
@@ -746,7 +746,7 @@ fn geo_to_condition(geo: &GeoQuery, payload_col: &str) -> Result<Condition, Andr
             } else {
                 let (sql1, _) = Query::select().expr(parts[0].clone()).build(PostgresQueryBuilder);
                 let (sql2, _) = Query::select().expr(parts[1].clone()).build(PostgresQueryBuilder);
-                SeaExpr::cust(format!("({} AND {})", sql1.trim_start_matches("SELECT "), sql2.trim_start_matches("SELECT "))).into()
+                SeaExpr::cust(format!("({} AND {})", sql1.trim_start_matches("SELECT "), sql2.trim_start_matches("SELECT ")))
             }
         }
     };
@@ -818,7 +818,7 @@ fn single_scope_to_temporal_exists(
     let lquery = scope_to_lquery(scope);
 
     let mut time_conditions = Vec::new();
-    let mut bind_vals: Vec<String> = vec![lquery.clone()];
+    let mut bind_vals: Vec<String> = vec![lquery];
 
     if let (Some(timerel), Some(time_at)) = (timerel, time_at) {
         match timerel {
@@ -917,24 +917,26 @@ fn build_geojson(geometry: &str, coordinates: &serde_json::Value) -> Result<Stri
 }
 
 /// Convert sea-query Values to BindValue vector for repository compatibility.
-fn sea_values_to_bind_values(values: sea_query::Values) -> Vec<BindValue<'static>> {
+fn sea_values_to_bind_values(values: sea_query::Values) -> Result<Vec<BindValue<'static>>, AndromedaError> {
     values
         .0
         .into_iter()
         .map(|v| match v {
-            sea_query::Value::String(Some(s)) => BindValue::String(Cow::Owned(s.to_string())),
-            sea_query::Value::Int(Some(i)) => BindValue::I64(i64::from(i)),
-            sea_query::Value::BigInt(Some(i)) => BindValue::I64(i),
-            sea_query::Value::BigUnsigned(Some(u)) => BindValue::I64(u as i64),
-            sea_query::Value::Unsigned(Some(u)) => BindValue::I64(i64::from(u)),
-            sea_query::Value::TinyInt(Some(i)) => BindValue::I64(i64::from(i)),
-            sea_query::Value::TinyUnsigned(Some(u)) => BindValue::I64(i64::from(u)),
-            sea_query::Value::SmallInt(Some(i)) => BindValue::I64(i64::from(i)),
-            sea_query::Value::SmallUnsigned(Some(u)) => BindValue::I64(i64::from(u)),
-            sea_query::Value::Bool(Some(b)) => BindValue::String(Cow::Owned(b.to_string())),
-            sea_query::Value::Double(Some(f)) => BindValue::String(Cow::Owned(f.to_string())),
-            sea_query::Value::Float(Some(f)) => BindValue::String(Cow::Owned(f.to_string())),
-            other => panic!("unexpected sea_query::Value variant in bind conversion: {:?}", other),
+            sea_query::Value::String(Some(s)) => Ok(BindValue::String(Cow::Owned(s.to_string()))),
+            sea_query::Value::Int(Some(i)) => Ok(BindValue::I64(i64::from(i))),
+            sea_query::Value::BigInt(Some(i)) => Ok(BindValue::I64(i)),
+            sea_query::Value::BigUnsigned(Some(u)) => Ok(BindValue::I64(u as i64)),
+            sea_query::Value::Unsigned(Some(u)) => Ok(BindValue::I64(i64::from(u))),
+            sea_query::Value::TinyInt(Some(i)) => Ok(BindValue::I64(i64::from(i))),
+            sea_query::Value::TinyUnsigned(Some(u)) => Ok(BindValue::I64(i64::from(u))),
+            sea_query::Value::SmallInt(Some(i)) => Ok(BindValue::I64(i64::from(i))),
+            sea_query::Value::SmallUnsigned(Some(u)) => Ok(BindValue::I64(i64::from(u))),
+            sea_query::Value::Bool(Some(b)) => Ok(BindValue::String(Cow::Owned(b.to_string()))),
+            sea_query::Value::Double(Some(f)) => Ok(BindValue::String(Cow::Owned(f.to_string()))),
+            sea_query::Value::Float(Some(f)) => Ok(BindValue::String(Cow::Owned(f.to_string()))),
+            other => Err(AndromedaError::internal(format!(
+                "unexpected sea_query::Value variant in bind conversion: {other:?}"
+            ))),
         })
         .collect()
 }

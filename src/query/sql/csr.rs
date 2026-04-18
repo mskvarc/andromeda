@@ -65,7 +65,7 @@ pub fn build_csr_query(query: &CompiledCsrQuery) -> Result<BuiltQuery<'static>, 
         .offset(query.pagination.offset as u64);
 
     let (sql, values) = select.build(PostgresQueryBuilder);
-    let bind_values = sea_values_to_bind_values(values);
+    let bind_values = sea_values_to_bind_values(values)?;
 
     // Count query always generated for CSR
     let mut count_select = Query::select();
@@ -114,18 +114,18 @@ fn build_csr_conditions(query: &CompiledCsrQuery) -> Result<Condition, Andromeda
     }
 
     // Attrs filter: match against information[].propertyNames / relationshipNames
-    if let Some(ref attrs) = query.attrs {
-        if !attrs.is_empty() {
-            let placeholders: Vec<String> = (1..=attrs.len()).map(|i| format!("${}", i)).collect();
-            let any_list = placeholders.join(", ");
-            let sql = format!(
-                "EXISTS (SELECT 1 FROM jsonb_array_elements(\"information\") AS info WHERE \
+    if let Some(ref attrs) = query.attrs
+        && !attrs.is_empty()
+    {
+        let placeholders: Vec<String> = (1..=attrs.len()).map(|i| format!("${}", i)).collect();
+        let any_list = placeholders.join(", ");
+        let sql = format!(
+            "EXISTS (SELECT 1 FROM jsonb_array_elements(\"information\") AS info WHERE \
                      EXISTS (SELECT 1 FROM jsonb_array_elements_text(COALESCE(info->'propertyNames', '[]'::jsonb)) AS pn WHERE pn IN ({any_list})) OR \
                      EXISTS (SELECT 1 FROM jsonb_array_elements_text(COALESCE(info->'relationshipNames', '[]'::jsonb)) AS rn WHERE rn IN ({any_list})))"
-            );
-            let values: Vec<String> = attrs.iter().cloned().collect();
-            condition = condition.add(SeaExpr::cust_with_values(sql, values));
-        }
+        );
+        let values: Vec<String> = attrs.to_vec();
+        condition = condition.add(SeaExpr::cust_with_values(sql, values));
     }
 
     // Q expression filter against additional_properties JSONB column
@@ -388,24 +388,26 @@ fn scalar_to_value(scalar: &Scalar) -> (&'static str, String) {
 }
 
 /// Converts sea-query Values to BindValue vector for repository compatibility.
-fn sea_values_to_bind_values(values: sea_query::Values) -> Vec<BindValue<'static>> {
+fn sea_values_to_bind_values(values: sea_query::Values) -> Result<Vec<BindValue<'static>>, AndromedaError> {
     values
         .0
         .into_iter()
         .map(|v| match v {
-            sea_query::Value::String(Some(s)) => BindValue::String(Cow::Owned(s.to_string())),
-            sea_query::Value::Int(Some(i)) => BindValue::I64(i64::from(i)),
-            sea_query::Value::BigInt(Some(i)) => BindValue::I64(i),
-            sea_query::Value::BigUnsigned(Some(u)) => BindValue::I64(u as i64),
-            sea_query::Value::Unsigned(Some(u)) => BindValue::I64(i64::from(u)),
-            sea_query::Value::TinyInt(Some(i)) => BindValue::I64(i64::from(i)),
-            sea_query::Value::TinyUnsigned(Some(u)) => BindValue::I64(i64::from(u)),
-            sea_query::Value::SmallInt(Some(i)) => BindValue::I64(i64::from(i)),
-            sea_query::Value::SmallUnsigned(Some(u)) => BindValue::I64(i64::from(u)),
-            sea_query::Value::Bool(Some(b)) => BindValue::String(Cow::Owned(b.to_string())),
-            sea_query::Value::Double(Some(f)) => BindValue::String(Cow::Owned(f.to_string())),
-            sea_query::Value::Float(Some(f)) => BindValue::String(Cow::Owned(f.to_string())),
-            other => panic!("unexpected sea_query::Value variant in bind conversion: {:?}", other),
+            sea_query::Value::String(Some(s)) => Ok(BindValue::String(Cow::Owned(s.to_string()))),
+            sea_query::Value::Int(Some(i)) => Ok(BindValue::I64(i64::from(i))),
+            sea_query::Value::BigInt(Some(i)) => Ok(BindValue::I64(i)),
+            sea_query::Value::BigUnsigned(Some(u)) => Ok(BindValue::I64(u as i64)),
+            sea_query::Value::Unsigned(Some(u)) => Ok(BindValue::I64(i64::from(u))),
+            sea_query::Value::TinyInt(Some(i)) => Ok(BindValue::I64(i64::from(i))),
+            sea_query::Value::TinyUnsigned(Some(u)) => Ok(BindValue::I64(i64::from(u))),
+            sea_query::Value::SmallInt(Some(i)) => Ok(BindValue::I64(i64::from(i))),
+            sea_query::Value::SmallUnsigned(Some(u)) => Ok(BindValue::I64(i64::from(u))),
+            sea_query::Value::Bool(Some(b)) => Ok(BindValue::String(Cow::Owned(b.to_string()))),
+            sea_query::Value::Double(Some(f)) => Ok(BindValue::String(Cow::Owned(f.to_string()))),
+            sea_query::Value::Float(Some(f)) => Ok(BindValue::String(Cow::Owned(f.to_string()))),
+            other => Err(AndromedaError::internal(format!(
+                "unexpected sea_query::Value variant in bind conversion: {other:?}"
+            ))),
         })
         .collect()
 }

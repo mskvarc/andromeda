@@ -4,7 +4,7 @@
 //! `snapshotLifetime`. This worker cleans up expired snapshots to prevent
 //! unbounded storage growth.
 
-use crate::repository::snapshot::SnapshotRepository;
+use crate::repository::snapshot::repo::SnapshotRepository;
 use std::time::Duration;
 use tracing::{debug, error, info};
 

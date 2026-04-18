@@ -2,7 +2,7 @@ use crate::{
     core::error::AndromedaError,
     domain::{notification::SubscriptionChange, subscription::Subscription, uri::Uri},
     jsonld::{ContextSpec, JsonLdEngine},
-    repository::{jsonld_context::JsonLdContextRepository, subscription::SubscriptionRepository},
+    repository::{jsonld_context::repo::JsonLdContextRepository, subscription::repo::SubscriptionRepository},
     service::{
         subscription_base::{SubscriptionServiceCore, SubscriptionVariant},
         subscription_core,

@@ -6,7 +6,7 @@ use crate::{
         uri::NGSI_LD_URN_NID,
     },
     jsonld::{CompactOptions, ContextSpec, ContextStripping, JsonLdEngine, JsonLdExpandable},
-    repository::entity::EntityRepository,
+    repository::entity::{repo::EntityRepository, rows::AttributeSummaryRow},
 };
 use serde_json::Value;
 use sqlx::postgres::PgPool;
@@ -72,7 +72,23 @@ impl EntityDiscoveryService {
 
     /// Return detailed information for all entity types, including their attribute names.
     pub async fn type_details(&self, context: &ContextSpec) -> Result<Value, AndromedaError> {
-        let summaries = self.repo.get_entity_type_summaries().await?;
+        // Keyset-paginate the aggregation so a very large set of distinct
+        // types does not require a single large result set.
+        const PAGE: u32 = 500;
+        let mut summaries: Vec<(String, Vec<String>)> = Vec::new();
+        let mut cursor: Option<String> = None;
+        loop {
+            let page = self.repo.get_entity_type_summaries(cursor.as_deref(), PAGE).await?;
+            if page.is_empty() {
+                break;
+            }
+            cursor = page.last().map(|(t, _)| t.clone()); // clone: own cursor string for next loop iteration
+            let page_len = page.len();
+            summaries.extend(page);
+            if page_len < usize::try_from(PAGE).unwrap_or(usize::MAX) {
+                break;
+            }
+        }
 
         let entity_types: Vec<EntityType> = summaries
             .into_iter()
@@ -171,7 +187,22 @@ impl EntityDiscoveryService {
 
     /// List all known attributes, optionally including per-attribute detail.
     pub async fn attributes(&self, details: bool, context: &ContextSpec) -> Result<Value, AndromedaError> {
-        let summary_rows = self.repo.get_attribute_summary().await?;
+        // Keyset-paginate attribute summary aggregation.
+        const PAGE: u32 = 500;
+        let mut summary_rows: Vec<AttributeSummaryRow> = Vec::new();
+        let mut cursor: Option<String> = None;
+        loop {
+            let page = self.repo.get_attribute_summary(cursor.as_deref(), PAGE).await?;
+            if page.is_empty() {
+                break;
+            }
+            cursor = page.last().map(|r| r.attr_iri.clone()); // clone: own cursor string for next loop iteration
+            let page_len = page.len();
+            summary_rows.extend(page);
+            if page_len < usize::try_from(PAGE).unwrap_or(usize::MAX) {
+                break;
+            }
+        }
 
         // Build the same HashMap structure from SQL aggregation results
         let mut attr_data: HashMap<String, AttributeMetadata> = HashMap::with_capacity(summary_rows.len());

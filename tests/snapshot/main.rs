@@ -621,10 +621,7 @@ async fn snapshot_api_purge_no_match_returns_404() {
 
     let (status, body) = purge_snapshots_with_q(&c, "snapshotPriority==10").await;
     pretty_assertions::assert_eq!(status, StatusCode::NOT_FOUND);
-    pretty_assertions::assert_eq!(
-        body["type"].as_str(),
-        Some("https://uri.etsi.org/ngsi-ld/errors/ResourceNotFound")
-    );
+    pretty_assertions::assert_eq!(body["type"].as_str(), Some("https://uri.etsi.org/ngsi-ld/errors/ResourceNotFound"));
 }
 
 #[tokio::test]
@@ -656,10 +653,7 @@ async fn snapshot_api_purge_malformed_q_returns_400() {
 
     let (status, body) = purge_snapshots_with_q(&c, "bogusField==value").await;
     pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
-    pretty_assertions::assert_eq!(
-        body["type"].as_str(),
-        Some("https://uri.etsi.org/ngsi-ld/errors/BadRequestData")
-    );
+    pretty_assertions::assert_eq!(body["type"].as_str(), Some("https://uri.etsi.org/ngsi-ld/errors/BadRequestData"));
 }
 
 #[tokio::test]

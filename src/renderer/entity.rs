@@ -393,7 +393,7 @@ fn concise_single_instance(mut attr_obj: Map<String, Value>) -> Value {
     let is_bare = attr_obj.len() == 2 && attr_obj.contains_key("type") && attr_obj.contains_key(value_key);
 
     if is_bare {
-        attr_obj.remove(value_key).unwrap_or_else(|| Value::Object(attr_obj))
+        attr_obj.remove(value_key).unwrap_or(Value::Object(attr_obj))
     } else {
         // Has metadata and/or sub-attributes: remove "type", recursively concise sub-attrs.
         attr_obj.remove("type");
@@ -529,13 +529,13 @@ fn simplify_attr_value(value: Value) -> Value {
                     if let Some(entity) = attr_obj.remove("entity") {
                         simplify_value(entity)
                     } else {
-                        attr_obj.remove("object").unwrap_or_else(|| Value::Object(attr_obj))
+                        attr_obj.remove("object").unwrap_or(Value::Object(attr_obj))
                     }
                 }
-                Some("Property") | Some("GeoProperty") | Some("VocabProperty") => attr_obj.remove("value").unwrap_or_else(|| Value::Object(attr_obj)),
-                Some("LanguageProperty") => attr_obj.remove("languageMap").unwrap_or_else(|| Value::Object(attr_obj)),
-                Some("JsonProperty") => attr_obj.remove("json").unwrap_or_else(|| Value::Object(attr_obj)),
-                Some("ListProperty") => attr_obj.remove("valueList").unwrap_or_else(|| Value::Object(attr_obj)),
+                Some("Property") | Some("GeoProperty") | Some("VocabProperty") => attr_obj.remove("value").unwrap_or(Value::Object(attr_obj)),
+                Some("LanguageProperty") => attr_obj.remove("languageMap").unwrap_or(Value::Object(attr_obj)),
+                Some("JsonProperty") => attr_obj.remove("json").unwrap_or(Value::Object(attr_obj)),
+                Some("ListProperty") => attr_obj.remove("valueList").unwrap_or(Value::Object(attr_obj)),
                 Some("ListRelationship") => {
                     if let Some(entity_list) = attr_obj.remove("entityList") {
                         match entity_list {
@@ -543,7 +543,7 @@ fn simplify_attr_value(value: Value) -> Value {
                             other => other,
                         }
                     } else {
-                        attr_obj.remove("objectList").unwrap_or_else(|| Value::Object(attr_obj))
+                        attr_obj.remove("objectList").unwrap_or(Value::Object(attr_obj))
                     }
                 }
                 Some(_) | None => Value::Object(attr_obj),

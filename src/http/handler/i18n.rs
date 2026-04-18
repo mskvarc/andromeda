@@ -110,7 +110,7 @@ fn reject_ld_json_accept(headers: &HeaderMap, uri: &axum::http::Uri) -> Result<(
     };
     if accept_value.contains("application/ld+json") {
         return Err(NgsiLdError::from(
-            AndromedaError::from(ErrorKind::OperationNotSupported("Localized endpoints only return application/json".to_string())).with_instance(&uri),
+            AndromedaError::from(ErrorKind::OperationNotSupported("Localized endpoints only return application/json".to_string())).with_instance(uri),
         ));
     }
     Ok(())

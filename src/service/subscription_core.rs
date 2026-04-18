@@ -6,7 +6,7 @@ use crate::{
     domain::subscription::Subscription,
     jsonld::{ContextSpec, JsonLdEngine},
     query::q,
-    repository::subscription_store::SubscriptionFields,
+    repository::subscription_store::params::SubscriptionFields,
 };
 use chrono::Utc;
 use serde_json::Value;

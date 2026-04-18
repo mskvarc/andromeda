@@ -1,1 +1,12 @@
 large-error-threshold = 256
+# Axum handlers use one parameter per extractor; the default 7 is too low
+# for routes that legitimately need request body + query + path + several
+# typed headers + tenant state. Keeping warnings on but at a higher bar.
+too-many-arguments-threshold = 10
+
+# Repo-layer contract (no `Value` inspection, no `serde_json::from_value`,
+# no `format!`-built SQL with user values) is enforced by the grep audit in
+# `docs/repo-contract.md` rather than a crate-wide clippy denylist: clippy's
+# `disallowed-methods` has no per-path scope and would require a crate-wide
+# `#[allow]` to suppress legitimate service-layer usage, which is disallowed
+# by this project's CLAUDE.md.

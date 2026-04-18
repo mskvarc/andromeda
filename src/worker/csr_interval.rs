@@ -5,9 +5,9 @@ use crate::{
         uri::{NGSI_LD_URN_NID, Uri},
     },
     repository::{
-        context_source_registration::ContextSourceRegistrationRepository,
-        csource_subscription::CsourceSubscriptionRepository,
-        subscription_store::SubscriptionStore,
+        csource_registration::repo::CsourceRegistrationRepository,
+        csource_subscription::repo::CsourceSubscriptionRepository,
+        subscription_store::repo::SubscriptionStore,
     },
     transport::{
         dispatch::{DeliveryResult, TransportDispatcher, build_delivery_request},
@@ -22,7 +22,7 @@ use uuid::Uuid;
 
 pub struct CsrIntervalWorker {
     sub_repo: CsourceSubscriptionRepository,
-    csr_repo: ContextSourceRegistrationRepository,
+    csr_repo: CsourceRegistrationRepository,
     transport: Arc<TransportDispatcher>,
     poll_interval: Duration,
     tenant: crate::tenancy::types::TenantRef,
@@ -31,7 +31,7 @@ pub struct CsrIntervalWorker {
 impl CsrIntervalWorker {
     pub const fn new(
         sub_repo: CsourceSubscriptionRepository,
-        csr_repo: ContextSourceRegistrationRepository,
+        csr_repo: CsourceRegistrationRepository,
         transport: Arc<TransportDispatcher>,
         tenant: crate::tenancy::types::TenantRef,
     ) -> Self {

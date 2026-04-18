@@ -10,7 +10,7 @@ use crate::{
     core::error::AndromedaError,
     domain::registration::ForwardingMode,
     http::error::batch::BatchEntityError,
-    service::context_source_forwarding::ForwardedWriteResult,
+    service::csource_forwarding::ForwardedWriteResult,
 };
 use serde_json::Value;
 

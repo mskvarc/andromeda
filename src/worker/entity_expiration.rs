@@ -5,7 +5,7 @@ use crate::{
         notification::{ChangeEvent, TriggerReason},
         uri::Uri,
     },
-    repository::entity::EntityRepository,
+    repository::entity::repo::EntityRepository,
 };
 use std::time::Duration;
 use tokio::sync::broadcast;

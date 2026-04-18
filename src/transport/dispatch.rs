@@ -194,12 +194,12 @@ impl TransportDispatcher {
     }
 
     /// Access the SSE connection registry.
-    pub fn sse_registry(&self) -> &Arc<SseConnectionRegistry> {
+    pub const fn sse_registry(&self) -> &Arc<SseConnectionRegistry> {
         &self.sse_registry
     }
 
     /// Access the WebSocket connection registry.
-    pub fn ws_registry(&self) -> &Arc<WsConnectionRegistry> {
+    pub const fn ws_registry(&self) -> &Arc<WsConnectionRegistry> {
         &self.ws_registry
     }
 

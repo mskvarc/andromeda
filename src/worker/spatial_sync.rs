@@ -9,7 +9,7 @@
 use crate::{
     domain::notification::{ChangeEvent, TriggerReason},
     jsonld::vocab,
-    repository::entity::EntityRepository,
+    repository::entity::repo::EntityRepository,
     service::spatial::{SpatialKey, entity_index::SpatialEntityIndex},
     tenancy::types::TenantRef,
 };

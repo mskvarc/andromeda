@@ -23,7 +23,7 @@ use crate::{
     jsonld::vocab,
     query::q,
     renderer::SysAttrsInclusion,
-    repository::subscription_store::SubscriptionStore,
+    repository::subscription_store::repo::SubscriptionStore,
     service::{
         spatial::{
             SpatialKey,
@@ -187,11 +187,10 @@ impl SubscriptionCache {
         for selector in &compiled.selectors {
             if selector.type_pattern.is_some() {
                 self.untyped.insert(compiled.id.clone());
-                indexed_any = true;
             } else {
                 self.by_type.entry(selector.type_.clone()).or_default().insert(compiled.id.clone());
-                indexed_any = true;
             }
+            indexed_any = true;
         }
         if !indexed_any {
             self.untyped.insert(compiled.id.clone());

@@ -29,3 +29,21 @@ pub struct ContextMetadata {
     pub number_of_hits: u64,
     pub extra_info: Option<Value>,
 }
+
+/// Service-layer DTO: list result as URLs or full metadata records.
+#[derive(Debug)]
+pub enum ContextListResult {
+    /// List of context URLs or IDs.
+    Urls(Vec<String>),
+    /// List of context metadata records with full details.
+    Detailed(Vec<ContextMetadata>),
+}
+
+/// Service-layer DTO: single-context fetch result (payload or metadata).
+#[derive(Debug)]
+pub enum ContextGetResult {
+    /// The raw JSON-LD context payload.
+    Payload(Value),
+    /// Full context metadata including usage statistics.
+    Detailed(Box<ContextMetadata>),
+}

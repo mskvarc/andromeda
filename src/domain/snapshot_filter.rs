@@ -339,7 +339,13 @@ mod tests {
         pretty_assertions::assert_eq!(err, SnapshotQParseError::Empty);
 
         let err = parse_snapshot_q("snapshotPriority==abc").unwrap_err();
-        assert!(matches!(err, SnapshotQParseError::InvalidValue { field: SnapshotField::SnapshotPriority, .. }));
+        assert!(matches!(
+            err,
+            SnapshotQParseError::InvalidValue {
+                field: SnapshotField::SnapshotPriority,
+                ..
+            }
+        ));
 
         let err = parse_snapshot_q("status<success").unwrap_err();
         assert!(matches!(

@@ -3,7 +3,11 @@ use crate::{
         notification::{CsourceSubscriptionChange, SubscriptionChange},
         uri::Uri,
     },
-    repository::{csource_subscription::CsourceSubscriptionRepository, subscription::SubscriptionRepository, subscription_store::SubscriptionStore},
+    repository::{
+        csource_subscription::repo::CsourceSubscriptionRepository,
+        subscription::repo::SubscriptionRepository,
+        subscription_store::repo::SubscriptionStore,
+    },
 };
 use std::time::Duration;
 use tokio::sync::broadcast;

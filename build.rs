@@ -57,10 +57,10 @@ fn compose_one(top: &Path, unicode: &str, out: &Path) -> std::io::Result<()> {
         composed.push('\n');
     }
     composed.push_str(unicode);
-    if let Ok(existing) = fs::read_to_string(out) {
-        if existing == composed {
-            return Ok(());
-        }
+    if let Ok(existing) = fs::read_to_string(out)
+        && existing == composed
+    {
+        return Ok(());
     }
     fs::write(out, composed)
 }

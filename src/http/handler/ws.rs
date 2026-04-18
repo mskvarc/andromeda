@@ -62,7 +62,7 @@ pub async fn stream(
         &subscription.notification.endpoint.uri,
         subscription.notification.endpoint.notifier_info.as_deref(),
     )
-    .map_or(false, |t| matches!(t, EndpointTransport::WebSocket));
+    .is_ok_and(|t| matches!(t, EndpointTransport::WebSocket));
 
     if !is_ws {
         return Err(NgsiLdError::from(
@@ -103,7 +103,7 @@ async fn handle_ws(
     socket: WebSocket,
     mut rx: mpsc::Receiver<crate::transport::ws::WsNotificationMessage>,
     cancellation_token: CancellationToken,
-    _guard: WsConnectionGuard,
+    guard: WsConnectionGuard,
     ping_interval_secs: u64,
 ) {
     let (mut sender, mut receiver) = socket.split();
@@ -158,9 +158,9 @@ async fn handle_ws(
     }
 
     debug!(
-        subscription_id = %_guard.subscription_id,
-        connection_id = ?_guard.connection_id,
+        subscription_id = %guard.subscription_id,
+        connection_id = ?guard.connection_id,
         "WebSocket client disconnected"
     );
-    // _guard drops here -> unregister
+    // guard drops here -> unregister
 }

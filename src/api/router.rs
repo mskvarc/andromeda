@@ -25,18 +25,26 @@ use crate::{
         ws,
     },
     repository::{
-        context_source_registration::ContextSourceRegistrationRepository,
-        csource_subscription::CsourceSubscriptionRepository,
-        entity::EntityRepository,
-        jsonld_context::JsonLdContextRepository,
-        outbox::OutboxRepository,
-        subscription::SubscriptionRepository,
-        temporal::TemporalRepository,
+        csource_registration::repo::CsourceRegistrationRepository,
+        csource_subscription::repo::CsourceSubscriptionRepository,
+        entity::repo::EntityRepository,
+        jsonld_context::repo::JsonLdContextRepository,
+        outbox::repo::OutboxRepository,
+        snapshot::repo::SnapshotRepository,
+        subscription::repo::SubscriptionRepository,
+        temporal::repo::TemporalRepository,
     },
     service::{
-        context_source_registration::ContextSourceRegistrationService,
+        csource_registration::CsourceRegistrationService,
         csource_subscription::CsourceSubscriptionService,
-        entity::{BatchExecutionConfig, BatchSideEffectDispatcherConfig, EntityService, OutboxWriteConfig},
+        entity::{
+            BatchExecutionConfig,
+            BatchSideEffectDispatcherConfig,
+            EntityService,
+            OutboxWriteConfig,
+            discovery::EntityDiscoveryService,
+            query::EntityQueryService,
+        },
         jsonld_context::JsonLdContextService,
         spatial::{entity_index::SpatialEntityIndex, warmup},
         subscription::SubscriptionService,
@@ -337,7 +345,7 @@ pub async fn build_tenant_state(
     let temporal_service = Arc::new(TemporalService::new(&pool, engine.clone(), config.temporal.default_last_n));
     let context_service = Arc::new(JsonLdContextService::new(&pool, engine.clone()));
     let subscription_service = Arc::new(SubscriptionService::new(&pool, engine.clone(), Some(sub_change_tx.clone())));
-    let csr_service = Arc::new(ContextSourceRegistrationService::new(&pool, engine.clone(), Some(csr_change_tx.clone())));
+    let csr_service = Arc::new(CsourceRegistrationService::new(&pool, engine.clone(), Some(csr_change_tx.clone())));
     let csr_subscription_service = Arc::new(CsourceSubscriptionService::new(&pool, engine.clone(), Some(csr_sub_change_tx.clone())));
 
     let sse_registry = Arc::new(SseConnectionRegistry::new());
@@ -363,7 +371,7 @@ pub async fn build_tenant_state(
     let _shutdown_tx = shutdown_tx;
 
     let spatial_change_rx = change_tx.subscribe();
-    let notification_entity_query = crate::service::entity::query::EntityQueryService::new(&pool, engine.clone(), Arc::clone(&spatial_index), tenant.clone());
+    let notification_entity_query = EntityQueryService::new(&pool, engine.clone(), Arc::clone(&spatial_index), tenant.clone());
     let notification_worker = NotificationWorker::new(
         change_tx.subscribe(),
         sub_change_tx.subscribe(),
@@ -407,7 +415,7 @@ pub async fn build_tenant_state(
         csr_change_tx.subscribe(),
         csr_sub_change_tx.subscribe(),
         CsourceSubscriptionRepository::new(&pool),
-        ContextSourceRegistrationRepository::new(&pool),
+        CsourceRegistrationRepository::new(&pool),
         transport.clone(),
         tenant.clone(),
     );
@@ -418,7 +426,7 @@ pub async fn build_tenant_state(
     worker_handles.push(tokio::spawn(data_expiration_worker.run()));
 
     // Snapshot expiration worker (NGSI-LD 5.16 -- clean up expired snapshots)
-    let snapshot_expiration_worker = SnapshotExpirationWorker::new(crate::repository::snapshot::SnapshotRepository::new(&pool), expiration_interval);
+    let snapshot_expiration_worker = SnapshotExpirationWorker::new(SnapshotRepository::new(&pool), expiration_interval);
     worker_handles.push(tokio::spawn(snapshot_expiration_worker.run()));
 
     // Spatial index: event-driven incremental sync + periodic bulk rebuild.
@@ -442,21 +450,16 @@ pub async fn build_tenant_state(
     let transport_handle = transport.clone();
     let csr_interval_worker = CsrIntervalWorker::new(
         CsourceSubscriptionRepository::new(&pool),
-        ContextSourceRegistrationRepository::new(&pool),
+        CsourceRegistrationRepository::new(&pool),
         transport,
         tenant.clone(),
     );
     worker_handles.push(tokio::spawn(csr_interval_worker.run()));
 
-    let entity_query_service = Arc::new(crate::service::entity::query::EntityQueryService::new(
-        &pool,
-        engine.clone(),
-        Arc::clone(&spatial_index),
-        tenant,
-    ));
-    let entity_discovery_service = Arc::new(crate::service::entity::discovery::EntityDiscoveryService::new(&pool, engine.clone()));
+    let entity_query_service = Arc::new(EntityQueryService::new(&pool, engine.clone(), Arc::clone(&spatial_index), tenant));
+    let entity_discovery_service = Arc::new(EntityDiscoveryService::new(&pool, engine.clone()));
 
-    let forwarding_service = Arc::new(crate::service::context_source_forwarding::ContextSourceForwardingService::new(
+    let forwarding_service = Arc::new(crate::service::csource_forwarding::CsourceForwardingService::new(
         &pool,
         engine,
         config.info.source_identity.clone(),

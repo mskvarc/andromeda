@@ -77,11 +77,7 @@ pub async fn run(config: RuntimeConfig) -> Result<(), AndromedaError> {
             );
         })
         .on_response(|response: &axum::http::Response<_>, latency: Duration, _span: &tracing::Span| {
-            let request_id = response
-                .headers()
-                .get("x-request-id")
-                .and_then(|id| id.to_str().ok())
-                .unwrap_or_default();
+            let request_id = response.headers().get("x-request-id").and_then(|id| id.to_str().ok()).unwrap_or_default();
             tracing::info!(
                 request_id = %request_id,
                 status = %response.status(),

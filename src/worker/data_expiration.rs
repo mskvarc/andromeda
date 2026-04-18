@@ -4,7 +4,7 @@ use crate::{
         notification::{ChangeEvent, TriggerReason},
         uri::Uri,
     },
-    repository::entity::EntityRepository,
+    repository::entity::repo::EntityRepository,
 };
 use std::time::Duration;
 use tokio::sync::broadcast;
@@ -68,7 +68,7 @@ impl DataExpirationWorker {
                 }
             }
 
-            match self.entity_repo.expire_due_attributes().await {
+            match self.entity_repo.purge_expired_attributes().await {
                 Ok(affected_ids) => {
                     if !affected_ids.is_empty() {
                         info!("Removed expired attribute instances from {} entity/entities", affected_ids.len());

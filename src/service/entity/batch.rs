@@ -8,7 +8,7 @@ use crate::{
     },
     jsonld::ContextSpec,
     query::sql,
-    repository::entity::{PreparedEntityColumns, PreparedEntityRow, decompose_rows},
+    repository::entity::{PreparedEntityRow, decompose_rows, params::PreparedEntityColumns},
     service::entity::{
         BatchSideEffectJob,
         EntityService,

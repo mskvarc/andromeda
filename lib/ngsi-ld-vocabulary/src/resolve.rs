@@ -34,12 +34,11 @@ pub fn resolve_workspace_root(path_literal: &LitStr) -> syn::Result<PathBuf> {
         let dir_str = dir.to_string_lossy();
         if !dir_str.contains("/target/") && !dir_str.contains("\\target\\") {
             let cargo_toml = dir.join("Cargo.toml");
-            if cargo_toml.exists() {
-                if let Ok(content) = std::fs::read_to_string(&cargo_toml) {
-                    if content.contains("[workspace]") {
-                        return Ok(dir);
-                    }
-                }
+            if cargo_toml.exists()
+                && let Ok(content) = std::fs::read_to_string(&cargo_toml)
+                && content.contains("[workspace]")
+            {
+                return Ok(dir);
             }
         }
         if !dir.pop() {

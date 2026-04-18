@@ -44,7 +44,7 @@ pub fn apply_entity_get_extension_headers(params: &mut GetEntityParams, protocol
         let format_value = response_format.as_query_value();
         if !matches!(format_value, "normalized" | "keyValues" | "simplified" | "concise") {
             return Err(NgsiLdError::from(
-                AndromedaError::malformed_request(format!("Invalid format value: '{}'", format_value)).with_instance(&uri),
+                AndromedaError::malformed_request(format!("Invalid format value: '{}'", format_value)).with_instance(uri),
             ));
         }
         params.format = Some(format_value.to_string());
@@ -89,7 +89,7 @@ pub fn apply_entity_query_extension_headers(params: &mut EntityQueryParameters, 
         let format_value = response_format.as_query_value();
         if !matches!(format_value, "normalized" | "keyValues" | "simplified" | "concise") {
             return Err(NgsiLdError::from(
-                AndromedaError::malformed_request(format!("Invalid format value: '{}'", format_value)).with_instance(&uri),
+                AndromedaError::malformed_request(format!("Invalid format value: '{}'", format_value)).with_instance(uri),
             ));
         }
         params.format = Some(format_value.to_string());
@@ -122,7 +122,7 @@ pub fn apply_temporal_extension_headers(params: &mut TemporalQueryParameters, pr
         let format_value = response_format.as_query_value();
         if !matches!(format_value, "temporalValues" | "aggregatedValues") {
             return Err(NgsiLdError::from(
-                AndromedaError::malformed_request(format!("Invalid format value: '{}'", format_value)).with_instance(&uri),
+                AndromedaError::malformed_request(format!("Invalid format value: '{}'", format_value)).with_instance(uri),
             ));
         }
         params.format = Some(format_value.to_string());

@@ -15,7 +15,7 @@ use crate::{
         Renderer,
         response::{ResponsePayload, ResponseRenderer},
     },
-    service::context_source_forwarding::{collect_discovery_warnings, merge_type_info_results, merge_types_results},
+    service::csource_forwarding::{collect_discovery_warnings, merge_type_info_results, merge_types_results},
 };
 use axum::{
     extract::{OriginalUri, Path},

@@ -1,7 +1,7 @@
 use crate::{
     service::{
-        context_source_forwarding::ContextSourceForwardingService,
-        context_source_registration::ContextSourceRegistrationService,
+        csource_forwarding::CsourceForwardingService,
+        csource_registration::CsourceRegistrationService,
         csource_subscription::CsourceSubscriptionService,
         entity::{EntityService, discovery::EntityDiscoveryService, query::EntityQueryService},
         entity_map::EntityMapService,
@@ -23,9 +23,9 @@ pub struct AndromedaState {
     pub temporal: Arc<TemporalService>,
     pub subscriptions: Arc<SubscriptionService>,
     pub contexts: Arc<JsonLdContextService>,
-    pub csr: Arc<ContextSourceRegistrationService>,
+    pub csr: Arc<CsourceRegistrationService>,
     pub csr_subscriptions: Arc<CsourceSubscriptionService>,
-    pub forwarding: Arc<ContextSourceForwardingService>,
+    pub forwarding: Arc<CsourceForwardingService>,
     pub entity_maps: Arc<EntityMapService>,
     pub snapshots: Arc<SnapshotService>,
     pub provenance: Arc<ProvenanceService>,

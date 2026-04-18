@@ -1,88 +1,24 @@
-//! Repository for persisting and querying NGSI-LD entities.
-//!
-//! Handles single-entity CRUD, batch operations (via SQL `UNNEST`), compiled
-//! query execution, entity type/attribute discovery, and expiration cleanup.
+//! SQL-only repository for entity persistence.
 
 use crate::{
     core::error::AndromedaError,
-    domain::{expanded, notification::SysAttrsSnapshot, outbox::NewOutboxEntry},
+    domain::{notification::SysAttrsSnapshot, outbox::NewOutboxEntry},
     query::{
         compiled::CompiledEntityQuery,
         sql::{self, BindValue},
     },
-    repository::outbox::OutboxRepository,
+    repository::{
+        entity::{
+            params::{EntityCreateParams, EntitySaveParams, PreparedEntityColumns},
+            rows::{AttributeSummaryRow, DeletedEntity, QueryResult},
+        },
+        outbox::repo::OutboxRepository,
+    },
 };
-use chrono::{DateTime, Utc};
 use serde_json::Value;
 use sqlx::{Executor, Row, postgres::PgPool};
 use std::collections::HashMap;
 use urn::Urn;
-
-/// Row data prepared for bulk entity SQL operations.
-///
-/// Each field corresponds to a column (or derived column) in the `entities`
-/// table.  The `types_json` and `scope_paths_json` fields are JSON arrays of
-/// strings because PostgreSQL `UNNEST` flattens `text[][]` into individual
-/// elements rather than per-row arrays.
-#[derive(Debug)]
-pub(crate) struct PreparedEntityRow {
-    /// Entity identifier (URN).
-    pub id: String,
-    /// JSON array of type IRIs (e.g. `["https://example.com/Vehicle"]`).
-    pub types_json: Value,
-    /// JSON array of ltree-formatted scope paths (e.g. `["Madrid", "Traffic"]`).
-    pub scope_paths_json: Value,
-    /// Full expanded JSON-LD payload.
-    pub payload: Value,
-    /// GeoJSON string for the `location` GeoProperty, if present.
-    pub location: Option<String>,
-    /// GeoJSON string for the `observationSpace` GeoProperty, if present.
-    pub observation_space: Option<String>,
-    /// GeoJSON string for the `operationSpace` GeoProperty, if present.
-    pub operation_space: Option<String>,
-    /// Entity expiration timestamp (ETSI GS CIM 009 clause 4.22).
-    pub expires_at: Option<DateTime<Utc>>,
-}
-
-/// Entity data returned by `delete_batch` via the SQL `RETURNING` clause.
-///
-/// Contains the deleted entity's payload and system attributes so the caller
-/// can emit change events without additional queries.
-#[derive(Debug)]
-pub struct DeletedEntity {
-    /// Entity identifier.
-    pub id: String,
-    /// The expanded JSON-LD payload at the time of deletion.
-    pub payload: Value,
-    /// Timestamp when the entity was originally created.
-    pub created_at: DateTime<Utc>,
-    /// Timestamp of the last modification before deletion.
-    pub modified_at: DateTime<Utc>,
-    /// Optional expiration timestamp.
-    pub expires_at: Option<DateTime<Utc>>,
-}
-
-/// Result of an entity query containing matched rows and an optional total count.
-#[derive(Debug)]
-pub struct QueryResult {
-    /// The matched entity payloads.
-    pub rows: Vec<Value>,
-    /// Total number of matching entities, present when a count was requested.
-    pub total_count: Option<i64>,
-}
-
-/// Aggregated metadata for a single attribute across all entities.
-#[derive(Debug)]
-pub struct AttributeSummaryRow {
-    /// The expanded IRI of the attribute.
-    pub attr_iri: String,
-    /// Number of distinct entities that carry this attribute.
-    pub entity_count: i64,
-    /// Entity type IRIs that contain this attribute.
-    pub entity_types: Vec<String>,
-    /// NGSI-LD attribute types (Property, Relationship, etc.) observed for this attribute.
-    pub attribute_types: Vec<String>,
-}
 
 /// Repository for persisting and querying NGSI-LD entities.
 #[derive(Debug)]
@@ -93,44 +29,25 @@ pub struct EntityRepository {
 impl EntityRepository {
     /// Create a new entity repository backed by the given connection pool.
     pub fn new(pool: &PgPool) -> EntityRepository {
-        EntityRepository { pool: pool.clone() } // clone: Arc ref-count bump (PgPool is Arc-based)
+        EntityRepository { pool: pool.clone() } // clone: Arc ref-count bump
     }
 
     /// Insert a new entity and return its URN identifier.
-    pub async fn create(&self, id: &str, type_: &[&str], scopes: &[String], entity: &Value, expires_at: Option<DateTime<Utc>>) -> Result<Urn, AndromedaError> {
-        Self::create_impl(&self.pool, id, type_, scopes, entity, expires_at).await
+    pub async fn create(&self, params: EntityCreateParams<'_>) -> Result<Urn, AndromedaError> {
+        Self::create_impl(&self.pool, params).await
     }
 
     /// Insert a new entity atomically with outbox entries, returning the URN.
-    pub async fn create_with_outbox(
-        &self,
-        id: &str,
-        type_: &[&str],
-        scopes: &[String],
-        entity: &Value,
-        expires_at: Option<DateTime<Utc>>,
-        outbox_entries: &[NewOutboxEntry],
-    ) -> Result<Urn, AndromedaError> {
+    pub async fn create_with_outbox(&self, params: EntityCreateParams<'_>, outbox_entries: &[NewOutboxEntry]) -> Result<Urn, AndromedaError> {
         let mut tx = self.pool.begin().await?;
-        let urn = Self::create_impl(&mut *tx, id, type_, scopes, entity, expires_at).await?;
+        let urn = Self::create_impl(&mut *tx, params).await?;
         OutboxRepository::insert_batch_in_tx(&mut tx, outbox_entries).await?;
         tx.commit().await?;
         Ok(urn)
     }
 
-    async fn create_impl<'e>(
-        executor: impl Executor<'e, Database = sqlx::Postgres>,
-        id: &str,
-        type_: &[&str],
-        scopes: &[String],
-        entity: &Value,
-        expires_at: Option<DateTime<Utc>>,
-    ) -> Result<Urn, AndromedaError> {
-        tracing::info!("Storing entity {} with types: {:?}", id, type_);
-        let location_wkb = expanded::extract_location_wkb(entity);
-        let observation_space_wkb = expanded::extract_observation_space_wkb(entity);
-        let operation_space_wkb = expanded::extract_operation_space_wkb(entity);
-        let scope_paths: Vec<String> = scopes.iter().map(|s| sql::scope_to_ltree(s)).collect();
+    async fn create_impl<'e>(executor: impl Executor<'e, Database = sqlx::Postgres>, params: EntityCreateParams<'_>) -> Result<Urn, AndromedaError> {
+        tracing::info!("Storing entity {} with types: {:?}", params.id, params.types);
         sqlx::query(
             r#"
             INSERT INTO entities (id, types, scope_paths, payload, location, observation_space, operation_space, expires_at)
@@ -141,21 +58,21 @@ impl EntityRepository {
                     $8)
             "#,
         )
-        .bind(id)
-        .bind(type_)
-        .bind(&scope_paths)
-        .bind(entity)
-        .bind(location_wkb)
-        .bind(observation_space_wkb)
-        .bind(operation_space_wkb)
-        .bind(expires_at)
+        .bind(params.id)
+        .bind(params.types)
+        .bind(&params.scope_paths)
+        .bind(params.payload)
+        .bind(params.location_wkb)
+        .bind(params.observation_space_wkb)
+        .bind(params.operation_space_wkb)
+        .bind(params.expires_at)
         .execute(executor)
         .await?;
 
-        Ok(id.parse::<Urn>()?)
+        Ok(params.id.parse::<Urn>()?)
     }
 
-    /// Retrieve an entity's expanded payload by identifier, returning `None` if not found.
+    /// Retrieve an entity's expanded payload by identifier.
     pub async fn get(&self, id: &str) -> Result<Option<Value>, AndromedaError> {
         let result: Option<Value> = sqlx::query_scalar("SELECT payload FROM entities WHERE id = $1")
             .bind(id)
@@ -165,7 +82,7 @@ impl EntityRepository {
         Ok(result)
     }
 
-    /// Retrieve system attributes (created_at, modified_at, expires_at) for a single entity.
+    /// Retrieve system attributes for a single entity.
     pub async fn get_sys_attrs(&self, id: &str) -> Result<Option<SysAttrsSnapshot>, AndromedaError> {
         let row = sqlx::query("SELECT created_at, modified_at, expires_at FROM entities WHERE id = $1")
             .bind(id)
@@ -188,14 +105,16 @@ impl EntityRepository {
         Ok(rows.into_iter().map(|(id,)| id).collect())
     }
 
-    /// Remove expired attribute instances from entity payloads and return IDs of affected entities.
+    /// Narrow persistence primitive: invoke the DB-side
+    /// `remove_expired_attribute_instances` SQL function across every entity
+    /// whose payload carries at least one past-due attribute instance, and
+    /// return the set of affected entity IDs.
     ///
-    /// Uses the `remove_expired_attribute_instances` SQL function to atomically
-    /// filter out attribute instances whose `expiresAt` has passed (ETSI GS CIM 009
-    /// clause 4.22). Also re-extracts hoisted geometry columns (`location`,
-    /// `observation_space`, `operation_space`) from the cleaned payload, nulling
-    /// them if the corresponding GeoProperty was entirely removed.
-    pub async fn expire_due_attributes(&self) -> Result<Vec<String>, AndromedaError> {
+    /// The *when* (scheduling cadence, which entities) is decided by the
+    /// service/worker layer; the *what* (the filter rule: past-due expiresAt)
+    /// lives in the SQL function definition, so the repository only supplies
+    /// the narrow trigger and SQL wiring.
+    pub async fn purge_expired_attributes(&self) -> Result<Vec<String>, AndromedaError> {
         let location_iri = crate::jsonld::vocab::expanded::LOCATION.as_str();
         let observation_space_iri = crate::jsonld::vocab::expanded::OBSERVATION_SPACE.as_str();
         let operation_space_iri = crate::jsonld::vocab::expanded::OPERATION_SPACE.as_str();
@@ -242,29 +161,22 @@ impl EntityRepository {
         Ok(rows.into_iter().map(|(id,)| id).collect())
     }
 
-    /// Save (overwrite) the expanded payload for an existing entity.
-    /// Automatically re-extracts types, scopes, location, and geo spaces from the payload.
-    /// Preserves existing expires_at unless the payload contains a new expiresAt value.
-    pub async fn save(&self, id: &str, entity: &Value) -> Result<bool, AndromedaError> {
-        Self::save_impl(&self.pool, id, entity).await
+    /// Save (overwrite) an existing entity with pre-extracted columns.
+    /// Returns rows affected.
+    pub async fn save(&self, params: EntitySaveParams<'_>) -> Result<u64, AndromedaError> {
+        Self::save_impl(&self.pool, params).await
     }
 
-    /// Save an entity atomically with outbox entries.
-    pub async fn save_with_outbox(&self, id: &str, entity: &Value, outbox_entries: &[NewOutboxEntry]) -> Result<bool, AndromedaError> {
+    /// Save an entity atomically with outbox entries. Returns rows affected.
+    pub async fn save_with_outbox(&self, params: EntitySaveParams<'_>, outbox_entries: &[NewOutboxEntry]) -> Result<u64, AndromedaError> {
         let mut tx = self.pool.begin().await?;
-        let updated = Self::save_impl(&mut *tx, id, entity).await?;
+        let updated = Self::save_impl(&mut *tx, params).await?;
         OutboxRepository::insert_batch_in_tx(&mut tx, outbox_entries).await?;
         tx.commit().await?;
         Ok(updated)
     }
 
-    async fn save_impl<'e>(executor: impl Executor<'e, Database = sqlx::Postgres>, id: &str, entity: &Value) -> Result<bool, AndromedaError> {
-        let types = expanded::extract_types(entity);
-        let scope_paths: Vec<String> = expanded::extract_scopes(entity).iter().map(|s| sql::scope_to_ltree(s)).collect();
-        let location_wkb = expanded::extract_location_wkb(entity);
-        let observation_space_wkb = expanded::extract_observation_space_wkb(entity);
-        let operation_space_wkb = expanded::extract_operation_space_wkb(entity);
-        let expires_at = expanded::extract_expires_at(entity);
+    async fn save_impl<'e>(executor: impl Executor<'e, Database = sqlx::Postgres>, params: EntitySaveParams<'_>) -> Result<u64, AndromedaError> {
         let result = sqlx::query(
             r#"
             UPDATE entities
@@ -277,27 +189,27 @@ impl EntityRepository {
             WHERE id = $1
             "#,
         )
-        .bind(id)
-        .bind(entity)
-        .bind(&types)
-        .bind(&scope_paths)
-        .bind(location_wkb)
-        .bind(observation_space_wkb)
-        .bind(operation_space_wkb)
-        .bind(expires_at)
+        .bind(params.id)
+        .bind(params.payload)
+        .bind(&params.types)
+        .bind(&params.scope_paths)
+        .bind(params.location_wkb)
+        .bind(params.observation_space_wkb)
+        .bind(params.operation_space_wkb)
+        .bind(params.expires_at)
         .execute(executor)
         .await?;
 
-        Ok(result.rows_affected() > 0)
+        Ok(result.rows_affected())
     }
 
-    /// Delete an entity by its identifier. Returns `true` if a row was removed.
-    pub async fn delete(&self, id: &str) -> Result<bool, AndromedaError> {
+    /// Delete an entity by its identifier. Returns rows affected.
+    pub async fn delete(&self, id: &str) -> Result<u64, AndromedaError> {
         Self::delete_impl(&self.pool, id).await
     }
 
-    /// Delete an entity atomically with outbox entries.
-    pub async fn delete_with_outbox(&self, id: &str, outbox_entries: &[NewOutboxEntry]) -> Result<bool, AndromedaError> {
+    /// Delete an entity atomically with outbox entries. Returns rows affected.
+    pub async fn delete_with_outbox(&self, id: &str, outbox_entries: &[NewOutboxEntry]) -> Result<u64, AndromedaError> {
         let mut tx = self.pool.begin().await?;
         let deleted = Self::delete_impl(&mut *tx, id).await?;
         OutboxRepository::insert_batch_in_tx(&mut tx, outbox_entries).await?;
@@ -305,19 +217,13 @@ impl EntityRepository {
         Ok(deleted)
     }
 
-    async fn delete_impl<'e>(executor: impl Executor<'e, Database = sqlx::Postgres>, id: &str) -> Result<bool, AndromedaError> {
+    async fn delete_impl<'e>(executor: impl Executor<'e, Database = sqlx::Postgres>, id: &str) -> Result<u64, AndromedaError> {
         let result = sqlx::query("DELETE FROM entities WHERE id = $1").bind(id).execute(executor).await?;
 
-        Ok(result.rows_affected() > 0)
+        Ok(result.rows_affected())
     }
 
-    /// Execute a compiled entity query and return matching payloads with an optional total count.
-    ///
-    /// When the compiled query requests a total count, the main SQL statement
-    /// carries a `COUNT(*) OVER ()` window column that is read from any
-    /// returned row, saving a round-trip. The dedicated `count_sql` only runs
-    /// when the result set is empty, since the window function does not
-    /// materialize on zero rows.
+    /// Execute a compiled entity query and return matching payloads.
     pub async fn query_compiled(&self, compiled: &CompiledEntityQuery) -> Result<QueryResult, AndromedaError> {
         let built = sql::entity::build_query(compiled)?;
 
@@ -338,15 +244,25 @@ impl EntityRepository {
         let query = crate::bind_values!(sqlx::query(sql), binds);
 
         let rows = query.fetch_all(&self.pool).await?;
-        let mut total_count: Option<i64> = None;
-        let mut results = Vec::with_capacity(rows.len());
-        for row in rows {
-            if read_total_count && total_count.is_none() {
-                total_count = row.try_get::<i64, _>(sql::entity::TOTAL_COUNT_COLUMN).ok();
+        let mut row_iter = rows.into_iter();
+        let total_count = if read_total_count {
+            match row_iter.next() {
+                Some(first) => {
+                    let count = first.try_get::<i64, _>(sql::entity::TOTAL_COUNT_COLUMN).ok();
+                    let data: Value = first.try_get("payload")?;
+                    let mut results = Vec::with_capacity(row_iter.size_hint().0 + 1);
+                    results.push(data);
+                    for row in row_iter {
+                        results.push(row.try_get::<Value, _>("payload")?);
+                    }
+                    return Ok((results, count));
+                }
+                None => None,
             }
-            let data: Value = row.try_get("payload")?;
-            results.push(data);
-        }
+        } else {
+            None
+        };
+        let results: Vec<Value> = row_iter.map(|row| row.try_get::<Value, _>("payload")).collect::<Result<_, _>>()?;
         Ok((results, total_count))
     }
 
@@ -357,7 +273,7 @@ impl EntityRepository {
         Ok(count)
     }
 
-    /// Fetch sys_attrs (created_at, modified_at, expires_at) for multiple entities in one query.
+    /// Fetch sys_attrs for multiple entities in one query.
     pub async fn get_sys_attrs_batch(&self, ids: &[String]) -> Result<HashMap<String, SysAttrsSnapshot>, AndromedaError> {
         if ids.is_empty() {
             return Ok(HashMap::new());
@@ -439,9 +355,15 @@ impl EntityRepository {
             .await?)
     }
 
-    /// Get per-type attribute summaries using SQL aggregation.
-    /// Returns (type_iri, Vec<attribute_iri>) pairs.
-    pub async fn get_entity_type_summaries(&self) -> Result<Vec<(String, Vec<String>)>, AndromedaError> {
+    /// Get per-type attribute summaries using SQL aggregation, with keyset
+    /// pagination on the aggregated `type_iri` key.
+    ///
+    /// Query plan assumption: the server materialises the full aggregation
+    /// (one row per distinct type) before applying the keyset filter + LIMIT,
+    /// so this pagination caps transport volume rather than server-side work.
+    /// It exists to bound memory for the HTTP response; it does not improve
+    /// the underlying aggregate cost.
+    pub async fn get_entity_type_summaries(&self, after: Option<&str>, limit: u32) -> Result<Vec<(String, Vec<String>)>, AndromedaError> {
         let rows = sqlx::query(
             r#"
             SELECT t AS type_iri,
@@ -453,9 +375,13 @@ impl EntityRepository {
                  ) AS attr_key
             WHERE attr_key NOT LIKE '@%'
             GROUP BY t
+            HAVING $1::text IS NULL OR t > $1
             ORDER BY t
+            LIMIT $2
             "#,
         )
+        .bind(after)
+        .bind(i64::from(limit))
         .fetch_all(&self.pool)
         .await?;
 
@@ -470,9 +396,10 @@ impl EntityRepository {
         Ok(results)
     }
 
-    /// Get attribute metadata aggregated at the SQL level.
-    /// Returns (attr_iri, count, attribute_types, entity_types) tuples.
-    pub async fn get_attribute_summary(&self) -> Result<Vec<AttributeSummaryRow>, AndromedaError> {
+    /// Get attribute metadata aggregated at the SQL level with keyset
+    /// pagination on `attr_key` (see [`Self::get_entity_type_summaries`] for
+    /// query-plan assumptions).
+    pub async fn get_attribute_summary(&self, after: Option<&str>, limit: u32) -> Result<Vec<AttributeSummaryRow>, AndromedaError> {
         let rows = sqlx::query(
             r#"
             SELECT attr_key,
@@ -490,9 +417,13 @@ impl EntityRepository {
                  unnest(e.types) AS t
                  LEFT JOIN LATERAL jsonb_array_elements_text(attrs.attr_value->0->'@type') AS at ON true
             GROUP BY attr_key
+            HAVING $1::text IS NULL OR attr_key > $1
             ORDER BY attr_key
+            LIMIT $2
             "#,
         )
+        .bind(after)
+        .bind(i64::from(limit))
         .fetch_all(&self.pool)
         .await?;
 
@@ -511,7 +442,7 @@ impl EntityRepository {
         Ok(results)
     }
 
-    /// Fetch attribute summary for a single attribute IRI (avoids scanning all attributes).
+    /// Fetch attribute summary for a single attribute IRI.
     pub async fn get_attribute_info(&self, attr_iri: &str) -> Result<Option<AttributeSummaryRow>, AndromedaError> {
         let row = sqlx::query(
             r#"
@@ -571,15 +502,7 @@ impl EntityRepository {
             .await?)
     }
 
-    // -------------------------------------------------------------------------
-    // Bulk batch operations (UNNEST-based, single round-trip per batch)
-    // -------------------------------------------------------------------------
-
     /// Insert multiple entities in a single SQL statement using `UNNEST`.
-    ///
-    /// Duplicate IDs (entities that already exist) are silently skipped via
-    /// `ON CONFLICT (id) DO NOTHING`.  Returns the IDs of successfully inserted
-    /// entities; the caller compares against the input to detect conflicts.
     pub async fn create_batch(&self, entities: &PreparedEntityColumns) -> Result<Vec<String>, AndromedaError> {
         if entities.ids.is_empty() {
             return Ok(Vec::new());
@@ -618,10 +541,6 @@ impl EntityRepository {
     }
 
     /// Delete multiple entities in a single SQL statement.
-    ///
-    /// Returns full entity data (payload + timestamps) for each deleted row so
-    /// the caller can emit change events without additional queries.  Entities
-    /// not found are simply absent from the result.
     pub async fn delete_batch(&self, ids: &[String]) -> Result<Vec<DeletedEntity>, AndromedaError> {
         if ids.is_empty() {
             return Ok(Vec::new());
@@ -646,9 +565,6 @@ impl EntityRepository {
     }
 
     /// Update multiple existing entities in a single SQL statement using `UNNEST`.
-    ///
-    /// Only rows where `entities.id = d.id` are updated; non-existent IDs are
-    /// silently skipped.  Returns the IDs of successfully updated entities.
     pub async fn save_batch(&self, entities: &PreparedEntityColumns) -> Result<Vec<String>, AndromedaError> {
         if entities.ids.is_empty() {
             return Ok(Vec::new());
@@ -686,10 +602,6 @@ impl EntityRepository {
     }
 
     /// Insert or update multiple entities in a single SQL statement.
-    ///
-    /// Uses `ON CONFLICT (id) DO UPDATE` to upsert.  Returns `(id, was_created)`
-    /// pairs where `was_created` is `true` for newly inserted rows and `false`
-    /// for updated rows (determined via PostgreSQL's `xmax = 0` pattern).
     pub async fn upsert_batch(&self, entities: &PreparedEntityColumns) -> Result<Vec<(String, bool)>, AndromedaError> {
         if entities.ids.is_empty() {
             return Ok(Vec::new());
@@ -742,54 +654,4 @@ impl EntityRepository {
             .collect();
         Ok(result)
     }
-}
-
-/// Parallel column vectors extracted from [`PreparedEntityRow`] slices for
-/// sqlx `UNNEST` binding.
-#[derive(Debug)]
-pub struct PreparedEntityColumns {
-    pub ids: Vec<String>,
-    pub types_json: Vec<Value>,
-    pub scope_paths_json: Vec<Value>,
-    pub payloads: Vec<Value>,
-    pub locations: Vec<Option<String>>,
-    pub obs_spaces: Vec<Option<String>>,
-    pub op_spaces: Vec<Option<String>>,
-    pub expires_ats: Vec<Option<DateTime<Utc>>>,
-}
-
-impl PreparedEntityColumns {
-    /// Create an empty set of parallel SQL bind vectors sized for `len` rows.
-    pub fn with_capacity(len: usize) -> PreparedEntityColumns {
-        PreparedEntityColumns {
-            ids: Vec::with_capacity(len),
-            types_json: Vec::with_capacity(len),
-            scope_paths_json: Vec::with_capacity(len),
-            payloads: Vec::with_capacity(len),
-            locations: Vec::with_capacity(len),
-            obs_spaces: Vec::with_capacity(len),
-            op_spaces: Vec::with_capacity(len),
-            expires_ats: Vec::with_capacity(len),
-        }
-    }
-}
-
-/// Decompose a slice of [`PreparedEntityRow`] into parallel column vectors for
-/// sqlx `UNNEST` binding.
-pub(crate) fn decompose_rows(entities: Vec<PreparedEntityRow>) -> PreparedEntityColumns {
-    let len = entities.len();
-    let mut columns = PreparedEntityColumns::with_capacity(len);
-
-    for e in entities {
-        columns.ids.push(e.id);
-        columns.types_json.push(e.types_json);
-        columns.scope_paths_json.push(e.scope_paths_json);
-        columns.payloads.push(e.payload);
-        columns.locations.push(e.location);
-        columns.obs_spaces.push(e.observation_space);
-        columns.op_spaces.push(e.operation_space);
-        columns.expires_ats.push(e.expires_at);
-    }
-
-    columns
 }

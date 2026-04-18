@@ -1,134 +1,50 @@
-//! Repository layer for the NGSI-LD Temporal API.
-//!
-//! Handles TEA (temporal_entity_attributes) catalog and attribute_history operations.
+//! SQL-only repository for the NGSI-LD Temporal API.
 
 use crate::{
     core::error::AndromedaError,
-    domain::{
-        attribute_type::AttributeType,
-        temporal::{TeaEntry, ValueType},
-    },
+    domain::temporal::TeaEntry,
     query::sql::BindValue,
-    repository::timescale_features::TimescaleFeatures,
+    repository::{
+        temporal::{
+            mapper::row_to_tea,
+            params::{DeleteScope, HistoryBatchEntry, ScopeHistoryEntry, TeaBatchEntry, UpdateInstanceParams},
+            rows::TeaBatchResultRow,
+        },
+        timescale_features::TimescaleFeatures,
+    },
 };
 use chrono::{DateTime, Utc};
 use dashmap::DashMap;
-use iref::IriBuf;
 use serde_json::Value;
-use sqlx::{
-    Postgres,
-    Row,
-    Transaction,
-    postgres::{PgPool, PgRow},
-};
-use std::{collections::HashMap, str::FromStr, sync::Arc};
-use urn::Urn;
-
-/// A single scope history observation for an entity.
-///
-/// Scopes are recorded separately from attributes (they have no TEA catalog
-/// entry, no dataset_id, no value_type). The scope path IS the value, stored
-/// in ltree dot notation (e.g. `"Madrid.Gardens"`).
-#[derive(Debug)]
-pub struct ScopeHistoryEntry {
-    /// Observation timestamp.
-    pub time: DateTime<Utc>,
-    /// The entity this scope belongs to.
-    pub entity_id: String,
-    /// Scope path in ltree dot notation (slashes converted to dots).
-    pub scope_path: String,
-    /// Unique identifier for this scope observation instance.
-    pub instance_id: String,
-}
-
-/// Whether to delete all instances of an attribute or a single specific instance.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DeleteScope {
-    /// Delete all instances of the attribute regardless of dataset ID.
-    All,
-    /// Delete only the instance matching the specific dataset ID (or the default if `None`).
-    Single,
-}
-
-/// Typed value columns for an attribute history row (exactly one should be set).
-#[derive(Debug)]
-pub struct HistoryValues<'a> {
-    /// Numeric attribute value.
-    pub value_number: Option<f64>,
-    /// String attribute value.
-    pub value_string: Option<&'a str>,
-    /// Boolean attribute value.
-    pub value_bool: Option<bool>,
-    /// GeoJSON geometry as a serialized string.
-    pub value_geo: Option<&'a str>,
-    /// JSON object attribute value.
-    pub value_object: Option<&'a Value>,
-    /// DateTime attribute value.
-    pub value_datetime: Option<DateTime<Utc>>,
-    /// URI attribute value.
-    pub value_uri: Option<&'a str>,
-    /// Additional metadata associated with the attribute instance.
-    pub metadata: Option<&'a Value>,
-}
-
-/// Parameters for modifying an existing attribute instance in history.
-#[derive(Debug)]
-pub struct UpdateInstanceParams<'a> {
-    /// Identifier of the attribute instance to update.
-    pub instance_id: &'a str,
-    /// Entity that owns the attribute.
-    pub entity_id: &'a str,
-    /// Expanded attribute name.
-    pub attribute_name: &'a str,
-    /// New typed value columns for this instance.
-    pub values: HistoryValues<'a>,
-    /// Updated observation timestamp, if provided.
-    pub observed_at: Option<DateTime<Utc>>,
-}
+use sqlx::{Postgres, Row, Transaction, postgres::PgPool};
+use std::{collections::HashMap, sync::Arc};
 
 /// PostgreSQL/TimescaleDB-backed repository for NGSI-LD temporal entity data.
 #[derive(Debug)]
 pub struct TemporalRepository {
     pool: PgPool,
     /// In-process cache for attribute name dictionary lookups.
-    ///
-    /// With only ~30 distinct attribute names, caching avoids repeated
-    /// database round-trips on every batch operation. New names are inserted
-    /// on first encounter and cached for the process lifetime.
     attr_name_cache: Arc<DashMap<String, i16>>,
-    /// TSL capability probe, populated at `new_with_features` or `empty`.
+    /// TSL capability probe.
     timescale_features: TimescaleFeatures,
 }
 
 impl TemporalRepository {
-    /// Creates a new repository backed by the given connection pool.
-    ///
-    /// Assumes no TSL features. For a runtime probe, call
-    /// [`TemporalRepository::with_features`] after constructing.
+    /// Create a new repository backed by the given connection pool.
     pub fn new(pool: &PgPool) -> TemporalRepository {
         TemporalRepository {
-            pool: pool.clone(), // clone: Arc ref-count bump (PgPool is Arc-based)
+            pool: pool.clone(), // clone: Arc ref-count bump
             attr_name_cache: Arc::new(DashMap::new()),
             timescale_features: TimescaleFeatures::empty(),
         }
     }
 
-    /// Replace the repository's TimescaleDB feature set. Intended to be called
-    /// once at startup after probing via [`TimescaleFeatures::detect`].
-    pub fn with_features(mut self, features: TimescaleFeatures) -> TemporalRepository {
+    /// Replace the repository's TimescaleDB feature set.
+    pub const fn with_features(mut self, features: TimescaleFeatures) -> TemporalRepository {
         self.timescale_features = features;
         self
     }
 
-    // -------------------------------------------------------------------------
-    // Attribute name dictionary
-    // -------------------------------------------------------------------------
-
-    /// Bulk-resolve attribute names to dictionary IDs, inserting new names.
-    ///
-    /// Checks the in-process cache first; only names not yet cached are sent
-    /// to the database. Uses `INSERT ... DO NOTHING` to avoid exclusive row
-    /// locks on existing names, then SELECTs all IDs in one round-trip.
     async fn resolve_attribute_name_ids(&self, names: &[&str]) -> Result<HashMap<String, i16>, AndromedaError> {
         if names.is_empty() {
             return Ok(HashMap::new());
@@ -149,7 +65,6 @@ impl TemporalRepository {
             return Ok(result);
         }
 
-        // Insert only genuinely new names (shared-lock-friendly).
         sqlx::query(
             "INSERT INTO attribute_names (name) \
              SELECT name FROM UNNEST($1::text[]) AS t(name) \
@@ -159,7 +74,6 @@ impl TemporalRepository {
         .execute(&self.pool)
         .await?;
 
-        // Fetch IDs for all uncached names in one query.
         let rows = sqlx::query("SELECT id, name FROM attribute_names WHERE name = ANY($1)")
             .bind(&uncached)
             .fetch_all(&self.pool)
@@ -174,10 +88,6 @@ impl TemporalRepository {
 
         Ok(result)
     }
-
-    // -------------------------------------------------------------------------
-    // TEA (Temporal Entity Attributes) Operations
-    // -------------------------------------------------------------------------
 
     /// TEA entries for a specific attribute.
     pub async fn get_teas_for_entity_attr(&self, entity_id: &str, attribute_name: &str) -> Result<Vec<TeaEntry>, AndromedaError> {
@@ -195,7 +105,7 @@ impl TemporalRepository {
         .fetch_all(&self.pool)
         .await?;
 
-        rows.iter().map(parse_tea_entry).collect()
+        rows.iter().map(row_to_tea).collect()
     }
 
     /// Distinct attribute names recorded for the given temporal entity.
@@ -225,20 +135,17 @@ impl TemporalRepository {
         Ok(exists)
     }
 
-    /// Delete all TEAs for an entity (cascades to history).
-    pub async fn delete_teas_for_entity(&self, entity_id: &str) -> Result<(), AndromedaError> {
-        sqlx::query("DELETE FROM temporal_entity_attributes WHERE entity_id = $1")
+    /// Delete all TEAs for an entity (cascades to history). Returns rows affected.
+    pub async fn delete_teas_for_entity(&self, entity_id: &str) -> Result<u64, AndromedaError> {
+        let result = sqlx::query("DELETE FROM temporal_entity_attributes WHERE entity_id = $1")
             .bind(entity_id)
             .execute(&self.pool)
             .await?;
 
-        Ok(())
+        Ok(result.rows_affected())
     }
 
     /// Delete specific TEA entry.
-    /// - `scope: DeleteScope::All`: delete all instances of the attribute
-    /// - `scope: DeleteScope::Single` with `dataset_id: None`: delete only default instance (dataset_id IS NULL)
-    /// - `scope: DeleteScope::Single` with `dataset_id: Some(s)`: delete the instance with that datasetId
     pub async fn delete_tea(&self, entity_id: &str, attribute_name: &str, dataset_id: Option<&str>, scope: DeleteScope) -> Result<u64, AndromedaError> {
         let result = match scope {
             DeleteScope::All => {
@@ -292,14 +199,9 @@ impl TemporalRepository {
         Ok(result.rows_affected())
     }
 
-    // -------------------------------------------------------------------------
-    // Attribute History Operations
-    // -------------------------------------------------------------------------
-
     /// Execute a dynamically-built temporal query. Returns raw rows for the service to map.
     pub async fn execute_temporal_query(&self, sql: &str, binds: &[BindValue<'_>]) -> Result<Vec<sqlx::postgres::PgRow>, AndromedaError> {
         let query = crate::bind_values!(sqlx::query(sql), binds);
-
         let rows = query.fetch_all(&self.pool).await?;
         Ok(rows)
     }
@@ -325,7 +227,7 @@ impl TemporalRepository {
         .await?;
 
         if result.is_none() {
-            return Err(AndromedaError::temporal_not_found(format!("Attribute instance {} not found", instance_id)));
+            return Err(AndromedaError::temporal_not_found(format!("Attribute instance {instance_id} not found")));
         }
 
         Ok(())
@@ -394,103 +296,13 @@ impl TemporalRepository {
 
         Ok(row)
     }
-}
 
-fn parse_tea_entry(row: &PgRow) -> Result<TeaEntry, AndromedaError> {
-    let attribute_name_raw: String = row.try_get("attribute_name")?;
-    let attribute_name = IriBuf::new(attribute_name_raw.clone())
-        .map_err(|e| AndromedaError::internal(format!("Invalid temporal_entity_attributes.attribute_name '{}': {}", attribute_name_raw, e)))?;
-
-    let attribute_type_raw: String = row.try_get("attribute_type")?;
-    let attribute_type = AttributeType::from_str(&attribute_type_raw)
-        .map_err(|e| AndromedaError::internal(format!("Invalid temporal_entity_attributes.attribute_type '{}': {}", attribute_type_raw, e)))?;
-
-    let dataset_id = row.try_get::<Option<String>, _>("dataset_id")?.map(|raw| Urn::from_str(&raw)).transpose()?;
-
-    let value_type_raw: String = row.try_get("value_type")?;
-    let value_type = ValueType::from_str(&value_type_raw)
-        .map_err(|e| AndromedaError::internal(format!("Invalid temporal_entity_attributes.value_type '{}': {}", value_type_raw, e)))?;
-
-    Ok(TeaEntry {
-        attribute_name,
-        attribute_type,
-        dataset_id,
-        value_type,
-    })
-}
-
-// ---------------------------------------------------------------------------
-// Bulk batch types and operations
-// ---------------------------------------------------------------------------
-
-/// Input for a single TEA catalog entry in a bulk upsert.
-#[derive(Debug)]
-pub struct TeaBatchEntry {
-    /// Entity identifier.
-    pub entity_id: String,
-    /// Expanded IRI of the attribute.
-    pub attribute_name: String,
-    /// NGSI-LD attribute meta-type.
-    pub attribute_type: AttributeType,
-    /// Multi-attribute discriminator; `None` for the default instance.
-    pub dataset_id: Option<String>,
-    /// Runtime value type discriminator.
-    pub value_type: ValueType,
-}
-
-/// Result of a bulk TEA upsert: maps back to the input entry via its natural key.
-#[derive(Debug)]
-pub struct TeaBatchResult {
-    /// Surrogate UUID assigned by the database.
-    pub id: uuid::Uuid,
-    /// Entity identifier (from the input).
-    pub entity_id: String,
-    /// Attribute IRI (from the input).
-    pub attribute_name: String,
-    /// Dataset ID (from the input).
-    pub dataset_id: Option<String>,
-}
-
-/// Input for a single attribute history observation in a bulk insert.
-#[derive(Debug)]
-pub struct HistoryBatchEntry {
-    /// TimescaleDB partition key.
-    pub time: DateTime<Utc>,
-    /// Foreign key into the TEA catalog.
-    pub tea_id: uuid::Uuid,
-    /// Numeric value column.
-    pub value_number: Option<f64>,
-    /// String value column.
-    pub value_string: Option<String>,
-    /// Boolean value column.
-    pub value_bool: Option<bool>,
-    /// GeoJSON geometry string.
-    pub value_geo: Option<String>,
-    /// JSON object value column.
-    pub value_object: Option<Value>,
-    /// DateTime value column.
-    pub value_datetime: Option<DateTime<Utc>>,
-    /// URI value column (for Relationships).
-    pub value_uri: Option<String>,
-    /// Unique instance identifier.
-    pub instance_id: String,
-    /// Application-level observation timestamp.
-    pub observed_at: Option<DateTime<Utc>>,
-    /// Additional metadata (sub-attributes, unitCode, etc.).
-    pub metadata: Option<Value>,
-}
-
-impl TemporalRepository {
     /// Bulk upsert TEA catalog entries in a single SQL round-trip using `UNNEST`.
-    ///
-    /// Returns one [`TeaBatchResult`] per input entry with the resolved UUID,
-    /// enabling the caller to build history rows without additional queries.
-    pub async fn upsert_tea_batch(&self, entries: &[TeaBatchEntry]) -> Result<Vec<TeaBatchResult>, AndromedaError> {
+    pub async fn upsert_tea_batch(&self, entries: &[TeaBatchEntry]) -> Result<Vec<TeaBatchResultRow>, AndromedaError> {
         if entries.is_empty() {
             return Ok(Vec::new());
         }
 
-        // Step 1: resolve all distinct attribute names to dictionary IDs.
         let distinct_names: Vec<&str> = {
             let mut seen = std::collections::HashSet::new();
             entries
@@ -500,7 +312,6 @@ impl TemporalRepository {
         };
         let name_to_id = self.resolve_attribute_name_ids(&distinct_names).await?;
 
-        // Step 2: build column vectors with attribute_name_id instead of attribute_name.
         let mut entity_ids = Vec::with_capacity(entries.len());
         let mut attr_name_ids: Vec<i16> = Vec::with_capacity(entries.len());
         let mut attribute_types = Vec::with_capacity(entries.len());
@@ -541,7 +352,7 @@ impl TemporalRepository {
 
         let results = rows
             .into_iter()
-            .map(|row| TeaBatchResult {
+            .map(|row| TeaBatchResultRow {
                 id: row.get("id"),
                 entity_id: row.get("entity_id"),
                 attribute_name: row.get("attribute_name"),
@@ -552,11 +363,6 @@ impl TemporalRepository {
     }
 
     /// Bulk insert attribute history rows in a single transaction.
-    ///
-    /// Performs deduplication (DELETE conflicting instance_id / observed_at rows)
-    /// then inserts all entries using `UNNEST`, all within a single transaction.
-    /// This replaces N individual `BEGIN + DELETE + INSERT + COMMIT` cycles with
-    /// a single `BEGIN + bulk DELETE + bulk INSERT + COMMIT`.
     pub async fn insert_history_batch(&self, entries: &[HistoryBatchEntry]) -> Result<(), AndromedaError> {
         if entries.is_empty() {
             return Ok(());
@@ -576,7 +382,6 @@ impl TemporalRepository {
         let mut observed_ats: Vec<Option<DateTime<Utc>>> = Vec::with_capacity(len);
         let mut metadatas: Vec<Option<Value>> = Vec::with_capacity(len);
 
-        // Dedup keys for the pre-delete step
         let mut dedup_tea_ids = Vec::with_capacity(len);
         let mut dedup_instance_ids = Vec::with_capacity(len);
         let mut dedup_observed_ats: Vec<Option<DateTime<Utc>>> = Vec::with_capacity(len);
@@ -585,15 +390,15 @@ impl TemporalRepository {
             times.push(e.time);
             tea_ids.push(e.tea_id);
             value_numbers.push(e.value_number);
-            value_strings.push(e.value_string.clone()); // clone: owned Option<String> for sqlx bind vector
+            value_strings.push(e.value_string.clone());
             value_bools.push(e.value_bool);
-            value_geos.push(e.value_geo.clone()); // clone: owned Option<String> for sqlx bind vector
-            value_objects.push(e.value_object.clone()); // clone: owned Option<Value> for sqlx bind vector
+            value_geos.push(e.value_geo.clone());
+            value_objects.push(e.value_object.clone());
             value_datetimes.push(e.value_datetime);
-            value_uris.push(e.value_uri.clone()); // clone: owned Option<String> for sqlx bind vector
+            value_uris.push(e.value_uri.clone());
             instance_ids.push(e.instance_id.as_str());
             observed_ats.push(e.observed_at);
-            metadatas.push(e.metadata.clone()); // clone: owned Option<Value> for sqlx bind vector
+            metadatas.push(e.metadata.clone());
 
             dedup_tea_ids.push(e.tea_id);
             dedup_instance_ids.push(e.instance_id.as_str());
@@ -602,7 +407,6 @@ impl TemporalRepository {
 
         let mut tx = self.pool.begin().await?;
 
-        // Dedup axis 1: delete by (tea_id, instance_id) using idx_attribute_history_dedup.
         sqlx::query(
             r#"
             DELETE FROM attribute_history ah
@@ -616,8 +420,6 @@ impl TemporalRepository {
         .execute(&mut *tx)
         .await?;
 
-        // Dedup axis 2: delete by (tea_id, observed_at) for entries that have one,
-        // using idx_attribute_history_observed_at.
         let filtered: Vec<(uuid::Uuid, DateTime<Utc>)> = dedup_tea_ids
             .iter()
             .zip(dedup_observed_ats.iter())
@@ -640,7 +442,6 @@ impl TemporalRepository {
             .await?;
         }
 
-        // Bulk insert all history entries
         sqlx::query(
             r#"
             INSERT INTO attribute_history
@@ -682,14 +483,7 @@ impl TemporalRepository {
         Ok(())
     }
 
-    // -------------------------------------------------------------------------
-    // Scope History Operations
-    // -------------------------------------------------------------------------
-
     /// Insert a single scope history observation.
-    ///
-    /// Uses `ON CONFLICT DO NOTHING` on the (entity_id, time, instance_id)
-    /// unique constraint to silently skip duplicates.
     pub async fn insert_scope_history(&self, entry: &ScopeHistoryEntry) -> Result<(), AndromedaError> {
         sqlx::query(
             r#"
@@ -709,9 +503,6 @@ impl TemporalRepository {
     }
 
     /// Bulk insert scope history observations in a single transaction.
-    ///
-    /// Performs deduplication (DELETE conflicting instance_id rows) then inserts
-    /// all entries using `UNNEST`, matching the pattern from `insert_history_batch`.
     pub async fn insert_scope_history_batch(&self, entries: &[ScopeHistoryEntry]) -> Result<(), AndromedaError> {
         if entries.is_empty() {
             return Ok(());
@@ -732,7 +523,6 @@ impl TemporalRepository {
 
         let mut tx = self.pool.begin().await?;
 
-        // Dedup: delete by (entity_id, instance_id) using idx_scope_history_dedup.
         sqlx::query(
             r#"
             DELETE FROM scope_history sh
@@ -746,7 +536,6 @@ impl TemporalRepository {
         .execute(&mut *tx)
         .await?;
 
-        // Bulk insert all scope history entries.
         sqlx::query(
             r#"
             INSERT INTO scope_history (time, entity_id, scope_path, instance_id)
@@ -767,11 +556,6 @@ impl TemporalRepository {
     }
 }
 
-/// Upsert the `attribute_current` projection from a batched `insert_history_batch` call.
-///
-/// The batch may contain multiple rows for the same TEA. `DISTINCT ON (tea_id)
-/// ORDER BY time DESC` picks the latest per TEA in the batch before upserting;
-/// the same `modified_at` guard rejects out-of-order writes.
 async fn sync_attribute_current_batch(tx: &mut Transaction<'_, Postgres>, entries: &[HistoryBatchEntry]) -> Result<(), AndromedaError> {
     if entries.is_empty() {
         return Ok(());

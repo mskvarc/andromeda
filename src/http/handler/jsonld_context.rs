@@ -10,7 +10,7 @@ use crate::{
         parameter::jsonld_context::{DeleteParams, ListParams, ServeParams},
     },
     jsonld::core_context::is_ngsi_ld_core_context_url,
-    repository::jsonld_context::DetailLevel,
+    repository::jsonld_context::params::DetailLevel,
 };
 use axum::{
     Json,
