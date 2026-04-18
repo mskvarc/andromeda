@@ -193,6 +193,82 @@ async fn query_temporal_entities_scoped(client: &Client, type_filter: Option<&st
     (status, headers, body)
 }
 
+async fn post_batch_entity_query_scoped(client: &Client, body: &Value, snapshot_id: &str) -> (StatusCode, Value) {
+    let resp = client
+        .post(format!("{BASE_URL}/entityOperations/query"))
+        .header("Content-Type", "application/json")
+        .header("NGSILD-Snapshot", snapshot_id)
+        .json(body)
+        .send()
+        .await
+        .expect("post_batch_entity_query_scoped request failed");
+    let status = resp.status();
+    let body: Value = resp.json().await.unwrap_or_default();
+    (status, body)
+}
+
+async fn post_batch_temporal_query_scoped(client: &Client, body: &Value, snapshot_id: &str) -> (StatusCode, Value) {
+    let resp = client
+        .post(format!("{BASE_URL}/temporal/entityOperations/query"))
+        .header("Content-Type", "application/json")
+        .header("NGSILD-Snapshot", snapshot_id)
+        .json(body)
+        .send()
+        .await
+        .expect("post_batch_temporal_query_scoped request failed");
+    let status = resp.status();
+    let body: Value = resp.json().await.unwrap_or_default();
+    (status, body)
+}
+
+async fn get_types_scoped(client: &Client, snapshot_id: &str) -> (StatusCode, Value) {
+    let resp = client
+        .get(format!("{BASE_URL}/types"))
+        .header("NGSILD-Snapshot", snapshot_id)
+        .send()
+        .await
+        .expect("get_types_scoped request failed");
+    let status = resp.status();
+    let body: Value = resp.json().await.unwrap_or_default();
+    (status, body)
+}
+
+async fn get_type_scoped(client: &Client, type_name: &str, snapshot_id: &str) -> (StatusCode, Value) {
+    let resp = client
+        .get(format!("{BASE_URL}/types/{type_name}"))
+        .header("NGSILD-Snapshot", snapshot_id)
+        .send()
+        .await
+        .expect("get_type_scoped request failed");
+    let status = resp.status();
+    let body: Value = resp.json().await.unwrap_or_default();
+    (status, body)
+}
+
+async fn get_attributes_scoped(client: &Client, snapshot_id: &str) -> (StatusCode, Value) {
+    let resp = client
+        .get(format!("{BASE_URL}/attributes"))
+        .header("NGSILD-Snapshot", snapshot_id)
+        .send()
+        .await
+        .expect("get_attributes_scoped request failed");
+    let status = resp.status();
+    let body: Value = resp.json().await.unwrap_or_default();
+    (status, body)
+}
+
+async fn get_attribute_scoped(client: &Client, attr_name: &str, snapshot_id: &str) -> (StatusCode, Value) {
+    let resp = client
+        .get(format!("{BASE_URL}/attributes/{attr_name}"))
+        .header("NGSILD-Snapshot", snapshot_id)
+        .send()
+        .await
+        .expect("get_attribute_scoped request failed");
+    let status = resp.status();
+    let body: Value = resp.json().await.unwrap_or_default();
+    (status, body)
+}
+
 async fn get_temporal_entity_scoped(client: &Client, id: &str, snapshot_id: &str) -> (StatusCode, HeaderMap, Value) {
     let resp = client
         .get(format!("{BASE_URL}/temporal/entities/{id}"))
@@ -1168,6 +1244,272 @@ async fn snapshot_scoping_preparing_snapshot_not_available_for_scoping() {
 
     let (status, _, _) = query_entities_scoped(&c, Some("Vehicle"), &snap_id).await;
     pretty_assertions::assert_eq!(status, StatusCode::NOT_FOUND, "snapshot in preparing status must not be available for scoping");
+
+    delete_snapshot(&c, &snap_id).await;
+}
+
+// ---------------------------------------------------------------------------
+// Phase C scoping: batch query + type / attribute discovery
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+#[serial]
+async fn snapshot_scoping_entity_batch_query_returns_frozen_entities() {
+    // Clause 5.5.15 + 5.7.11: POST /entityOperations/query honours NGSILD-Snapshot.
+    clean_database().await;
+    let c = client();
+    let pool = PgPool::connect(DATABASE_URL).await.expect("db connect");
+
+    let (_, _, created) = create_snapshot(&c, &json!({"snapshotLifetime": "PT1H"})).await;
+    let snap_id = created["id"].as_str().unwrap().to_string();
+
+    let eid = unique_id("urn:ngsi-ld:Vehicle:snap-batch");
+    let entity = json!({"id": eid, "type": "Vehicle", "speed": {"type": "Property", "value": 42}});
+    seed_snapshot_entities(&pool, &snap_id, &[(eid.clone(), entity)]).await;
+
+    let body = json!({"type": "Query", "entities": [{"type": "Vehicle"}]});
+    let (status, response) = post_batch_entity_query_scoped(&c, &body, &snap_id).await;
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
+
+    let entities = response.as_array().expect("collection response");
+    pretty_assertions::assert_eq!(entities.len(), 1);
+    pretty_assertions::assert_eq!(entities[0]["id"].as_str(), Some(eid.as_str()));
+
+    pool.close().await;
+    delete_snapshot(&c, &snap_id).await;
+}
+
+#[tokio::test]
+#[serial]
+async fn snapshot_scoping_temporal_batch_query_returns_frozen_history() {
+    // Clause 5.5.15 + 5.7.3.
+    clean_database().await;
+    let c = client();
+    let pool = PgPool::connect(DATABASE_URL).await.expect("db connect");
+
+    let (_, _, created) = create_snapshot(&c, &json!({"snapshotLifetime": "PT1H"})).await;
+    let snap_id = created["id"].as_str().unwrap().to_string();
+
+    let eid = unique_id("urn:ngsi-ld:Vehicle:snap-tempbatch");
+    let temporal = json!({"id": eid, "type": "Vehicle", "speed": [{"type": "Property", "value": 10, "observedAt": "2024-01-01T00:00:00Z"}]});
+    seed_snapshot_temporal_entities(&pool, &snap_id, &[(eid.clone(), temporal)]).await;
+
+    let body = json!({
+        "type": "Query",
+        "entities": [{"type": "Vehicle"}],
+        "temporalQ": {"timerel": "after", "timeAt": "2023-01-01T00:00:00Z"}
+    });
+    let (status, response) = post_batch_temporal_query_scoped(&c, &body, &snap_id).await;
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
+
+    let entities = response.as_array().expect("collection response");
+    pretty_assertions::assert_eq!(entities.len(), 1);
+    pretty_assertions::assert_eq!(entities[0]["id"].as_str(), Some(eid.as_str()));
+
+    pool.close().await;
+    delete_snapshot(&c, &snap_id).await;
+}
+
+#[tokio::test]
+#[serial]
+async fn snapshot_scoping_types_query_returns_frozen_types() {
+    // Clause 5.7.5 + 5.5.15.
+    clean_database().await;
+    let c = client();
+    let pool = PgPool::connect(DATABASE_URL).await.expect("db connect");
+
+    let (_, _, created) = create_snapshot(&c, &json!({"snapshotLifetime": "PT1H"})).await;
+    let snap_id = created["id"].as_str().unwrap().to_string();
+
+    let eid1 = unique_id("urn:ngsi-ld:Vehicle:snap-types-v");
+    let eid2 = unique_id("urn:ngsi-ld:Sensor:snap-types-s");
+    seed_snapshot_entities(
+        &pool,
+        &snap_id,
+        &[
+            (eid1.clone(), json!({"id": eid1, "type": "Vehicle"})),
+            (eid2.clone(), json!({"id": eid2, "type": "Sensor"})),
+        ],
+    )
+    .await;
+
+    let (status, body) = get_types_scoped(&c, &snap_id).await;
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(body["type"].as_str(), Some("EntityTypeList"));
+    let list = body["typeList"].as_array().expect("typeList array");
+    let names: Vec<&str> = list.iter().filter_map(|v| v.as_str()).collect();
+    assert!(names.contains(&"Vehicle"));
+    assert!(names.contains(&"Sensor"));
+
+    pool.close().await;
+    delete_snapshot(&c, &snap_id).await;
+}
+
+#[tokio::test]
+#[serial]
+async fn snapshot_scoping_type_detail_returns_entity_count_and_attributes() {
+    // Clause 5.7.6 + 5.5.15.
+    clean_database().await;
+    let c = client();
+    let pool = PgPool::connect(DATABASE_URL).await.expect("db connect");
+
+    let (_, _, created) = create_snapshot(&c, &json!({"snapshotLifetime": "PT1H"})).await;
+    let snap_id = created["id"].as_str().unwrap().to_string();
+
+    let eid1 = unique_id("urn:ngsi-ld:Vehicle:snap-type-detail");
+    let eid2 = unique_id("urn:ngsi-ld:Vehicle:snap-type-detail");
+    seed_snapshot_entities(
+        &pool,
+        &snap_id,
+        &[
+            (eid1.clone(), json!({"id": eid1, "type": "Vehicle", "speed": {"type": "Property", "value": 1}})),
+            (eid2.clone(), json!({"id": eid2, "type": "Vehicle", "fuel": {"type": "Property", "value": 50}})),
+        ],
+    )
+    .await;
+
+    let (status, body) = get_type_scoped(&c, "Vehicle", &snap_id).await;
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(body["type"].as_str(), Some("EntityType"));
+    pretty_assertions::assert_eq!(body["typeName"].as_str(), Some("Vehicle"));
+    pretty_assertions::assert_eq!(body["entityCount"].as_i64(), Some(2));
+    let attrs = body["attributeNames"].as_array().expect("attributeNames array");
+    let names: Vec<&str> = attrs.iter().filter_map(|v| v.as_str()).collect();
+    assert!(names.contains(&"speed"));
+    assert!(names.contains(&"fuel"));
+
+    pool.close().await;
+    delete_snapshot(&c, &snap_id).await;
+}
+
+#[tokio::test]
+#[serial]
+async fn snapshot_scoping_type_detail_returns_404_when_absent() {
+    clean_database().await;
+    let c = client();
+    let pool = PgPool::connect(DATABASE_URL).await.expect("db connect");
+
+    let (_, _, created) = create_snapshot(&c, &json!({"snapshotLifetime": "PT1H"})).await;
+    let snap_id = created["id"].as_str().unwrap().to_string();
+    let eid = unique_id("urn:ngsi-ld:Vehicle:snap-type-missing");
+    seed_snapshot_entities(&pool, &snap_id, &[(eid.clone(), json!({"id": eid, "type": "Vehicle"}))]).await;
+
+    let (status, _) = get_type_scoped(&c, "Spaceship", &snap_id).await;
+    pretty_assertions::assert_eq!(status, StatusCode::NOT_FOUND);
+
+    pool.close().await;
+    delete_snapshot(&c, &snap_id).await;
+}
+
+#[tokio::test]
+#[serial]
+async fn snapshot_scoping_attributes_query_returns_frozen_attrs() {
+    // Clause 5.7.7 + 5.5.15.
+    clean_database().await;
+    let c = client();
+    let pool = PgPool::connect(DATABASE_URL).await.expect("db connect");
+
+    let (_, _, created) = create_snapshot(&c, &json!({"snapshotLifetime": "PT1H"})).await;
+    let snap_id = created["id"].as_str().unwrap().to_string();
+
+    let eid = unique_id("urn:ngsi-ld:Vehicle:snap-attrs");
+    seed_snapshot_entities(
+        &pool,
+        &snap_id,
+        &[(
+            eid.clone(),
+            json!({"id": eid, "type": "Vehicle", "speed": {"type": "Property", "value": 10}, "fuel": {"type": "Property", "value": 50}}),
+        )],
+    )
+    .await;
+
+    let (status, body) = get_attributes_scoped(&c, &snap_id).await;
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(body["type"].as_str(), Some("AttributeList"));
+    let list = body["attributeList"].as_array().expect("attributeList array");
+    let names: Vec<&str> = list.iter().filter_map(|v| v.as_str()).collect();
+    assert!(names.contains(&"speed"));
+    assert!(names.contains(&"fuel"));
+
+    pool.close().await;
+    delete_snapshot(&c, &snap_id).await;
+}
+
+#[tokio::test]
+#[serial]
+async fn snapshot_scoping_attribute_detail_returns_count_and_types() {
+    // Clause 5.7.8 + 5.5.15.
+    clean_database().await;
+    let c = client();
+    let pool = PgPool::connect(DATABASE_URL).await.expect("db connect");
+
+    let (_, _, created) = create_snapshot(&c, &json!({"snapshotLifetime": "PT1H"})).await;
+    let snap_id = created["id"].as_str().unwrap().to_string();
+
+    let eid1 = unique_id("urn:ngsi-ld:Vehicle:snap-attr-detail");
+    let eid2 = unique_id("urn:ngsi-ld:Sensor:snap-attr-detail");
+    seed_snapshot_entities(
+        &pool,
+        &snap_id,
+        &[
+            (eid1.clone(), json!({"id": eid1, "type": "Vehicle", "speed": {"type": "Property", "value": 1}})),
+            (eid2.clone(), json!({"id": eid2, "type": "Sensor", "speed": {"type": "Property", "value": 2}})),
+        ],
+    )
+    .await;
+
+    let (status, body) = get_attribute_scoped(&c, "speed", &snap_id).await;
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(body["type"].as_str(), Some("Attribute"));
+    pretty_assertions::assert_eq!(body["attributeName"].as_str(), Some("speed"));
+    pretty_assertions::assert_eq!(body["attributeCount"].as_i64(), Some(2));
+    let types = body["typeNames"].as_array().expect("typeNames array");
+    let names: Vec<&str> = types.iter().filter_map(|v| v.as_str()).collect();
+    assert!(names.contains(&"Vehicle"));
+    assert!(names.contains(&"Sensor"));
+
+    pool.close().await;
+    delete_snapshot(&c, &snap_id).await;
+}
+
+#[tokio::test]
+#[serial]
+async fn snapshot_scoping_attribute_detail_returns_404_when_absent() {
+    clean_database().await;
+    let c = client();
+    let pool = PgPool::connect(DATABASE_URL).await.expect("db connect");
+
+    let (_, _, created) = create_snapshot(&c, &json!({"snapshotLifetime": "PT1H"})).await;
+    let snap_id = created["id"].as_str().unwrap().to_string();
+    let eid = unique_id("urn:ngsi-ld:Vehicle:snap-attr-missing");
+    seed_snapshot_entities(&pool, &snap_id, &[(eid.clone(), json!({"id": eid, "type": "Vehicle"}))]).await;
+
+    let (status, _) = get_attribute_scoped(&c, "nonexistent", &snap_id).await;
+    pretty_assertions::assert_eq!(status, StatusCode::NOT_FOUND);
+
+    pool.close().await;
+    delete_snapshot(&c, &snap_id).await;
+}
+
+#[tokio::test]
+#[serial]
+async fn snapshot_scoping_subscription_query_ignores_snapshot_header() {
+    // Clause 5.5.15: scoping MUST NOT apply to management resources.
+    clean_database().await;
+    let c = client();
+
+    let (_, _, created) = create_snapshot(&c, &json!({"snapshotLifetime": "PT1H"})).await;
+    let snap_id = created["id"].as_str().unwrap().to_string();
+
+    let resp = c
+        .get(format!("{BASE_URL}/subscriptions"))
+        .header("NGSILD-Snapshot", &snap_id)
+        .send()
+        .await
+        .expect("subscriptions GET failed");
+    // A subscriptions list endpoint is unaffected by the snapshot header;
+    // success here confirms the header was not consumed by this route.
+    pretty_assertions::assert_eq!(resp.status(), StatusCode::OK);
 
     delete_snapshot(&c, &snap_id).await;
 }

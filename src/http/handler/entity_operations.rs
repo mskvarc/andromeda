@@ -12,6 +12,7 @@ use crate::{
             prefer::PreferHeader,
             protocol::NgsiLdProtocolHeaders,
             query::ValidatedQuery,
+            snapshot::SnapshotHeader,
             via::IncomingVia,
         },
         model::query_request::QueryRequest,
@@ -49,6 +50,7 @@ pub async fn query(
     accept: AcceptFormat,
     context: ContextUrl,
     protocol: NgsiLdProtocolHeaders,
+    SnapshotHeader(snapshot_id): SnapshotHeader,
     ValidatedQuery(qparams): ValidatedQuery<PostQueryParams>,
     JsonLd {
         value: request,
@@ -60,6 +62,28 @@ pub async fn query(
 
     // Convert POST query body to EntityQueryParameters using From impl
     let mut params: EntityQueryParameters = request.into();
+
+    // ETSI GS CIM 009 clause 5.5.15: when NGSILD-Snapshot is set, serve frozen
+    // data and skip both the live pipeline and CSR forwarding.
+    if let Some(snapshot_id) = snapshot_id {
+        state.snapshots.validate_for_scoping(&snapshot_id).await.with_instance(&uri)?;
+        let entity_type = params.entity_type.as_deref();
+        let entity_ids: Option<Vec<String>> = params
+            .id
+            .as_deref()
+            .map(|s| s.split(',').map(|id| id.trim().to_string()).collect());
+        let limit = i64::from(params.limit.unwrap_or(1000));
+        let offset = i64::from(params.offset.unwrap_or(0));
+        let (entities, _total) = state
+            .snapshots
+            .query_snapshot_entities(&snapshot_id, entity_type, entity_ids.as_deref(), limit, offset)
+            .await
+            .with_instance(&uri)?;
+        let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default())
+            .with_payload(ResponsePayload::Collection(entities))
+            .render()?;
+        return Ok(NgsiLdCollectionResponse::ok(rendered).into_response());
+    }
     // Merge fields from query string parameters
     params.options = qparams.options;
     params.local = qparams.local;

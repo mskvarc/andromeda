@@ -330,6 +330,106 @@ impl SnapshotRepository {
         get_snapshot_row(&self.pool, "snapshot_temporal_entities", "temporal_data", snapshot_id, entity_id).await
     }
 
+    /// Return distinct `type` values observed across all frozen entities of a
+    /// snapshot (clause 5.7.5 type discovery).
+    pub async fn snapshot_distinct_types(&self, snapshot_id: &SnapshotId) -> Result<Vec<String>, AndromedaError> {
+        let rows = sqlx::query(
+            "SELECT DISTINCT entity_data->>'type' AS t FROM snapshot_entities WHERE snapshot_id = $1 AND entity_data ? 'type' ORDER BY t",
+        )
+        .bind(snapshot_id.as_str())
+        .fetch_all(&self.pool)
+        .await?;
+        let mut types = Vec::with_capacity(rows.len());
+        for row in &rows {
+            if let Ok(Some(t)) = row.try_get::<Option<String>, _>("t") {
+                types.push(t);
+            }
+        }
+        Ok(types)
+    }
+
+    /// Number of frozen entities with the given type and the set of attribute
+    /// names observed on them (clause 5.7.6 type information).
+    pub async fn snapshot_type_info(&self, snapshot_id: &SnapshotId, type_name: &str) -> Result<Option<(i64, Vec<String>)>, AndromedaError> {
+        let count_row = sqlx::query(
+            "SELECT COUNT(*) AS cnt FROM snapshot_entities WHERE snapshot_id = $1 AND entity_data->>'type' = $2",
+        )
+        .bind(snapshot_id.as_str())
+        .bind(type_name)
+        .fetch_one(&self.pool)
+        .await?;
+        let count: i64 = count_row.try_get("cnt")?;
+        if count == 0 {
+            return Ok(None);
+        }
+
+        let attr_rows = sqlx::query(
+            "SELECT DISTINCT key FROM snapshot_entities, jsonb_object_keys(entity_data) AS key \
+             WHERE snapshot_id = $1 AND entity_data->>'type' = $2 AND key NOT IN ('id', 'type', '@context') \
+             ORDER BY key",
+        )
+        .bind(snapshot_id.as_str())
+        .bind(type_name)
+        .fetch_all(&self.pool)
+        .await?;
+        let mut attrs = Vec::with_capacity(attr_rows.len());
+        for row in &attr_rows {
+            let key: String = row.try_get("key")?;
+            attrs.push(key);
+        }
+        Ok(Some((count, attrs)))
+    }
+
+    /// Distinct attribute names observed across all frozen entities
+    /// (clause 5.7.7 attribute discovery).
+    pub async fn snapshot_distinct_attributes(&self, snapshot_id: &SnapshotId) -> Result<Vec<String>, AndromedaError> {
+        let rows = sqlx::query(
+            "SELECT DISTINCT key FROM snapshot_entities, jsonb_object_keys(entity_data) AS key \
+             WHERE snapshot_id = $1 AND key NOT IN ('id', 'type', '@context') ORDER BY key",
+        )
+        .bind(snapshot_id.as_str())
+        .fetch_all(&self.pool)
+        .await?;
+        let mut attrs = Vec::with_capacity(rows.len());
+        for row in &rows {
+            let key: String = row.try_get("key")?;
+            attrs.push(key);
+        }
+        Ok(attrs)
+    }
+
+    /// Number of frozen entities carrying the given attribute name, and the
+    /// set of types those entities have (clause 5.7.8 attribute information).
+    pub async fn snapshot_attribute_info(&self, snapshot_id: &SnapshotId, attr_name: &str) -> Result<Option<(i64, Vec<String>)>, AndromedaError> {
+        let count_row = sqlx::query(
+            "SELECT COUNT(*) AS cnt FROM snapshot_entities WHERE snapshot_id = $1 AND entity_data ? $2",
+        )
+        .bind(snapshot_id.as_str())
+        .bind(attr_name)
+        .fetch_one(&self.pool)
+        .await?;
+        let count: i64 = count_row.try_get("cnt")?;
+        if count == 0 {
+            return Ok(None);
+        }
+
+        let type_rows = sqlx::query(
+            "SELECT DISTINCT entity_data->>'type' AS t FROM snapshot_entities \
+             WHERE snapshot_id = $1 AND entity_data ? $2 AND entity_data ? 'type' ORDER BY t",
+        )
+        .bind(snapshot_id.as_str())
+        .bind(attr_name)
+        .fetch_all(&self.pool)
+        .await?;
+        let mut types = Vec::with_capacity(type_rows.len());
+        for row in &type_rows {
+            if let Ok(Some(t)) = row.try_get::<Option<String>, _>("t") {
+                types.push(t);
+            }
+        }
+        Ok(Some((count, types)))
+    }
+
     /// Query temporal entities from `snapshot_temporal_entities` with optional filtering.
     ///
     /// Returns `(entities, total_count)` for pagination support.
@@ -354,100 +454,6 @@ impl SnapshotRepository {
         .await
     }
 
-    /// Query entities from the main `entities` table for snapshot population.
-    ///
-    /// Basic implementation filtering by type and/or IDs. Returns the JSONB
-    /// payload as a Value for each matching entity.
-    pub async fn query_entities_from_main(&self, entity_type: Option<&str>, entity_ids: Option<&[String]>) -> Result<Vec<Value>, AndromedaError> {
-        let mut conditions = Vec::new();
-        let mut param_idx = 1u32;
-
-        if entity_type.is_some() {
-            conditions.push(format!("${} = ANY(types)", param_idx));
-            param_idx += 1;
-        }
-
-        if let Some(ids) = entity_ids {
-            let placeholders: Vec<String> = ids.iter().enumerate().map(|(i, _)| format!("${}", param_idx + i as u32)).collect();
-            if !placeholders.is_empty() {
-                conditions.push(format!("id IN ({})", placeholders.join(", ")));
-            }
-        }
-
-        let where_clause = if conditions.is_empty() {
-            String::new()
-        } else {
-            format!(" WHERE {}", conditions.join(" AND "))
-        };
-
-        let sql = format!(
-            "SELECT jsonb_build_object('id', id, 'type', types[1], 'payload', payload) as entity_data \
-             FROM entities{} LIMIT 1000",
-            where_clause
-        );
-
-        let mut query = sqlx::query(&sql);
-        if let Some(t) = entity_type {
-            query = query.bind(t);
-        }
-        if let Some(ids) = entity_ids {
-            for id in ids {
-                query = query.bind(id);
-            }
-        }
-
-        let rows = query.fetch_all(&self.pool).await?;
-        let entities: Vec<Value> = rows.iter().filter_map(|r| r.try_get::<Value, _>("entity_data").ok()).collect();
-
-        Ok(entities)
-    }
-
-    /// Query temporal entities from the main temporal tables for snapshot population.
-    ///
-    /// Returns entity IDs that have temporal data, wrapped in a basic JSON structure.
-    pub async fn query_temporal_entities_from_main(&self, entity_type: Option<&str>, entity_ids: Option<&[String]>) -> Result<Vec<Value>, AndromedaError> {
-        let mut conditions = Vec::new();
-        let mut param_idx = 1u32;
-
-        if entity_type.is_some() {
-            conditions.push(format!("tea.entity_id IN (SELECT id FROM entities WHERE ${} = ANY(types))", param_idx));
-            param_idx += 1;
-        }
-
-        if let Some(ids) = entity_ids {
-            let placeholders: Vec<String> = ids.iter().enumerate().map(|(i, _)| format!("${}", param_idx + i as u32)).collect();
-            if !placeholders.is_empty() {
-                conditions.push(format!("tea.entity_id IN ({})", placeholders.join(", ")));
-            }
-        }
-
-        let where_clause = if conditions.is_empty() {
-            String::new()
-        } else {
-            format!(" WHERE {}", conditions.join(" AND "))
-        };
-
-        let sql = format!(
-            "SELECT DISTINCT tea.entity_id, jsonb_build_object('id', tea.entity_id) as temporal_data \
-             FROM temporal_entity_attributes tea{} LIMIT 1000",
-            where_clause
-        );
-
-        let mut query = sqlx::query(&sql);
-        if let Some(t) = entity_type {
-            query = query.bind(t);
-        }
-        if let Some(ids) = entity_ids {
-            for id in ids {
-                query = query.bind(id);
-            }
-        }
-
-        let rows = query.fetch_all(&self.pool).await?;
-        let entities: Vec<Value> = rows.iter().filter_map(|r| r.try_get::<Value, _>("temporal_data").ok()).collect();
-
-        Ok(entities)
-    }
 }
 
 /// Parameters for a paginated snapshot table query.

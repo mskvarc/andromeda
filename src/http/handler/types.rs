@@ -4,8 +4,8 @@ use crate::{
     api::tenant::TenantState,
     core::error::{AndromedaError, ResultInstanceExt},
     http::{
-        error::problem::NgsiLdError,
-        extractor::{accept::AcceptFormat, context::ContextUrl, prefer::PreferHeader, query::ValidatedQuery, via::IncomingVia},
+        error::problem::{NgsiLdError, NgsiLdErrorType},
+        extractor::{accept::AcceptFormat, context::ContextUrl, prefer::PreferHeader, query::ValidatedQuery, snapshot::SnapshotHeader, via::IncomingVia},
         parameter::{DiscoveryListParams, LocalOnlyParams},
         response::single::NgsiLdResponse,
         validation::validate_name_or_iri,
@@ -21,6 +21,7 @@ use axum::{
     extract::{OriginalUri, Path},
     response::{IntoResponse, Response},
 };
+use serde_json::json;
 
 /// GET /ngsi-ld/v1/types -- Query available entity types.
 pub async fn query(
@@ -29,10 +30,27 @@ pub async fn query(
     accept: AcceptFormat,
     context: ContextUrl,
     IncomingVia(incoming_via): IncomingVia,
+    SnapshotHeader(snapshot_id): SnapshotHeader,
     ValidatedQuery(params): ValidatedQuery<DiscoveryListParams>,
 ) -> Result<Response, NgsiLdError> {
     let service = &state.entity_discovery;
     let context: ContextSpec = context.into_inner();
+
+    // ETSI GS CIM 009 clause 5.5.15: snapshot scoping applies to the Core API.
+    if let Some(snapshot_id) = snapshot_id {
+        state.snapshots.validate_for_scoping(&snapshot_id).await.with_instance(&uri)?;
+        let types = state.snapshots.snapshot_types(&snapshot_id).await.with_instance(&uri)?;
+        let body = json!({
+            "id": snapshot_id.as_str(),
+            "type": "EntityTypeList",
+            "typeList": types,
+        });
+        let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default())
+            .with_payload(ResponsePayload::Single(body))
+            .render()?;
+        return Ok(NgsiLdResponse::ok(rendered).into_response());
+    }
+
     let is_local = params.local.unwrap_or(false);
 
     if params.details {
@@ -89,12 +107,37 @@ pub async fn get(
     accept: AcceptFormat,
     context: ContextUrl,
     IncomingVia(incoming_via): IncomingVia,
+    SnapshotHeader(snapshot_id): SnapshotHeader,
     Path(type_): Path<String>,
     ValidatedQuery(params): ValidatedQuery<LocalOnlyParams>,
 ) -> Result<Response, NgsiLdError> {
     let service = &state.entity_discovery;
     validate_name_or_iri(&type_, &uri)?;
     let context: ContextSpec = context.into_inner();
+
+    if let Some(snapshot_id) = snapshot_id {
+        state.snapshots.validate_for_scoping(&snapshot_id).await.with_instance(&uri)?;
+        let info = state.snapshots.snapshot_type_info(&snapshot_id, &type_).await.with_instance(&uri)?;
+        let (entity_count, attribute_names) = info.ok_or_else(|| {
+            NgsiLdError::new(
+                NgsiLdErrorType::ResourceNotFound,
+                format!("Type '{type_}' not found in snapshot {}", snapshot_id.as_str()),
+                uri.clone(),
+            )
+        })?;
+        let body = json!({
+            "id": format!("urn:ngsi-ld:EntityType:{type_}"),
+            "type": "EntityType",
+            "typeName": type_,
+            "entityCount": entity_count,
+            "attributeNames": attribute_names,
+        });
+        let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default())
+            .with_payload(ResponsePayload::Single(body))
+            .render()?;
+        return Ok(NgsiLdResponse::ok(rendered).into_response());
+    }
+
     let is_local = params.local.unwrap_or(false);
 
     let local_result = service.type_info(&type_, &context).await.with_instance(&uri)?;

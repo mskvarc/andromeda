@@ -5,7 +5,7 @@ use crate::{
     core::error::ResultInstanceExt,
     http::{
         error::problem::NgsiLdError,
-        extractor::{accept::AcceptFormat, context::ContextUrl, jsonld::JsonLd, prefer::PreferHeader, via::IncomingVia},
+        extractor::{accept::AcceptFormat, context::ContextUrl, jsonld::JsonLd, prefer::PreferHeader, snapshot::SnapshotHeader, via::IncomingVia},
         model::temporal_query_request::TemporalQueryRequest,
         parameter::query::temporal::TemporalQueryParameters,
         response::collection::NgsiLdCollectionResponse,
@@ -31,6 +31,7 @@ pub async fn query(
     accept: AcceptFormat,
     context: ContextUrl,
     IncomingVia(incoming_via): IncomingVia,
+    SnapshotHeader(snapshot_id): SnapshotHeader,
     JsonLd {
         value: request,
         context: body_context,
@@ -41,6 +42,27 @@ pub async fn query(
 
     // Convert POST query body to TemporalQueryParameters using From impl
     let params: TemporalQueryParameters = request.into();
+
+    // ETSI GS CIM 009 clause 5.5.15.
+    if let Some(snapshot_id) = snapshot_id {
+        state.snapshots.validate_for_scoping(&snapshot_id).await.with_instance(&uri)?;
+        let entity_type = params.entity_type.as_deref();
+        let entity_ids: Option<Vec<String>> = params
+            .id
+            .as_deref()
+            .map(|s| s.split(',').map(|id| id.trim().to_string()).collect());
+        let limit = i64::from(params.limit.unwrap_or(1000));
+        let offset = i64::from(params.offset.unwrap_or(0));
+        let (entities, _total) = state
+            .snapshots
+            .query_snapshot_temporal_entities(&snapshot_id, entity_type, entity_ids.as_deref(), limit, offset)
+            .await
+            .with_instance(&uri)?;
+        let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default())
+            .with_payload(ResponsePayload::Collection(entities))
+            .render()?;
+        return Ok(NgsiLdCollectionResponse::ok(rendered).into_response());
+    }
 
     let is_local = params.is_local();
 

@@ -7,7 +7,12 @@ use crate::{
     },
     http::error::{batch::BatchEntityError, problem::NgsiLdErrorType},
     repository::snapshot::SnapshotRepository,
-    service::snapshot_executor::SnapshotExecutor,
+    service::{
+        context_source_forwarding::ContextSourceForwardingService,
+        entity::query::EntityQueryService,
+        snapshot_executor::SnapshotExecutor,
+        temporal::TemporalService,
+    },
     transport::{
         dispatch::{DeliveryResult, TransportDispatcher, build_delivery_request},
         endpoint::EndpointTransport,
@@ -36,8 +41,15 @@ impl SnapshotService {
     /// When `transport` is provided, snapshot status notifications are
     /// dispatched to snapshots that have an `endpoint` configured
     /// (ETSI GS CIM 009 clause 5.16.6).
-    pub fn new(pool: &PgPool, transport: Option<Arc<TransportDispatcher>>, snapshot_concurrency: usize) -> SnapshotService {
-        let executor = Arc::new(SnapshotExecutor::new(pool));
+    pub fn new(
+        pool: &PgPool,
+        transport: Option<Arc<TransportDispatcher>>,
+        entity_query: Arc<EntityQueryService>,
+        temporal: Arc<TemporalService>,
+        forwarding: Arc<ContextSourceForwardingService>,
+        snapshot_concurrency: usize,
+    ) -> SnapshotService {
+        let executor = Arc::new(SnapshotExecutor::new(pool, entity_query, temporal, forwarding));
         SnapshotService {
             repo: SnapshotRepository::new(pool),
             transport,
@@ -253,6 +265,30 @@ impl SnapshotService {
         offset: i64,
     ) -> Result<(Vec<Value>, i64), AndromedaError> {
         self.repo.query_entities(snapshot_id, entity_type, entity_ids, limit, offset).await
+    }
+
+    /// Return distinct entity types present in a snapshot's frozen data
+    /// (ETSI GS CIM 009 clause 5.7.5, scoped via 5.5.15).
+    pub async fn snapshot_types(&self, snapshot_id: &SnapshotId) -> Result<Vec<String>, AndromedaError> {
+        self.repo.snapshot_distinct_types(snapshot_id).await
+    }
+
+    /// Return `(entity_count, attribute_names)` for a type within a snapshot,
+    /// or `None` if the type is absent (clause 5.7.6).
+    pub async fn snapshot_type_info(&self, snapshot_id: &SnapshotId, type_name: &str) -> Result<Option<(i64, Vec<String>)>, AndromedaError> {
+        self.repo.snapshot_type_info(snapshot_id, type_name).await
+    }
+
+    /// Return distinct attribute names present across a snapshot's frozen
+    /// entities (clause 5.7.7).
+    pub async fn snapshot_attributes(&self, snapshot_id: &SnapshotId) -> Result<Vec<String>, AndromedaError> {
+        self.repo.snapshot_distinct_attributes(snapshot_id).await
+    }
+
+    /// Return `(entity_count, type_names)` for an attribute within a snapshot,
+    /// or `None` if the attribute is absent (clause 5.7.8).
+    pub async fn snapshot_attribute_info(&self, snapshot_id: &SnapshotId, attr_name: &str) -> Result<Option<(i64, Vec<String>)>, AndromedaError> {
+        self.repo.snapshot_attribute_info(snapshot_id, attr_name).await
     }
 
     /// Retrieve a single temporal entity from a snapshot's frozen data.

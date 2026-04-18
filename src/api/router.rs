@@ -469,6 +469,9 @@ pub async fn build_tenant_state(
     let snapshot_service = Arc::new(crate::service::snapshot::SnapshotService::new(
         &pool,
         Some(snapshot_transport),
+        Arc::clone(&entity_query_service),
+        Arc::clone(&temporal_service),
+        Arc::clone(&forwarding_service),
         config.performance.snapshot_concurrency,
     ));
 
