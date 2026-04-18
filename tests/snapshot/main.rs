@@ -319,6 +319,11 @@ async fn seed_snapshot_temporal_entities(pool: &PgPool, snapshot_id: &str, entit
         .await
         .expect("failed to insert snapshot temporal entity");
     }
+    sqlx::query("UPDATE snapshots SET status = 'success' WHERE id = $1")
+        .bind(snapshot_id)
+        .execute(pool)
+        .await
+        .expect("failed to update snapshot status");
 }
 
 // ---------------------------------------------------------------------------
