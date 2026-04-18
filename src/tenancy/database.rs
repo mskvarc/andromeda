@@ -40,13 +40,24 @@ pub(crate) fn sanitize_identifier(input: &str) -> String {
     if collapsed.is_empty() { "tenant".to_string() } else { collapsed }
 }
 
+/// Postgres identifier length limit (NAMEDATALEN - 1 in a default build).
+const POSTGRES_IDENT_MAX: usize = 63;
+
+/// Build a per-tenant Postgres database name of the form
+/// `{prefix}_{sanitized}_{hash}` while ensuring the result fits within
+/// Postgres's identifier length limit. Uniqueness is preserved by the
+/// fixed-length hash suffix even when the sanitized label is truncated.
 pub(crate) fn generate_db_name(prefix: &str, tenant_name: &TenantName) -> String {
     let sanitized = sanitize_identifier(tenant_name.as_str());
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     tenant_name.hash(&mut hasher);
     let hash = hasher.finish();
     let short_hash = format!("{:08x}", (hash & 0xffff_ffff) as u32);
-    format!("{prefix}_{sanitized}_{short_hash}")
+    let fixed_len = prefix.len() + 1 + 1 + short_hash.len();
+    let max_sanitized = POSTGRES_IDENT_MAX.saturating_sub(fixed_len);
+    let truncated: String = sanitized.chars().take(max_sanitized).collect();
+    let trimmed = truncated.trim_end_matches('_');
+    format!("{prefix}_{trimmed}_{short_hash}")
 }
 
 pub(crate) async fn create_database_if_missing(base_url: &DatabaseUrl, db_name: &str) -> Result<(), AndromedaError> {

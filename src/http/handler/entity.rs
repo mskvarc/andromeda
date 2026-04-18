@@ -474,6 +474,7 @@ pub async fn query(
     protocol: NgsiLdProtocolHeaders,
     EntityQuery(mut query): EntityQuery,
 ) -> Result<Response, NgsiLdError> {
+    Box::pin(async move {
     let service = &state.entity_query;
     let context: ContextSpec = context.into_inner();
     apply_entity_query_extension_headers(&mut query, &protocol, &uri)?;
@@ -800,6 +801,8 @@ pub async fn query(
         response = response.with_entity_map_uri(map_uri.clone());
     }
     Ok(response.into_response())
+    })
+    .await
 }
 
 pub async fn merge(

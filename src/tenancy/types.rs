@@ -2,10 +2,12 @@ use derive_more::Display;
 use serde::{Deserialize, Serialize};
 use static_regular_grammar::RegularGrammar;
 
-/// Maximum tenant identifier length, chosen to fit inside a Postgres
-/// schema/database identifier (63 chars, minus an 8-char hash suffix and
-/// separator used by tenant database naming in [`crate::tenancy::database`]).
-const MAX_TENANT_LEN: usize = 50;
+/// Maximum tenant identifier length. NGSI-LD v1.9.1 clause 6.3.14 does not
+/// constrain the length of the `NGSILD-Tenant` header value; this bound is
+/// chosen for HTTP-header practicality. Tenant database naming in
+/// [`crate::tenancy::database`] truncates as needed to fit Postgres's 63-char
+/// identifier limit while preserving uniqueness via a hash suffix.
+const MAX_TENANT_LEN: usize = 255;
 
 /// Grammar-validated tenant label (FIWARE convention).
 ///
