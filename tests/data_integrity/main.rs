@@ -13,18 +13,17 @@
 
 #![allow(clippy::expect_used, clippy::unwrap_used)]
 
+use andromeda_test_common::prelude::*;
 use axum::{Json, Router, routing::get};
 use ed25519_dalek::{Signer, SigningKey};
 use p256::ecdsa::{Signature as P256Signature, SigningKey as P256SigningKey};
+use pretty_assertions::assert_eq;
 use reqwest::{Client, Method, StatusCode};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::net::SocketAddr;
 use tokio::sync::oneshot;
 use uuid::Uuid;
-
-const BASE_URL: &str = "http://127.0.0.1:1056/ngsi-ld/v1";
-const CORE_CONTEXT: &str = "https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.9.jsonld";
 
 fn client() -> Client {
     Client::new()

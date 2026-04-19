@@ -17,21 +17,10 @@ use tokio::sync::RwLock;
 use urlencoding::encode;
 use uuid::Uuid;
 
-pub const BASE_URL: &str = "http://127.0.0.1:1056/ngsi-ld/v1";
-pub const DATABASE_URL: &str = "postgres://postgres:postgres@127.0.0.1:5432/postgres";
-pub const TEST_SUITE_CONTEXT: &str =
-    "https://forge.etsi.org/rep/cim/ngsi-ld-test-suite/-/raw/develop/resources/jsonld-contexts/ngsi-ld-test-suite-compound.jsonld";
-
-pub const TRUNCATE_ALL: &str = "\
-    TRUNCATE \
-        entities, \
-        jsonld_contexts, \
-        temporal_entity_attributes, \
-        attribute_history, \
-        subscriptions, \
-        context_source_registrations, \
-        snapshots \
-    CASCADE";
+pub use andromeda_test_common::{
+    config::{BASE_URL, COMPOUND_CONTEXT as TEST_SUITE_CONTEXT, DATABASE_URL},
+    db::TRUNCATE_ALL,
+};
 
 // ---------------------------------------------------------------------------
 // Mock context source server

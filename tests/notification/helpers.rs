@@ -1,4 +1,5 @@
 #![allow(clippy::expect_used, clippy::unwrap_used)]
+use andromeda_test_common::{db::TRUNCATE_ALL, prelude::*};
 use axum::{Router, body::Bytes, http::HeaderMap as AxumHeaderMap, response::IntoResponse, routing::post};
 use reqwest::{Client, StatusCode, header::HeaderMap};
 use rumqttc::{AsyncClient, Event, MqttOptions, Packet, QoS};
@@ -8,19 +9,7 @@ use std::{sync::Arc, time::Duration};
 use tokio::sync::{Mutex, Notify};
 use uuid::Uuid;
 
-pub const BASE_URL: &str = "http://127.0.0.1:1056/ngsi-ld/v1";
-pub const CORE_CONTEXT: &str = "https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.9.jsonld";
-const DATABASE_URL: &str = "postgres://postgres:postgres@127.0.0.1:5432/postgres";
-const TRUNCATE_ALL: &str = "\
-    TRUNCATE \
-        entities, \
-        jsonld_contexts, \
-        temporal_entity_attributes, \
-        attribute_history, \
-        subscriptions, \
-        context_source_registrations, \
-        snapshots \
-    CASCADE";
+pub use andromeda_test_common::config::{BASE_URL, CORE_CONTEXT};
 
 pub fn client() -> Client {
     Client::new()

@@ -94,6 +94,7 @@ uuid = { version = "1.23.1", features = ["serde", "v4"] }
 shadow-rs = "1.7.1"
 
 [dev-dependencies]
+andromeda-test-common = { path = "lib/andromeda-test-common" }
 futures = "0.3.32"
 pretty_assertions = "1.4.1"
 serial_test = "3.4.0"

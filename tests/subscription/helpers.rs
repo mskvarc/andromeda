@@ -1,27 +1,16 @@
 #![allow(clippy::expect_used, clippy::unwrap_used)]
+use andromeda_test_common::{db::TRUNCATE_ALL, prelude::*};
 use reqwest::{Client, Method, StatusCode, header::HeaderMap};
 use serde_json::{Value, json};
 use sqlx::PgPool;
 use uuid::Uuid;
 
-pub const BASE_URL: &str = "http://127.0.0.1:1056/ngsi-ld/v1";
-pub const CORE_CONTEXT: &str = "https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.9.jsonld";
-pub const BAD_REQUEST_DATA_TYPE: &str = "https://uri.etsi.org/ngsi-ld/errors/BadRequestData";
-pub const RESOURCE_NOT_FOUND_TYPE: &str = "https://uri.etsi.org/ngsi-ld/errors/ResourceNotFound";
-pub const ALREADY_EXISTS_TYPE: &str = "https://uri.etsi.org/ngsi-ld/errors/AlreadyExists";
-pub const INVALID_REQUEST_TYPE: &str = "https://uri.etsi.org/ngsi-ld/errors/InvalidRequest";
-pub const LD_CONTEXT_NOT_AVAILABLE_TYPE: &str = "https://uri.etsi.org/ngsi-ld/errors/LdContextNotAvailable";
-const DATABASE_URL: &str = "postgres://postgres:postgres@127.0.0.1:5432/postgres";
-const TRUNCATE_ALL: &str = "\
-    TRUNCATE \
-        entities, \
-        jsonld_contexts, \
-        temporal_entity_attributes, \
-        attribute_history, \
-        subscriptions, \
-        context_source_registrations, \
-        snapshots \
-    CASCADE";
+pub use andromeda_test_common::config::{BASE_URL, CORE_CONTEXT};
+pub const BAD_REQUEST_DATA_TYPE: &str = error::BAD_REQUEST_DATA;
+pub const RESOURCE_NOT_FOUND_TYPE: &str = error::RESOURCE_NOT_FOUND;
+pub const ALREADY_EXISTS_TYPE: &str = error::ALREADY_EXISTS;
+pub const INVALID_REQUEST_TYPE: &str = error::INVALID_REQUEST;
+pub const LD_CONTEXT_NOT_AVAILABLE_TYPE: &str = error::LD_CONTEXT_NOT_AVAILABLE;
 
 pub fn client() -> Client {
     Client::new()

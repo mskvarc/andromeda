@@ -8,6 +8,7 @@
 // Test infrastructure legitimately uses expect/unwrap to fail fast on transport errors.
 #![allow(clippy::expect_used, clippy::unwrap_used)]
 
+use andromeda_test_common::{db::TRUNCATE_ALL, prelude::*};
 use chrono::{Duration, Utc};
 use reqwest::{Client, Method, StatusCode, header::HeaderMap};
 use serde_json::{Value, json};
@@ -16,24 +17,9 @@ use sqlx::PgPool;
 use urlencoding::encode;
 use uuid::Uuid;
 
-const BASE_URL: &str = "http://127.0.0.1:1056/ngsi-ld/v1";
-const DATABASE_URL: &str = "postgres://postgres:postgres@127.0.0.1:5432/postgres";
-const TEST_SUITE_CONTEXT: &str = "https://forge.etsi.org/rep/cim/ngsi-ld-test-suite/-/raw/develop/resources/jsonld-contexts/ngsi-ld-test-suite.jsonld";
-const CORE_CONTEXT: &str = "https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.9.jsonld";
-const INVALID_REQUEST_TYPE: &str = "https://uri.etsi.org/ngsi-ld/errors/InvalidRequest";
-const BAD_REQUEST_DATA_TYPE: &str = "https://uri.etsi.org/ngsi-ld/errors/BadRequestData";
-const RESOURCE_NOT_FOUND_TYPE: &str = "https://uri.etsi.org/ngsi-ld/errors/ResourceNotFound";
-
-const TRUNCATE_ALL: &str = "\
-    TRUNCATE \
-        entities, \
-        jsonld_contexts, \
-        temporal_entity_attributes, \
-        attribute_history, \
-        subscriptions, \
-        context_source_registrations, \
-        snapshots \
-    CASCADE";
+const INVALID_REQUEST_TYPE: &str = error::INVALID_REQUEST;
+const BAD_REQUEST_DATA_TYPE: &str = error::BAD_REQUEST_DATA;
+const RESOURCE_NOT_FOUND_TYPE: &str = error::RESOURCE_NOT_FOUND;
 
 fn client() -> Client {
     Client::new()

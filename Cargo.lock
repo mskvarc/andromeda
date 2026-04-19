@@ -93,6 +93,7 @@ dependencies = [
 name = "andromeda"
 version = "0.1.0"
 dependencies = [
+ "andromeda-test-common",
  "async-trait",
  "axum",
  "backon",
@@ -168,6 +169,27 @@ dependencies = [
  "url",
  "urlencoding",
  "urn",
+ "uuid",
+]
+
+[[package]]
+name = "andromeda-test-common"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "bytes",
+ "dashmap",
+ "futures",
+ "pretty_assertions",
+ "reqwest",
+ "rumqttc",
+ "scopeguard",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "thiserror 2.0.18",
+ "tokio",
+ "urlencoding",
  "uuid",
 ]
 

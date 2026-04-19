@@ -8,6 +8,7 @@
 
 #![allow(clippy::expect_used, clippy::unwrap_used)]
 
+use andromeda_test_common::{db::TRUNCATE_ALL, prelude::*};
 use axum::{Router, body::Bytes, http::HeaderMap as AxumHeaderMap, response::IntoResponse, routing::post};
 use reqwest::{Client, Method, StatusCode, header::HeaderMap};
 use serde_json::{Value, json};
@@ -16,20 +17,7 @@ use std::{sync::Arc, time::Duration};
 use tokio::sync::{Mutex, Notify};
 use uuid::Uuid;
 
-const BASE_URL: &str = "http://127.0.0.1:1056/ngsi-ld/v1";
-const CORE_CONTEXT: &str = "https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.9.jsonld";
-const DATABASE_URL: &str = "postgres://postgres:postgres@127.0.0.1:5432/postgres";
-const TRUNCATE_ALL: &str = "\
-    TRUNCATE \
-        entities, \
-        jsonld_contexts, \
-        temporal_entity_attributes, \
-        attribute_history, \
-        subscriptions, \
-        context_source_registrations, \
-        snapshots \
-    CASCADE";
-const NONEXISTENT_TENANT_ERROR: &str = "https://uri.etsi.org/ngsi-ld/errors/NonexistentTenant";
+const NONEXISTENT_TENANT_ERROR: &str = error::NONEXISTENT_TENANT;
 
 fn client() -> Client {
     Client::new()

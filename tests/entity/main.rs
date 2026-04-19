@@ -18,26 +18,11 @@ mod query;
 mod replace;
 mod retrieve;
 
+use andromeda_test_common::{db::TRUNCATE_ALL, prelude::*};
 use reqwest::{Client, StatusCode};
 use serde_json::{Value, json};
 use sqlx::PgPool;
 use uuid::Uuid;
-
-const BASE_URL: &str = "http://127.0.0.1:1056/ngsi-ld/v1";
-const DATABASE_URL: &str = "postgres://postgres:postgres@127.0.0.1:5432/postgres";
-const TEST_SUITE_CONTEXT: &str = "https://forge.etsi.org/rep/cim/ngsi-ld-test-suite/-/raw/develop/resources/jsonld-contexts/ngsi-ld-test-suite.jsonld";
-const COMPOUND_CONTEXT: &str = "https://forge.etsi.org/rep/cim/ngsi-ld-test-suite/-/raw/develop/resources/jsonld-contexts/ngsi-ld-test-suite-compound.jsonld";
-
-const TRUNCATE_ALL: &str = "\
-    TRUNCATE \
-        entities, \
-        jsonld_contexts, \
-        temporal_entity_attributes, \
-        attribute_history, \
-        subscriptions, \
-        context_source_registrations, \
-        snapshots \
-    CASCADE";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -49,10 +34,6 @@ fn client() -> Client {
 
 fn unique_id(prefix: &str) -> String {
     format!("{prefix}:{}", Uuid::new_v4())
-}
-
-fn jsonld_link_header(context_url: &str) -> String {
-    format!("<{context_url}>; rel=\"http://www.w3.org/ns/json-ld#context\"; type=\"application/ld+json\"")
 }
 
 async fn clean_database() {

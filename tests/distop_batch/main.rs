@@ -16,6 +16,7 @@ use std::{
     },
 };
 
+use andromeda_test_common::{db::TRUNCATE_ALL, prelude::*};
 use axum::{extract::Request, response::IntoResponse};
 use reqwest::{Client, Method, StatusCode};
 use serde_json::{Value, json};
@@ -24,21 +25,6 @@ use sqlx::PgPool;
 use tokio::sync::RwLock;
 use urlencoding::encode;
 use uuid::Uuid;
-
-const BASE_URL: &str = "http://127.0.0.1:1056/ngsi-ld/v1";
-const DATABASE_URL: &str = "postgres://postgres:postgres@127.0.0.1:5432/postgres";
-const COMPOUND_CONTEXT: &str = "https://forge.etsi.org/rep/cim/ngsi-ld-test-suite/-/raw/develop/resources/jsonld-contexts/ngsi-ld-test-suite-compound.jsonld";
-
-const TRUNCATE_ALL: &str = "\
-    TRUNCATE \
-        entities, \
-        jsonld_contexts, \
-        temporal_entity_attributes, \
-        attribute_history, \
-        subscriptions, \
-        context_source_registrations, \
-        snapshots \
-    CASCADE";
 
 // ---------------------------------------------------------------------------
 // Mock context source server

@@ -10,10 +10,12 @@
 #![allow(clippy::expect_used, clippy::unwrap_used)]
 
 mod add;
+mod cache_expiration;
 mod delete;
 mod list;
 mod serve;
 
+use andromeda_test_common::{db::TRUNCATE_ALL, prelude::*};
 use axum::response::IntoResponse;
 use reqwest::{Client, StatusCode};
 use serde_json::{Value, json};
@@ -22,13 +24,10 @@ use std::{collections::HashMap, sync::Arc};
 use tokio::sync::RwLock;
 use uuid::Uuid;
 
-const BASE_URL: &str = "http://127.0.0.1:1056/ngsi-ld/v1";
-const DATABASE_URL: &str = "postgres://postgres:postgres@127.0.0.1:5432/postgres";
-const CORE_CONTEXT: &str = "https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.9.jsonld";
-const INVALID_REQUEST_TYPE: &str = "https://uri.etsi.org/ngsi-ld/errors/InvalidRequest";
-const BAD_REQUEST_DATA_TYPE: &str = "https://uri.etsi.org/ngsi-ld/errors/BadRequestData";
-const RESOURCE_NOT_FOUND_TYPE: &str = "https://uri.etsi.org/ngsi-ld/errors/ResourceNotFound";
-const LD_CONTEXT_NOT_AVAILABLE_TYPE: &str = "https://uri.etsi.org/ngsi-ld/errors/LdContextNotAvailable";
+const INVALID_REQUEST_TYPE: &str = error::INVALID_REQUEST;
+const BAD_REQUEST_DATA_TYPE: &str = error::BAD_REQUEST_DATA;
+const RESOURCE_NOT_FOUND_TYPE: &str = error::RESOURCE_NOT_FOUND;
+const LD_CONTEXT_NOT_AVAILABLE_TYPE: &str = error::LD_CONTEXT_NOT_AVAILABLE;
 
 fn client() -> Client {
     Client::new()
@@ -41,17 +40,6 @@ fn unique_id(prefix: &str) -> String {
 // ---------------------------------------------------------------------------
 // Database cleanup
 // ---------------------------------------------------------------------------
-
-const TRUNCATE_ALL: &str = "\
-    TRUNCATE \
-        entities, \
-        jsonld_contexts, \
-        temporal_entity_attributes, \
-        attribute_history, \
-        subscriptions, \
-        context_source_registrations, \
-        snapshots \
-    CASCADE";
 
 async fn clean_database() {
     let pool = PgPool::connect(DATABASE_URL).await.expect("failed to connect to database for cleanup");

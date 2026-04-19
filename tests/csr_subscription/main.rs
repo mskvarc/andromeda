@@ -5,29 +5,16 @@ mod query;
 mod retrieve;
 mod update;
 
+use andromeda_test_common::{db::TRUNCATE_ALL, prelude::*};
 use reqwest::{Client, Method, StatusCode, header::LOCATION};
 use serde_json::{Value, json};
 use sqlx::PgPool;
 use uuid::Uuid;
 
-const BASE_URL: &str = "http://127.0.0.1:1056/ngsi-ld/v1";
-const DATABASE_URL: &str = "postgres://postgres:postgres@127.0.0.1:5432/postgres";
-const CORE_CONTEXT: &str = "https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.9.jsonld";
-const BAD_REQUEST_DATA_TYPE: &str = "https://uri.etsi.org/ngsi-ld/errors/BadRequestData";
-const INVALID_REQUEST_TYPE: &str = "https://uri.etsi.org/ngsi-ld/errors/InvalidRequest";
-const RESOURCE_NOT_FOUND_TYPE: &str = "https://uri.etsi.org/ngsi-ld/errors/ResourceNotFound";
-const ALREADY_EXISTS_TYPE: &str = "https://uri.etsi.org/ngsi-ld/errors/AlreadyExists";
-
-const TRUNCATE_ALL: &str = "\
-    TRUNCATE \
-        entities, \
-        jsonld_contexts, \
-        temporal_entity_attributes, \
-        attribute_history, \
-        subscriptions, \
-        context_source_registrations, \
-        snapshots \
-    CASCADE";
+const BAD_REQUEST_DATA_TYPE: &str = error::BAD_REQUEST_DATA;
+const INVALID_REQUEST_TYPE: &str = error::INVALID_REQUEST;
+const RESOURCE_NOT_FOUND_TYPE: &str = error::RESOURCE_NOT_FOUND;
+const ALREADY_EXISTS_TYPE: &str = error::ALREADY_EXISTS;
 
 fn client() -> Client {
     Client::new()

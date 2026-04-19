@@ -18,16 +18,14 @@ mod entity_type_details;
 mod entity_type_info;
 mod entity_types;
 
+use andromeda_test_common::prelude::*;
 use reqwest::{Client, StatusCode};
 use serde_json::Value;
 use sqlx::PgPool;
 use uuid::Uuid;
 
-const BASE_URL: &str = "http://127.0.0.1:1056/ngsi-ld/v1";
-const DATABASE_URL: &str = "postgres://postgres:postgres@127.0.0.1:5432/postgres";
-const COMPOUND_CONTEXT_URL: &str =
-    "https://forge.etsi.org/rep/cim/ngsi-ld-test-suite/-/raw/develop/resources/jsonld-contexts/ngsi-ld-test-suite-compound.jsonld";
-const RESOURCE_NOT_FOUND_TYPE: &str = "https://uri.etsi.org/ngsi-ld/errors/ResourceNotFound";
+const COMPOUND_CONTEXT_URL: &str = COMPOUND_CONTEXT;
+const RESOURCE_NOT_FOUND_TYPE: &str = error::RESOURCE_NOT_FOUND;
 
 fn client() -> Client {
     Client::new()
