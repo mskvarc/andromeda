@@ -82,9 +82,9 @@ impl CsourceRegistrationRepository {
             ) VALUES (
                 $1, 'ContextSourceRegistration', $2, $3, $4,
                 $5, $6, $7,
-                CASE WHEN $8::TEXT IS NOT NULL THEN ST_MakeValid(ST_SetSRID(ST_GeomFromGeoJSON($8), 4326)) ELSE NULL END,
-                CASE WHEN $9::TEXT IS NOT NULL THEN ST_MakeValid(ST_SetSRID(ST_GeomFromGeoJSON($9), 4326)) ELSE NULL END,
-                CASE WHEN $10::TEXT IS NOT NULL THEN ST_MakeValid(ST_SetSRID(ST_GeomFromGeoJSON($10), 4326)) ELSE NULL END,
+                CASE WHEN $8 IS NOT NULL THEN ST_MakeValid(ST_GeomFromEWKB($8)) ELSE NULL END,
+                CASE WHEN $9 IS NOT NULL THEN ST_MakeValid(ST_GeomFromEWKB($9)) ELSE NULL END,
+                CASE WHEN $10 IS NOT NULL THEN ST_MakeValid(ST_GeomFromEWKB($10)) ELSE NULL END,
                 $11, $12, $13, $14,
                 $15, $16, $17,
                 $18, $19, $20,
@@ -100,9 +100,9 @@ impl CsourceRegistrationRepository {
         .bind(params.tenant)
         .bind(params.observation_interval.cloned())
         .bind(params.management_interval.cloned())
-        .bind(params.location_geojson.as_deref())
-        .bind(params.observation_space_geojson.as_deref())
-        .bind(params.operation_space_geojson.as_deref())
+        .bind(params.location_wkb.as_ref())
+        .bind(params.observation_space_wkb.as_ref())
+        .bind(params.operation_space_wkb.as_ref())
         .bind(params.expires_at)
         .bind(params.endpoint)
         .bind(params.accept)
@@ -186,9 +186,9 @@ impl CsourceRegistrationRepository {
                 tenant = $5,
                 observation_interval = $6,
                 management_interval = $7,
-                location = CASE WHEN $8::TEXT IS NOT NULL THEN ST_MakeValid(ST_SetSRID(ST_GeomFromGeoJSON($8), 4326)) ELSE NULL END,
-                observation_space = CASE WHEN $9::TEXT IS NOT NULL THEN ST_MakeValid(ST_SetSRID(ST_GeomFromGeoJSON($9), 4326)) ELSE NULL END,
-                operation_space = CASE WHEN $10::TEXT IS NOT NULL THEN ST_MakeValid(ST_SetSRID(ST_GeomFromGeoJSON($10), 4326)) ELSE NULL END,
+                location = CASE WHEN $8 IS NOT NULL THEN ST_MakeValid(ST_GeomFromEWKB($8)) ELSE NULL END,
+                observation_space = CASE WHEN $9 IS NOT NULL THEN ST_MakeValid(ST_GeomFromEWKB($9)) ELSE NULL END,
+                operation_space = CASE WHEN $10 IS NOT NULL THEN ST_MakeValid(ST_GeomFromEWKB($10)) ELSE NULL END,
                 expires_at = $11,
                 endpoint = $12,
                 accept = $13,
@@ -212,9 +212,9 @@ impl CsourceRegistrationRepository {
         .bind(values.tenant.as_ref().map(TenantName::as_str))
         .bind(&values.observation_interval)
         .bind(&values.management_interval)
-        .bind(values.location_geojson.as_deref())
-        .bind(values.observation_space_geojson.as_deref())
-        .bind(values.operation_space_geojson.as_deref())
+        .bind(values.location_wkb.as_ref())
+        .bind(values.observation_space_wkb.as_ref())
+        .bind(values.operation_space_wkb.as_ref())
         .bind(values.expires_at)
         .bind(values.endpoint.as_str())
         .bind(values.accept.as_deref())

@@ -15,7 +15,7 @@ use crate::{
         params::{CreateCsrParams, CsrUpdateFragment},
         repo::CsourceRegistrationRepository,
     },
-    service::{csource_extract::unwrap_geo_property_to_string, csource_merge::apply_fragment},
+    service::{csource_extract::unwrap_geo_property_to_wkb, csource_merge::apply_fragment},
     tenancy::types::TenantName,
 };
 use chrono::{DateTime, Utc};
@@ -32,13 +32,18 @@ fn extract_create_params(payload: &Value) -> Result<CreateCsrParams<'_>, Androme
         tenant: payload.get("tenant").and_then(|v| v.as_str()),
         observation_interval: payload.get("observationInterval"),
         management_interval: payload.get("managementInterval"),
-        location_geojson: payload.get("location").map(crate::service::csource_extract::unwrap_geo_property_to_string),
-        observation_space_geojson: payload
+        location_wkb: payload
+            .get("location")
+            .map(crate::service::csource_extract::unwrap_geo_property_to_wkb)
+            .transpose()?,
+        observation_space_wkb: payload
             .get("observationSpace")
-            .map(crate::service::csource_extract::unwrap_geo_property_to_string),
-        operation_space_geojson: payload
+            .map(crate::service::csource_extract::unwrap_geo_property_to_wkb)
+            .transpose()?,
+        operation_space_wkb: payload
             .get("operationSpace")
-            .map(crate::service::csource_extract::unwrap_geo_property_to_string),
+            .map(crate::service::csource_extract::unwrap_geo_property_to_wkb)
+            .transpose()?,
         expires_at: payload
             .get("expiresAt")
             .and_then(|v| v.as_str())
@@ -84,13 +89,16 @@ fn extract_update_fragment(fragment: &Value) -> Result<CsrUpdateFragment, Androm
         management_interval: extract_optional_value(fragment, "managementInterval"),
         location: fragment
             .get("location")
-            .map(|v| if v.is_null() { None } else { Some(unwrap_geo_property_to_string(v)) }),
+            .map(|v| if v.is_null() { Ok(None) } else { unwrap_geo_property_to_wkb(v).map(Some) })
+            .transpose()?,
         observation_space: fragment
             .get("observationSpace")
-            .map(|v| if v.is_null() { None } else { Some(unwrap_geo_property_to_string(v)) }),
+            .map(|v| if v.is_null() { Ok(None) } else { unwrap_geo_property_to_wkb(v).map(Some) })
+            .transpose()?,
         operation_space: fragment
             .get("operationSpace")
-            .map(|v| if v.is_null() { None } else { Some(unwrap_geo_property_to_string(v)) }),
+            .map(|v| if v.is_null() { Ok(None) } else { unwrap_geo_property_to_wkb(v).map(Some) })
+            .transpose()?,
         expires_at: fragment
             .get("expiresAt")
             .map(|v| {

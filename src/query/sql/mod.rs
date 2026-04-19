@@ -36,6 +36,7 @@ macro_rules! bind_values {
                 $crate::query::sql::BindValue::String(s) => q.bind(s.as_ref()),
                 $crate::query::sql::BindValue::StringVec(v) => q.bind(v.as_ref()),
                 $crate::query::sql::BindValue::I64(i) => q.bind(*i),
+                $crate::query::sql::BindValue::Bytes(b) => q.bind(b.as_ref()),
             };
         }
         q
@@ -51,6 +52,8 @@ pub enum BindValue<'a> {
     StringVec(Cow<'a, [String]>),
     /// A 64-bit integer value.
     I64(i64),
+    /// A byte buffer (binds as PostgreSQL `bytea`), used for EWKB geometry.
+    Bytes(Cow<'a, [u8]>),
 }
 
 /// Convert an NGSI-LD scope path to PostgreSQL ltree format for storage.

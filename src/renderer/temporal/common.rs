@@ -4,12 +4,14 @@ use crate::{
     core::error::AndromedaError,
     domain::{
         attribute_type::AttributeType,
+        geometry::Wkb,
         temporal::{TeaEntry, ValueType},
     },
     jsonld::vocab,
     renderer::SysAttrsInclusion,
     service::temporal::format_datetime,
 };
+use bytes::Bytes;
 use chrono::{DateTime, Utc};
 use iref::IriBuf;
 use serde_json::{Value, json};
@@ -123,9 +125,12 @@ pub(crate) fn history_row_to_expanded_instance(row: &PgRow, tea: &TeaEntry, sys_
             }
         }
         ValueType::Geometry => {
-            if let Ok(v) = row.try_get::<String, _>("value_geo_json") {
-                let geo: Value =
-                    serde_json::from_str(&v).map_err(|e| AndromedaError::internal(format!("Failed to parse GeoJSON from temporal value: {}", e)))?;
+            if let Ok(bytes) = row.try_get::<Vec<u8>, _>("value_geo_ewkb") {
+                let wkb = Wkb::from_postgis_bytes(Bytes::from(bytes));
+                let geometry = wkb
+                    .to_geojson()
+                    .map_err(|e| AndromedaError::internal(format!("Failed to decode temporal geometry EWKB: {}", e)))?;
+                let geo = serde_json::to_value(&geometry).map_err(|e| AndromedaError::internal(format!("Failed to serialize temporal geometry: {}", e)))?;
                 let expanded = expand_geojson(&geo);
                 instance.insert(value_key.to_string(), json!([expanded]));
             }

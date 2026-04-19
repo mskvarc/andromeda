@@ -2,7 +2,7 @@
 
 use crate::{
     core::error::AndromedaError,
-    domain::temporal::TeaEntry,
+    domain::{geometry::Wkb, temporal::TeaEntry},
     query::sql::BindValue,
     repository::{
         temporal::{
@@ -239,7 +239,7 @@ impl TemporalRepository {
             r#"
             UPDATE attribute_history
             SET value_number = $4, value_string = $5, value_bool = $6,
-                value_geo = ST_MakeValid(ST_SetSRID(ST_GeomFromGeoJSON($7), 4326)),
+                value_geo = CASE WHEN $7 IS NOT NULL THEN ST_MakeValid(ST_GeomFromEWKB($7)) ELSE NULL END,
                 value_object = $8, value_datetime = $9, value_uri = $10,
                 observed_at = $11, metadata = $12
             WHERE instance_id = $1
@@ -374,7 +374,7 @@ impl TemporalRepository {
         let mut value_numbers: Vec<Option<f64>> = Vec::with_capacity(len);
         let mut value_strings: Vec<Option<String>> = Vec::with_capacity(len);
         let mut value_bools: Vec<Option<bool>> = Vec::with_capacity(len);
-        let mut value_geos: Vec<Option<String>> = Vec::with_capacity(len);
+        let mut value_geos: Vec<Option<Wkb>> = Vec::with_capacity(len);
         let mut value_objects: Vec<Option<Value>> = Vec::with_capacity(len);
         let mut value_datetimes: Vec<Option<DateTime<Utc>>> = Vec::with_capacity(len);
         let mut value_uris: Vec<Option<String>> = Vec::with_capacity(len);
@@ -450,12 +450,12 @@ impl TemporalRepository {
                  instance_id, observed_at, metadata)
             SELECT
                 d.time, d.tea_id, d.value_number, d.value_string, d.value_bool,
-                ST_MakeValid(ST_SetSRID(ST_GeomFromGeoJSON(d.value_geo), 4326)),
+                CASE WHEN d.value_geo IS NOT NULL THEN ST_MakeValid(ST_GeomFromEWKB(d.value_geo)) ELSE NULL END,
                 d.value_object, d.value_datetime, d.value_uri,
                 d.instance_id, d.observed_at, d.metadata
             FROM UNNEST(
                 $1::timestamptz[], $2::uuid[], $3::double precision[], $4::text[], $5::boolean[],
-                $6::text[], $7::jsonb[], $8::timestamptz[], $9::text[],
+                $6::bytea[], $7::jsonb[], $8::timestamptz[], $9::text[],
                 $10::text[], $11::timestamptz[], $12::jsonb[]
             ) AS d(time, tea_id, value_number, value_string, value_bool,
                    value_geo, value_object, value_datetime, value_uri,
@@ -567,7 +567,7 @@ async fn sync_attribute_current_batch(tx: &mut Transaction<'_, Postgres>, entrie
     let mut value_numbers: Vec<Option<f64>> = Vec::with_capacity(len);
     let mut value_strings: Vec<Option<&str>> = Vec::with_capacity(len);
     let mut value_bools: Vec<Option<bool>> = Vec::with_capacity(len);
-    let mut value_geos: Vec<Option<&str>> = Vec::with_capacity(len);
+    let mut value_geos: Vec<Option<&Wkb>> = Vec::with_capacity(len);
     let mut value_objects: Vec<Option<&Value>> = Vec::with_capacity(len);
     let mut value_datetimes: Vec<Option<DateTime<Utc>>> = Vec::with_capacity(len);
     let mut value_uris: Vec<Option<&str>> = Vec::with_capacity(len);
@@ -578,7 +578,7 @@ async fn sync_attribute_current_batch(tx: &mut Transaction<'_, Postgres>, entrie
         value_numbers.push(e.value_number);
         value_strings.push(e.value_string.as_deref());
         value_bools.push(e.value_bool);
-        value_geos.push(e.value_geo.as_deref());
+        value_geos.push(e.value_geo.as_ref());
         value_objects.push(e.value_object.as_ref());
         value_datetimes.push(e.value_datetime);
         value_uris.push(e.value_uri.as_deref());
@@ -594,11 +594,11 @@ async fn sync_attribute_current_batch(tx: &mut Transaction<'_, Postgres>, entrie
         SELECT DISTINCT ON (d.tea_id)
             d.tea_id, tea.entity_id, tea.attribute_name_id, tea.dataset_id, tea.value_type,
             d.value_number, d.value_string, d.value_bool,
-            ST_MakeValid(ST_SetSRID(ST_GeomFromGeoJSON(d.value_geo), 4326)),
+            CASE WHEN d.value_geo IS NOT NULL THEN ST_MakeValid(ST_GeomFromEWKB(d.value_geo)) ELSE NULL END,
             d.value_object, d.value_datetime, d.value_uri, d.time
         FROM UNNEST(
             $1::uuid[], $2::timestamptz[], $3::double precision[], $4::text[], $5::boolean[],
-            $6::text[], $7::jsonb[], $8::timestamptz[], $9::text[]
+            $6::bytea[], $7::jsonb[], $8::timestamptz[], $9::text[]
         ) AS d(tea_id, time, value_number, value_string, value_bool,
                value_geo, value_object, value_datetime, value_uri)
         JOIN temporal_entity_attributes tea ON tea.id = d.tea_id

@@ -58,12 +58,12 @@ pub(crate) struct PreparedEntityRow {
     pub scope_paths_json: Value,
     /// Full expanded JSON-LD payload.
     pub payload: Value,
-    /// GeoJSON string for the `location` GeoProperty, if present.
-    pub location: Option<String>,
-    /// GeoJSON string for the `observationSpace` GeoProperty, if present.
-    pub observation_space: Option<String>,
-    /// GeoJSON string for the `operationSpace` GeoProperty, if present.
-    pub operation_space: Option<String>,
+    /// Canonical WKB for the `location` GeoProperty, if present.
+    pub location: Option<Wkb>,
+    /// Canonical WKB for the `observationSpace` GeoProperty, if present.
+    pub observation_space: Option<Wkb>,
+    /// Canonical WKB for the `operationSpace` GeoProperty, if present.
+    pub operation_space: Option<Wkb>,
     /// Entity expiration timestamp.
     pub expires_at: Option<DateTime<Utc>>,
 }
@@ -80,12 +80,12 @@ pub struct PreparedEntityColumns {
     pub scope_paths_json: Vec<Value>,
     /// Expanded payloads.
     pub payloads: Vec<Value>,
-    /// Location GeoJSON strings.
-    pub locations: Vec<Option<String>>,
-    /// Observation-space GeoJSON strings.
-    pub obs_spaces: Vec<Option<String>>,
-    /// Operation-space GeoJSON strings.
-    pub op_spaces: Vec<Option<String>>,
+    /// Location WKB buffers.
+    pub locations: Vec<Option<Wkb>>,
+    /// Observation-space WKB buffers.
+    pub obs_spaces: Vec<Option<Wkb>>,
+    /// Operation-space WKB buffers.
+    pub op_spaces: Vec<Option<Wkb>>,
     /// Expiration timestamps.
     pub expires_ats: Vec<Option<DateTime<Utc>>>,
 }

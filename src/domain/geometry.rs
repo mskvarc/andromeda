@@ -87,6 +87,11 @@ impl Wkb {
     pub const fn from_postgis_bytes(bytes: Bytes) -> Wkb {
         Wkb(bytes)
     }
+
+    /// Produce an owned EWKB byte vector (used for SQL bind construction).
+    pub fn to_vec(&self) -> Vec<u8> {
+        self.0.to_vec()
+    }
 }
 
 impl Serialize for Wkb {

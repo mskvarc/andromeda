@@ -2,6 +2,7 @@
 
 use crate::{
     core::error::AndromedaError,
+    domain::geometry::Wkb,
     jsonld::vocab,
     query::{
         compiled::{CompiledEntityQuery, CompiledOrderTerm, GeoQuery, GeoRel, OrderDirection, OrderingGeometry, TypeExpr},
@@ -21,6 +22,7 @@ use crate::{
                 st_intersects,
                 st_overlaps,
                 st_within,
+                validated_geom_from_ewkb,
                 validated_geom_from_geojson,
             },
             schema::Entities,
@@ -321,9 +323,9 @@ fn geo_to_condition(geo: &GeoQuery, payload_col: &str) -> Result<Condition, Andr
         validated_geom_from_geojson(extract)
     };
 
-    // Build reference geometry from GeoJSON using helper
-    let geojson = build_geojson(&geo.geometry, &geo.coordinates)?;
-    let ref_geom_expr = validated_geom_from_geojson(SeaExpr::val(&geojson).into());
+    // Build canonical reference WKB; bind as bytea for ST_GeomFromEWKB.
+    let ref_wkb = build_reference_wkb(&geo.geometry, &geo.coordinates)?;
+    let ref_geom_expr = validated_geom_from_ewkb(SeaExpr::val(ref_wkb.to_vec()).into());
 
     // Build spatial condition using PostGIS helpers
     let spatial_expr = match &geo.georel {
@@ -334,43 +336,44 @@ fn geo_to_condition(geo: &GeoQuery, payload_col: &str) -> Result<Condition, Andr
         GeoRel::Equals => st_equals(geo_extract_expr, ref_geom_expr),
         GeoRel::Overlaps => st_overlaps(geo_extract_expr, ref_geom_expr),
         GeoRel::Near { max_distance, min_distance } => {
-            // Near uses geography type for accurate distance calculations
-            let geo_col_sql = if is_default_location {
-                "\"location_geo\"".to_string()
+            // Near uses geography type for accurate distance calculations.
+            let geo_col_expr: sea_query::SimpleExpr = if is_default_location {
+                SeaExpr::cust("\"location_geo\"")
             } else {
+                // JSONB column-side extraction: ST_GeomFromGeoJSON on the stored
+                // GeoJSON object is the documented exception to WKB-only binds.
                 let jsonpath = format!(
                     "$[0].\"{}\"[0].\"{}\"[0].\"@value\"",
                     escape_jsonpath_key(&geo.geoproperty_iri),
                     escape_jsonpath_key(vocab::expanded::VALUE.as_str())
                 );
-                format!(
+                SeaExpr::cust(format!(
                     "ST_MakeValid(ST_SetSRID(ST_GeomFromGeoJSON(jsonb_path_query_first(\"{}\", '{}')::text), 4326))::geography",
                     payload_col, jsonpath
-                )
+                ))
             };
-            let ref_geom_geo_sql = format!("ST_MakeValid(ST_SetSRID(ST_GeomFromGeoJSON('{}'), 4326))::geography", geojson);
+            let ref_geom_geo_expr: sea_query::SimpleExpr =
+                SeaExpr::cust_with_exprs("ST_MakeValid(ST_GeomFromEWKB($1))::geography", [SeaExpr::val(ref_wkb.to_vec()).into()]);
 
             let mut parts = Vec::new();
             if let Some(max) = max_distance {
-                parts.push(st_dwithin(SeaExpr::cust(&geo_col_sql), SeaExpr::cust(&ref_geom_geo_sql), *max));
+                parts.push(st_dwithin(geo_col_expr.clone(), ref_geom_geo_expr.clone(), *max));
             }
             if let Some(min) = min_distance {
-                // ST_Distance for minDistance check - use raw SQL since we don't have a helper
-                parts.push(SeaExpr::cust(format!("ST_Distance({}, {}) >= {}", geo_col_sql, ref_geom_geo_sql, min)));
+                parts.push(SeaExpr::cust_with_exprs(
+                    format!("ST_Distance($1, $2) >= {}", min),
+                    [geo_col_expr.clone(), ref_geom_geo_expr.clone()],
+                ));
             }
             if parts.is_empty() {
                 return Err(AndromedaError::query_validation("near georel requires maxDistance or minDistance"));
             }
-            // Combine with AND if multiple conditions
             if parts.len() == 1 {
                 parts.remove(0)
             } else {
-                // Build combined AND expression
                 let first = parts.remove(0);
                 let second = parts.remove(0);
-                let (sql1, _) = Query::select().expr(first).build(PostgresQueryBuilder);
-                let (sql2, _) = Query::select().expr(second).build(PostgresQueryBuilder);
-                SeaExpr::cust(format!("({} AND {})", sql1.trim_start_matches("SELECT "), sql2.trim_start_matches("SELECT ")))
+                SeaExpr::cust_with_exprs("($1 AND $2)", [first, second])
             }
         }
     };
@@ -444,33 +447,22 @@ fn add_order_clause(
         };
 
         if term.direction.is_distance() {
-            // Distance-based ordering
-            let (geo_col, ref_geom) = if let Some(og) = ordering_geometry {
-                let geojson = og
-                    .geometry
-                    .to_geojson()
-                    .map_err(|e| AndromedaError::query_validation(format!("Failed to decode ordering geometry: {}", e)))?;
-                let geojson_str =
-                    serde_json::to_string(&geojson).map_err(|e| AndromedaError::query_validation(format!("Failed to serialize ordering geometry: {}", e)))?;
-                let geo_col = build_geo_extract_geography(&term.attr_iri);
-                let ref_geom = format!("ST_MakeValid(ST_SetSRID(ST_GeomFromGeoJSON('{}'), 4326))", geojson_str);
-                (geo_col, ref_geom)
+            // Distance-based ordering — reference geometry binds as EWKB.
+            let ref_wkb = if let Some(og) = ordering_geometry {
+                og.geometry.clone()
             } else if let Some(geo) = geo {
-                let geojson = serde_json::json!({
-                    "type": geo.geometry,
-                    "coordinates": geo.coordinates
-                });
-                let geo_col = build_geo_extract_geography(&term.attr_iri);
-                let ref_geom = format!("ST_MakeValid(ST_SetSRID(ST_GeomFromGeoJSON('{}'), 4326))", geojson);
-                (geo_col, ref_geom)
+                build_reference_wkb(&geo.geometry, &geo.coordinates)?
             } else {
                 return Err(AndromedaError::query_validation(
                     "Distance-based ordering requires either a geo-query or orderFrom parameter".to_string(),
                 ));
             };
-
-            let dist_expr = format!("ST_Distance({}, {}::geography)", geo_col, ref_geom);
-            select.order_by_expr(SeaExpr::cust(dist_expr), order);
+            let geo_col = build_geo_extract_geography(&term.attr_iri);
+            let dist_expr: sea_query::SimpleExpr = SeaExpr::cust_with_exprs(
+                format!("ST_Distance({}, ST_MakeValid(ST_GeomFromEWKB($1))::geography)", geo_col),
+                [SeaExpr::val(ref_wkb.to_vec()).into()],
+            );
+            select.order_by_expr(dist_expr, order);
         } else {
             // Attribute value ordering
             let json_path = format!(
@@ -518,12 +510,13 @@ fn escape_jsonpath(path: &str) -> String {
     path.replace('\'', "''")
 }
 
-fn build_geojson(geometry: &str, coordinates: &serde_json::Value) -> Result<String, AndromedaError> {
+/// Build canonical [`Wkb`] from an NGSI-LD `GeoQuery` geometry/coordinates pair.
+fn build_reference_wkb(geometry: &str, coordinates: &serde_json::Value) -> Result<Wkb, AndromedaError> {
     let geojson = serde_json::json!({
         "type": geometry,
         "coordinates": coordinates
     });
-    Ok(geojson.to_string())
+    Wkb::from_geojson_value(&geojson).map_err(|error| AndromedaError::query_validation(format!("Invalid geo-query reference geometry: {}", error)))
 }
 
 fn build_geo_extract_geography(geoproperty_iri: &str) -> String {
@@ -577,6 +570,7 @@ fn sea_values_to_bind_values(values: sea_query::Values) -> Result<Vec<BindValue<
             sea_query::Value::Bool(Some(b)) => Ok(BindValue::String(Cow::Owned(b.to_string()))),
             sea_query::Value::Double(Some(f)) => Ok(BindValue::String(Cow::Owned(f.to_string()))),
             sea_query::Value::Float(Some(f)) => Ok(BindValue::String(Cow::Owned(f.to_string()))),
+            sea_query::Value::Bytes(Some(b)) => Ok(BindValue::Bytes(Cow::Owned(*b))),
             other => Err(AndromedaError::internal(format!(
                 "unexpected sea_query::Value variant in bind conversion: {other:?}"
             ))),
@@ -826,7 +820,11 @@ mod tests {
         let built = build_query(&q).unwrap();
         assert!(built.sql.contains("ST_Distance"));
         assert!(built.sql.contains("ASC"));
-        assert!(built.sql.contains("13.3986"));
+        assert!(built.sql.contains("ST_GeomFromEWKB"));
+        assert!(
+            built.bind_values.iter().any(|b| matches!(b, BindValue::Bytes(_))),
+            "reference geometry must be bound as EWKB bytes, not a GeoJSON string"
+        );
     }
 
     #[test]
@@ -854,8 +852,11 @@ mod tests {
         }];
         let built = build_query(&q).unwrap();
         assert!(built.sql.contains("ST_Distance"));
-        // Should use the ordering geometry (Berlin), not the geo query (Paris)
-        assert!(built.sql.contains("13.3986"));
+        // Ordering geometry (Berlin) takes precedence over the geo query (Paris);
+        // since reference geometries are now bound as EWKB bytes, verify that the
+        // bind values carry exactly one raw geometry blob for the distance expression.
+        assert!(built.sql.contains("ST_GeomFromEWKB"));
+        assert!(built.bind_values.iter().any(|b| matches!(b, BindValue::Bytes(_))));
     }
 
     #[test]
@@ -904,6 +905,62 @@ mod tests {
         assert!(built.sql.contains("ST_Within"), "should contain ST_Within spatial predicate");
         assert!(matches!(built.bind_values[1], BindValue::I64(20)), "limit should be I64(20)");
         assert!(matches!(built.bind_values[2], BindValue::I64(0)), "offset should be I64(0)");
+    }
+
+    #[test]
+    fn georel_variants_bind_reference_geometry_as_ewkb() {
+        // Each GeoRel variant must parameterise the reference geometry as
+        // EWKB bytes; raw GeoJSON-in-SQL is disallowed in reference position.
+        let variants = vec![
+            GeoRel::Within,
+            GeoRel::Contains,
+            GeoRel::Intersects,
+            GeoRel::Disjoint,
+            GeoRel::Equals,
+            GeoRel::Overlaps,
+            GeoRel::Near {
+                max_distance: Some(1000.0),
+                min_distance: Some(10.0),
+            },
+        ];
+
+        for georel in variants {
+            let mut q = empty_query();
+            q.geo = Some(GeoQuery {
+                georel: georel.clone(),
+                geometry: "Point".to_string(),
+                coordinates: serde_json::json!([1.0, 2.0]),
+                geoproperty_iri: vocab::expanded::LOCATION.as_str().to_string(),
+            });
+            let built = build_query(&q).unwrap();
+            assert!(built.sql.contains("ST_GeomFromEWKB"), "{georel:?} SQL missing ST_GeomFromEWKB");
+            // Default-location path must not re-decode GeoJSON for the reference side.
+            assert!(
+                !built.sql.contains("ST_GeomFromGeoJSON"),
+                "{georel:?} SQL still contains ST_GeomFromGeoJSON: {}",
+                built.sql
+            );
+            assert!(
+                built.bind_values.iter().any(|b| matches!(b, BindValue::Bytes(_))),
+                "{georel:?} missing EWKB bytes bind"
+            );
+        }
+    }
+
+    #[test]
+    fn custom_geoproperty_preserves_jsonb_geojson_extraction() {
+        // Custom GeoProperties are stored inside the JSONB payload; the
+        // column-side extraction is the documented exception.
+        let mut q = empty_query();
+        q.geo = Some(GeoQuery {
+            georel: GeoRel::Within,
+            geometry: "Point".to_string(),
+            coordinates: serde_json::json!([1.0, 2.0]),
+            geoproperty_iri: "https://example.com/customGeo".to_string(),
+        });
+        let built = build_query(&q).unwrap();
+        assert!(built.sql.contains("ST_GeomFromGeoJSON"), "column-side JSONB extraction must remain");
+        assert!(built.sql.contains("ST_GeomFromEWKB"), "reference side must still bind EWKB");
     }
 
     #[test]

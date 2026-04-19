@@ -4,7 +4,7 @@
 
 use crate::{
     core::error::AndromedaError,
-    domain::{attribute_type::AttributeType, temporal::ValueType},
+    domain::{attribute_type::AttributeType, geometry::Wkb, temporal::ValueType},
     jsonld::vocab,
     query::sql::scope_to_ltree,
     repository::temporal::{
@@ -39,8 +39,8 @@ pub(crate) struct DbValueParams {
     pub value_string: Option<String>,
     /// Boolean value for boolean-typed properties.
     pub value_bool: Option<bool>,
-    /// GeoJSON string for geo-typed properties.
-    pub value_geo: Option<String>,
+    /// Canonical WKB for geo-typed properties.
+    pub value_geo: Option<Wkb>,
     /// Arbitrary JSON value for object-typed or complex properties.
     pub value_object: Option<Value>,
     /// Datetime value for datetime-typed properties.
@@ -445,7 +445,7 @@ impl TemporalRecorder {
                     value_number: p.value_number,
                     value_string: p.value_string.as_deref(),
                     value_bool: p.value_bool,
-                    value_geo: p.value_geo.as_deref(),
+                    value_geo: p.value_geo.as_ref(),
                     value_object: p.value_object.as_ref(),
                     value_datetime: p.value_datetime,
                     value_uri: p.value_uri.as_deref(),
@@ -489,7 +489,7 @@ enum TypedValue {
     Number(f64),
     String(String),
     Boolean(bool),
-    Geometry(String),
+    Geometry(Wkb),
     Object(Value),
     DateTime(String),
     Uri(String),
@@ -552,15 +552,20 @@ fn extract_typed_value(instance: &Value, attribute_type: AttributeType) -> Resul
                 .and_then(|arr| arr.first())
                 .ok_or_else(|| AndromedaError::temporal_validation("GeoProperty missing value"))?;
 
-            let geo_str = if let Some(val) = geo_node.get("@value") {
+            let geo_value: Value = if let Some(val) = geo_node.get("@value") {
                 match val.as_str() {
-                    Some(s) => s.to_string(),
-                    None => val.to_string(),
+                    Some(s) => serde_json::from_str(s)
+                        .map_err(|error| AndromedaError::temporal_validation(format!("Invalid GeoProperty GeoJSON string: {}", error)))?,
+                    None => val.clone(),
                 }
             } else {
-                reconstruct_geojson(geo_node)
+                let reconstructed = reconstruct_geojson(geo_node);
+                serde_json::from_str(&reconstructed)
+                    .map_err(|error| AndromedaError::temporal_validation(format!("Invalid reconstructed GeoProperty GeoJSON: {}", error)))?
             };
-            Ok(TypedValue::Geometry(geo_str))
+            let wkb =
+                Wkb::from_geojson_value(&geo_value).map_err(|error| AndromedaError::temporal_validation(format!("Invalid GeoProperty geometry: {}", error)))?;
+            Ok(TypedValue::Geometry(wkb))
         }
         AttributeType::VocabProperty => {
             let arr = instance

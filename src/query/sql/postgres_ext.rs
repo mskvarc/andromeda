@@ -46,6 +46,11 @@ pub fn st_geom_from_geojson(geojson: SimpleExpr) -> SimpleExpr {
     Expr::cust_with_exprs("ST_GeomFromGeoJSON($1)", [geojson])
 }
 
+/// PostGIS: `ST_GeomFromEWKB(bytes)` - creates geometry from EWKB (SRID embedded).
+pub fn st_geom_from_ewkb(ewkb: SimpleExpr) -> SimpleExpr {
+    Expr::cust_with_exprs("ST_GeomFromEWKB($1)", [ewkb])
+}
+
 /// PostGIS: `ST_MakeValid(geom)` - attempts to make an invalid geometry valid.
 pub fn st_make_valid(geom: SimpleExpr) -> SimpleExpr {
     Expr::cust_with_exprs("ST_MakeValid($1)", [geom])
@@ -58,9 +63,19 @@ pub fn st_set_srid(geom: SimpleExpr, srid: i32) -> SimpleExpr {
 
 /// PostGIS: Builds a validated geometry from GeoJSON with SRID 4326.
 ///
-/// Equivalent to: `ST_MakeValid(ST_SetSRID(ST_GeomFromGeoJSON($1), 4326))`
+/// Equivalent to: `ST_MakeValid(ST_SetSRID(ST_GeomFromGeoJSON($1), 4326))`.
+/// Retained for the JSONB column-side extraction case (non-default GeoProperty
+/// stored inside `entities.payload`); every other path uses
+/// [`validated_geom_from_ewkb`].
 pub fn validated_geom_from_geojson(geojson: SimpleExpr) -> SimpleExpr {
     st_make_valid(st_set_srid(st_geom_from_geojson(geojson), 4326))
+}
+
+/// PostGIS: Builds a validated geometry from EWKB (SRID 4326 already embedded).
+///
+/// Equivalent to: `ST_MakeValid(ST_GeomFromEWKB($1))`.
+pub fn validated_geom_from_ewkb(ewkb: SimpleExpr) -> SimpleExpr {
+    st_make_valid(st_geom_from_ewkb(ewkb))
 }
 
 /// JSONB: `col ? key` - tests if JSONB object contains key.
@@ -131,5 +146,16 @@ mod tests {
         assert!(sql.contains("ST_SetSRID"));
         assert!(sql.contains("ST_GeomFromGeoJSON"));
         assert!(sql.contains("4326"));
+    }
+
+    #[test]
+    fn validated_geom_from_ewkb_generates_st_geomfromewkb() {
+        let expr = validated_geom_from_ewkb(Expr::val(Vec::<u8>::new()).into());
+        let query = Query::select().expr(expr).to_owned();
+        let sql = query.to_string(PostgresQueryBuilder);
+        assert!(sql.contains("ST_MakeValid"));
+        assert!(sql.contains("ST_GeomFromEWKB"));
+        assert!(!sql.contains("ST_GeomFromGeoJSON"));
+        assert!(!sql.contains("ST_SetSRID"));
     }
 }

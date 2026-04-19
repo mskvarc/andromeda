@@ -129,26 +129,8 @@ pub fn extract_expires_at(expanded: &Value) -> Option<chrono::DateTime<chrono::U
 }
 
 // ---------------------------------------------------------------------------
-// Location GeoJSON extraction
+// GeoProperty extraction (WKB-only public surface; see extract_geo_property_geojson)
 // ---------------------------------------------------------------------------
-
-/// Extract the GeoJSON string from the entity's `location` GeoProperty
-/// (expanded form).  Returns `None` if no location attribute is present.
-pub fn extract_location_geojson(expanded: &Value) -> Option<String> {
-    extract_geo_property_geojson(expanded, vocab::expanded::LOCATION)
-}
-
-/// Extract the GeoJSON string from the entity's `observationSpace` GeoProperty
-/// (expanded form, ETSI GS CIM 009 clause 5.2.4).
-pub fn extract_observation_space_geojson(expanded: &Value) -> Option<String> {
-    extract_geo_property_geojson(expanded, vocab::expanded::OBSERVATION_SPACE)
-}
-
-/// Extract the GeoJSON string from the entity's `operationSpace` GeoProperty
-/// (expanded form, ETSI GS CIM 009 clause 5.2.4).
-pub fn extract_operation_space_geojson(expanded: &Value) -> Option<String> {
-    extract_geo_property_geojson(expanded, vocab::expanded::OPERATION_SPACE)
-}
 
 /// Extract the entity's `location` GeoProperty decoded into canonical [`Wkb`].
 pub fn extract_location_wkb(expanded: &Value) -> Option<Wkb> {
@@ -874,37 +856,5 @@ mod tests {
             }]
         }]);
         assert!(extract_expires_at(&entity).is_none());
-    }
-
-    #[test]
-    fn extract_observation_space_geojson_from_expanded() {
-        let entity = json!([{
-            "@id": "urn:ngsi-ld:Entity:001",
-            "https://uri.etsi.org/ngsi-ld/observationSpace": [{
-                "@type": ["https://uri.etsi.org/ngsi-ld/GeoProperty"],
-                "https://uri.etsi.org/ngsi-ld/hasValue": [{
-                    "@value": "{\"type\":\"Point\",\"coordinates\":[1.0,2.0]}"
-                }]
-            }]
-        }]);
-        let result = extract_observation_space_geojson(&entity);
-        assert!(result.is_some());
-        assert!(result.unwrap().contains("Point"));
-    }
-
-    #[test]
-    fn extract_operation_space_geojson_from_expanded() {
-        let entity = json!([{
-            "@id": "urn:ngsi-ld:Entity:001",
-            "https://uri.etsi.org/ngsi-ld/operationSpace": [{
-                "@type": ["https://uri.etsi.org/ngsi-ld/GeoProperty"],
-                "https://uri.etsi.org/ngsi-ld/hasValue": [{
-                    "@value": "{\"type\":\"Polygon\",\"coordinates\":[[[0,0],[1,0],[1,1],[0,1],[0,0]]]}"
-                }]
-            }]
-        }]);
-        let result = extract_operation_space_geojson(&entity);
-        assert!(result.is_some());
-        assert!(result.unwrap().contains("Polygon"));
     }
 }

@@ -516,11 +516,11 @@ impl EntityRepository {
                 ARRAY(SELECT jsonb_array_elements_text(d.types_json)),
                 ARRAY(SELECT jsonb_array_elements_text(d.scope_paths_json)::ltree),
                 d.payload,
-                CASE WHEN d.loc IS NOT NULL THEN ST_MakeValid(ST_SetSRID(ST_GeomFromGeoJSON(d.loc), 4326)) ELSE NULL END,
-                CASE WHEN d.obs IS NOT NULL THEN ST_MakeValid(ST_SetSRID(ST_GeomFromGeoJSON(d.obs), 4326)) ELSE NULL END,
-                CASE WHEN d.ops IS NOT NULL THEN ST_MakeValid(ST_SetSRID(ST_GeomFromGeoJSON(d.ops), 4326)) ELSE NULL END,
+                CASE WHEN d.loc IS NOT NULL THEN ST_MakeValid(ST_GeomFromEWKB(d.loc)) ELSE NULL END,
+                CASE WHEN d.obs IS NOT NULL THEN ST_MakeValid(ST_GeomFromEWKB(d.obs)) ELSE NULL END,
+                CASE WHEN d.ops IS NOT NULL THEN ST_MakeValid(ST_GeomFromEWKB(d.ops)) ELSE NULL END,
                 d.expires_at
-            FROM UNNEST($1::text[], $2::jsonb[], $3::jsonb[], $4::jsonb[], $5::text[], $6::text[], $7::text[], $8::timestamptz[])
+            FROM UNNEST($1::text[], $2::jsonb[], $3::jsonb[], $4::jsonb[], $5::bytea[], $6::bytea[], $7::bytea[], $8::timestamptz[])
                 AS d(id, types_json, scope_paths_json, payload, loc, obs, ops, expires_at)
             ON CONFLICT (id) DO NOTHING
             RETURNING id
@@ -576,12 +576,12 @@ impl EntityRepository {
                 payload = d.payload,
                 types = ARRAY(SELECT jsonb_array_elements_text(d.types_json)),
                 scope_paths = ARRAY(SELECT jsonb_array_elements_text(d.scope_paths_json)::ltree),
-                location = CASE WHEN d.loc IS NOT NULL THEN ST_MakeValid(ST_SetSRID(ST_GeomFromGeoJSON(d.loc), 4326)) ELSE NULL END,
-                observation_space = CASE WHEN d.obs IS NOT NULL THEN ST_MakeValid(ST_SetSRID(ST_GeomFromGeoJSON(d.obs), 4326)) ELSE NULL END,
-                operation_space = CASE WHEN d.ops IS NOT NULL THEN ST_MakeValid(ST_SetSRID(ST_GeomFromGeoJSON(d.ops), 4326)) ELSE NULL END,
+                location = CASE WHEN d.loc IS NOT NULL THEN ST_MakeValid(ST_GeomFromEWKB(d.loc)) ELSE NULL END,
+                observation_space = CASE WHEN d.obs IS NOT NULL THEN ST_MakeValid(ST_GeomFromEWKB(d.obs)) ELSE NULL END,
+                operation_space = CASE WHEN d.ops IS NOT NULL THEN ST_MakeValid(ST_GeomFromEWKB(d.ops)) ELSE NULL END,
                 modified_at = NOW(),
                 expires_at = COALESCE(d.expires_at, entities.expires_at)
-            FROM UNNEST($1::text[], $2::jsonb[], $3::jsonb[], $4::jsonb[], $5::text[], $6::text[], $7::text[], $8::timestamptz[])
+            FROM UNNEST($1::text[], $2::jsonb[], $3::jsonb[], $4::jsonb[], $5::bytea[], $6::bytea[], $7::bytea[], $8::timestamptz[])
                 AS d(id, types_json, scope_paths_json, payload, loc, obs, ops, expires_at)
             WHERE entities.id = d.id
             RETURNING entities.id
@@ -615,11 +615,11 @@ impl EntityRepository {
                 ARRAY(SELECT jsonb_array_elements_text(d.types_json)),
                 ARRAY(SELECT jsonb_array_elements_text(d.scope_paths_json)::ltree),
                 d.payload,
-                CASE WHEN d.loc IS NOT NULL THEN ST_MakeValid(ST_SetSRID(ST_GeomFromGeoJSON(d.loc), 4326)) ELSE NULL END,
-                CASE WHEN d.obs IS NOT NULL THEN ST_MakeValid(ST_SetSRID(ST_GeomFromGeoJSON(d.obs), 4326)) ELSE NULL END,
-                CASE WHEN d.ops IS NOT NULL THEN ST_MakeValid(ST_SetSRID(ST_GeomFromGeoJSON(d.ops), 4326)) ELSE NULL END,
+                CASE WHEN d.loc IS NOT NULL THEN ST_MakeValid(ST_GeomFromEWKB(d.loc)) ELSE NULL END,
+                CASE WHEN d.obs IS NOT NULL THEN ST_MakeValid(ST_GeomFromEWKB(d.obs)) ELSE NULL END,
+                CASE WHEN d.ops IS NOT NULL THEN ST_MakeValid(ST_GeomFromEWKB(d.ops)) ELSE NULL END,
                 d.expires_at
-            FROM UNNEST($1::text[], $2::jsonb[], $3::jsonb[], $4::jsonb[], $5::text[], $6::text[], $7::text[], $8::timestamptz[])
+            FROM UNNEST($1::text[], $2::jsonb[], $3::jsonb[], $4::jsonb[], $5::bytea[], $6::bytea[], $7::bytea[], $8::timestamptz[])
                 AS d(id, types_json, scope_paths_json, payload, loc, obs, ops, expires_at)
             ON CONFLICT (id) DO UPDATE SET
                 payload = EXCLUDED.payload,

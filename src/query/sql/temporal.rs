@@ -4,7 +4,10 @@
 
 use crate::{
     core::error::AndromedaError,
-    domain::temporal::{AggrMethod, TemporalFormat, TimeProp, TimeRel},
+    domain::{
+        geometry::Wkb,
+        temporal::{AggrMethod, TemporalFormat, TimeProp, TimeRel},
+    },
     jsonld::vocab,
     query::{
         compiled::{CompiledTemporalQuery, GeoQuery, TypeExpr},
@@ -23,7 +26,7 @@ use crate::{
                 st_intersects,
                 st_overlaps,
                 st_within,
-                validated_geom_from_geojson,
+                validated_geom_from_ewkb,
             },
             schema::{Ah, An, AttributeHistory, AttributeNames, E, Entities, Tea, TemporalEntityAttributes},
             scope_to_lquery,
@@ -362,7 +365,7 @@ fn build_history_query_sql(
 
     let base_cols = r#""ah"."time", "ah"."tea_id",
        "ah"."value_number", "ah"."value_string", "ah"."value_bool",
-       ST_AsGeoJSON("ah"."value_geo") as value_geo_json,
+       ST_AsEWKB("ah"."value_geo") as value_geo_ewkb,
        "ah"."value_object", "ah"."value_datetime", "ah"."value_uri",
        "ah"."instance_id", "ah"."observed_at", "ah"."metadata",
        "an"."name" AS attribute_name, "tea"."attribute_type", "tea"."dataset_id", "tea"."value_type""#;
@@ -382,7 +385,7 @@ fn build_history_query_sql(
     JOIN "attribute_names" AS "an" ON "an"."id" = "tea"."attribute_name_id"
     WHERE {}
 )
-SELECT "time", "tea_id", "value_number", "value_string", "value_bool", "value_geo_json",
+SELECT "time", "tea_id", "value_number", "value_string", "value_bool", "value_geo_ewkb",
        "value_object", "value_datetime", "value_uri", "instance_id", "observed_at", "metadata",
        "attribute_name", "attribute_type", "dataset_id", "value_type", "partition_total"
 FROM ranked WHERE "rn" <= ${}
@@ -707,9 +710,9 @@ fn geo_to_condition(geo: &GeoQuery, payload_col: &str) -> Result<Condition, Andr
         )
     };
 
-    let geojson = build_geojson(&geo.geometry, &geo.coordinates)?;
+    let ref_wkb = build_reference_wkb(&geo.geometry, &geo.coordinates)?;
     let geo_extract_expr = SeaExpr::cust(&geo_extract_sql);
-    let ref_geom_expr = validated_geom_from_geojson(SeaExpr::val(&geojson).into());
+    let ref_geom_expr = validated_geom_from_ewkb(SeaExpr::val(ref_wkb.to_vec()).into());
 
     // Build spatial condition using PostGIS helpers
     let spatial_expr = match &geo.georel {
@@ -729,14 +732,19 @@ fn geo_to_condition(geo: &GeoQuery, payload_col: &str) -> Result<Condition, Andr
             } else {
                 format!("{}::geography", geo_extract_sql)
             };
-            let ref_geom_geo_sql = format!("ST_MakeValid(ST_SetSRID(ST_GeomFromGeoJSON('{}'), 4326))::geography", geojson);
+            let geo_col_expr: sea_query::SimpleExpr = SeaExpr::cust(&geo_col_sql);
+            let ref_geom_geo_expr: sea_query::SimpleExpr =
+                SeaExpr::cust_with_exprs("ST_MakeValid(ST_GeomFromEWKB($1))::geography", [SeaExpr::val(ref_wkb.to_vec()).into()]);
 
             let mut parts = Vec::new();
             if let Some(max) = max_distance {
-                parts.push(st_dwithin(SeaExpr::cust(&geo_col_sql), SeaExpr::cust(&ref_geom_geo_sql), *max));
+                parts.push(st_dwithin(geo_col_expr.clone(), ref_geom_geo_expr.clone(), *max));
             }
             if let Some(min) = min_distance {
-                parts.push(SeaExpr::cust(format!("ST_Distance({}, {}) >= {}", geo_col_sql, ref_geom_geo_sql, min)));
+                parts.push(SeaExpr::cust_with_exprs(
+                    format!("ST_Distance($1, $2) >= {}", min),
+                    [geo_col_expr.clone(), ref_geom_geo_expr.clone()],
+                ));
             }
             if parts.is_empty() {
                 return Err(AndromedaError::query_validation("near georel requires maxDistance or minDistance"));
@@ -744,9 +752,9 @@ fn geo_to_condition(geo: &GeoQuery, payload_col: &str) -> Result<Condition, Andr
             if parts.len() == 1 {
                 parts.remove(0)
             } else {
-                let (sql1, _) = Query::select().expr(parts[0].clone()).build(PostgresQueryBuilder);
-                let (sql2, _) = Query::select().expr(parts[1].clone()).build(PostgresQueryBuilder);
-                SeaExpr::cust(format!("({} AND {})", sql1.trim_start_matches("SELECT "), sql2.trim_start_matches("SELECT ")))
+                let first = parts.remove(0);
+                let second = parts.remove(0);
+                SeaExpr::cust_with_exprs("($1 AND $2)", [first, second])
             }
         }
     };
@@ -908,12 +916,12 @@ fn scalar_to_sql_bind(scalar: &crate::query::q::ast::Scalar) -> (&'static str, S
     }
 }
 
-fn build_geojson(geometry: &str, coordinates: &serde_json::Value) -> Result<String, AndromedaError> {
+fn build_reference_wkb(geometry: &str, coordinates: &serde_json::Value) -> Result<Wkb, AndromedaError> {
     let geojson = serde_json::json!({
         "type": geometry,
         "coordinates": coordinates
     });
-    Ok(geojson.to_string())
+    Wkb::from_geojson_value(&geojson).map_err(|error| AndromedaError::query_validation(format!("Invalid geo-query reference geometry: {}", error)))
 }
 
 /// Convert sea-query Values to BindValue vector for repository compatibility.
@@ -934,6 +942,7 @@ fn sea_values_to_bind_values(values: sea_query::Values) -> Result<Vec<BindValue<
             sea_query::Value::Bool(Some(b)) => Ok(BindValue::String(Cow::Owned(b.to_string()))),
             sea_query::Value::Double(Some(f)) => Ok(BindValue::String(Cow::Owned(f.to_string()))),
             sea_query::Value::Float(Some(f)) => Ok(BindValue::String(Cow::Owned(f.to_string()))),
+            sea_query::Value::Bytes(Some(b)) => Ok(BindValue::Bytes(Cow::Owned(*b))),
             other => Err(AndromedaError::internal(format!(
                 "unexpected sea_query::Value variant in bind conversion: {other:?}"
             ))),

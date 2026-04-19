@@ -1,6 +1,9 @@
 //! Repository input parameters for context source registrations.
 
-use crate::{domain::registration::ForwardingMode, tenancy::types::TenantName};
+use crate::{
+    domain::{geometry::Wkb, registration::ForwardingMode},
+    tenancy::types::TenantName,
+};
 use chrono::{DateTime, Utc};
 use serde_json::Value;
 
@@ -19,12 +22,12 @@ pub struct CreateCsrParams<'a> {
     pub observation_interval: Option<&'a Value>,
     /// Expected interval between management interactions.
     pub management_interval: Option<&'a Value>,
-    /// Pre-extracted GeoJSON string for `location`.
-    pub location_geojson: Option<String>,
-    /// Pre-extracted GeoJSON string for `observationSpace`.
-    pub observation_space_geojson: Option<String>,
-    /// Pre-extracted GeoJSON string for `operationSpace`.
-    pub operation_space_geojson: Option<String>,
+    /// Canonical WKB for `location`.
+    pub location_wkb: Option<Wkb>,
+    /// Canonical WKB for `observationSpace`.
+    pub observation_space_wkb: Option<Wkb>,
+    /// Canonical WKB for `operationSpace`.
+    pub operation_space_wkb: Option<Wkb>,
     /// Expiration timestamp for the registration.
     pub expires_at: Option<DateTime<Utc>>,
     /// Base endpoint URL of the context source.
@@ -103,12 +106,12 @@ pub struct CsrUpdateFragment {
     pub observation_interval: Option<Option<Value>>,
     /// Updated management interval.
     pub management_interval: Option<Option<Value>>,
-    /// Updated GeoJSON location (as serialized string).
-    pub location: Option<Option<String>>,
-    /// Updated GeoJSON observation space (as serialized string).
-    pub observation_space: Option<Option<String>>,
-    /// Updated GeoJSON operation space (as serialized string).
-    pub operation_space: Option<Option<String>>,
+    /// Updated `location` WKB (`Some(None)` clears, `Some(Some(_))` replaces).
+    pub location: Option<Option<Wkb>>,
+    /// Updated `observationSpace` WKB.
+    pub observation_space: Option<Option<Wkb>>,
+    /// Updated `operationSpace` WKB.
+    pub operation_space: Option<Option<Wkb>>,
     /// Updated expiration timestamp.
     pub expires_at: Option<Option<DateTime<Utc>>>,
     /// Updated endpoint URL.

@@ -3,6 +3,7 @@ use crate::{
     domain::{
         entity::Entity,
         expanded::{self, append_entity_attrs, merge_entity, update_entity_attrs},
+        geometry::Wkb,
         notification::{ChangeEvent, SysAttrsSnapshot, TriggerReason},
         uri::Uri,
     },
@@ -54,12 +55,12 @@ struct PreparedEntity {
     scopes: Vec<String>,
     /// Attribute keys changed by this request payload.
     changed_attributes: Vec<String>,
-    /// GeoJSON string for `location`, if present.
-    location: Option<String>,
-    /// GeoJSON string for `observationSpace`, if present.
-    observation_space: Option<String>,
-    /// GeoJSON string for `operationSpace`, if present.
-    operation_space: Option<String>,
+    /// Canonical WKB for `location`, if present.
+    location: Option<Wkb>,
+    /// Canonical WKB for `observationSpace`, if present.
+    observation_space: Option<Wkb>,
+    /// Canonical WKB for `operationSpace`, if present.
+    operation_space: Option<Wkb>,
     /// Entity expiration timestamp (ETSI GS CIM 009 clause 4.22).
     expires_at: Option<chrono::DateTime<chrono::Utc>>,
 }
@@ -94,9 +95,9 @@ fn row_from_expanded(id: String, expanded: Value) -> (PreparedEntityRow, Vec<Str
             .map(|s| Value::String(sql::scope_to_ltree(&s)))
             .collect(),
     );
-    let location = expanded::extract_location_geojson(&expanded);
-    let observation_space = expanded::extract_observation_space_geojson(&expanded);
-    let operation_space = expanded::extract_operation_space_geojson(&expanded);
+    let location = expanded::extract_location_wkb(&expanded);
+    let observation_space = expanded::extract_observation_space_wkb(&expanded);
+    let operation_space = expanded::extract_operation_space_wkb(&expanded);
     let expires_at = expanded::extract_expires_at(&expanded);
 
     (
@@ -140,9 +141,9 @@ impl EntityService {
         let changed_attributes = extract_attribute_keys(&expanded);
         let types = extract_entity_types(&expanded);
         let scopes = extract_scopes(&expanded);
-        let location = expanded::extract_location_geojson(&expanded);
-        let observation_space = expanded::extract_observation_space_geojson(&expanded);
-        let operation_space = expanded::extract_operation_space_geojson(&expanded);
+        let location = expanded::extract_location_wkb(&expanded);
+        let observation_space = expanded::extract_observation_space_wkb(&expanded);
+        let operation_space = expanded::extract_operation_space_wkb(&expanded);
         let expires_at = expanded::extract_expires_at(&expanded);
 
         Ok(PreparedEntity {

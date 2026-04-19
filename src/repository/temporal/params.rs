@@ -1,6 +1,6 @@
 //! Repository input parameter types for temporal data.
 
-use crate::domain::{attribute_type::AttributeType, temporal::ValueType};
+use crate::domain::{attribute_type::AttributeType, geometry::Wkb, temporal::ValueType};
 use chrono::{DateTime, Utc};
 use serde_json::Value;
 
@@ -22,8 +22,8 @@ pub struct HistoryValues<'a> {
     pub value_string: Option<&'a str>,
     /// Boolean attribute value.
     pub value_bool: Option<bool>,
-    /// GeoJSON geometry as a serialized string.
-    pub value_geo: Option<&'a str>,
+    /// Canonical WKB for geometry values.
+    pub value_geo: Option<&'a Wkb>,
     /// JSON object attribute value.
     pub value_object: Option<&'a Value>,
     /// DateTime attribute value.
@@ -77,8 +77,8 @@ pub struct HistoryBatchEntry {
     pub value_string: Option<String>,
     /// Boolean value column.
     pub value_bool: Option<bool>,
-    /// GeoJSON geometry string.
-    pub value_geo: Option<String>,
+    /// Canonical WKB for geometry values.
+    pub value_geo: Option<Wkb>,
     /// JSON object value column.
     pub value_object: Option<Value>,
     /// DateTime value column.

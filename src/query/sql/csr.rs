@@ -2,7 +2,10 @@
 
 use crate::{
     core::error::AndromedaError,
-    domain::temporal::{TimeProp, TimeRel},
+    domain::{
+        geometry::Wkb,
+        temporal::{TimeProp, TimeRel},
+    },
     query::{
         compiled::{CompiledCsrQuery, GeoRel},
         q::ast::{AttrPath, CmpOp, CompareValue, Expr, Predicate, Scalar},
@@ -134,30 +137,27 @@ fn build_csr_conditions(query: &CompiledCsrQuery) -> Result<Condition, Andromeda
         condition = condition.add(q_cond);
     }
 
-    // Geo filter: CSRs without a location still match (per NGSI-LD spec)
+    // Geo filter: CSRs without a location still match (per NGSI-LD spec).
     if let Some(ref geo) = query.geo {
-        let geojson = build_geojson(&geo.geometry, &geo.coordinates)?;
-        // Escape single quotes for safe SQL embedding (geojson is valid JSON, so no unescaped quotes expected, but be defensive)
-        let geojson_escaped = geojson.replace('\'', "''");
-        // Inline the geometry directly to avoid bind parameter issues with sea-query expression composition
-        let ref_geom_sql = format!("ST_MakeValid(ST_SetSRID(ST_GeomFromGeoJSON('{}'), 4326))", geojson_escaped);
+        let ref_wkb = build_reference_wkb(&geo.geometry, &geo.coordinates)?;
+        let ref_wkb_bytes = ref_wkb.to_vec();
+        let ref_geom_frag = "ST_MakeValid(ST_GeomFromEWKB($1))";
 
         let spatial_sql = match &geo.georel {
-            GeoRel::Within => format!("ST_Within(\"location\", {})", ref_geom_sql),
-            GeoRel::Contains => format!("ST_Contains(\"location\", {})", ref_geom_sql),
-            GeoRel::Intersects => format!("ST_Intersects(\"location\", {})", ref_geom_sql),
-            GeoRel::Disjoint => format!("ST_Disjoint(\"location\", {})", ref_geom_sql),
-            GeoRel::Equals => format!("ST_Equals(\"location\", {})", ref_geom_sql),
-            GeoRel::Overlaps => format!("ST_Overlaps(\"location\", {})", ref_geom_sql),
+            GeoRel::Within => format!("ST_Within(\"location\", {})", ref_geom_frag),
+            GeoRel::Contains => format!("ST_Contains(\"location\", {})", ref_geom_frag),
+            GeoRel::Intersects => format!("ST_Intersects(\"location\", {})", ref_geom_frag),
+            GeoRel::Disjoint => format!("ST_Disjoint(\"location\", {})", ref_geom_frag),
+            GeoRel::Equals => format!("ST_Equals(\"location\", {})", ref_geom_frag),
+            GeoRel::Overlaps => format!("ST_Overlaps(\"location\", {})", ref_geom_frag),
             GeoRel::Near { max_distance, min_distance } => {
-                let ref_geom_geo_sql = format!("{}::geography", ref_geom_sql);
-
+                let ref_geom_geo_frag = format!("{}::geography", ref_geom_frag);
                 let mut parts = Vec::new();
                 if let Some(max) = max_distance {
-                    parts.push(format!("ST_DWithin(\"location\"::geography, {}, {})", ref_geom_geo_sql, max));
+                    parts.push(format!("ST_DWithin(\"location\"::geography, {}, {})", ref_geom_geo_frag, max));
                 }
                 if let Some(min) = min_distance {
-                    parts.push(format!("ST_Distance(\"location\"::geography, {}) >= {}", ref_geom_geo_sql, min));
+                    parts.push(format!("ST_Distance(\"location\"::geography, {}) >= {}", ref_geom_geo_frag, min));
                 }
                 if parts.is_empty() {
                     return Err(AndromedaError::query_validation("near georel requires maxDistance or minDistance"));
@@ -166,7 +166,10 @@ fn build_csr_conditions(query: &CompiledCsrQuery) -> Result<Condition, Andromeda
             }
         };
 
-        condition = condition.add(SeaExpr::cust(format!("(\"location\" IS NULL OR {})", spatial_sql)));
+        condition = condition.add(SeaExpr::cust_with_exprs(
+            format!("(\"location\" IS NULL OR {})", spatial_sql),
+            [SeaExpr::val(ref_wkb_bytes).into()],
+        ));
     }
 
     // Temporal filter: CSRs without the relevant interval still match (per spec)
@@ -215,8 +218,11 @@ fn build_csr_conditions(query: &CompiledCsrQuery) -> Result<Condition, Andromeda
     Ok(condition)
 }
 
-/// Build a GeoJSON string from NGSI-LD geometry type and coordinates.
-fn build_geojson(geometry: &str, coordinates: &serde_json::Value) -> Result<String, AndromedaError> {
+/// Build canonical WKB from NGSI-LD geometry type and coordinates.
+///
+/// For polygons, closes the ring when the caller supplied an open form (matches
+/// the prior GeoJSON-building behaviour).
+fn build_reference_wkb(geometry: &str, coordinates: &serde_json::Value) -> Result<Wkb, AndromedaError> {
     let coords_value = match geometry {
         "Polygon" => {
             if let Some(arr) = coordinates.as_array() {
@@ -237,14 +243,14 @@ fn build_geojson(geometry: &str, coordinates: &serde_json::Value) -> Result<Stri
                 Cow::Borrowed(coordinates)
             }
         }
-        _ => Cow::Borrowed(coordinates),
+        _other => Cow::Borrowed(coordinates),
     };
 
     let geojson = serde_json::json!({
         "type": geometry,
         "coordinates": *coords_value
     });
-    Ok(geojson.to_string())
+    Wkb::from_geojson_value(&geojson).map_err(|error| AndromedaError::query_validation(format!("Invalid CSR geo-query reference geometry: {}", error)))
 }
 
 // --- Q expression to SQL for CSR additional_properties ---
@@ -405,6 +411,7 @@ fn sea_values_to_bind_values(values: sea_query::Values) -> Result<Vec<BindValue<
             sea_query::Value::Bool(Some(b)) => Ok(BindValue::String(Cow::Owned(b.to_string()))),
             sea_query::Value::Double(Some(f)) => Ok(BindValue::String(Cow::Owned(f.to_string()))),
             sea_query::Value::Float(Some(f)) => Ok(BindValue::String(Cow::Owned(f.to_string()))),
+            sea_query::Value::Bytes(Some(b)) => Ok(BindValue::Bytes(Cow::Owned(*b))),
             other => Err(AndromedaError::internal(format!(
                 "unexpected sea_query::Value variant in bind conversion: {other:?}"
             ))),
