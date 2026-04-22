@@ -18,7 +18,7 @@ use crate::{
     },
 };
 use serde_json::Value;
-use urn::Urn;
+use urn_rs::Urn;
 
 impl EntityService {
     /// 5.6.3 Append Entity Attributes

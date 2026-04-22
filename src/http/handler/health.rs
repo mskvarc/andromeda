@@ -10,7 +10,7 @@ use crate::{
     http::error::problem::NgsiLdError,
 };
 use axum::{Extension, Json, http::StatusCode, response::IntoResponse};
-use urn::UrnBuilder;
+use urn_rs::UrnBuilder;
 use uuid::Uuid;
 
 /// GET /ngsi-ld/v1/health -- Check broker health and return component status.

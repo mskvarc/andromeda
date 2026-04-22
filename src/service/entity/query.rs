@@ -28,7 +28,7 @@ use std::{
     pin::Pin,
     sync::Arc,
 };
-use urn::Urn;
+use urn_rs::Urn;
 
 /// Service for querying and retrieving NGSI-LD entities.
 pub struct EntityQueryService {

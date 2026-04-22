@@ -13,7 +13,7 @@ use crate::{
 };
 use axum::http::{HeaderMap, HeaderValue};
 use headers::HeaderMapExt;
-use urn::Urn;
+use urn_rs::Urn;
 
 /// Options for applying common NGSI-LD headers to a response.
 pub struct CommonHeadersOptions<'a> {

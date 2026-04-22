@@ -16,7 +16,7 @@ use crate::{
 };
 use chrono::{DateTime, Utc};
 use serde_json::Value;
-use urn::Urn;
+use urn_rs::Urn;
 
 /// Build [`EntitySaveParams`] for `save()` from an expanded JSON-LD payload.
 ///

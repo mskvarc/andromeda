@@ -320,7 +320,7 @@ pub async fn validate_jsonld_context_value(engine: &JsonLdEngine, value: &Value)
 /// Check if a string is a valid URI (URN or URL).
 pub fn is_valid_uri(id: &str) -> bool {
     if id.starts_with("urn:") {
-        return id.parse::<urn::Urn>().is_ok();
+        return id.parse::<urn_rs::Urn>().is_ok();
     }
     url::Url::parse(id).is_ok()
 }

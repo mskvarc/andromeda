@@ -86,7 +86,7 @@ pub struct ComponentDetail {
 mod tests {
     #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::*;
-    use urn::UrnBuilder;
+    use urn_rs::UrnBuilder;
 
     fn sample_response() -> HealthCheckResponse {
         let id_urn = UrnBuilder::new("ngsi-ld", "HealthCheck:550e8400-e29b-41d4-a716-446655440000").build().unwrap();

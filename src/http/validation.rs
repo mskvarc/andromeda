@@ -15,7 +15,7 @@ use crate::{
 };
 use axum::http::Uri;
 use url::Url;
-use urn::Urn;
+use urn_rs::Urn;
 
 /// Parse and validate an entity ID as a URN.
 ///

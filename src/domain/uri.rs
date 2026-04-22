@@ -2,7 +2,7 @@ use derive_more::{Display, From};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use url::Url;
-use urn::Urn;
+use urn_rs::Urn;
 
 /// The Namespace Identifier for NGSI-LD URNs.
 pub const NGSI_LD_URN_NID: &str = "ngsi-ld";

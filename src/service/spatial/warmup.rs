@@ -20,7 +20,7 @@ use iref::IriBuf;
 use sqlx::PgPool;
 use std::{collections::HashMap, sync::Arc, time::Instant};
 use tracing::{debug, info, warn};
-use urn::Urn;
+use urn_rs::Urn;
 
 /// Load every entity with a non-null `location` into the spatial index,
 /// grouped and bulk-loaded per `(tenant, type, location)` partition.

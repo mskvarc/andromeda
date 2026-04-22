@@ -3,7 +3,7 @@
 //! Carries one or more dataset identifiers as URNs, equivalent to `datasetId`.
 
 use axum::http::{HeaderName, HeaderValue};
-use urn::Urn;
+use urn_rs::Urn;
 
 static NGSILD_DATASET_ID: HeaderName = HeaderName::from_static("ngsild-dataset-id");
 

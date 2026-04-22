@@ -6,7 +6,7 @@
 use crate::domain::attribute_type::AttributeType;
 use iref::IriBuf;
 use strum::{Display, EnumString};
-use urn::Urn;
+use urn_rs::Urn;
 
 /// A typed row from the temporal_entity_attributes table.
 #[derive(Debug, Clone)]

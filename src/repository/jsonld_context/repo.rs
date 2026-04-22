@@ -12,7 +12,7 @@ use crate::{
 use async_trait::async_trait;
 use serde_json::Value;
 use sqlx::{postgres::PgPool, types::Json};
-use urn::{Urn, UrnBuilder};
+use urn_rs::{Urn, UrnBuilder};
 use uuid::Uuid;
 
 /// Summary-projection list output: either detailed rows or summary rows.

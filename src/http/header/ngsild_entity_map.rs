@@ -4,7 +4,7 @@
 //! The value must be a valid URN (RFC 8141).
 
 use axum::http::{HeaderName, HeaderValue};
-use urn::Urn;
+use urn_rs::Urn;
 
 static NGSILD_ENTITYMAP: HeaderName = HeaderName::from_static("ngsild-entitymap");
 

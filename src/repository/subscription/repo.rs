@@ -9,7 +9,7 @@ use crate::{
 };
 use sqlx::postgres::PgPool;
 use tracing::info;
-use urn::UrnBuilder;
+use urn_rs::UrnBuilder;
 use uuid::Uuid;
 
 /// PostgreSQL-backed repository for NGSI-LD entity subscriptions.

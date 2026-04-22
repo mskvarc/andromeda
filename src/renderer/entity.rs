@@ -21,7 +21,7 @@ use langtag::LangTagBuf;
 use serde::Serialize;
 use serde_json::{Map, Value};
 use std::{collections::HashMap, ops::Deref};
-use urn::Urn;
+use urn_rs::Urn;
 
 /// Output representation mode for entity rendering.
 ///

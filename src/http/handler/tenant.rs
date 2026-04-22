@@ -14,7 +14,7 @@ use axum::{
     extract::{OriginalUri, State},
     response::IntoResponse,
 };
-use urn::UrnBuilder;
+use urn_rs::UrnBuilder;
 use uuid::Uuid;
 
 /// GET /ngsi-ld/v1/tenants -- Query available named tenants as pure JSON.

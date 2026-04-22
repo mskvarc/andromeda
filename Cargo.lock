@@ -168,7 +168,7 @@ dependencies = [
  "unicode-normalization",
  "url",
  "urlencoding",
- "urn",
+ "urn-rs",
  "uuid",
 ]
 
@@ -5715,10 +5715,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "daf8dba3b7eb870caf1ddeed7bc9d2a049f3cfdfae7cb521b087cc33ae4c49da"
 
 [[package]]
-name = "urn"
-version = "0.7.0"
+name = "urn-rs"
+version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "88dcfb3ddf58a741e39d7206b8fb08d2856c0db0e22d41b226fbc34889d2158c"
+checksum = "f2f0be9c887fb9ed77ecc9ab841cc3c40379ba5773a7d4f2bca1a63eaadf77c6"
 dependencies = [
  "serde",
 ]

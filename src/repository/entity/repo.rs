@@ -18,7 +18,7 @@ use crate::{
 use serde_json::Value;
 use sqlx::{Executor, Row, postgres::PgPool};
 use std::collections::HashMap;
-use urn::Urn;
+use urn_rs::Urn;
 
 /// Repository for persisting and querying NGSI-LD entities.
 #[derive(Debug)]

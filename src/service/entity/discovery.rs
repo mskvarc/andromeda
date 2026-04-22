@@ -11,7 +11,7 @@ use crate::{
 use serde_json::Value;
 use sqlx::postgres::PgPool;
 use std::collections::{HashMap, HashSet};
-use urn::UrnBuilder;
+use urn_rs::UrnBuilder;
 use uuid::Uuid;
 
 /// Service for NGSI-LD entity type and attribute discovery operations.

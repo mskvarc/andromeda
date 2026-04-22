@@ -55,7 +55,7 @@ impl EntityMapService {
     }
 
     /// Validate that a specific entity ID exists in the given EntityMap.
-    pub async fn validate_entity_in_map(&self, map_id: &EntityMapId, entity_id: &urn::Urn) -> Result<(), AndromedaError> {
+    pub async fn validate_entity_in_map(&self, map_id: &EntityMapId, entity_id: &urn_rs::Urn) -> Result<(), AndromedaError> {
         let map = self.retrieve(map_id).await?;
         if map.entity_ids.iter().any(|id| matches!(id, Uri::Urn(candidate) if candidate == entity_id)) {
             Ok(())

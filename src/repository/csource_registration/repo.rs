@@ -11,7 +11,7 @@ use crate::{
 use sea_query::{Alias, Expr as SeaExpr, Order, PostgresQueryBuilder, Query, SelectStatement};
 use sea_query_binder::SqlxBinder;
 use sqlx::postgres::PgPool;
-use urn::UrnBuilder;
+use urn_rs::UrnBuilder;
 use uuid::Uuid;
 
 /// Projection for a full CSR row. Static, identifier-only expression — no user

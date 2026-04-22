@@ -15,7 +15,7 @@ use crate::{
 use chrono::{DateTime, Utc};
 use serde_json::Value;
 use std::sync::Arc;
-use urn::Urn;
+use urn_rs::Urn;
 
 /// Returns whether the given expanded IRI is an NGSI-LD system attribute.
 fn is_system_attribute(attr_name: &str) -> bool {

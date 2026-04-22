@@ -15,7 +15,7 @@ use geo::algorithm::{Contains, Intersects};
 use parking_lot::RwLock;
 use rstar::{AABB, PointDistance, RTree, RTreeObject};
 use std::{collections::HashSet, sync::Arc};
-use urn::Urn;
+use urn_rs::Urn;
 
 /// A single entity's geometry, indexed under one [`SpatialKey`].
 ///

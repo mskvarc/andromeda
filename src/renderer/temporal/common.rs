@@ -17,7 +17,7 @@ use iref::IriBuf;
 use serde_json::{Value, json};
 use sqlx::{Row, postgres::PgRow};
 use std::str::FromStr;
-use urn::Urn;
+use urn_rs::Urn;
 
 pub(crate) type TimeRange = (DateTime<Utc>, DateTime<Utc>);
 

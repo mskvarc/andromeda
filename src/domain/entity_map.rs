@@ -4,7 +4,7 @@ use compact_str::CompactString;
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
-use urn::Urn;
+use urn_rs::Urn;
 
 /// JSON-LD `@type` for EntityMap resources.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

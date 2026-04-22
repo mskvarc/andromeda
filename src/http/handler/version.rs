@@ -10,7 +10,7 @@ use crate::{
     version::Version,
 };
 use axum::{Extension, Json, http::StatusCode, response::IntoResponse};
-use urn::UrnBuilder;
+use urn_rs::UrnBuilder;
 use uuid::Uuid;
 
 /// GET /ngsi-ld/v1/version -- Return build and runtime version information.

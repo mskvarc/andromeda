@@ -145,7 +145,7 @@ pub enum ErrorKind {
     // -- Parse / conversion errors -------------------------------------------
     /// A URN could not be parsed.
     #[error("Invalid URN: {0}")]
-    InvalidUrn(#[source] urn::Error),
+    InvalidUrn(#[source] urn_rs::Error),
 
     /// A snapshot identifier has invalid NGSI-LD URN format.
     #[error("Invalid snapshot id: {0}")]
@@ -508,8 +508,8 @@ impl From<SerdeJsonError> for AndromedaError {
     }
 }
 
-impl From<urn::Error> for AndromedaError {
-    fn from(error: urn::Error) -> AndromedaError {
+impl From<urn_rs::Error> for AndromedaError {
+    fn from(error: urn_rs::Error) -> AndromedaError {
         ErrorKind::InvalidUrn(error).into()
     }
 }

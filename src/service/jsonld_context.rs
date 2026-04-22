@@ -19,7 +19,7 @@ use serde_json::Value;
 use sqlx::postgres::PgPool;
 use tracing::debug;
 use url::Url;
-use urn::Urn;
+use urn_rs::Urn;
 
 /// Service for managing hosted and cached JSON-LD contexts.
 pub struct JsonLdContextService {

@@ -10,7 +10,7 @@ use crate::{
 use iref::IriBuf;
 use sqlx::{Row, postgres::PgRow};
 use std::str::FromStr;
-use urn::Urn;
+use urn_rs::Urn;
 
 /// Convert a `temporal_entity_attributes`-shaped row into a domain [`TeaEntry`].
 pub fn row_to_tea(row: &PgRow) -> Result<TeaEntry, AndromedaError> {

@@ -33,7 +33,7 @@ use sqlx::postgres::PgPool;
 use std::{collections::HashSet, sync::Arc};
 use tokio::sync::{broadcast, mpsc};
 use tracing::debug;
-use urn::Urn;
+use urn_rs::Urn;
 
 /// Configuration for outbox-based notification delivery (Phase 1: dual-write).
 #[derive(Clone, Debug)]

@@ -19,7 +19,7 @@ use sqlx::PgPool;
 use std::sync::Arc;
 use tokio::sync::broadcast;
 use tracing::{debug, warn};
-use urn::Urn;
+use urn_rs::Urn;
 
 /// Event subscriber that applies incremental updates to the entity spatial index.
 pub struct SpatialSyncWorker {

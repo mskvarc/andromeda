@@ -2,7 +2,7 @@ use crate::domain::uri::Uri;
 use derive_more::{AsRef, Deref, Display};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
-use urn::Urn;
+use urn_rs::Urn;
 
 macro_rules! ngsi_ld_urn_id {
     ($name:ident, $error:ident, $constant:literal) => {
@@ -117,7 +117,7 @@ ngsi_ld_urn_id!(AttributeListId, AttributeListIdParseError, "AttributeList");
 mod tests {
     #![allow(clippy::expect_used, clippy::unwrap_used)]
     use crate::domain::ngsi_ld_urn::{AttributeListId, EntityMapId, EntityTypeListId, SnapshotId, SnapshotNotificationId};
-    use urn::Urn;
+    use urn_rs::Urn;
 
     #[test]
     fn snapshot_id_accepts_valid_value() {

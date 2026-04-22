@@ -112,7 +112,7 @@ pub trait SharedQueryParams {
 /// entity IDs are well-formed identifiers per NGSI-LD 4.5.1.
 pub(crate) fn is_valid_uri(id: &str) -> bool {
     if id.starts_with("urn:") {
-        return id.parse::<urn::Urn>().is_ok();
+        return id.parse::<urn_rs::Urn>().is_ok();
     }
     url::Url::parse(id).is_ok()
 }

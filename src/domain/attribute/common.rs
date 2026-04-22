@@ -11,7 +11,7 @@ use serde_json::Value;
 use serde_with::skip_serializing_none;
 use std::{fmt, str::FromStr};
 use thiserror::Error;
-use urn::Urn;
+use urn_rs::Urn;
 
 use crate::domain::attribute::Property;
 
