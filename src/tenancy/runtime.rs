@@ -185,13 +185,7 @@ impl TenantRuntimeManager {
         loop {
             ticker.tick().await;
 
-            let orphan_keys = self.collect_orphan_runtimes().await;
-            let orphan_count = orphan_keys.len();
-            for key in orphan_keys {
-                if let Some((_, runtime)) = self.runtimes.remove(&key) {
-                    shutdown_runtime(runtime).await;
-                }
-            }
+            let orphan_count = self.evict_orphan_runtimes().await;
             if orphan_count > 0 {
                 info!(orphaned = orphan_count, "Janitor evicted tenant runtimes whose registry row was removed");
             }
@@ -225,6 +219,22 @@ impl TenantRuntimeManager {
                 info!(evicted = evict_count, "Janitor evicted idle tenant runtimes");
             }
         }
+    }
+
+    /// Synchronously evict every orphan tenant runtime and close its pool.
+    ///
+    /// Returns the number of runtimes that were evicted. Exposed as a public
+    /// method so admin/test tooling can force a sweep without waiting for
+    /// the next janitor tick (`janitor_interval_seconds`).
+    pub async fn evict_orphan_runtimes(&self) -> usize {
+        let keys = self.collect_orphan_runtimes().await;
+        let count = keys.len();
+        for key in keys {
+            if let Some((_, runtime)) = self.runtimes.remove(&key) {
+                shutdown_runtime(runtime).await;
+            }
+        }
+        count
     }
 
     /// Collect keys of cached tenant runtimes whose row no longer exists in the

@@ -164,7 +164,9 @@ fn build_v1_router() -> Router<AppState> {
         .route("/query", post(entity_operations::query));
 
     let types_routes = Router::new().route("/", get(types::query)).route("/{type_}", get(types::get));
-    let tenants_routes = Router::new().route("/", get(tenant::query));
+    let tenants_routes = Router::new()
+        .route("/", get(tenant::query))
+        .route("/evictOrphans", post(tenant::evict_orphans));
 
     let attributes_routes = Router::new().route("/", get(attribute::query)).route("/{attr_id}", get(attribute::get));
 

@@ -15,7 +15,7 @@ use andromeda_test_common::{
 use axum::{Router, body::Bytes, http::HeaderMap as AxumHeaderMap, response::IntoResponse, routing::post};
 use reqwest::{Client, Method, StatusCode, header::HeaderMap};
 use serde_json::{Value, json};
-use sqlx::{Connection, PgConnection, PgPool};
+use sqlx::PgPool;
 use std::{sync::Arc, time::Duration};
 use tokio::sync::{Mutex, Notify};
 use uuid::Uuid;
@@ -30,23 +30,15 @@ fn link_header() -> String {
     format!("<{CORE_CONTEXT}>; rel=\"http://www.w3.org/ns/json-ld#context\"; type=\"application/ld+json\"")
 }
 
-fn replace_database_name(url: &str, new_db: &str) -> Result<String, ()> {
-    let mut parts = url.rsplitn(2, '/');
-    let _current_db = parts.next().ok_or(())?;
-    let prefix = parts.next().ok_or(())?;
-    Ok(format!("{prefix}/{new_db}"))
-}
-
-/// Drop every named-tenant database and delete its registry row.
+/// Delete every named-tenant registry row so the broker's next orphan
+/// sweep closes the per-tenant pools they refer to.
 ///
-/// The broker caches a `PgPool` per named tenant. Truncating the registry
-/// alone leaves those pools (and their PostgreSQL connections) alive — with
-/// unique UUID tenant names per test, this accumulates quickly and exhausts
-/// `max_connections`. Dropping the underlying database `WITH (FORCE)`
-/// terminates every backend connected to it, returning the slot to the
-/// cluster immediately. The broker's cached pool becomes empty on the next
-/// tick and the janitor's orphan sweep evicts the stale runtime handle.
-async fn clean_named_tenant_databases(main_db_url: &str, main_pool: &PgPool) {
+/// We intentionally do not drop the underlying tenant databases: doing so
+/// races broker workers that still hold open connections and forces the
+/// (slow) migration chain to rerun on next tenant create. Instead the test
+/// harness deletes the registry rows, then triggers `evictOrphans` on the
+/// broker so the cached runtimes (and their pools) shut down in place.
+async fn clean_named_tenant_databases(main_pool: &PgPool) {
     let has_tenants_table: bool = sqlx::query_scalar("SELECT to_regclass('public.tenants') IS NOT NULL")
         .fetch_one(main_pool)
         .await
@@ -54,29 +46,22 @@ async fn clean_named_tenant_databases(main_db_url: &str, main_pool: &PgPool) {
     if !has_tenants_table {
         return;
     }
-    let tenant_dbs: Vec<String> = sqlx::query_scalar("SELECT db_name FROM tenants WHERE is_unnamed_default = false")
-        .fetch_all(main_pool)
-        .await
-        .unwrap_or_default();
-    let Ok(admin_url) = replace_database_name(main_db_url, "postgres") else {
-        return;
-    };
-    let Ok(mut admin) = PgConnection::connect(&admin_url).await else {
-        return;
-    };
-    for db_name in tenant_dbs {
-        let safe = db_name.replace('"', "");
-        let sql = format!("DROP DATABASE IF EXISTS \"{safe}\" WITH (FORCE)");
-        let _ = sqlx::query(&sql).execute(&mut admin).await;
-    }
-    let _ = admin.close().await;
     let _ = sqlx::query("DELETE FROM tenants WHERE is_unnamed_default = false").execute(main_pool).await;
 }
 
 async fn reset_broker_state() {
     let pool = shared_pool().await.expect("acquire shared test pool");
-    clean_named_tenant_databases(DATABASE_URL, &pool).await;
+    clean_named_tenant_databases(&pool).await;
     sqlx::query(TRUNCATE_ALL).execute(&pool).await.expect("truncate test tables");
+    // Force the broker to evict the now-orphan tenant runtimes immediately
+    // rather than waiting for the next janitor tick. Without this, cached
+    // per-tenant pools accumulate across the serial suite and exhaust
+    // PostgreSQL `max_connections`, producing PoolTimedOut panics in later
+    // tests.
+    let _ = client()
+        .post(format!("{BASE_URL}/tenants/evictOrphans"))
+        .send()
+        .await;
 }
 
 fn unique_entity_id(prefix: &str) -> String {
