@@ -1,5 +1,6 @@
 //! Persistence layer for NGSI-LD entities.
 
+pub mod copy;
 pub mod mapper;
 pub mod params;
 pub mod repo;

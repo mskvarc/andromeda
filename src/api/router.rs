@@ -341,6 +341,7 @@ pub async fn build_tenant_state(
             large_threshold: config.performance.batch_large_threshold.max(1),
             prepare_blocking_threshold: config.performance.batch_prepare_blocking_threshold.max(1),
             async_side_effect_threshold: config.performance.batch_async_side_effect_threshold,
+            bulk_write_mode: config.performance.bulk_write_mode,
         },
         batch_activity.clone(),
         if config.outbox.enabled {

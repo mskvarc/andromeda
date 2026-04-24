@@ -46,6 +46,21 @@ pub enum CorsMode {
     Permissive,
 }
 
+/// Bulk-write execution mode for batch entity INSERT/UPDATE/UPSERT paths.
+#[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, Display, EnumString, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+#[strum(serialize_all = "kebab-case", ascii_case_insensitive)]
+pub enum BulkWriteMode {
+    /// Classic `UNNEST($1::text[], $2::jsonb[], ...)` driver-side array path.
+    /// One network round-trip per batch; server parses the array binds.
+    #[default]
+    Unnest,
+    /// Binary `COPY ... FROM STDIN` into a transaction-scoped staging table,
+    /// followed by `INSERT ... SELECT ... FROM stage`. Avoids the jsonb-array
+    /// parse overhead and per-row deserialisation on the server.
+    CopyStaging,
+}
+
 /// HTTP middleware configuration applied to all broker routes.
 #[derive(Config, Debug, Clone, Serialize)]
 pub struct HttpConfig {
@@ -208,6 +223,12 @@ pub struct PerformanceConfig {
     /// Base exponential-backoff interval (seconds) between retry attempts.
     #[config(env = "ANDROMEDA_PERFORMANCE_PENDING_SIDE_EFFECTS_BASE_BACKOFF_SECS", default = 2)]
     pub pending_side_effects_base_backoff_secs: u64,
+
+    /// Bulk-write execution mode for batch entity paths. Defaults to the
+    /// classic `UNNEST` path; flip to `copy-staging` once benchmarks
+    /// confirm the binary COPY path is faster for the target workload.
+    #[config(env = "ANDROMEDA_PERFORMANCE_BULK_WRITE_MODE", default = "unnest")]
+    pub bulk_write_mode: BulkWriteMode,
 
     /// Maximum HTTP request body size in bytes.
     /// Defaults to 64 MiB. Set higher for very large batch operations.
@@ -646,6 +667,7 @@ mod tests {
                 pending_side_effects_batch_size: 32,
                 pending_side_effects_max_attempts: 5,
                 pending_side_effects_base_backoff_secs: 2,
+                bulk_write_mode: BulkWriteMode::Unnest,
                 max_request_body_bytes: 67_108_864,
                 snapshot_concurrency: 4,
                 forward_csr_concurrency: 16,

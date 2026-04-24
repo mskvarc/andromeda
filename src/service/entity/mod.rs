@@ -10,7 +10,7 @@ pub mod provision_forwarding;
 pub mod query;
 
 use crate::{
-    core::{batch_activity::BatchActivityTracker, error::AndromedaError},
+    core::{batch_activity::BatchActivityTracker, config::BulkWriteMode, error::AndromedaError},
     domain::{
         entity::{Entity, EntityPatch},
         notification::{ChangeEvent, TriggerReason},
@@ -63,6 +63,8 @@ pub struct BatchExecutionConfig {
     /// the async durable-queue path is never taken regardless of the client
     /// preference (all batches run inline).
     pub async_side_effect_threshold: Option<usize>,
+    /// Bulk-write execution mode for entity INSERT/UPDATE/UPSERT paths.
+    pub bulk_write_mode: BulkWriteMode,
 }
 
 /// Collected side-effects for a batch chunk: temporal history writes plus
@@ -103,6 +105,7 @@ pub struct EntityService {
     batch_large_threshold: usize,
     batch_prepare_blocking_threshold: usize,
     async_side_effect_threshold: Option<usize>,
+    pub(crate) bulk_write_mode: BulkWriteMode,
     /// Outbox write configuration, present when outbox is enabled.
     outbox: Option<OutboxWriteConfig>,
 }
@@ -135,6 +138,7 @@ impl EntityService {
             batch_large_threshold: batch_config.large_threshold.max(1),
             batch_prepare_blocking_threshold: batch_config.prepare_blocking_threshold.max(1),
             async_side_effect_threshold: batch_config.async_side_effect_threshold.filter(|t| *t > 0),
+            bulk_write_mode: batch_config.bulk_write_mode,
             outbox,
         }
     }

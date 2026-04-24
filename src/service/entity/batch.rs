@@ -1,5 +1,5 @@
 use crate::{
-    core::error::AndromedaError,
+    core::{config::BulkWriteMode, error::AndromedaError},
     domain::{
         entity::Entity,
         expanded::{self, append_entity_attrs, merge_entity, update_entity_attrs},
@@ -9,7 +9,7 @@ use crate::{
     },
     jsonld::ContextSpec,
     query::sql,
-    repository::entity::{PreparedEntityRow, decompose_rows, params::PreparedEntityColumns, repo::EntityRepository},
+    repository::entity::{PreparedEntityRow, copy::create_batch_via_copy_in_tx, decompose_rows, params::PreparedEntityColumns, repo::EntityRepository},
     service::entity::{
         BatchSideEffectJob,
         BatchSideEffectMode,
@@ -421,7 +421,7 @@ impl EntityService {
 
         match mode {
             BatchSideEffectMode::Inline => {
-                let inserted_ids = self.repo.create_batch(&columns).await?;
+                let inserted_ids = self.create_entities_inline(&columns).await?;
                 self.report_missing_inserts(&inserted_ids, &entity_data, &mut errors);
                 let mut payloads = columns.payloads.into_iter().map(Some).collect::<Vec<_>>();
                 let (job, success) = Self::drain_indexed_effect_entities(&mut entity_data, &mut payloads, &inserted_ids, TriggerReason::EntityCreated);
@@ -430,7 +430,7 @@ impl EntityService {
             }
             BatchSideEffectMode::Enqueue => {
                 let mut tx = self.repo.pool().begin().await?;
-                let inserted_ids = EntityRepository::create_batch_in_tx(&mut tx, &columns).await?;
+                let inserted_ids = self.create_entities_in_tx(&mut tx, &columns).await?;
                 self.report_missing_inserts(&inserted_ids, &entity_data, &mut errors);
                 let mut payloads = columns.payloads.into_iter().map(Some).collect::<Vec<_>>();
                 let (job, success) = Self::drain_indexed_effect_entities(&mut entity_data, &mut payloads, &inserted_ids, TriggerReason::EntityCreated);
@@ -438,6 +438,36 @@ impl EntityService {
                 tx.commit().await?;
                 Ok(BatchResult { success, errors })
             }
+        }
+    }
+
+    /// Route the inline create path to either the classic `UNNEST` query
+    /// or the binary `COPY`-into-staging path, depending on the configured
+    /// [`BulkWriteMode`]. The `COPY` path opens a short-lived transaction
+    /// so the temp staging table is available for the follow-up
+    /// `INSERT ... SELECT`.
+    async fn create_entities_inline(&self, columns: &PreparedEntityColumns) -> Result<Vec<String>, AndromedaError> {
+        match self.bulk_write_mode {
+            BulkWriteMode::Unnest => self.repo.create_batch(columns).await,
+            BulkWriteMode::CopyStaging => {
+                let mut tx = self.repo.pool().begin().await?;
+                let inserted = create_batch_via_copy_in_tx(&mut tx, columns).await?;
+                tx.commit().await?;
+                Ok(inserted)
+            }
+        }
+    }
+
+    /// Same routing as [`Self::create_entities_inline`] but running inside a
+    /// caller-provided transaction (async durable-queue path).
+    async fn create_entities_in_tx(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        columns: &PreparedEntityColumns,
+    ) -> Result<Vec<String>, AndromedaError> {
+        match self.bulk_write_mode {
+            BulkWriteMode::Unnest => EntityRepository::create_batch_in_tx(tx, columns).await,
+            BulkWriteMode::CopyStaging => create_batch_via_copy_in_tx(tx, columns).await,
         }
     }
 
