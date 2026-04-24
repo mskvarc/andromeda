@@ -70,6 +70,7 @@ serde_urlencoded = "0.7.1"
 serde_with = "3.18.0"
 sha2 = "0.11.0"
 shadow-rs = "1.7.1"
+sonic-rs = "0.5.8"
 sqlx = { version = "0.8.6", features = ["runtime-tokio", "postgres", "json", "chrono", "uuid"] }
 static-iref = "3.0.0"
 static-regular-grammar = "2.0.2"

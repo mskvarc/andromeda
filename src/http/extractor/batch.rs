@@ -26,6 +26,26 @@ use mediatype::{MediaTypeBuf, names};
 use serde_json::Value;
 use std::collections::HashSet;
 
+/// Payload size at which the SIMD-accelerated JSON parser is used.
+///
+/// `sonic-rs` accepts `&[u8]` directly (no mutation, no copy), so the
+/// threshold is only guarding against the setup cost of the SIMD path on
+/// tiny bodies where `serde_json`'s byte-by-byte scan is already fastest.
+/// 1 MiB is a conservative break-even on AVX2 / NEON hosts.
+const SIMD_JSON_THRESHOLD_BYTES: usize = 1024 * 1024;
+
+/// Parse a batch request body into a JSON `Value`, dispatching to
+/// `sonic-rs` for large payloads and falling back to `serde_json` below
+/// the threshold. `sonic-rs` runtime-dispatches its SIMD implementation
+/// (AVX2 / NEON / scalar) based on host CPU features.
+fn parse_batch_body_json(body: &Bytes) -> Result<Value, String> {
+    if body.len() >= SIMD_JSON_THRESHOLD_BYTES {
+        sonic_rs::from_slice::<Value>(body).map_err(|err| err.to_string())
+    } else {
+        serde_json::from_slice::<Value>(body).map_err(|err| err.to_string())
+    }
+}
+
 /// Content-Type classification for batch entity parsing.
 enum ContentKind {
     Json,
@@ -121,7 +141,7 @@ pub fn parse_batch_entities(
         return Err(AndromedaError::malformed_request("Request body shall not be empty").with_instance(uri).into());
     }
 
-    let value: Value = serde_json::from_slice(body).map_err(|e| AndromedaError::malformed_request(format!("Invalid JSON: {}", e)).with_instance(uri))?;
+    let value: Value = parse_batch_body_json(body).map_err(|e| AndromedaError::malformed_request(format!("Invalid JSON: {}", e)).with_instance(uri))?;
 
     let items = match value {
         Value::Array(arr) if arr.is_empty() => {
