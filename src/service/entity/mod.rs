@@ -71,9 +71,13 @@ pub struct BatchExecutionConfig {
 /// NGSI-LD change-event emissions. Either run inline (sync path) or
 /// persisted to `pending_side_effects` and drained by a background worker
 /// (async path, opt-in via `Prefer: respond-async`).
+///
+/// Entity IDs and expanded payloads are `Arc`-wrapped so they can be
+/// cheaply referenced both by the temporal writer (which reads them as
+/// borrows) and by any future replay or fan-out path without deep clones.
 #[derive(Debug)]
 pub struct BatchSideEffectJob {
-    pub temporal_entities: Vec<(String, Value)>,
+    pub temporal_entities: Vec<(Arc<str>, Arc<Value>)>,
     pub change_events: Vec<ChangeEvent>,
 }
 

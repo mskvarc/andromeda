@@ -65,8 +65,8 @@ impl From<&BatchSideEffectJob> for PersistedBatchSideEffectJob {
                 .temporal_entities
                 .iter()
                 .map(|(id, expanded)| PersistedTemporalEntity {
-                    id: id.clone(),
-                    expanded: expanded.clone(),
+                    id: id.as_ref().to_owned(),
+                    expanded: (**expanded).clone(),
                 })
                 .collect(),
             change_events: job.change_events.iter().map(PersistedChangeEvent::from).collect(),
@@ -107,7 +107,11 @@ impl TryFrom<PersistedBatchSideEffectJob> for BatchSideEffectJob {
     type Error = AndromedaError;
 
     fn try_from(persisted: PersistedBatchSideEffectJob) -> Result<BatchSideEffectJob, AndromedaError> {
-        let temporal_entities = persisted.temporal_entities.into_iter().map(|t| (t.id, t.expanded)).collect();
+        let temporal_entities = persisted
+            .temporal_entities
+            .into_iter()
+            .map(|t| (Arc::<str>::from(t.id.as_str()), Arc::new(t.expanded)))
+            .collect();
         let change_events = persisted
             .change_events
             .into_iter()

@@ -315,7 +315,43 @@ impl TemporalRepository {
         if entries.is_empty() {
             return Ok(Vec::new());
         }
+        let (entity_ids, attr_name_ids, attribute_types, dataset_ids, value_types) = self.tea_batch_binds(entries).await?;
+        let rows = sqlx::query(TEA_UPSERT_SQL)
+            .bind(&entity_ids)
+            .bind(&attr_name_ids)
+            .bind(&attribute_types)
+            .bind(&dataset_ids)
+            .bind(&value_types)
+            .fetch_all(&self.pool)
+            .await?;
+        Ok(rows_to_tea_results(rows))
+    }
 
+    /// Transactional variant of [`Self::upsert_tea_batch`].
+    pub async fn upsert_tea_batch_in_tx(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+        entries: &[TeaBatchEntry],
+    ) -> Result<Vec<TeaBatchResultRow>, AndromedaError> {
+        if entries.is_empty() {
+            return Ok(Vec::new());
+        }
+        let (entity_ids, attr_name_ids, attribute_types, dataset_ids, value_types) = self.tea_batch_binds(entries).await?;
+        let rows = sqlx::query(TEA_UPSERT_SQL)
+            .bind(&entity_ids)
+            .bind(&attr_name_ids)
+            .bind(&attribute_types)
+            .bind(&dataset_ids)
+            .bind(&value_types)
+            .fetch_all(&mut **tx)
+            .await?;
+        Ok(rows_to_tea_results(rows))
+    }
+
+    async fn tea_batch_binds<'a>(
+        &self,
+        entries: &'a [TeaBatchEntry],
+    ) -> Result<(Vec<&'a str>, Vec<i16>, Vec<&'static str>, Vec<Option<&'a str>>, Vec<&'static str>), AndromedaError> {
         let distinct_names: Vec<&str> = {
             let mut seen = std::collections::HashSet::new();
             entries
@@ -341,42 +377,24 @@ impl TemporalRepository {
             dataset_ids.push(e.dataset_id.as_deref());
             value_types.push(e.value_type.as_str());
         }
-
-        let rows = sqlx::query(
-            r#"
-            INSERT INTO temporal_entity_attributes (entity_id, attribute_name_id, attribute_type, dataset_id, value_type)
-            SELECT d.entity_id, d.attribute_name_id, d.attribute_type, d.dataset_id, d.value_type
-            FROM UNNEST($1::text[], $2::smallint[], $3::text[], $4::text[], $5::text[])
-                AS d(entity_id, attribute_name_id, attribute_type, dataset_id, value_type)
-            ON CONFLICT (entity_id, attribute_name_id, dataset_id) DO UPDATE
-            SET attribute_type = EXCLUDED.attribute_type, value_type = EXCLUDED.value_type
-            RETURNING id, entity_id,
-                (SELECT an.name FROM attribute_names an WHERE an.id = temporal_entity_attributes.attribute_name_id) AS attribute_name,
-                dataset_id
-            "#,
-        )
-        .bind(&entity_ids)
-        .bind(&attr_name_ids)
-        .bind(&attribute_types)
-        .bind(&dataset_ids)
-        .bind(&value_types)
-        .fetch_all(&self.pool)
-        .await?;
-
-        let results = rows
-            .into_iter()
-            .map(|row| TeaBatchResultRow {
-                id: row.get("id"),
-                entity_id: row.get("entity_id"),
-                attribute_name: row.get("attribute_name"),
-                dataset_id: row.get("dataset_id"),
-            })
-            .collect();
-        Ok(results)
+        Ok((entity_ids, attr_name_ids, attribute_types, dataset_ids, value_types))
     }
 
     /// Bulk insert attribute history rows in a single transaction.
     pub async fn insert_history_batch(&self, entries: &[HistoryBatchEntry]) -> Result<(), AndromedaError> {
+        if entries.is_empty() {
+            return Ok(());
+        }
+        let mut tx = self.pool.begin().await?;
+        self.insert_history_batch_in_tx(&mut tx, entries).await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
+    /// Transactional variant of [`Self::insert_history_batch`]. Runs the
+    /// dedup `DELETE`s, the history `INSERT`, and the `attribute_current`
+    /// upsert against the caller's transaction without committing.
+    pub async fn insert_history_batch_in_tx(&self, tx: &mut Transaction<'_, Postgres>, entries: &[HistoryBatchEntry]) -> Result<(), AndromedaError> {
         if entries.is_empty() {
             return Ok(());
         }
@@ -418,8 +436,6 @@ impl TemporalRepository {
             dedup_observed_ats.push(e.observed_at);
         }
 
-        let mut tx = self.pool.begin().await?;
-
         sqlx::query(
             r#"
             DELETE FROM attribute_history ah
@@ -430,7 +446,7 @@ impl TemporalRepository {
         )
         .bind(&dedup_tea_ids)
         .bind(&dedup_instance_ids)
-        .execute(&mut *tx)
+        .execute(&mut **tx)
         .await?;
 
         let filtered: Vec<(uuid::Uuid, DateTime<Utc>)> = dedup_tea_ids
@@ -451,7 +467,7 @@ impl TemporalRepository {
             )
             .bind(&obs_tea_ids)
             .bind(&obs_ats)
-            .execute(&mut *tx)
+            .execute(&mut **tx)
             .await?;
         }
 
@@ -487,12 +503,11 @@ impl TemporalRepository {
         .bind(&instance_ids)
         .bind(&observed_ats)
         .bind(&metadatas)
-        .execute(&mut *tx)
+        .execute(&mut **tx)
         .await?;
 
-        sync_attribute_current_batch(&mut tx, entries).await?;
+        sync_attribute_current_batch(tx, entries).await?;
 
-        tx.commit().await?;
         Ok(())
     }
 
@@ -520,6 +535,17 @@ impl TemporalRepository {
         if entries.is_empty() {
             return Ok(());
         }
+        let mut tx = self.pool.begin().await?;
+        self.insert_scope_history_batch_in_tx(&mut tx, entries).await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
+    /// Transactional variant of [`Self::insert_scope_history_batch`].
+    pub async fn insert_scope_history_batch_in_tx(&self, tx: &mut Transaction<'_, Postgres>, entries: &[ScopeHistoryEntry]) -> Result<(), AndromedaError> {
+        if entries.is_empty() {
+            return Ok(());
+        }
 
         let len = entries.len();
         let mut times = Vec::with_capacity(len);
@@ -534,8 +560,6 @@ impl TemporalRepository {
             instance_ids.push(e.instance_id.as_str());
         }
 
-        let mut tx = self.pool.begin().await?;
-
         sqlx::query(
             r#"
             DELETE FROM scope_history sh
@@ -546,7 +570,7 @@ impl TemporalRepository {
         )
         .bind(&entity_ids)
         .bind(&instance_ids)
-        .execute(&mut *tx)
+        .execute(&mut **tx)
         .await?;
 
         sqlx::query(
@@ -561,12 +585,34 @@ impl TemporalRepository {
         .bind(&entity_ids)
         .bind(&scope_paths)
         .bind(&instance_ids)
-        .execute(&mut *tx)
+        .execute(&mut **tx)
         .await?;
 
-        tx.commit().await?;
         Ok(())
     }
+}
+
+const TEA_UPSERT_SQL: &str = r#"
+INSERT INTO temporal_entity_attributes (entity_id, attribute_name_id, attribute_type, dataset_id, value_type)
+SELECT d.entity_id, d.attribute_name_id, d.attribute_type, d.dataset_id, d.value_type
+FROM UNNEST($1::text[], $2::smallint[], $3::text[], $4::text[], $5::text[])
+    AS d(entity_id, attribute_name_id, attribute_type, dataset_id, value_type)
+ON CONFLICT (entity_id, attribute_name_id, dataset_id) DO UPDATE
+SET attribute_type = EXCLUDED.attribute_type, value_type = EXCLUDED.value_type
+RETURNING id, entity_id,
+    (SELECT an.name FROM attribute_names an WHERE an.id = temporal_entity_attributes.attribute_name_id) AS attribute_name,
+    dataset_id
+"#;
+
+fn rows_to_tea_results(rows: Vec<sqlx::postgres::PgRow>) -> Vec<TeaBatchResultRow> {
+    rows.into_iter()
+        .map(|row| TeaBatchResultRow {
+            id: row.get("id"),
+            entity_id: row.get("entity_id"),
+            attribute_name: row.get("attribute_name"),
+            dataset_id: row.get("dataset_id"),
+        })
+        .collect()
 }
 
 async fn sync_attribute_current_batch(tx: &mut Transaction<'_, Postgres>, entries: &[HistoryBatchEntry]) -> Result<(), AndromedaError> {

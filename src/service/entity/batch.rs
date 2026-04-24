@@ -24,7 +24,10 @@ use crate::{
 };
 use futures::{StreamExt, stream};
 use serde_json::Value;
-use std::collections::{HashMap, HashSet, hash_map::Entry};
+use std::{
+    collections::{HashMap, HashSet, hash_map::Entry},
+    sync::Arc,
+};
 use tokio::task;
 
 /// Domain-level result of a batch operation.
@@ -234,7 +237,9 @@ impl EntityService {
                 continue;
             };
 
-            temporal_entities.push((id.clone(), effect.expanded));
+            let id_arc: Arc<str> = Arc::from(id.as_str());
+            let expanded_arc = Arc::new(effect.expanded);
+            temporal_entities.push((Arc::clone(&id_arc), expanded_arc));
             match id.parse::<Uri>() {
                 Ok(entity_uri) => {
                     change_events.push(ChangeEvent::new(entity_uri, effect.types, trigger_reason).with_changed_attributes(effect.changed_attributes));
@@ -243,7 +248,7 @@ impl EntityService {
                     tracing::error!(entity_id = %id, event = "entity_uri_parse_failed");
                 }
             }
-            success.push(id.clone());
+            success.push(id_arc.to_string());
         }
 
         (
@@ -275,7 +280,8 @@ impl EntityService {
                 continue;
             };
 
-            temporal_entities.push((id.clone(), expanded));
+            let id_arc: Arc<str> = Arc::from(id.as_str());
+            temporal_entities.push((Arc::clone(&id_arc), Arc::new(expanded)));
             match id.parse::<Uri>() {
                 Ok(entity_uri) => {
                     change_events.push(ChangeEvent::new(entity_uri, effect.types, trigger_reason).with_changed_attributes(effect.changed_attributes));
@@ -284,7 +290,7 @@ impl EntityService {
                     tracing::error!(entity_id = %id, event = "entity_uri_parse_failed");
                 }
             }
-            success.push(id.clone());
+            success.push(id_arc.to_string());
         }
 
         (
@@ -316,13 +322,14 @@ impl EntityService {
                 continue;
             };
 
+            let id_arc: Arc<str> = Arc::from(id.as_str());
             let trigger_reason = if was_created {
                 created.push(id.clone());
                 TriggerReason::EntityCreated
             } else {
                 TriggerReason::EntityUpdated
             };
-            temporal_entities.push((id.clone(), expanded));
+            temporal_entities.push((Arc::clone(&id_arc), Arc::new(expanded)));
             match id.parse::<Uri>() {
                 Ok(entity_uri) => {
                     change_events.push(ChangeEvent::new(entity_uri, effect.types, trigger_reason).with_changed_attributes(effect.changed_attributes));
@@ -428,47 +435,39 @@ impl EntityService {
             }
         }
 
+        // Single-transaction path: entity write and temporal-side-effect
+        // write (inline) / queue enqueue (async) share one commit. Halves
+        // the fsync cost of the inline create path and guarantees
+        // at-least-once delivery of the async path without an orphan
+        // queue row.
+        let mut tx = self.repo.pool().begin().await?;
+        let inserted_ids = self.create_entities_in_tx(&mut tx, &columns).await?;
+        self.report_missing_inserts(&inserted_ids, &entity_data, &mut errors);
+        let mut payloads = columns.payloads.into_iter().map(Some).collect::<Vec<_>>();
+        let (job, success) = Self::drain_indexed_effect_entities(&mut entity_data, &mut payloads, &inserted_ids, TriggerReason::EntityCreated);
+
         match mode {
             BatchSideEffectMode::Inline => {
-                let inserted_ids = self.create_entities_inline(&columns).await?;
-                self.report_missing_inserts(&inserted_ids, &entity_data, &mut errors);
-                let mut payloads = columns.payloads.into_iter().map(Some).collect::<Vec<_>>();
-                let (job, success) = Self::drain_indexed_effect_entities(&mut entity_data, &mut payloads, &inserted_ids, TriggerReason::EntityCreated);
-                self.apply_inline_side_effects(job).await;
-                Ok(BatchResult { success, errors })
+                self.temporal_recorder.record_entities_batch_in_tx(&mut tx, &job.temporal_entities).await?;
+                tx.commit().await?;
+                for event in job.change_events {
+                    self.emit_change(event);
+                }
             }
             BatchSideEffectMode::Enqueue => {
-                let mut tx = self.repo.pool().begin().await?;
-                let inserted_ids = self.create_entities_in_tx(&mut tx, &columns).await?;
-                self.report_missing_inserts(&inserted_ids, &entity_data, &mut errors);
-                let mut payloads = columns.payloads.into_iter().map(Some).collect::<Vec<_>>();
-                let (job, success) = Self::drain_indexed_effect_entities(&mut entity_data, &mut payloads, &inserted_ids, TriggerReason::EntityCreated);
                 self.enqueue_batch_side_effects(&mut tx, &job).await?;
                 tx.commit().await?;
-                Ok(BatchResult { success, errors })
             }
         }
+
+        Ok(BatchResult { success, errors })
     }
 
-    /// Route the inline create path to either the classic `UNNEST` query
-    /// or the binary `COPY`-into-staging path, depending on the configured
-    /// [`BulkWriteMode`]. The `COPY` path opens a short-lived transaction
-    /// so the temp staging table is available for the follow-up
-    /// `INSERT ... SELECT`.
-    async fn create_entities_inline(&self, columns: &PreparedEntityColumns) -> Result<Vec<String>, AndromedaError> {
-        match self.bulk_write_mode {
-            BulkWriteMode::Unnest => self.repo.create_batch(columns).await,
-            BulkWriteMode::CopyStaging => {
-                let mut tx = self.repo.pool().begin().await?;
-                let inserted = create_batch_via_copy_in_tx(&mut tx, columns).await?;
-                tx.commit().await?;
-                Ok(inserted)
-            }
-        }
-    }
-
-    /// Same routing as [`Self::create_entities_inline`] but running inside a
-    /// caller-provided transaction (async durable-queue path).
+    /// Route the create path through either the classic `UNNEST` query or
+    /// the binary `COPY`-into-staging path, depending on the configured
+    /// [`BulkWriteMode`]. Always runs inside the caller's transaction so
+    /// the entity write can be paired with the temporal-recorder write
+    /// (sync path) or the `pending_side_effects` enqueue (async path).
     async fn create_entities_in_tx(
         &self,
         tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,

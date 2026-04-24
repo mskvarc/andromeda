@@ -58,10 +58,7 @@ async fn reset_broker_state() {
     // per-tenant pools accumulate across the serial suite and exhaust
     // PostgreSQL `max_connections`, producing PoolTimedOut panics in later
     // tests.
-    let _ = client()
-        .post(format!("{BASE_URL}/tenants/evictOrphans"))
-        .send()
-        .await;
+    let _ = client().post(format!("{BASE_URL}/tenants/evictOrphans")).send().await;
 }
 
 fn unique_entity_id(prefix: &str) -> String {

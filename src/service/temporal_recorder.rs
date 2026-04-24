@@ -54,6 +54,25 @@ pub struct TemporalRecorder {
     repo: Arc<TemporalRepository>,
 }
 
+/// Intermediate batch state: rows collected from the expanded entities but
+/// not yet paired with their TEA UUIDs.
+struct PreparedBatch {
+    tea_entries: Vec<TeaBatchEntry>,
+    pending_histories: Vec<PendingHistory>,
+    tea_index: Vec<usize>,
+    scope_entries: Vec<ScopeHistoryEntry>,
+}
+
+/// Per-observation history data that only needs a TEA UUID to become a
+/// [`HistoryBatchEntry`].
+struct PendingHistory {
+    time: DateTime<Utc>,
+    db_params: DbValueParams,
+    instance_id: String,
+    observed_at: Option<DateTime<Utc>>,
+    metadata: Option<Value>,
+}
+
 impl TemporalRecorder {
     /// Create a new temporal recorder backed by the given repository.
     pub const fn new(repo: Arc<TemporalRepository>) -> TemporalRecorder {
@@ -207,36 +226,61 @@ impl TemporalRecorder {
     ///
     /// Invalid attributes are skipped with a warning rather than failing the
     /// entire batch.
-    pub async fn record_entities_batch(&self, entities: &[(String, Value)]) -> Result<(), AndromedaError> {
-        if entities.is_empty() {
+    pub async fn record_entities_batch(&self, entities: &[(Arc<str>, Arc<Value>)]) -> Result<(), AndromedaError> {
+        let prepared = Self::prepare_batch(entities);
+        if prepared.tea_entries.is_empty() && prepared.scope_entries.is_empty() {
             return Ok(());
         }
 
-        // Phase 1: Collect all TEA entries from all entities.
-        // Each entry is paired with its "pending history" data so we can
-        // build history rows once we have the TEA UUIDs.
-        struct PendingHistory {
-            time: DateTime<Utc>,
-            db_params: DbValueParams,
-            instance_id: String,
-            observed_at: Option<DateTime<Utc>>,
-            metadata: Option<Value>,
+        let tea_results = self.repo.upsert_tea_batch(&prepared.tea_entries).await?;
+        let history_entries = Self::build_history_entries(&prepared, &tea_results);
+        self.repo.insert_history_batch(&history_entries).await?;
+
+        if !prepared.scope_entries.is_empty() {
+            self.repo.insert_scope_history_batch(&prepared.scope_entries).await?;
         }
 
+        Ok(())
+    }
+
+    /// Transactional variant of [`Self::record_entities_batch`]. Writes all
+    /// temporal rows inside the caller-provided transaction so the entity
+    /// INSERT and temporal history share a single commit fsync and roll
+    /// back atomically on any sub-statement failure.
+    pub async fn record_entities_batch_in_tx(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        entities: &[(Arc<str>, Arc<Value>)],
+    ) -> Result<(), AndromedaError> {
+        let prepared = Self::prepare_batch(entities);
+        if prepared.tea_entries.is_empty() && prepared.scope_entries.is_empty() {
+            return Ok(());
+        }
+
+        let tea_results = self.repo.upsert_tea_batch_in_tx(tx, &prepared.tea_entries).await?;
+        let history_entries = Self::build_history_entries(&prepared, &tea_results);
+        self.repo.insert_history_batch_in_tx(tx, &history_entries).await?;
+
+        if !prepared.scope_entries.is_empty() {
+            self.repo.insert_scope_history_batch_in_tx(tx, &prepared.scope_entries).await?;
+        }
+
+        Ok(())
+    }
+
+    fn prepare_batch(entities: &[(Arc<str>, Arc<Value>)]) -> PreparedBatch {
         let mut tea_entries = Vec::new();
         let mut pending_histories: Vec<PendingHistory> = Vec::new();
-        // tea_index[i] corresponds to pending_histories[i] and maps to tea_entries index
         let mut tea_index: Vec<usize> = Vec::new();
-        // Scope entries collected separately -- bypass TEA/attribute_history pipeline.
         let mut scope_entries: Vec<ScopeHistoryEntry> = Vec::new();
 
         for (entity_id, expanded) in entities {
-            let obj = match expanded {
+            let entity_id_str: &str = entity_id;
+            let obj = match expanded.as_ref() {
                 Value::Array(arr) => arr.first().and_then(|v| v.as_object()),
                 Value::Object(obj) => Some(obj),
                 _other => None,
             };
-
             let Some(obj) = obj else {
                 continue;
             };
@@ -246,14 +290,13 @@ impl TemporalRecorder {
                     continue;
                 }
 
-                // Handle scope entries: write directly to scope_history, not attribute_history.
                 if attr_name == vocab::expanded::SCOPE.as_str() {
                     if let Some(scope_arr) = attr_value.as_array() {
                         for scope_entry in scope_arr {
                             if let Some(scope_val) = scope_entry.as_object().and_then(|o| o.get("@value")).and_then(|v| v.as_str()) {
                                 scope_entries.push(ScopeHistoryEntry {
                                     time: Utc::now(),
-                                    entity_id: entity_id.clone(), // clone: owned String for batch entry
+                                    entity_id: entity_id_str.to_owned(),
                                     scope_path: scope_to_ltree(scope_val),
                                     instance_id: format!("urn:ngsi-ld:scope:instance:{}", uuid::Uuid::new_v4()),
                                 });
@@ -272,7 +315,6 @@ impl TemporalRecorder {
                     let Some(inst_obj) = instance.as_object() else {
                         continue;
                     };
-
                     if !is_ngsi_ld_attribute_instance(inst_obj) {
                         continue;
                     }
@@ -281,7 +323,7 @@ impl TemporalRecorder {
                     let typed_value = match extract_typed_value(instance, attribute_type) {
                         Ok(v) => v,
                         Err(e) => {
-                            tracing::warn!(error = %e, entity_id = %entity_id, attr = %attr_name, event = "temporal_batch_extract_failed");
+                            tracing::warn!(error = %e, entity_id = %entity_id_str, attr = %attr_name, event = "temporal_batch_extract_failed");
                             continue;
                         }
                     };
@@ -295,15 +337,14 @@ impl TemporalRecorder {
                         .as_ref()
                         .and_then(|s| DateTime::parse_from_rfc3339(s).map(|dt| dt.with_timezone(&Utc)).ok())
                         .unwrap_or_else(Utc::now);
-
                     let observed_at = observed_at_str
                         .as_ref()
                         .and_then(|s| DateTime::parse_from_rfc3339(s).map(|dt| dt.with_timezone(&Utc)).ok());
 
                     let tea_idx = tea_entries.len();
                     tea_entries.push(TeaBatchEntry {
-                        entity_id: entity_id.clone(),      // clone: owned String for batch entry
-                        attribute_name: attr_name.clone(), // clone: owned String for batch entry
+                        entity_id: entity_id_str.to_owned(),
+                        attribute_name: attr_name.clone(),
                         attribute_type,
                         dataset_id: dataset_id.map(|u| u.to_string()),
                         value_type,
@@ -320,23 +361,23 @@ impl TemporalRecorder {
             }
         }
 
-        if tea_entries.is_empty() {
-            return Ok(());
+        PreparedBatch {
+            tea_entries,
+            pending_histories,
+            tea_index,
+            scope_entries,
         }
+    }
 
-        // Phase 2: Bulk upsert all TEA entries in a single SQL round-trip.
-        let tea_results = self.repo.upsert_tea_batch(&tea_entries).await?;
-
-        // Build a lookup map: (entity_id, attribute_name, dataset_id) -> tea_id
+    fn build_history_entries(prepared: &PreparedBatch, tea_results: &[crate::repository::temporal::rows::TeaBatchResultRow]) -> Vec<HistoryBatchEntry> {
         let mut tea_id_map: std::collections::HashMap<(&str, &str, Option<&str>), uuid::Uuid> = std::collections::HashMap::with_capacity(tea_results.len());
-        for r in &tea_results {
+        for r in tea_results {
             tea_id_map.insert((r.entity_id.as_str(), r.attribute_name.as_str(), r.dataset_id.as_deref()), r.id);
         }
 
-        // Phase 3: Build history entries by resolving TEA UUIDs from the map.
-        let mut history_entries = Vec::with_capacity(pending_histories.len());
-        for (i, ph) in pending_histories.into_iter().enumerate() {
-            let tea_entry = &tea_entries[tea_index[i]];
+        let mut history_entries = Vec::with_capacity(prepared.pending_histories.len());
+        for (i, ph) in prepared.pending_histories.iter().enumerate() {
+            let tea_entry = &prepared.tea_entries[prepared.tea_index[i]];
             let tea_id = match tea_id_map.get(&(tea_entry.entity_id.as_str(), tea_entry.attribute_name.as_str(), tea_entry.dataset_id.as_deref())) {
                 Some(id) => *id,
                 None => {
@@ -348,32 +389,22 @@ impl TemporalRecorder {
                     continue;
                 }
             };
-
             history_entries.push(HistoryBatchEntry {
                 time: ph.time,
                 tea_id,
                 value_number: ph.db_params.value_number,
-                value_string: ph.db_params.value_string,
+                value_string: ph.db_params.value_string.clone(),
                 value_bool: ph.db_params.value_bool,
-                value_geo: ph.db_params.value_geo,
-                value_object: ph.db_params.value_object,
+                value_geo: ph.db_params.value_geo.clone(),
+                value_object: ph.db_params.value_object.clone(),
                 value_datetime: ph.db_params.value_datetime,
-                value_uri: ph.db_params.value_uri,
-                instance_id: ph.instance_id,
+                value_uri: ph.db_params.value_uri.clone(),
+                instance_id: ph.instance_id.clone(),
                 observed_at: ph.observed_at,
-                metadata: ph.metadata,
+                metadata: ph.metadata.clone(),
             });
         }
-
-        // Phase 4: Bulk insert all history rows in a single transaction.
-        self.repo.insert_history_batch(&history_entries).await?;
-
-        // Phase 5: Bulk insert scope history entries (separate from attribute pipeline).
-        if !scope_entries.is_empty() {
-            self.repo.insert_scope_history_batch(&scope_entries).await?;
-        }
-
-        Ok(())
+        history_entries
     }
 
     /// Record a tombstone for a deleted attribute (soft-delete).
