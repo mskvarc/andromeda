@@ -47,6 +47,8 @@ pub struct OutboxWriteConfig {
 pub struct BatchExecutionConfig {
     /// Maximum number of concurrent entity preparations.
     pub concurrency: usize,
+    /// Maximum number of chunks dispatched in parallel during large-batch processing.
+    pub chunk_concurrency: usize,
     /// Maximum number of entities processed per chunk in large-batch mode.
     pub chunk_size: usize,
     /// Entity-count threshold that enables chunked large-batch processing.
@@ -79,6 +81,7 @@ pub struct EntityService {
     batch_async_side_effects: Option<BatchSideEffectDispatcherConfig>,
     batch_activity: BatchActivityTracker,
     batch_chunk_size: usize,
+    batch_chunk_concurrency: usize,
     batch_concurrency: usize,
     batch_large_threshold: usize,
     batch_prepare_blocking_threshold: usize,
@@ -111,6 +114,7 @@ impl EntityService {
             batch_async_side_effects,
             batch_activity,
             batch_chunk_size: batch_config.chunk_size.max(1),
+            batch_chunk_concurrency: batch_config.chunk_concurrency.max(1),
             batch_concurrency: batch_config.concurrency.max(1),
             batch_large_threshold: batch_config.large_threshold.max(1),
             batch_prepare_blocking_threshold: batch_config.prepare_blocking_threshold.max(1),

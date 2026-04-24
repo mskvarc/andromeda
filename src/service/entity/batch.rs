@@ -190,7 +190,7 @@ impl EntityService {
         let execution = self.prepare_execution(entities.len());
         let results: Vec<_> = stream::iter(entities.iter().copied())
             .map(|entity| async move { self.prepare_entity(entity, context, execution).await })
-            .buffer_unordered(self.batch_concurrency)
+            .buffered(self.batch_concurrency)
             .collect()
             .await;
 
@@ -727,9 +727,16 @@ impl EntityService {
         }
 
         let chunk_len = self.batch_chunk_len(deduped.len());
+        let batch_size = entities.len();
+        let chunk_results: Vec<Result<BatchResult, AndromedaError>> = stream::iter(deduped.chunks(chunk_len))
+            .map(|chunk| async move { self.batch_create_chunk(chunk, context, batch_size).await })
+            .buffered(self.batch_chunk_concurrency)
+            .collect()
+            .await;
+
         let mut success = Vec::new();
-        for chunk in deduped.chunks(chunk_len) {
-            let chunk_result = self.batch_create_chunk(chunk, context, entities.len()).await?;
+        for result in chunk_results {
+            let chunk_result = result?;
             success.extend(chunk_result.success);
             errors.extend(chunk_result.errors);
         }
@@ -755,66 +762,83 @@ impl EntityService {
             }
         }
 
-        let mut success = Vec::new();
         let chunk_len = self.batch_chunk_len(unique_ids.len());
-        for chunk in unique_ids.chunks(chunk_len) {
-            let deleted = self.repo.delete_batch(chunk).await?;
-            let deleted_set: HashSet<&str> = deleted.iter().map(|entity| entity.id.as_str()).collect();
-            for id in chunk {
-                if !deleted_set.contains(id.as_str()) {
-                    errors.push((id.clone(), AndromedaError::entity_not_found(id)));
-                }
-            }
-
-            let mut change_events = Vec::with_capacity(deleted.len() * 2);
-            for deleted_entity in deleted {
-                let entity_types = extract_entity_types(&deleted_entity.payload);
-                let attr_keys = extract_attribute_keys(&deleted_entity.payload);
-                let sys_attrs = SysAttrsSnapshot {
-                    created_at: deleted_entity.created_at,
-                    modified_at: deleted_entity.modified_at,
-                    expires_at: deleted_entity.expires_at,
-                };
-
-                let entity_uri: Uri = match deleted_entity.id.parse() {
-                    Ok(uri) => uri,
-                    Err(_error) => {
-                        tracing::error!(entity_id = %deleted_entity.id, event = "entity_uri_parse_failed");
-                        success.push(deleted_entity.id);
-                        continue;
-                    }
-                };
-
-                if !attr_keys.is_empty() {
-                    change_events.push(
-                        ChangeEvent::new(entity_uri.clone(), entity_types.clone(), TriggerReason::AttributeDeleted)
-                            .with_changed_attributes(attr_keys)
-                            .with_snapshot(deleted_entity.payload.clone())
-                            .with_previous(deleted_entity.payload.clone())
-                            .with_sys_attrs(Some(sys_attrs.clone())),
-                    );
-                }
-
-                change_events.push(
-                    ChangeEvent::new(entity_uri, entity_types, TriggerReason::EntityDeleted)
-                        .with_snapshot(deleted_entity.payload.clone())
-                        .with_previous(deleted_entity.payload)
-                        .with_sys_attrs(Some(sys_attrs)),
-                );
-                success.push(deleted_entity.id);
-            }
-
-            self.dispatch_batch_side_effects(
-                entity_ids.len(),
-                BatchSideEffectJob {
-                    temporal_entities: Vec::new(),
-                    change_events,
-                },
-            )
+        let batch_size = entity_ids.len();
+        let chunk_results: Vec<Result<(Vec<String>, Vec<(String, AndromedaError)>), AndromedaError>> = stream::iter(unique_ids.chunks(chunk_len))
+            .map(|chunk| async move { self.batch_delete_chunk(chunk, batch_size).await })
+            .buffered(self.batch_chunk_concurrency)
+            .collect()
             .await;
+
+        let mut success = Vec::new();
+        for result in chunk_results {
+            let (chunk_success, chunk_errors) = result?;
+            success.extend(chunk_success);
+            errors.extend(chunk_errors);
         }
 
         Ok(BatchResult { success, errors })
+    }
+
+    async fn batch_delete_chunk(&self, chunk: &[String], original_batch_size: usize) -> Result<(Vec<String>, Vec<(String, AndromedaError)>), AndromedaError> {
+        let deleted = self.repo.delete_batch(chunk).await?;
+        let deleted_set: HashSet<&str> = deleted.iter().map(|entity| entity.id.as_str()).collect();
+        let mut errors = Vec::new();
+        for id in chunk {
+            if !deleted_set.contains(id.as_str()) {
+                errors.push((id.clone(), AndromedaError::entity_not_found(id)));
+            }
+        }
+
+        let mut success = Vec::new();
+        let mut change_events = Vec::with_capacity(deleted.len() * 2);
+        for deleted_entity in deleted {
+            let entity_types = extract_entity_types(&deleted_entity.payload);
+            let attr_keys = extract_attribute_keys(&deleted_entity.payload);
+            let sys_attrs = SysAttrsSnapshot {
+                created_at: deleted_entity.created_at,
+                modified_at: deleted_entity.modified_at,
+                expires_at: deleted_entity.expires_at,
+            };
+
+            let entity_uri: Uri = match deleted_entity.id.parse() {
+                Ok(uri) => uri,
+                Err(_error) => {
+                    tracing::error!(entity_id = %deleted_entity.id, event = "entity_uri_parse_failed");
+                    success.push(deleted_entity.id);
+                    continue;
+                }
+            };
+
+            if !attr_keys.is_empty() {
+                change_events.push(
+                    ChangeEvent::new(entity_uri.clone(), entity_types.clone(), TriggerReason::AttributeDeleted)
+                        .with_changed_attributes(attr_keys)
+                        .with_snapshot(deleted_entity.payload.clone())
+                        .with_previous(deleted_entity.payload.clone())
+                        .with_sys_attrs(Some(sys_attrs.clone())),
+                );
+            }
+
+            change_events.push(
+                ChangeEvent::new(entity_uri, entity_types, TriggerReason::EntityDeleted)
+                    .with_snapshot(deleted_entity.payload.clone())
+                    .with_previous(deleted_entity.payload)
+                    .with_sys_attrs(Some(sys_attrs)),
+            );
+            success.push(deleted_entity.id);
+        }
+
+        self.dispatch_batch_side_effects(
+            original_batch_size,
+            BatchSideEffectJob {
+                temporal_entities: Vec::new(),
+                change_events,
+            },
+        )
+        .await;
+
+        Ok((success, errors))
     }
 
     // -------------------------------------------------------------------------
@@ -824,11 +848,18 @@ impl EntityService {
     /// Update attributes of multiple entities in a single batch operation (NGSI-LD 5.6.9).
     pub async fn batch_update(&self, entities: &[Entity], context: &ContextSpec, no_overwrite: bool) -> Result<BatchResult, AndromedaError> {
         self.batch_activity.record_activity();
-        let mut errors = Vec::new();
-        let mut success = Vec::new();
         let chunk_len = self.batch_chunk_len(entities.len());
-        for chunk in entities.chunks(chunk_len) {
-            let chunk_result = self.batch_update_chunk(chunk, context, no_overwrite, entities.len()).await?;
+        let batch_size = entities.len();
+        let chunk_results: Vec<Result<BatchResult, AndromedaError>> = stream::iter(entities.chunks(chunk_len))
+            .map(|chunk| async move { self.batch_update_chunk(chunk, context, no_overwrite, batch_size).await })
+            .buffered(self.batch_chunk_concurrency)
+            .collect()
+            .await;
+
+        let mut success = Vec::new();
+        let mut errors = Vec::new();
+        for result in chunk_results {
+            let chunk_result = result?;
             success.extend(chunk_result.success);
             errors.extend(chunk_result.errors);
         }
@@ -843,11 +874,18 @@ impl EntityService {
     /// Merge partial updates into multiple entities in a single batch operation.
     pub async fn batch_merge(&self, entities: &[Entity], context: &ContextSpec) -> Result<BatchResult, AndromedaError> {
         self.batch_activity.record_activity();
-        let mut errors = Vec::new();
-        let mut success = Vec::new();
         let chunk_len = self.batch_chunk_len(entities.len());
-        for chunk in entities.chunks(chunk_len) {
-            let chunk_result = self.batch_merge_chunk(chunk, context, entities.len()).await?;
+        let batch_size = entities.len();
+        let chunk_results: Vec<Result<BatchResult, AndromedaError>> = stream::iter(entities.chunks(chunk_len))
+            .map(|chunk| async move { self.batch_merge_chunk(chunk, context, batch_size).await })
+            .buffered(self.batch_chunk_concurrency)
+            .collect()
+            .await;
+
+        let mut success = Vec::new();
+        let mut errors = Vec::new();
+        for result in chunk_results {
+            let chunk_result = result?;
             success.extend(chunk_result.success);
             errors.extend(chunk_result.errors);
         }
@@ -864,19 +902,32 @@ impl EntityService {
         self.batch_activity.record_activity();
         let deduped = Self::dedupe_upsert_entities(entities);
         let chunk_len = self.batch_chunk_len(deduped.len());
+        let batch_size = entities.len();
+
+        type ChunkOutcome = (BatchResult, Vec<(String, AndromedaError)>, Vec<String>);
+        let chunk_results: Vec<Result<ChunkOutcome, AndromedaError>> = stream::iter(deduped.chunks(chunk_len))
+            .map(|chunk| async move {
+                let mut chunk_errors = Vec::new();
+                let outcome = if update_mode {
+                    self.batch_upsert_update_chunk(chunk, context, &mut chunk_errors, batch_size).await
+                } else {
+                    self.batch_upsert_replace_chunk(chunk, context, &mut chunk_errors, batch_size).await
+                };
+                outcome.map(|(result, created)| (result, chunk_errors, created))
+            })
+            .buffered(self.batch_chunk_concurrency)
+            .collect()
+            .await;
+
         let mut errors = Vec::new();
         let mut success = Vec::new();
         let mut created = Vec::new();
-
-        for chunk in deduped.chunks(chunk_len) {
-            let (chunk_result, mut chunk_created) = if update_mode {
-                self.batch_upsert_update_chunk(chunk, context, &mut errors, entities.len()).await?
-            } else {
-                self.batch_upsert_replace_chunk(chunk, context, &mut errors, entities.len()).await?
-            };
+        for result in chunk_results {
+            let (chunk_result, chunk_errors, mut chunk_created) = result?;
             success.extend(chunk_result.success);
-            created.append(&mut chunk_created);
+            errors.extend(chunk_errors);
             errors.extend(chunk_result.errors);
+            created.append(&mut chunk_created);
         }
 
         Ok((BatchResult { success, errors }, created))

@@ -295,11 +295,12 @@ pub async fn build_tenant_state(
 
     let batch_activity = BatchActivityTracker::new();
 
-    let batch_concurrency = config
-        .performance
-        .batch_concurrency
-        .unwrap_or_else(|| usize::min(config.database.max_connections as usize, 25))
-        .max(1);
+    let pool_size = match tenant {
+        TenantRef::UnnamedDefault => config.database.max_connections as usize,
+        TenantRef::Named(_) => config.tenancy.tenant_max_connections as usize,
+    };
+    let batch_concurrency = config.performance.batch_concurrency.unwrap_or_else(|| usize::min(pool_size, 25)).max(1);
+    let batch_chunk_concurrency = config.performance.batch_chunk_concurrency.unwrap_or_else(|| (pool_size / 2).max(1)).max(1);
     let batch_side_effects = if let Some(threshold) = config.performance.batch_async_side_effect_threshold {
         let (sender, receiver) = tokio::sync::mpsc::channel(config.performance.batch_side_effect_queue_capacity.max(1));
         let temporal_repo = Arc::new(TemporalRepository::new(&pool).with_features(timescale_features));
@@ -328,6 +329,7 @@ pub async fn build_tenant_state(
         Some(change_tx.clone()),
         BatchExecutionConfig {
             concurrency: batch_concurrency,
+            chunk_concurrency: batch_chunk_concurrency,
             chunk_size: config.performance.batch_chunk_size.max(1),
             large_threshold: config.performance.batch_large_threshold.max(1),
             prepare_blocking_threshold: config.performance.batch_prepare_blocking_threshold.max(1),

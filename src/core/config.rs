@@ -73,7 +73,7 @@ pub struct DatabaseConfig {
     #[config(env = "ANDROMEDA_DATABASE_URL", default = "postgres://postgres:postgres@localhost:5432/postgres")]
     pub url: String,
 
-    #[config(env = "ANDROMEDA_DATABASE_MAX_CONNECTIONS", default = 5)]
+    #[config(env = "ANDROMEDA_DATABASE_MAX_CONNECTIONS", default = 32)]
     pub max_connections: u32,
 }
 
@@ -125,7 +125,7 @@ pub struct TenancyConfig {
     /// Each tenant gets its own connection pool capped at this value,
     /// preventing a single tenant from exhausting system-wide connection
     /// limits.
-    #[config(env = "ANDROMEDA_TENANCY_TENANT_MAX_CONNECTIONS", default = 3)]
+    #[config(env = "ANDROMEDA_TENANCY_TENANT_MAX_CONNECTIONS", default = 16)]
     pub tenant_max_connections: u32,
 
     #[config(env = "ANDROMEDA_TENANCY_RUNTIME_IDLE_TTL_SECONDS", default = 900)]
@@ -150,6 +150,11 @@ pub struct PerformanceConfig {
     /// If omitted, the runtime uses `min(database.max_connections, 25)`.
     #[config(env = "ANDROMEDA_PERFORMANCE_BATCH_CONCURRENCY")]
     pub batch_concurrency: Option<usize>,
+
+    /// Maximum number of chunks dispatched in parallel for large batch
+    /// operations. If omitted, the runtime uses `max(1, pool_size / 2)`.
+    #[config(env = "ANDROMEDA_PERFORMANCE_BATCH_CHUNK_CONCURRENCY")]
+    pub batch_chunk_concurrency: Option<usize>,
 
     /// Batch size used for chunked processing of large entity operation payloads.
     #[config(env = "ANDROMEDA_PERFORMANCE_BATCH_CHUNK_SIZE", default = 512)]
@@ -443,6 +448,11 @@ fn validate_config(config: &RuntimeConfig) -> Result<(), AndromedaError> {
     {
         return Err(AndromedaError::internal("performance.batch_concurrency must be at least 1"));
     }
+    if let Some(batch_chunk_concurrency) = config.performance.batch_chunk_concurrency
+        && batch_chunk_concurrency == 0
+    {
+        return Err(AndromedaError::internal("performance.batch_chunk_concurrency must be at least 1"));
+    }
     if config.performance.batch_chunk_size == 0 {
         return Err(AndromedaError::internal("performance.batch_chunk_size must be at least 1"));
     }
@@ -547,7 +557,7 @@ mod tests {
             },
             database: DatabaseConfig {
                 url: "postgres://postgres:postgres@localhost:5432/postgres".to_string(),
-                max_connections: 5,
+                max_connections: 32,
             },
             jsonld: JsonLdConfig {
                 allow_remote_contexts: true,
@@ -565,7 +575,7 @@ mod tests {
             tenancy: TenancyConfig {
                 enabled: true,
                 tenant_db_prefix: "andromeda_tenant".to_string(),
-                tenant_max_connections: 3,
+                tenant_max_connections: 16,
                 runtime_idle_ttl_seconds: 900,
                 runtime_max_cached: 64,
                 janitor_interval_seconds: 30,
@@ -575,6 +585,7 @@ mod tests {
             },
             performance: PerformanceConfig {
                 batch_concurrency: None,
+                batch_chunk_concurrency: None,
                 batch_chunk_size: 512,
                 batch_large_threshold: 512,
                 batch_prepare_blocking_threshold: 128,
