@@ -32,13 +32,7 @@ fn link_header() -> String {
 
 /// Delete every named-tenant registry row so the broker's next orphan
 /// sweep closes the per-tenant pools they refer to.
-///
-/// We intentionally do not drop the underlying tenant databases: doing so
-/// races broker workers that still hold open connections and forces the
-/// (slow) migration chain to rerun on next tenant create. Instead the test
-/// harness deletes the registry rows, then triggers `evictOrphans` on the
-/// broker so the cached runtimes (and their pools) shut down in place.
-async fn clean_named_tenant_databases(main_pool: &PgPool) {
+async fn clean_named_tenant_registry(main_pool: &PgPool) {
     let has_tenants_table: bool = sqlx::query_scalar("SELECT to_regclass('public.tenants') IS NOT NULL")
         .fetch_one(main_pool)
         .await
@@ -51,14 +45,55 @@ async fn clean_named_tenant_databases(main_pool: &PgPool) {
 
 async fn reset_broker_state() {
     let pool = shared_pool().await.expect("acquire shared test pool");
-    clean_named_tenant_databases(&pool).await;
+    clean_named_tenant_registry(&pool).await;
+    // Delete order: registry row first so the broker considers runtimes
+    // orphans, then evictOrphans so it closes its own sqlx pools, then
+    // DROP DATABASE to kill the per-tenant TimescaleDB background-worker
+    // processes that otherwise hold a `max_connections` slot each for the
+    // lifetime of the database. TRUNCATE must run last on a server with
+    // free slots.
+    evict_broker_orphans().await;
+    drop_orphan_tenant_databases(&pool).await;
     sqlx::query(TRUNCATE_ALL).execute(&pool).await.expect("truncate test tables");
-    // Force the broker to evict the now-orphan tenant runtimes immediately
-    // rather than waiting for the next janitor tick. Without this, cached
-    // per-tenant pools accumulate across the serial suite and exhaust
-    // PostgreSQL `max_connections`, producing PoolTimedOut panics in later
-    // tests.
-    let _ = client().post(format!("{BASE_URL}/tenants/evictOrphans")).send().await;
+}
+
+/// POST `/tenants/evictOrphans` and assert the broker accepted it.
+///
+/// A silent failure here (network error, 404 because the broker predates
+/// commit `acb1dcd`, 5xx) would leave orphan tenant pools in place. Panic
+/// with the actual error so the failure mode stays visible.
+async fn evict_broker_orphans() {
+    let response = client()
+        .post(format!("{BASE_URL}/tenants/evictOrphans"))
+        .send()
+        .await
+        .expect("POST /tenants/evictOrphans failed - is the broker running and up to date?");
+    let status = response.status();
+    assert!(
+        status.is_success(),
+        "POST /tenants/evictOrphans returned {status} - broker likely predates the evictOrphans endpoint (commit acb1dcd)"
+    );
+}
+
+/// Drop every `andromeda_tenant_*` database (except the current one).
+///
+/// Each tenant database, once touched, spawns a permanent
+/// `TimescaleDB Background Worker Scheduler` backend that holds a
+/// `max_connections` slot until the database is dropped. The broker's
+/// `pool.close()` cannot remove it — only `DROP DATABASE` does. `WITH
+/// (FORCE)` (PostgreSQL 13+) terminates any residual backends so the drop
+/// succeeds even if the broker's sqlx pool has not yet fully released.
+async fn drop_orphan_tenant_databases(main_pool: &PgPool) {
+    let current: String = sqlx::query_scalar("SELECT current_database()").fetch_one(main_pool).await.unwrap_or_default();
+    let dbs: Vec<String> = sqlx::query_scalar("SELECT datname FROM pg_database WHERE datname LIKE 'andromeda_tenant_%' AND datname <> $1")
+        .bind(&current)
+        .fetch_all(main_pool)
+        .await
+        .unwrap_or_default();
+    for db in dbs {
+        let sql = format!("DROP DATABASE IF EXISTS \"{db}\" WITH (FORCE)");
+        let _ = sqlx::query(&sql).execute(main_pool).await;
+    }
 }
 
 fn unique_entity_id(prefix: &str) -> String {
