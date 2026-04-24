@@ -159,14 +159,13 @@ pub struct TemporalQueryResult {
 }
 
 impl TemporalService {
-    /// Create a new temporal service with the given connection pool, JSON-LD engine, and default lastN cap.
-    pub fn new(pool: &sqlx::postgres::PgPool, engine: JsonLdEngine, default_last_n: u32) -> TemporalService {
-        let repo = Arc::new(TemporalRepository::new(pool));
-        let recorder = TemporalRecorder::new(repo.clone()); // clone: Arc ref-count bump; repo is shared between service and recorder
+    /// Create a new temporal service with the given connection pool, shared temporal repository, JSON-LD engine, and default lastN cap.
+    pub fn new(pool: &sqlx::postgres::PgPool, temporal_repo: Arc<TemporalRepository>, engine: JsonLdEngine, default_last_n: u32) -> TemporalService {
+        let recorder = TemporalRecorder::new(temporal_repo.clone()); // clone: Arc ref-count bump; repo is shared between service and recorder
         let entity_repo = EntityRepository::new(pool);
 
         TemporalService {
-            repo,
+            repo: temporal_repo,
             recorder,
             entity_repo,
             engine,

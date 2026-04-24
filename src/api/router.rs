@@ -301,10 +301,17 @@ pub async fn build_tenant_state(
     };
     let batch_concurrency = config.performance.batch_concurrency.unwrap_or_else(|| usize::min(pool_size, 25)).max(1);
     let batch_chunk_concurrency = config.performance.batch_chunk_concurrency.unwrap_or_else(|| (pool_size / 2).max(1)).max(1);
+
+    let temporal_repo = Arc::new(TemporalRepository::new(&pool).with_features(timescale_features));
+    if config.performance.preload_attribute_names
+        && let Err(error) = temporal_repo.preload_attribute_names().await
+    {
+        tracing::warn!(error = %error, event = "attribute_names_preload_failed");
+    }
+
     let batch_side_effects = if let Some(threshold) = config.performance.batch_async_side_effect_threshold {
         let (sender, receiver) = tokio::sync::mpsc::channel(config.performance.batch_side_effect_queue_capacity.max(1));
-        let temporal_repo = Arc::new(TemporalRepository::new(&pool).with_features(timescale_features));
-        let worker = BatchSideEffectWorker::new(temporal_repo, Some(change_tx.clone()), receiver);
+        let worker = BatchSideEffectWorker::new(Arc::clone(&temporal_repo), Some(change_tx.clone()), receiver);
         worker_handles.push(tokio::spawn(worker.run()));
         Some(BatchSideEffectDispatcherConfig {
             threshold: threshold.max(1),
@@ -325,6 +332,7 @@ pub async fn build_tenant_state(
 
     let entity_service = Arc::new(EntityService::new(
         &pool,
+        Arc::clone(&temporal_repo),
         engine.clone(),
         Some(change_tx.clone()),
         BatchExecutionConfig {
@@ -344,7 +352,12 @@ pub async fn build_tenant_state(
             None
         },
     ));
-    let temporal_service = Arc::new(TemporalService::new(&pool, engine.clone(), config.temporal.default_last_n));
+    let temporal_service = Arc::new(TemporalService::new(
+        &pool,
+        Arc::clone(&temporal_repo),
+        engine.clone(),
+        config.temporal.default_last_n,
+    ));
     let context_service = Arc::new(JsonLdContextService::new(&pool, engine.clone()));
     let subscription_service = Arc::new(SubscriptionService::new(&pool, engine.clone(), Some(sub_change_tx.clone())));
     let csr_service = Arc::new(CsourceRegistrationService::new(&pool, engine.clone(), Some(csr_change_tx.clone())));

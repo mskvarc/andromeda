@@ -156,6 +156,12 @@ pub struct PerformanceConfig {
     #[config(env = "ANDROMEDA_PERFORMANCE_BATCH_CHUNK_CONCURRENCY")]
     pub batch_chunk_concurrency: Option<usize>,
 
+    /// Populate the attribute-name dictionary cache from the database at
+    /// tenant startup. Eliminates cold-hit `INSERT ... ON CONFLICT DO NOTHING`
+    /// round-trips on first use of each attribute IRI.
+    #[config(env = "ANDROMEDA_PERFORMANCE_PRELOAD_ATTRIBUTE_NAMES", default = true)]
+    pub preload_attribute_names: bool,
+
     /// Batch size used for chunked processing of large entity operation payloads.
     #[config(env = "ANDROMEDA_PERFORMANCE_BATCH_CHUNK_SIZE", default = 512)]
     pub batch_chunk_size: usize,
@@ -586,6 +592,7 @@ mod tests {
             performance: PerformanceConfig {
                 batch_concurrency: None,
                 batch_chunk_concurrency: None,
+                preload_attribute_names: true,
                 batch_chunk_size: 512,
                 batch_large_threshold: 512,
                 batch_prepare_blocking_threshold: 128,

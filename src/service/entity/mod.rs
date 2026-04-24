@@ -90,9 +90,10 @@ pub struct EntityService {
 }
 
 impl EntityService {
-    /// Create a new entity service backed by the given connection pool.
+    /// Create a new entity service backed by the given connection pool and shared temporal repository.
     pub fn new(
         pool: &PgPool,
+        temporal_repo: Arc<TemporalRepository>,
         engine: JsonLdEngine,
         change_tx: Option<broadcast::Sender<ChangeEvent>>,
         batch_config: BatchExecutionConfig,
@@ -101,7 +102,6 @@ impl EntityService {
         outbox: Option<OutboxWriteConfig>,
     ) -> EntityService {
         let repo = EntityRepository::new(pool);
-        let temporal_repo = Arc::new(TemporalRepository::new(pool));
         let temporal_recorder = TemporalRecorder::new(temporal_repo);
 
         debug!("Entity service created!");

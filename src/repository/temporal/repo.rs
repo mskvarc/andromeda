@@ -45,6 +45,19 @@ impl TemporalRepository {
         self
     }
 
+    /// Populate the in-process `attribute_names` dictionary cache from the
+    /// database. Eliminates the cold-hit `INSERT ... ON CONFLICT DO NOTHING`
+    /// round-trip otherwise incurred on first use of each attribute IRI.
+    pub async fn preload_attribute_names(&self) -> Result<(), AndromedaError> {
+        let rows = sqlx::query("SELECT id, name FROM attribute_names").fetch_all(&self.pool).await?;
+        for row in rows {
+            let id: i16 = row.get("id");
+            let name: String = row.get("name");
+            self.attr_name_cache.insert(name, id);
+        }
+        Ok(())
+    }
+
     async fn resolve_attribute_name_ids(&self, names: &[&str]) -> Result<HashMap<String, i16>, AndromedaError> {
         if names.is_empty() {
             return Ok(HashMap::new());
