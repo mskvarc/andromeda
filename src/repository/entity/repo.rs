@@ -521,12 +521,12 @@ impl EntityRepository {
                 d.id,
                 ARRAY(SELECT jsonb_array_elements_text(d.types_json)),
                 ARRAY(SELECT jsonb_array_elements_text(d.scope_paths_json)::ltree),
-                d.payload,
+                d.payload::jsonb,
                 CASE WHEN d.loc IS NOT NULL THEN ST_MakeValid(ST_GeomFromEWKB(d.loc)) ELSE NULL END,
                 CASE WHEN d.obs IS NOT NULL THEN ST_MakeValid(ST_GeomFromEWKB(d.obs)) ELSE NULL END,
                 CASE WHEN d.ops IS NOT NULL THEN ST_MakeValid(ST_GeomFromEWKB(d.ops)) ELSE NULL END,
                 d.expires_at
-            FROM UNNEST($1::text[], $2::jsonb[], $3::jsonb[], $4::jsonb[], $5::bytea[], $6::bytea[], $7::bytea[], $8::timestamptz[])
+            FROM UNNEST($1::text[], $2::jsonb[], $3::jsonb[], $4::text[], $5::bytea[], $6::bytea[], $7::bytea[], $8::timestamptz[])
                 AS d(id, types_json, scope_paths_json, payload, loc, obs, ops, expires_at)
             ON CONFLICT (id) DO NOTHING
             RETURNING id
@@ -535,7 +535,7 @@ impl EntityRepository {
         .bind(&entities.ids)
         .bind(&entities.types_json)
         .bind(&entities.scope_paths_json)
-        .bind(&entities.payloads)
+        .bind(&entities.payload_json)
         .bind(&entities.locations)
         .bind(&entities.obs_spaces)
         .bind(&entities.op_spaces)
@@ -593,7 +593,7 @@ impl EntityRepository {
         let rows: Vec<(String,)> = sqlx::query_as(
             r#"
             UPDATE entities SET
-                payload = d.payload,
+                payload = d.payload::jsonb,
                 types = ARRAY(SELECT jsonb_array_elements_text(d.types_json)),
                 scope_paths = ARRAY(SELECT jsonb_array_elements_text(d.scope_paths_json)::ltree),
                 location = CASE WHEN d.loc IS NOT NULL THEN ST_MakeValid(ST_GeomFromEWKB(d.loc)) ELSE NULL END,
@@ -601,7 +601,7 @@ impl EntityRepository {
                 operation_space = CASE WHEN d.ops IS NOT NULL THEN ST_MakeValid(ST_GeomFromEWKB(d.ops)) ELSE NULL END,
                 modified_at = NOW(),
                 expires_at = COALESCE(d.expires_at, entities.expires_at)
-            FROM UNNEST($1::text[], $2::jsonb[], $3::jsonb[], $4::jsonb[], $5::bytea[], $6::bytea[], $7::bytea[], $8::timestamptz[])
+            FROM UNNEST($1::text[], $2::jsonb[], $3::jsonb[], $4::text[], $5::bytea[], $6::bytea[], $7::bytea[], $8::timestamptz[])
                 AS d(id, types_json, scope_paths_json, payload, loc, obs, ops, expires_at)
             WHERE entities.id = d.id
             RETURNING entities.id
@@ -610,7 +610,7 @@ impl EntityRepository {
         .bind(&entities.ids)
         .bind(&entities.types_json)
         .bind(&entities.scope_paths_json)
-        .bind(&entities.payloads)
+        .bind(&entities.payload_json)
         .bind(&entities.locations)
         .bind(&entities.obs_spaces)
         .bind(&entities.op_spaces)
@@ -642,12 +642,12 @@ impl EntityRepository {
                 d.id,
                 ARRAY(SELECT jsonb_array_elements_text(d.types_json)),
                 ARRAY(SELECT jsonb_array_elements_text(d.scope_paths_json)::ltree),
-                d.payload,
+                d.payload::jsonb,
                 CASE WHEN d.loc IS NOT NULL THEN ST_MakeValid(ST_GeomFromEWKB(d.loc)) ELSE NULL END,
                 CASE WHEN d.obs IS NOT NULL THEN ST_MakeValid(ST_GeomFromEWKB(d.obs)) ELSE NULL END,
                 CASE WHEN d.ops IS NOT NULL THEN ST_MakeValid(ST_GeomFromEWKB(d.ops)) ELSE NULL END,
                 d.expires_at
-            FROM UNNEST($1::text[], $2::jsonb[], $3::jsonb[], $4::jsonb[], $5::bytea[], $6::bytea[], $7::bytea[], $8::timestamptz[])
+            FROM UNNEST($1::text[], $2::jsonb[], $3::jsonb[], $4::text[], $5::bytea[], $6::bytea[], $7::bytea[], $8::timestamptz[])
                 AS d(id, types_json, scope_paths_json, payload, loc, obs, ops, expires_at)
             ON CONFLICT (id) DO UPDATE SET
                 payload = EXCLUDED.payload,
@@ -664,7 +664,7 @@ impl EntityRepository {
         .bind(&entities.ids)
         .bind(&entities.types_json)
         .bind(&entities.scope_paths_json)
-        .bind(&entities.payloads)
+        .bind(&entities.payload_json)
         .bind(&entities.locations)
         .bind(&entities.obs_spaces)
         .bind(&entities.op_spaces)

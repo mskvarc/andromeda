@@ -181,8 +181,12 @@ mod tests {
         columns.types_json.push(serde_json::json!(["https://example.com/Building"]));
         columns.scope_paths_json.push(serde_json::json!(["root.a"]));
         columns.scope_paths_json.push(serde_json::json!([]));
-        columns.payloads.push(serde_json::json!({"@id": "urn:ngsi-ld:Building:1"}));
-        columns.payloads.push(serde_json::json!({"@id": "urn:ngsi-ld:Building:2"}));
+        columns
+            .push_payload(serde_json::json!({"@id": "urn:ngsi-ld:Building:1"}))
+            .expect("payload serialises");
+        columns
+            .push_payload(serde_json::json!({"@id": "urn:ngsi-ld:Building:2"}))
+            .expect("payload serialises");
         columns.locations.push(Some(Wkb::from_postgis_bytes(Bytes::from_static(&[0x01, 0x02, 0x03]))));
         columns.locations.push(None);
         columns.obs_spaces.push(None);

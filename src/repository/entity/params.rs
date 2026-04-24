@@ -1,6 +1,6 @@
 //! Repository input parameter types for entity persistence.
 
-use crate::domain::geometry::Wkb;
+use crate::{core::error::AndromedaError, domain::geometry::Wkb};
 use chrono::{DateTime, Utc};
 use serde_json::Value;
 
@@ -78,8 +78,14 @@ pub struct PreparedEntityColumns {
     pub types_json: Vec<Value>,
     /// Scope arrays as JSON.
     pub scope_paths_json: Vec<Value>,
-    /// Expanded payloads.
+    /// Expanded payloads retained for in-process side-effect consumers
+    /// (temporal recorder, change events) that still require a DOM view.
     pub payloads: Vec<Value>,
+    /// Pre-serialised JSON text for each payload, produced once via
+    /// `sonic_rs::to_string` so that the SQL bind path can pass the wire
+    /// bytes directly to Postgres (bound as `text[]` and cast to `jsonb`)
+    /// instead of walking the `serde_json::Value` DOM per row inside sqlx.
+    pub payload_json: Vec<String>,
     /// Location WKB buffers.
     pub locations: Vec<Option<Wkb>>,
     /// Observation-space WKB buffers.
@@ -98,15 +104,27 @@ impl PreparedEntityColumns {
             types_json: Vec::with_capacity(len),
             scope_paths_json: Vec::with_capacity(len),
             payloads: Vec::with_capacity(len),
+            payload_json: Vec::with_capacity(len),
             locations: Vec::with_capacity(len),
             obs_spaces: Vec::with_capacity(len),
             op_spaces: Vec::with_capacity(len),
             expires_ats: Vec::with_capacity(len),
         }
     }
+
+    /// Pre-serialise an expanded payload with `sonic_rs` and append it to both
+    /// `payloads` (DOM view) and `payload_json` (wire bytes). Always use this
+    /// rather than pushing `payloads` directly so the two parallel vectors
+    /// stay aligned.
+    pub fn push_payload(&mut self, payload: Value) -> Result<(), AndromedaError> {
+        let json = sonic_rs::to_string(&payload).map_err(|err| AndromedaError::internal(format!("serialise entity payload: {err}")))?;
+        self.payload_json.push(json);
+        self.payloads.push(payload);
+        Ok(())
+    }
 }
 
-pub(crate) fn decompose_rows(entities: Vec<PreparedEntityRow>) -> PreparedEntityColumns {
+pub(crate) fn decompose_rows(entities: Vec<PreparedEntityRow>) -> Result<PreparedEntityColumns, AndromedaError> {
     let len = entities.len();
     let mut columns = PreparedEntityColumns::with_capacity(len);
 
@@ -114,12 +132,12 @@ pub(crate) fn decompose_rows(entities: Vec<PreparedEntityRow>) -> PreparedEntity
         columns.ids.push(e.id);
         columns.types_json.push(e.types_json);
         columns.scope_paths_json.push(e.scope_paths_json);
-        columns.payloads.push(e.payload);
+        columns.push_payload(e.payload)?;
         columns.locations.push(e.location);
         columns.obs_spaces.push(e.observation_space);
         columns.op_spaces.push(e.operation_space);
         columns.expires_ats.push(e.expires_at);
     }
 
-    columns
+    Ok(columns)
 }

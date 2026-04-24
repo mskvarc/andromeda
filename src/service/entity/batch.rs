@@ -421,7 +421,7 @@ impl EntityService {
                     columns
                         .scope_paths_json
                         .push(Value::Array(scopes.into_iter().map(|s| Value::String(sql::scope_to_ltree(&s))).collect()));
-                    columns.payloads.push(expanded);
+                    columns.push_payload(expanded)?;
                     columns.locations.push(location);
                     columns.obs_spaces.push(observation_space);
                     columns.op_spaces.push(operation_space);
@@ -554,7 +554,7 @@ impl EntityService {
             save_rows.push(row);
         }
 
-        let save_columns = decompose_rows(save_rows);
+        let save_columns = decompose_rows(save_rows)?;
 
         let mut tx = self.repo.pool().begin().await?;
         let saved_ids = EntityRepository::save_batch_in_tx(&mut tx, &save_columns).await?;
@@ -616,7 +616,7 @@ impl EntityService {
             save_rows.push(row);
         }
 
-        let save_columns = decompose_rows(save_rows);
+        let save_columns = decompose_rows(save_rows)?;
 
         let mut tx = self.repo.pool().begin().await?;
         let saved_ids = EntityRepository::save_batch_in_tx(&mut tx, &save_columns).await?;
@@ -687,7 +687,7 @@ impl EntityService {
             columns
                 .scope_paths_json
                 .push(Value::Array(scopes.into_iter().map(|s| Value::String(sql::scope_to_ltree(&s))).collect()));
-            columns.payloads.push(expanded);
+            columns.push_payload(expanded)?;
             columns.locations.push(location);
             columns.obs_spaces.push(observation_space);
             columns.op_spaces.push(operation_space);
@@ -787,7 +787,7 @@ impl EntityService {
                 created_columns
                     .scope_paths_json
                     .push(Value::Array(scopes.into_iter().map(|s| Value::String(sql::scope_to_ltree(&s))).collect()));
-                created_columns.payloads.push(expanded);
+                created_columns.push_payload(expanded)?;
                 created_columns.locations.push(location);
                 created_columns.obs_spaces.push(observation_space);
                 created_columns.op_spaces.push(operation_space);
@@ -795,7 +795,7 @@ impl EntityService {
             }
         }
 
-        let updated_columns = if updated_rows.is_empty() { None } else { Some(decompose_rows(updated_rows)) };
+        let updated_columns = if updated_rows.is_empty() { None } else { Some(decompose_rows(updated_rows)?) };
 
         let mut tx = self.repo.pool().begin().await?;
         let created_ids = if created_columns.ids.is_empty() {

@@ -403,15 +403,15 @@ impl TemporalRepository {
         let mut times = Vec::with_capacity(len);
         let mut tea_ids = Vec::with_capacity(len);
         let mut value_numbers: Vec<Option<f64>> = Vec::with_capacity(len);
-        let mut value_strings: Vec<Option<String>> = Vec::with_capacity(len);
+        let mut value_strings: Vec<Option<&str>> = Vec::with_capacity(len);
         let mut value_bools: Vec<Option<bool>> = Vec::with_capacity(len);
-        let mut value_geos: Vec<Option<Wkb>> = Vec::with_capacity(len);
-        let mut value_objects: Vec<Option<Value>> = Vec::with_capacity(len);
+        let mut value_geos: Vec<Option<&Wkb>> = Vec::with_capacity(len);
+        let mut value_objects: Vec<Option<&Value>> = Vec::with_capacity(len);
         let mut value_datetimes: Vec<Option<DateTime<Utc>>> = Vec::with_capacity(len);
-        let mut value_uris: Vec<Option<String>> = Vec::with_capacity(len);
+        let mut value_uris: Vec<Option<&str>> = Vec::with_capacity(len);
         let mut instance_ids = Vec::with_capacity(len);
         let mut observed_ats: Vec<Option<DateTime<Utc>>> = Vec::with_capacity(len);
-        let mut metadatas: Vec<Option<Value>> = Vec::with_capacity(len);
+        let mut metadatas: Vec<Option<&Value>> = Vec::with_capacity(len);
 
         let mut dedup_tea_ids = Vec::with_capacity(len);
         let mut dedup_instance_ids = Vec::with_capacity(len);
@@ -421,15 +421,15 @@ impl TemporalRepository {
             times.push(e.time);
             tea_ids.push(e.tea_id);
             value_numbers.push(e.value_number);
-            value_strings.push(e.value_string.clone());
+            value_strings.push(e.value_string.as_deref());
             value_bools.push(e.value_bool);
-            value_geos.push(e.value_geo.clone());
-            value_objects.push(e.value_object.clone());
+            value_geos.push(e.value_geo.as_ref());
+            value_objects.push(e.value_object.as_ref());
             value_datetimes.push(e.value_datetime);
-            value_uris.push(e.value_uri.clone());
+            value_uris.push(e.value_uri.as_deref());
             instance_ids.push(e.instance_id.as_str());
             observed_ats.push(e.observed_at);
-            metadatas.push(e.metadata.clone());
+            metadatas.push(e.metadata.as_ref());
 
             dedup_tea_ids.push(e.tea_id);
             dedup_instance_ids.push(e.instance_id.as_str());
