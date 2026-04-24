@@ -7,7 +7,7 @@ use crate::{
         notification::{ChangeEvent, SysAttrsSnapshot, TriggerReason},
         uri::Uri,
     },
-    jsonld::ContextSpec,
+    jsonld::{BatchContextHandle, ContextSpec},
     query::sql,
     repository::entity::{PreparedEntityRow, copy::create_batch_via_copy_in_tx, decompose_rows, params::PreparedEntityColumns, repo::EntityRepository},
     service::entity::{
@@ -165,13 +165,18 @@ impl EntityService {
     ///
     /// On failure, returns the entity ID paired with the error so the caller
     /// can aggregate per-entity errors.
-    async fn prepare_entity(&self, entity: &Entity, context: &ContextSpec, execution: PrepareExecution) -> Result<PreparedEntity, (String, AndromedaError)> {
+    async fn prepare_entity(
+        &self,
+        entity: &Entity,
+        handle: &BatchContextHandle,
+        execution: PrepareExecution,
+    ) -> Result<PreparedEntity, (String, AndromedaError)> {
         let id = entity.id.to_string();
 
         let mut entity_json =
             serde_json::to_value(entity).map_err(|err| (id.clone(), AndromedaError::entity_validation(format!("Invalid entity payload: {}", err))))?;
         normalize_entity_attributes(&mut entity_json);
-        let expanded = self.engine.expand(entity_json, context).await.map_err(|err| {
+        let expanded = self.engine.expand_with_handle(entity_json, handle).await.map_err(|err| {
             let err: AndromedaError = err.into();
             (id.clone(), err)
         })?;
@@ -189,8 +194,12 @@ impl EntityService {
 
     async fn prepare_entity_refs(&self, entities: &[&Entity], context: &ContextSpec) -> (Vec<PreparedEntity>, Vec<(String, AndromedaError)>) {
         let execution = self.prepare_execution(entities.len());
+        let handle = self.engine.batch_context_handle(context);
         let results: Vec<_> = stream::iter(entities.iter().copied())
-            .map(|entity| async move { self.prepare_entity(entity, context, execution).await })
+            .map(|entity| {
+                let handle_ref = &handle;
+                async move { self.prepare_entity(entity, handle_ref, execution).await }
+            })
             .buffered(self.batch_concurrency)
             .collect()
             .await;

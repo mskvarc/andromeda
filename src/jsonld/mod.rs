@@ -14,7 +14,7 @@ pub mod term_resolver;
 pub mod vocab;
 
 pub use context::{ContextSpec, CoreContextPolicy, default_core_context_url, set_default_core_context_url};
-pub use engine::{CompactOptions, ContextStripping, JsonLdEngine};
+pub use engine::{BatchContextHandle, CompactOptions, ContextStripping, JsonLdEngine};
 pub use error::Error;
 pub use expandable::{JsonLdExpandable, JsonLdLanguageMap, JsonLdTypeValue};
 pub use loader::ContextCache;

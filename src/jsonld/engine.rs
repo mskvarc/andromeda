@@ -106,6 +106,22 @@ pub struct JsonLdEngine {
     term_cache_misses: Arc<AtomicU64>,
 }
 
+/// Per-batch JSON-LD expansion handle.
+///
+/// Captures the resolved `@context` value for a batch (the caller's
+/// [`ContextSpec`] post-merge with core policy) so that individual entity
+/// expansions can skip the `resolve_context_value` rebuild on every call.
+///
+/// Entities whose inline `@context` diverges from the batch's resolved value
+/// fall back to the full per-entity [`JsonLdEngine::expand`] path, so the
+/// spec rule allowing per-entity context overrides (NGSI-LD 5.5.7) is
+/// preserved.
+#[derive(Clone, Debug)]
+pub struct BatchContextHandle {
+    spec: ContextSpec,
+    resolved_context: Option<serde_json::Value>,
+}
+
 impl JsonLdEngine {
     /// Start building an engine with custom configuration.
     pub fn builder() -> JsonLdEngineBuilder {
@@ -122,7 +138,43 @@ impl JsonLdEngine {
     /// Returns [`Error::Expansion`] on expansion failure, or a context-loading
     /// error variant if a required context could not be fetched.
     pub async fn expand(&self, document: serde_json::Value, context: &ContextSpec) -> Result<serde_json::Value, Error> {
-        let mut document = context::apply_context(document, context)?;
+        let document = context::apply_context(document, context)?;
+        self.expand_prepared(document, context.core_policy()).await
+    }
+
+    /// Build a per-batch expansion handle for a shared `@context`.
+    ///
+    /// The caller typically constructs one handle per batch and hands it to
+    /// [`Self::expand_with_handle`] for every entity in the batch.
+    pub fn batch_context_handle(&self, context: &ContextSpec) -> BatchContextHandle {
+        BatchContextHandle {
+            resolved_context: context::resolve_context_value(None, context),
+            spec: context.clone(),
+        }
+    }
+
+    /// Expand one entity of a batch using a shared [`BatchContextHandle`].
+    ///
+    /// If the entity carries no inline `@context` — or carries one that
+    /// resolves to the same value as the batch handle — the engine skips
+    /// the `resolve_context_value` rebuild and injects the precomputed
+    /// context directly, avoiding per-entity clones.
+    ///
+    /// Entities with a divergent inline `@context` transparently fall back
+    /// to the per-entity [`Self::expand`] path so NGSI-LD 5.5.7 semantics
+    /// are preserved byte-for-byte.
+    pub async fn expand_with_handle(&self, mut document: serde_json::Value, handle: &BatchContextHandle) -> Result<serde_json::Value, Error> {
+        match handle_fast_path_apply(&mut document, handle) {
+            FastPath::Hit => self.expand_prepared(document, handle.spec.core_policy()).await,
+            FastPath::Miss => self.expand(document, &handle.spec).await,
+        }
+    }
+
+    async fn expand_prepared(
+        &self,
+        mut document: serde_json::Value,
+        core_policy: crate::jsonld::context::CoreContextPolicy,
+    ) -> Result<serde_json::Value, Error> {
         resolve_relative_context_urls(&mut document);
 
         // Diagnostic-only fields (applied_context, context_urls, normalized_context_urls)
@@ -142,7 +194,7 @@ impl JsonLdEngine {
                 let normalized_context_urls = normalize_context_urls_for_logging(&context_urls);
                 tracing::warn!(
                     "JSON-LD expansion failed. core_policy={:?}; applied_context={:?}; context_urls={:?}; normalized_context_urls={:?}; error={:?}",
-                    context.core_policy(),
+                    core_policy,
                     diag_context,
                     context_urls,
                     normalized_context_urls,
@@ -674,6 +726,46 @@ fn resolve_relative_context_urls(document: &mut serde_json::Value) {
             }
         }
         serde_json::Value::Null | serde_json::Value::Bool(_) | serde_json::Value::Number(_) | serde_json::Value::String(_) => {}
+    }
+}
+
+/// Outcome of attempting to apply the shared batch handle to an entity.
+enum FastPath {
+    /// The entity had no inline `@context` or its context matches the batch
+    /// handle exactly — the precomputed context was injected in place.
+    Hit,
+    /// The entity carries a divergent inline `@context` — caller must run
+    /// the per-entity resolution path.
+    Miss,
+}
+
+fn handle_fast_path_apply(document: &mut serde_json::Value, handle: &BatchContextHandle) -> FastPath {
+    match document {
+        serde_json::Value::Object(obj) => apply_handle_to_object(obj, handle),
+        serde_json::Value::Array(items) => {
+            for item in items {
+                if let serde_json::Value::Object(obj) = item
+                    && matches!(apply_handle_to_object(obj, handle), FastPath::Miss)
+                {
+                    return FastPath::Miss;
+                }
+            }
+            FastPath::Hit
+        }
+        serde_json::Value::Null | serde_json::Value::Bool(_) | serde_json::Value::Number(_) | serde_json::Value::String(_) => FastPath::Miss,
+    }
+}
+
+fn apply_handle_to_object(obj: &mut serde_json::Map<String, serde_json::Value>, handle: &BatchContextHandle) -> FastPath {
+    match obj.get("@context") {
+        None => {
+            if let Some(resolved) = handle.resolved_context.as_ref() {
+                obj.insert("@context".to_string(), resolved.clone());
+            }
+            FastPath::Hit
+        }
+        Some(existing) if Some(existing) == handle.resolved_context.as_ref() => FastPath::Hit,
+        Some(_) => FastPath::Miss,
     }
 }
 
