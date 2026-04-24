@@ -9,9 +9,10 @@ use crate::{
     },
     jsonld::ContextSpec,
     query::sql,
-    repository::entity::{PreparedEntityRow, decompose_rows, params::PreparedEntityColumns},
+    repository::entity::{PreparedEntityRow, decompose_rows, params::PreparedEntityColumns, repo::EntityRepository},
     service::entity::{
         BatchSideEffectJob,
+        BatchSideEffectMode,
         EntityService,
         extract_attribute_keys,
         extract_entity_types,
@@ -363,7 +364,14 @@ impl EntityService {
             .collect()
     }
 
-    async fn batch_create_chunk(&self, entities: &[&Entity], context: &ContextSpec, original_batch_size: usize) -> Result<BatchResult, AndromedaError> {
+    async fn batch_create_chunk(
+        &self,
+        entities: &[&Entity],
+        context: &ContextSpec,
+        original_batch_size: usize,
+        mode: BatchSideEffectMode,
+    ) -> Result<BatchResult, AndromedaError> {
+        let _ = original_batch_size;
         let (prepared, mut errors) = self.prepare_entity_refs(entities, context).await;
 
         if prepared.is_empty() {
@@ -411,19 +419,40 @@ impl EntityService {
             }
         }
 
-        let inserted_ids = self.repo.create_batch(&columns).await?;
+        match mode {
+            BatchSideEffectMode::Inline => {
+                let inserted_ids = self.repo.create_batch(&columns).await?;
+                self.report_missing_inserts(&inserted_ids, &entity_data, &mut errors);
+                let mut payloads = columns.payloads.into_iter().map(Some).collect::<Vec<_>>();
+                let (job, success) = Self::drain_indexed_effect_entities(&mut entity_data, &mut payloads, &inserted_ids, TriggerReason::EntityCreated);
+                self.apply_inline_side_effects(job).await;
+                Ok(BatchResult { success, errors })
+            }
+            BatchSideEffectMode::Enqueue => {
+                let mut tx = self.repo.pool().begin().await?;
+                let inserted_ids = EntityRepository::create_batch_in_tx(&mut tx, &columns).await?;
+                self.report_missing_inserts(&inserted_ids, &entity_data, &mut errors);
+                let mut payloads = columns.payloads.into_iter().map(Some).collect::<Vec<_>>();
+                let (job, success) = Self::drain_indexed_effect_entities(&mut entity_data, &mut payloads, &inserted_ids, TriggerReason::EntityCreated);
+                self.enqueue_batch_side_effects(&mut tx, &job).await?;
+                tx.commit().await?;
+                Ok(BatchResult { success, errors })
+            }
+        }
+    }
+
+    fn report_missing_inserts(
+        &self,
+        inserted_ids: &[String],
+        entity_data: &HashMap<String, IndexedBatchEffectEntity>,
+        errors: &mut Vec<(String, AndromedaError)>,
+    ) {
         let inserted_set: HashSet<&str> = inserted_ids.iter().map(String::as_str).collect();
         for id in entity_data.keys() {
             if !inserted_set.contains(id.as_str()) {
                 errors.push((id.clone(), AndromedaError::entity_already_exists(id)));
             }
         }
-
-        let mut payloads = columns.payloads.into_iter().map(Some).collect::<Vec<_>>();
-        let (job, success) = Self::drain_indexed_effect_entities(&mut entity_data, &mut payloads, &inserted_ids, TriggerReason::EntityCreated);
-        self.dispatch_batch_side_effects(original_batch_size, job).await;
-
-        Ok(BatchResult { success, errors })
     }
 
     async fn batch_update_chunk(
@@ -432,7 +461,9 @@ impl EntityService {
         context: &ContextSpec,
         no_overwrite: bool,
         original_batch_size: usize,
+        mode: BatchSideEffectMode,
     ) -> Result<BatchResult, AndromedaError> {
+        let _ = original_batch_size;
         let (prepared, mut errors) = self.prepare_entities(entities, context).await;
         if prepared.is_empty() {
             return Ok(BatchResult { success: Vec::new(), errors });
@@ -486,14 +517,33 @@ impl EntityService {
         }
 
         let save_columns = decompose_rows(save_rows);
-        let saved_ids = self.repo.save_batch(&save_columns).await?;
-        let (job, success) = Self::drain_effect_entities(&mut effect_entities, &saved_ids, TriggerReason::EntityUpdated);
-        self.dispatch_batch_side_effects(original_batch_size, job).await;
 
-        Ok(BatchResult { success, errors })
+        match mode {
+            BatchSideEffectMode::Inline => {
+                let saved_ids = self.repo.save_batch(&save_columns).await?;
+                let (job, success) = Self::drain_effect_entities(&mut effect_entities, &saved_ids, TriggerReason::EntityUpdated);
+                self.apply_inline_side_effects(job).await;
+                Ok(BatchResult { success, errors })
+            }
+            BatchSideEffectMode::Enqueue => {
+                let mut tx = self.repo.pool().begin().await?;
+                let saved_ids = EntityRepository::save_batch_in_tx(&mut tx, &save_columns).await?;
+                let (job, success) = Self::drain_effect_entities(&mut effect_entities, &saved_ids, TriggerReason::EntityUpdated);
+                self.enqueue_batch_side_effects(&mut tx, &job).await?;
+                tx.commit().await?;
+                Ok(BatchResult { success, errors })
+            }
+        }
     }
 
-    async fn batch_merge_chunk(&self, entities: &[Entity], context: &ContextSpec, original_batch_size: usize) -> Result<BatchResult, AndromedaError> {
+    async fn batch_merge_chunk(
+        &self,
+        entities: &[Entity],
+        context: &ContextSpec,
+        original_batch_size: usize,
+        mode: BatchSideEffectMode,
+    ) -> Result<BatchResult, AndromedaError> {
+        let _ = original_batch_size;
         let (prepared, mut errors) = self.prepare_entities(entities, context).await;
         if prepared.is_empty() {
             return Ok(BatchResult { success: Vec::new(), errors });
@@ -528,11 +578,23 @@ impl EntityService {
         }
 
         let save_columns = decompose_rows(save_rows);
-        let saved_ids = self.repo.save_batch(&save_columns).await?;
-        let (job, success) = Self::drain_effect_entities(&mut effect_entities, &saved_ids, TriggerReason::EntityUpdated);
-        self.dispatch_batch_side_effects(original_batch_size, job).await;
 
-        Ok(BatchResult { success, errors })
+        match mode {
+            BatchSideEffectMode::Inline => {
+                let saved_ids = self.repo.save_batch(&save_columns).await?;
+                let (job, success) = Self::drain_effect_entities(&mut effect_entities, &saved_ids, TriggerReason::EntityUpdated);
+                self.apply_inline_side_effects(job).await;
+                Ok(BatchResult { success, errors })
+            }
+            BatchSideEffectMode::Enqueue => {
+                let mut tx = self.repo.pool().begin().await?;
+                let saved_ids = EntityRepository::save_batch_in_tx(&mut tx, &save_columns).await?;
+                let (job, success) = Self::drain_effect_entities(&mut effect_entities, &saved_ids, TriggerReason::EntityUpdated);
+                self.enqueue_batch_side_effects(&mut tx, &job).await?;
+                tx.commit().await?;
+                Ok(BatchResult { success, errors })
+            }
+        }
     }
 
     async fn batch_upsert_replace_chunk(
@@ -541,7 +603,9 @@ impl EntityService {
         context: &ContextSpec,
         errors: &mut Vec<(String, AndromedaError)>,
         original_batch_size: usize,
+        mode: BatchSideEffectMode,
     ) -> Result<(BatchResult, Vec<String>), AndromedaError> {
+        let _ = original_batch_size;
         let (prepared, mut chunk_errors) = self.prepare_entity_refs(entities, context).await;
         errors.append(&mut chunk_errors);
         if prepared.is_empty() {
@@ -590,12 +654,24 @@ impl EntityService {
             columns.expires_ats.push(expires_at);
         }
 
-        let upserted = self.repo.upsert_batch(&columns).await?;
-        let mut payloads = columns.payloads.into_iter().map(Some).collect::<Vec<_>>();
-        let (job, success, created) = Self::drain_upsert_indexed_effect_entities(&mut entity_data, &mut payloads, upserted);
-        self.dispatch_batch_side_effects(original_batch_size, job).await;
-
-        Ok((BatchResult { success, errors: Vec::new() }, created))
+        match mode {
+            BatchSideEffectMode::Inline => {
+                let upserted = self.repo.upsert_batch(&columns).await?;
+                let mut payloads = columns.payloads.into_iter().map(Some).collect::<Vec<_>>();
+                let (job, success, created) = Self::drain_upsert_indexed_effect_entities(&mut entity_data, &mut payloads, upserted);
+                self.apply_inline_side_effects(job).await;
+                Ok((BatchResult { success, errors: Vec::new() }, created))
+            }
+            BatchSideEffectMode::Enqueue => {
+                let mut tx = self.repo.pool().begin().await?;
+                let upserted = EntityRepository::upsert_batch_in_tx(&mut tx, &columns).await?;
+                let mut payloads = columns.payloads.into_iter().map(Some).collect::<Vec<_>>();
+                let (job, success, created) = Self::drain_upsert_indexed_effect_entities(&mut entity_data, &mut payloads, upserted);
+                self.enqueue_batch_side_effects(&mut tx, &job).await?;
+                tx.commit().await?;
+                Ok((BatchResult { success, errors: Vec::new() }, created))
+            }
+        }
     }
 
     async fn batch_upsert_update_chunk(
@@ -604,7 +680,9 @@ impl EntityService {
         context: &ContextSpec,
         errors: &mut Vec<(String, AndromedaError)>,
         original_batch_size: usize,
+        mode: BatchSideEffectMode,
     ) -> Result<(BatchResult, Vec<String>), AndromedaError> {
+        let _ = original_batch_size;
         let (prepared, mut chunk_errors) = self.prepare_entity_refs(entities, context).await;
         errors.append(&mut chunk_errors);
         if prepared.is_empty() {
@@ -677,16 +755,56 @@ impl EntityService {
             }
         }
 
-        let created_ids = if created_columns.ids.is_empty() {
-            Vec::new()
-        } else {
-            self.repo.create_batch(&created_columns).await?
-        };
-        let updated_ids = if updated_rows.is_empty() {
-            Vec::new()
-        } else {
-            let updated_columns = decompose_rows(updated_rows);
-            self.repo.save_batch(&updated_columns).await?
+        let updated_columns = if updated_rows.is_empty() { None } else { Some(decompose_rows(updated_rows)) };
+
+        let (created_ids, updated_ids) = match mode {
+            BatchSideEffectMode::Inline => {
+                let created_ids = if created_columns.ids.is_empty() {
+                    Vec::new()
+                } else {
+                    self.repo.create_batch(&created_columns).await?
+                };
+                let updated_ids = if let Some(cols) = &updated_columns {
+                    self.repo.save_batch(cols).await?
+                } else {
+                    Vec::new()
+                };
+                (created_ids, updated_ids)
+            }
+            BatchSideEffectMode::Enqueue => {
+                let mut tx = self.repo.pool().begin().await?;
+                let created_ids = if created_columns.ids.is_empty() {
+                    Vec::new()
+                } else {
+                    EntityRepository::create_batch_in_tx(&mut tx, &created_columns).await?
+                };
+                let updated_ids = if let Some(cols) = &updated_columns {
+                    EntityRepository::save_batch_in_tx(&mut tx, cols).await?
+                } else {
+                    Vec::new()
+                };
+
+                let mut created_payloads = created_columns.payloads.clone().into_iter().map(Some).collect::<Vec<_>>();
+                let (created_job, mut success, created) = Self::drain_upsert_indexed_effect_entities(
+                    &mut created_effects,
+                    &mut created_payloads,
+                    created_ids.iter().cloned().map(|id| (id, true)).collect(),
+                );
+                let (updated_job, updated_success) = Self::drain_effect_entities(&mut updated_effects, &updated_ids, TriggerReason::EntityUpdated);
+                success.extend(updated_success);
+
+                let mut temporal_entities = created_job.temporal_entities;
+                temporal_entities.extend(updated_job.temporal_entities);
+                let mut change_events = created_job.change_events;
+                change_events.extend(updated_job.change_events);
+                let job = BatchSideEffectJob {
+                    temporal_entities,
+                    change_events,
+                };
+                self.enqueue_batch_side_effects(&mut tx, &job).await?;
+                tx.commit().await?;
+                return Ok((BatchResult { success, errors: Vec::new() }, created));
+            }
         };
 
         let mut created_payloads = created_columns.payloads.into_iter().map(Some).collect::<Vec<_>>();
@@ -702,13 +820,10 @@ impl EntityService {
         temporal_entities.extend(updated_job.temporal_entities);
         let mut change_events = created_job.change_events;
         change_events.extend(updated_job.change_events);
-        self.dispatch_batch_side_effects(
-            original_batch_size,
-            BatchSideEffectJob {
-                temporal_entities,
-                change_events,
-            },
-        )
+        self.apply_inline_side_effects(BatchSideEffectJob {
+            temporal_entities,
+            change_events,
+        })
         .await;
 
         Ok((BatchResult { success, errors: Vec::new() }, created))
@@ -719,7 +834,7 @@ impl EntityService {
     // -------------------------------------------------------------------------
 
     /// Create multiple entities in a single batch operation (NGSI-LD 5.6.7).
-    pub async fn batch_create(&self, entities: &[Entity], context: &ContextSpec) -> Result<BatchResult, AndromedaError> {
+    pub async fn batch_create(&self, entities: &[Entity], context: &ContextSpec, mode: BatchSideEffectMode) -> Result<BatchResult, AndromedaError> {
         self.batch_activity.record_activity();
         let (deduped, mut errors) = Self::dedupe_create_entities(entities);
         if deduped.is_empty() {
@@ -729,7 +844,7 @@ impl EntityService {
         let chunk_len = self.batch_chunk_len(deduped.len());
         let batch_size = entities.len();
         let chunk_results: Vec<Result<BatchResult, AndromedaError>> = stream::iter(deduped.chunks(chunk_len))
-            .map(|chunk| async move { self.batch_create_chunk(chunk, context, batch_size).await })
+            .map(|chunk| async move { self.batch_create_chunk(chunk, context, batch_size, mode).await })
             .buffered(self.batch_chunk_concurrency)
             .collect()
             .await;
@@ -749,7 +864,7 @@ impl EntityService {
     // -------------------------------------------------------------------------
 
     /// Delete multiple entities by ID in a single batch operation (NGSI-LD 5.6.10).
-    pub async fn batch_delete(&self, entity_ids: &[String]) -> Result<BatchResult, AndromedaError> {
+    pub async fn batch_delete(&self, entity_ids: &[String], mode: BatchSideEffectMode) -> Result<BatchResult, AndromedaError> {
         self.batch_activity.record_activity();
         let mut seen = HashSet::new();
         let mut unique_ids = Vec::new();
@@ -765,7 +880,7 @@ impl EntityService {
         let chunk_len = self.batch_chunk_len(unique_ids.len());
         let batch_size = entity_ids.len();
         let chunk_results: Vec<Result<(Vec<String>, Vec<(String, AndromedaError)>), AndromedaError>> = stream::iter(unique_ids.chunks(chunk_len))
-            .map(|chunk| async move { self.batch_delete_chunk(chunk, batch_size).await })
+            .map(|chunk| async move { self.batch_delete_chunk(chunk, batch_size, mode).await })
             .buffered(self.batch_chunk_concurrency)
             .collect()
             .await;
@@ -780,8 +895,21 @@ impl EntityService {
         Ok(BatchResult { success, errors })
     }
 
-    async fn batch_delete_chunk(&self, chunk: &[String], original_batch_size: usize) -> Result<(Vec<String>, Vec<(String, AndromedaError)>), AndromedaError> {
-        let deleted = self.repo.delete_batch(chunk).await?;
+    async fn batch_delete_chunk(
+        &self,
+        chunk: &[String],
+        original_batch_size: usize,
+        mode: BatchSideEffectMode,
+    ) -> Result<(Vec<String>, Vec<(String, AndromedaError)>), AndromedaError> {
+        let _ = original_batch_size;
+        let (deleted, tx_slot) = match mode {
+            BatchSideEffectMode::Inline => (self.repo.delete_batch(chunk).await?, None),
+            BatchSideEffectMode::Enqueue => {
+                let mut tx = self.repo.pool().begin().await?;
+                let deleted = EntityRepository::delete_batch_in_tx(&mut tx, chunk).await?;
+                (deleted, Some(tx))
+            }
+        };
         let deleted_set: HashSet<&str> = deleted.iter().map(|entity| entity.id.as_str()).collect();
         let mut errors = Vec::new();
         for id in chunk {
@@ -829,14 +957,16 @@ impl EntityService {
             success.push(deleted_entity.id);
         }
 
-        self.dispatch_batch_side_effects(
-            original_batch_size,
-            BatchSideEffectJob {
-                temporal_entities: Vec::new(),
-                change_events,
-            },
-        )
-        .await;
+        let job = BatchSideEffectJob {
+            temporal_entities: Vec::new(),
+            change_events,
+        };
+        if let Some(mut tx) = tx_slot {
+            self.enqueue_batch_side_effects(&mut tx, &job).await?;
+            tx.commit().await?;
+        } else {
+            self.apply_inline_side_effects(job).await;
+        }
 
         Ok((success, errors))
     }
@@ -846,12 +976,18 @@ impl EntityService {
     // -------------------------------------------------------------------------
 
     /// Update attributes of multiple entities in a single batch operation (NGSI-LD 5.6.9).
-    pub async fn batch_update(&self, entities: &[Entity], context: &ContextSpec, no_overwrite: bool) -> Result<BatchResult, AndromedaError> {
+    pub async fn batch_update(
+        &self,
+        entities: &[Entity],
+        context: &ContextSpec,
+        no_overwrite: bool,
+        mode: BatchSideEffectMode,
+    ) -> Result<BatchResult, AndromedaError> {
         self.batch_activity.record_activity();
         let chunk_len = self.batch_chunk_len(entities.len());
         let batch_size = entities.len();
         let chunk_results: Vec<Result<BatchResult, AndromedaError>> = stream::iter(entities.chunks(chunk_len))
-            .map(|chunk| async move { self.batch_update_chunk(chunk, context, no_overwrite, batch_size).await })
+            .map(|chunk| async move { self.batch_update_chunk(chunk, context, no_overwrite, batch_size, mode).await })
             .buffered(self.batch_chunk_concurrency)
             .collect()
             .await;
@@ -872,12 +1008,12 @@ impl EntityService {
     // -------------------------------------------------------------------------
 
     /// Merge partial updates into multiple entities in a single batch operation.
-    pub async fn batch_merge(&self, entities: &[Entity], context: &ContextSpec) -> Result<BatchResult, AndromedaError> {
+    pub async fn batch_merge(&self, entities: &[Entity], context: &ContextSpec, mode: BatchSideEffectMode) -> Result<BatchResult, AndromedaError> {
         self.batch_activity.record_activity();
         let chunk_len = self.batch_chunk_len(entities.len());
         let batch_size = entities.len();
         let chunk_results: Vec<Result<BatchResult, AndromedaError>> = stream::iter(entities.chunks(chunk_len))
-            .map(|chunk| async move { self.batch_merge_chunk(chunk, context, batch_size).await })
+            .map(|chunk| async move { self.batch_merge_chunk(chunk, context, batch_size, mode).await })
             .buffered(self.batch_chunk_concurrency)
             .collect()
             .await;
@@ -898,7 +1034,13 @@ impl EntityService {
     // -------------------------------------------------------------------------
 
     /// Create or update multiple entities in a single batch operation (NGSI-LD 5.6.8).
-    pub async fn batch_upsert(&self, entities: &[Entity], context: &ContextSpec, update_mode: bool) -> Result<(BatchResult, Vec<String>), AndromedaError> {
+    pub async fn batch_upsert(
+        &self,
+        entities: &[Entity],
+        context: &ContextSpec,
+        update_mode: bool,
+        mode: BatchSideEffectMode,
+    ) -> Result<(BatchResult, Vec<String>), AndromedaError> {
         self.batch_activity.record_activity();
         let deduped = Self::dedupe_upsert_entities(entities);
         let chunk_len = self.batch_chunk_len(deduped.len());
@@ -909,9 +1051,9 @@ impl EntityService {
             .map(|chunk| async move {
                 let mut chunk_errors = Vec::new();
                 let outcome = if update_mode {
-                    self.batch_upsert_update_chunk(chunk, context, &mut chunk_errors, batch_size).await
+                    self.batch_upsert_update_chunk(chunk, context, &mut chunk_errors, batch_size, mode).await
                 } else {
-                    self.batch_upsert_replace_chunk(chunk, context, &mut chunk_errors, batch_size).await
+                    self.batch_upsert_replace_chunk(chunk, context, &mut chunk_errors, batch_size, mode).await
                 };
                 outcome.map(|(result, created)| (result, chunk_errors, created))
             })

@@ -16,7 +16,7 @@ use crate::{
     },
 };
 use serde_json::Value;
-use sqlx::{Executor, Row, postgres::PgPool};
+use sqlx::{Executor, Postgres, Row, Transaction, postgres::PgPool};
 use std::collections::HashMap;
 use urn_rs::Urn;
 
@@ -504,6 +504,17 @@ impl EntityRepository {
 
     /// Insert multiple entities in a single SQL statement using `UNNEST`.
     pub async fn create_batch(&self, entities: &PreparedEntityColumns) -> Result<Vec<String>, AndromedaError> {
+        Self::create_batch_impl(&self.pool, entities).await
+    }
+
+    /// Transactional variant of [`Self::create_batch`]. Lets callers pair
+    /// the entity insert with another write (e.g. enqueueing a side-effect
+    /// job) inside a single commit.
+    pub async fn create_batch_in_tx(tx: &mut Transaction<'_, Postgres>, entities: &PreparedEntityColumns) -> Result<Vec<String>, AndromedaError> {
+        Self::create_batch_impl(&mut **tx, entities).await
+    }
+
+    async fn create_batch_impl<'e>(executor: impl Executor<'e, Database = Postgres>, entities: &PreparedEntityColumns) -> Result<Vec<String>, AndromedaError> {
         if entities.ids.is_empty() {
             return Ok(Vec::new());
         }
@@ -534,7 +545,7 @@ impl EntityRepository {
         .bind(&entities.obs_spaces)
         .bind(&entities.op_spaces)
         .bind(&entities.expires_ats)
-        .fetch_all(&self.pool)
+        .fetch_all(executor)
         .await?;
 
         Ok(rows.into_iter().map(|(id,)| id).collect())
@@ -542,13 +553,22 @@ impl EntityRepository {
 
     /// Delete multiple entities in a single SQL statement.
     pub async fn delete_batch(&self, ids: &[String]) -> Result<Vec<DeletedEntity>, AndromedaError> {
+        Self::delete_batch_impl(&self.pool, ids).await
+    }
+
+    /// Transactional variant of [`Self::delete_batch`].
+    pub async fn delete_batch_in_tx(tx: &mut Transaction<'_, Postgres>, ids: &[String]) -> Result<Vec<DeletedEntity>, AndromedaError> {
+        Self::delete_batch_impl(&mut **tx, ids).await
+    }
+
+    async fn delete_batch_impl<'e>(executor: impl Executor<'e, Database = Postgres>, ids: &[String]) -> Result<Vec<DeletedEntity>, AndromedaError> {
         if ids.is_empty() {
             return Ok(Vec::new());
         }
 
         let rows = sqlx::query("DELETE FROM entities WHERE id = ANY($1) RETURNING id, payload, created_at, modified_at, expires_at")
             .bind(ids)
-            .fetch_all(&self.pool)
+            .fetch_all(executor)
             .await?;
 
         let result = rows
@@ -566,6 +586,15 @@ impl EntityRepository {
 
     /// Update multiple existing entities in a single SQL statement using `UNNEST`.
     pub async fn save_batch(&self, entities: &PreparedEntityColumns) -> Result<Vec<String>, AndromedaError> {
+        Self::save_batch_impl(&self.pool, entities).await
+    }
+
+    /// Transactional variant of [`Self::save_batch`].
+    pub async fn save_batch_in_tx(tx: &mut Transaction<'_, Postgres>, entities: &PreparedEntityColumns) -> Result<Vec<String>, AndromedaError> {
+        Self::save_batch_impl(&mut **tx, entities).await
+    }
+
+    async fn save_batch_impl<'e>(executor: impl Executor<'e, Database = Postgres>, entities: &PreparedEntityColumns) -> Result<Vec<String>, AndromedaError> {
         if entities.ids.is_empty() {
             return Ok(Vec::new());
         }
@@ -595,7 +624,7 @@ impl EntityRepository {
         .bind(&entities.obs_spaces)
         .bind(&entities.op_spaces)
         .bind(&entities.expires_ats)
-        .fetch_all(&self.pool)
+        .fetch_all(executor)
         .await?;
 
         Ok(rows.into_iter().map(|(id,)| id).collect())
@@ -603,6 +632,18 @@ impl EntityRepository {
 
     /// Insert or update multiple entities in a single SQL statement.
     pub async fn upsert_batch(&self, entities: &PreparedEntityColumns) -> Result<Vec<(String, bool)>, AndromedaError> {
+        Self::upsert_batch_impl(&self.pool, entities).await
+    }
+
+    /// Transactional variant of [`Self::upsert_batch`].
+    pub async fn upsert_batch_in_tx(tx: &mut Transaction<'_, Postgres>, entities: &PreparedEntityColumns) -> Result<Vec<(String, bool)>, AndromedaError> {
+        Self::upsert_batch_impl(&mut **tx, entities).await
+    }
+
+    async fn upsert_batch_impl<'e>(
+        executor: impl Executor<'e, Database = Postgres>,
+        entities: &PreparedEntityColumns,
+    ) -> Result<Vec<(String, bool)>, AndromedaError> {
         if entities.ids.is_empty() {
             return Ok(Vec::new());
         }
@@ -641,7 +682,7 @@ impl EntityRepository {
         .bind(&entities.obs_spaces)
         .bind(&entities.op_spaces)
         .bind(&entities.expires_ats)
-        .fetch_all(&self.pool)
+        .fetch_all(executor)
         .await?;
 
         let result = rows
@@ -653,5 +694,11 @@ impl EntityRepository {
             })
             .collect();
         Ok(result)
+    }
+
+    /// Expose the underlying connection pool so services can open their
+    /// own transactions (e.g. for the async durable-queue path).
+    pub const fn pool(&self) -> &PgPool {
+        &self.pool
     }
 }

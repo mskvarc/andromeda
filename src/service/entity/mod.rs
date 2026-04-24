@@ -19,7 +19,11 @@ use crate::{
     },
     i18n::collation::augment_expanded_with_collation_metadata,
     jsonld::{ContextSpec, JsonLdEngine},
-    repository::{entity::repo::EntityRepository, temporal::repo::TemporalRepository},
+    repository::{
+        entity::repo::EntityRepository,
+        pending_side_effects::{payload::PersistedBatchSideEffectJob, repo::PendingSideEffectsRepository},
+        temporal::repo::TemporalRepository,
+    },
     service::{
         entity::extract::{create_entity, create_entity_with_outbox, save_entity, save_entity_with_outbox},
         subscription_cache::SubscriptionCache,
@@ -31,7 +35,7 @@ use chrono::{DateTime, SecondsFormat, Utc};
 use serde_json::{Map, Value};
 use sqlx::postgres::PgPool;
 use std::{collections::HashSet, sync::Arc};
-use tokio::sync::{broadcast, mpsc};
+use tokio::sync::broadcast;
 use tracing::debug;
 use urn_rs::Urn;
 
@@ -55,21 +59,35 @@ pub struct BatchExecutionConfig {
     pub large_threshold: usize,
     /// Entity-count threshold that offloads preparation post-processing to blocking workers.
     pub prepare_blocking_threshold: usize,
+    /// Minimum batch size for honouring `Prefer: respond-async`. When `None`,
+    /// the async durable-queue path is never taken regardless of the client
+    /// preference (all batches run inline).
+    pub async_side_effect_threshold: Option<usize>,
 }
 
+/// Collected side-effects for a batch chunk: temporal history writes plus
+/// NGSI-LD change-event emissions. Either run inline (sync path) or
+/// persisted to `pending_side_effects` and drained by a background worker
+/// (async path, opt-in via `Prefer: respond-async`).
 #[derive(Debug)]
 pub struct BatchSideEffectJob {
     pub temporal_entities: Vec<(String, Value)>,
     pub change_events: Vec<ChangeEvent>,
 }
 
-/// Configuration for deferred batch side-effect delivery.
-#[derive(Clone, Debug)]
-pub struct BatchSideEffectDispatcherConfig {
-    /// Minimum batch size required before dispatching work to the background queue.
-    pub threshold: usize,
-    /// Queue sender used to hand jobs to the background worker.
-    pub sender: mpsc::Sender<BatchSideEffectJob>,
+/// How batch side-effects (temporal writes + change events) should be
+/// applied for a given request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BatchSideEffectMode {
+    /// Run side-effects inline in the same request that triggered them.
+    /// Strong read-your-write: the batch response implies the temporal
+    /// history and any derived notifications have already been produced.
+    Inline,
+    /// Persist the side-effect job into `pending_side_effects` in the same
+    /// transaction as the entity write; a background worker executes the
+    /// job at-least-once. Opt-in via `Prefer: respond-async` plus the
+    /// configured minimum-batch-size threshold.
+    Enqueue,
 }
 
 /// Service layer for NGSI-LD entity CRUD operations.
@@ -78,13 +96,13 @@ pub struct EntityService {
     temporal_recorder: TemporalRecorder,
     engine: JsonLdEngine,
     change_tx: Option<broadcast::Sender<ChangeEvent>>,
-    batch_async_side_effects: Option<BatchSideEffectDispatcherConfig>,
     batch_activity: BatchActivityTracker,
     batch_chunk_size: usize,
     batch_chunk_concurrency: usize,
     batch_concurrency: usize,
     batch_large_threshold: usize,
     batch_prepare_blocking_threshold: usize,
+    async_side_effect_threshold: Option<usize>,
     /// Outbox write configuration, present when outbox is enabled.
     outbox: Option<OutboxWriteConfig>,
 }
@@ -97,7 +115,6 @@ impl EntityService {
         engine: JsonLdEngine,
         change_tx: Option<broadcast::Sender<ChangeEvent>>,
         batch_config: BatchExecutionConfig,
-        batch_async_side_effects: Option<BatchSideEffectDispatcherConfig>,
         batch_activity: BatchActivityTracker,
         outbox: Option<OutboxWriteConfig>,
     ) -> EntityService {
@@ -111,14 +128,25 @@ impl EntityService {
             temporal_recorder,
             engine,
             change_tx,
-            batch_async_side_effects,
             batch_activity,
             batch_chunk_size: batch_config.chunk_size.max(1),
             batch_chunk_concurrency: batch_config.chunk_concurrency.max(1),
             batch_concurrency: batch_config.concurrency.max(1),
             batch_large_threshold: batch_config.large_threshold.max(1),
             batch_prepare_blocking_threshold: batch_config.prepare_blocking_threshold.max(1),
+            async_side_effect_threshold: batch_config.async_side_effect_threshold.filter(|t| *t > 0),
             outbox,
+        }
+    }
+
+    /// Decide which side-effect path to take based on the client's
+    /// `Prefer: respond-async` hint and the configured minimum-batch
+    /// threshold. Returns [`BatchSideEffectMode::Inline`] when either the
+    /// client did not opt in or the threshold is not met.
+    pub fn effective_side_effect_mode(&self, client_requested_async: bool, batch_size: usize) -> BatchSideEffectMode {
+        match (client_requested_async, self.async_side_effect_threshold) {
+            (true, Some(threshold)) if batch_size >= threshold => BatchSideEffectMode::Enqueue,
+            _other => BatchSideEffectMode::Inline,
         }
     }
 
@@ -158,25 +186,31 @@ impl EntityService {
         }
     }
 
-    async fn dispatch_batch_side_effects(&self, batch_size: usize, job: BatchSideEffectJob) {
+    /// Route a chunk's side-effects either inline or through the durable
+    /// queue. The `Enqueue` branch is only reachable when the caller has
+    /// already paired it with the entity write inside a transaction; this
+    /// method handles only the inline case.
+    async fn apply_inline_side_effects(&self, job: BatchSideEffectJob) {
         if job.temporal_entities.is_empty() && job.change_events.is_empty() {
             return;
         }
-
-        if let Some(dispatcher) = &self.batch_async_side_effects
-            && batch_size >= dispatcher.threshold
-        {
-            match dispatcher.sender.try_send(job) {
-                Ok(()) => return,
-                Err(mpsc::error::TrySendError::Full(job)) | Err(mpsc::error::TrySendError::Closed(job)) => {
-                    tracing::warn!(event = "batch_side_effect_queue_unavailable", batch_size);
-                    self.apply_batch_side_effects(job).await;
-                    return;
-                }
-            }
-        }
-
         self.apply_batch_side_effects(job).await;
+    }
+
+    /// Persist a side-effect job into the durable queue within an existing
+    /// transaction. Caller must commit the transaction for the enqueue to
+    /// take effect, guaranteeing crash-consistency with the entity write.
+    pub(crate) async fn enqueue_batch_side_effects(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        job: &BatchSideEffectJob,
+    ) -> Result<(), AndromedaError> {
+        if job.temporal_entities.is_empty() && job.change_events.is_empty() {
+            return Ok(());
+        }
+        let persisted: PersistedBatchSideEffectJob = job.into();
+        PendingSideEffectsRepository::enqueue_in_tx(tx, &persisted).await?;
+        Ok(())
     }
 
     // -------------------------------------------------------------------------

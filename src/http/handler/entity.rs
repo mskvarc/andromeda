@@ -1357,14 +1357,22 @@ pub async fn delete_by_query(
         }
 
         if modes.has_exclusive {
-            if let Err(e) = state.entities.batch_delete(&entity_ids).await {
+            if let Err(e) = state
+                .entities
+                .batch_delete(&entity_ids, crate::service::entity::BatchSideEffectMode::Inline)
+                .await
+            {
                 tracing::warn!(error = %e, "Failed to delete local entities during exclusive batch delete");
             }
             return Ok(StatusCode::NO_CONTENT.into_response());
         }
     }
 
-    let batch = state.entities.batch_delete(&entity_ids).await.with_instance(&uri)?;
+    let batch = state
+        .entities
+        .batch_delete(&entity_ids, crate::service::entity::BatchSideEffectMode::Inline)
+        .await
+        .with_instance(&uri)?;
     let result: BatchOperationResult = batch.into();
 
     if result.errors.is_empty() {

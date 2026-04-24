@@ -5,7 +5,10 @@
 
 use crate::http::{
     header::prefer::Prefer,
-    model::{preference::GeoJsonBodyPreference, version::NgsiLdVersion},
+    model::{
+        preference::{GeoJsonBodyPreference, RespondMode},
+        version::NgsiLdVersion,
+    },
 };
 use axum::{extract::FromRequestParts, http::request::Parts};
 use headers::HeaderMapExt;
@@ -20,6 +23,10 @@ pub struct PreferHeader {
     pub geo_json_body: GeoJsonBodyPreference,
     /// Requested NGSI-LD version for backwards-compatible payload adaptation.
     pub requested_version: Option<NgsiLdVersion>,
+    /// Response-mode hint (`respond-async` / `respond-sync`) per RFC 7240 sec. 4.1.
+    /// Used by `/entityOperations` batch endpoints to choose between inline
+    /// side-effect processing and the durable queue path.
+    pub respond_mode: Option<RespondMode>,
 }
 
 impl<S> FromRequestParts<S> for PreferHeader
@@ -32,6 +39,7 @@ where
         let prefer = parts.headers.typed_get::<Prefer>().map_or_else(PreferHeader::default, |p| PreferHeader {
             geo_json_body: p.geo_json_body(),
             requested_version: p.requested_version(),
+            respond_mode: p.respond_mode(),
         });
         Ok(prefer)
     }
@@ -53,6 +61,7 @@ mod tests {
         parts.headers.typed_get::<Prefer>().map_or_else(PreferHeader::default, |p| PreferHeader {
             geo_json_body: p.geo_json_body(),
             requested_version: p.requested_version(),
+            respond_mode: p.respond_mode(),
         })
     }
 
@@ -114,8 +123,22 @@ mod tests {
 
     #[test]
     fn unknown_token_ignored() {
-        let prefer = parse_from_header(Some("respond-async, body=json"));
+        let prefer = parse_from_header(Some("wait=5, body=json"));
         pretty_assertions::assert_eq!(prefer.geo_json_body, GeoJsonBodyPreference::Json);
         pretty_assertions::assert_eq!(prefer.requested_version, None);
+        pretty_assertions::assert_eq!(prefer.respond_mode, None);
+    }
+
+    #[test]
+    fn respond_async_extracted() {
+        let prefer = parse_from_header(Some("respond-async"));
+        pretty_assertions::assert_eq!(prefer.respond_mode, Some(RespondMode::Async));
+    }
+
+    #[test]
+    fn respond_sync_extracted() {
+        let prefer = parse_from_header(Some("respond-sync, body=json"));
+        pretty_assertions::assert_eq!(prefer.respond_mode, Some(RespondMode::Sync));
+        pretty_assertions::assert_eq!(prefer.geo_json_body, GeoJsonBodyPreference::Json);
     }
 }

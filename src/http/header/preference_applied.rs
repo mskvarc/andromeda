@@ -21,7 +21,7 @@
 //! * `body=json` -- server applied JSON body preference
 
 use crate::http::model::{
-    preference::{Preference, parse_preference},
+    preference::{Preference, RespondMode, parse_preference},
     version::NgsiLdVersion,
 };
 use axum::http::{HeaderName, HeaderValue};
@@ -40,6 +40,12 @@ impl PreferenceApplied {
     /// when the client requests version conformance (clause 4.3.6.8).
     pub fn version_conformance() -> PreferenceApplied {
         PreferenceApplied(vec![Preference::NgsiLdVersion(NgsiLdVersion::CONFORMANT)])
+    }
+
+    /// Create a `Preference-Applied: respond-async` header, signalling the
+    /// server accepted the client's async processing hint for this request.
+    pub fn respond_async() -> PreferenceApplied {
+        PreferenceApplied(vec![Preference::Respond(RespondMode::Async)])
     }
 }
 

@@ -9,6 +9,7 @@ pub mod entity;
 pub mod entity_map;
 pub mod jsonld_context;
 pub mod outbox;
+pub mod pending_side_effects;
 pub mod snapshot;
 pub mod subscription;
 pub mod subscription_store;

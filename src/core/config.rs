@@ -175,13 +175,39 @@ pub struct PerformanceConfig {
     pub batch_prepare_blocking_threshold: usize,
 
     /// Queue capacity for deferred batch side-effect processing jobs.
+    ///
+    /// Retained for backwards compatibility with the prior in-memory mpsc
+    /// dispatch; the new durable-queue path does not use it.
     #[config(env = "ANDROMEDA_PERFORMANCE_BATCH_SIDE_EFFECT_QUEUE_CAPACITY", default = 8)]
     pub batch_side_effect_queue_capacity: usize,
 
-    /// If set, successful batch side effects for batches at or above this size
-    /// are deferred to a background worker.
+    /// Minimum batch size for honouring `Prefer: respond-async` on an
+    /// `/entityOperations` endpoint. When unset, `respond-async` is ignored
+    /// and all batches run synchronously regardless of preference.
     #[config(env = "ANDROMEDA_PERFORMANCE_BATCH_ASYNC_SIDE_EFFECT_THRESHOLD")]
     pub batch_async_side_effect_threshold: Option<usize>,
+
+    /// Poll interval (seconds) for the durable side-effect queue worker.
+    #[config(env = "ANDROMEDA_PERFORMANCE_PENDING_SIDE_EFFECTS_POLL_SECS", default = 1)]
+    pub pending_side_effects_poll_secs: u64,
+
+    /// Lease duration (seconds) stamped on claimed side-effect jobs. A
+    /// worker crash leaves rows leased until this period elapses, after
+    /// which another worker can reclaim them.
+    #[config(env = "ANDROMEDA_PERFORMANCE_PENDING_SIDE_EFFECTS_LEASE_SECS", default = 30)]
+    pub pending_side_effects_lease_secs: u64,
+
+    /// Maximum number of jobs leased per poll cycle.
+    #[config(env = "ANDROMEDA_PERFORMANCE_PENDING_SIDE_EFFECTS_BATCH_SIZE", default = 32)]
+    pub pending_side_effects_batch_size: usize,
+
+    /// Maximum retry attempts before dead-lettering a side-effect job.
+    #[config(env = "ANDROMEDA_PERFORMANCE_PENDING_SIDE_EFFECTS_MAX_ATTEMPTS", default = 5)]
+    pub pending_side_effects_max_attempts: u16,
+
+    /// Base exponential-backoff interval (seconds) between retry attempts.
+    #[config(env = "ANDROMEDA_PERFORMANCE_PENDING_SIDE_EFFECTS_BASE_BACKOFF_SECS", default = 2)]
+    pub pending_side_effects_base_backoff_secs: u64,
 
     /// Maximum HTTP request body size in bytes.
     /// Defaults to 64 MiB. Set higher for very large batch operations.
@@ -476,6 +502,23 @@ fn validate_config(config: &RuntimeConfig) -> Result<(), AndromedaError> {
     {
         return Err(AndromedaError::internal("performance.batch_async_side_effect_threshold must be at least 1"));
     }
+    if config.performance.pending_side_effects_poll_secs == 0 {
+        return Err(AndromedaError::internal("performance.pending_side_effects_poll_secs must be at least 1"));
+    }
+    if config.performance.pending_side_effects_lease_secs == 0 {
+        return Err(AndromedaError::internal("performance.pending_side_effects_lease_secs must be at least 1"));
+    }
+    if config.performance.pending_side_effects_batch_size == 0 {
+        return Err(AndromedaError::internal("performance.pending_side_effects_batch_size must be at least 1"));
+    }
+    if config.performance.pending_side_effects_max_attempts == 0 {
+        return Err(AndromedaError::internal("performance.pending_side_effects_max_attempts must be at least 1"));
+    }
+    if config.performance.pending_side_effects_base_backoff_secs == 0 {
+        return Err(AndromedaError::internal(
+            "performance.pending_side_effects_base_backoff_secs must be at least 1",
+        ));
+    }
     if config.performance.max_request_body_bytes == 0 {
         return Err(AndromedaError::internal("performance.max_request_body_bytes must be at least 1"));
     }
@@ -598,6 +641,11 @@ mod tests {
                 batch_prepare_blocking_threshold: 128,
                 batch_side_effect_queue_capacity: 8,
                 batch_async_side_effect_threshold: None,
+                pending_side_effects_poll_secs: 1,
+                pending_side_effects_lease_secs: 30,
+                pending_side_effects_batch_size: 32,
+                pending_side_effects_max_attempts: 5,
+                pending_side_effects_base_backoff_secs: 2,
                 max_request_body_bytes: 67_108_864,
                 snapshot_concurrency: 4,
                 forward_csr_concurrency: 16,

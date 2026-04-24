@@ -15,7 +15,8 @@ use crate::{
             snapshot::SnapshotHeader,
             via::IncomingVia,
         },
-        model::query_request::QueryRequest,
+        header::preference_applied::PreferenceApplied,
+        model::{preference::RespondMode, query_request::QueryRequest},
         parameter::{
             entity_operations::{PostQueryParams, UpdateParams, UpsertParams},
             protocol::apply_entity_query_extension_headers,
@@ -30,7 +31,7 @@ use crate::{
     },
     service::{
         csource_forwarding::{CsrModeFilter, ForwardBatchProvisionRequest, ForwardQueryRequest, ForwardingOperation, collect_warnings},
-        entity::{provision_forwarding::ForwardingModes, query::EntityQueryService},
+        entity::{BatchSideEffectMode, provision_forwarding::ForwardingModes, query::EntityQueryService},
     },
 };
 use axum::{
@@ -40,8 +41,16 @@ use axum::{
     http::StatusCode,
     response::{IntoResponse, Response},
 };
+use headers::HeaderMapExt;
 use serde_json::Value;
 use std::collections::HashSet;
+
+fn apply_preference_applied(mut response: Response, mode: BatchSideEffectMode) -> Response {
+    if matches!(mode, BatchSideEffectMode::Enqueue) {
+        response.headers_mut().typed_insert(PreferenceApplied::respond_async());
+    }
+    response
+}
 
 /// Handles POST query requests for batch entity retrieval (NGSI-LD 5.7.2).
 pub async fn query(
@@ -228,6 +237,7 @@ pub async fn batch_create(
     OriginalUri(uri): OriginalUri,
     accept: AcceptFormat,
     context: ContextUrl,
+    prefer: PreferHeader,
     IncomingVia(incoming_via): IncomingVia,
     BatchBody { headers, body }: BatchBody,
 ) -> Result<Response, NgsiLdError> {
@@ -279,7 +289,8 @@ pub async fn batch_create(
     }
 
     // Inclusive or no match: create locally
-    let batch = service.batch_create(&entities, &context).await.with_instance(&uri)?;
+    let mode = service.effective_side_effect_mode(prefer.respond_mode == Some(RespondMode::Async), entities.len());
+    let batch = service.batch_create(&entities, &context, mode).await.with_instance(&uri)?;
     let mut result: BatchOperationResult = batch.into();
     result.errors.append(&mut parse_errors);
 
@@ -289,14 +300,20 @@ pub async fn batch_create(
         let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default())
             .with_payload(ResponsePayload::Batch(value))
             .render()?;
-        Ok(NgsiLdBatchResponse::new(StatusCode::CREATED, rendered).into_response())
+        Ok(apply_preference_applied(
+            NgsiLdBatchResponse::new(StatusCode::CREATED, rendered).into_response(),
+            mode,
+        ))
     } else {
         let value =
             serde_json::to_value(&result).map_err(|e| AndromedaError::internal(format!("Failed to serialize batch result: {}", e)).with_instance(&uri))?;
         let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default())
             .with_payload(ResponsePayload::Batch(value))
             .render()?;
-        Ok(NgsiLdBatchResponse::new(StatusCode::MULTI_STATUS, rendered).into_response())
+        Ok(apply_preference_applied(
+            NgsiLdBatchResponse::new(StatusCode::MULTI_STATUS, rendered).into_response(),
+            mode,
+        ))
     }
 }
 
@@ -306,6 +323,7 @@ pub async fn batch_upsert(
     OriginalUri(uri): OriginalUri,
     accept: AcceptFormat,
     context: ContextUrl,
+    prefer: PreferHeader,
     ValidatedQuery(params): ValidatedQuery<UpsertParams>,
     IncomingVia(incoming_via): IncomingVia,
     BatchBody { headers, body }: BatchBody,
@@ -360,20 +378,24 @@ pub async fn batch_upsert(
     }
 
     // Inclusive or no match: upsert locally
-    let (batch, created_ids) = service.batch_upsert(&entities, &context, update_mode).await.with_instance(&uri)?;
+    let mode = service.effective_side_effect_mode(prefer.respond_mode == Some(RespondMode::Async), entities.len());
+    let (batch, created_ids) = service.batch_upsert(&entities, &context, update_mode, mode).await.with_instance(&uri)?;
     let mut result: BatchOperationResult = batch.into();
     result.errors.append(&mut parse_errors);
 
     if result.errors.is_empty() {
         if created_ids.is_empty() {
-            Ok(StatusCode::NO_CONTENT.into_response())
+            Ok(apply_preference_applied(StatusCode::NO_CONTENT.into_response(), mode))
         } else {
             let value = serde_json::to_value(&created_ids)
                 .map_err(|e| AndromedaError::internal(format!("Failed to serialize batch result: {}", e)).with_instance(&uri))?;
             let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default())
                 .with_payload(ResponsePayload::Batch(value))
                 .render()?;
-            Ok(NgsiLdBatchResponse::new(StatusCode::CREATED, rendered).into_response())
+            Ok(apply_preference_applied(
+                NgsiLdBatchResponse::new(StatusCode::CREATED, rendered).into_response(),
+                mode,
+            ))
         }
     } else {
         let value =
@@ -381,7 +403,10 @@ pub async fn batch_upsert(
         let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default())
             .with_payload(ResponsePayload::Batch(value))
             .render()?;
-        Ok(NgsiLdBatchResponse::new(StatusCode::MULTI_STATUS, rendered).into_response())
+        Ok(apply_preference_applied(
+            NgsiLdBatchResponse::new(StatusCode::MULTI_STATUS, rendered).into_response(),
+            mode,
+        ))
     }
 }
 
@@ -391,6 +416,7 @@ pub async fn batch_update(
     OriginalUri(uri): OriginalUri,
     accept: AcceptFormat,
     context: ContextUrl,
+    prefer: PreferHeader,
     ValidatedQuery(params): ValidatedQuery<UpdateParams>,
     IncomingVia(incoming_via): IncomingVia,
     BatchBody { headers, body }: BatchBody,
@@ -443,19 +469,23 @@ pub async fn batch_update(
         return Ok(status.into_response());
     }
 
-    let batch = service.batch_update(&entities, &context, no_overwrite).await.with_instance(&uri)?;
+    let mode = service.effective_side_effect_mode(prefer.respond_mode == Some(RespondMode::Async), entities.len());
+    let batch = service.batch_update(&entities, &context, no_overwrite, mode).await.with_instance(&uri)?;
     let mut result: BatchOperationResult = batch.into();
     result.errors.append(&mut parse_errors);
 
     if result.errors.is_empty() {
-        Ok(StatusCode::NO_CONTENT.into_response())
+        Ok(apply_preference_applied(StatusCode::NO_CONTENT.into_response(), mode))
     } else {
         let value =
             serde_json::to_value(&result).map_err(|e| AndromedaError::internal(format!("Failed to serialize batch result: {}", e)).with_instance(&uri))?;
         let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default())
             .with_payload(ResponsePayload::Batch(value))
             .render()?;
-        Ok(NgsiLdBatchResponse::new(StatusCode::MULTI_STATUS, rendered).into_response())
+        Ok(apply_preference_applied(
+            NgsiLdBatchResponse::new(StatusCode::MULTI_STATUS, rendered).into_response(),
+            mode,
+        ))
     }
 }
 
@@ -465,6 +495,7 @@ pub async fn batch_merge(
     OriginalUri(uri): OriginalUri,
     accept: AcceptFormat,
     context: ContextUrl,
+    prefer: PreferHeader,
     IncomingVia(incoming_via): IncomingVia,
     BatchBody { headers, body }: BatchBody,
 ) -> Result<Response, NgsiLdError> {
@@ -513,12 +544,13 @@ pub async fn batch_merge(
         return Ok(status.into_response());
     }
 
-    let batch = service.batch_merge(&entities, &context).await.with_instance(&uri)?;
+    let mode = service.effective_side_effect_mode(prefer.respond_mode == Some(RespondMode::Async), entities.len());
+    let batch = service.batch_merge(&entities, &context, mode).await.with_instance(&uri)?;
     let mut result: BatchOperationResult = batch.into();
     result.errors.append(&mut parse_errors);
 
     if result.errors.is_empty() {
-        Ok(StatusCode::NO_CONTENT.into_response())
+        Ok(apply_preference_applied(StatusCode::NO_CONTENT.into_response(), mode))
     } else {
         let value =
             serde_json::to_value(&result).map_err(|e| AndromedaError::internal(format!("Failed to serialize batch result: {}", e)).with_instance(&uri))?;
@@ -535,6 +567,7 @@ pub async fn batch_delete(
     OriginalUri(uri): OriginalUri,
     accept: AcceptFormat,
     context: ContextUrl,
+    prefer: PreferHeader,
     IncomingVia(incoming_via): IncomingVia,
     body: Bytes,
 ) -> Result<Response, NgsiLdError> {
@@ -581,26 +614,31 @@ pub async fn batch_delete(
         return Ok(status.into_response());
     }
 
+    let mode = service.effective_side_effect_mode(prefer.respond_mode == Some(RespondMode::Async), entity_ids.len());
+
     if modes.has_exclusive {
         // Exclusive: delete locally AND forwarded (already done)
-        if let Err(e) = service.batch_delete(&entity_ids).await {
+        if let Err(e) = service.batch_delete(&entity_ids, mode).await {
             tracing::warn!(error = %e, "Failed to delete local entities during exclusive batch delete");
         }
-        return Ok(StatusCode::NO_CONTENT.into_response());
+        return Ok(apply_preference_applied(StatusCode::NO_CONTENT.into_response(), mode));
     }
 
     // Inclusive or no match: delete locally
-    let batch = service.batch_delete(&entity_ids).await.with_instance(&uri)?;
+    let batch = service.batch_delete(&entity_ids, mode).await.with_instance(&uri)?;
     let result: BatchOperationResult = batch.into();
 
     if result.errors.is_empty() {
-        Ok(StatusCode::NO_CONTENT.into_response())
+        Ok(apply_preference_applied(StatusCode::NO_CONTENT.into_response(), mode))
     } else {
         let value =
             serde_json::to_value(&result).map_err(|e| AndromedaError::internal(format!("Failed to serialize batch result: {}", e)).with_instance(&uri))?;
         let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default())
             .with_payload(ResponsePayload::Batch(value))
             .render()?;
-        Ok(NgsiLdBatchResponse::new(StatusCode::MULTI_STATUS, rendered).into_response())
+        Ok(apply_preference_applied(
+            NgsiLdBatchResponse::new(StatusCode::MULTI_STATUS, rendered).into_response(),
+            mode,
+        ))
     }
 }

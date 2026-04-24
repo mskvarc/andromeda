@@ -26,7 +26,7 @@
 //! * `ngsi-ld=1.9` -- request version conformance (clause 4.3.6.8)
 
 use crate::http::model::{
-    preference::{GeoJsonBodyPreference, Preference, parse_preference},
+    preference::{GeoJsonBodyPreference, Preference, RespondMode, parse_preference},
     version::NgsiLdVersion,
 };
 use axum::http::{HeaderName, HeaderValue};
@@ -45,7 +45,7 @@ impl Prefer {
             .iter()
             .find_map(|p| match p {
                 Preference::Body(body) => Some(*body),
-                Preference::NgsiLdVersion(_) => None,
+                Preference::NgsiLdVersion(_) | Preference::Respond(_) => None,
             })
             .unwrap_or_default()
     }
@@ -54,7 +54,16 @@ impl Prefer {
     pub fn requested_version(&self) -> Option<NgsiLdVersion> {
         self.0.iter().find_map(|p| match p {
             Preference::NgsiLdVersion(v) => Some(*v),
-            Preference::Body(_) => None,
+            Preference::Body(_) | Preference::Respond(_) => None,
+        })
+    }
+
+    /// Return the requested response mode (`respond-async` / `respond-sync`),
+    /// if the client included one.
+    pub fn respond_mode(&self) -> Option<RespondMode> {
+        self.0.iter().find_map(|p| match p {
+            Preference::Respond(mode) => Some(*mode),
+            Preference::Body(_) | Preference::NgsiLdVersion(_) => None,
         })
     }
 }
@@ -142,8 +151,23 @@ mod tests {
 
     #[test]
     fn decode_ignores_unknown_tokens() {
-        let prefer = decode_prefer("respond-async, body=json");
+        let prefer = decode_prefer("wait=5, body=json");
         pretty_assertions::assert_eq!(prefer, Prefer(vec![Preference::Body(GeoJsonBodyPreference::Json)]));
+    }
+
+    #[test]
+    fn decode_respond_async() {
+        let prefer = decode_prefer("respond-async");
+        pretty_assertions::assert_eq!(prefer, Prefer(vec![Preference::Respond(RespondMode::Async)]));
+    }
+
+    #[test]
+    fn decode_respond_sync() {
+        let prefer = decode_prefer("respond-sync, body=json");
+        pretty_assertions::assert_eq!(
+            prefer,
+            Prefer(vec![Preference::Respond(RespondMode::Sync), Preference::Body(GeoJsonBodyPreference::Json)])
+        );
     }
 
     #[test]

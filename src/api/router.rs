@@ -37,14 +37,7 @@ use crate::{
     service::{
         csource_registration::CsourceRegistrationService,
         csource_subscription::CsourceSubscriptionService,
-        entity::{
-            BatchExecutionConfig,
-            BatchSideEffectDispatcherConfig,
-            EntityService,
-            OutboxWriteConfig,
-            discovery::EntityDiscoveryService,
-            query::EntityQueryService,
-        },
+        entity::{BatchExecutionConfig, EntityService, OutboxWriteConfig, discovery::EntityDiscoveryService, query::EntityQueryService},
         jsonld_context::JsonLdContextService,
         spatial::{entity_index::SpatialEntityIndex, warmup},
         subscription::SubscriptionService,
@@ -59,13 +52,13 @@ use crate::{
     transport::{dispatch::TransportDispatcher, http::HttpTransportConfig, mqtt::MqttPoolConfig, sse::SseConnectionRegistry, ws::WsConnectionRegistry},
     version::Version,
     worker::{
-        batch_side_effects::BatchSideEffectWorker,
         csr_interval::CsrIntervalWorker,
         csr_notification::CsrNotificationWorker,
         data_expiration::DataExpirationWorker,
         interval::IntervalWorker,
         notification::NotificationWorker,
         outbox_delivery::OutboxDeliveryWorker,
+        pending_side_effects::PendingSideEffectsWorker,
         snapshot_expiration::SnapshotExpirationWorker,
         spatial_sync::SpatialSyncWorker,
         subscription_expiration::SubscriptionExpirationWorker,
@@ -309,17 +302,23 @@ pub async fn build_tenant_state(
         tracing::warn!(error = %error, event = "attribute_names_preload_failed");
     }
 
-    let batch_side_effects = if let Some(threshold) = config.performance.batch_async_side_effect_threshold {
-        let (sender, receiver) = tokio::sync::mpsc::channel(config.performance.batch_side_effect_queue_capacity.max(1));
-        let worker = BatchSideEffectWorker::new(Arc::clone(&temporal_repo), Some(change_tx.clone()), receiver);
+    if config.performance.batch_async_side_effect_threshold.is_some() {
+        let pending_repo = crate::repository::pending_side_effects::repo::PendingSideEffectsRepository::new(&pool);
+        let worker = PendingSideEffectsWorker::new(
+            pending_repo,
+            Arc::clone(&temporal_repo),
+            Some(change_tx.clone()),
+            crate::worker::pending_side_effects::WorkerConfig {
+                poll_interval: std::time::Duration::from_secs(config.performance.pending_side_effects_poll_secs.max(1)),
+                lease_seconds: i32::try_from(config.performance.pending_side_effects_lease_secs.max(1)).unwrap_or(i32::MAX),
+                batch_size: i32::try_from(config.performance.pending_side_effects_batch_size.max(1)).unwrap_or(i32::MAX),
+                max_attempts: config.performance.pending_side_effects_max_attempts.max(1),
+                base_backoff: std::time::Duration::from_secs(config.performance.pending_side_effects_base_backoff_secs.max(1)),
+                worker_id: format!("{}-{}", config.info.source_identity, uuid::Uuid::new_v4()),
+            },
+        );
         worker_handles.push(tokio::spawn(worker.run()));
-        Some(BatchSideEffectDispatcherConfig {
-            threshold: threshold.max(1),
-            sender,
-        })
-    } else {
-        None
-    };
+    }
     let subscription_cache = Arc::new(SubscriptionCache::new(tenant.clone()));
     if let Err(e) = subscription_cache.reload(&SubscriptionRepository::new(&pool)).await {
         tracing::error!("Failed to load subscription cache: {}", e);
@@ -341,8 +340,8 @@ pub async fn build_tenant_state(
             chunk_size: config.performance.batch_chunk_size.max(1),
             large_threshold: config.performance.batch_large_threshold.max(1),
             prepare_blocking_threshold: config.performance.batch_prepare_blocking_threshold.max(1),
+            async_side_effect_threshold: config.performance.batch_async_side_effect_threshold,
         },
-        batch_side_effects,
         batch_activity.clone(),
         if config.outbox.enabled {
             Some(OutboxWriteConfig {
