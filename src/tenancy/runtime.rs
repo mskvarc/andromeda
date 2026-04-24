@@ -29,6 +29,7 @@ struct TenantRuntime {
     state: Arc<AndromedaState>,
     worker_handles: Vec<JoinHandle<()>>,
     transport: Arc<TransportDispatcher>,
+    pool: sqlx::PgPool,
     last_used: AtomicU64,
 }
 
@@ -151,7 +152,7 @@ impl TenantRuntimeManager {
         };
 
         let db_url = self.database_url.with_db_name(&db_name);
-        let (state, handles, transport) = build_tenant_state(&self.config, &db_url, tenant.clone()).await?;
+        let (state, handles, transport, pool) = build_tenant_state(&self.config, &db_url, tenant.clone()).await?;
         let state = Arc::new(state);
 
         match self.runtimes.entry(tenant.clone()) {
@@ -161,6 +162,7 @@ impl TenantRuntimeManager {
                     handle.abort();
                 }
                 transport.shutdown().await;
+                pool.close().await;
                 Ok(Arc::clone(&entry.get().state))
             }
             dashmap::mapref::entry::Entry::Vacant(vacant) => {
@@ -168,6 +170,7 @@ impl TenantRuntimeManager {
                     state: Arc::clone(&state),
                     worker_handles: handles,
                     transport,
+                    pool,
                     last_used: AtomicU64::new(EPOCH.elapsed().as_millis() as u64),
                 });
                 Ok(state)
@@ -181,6 +184,17 @@ impl TenantRuntimeManager {
         let mut ticker = tokio::time::interval(interval);
         loop {
             ticker.tick().await;
+
+            let orphan_keys = self.collect_orphan_runtimes().await;
+            let orphan_count = orphan_keys.len();
+            for key in orphan_keys {
+                if let Some((_, runtime)) = self.runtimes.remove(&key) {
+                    shutdown_runtime(runtime).await;
+                }
+            }
+            if orphan_count > 0 {
+                info!(orphaned = orphan_count, "Janitor evicted tenant runtimes whose registry row was removed");
+            }
 
             let excess_evictions = collect_excess_evictions(&self.runtimes, self.tenancy.runtime_max_cached);
             if !excess_evictions.is_empty() {
@@ -211,6 +225,35 @@ impl TenantRuntimeManager {
                 info!(evicted = evict_count, "Janitor evicted idle tenant runtimes");
             }
         }
+    }
+
+    /// Collect keys of cached tenant runtimes whose row no longer exists in the
+    /// `tenants` registry table. These are "orphans" — either a tenant was
+    /// deleted directly in the database (e.g., by integration tests resetting
+    /// state) or an administrative tool removed it. Evicting them frees the
+    /// cached connection pool and lets PostgreSQL reclaim the connection slots.
+    async fn collect_orphan_runtimes(&self) -> Vec<TenantRef> {
+        let registered: Vec<String> = match sqlx::query_scalar("SELECT name FROM tenants WHERE is_unnamed_default = FALSE AND name IS NOT NULL")
+            .fetch_all(&self.main_pool)
+            .await
+        {
+            Ok(rows) => rows,
+            Err(_) => return Vec::new(),
+        };
+        let registered: HashSet<String> = registered.into_iter().collect();
+        self.runtimes
+            .iter()
+            .filter_map(|entry| match entry.key() {
+                TenantRef::UnnamedDefault => None,
+                TenantRef::Named(name) => {
+                    if registered.contains(name.as_str()) {
+                        None
+                    } else {
+                        Some(TenantRef::Named(name.clone()))
+                    }
+                }
+            })
+            .collect()
     }
 
     async fn ensure_default_tenant_registry_row(&self) -> Result<(), AndromedaError> {
@@ -279,12 +322,15 @@ impl TenantRuntimeManager {
     }
 }
 
-/// Shut down a tenant runtime by stopping the transport and aborting all worker tasks.
+/// Shut down a tenant runtime: stop transport, abort workers, and close the
+/// per-tenant database pool so PostgreSQL connection slots are released
+/// immediately rather than waiting for idle_timeout or eventual drop.
 async fn shutdown_runtime(runtime: TenantRuntime) {
     runtime.transport.shutdown().await;
     for handle in runtime.worker_handles {
         handle.abort();
     }
+    runtime.pool.close().await;
 }
 
 /// Collect tenant keys that should be evicted to bring the cache below `max_cached`.

@@ -8,11 +8,14 @@
 
 #![allow(clippy::expect_used, clippy::unwrap_used)]
 
-use andromeda_test_common::{db::TRUNCATE_ALL, prelude::*};
+use andromeda_test_common::{
+    db::{TRUNCATE_ALL, pool as shared_pool},
+    prelude::*,
+};
 use axum::{Router, body::Bytes, http::HeaderMap as AxumHeaderMap, response::IntoResponse, routing::post};
 use reqwest::{Client, Method, StatusCode, header::HeaderMap};
 use serde_json::{Value, json};
-use sqlx::PgPool;
+use sqlx::{Connection, PgConnection, PgPool};
 use std::{sync::Arc, time::Duration};
 use tokio::sync::{Mutex, Notify};
 use uuid::Uuid;
@@ -34,6 +37,15 @@ fn replace_database_name(url: &str, new_db: &str) -> Result<String, ()> {
     Ok(format!("{prefix}/{new_db}"))
 }
 
+/// Drop every named-tenant database and delete its registry row.
+///
+/// The broker caches a `PgPool` per named tenant. Truncating the registry
+/// alone leaves those pools (and their PostgreSQL connections) alive — with
+/// unique UUID tenant names per test, this accumulates quickly and exhausts
+/// `max_connections`. Dropping the underlying database `WITH (FORCE)`
+/// terminates every backend connected to it, returning the slot to the
+/// cluster immediately. The broker's cached pool becomes empty on the next
+/// tick and the janitor's orphan sweep evicts the stale runtime handle.
 async fn clean_named_tenant_databases(main_db_url: &str, main_pool: &PgPool) {
     let has_tenants_table: bool = sqlx::query_scalar("SELECT to_regclass('public.tenants') IS NOT NULL")
         .fetch_one(main_pool)
@@ -46,24 +58,25 @@ async fn clean_named_tenant_databases(main_db_url: &str, main_pool: &PgPool) {
         .fetch_all(main_pool)
         .await
         .unwrap_or_default();
+    let Ok(admin_url) = replace_database_name(main_db_url, "postgres") else {
+        return;
+    };
+    let Ok(mut admin) = PgConnection::connect(&admin_url).await else {
+        return;
+    };
     for db_name in tenant_dbs {
-        let Ok(tenant_url) = replace_database_name(main_db_url, &db_name) else {
-            continue;
-        };
-        let Ok(tenant_pool) = PgPool::connect(&tenant_url).await else {
-            continue;
-        };
-        let _ = sqlx::query(TRUNCATE_ALL).execute(&tenant_pool).await;
-        tenant_pool.close().await;
+        let safe = db_name.replace('"', "");
+        let sql = format!("DROP DATABASE IF EXISTS \"{safe}\" WITH (FORCE)");
+        let _ = sqlx::query(&sql).execute(&mut admin).await;
     }
+    let _ = admin.close().await;
     let _ = sqlx::query("DELETE FROM tenants WHERE is_unnamed_default = false").execute(main_pool).await;
 }
 
 async fn reset_broker_state() {
-    let pool = PgPool::connect(DATABASE_URL).await.expect("connect test database");
+    let pool = shared_pool().await.expect("acquire shared test pool");
     clean_named_tenant_databases(DATABASE_URL, &pool).await;
     sqlx::query(TRUNCATE_ALL).execute(&pool).await.expect("truncate test tables");
-    pool.close().await;
 }
 
 fn unique_entity_id(prefix: &str) -> String {

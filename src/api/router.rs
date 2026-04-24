@@ -254,7 +254,7 @@ pub async fn build_tenant_state(
     config: &RuntimeConfig,
     db_url: &str,
     tenant: TenantRef,
-) -> Result<(AndromedaState, Vec<JoinHandle<()>>, Arc<TransportDispatcher>), AndromedaError> {
+) -> Result<(AndromedaState, Vec<JoinHandle<()>>, Arc<TransportDispatcher>, sqlx::PgPool), AndromedaError> {
     let max_connections = match tenant {
         TenantRef::UnnamedDefault => config.database.max_connections,
         TenantRef::Named(_) => config.tenancy.tenant_max_connections,
@@ -519,5 +519,6 @@ pub async fn build_tenant_state(
         },
         worker_handles,
         transport_handle,
+        pool,
     ))
 }
