@@ -60,8 +60,10 @@ pub struct BatchExecutionConfig {
     /// Entity-count threshold that offloads preparation post-processing to blocking workers.
     pub prepare_blocking_threshold: usize,
     /// Minimum batch size for honouring `Prefer: respond-async`. When `None`,
-    /// the async durable-queue path is never taken regardless of the client
-    /// preference (all batches run inline).
+    /// the async durable-queue path is honoured for any batch size whenever
+    /// the client opts in via the header. When `Some(t)`, the async path is
+    /// only taken for batches of size `>= t` (smaller batches stay inline
+    /// regardless of the client preference).
     pub async_side_effect_threshold: Option<usize>,
     /// Bulk-write execution mode for entity INSERT/UPDATE/UPSERT paths.
     pub bulk_write_mode: BulkWriteMode,
@@ -141,7 +143,7 @@ impl EntityService {
             batch_concurrency: batch_config.concurrency.max(1),
             batch_large_threshold: batch_config.large_threshold.max(1),
             batch_prepare_blocking_threshold: batch_config.prepare_blocking_threshold.max(1),
-            async_side_effect_threshold: batch_config.async_side_effect_threshold.filter(|t| *t > 0),
+            async_side_effect_threshold: batch_config.async_side_effect_threshold,
             bulk_write_mode: batch_config.bulk_write_mode,
             outbox,
         }
@@ -149,13 +151,13 @@ impl EntityService {
 
     /// Decide which side-effect path to take based on the client's
     /// `Prefer: respond-async` hint and the configured minimum-batch
-    /// threshold. Returns [`BatchSideEffectMode::Inline`] when either the
-    /// client did not opt in or the threshold is not met.
+    /// threshold. When the client opts in and no threshold is configured the
+    /// async path is taken for any batch size; with a threshold, only batches
+    /// at or above it are enqueued. Requests that do not opt in always run
+    /// inline. See NGSI-LD 6.3.5 for the server's discretion over `Prefer`
+    /// token handling.
     pub fn effective_side_effect_mode(&self, client_requested_async: bool, batch_size: usize) -> BatchSideEffectMode {
-        match (client_requested_async, self.async_side_effect_threshold) {
-            (true, Some(threshold)) if batch_size >= threshold => BatchSideEffectMode::Enqueue,
-            _other => BatchSideEffectMode::Inline,
-        }
+        resolve_side_effect_mode(self.async_side_effect_threshold, client_requested_async, batch_size)
     }
 
     fn emit_change(&self, event: ChangeEvent) {
@@ -499,6 +501,19 @@ impl EntityService {
     }
 }
 
+/// Pure routing logic for [`EntityService::effective_side_effect_mode`].
+///
+/// Split from the method so the decision table can be unit-tested without
+/// constructing a full [`EntityService`]. See that method's doc comment for
+/// the semantic contract.
+pub(crate) fn resolve_side_effect_mode(async_threshold: Option<usize>, client_requested_async: bool, batch_size: usize) -> BatchSideEffectMode {
+    match (client_requested_async, async_threshold) {
+        (true, None) => BatchSideEffectMode::Enqueue,
+        (true, Some(threshold)) if batch_size >= threshold => BatchSideEffectMode::Enqueue,
+        _other => BatchSideEffectMode::Inline,
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Shared helpers (used across submodules)
 // ---------------------------------------------------------------------------
@@ -757,7 +772,34 @@ pub(crate) fn inject_attr_sys_attrs(obj: &mut Map<String, Value>, created_at_val
 #[cfg(test)]
 mod tests {
     #![allow(clippy::expect_used, clippy::unwrap_used)]
-    use super::normalize_entity_attributes;
+    use super::{BatchSideEffectMode, normalize_entity_attributes, resolve_side_effect_mode};
+
+    #[test]
+    fn prefer_respond_async_with_none_threshold_routes_to_enqueue() {
+        assert_eq!(resolve_side_effect_mode(None, true, 1), BatchSideEffectMode::Enqueue);
+    }
+
+    #[test]
+    fn prefer_respond_async_with_threshold_below_batch_size_routes_to_inline() {
+        assert_eq!(resolve_side_effect_mode(Some(100), true, 10), BatchSideEffectMode::Inline);
+    }
+
+    #[test]
+    fn prefer_respond_async_at_or_above_threshold_routes_to_enqueue() {
+        assert_eq!(resolve_side_effect_mode(Some(100), true, 100), BatchSideEffectMode::Enqueue);
+        assert_eq!(resolve_side_effect_mode(Some(100), true, 512), BatchSideEffectMode::Enqueue);
+    }
+
+    #[test]
+    fn prefer_respond_sync_forces_inline_with_threshold_zero() {
+        assert_eq!(resolve_side_effect_mode(Some(0), false, 1000), BatchSideEffectMode::Inline);
+    }
+
+    #[test]
+    fn no_async_opt_in_routes_to_inline_regardless_of_threshold() {
+        assert_eq!(resolve_side_effect_mode(None, false, 1000), BatchSideEffectMode::Inline);
+        assert_eq!(resolve_side_effect_mode(Some(1), false, 1000), BatchSideEffectMode::Inline);
+    }
 
     #[test]
     fn normalize_entity_attributes_wraps_concise_values_as_property() {

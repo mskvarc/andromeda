@@ -556,22 +556,23 @@ impl EntityService {
 
         let save_columns = decompose_rows(save_rows);
 
+        let mut tx = self.repo.pool().begin().await?;
+        let saved_ids = EntityRepository::save_batch_in_tx(&mut tx, &save_columns).await?;
+        let (job, success) = Self::drain_effect_entities(&mut effect_entities, &saved_ids, TriggerReason::EntityUpdated);
         match mode {
             BatchSideEffectMode::Inline => {
-                let saved_ids = self.repo.save_batch(&save_columns).await?;
-                let (job, success) = Self::drain_effect_entities(&mut effect_entities, &saved_ids, TriggerReason::EntityUpdated);
-                self.apply_inline_side_effects(job).await;
-                Ok(BatchResult { success, errors })
+                self.temporal_recorder.record_entities_batch_in_tx(&mut tx, &job.temporal_entities).await?;
+                tx.commit().await?;
+                for event in job.change_events {
+                    self.emit_change(event);
+                }
             }
             BatchSideEffectMode::Enqueue => {
-                let mut tx = self.repo.pool().begin().await?;
-                let saved_ids = EntityRepository::save_batch_in_tx(&mut tx, &save_columns).await?;
-                let (job, success) = Self::drain_effect_entities(&mut effect_entities, &saved_ids, TriggerReason::EntityUpdated);
                 self.enqueue_batch_side_effects(&mut tx, &job).await?;
                 tx.commit().await?;
-                Ok(BatchResult { success, errors })
             }
         }
+        Ok(BatchResult { success, errors })
     }
 
     async fn batch_merge_chunk(
@@ -617,22 +618,23 @@ impl EntityService {
 
         let save_columns = decompose_rows(save_rows);
 
+        let mut tx = self.repo.pool().begin().await?;
+        let saved_ids = EntityRepository::save_batch_in_tx(&mut tx, &save_columns).await?;
+        let (job, success) = Self::drain_effect_entities(&mut effect_entities, &saved_ids, TriggerReason::EntityUpdated);
         match mode {
             BatchSideEffectMode::Inline => {
-                let saved_ids = self.repo.save_batch(&save_columns).await?;
-                let (job, success) = Self::drain_effect_entities(&mut effect_entities, &saved_ids, TriggerReason::EntityUpdated);
-                self.apply_inline_side_effects(job).await;
-                Ok(BatchResult { success, errors })
+                self.temporal_recorder.record_entities_batch_in_tx(&mut tx, &job.temporal_entities).await?;
+                tx.commit().await?;
+                for event in job.change_events {
+                    self.emit_change(event);
+                }
             }
             BatchSideEffectMode::Enqueue => {
-                let mut tx = self.repo.pool().begin().await?;
-                let saved_ids = EntityRepository::save_batch_in_tx(&mut tx, &save_columns).await?;
-                let (job, success) = Self::drain_effect_entities(&mut effect_entities, &saved_ids, TriggerReason::EntityUpdated);
                 self.enqueue_batch_side_effects(&mut tx, &job).await?;
                 tx.commit().await?;
-                Ok(BatchResult { success, errors })
             }
         }
+        Ok(BatchResult { success, errors })
     }
 
     async fn batch_upsert_replace_chunk(
@@ -692,24 +694,24 @@ impl EntityService {
             columns.expires_ats.push(expires_at);
         }
 
+        let mut tx = self.repo.pool().begin().await?;
+        let upserted = EntityRepository::upsert_batch_in_tx(&mut tx, &columns).await?;
+        let mut payloads = columns.payloads.into_iter().map(Some).collect::<Vec<_>>();
+        let (job, success, created) = Self::drain_upsert_indexed_effect_entities(&mut entity_data, &mut payloads, upserted);
         match mode {
             BatchSideEffectMode::Inline => {
-                let upserted = self.repo.upsert_batch(&columns).await?;
-                let mut payloads = columns.payloads.into_iter().map(Some).collect::<Vec<_>>();
-                let (job, success, created) = Self::drain_upsert_indexed_effect_entities(&mut entity_data, &mut payloads, upserted);
-                self.apply_inline_side_effects(job).await;
-                Ok((BatchResult { success, errors: Vec::new() }, created))
+                self.temporal_recorder.record_entities_batch_in_tx(&mut tx, &job.temporal_entities).await?;
+                tx.commit().await?;
+                for event in job.change_events {
+                    self.emit_change(event);
+                }
             }
             BatchSideEffectMode::Enqueue => {
-                let mut tx = self.repo.pool().begin().await?;
-                let upserted = EntityRepository::upsert_batch_in_tx(&mut tx, &columns).await?;
-                let mut payloads = columns.payloads.into_iter().map(Some).collect::<Vec<_>>();
-                let (job, success, created) = Self::drain_upsert_indexed_effect_entities(&mut entity_data, &mut payloads, upserted);
                 self.enqueue_batch_side_effects(&mut tx, &job).await?;
                 tx.commit().await?;
-                Ok((BatchResult { success, errors: Vec::new() }, created))
             }
         }
+        Ok((BatchResult { success, errors: Vec::new() }, created))
     }
 
     async fn batch_upsert_update_chunk(
@@ -795,54 +797,16 @@ impl EntityService {
 
         let updated_columns = if updated_rows.is_empty() { None } else { Some(decompose_rows(updated_rows)) };
 
-        let (created_ids, updated_ids) = match mode {
-            BatchSideEffectMode::Inline => {
-                let created_ids = if created_columns.ids.is_empty() {
-                    Vec::new()
-                } else {
-                    self.repo.create_batch(&created_columns).await?
-                };
-                let updated_ids = if let Some(cols) = &updated_columns {
-                    self.repo.save_batch(cols).await?
-                } else {
-                    Vec::new()
-                };
-                (created_ids, updated_ids)
-            }
-            BatchSideEffectMode::Enqueue => {
-                let mut tx = self.repo.pool().begin().await?;
-                let created_ids = if created_columns.ids.is_empty() {
-                    Vec::new()
-                } else {
-                    EntityRepository::create_batch_in_tx(&mut tx, &created_columns).await?
-                };
-                let updated_ids = if let Some(cols) = &updated_columns {
-                    EntityRepository::save_batch_in_tx(&mut tx, cols).await?
-                } else {
-                    Vec::new()
-                };
-
-                let mut created_payloads = created_columns.payloads.clone().into_iter().map(Some).collect::<Vec<_>>();
-                let (created_job, mut success, created) = Self::drain_upsert_indexed_effect_entities(
-                    &mut created_effects,
-                    &mut created_payloads,
-                    created_ids.iter().cloned().map(|id| (id, true)).collect(),
-                );
-                let (updated_job, updated_success) = Self::drain_effect_entities(&mut updated_effects, &updated_ids, TriggerReason::EntityUpdated);
-                success.extend(updated_success);
-
-                let mut temporal_entities = created_job.temporal_entities;
-                temporal_entities.extend(updated_job.temporal_entities);
-                let mut change_events = created_job.change_events;
-                change_events.extend(updated_job.change_events);
-                let job = BatchSideEffectJob {
-                    temporal_entities,
-                    change_events,
-                };
-                self.enqueue_batch_side_effects(&mut tx, &job).await?;
-                tx.commit().await?;
-                return Ok((BatchResult { success, errors: Vec::new() }, created));
-            }
+        let mut tx = self.repo.pool().begin().await?;
+        let created_ids = if created_columns.ids.is_empty() {
+            Vec::new()
+        } else {
+            EntityRepository::create_batch_in_tx(&mut tx, &created_columns).await?
+        };
+        let updated_ids = if let Some(cols) = &updated_columns {
+            EntityRepository::save_batch_in_tx(&mut tx, cols).await?
+        } else {
+            Vec::new()
         };
 
         let mut created_payloads = created_columns.payloads.into_iter().map(Some).collect::<Vec<_>>();
@@ -858,11 +822,24 @@ impl EntityService {
         temporal_entities.extend(updated_job.temporal_entities);
         let mut change_events = created_job.change_events;
         change_events.extend(updated_job.change_events);
-        self.apply_inline_side_effects(BatchSideEffectJob {
-            temporal_entities,
-            change_events,
-        })
-        .await;
+
+        match mode {
+            BatchSideEffectMode::Inline => {
+                self.temporal_recorder.record_entities_batch_in_tx(&mut tx, &temporal_entities).await?;
+                tx.commit().await?;
+                for event in change_events {
+                    self.emit_change(event);
+                }
+            }
+            BatchSideEffectMode::Enqueue => {
+                let job = BatchSideEffectJob {
+                    temporal_entities,
+                    change_events,
+                };
+                self.enqueue_batch_side_effects(&mut tx, &job).await?;
+                tx.commit().await?;
+            }
+        }
 
         Ok((BatchResult { success, errors: Vec::new() }, created))
     }

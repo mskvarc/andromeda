@@ -503,13 +503,8 @@ impl EntityRepository {
     }
 
     /// Insert multiple entities in a single SQL statement using `UNNEST`.
-    pub async fn create_batch(&self, entities: &PreparedEntityColumns) -> Result<Vec<String>, AndromedaError> {
-        Self::create_batch_impl(&self.pool, entities).await
-    }
-
-    /// Transactional variant of [`Self::create_batch`]. Lets callers pair
-    /// the entity insert with another write (e.g. enqueueing a side-effect
-    /// job) inside a single commit.
+    /// Lets callers pair the entity insert with another write (e.g.
+    /// enqueueing a side-effect job) inside a single commit.
     pub async fn create_batch_in_tx(tx: &mut Transaction<'_, Postgres>, entities: &PreparedEntityColumns) -> Result<Vec<String>, AndromedaError> {
         Self::create_batch_impl(&mut **tx, entities).await
     }
@@ -584,12 +579,8 @@ impl EntityRepository {
         Ok(result)
     }
 
-    /// Update multiple existing entities in a single SQL statement using `UNNEST`.
-    pub async fn save_batch(&self, entities: &PreparedEntityColumns) -> Result<Vec<String>, AndromedaError> {
-        Self::save_batch_impl(&self.pool, entities).await
-    }
-
-    /// Transactional variant of [`Self::save_batch`].
+    /// Update multiple existing entities in a single SQL statement using
+    /// `UNNEST`, inside the caller's transaction.
     pub async fn save_batch_in_tx(tx: &mut Transaction<'_, Postgres>, entities: &PreparedEntityColumns) -> Result<Vec<String>, AndromedaError> {
         Self::save_batch_impl(&mut **tx, entities).await
     }
@@ -630,12 +621,8 @@ impl EntityRepository {
         Ok(rows.into_iter().map(|(id,)| id).collect())
     }
 
-    /// Insert or update multiple entities in a single SQL statement.
-    pub async fn upsert_batch(&self, entities: &PreparedEntityColumns) -> Result<Vec<(String, bool)>, AndromedaError> {
-        Self::upsert_batch_impl(&self.pool, entities).await
-    }
-
-    /// Transactional variant of [`Self::upsert_batch`].
+    /// Insert or update multiple entities in a single SQL statement inside
+    /// the caller's transaction.
     pub async fn upsert_batch_in_tx(tx: &mut Transaction<'_, Postgres>, entities: &PreparedEntityColumns) -> Result<Vec<(String, bool)>, AndromedaError> {
         Self::upsert_batch_impl(&mut **tx, entities).await
     }
