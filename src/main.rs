@@ -23,7 +23,7 @@ use core::{
 use jsonld::core_context::NGSI_LD_CORE_CONTEXT_V18_URL;
 use mimalloc::MiMalloc;
 use tracing::info;
-use tracing_subscriber::FmtSubscriber;
+use tracing_subscriber::fmt;
 
 #[global_allocator]
 static GLOBAL: MiMalloc = MiMalloc;
@@ -42,9 +42,7 @@ async fn main() -> Result<(), AndromedaError> {
                 },
             )?;
 
-            let subscriber = FmtSubscriber::builder()
-                .with_max_level(config.observability.log_level.as_tracing_level())
-                .finish();
+            let subscriber = fmt().compact().with_max_level(config.observability.log_level.as_tracing_level()).finish();
             tracing::subscriber::set_global_default(subscriber)?;
 
             // Set the default core context URL to v1.8 (ETSI test suite expectation)

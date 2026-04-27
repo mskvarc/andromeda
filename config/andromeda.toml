@@ -10,7 +10,7 @@ cors = "permissive"
 
 [database]
 url = "postgres://postgres:postgres@localhost:5432/postgres"
-max_connections = 5
+max_connections = 64
 
 [jsonld]
 allow_remote_contexts = true
@@ -28,7 +28,7 @@ expiration_check_interval_secs = 30
 [tenancy]
 enabled = true
 tenant_db_prefix = "andromeda_tenant"
-tenant_max_connections = 3
+tenant_max_connections = 32
 runtime_idle_ttl_seconds = 900
 runtime_max_cached = 64
 janitor_interval_seconds = 30
