@@ -29,7 +29,7 @@ contextual = "0.1.6"
 dashmap = { version = "6.1.0", features = ["inline"] }
 derive_more = { version = "2.1.1", features = ["as_ref", "deref", "display", "from"] }
 futures = "0.3.32"
-geo = "0.33.0"
+geo = "0.33.1"
 geojson = "1.0.0"
 geozero = { version = "0.15.1", default-features = false, features = ["with-wkb", "with-geo", "with-geojson", "with-postgis-sqlx"] }
 headers = "0.4.1"
@@ -61,7 +61,7 @@ serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"
 serde_urlencoded = "0.7.1"
 serde_with = "3.18.0"
-shadow-rs = "1.7.1"
+shadow-rs = "2.0.0"
 sonic-rs = "0.5.8"
 sqlx = { version = "0.8.6", features = ["runtime-tokio", "postgres", "json", "chrono", "uuid"] }
 static-iref = "3.0.0"
@@ -70,7 +70,7 @@ strum = { version = "0.28.0", features = ["derive"] }
 thiserror = "2.0.18"
 tokio = { version = "1.52.1", features = ["full"] }
 tokio-util = "0.7.18"
-toml = "0.9.12"
+toml = "1.1.2"
 tower = { version = "0.5.3", features = ["util"] }
 tower-helmet = "0.3.0"
 tower-http = { version = "0.6.8", features = ["compression-full", "cors", "decompression-full", "normalize-path", "request-id", "sensitive-headers", "timeout", "trace", "util"] }
@@ -78,11 +78,11 @@ tower-layer = "0.3.3"
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["json", "env-filter"] }
 url = { version = "2.5.8", features = ["serde"] }
-urn-rs = { version = "0.8.0", features = ["serde"] }
+urn-rs = { version = "0.9.2", features = ["serde"] }
 uuid = { version = "1.23.1", features = ["serde", "v4"] }
 
 [build-dependencies]
-shadow-rs = "1.7.1"
+shadow-rs = "2.0.0"
 
 [dev-dependencies]
 andromeda-test-common = { path = "lib/andromeda-test-common" }
