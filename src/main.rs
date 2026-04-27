@@ -3,7 +3,6 @@ mod core;
 mod domain;
 mod health;
 mod http;
-mod i18n;
 mod jsonld;
 mod query;
 mod renderer;
@@ -59,7 +58,6 @@ async fn main() -> Result<(), AndromedaError> {
                 cli_port_override = run_args.port.is_some(),
                 tenancy_enabled = config.tenancy.enabled,
                 outbox_enabled = config.outbox.enabled,
-                provenance_https_resolver_enabled = config.provenance.https_resolver_enabled,
                 log_level = %config.observability.log_level,
                 precedence = RuntimeConfig::precedence_summary(),
                 "Starting Andromeda"

@@ -9,8 +9,6 @@ use crate::jsonld::{
     core_context::{
         ANDROMEDA_CORE_CONTEXT,
         ANDROMEDA_CORE_CONTEXT_URL,
-        DATA_INTEGRITY_CONTEXT,
-        DATA_INTEGRITY_CONTEXT_URL,
         NGSI_LD_CORE_CONTEXT_MAP,
         NGSI_LD_CORE_CONTEXT_URL,
         NGSI_LD_CORE_CONTEXT_URL_LIST,
@@ -600,8 +598,16 @@ impl JsonLdEngineBuilder {
         let andromeda_core = load_embedded_context(ANDROMEDA_CORE_CONTEXT, ANDROMEDA_CORE_CONTEXT_URL)?;
         self.registry.register(ANDROMEDA_CORE_CONTEXT_URL.to_string(), andromeda_core);
 
-        let data_integrity = load_embedded_context(DATA_INTEGRITY_CONTEXT, DATA_INTEGRITY_CONTEXT_URL)?;
-        self.registry.register(DATA_INTEGRITY_CONTEXT_URL.to_string(), data_integrity);
+        // The ETSI v1.9 core context references the W3C Data Integrity
+        // companion context as a scoped @context for the `ngsildproof`
+        // term. The broker no longer implements proof verification, but
+        // the term itself remains in the verbatim ETSI artefact, so its
+        // scoped context must still resolve during expansion. Register
+        // an empty stub so JSON-LD processing does not fail.
+        const DATA_INTEGRITY_CONTEXT_URL: &str = "https://w3id.org/security/data-integrity/v2";
+        const DATA_INTEGRITY_STUB: &str = r#"{"@context":{}}"#;
+        let data_integrity_stub = load_embedded_context(DATA_INTEGRITY_STUB, DATA_INTEGRITY_CONTEXT_URL)?;
+        self.registry.register(DATA_INTEGRITY_CONTEXT_URL.to_string(), data_integrity_stub);
 
         let preloaded = register_preloaded_contexts(&self.preload_contexts, &self.registry)?;
         if preloaded.is_empty() {

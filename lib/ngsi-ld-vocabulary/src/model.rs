@@ -11,12 +11,10 @@ use syn::{
     parse::{Parse, ParseStream},
 };
 
-/// Parsed macro input containing exactly three local JSON-LD context paths.
+/// Parsed macro input containing exactly two local JSON-LD context paths.
 pub struct MacroInput {
     /// Path to the NGSI-LD core context.
     pub core: LitStr,
-    /// Path to the Data Integrity companion context.
-    pub data_integrity: LitStr,
     /// Path to the Andromeda-owned context.
     pub andromeda: LitStr,
 }
@@ -25,20 +23,14 @@ impl Parse for MacroInput {
     fn parse(input: ParseStream<'_>) -> Result<Self> {
         let core: LitStr = input.parse()?;
         input.parse::<Token![,]>()?;
-        let data_integrity: LitStr = input.parse()?;
-        input.parse::<Token![,]>()?;
         let andromeda: LitStr = input.parse()?;
         let _ = input.parse::<Option<Token![,]>>()?;
 
         if !input.is_empty() {
-            return Err(input.error("expected exactly three string literal context paths"));
+            return Err(input.error("expected exactly two string literal context paths"));
         }
 
-        Ok(Self {
-            core,
-            data_integrity,
-            andromeda,
-        })
+        Ok(Self { core, andromeda })
     }
 }
 
@@ -51,17 +43,13 @@ pub struct InputContextFile {
     pub resolved_path: PathBuf,
     /// Literal span for diagnostics.
     pub span: Span,
-    /// Canonical remote URLs that are allowed to resolve to this file.
-    pub remote_urls: &'static [&'static str],
 }
 
-/// All three resolved input contexts.
+/// All resolved input contexts.
 #[derive(Clone, Debug)]
 pub struct InputContexts {
     /// NGSI-LD core context file.
     pub core: InputContextFile,
-    /// Data Integrity context file.
-    pub data_integrity: InputContextFile,
     /// Andromeda-owned context file.
     pub andromeda: InputContextFile,
 }
@@ -70,34 +58,18 @@ impl InputContexts {
     /// Resolve the macro input using absolute paths from workspace root.
     pub fn resolve(workspace_root: PathBuf, input: MacroInput) -> Result<InputContexts> {
         Ok(Self {
-            core: resolve_input(
-                &workspace_root,
-                "core",
-                input.core,
-                &["https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.9.jsonld"],
-            )?,
-            data_integrity: resolve_input(
-                &workspace_root,
-                "data_integrity",
-                input.data_integrity,
-                &["https://w3id.org/security/data-integrity/v2"],
-            )?,
-            andromeda: resolve_input(&workspace_root, "andromeda", input.andromeda, &[])?,
+            core: resolve_input(&workspace_root, "core", input.core)?,
+            andromeda: resolve_input(&workspace_root, "andromeda", input.andromeda)?,
         })
     }
 
-    /// Iterate over the three files in merge order.
+    /// Iterate over the two files in merge order.
     pub fn iter(&self) -> impl Iterator<Item = &InputContextFile> {
-        [&self.core, &self.data_integrity, &self.andromeda].into_iter()
-    }
-
-    /// Find an input file by an allowed remote URL.
-    pub fn find_by_remote_url(&self, url: &str) -> Option<&InputContextFile> {
-        self.iter().find(|file| file.remote_urls.contains(&url))
+        [&self.core, &self.andromeda].into_iter()
     }
 }
 
-fn resolve_input(workspace_root: &Path, label: &'static str, lit: LitStr, remote_urls: &'static [&'static str]) -> Result<InputContextFile> {
+fn resolve_input(workspace_root: &Path, label: &'static str, lit: LitStr) -> Result<InputContextFile> {
     let path_str = lit.value();
     // Strip leading "/" if present, then join to workspace root
     let relative = path_str.strip_prefix('/').unwrap_or(&path_str);
@@ -107,7 +79,6 @@ fn resolve_input(workspace_root: &Path, label: &'static str, lit: LitStr, remote
         label,
         resolved_path,
         span: lit.span(),
-        remote_urls,
     })
 }
 

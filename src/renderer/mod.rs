@@ -25,8 +25,6 @@
 //! - **Version adaptation** ([`version::VersionRenderer`]) -- adapting payloads
 //!   to conform to older NGSI-LD spec versions when the client sends
 //!   `Prefer: ngsi-ld=<version>`.
-//! - **Localization** ([`localization`]) -- locale-aware formatting of datetime and
-//!   currency attribute values for i18n proxy endpoints (Annex G.3).
 //!
 //! API handlers configure renderers via builder methods and call `render()`.
 //! No transformation logic should live in handlers directly.
@@ -92,7 +90,6 @@ pub enum VersionAdaptation {
 
 pub mod entity;
 pub mod geojson;
-pub mod localization;
 pub mod registration;
 pub mod response;
 pub mod snapshot;

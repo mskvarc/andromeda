@@ -1,8 +1,8 @@
 //! NGSI-LD core context URL constants and embedded payloads.
 //!
 //! Provides canonical URLs for all released versions of the NGSI-LD core
-//! context (ETSI CIM 009 / GS CIM 009), a W3C Data Integrity context, and
-//! helpers to test whether a URL matches any known version.
+//! context (ETSI CIM 009 / GS CIM 009) and helpers to test whether a URL
+//! matches any known version.
 //!
 //! The embedded payloads are compiled into the binary via [`include_str!`] so
 //! they are available without any network access.
@@ -84,11 +84,6 @@ pub static NGSI_LD_CORE_CONTEXT_MAP: LazyLock<HashMap<&str, &str>> = LazyLock::n
 pub const ANDROMEDA_CORE_CONTEXT_URL: &str = "https://andromeda.internal/context/andromeda-core-context.jsonld";
 /// Andromeda broker-specific context embedded payload.
 pub const ANDROMEDA_CORE_CONTEXT: &str = include_str!("context/andromeda-core-context.jsonld");
-
-/// W3C Data Integrity context URL.
-pub const DATA_INTEGRITY_CONTEXT_URL: &str = "https://w3id.org/security/data-integrity/v2";
-/// W3C Data Integrity context embedded payload.
-pub const DATA_INTEGRITY_CONTEXT: &str = include_str!("context/data-integrity-v2.jsonld");
 
 /// Returns `true` if `url` matches any known NGSI-LD core context version.
 pub fn is_ngsi_ld_core_context_url(url: &str) -> bool {

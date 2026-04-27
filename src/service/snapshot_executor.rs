@@ -326,7 +326,6 @@ pub fn snapshot_query_to_entity_params(query: &SnapshotQuery) -> Result<EntityQu
         collation: None,
         order_from: None,
         order_geometry: None,
-        collate: None,
         csf: None,
         drop: None,
         keep: None,

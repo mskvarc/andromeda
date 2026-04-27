@@ -7,7 +7,6 @@ use crate::{
         parameter::query::{SharedQueryParams, temporal::TemporalQueryParameters},
         response::content_range::build_content_range,
     },
-    i18n::collation::augment_expanded_with_collation_metadata,
     jsonld::{CompactOptions, ContextSpec, JsonLdEngine, term_resolver, vocab},
     query::{
         compiled::{CompiledTemporalQuery, GeoQuery, IdPattern, LastNOrigin, Pagination, ScopeQuery},
@@ -184,8 +183,7 @@ impl TemporalService {
 
     /// Create a new temporal entity or append attributes to an existing one.
     pub async fn create_or_update(&self, payload: Value, context: &ContextSpec) -> Result<CreateOrUpdateResult, AndromedaError> {
-        let mut expanded = self.engine.expand(payload.clone(), context).await?; // clone: expand() consumes the Value; payload is still used below for type extraction
-        augment_expanded_with_collation_metadata(&mut expanded);
+        let expanded = self.engine.expand(payload.clone(), context).await?; // clone: expand() consumes the Value; payload is still used below for type extraction
         let entity_obj = expanded
             .as_array()
             .and_then(|arr| arr.first())
@@ -256,8 +254,7 @@ impl TemporalService {
             return Err(AndromedaError::temporal_not_found(entity_id.to_string()));
         }
 
-        let mut expanded = self.engine.expand(payload, context).await?;
-        augment_expanded_with_collation_metadata(&mut expanded);
+        let expanded = self.engine.expand(payload, context).await?;
         self.add_attrs_internal(entity_id, &expanded).await?;
         Ok(())
     }
@@ -362,8 +359,7 @@ impl TemporalService {
             return Err(AndromedaError::temporal_not_found(format!("Attribute instance {} not found", instance_id)));
         }
 
-        let mut expanded = self.engine.expand(payload, context).await?;
-        augment_expanded_with_collation_metadata(&mut expanded);
+        let expanded = self.engine.expand(payload, context).await?;
         let instance_value = expanded.as_array().and_then(|arr| arr.first()).cloned().unwrap_or(expanded); // clone: extracting first element from array requires owned value; original consumed by unwrap_or
 
         self.recorder

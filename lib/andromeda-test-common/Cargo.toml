@@ -9,14 +9,10 @@ path = "src/lib.rs"
 
 [dependencies]
 axum = { version = "0.8.9", features = ["ws"] }
-bytes = "1.11.1"
 dashmap = { version = "6.1.0", features = ["inline"] }
-futures = "0.3.32"
 pretty_assertions = "1.4.1"
 reqwest = { version = "0.13.2", features = ["json"] }
 rumqttc = { version = "0.25.1", features = ["use-rustls"] }
-scopeguard = "1.2.0"
-serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"
 sqlx = { version = "0.8.6", features = ["runtime-tokio", "postgres"] }
 thiserror = "2.0.18"

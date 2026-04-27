@@ -1,6 +1,5 @@
 ngsi_ld_vocabulary::generate!(
     "lib/ngsi-ld-vocabulary/tests/ui/contexts/naming-collision-core.jsonld",
-    "lib/ngsi-ld-vocabulary/tests/ui/contexts/data-integrity.jsonld",
     "lib/ngsi-ld-vocabulary/tests/ui/contexts/andromeda.jsonld",
 );
 

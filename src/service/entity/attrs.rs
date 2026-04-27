@@ -4,7 +4,6 @@ use crate::{
         notification::{ChangeEvent, TriggerReason},
         uri::Uri,
     },
-    i18n::collation::augment_expanded_with_collation_metadata,
     jsonld::{ContextSpec, vocab},
     query::compiled::PurgeMode,
     service::entity::{
@@ -38,8 +37,7 @@ impl EntityService {
         let id = id.to_string();
 
         normalize_entity_attributes(&mut fragment);
-        let mut expanded = self.engine.expand(fragment, context).await?;
-        augment_expanded_with_collation_metadata(&mut expanded);
+        let expanded = self.engine.expand(fragment, context).await?;
         validate_attribute_envelopes(&expanded)?;
         let attrs = unwrap_expanded_ref(&expanded);
 
@@ -71,8 +69,7 @@ impl EntityService {
         let id = id.to_string();
 
         normalize_entity_attributes(&mut fragment);
-        let mut expanded = self.engine.expand(fragment, context).await?;
-        augment_expanded_with_collation_metadata(&mut expanded);
+        let expanded = self.engine.expand(fragment, context).await?;
         validate_attribute_envelopes(&expanded)?;
         let attrs = unwrap_expanded_ref(&expanded);
 
@@ -141,8 +138,7 @@ impl EntityService {
 
         let attr_iri = self.engine.expand_term(attr_name, context).await?;
 
-        let mut expanded = self.engine.expand(fragment, context).await?;
-        augment_expanded_with_collation_metadata(&mut expanded);
+        let expanded = self.engine.expand(fragment, context).await?;
         validate_attribute_envelopes(&expanded)?;
         let attr_value = unwrap_expanded_ref(&expanded);
 
@@ -252,8 +248,7 @@ impl EntityService {
             return Err(AndromedaError::entity_validation("Scope is not a replaceable attribute"));
         }
 
-        let mut expanded = self.engine.expand(fragment, context).await?;
-        augment_expanded_with_collation_metadata(&mut expanded);
+        let expanded = self.engine.expand(fragment, context).await?;
         validate_attribute_envelopes(&expanded)?;
         let attr_value = unwrap_expanded_ref(&expanded);
 

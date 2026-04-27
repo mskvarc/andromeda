@@ -110,7 +110,6 @@ impl AttributeType {
                 vocab::compact::CREATED_AT,
                 vocab::compact::MODIFIED_AT,
                 vocab::compact::DELETED_AT,
-                vocab::compact::NGSILDPROOF,
                 "name",
             ],
             Self::Relationship => &[
@@ -125,7 +124,6 @@ impl AttributeType {
                 vocab::compact::CREATED_AT,
                 vocab::compact::MODIFIED_AT,
                 vocab::compact::DELETED_AT,
-                vocab::compact::NGSILDPROOF,
                 "name",
             ],
             Self::GeoProperty => &[
@@ -139,7 +137,6 @@ impl AttributeType {
                 vocab::compact::CREATED_AT,
                 vocab::compact::MODIFIED_AT,
                 vocab::compact::DELETED_AT,
-                vocab::compact::NGSILDPROOF,
                 "name",
             ],
             Self::VocabProperty => &[
@@ -153,7 +150,6 @@ impl AttributeType {
                 vocab::compact::CREATED_AT,
                 vocab::compact::MODIFIED_AT,
                 vocab::compact::DELETED_AT,
-                vocab::compact::NGSILDPROOF,
                 "name",
             ],
             Self::LanguageProperty => &[
@@ -167,7 +163,6 @@ impl AttributeType {
                 vocab::compact::CREATED_AT,
                 vocab::compact::MODIFIED_AT,
                 vocab::compact::DELETED_AT,
-                vocab::compact::NGSILDPROOF,
                 "name",
             ],
             Self::JsonProperty => &[
@@ -181,7 +176,6 @@ impl AttributeType {
                 vocab::compact::CREATED_AT,
                 vocab::compact::MODIFIED_AT,
                 vocab::compact::DELETED_AT,
-                vocab::compact::NGSILDPROOF,
                 "name",
             ],
             Self::ListProperty => &[
@@ -195,7 +189,6 @@ impl AttributeType {
                 vocab::compact::CREATED_AT,
                 vocab::compact::MODIFIED_AT,
                 vocab::compact::DELETED_AT,
-                vocab::compact::NGSILDPROOF,
                 "name",
             ],
             Self::ListRelationship => &[
@@ -210,7 +203,6 @@ impl AttributeType {
                 vocab::compact::CREATED_AT,
                 vocab::compact::MODIFIED_AT,
                 vocab::compact::DELETED_AT,
-                vocab::compact::NGSILDPROOF,
                 "name",
             ],
         }

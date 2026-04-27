@@ -311,23 +311,6 @@ pub struct NotificationConfig {
     pub ws: WsConfig,
 }
 
-/// NGSI-LD Data Integrity (ETSI GS CIM 019) configuration. The
-/// `verification_methods` map binds verification-method URIs to
-/// multibase-encoded public keys used by the static resolver. When
-/// empty, only the HTTPS resolver applies and `verify=true` requests
-/// dereference the verification method URL to fetch the key at runtime.
-#[derive(Config, Debug, Clone, Serialize)]
-pub struct ProvenanceConfig {
-    #[config(env = "ANDROMEDA_PROVENANCE_VERIFICATION_METHODS", parse_env = parse_string_map_json, default = {})]
-    pub verification_methods: HashMap<String, String>,
-
-    /// When true, unknown verification-method URIs are dereferenced
-    /// over HTTPS to fetch the `publicKeyMultibase` of a DID-document
-    /// or JWK-style response. Off by default.
-    #[config(env = "ANDROMEDA_PROVENANCE_HTTPS_RESOLVER_ENABLED", default = false)]
-    pub https_resolver_enabled: bool,
-}
-
 #[derive(Config, Debug, Clone, Serialize)]
 pub struct SpatialConfig {
     #[config(env = "ANDROMEDA_SPATIAL_REBUILD_INTERVAL_SECS", default = 1800)]
@@ -397,9 +380,6 @@ pub struct RuntimeConfig {
     pub notifications: NotificationConfig,
 
     #[config(nested)]
-    pub provenance: ProvenanceConfig,
-
-    #[config(nested)]
     pub spatial: SpatialConfig,
 
     #[config(nested)]
@@ -436,9 +416,6 @@ impl RuntimeConfig {
         // Clone into a printable snapshot so secrets can be redacted without mutating the live runtime config.
         let mut redacted = self.clone();
         redacted.database.url = REDACTED_SECRET.to_string();
-        for value in redacted.provenance.verification_methods.values_mut() {
-            *value = REDACTED_SECRET.to_string();
-        }
         redacted
     }
 }
@@ -690,10 +667,6 @@ mod tests {
                     ping_interval_secs: 30,
                 },
             },
-            provenance: ProvenanceConfig {
-                verification_methods: HashMap::new(),
-                https_resolver_enabled: false,
-            },
             spatial: SpatialConfig { rebuild_interval_secs: 1800 },
             observability: ObservabilityConfig { log_level: LogLevel::Info },
         }
@@ -866,15 +839,10 @@ port = 1600
     fn redacted_effective_config_hides_secrets() {
         let mut config = test_runtime_config_with_preload("contexts/test.jsonld");
         config.database.url = "postgres://secret".to_string();
-        config
-            .provenance
-            .verification_methods
-            .insert("https://example.com/verification-method".to_string(), "zSecretMultibase".to_string());
 
         let rendered = config.to_redacted_toml().expect("redacted toml should render");
 
         assert!(!rendered.contains("postgres://secret"));
-        assert!(!rendered.contains("zSecretMultibase"));
         assert!(rendered.contains(REDACTED_SECRET));
     }
 

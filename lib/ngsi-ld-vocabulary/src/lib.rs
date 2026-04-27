@@ -5,7 +5,7 @@
 
 //! Proc-macro crate that generates NGSI-LD vocabulary constants from local JSON-LD contexts.
 //!
-//! The macro reads three local context files at compile time, resolves prefixes and terms
+//! The macro reads two local context files at compile time, resolves prefixes and terms
 //! offline, and emits typed `&'static iref::Iri` constants plus string lookup tables.
 
 mod codegen;
@@ -20,7 +20,7 @@ use crate::{
 use proc_macro::TokenStream;
 use syn::parse_macro_input;
 
-/// Generate NGSI-LD vocabulary constants from exactly three local JSON-LD context files.
+/// Generate NGSI-LD vocabulary constants from exactly two local JSON-LD context files.
 ///
 /// Paths are resolved as absolute paths from the workspace root.
 #[proc_macro]

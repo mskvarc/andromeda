@@ -55,11 +55,6 @@ pub struct GetEntityParams {
     pub contained_by: Option<String>,
     #[serde(rename = "entityMap")]
     pub entity_map: Option<String>,
-    /// When true, the handler runs NGSI-LD Data Integrity verification
-    /// on every sealed attribute and attaches an
-    /// `ngsildproofVerification` member to the response body.
-    #[serde(default, deserialize_with = "deserialize_option_bool_case_insensitive")]
-    pub verify: Option<bool>,
 }
 
 impl GetEntityParams {
@@ -99,7 +94,6 @@ mod tests {
             join_level: None,
             contained_by: None,
             entity_map: None,
-            verify: None,
         }
     }
 

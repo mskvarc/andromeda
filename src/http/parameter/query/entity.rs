@@ -74,7 +74,6 @@ pub struct EntityQueryParameters {
     /// Geometry type for orderFrom coordinates (S5.2.43). Defaults to "Point".
     #[serde(rename = "orderGeometry")]
     pub order_geometry: Option<String>,
-    pub collate: Option<String>,
     /// Context Source Filter expression (S6.4.3.2) for filtering which CSRs
     /// are contacted during distributed operations. Uses the q-expression grammar.
     pub csf: Option<String>,
@@ -257,19 +256,6 @@ impl EntityQueryParameters {
 
         Ok(())
     }
-
-    pub fn parse_collate_targets(&self) -> Vec<String> {
-        self.collate
-            .as_deref()
-            .map(|raw| {
-                raw.split(',')
-                    .map(str::trim)
-                    .filter(|target| !target.is_empty())
-                    .map(ToOwned::to_owned)
-                    .collect()
-            })
-            .unwrap_or_default()
-    }
 }
 
 /// Parsed response shaping options from the `options` and `format` parameters.
@@ -343,7 +329,6 @@ impl From<QueryRequest> for EntityQueryParameters {
             collation: None,
             order_from: None,
             order_geometry: None,
-            collate: None,
             csf: None,
             drop: None,
             keep: None,

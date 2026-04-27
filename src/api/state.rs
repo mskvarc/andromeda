@@ -6,7 +6,6 @@ use crate::{
         entity::{EntityService, discovery::EntityDiscoveryService, query::EntityQueryService},
         entity_map::EntityMapService,
         jsonld_context::JsonLdContextService,
-        provenance::ProvenanceService,
         snapshot::SnapshotService,
         subscription::SubscriptionService,
         temporal::TemporalService,
@@ -28,7 +27,6 @@ pub struct AndromedaState {
     pub forwarding: Arc<CsourceForwardingService>,
     pub entity_maps: Arc<EntityMapService>,
     pub snapshots: Arc<SnapshotService>,
-    pub provenance: Arc<ProvenanceService>,
     pub sse_registry: Arc<SseConnectionRegistry>,
     /// Per-connection SSE channel buffer size.
     pub sse_channel_buffer_size: usize,

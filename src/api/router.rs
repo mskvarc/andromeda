@@ -11,7 +11,6 @@ use crate::{
         entity_map,
         entity_operations,
         health,
-        i18n,
         info,
         jsonld_context,
         snapshot,
@@ -107,28 +106,6 @@ pub async fn create_router(config: Arc<RuntimeConfig>) -> Result<Router, Androme
         .layer(HelmetLayer::with_defaults())
         .with_state(app_state);
     Ok(router)
-}
-
-/// Build the verification-method resolver from the `[provenance]` config
-/// section. Static entries are decoded eagerly at startup so that
-/// invalid multibase literals fail fast. When the HTTPS resolver is
-/// enabled a chained resolver is returned, preferring static config.
-fn build_provenance_resolver(
-    config: &crate::core::config::ProvenanceConfig,
-) -> Result<std::sync::Arc<dyn crate::service::provenance::VerificationMethodResolver>, AndromedaError> {
-    use crate::service::provenance::{ChainedResolver, HttpsResolver, StaticResolver, VerificationMethodResolver};
-    let static_resolver = StaticResolver::new();
-    for (uri, multibase) in &config.verification_methods {
-        static_resolver
-            .insert_multibase(uri.clone(), multibase)
-            .map_err(|e| AndromedaError::internal(format!("invalid publicKeyMultibase for {uri}: {e}")))?;
-    }
-    let static_arc: std::sync::Arc<dyn VerificationMethodResolver> = std::sync::Arc::new(static_resolver);
-    if !config.https_resolver_enabled {
-        return Ok(static_arc);
-    }
-    let https = HttpsResolver::new(reqwest::Client::new());
-    Ok(std::sync::Arc::new(ChainedResolver::new(vec![static_arc, std::sync::Arc::new(https)])))
 }
 
 async fn favicon() -> impl IntoResponse {
@@ -230,7 +207,6 @@ fn build_v1_router() -> Router<AppState> {
         .route("/{snapshot_id}/clone", post(snapshot::clone));
 
     let info_routes = Router::new().route("/sourceIdentity", get(info::get));
-    let i18n_routes = Router::new().route("/entities", get(i18n::query)).route("/entities/{id}", get(i18n::get));
 
     Router::new()
         .nest("/entities", entity_routes)
@@ -248,7 +224,6 @@ fn build_v1_router() -> Router<AppState> {
         .nest("/csourceSubscriptions", csr_subscription_routes)
         .nest("/snapshots", snapshot_routes)
         .nest("/info", info_routes)
-        .nest("/i18n", i18n_routes)
 }
 
 pub async fn build_tenant_state(
@@ -496,10 +471,6 @@ pub async fn build_tenant_state(
         config.performance.snapshot_concurrency,
     ));
 
-    let provenance_service = Arc::new(crate::service::provenance::ProvenanceService::new(build_provenance_resolver(
-        &config.provenance,
-    )?));
-
     Ok((
         AndromedaState {
             entities: entity_service,
@@ -513,7 +484,6 @@ pub async fn build_tenant_state(
             forwarding: forwarding_service,
             entity_maps: entity_map_service,
             snapshots: snapshot_service,
-            provenance: provenance_service,
             sse_registry,
             sse_channel_buffer_size: config.notifications.sse.channel_buffer_size,
             sse_keep_alive_interval_secs: config.notifications.sse.keep_alive_interval_secs,

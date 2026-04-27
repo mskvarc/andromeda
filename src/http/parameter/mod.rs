@@ -7,7 +7,6 @@
 pub mod csource_subscription;
 pub mod entity;
 pub mod entity_operations;
-pub mod i18n;
 pub mod jsonld_context;
 pub mod protocol;
 pub mod query;

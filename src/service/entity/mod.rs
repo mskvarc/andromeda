@@ -17,7 +17,6 @@ use crate::{
         outbox::NewOutboxEntry,
         uri::Uri,
     },
-    i18n::collation::augment_expanded_with_collation_metadata,
     jsonld::{ContextSpec, JsonLdEngine},
     repository::{
         entity::{params::EntityCreateParams, repo::EntityRepository},
@@ -233,8 +232,7 @@ impl EntityService {
 
         let mut entity_json = serde_json::to_value(entity).map_err(|err| AndromedaError::entity_validation(format!("Invalid entity payload: {}", err)))?;
         normalize_entity_attributes(&mut entity_json);
-        let mut expanded = self.engine.expand(entity_json, context).await?;
-        augment_expanded_with_collation_metadata(&mut expanded);
+        let expanded = self.engine.expand(entity_json, context).await?;
         validate_attribute_envelopes(&expanded)?;
 
         let types = extract_entity_types(&expanded);
@@ -292,8 +290,7 @@ impl EntityService {
 
         let mut patch_json = serde_json::to_value(patch).map_err(|err| AndromedaError::entity_validation(format!("Invalid patch payload: {}", err)))?;
         normalize_entity_attributes(&mut patch_json);
-        let mut expanded = self.engine.expand(patch_json, context).await?;
-        augment_expanded_with_collation_metadata(&mut expanded);
+        let expanded = self.engine.expand(patch_json, context).await?;
         validate_attribute_envelopes(&expanded)?;
         crate::domain::expanded::merge_entity(&mut existing, &expanded).map_err(AndromedaError::internal)?;
 
@@ -364,8 +361,7 @@ impl EntityService {
 
         let mut patch_json = serde_json::to_value(patch).map_err(|err| AndromedaError::entity_validation(format!("Invalid patch payload: {}", err)))?;
         normalize_entity_attributes(&mut patch_json);
-        let mut expanded = self.engine.expand(patch_json, context).await?;
-        augment_expanded_with_collation_metadata(&mut expanded);
+        let expanded = self.engine.expand(patch_json, context).await?;
         validate_attribute_envelopes(&expanded)?;
 
         let types = self.fetch_entity_types(&id).await;

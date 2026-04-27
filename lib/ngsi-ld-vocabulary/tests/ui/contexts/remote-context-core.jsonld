@@ -1,8 +1,0 @@
-{
-    "@context": {
-        "proof": {
-            "@id": "https://example.com/proof",
-            "@context": "https://example.com/unknown-context"
-        }
-    }
-}

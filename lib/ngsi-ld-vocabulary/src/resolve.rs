@@ -50,13 +50,13 @@ pub fn resolve_workspace_root(path_literal: &LitStr) -> syn::Result<PathBuf> {
     }
 }
 
-/// Read, merge, and resolve the three input contexts into a canonical vocabulary model.
+/// Read, merge, and resolve the input contexts into a canonical vocabulary model.
 pub fn load_contexts(inputs: &InputContexts) -> syn::Result<ResolvedModel> {
     let documents = inputs.iter().cloned().map(read_document).collect::<syn::Result<Vec<_>>>()?;
 
     let mut model = ContextModel::default();
     for document in &documents {
-        collect_context_object(document.top_level_context()?, &document.input, inputs, &mut model)?;
+        collect_context_object(document.top_level_context()?, &document.input, &mut model)?;
     }
 
     let prefixes = resolve_prefixes(model.prefixes)?;
@@ -94,7 +94,7 @@ fn read_document(input: InputContextFile) -> syn::Result<ParsedDocument> {
     Ok(ParsedDocument { input, root })
 }
 
-fn collect_context_object(context: &Map<String, Value>, file: &InputContextFile, inputs: &InputContexts, model: &mut ContextModel) -> syn::Result<()> {
+fn collect_context_object(context: &Map<String, Value>, file: &InputContextFile, model: &mut ContextModel) -> syn::Result<()> {
     for (compact, value) in context {
         if compact.starts_with('@') {
             continue;
@@ -109,22 +109,22 @@ fn collect_context_object(context: &Map<String, Value>, file: &InputContextFile,
             insert_term(model, compact, target, file)?;
         }
 
-        collect_nested_contexts(value, file, inputs, model)?;
+        collect_nested_contexts(value, file, model)?;
     }
 
     Ok(())
 }
 
-fn collect_nested_contexts(value: &Value, file: &InputContextFile, inputs: &InputContexts, model: &mut ContextModel) -> syn::Result<()> {
+fn collect_nested_contexts(value: &Value, file: &InputContextFile, model: &mut ContextModel) -> syn::Result<()> {
     match value {
         Value::Object(object) => {
             if let Some(nested) = object.get("@context") {
-                collect_context_value(nested, file, inputs, model)?;
+                collect_context_value(nested, file, model)?;
             }
         }
         Value::Array(items) => {
             for item in items {
-                collect_nested_contexts(item, file, inputs, model)?;
+                collect_nested_contexts(item, file, model)?;
             }
         }
         Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => {}
@@ -133,28 +133,21 @@ fn collect_nested_contexts(value: &Value, file: &InputContextFile, inputs: &Inpu
     Ok(())
 }
 
-fn collect_context_value(value: &Value, file: &InputContextFile, inputs: &InputContexts, model: &mut ContextModel) -> syn::Result<()> {
+fn collect_context_value(value: &Value, file: &InputContextFile, model: &mut ContextModel) -> syn::Result<()> {
     match value {
-        Value::Object(object) => collect_context_object(object, file, inputs, model),
+        Value::Object(object) => collect_context_object(object, file, model),
         Value::Array(items) => {
             for item in items {
-                collect_context_value(item, file, inputs, model)?;
+                collect_context_value(item, file, model)?;
             }
             Ok(())
         }
-        Value::String(url) => {
-            if inputs.find_by_remote_url(url).is_some() {
-                return Ok(());
-            }
-
-            Err(syn::Error::new(
-                file.span,
-                format!(
-                    "unsupported remote @context URL {url} in {}; allowed URLs are {}",
-                    file.resolved_path.display(),
-                    inputs.iter().flat_map(|input| input.remote_urls.iter().copied()).collect::<Vec<_>>().join(", ")
-                ),
-            ))
+        Value::String(_url) => {
+            // Remote @context URLs are silently skipped: their terms simply
+            // do not get materialised into generated constants. This keeps
+            // the verbatim ETSI core context valid even after companion
+            // files (e.g. Data Integrity) are removed from the input set.
+            Ok(())
         }
         Value::Null | Value::Bool(_) | Value::Number(_) => Err(syn::Error::new(
             file.span,
