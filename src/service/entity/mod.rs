@@ -10,7 +10,7 @@ pub mod provision_forwarding;
 pub mod query;
 
 use crate::{
-    core::{batch_activity::BatchActivityTracker, config::BulkWriteMode, error::AndromedaError},
+    core::{batch_activity::BatchActivityTracker, error::AndromedaError},
     domain::{
         entity::{Entity, EntityPatch},
         notification::{ChangeEvent, TriggerReason},
@@ -20,12 +20,13 @@ use crate::{
     i18n::collation::augment_expanded_with_collation_metadata,
     jsonld::{ContextSpec, JsonLdEngine},
     repository::{
-        entity::repo::EntityRepository,
-        pending_side_effects::{payload::PersistedBatchSideEffectJob, repo::PendingSideEffectsRepository},
+        entity::{params::EntityCreateParams, repo::EntityRepository},
+        pending_side_effects::payload::PersistedBatchSideEffectJob,
         temporal::repo::TemporalRepository,
+        uow::UnitOfWorkFactory,
     },
     service::{
-        entity::extract::{create_entity, create_entity_with_outbox, save_entity, save_entity_with_outbox},
+        entity::extract::{build_save_params, extract_geo_wkb},
         subscription_cache::SubscriptionCache,
         subscription_matching::matches_entity_filters,
         temporal_recorder::TemporalRecorder,
@@ -65,8 +66,6 @@ pub struct BatchExecutionConfig {
     /// only taken for batches of size `>= t` (smaller batches stay inline
     /// regardless of the client preference).
     pub async_side_effect_threshold: Option<usize>,
-    /// Bulk-write execution mode for entity INSERT/UPDATE/UPSERT paths.
-    pub bulk_write_mode: BulkWriteMode,
 }
 
 /// Collected side-effects for a batch chunk: temporal history writes plus
@@ -102,6 +101,7 @@ pub enum BatchSideEffectMode {
 pub struct EntityService {
     repo: EntityRepository,
     temporal_recorder: TemporalRecorder,
+    uow: Arc<UnitOfWorkFactory>,
     engine: JsonLdEngine,
     change_tx: Option<broadcast::Sender<ChangeEvent>>,
     batch_activity: BatchActivityTracker,
@@ -111,7 +111,6 @@ pub struct EntityService {
     batch_large_threshold: usize,
     batch_prepare_blocking_threshold: usize,
     async_side_effect_threshold: Option<usize>,
-    pub(crate) bulk_write_mode: BulkWriteMode,
     /// Outbox write configuration, present when outbox is enabled.
     outbox: Option<OutboxWriteConfig>,
 }
@@ -121,6 +120,7 @@ impl EntityService {
     pub fn new(
         pool: &PgPool,
         temporal_repo: Arc<TemporalRepository>,
+        uow: Arc<UnitOfWorkFactory>,
         engine: JsonLdEngine,
         change_tx: Option<broadcast::Sender<ChangeEvent>>,
         batch_config: BatchExecutionConfig,
@@ -135,6 +135,7 @@ impl EntityService {
         EntityService {
             repo,
             temporal_recorder,
+            uow,
             engine,
             change_tx,
             batch_activity,
@@ -144,7 +145,6 @@ impl EntityService {
             batch_large_threshold: batch_config.large_threshold.max(1),
             batch_prepare_blocking_threshold: batch_config.prepare_blocking_threshold.max(1),
             async_side_effect_threshold: batch_config.async_side_effect_threshold,
-            bulk_write_mode: batch_config.bulk_write_mode,
             outbox,
         }
     }
@@ -207,19 +207,19 @@ impl EntityService {
         self.apply_batch_side_effects(job).await;
     }
 
-    /// Persist a side-effect job into the durable queue within an existing
-    /// transaction. Caller must commit the transaction for the enqueue to
-    /// take effect, guaranteeing crash-consistency with the entity write.
+    /// Persist a side-effect job into the durable queue inside the given
+    /// unit of work. The caller must commit the UoW for the enqueue to take
+    /// effect, guaranteeing crash-consistency with the entity write.
     pub(crate) async fn enqueue_batch_side_effects(
         &self,
-        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        uow: &mut crate::repository::uow::UnitOfWork,
         job: &BatchSideEffectJob,
     ) -> Result<(), AndromedaError> {
         if job.temporal_entities.is_empty() && job.change_events.is_empty() {
             return Ok(());
         }
         let persisted: PersistedBatchSideEffectJob = job.into();
-        PendingSideEffectsRepository::enqueue_in_tx(tx, &persisted).await?;
+        uow.enqueue_pending_side_effects(&persisted).await?;
         Ok(())
     }
 
@@ -240,26 +240,41 @@ impl EntityService {
         let types = extract_entity_types(&expanded);
         let types_refs: Vec<&str> = types.iter().map(String::as_str).collect();
         let scopes = extract_scopes(&expanded);
-
+        let scope_paths: Vec<String> = scopes.iter().map(|s| crate::query::sql::scope_to_ltree(s)).collect();
         let expires_at = crate::domain::expanded::extract_expires_at(&expanded);
+        let (location_wkb, observation_space_wkb, operation_space_wkb) = extract_geo_wkb(&expanded);
 
-        let urn = if self.outbox.is_some() {
-            let outbox_entries = self.build_outbox_entries(
+        let outbox_entries = if self.outbox.is_some() {
+            self.build_outbox_entries(
                 &entity.id,
                 &types,
                 TriggerReason::EntityCreated,
                 &extract_attribute_keys(&expanded),
                 Some(&expanded),
                 None,
-            );
-            create_entity_with_outbox(&self.repo, &id, types_refs.as_ref(), &scopes, &expanded, expires_at, &outbox_entries).await?
+            )
         } else {
-            create_entity(&self.repo, &id, types_refs.as_ref(), &scopes, &expanded, expires_at).await?
+            Vec::new()
         };
 
-        if let Err(e) = self.temporal_recorder.record_entity_attributes(&id, &expanded).await {
-            tracing::warn!(error = %e, entity_id = %id, event = "temporal_recording_failed");
+        let mut uow = self.uow.begin().await?;
+        let urn = uow
+            .create_entity(EntityCreateParams {
+                id: &id,
+                types: types_refs.as_ref(),
+                scope_paths,
+                payload: &expanded,
+                location_wkb,
+                observation_space_wkb,
+                operation_space_wkb,
+                expires_at,
+            })
+            .await?;
+        uow.record_entity_attributes(&id, &expanded).await?;
+        if !outbox_entries.is_empty() {
+            uow.insert_outbox_batch(&outbox_entries).await?;
         }
+        uow.commit().await?;
 
         self.emit_change(ChangeEvent::new(entity.id.clone(), types, TriggerReason::EntityCreated).with_changed_attributes(extract_attribute_keys(&expanded))); // clone: owned Uri for event
 
@@ -287,10 +302,10 @@ impl EntityService {
         let attrs_after: HashSet<String> = extract_attribute_keys(&existing).into_iter().collect();
         let deleted_attrs: Vec<String> = attrs_before.difference(&attrs_after).cloned().collect(); // clone: owned strings from set difference
 
-        if self.outbox.is_some() {
-            let mut outbox_entries = Vec::new();
+        let outbox_entries = if self.outbox.is_some() {
+            let mut entries = Vec::new();
             for deleted_attr in &deleted_attrs {
-                outbox_entries.extend(self.build_outbox_entries(
+                entries.extend(self.build_outbox_entries(
                     &entity_uri,
                     &types,
                     TriggerReason::AttributeDeleted,
@@ -299,7 +314,7 @@ impl EntityService {
                     previous_attributes.as_ref(),
                 ));
             }
-            outbox_entries.extend(self.build_outbox_entries(
+            entries.extend(self.build_outbox_entries(
                 &entity_uri,
                 &types,
                 TriggerReason::EntityUpdated,
@@ -307,19 +322,21 @@ impl EntityService {
                 Some(&existing),
                 previous_attributes.as_ref(),
             ));
-            save_entity_with_outbox(&self.repo, &id, &existing, &outbox_entries).await?;
+            entries
         } else {
-            save_entity(&self.repo, &id, &existing).await?;
-        }
+            Vec::new()
+        };
 
-        if let Err(e) = self.temporal_recorder.record_entity_attributes(&id, &expanded).await {
-            tracing::warn!(error = %e, entity_id = %id, event = "temporal_recording_failed");
-        }
-
-        // Record temporal tombstones for deleted attributes
+        let mut uow = self.uow.begin().await?;
+        uow.save_entity(build_save_params(&id, &existing)).await?;
+        uow.record_entity_attributes(&id, &expanded).await?;
         for deleted_attr in &deleted_attrs {
-            let _ = self.temporal_recorder.record_attribute_deletion(&id, deleted_attr, None).await;
+            uow.record_attribute_deletion(&id, deleted_attr, None).await?;
         }
+        if !outbox_entries.is_empty() {
+            uow.insert_outbox_batch(&outbox_entries).await?;
+        }
+        uow.commit().await?;
 
         for deleted_attr in &deleted_attrs {
             self.emit_attr_change(
@@ -354,16 +371,19 @@ impl EntityService {
         let types = self.fetch_entity_types(&id).await;
         let changed_attrs = extract_attribute_keys(&expanded);
 
-        if self.outbox.is_some() {
-            let outbox_entries = self.build_outbox_entries(&entity_uri, &types, TriggerReason::EntityUpdated, &changed_attrs, Some(&expanded), None);
-            save_entity_with_outbox(&self.repo, &id, &expanded, &outbox_entries).await?;
+        let outbox_entries = if self.outbox.is_some() {
+            self.build_outbox_entries(&entity_uri, &types, TriggerReason::EntityUpdated, &changed_attrs, Some(&expanded), None)
         } else {
-            save_entity(&self.repo, &id, &expanded).await?;
-        }
+            Vec::new()
+        };
 
-        if let Err(e) = self.temporal_recorder.record_entity_attributes(&id, &expanded).await {
-            tracing::warn!(error = %e, entity_id = %id, event = "temporal_recording_failed");
+        let mut uow = self.uow.begin().await?;
+        uow.save_entity(build_save_params(&id, &expanded)).await?;
+        uow.record_entity_attributes(&id, &expanded).await?;
+        if !outbox_entries.is_empty() {
+            uow.insert_outbox_batch(&outbox_entries).await?;
         }
+        uow.commit().await?;
 
         self.emit_change(ChangeEvent::new(entity_uri, types, TriggerReason::EntityUpdated).with_changed_attributes(changed_attrs));
 
@@ -392,10 +412,10 @@ impl EntityService {
 
         let attr_keys = extract_attribute_keys(&entity_snapshot);
 
-        if self.outbox.is_some() {
-            let mut outbox_entries = Vec::new();
+        let outbox_entries = if self.outbox.is_some() {
+            let mut entries = Vec::new();
             if !attr_keys.is_empty() {
-                outbox_entries.extend(self.build_outbox_entries(
+                entries.extend(self.build_outbox_entries(
                     &entity_uri,
                     &entity_types,
                     TriggerReason::AttributeDeleted,
@@ -404,7 +424,7 @@ impl EntityService {
                     Some(&entity_snapshot),
                 ));
             }
-            outbox_entries.extend(self.build_outbox_entries(
+            entries.extend(self.build_outbox_entries(
                 &entity_uri,
                 &entity_types,
                 TriggerReason::EntityDeleted,
@@ -412,12 +432,19 @@ impl EntityService {
                 Some(&entity_snapshot),
                 Some(&entity_snapshot),
             ));
-            if self.repo.delete_with_outbox(&id, &outbox_entries).await? == 0 {
-                return Err(AndromedaError::entity_not_found(id));
-            }
-        } else if self.repo.delete(&id).await? == 0 {
+            entries
+        } else {
+            Vec::new()
+        };
+
+        let mut uow = self.uow.begin().await?;
+        if uow.delete_entity(&id).await? == 0 {
             return Err(AndromedaError::entity_not_found(id));
         }
+        if !outbox_entries.is_empty() {
+            uow.insert_outbox_batch(&outbox_entries).await?;
+        }
+        uow.commit().await?;
 
         // Emit AttributeDeleted for each attribute so attributeDeleted subscriptions fire
         if !attr_keys.is_empty() {

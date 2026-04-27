@@ -2,17 +2,14 @@
 
 use crate::{
     core::error::AndromedaError,
-    domain::{notification::SysAttrsSnapshot, outbox::NewOutboxEntry},
+    domain::notification::SysAttrsSnapshot,
     query::{
         compiled::CompiledEntityQuery,
         sql::{self, BindValue},
     },
-    repository::{
-        entity::{
-            params::{EntityCreateParams, EntitySaveParams, PreparedEntityColumns},
-            rows::{AttributeSummaryRow, DeletedEntity, QueryResult},
-        },
-        outbox::repo::OutboxRepository,
+    repository::entity::{
+        params::{EntityCreateParams, EntitySaveParams, PreparedEntityColumns},
+        rows::{AttributeSummaryRow, DeletedEntity, QueryResult},
     },
 };
 use serde_json::Value;
@@ -37,13 +34,9 @@ impl EntityRepository {
         Self::create_impl(&self.pool, params).await
     }
 
-    /// Insert a new entity atomically with outbox entries, returning the URN.
-    pub async fn create_with_outbox(&self, params: EntityCreateParams<'_>, outbox_entries: &[NewOutboxEntry]) -> Result<Urn, AndromedaError> {
-        let mut tx = self.pool.begin().await?;
-        let urn = Self::create_impl(&mut *tx, params).await?;
-        OutboxRepository::insert_batch_in_tx(&mut tx, outbox_entries).await?;
-        tx.commit().await?;
-        Ok(urn)
+    /// Transactional variant of [`Self::create`].
+    pub async fn create_in_tx(tx: &mut Transaction<'_, Postgres>, params: EntityCreateParams<'_>) -> Result<Urn, AndromedaError> {
+        Self::create_impl(&mut **tx, params).await
     }
 
     async fn create_impl<'e>(executor: impl Executor<'e, Database = sqlx::Postgres>, params: EntityCreateParams<'_>) -> Result<Urn, AndromedaError> {
@@ -167,13 +160,9 @@ impl EntityRepository {
         Self::save_impl(&self.pool, params).await
     }
 
-    /// Save an entity atomically with outbox entries. Returns rows affected.
-    pub async fn save_with_outbox(&self, params: EntitySaveParams<'_>, outbox_entries: &[NewOutboxEntry]) -> Result<u64, AndromedaError> {
-        let mut tx = self.pool.begin().await?;
-        let updated = Self::save_impl(&mut *tx, params).await?;
-        OutboxRepository::insert_batch_in_tx(&mut tx, outbox_entries).await?;
-        tx.commit().await?;
-        Ok(updated)
+    /// Transactional variant of [`Self::save`].
+    pub async fn save_in_tx(tx: &mut Transaction<'_, Postgres>, params: EntitySaveParams<'_>) -> Result<u64, AndromedaError> {
+        Self::save_impl(&mut **tx, params).await
     }
 
     async fn save_impl<'e>(executor: impl Executor<'e, Database = sqlx::Postgres>, params: EntitySaveParams<'_>) -> Result<u64, AndromedaError> {
@@ -203,23 +192,9 @@ impl EntityRepository {
         Ok(result.rows_affected())
     }
 
-    /// Delete an entity by its identifier. Returns rows affected.
-    pub async fn delete(&self, id: &str) -> Result<u64, AndromedaError> {
-        Self::delete_impl(&self.pool, id).await
-    }
-
-    /// Delete an entity atomically with outbox entries. Returns rows affected.
-    pub async fn delete_with_outbox(&self, id: &str, outbox_entries: &[NewOutboxEntry]) -> Result<u64, AndromedaError> {
-        let mut tx = self.pool.begin().await?;
-        let deleted = Self::delete_impl(&mut *tx, id).await?;
-        OutboxRepository::insert_batch_in_tx(&mut tx, outbox_entries).await?;
-        tx.commit().await?;
-        Ok(deleted)
-    }
-
-    async fn delete_impl<'e>(executor: impl Executor<'e, Database = sqlx::Postgres>, id: &str) -> Result<u64, AndromedaError> {
-        let result = sqlx::query("DELETE FROM entities WHERE id = $1").bind(id).execute(executor).await?;
-
+    /// Transactional delete of a single entity by id. Returns rows affected.
+    pub async fn delete_in_tx(tx: &mut Transaction<'_, Postgres>, id: &str) -> Result<u64, AndromedaError> {
+        let result = sqlx::query("DELETE FROM entities WHERE id = $1").bind(id).execute(&mut **tx).await?;
         Ok(result.rows_affected())
     }
 
@@ -681,11 +656,5 @@ impl EntityRepository {
             })
             .collect();
         Ok(result)
-    }
-
-    /// Expose the underlying connection pool so services can open their
-    /// own transactions (e.g. for the async durable-queue path).
-    pub const fn pool(&self) -> &PgPool {
-        &self.pool
     }
 }

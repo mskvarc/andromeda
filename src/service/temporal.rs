@@ -24,12 +24,12 @@ use crate::{
         },
     },
     repository::{
-        entity::repo::EntityRepository,
+        entity::{params::EntityCreateParams, repo::EntityRepository},
         temporal::{params::DeleteScope, repo::TemporalRepository},
     },
     service::{
         csource_forwarding::{ForwardedTemporalEntities, merge_temporal_query_results},
-        entity::{extract::create_entity, extract_entity_types},
+        entity::{extract::extract_geo_wkb, extract_entity_types},
         temporal_recorder::TemporalRecorder,
     },
 };
@@ -229,7 +229,20 @@ impl TemporalService {
                 // Save initial base entity using the expanded payload so that
                 // extract_entity_types() can find @type in the stored JSON.
                 let expires_at = crate::domain::expanded::extract_expires_at(&expanded);
-                let _ = create_entity(&self.entity_repo, entity_id, &types, &[], &expanded, expires_at).await;
+                let (location_wkb, observation_space_wkb, operation_space_wkb) = extract_geo_wkb(&expanded);
+                let _ = self
+                    .entity_repo
+                    .create(EntityCreateParams {
+                        id: entity_id,
+                        types: &types,
+                        scope_paths: Vec::new(),
+                        payload: &expanded,
+                        location_wkb,
+                        observation_space_wkb,
+                        operation_space_wkb,
+                        expires_at,
+                    })
+                    .await;
             }
 
             self.recorder.record_entity_attributes(entity_id, &expanded).await?;

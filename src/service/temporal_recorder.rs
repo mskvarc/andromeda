@@ -10,6 +10,7 @@ use crate::{
     repository::temporal::{
         params::{HistoryBatchEntry, HistoryValues, ScopeHistoryEntry, TeaBatchEntry, UpdateInstanceParams},
         repo::TemporalRepository,
+        rows::TeaBatchResultRow,
     },
 };
 use chrono::{DateTime, Utc};
@@ -50,6 +51,7 @@ pub(crate) struct DbValueParams {
 }
 
 /// Records attribute history into temporal tables when entities are created or modified.
+#[derive(Debug)]
 pub struct TemporalRecorder {
     repo: Arc<TemporalRepository>,
 }
@@ -227,7 +229,7 @@ impl TemporalRecorder {
     /// Invalid attributes are skipped with a warning rather than failing the
     /// entire batch.
     pub async fn record_entities_batch(&self, entities: &[(Arc<str>, Arc<Value>)]) -> Result<(), AndromedaError> {
-        let prepared = Self::prepare_batch(entities);
+        let prepared = Self::prepare_batch_arc(entities);
         if prepared.tea_entries.is_empty() && prepared.scope_entries.is_empty() {
             return Ok(());
         }
@@ -252,7 +254,24 @@ impl TemporalRecorder {
         tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         entities: &[(Arc<str>, Arc<Value>)],
     ) -> Result<(), AndromedaError> {
-        let prepared = Self::prepare_batch(entities);
+        let prepared = Self::prepare_batch_arc(entities);
+        self.flush_prepared_in_tx(tx, prepared).await
+    }
+
+    /// Transactional variant of [`Self::record_entity_attributes`]. Borrows the
+    /// payload directly so the single-entity hot path avoids the `Arc<Value>`
+    /// clone the bulk path requires for the durable-queue handoff.
+    pub async fn record_entity_attributes_in_tx(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        entity_id: &str,
+        expanded: &Value,
+    ) -> Result<(), AndromedaError> {
+        let prepared = Self::prepare_batch_refs(&[(entity_id, expanded)]);
+        self.flush_prepared_in_tx(tx, prepared).await
+    }
+
+    async fn flush_prepared_in_tx(&self, tx: &mut sqlx::Transaction<'_, sqlx::Postgres>, prepared: PreparedBatch) -> Result<(), AndromedaError> {
         if prepared.tea_entries.is_empty() && prepared.scope_entries.is_empty() {
             return Ok(());
         }
@@ -268,7 +287,12 @@ impl TemporalRecorder {
         Ok(())
     }
 
-    fn prepare_batch(entities: &[(Arc<str>, Arc<Value>)]) -> PreparedBatch {
+    fn prepare_batch_arc(entities: &[(Arc<str>, Arc<Value>)]) -> PreparedBatch {
+        let refs: Vec<(&str, &Value)> = entities.iter().map(|(id, v)| (id.as_ref(), v.as_ref())).collect();
+        Self::prepare_batch_refs(&refs)
+    }
+
+    fn prepare_batch_refs(entities: &[(&str, &Value)]) -> PreparedBatch {
         let mut tea_entries = Vec::new();
         let mut pending_histories: Vec<PendingHistory> = Vec::new();
         let mut tea_index: Vec<usize> = Vec::new();
@@ -276,7 +300,7 @@ impl TemporalRecorder {
 
         for (entity_id, expanded) in entities {
             let entity_id_str: &str = entity_id;
-            let obj = match expanded.as_ref() {
+            let obj = match *expanded {
                 Value::Array(arr) => arr.first().and_then(|v| v.as_object()),
                 Value::Object(obj) => Some(obj),
                 _other => None,
@@ -369,7 +393,7 @@ impl TemporalRecorder {
         }
     }
 
-    fn build_history_entries(prepared: &PreparedBatch, tea_results: &[crate::repository::temporal::rows::TeaBatchResultRow]) -> Vec<HistoryBatchEntry> {
+    fn build_history_entries(prepared: &PreparedBatch, tea_results: &[TeaBatchResultRow]) -> Vec<HistoryBatchEntry> {
         let mut tea_id_map: std::collections::HashMap<(&str, &str, Option<&str>), uuid::Uuid> = std::collections::HashMap::with_capacity(tea_results.len());
         for r in tea_results {
             tea_id_map.insert((r.entity_id.as_str(), r.attribute_name.as_str(), r.dataset_id.as_deref()), r.id);
@@ -407,9 +431,30 @@ impl TemporalRecorder {
         history_entries
     }
 
-    /// Record a tombstone for a deleted attribute (soft-delete).
-    pub async fn record_attribute_deletion(&self, entity_id: &str, attr_iri: &str, dataset_id: Option<&str>) -> Result<(), AndromedaError> {
-        // Look up the existing TEA to preserve the attribute type
+    /// Record a tombstone for a deleted attribute (soft-delete) inside the
+    /// caller's transaction.
+    pub async fn record_attribute_deletion_in_tx(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        entity_id: &str,
+        attr_iri: &str,
+        dataset_id: Option<&str>,
+    ) -> Result<(), AndromedaError> {
+        let (tea_entry, history_entry) = self.build_deletion_entries(entity_id, attr_iri, dataset_id).await?;
+        let tea_results = self.repo.upsert_tea_batch_in_tx(tx, std::slice::from_ref(&tea_entry)).await?;
+        let tea_id = first_tea_id(tea_results)?;
+        let mut history = history_entry;
+        history.tea_id = tea_id;
+        self.repo.insert_history_batch_in_tx(tx, std::slice::from_ref(&history)).await?;
+        Ok(())
+    }
+
+    async fn build_deletion_entries(
+        &self,
+        entity_id: &str,
+        attr_iri: &str,
+        dataset_id: Option<&str>,
+    ) -> Result<(TeaBatchEntry, HistoryBatchEntry), AndromedaError> {
         let teas = self.repo.get_teas_for_entity_attr(entity_id, attr_iri).await?;
         let parsed_dataset_id = dataset_id.map(Urn::try_from).transpose()?;
         let attr_type = teas
@@ -419,73 +464,83 @@ impl TemporalRecorder {
             .map_or(AttributeType::Property, |t| t.attribute_type);
 
         let dataset_id_str = parsed_dataset_id.as_ref().map(ToString::to_string);
-        let tea_results = self
-            .repo
-            .upsert_tea_batch(&[TeaBatchEntry {
-                entity_id: entity_id.to_owned(),
-                attribute_name: attr_iri.to_owned(),
-                attribute_type: attr_type,
-                dataset_id: dataset_id_str,
-                value_type: ValueType::String,
-            }])
-            .await?;
-        let tea_id = tea_results
-            .into_iter()
-            .next()
-            .ok_or_else(|| AndromedaError::internal("upsert_tea_batch returned no rows for deletion tombstone".to_string()))?
-            .id;
-
-        let now = Utc::now();
-        let instance_id = format!("urn:ngsi-ld:attribute:instance:{}", uuid::Uuid::new_v4());
-
-        self.repo
-            .insert_history_batch(&[HistoryBatchEntry {
-                time: now,
-                tea_id,
-                value_number: None,
-                value_string: Some(vocab::expanded::NULL_URI.as_str().to_owned()),
-                value_bool: None,
-                value_geo: None,
-                value_object: None,
-                value_datetime: None,
-                value_uri: None,
-                instance_id,
-                observed_at: None,
-                metadata: None,
-            }])
-            .await?;
-
-        Ok(())
+        let tea_entry = TeaBatchEntry {
+            entity_id: entity_id.to_owned(),
+            attribute_name: attr_iri.to_owned(),
+            attribute_type: attr_type,
+            dataset_id: dataset_id_str,
+            value_type: ValueType::String,
+        };
+        let history_entry = HistoryBatchEntry {
+            time: Utc::now(),
+            tea_id: uuid::Uuid::nil(),
+            value_number: None,
+            value_string: Some(vocab::expanded::NULL_URI.as_str().to_owned()),
+            value_bool: None,
+            value_geo: None,
+            value_object: None,
+            value_datetime: None,
+            value_uri: None,
+            instance_id: format!("urn:ngsi-ld:attribute:instance:{}", uuid::Uuid::new_v4()),
+            observed_at: None,
+            metadata: None,
+        };
+        Ok((tea_entry, history_entry))
     }
 
     /// Update an existing attribute instance (full replacement, preserves createdAt).
     pub async fn update_attribute_instance(&self, entity_id: &str, attr_name: &str, instance_id: &str, instance: &Value) -> Result<(), AndromedaError> {
-        let attribute_type = detect_attribute_type(instance);
-        let typed_value = extract_typed_value(instance, attribute_type)?;
-        let observed_at = extract_observed_at(instance).and_then(|s| DateTime::parse_from_rfc3339(&s).map(|dt| dt.with_timezone(&Utc)).ok());
-        let metadata = collect_metadata(instance);
-
-        let p = typed_value.into_db_params();
-
-        self.repo
-            .update_instance(UpdateInstanceParams {
-                instance_id,
-                entity_id,
-                attribute_name: attr_name,
-                values: HistoryValues {
-                    value_number: p.value_number,
-                    value_string: p.value_string.as_deref(),
-                    value_bool: p.value_bool,
-                    value_geo: p.value_geo.as_ref(),
-                    value_object: p.value_object.as_ref(),
-                    value_datetime: p.value_datetime,
-                    value_uri: p.value_uri.as_deref(),
-                    metadata: metadata.as_ref(),
-                },
-                observed_at,
-            })
-            .await
+        let (params_owner, observed_at) = build_update_instance_state(instance)?;
+        let params = build_update_instance_params(instance_id, entity_id, attr_name, &params_owner, observed_at);
+        self.repo.update_instance(params).await
     }
+}
+
+struct UpdateInstanceOwned {
+    db_params: DbValueParams,
+    metadata: Option<Value>,
+}
+
+fn build_update_instance_state(instance: &Value) -> Result<(UpdateInstanceOwned, Option<DateTime<Utc>>), AndromedaError> {
+    let attribute_type = detect_attribute_type(instance);
+    let typed_value = extract_typed_value(instance, attribute_type)?;
+    let observed_at = extract_observed_at(instance).and_then(|s| DateTime::parse_from_rfc3339(&s).map(|dt| dt.with_timezone(&Utc)).ok());
+    let metadata = collect_metadata(instance);
+    let db_params = typed_value.into_db_params();
+    Ok((UpdateInstanceOwned { db_params, metadata }, observed_at))
+}
+
+fn build_update_instance_params<'a>(
+    instance_id: &'a str,
+    entity_id: &'a str,
+    attribute_name: &'a str,
+    owner: &'a UpdateInstanceOwned,
+    observed_at: Option<DateTime<Utc>>,
+) -> UpdateInstanceParams<'a> {
+    UpdateInstanceParams {
+        instance_id,
+        entity_id,
+        attribute_name,
+        values: HistoryValues {
+            value_number: owner.db_params.value_number,
+            value_string: owner.db_params.value_string.as_deref(),
+            value_bool: owner.db_params.value_bool,
+            value_geo: owner.db_params.value_geo.as_ref(),
+            value_object: owner.db_params.value_object.as_ref(),
+            value_datetime: owner.db_params.value_datetime,
+            value_uri: owner.db_params.value_uri.as_deref(),
+            metadata: owner.metadata.as_ref(),
+        },
+        observed_at,
+    }
+}
+
+fn first_tea_id(tea_results: Vec<TeaBatchResultRow>) -> Result<uuid::Uuid, AndromedaError> {
+    tea_results
+        .into_iter()
+        .next()
+        .map(|r| r.id)
+        .ok_or_else(|| AndromedaError::internal("upsert_tea_batch returned no rows".to_string()))
 }
 
 // -----------------------------------------------------------------------------

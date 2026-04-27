@@ -9,7 +9,7 @@ use crate::{
     query::compiled::PurgeMode,
     service::entity::{
         EntityService,
-        extract::save_entity,
+        extract::build_save_params,
         extract_attribute_keys,
         extract_entity_types,
         normalize_entity_attributes,
@@ -46,11 +46,11 @@ impl EntityService {
         // Load existing entity, apply append, save back
         let mut existing = self.repo.get(&id).await?.ok_or_else(|| AndromedaError::entity_not_found(&id))?;
         let not_appended = crate::domain::expanded::append_entity_attrs(&mut existing, attrs, no_overwrite).map_err(AndromedaError::entity_validation)?;
-        save_entity(&self.repo, &id, &existing).await?;
 
-        if let Err(e) = self.temporal_recorder.record_entity_attributes(&id, &expanded).await {
-            tracing::warn!(error = %e, entity_id = %id, event = "temporal_recording_failed");
-        }
+        let mut uow = self.uow.begin().await?;
+        uow.save_entity(build_save_params(&id, &existing)).await?;
+        uow.record_entity_attributes(&id, &expanded).await?;
+        uow.commit().await?;
 
         let entity_types = extract_entity_types(&existing);
         self.emit_change(
@@ -81,22 +81,20 @@ impl EntityService {
         let previous_attributes = self.change_tx.as_ref().map(|_| existing.clone()); // clone: snapshot before mutation for showChanges diff
         let attrs_before: std::collections::HashSet<String> = extract_attribute_keys(&existing).into_iter().collect();
         let not_updated = crate::domain::expanded::update_entity_attrs(&mut existing, attrs).map_err(AndromedaError::entity_validation)?;
-        save_entity(&self.repo, &id, &existing).await?;
 
-        if let Err(e) = self.temporal_recorder.record_entity_attributes(&id, &expanded).await {
-            tracing::warn!(error = %e, entity_id = %id, event = "temporal_recording_failed");
-        }
-
-        let entity_types = self.fetch_entity_types(&id).await;
-
-        // Detect which attributes were deleted
+        // Detect which attributes were deleted by the update
         let attrs_after: std::collections::HashSet<String> = extract_attribute_keys(&existing).into_iter().collect();
         let deleted_attrs: Vec<String> = attrs_before.difference(&attrs_after).cloned().collect(); // clone: owned strings from set difference
 
-        // Record temporal tombstones for deleted attributes
+        let mut uow = self.uow.begin().await?;
+        uow.save_entity(build_save_params(&id, &existing)).await?;
+        uow.record_entity_attributes(&id, &expanded).await?;
         for deleted_attr in &deleted_attrs {
-            let _ = self.temporal_recorder.record_attribute_deletion(&id, deleted_attr, None).await;
+            uow.record_attribute_deletion(&id, deleted_attr, None).await?;
         }
+        uow.commit().await?;
+
+        let entity_types = self.fetch_entity_types(&id).await;
 
         for deleted_attr in &deleted_attrs {
             self.emit_attr_change(
@@ -160,17 +158,19 @@ impl EntityService {
                 AndromedaError::entity_not_found(msg)
             }
         })?;
-        save_entity(&self.repo, &id, &existing).await?;
 
         // Detect if the attribute was actually deleted (null sentinel)
         let attrs_after: std::collections::HashSet<String> = extract_attribute_keys(&existing).into_iter().collect();
         let was_deleted = attrs_before.contains(&attr_iri) && !attrs_after.contains(&attr_iri);
 
+        let mut uow = self.uow.begin().await?;
+        uow.save_entity(build_save_params(&id, &existing)).await?;
         if was_deleted {
-            let _ = self.temporal_recorder.record_attribute_deletion(&id, &attr_iri, dataset_id).await;
-        } else if let Err(e) = self.temporal_recorder.record_entity_attributes(&id, &expanded).await {
-            tracing::warn!(error = %e, entity_id = %id, event = "temporal_recording_failed");
+            uow.record_attribute_deletion(&id, &attr_iri, dataset_id).await?;
+        } else {
+            uow.record_entity_attributes(&id, &expanded).await?;
         }
+        uow.commit().await?;
 
         let trigger = if was_deleted {
             TriggerReason::AttributeDeleted
@@ -202,25 +202,27 @@ impl EntityService {
         let mut existing = self.repo.get(&id).await?.ok_or_else(|| AndromedaError::entity_not_found(&id))?;
         let previous_attributes = self.change_tx.as_ref().map(|_| existing.clone()); // clone: snapshot before mutation for showChanges diff
 
-        // Record temporal tombstones before the actual deletion
-        if delete_all {
-            // Record tombstones for all dataset instances of this attribute
-            if let Ok(teas) = self.temporal_recorder.get_teas_for_entity_attr(&id, &attr_iri).await {
-                for tea in &teas {
-                    if let Some(dataset_id) = tea.dataset_id.as_ref() {
-                        let dataset_id = dataset_id.to_string();
-                        let _ = self.temporal_recorder.record_attribute_deletion(&id, &attr_iri, Some(&dataset_id)).await;
-                    } else {
-                        let _ = self.temporal_recorder.record_attribute_deletion(&id, &attr_iri, None).await;
-                    }
+        // Resolve target dataset ids for tombstones before mutating the entity payload.
+        let tombstone_targets: Vec<Option<String>> = if delete_all {
+            match self.temporal_recorder.get_teas_for_entity_attr(&id, &attr_iri).await {
+                Ok(teas) => teas.iter().map(|tea| tea.dataset_id.as_ref().map(ToString::to_string)).collect(),
+                Err(e) => {
+                    tracing::warn!(error = %e, entity_id = %id, event = "tea_lookup_failed_for_deletion");
+                    Vec::new()
                 }
             }
         } else {
-            let _ = self.temporal_recorder.record_attribute_deletion(&id, &attr_iri, dataset_id).await;
-        }
+            vec![dataset_id.map(ToString::to_string)]
+        };
 
         crate::domain::expanded::delete_attr(&mut existing, &attr_iri, dataset_id, delete_all).map_err(AndromedaError::entity_not_found)?;
-        save_entity(&self.repo, &id, &existing).await?;
+
+        let mut uow = self.uow.begin().await?;
+        uow.save_entity(build_save_params(&id, &existing)).await?;
+        for target in &tombstone_targets {
+            uow.record_attribute_deletion(&id, &attr_iri, target.as_deref()).await?;
+        }
+        uow.commit().await?;
 
         let entity_types = self.fetch_entity_types(&id).await;
         self.emit_attr_change(entity_uri, entity_types, TriggerReason::AttributeDeleted, vec![attr_iri], previous_attributes);
@@ -259,11 +261,11 @@ impl EntityService {
         let mut existing = self.repo.get(&id).await?.ok_or_else(|| AndromedaError::entity_not_found(&id))?;
         let previous_attributes = self.change_tx.as_ref().map(|_| existing.clone()); // clone: snapshot before mutation for showChanges diff
         crate::domain::expanded::replace_attr(&mut existing, &attr_iri, dataset_id, attr_value).map_err(AndromedaError::entity_not_found)?;
-        save_entity(&self.repo, &id, &existing).await?;
 
-        if let Err(e) = self.temporal_recorder.record_entity_attributes(&id, &expanded).await {
-            tracing::warn!(error = %e, entity_id = %id, event = "temporal_recording_failed");
-        }
+        let mut uow = self.uow.begin().await?;
+        uow.save_entity(build_save_params(&id, &existing)).await?;
+        uow.record_entity_attributes(&id, &expanded).await?;
+        uow.commit().await?;
 
         let entity_types = self.fetch_entity_types(&id).await;
         self.emit_attr_change(entity_uri, entity_types, TriggerReason::AttributeUpdated, vec![attr_iri], previous_attributes);
@@ -329,7 +331,7 @@ impl EntityService {
                 obj.remove(key);
             }
 
-            save_entity(&self.repo, entity_id, &existing).await?;
+            self.repo.save(build_save_params(entity_id, &existing)).await?;
             modified_count += 1;
         }
 

@@ -33,6 +33,7 @@ use crate::{
         snapshot::repo::SnapshotRepository,
         subscription::repo::SubscriptionRepository,
         temporal::repo::TemporalRepository,
+        uow::UnitOfWorkFactory,
     },
     service::{
         csource_registration::CsourceRegistrationService,
@@ -329,9 +330,12 @@ pub async fn build_tenant_state(
         tracing::warn!("spatial warmup failed: {}", e);
     }
 
+    let uow_factory = Arc::new(UnitOfWorkFactory::new(&pool, Arc::clone(&temporal_repo), config.performance.bulk_write_mode));
+
     let entity_service = Arc::new(EntityService::new(
         &pool,
         Arc::clone(&temporal_repo),
+        Arc::clone(&uow_factory),
         engine.clone(),
         Some(change_tx.clone()),
         BatchExecutionConfig {
@@ -341,7 +345,6 @@ pub async fn build_tenant_state(
             large_threshold: config.performance.batch_large_threshold.max(1),
             prepare_blocking_threshold: config.performance.batch_prepare_blocking_threshold.max(1),
             async_side_effect_threshold: config.performance.batch_async_side_effect_threshold,
-            bulk_write_mode: config.performance.bulk_write_mode,
         },
         batch_activity.clone(),
         if config.outbox.enabled {

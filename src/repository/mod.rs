@@ -15,3 +15,4 @@ pub mod subscription;
 pub mod subscription_store;
 pub mod temporal;
 pub mod timescale_features;
+pub mod uow;
