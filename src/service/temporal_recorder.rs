@@ -4,7 +4,7 @@
 
 use crate::{
     core::error::AndromedaError,
-    domain::{attribute_type::AttributeType, geometry::Wkb, temporal::ValueType},
+    domain::{attribute_type::AttributeType, expanded::expanded_geo_node_to_wkb, geometry::Wkb, temporal::ValueType},
     jsonld::vocab,
     query::sql::scope_to_ltree,
     repository::temporal::{
@@ -638,19 +638,20 @@ fn extract_typed_value(instance: &Value, attribute_type: AttributeType) -> Resul
                 .and_then(|arr| arr.first())
                 .ok_or_else(|| AndromedaError::temporal_validation("GeoProperty missing value"))?;
 
-            let geo_value: Value = if let Some(val) = geo_node.get("@value") {
-                match val.as_str() {
+            // Literal-`@value` form (string or already-compact object) keeps the
+            // legacy decoding path. Expanded JSON-LD GeoJSON nodes go through the
+            // direct walker, skipping the compact-string round-trip and
+            // `extract_coordinates` clones that dominated the temporal hot path.
+            let wkb = if let Some(val) = geo_node.get("@value") {
+                let geo_value: Value = match val.as_str() {
                     Some(s) => serde_json::from_str(s)
                         .map_err(|error| AndromedaError::temporal_validation(format!("Invalid GeoProperty GeoJSON string: {}", error)))?,
-                    None => val.clone(),
-                }
+                    None => val.clone(), // clone: need owned Value for from_geojson_value
+                };
+                Wkb::from_geojson_value(&geo_value).map_err(|error| AndromedaError::temporal_validation(format!("Invalid GeoProperty geometry: {}", error)))?
             } else {
-                let reconstructed = reconstruct_geojson(geo_node);
-                serde_json::from_str(&reconstructed)
-                    .map_err(|error| AndromedaError::temporal_validation(format!("Invalid reconstructed GeoProperty GeoJSON: {}", error)))?
+                expanded_geo_node_to_wkb(geo_node).ok_or_else(|| AndromedaError::temporal_validation("Invalid expanded GeoProperty geometry"))?
             };
-            let wkb =
-                Wkb::from_geojson_value(&geo_value).map_err(|error| AndromedaError::temporal_validation(format!("Invalid GeoProperty geometry: {}", error)))?;
             Ok(TypedValue::Geometry(wkb))
         }
         AttributeType::VocabProperty => {
@@ -736,65 +737,6 @@ fn extract_typed_value(instance: &Value, attribute_type: AttributeType) -> Resul
                 Ok(TypedValue::Object(has_value.clone())) // clone: need owned Value for TypedValue enum; has_value is borrowed from instance
             }
         }
-    }
-}
-
-/// Reconstruct compact GeoJSON from an expanded JSON-LD GeoJSON node.
-///
-/// Expanded GeoJSON has structure like:
-/// ```json
-/// {
-///   "@type": ["https://purl.org/geojson/vocab#Point"],
-///   "https://purl.org/geojson/vocab#coordinates": [{"@list": [{"@value": 16.37}, {"@value": 48.20}]}]
-/// }
-/// ```
-/// We reconstruct: `{"type": "Point", "coordinates": [16.37, 48.20]}`
-pub(crate) fn reconstruct_geojson(node: &Value) -> String {
-    let Some(obj) = node.as_object() else {
-        return node.to_string();
-    };
-
-    // Extract the geometry type from @type
-    let geo_type = obj
-        .get("@type")
-        .and_then(|t| t.as_array())
-        .and_then(|arr| arr.first())
-        .and_then(|v| v.as_str())
-        .and_then(|s| s.strip_prefix(vocab::prefix::GEOJSON.as_str()))
-        .unwrap_or("Point");
-
-    // Extract coordinates from the expanded form
-    let coordinates = obj
-        .get(vocab::expanded::COORDINATES.as_str())
-        .and_then(|v| v.as_array())
-        .and_then(|arr| arr.first())
-        .and_then(|v| v.get("@list").or(Some(v)))
-        .map_or(Value::Array(vec![]), extract_coordinates);
-
-    let result = serde_json::json!({
-        "type": geo_type,
-        "coordinates": coordinates
-    });
-    result.to_string()
-}
-
-/// Recursively extract coordinate values from expanded JSON-LD @list structures.
-pub(crate) fn extract_coordinates(value: &Value) -> Value {
-    match value {
-        Value::Array(arr) => {
-            let items: Vec<Value> = arr.iter().map(extract_coordinates).collect();
-            Value::Array(items)
-        }
-        Value::Object(obj) => {
-            if let Some(val) = obj.get("@value") {
-                val.clone() // clone: need owned Value for recursive coordinate extraction
-            } else if let Some(list) = obj.get("@list") {
-                extract_coordinates(list)
-            } else {
-                value.clone() // clone: need owned Value; unrecognized object passed through as-is
-            }
-        }
-        _other => value.clone(), // clone: need owned Value for return; primitives don't implement Copy for serde_json::Value
     }
 }
 
