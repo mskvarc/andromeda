@@ -242,6 +242,37 @@ impl JsonLdContextRepository {
     }
 }
 
+impl JsonLdContextRepository {
+    /// Apply a batch of pending hit-count deltas in a single bulk UPDATE.
+    ///
+    /// Called by the broker's periodic flush task. URLs not yet persisted
+    /// in `jsonld_contexts` are silently dropped: registry-resident
+    /// contexts (core, preloaded) never get a row, so a counter bump for
+    /// them is a no-op here and that is the intended behaviour.
+    pub async fn flush_hits(&self, deltas: &[(String, u64)]) -> Result<(), AndromedaError> {
+        if deltas.is_empty() {
+            return Ok(());
+        }
+        let urls: Vec<&str> = deltas.iter().map(|(u, _)| u.as_str()).collect();
+        let bigints: Vec<i64> = deltas.iter().map(|(_, n)| i64::try_from(*n).unwrap_or(i64::MAX)).collect();
+
+        sqlx::query(
+            r#"
+            UPDATE jsonld_contexts
+            SET number_of_hits = jsonld_contexts.number_of_hits + d.delta,
+                last_usage = NOW()
+            FROM UNNEST($1::text[], $2::bigint[]) AS d(url, delta)
+            WHERE jsonld_contexts.url = d.url
+            "#,
+        )
+        .bind(&urls)
+        .bind(&bigints)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+}
+
 #[async_trait]
 impl ContextCache for JsonLdContextRepository {
     async fn get(&self, url: &str) -> Option<Value> {
@@ -255,7 +286,24 @@ impl ContextCache for JsonLdContextRepository {
     }
 
     async fn put(&self, url: &str, payload: Value) {
-        if let Err(e) = self.ensure_cached(url, payload).await {
+        let local_id = match UrnBuilder::new(NGSI_LD_URN_NID, &format!("Context:{}", Uuid::new_v4())).build() {
+            Ok(urn) => urn.to_string(),
+            Err(e) => {
+                tracing::trace!("Failed to mint local id for cached context {}: {}", url, e);
+                return;
+            }
+        };
+        let result = sqlx::query(
+            "INSERT INTO jsonld_contexts (id, url, kind, payload, created_at, last_usage, number_of_hits) \
+             VALUES ($1, $2, 'Cached', $3, NOW(), NOW(), 0) \
+             ON CONFLICT (url) DO NOTHING",
+        )
+        .bind(local_id)
+        .bind(url)
+        .bind(payload)
+        .execute(&self.pool)
+        .await;
+        if let Err(e) = result {
             tracing::trace!("Failed to persist context {} to DB cache: {}", url, e);
         }
     }

@@ -14,7 +14,7 @@ use crate::jsonld::{
         NGSI_LD_CORE_CONTEXT_URL_LIST,
         is_ngsi_ld_core_context_url,
     },
-    loader::{ContextCache, ContextRegistry, HttpContextLoader},
+    loader::{ContextCache, ContextRegistry, HitCounter, HttpContextLoader},
     vocab,
 };
 use contextual::WithContext;
@@ -103,6 +103,18 @@ pub struct JsonLdEngine {
     term_cache: Cache<String, String>,
     term_cache_hits: Arc<AtomicU64>,
     term_cache_misses: Arc<AtomicU64>,
+    hit_counter: Option<Arc<HitCounter>>,
+}
+
+impl JsonLdEngine {
+    /// Returns the in-memory hit counter, if one is attached.
+    ///
+    /// Wired by the broker startup path so a periodic flush task can drain
+    /// pending deltas into the L2 store. Absent when the engine was built
+    /// without an L2 cache.
+    pub fn hit_counter(&self) -> Option<Arc<HitCounter>> {
+        self.hit_counter.clone() // clone: Arc ref-count bump
+    }
 }
 
 /// Per-batch JSON-LD expansion handle.
@@ -625,6 +637,13 @@ impl JsonLdEngineBuilder {
             self.cache_ttl_seconds,
             self.max_context_bytes as usize,
         )?;
+        let hit_counter = if self.l2_cache.is_some() {
+            let counter = Arc::new(HitCounter::new());
+            loader = loader.with_hit_counter(Arc::clone(&counter)); // clone: Arc ref-count bump
+            Some(counter)
+        } else {
+            None
+        };
         if let Some(l2) = self.l2_cache {
             loader = loader.with_l2_cache(l2);
         }
@@ -638,6 +657,7 @@ impl JsonLdEngineBuilder {
             term_cache,
             term_cache_hits: Arc::new(AtomicU64::new(0)),
             term_cache_misses: Arc::new(AtomicU64::new(0)),
+            hit_counter,
         })
     }
 }

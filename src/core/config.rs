@@ -249,6 +249,13 @@ pub struct PerformanceConfig {
     /// without overwhelming downstream CSRs.
     #[config(env = "ANDROMEDA_PERFORMANCE_FORWARD_CSR_CONCURRENCY", default = 16)]
     pub forward_csr_concurrency: usize,
+
+    /// Interval (seconds) at which the JSON-LD context hit counter is
+    /// flushed to the L2 store. Pending per-URL hit deltas accumulate in
+    /// memory between flushes so the ingestion hot path never serialises
+    /// on the shared `jsonld_contexts` row.
+    #[config(env = "ANDROMEDA_PERFORMANCE_CONTEXT_HIT_FLUSH_SECS", default = 5)]
+    pub context_hit_flush_secs: u64,
 }
 
 #[derive(Config, Debug, Clone, Serialize)]
@@ -526,6 +533,9 @@ fn validate_config(config: &RuntimeConfig) -> Result<(), AndromedaError> {
     if config.performance.forward_csr_concurrency == 0 {
         return Err(AndromedaError::internal("performance.forward_csr_concurrency must be at least 1"));
     }
+    if config.performance.context_hit_flush_secs == 0 {
+        return Err(AndromedaError::internal("performance.context_hit_flush_secs must be at least 1"));
+    }
     if config.outbox.max_attempts <= 0 {
         return Err(AndromedaError::internal("outbox.max_attempts must be at least 1"));
     }
@@ -648,6 +658,7 @@ mod tests {
                 max_request_body_bytes: 67_108_864,
                 snapshot_concurrency: 4,
                 forward_csr_concurrency: 16,
+                context_hit_flush_secs: 5,
             },
             outbox: OutboxConfig {
                 enabled: false,

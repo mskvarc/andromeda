@@ -260,7 +260,29 @@ pub async fn build_tenant_state(
     let mut worker_handles = Vec::new();
 
     let context_repo = Arc::new(JsonLdContextRepository::new(&pool));
-    let engine = crate::jsonld::build_engine(&config.jsonld, context_repo)?;
+    let engine = crate::jsonld::build_engine(&config.jsonld, Arc::clone(&context_repo))?;
+
+    if let Some(hit_counter) = engine.hit_counter() {
+        let flush_repo = Arc::clone(&context_repo);
+        let interval = std::time::Duration::from_secs(config.performance.context_hit_flush_secs.max(1));
+        worker_handles.push(tokio::spawn(async move {
+            let mut ticker = tokio::time::interval(interval);
+            ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+            // First tick fires immediately; skip it to avoid a flush before
+            // any hits accumulate.
+            ticker.tick().await;
+            loop {
+                ticker.tick().await;
+                let pending = hit_counter.drain();
+                if pending.is_empty() {
+                    continue;
+                }
+                if let Err(error) = flush_repo.flush_hits(&pending).await {
+                    tracing::warn!(error = %error, count = pending.len(), event = "context_hit_flush_failed");
+                }
+            }
+        }));
+    }
 
     let batch_activity = BatchActivityTracker::new();
 

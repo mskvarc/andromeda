@@ -8,9 +8,11 @@
 //! 3. [`ContextCache`] (optional, e.g. database-backed L2 cache).
 //! 4. Remote HTTP fetch (if enabled).
 //!
-//! Every successful load upserts to L2 so the DB-backed hit counter
-//! (`number_of_hits`) is incremented on every access per NGSI-LD spec
-//! clause 5.13.
+//! L2 persistence happens once per URL on first remote-fetch success.
+//! The `number_of_hits` counter required by NGSI-LD spec clause 5.13 is
+//! tracked via an in-process [`HitCounter`] and flushed periodically by
+//! a background task in the broker startup path, so the ingestion hot
+//! path never serialises on a shared `jsonld_contexts` row.
 
 use crate::jsonld::{Error, core_context::is_ngsi_ld_core_context_url, engine::RemoteContextFetch};
 use async_trait::async_trait;
@@ -22,7 +24,11 @@ use mediatype::MediaTypeBuf;
 use moka::future::Cache;
 use reqwest::{Client, header::CONTENT_TYPE, redirect::Policy};
 use std::{
-    sync::{Arc, LazyLock},
+    sync::{
+        Arc,
+        LazyLock,
+        atomic::{AtomicU64, Ordering},
+    },
     time::Duration,
 };
 use tracing::trace;
@@ -65,8 +71,68 @@ pub trait ContextCache: Send + Sync + std::fmt::Debug {
     /// Look up a previously cached context by URL.
     async fn get(&self, url: &str) -> Option<serde_json::Value>;
 
-    /// Store a context payload for the given URL.
+    /// Store a context payload for the given URL if no row exists yet.
+    ///
+    /// Implementations must NOT increment `numberOfHits` or update
+    /// `last_usage` here. Hit accounting is handled out-of-band via
+    /// [`HitCounter`] and a periodic flush task wired in the broker
+    /// startup path.
     async fn put(&self, url: &str, payload: serde_json::Value);
+}
+
+/// In-memory accumulator for JSON-LD context hit counts.
+///
+/// The hot ingestion path bumps a per-URL atomic instead of issuing a
+/// `number_of_hits = number_of_hits + 1` UPDATE on every entity
+/// expansion. A background task drains pending deltas every few
+/// seconds and folds them into a single bulk UPDATE per flush cycle.
+///
+/// Spec note: NGSI-LD clause 5.13.3.5 requires the broker to maintain
+/// a `numberOfHits` counter, but does not require it to be persisted
+/// synchronously per access. Eventual consistency between in-memory
+/// accumulation and DB state is sufficient.
+#[derive(Debug, Default)]
+pub struct HitCounter {
+    pending: DashMap<String, AtomicU64>,
+}
+
+impl HitCounter {
+    /// Create an empty counter.
+    pub fn new() -> HitCounter {
+        HitCounter::default()
+    }
+
+    /// Record one hit for the given URL.
+    ///
+    /// Lock-free path on the steady-state branch: a `get` + atomic
+    /// `fetch_add` against an existing `AtomicU64`. Only the very first
+    /// hit per URL takes the DashMap insert path.
+    pub fn bump(&self, url: &str) {
+        if let Some(entry) = self.pending.get(url) {
+            entry.value().fetch_add(1, Ordering::Relaxed);
+            return;
+        }
+        self.pending
+            .entry(url.to_string()) // clone: DashMap requires owned key on insert
+            .or_insert_with(|| AtomicU64::new(0))
+            .value()
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Atomically swap each pending counter to zero and return the drained
+    /// `(url, delta)` pairs. Entries with zero delta are skipped. Map
+    /// entries themselves are retained so subsequent bumps stay on the
+    /// fast path.
+    pub fn drain(&self) -> Vec<(String, u64)> {
+        let mut out = Vec::with_capacity(self.pending.len());
+        for entry in self.pending.iter() {
+            let n = entry.value().swap(0, Ordering::Relaxed);
+            if n > 0 {
+                out.push((entry.key().clone(), n)); // clone: send drained delta to caller
+            }
+        }
+        out
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -118,6 +184,7 @@ pub struct HttpContextLoader {
     cache: Cache<String, Arc<json_syntax::Value>>,
     registry: Arc<ContextRegistry>,
     l2_cache: Option<Arc<dyn ContextCache>>,
+    hit_counter: Option<Arc<HitCounter>>,
     allow_remote: RemoteContextFetch,
     max_context_bytes: usize,
 }
@@ -156,6 +223,7 @@ impl HttpContextLoader {
             cache,
             registry,
             l2_cache: None,
+            hit_counter: None,
             allow_remote,
             max_context_bytes,
         })
@@ -164,6 +232,14 @@ impl HttpContextLoader {
     /// Attach an L2 context cache.
     pub(crate) fn with_l2_cache(mut self, cache: Arc<dyn ContextCache>) -> HttpContextLoader {
         self.l2_cache = Some(cache);
+        self
+    }
+
+    /// Attach a shared in-memory hit counter. The same `Arc<HitCounter>`
+    /// must be handed to the periodic flush task so accumulated deltas
+    /// reach the database.
+    pub(crate) fn with_hit_counter(mut self, counter: Arc<HitCounter>) -> HttpContextLoader {
+        self.hit_counter = Some(counter);
         self
     }
 
@@ -211,8 +287,6 @@ impl HttpContextLoader {
                         kind: LoaderErrorKind::Invalid(e.to_string()),
                     })?;
                     let normalized = normalize_loaded_context_document(&url_string, parsed);
-                    // Persist L2 hit back (already in L2, but the closure only
-                    // runs on L1 miss — no additional write needed here).
                     return Ok(Arc::new(normalized));
                 }
 
@@ -224,7 +298,9 @@ impl HttpContextLoader {
                 match fetch_and_parse(&client, &url_string, max_bytes).await {
                     Ok(value) => {
                         let normalized = normalize_loaded_context_document(&url_string, value);
-                        // Write to L2 only on remote fetch success (L1 miss path).
+                        // Write to L2 only on remote fetch success (L1 miss
+                        // path). Persisted as an empty-counter row; hit
+                        // accounting is handled separately by HitCounter.
                         if let Some(ref cache) = l2_cache {
                             let serde_value = json_syntax::Value::into_serde_json(normalized.clone());
                             cache.put(&url_string, serde_value).await;
@@ -246,14 +322,15 @@ impl HttpContextLoader {
         let url_for_l2 = normalize_local_hosted_context_url(url);
         match result {
             Ok(value) => {
-                // Always upsert to L2 so the DB-backed hit counter
-                // (`numberOfHits`, spec clause 5.13.3.5) is incremented
-                // on every access.
-                if let Some(ref cache) = self.l2_cache
+                // Bump in-memory hit counter; the periodic flusher folds
+                // accumulated deltas into one bulk UPDATE per cycle so the
+                // ingestion hot path never serialises on a shared row.
+                // Skip core contexts: they live in the registry, never have
+                // a `jsonld_contexts` row, and the bump would be a no-op.
+                if let Some(ref counter) = self.hit_counter
                     && !is_ngsi_ld_core_context_url(&url_for_l2)
                 {
-                    let serde_value = json_syntax::Value::into_serde_json((*value).clone());
-                    cache.put(&url_for_l2, serde_value).await;
+                    counter.bump(&url_for_l2);
                 }
                 Ok(value)
             }
@@ -592,6 +669,33 @@ mod tests {
                 ]
             })
         );
+    }
+
+    #[test]
+    fn hit_counter_aggregates_per_url_then_drains_to_zero() {
+        let counter = HitCounter::new();
+        let url_a = "https://example.com/ctx-a";
+        let url_b = "https://example.com/ctx-b";
+
+        for _ in 0..5 {
+            counter.bump(url_a);
+        }
+        counter.bump(url_b);
+        counter.bump(url_b);
+
+        let mut drained = counter.drain();
+        drained.sort_by(|left, right| left.0.cmp(&right.0));
+        pretty_assertions::assert_eq!(drained, vec![(url_a.to_string(), 5), (url_b.to_string(), 2)]);
+
+        // Second drain returns nothing because the swap reset every counter
+        // to zero; entries with zero delta are filtered out.
+        let empty = counter.drain();
+        assert!(empty.is_empty(), "second drain must be empty, got {:?}", empty);
+
+        // After drain, fast-path entries remain; new bumps reuse them.
+        counter.bump(url_a);
+        let again = counter.drain();
+        pretty_assertions::assert_eq!(again, vec![(url_a.to_string(), 1)]);
     }
 
     #[tokio::test]
