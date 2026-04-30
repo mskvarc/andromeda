@@ -18,6 +18,7 @@ use crate::jsonld::{
     vocab,
 };
 use contextual::WithContext;
+use dashmap::DashMap;
 use json_ld::{
     JsonLdProcessor,
     RemoteContextReference,
@@ -28,16 +29,43 @@ use json_syntax::Parse;
 use moka::future::Cache;
 use rdf_types::vocabulary::{BlankIdIndex, IndexVocabulary, IriIndex};
 use std::{
+    borrow::Cow,
     collections::HashMap,
     fs,
     hash::Hash,
     sync::{
         Arc,
+        LazyLock,
         atomic::{AtomicU64, Ordering},
     },
     time::Duration,
 };
 use tracing::info;
+
+/// Pre-allocated `String`s for the JSON-LD expanded-form IRI keys the fastpath
+/// emits on every entity. Calling `.clone()` on these reuses the cached
+/// `String` shape (capacity == length == known IRI length) instead of running
+/// `.as_str().to_owned()` on a `&'static iref::Iri` which dereferences the IRI
+/// pointer and recomputes the UTF-8 length on every entity.
+mod static_keys {
+    use super::{LazyLock, vocab};
+
+    pub(super) static PROPERTY: LazyLock<String> = LazyLock::new(|| vocab::expanded::PROPERTY.as_str().to_owned());
+    pub(super) static RELATIONSHIP: LazyLock<String> = LazyLock::new(|| vocab::expanded::RELATIONSHIP.as_str().to_owned());
+    pub(super) static GEO_PROPERTY: LazyLock<String> = LazyLock::new(|| vocab::expanded::GEO_PROPERTY.as_str().to_owned());
+    pub(super) static LANGUAGE_PROPERTY: LazyLock<String> = LazyLock::new(|| vocab::expanded::LANGUAGE_PROPERTY.as_str().to_owned());
+    pub(super) static VOCAB_PROPERTY: LazyLock<String> = LazyLock::new(|| vocab::expanded::VOCAB_PROPERTY.as_str().to_owned());
+    pub(super) static JSON_PROPERTY: LazyLock<String> = LazyLock::new(|| vocab::expanded::JSON_PROPERTY.as_str().to_owned());
+    pub(super) static VALUE: LazyLock<String> = LazyLock::new(|| vocab::expanded::VALUE.as_str().to_owned());
+    pub(super) static OBJECT: LazyLock<String> = LazyLock::new(|| vocab::expanded::OBJECT.as_str().to_owned());
+    pub(super) static LANGUAGE_MAP: LazyLock<String> = LazyLock::new(|| vocab::expanded::LANGUAGE_MAP.as_str().to_owned());
+    pub(super) static VOCAB: LazyLock<String> = LazyLock::new(|| vocab::expanded::VOCAB.as_str().to_owned());
+    pub(super) static JSON: LazyLock<String> = LazyLock::new(|| vocab::expanded::JSON.as_str().to_owned());
+    pub(super) static SCOPE: LazyLock<String> = LazyLock::new(|| vocab::expanded::SCOPE.as_str().to_owned());
+    pub(super) static DATE_TIME: LazyLock<String> = LazyLock::new(|| vocab::expanded::DATE_TIME.as_str().to_owned());
+    pub(super) static COORDINATES: LazyLock<String> = LazyLock::new(|| vocab::expanded::COORDINATES.as_str().to_owned());
+    pub(super) static BBOX: LazyLock<String> = LazyLock::new(|| vocab::expanded::BBOX.as_str().to_owned());
+}
 
 // ---------------------------------------------------------------------------
 // ContextStripping
@@ -104,6 +132,10 @@ pub struct JsonLdEngine {
     term_cache_hits: Arc<AtomicU64>,
     term_cache_misses: Arc<AtomicU64>,
     hit_counter: Option<Arc<HitCounter>>,
+    /// Per-URL parsed user term tables. Built lazily the first time a
+    /// batch references a non-core context URL; reused across batches for
+    /// the lifetime of the engine.
+    user_term_table_cache: Arc<DashMap<String, Arc<UserTermTable>>>,
 }
 
 impl JsonLdEngine {
@@ -137,64 +169,187 @@ impl JsonLdEngine {
 #[derive(Clone, Debug)]
 pub struct BatchContextHandle {
     spec: ContextSpec,
-    resolved_context: Option<serde_json::Value>,
-    core_term_map: Option<Arc<CoreTermMap>>,
+    resolved_context: Option<Arc<serde_json::Value>>,
+    term_map: Arc<BatchTermMap>,
+    relative_url_policy: RelativeUrlPolicy,
 }
 
-/// Hardcoded NGSI-LD core context term → IRI mapping used by
-/// [`JsonLdEngine::expand_with_handle`]'s in-process fastpath.
+impl BatchContextHandle {
+    /// Whether the handle's term map admits the in-process fastpath. When
+    /// `false`, every entity in the batch routes to the asynchronous slow
+    /// path regardless of per-entity `@context` shape.
+    pub fn fast_eligible(&self) -> bool {
+        self.term_map.is_eligible()
+    }
+
+    /// Back-compat alias for [`Self::fast_eligible`]. Both names are
+    /// supported because Step 4's batch service still uses the original
+    /// `has_core_term_map` accessor for handle-level routing.
+    pub fn has_core_term_map(&self) -> bool {
+        self.fast_eligible()
+    }
+
+    /// Borrow the [`ContextSpec`] this handle was built from. Required by
+    /// the batch service's slow pool to dispatch per-entity expansion when
+    /// an inline `@context` diverges from the handle.
+    pub const fn spec(&self) -> &ContextSpec {
+        &self.spec
+    }
+}
+
+/// Whether the resolved batch `@context` may contain relative URLs that
+/// `expand_prepared` must rewrite via [`resolve_relative_context_urls`].
 ///
-/// Only populated on [`BatchContextHandle`]s whose spec resolves to the
-/// NGSI-LD core + Andromeda core bundle (no user-supplied link or body
-/// contexts). Non-core specs keep the handle's term map as `None`, which
-/// disables the fastpath entirely.
-#[derive(Debug)]
-struct CoreTermMap {
-    /// `@vocab` prefix applied to unknown terms (e.g. a user's
-    /// `speed` attribute becomes `<vocab>speed`). Always the NGSI-LD
-    /// default-context prefix when this map is populated.
-    vocab: &'static str,
+/// Computed once at handle build time so per-entity expansion can skip the
+/// recursive walk when the batch context is provably composed of absolute
+/// IRIs only.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RelativeUrlPolicy {
+    /// All `@context` strings are absolute IRIs — skip the rewriter.
+    Absent,
+    /// At least one string is non-absolute or unknown — run the rewriter.
+    MaybePresent,
 }
 
 /// NGSI-LD default-context prefix (`@vocab` in the core context).
 const NGSI_LD_DEFAULT_CONTEXT_PREFIX: &str = "https://uri.etsi.org/ngsi-ld/default-context/";
+/// Standard XSD namespace, used as a built-in compile-time prefix for `xsd:`.
+const XSD_PREFIX: &str = "http://www.w3.org/2001/XMLSchema#";
 
-impl CoreTermMap {
-    /// Expand a short NGSI-LD term to its full IRI using the compile-time
-    /// generated lookup table, falling back to the `@vocab` prefix for
-    /// user-defined terms.
-    fn expand_iri(&self, short: &str) -> String {
-        if is_full_iri(short) {
-            return short.to_string();
-        }
-        if let Some(iri) = vocab::compact_to_expanded(short) {
-            return iri.to_string();
-        }
-        format!("{}{}", self.vocab, short)
+/// Generalised term resolution table covering the NGSI-LD core context plus
+/// any user-supplied link/body contexts.
+///
+/// Built once per batch from [`JsonLdEngine::batch_context_handle`]; consumed
+/// by the synchronous fastpath in [`fast_normalize_and_expand_entity`] and
+/// friends. Carries enough information (active `@vocab`, prefix table sorted
+/// longest-first per JSON-LD 1.1 §4.4, term lookups with optional `@type`
+/// coercion, scoped-context flags, and an explicit eligibility verdict) so
+/// the fastpath can both (a) decide at handle level whether to even attempt
+/// fast expansion, and (b) per-entity reject documents whose attribute keys
+/// resolve to scoped sub-contexts the fastpath does not support.
+#[derive(Debug, Clone)]
+pub struct BatchTermMap {
+    /// Term name → resolved IRI plus coercion + scoped-context flag.
+    terms: HashMap<Box<str>, ResolvedTerm>,
+    /// Active `@vocab` IRI prefix; defaults to the NGSI-LD core
+    /// default-context, overridden by any user-supplied `@vocab`.
+    vocab: Box<str>,
+    /// Prefix definitions (`prefix → expansion`) sorted longest-first so
+    /// `exFoo:bar` matches `exFoo:` before `ex:` per JSON-LD §4.4.
+    prefix_table: Vec<(Box<str>, Box<str>)>,
+    /// Verdict on whether the fastpath may attempt to expand entities
+    /// against this term map.
+    eligibility: FastpathEligibility,
+}
+
+/// Whether the fastpath is allowed to attempt expansion at the handle
+/// level. A non-`Eligible` value means every entity in the batch is
+/// routed to the slow path.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FastpathEligibility {
+    /// Fastpath may attempt expansion. Per-entity rules in
+    /// [`fast_normalize_and_expand_entity`] still apply.
+    Eligible,
+    /// Fastpath unsafe at the handle level — slow path only.
+    Ineligible(IneligibilityReason),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum IneligibilityReason {
+    /// A user context redefined a core term with a different IRI.
+    UserOverridesCoreTerm,
+    /// At least one term in a user context carries a scoped `@context`,
+    /// which the fastpath does not unfold.
+    HasScopedContexts,
+    /// User context referenced a blank node identifier.
+    #[allow(dead_code)]
+    ContainsBlankNodeContext,
+    /// User context URL could not be resolved through the loader pipeline.
+    ContextLoadFailed,
+}
+
+/// One term mapping inside [`BatchTermMap::terms`].
+#[derive(Debug, Clone)]
+struct ResolvedTerm {
+    iri: Box<str>,
+    coercion: Option<TermCoercion>,
+    has_scoped_context: bool,
+}
+
+/// Parsed user-context shape cached per URL on the engine. Only IRI
+/// expansions, `@vocab`, and scoped-context flags are retained — anything
+/// the fastpath cannot honour conservatively forces ineligibility.
+#[derive(Debug, Clone)]
+struct UserTermTable {
+    terms: HashMap<Box<str>, ResolvedTerm>,
+    vocab: Option<Box<str>>,
+    has_scoped_contexts: bool,
+}
+
+impl BatchTermMap {
+    /// `true` iff the handle's eligibility verdict is `Eligible`.
+    pub const fn is_eligible(&self) -> bool {
+        matches!(self.eligibility, FastpathEligibility::Eligible)
     }
 
-    /// Return the `@type` coercion IRI for a core context term, if one is
-    /// declared in the embedded NGSI-LD core context
-    /// (e.g. `observedAt → DateTime`, `datasetId → @id`). `None` means the
-    /// term carries no `@type` coercion.
-    fn coercion(short: &str) -> Option<TermCoercion> {
-        match short {
-            "observedAt" | "createdAt" | "modifiedAt" | "expiresAt" | "deletedAt" | "startAt" | "endAt" | "timeAt" | "instanceTimeAt" | "previousTime"
-            | "timestamp" | "notifiedAt" | "lastNotification" | "lastSuccess" | "lastFailure" => Some(TermCoercion::DateTime),
-            "datasetId" | "instanceId" => Some(TermCoercion::Id),
-            _other => None,
+    /// Expand a short term to its full IRI using (in priority order):
+    /// the compile-time core lookup, the user-context term map, the
+    /// user-defined prefix table sorted longest-first, the built-in `xsd:`
+    /// prefix, or the active `@vocab` fallback.
+    fn expand_iri<'a>(&'a self, short: &'a str) -> Cow<'a, str> {
+        if is_full_iri(short) {
+            return Cow::Borrowed(short);
         }
+        if let Some(term) = self.terms.get(short) {
+            return Cow::Borrowed(&term.iri);
+        }
+        if let Some((prefix, suffix)) = short.split_once(':') {
+            for (p, expansion) in &self.prefix_table {
+                if prefix == p.as_ref() {
+                    return Cow::Owned(format!("{expansion}{suffix}"));
+                }
+            }
+            if prefix == "xsd" {
+                return Cow::Owned(format!("{XSD_PREFIX}{suffix}"));
+            }
+            if prefix == "ngsi-ld" {
+                return Cow::Owned(format!("https://uri.etsi.org/ngsi-ld/{suffix}"));
+            }
+            if prefix == "geojson" {
+                return Cow::Owned(format!("https://purl.org/geojson/vocab#{suffix}"));
+            }
+        }
+        Cow::Owned(format!("{}{}", self.vocab, short))
+    }
+
+    /// Coercion declared for a term, if any. Looks up the term name in the
+    /// merged `terms` map (which combines core + user contexts).
+    fn coercion(&self, short: &str) -> Option<TermCoercion> {
+        self.terms.get(short).and_then(|t| t.coercion.clone())
+    }
+
+    /// Whether the supplied term name is declared with a scoped `@context`
+    /// in any of the contributing contexts.
+    fn term_has_scoped_context(&self, short: &str) -> bool {
+        self.terms.get(short).is_some_and(|t| t.has_scoped_context)
     }
 }
 
-/// `@type` coercion applied to attribute metadata values by the NGSI-LD
-/// core context.
-#[derive(Debug, Clone, Copy)]
+/// `@type` coercion applied to attribute metadata values.
+///
+/// Distinguishes the NGSI-LD core context's hard-coded `DateTime`/`@id`
+/// shapes from user-supplied custom IRIs declared on a term in a body or
+/// link context. The custom IRI is stored as the raw user string and
+/// resolved through [`BatchTermMap::expand_iri`] at emit time so user
+/// prefix declarations apply consistently with the slow path.
+#[derive(Debug, Clone)]
 enum TermCoercion {
-    /// Value is emitted as `{"@type": "<DateTime IRI>", "@value": "<ISO>"}`.
+    /// Value is emitted as `{"@type": "<NGSI-LD DateTime IRI>", "@value": "<ISO>"}`.
     DateTime,
     /// Value is emitted as `{"@id": "<value>"}`.
     Id,
+    /// Value is emitted as `{"@type": "<expanded user IRI>", "@value": "<s>"}`.
+    TypeIri(Box<str>),
 }
 
 impl JsonLdEngine {
@@ -214,18 +369,102 @@ impl JsonLdEngine {
     /// error variant if a required context could not be fetched.
     pub async fn expand(&self, document: serde_json::Value, context: &ContextSpec) -> Result<serde_json::Value, Error> {
         let document = context::apply_context(document, context)?;
-        self.expand_prepared(document, context.core_policy()).await
+        self.expand_prepared(document, context.core_policy(), RelativeUrlPolicy::MaybePresent).await
     }
 
     /// Build a per-batch expansion handle for a shared `@context`.
     ///
-    /// The caller typically constructs one handle per batch and hands it to
-    /// [`Self::expand_with_handle`] for every entity in the batch.
-    pub fn batch_context_handle(&self, context: &ContextSpec) -> BatchContextHandle {
+    /// Asynchronous because user-supplied link contexts are resolved
+    /// through [`HttpContextLoader::load_value`], which may need the L1
+    /// moka cache, the registry, the L2 cache, or a remote fetch. The
+    /// resulting [`BatchTermMap`] caches the parsed shape so subsequent
+    /// handles for the same URL pay only a `DashMap` lookup.
+    pub async fn batch_context_handle(&self, context: &ContextSpec) -> BatchContextHandle {
+        let resolved_context = context::resolve_context_value(None, context);
+        let relative_url_policy = match resolved_context.as_ref() {
+            Some(ctx) => detect_relative_url_policy(ctx),
+            None => RelativeUrlPolicy::Absent,
+        };
+        let term_map = self.build_batch_term_map(context).await;
         BatchContextHandle {
-            resolved_context: context::resolve_context_value(None, context),
-            core_term_map: build_core_term_map(context),
+            resolved_context: resolved_context.map(Arc::new),
+            term_map: Arc::new(term_map),
             spec: context.clone(),
+            relative_url_policy,
+        }
+    }
+
+    /// Resolve a user-context URL to its parsed [`UserTermTable`], caching
+    /// the result on the engine for the process lifetime. The first call
+    /// per URL fetches through the loader (registry → L2 → remote);
+    /// subsequent calls hit the in-memory `DashMap`.
+    async fn user_term_table(&self, url: &str) -> Result<Arc<UserTermTable>, Error> {
+        if let Some(cached) = self.user_term_table_cache.get(url) {
+            return Ok(Arc::clone(cached.value()));
+        }
+        let value = self.loader.load_value(url).await?;
+        let serde_value = json_syntax::Value::into_serde_json((*value).clone()); // clone: Arc -> owned for conversion
+        let table = parse_user_context_value(&serde_value);
+        let arc = Arc::new(table);
+        self.user_term_table_cache.insert(url.to_owned(), Arc::clone(&arc));
+        Ok(arc)
+    }
+
+    async fn build_batch_term_map(&self, spec: &ContextSpec) -> BatchTermMap {
+        // Seed terms from the compile-time NGSI-LD core lookup.
+        let mut terms: HashMap<Box<str>, ResolvedTerm> = HashMap::new();
+        for (compact, expanded) in vocab::COMPACT_TO_EXPANDED {
+            terms.insert(
+                Box::<str>::from(*compact),
+                ResolvedTerm {
+                    iri: Box::<str>::from(*expanded),
+                    coercion: core_term_coercion(compact),
+                    has_scoped_context: false,
+                },
+            );
+        }
+
+        let mut vocab = Box::<str>::from(NGSI_LD_DEFAULT_CONTEXT_PREFIX);
+        let mut prefix_table: Vec<(Box<str>, Box<str>)> = Vec::new();
+        let mut eligibility = FastpathEligibility::Eligible;
+
+        match spec.core_policy() {
+            CoreContextPolicy::Only | CoreContextPolicy::Append | CoreContextPolicy::AppendIfNoExplicit => {}
+            CoreContextPolicy::Omit => {
+                eligibility = FastpathEligibility::Ineligible(IneligibilityReason::ContextLoadFailed);
+            }
+        }
+
+        // User link contexts (skip core URLs which were seeded above).
+        for url in spec.link_contexts() {
+            if is_ngsi_ld_core_context_url(url) || url == ANDROMEDA_CORE_CONTEXT_URL {
+                continue;
+            }
+            match self.user_term_table(url).await {
+                Ok(table) => {
+                    merge_user_table(&mut terms, &mut vocab, &mut prefix_table, &table, &mut eligibility);
+                }
+                Err(_err) => {
+                    eligibility = FastpathEligibility::Ineligible(IneligibilityReason::ContextLoadFailed);
+                }
+            }
+        }
+
+        // Inline body context.
+        if let Some(body) = spec.body_context() {
+            let table = parse_user_context_value(body);
+            merge_user_table(&mut terms, &mut vocab, &mut prefix_table, &table, &mut eligibility);
+        }
+
+        // Sort prefix_table by length descending so longest match wins
+        // (JSON-LD 1.1 §4.4 IRI compaction prefix order).
+        prefix_table.sort_by(|a, b| b.0.len().cmp(&a.0.len()).then_with(|| a.0.cmp(&b.0)));
+
+        BatchTermMap {
+            terms,
+            vocab,
+            prefix_table,
+            eligibility,
         }
     }
 
@@ -238,24 +477,100 @@ impl JsonLdEngine {
     /// NGSI-LD attribute shape, user-supplied contexts) fall through to
     /// [`Self::expand`] so NGSI-LD 5.5.7 semantics are preserved
     /// byte-for-byte.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub async fn expand_with_handle(&self, mut document: serde_json::Value, handle: &BatchContextHandle) -> Result<serde_json::Value, Error> {
-        if let Some(term_map) = handle.core_term_map.as_ref()
-            && let Some(expanded) = fast_expand_entity_document(&document, term_map)
+        if handle.term_map.is_eligible()
+            && let Some(expanded) = fast_normalize_and_expand_entity(&document, &handle.term_map)
         {
             return Ok(expanded);
         }
         match handle_fast_path_apply(&mut document, handle) {
-            FastPath::Hit => self.expand_prepared(document, handle.spec.core_policy()).await,
+            FastPath::Hit => self.expand_prepared(document, handle.spec.core_policy(), handle.relative_url_policy).await,
             FastPath::Miss => self.expand(document, &handle.spec).await,
         }
+    }
+
+    /// Expand many independently-prepared documents in a single
+    /// `json-ld` call.
+    ///
+    /// All inputs must already be normalized and carry their effective
+    /// `@context`. The bulk call wraps them in a single `Value::Array` so
+    /// the expander runs once with one [`IndexVocabulary`] and one loader
+    /// handshake; the result is split back into per-entity values aligned
+    /// with the input order.
+    ///
+    /// On whole-batch expansion failure (e.g. one malformed entity poisons
+    /// the bulk call) the engine falls back to per-entity expansion to
+    /// attribute the error to the offending input. Worst case is 2x
+    /// latency on malformed inputs; the happy path stays a single call.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub async fn expand_prepared_array(&self, documents: Vec<serde_json::Value>, core_policy: CoreContextPolicy) -> Vec<Result<serde_json::Value, Error>> {
+        if documents.is_empty() {
+            return Vec::new();
+        }
+        let len = documents.len();
+
+        // Cheap-clone path: only deep-clone if we need to fall back.
+        let bulk_doc = serde_json::Value::Array(documents.clone()); // clone: fallback retry needs originals
+        match self.expand_prepared(bulk_doc, core_policy, RelativeUrlPolicy::MaybePresent).await {
+            Ok(serde_json::Value::Array(items)) if items.len() == len => {
+                // Re-wrap each node object as a single-element array so the
+                // per-entity shape matches `expand_prepared`'s contract.
+                items.into_iter().map(|item| Ok(serde_json::Value::Array(vec![item]))).collect()
+            }
+            Ok(_other) => {
+                // Bulk shape did not match input cardinality (graph
+                // expansion or unexpected reshape). Fall back to per-entity.
+                tracing::debug!("Bulk expansion shape mismatch for {} inputs; retrying per-entity", len);
+                self.expand_per_entity(documents, core_policy).await
+            }
+            Err(bulk_err) => {
+                tracing::warn!(error = %bulk_err, "Bulk JSON-LD expansion failed; retrying per-entity to attribute error");
+                self.expand_per_entity(documents, core_policy).await
+            }
+        }
+    }
+
+    #[cfg_attr(not(test), allow(dead_code))]
+    async fn expand_per_entity(&self, documents: Vec<serde_json::Value>, core_policy: CoreContextPolicy) -> Vec<Result<serde_json::Value, Error>> {
+        let mut results = Vec::with_capacity(documents.len());
+        for doc in documents {
+            results.push(self.expand_prepared(doc, core_policy, RelativeUrlPolicy::MaybePresent).await);
+        }
+        results
+    }
+
+    /// Synchronous CPU-only fastpath entry point used by
+    /// [`crate::service::entity::EntityService`]'s batch fast pool.
+    ///
+    /// Returns the expanded form when the handle carries a core term map and
+    /// the document fits the supported subset; returns `None` so the caller
+    /// can demote the entity to the asynchronous slow path. Does no I/O and
+    /// is safe to call from `tokio::task::spawn_blocking`.
+    pub fn try_fast_expand(&self, document: &serde_json::Value, handle: &BatchContextHandle) -> Option<serde_json::Value> {
+        if !handle.term_map.is_eligible() {
+            return None;
+        }
+        fast_normalize_and_expand_entity(document, &handle.term_map)
+    }
+
+    /// Per-entity check whether the entity's inline `@context` (if any)
+    /// matches the batch handle's resolved context. Used by the batch
+    /// classifier to route entities between the synchronous fastpath pool
+    /// and the asynchronous slow pool without touching the document DOM.
+    pub fn entity_context_matches_handle(&self, document: &serde_json::Value, handle: &BatchContextHandle) -> bool {
+        check_handle_context_compatibility(document, handle)
     }
 
     async fn expand_prepared(
         &self,
         mut document: serde_json::Value,
-        core_policy: crate::jsonld::context::CoreContextPolicy,
+        core_policy: CoreContextPolicy,
+        relative_url_policy: RelativeUrlPolicy,
     ) -> Result<serde_json::Value, Error> {
-        resolve_relative_context_urls(&mut document);
+        if relative_url_policy == RelativeUrlPolicy::MaybePresent {
+            resolve_relative_context_urls(&mut document);
+        }
 
         // Diagnostic-only fields (applied_context, context_urls, normalized_context_urls)
         // are expensive recursive traversals with repeated clones. Keep the happy
@@ -658,6 +973,7 @@ impl JsonLdEngineBuilder {
             term_cache_hits: Arc::new(AtomicU64::new(0)),
             term_cache_misses: Arc::new(AtomicU64::new(0)),
             hit_counter,
+            user_term_table_cache: Arc::new(DashMap::new()),
         })
     }
 }
@@ -852,15 +1168,42 @@ fn handle_fast_path_apply(document: &mut serde_json::Value, handle: &BatchContex
     }
 }
 
+/// Non-mutating equivalent of [`handle_fast_path_apply`] used during batch
+/// classification. Returns `true` when the document's inline `@context`
+/// (if any) matches the handle's resolved context, so attaching the handle
+/// to the document for slow-path expansion would still be a fastpath hit.
+fn check_handle_context_compatibility(document: &serde_json::Value, handle: &BatchContextHandle) -> bool {
+    fn check(obj: &serde_json::Map<String, serde_json::Value>, handle: &BatchContextHandle) -> bool {
+        match obj.get("@context") {
+            None => true,
+            Some(existing) => Some(existing) == handle.resolved_context.as_deref(),
+        }
+    }
+    match document {
+        serde_json::Value::Object(obj) => check(obj, handle),
+        serde_json::Value::Array(items) => items.iter().all(|item| match item {
+            serde_json::Value::Object(obj) => check(obj, handle),
+            serde_json::Value::Null
+            | serde_json::Value::Bool(_)
+            | serde_json::Value::Number(_)
+            | serde_json::Value::String(_)
+            | serde_json::Value::Array(_) => false,
+        }),
+        serde_json::Value::Null | serde_json::Value::Bool(_) | serde_json::Value::Number(_) | serde_json::Value::String(_) => false,
+    }
+}
+
 fn apply_handle_to_object(obj: &mut serde_json::Map<String, serde_json::Value>, handle: &BatchContextHandle) -> FastPath {
     match obj.get("@context") {
         None => {
             if let Some(resolved) = handle.resolved_context.as_ref() {
-                obj.insert("@context".to_string(), resolved.clone());
+                // Cold path: entity has no `@context`; deep-clone the shared
+                // resolved value once into the per-entity document.
+                obj.insert("@context".to_string(), (**resolved).clone());
             }
             FastPath::Hit
         }
-        Some(existing) if Some(existing) == handle.resolved_context.as_ref() => FastPath::Hit,
+        Some(existing) if Some(existing) == handle.resolved_context.as_deref() => FastPath::Hit,
         Some(_) => FastPath::Miss,
     }
 }
@@ -869,33 +1212,177 @@ fn apply_handle_to_object(obj: &mut serde_json::Map<String, serde_json::Value>, 
 /// resolves to exactly the NGSI-LD core + Andromeda core bundle with no
 /// user-supplied contexts. Any user-supplied link or body context disables
 /// the fastpath because term IRIs might be overridden.
-fn build_core_term_map(spec: &ContextSpec) -> Option<Arc<CoreTermMap>> {
-    if spec.body_context().is_some() {
-        return None;
+/// Hardcoded `@type` coercions defined by the NGSI-LD core context.
+/// Mirrors the embedded core context's `@type` declarations (DateTime,
+/// `@id`) for the term names listed in NGSI-LD 1.9.1 §B.
+fn core_term_coercion(short: &str) -> Option<TermCoercion> {
+    match short {
+        "observedAt" | "createdAt" | "modifiedAt" | "expiresAt" | "deletedAt" | "startAt" | "endAt" | "timeAt" | "instanceTimeAt" | "previousTime"
+        | "timestamp" | "notifiedAt" | "lastNotification" | "lastSuccess" | "lastFailure" => Some(TermCoercion::DateTime),
+        "datasetId" | "instanceId" => Some(TermCoercion::Id),
+        _other => None,
     }
-    // Only the Append / AppendIfNoExplicit / Only policies can yield a
-    // safe fastpath; Omit leaves terms unresolved.
-    match spec.core_policy() {
-        CoreContextPolicy::Only | CoreContextPolicy::Append | CoreContextPolicy::AppendIfNoExplicit => {}
-        CoreContextPolicy::Omit => return None,
-    }
-    for url in spec.link_contexts() {
-        if !is_ngsi_ld_core_context_url(url) && url != ANDROMEDA_CORE_CONTEXT_URL {
-            return None;
-        }
-    }
-    Some(Arc::new(CoreTermMap {
-        vocab: NGSI_LD_DEFAULT_CONTEXT_PREFIX,
-    }))
 }
 
-/// Produce the expanded JSON-LD form for a whole document (single entity or
-/// an array of entities) using only the precomputed core term map.
+/// Parse a user-supplied `@context` value (string URL refs are filtered out
+/// by the caller; this only consumes inline objects/arrays/wrapping).
+fn parse_user_context_value(value: &serde_json::Value) -> UserTermTable {
+    let mut table = UserTermTable {
+        terms: HashMap::new(),
+        vocab: None,
+        has_scoped_contexts: false,
+    };
+    parse_user_context_into(value, &mut table);
+    table
+}
+
+fn parse_user_context_into(value: &serde_json::Value, table: &mut UserTermTable) {
+    match value {
+        serde_json::Value::Array(items) => {
+            for item in items {
+                parse_user_context_into(item, table);
+            }
+        }
+        serde_json::Value::Object(map) => {
+            // The outer JSON-LD context document wraps the actual context in
+            // a "@context" key. Recurse into that if present.
+            if let Some(inner) = map.get("@context") {
+                parse_user_context_into(inner, table);
+                return;
+            }
+            for (key, val) in map {
+                if key == "@vocab" {
+                    if let Some(s) = val.as_str() {
+                        table.vocab = Some(Box::<str>::from(s));
+                    }
+                } else if key.starts_with('@') {
+                    // Other JSON-LD keywords ignored conservatively.
+                } else {
+                    match val {
+                        serde_json::Value::String(iri) => {
+                            table.terms.insert(
+                                Box::<str>::from(key.as_str()),
+                                ResolvedTerm {
+                                    iri: Box::<str>::from(iri.as_str()),
+                                    coercion: None,
+                                    has_scoped_context: false,
+                                },
+                            );
+                        }
+                        serde_json::Value::Object(obj) => {
+                            let id = obj.get("@id").and_then(|v| v.as_str());
+                            let type_str = obj.get("@type").and_then(|v| v.as_str());
+                            let has_scoped = obj.contains_key("@context");
+                            if has_scoped {
+                                table.has_scoped_contexts = true;
+                            }
+                            if let Some(id_iri) = id {
+                                let coercion = match type_str {
+                                    Some("@id") => Some(TermCoercion::Id),
+                                    Some(t) if t == vocab::expanded::DATE_TIME.as_str() => Some(TermCoercion::DateTime),
+                                    Some("DateTime") => Some(TermCoercion::DateTime),
+                                    Some(other) => Some(TermCoercion::TypeIri(Box::<str>::from(other))),
+                                    None => None,
+                                };
+                                table.terms.insert(
+                                    Box::<str>::from(key.as_str()),
+                                    ResolvedTerm {
+                                        iri: Box::<str>::from(id_iri),
+                                        coercion,
+                                        has_scoped_context: has_scoped,
+                                    },
+                                );
+                            }
+                        }
+                        serde_json::Value::Null | serde_json::Value::Bool(_) | serde_json::Value::Number(_) | serde_json::Value::Array(_) => {
+                            // Other shapes (null, arrays in term values) are not
+                            // part of the standard JSON-LD context grammar; the
+                            // fastpath is conservative and forwards parsing
+                            // responsibility to the slow path.
+                        }
+                    }
+                }
+            }
+        }
+        serde_json::Value::Null | serde_json::Value::Bool(_) | serde_json::Value::Number(_) | serde_json::Value::String(_) => {}
+    }
+}
+
+/// Merge a parsed user term table into the accumulating batch term map.
+/// Sets `eligibility` to an `Ineligible` variant if the merge would
+/// require canonical-equivalence checks the fastpath does not perform.
+fn merge_user_table(
+    terms: &mut HashMap<Box<str>, ResolvedTerm>,
+    vocab: &mut Box<str>,
+    prefix_table: &mut Vec<(Box<str>, Box<str>)>,
+    table: &UserTermTable,
+    eligibility: &mut FastpathEligibility,
+) {
+    if matches!(*eligibility, FastpathEligibility::Ineligible(_)) {
+        return;
+    }
+    if table.has_scoped_contexts {
+        *eligibility = FastpathEligibility::Ineligible(IneligibilityReason::HasScopedContexts);
+        return;
+    }
+    if let Some(new_vocab) = &table.vocab {
+        *vocab = new_vocab.clone();
+    }
+    for (term_name, resolved) in &table.terms {
+        if let Some(existing) = terms.get(term_name.as_ref())
+            && existing.iri != resolved.iri
+        {
+            *eligibility = FastpathEligibility::Ineligible(IneligibilityReason::UserOverridesCoreTerm);
+            return;
+        }
+        // Treat term as a prefix definition iff its IRI ends in `/` or `#`
+        // (the conventional JSON-LD §4.4 idiom for a namespace prefix).
+        if resolved.iri.ends_with('/') || resolved.iri.ends_with('#') {
+            prefix_table.push((term_name.clone(), resolved.iri.clone()));
+        }
+        terms.insert(term_name.clone(), resolved.clone());
+    }
+}
+
+/// Walk a resolved `@context` value and report whether it contains any
+/// non-absolute string. Used by [`JsonLdEngine::batch_context_handle`] to
+/// decide whether per-entity expansion can skip
+/// [`resolve_relative_context_urls`].
+fn detect_relative_url_policy(ctx: &serde_json::Value) -> RelativeUrlPolicy {
+    fn has_relative(value: &serde_json::Value) -> bool {
+        match value {
+            serde_json::Value::String(s) => !is_absolute_iri(s),
+            serde_json::Value::Array(items) => items.iter().any(has_relative),
+            serde_json::Value::Object(map) => map.values().any(has_relative),
+            serde_json::Value::Null | serde_json::Value::Bool(_) | serde_json::Value::Number(_) => false,
+        }
+    }
+    if has_relative(ctx) {
+        RelativeUrlPolicy::MaybePresent
+    } else {
+        RelativeUrlPolicy::Absent
+    }
+}
+
+/// Conservative absolute-IRI check used by [`detect_relative_url_policy`].
+/// Accepts the schemes the broker is actually willing to emit in a
+/// resolved batch context.
+fn is_absolute_iri(s: &str) -> bool {
+    s.starts_with("http://") || s.starts_with("https://") || s.starts_with("urn:")
+}
+
+/// Fused NGSI-LD attribute normalization + JSON-LD expansion in a single
+/// recursive walk.
 ///
-/// Returns `None` the moment any substructure the fastpath cannot prove
-/// byte-equivalent to [`json_ld::JsonLdProcessor::expand`] is encountered,
-/// so the caller falls back to the full expander.
-fn fast_expand_entity_document(document: &serde_json::Value, term_map: &CoreTermMap) -> Option<serde_json::Value> {
+/// Equivalent in observable behaviour to running
+/// [`crate::service::entity::normalize_entity_attributes`] followed by
+/// [`json_ld::JsonLdProcessor::expand`], but produces the expanded form in
+/// one descent without the intermediate normalized DOM.
+///
+/// Returns `None` whenever any substructure cannot be proven canonically
+/// equivalent to the slow path; the caller then falls back to the full
+/// expander.
+fn fast_normalize_and_expand_entity(document: &serde_json::Value, term_map: &BatchTermMap) -> Option<serde_json::Value> {
     match document {
         serde_json::Value::Object(obj) => {
             let expanded = fast_expand_entity(obj, term_map)?;
@@ -917,7 +1404,7 @@ fn fast_expand_entity_document(document: &serde_json::Value, term_map: &CoreTerm
 ///
 /// Only a conservative subset of shapes is supported; any unexpected key
 /// or attribute form returns `None` to trigger the fallback expander.
-fn fast_expand_entity(obj: &serde_json::Map<String, serde_json::Value>, term_map: &CoreTermMap) -> Option<serde_json::Value> {
+fn fast_expand_entity(obj: &serde_json::Map<String, serde_json::Value>, term_map: &BatchTermMap) -> Option<serde_json::Value> {
     // Per-entity `@context` is only acceptable when it matches the NGSI-LD
     // core context family; anything else must fall back.
     if let Some(ctx) = obj.get("@context")
@@ -937,12 +1424,12 @@ fn fast_expand_entity(obj: &serde_json::Map<String, serde_json::Value>, term_map
             }
             "type" | "@type" => {
                 let iris = match value {
-                    serde_json::Value::String(s) => vec![serde_json::Value::String(term_map.expand_iri(s))],
+                    serde_json::Value::String(s) => vec![serde_json::Value::String(term_map.expand_iri(s).into_owned())],
                     serde_json::Value::Array(arr) => {
                         let mut out = Vec::with_capacity(arr.len());
                         for item in arr {
                             let s = item.as_str()?;
-                            out.push(serde_json::Value::String(term_map.expand_iri(s)));
+                            out.push(serde_json::Value::String(term_map.expand_iri(s).into_owned()));
                         }
                         out
                     }
@@ -952,11 +1439,29 @@ fn fast_expand_entity(obj: &serde_json::Map<String, serde_json::Value>, term_map
             }
             "scope" => {
                 let scope_values = fast_expand_scope(value)?;
-                expanded.insert(vocab::expanded::SCOPE.as_str().to_owned(), scope_values);
+                expanded.insert(static_keys::SCOPE.clone(), scope_values);
+            }
+            "expiresAt" | "createdAt" | "modifiedAt" | "deletedAt" => {
+                // NGSI-LD §5.2.4 entity-level temporal metadata: the core
+                // context coerces these to xsd:dateTime via @type=DateTime.
+                // They are *not* attribute slots, so the fused walker
+                // emits the expanded form directly without going through
+                // the implicit-Property wrap rule.
+                let iri = term_map.expand_iri(key).into_owned();
+                let timestamp = value.as_str()?;
+                let mut node = serde_json::Map::with_capacity(2);
+                node.insert("@type".to_owned(), serde_json::Value::String(static_keys::DATE_TIME.clone()));
+                node.insert("@value".to_owned(), serde_json::Value::String(timestamp.to_owned()));
+                expanded.insert(iri, serde_json::Value::Array(vec![serde_json::Value::Object(node)]));
             }
             other if other.starts_with('@') => return None,
             attr_name => {
-                let iri = term_map.expand_iri(attr_name);
+                // Per-entity divergence rule: attributes whose term carries
+                // a scoped `@context` are not safe for the fastpath.
+                if term_map.term_has_scoped_context(attr_name) {
+                    return None;
+                }
+                let iri = term_map.expand_iri(attr_name).into_owned();
                 let attr_expanded = fast_expand_attribute(value, term_map)?;
                 expanded.insert(iri, attr_expanded);
             }
@@ -998,15 +1503,20 @@ fn fast_expand_scope(value: &serde_json::Value) -> Option<serde_json::Value> {
 }
 
 /// Expand a single attribute's value to its JSON-LD `[...]`-wrapped
-/// expanded form. Accepts either a single instance object or an array of
-/// instance objects (multi-dataset attribute).
-fn fast_expand_attribute(value: &serde_json::Value, term_map: &CoreTermMap) -> Option<serde_json::Value> {
+/// expanded form. Accepts either a single instance object, an array of
+/// instance objects (multi-dataset attribute), or a bare scalar (which
+/// the NGSI-LD concise representation rule wraps as an implicit Property
+/// per §5.2.4).
+fn fast_expand_attribute(value: &serde_json::Value, term_map: &BatchTermMap) -> Option<serde_json::Value> {
     match value {
         serde_json::Value::Object(instance) => {
             let expanded = fast_expand_attribute_instance(instance, term_map)?;
             Some(serde_json::Value::Array(vec![expanded]))
         }
         serde_json::Value::Array(items) => {
+            if items.is_empty() {
+                return None;
+            }
             let mut out = Vec::with_capacity(items.len());
             for item in items {
                 let instance = item.as_object()?;
@@ -1014,26 +1524,40 @@ fn fast_expand_attribute(value: &serde_json::Value, term_map: &CoreTermMap) -> O
             }
             Some(serde_json::Value::Array(out))
         }
-        serde_json::Value::Null | serde_json::Value::Bool(_) | serde_json::Value::Number(_) | serde_json::Value::String(_) => None,
+        serde_json::Value::String(_) | serde_json::Value::Number(_) | serde_json::Value::Bool(_) => fast_implicit_property_attribute(value),
+        serde_json::Value::Null => None,
     }
+}
+
+/// Emit the JSON-LD expanded form for an implicit Property whose value is
+/// a JSON scalar. Equivalent to wrapping the input as
+/// `{"type": "Property", "value": <scalar>}` and running it through
+/// [`fast_expand_attribute_instance`], but synthesised in place.
+fn fast_implicit_property_attribute(scalar: &serde_json::Value) -> Option<serde_json::Value> {
+    let mut value_node = serde_json::Map::with_capacity(1);
+    value_node.insert("@value".to_owned(), scalar.clone());
+    let mut instance = serde_json::Map::with_capacity(2);
+    instance.insert(
+        "@type".to_owned(),
+        serde_json::Value::Array(vec![serde_json::Value::String(static_keys::PROPERTY.clone())]),
+    );
+    instance.insert(
+        static_keys::VALUE.clone(),
+        serde_json::Value::Array(vec![serde_json::Value::Object(value_node)]),
+    );
+    Some(serde_json::Value::Array(vec![serde_json::Value::Object(instance)]))
 }
 
 /// Expand a single attribute instance object into its JSON-LD node form
 /// (without the enclosing array).
-fn fast_expand_attribute_instance(instance: &serde_json::Map<String, serde_json::Value>, term_map: &CoreTermMap) -> Option<serde_json::Value> {
+fn fast_expand_attribute_instance(instance: &serde_json::Map<String, serde_json::Value>, term_map: &BatchTermMap) -> Option<serde_json::Value> {
     let attr_type = instance.get("type")?.as_str()?;
     let kind = AttrKind::from_type_name(attr_type)?;
 
     let mut out = serde_json::Map::with_capacity(instance.len());
-    out.insert(
-        "@type".to_owned(),
-        serde_json::Value::Array(vec![serde_json::Value::String(kind.iri().to_owned())]),
-    );
+    out.insert("@type".to_owned(), serde_json::Value::Array(vec![serde_json::Value::String(kind.iri_string())]));
 
-    let value_emitted = fast_emit_attribute_value(&mut out, instance, kind, term_map)?;
-    if !value_emitted {
-        return None;
-    }
+    fast_emit_attribute_value(&mut out, instance, kind, term_map)?;
 
     for (key, value) in instance {
         if key == "type" || kind.is_value_key(key) {
@@ -1071,14 +1595,17 @@ impl AttrKind {
         }
     }
 
-    fn iri(self) -> &'static str {
+    /// Owned IRI for the attribute kind, sourced from the precomputed
+    /// [`static_keys`] cache so the per-entity insertion does not pay for an
+    /// `as_str().to_owned()` round-trip on every call.
+    fn iri_string(self) -> String {
         match self {
-            AttrKind::Property => vocab::expanded::PROPERTY.as_str(),
-            AttrKind::Relationship => vocab::expanded::RELATIONSHIP.as_str(),
-            AttrKind::GeoProperty => vocab::expanded::GEO_PROPERTY.as_str(),
-            AttrKind::LanguageProperty => vocab::expanded::LANGUAGE_PROPERTY.as_str(),
-            AttrKind::VocabProperty => vocab::expanded::VOCAB_PROPERTY.as_str(),
-            AttrKind::JsonProperty => vocab::expanded::JSON_PROPERTY.as_str(),
+            AttrKind::Property => static_keys::PROPERTY.clone(),
+            AttrKind::Relationship => static_keys::RELATIONSHIP.clone(),
+            AttrKind::GeoProperty => static_keys::GEO_PROPERTY.clone(),
+            AttrKind::LanguageProperty => static_keys::LANGUAGE_PROPERTY.clone(),
+            AttrKind::VocabProperty => static_keys::VOCAB_PROPERTY.clone(),
+            AttrKind::JsonProperty => static_keys::JSON_PROPERTY.clone(),
         }
     }
 
@@ -1094,60 +1621,54 @@ impl AttrKind {
 }
 
 /// Emit the core value of an attribute into the pre-built expanded node
-/// object. Returns `Some(true)` when the value key is present and the
-/// shape is supported, and `None` when the shape cannot be expanded
-/// safely (caller falls back to the slow path).
+/// object. Returns `Some(())` when the value key is present and the shape
+/// is supported, and `None` when the shape cannot be expanded safely
+/// (caller falls back to the slow path).
 fn fast_emit_attribute_value(
     out: &mut serde_json::Map<String, serde_json::Value>,
     instance: &serde_json::Map<String, serde_json::Value>,
     kind: AttrKind,
-    term_map: &CoreTermMap,
-) -> Option<bool> {
+    term_map: &BatchTermMap,
+) -> Option<()> {
     match kind {
         AttrKind::Property => {
             let value = instance.get("value")?;
             let wrapped = fast_wrap_property_value(value)?;
-            out.insert(vocab::expanded::VALUE.as_str().to_owned(), wrapped);
-            Some(true)
+            out.insert(static_keys::VALUE.clone(), wrapped);
+            Some(())
         }
         AttrKind::Relationship => {
             let object = instance.get("object")?.as_str()?;
             let mut node = serde_json::Map::with_capacity(1);
             node.insert("@id".to_owned(), serde_json::Value::String(object.to_owned()));
-            out.insert(
-                vocab::expanded::OBJECT.as_str().to_owned(),
-                serde_json::Value::Array(vec![serde_json::Value::Object(node)]),
-            );
-            Some(true)
+            out.insert(static_keys::OBJECT.clone(), serde_json::Value::Array(vec![serde_json::Value::Object(node)]));
+            Some(())
         }
         AttrKind::GeoProperty => {
             let value = instance.get("value")?.as_object()?;
             let wrapped = fast_expand_geojson_node(value)?;
-            out.insert(vocab::expanded::VALUE.as_str().to_owned(), serde_json::Value::Array(vec![wrapped]));
-            Some(true)
+            out.insert(static_keys::VALUE.clone(), serde_json::Value::Array(vec![wrapped]));
+            Some(())
         }
         AttrKind::LanguageProperty => {
             let map = instance.get("languageMap")?.as_object()?;
             let wrapped = fast_expand_language_map(map)?;
-            out.insert(vocab::expanded::LANGUAGE_MAP.as_str().to_owned(), wrapped);
-            Some(true)
+            out.insert(static_keys::LANGUAGE_MAP.clone(), wrapped);
+            Some(())
         }
         AttrKind::VocabProperty => {
             let vocab_value = instance.get("vocab")?;
             let wrapped = fast_expand_vocab_value(vocab_value, term_map)?;
-            out.insert(vocab::expanded::VOCAB.as_str().to_owned(), wrapped);
-            Some(true)
+            out.insert(static_keys::VOCAB.clone(), wrapped);
+            Some(())
         }
         AttrKind::JsonProperty => {
             let json_value = instance.get("json")?;
             let mut node = serde_json::Map::with_capacity(2);
             node.insert("@type".to_owned(), serde_json::Value::String("@json".to_owned()));
             node.insert("@value".to_owned(), json_value.clone());
-            out.insert(
-                vocab::expanded::JSON.as_str().to_owned(),
-                serde_json::Value::Array(vec![serde_json::Value::Object(node)]),
-            );
-            Some(true)
+            out.insert(static_keys::JSON.clone(), serde_json::Value::Array(vec![serde_json::Value::Object(node)]));
+            Some(())
         }
     }
 }
@@ -1181,14 +1702,12 @@ fn fast_expand_geojson_node(obj: &serde_json::Map<String, serde_json::Value>) ->
         match key.as_str() {
             "type" => {}
             "coordinates" => {
-                let coords_iri = vocab::compact_to_expanded("coordinates")?;
                 let list = fast_expand_geojson_coordinates(value)?;
-                out.insert(coords_iri.to_owned(), serde_json::Value::Array(vec![list]));
+                out.insert(static_keys::COORDINATES.clone(), serde_json::Value::Array(vec![list]));
             }
             "bbox" => {
-                let bbox_iri = vocab::compact_to_expanded("bbox")?;
                 let list = fast_expand_geojson_coordinates(value)?;
-                out.insert(bbox_iri.to_owned(), serde_json::Value::Array(vec![list]));
+                out.insert(static_keys::BBOX.clone(), serde_json::Value::Array(vec![list]));
             }
             _other => return None,
         }
@@ -1235,10 +1754,10 @@ fn fast_expand_language_map(map: &serde_json::Map<String, serde_json::Value>) ->
 /// Expand a `VocabProperty.vocab` value. Strings resolve via the core term
 /// map (with `@vocab` fallback) to an `@id` node. Arrays of strings emit
 /// multiple nodes.
-fn fast_expand_vocab_value(value: &serde_json::Value, term_map: &CoreTermMap) -> Option<serde_json::Value> {
+fn fast_expand_vocab_value(value: &serde_json::Value, term_map: &BatchTermMap) -> Option<serde_json::Value> {
     match value {
         serde_json::Value::String(s) => {
-            let iri = term_map.expand_iri(s);
+            let iri = term_map.expand_iri(s).into_owned();
             let mut node = serde_json::Map::with_capacity(1);
             node.insert("@id".to_owned(), serde_json::Value::String(iri));
             Some(serde_json::Value::Array(vec![serde_json::Value::Object(node)]))
@@ -1247,7 +1766,7 @@ fn fast_expand_vocab_value(value: &serde_json::Value, term_map: &CoreTermMap) ->
             let mut out = Vec::with_capacity(items.len());
             for item in items {
                 let s = item.as_str()?;
-                let iri = term_map.expand_iri(s);
+                let iri = term_map.expand_iri(s).into_owned();
                 let mut node = serde_json::Map::with_capacity(1);
                 node.insert("@id".to_owned(), serde_json::Value::String(iri));
                 out.push(serde_json::Value::Object(node));
@@ -1261,21 +1780,32 @@ fn fast_expand_vocab_value(value: &serde_json::Value, term_map: &CoreTermMap) ->
 /// Expand an attribute-level metadata key such as `observedAt`, `datasetId`,
 /// `unitCode`, or a nested sub-attribute (Property / Relationship /
 /// GeoProperty / …). Unknown keys or unsupported shapes bail the fastpath.
-fn fast_expand_attribute_metadata(key: &str, value: &serde_json::Value, term_map: &CoreTermMap) -> Option<(String, serde_json::Value)> {
-    let iri = term_map.expand_iri(key);
-    let coercion = CoreTermMap::coercion(key);
+fn fast_expand_attribute_metadata(key: &str, value: &serde_json::Value, term_map: &BatchTermMap) -> Option<(String, serde_json::Value)> {
+    // Per-entity divergence rule: metadata key with scoped @context bails.
+    if term_map.term_has_scoped_context(key) {
+        return None;
+    }
+    let iri = term_map.expand_iri(key).into_owned();
+    let coercion = term_map.coercion(key);
 
     match value {
         serde_json::Value::String(s) => match coercion {
             Some(TermCoercion::DateTime) => {
                 let mut node = serde_json::Map::with_capacity(2);
-                node.insert("@type".to_owned(), serde_json::Value::String(vocab::expanded::DATE_TIME.as_str().to_owned()));
+                node.insert("@type".to_owned(), serde_json::Value::String(static_keys::DATE_TIME.clone()));
                 node.insert("@value".to_owned(), serde_json::Value::String(s.clone()));
                 Some((iri, serde_json::Value::Array(vec![serde_json::Value::Object(node)])))
             }
             Some(TermCoercion::Id) => {
                 let mut node = serde_json::Map::with_capacity(1);
                 node.insert("@id".to_owned(), serde_json::Value::String(s.clone()));
+                Some((iri, serde_json::Value::Array(vec![serde_json::Value::Object(node)])))
+            }
+            Some(TermCoercion::TypeIri(raw)) => {
+                let resolved = term_map.expand_iri(&raw).into_owned();
+                let mut node = serde_json::Map::with_capacity(2);
+                node.insert("@type".to_owned(), serde_json::Value::String(resolved));
+                node.insert("@value".to_owned(), serde_json::Value::String(s.clone()));
                 Some((iri, serde_json::Value::Array(vec![serde_json::Value::Object(node)])))
             }
             None => {
@@ -1548,16 +2078,16 @@ mod tests {
         (fast, slow)
     }
 
-    fn core_handle(engine: &JsonLdEngine) -> BatchContextHandle {
+    async fn core_handle(engine: &JsonLdEngine) -> BatchContextHandle {
         let spec = ContextSpec::core_only();
-        engine.batch_context_handle(&spec)
+        engine.batch_context_handle(&spec).await
     }
 
     #[tokio::test]
     async fn fastpath_simple_property_byte_equal_to_full_expand() {
         let engine = test_engine();
-        let handle = core_handle(&engine);
-        assert!(handle.core_term_map.is_some(), "core-only spec must enable fastpath");
+        let handle = core_handle(&engine).await;
+        assert!(handle.fast_eligible(), "core-only spec must enable fastpath");
 
         let doc = json!({
             "id": "urn:ngsi-ld:Device:1",
@@ -1571,7 +2101,7 @@ mod tests {
     #[tokio::test]
     async fn fastpath_property_with_observed_at_matches_full_expand() {
         let engine = test_engine();
-        let handle = core_handle(&engine);
+        let handle = core_handle(&engine).await;
         let doc = json!({
             "id": "urn:ngsi-ld:Device:2",
             "type": "Device",
@@ -1589,7 +2119,7 @@ mod tests {
     #[tokio::test]
     async fn fastpath_property_with_dataset_id_matches_full_expand() {
         let engine = test_engine();
-        let handle = core_handle(&engine);
+        let handle = core_handle(&engine).await;
         let doc = json!({
             "id": "urn:ngsi-ld:Device:3",
             "type": "Device",
@@ -1606,7 +2136,7 @@ mod tests {
     #[tokio::test]
     async fn fastpath_multi_instance_property_matches_full_expand() {
         let engine = test_engine();
-        let handle = core_handle(&engine);
+        let handle = core_handle(&engine).await;
         let doc = json!({
             "id": "urn:ngsi-ld:Device:4",
             "type": "Device",
@@ -1622,7 +2152,7 @@ mod tests {
     #[tokio::test]
     async fn fastpath_relationship_matches_full_expand() {
         let engine = test_engine();
-        let handle = core_handle(&engine);
+        let handle = core_handle(&engine).await;
         let doc = json!({
             "id": "urn:ngsi-ld:Device:5",
             "type": "Device",
@@ -1639,7 +2169,7 @@ mod tests {
     #[tokio::test]
     async fn fastpath_multiple_types_matches_full_expand() {
         let engine = test_engine();
-        let handle = core_handle(&engine);
+        let handle = core_handle(&engine).await;
         let doc = json!({
             "id": "urn:ngsi-ld:Device:6",
             "type": ["Device", "Sensor"],
@@ -1652,7 +2182,7 @@ mod tests {
     #[tokio::test]
     async fn fastpath_geoproperty_falls_back_to_full_expand() {
         let engine = test_engine();
-        let handle = core_handle(&engine);
+        let handle = core_handle(&engine).await;
         let doc = json!({
             "id": "urn:ngsi-ld:Device:7",
             "type": "Device",
@@ -1671,7 +2201,7 @@ mod tests {
     #[tokio::test]
     async fn fastpath_inline_context_divergence_falls_back_to_full_expand() {
         let engine = test_engine();
-        let handle = core_handle(&engine);
+        let handle = core_handle(&engine).await;
         // Inline @context object overrides the batch handle; fastpath must
         // refuse and the fallback path must still produce the correct
         // expansion using the document's own context.
@@ -1688,7 +2218,7 @@ mod tests {
     #[tokio::test]
     async fn fastpath_geoproperty_point_matches_full_expand() {
         let engine = test_engine();
-        let handle = core_handle(&engine);
+        let handle = core_handle(&engine).await;
         let doc = json!({
             "id": "urn:ngsi-ld:Device:g1",
             "type": "Device",
@@ -1704,7 +2234,7 @@ mod tests {
     #[tokio::test]
     async fn fastpath_geoproperty_polygon_matches_full_expand() {
         let engine = test_engine();
-        let handle = core_handle(&engine);
+        let handle = core_handle(&engine).await;
         let doc = json!({
             "id": "urn:ngsi-ld:Device:g2",
             "type": "Device",
@@ -1720,7 +2250,7 @@ mod tests {
     #[tokio::test]
     async fn fastpath_language_property_matches_full_expand() {
         let engine = test_engine();
-        let handle = core_handle(&engine);
+        let handle = core_handle(&engine).await;
         let doc = json!({
             "id": "urn:ngsi-ld:Device:lp1",
             "type": "Device",
@@ -1736,7 +2266,7 @@ mod tests {
     #[tokio::test]
     async fn fastpath_vocab_property_matches_full_expand() {
         let engine = test_engine();
-        let handle = core_handle(&engine);
+        let handle = core_handle(&engine).await;
         let doc = json!({
             "id": "urn:ngsi-ld:Device:vp1",
             "type": "Device",
@@ -1752,7 +2282,7 @@ mod tests {
     #[tokio::test]
     async fn fastpath_json_property_matches_full_expand() {
         let engine = test_engine();
-        let handle = core_handle(&engine);
+        let handle = core_handle(&engine).await;
         let doc = json!({
             "id": "urn:ngsi-ld:Device:jp1",
             "type": "Device",
@@ -1768,7 +2298,7 @@ mod tests {
     #[tokio::test]
     async fn fastpath_scope_string_matches_full_expand() {
         let engine = test_engine();
-        let handle = core_handle(&engine);
+        let handle = core_handle(&engine).await;
         let doc = json!({
             "id": "urn:ngsi-ld:Device:sc1",
             "type": "Device",
@@ -1781,7 +2311,7 @@ mod tests {
     #[tokio::test]
     async fn fastpath_scope_array_matches_full_expand() {
         let engine = test_engine();
-        let handle = core_handle(&engine);
+        let handle = core_handle(&engine).await;
         let doc = json!({
             "id": "urn:ngsi-ld:Device:sc2",
             "type": "Device",
@@ -1791,83 +2321,83 @@ mod tests {
         pretty_assertions::assert_eq!(fast, slow);
     }
 
-    fn fast_expand_or_none(engine: &JsonLdEngine, document: serde_json::Value) -> Option<serde_json::Value> {
-        let handle = core_handle(engine);
-        let term_map = handle.core_term_map.as_ref().expect("fastpath enabled");
-        fast_expand_entity_document(&document, term_map)
+    async fn fast_expand_or_none(engine: &JsonLdEngine, document: serde_json::Value) -> Option<serde_json::Value> {
+        let handle = core_handle(engine).await;
+        assert!(handle.fast_eligible(), "fastpath enabled");
+        fast_normalize_and_expand_entity(&document, &handle.term_map)
     }
 
-    #[test]
-    fn fastpath_hits_simple_property() {
+    #[tokio::test]
+    async fn fastpath_hits_simple_property() {
         let engine = test_engine();
         let doc = json!({"id": "urn:x:1", "type": "X", "a": {"type": "Property", "value": 1}});
-        assert!(fast_expand_or_none(&engine, doc).is_some());
+        assert!(fast_expand_or_none(&engine, doc).await.is_some());
     }
 
-    #[test]
-    fn fastpath_hits_geoproperty() {
+    #[tokio::test]
+    async fn fastpath_hits_geoproperty() {
         let engine = test_engine();
         let doc = json!({
             "id": "urn:x:2", "type": "X",
             "loc": {"type": "GeoProperty", "value": {"type": "Point", "coordinates": [1.0, 2.0]}}
         });
-        assert!(fast_expand_or_none(&engine, doc).is_some());
+        assert!(fast_expand_or_none(&engine, doc).await.is_some());
     }
 
-    #[test]
-    fn fastpath_hits_language_property() {
+    #[tokio::test]
+    async fn fastpath_hits_language_property() {
         let engine = test_engine();
         let doc = json!({
             "id": "urn:x:3", "type": "X",
             "desc": {"type": "LanguageProperty", "languageMap": {"en": "hi"}}
         });
-        assert!(fast_expand_or_none(&engine, doc).is_some());
+        assert!(fast_expand_or_none(&engine, doc).await.is_some());
     }
 
-    #[test]
-    fn fastpath_hits_vocab_property() {
+    #[tokio::test]
+    async fn fastpath_hits_vocab_property() {
         let engine = test_engine();
         let doc = json!({
             "id": "urn:x:4", "type": "X",
             "cat": {"type": "VocabProperty", "vocab": "sensor"}
         });
-        assert!(fast_expand_or_none(&engine, doc).is_some());
+        assert!(fast_expand_or_none(&engine, doc).await.is_some());
     }
 
-    #[test]
-    fn fastpath_hits_json_property() {
+    #[tokio::test]
+    async fn fastpath_hits_json_property() {
         let engine = test_engine();
         let doc = json!({
             "id": "urn:x:5", "type": "X",
             "cfg": {"type": "JsonProperty", "json": {"k": 1}}
         });
-        assert!(fast_expand_or_none(&engine, doc).is_some());
+        assert!(fast_expand_or_none(&engine, doc).await.is_some());
     }
 
-    #[test]
-    fn fastpath_misses_on_inline_divergent_context() {
+    #[tokio::test]
+    async fn fastpath_misses_on_inline_divergent_context() {
         let engine = test_engine();
         let doc = json!({
             "@context": {"@vocab": "https://example.com/"},
             "id": "urn:x:6", "type": "X"
         });
-        assert!(fast_expand_or_none(&engine, doc).is_none());
+        assert!(fast_expand_or_none(&engine, doc).await.is_none());
     }
 
-    #[test]
-    fn fastpath_misses_on_unknown_attribute_type() {
+    #[tokio::test]
+    async fn fastpath_misses_on_unknown_attribute_type() {
         let engine = test_engine();
         let doc = json!({
             "id": "urn:x:7", "type": "X",
             "weird": {"type": "SomethingElse", "value": 1}
         });
-        assert!(fast_expand_or_none(&engine, doc).is_none());
+        assert!(fast_expand_or_none(&engine, doc).await.is_none());
     }
 
     #[tokio::test]
     async fn fastpath_property_with_nested_sub_property_matches_full_expand() {
         let engine = test_engine();
-        let handle = core_handle(&engine);
+        let handle = core_handle(&engine).await;
         let doc = json!({
             "id": "urn:ngsi-ld:Device:nested1",
             "type": "Device",
@@ -1884,7 +2414,7 @@ mod tests {
     #[tokio::test]
     async fn fastpath_relationship_with_nested_sub_relationship_matches_full_expand() {
         let engine = test_engine();
-        let handle = core_handle(&engine);
+        let handle = core_handle(&engine).await;
         let doc = json!({
             "id": "urn:ngsi-ld:Device:nested2",
             "type": "Device",
@@ -1898,46 +2428,253 @@ mod tests {
         pretty_assertions::assert_eq!(fast, slow);
     }
 
-    #[test]
-    fn fastpath_misses_on_property_with_object_value() {
+    #[tokio::test]
+    async fn fastpath_misses_on_property_with_object_value() {
         let engine = test_engine();
         let doc = json!({
             "id": "urn:x:8", "type": "X",
             "complex": {"type": "Property", "value": {"nested": true}}
         });
-        assert!(fast_expand_or_none(&engine, doc).is_none());
+        assert!(fast_expand_or_none(&engine, doc).await.is_none());
     }
 
     #[tokio::test]
     async fn fastpath_enabled_for_default_context_spec() {
         let engine = test_engine();
         let spec = ContextSpec::none();
-        let handle = engine.batch_context_handle(&spec);
-        assert!(handle.core_term_map.is_some(), "default spec (core + andromeda only) must enable the fastpath");
+        let handle = engine.batch_context_handle(&spec).await;
+        assert!(handle.fast_eligible(), "default spec (core + andromeda only) must enable the fastpath");
     }
 
     #[tokio::test]
     async fn fastpath_enabled_for_link_header_containing_only_core_urls() {
         let engine = test_engine();
         let spec = ContextSpec::from_links(vec![NGSI_LD_CORE_CONTEXT_URL.to_string(), ANDROMEDA_CORE_CONTEXT_URL.to_string()]);
-        let handle = engine.batch_context_handle(&spec);
-        assert!(handle.core_term_map.is_some(), "core-only Link header must enable the fastpath");
+        let handle = engine.batch_context_handle(&spec).await;
+        assert!(handle.fast_eligible(), "core-only Link header must enable the fastpath");
     }
 
     #[tokio::test]
-    async fn fastpath_disabled_for_body_context_spec() {
+    async fn fastpath_eligible_for_vocab_only_body_context() {
+        // Step 5: a body context that only redefines `@vocab` keeps the
+        // handle fast-eligible because every term still resolves against
+        // an unambiguous IRI (the BatchTermMap routes attributes through
+        // the new vocab consistently with the slow path).
         let engine = test_engine();
         let spec = ContextSpec::none().with_body_context(Some(json!({"@vocab": "https://example.com/vocab#"})));
-        let handle = engine.batch_context_handle(&spec);
-        assert!(handle.core_term_map.is_none(), "user body context must disable the fastpath");
+        let handle = engine.batch_context_handle(&spec).await;
+        assert!(handle.fast_eligible(), "@vocab-only body context stays fast-eligible after Step 5");
+    }
+
+    #[tokio::test]
+    async fn fastpath_disabled_when_body_context_overrides_core_term() {
+        // Plan §5.2: user term IRI differs from the existing core mapping
+        // for the same name -> Ineligible(UserOverridesCoreTerm).
+        let engine = test_engine();
+        let spec = ContextSpec::none().with_body_context(Some(json!({"observedAt": "https://example.com/own/observedAt"})));
+        let handle = engine.batch_context_handle(&spec).await;
+        assert!(!handle.fast_eligible(), "user override of core term must disable the fastpath");
     }
 
     #[tokio::test]
     async fn fastpath_disabled_for_custom_link_context_spec() {
         let engine = test_engine();
         let spec = ContextSpec::from_links(vec!["https://example.com/custom.jsonld".to_string()]);
-        let handle = engine.batch_context_handle(&spec);
-        assert!(handle.core_term_map.is_none(), "user link context must disable the fastpath");
+        let handle = engine.batch_context_handle(&spec).await;
+        assert!(!handle.fast_eligible(), "user link context must disable the fastpath");
+    }
+
+    #[tokio::test]
+    async fn batch_term_map_is_send_sync() {
+        // BatchTermMap holds Boxed strings + HashMap + Vec; it cannot be
+        // Copy, but it must be Send + Sync so spawn_blocking workers can
+        // hold a clone.
+        const fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<BatchTermMap>();
+        let engine = test_engine();
+        let handle = core_handle(&engine).await;
+        assert!(handle.fast_eligible(), "core-only handle must be fast-eligible");
+    }
+
+    #[tokio::test]
+    async fn relative_url_policy_absent_for_canonical_core_only_spec() {
+        let engine = test_engine();
+        let spec = ContextSpec::core_only();
+        let handle = engine.batch_context_handle(&spec).await;
+        pretty_assertions::assert_eq!(handle.relative_url_policy, RelativeUrlPolicy::Absent);
+    }
+
+    #[tokio::test]
+    async fn relative_url_policy_maybe_present_when_user_relative_url() {
+        let engine = test_engine();
+        let spec = ContextSpec::none().with_body_context(Some(json!(["foo"])));
+        let handle = engine.batch_context_handle(&spec).await;
+        pretty_assertions::assert_eq!(handle.relative_url_policy, RelativeUrlPolicy::MaybePresent);
+    }
+
+    #[tokio::test]
+    async fn fused_walk_implicit_property_byte_match() {
+        let engine = test_engine();
+        let handle = core_handle(&engine).await;
+        let raw = json!({
+            "id": "urn:ngsi-ld:Device:fused1",
+            "type": "Device",
+            "speed": 42
+        });
+        let mut normalized = raw.clone();
+        crate::service::entity::normalize_entity_attributes(&mut normalized);
+        let slow = engine.expand(normalized, &handle.spec).await.expect("slow");
+        let fast = engine.expand_with_handle(raw, &handle).await.expect("fast");
+        pretty_assertions::assert_eq!(fast, slow);
+    }
+
+    #[tokio::test]
+    async fn fused_walk_explicit_property_with_subattrs_match() {
+        let engine = test_engine();
+        let handle = core_handle(&engine).await;
+        let doc = json!({
+            "id": "urn:ngsi-ld:Device:fused2",
+            "type": "Device",
+            "temperature": {
+                "type": "Property",
+                "value": 21,
+                "providedBy": {"type": "Relationship", "object": "urn:ngsi-ld:Sensor:s1"}
+            }
+        });
+        let (fast, slow) = expand_both_paths(&engine, doc, &handle).await;
+        pretty_assertions::assert_eq!(fast, slow);
+    }
+
+    #[tokio::test]
+    async fn fused_walk_array_attr_normalises_per_instance() {
+        let engine = test_engine();
+        let handle = core_handle(&engine).await;
+        let doc = json!({
+            "id": "urn:ngsi-ld:Device:fused3",
+            "type": "Device",
+            "temperature": [
+                {"type": "Property", "value": 21, "datasetId": "urn:ngsi-ld:Dataset:a"},
+                {"type": "Property", "value": 22, "datasetId": "urn:ngsi-ld:Dataset:b"}
+            ]
+        });
+        let (fast, slow) = expand_both_paths(&engine, doc, &handle).await;
+        pretty_assertions::assert_eq!(fast, slow);
+    }
+
+    #[tokio::test]
+    async fn fused_walk_reserved_keys_skipped() {
+        let engine = test_engine();
+        let handle = core_handle(&engine).await;
+        let doc = json!({
+            "id": "urn:ngsi-ld:Device:fused4",
+            "type": "Device",
+            "expiresAt": "2030-01-01T00:00:00Z",
+            "scope": "root/a",
+            "speed": 42
+        });
+        let raw_for_slow = doc.clone();
+        let mut normalized = raw_for_slow;
+        crate::service::entity::normalize_entity_attributes(&mut normalized);
+        // Verify normalize did not wrap any of the reserved keys as Property.
+        let entity_obj = normalized.as_object().expect("object");
+        let expires = entity_obj.get("expiresAt").expect("expiresAt present");
+        assert!(expires.is_string(), "expiresAt must remain a string after normalize");
+        let scope = entity_obj.get("scope").expect("scope present");
+        assert!(scope.is_string(), "scope must remain a string after normalize");
+        let id = entity_obj.get("id").expect("id present");
+        assert!(id.is_string(), "id must remain a string after normalize");
+        let typ = entity_obj.get("type").expect("type present");
+        assert!(typ.is_string(), "type must remain a string after normalize");
+
+        let slow = engine.expand(normalized, &handle.spec).await.expect("slow");
+        let fast = engine.expand_with_handle(doc, &handle).await.expect("fast");
+        pretty_assertions::assert_eq!(fast, slow);
+    }
+
+    #[tokio::test]
+    async fn resolved_context_arc_shared_across_entities() {
+        let engine = test_engine();
+        let handle = core_handle(&engine).await;
+        let arc = handle.resolved_context.as_ref().expect("resolved context for core spec");
+        let baseline = Arc::strong_count(arc);
+
+        // Cloning the handle bumps the Arc refcount instead of deep-cloning
+        // the resolved context value.
+        let cloned_handles: Vec<BatchContextHandle> = (0..16).map(|_| handle.clone()).collect();
+        let arc_after_clone = handle.resolved_context.as_ref().expect("still present");
+        assert!(Arc::strong_count(arc_after_clone) >= baseline + cloned_handles.len());
+
+        drop(cloned_handles);
+        let arc_after_drop = handle.resolved_context.as_ref().expect("still present");
+        pretty_assertions::assert_eq!(Arc::strong_count(arc_after_drop), baseline);
+    }
+
+    fn bulk_doc(idx: usize) -> serde_json::Value {
+        json!({
+            "@context": NGSI_LD_CORE_CONTEXT_URL,
+            "id": format!("urn:ngsi-ld:Device:bulk-{idx}"),
+            "type": "Device"
+        })
+    }
+
+    #[tokio::test]
+    async fn bulk_expand_n_entities_per_index_match() {
+        let engine = test_engine();
+        let docs: Vec<serde_json::Value> = (0..10).map(bulk_doc).collect();
+        let bulk = engine.expand_prepared_array(docs.clone(), context::CoreContextPolicy::Append).await;
+        pretty_assertions::assert_eq!(bulk.len(), docs.len());
+        for (i, (bulk_result, original)) in bulk.iter().zip(docs.iter()).enumerate() {
+            let bulk_value = bulk_result.as_ref().expect("bulk index ok");
+            let solo = engine
+                .expand_prepared(original.clone(), context::CoreContextPolicy::Append, RelativeUrlPolicy::MaybePresent)
+                .await
+                .expect("solo expand");
+            pretty_assertions::assert_eq!(bulk_value, &solo, "bulk[{i}] must match individual expand");
+        }
+    }
+
+    #[tokio::test]
+    async fn bulk_expand_invalid_entity_attributes_to_index() {
+        let engine = test_engine();
+        let mut docs: Vec<serde_json::Value> = (0..10).map(bulk_doc).collect();
+        // Replace entity 5 with an inline @context that points to an
+        // unreachable URL (allow_remote=false); bulk and per-entity expand
+        // should both surface the error specifically at index 5.
+        docs[5] = json!({
+            "@context": "https://example.com/missing-context.jsonld",
+            "id": "urn:ngsi-ld:Device:bulk-5",
+            "type": "Device"
+        });
+        let bulk = engine.expand_prepared_array(docs.clone(), context::CoreContextPolicy::Append).await;
+        pretty_assertions::assert_eq!(bulk.len(), 10);
+        assert!(bulk[5].is_err(), "entity 5 must report error");
+        for (i, slot) in bulk.iter().enumerate() {
+            if i == 5 {
+                continue;
+            }
+            assert!(slot.is_ok(), "entity {i} must succeed; got {slot:?}");
+        }
+    }
+
+    #[tokio::test]
+    async fn bulk_expand_empty_input_returns_empty() {
+        let engine = test_engine();
+        let bulk = engine.expand_prepared_array(Vec::new(), context::CoreContextPolicy::Append).await;
+        assert!(bulk.is_empty());
+    }
+
+    #[tokio::test]
+    async fn bulk_expand_single_element_produces_correct_result() {
+        let engine = test_engine();
+        let docs = vec![bulk_doc(0)];
+        let bulk = engine.expand_prepared_array(docs.clone(), context::CoreContextPolicy::Append).await;
+        pretty_assertions::assert_eq!(bulk.len(), 1);
+        let bulk_value = bulk[0].as_ref().expect("single ok");
+        let solo = engine
+            .expand_prepared(docs[0].clone(), context::CoreContextPolicy::Append, RelativeUrlPolicy::MaybePresent)
+            .await
+            .expect("solo");
+        pretty_assertions::assert_eq!(bulk_value, &solo);
     }
 
     #[tokio::test]
@@ -1954,5 +2691,215 @@ mod tests {
         let result = engine.expand(input, &ContextSpec::none()).await;
         assert!(result.is_ok());
         assert!(result.unwrap().is_array());
+    }
+
+    // -----------------------------------------------------------------
+    // Step 5 — generalised BatchTermMap test suite
+    // -----------------------------------------------------------------
+
+    /// Canonical-equivalence comparator: recursively sorts object keys
+    /// before comparing so two expansions that differ only in JSON object
+    /// member order register as equal. Adequate for the Step 5 user-context
+    /// tests; deeper canonicalisation (blank-node relabelling, list multi-
+    /// set semantics) is out of scope for this comparator.
+    fn canonical(value: &serde_json::Value) -> serde_json::Value {
+        match value {
+            serde_json::Value::Object(map) => {
+                let mut entries: Vec<(String, serde_json::Value)> = map.iter().map(|(k, v)| (k.clone(), canonical(v))).collect();
+                entries.sort_by(|a, b| a.0.cmp(&b.0));
+                serde_json::Value::Object(entries.into_iter().collect())
+            }
+            serde_json::Value::Array(items) => serde_json::Value::Array(items.iter().map(canonical).collect()),
+            other => other.clone(),
+        }
+    }
+
+    fn assert_jsonld_canonically_equal(a: &serde_json::Value, b: &serde_json::Value) {
+        pretty_assertions::assert_eq!(canonical(a), canonical(b));
+    }
+
+    fn body_spec(body: serde_json::Value) -> ContextSpec {
+        ContextSpec::none().with_body_context(Some(body))
+    }
+
+    #[tokio::test]
+    async fn gen_fastpath_inline_user_context_custom_term() {
+        let engine = test_engine();
+        let spec = body_spec(json!({"mySpeed": "http://ex.com/speed"}));
+        let handle = engine.batch_context_handle(&spec).await;
+        assert!(handle.fast_eligible(), "custom term in body context stays fast-eligible");
+        let doc = json!({
+            "id": "urn:ngsi-ld:Device:gen1",
+            "type": "X",
+            "mySpeed": {"type": "Property", "value": 42}
+        });
+        let fast = engine.expand_with_handle(doc.clone(), &handle).await.expect("fast");
+        let slow = engine.expand(doc, &spec).await.expect("slow");
+        assert!(
+            fast[0].as_object().expect("entity object").contains_key("http://ex.com/speed"),
+            "expected user IRI in fastpath output"
+        );
+        assert_jsonld_canonically_equal(&fast, &slow);
+    }
+
+    #[tokio::test]
+    async fn gen_fastpath_url_user_context_custom_term() {
+        let unique = SystemTime::now().duration_since(UNIX_EPOCH).expect("system time").as_nanos();
+        let path = std::env::temp_dir().join(format!("engine-user-context-{unique}.jsonld"));
+        fs::write(&path, r#"{"@context":{"mySpeed":"http://ex.com/speed"}}"#).expect("write user context");
+        let url = format!("https://example.com/user-context-{unique}.jsonld");
+
+        let mut preloads = HashMap::new();
+        preloads.insert(url.clone(), path.to_string_lossy().to_string());
+        let engine = JsonLdEngine::builder().allow_remote(false).preload_contexts(preloads).build().expect("engine");
+
+        let spec = ContextSpec::from_links(vec![url]);
+        let handle = engine.batch_context_handle(&spec).await;
+        assert!(handle.fast_eligible(), "URL user context stays fast-eligible");
+
+        let doc = json!({
+            "id": "urn:ngsi-ld:Device:gen2",
+            "type": "X",
+            "mySpeed": {"type": "Property", "value": 42}
+        });
+        let fast = engine.expand_with_handle(doc.clone(), &handle).await.expect("fast");
+        let slow = engine.expand(doc, &spec).await.expect("slow");
+        assert_jsonld_canonically_equal(&fast, &slow);
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn gen_fastpath_user_context_type_coercion() {
+        // Step 5 §5.5: user-declared coercion via `xsd:dateTime`. The
+        // user context must declare the `xsd` prefix because JSON-LD does
+        // not provide one by default — both fast and slow paths then
+        // resolve the IRI consistently.
+        let engine = test_engine();
+        let spec = body_spec(json!({
+            "xsd": "http://www.w3.org/2001/XMLSchema#",
+            "timestamp": {"@id": "http://ex.com/ts", "@type": "xsd:dateTime"}
+        }));
+        let handle = engine.batch_context_handle(&spec).await;
+        assert!(handle.fast_eligible(), "DateTime coercion via declared xsd:dateTime stays eligible");
+        let doc = json!({
+            "id": "urn:ngsi-ld:Device:gen3",
+            "type": "X",
+            "ts": {"type": "Property", "value": "2025-01-01T00:00:00Z", "timestamp": "2025-01-02T00:00:00Z"}
+        });
+        let fast = engine.expand_with_handle(doc.clone(), &handle).await.expect("fast");
+        let slow = engine.expand(doc, &spec).await.expect("slow");
+        assert_jsonld_canonically_equal(&fast, &slow);
+    }
+
+    #[tokio::test]
+    async fn gen_fastpath_user_overrides_core_falls_back() {
+        let engine = test_engine();
+        let spec = body_spec(json!({"observedAt": "http://ex.com/own/observedAt"}));
+        let handle = engine.batch_context_handle(&spec).await;
+        assert!(!handle.fast_eligible(), "user override of observedAt must mark Ineligible");
+        let doc = json!({
+            "id": "urn:ngsi-ld:Device:gen4",
+            "type": "X",
+            "speed": {"type": "Property", "value": 42, "observedAt": "2025-01-01T00:00:00Z"}
+        });
+        let fast = engine.expand_with_handle(doc.clone(), &handle).await.expect("fast");
+        let slow = engine.expand(doc, &spec).await.expect("slow");
+        assert_jsonld_canonically_equal(&fast, &slow);
+    }
+
+    #[tokio::test]
+    async fn gen_fastpath_scoped_property_context_falls_back() {
+        let engine = test_engine();
+        let spec = body_spec(json!({
+            "sensor": {"@id": "http://ex.com/sensor", "@context": {"reading": "http://ex.com/reading"}}
+        }));
+        let handle = engine.batch_context_handle(&spec).await;
+        assert!(!handle.fast_eligible(), "scoped @context on a term must mark Ineligible");
+    }
+
+    #[tokio::test]
+    async fn gen_fastpath_xsd_prefix_expansion() {
+        let engine = test_engine();
+        let spec = body_spec(json!({
+            "size": {"@id": "http://ex.com/size", "@type": "xsd:string"}
+        }));
+        let handle = engine.batch_context_handle(&spec).await;
+        // xsd:string is not a coercion the fastpath models, but xsd: must
+        // resolve via the built-in prefix.
+        let expansion = handle.term_map.expand_iri("xsd:string");
+        pretty_assertions::assert_eq!(expansion.as_ref(), "http://www.w3.org/2001/XMLSchema#string");
+    }
+
+    #[tokio::test]
+    async fn gen_fastpath_per_entity_inline_context_falls_back() {
+        let engine = test_engine();
+        let handle = core_handle(&engine).await;
+        let doc = json!({
+            "@context": {"@vocab": "https://example.com/vocab#"},
+            "id": "urn:ngsi-ld:Device:gen6",
+            "type": "X"
+        });
+        let fast = engine.expand_with_handle(doc.clone(), &handle).await.expect("fast");
+        let slow = engine.expand(doc, &handle.spec).await.expect("slow");
+        assert_jsonld_canonically_equal(&fast, &slow);
+    }
+
+    #[tokio::test]
+    async fn gen_fastpath_prefix_table_longest_first() {
+        // Two overlapping prefixes (`ex:` and `exFoo:`); longest must win.
+        let engine = test_engine();
+        let spec = body_spec(json!({
+            "ex": "http://ex.com/short/",
+            "exFoo": "http://ex.com/long/"
+        }));
+        let handle = engine.batch_context_handle(&spec).await;
+        assert!(handle.fast_eligible());
+        let expanded = handle.term_map.expand_iri("exFoo:bar");
+        pretty_assertions::assert_eq!(expanded.as_ref(), "http://ex.com/long/bar");
+    }
+
+    #[tokio::test]
+    async fn gen_fastpath_user_term_with_at_id_only() {
+        let engine = test_engine();
+        let spec = body_spec(json!({
+            "foo": {"@id": "http://ex.com/foo"}
+        }));
+        let handle = engine.batch_context_handle(&spec).await;
+        assert!(handle.fast_eligible());
+        let doc = json!({
+            "id": "urn:ngsi-ld:Device:gen8",
+            "type": "X",
+            "foo": {"type": "Property", "value": 1}
+        });
+        let fast = engine.expand_with_handle(doc.clone(), &handle).await.expect("fast");
+        let slow = engine.expand(doc, &spec).await.expect("slow");
+        assert!(
+            fast[0].as_object().expect("entity").contains_key("http://ex.com/foo"),
+            "user IRI must appear in expanded form"
+        );
+        assert_jsonld_canonically_equal(&fast, &slow);
+    }
+
+    #[tokio::test]
+    async fn term_table_caches_per_url() {
+        // Build two handles for the same URL and assert the user term
+        // table cache is hit (cache size grows by exactly one entry).
+        let unique = SystemTime::now().duration_since(UNIX_EPOCH).expect("system time").as_nanos();
+        let path = std::env::temp_dir().join(format!("engine-user-cache-{unique}.jsonld"));
+        fs::write(&path, r#"{"@context":{"foo":"http://ex.com/foo"}}"#).expect("write");
+        let url = format!("https://example.com/user-cache-{unique}.jsonld");
+
+        let mut preloads = HashMap::new();
+        preloads.insert(url.clone(), path.to_string_lossy().to_string());
+        let engine = JsonLdEngine::builder().allow_remote(false).preload_contexts(preloads).build().expect("engine");
+
+        let spec = ContextSpec::from_links(vec![url.clone()]);
+        let _h1 = engine.batch_context_handle(&spec).await;
+        pretty_assertions::assert_eq!(engine.user_term_table_cache.len(), 1, "first handle populates the cache");
+        let _h2 = engine.batch_context_handle(&spec).await;
+        pretty_assertions::assert_eq!(engine.user_term_table_cache.len(), 1, "second handle reuses the cache entry");
+
+        let _ = fs::remove_file(path);
     }
 }

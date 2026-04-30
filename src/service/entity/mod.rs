@@ -589,7 +589,7 @@ fn unwrap_expanded_ref(value: &Value) -> &Value {
 }
 
 #[inline(always)]
-fn normalize_entity_attributes(payload: &mut Value) {
+pub(crate) fn normalize_entity_attributes(payload: &mut Value) {
     let Some(obj) = payload.as_object_mut() else {
         return;
     };
