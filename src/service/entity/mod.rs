@@ -155,7 +155,7 @@ impl EntityService {
     /// at or above it are enqueued. Requests that do not opt in always run
     /// inline. See NGSI-LD 6.3.5 for the server's discretion over `Prefer`
     /// token handling.
-    pub fn effective_side_effect_mode(&self, client_requested_async: bool, batch_size: usize) -> BatchSideEffectMode {
+    pub const fn effective_side_effect_mode(&self, client_requested_async: bool, batch_size: usize) -> BatchSideEffectMode {
         resolve_side_effect_mode(self.async_side_effect_threshold, client_requested_async, batch_size)
     }
 
@@ -529,11 +529,11 @@ impl EntityService {
 /// Split from the method so the decision table can be unit-tested without
 /// constructing a full [`EntityService`]. See that method's doc comment for
 /// the semantic contract.
-pub(crate) fn resolve_side_effect_mode(async_threshold: Option<usize>, client_requested_async: bool, batch_size: usize) -> BatchSideEffectMode {
+pub(crate) const fn resolve_side_effect_mode(async_threshold: Option<usize>, client_requested_async: bool, batch_size: usize) -> BatchSideEffectMode {
     match (client_requested_async, async_threshold) {
         (true, None) => BatchSideEffectMode::Enqueue,
         (true, Some(threshold)) if batch_size >= threshold => BatchSideEffectMode::Enqueue,
-        _other => BatchSideEffectMode::Inline,
+        (true, Some(_)) | (false, None) | (false, Some(_)) => BatchSideEffectMode::Inline,
     }
 }
 

@@ -199,9 +199,13 @@ where
             return Err(ExtractorRejection::invalid_request("Request body shall not be empty", uri.clone()));
         }
 
-        // Parse as Value first to extract @context if needed, then strip
+        // Parse as Value first to extract @context if needed, then strip.
+        // `sonic-rs` runtime-dispatches a SIMD parser (AVX2 / NEON / scalar)
+        // and is roughly 2-3x faster than `serde_json` on body shapes seen by
+        // this extractor (single entities, small batches). The output is a
+        // standard `serde_json::Value`, so downstream code is unchanged.
         let mut value: serde_json::Value =
-            serde_json::from_slice(&bytes).map_err(|e| ExtractorRejection::invalid_request(format!("Invalid JSON: {}", e), uri.clone()))?;
+            sonic_rs::from_slice(&bytes).map_err(|e| ExtractorRejection::invalid_request(format!("Invalid JSON: {}", e), uri.clone()))?;
 
         // Reject empty arrays — not a valid NGSI-LD entity or batch payload
         if value.as_array().is_some_and(|a| a.is_empty()) {

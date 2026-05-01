@@ -26,24 +26,16 @@ use mediatype::{MediaTypeBuf, names};
 use serde_json::Value;
 use std::collections::HashSet;
 
-/// Payload size at which the SIMD-accelerated JSON parser is used.
+/// Parse a batch request body into a JSON `Value` via `sonic-rs`.
 ///
-/// `sonic-rs` accepts `&[u8]` directly (no mutation, no copy), so the
-/// threshold is only guarding against the setup cost of the SIMD path on
-/// tiny bodies where `serde_json`'s byte-by-byte scan is already fastest.
-/// 1 MiB is a conservative break-even on AVX2 / NEON hosts.
-const SIMD_JSON_THRESHOLD_BYTES: usize = 1024 * 1024;
-
-/// Parse a batch request body into a JSON `Value`, dispatching to
-/// `sonic-rs` for large payloads and falling back to `serde_json` below
-/// the threshold. `sonic-rs` runtime-dispatches its SIMD implementation
-/// (AVX2 / NEON / scalar) based on host CPU features.
+/// `sonic-rs` accepts `&[u8]` directly (no mutation, no copy) and runtime-
+/// dispatches its SIMD implementation (AVX2 / NEON / scalar) based on host
+/// CPU features. Used unconditionally on the batch path: the dispatch cost
+/// is amortised over header inspection and per-entity context merging that
+/// already happen above and below the parse, so even sub-KiB bodies prefer
+/// it over `serde_json`'s byte-by-byte scan.
 fn parse_batch_body_json(body: &Bytes) -> Result<Value, String> {
-    if body.len() >= SIMD_JSON_THRESHOLD_BYTES {
-        sonic_rs::from_slice::<Value>(body).map_err(|err| err.to_string())
-    } else {
-        serde_json::from_slice::<Value>(body).map_err(|err| err.to_string())
-    }
+    sonic_rs::from_slice::<Value>(body).map_err(|err| err.to_string())
 }
 
 /// Content-Type classification for batch entity parsing.

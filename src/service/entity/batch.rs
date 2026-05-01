@@ -116,6 +116,7 @@ struct ClassifiedBatch {
 /// produced them.
 type PreparedSlot = Result<PreparedEntity, (String, AndromedaError)>;
 type IndexedPrepared = (usize, PreparedSlot);
+type DeleteChunkOutcome = (Vec<String>, Vec<(String, AndromedaError)>);
 
 /// Output of one entry processed by the fastpath chunk worker.
 enum FastPoolOutput {
@@ -1073,7 +1074,7 @@ impl EntityService {
 
         let chunk_len = self.batch_chunk_len(unique_ids.len());
         let batch_size = entity_ids.len();
-        let chunk_results: Vec<Result<(Vec<String>, Vec<(String, AndromedaError)>), AndromedaError>> = stream::iter(unique_ids.chunks(chunk_len))
+        let chunk_results: Vec<Result<DeleteChunkOutcome, AndromedaError>> = stream::iter(unique_ids.chunks(chunk_len))
             .map(|chunk| async move { self.batch_delete_chunk(chunk, batch_size, mode).await })
             .buffered(self.batch_chunk_concurrency)
             .collect()
@@ -1089,12 +1090,7 @@ impl EntityService {
         Ok(BatchResult { success, errors })
     }
 
-    async fn batch_delete_chunk(
-        &self,
-        chunk: &[String],
-        original_batch_size: usize,
-        mode: BatchSideEffectMode,
-    ) -> Result<(Vec<String>, Vec<(String, AndromedaError)>), AndromedaError> {
+    async fn batch_delete_chunk(&self, chunk: &[String], original_batch_size: usize, mode: BatchSideEffectMode) -> Result<DeleteChunkOutcome, AndromedaError> {
         let _ = original_batch_size;
         let (deleted, uow_slot) = match mode {
             BatchSideEffectMode::Inline => (self.repo.delete_batch(chunk).await?, None),

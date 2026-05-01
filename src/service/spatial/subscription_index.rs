@@ -170,6 +170,7 @@ fn exact_match(georel: &CompiledGeoRel, entity_geom: &geo::Geometry<f64>, ref_ge
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::*;
     use crate::tenancy::types::TenantRef;
     use geo::{Coord, LineString, Point, Polygon};

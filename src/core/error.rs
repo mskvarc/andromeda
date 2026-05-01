@@ -591,7 +591,7 @@ impl From<ReqwestError> for AndromedaError {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::expect_used, clippy::unwrap_used)]
+    #![allow(clippy::expect_used, clippy::unwrap_used, clippy::invalid_regex)]
     use super::*;
     use sqlx::{
         Error as SqlxError,

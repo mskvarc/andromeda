@@ -4,12 +4,14 @@ use crate::{
     domain::ngsi_ld_urn::SnapshotId,
     http::{
         header::{ngsild_warning::NgsiLdWarning, preference_applied::PreferenceApplied},
-        response::headers::{CommonHeadersOptions, apply_common_headers},
+        response::{
+            headers::{CommonHeadersOptions, apply_common_headers},
+            sonic_json::SonicJson,
+        },
     },
     renderer::{VersionAdaptation, response::RenderedOutput},
 };
 use axum::{
-    Json,
     http::{HeaderMap, HeaderValue, StatusCode, header::CONTENT_TYPE},
     response::{IntoResponse, Response},
 };
@@ -123,6 +125,6 @@ impl IntoResponse for NgsiLdResponse {
             headers.insert("Content-Range", val);
         }
 
-        (status, headers, Json(self.rendered.value)).into_response()
+        (status, headers, SonicJson(self.rendered.value)).into_response()
     }
 }

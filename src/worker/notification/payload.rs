@@ -760,7 +760,7 @@ async fn inject_previous_values(current: &mut Value, previous: &Value, changed_a
             let curr_attr = curr_obj.get(&key).cloned();
             let previous_key = previous_key_for_attr(prev_val);
 
-            if let Some(Value::Object(attr_obj)) = curr_attr.as_ref().and_then(|v| if v.is_object() { Some(v) } else { None }) {
+            if let Some(Value::Object(attr_obj)) = curr_attr.as_ref().filter(|&v| v.is_object()) {
                 let mut updated_attr = attr_obj.clone();
                 let prev_value = extract_previous_value(prev_val, previous_key);
                 updated_attr.insert(previous_key.to_string(), prev_value);

@@ -22,7 +22,7 @@ use crate::{
             protocol::apply_entity_query_extension_headers,
             query::entity::EntityQueryParameters,
         },
-        response::{batch::NgsiLdBatchResponse, collection::NgsiLdCollectionResponse},
+        response::{batch::NgsiLdBatchResponse, collection::NgsiLdCollectionResponse, sonic_json::SonicJson},
     },
     renderer::{
         Renderer,
@@ -35,7 +35,6 @@ use crate::{
     },
 };
 use axum::{
-    Json,
     body::Bytes,
     extract::OriginalUri,
     http::StatusCode,
@@ -283,7 +282,7 @@ pub async fn batch_create(
         };
         let status = StatusCode::from_u16(first.status).unwrap_or(StatusCode::CREATED);
         if let Some(ref resp_body) = first.body {
-            return Ok((status, Json(resp_body.clone())).into_response());
+            return Ok((status, SonicJson(resp_body.clone())).into_response());
         }
         return Ok(status.into_response());
     }
@@ -372,7 +371,7 @@ pub async fn batch_upsert(
         };
         let status = StatusCode::from_u16(first.status).unwrap_or(StatusCode::NO_CONTENT);
         if let Some(ref resp_body) = first.body {
-            return Ok((status, Json(resp_body.clone())).into_response());
+            return Ok((status, SonicJson(resp_body.clone())).into_response());
         }
         return Ok(status.into_response());
     }
@@ -464,7 +463,7 @@ pub async fn batch_update(
         };
         let status = StatusCode::from_u16(first.status).unwrap_or(StatusCode::NO_CONTENT);
         if let Some(ref resp_body) = first.body {
-            return Ok((status, Json(resp_body.clone())).into_response());
+            return Ok((status, SonicJson(resp_body.clone())).into_response());
         }
         return Ok(status.into_response());
     }
@@ -539,7 +538,7 @@ pub async fn batch_merge(
         };
         let status = StatusCode::from_u16(first.status).unwrap_or(StatusCode::NO_CONTENT);
         if let Some(ref resp_body) = first.body {
-            return Ok((status, Json(resp_body.clone())).into_response());
+            return Ok((status, SonicJson(resp_body.clone())).into_response());
         }
         return Ok(status.into_response());
     }
@@ -609,7 +608,7 @@ pub async fn batch_delete(
         };
         let status = StatusCode::from_u16(first.status).unwrap_or(StatusCode::NO_CONTENT);
         if let Some(ref resp_body) = first.body {
-            return Ok((status, Json(resp_body.clone())).into_response()); // clone: owned Value needed for JSON response
+            return Ok((status, SonicJson(resp_body.clone())).into_response()); // clone: owned Value needed for JSON response
         }
         return Ok(status.into_response());
     }

@@ -25,7 +25,7 @@ mod tests {
 
     #[test]
     fn term_count_exceeds_150() {
-        assert!(TERM_COUNT > 170, "expected >170 terms, got {}", TERM_COUNT);
+        const { assert!(TERM_COUNT > 170, "expected >170 terms") };
     }
 
     #[test]

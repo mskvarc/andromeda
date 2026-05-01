@@ -157,7 +157,7 @@ impl SseConnectionRegistry {
 impl SseConnectionRegistry {
     /// Check whether any client is currently connected for a subscription.
     pub fn is_connected(&self, subscription_id: &str) -> bool {
-        self.connections.get(subscription_id).map_or(false, |inner| !inner.is_empty())
+        self.connections.get(subscription_id).is_some_and(|inner| !inner.is_empty())
     }
 
     /// Count active connections for a subscription.

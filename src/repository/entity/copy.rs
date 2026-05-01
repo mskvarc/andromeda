@@ -101,7 +101,7 @@ fn encode_entities_copy_stream(columns: &PreparedEntityColumns) -> Vec<u8> {
     buf
 }
 
-fn estimated_stream_bytes(columns: &PreparedEntityColumns) -> usize {
+const fn estimated_stream_bytes(columns: &PreparedEntityColumns) -> usize {
     // Rough guess: 1 KiB per row accounts for typical JSON payload size.
     19 + columns.ids.len() * 1024
 }

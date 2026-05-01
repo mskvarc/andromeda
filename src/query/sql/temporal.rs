@@ -743,7 +743,7 @@ fn geo_to_condition(geo: &GeoQuery, payload_col: &str) -> Result<Condition, Andr
             if let Some(min) = min_distance {
                 parts.push(SeaExpr::cust_with_exprs(
                     format!("ST_Distance($1, $2) >= {}", min),
-                    [geo_col_expr.clone(), ref_geom_geo_expr.clone()],
+                    [geo_col_expr, ref_geom_geo_expr],
                 ));
             }
             if parts.is_empty() {

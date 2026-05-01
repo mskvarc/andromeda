@@ -6,3 +6,4 @@ pub mod content_range;
 pub mod headers;
 pub mod pagination;
 pub mod single;
+pub mod sonic_json;

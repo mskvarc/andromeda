@@ -224,6 +224,7 @@ fn geometry_envelope(g: &geo::Geometry<f64>) -> AABB<[f64; 2]> {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::*;
     use crate::tenancy::types::TenantRef;
     use geo::{Coord, LineString, Point, Polygon};

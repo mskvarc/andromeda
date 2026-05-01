@@ -53,7 +53,7 @@ pub struct PendingSideEffectsWorker {
 
 impl PendingSideEffectsWorker {
     /// Create a new worker bound to the tenant's shared temporal repository.
-    pub fn new(
+    pub const fn new(
         repo: PendingSideEffectsRepository,
         temporal_repo: Arc<TemporalRepository>,
         change_tx: Option<broadcast::Sender<ChangeEvent>>,

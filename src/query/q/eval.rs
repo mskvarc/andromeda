@@ -77,10 +77,8 @@ fn resolve_value(obj: &serde_json::Map<String, Value>, path: &AttrPath) -> Optio
     // Try hasValue first, then hasObject
     let (terminal_value, is_object) = if let Some(hv) = current.get(has_value).and_then(|v| v.as_array()?.first()) {
         (hv, false)
-    } else if let Some(ho) = current.get(has_object).and_then(|v| v.as_array()?.first()) {
-        (ho, true)
     } else {
-        return None;
+        (current.get(has_object).and_then(|v| v.as_array()?.first())?, true)
     };
 
     // Extract the raw value
