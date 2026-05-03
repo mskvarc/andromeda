@@ -592,16 +592,50 @@ impl TemporalRepository {
     }
 }
 
+// The upsert skips no-op writes via `WHERE ... IS DISTINCT FROM EXCLUDED ...`
+// to avoid btree/WAL amplification on the steady-state path where
+// `(attribute_type, value_type)` rarely change for a given TEA tuple.
+// `RETURNING` therefore omits unchanged rows, so a follow-up SELECT in the
+// same CTE pulls their existing ids and the result is unioned to preserve
+// the contract that every input entry yields a `TeaBatchResultRow`.
+// `dataset_id` is NULL-able with `UNIQUE NULLS NOT DISTINCT` semantics
+// (migration 0007), so equality joins use `IS NOT DISTINCT FROM`.
 const TEA_UPSERT_SQL: &str = r#"
-INSERT INTO temporal_entity_attributes (entity_id, attribute_name_id, attribute_type, dataset_id, value_type)
-SELECT d.entity_id, d.attribute_name_id, d.attribute_type, d.dataset_id, d.value_type
-FROM UNNEST($1::text[], $2::smallint[], $3::text[], $4::text[], $5::text[])
-    AS d(entity_id, attribute_name_id, attribute_type, dataset_id, value_type)
-ON CONFLICT (entity_id, attribute_name_id, dataset_id) DO UPDATE
-SET attribute_type = EXCLUDED.attribute_type, value_type = EXCLUDED.value_type
-RETURNING id, entity_id,
-    (SELECT an.name FROM attribute_names an WHERE an.id = temporal_entity_attributes.attribute_name_id) AS attribute_name,
-    dataset_id
+WITH input AS (
+    SELECT d.entity_id, d.attribute_name_id, d.attribute_type, d.dataset_id, d.value_type
+    FROM UNNEST($1::text[], $2::smallint[], $3::text[], $4::text[], $5::text[])
+        AS d(entity_id, attribute_name_id, attribute_type, dataset_id, value_type)
+),
+upserted AS (
+    INSERT INTO temporal_entity_attributes (entity_id, attribute_name_id, attribute_type, dataset_id, value_type)
+    SELECT entity_id, attribute_name_id, attribute_type, dataset_id, value_type FROM input
+    ON CONFLICT (entity_id, attribute_name_id, dataset_id) DO UPDATE
+    SET attribute_type = EXCLUDED.attribute_type, value_type = EXCLUDED.value_type
+    WHERE temporal_entity_attributes.attribute_type IS DISTINCT FROM EXCLUDED.attribute_type
+       OR temporal_entity_attributes.value_type   IS DISTINCT FROM EXCLUDED.value_type
+    RETURNING id, entity_id, attribute_name_id, dataset_id
+)
+SELECT u.id, u.entity_id,
+       an.name AS attribute_name,
+       u.dataset_id
+FROM upserted u
+JOIN attribute_names an ON an.id = u.attribute_name_id
+UNION ALL
+SELECT tea.id, tea.entity_id,
+       an.name AS attribute_name,
+       tea.dataset_id
+FROM input i
+JOIN temporal_entity_attributes tea
+    ON tea.entity_id          = i.entity_id
+   AND tea.attribute_name_id  = i.attribute_name_id
+   AND tea.dataset_id IS NOT DISTINCT FROM i.dataset_id
+JOIN attribute_names an ON an.id = tea.attribute_name_id
+WHERE NOT EXISTS (
+    SELECT 1 FROM upserted u
+    WHERE u.entity_id          = i.entity_id
+      AND u.attribute_name_id  = i.attribute_name_id
+      AND u.dataset_id IS NOT DISTINCT FROM i.dataset_id
+)
 "#;
 
 fn rows_to_tea_results(rows: Vec<sqlx::postgres::PgRow>) -> Vec<TeaBatchResultRow> {

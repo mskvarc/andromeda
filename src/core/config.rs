@@ -167,9 +167,19 @@ pub struct PerformanceConfig {
     pub batch_concurrency: Option<usize>,
 
     /// Maximum number of chunks dispatched in parallel for large batch
-    /// operations. If omitted, the runtime uses `max(1, pool_size / 2)`.
+    /// operations. Sizes the fastpath preparation blocking-pool semaphore
+    /// (CPU-bound work). If omitted, defaults to 4.
     #[config(env = "ANDROMEDA_PERFORMANCE_BATCH_CHUNK_CONCURRENCY")]
     pub batch_chunk_concurrency: Option<usize>,
+
+    /// Maximum number of write-batch chunks dispatched in parallel
+    /// (used by batch create/upsert/update/merge/delete). Distinct from
+    /// `batch_chunk_concurrency`, which sizes the fastpath preparation
+    /// blocking-pool semaphore. Write paths are DB-bound and prefer a
+    /// lower ceiling (~4) to avoid row-lock contention on `entities`
+    /// and `temporal_entity_attributes`. If omitted, defaults to 4.
+    #[config(env = "ANDROMEDA_PERFORMANCE_BATCH_CHUNK_WRITE_CONCURRENCY")]
+    pub batch_chunk_write_concurrency: Option<usize>,
 
     /// Populate the attribute-name dictionary cache from the database at
     /// tenant startup. Eliminates cold-hit `INSERT ... ON CONFLICT DO NOTHING`
@@ -490,6 +500,11 @@ fn validate_config(config: &RuntimeConfig) -> Result<(), AndromedaError> {
     {
         return Err(AndromedaError::internal("performance.batch_chunk_concurrency must be at least 1"));
     }
+    if let Some(batch_chunk_write_concurrency) = config.performance.batch_chunk_write_concurrency
+        && batch_chunk_write_concurrency == 0
+    {
+        return Err(AndromedaError::internal("performance.batch_chunk_write_concurrency must be at least 1"));
+    }
     if config.performance.batch_chunk_size == 0 {
         return Err(AndromedaError::internal("performance.batch_chunk_size must be at least 1"));
     }
@@ -643,6 +658,7 @@ mod tests {
             performance: PerformanceConfig {
                 batch_concurrency: None,
                 batch_chunk_concurrency: None,
+                batch_chunk_write_concurrency: None,
                 preload_attribute_names: true,
                 batch_chunk_size: 512,
                 batch_large_threshold: 512,
@@ -871,6 +887,23 @@ port = 1600
         config.http.request_timeout_secs = 0;
 
         assert!(validate_config(&config).is_err());
+    }
+
+    #[test]
+    fn validate_rejects_zero_batch_chunk_write_concurrency() {
+        let mut config = test_runtime_config_with_preload("contexts/test.jsonld");
+        config.performance.batch_chunk_write_concurrency = Some(0);
+
+        assert!(validate_config(&config).is_err());
+    }
+
+    #[test]
+    #[serial]
+    fn env_overrides_batch_chunk_write_concurrency() {
+        unsafe { std::env::set_var("ANDROMEDA_PERFORMANCE_BATCH_CHUNK_WRITE_CONCURRENCY", "9") };
+        let config = RuntimeConfig::builder().env().load().expect("config should load");
+        unsafe { std::env::remove_var("ANDROMEDA_PERFORMANCE_BATCH_CHUNK_WRITE_CONCURRENCY") };
+        pretty_assertions::assert_eq!(config.performance.batch_chunk_write_concurrency, Some(9));
     }
 
     #[test]

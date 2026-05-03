@@ -291,7 +291,8 @@ pub async fn build_tenant_state(
         TenantRef::Named(_) => config.tenancy.tenant_max_connections as usize,
     };
     let batch_concurrency = config.performance.batch_concurrency.unwrap_or_else(|| usize::min(pool_size, 25)).max(1);
-    let batch_chunk_concurrency = config.performance.batch_chunk_concurrency.unwrap_or_else(|| (pool_size / 2).max(1)).max(1);
+    let batch_chunk_concurrency = config.performance.batch_chunk_concurrency.unwrap_or(4).max(1);
+    let batch_chunk_write_concurrency = config.performance.batch_chunk_write_concurrency.unwrap_or(4).max(1);
 
     let temporal_repo = Arc::new(TemporalRepository::new(&pool).with_features(timescale_features));
     if config.performance.preload_attribute_names
@@ -338,6 +339,7 @@ pub async fn build_tenant_state(
         BatchExecutionConfig {
             concurrency: batch_concurrency,
             chunk_concurrency: batch_chunk_concurrency,
+            chunk_write_concurrency: batch_chunk_write_concurrency,
             chunk_size: config.performance.batch_chunk_size.max(1),
             large_threshold: config.performance.batch_large_threshold.max(1),
             prepare_blocking_threshold: config.performance.batch_prepare_blocking_threshold.max(1),

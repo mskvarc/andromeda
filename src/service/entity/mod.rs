@@ -52,7 +52,14 @@ pub struct BatchExecutionConfig {
     /// Maximum number of concurrent entity preparations.
     pub concurrency: usize,
     /// Maximum number of chunks dispatched in parallel during large-batch processing.
+    /// Sizes the fastpath preparation blocking-pool semaphore (CPU-bound work).
     pub chunk_concurrency: usize,
+    /// Maximum number of write-batch chunks dispatched in parallel for
+    /// create/upsert/update/merge/delete. Distinct from `chunk_concurrency`,
+    /// which sizes fastpath preparation; write paths are DB-bound and prefer a
+    /// lower ceiling to avoid row-lock contention on `entities` and
+    /// `temporal_entity_attributes`.
+    pub chunk_write_concurrency: usize,
     /// Maximum number of entities processed per chunk in large-batch mode.
     pub chunk_size: usize,
     /// Entity-count threshold that enables chunked large-batch processing.
@@ -106,6 +113,7 @@ pub struct EntityService {
     batch_activity: BatchActivityTracker,
     batch_chunk_size: usize,
     batch_chunk_concurrency: usize,
+    batch_chunk_write_concurrency: usize,
     batch_concurrency: usize,
     batch_large_threshold: usize,
     batch_prepare_blocking_threshold: usize,
@@ -140,6 +148,7 @@ impl EntityService {
             batch_activity,
             batch_chunk_size: batch_config.chunk_size.max(1),
             batch_chunk_concurrency: batch_config.chunk_concurrency.max(1),
+            batch_chunk_write_concurrency: batch_config.chunk_write_concurrency.max(1),
             batch_concurrency: batch_config.concurrency.max(1),
             batch_large_threshold: batch_config.large_threshold.max(1),
             batch_prepare_blocking_threshold: batch_config.prepare_blocking_threshold.max(1),

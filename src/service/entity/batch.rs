@@ -1054,7 +1054,7 @@ impl EntityService {
         let batch_size = entities.len();
         let chunk_results: Vec<Result<BatchResult, AndromedaError>> = stream::iter(deduped.chunks(chunk_len))
             .map(|chunk| async move { self.batch_create_chunk(chunk, context, batch_size, mode).await })
-            .buffered(self.batch_chunk_concurrency)
+            .buffered(self.batch_chunk_write_concurrency)
             .collect()
             .await;
 
@@ -1090,7 +1090,7 @@ impl EntityService {
         let batch_size = entity_ids.len();
         let chunk_results: Vec<Result<DeleteChunkOutcome, AndromedaError>> = stream::iter(unique_ids.chunks(chunk_len))
             .map(|chunk| async move { self.batch_delete_chunk(chunk, batch_size, mode).await })
-            .buffered(self.batch_chunk_concurrency)
+            .buffered(self.batch_chunk_write_concurrency)
             .collect()
             .await;
 
@@ -1192,7 +1192,7 @@ impl EntityService {
         let batch_size = entities.len();
         let chunk_results: Vec<Result<BatchResult, AndromedaError>> = stream::iter(entities.chunks(chunk_len))
             .map(|chunk| async move { self.batch_update_chunk(chunk, context, no_overwrite, batch_size, mode).await })
-            .buffered(self.batch_chunk_concurrency)
+            .buffered(self.batch_chunk_write_concurrency)
             .collect()
             .await;
 
@@ -1218,7 +1218,7 @@ impl EntityService {
         let batch_size = entities.len();
         let chunk_results: Vec<Result<BatchResult, AndromedaError>> = stream::iter(entities.chunks(chunk_len))
             .map(|chunk| async move { self.batch_merge_chunk(chunk, context, batch_size, mode).await })
-            .buffered(self.batch_chunk_concurrency)
+            .buffered(self.batch_chunk_write_concurrency)
             .collect()
             .await;
 
@@ -1261,7 +1261,7 @@ impl EntityService {
                 };
                 outcome.map(|(result, created)| (result, chunk_errors, created))
             })
-            .buffered(self.batch_chunk_concurrency)
+            .buffered(self.batch_chunk_write_concurrency)
             .collect()
             .await;
 
