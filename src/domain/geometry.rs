@@ -44,6 +44,13 @@ pub enum WkbError {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Wkb(Bytes);
 
+impl<V: jsonld_expandable_core::JsonValue> jsonld_expandable_core::ToJsonValue<V> for Wkb {
+    fn to_json_value(&self) -> V {
+        let json = serde_json::to_value(self).unwrap_or(serde_json::Value::Null);
+        crate::domain::attribute::serde_json_value_to_json_value::<V>(&json)
+    }
+}
+
 impl Wkb {
     /// Build from a `geo::Geometry<f64>` using the canonical EWKB dialect (SRID 4326).
     pub fn from_geo(geometry: &geo::Geometry<f64>) -> Result<Wkb, WkbError> {

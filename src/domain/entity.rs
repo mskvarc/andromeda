@@ -1,6 +1,6 @@
 use crate::{
     domain::{attribute::AttributeValue, notification::SysAttrsSnapshot, scope::ScopeBuf, uri::Uri},
-    jsonld::{JsonLdExpandable, JsonLdExpandableMacro, JsonLdTypeValue},
+    jsonld::{Expandable, ExpandableTypeValue, JsonValue},
 };
 use chrono::{DateTime, Utc};
 use indexmap::IndexMap;
@@ -23,20 +23,27 @@ pub enum ScopeValue {
     Multiple(Vec<ScopeBuf>),
 }
 
-impl JsonLdTypeValue for EntityTypeValue {
-    fn to_type_array(&self) -> serde_json::Value {
+impl ScopeValue {
+    /// Iterate the contained scopes uniformly regardless of variant.
+    pub fn iter(&self) -> std::slice::Iter<'_, ScopeBuf> {
         match self {
-            EntityTypeValue::Single(s) => serde_json::json!([s]),
-            EntityTypeValue::Multiple(v) => serde_json::json!(v),
+            ScopeValue::Single(s) => std::slice::from_ref(s).iter(),
+            ScopeValue::Multiple(v) => v.iter(),
         }
     }
 }
 
-impl JsonLdExpandable for ScopeValue {
-    fn to_expanded(&self) -> serde_json::Value {
+impl Expandable for ScopeValue {
+    fn expand<V: JsonValue>(&self) -> V {
+        V::array(self.iter().map(|s| V::object(std::iter::once(("@value".to_string(), V::string(s.as_str()))))))
+    }
+}
+
+impl ExpandableTypeValue for EntityTypeValue {
+    fn to_type_array<V: JsonValue>(&self) -> V {
         match self {
-            ScopeValue::Single(s) => serde_json::json!([{"@value": s.as_str()}]),
-            ScopeValue::Multiple(v) => serde_json::Value::Array(v.iter().map(|s| serde_json::json!({"@value": s.as_str()})).collect()),
+            EntityTypeValue::Single(s) => V::array(std::iter::once(V::string(s))),
+            EntityTypeValue::Multiple(v) => V::array(v.iter().map(|s| V::string(s))),
         }
     }
 }
@@ -50,9 +57,9 @@ impl JsonLdExpandable for ScopeValue {
 /// All spec-defined entity members are explicit fields. `@context` is excluded
 /// as it is a transport concern handled by the JSON-LD engine.
 #[skip_serializing_none]
-#[derive(Debug, Clone, Serialize, Deserialize, JsonLdExpandableMacro)]
+#[derive(Debug, Clone, Serialize, Deserialize, Expandable)]
 #[serde(rename_all = "camelCase")]
-#[jsonld(type_field)]
+#[jsonld(type_field, prefix(ngsi = "https://uri.etsi.org/ngsi-ld/", xsd = "http://www.w3.org/2001/XMLSchema#"))]
 pub struct Entity {
     #[jsonld(id)]
     pub id: Uri,
@@ -64,7 +71,7 @@ pub struct Entity {
 
     /// Entity expiration timestamp (clause 4.22).
     #[serde(default)]
-    #[jsonld(property = "ngsi:expiresAt", typed_value, datatype = "ngsi:DateTime")]
+    #[jsonld(property = "ngsi:expiresAt", typed_value, datatype = "https://uri.etsi.org/ngsi-ld/DateTime")]
     pub expires_at: Option<DateTime<Utc>>,
 
     /// Default geospatial property (clause 4.7).
@@ -81,17 +88,17 @@ pub struct Entity {
 
     /// System-generated creation timestamp (clause 4.8, Table 5.2.2-1).
     #[serde(default)]
-    #[jsonld(property = "ngsi:createdAt", typed_value, datatype = "ngsi:DateTime")]
+    #[jsonld(property = "ngsi:createdAt", typed_value, datatype = "https://uri.etsi.org/ngsi-ld/DateTime")]
     pub created_at: Option<DateTime<Utc>>,
 
     /// System-generated modification timestamp (clause 4.8, Table 5.2.2-1).
     #[serde(default)]
-    #[jsonld(property = "ngsi:modifiedAt", typed_value, datatype = "ngsi:DateTime")]
+    #[jsonld(property = "ngsi:modifiedAt", typed_value, datatype = "https://uri.etsi.org/ngsi-ld/DateTime")]
     pub modified_at: Option<DateTime<Utc>>,
 
     /// Deletion timestamp, output-only in notifications/temporal (clause 4.8).
     #[serde(default)]
-    #[jsonld(property = "ngsi:deletedAt", typed_value, datatype = "ngsi:DateTime")]
+    #[jsonld(property = "ngsi:deletedAt", typed_value, datatype = "https://uri.etsi.org/ngsi-ld/DateTime")]
     pub deleted_at: Option<DateTime<Utc>>,
 
     #[serde(flatten)]
@@ -611,7 +618,7 @@ mod tests {
 
     #[test]
     fn entity_expanded_has_dynamic_type_and_id() {
-        use crate::jsonld::JsonLdExpandable;
+        use crate::jsonld::Expandable;
 
         let payload = json!({
             "id": "urn:ngsi-ld:Building:001",
@@ -619,7 +626,7 @@ mod tests {
         });
 
         let entity: Entity = serde_json::from_value(payload).expect("basic entity");
-        let expanded = entity.to_expanded();
+        let expanded = entity.expand::<serde_json::Value>();
         let obj = expanded.as_object().expect("expanded is object");
 
         pretty_assertions::assert_eq!(obj["@id"], "urn:ngsi-ld:Building:001");
@@ -628,7 +635,7 @@ mod tests {
 
     #[test]
     fn entity_expanded_with_multiple_types() {
-        use crate::jsonld::JsonLdExpandable;
+        use crate::jsonld::Expandable;
 
         let payload = json!({
             "id": "urn:ngsi-ld:Building:002",
@@ -636,7 +643,7 @@ mod tests {
         });
 
         let entity: Entity = serde_json::from_value(payload).expect("entity with multi type");
-        let expanded = entity.to_expanded();
+        let expanded = entity.expand::<serde_json::Value>();
         let obj = expanded.as_object().expect("expanded is object");
 
         pretty_assertions::assert_eq!(obj["@type"], json!(["Building", "Venue"]));
@@ -644,7 +651,7 @@ mod tests {
 
     #[test]
     fn entity_expanded_includes_scope() {
-        use crate::jsonld::JsonLdExpandable;
+        use crate::jsonld::Expandable;
 
         let payload = json!({
             "id": "urn:ngsi-ld:Building:003",
@@ -653,7 +660,7 @@ mod tests {
         });
 
         let entity: Entity = serde_json::from_value(payload).expect("entity with scope");
-        let expanded = entity.to_expanded();
+        let expanded = entity.expand::<serde_json::Value>();
         let obj = expanded.as_object().expect("expanded is object");
 
         let scope = &obj[vocab::expanded::SCOPE.as_str()];
@@ -662,7 +669,7 @@ mod tests {
 
     #[test]
     fn entity_expanded_includes_timestamps_and_attributes() {
-        use crate::jsonld::JsonLdExpandable;
+        use crate::jsonld::Expandable;
 
         let payload = json!({
             "id": "urn:ngsi-ld:Building:004",
@@ -676,7 +683,7 @@ mod tests {
         });
 
         let entity: Entity = serde_json::from_value(payload).expect("entity with attrs");
-        let expanded = entity.to_expanded();
+        let expanded = entity.expand::<serde_json::Value>();
         let obj = expanded.as_object().expect("expanded is object");
 
         // Timestamps should be typed values
@@ -690,7 +697,7 @@ mod tests {
 
     #[test]
     fn entity_expanded_omits_none_fields() {
-        use crate::jsonld::JsonLdExpandable;
+        use crate::jsonld::Expandable;
 
         let payload = json!({
             "id": "urn:ngsi-ld:Building:005",
@@ -698,7 +705,7 @@ mod tests {
         });
 
         let entity: Entity = serde_json::from_value(payload).expect("basic entity");
-        let expanded = entity.to_expanded();
+        let expanded = entity.expand::<serde_json::Value>();
         let obj = expanded.as_object().expect("expanded is object");
 
         assert!(!obj.contains_key(vocab::expanded::SCOPE.as_str()));
@@ -713,7 +720,7 @@ mod tests {
 
     #[test]
     fn entity_expanded_includes_location() {
-        use crate::jsonld::JsonLdExpandable;
+        use crate::jsonld::Expandable;
 
         let payload = json!({
             "id": "urn:ngsi-ld:Building:006",
@@ -725,7 +732,7 @@ mod tests {
         });
 
         let entity: Entity = serde_json::from_value(payload).expect("entity with location");
-        let expanded = entity.to_expanded();
+        let expanded = entity.expand::<serde_json::Value>();
         let obj = expanded.as_object().expect("expanded is object");
 
         let location = &obj[vocab::expanded::LOCATION.as_str()];

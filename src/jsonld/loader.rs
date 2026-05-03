@@ -1,6 +1,6 @@
 //! HTTP context loader with in-memory cache, registry, and optional L2 cache.
 //!
-//! [`HttpContextLoader`] implements the [`json_ld::Loader`] trait.  Contexts
+//! [`HttpContextLoader`] implements the [`jsonld::Loader`] trait.  Contexts
 //! are resolved in this order:
 //!
 //! 1. In-memory moka cache (L1).
@@ -17,16 +17,15 @@
 use crate::jsonld::{Error, core_context::is_ngsi_ld_core_context_url, engine::RemoteContextFetch};
 use async_trait::async_trait;
 use dashmap::DashMap;
-use iref3::{Iri, IriBuf};
-use json_ld::{LoadError, Loader, RemoteDocument};
-use json_syntax::Parse;
+use iri_rs::{Iri, IriBuf};
+use jsonld::{LoadError, Loader, RemoteDocument};
+use jsonld_syntax::Parse;
 use mediatype::MediaTypeBuf;
 use moka::future::Cache;
 use reqwest::{Client, header::CONTENT_TYPE, redirect::Policy};
 use std::{
     sync::{
         Arc,
-        LazyLock,
         atomic::{AtomicU64, Ordering},
     },
     time::Duration,
@@ -47,12 +46,13 @@ fn fallback_iri() -> IriBuf {
     }
 }
 
-/// `application/ld+json` media type constant for `json_ld::RemoteDocument` compatibility.
+/// `application/ld+json` media type constant for `jsonld::RemoteDocument` compatibility.
 ///
-/// The `json_ld` crate requires `mime::Mime` in its `RemoteDocument::new` API.
-/// The literal `"application/ld+json"` is always a valid MIME type; the
-/// `unwrap_or` fallback is unreachable but avoids using `.unwrap()`.
-static MEDIA_TYPE_LD_JSON: LazyLock<mime::Mime> = LazyLock::new(|| "application/ld+json".parse().unwrap_or(mime::APPLICATION_OCTET_STREAM));
+/// The fork's `RemoteDocument` uses `mediatype::MediaTypeBuf` for the
+/// content-type field. Constructed once via [`jsonld_core::LD_JSON_MEDIA_TYPE`].
+fn ld_json_media_type() -> MediaTypeBuf {
+    jsonld_core::LD_JSON_MEDIA_TYPE.into()
+}
 
 /// Accept header value for context fetches.
 const ACCEPT_HEADER: &str = "application/ld+json, application/json";
@@ -145,7 +145,7 @@ impl HitCounter {
 /// without network access.
 #[derive(Debug, Default, Clone)]
 pub struct ContextRegistry {
-    contexts: Arc<DashMap<String, Arc<json_syntax::Value>>>,
+    contexts: Arc<DashMap<String, Arc<jsonld_syntax::Value>>>,
 }
 
 impl ContextRegistry {
@@ -159,14 +159,14 @@ impl ContextRegistry {
     /// The document is normalized at registration time (embedded core context
     /// aliases are stripped for non-core URLs) so that lookups return
     /// ready-to-use values without per-access normalization.
-    pub fn register(&self, url: impl Into<String>, value: json_syntax::Value) {
+    pub fn register(&self, url: impl Into<String>, value: jsonld_syntax::Value) {
         let url = url.into();
         let normalized = normalize_loaded_context_document(&url, value);
         self.contexts.insert(url, Arc::new(normalized));
     }
 
     /// Retrieve a previously registered context.
-    pub fn get(&self, url: &str) -> Option<Arc<json_syntax::Value>> {
+    pub fn get(&self, url: &str) -> Option<Arc<jsonld_syntax::Value>> {
         self.contexts.get(url).map(|v| Arc::clone(v.value()))
     }
 }
@@ -181,7 +181,7 @@ impl ContextRegistry {
 #[derive(Debug)]
 pub struct HttpContextLoader {
     client: Client,
-    cache: Cache<String, Arc<json_syntax::Value>>,
+    cache: Cache<String, Arc<jsonld_syntax::Value>>,
     registry: Arc<ContextRegistry>,
     l2_cache: Option<Arc<dyn ContextCache>>,
     hit_counter: Option<Arc<HitCounter>>,
@@ -250,7 +250,15 @@ impl HttpContextLoader {
     ///
     /// Returns an [`Error`] variant describing the failure (fetch disabled,
     /// HTTP error, size exceeded, parse error, etc.).
-    pub async fn load_value(&self, url: &str) -> Result<Arc<json_syntax::Value>, Error> {
+    pub async fn load_value(&self, url: &str) -> Result<Arc<jsonld_syntax::Value>, Error> {
+        self.load_value_raw(url).await.map_err(|err| Error::from_loader_error(err.as_ref()))
+    }
+
+    /// Same as [`Self::load_value`] but yields the raw [`LoaderError`] (wrapped
+    /// in `Arc` to satisfy `moka`'s `Clone + Send + Sync` requirement on cached
+    /// errors). Used by the [`jsonld::Loader`] trait implementation, which
+    /// requires the loader-specific error type.
+    pub(crate) async fn load_value_raw(&self, url: &str) -> Result<Arc<jsonld_syntax::Value>, Arc<LoaderError>> {
         let url_string = normalize_local_hosted_context_url(url);
         if url_string != url {
             trace!("Normalized hosted context URL for lookup: {} -> {}", url, url_string);
@@ -282,7 +290,7 @@ impl HttpContextLoader {
                             String::new()
                         }
                     };
-                    let (parsed, _) = json_syntax::Value::parse_str(&json_str).map_err(|e| LoaderError {
+                    let (parsed, _) = jsonld_syntax::Value::parse_str(&json_str).map_err(|e| LoaderError {
                         url: url_string.clone(),
                         kind: LoaderErrorKind::Invalid(e.to_string()),
                     })?;
@@ -302,7 +310,7 @@ impl HttpContextLoader {
                         // path). Persisted as an empty-counter row; hit
                         // accounting is handled separately by HitCounter.
                         if let Some(ref cache) = l2_cache {
-                            let serde_value = json_syntax::Value::into_serde_json(normalized.clone());
+                            let serde_value = jsonld_syntax::Value::into_serde_json(normalized.clone());
                             cache.put(&url_string, serde_value).await;
                             trace!("Persisted context to L2 cache: {}", url_string);
                         }
@@ -334,7 +342,7 @@ impl HttpContextLoader {
                 }
                 Ok(value)
             }
-            Err(err) => Err(Error::from_loader_error(err.as_ref())),
+            Err(err) => Err(err),
         }
     }
 
@@ -346,7 +354,7 @@ impl HttpContextLoader {
     /// # Errors
     ///
     /// Returns a [`LoaderError`] if remote fetch is disabled or the request fails.
-    pub(crate) async fn fetch_remote_value(&self, url: &str) -> Result<Arc<json_syntax::Value>, LoaderError> {
+    pub(crate) async fn fetch_remote_value(&self, url: &str) -> Result<Arc<jsonld_syntax::Value>, LoaderError> {
         let url_string = normalize_local_hosted_context_url(url);
         if self.allow_remote == RemoteContextFetch::Deny {
             return Err(LoaderError::fetch_disabled(url_string));
@@ -358,17 +366,27 @@ impl HttpContextLoader {
 }
 
 impl Loader for HttpContextLoader {
-    async fn load(&self, url: &Iri) -> Result<RemoteDocument<IriBuf>, LoadError> {
+    type Error = LoaderError;
+
+    async fn load(&self, url: Iri<&str>) -> Result<RemoteDocument<IriBuf>, LoadError<Self::Error>> {
         let requested_url = url.as_str();
         let normalized_url = normalize_local_hosted_context_url(requested_url);
-        let value = self.load_value(&normalized_url).await.map_err(|e| {
+        let value = self.load_value_raw(&normalized_url).await.map_err(|e| {
             let iri = IriBuf::new(normalized_url.clone()).unwrap_or_else(|_| fallback_iri());
-            LoadError::new(iri, e)
+            LoadError::new(iri, (*e).clone())
         })?;
 
-        let iri = IriBuf::new(normalized_url).map_err(|e| LoadError::new(fallback_iri(), e))?;
+        let iri = IriBuf::new(normalized_url.clone()).map_err(|e| {
+            LoadError::new(
+                fallback_iri(),
+                LoaderError {
+                    url: normalized_url,
+                    kind: LoaderErrorKind::Invalid(format!("invalid IRI: {e}")),
+                },
+            )
+        })?;
 
-        Ok(RemoteDocument::new(Some(iri), Some(MEDIA_TYPE_LD_JSON.clone()), (*value).clone()))
+        Ok(RemoteDocument::new(Some(iri), Some(ld_json_media_type()), (*value).clone()))
     }
 }
 
@@ -405,14 +423,14 @@ fn is_local_host(host: &str) -> bool {
     matches!(host, "localhost" | "127.0.0.1" | "::1")
 }
 
-fn normalize_loaded_context_document(url: &str, value: json_syntax::Value) -> json_syntax::Value {
+fn normalize_loaded_context_document(url: &str, value: jsonld_syntax::Value) -> jsonld_syntax::Value {
     if is_ngsi_ld_core_context_url(url) {
         return value;
     }
 
-    let mut json = json_syntax::Value::into_serde_json(value);
+    let mut json = jsonld_syntax::Value::into_serde_json(value);
     remove_embedded_core_context_aliases(&mut json);
-    json_syntax::Value::from_serde_json(json)
+    jsonld_syntax::Value::from_serde_json(json)
 }
 
 fn remove_embedded_core_context_aliases(value: &mut serde_json::Value) {
@@ -457,20 +475,21 @@ fn strip_core_aliases_from_context_slot(context: &mut serde_json::Value) {
 // Internal error types
 // ---------------------------------------------------------------------------
 
-/// Internal error type for the context loader pipeline.
+/// Loader pipeline error surfaced via [`jsonld::Loader::Error`].
 ///
-/// Converted to [`Error`] at the public API boundary via
-/// [`Error::from_loader_error`].
-#[derive(Debug, thiserror::Error)]
+/// Converted to the public [`Error`] type via [`Error::from_loader_error`].
+#[derive(Debug, Clone, thiserror::Error)]
 #[error("{kind} for {url}")]
-pub(crate) struct LoaderError {
-    pub(crate) url: String,
-    pub(crate) kind: LoaderErrorKind,
+pub struct LoaderError {
+    /// URL that was being resolved when the failure occurred.
+    pub url: String,
+    /// Classification of the failure.
+    pub kind: LoaderErrorKind,
 }
 
 /// Classification of loader failures.
-#[derive(Debug, thiserror::Error)]
-pub(crate) enum LoaderErrorKind {
+#[derive(Debug, Clone, thiserror::Error)]
+pub enum LoaderErrorKind {
     /// Remote context fetch is disabled by configuration.
     #[error("Remote context fetch disabled")]
     FetchDisabled,
@@ -494,7 +513,7 @@ pub(crate) enum LoaderErrorKind {
 }
 
 impl LoaderError {
-    const fn fetch_disabled(url: String) -> LoaderError {
+    pub(crate) const fn fetch_disabled(url: String) -> LoaderError {
         LoaderError {
             url,
             kind: LoaderErrorKind::FetchDisabled,
@@ -504,7 +523,7 @@ impl LoaderError {
 
 impl Error {
     /// Convert a [`LoaderError`] into the public [`Error`] type.
-    pub(crate) fn from_loader_error(err: &LoaderError) -> Error {
+    pub fn from_loader_error(err: &LoaderError) -> Error {
         match &err.kind {
             LoaderErrorKind::FetchDisabled => Error::ContextFetchDisabled { url: err.url.clone() },
             LoaderErrorKind::Http(status) => Error::ContextHttp {
@@ -532,7 +551,7 @@ impl Error {
 // HTTP fetch
 // ---------------------------------------------------------------------------
 
-async fn fetch_and_parse(client: &Client, url: &str, max_bytes: usize) -> Result<json_syntax::Value, LoaderError> {
+async fn fetch_and_parse(client: &Client, url: &str, max_bytes: usize) -> Result<jsonld_syntax::Value, LoaderError> {
     let response = client.get(url).header("Accept", ACCEPT_HEADER).send().await.map_err(|e| LoaderError {
         url: url.to_string(),
         kind: LoaderErrorKind::Request(e.to_string()),
@@ -596,7 +615,7 @@ async fn fetch_and_parse(client: &Client, url: &str, max_bytes: usize) -> Result
         kind: LoaderErrorKind::Invalid(e.to_string()),
     })?;
 
-    let (value, _) = json_syntax::Value::parse_str(text).map_err(|e| LoaderError {
+    let (value, _) = jsonld_syntax::Value::parse_str(text).map_err(|e| LoaderError {
         url: url.to_string(),
         kind: LoaderErrorKind::Invalid(e.to_string()),
     })?;
@@ -628,7 +647,7 @@ mod tests {
 
     #[test]
     fn normalizes_non_core_loaded_context_by_stripping_embedded_core_alias() {
-        let input = json_syntax::Value::from_serde_json(serde_json::json!({
+        let input = jsonld_syntax::Value::from_serde_json(serde_json::json!({
             "@context": [
                 "https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.9.jsonld",
                 { "location": "https://example.com/location" }
@@ -636,7 +655,7 @@ mod tests {
         }));
 
         let normalized = normalize_loaded_context_document("https://example.com/compound.jsonld", input);
-        let normalized_json = json_syntax::Value::into_serde_json(normalized);
+        let normalized_json = jsonld_syntax::Value::into_serde_json(normalized);
 
         pretty_assertions::assert_eq!(
             normalized_json,
@@ -650,7 +669,7 @@ mod tests {
 
     #[test]
     fn keeps_core_context_document_untouched() {
-        let input = json_syntax::Value::from_serde_json(serde_json::json!({
+        let input = jsonld_syntax::Value::from_serde_json(serde_json::json!({
             "@context": [
                 "https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.9.jsonld",
                 { "location": "https://example.com/location" }
@@ -658,7 +677,7 @@ mod tests {
         }));
 
         let normalized = normalize_loaded_context_document("https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.9.jsonld", input);
-        let normalized_json = json_syntax::Value::into_serde_json(normalized);
+        let normalized_json = jsonld_syntax::Value::into_serde_json(normalized);
 
         pretty_assertions::assert_eq!(
             normalized_json,
@@ -703,7 +722,7 @@ mod tests {
         let registry = Arc::new(ContextRegistry::new());
         registry.register(
             "https://example.com/context.jsonld",
-            json_syntax::Value::from_serde_json(serde_json::json!({
+            jsonld_syntax::Value::from_serde_json(serde_json::json!({
                 "@context": { "name": "https://example.com/name" }
             })),
         );
@@ -711,7 +730,7 @@ mod tests {
         let loader = HttpContextLoader::new(registry, RemoteContextFetch::Deny, 30, 5, 1024, 3600, 2_000_000).expect("loader");
         let iri = IriBuf::new("https://example.com/context.jsonld".to_string()).unwrap();
 
-        let doc = loader.load(iri.as_iri()).await.expect("load");
+        let doc = loader.load(iri.as_ref()).await.expect("load");
         assert!(doc.document.is_object());
     }
 
@@ -720,7 +739,7 @@ mod tests {
         let registry = Arc::new(ContextRegistry::new());
         registry.register(
             "http://localhost:1056/ngsi-ld/v1/jsonldContexts/urn:ngsi-ld:Context:abc",
-            json_syntax::Value::from_serde_json(serde_json::json!({
+            jsonld_syntax::Value::from_serde_json(serde_json::json!({
                 "@context": { "A1": "https://example.com/A1" }
             })),
         );
@@ -728,7 +747,7 @@ mod tests {
         let loader = HttpContextLoader::new(registry, RemoteContextFetch::Deny, 30, 5, 1024, 3600, 2_000_000).expect("loader");
         let iri = IriBuf::new("http://localhost:1056/ngsi-ld/v1/ngsi-ld/v1/jsonldContexts/urn:ngsi-ld:Context:abc".to_string()).unwrap();
 
-        let doc = loader.load(iri.as_iri()).await.expect("load");
+        let doc = loader.load(iri.as_ref()).await.expect("load");
         assert!(doc.document.is_object());
     }
 }

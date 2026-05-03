@@ -24,7 +24,7 @@ pub fn generate_tokens(inputs: &crate::model::InputContexts, model: &ResolvedMod
             let doc = format!("`{}` -> `{}`", prefix.compact, prefix.expanded);
             quote! {
                 #[doc = #doc]
-                pub const #ident: &'static iref::Iri = static_iref::iri!(#expanded);
+                pub const #ident: ::iri_rs::Iri<&'static str> = ::iri_rs::iri!(#expanded);
             }
         })
         .collect::<Vec<_>>();
@@ -38,7 +38,7 @@ pub fn generate_tokens(inputs: &crate::model::InputContexts, model: &ResolvedMod
             let doc = format!("`{}` -> `{}`", term.compact, term.expanded);
             quote! {
                 #[doc = #doc]
-                pub const #ident: &'static iref::Iri = static_iref::iri!(#expanded);
+                pub const #ident: ::iri_rs::Iri<&'static str> = ::iri_rs::iri!(#expanded);
             }
         })
         .collect::<Vec<_>>();

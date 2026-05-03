@@ -7,7 +7,7 @@
 
 use crate::{domain::geometry::Wkb, jsonld::vocab};
 use geo::{Coord, Geometry, LineString, MultiLineString, MultiPoint, MultiPolygon, Point, Polygon};
-use iref::Iri;
+use iri_rs::Iri;
 use serde_json::{Map, Value};
 
 // ---------------------------------------------------------------------------
@@ -148,7 +148,7 @@ pub fn extract_operation_space_wkb(expanded: &Value) -> Option<Wkb> {
     extract_geo_property_wkb(expanded, vocab::expanded::OPERATION_SPACE)
 }
 
-fn extract_geo_property_wkb(expanded: &Value, iri: &'static Iri) -> Option<Wkb> {
+fn extract_geo_property_wkb(expanded: &Value, iri: Iri<&'static str>) -> Option<Wkb> {
     let geo_node = geo_node_for_property(expanded, iri)?;
     if let Some(literal) = geo_node.get("@value") {
         return literal_geojson_to_wkb(literal);
@@ -162,7 +162,7 @@ fn extract_geo_property_wkb(expanded: &Value, iri: &'static Iri) -> Option<Wkb> 
 /// `expanded[iri][..].hasValue[0]`, ignoring whether the value was inlined
 /// as a literal `@value` or expanded as a nested JSON-LD GeoJSON node —
 /// callers branch on the presence of `@value` to pick the decoding path.
-fn geo_node_for_property<'a>(expanded: &'a Value, iri: &'static Iri) -> Option<&'a Value> {
+fn geo_node_for_property<'a>(expanded: &'a Value, iri: Iri<&'static str>) -> Option<&'a Value> {
     let obj = expanded_object_ref(expanded)?;
     let prop = obj.get(iri.as_str())?;
     prop.as_array()

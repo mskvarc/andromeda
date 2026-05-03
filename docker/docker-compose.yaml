@@ -68,33 +68,3 @@ services:
       interval: 2s
       timeout: 5s
       retries: 10
-
-  andromeda:
-    build:
-      context: ..
-      dockerfile: docker/andromeda/Dockerfile
-    environment:
-      ANDROMEDA_DATABASE_URL: postgres://postgres:postgres@postgres:5432/postgres
-      ANDROMEDA_PROVENANCE_HTTPS_RESOLVER_ENABLED: "true"
-    ports:
-      - "1056:1056"
-    depends_on:
-      postgres:
-        condition: service_healthy
-    command:
-      - "run"
-      - "--host"
-      - "0.0.0.0"
-      - "--port"
-      - "1056"
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-    healthcheck:
-      test:
-        [
-          "CMD-SHELL",
-          "wget -qO- http://127.0.0.1:1056/ngsi-ld/v1/entities?type=HealthCheck || exit 1",
-        ]
-      interval: 2s
-      timeout: 5s
-      retries: 30

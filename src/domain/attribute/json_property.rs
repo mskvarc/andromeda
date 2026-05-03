@@ -1,6 +1,6 @@
 use crate::{
     domain::attribute::{AttributeValue, common::CommonAttributeFields},
-    jsonld::JsonLdExpandableMacro,
+    jsonld::Expandable,
 };
 use compact_str::CompactString;
 use indexmap::IndexMap;
@@ -10,9 +10,12 @@ use serde_with::skip_serializing_none;
 
 /// NGSI-LD JsonProperty representation (ETSI GS CIM 009 clause 5.2.38).
 #[skip_serializing_none]
-#[derive(Debug, Clone, Serialize, Deserialize, JsonLdExpandableMacro)]
+#[derive(Debug, Clone, Serialize, Deserialize, Expandable)]
 #[serde(rename_all = "camelCase")]
-#[jsonld(type = "ngsi:JsonProperty")]
+#[jsonld(
+    type = "ngsi:JsonProperty",
+    prefix(ngsi = "https://uri.etsi.org/ngsi-ld/", xsd = "http://www.w3.org/2001/XMLSchema#")
+)]
 pub struct JsonProperty {
     /// Raw non-expandable JSON payload.
     #[jsonld(property = "ngsi:hasJSON", json_value)]
@@ -48,7 +51,7 @@ mod tests {
     #![allow(clippy::expect_used, clippy::unwrap_used)]
     use crate::{
         domain::attribute::Attribute,
-        jsonld::{JsonLdExpandable, vocab},
+        jsonld::{Expandable, vocab},
     };
 
     #[test]
@@ -76,7 +79,7 @@ mod tests {
         let Attribute::JsonProperty(property) = attr else {
             unreachable!("expected JsonProperty");
         };
-        let expanded = property.to_expanded();
+        let expanded = property.expand::<serde_json::Value>();
         let obj = expanded.as_object().expect("object");
         assert!(obj.contains_key(vocab::expanded::PREVIOUS_JSON.as_str()));
     }

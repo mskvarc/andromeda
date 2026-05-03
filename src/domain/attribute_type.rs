@@ -1,7 +1,7 @@
 //! NGSI-LD Attribute type enum (ETSI GS CIM 009 clause 5.2.4).
 
 use crate::jsonld::vocab;
-use iref::Iri;
+use iri_rs::Iri;
 use serde::{Deserialize, Serialize};
 use strum::{Display, EnumString};
 
@@ -19,8 +19,8 @@ pub enum AttributeType {
 }
 
 impl AttributeType {
-    /// Returns the expanded IRI for this attribute type.
-    pub const fn iri(self) -> &'static Iri {
+    /// Returns the expanded IRI for this attribute type as an [`Iri`].
+    pub fn iri(self) -> Iri<&'static str> {
         match self {
             Self::Property => vocab::expanded::PROPERTY,
             Self::Relationship => vocab::expanded::RELATIONSHIP,
@@ -33,8 +33,14 @@ impl AttributeType {
         }
     }
 
-    /// Returns the expanded IRI of the value container for this attribute type.
-    pub const fn value_key(self) -> &'static Iri {
+    /// Returns the expanded IRI for this attribute type as a static string slice.
+    pub fn iri_str(self) -> &'static str {
+        self.iri().into_inner()
+    }
+
+    /// Returns the expanded IRI of the value container for this attribute type
+    /// as an [`Iri`].
+    pub fn value_key(self) -> Iri<&'static str> {
         match self {
             Self::Property | Self::GeoProperty => vocab::expanded::VALUE,
             Self::Relationship => vocab::expanded::OBJECT,
@@ -44,6 +50,11 @@ impl AttributeType {
             Self::ListProperty => vocab::expanded::VALUE_LIST,
             Self::ListRelationship => vocab::expanded::OBJECT_LIST,
         }
+    }
+
+    /// Returns the expanded IRI of the value container as a static string slice.
+    pub fn value_key_str(self) -> &'static str {
+        self.value_key().into_inner()
     }
 
     /// Returns the compacted (short) value key for this attribute type.
@@ -280,7 +291,7 @@ mod tests {
     #[test]
     fn attribute_type_iri_roundtrip() {
         for variant in AttributeType::ALL {
-            let iri = variant.iri().as_str();
+            let iri = variant.iri_str();
             let parsed = AttributeType::from_expanded_iri(iri);
             pretty_assertions::assert_eq!(parsed, Some(variant), "roundtrip failed for {variant}");
         }

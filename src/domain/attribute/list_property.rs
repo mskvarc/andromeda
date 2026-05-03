@@ -3,7 +3,7 @@ use crate::{
         AttributeValue,
         common::{CommonAttributeFields, NgsiLdValue},
     },
-    jsonld::JsonLdExpandableMacro,
+    jsonld::Expandable,
 };
 use compact_str::CompactString;
 use indexmap::IndexMap;
@@ -12,9 +12,12 @@ use serde_with::skip_serializing_none;
 
 /// NGSI-LD ListProperty representation (ETSI GS CIM 009 clause 5.2.36).
 #[skip_serializing_none]
-#[derive(Debug, Clone, Serialize, Deserialize, JsonLdExpandableMacro)]
+#[derive(Debug, Clone, Serialize, Deserialize, Expandable)]
 #[serde(rename_all = "camelCase")]
-#[jsonld(type = "ngsi:ListProperty")]
+#[jsonld(
+    type = "ngsi:ListProperty",
+    prefix(ngsi = "https://uri.etsi.org/ngsi-ld/", xsd = "http://www.w3.org/2001/XMLSchema#")
+)]
 pub struct ListProperty {
     #[jsonld(property = "ngsi:hasValueList", list)]
     pub value_list: Vec<NgsiLdValue>,
@@ -45,7 +48,7 @@ impl Default for ListProperty {
 #[cfg(test)]
 mod tests {
     #![allow(clippy::expect_used, clippy::unwrap_used)]
-    use crate::jsonld::JsonLdExpandable;
+    use crate::jsonld::Expandable;
 
     #[test]
     fn list_property_expanded_has_list_container() {
@@ -58,7 +61,7 @@ mod tests {
         let crate::domain::attribute::Attribute::ListProperty(lp) = &attr else {
             unreachable!("expected ListProperty");
         };
-        let expanded = lp.to_expanded();
+        let expanded = lp.expand::<serde_json::Value>();
         let obj = expanded.as_object().expect("expanded is object");
 
         pretty_assertions::assert_eq!(obj["@type"], serde_json::json!(["https://uri.etsi.org/ngsi-ld/ListProperty"]));

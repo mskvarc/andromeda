@@ -19,15 +19,15 @@ use crate::jsonld::{
 };
 use contextual::WithContext;
 use dashmap::DashMap;
-use json_ld::{
+use jsonld::{
     JsonLdProcessor,
     RemoteContextReference,
     RemoteDocument,
     syntax::{Context as JsonLdContext, IntoJson, TryFromJson},
 };
-use json_syntax::Parse;
+use jsonld_syntax::Parse;
 use moka::future::Cache;
-use rdf_types::vocabulary::{BlankIdIndex, IndexVocabulary, IriIndex};
+use rdf_rs::vocabulary::{BlankIdIndex, IndexVocabulary, IriIndex};
 use std::{
     borrow::Cow,
     collections::HashMap,
@@ -160,7 +160,7 @@ impl JsonLdEngine {
 /// precomputed [`CoreTermMap`] that enables an in-process fastpath expander.
 /// That fastpath walks the `serde_json::Value` DOM once and synthesises the
 /// expanded form directly, skipping the
-/// `serde_json → json_syntax → json-ld expand → serde_json` round-trip.
+/// `serde_json → jsonld_syntax → jsonld expand → serde_json` round-trip.
 ///
 /// Entities whose inline `@context` diverges from the batch's resolved value
 /// fall back to the full per-entity [`JsonLdEngine::expand`] path, so the
@@ -403,7 +403,7 @@ impl JsonLdEngine {
             return Ok(Arc::clone(cached.value()));
         }
         let value = self.loader.load_value(url).await?;
-        let serde_value = json_syntax::Value::into_serde_json((*value).clone()); // clone: Arc -> owned for conversion
+        let serde_value = jsonld_syntax::Value::into_serde_json((*value).clone()); // clone: Arc -> owned for conversion
         let table = parse_user_context_value(&serde_value);
         let arc = Arc::new(table);
         self.user_term_table_cache.insert(url.to_owned(), Arc::clone(&arc));
@@ -577,7 +577,7 @@ impl JsonLdEngine {
         // path zero-alloc for diagnostics; only clone the document's `@context`
         // for the error branch, since `from_serde_json` consumes the full doc.
         let diag_context = document.get("@context").cloned();
-        let syntax_value = json_syntax::Value::from_serde_json(document);
+        let syntax_value = jsonld_syntax::Value::from_serde_json(document);
         let remote_doc: RemoteDocument<IriIndex> = RemoteDocument::new(None, None, syntax_value);
 
         let mut vocabulary: IndexVocabulary<IriIndex, BlankIdIndex> = IndexVocabulary::new();
@@ -599,7 +599,7 @@ impl JsonLdEngine {
             }
         };
 
-        let expanded_json = json_syntax::Value::into_serde_json(expanded.into_iter().collect::<Vec<_>>().into_with(&vocabulary).into_json());
+        let expanded_json = jsonld_syntax::Value::into_serde_json(expanded.into_iter().collect::<Vec<_>>().into_with(&vocabulary).into_json());
         Ok(expanded_json)
     }
 
@@ -629,7 +629,7 @@ impl JsonLdEngine {
         // One clone is unavoidable: compact_with consumes RemoteDocument, but
         // the protected-term fallback path needs the original document to retry
         // with the core context.
-        let syntax_value = json_syntax::Value::from_serde_json(document.clone());
+        let syntax_value = jsonld_syntax::Value::from_serde_json(document.clone());
         let remote_doc: RemoteDocument<IriIndex> = RemoteDocument::new(None, None, syntax_value);
 
         let compacted = match remote_doc.compact_with(&mut vocabulary, context_ref, &*self.loader).await {
@@ -647,7 +647,7 @@ impl JsonLdEngine {
                     let core_context_ref = build_context_reference(&core_context)?;
                     let mut fallback_vocabulary: IndexVocabulary<IriIndex, BlankIdIndex> = IndexVocabulary::new();
                     // Consume the original document here — no further clones needed.
-                    let fallback_remote_doc: RemoteDocument<IriIndex> = RemoteDocument::new(None, None, json_syntax::Value::from_serde_json(document));
+                    let fallback_remote_doc: RemoteDocument<IriIndex> = RemoteDocument::new(None, None, jsonld_syntax::Value::from_serde_json(document));
                     fallback_remote_doc
                         .compact_with(&mut fallback_vocabulary, core_context_ref, &*self.loader)
                         .await
@@ -666,7 +666,7 @@ impl JsonLdEngine {
             }
         };
 
-        let mut compacted_json = json_syntax::Value::into_serde_json(compacted);
+        let mut compacted_json = jsonld_syntax::Value::into_serde_json(compacted);
 
         if options.strip_context == ContextStripping::Strip {
             strip_context(&mut compacted_json);
@@ -799,7 +799,7 @@ impl JsonLdEngine {
     /// Returns a context-loading error if the URL cannot be resolved.
     pub async fn resolve_context(&self, url: &str) -> Result<serde_json::Value, Error> {
         let value = self.loader.load_value(url).await?;
-        Ok(json_syntax::Value::into_serde_json(Arc::unwrap_or_clone(value)))
+        Ok(jsonld_syntax::Value::into_serde_json(Arc::unwrap_or_clone(value)))
     }
 
     /// Fetch a context directly from the remote source, bypassing all caches.
@@ -812,7 +812,7 @@ impl JsonLdEngine {
     /// Returns a context-loading error if the remote fetch fails.
     pub async fn fetch_remote_context(&self, url: &str) -> Result<serde_json::Value, Error> {
         let value = self.loader.fetch_remote_value(url).await.map_err(|e| Error::from_loader_error(&e))?;
-        Ok(json_syntax::Value::into_serde_json(Arc::unwrap_or_clone(value)))
+        Ok(jsonld_syntax::Value::into_serde_json(Arc::unwrap_or_clone(value)))
     }
 }
 
@@ -988,18 +988,18 @@ impl Default for JsonLdEngineBuilder {
 // Private helpers
 // ---------------------------------------------------------------------------
 
-fn load_embedded_core_context(url: &str) -> Result<json_syntax::Value, Error> {
+fn load_embedded_core_context(url: &str) -> Result<jsonld_syntax::Value, Error> {
     let context = NGSI_LD_CORE_CONTEXT_MAP
         .get(url)
         .ok_or(Error::EmbeddedContextInvalid("Unable to obtain embedded context".to_string()))?;
 
-    let (value, _) = json_syntax::Value::parse_str(context).map_err(|e| Error::EmbeddedContextInvalid(e.to_string()))?;
+    let (value, _) = jsonld_syntax::Value::parse_str(context).map_err(|e| Error::EmbeddedContextInvalid(e.to_string()))?;
     Ok(value)
 }
 
-/// Parse an embedded context payload into a [`json_syntax::Value`].
-fn load_embedded_context(payload: &str, url: &str) -> Result<json_syntax::Value, Error> {
-    let (value, _) = json_syntax::Value::parse_str(payload).map_err(|e| Error::EmbeddedContextInvalid(format!("{}: {}", url, e)))?;
+/// Parse an embedded context payload into a [`jsonld_syntax::Value`].
+fn load_embedded_context(payload: &str, url: &str) -> Result<jsonld_syntax::Value, Error> {
+    let (value, _) = jsonld_syntax::Value::parse_str(payload).map_err(|e| Error::EmbeddedContextInvalid(format!("{}: {}", url, e)))?;
     Ok(value)
 }
 
@@ -1014,7 +1014,7 @@ fn register_preloaded_contexts(entries: &Option<HashMap<String, String>>, regist
             url: url.clone(),
             message: format!("Failed reading preloaded context file '{}': {}", file, e),
         })?;
-        let (value, _) = json_syntax::Value::parse_str(&raw).map_err(|e| Error::ContextInvalid {
+        let (value, _) = jsonld_syntax::Value::parse_str(&raw).map_err(|e| Error::ContextInvalid {
             url: url.clone(),
             message: format!("Invalid preloaded context file '{}': {}", file, e),
         })?;
@@ -1029,8 +1029,8 @@ fn build_context_reference(context: &ContextSpec) -> Result<RemoteContextReferen
     let context_value = context.to_context_value();
     let jsonld_context = match context_value {
         Some(value) => {
-            let syntax_value = json_syntax::Value::from_serde_json(value);
-            JsonLdContext::try_from_json(syntax_value).map_err(|e| Error::ContextInvalid {
+            let syntax_value = jsonld_syntax::Value::from_serde_json(value);
+            JsonLdContext::try_from_json(&syntax_value).map_err(|e| Error::ContextInvalid {
                 url: "inline".to_string(),
                 message: e.to_string(),
             })?
@@ -1376,7 +1376,7 @@ fn is_absolute_iri(s: &str) -> bool {
 ///
 /// Equivalent in observable behaviour to running
 /// [`crate::service::entity::normalize_entity_attributes`] followed by
-/// [`json_ld::JsonLdProcessor::expand`], but produces the expanded form in
+/// [`jsonld::JsonLdProcessor::expand`], but produces the expanded form in
 /// one descent without the intermediate normalized DOM.
 ///
 /// Returns `None` whenever any substructure cannot be proven canonically

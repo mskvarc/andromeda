@@ -7,7 +7,7 @@ use crate::{
         temporal::{TeaEntry, ValueType},
     },
 };
-use iref::IriBuf;
+use iri_rs::IriBuf;
 use sqlx::{Row, postgres::PgRow};
 use std::str::FromStr;
 use urn_rs::Urn;

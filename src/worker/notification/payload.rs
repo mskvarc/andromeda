@@ -578,7 +578,7 @@ fn fix_null_language_maps(entity: &mut Value) {
                     None
                 }
             })
-            == Some(vocab::expanded::NULL_URI);
+            == Some(vocab::expanded::NULL_URI.as_str());
         if is_null_lang_map && let Some(attr) = value.as_object_mut() {
             attr.insert("languageMap".to_string(), Value::String(vocab::expanded::NULL_URI.as_str().to_string()));
         }

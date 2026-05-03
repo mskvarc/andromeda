@@ -16,7 +16,7 @@ use crate::{
     tenancy::types::TenantRef,
 };
 use bytes::Bytes;
-use iref::IriBuf;
+use iri_rs::IriBuf;
 use sqlx::PgPool;
 use std::{collections::HashMap, sync::Arc, time::Instant};
 use tracing::{debug, info, warn};

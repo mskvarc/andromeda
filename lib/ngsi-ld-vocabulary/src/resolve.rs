@@ -191,7 +191,7 @@ fn parse_term_target(compact: &str, raw: &str) -> syn::Result<Option<TermTarget>
             suffix: suffix.to_string(),
         }));
     }
-    if let Ok(iri) = iref::IriBuf::new(raw.to_string()) {
+    if let Ok(iri) = iri_rs::IriBuf::new(raw.to_string()) {
         return Ok(Some(TermTarget::Absolute(iri.to_string())));
     }
     if raw.is_empty() {

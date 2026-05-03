@@ -104,6 +104,12 @@ macro_rules! ngsi_ld_urn_id {
                 Uri::Urn(value.0)
             }
         }
+
+        impl AsRef<str> for $name {
+            fn as_ref(&self) -> &str {
+                self.0.as_str()
+            }
+        }
     };
 }
 

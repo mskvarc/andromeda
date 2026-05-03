@@ -20,7 +20,7 @@ use crate::{
     query::compiled::{GeoQuery, TypeExpr},
     tenancy::types::TenantRef,
 };
-use iref::IriBuf;
+use iri_rs::IriBuf;
 
 /// Partition key for both spatial indexes.
 ///

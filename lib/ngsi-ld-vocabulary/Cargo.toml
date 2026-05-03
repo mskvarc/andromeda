@@ -10,11 +10,10 @@ proc-macro = true
 
 [dependencies]
 heck = "0.5.0"
-iref = "4.0.0"
+iri-rs = { version = "3.3.4", features = ["static"] }
 proc-macro2 = "1.0.106"
 quote = "1.0.45"
 serde_json = "1.0.149"
-static-iref = "3.0.0"
 syn = "2.0.117"
 
 [dev-dependencies]

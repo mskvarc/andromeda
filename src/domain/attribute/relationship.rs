@@ -6,7 +6,7 @@ use crate::{
         },
         uri::Uri,
     },
-    jsonld::JsonLdExpandableMacro,
+    jsonld::Expandable,
 };
 use compact_str::CompactString;
 use indexmap::IndexMap;
@@ -15,9 +15,12 @@ use serde_with::skip_serializing_none;
 
 /// NGSI-LD Relationship representation (ETSI GS CIM 009 clause 5.2.6).
 #[skip_serializing_none]
-#[derive(Debug, Clone, Serialize, Deserialize, JsonLdExpandableMacro)]
+#[derive(Debug, Clone, Serialize, Deserialize, Expandable)]
 #[serde(rename_all = "camelCase")]
-#[jsonld(type = "ngsi:Relationship")]
+#[jsonld(
+    type = "ngsi:Relationship",
+    prefix(ngsi = "https://uri.etsi.org/ngsi-ld/", xsd = "http://www.w3.org/2001/XMLSchema#")
+)]
 pub struct Relationship {
     /// One or more target object URIs.
     #[jsonld(property = "ngsi:hasObject", custom)]
@@ -57,7 +60,7 @@ mod tests {
     #![allow(clippy::expect_used, clippy::unwrap_used)]
     use crate::{
         domain::attribute::{Attribute, common::OneOrMany},
-        jsonld::{JsonLdExpandable, vocab},
+        jsonld::{Expandable, vocab},
     };
 
     #[test]
@@ -88,7 +91,7 @@ mod tests {
         let Attribute::Relationship(relationship) = attr else {
             unreachable!("expected Relationship");
         };
-        let expanded = relationship.to_expanded();
+        let expanded = relationship.expand::<serde_json::Value>();
         let obj = expanded.as_object().expect("object");
         assert!(obj.contains_key(vocab::expanded::OBJECT_TYPE.as_str()));
     }

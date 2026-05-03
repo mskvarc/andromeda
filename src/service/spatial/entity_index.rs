@@ -228,13 +228,13 @@ mod tests {
     use super::*;
     use crate::tenancy::types::TenantRef;
     use geo::{Coord, LineString, Point, Polygon};
-    use static_iref::iri;
+    use iri_rs::{IriBuf, iri};
 
     fn key() -> SpatialKey {
         SpatialKey::new(
             TenantRef::UnnamedDefault,
-            iri!("https://example.org/Vehicle").to_owned(),
-            iri!("https://uri.etsi.org/ngsi-ld/location").to_owned(),
+            IriBuf::from(iri!("https://example.org/Vehicle")),
+            IriBuf::from(iri!("https://uri.etsi.org/ngsi-ld/location")),
         )
     }
 

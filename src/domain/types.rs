@@ -1,15 +1,18 @@
 use crate::{
     domain::ngsi_ld_urn::{AttributeListId, EntityTypeListId},
-    jsonld::JsonLdExpandableMacro,
+    jsonld::Expandable,
 };
 use serde::{Deserialize, Serialize};
 
 /// NGSI-LD EntityTypeList representation (ETSI GS CIM 009 clause 5.2.24).
 ///
 /// Lists all entity types known to the broker.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonLdExpandableMacro)]
+#[derive(Debug, Clone, Serialize, Deserialize, Expandable)]
 #[serde(rename_all = "camelCase")]
-#[jsonld(type = "ngsi:EntityTypeList")]
+#[jsonld(
+    type = "ngsi:EntityTypeList",
+    prefix(ngsi = "https://uri.etsi.org/ngsi-ld/", xsd = "http://www.w3.org/2001/XMLSchema#")
+)]
 pub struct Types {
     #[jsonld(id)]
     pub id: EntityTypeListId,
@@ -24,9 +27,12 @@ pub struct Types {
 ///
 /// Provides the type name, entity count, and details of all attributes
 /// associated with entities of this type.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonLdExpandableMacro)]
+#[derive(Debug, Clone, Serialize, Deserialize, Expandable)]
 #[serde(rename_all = "camelCase")]
-#[jsonld(type = "ngsi:EntityTypeInfo")]
+#[jsonld(
+    type = "ngsi:EntityTypeInfo",
+    prefix(ngsi = "https://uri.etsi.org/ngsi-ld/", xsd = "http://www.w3.org/2001/XMLSchema#")
+)]
 pub struct EntityTypeInfo {
     #[jsonld(id)]
     pub id: String,
@@ -42,9 +48,12 @@ pub struct EntityTypeInfo {
 }
 
 /// Detail record for a single attribute within an EntityTypeInfo (ETSI GS CIM 009 clause 5.2.26).
-#[derive(Debug, Clone, Serialize, Deserialize, JsonLdExpandableMacro)]
+#[derive(Debug, Clone, Serialize, Deserialize, Expandable)]
 #[serde(rename_all = "camelCase")]
-#[jsonld(type = "ngsi:Attribute")]
+#[jsonld(
+    type = "ngsi:Attribute",
+    prefix(ngsi = "https://uri.etsi.org/ngsi-ld/", xsd = "http://www.w3.org/2001/XMLSchema#")
+)]
 pub struct AttributeDetail {
     #[jsonld(id)]
     pub id: String,
@@ -61,9 +70,12 @@ pub struct AttributeDetail {
 ///
 /// Provides the type name and all attribute names associated with entities
 /// of this type.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonLdExpandableMacro)]
+#[derive(Debug, Clone, Serialize, Deserialize, Expandable)]
 #[serde(rename_all = "camelCase")]
-#[jsonld(type = "ngsi:EntityType")]
+#[jsonld(
+    type = "ngsi:EntityType",
+    prefix(ngsi = "https://uri.etsi.org/ngsi-ld/", xsd = "http://www.w3.org/2001/XMLSchema#")
+)]
 pub struct EntityType {
     #[jsonld(id)]
     pub id: String,
@@ -79,9 +91,12 @@ pub struct EntityType {
 /// NGSI-LD AttributeList representation (ETSI GS CIM 009 clause 5.2.27).
 ///
 /// Lists all attributes known to the broker.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonLdExpandableMacro)]
+#[derive(Debug, Clone, Serialize, Deserialize, Expandable)]
 #[serde(rename_all = "camelCase")]
-#[jsonld(type = "ngsi:AttributeList")]
+#[jsonld(
+    type = "ngsi:AttributeList",
+    prefix(ngsi = "https://uri.etsi.org/ngsi-ld/", xsd = "http://www.w3.org/2001/XMLSchema#")
+)]
 pub struct AttributeList {
     #[jsonld(id)]
     pub id: AttributeListId,
@@ -96,9 +111,12 @@ pub struct AttributeList {
 ///
 /// Provides the attribute name, types, usage count, and associated entity
 /// type names.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonLdExpandableMacro)]
+#[derive(Debug, Clone, Serialize, Deserialize, Expandable)]
 #[serde(rename_all = "camelCase")]
-#[jsonld(type = "ngsi:Attribute")]
+#[jsonld(
+    type = "ngsi:Attribute",
+    prefix(ngsi = "https://uri.etsi.org/ngsi-ld/", xsd = "http://www.w3.org/2001/XMLSchema#")
+)]
 pub struct Attribute {
     #[jsonld(id)]
     pub id: String,

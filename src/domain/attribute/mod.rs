@@ -17,11 +17,11 @@ pub use property::Property;
 pub use relationship::Relationship;
 pub use vocab_property::VocabProperty;
 
-use crate::jsonld::{JsonLdExpandable, JsonLdExpandableMacro};
+use crate::jsonld::Expandable;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonLdExpandableMacro)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum Attribute {
     Property(Property),
@@ -87,13 +87,58 @@ pub enum AttributeValue {
     Raw(serde_json::Value),
 }
 
-impl JsonLdExpandable for AttributeValue {
-    fn to_expanded(&self) -> serde_json::Value {
+impl Expandable for Attribute {
+    fn expand<V: jsonld_expandable_core::JsonValue>(&self) -> V {
         match self {
-            AttributeValue::Single(attr) => serde_json::json!([attr.to_expanded()]),
-            AttributeValue::Multiple(attrs) => serde_json::Value::Array(attrs.iter().map(|a| a.to_expanded()).collect()),
-            AttributeValue::Raw(value) => serde_json::json!([{"@value": value}]),
+            Attribute::Property(p) => Expandable::expand::<V>(p),
+            Attribute::Relationship(r) => Expandable::expand::<V>(r),
+            Attribute::VocabProperty(v) => Expandable::expand::<V>(v),
+            Attribute::GeoProperty(g) => Expandable::expand::<V>(g),
+            Attribute::LanguageProperty(l) => Expandable::expand::<V>(l),
+            Attribute::JsonProperty(j) => Expandable::expand::<V>(j),
+            Attribute::ListProperty(lp) => Expandable::expand::<V>(lp),
+            Attribute::ListRelationship(lr) => Expandable::expand::<V>(lr),
         }
+    }
+}
+
+impl Expandable for AttributeValue {
+    fn expand<V: jsonld_expandable_core::JsonValue>(&self) -> V {
+        match self {
+            AttributeValue::Single(attr) => V::array(std::iter::once(Expandable::expand::<V>(attr.as_ref()))),
+            AttributeValue::Multiple(attrs) => V::array(attrs.iter().map(Expandable::expand::<V>)),
+            AttributeValue::Raw(value) => V::array(std::iter::once(V::object(std::iter::once((
+                "@value".to_string(),
+                serde_json_value_to_json_value::<V>(value),
+            ))))),
+        }
+    }
+}
+
+impl<V: jsonld_expandable_core::JsonValue> jsonld_expandable_core::ToJsonValue<V> for AttributeValue {
+    fn to_json_value(&self) -> V {
+        Expandable::expand::<V>(self)
+    }
+}
+
+pub(crate) fn serde_json_value_to_json_value<V: jsonld_expandable_core::JsonValue>(value: &serde_json::Value) -> V {
+    match value {
+        serde_json::Value::Null => V::null(),
+        serde_json::Value::Bool(b) => V::bool(*b),
+        serde_json::Value::Number(n) => {
+            if let Some(i) = n.as_i64() {
+                V::integer(i)
+            } else if let Some(u) = n.as_u64() {
+                V::unsigned(u)
+            } else if let Some(f) = n.as_f64() {
+                V::float(f)
+            } else {
+                V::null()
+            }
+        }
+        serde_json::Value::String(s) => V::string(s),
+        serde_json::Value::Array(items) => V::array(items.iter().map(serde_json_value_to_json_value::<V>)),
+        serde_json::Value::Object(map) => V::object(map.iter().map(|(k, v)| (k.clone(), serde_json_value_to_json_value::<V>(v)))),
     }
 }
 
@@ -271,7 +316,7 @@ mod tests {
             "value": 42
         });
         let attr: Attribute = serde_json::from_value(json).unwrap();
-        let expanded = attr.to_expanded();
+        let expanded = attr.expand::<serde_json::Value>();
         let obj = expanded.as_object().expect("expanded is object");
 
         // Enum delegation should produce the same output as the inner struct
@@ -286,7 +331,7 @@ mod tests {
             "object": "urn:ngsi-ld:Entity:1"
         });
         let attr: Attribute = serde_json::from_value(json).unwrap();
-        let expanded = attr.to_expanded();
+        let expanded = attr.expand::<serde_json::Value>();
         let obj = expanded.as_object().expect("expanded is object");
 
         pretty_assertions::assert_eq!(obj["@type"], serde_json::json!(["https://uri.etsi.org/ngsi-ld/Relationship"]));
@@ -300,7 +345,7 @@ mod tests {
         });
         let attr: Attribute = serde_json::from_value(json).unwrap();
         let av = AttributeValue::Single(Box::new(attr));
-        let expanded = av.to_expanded();
+        let expanded = av.expand::<serde_json::Value>();
         let arr = expanded.as_array().expect("expanded is array");
         pretty_assertions::assert_eq!(arr.len(), 1);
         pretty_assertions::assert_eq!(arr[0]["@type"], serde_json::json!(["https://uri.etsi.org/ngsi-ld/Property"]));
@@ -313,7 +358,7 @@ mod tests {
         let a1: Attribute = serde_json::from_value(json1).unwrap();
         let a2: Attribute = serde_json::from_value(json2).unwrap();
         let av = AttributeValue::Multiple(vec![a1, a2]);
-        let expanded = av.to_expanded();
+        let expanded = av.expand::<serde_json::Value>();
         let arr = expanded.as_array().expect("expanded is array");
         pretty_assertions::assert_eq!(arr.len(), 2);
     }
@@ -321,7 +366,7 @@ mod tests {
     #[test]
     fn attribute_value_raw_wraps_in_value_object() {
         let av = AttributeValue::Raw(serde_json::json!("hello"));
-        let expanded = av.to_expanded();
+        let expanded = av.expand::<serde_json::Value>();
         pretty_assertions::assert_eq!(expanded, serde_json::json!([{"@value": "hello"}]));
     }
 }

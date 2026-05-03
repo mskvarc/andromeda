@@ -5,7 +5,7 @@ use crate::{
         types::{AttributeDetail, EntityType, EntityTypeInfo, Types},
         uri::NGSI_LD_URN_NID,
     },
-    jsonld::{CompactOptions, ContextSpec, ContextStripping, JsonLdEngine, JsonLdExpandable},
+    jsonld::{CompactOptions, ContextSpec, ContextStripping, Expandable, JsonLdEngine},
     repository::entity::{repo::EntityRepository, rows::AttributeSummaryRow},
 };
 use serde_json::Value;
@@ -101,7 +101,7 @@ impl EntityDiscoveryService {
             .collect();
 
         // Expand and compact
-        let expanded = serde_json::json!(entity_types.iter().map(|et| et.to_expanded()).collect::<Vec<_>>());
+        let expanded = serde_json::json!(entity_types.iter().map(|et| et.expand::<serde_json::Value>()).collect::<Vec<_>>());
         let mut compacted = self.engine.compact(expanded, context, CompactOptions::default()).await?;
 
         // Extract the @graph array (compaction wraps multiple items in @graph)
@@ -176,7 +176,7 @@ impl EntityDiscoveryService {
         };
 
         // Convert to expanded JSON-LD using the trait, then compact
-        let expanded = serde_json::json!([type_info.to_expanded()]);
+        let expanded = serde_json::json!([type_info.expand::<serde_json::Value>()]);
         let mut compacted = self.engine.compact(expanded, context, CompactOptions::default()).await?;
 
         strip_ngsild_prefix(&mut compacted);
@@ -236,7 +236,7 @@ impl EntityDiscoveryService {
                 attributes
                     .iter()
                     .map(|a| {
-                        let mut val = a.to_expanded();
+                        let mut val = a.expand::<serde_json::Value>();
                         if let Some(obj) = val.as_object_mut() {
                             obj.retain(|_, v| match v {
                                 Value::Array(arr) => !arr.is_empty(),
@@ -324,7 +324,7 @@ impl EntityDiscoveryService {
             type_names: Some(row.entity_types),
         };
 
-        let mut expanded_obj = attr.to_expanded();
+        let mut expanded_obj = attr.expand::<serde_json::Value>();
         if let Some(obj) = expanded_obj.as_object_mut() {
             obj.retain(|_, v| match v {
                 Value::Array(arr) => !arr.is_empty(),

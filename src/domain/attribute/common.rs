@@ -1,11 +1,12 @@
 use crate::{
     domain::{entity::Entity, geometry::Wkb, name::NameBuf, uri::Uri},
-    jsonld::{JsonLdExpandable, JsonLdExpandableMacro},
+    jsonld::{Expandable, JsonValue},
 };
 use chrono::{DateTime, Utc};
 use compact_str::CompactString;
 use derive_more::{AsRef, Deref, Display, From};
-use iref::IriBuf;
+use iri_rs::IriBuf;
+use jsonld_expandable_core::ToJsonValue;
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error as _};
 use serde_json::Value;
 use serde_with::skip_serializing_none;
@@ -15,43 +16,43 @@ use urn_rs::Urn;
 
 /// Shared system-managed members for NGSI-LD attributes (ETSI GS CIM 009 clause 5.2).
 #[skip_serializing_none]
-#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonLdExpandableMacro)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, Expandable)]
 #[serde(rename_all = "camelCase")]
-#[jsonld(fragment)]
+#[jsonld(fragment, prefix(ngsi = "https://uri.etsi.org/ngsi-ld/", xsd = "http://www.w3.org/2001/XMLSchema#"))]
 pub struct AttributeSystemFields {
     /// System-generated creation timestamp.
     #[serde(default)]
-    #[jsonld(property = "ngsi:createdAt", typed_value, datatype = "ngsi:DateTime")]
+    #[jsonld(property = "ngsi:createdAt", typed_value, datatype = "https://uri.etsi.org/ngsi-ld/DateTime")]
     pub created_at: Option<DateTime<Utc>>,
     /// System-generated deletion timestamp.
     #[serde(default)]
-    #[jsonld(property = "ngsi:deletedAt", typed_value, datatype = "ngsi:DateTime")]
+    #[jsonld(property = "ngsi:deletedAt", typed_value, datatype = "https://uri.etsi.org/ngsi-ld/DateTime")]
     pub deleted_at: Option<DateTime<Utc>>,
     /// URI uniquely identifying an attribute instance.
     #[jsonld(property = "ngsi:instanceId", id_ref)]
     pub instance_id: Option<Uri>,
     /// System-generated last modification timestamp.
     #[serde(default)]
-    #[jsonld(property = "ngsi:modifiedAt", typed_value, datatype = "ngsi:DateTime")]
+    #[jsonld(property = "ngsi:modifiedAt", typed_value, datatype = "https://uri.etsi.org/ngsi-ld/DateTime")]
     pub modified_at: Option<DateTime<Utc>>,
 }
 
 /// Shared optional members present on all NGSI-LD attribute families (ETSI GS CIM 009 clause 5.2).
 #[skip_serializing_none]
-#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonLdExpandableMacro)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, Expandable)]
 #[serde(rename_all = "camelCase")]
-#[jsonld(fragment)]
+#[jsonld(fragment, prefix(ngsi = "https://uri.etsi.org/ngsi-ld/", xsd = "http://www.w3.org/2001/XMLSchema#"))]
 pub struct CommonAttributeFields {
     /// Dataset identifier separating multi-instance attributes.
     #[jsonld(property = "ngsi:datasetId", id_ref)]
     pub dataset_id: Option<Urn>,
     /// Attribute expiration timestamp.
     #[serde(default)]
-    #[jsonld(property = "ngsi:expiresAt", typed_value, datatype = "ngsi:DateTime")]
+    #[jsonld(property = "ngsi:expiresAt", typed_value, datatype = "https://uri.etsi.org/ngsi-ld/DateTime")]
     pub expires_at: Option<DateTime<Utc>>,
     /// Observation timestamp for the attribute value.
     #[serde(default)]
-    #[jsonld(property = "ngsi:observedAt", typed_value, datatype = "ngsi:DateTime")]
+    #[jsonld(property = "ngsi:observedAt", typed_value, datatype = "https://uri.etsi.org/ngsi-ld/DateTime")]
     pub observed_at: Option<DateTime<Utc>>,
     #[serde(flatten)]
     #[jsonld(flatten_object)]
@@ -327,30 +328,79 @@ fn parse_ngsi_ld_time(value: &str) -> Result<(), NgsiLdValueError> {
     Ok(())
 }
 
-impl JsonLdExpandable for InlineEntity {
-    fn to_expanded(&self) -> Value {
+fn id_object<V: JsonValue>(s: &str) -> V {
+    V::object(std::iter::once(("@id".to_string(), V::string(s))))
+}
+
+impl Expandable for InlineEntity {
+    fn expand<V: JsonValue>(&self) -> V {
         match self {
-            OneOrMany::One(entity) => JsonLdExpandable::to_expanded(entity),
-            OneOrMany::Many(entities) => Value::Array(entities.iter().map(JsonLdExpandable::to_expanded).collect()),
+            OneOrMany::One(entity) => Expandable::expand::<V>(entity),
+            OneOrMany::Many(entities) => V::array(entities.iter().map(Expandable::expand::<V>)),
         }
     }
 }
 
-impl JsonLdExpandable for OneOrMany<Uri> {
-    fn to_expanded(&self) -> Value {
-        Value::Array(self.iter().map(|value| serde_json::json!({ "@id": value.to_string() })).collect())
+impl<V: JsonValue> ToJsonValue<V> for InlineEntity {
+    fn to_json_value(&self) -> V {
+        Expandable::expand::<V>(self)
     }
 }
 
-impl JsonLdExpandable for OneOrMany<NgsiLdReference> {
-    fn to_expanded(&self) -> Value {
-        Value::Array(self.iter().map(|value| serde_json::json!({ "@id": value.to_string() })).collect())
+impl Expandable for OneOrMany<Uri> {
+    fn expand<V: JsonValue>(&self) -> V {
+        V::array(self.iter().map(|value| id_object::<V>(&value.to_string())))
     }
 }
 
-impl JsonLdExpandable for OneOrMany<CompactString> {
-    fn to_expanded(&self) -> Value {
-        Value::Array(self.iter().map(|value| serde_json::json!({ "@id": value.as_str() })).collect())
+impl<V: JsonValue> ToJsonValue<V> for OneOrMany<Uri> {
+    fn to_json_value(&self) -> V {
+        Expandable::expand::<V>(self)
+    }
+}
+
+impl Expandable for OneOrMany<NgsiLdReference> {
+    fn expand<V: JsonValue>(&self) -> V {
+        V::array(self.iter().map(|value| id_object::<V>(&value.to_string())))
+    }
+}
+
+impl<V: JsonValue> ToJsonValue<V> for OneOrMany<NgsiLdReference> {
+    fn to_json_value(&self) -> V {
+        Expandable::expand::<V>(self)
+    }
+}
+
+impl Expandable for OneOrMany<CompactString> {
+    fn expand<V: JsonValue>(&self) -> V {
+        V::array(self.iter().map(|value| id_object::<V>(value.as_str())))
+    }
+}
+
+impl<V: JsonValue> ToJsonValue<V> for OneOrMany<CompactString> {
+    fn to_json_value(&self) -> V {
+        Expandable::expand::<V>(self)
+    }
+}
+
+impl AsRef<str> for NgsiLdReference {
+    fn as_ref(&self) -> &str {
+        self.0.as_str()
+    }
+}
+
+impl<V: JsonValue> ToJsonValue<V> for NgsiLdValue {
+    fn to_json_value(&self) -> V {
+        match self {
+            NgsiLdValue::Json(value) => crate::domain::attribute::serde_json_value_to_json_value::<V>(value),
+            NgsiLdValue::Uri(uri) => V::string(&uri.to_string()),
+            NgsiLdValue::DateTime(dt) => V::from_string(dt.to_rfc3339_opts(chrono::SecondsFormat::Millis, true)),
+            NgsiLdValue::Date(d) => V::string(d.as_str()),
+            NgsiLdValue::Time(t) => V::string(t.as_str()),
+            NgsiLdValue::Geometry(g) => {
+                crate::domain::attribute::serde_json_value_to_json_value::<V>(&serde_json::to_value(g).unwrap_or(serde_json::Value::Null))
+            }
+        }
     }
 }
 

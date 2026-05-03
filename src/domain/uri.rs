@@ -27,6 +27,15 @@ pub enum Uri {
 #[error("invalid URI: not a valid URN or URL")]
 pub struct UriParseError;
 
+impl AsRef<str> for Uri {
+    fn as_ref(&self) -> &str {
+        match self {
+            Uri::Urn(urn) => urn.as_str(),
+            Uri::Url(url) => url.as_str(),
+        }
+    }
+}
+
 impl std::str::FromStr for Uri {
     type Err = UriParseError;
 

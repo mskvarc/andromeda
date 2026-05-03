@@ -13,7 +13,7 @@ use crate::{
     service::spatial::{SpatialKey, entity_index::SpatialEntityIndex},
     tenancy::types::TenantRef,
 };
-use iref::IriBuf;
+use iri_rs::IriBuf;
 use serde_json::Value;
 use sqlx::PgPool;
 use std::sync::Arc;

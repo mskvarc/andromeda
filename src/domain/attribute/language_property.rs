@@ -1,8 +1,9 @@
 use crate::{
     domain::attribute::{AttributeValue, common::CommonAttributeFields},
-    jsonld::{JsonLdExpandableMacro, JsonLdLanguageMap},
+    jsonld::{Expandable, ExpandableLanguageMap, JsonValue},
 };
 use compact_str::CompactString;
+use derive_more::{Deref, From};
 use indexmap::IndexMap;
 use langtag::LangTagBuf;
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error as _};
@@ -55,34 +56,59 @@ pub enum LanguageMapValue {
     Multiple(Vec<String>),
 }
 
-impl JsonLdLanguageMap for IndexMap<LanguageMapKey, LanguageMapValue> {
-    fn to_expanded_language_map(&self) -> serde_json::Value {
-        let entries = self
+/// Local newtype around [`IndexMap`] of language-tagged strings, required so
+/// the foreign [`ExpandableLanguageMap`] trait can be implemented (orphan
+/// rules forbid implementing a foreign trait for the foreign [`IndexMap`]).
+#[derive(Debug, Clone, Default, Serialize, Deserialize, From, Deref)]
+#[serde(transparent)]
+pub struct LanguageMap(pub IndexMap<LanguageMapKey, LanguageMapValue>);
+
+impl std::ops::DerefMut for LanguageMap {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+impl PartialEq for LanguageMap {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.len() == other.0.len() && self.0.iter().all(|(k, v)| other.0.get(k).is_some_and(|other_v| other_v == v))
+    }
+}
+
+impl Eq for LanguageMap {}
+
+impl ExpandableLanguageMap for LanguageMap {
+    fn to_expanded_language_map<V: JsonValue>(&self) -> V {
+        let entries: Vec<V> = self
+            .0
             .iter()
             .flat_map(|(key, value)| match value {
-                LanguageMapValue::Single(text) => vec![language_entry(key, text)],
-                LanguageMapValue::Multiple(values) => values.iter().map(|text| language_entry(key, text)).collect(),
+                LanguageMapValue::Single(text) => vec![language_entry::<V>(key, text)],
+                LanguageMapValue::Multiple(values) => values.iter().map(|text| language_entry::<V>(key, text)).collect(),
             })
             .collect();
-        serde_json::Value::Array(entries)
+        V::array(entries)
     }
 }
 
 /// NGSI-LD LanguageProperty representation (ETSI GS CIM 009 clause 5.2.32).
 #[skip_serializing_none]
-#[derive(Debug, Clone, Serialize, Deserialize, JsonLdExpandableMacro)]
+#[derive(Debug, Clone, Serialize, Deserialize, Expandable)]
 #[serde(rename_all = "camelCase")]
-#[jsonld(type = "ngsi:LanguageProperty")]
+#[jsonld(
+    type = "ngsi:LanguageProperty",
+    prefix(ngsi = "https://uri.etsi.org/ngsi-ld/", xsd = "http://www.w3.org/2001/XMLSchema#")
+)]
 pub struct LanguageProperty {
     /// Language-indexed string map.
     #[jsonld(property = "ngsi:hasLanguageMap", language_map)]
-    pub language_map: IndexMap<LanguageMapKey, LanguageMapValue>,
+    pub language_map: LanguageMap,
     /// Fixed JSON-LD datatype for language-tagged strings.
     #[jsonld(property = "ngsi:hasValueType", vocab)]
     pub value_type: Option<CompactString>,
     /// Previous language map emitted in notifications when `showChanges` is active.
     #[jsonld(property = "ngsi:hasPreviousLanguageMap", language_map)]
-    pub previous_language_map: Option<IndexMap<LanguageMapKey, LanguageMapValue>>,
+    pub previous_language_map: Option<LanguageMap>,
     #[serde(flatten)]
     #[jsonld(flatten_object)]
     pub common: CommonAttributeFields,
@@ -94,7 +120,7 @@ pub struct LanguageProperty {
 impl Default for LanguageProperty {
     fn default() -> LanguageProperty {
         LanguageProperty {
-            language_map: IndexMap::new(),
+            language_map: LanguageMap::default(),
             value_type: None,
             previous_language_map: None,
             common: CommonAttributeFields::default(),
@@ -103,13 +129,13 @@ impl Default for LanguageProperty {
     }
 }
 
-fn language_entry(key: &LanguageMapKey, value: &str) -> serde_json::Value {
-    let mut entry = serde_json::Map::new();
-    entry.insert("@value".to_string(), serde_json::Value::String(value.to_string()));
+fn language_entry<V: JsonValue>(key: &LanguageMapKey, value: &str) -> V {
+    let mut entries: Vec<(String, V)> = Vec::with_capacity(2);
+    entries.push(("@value".to_string(), V::string(value)));
     if let LanguageMapKey::Tag(tag) = key {
-        entry.insert("@language".to_string(), serde_json::Value::String(tag.as_str().to_string()));
+        entries.push(("@language".to_string(), V::string(tag.as_str())));
     }
-    serde_json::Value::Object(entry)
+    V::object(entries)
 }
 
 #[cfg(test)]
@@ -117,7 +143,7 @@ mod tests {
     #![allow(clippy::expect_used, clippy::unwrap_used)]
     use crate::{
         domain::attribute::{Attribute, LanguageMapKey, LanguageMapValue},
-        jsonld::{JsonLdExpandable, vocab},
+        jsonld::{Expandable, vocab},
     };
     use indexmap::IndexMap;
 
@@ -142,10 +168,10 @@ mod tests {
         let mut map = IndexMap::new();
         map.insert(LanguageMapKey::None, LanguageMapValue::Single("default".to_string()));
         let property = crate::domain::attribute::LanguageProperty {
-            language_map: map,
+            language_map: map.into(),
             ..Default::default()
         };
-        let expanded = property.to_expanded();
+        let expanded = property.expand::<serde_json::Value>();
         let obj = expanded.as_object().expect("object");
         assert!(obj.contains_key(vocab::expanded::LANGUAGE_MAP.as_str()));
     }

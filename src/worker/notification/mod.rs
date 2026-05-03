@@ -27,7 +27,7 @@ use tracing::{debug, error, info};
 use uuid::Uuid;
 
 use crate::service::{spatial::SpatialKey, subscription_matching::matches_entity_filters};
-use iref::IriBuf;
+use iri_rs::IriBuf;
 use payload::{NotificationBuildParams, NotificationCompactionCache, build_notification_data};
 use std::collections::HashSet;
 

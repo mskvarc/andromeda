@@ -8,18 +8,16 @@ mod context;
 pub mod core_context;
 mod engine;
 mod error;
-mod expandable;
-mod loader;
+pub mod loader;
 pub mod term_resolver;
 pub mod vocab;
 
 pub use context::{ContextSpec, CoreContextPolicy, default_core_context_url, set_default_core_context_url};
 pub use engine::{BatchContextHandle, CompactOptions, ContextStripping, JsonLdEngine};
 pub use error::Error;
-pub use expandable::{JsonLdExpandable, JsonLdLanguageMap, JsonLdTypeValue};
+pub use jsonld::{Expandable, ExpandableLanguageMap, ExpandableTypeValue};
+pub use jsonld_expandable_core::JsonValue;
 pub use loader::ContextCache;
-
-pub use json_ld_expandable::JsonLdExpandable as JsonLdExpandableMacro;
 
 /// Build a [`JsonLdEngine`] from application config and an L2 context cache.
 ///

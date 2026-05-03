@@ -18,7 +18,7 @@ use crate::{
     },
     tenancy::types::TenantRef,
 };
-use iref::IriBuf;
+use iri_rs::IriBuf;
 use serde_json::Value;
 use sqlx::postgres::PgPool;
 use std::{

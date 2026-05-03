@@ -13,7 +13,7 @@ use crate::{
 };
 use bytes::Bytes;
 use chrono::{DateTime, Utc};
-use iref::IriBuf;
+use iri_rs::IriBuf;
 use serde_json::{Value, json};
 use sqlx::{Row, postgres::PgRow};
 use std::str::FromStr;
@@ -49,7 +49,7 @@ pub(crate) fn history_row_to_expanded_instance(row: &PgRow, tea: &TeaEntry, sys_
 
     instance.insert("@type".to_string(), json!([tea.attribute_type.iri().as_str()]));
 
-    let value_key = tea.attribute_type.value_key().as_str();
+    let value_key = tea.attribute_type.value_key_str();
 
     let is_tombstone = row.try_get::<Option<String>, _>("value_string").ok().flatten().as_deref() == Some(vocab::expanded::NULL_URI.as_str());
 

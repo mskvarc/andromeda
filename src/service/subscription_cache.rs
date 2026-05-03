@@ -35,7 +35,7 @@ use crate::{
     transport::endpoint::parse_endpoint_transport,
 };
 use dashmap::DashMap;
-use iref::IriBuf;
+use iri_rs::IriBuf;
 use regex::Regex;
 use std::{collections::HashSet, sync::Arc};
 use tracing::debug;

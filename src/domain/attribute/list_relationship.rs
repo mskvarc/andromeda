@@ -3,7 +3,7 @@ use crate::{
         AttributeValue,
         common::{CommonAttributeFields, InlineEntity, OneOrMany, RelationshipObjectList},
     },
-    jsonld::JsonLdExpandableMacro,
+    jsonld::Expandable,
 };
 use compact_str::CompactString;
 use indexmap::IndexMap;
@@ -12,9 +12,12 @@ use serde_with::skip_serializing_none;
 
 /// NGSI-LD ListRelationship representation (ETSI GS CIM 009 clause 5.2.37).
 #[skip_serializing_none]
-#[derive(Debug, Clone, Serialize, Deserialize, JsonLdExpandableMacro)]
+#[derive(Debug, Clone, Serialize, Deserialize, Expandable)]
 #[serde(rename_all = "camelCase")]
-#[jsonld(type = "ngsi:ListRelationship")]
+#[jsonld(
+    type = "ngsi:ListRelationship",
+    prefix(ngsi = "https://uri.etsi.org/ngsi-ld/", xsd = "http://www.w3.org/2001/XMLSchema#")
+)]
 pub struct ListRelationship {
     #[jsonld(property = "ngsi:hasObjectList", list, id_ref)]
     pub object_list: RelationshipObjectList,
@@ -48,7 +51,7 @@ impl Default for ListRelationship {
 #[cfg(test)]
 mod tests {
     #![allow(clippy::expect_used, clippy::unwrap_used)]
-    use crate::jsonld::JsonLdExpandable;
+    use crate::jsonld::Expandable;
 
     #[test]
     fn list_relationship_expanded_has_list_of_id_refs() {
@@ -61,7 +64,7 @@ mod tests {
         let crate::domain::attribute::Attribute::ListRelationship(lr) = &attr else {
             unreachable!("expected ListRelationship");
         };
-        let expanded = lr.to_expanded();
+        let expanded = lr.expand::<serde_json::Value>();
         let obj = expanded.as_object().expect("expanded is object");
 
         pretty_assertions::assert_eq!(obj["@type"], serde_json::json!(["https://uri.etsi.org/ngsi-ld/ListRelationship"]));

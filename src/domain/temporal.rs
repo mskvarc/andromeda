@@ -4,7 +4,7 @@
 //! history of attribute values over time.
 
 use crate::domain::attribute_type::AttributeType;
-use iref::IriBuf;
+use iri_rs::IriBuf;
 use strum::{Display, EnumString};
 use urn_rs::Urn;
 

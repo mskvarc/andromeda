@@ -3,26 +3,49 @@ use crate::{
         AttributeValue,
         common::{CommonAttributeFields, NgsiLdValue},
     },
-    jsonld::JsonLdExpandableMacro,
+    jsonld::Expandable,
 };
 use cefact_units::UnitCode;
 use compact_str::CompactString;
+use derive_more::{Deref, From};
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
 
+/// Newtype wrapping [`UnitCode`] to provide an [`AsRef<str>`] implementation
+/// (orphan rules forbid implementing the foreign trait for the foreign type
+/// directly). Used as a field value where the JSON-LD derive needs `&str` access.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, From, Deref)]
+#[serde(transparent)]
+pub struct UnitCodeRef(pub UnitCode);
+
+impl AsRef<str> for UnitCodeRef {
+    fn as_ref(&self) -> &str {
+        self.0.as_str()
+    }
+}
+
+impl From<UnitCodeRef> for UnitCode {
+    fn from(value: UnitCodeRef) -> UnitCode {
+        value.0
+    }
+}
+
 /// NGSI-LD Property representation (ETSI GS CIM 009 clause 5.2.5).
 #[skip_serializing_none]
-#[derive(Debug, Clone, Serialize, Deserialize, JsonLdExpandableMacro)]
+#[derive(Debug, Clone, Serialize, Deserialize, Expandable)]
 #[serde(rename_all = "camelCase")]
-#[jsonld(type = "ngsi:Property")]
+#[jsonld(
+    type = "ngsi:Property",
+    prefix(ngsi = "https://uri.etsi.org/ngsi-ld/", xsd = "http://www.w3.org/2001/XMLSchema#")
+)]
 pub struct Property {
     /// Property value.
     #[jsonld(property = "ngsi:hasValue")]
     pub value: NgsiLdValue,
     /// Measurement unit code.
     #[jsonld(property = "ngsi:unitCode", vocab)]
-    pub unit_code: Option<UnitCode>,
+    pub unit_code: Option<UnitCodeRef>,
     /// Optional JSON-LD datatype for `value`.
     #[jsonld(property = "ngsi:hasValueType", vocab)]
     pub value_type: Option<CompactString>,
@@ -55,7 +78,7 @@ mod tests {
     #![allow(clippy::expect_used, clippy::unwrap_used)]
     use crate::{
         domain::attribute::Attribute,
-        jsonld::{JsonLdExpandable, vocab},
+        jsonld::{Expandable, vocab},
     };
 
     #[test]
@@ -91,7 +114,7 @@ mod tests {
             unreachable!("expected Property");
         };
         pretty_assertions::assert_eq!(property.value_type.as_deref(), Some("Integer"));
-        let expanded = property.to_expanded();
+        let expanded = property.expand::<serde_json::Value>();
         let obj = expanded.as_object().expect("object");
         assert!(obj.contains_key(vocab::expanded::VALUE_TYPE.as_str()));
         assert!(obj.contains_key(vocab::expanded::CREATED_AT.as_str()));
