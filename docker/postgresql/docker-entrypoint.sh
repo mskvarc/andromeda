@@ -375,8 +375,57 @@ _main() {
 	fi
 
 	timescaledb-tune --wal-disk-size="32GB" --yes
+	apply_andromeda_overrides
 
 	exec "$@"
+}
+
+# Append Andromeda-specific overrides to postgresql.conf after timescaledb-tune.
+# Settings here either fix bottlenecks observed in batch-ingest load tests
+# (WAL fsync waits, autovacuum throttling, sort spills) or align the cluster
+# with the EnterpriseDB tuning guide referenced in docs/postgresql.md.
+# Idempotent: each start strips the prior block (between markers) before
+# rewriting it, so the conf does not grow across restarts.
+apply_andromeda_overrides() {
+	local conf="$PGDATA/postgresql.conf"
+	local begin="# --- andromeda overrides BEGIN ---"
+	local end="# --- andromeda overrides END ---"
+	if [ ! -f "$conf" ]; then
+		return 0
+	fi
+	if grep -qF "$begin" "$conf"; then
+		sed -i "/^${begin}\$/,/^${end}\$/d" "$conf"
+	fi
+	cat >> "$conf" <<-EOF
+		${begin}
+		# Resource usage
+		work_mem = 64MB
+
+		# Write-ahead log
+		synchronous_commit = off
+		wal_compression = on
+		wal_log_hints = on
+		wal_buffers = 64MB
+
+		# Query planner
+		cpu_tuple_cost = 0.03
+
+		# Autovacuum
+		autovacuum_vacuum_cost_delay = 2ms
+		autovacuum_vacuum_cost_limit = 3000
+		log_autovacuum_min_duration = 0
+
+		# Reporting and logging
+		log_checkpoints = on
+		log_lock_waits = on
+		log_temp_files = 0
+		log_min_duration_statement = 1000
+
+		# Client connection defaults
+		idle_in_transaction_session_timeout = 600000
+		lc_messages = 'C'
+		${end}
+	EOF
 }
 
 if ! _is_sourced; then
