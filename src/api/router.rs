@@ -247,7 +247,7 @@ pub async fn build_tenant_state(
         "Detected TimescaleDB capabilities"
     );
 
-    let (change_tx, _) = tokio::sync::broadcast::channel::<ChangeEvent>(4096);
+    let (change_tx, _) = tokio::sync::broadcast::channel::<ChangeEvent>(config.spatial.change_channel_capacity.max(1));
     // Subscription / CSR / CSR-subscription change channels carry burst
     // traffic during mass updates: an operator uploading N subscriptions in
     // quick succession, or a federation refresh touching many CSRs. At 256
@@ -447,7 +447,13 @@ pub async fn build_tenant_state(
     worker_handles.push(tokio::spawn(snapshot_expiration_worker.run()));
 
     // Spatial index: event-driven incremental sync + periodic bulk rebuild.
-    let spatial_sync_worker = SpatialSyncWorker::new(spatial_change_rx, Arc::clone(&spatial_index), &pool, tenant.clone());
+    let spatial_sync_worker = SpatialSyncWorker::new(
+        spatial_change_rx,
+        Arc::clone(&spatial_index),
+        &pool,
+        tenant.clone(),
+        std::time::Duration::from_secs(config.spatial.lag_log_interval_secs.max(1)),
+    );
     worker_handles.push(tokio::spawn(spatial_sync_worker.run()));
 
     let rebuild_secs = config.spatial.rebuild_interval_secs;

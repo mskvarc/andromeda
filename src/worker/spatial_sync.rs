@@ -24,7 +24,10 @@ use crate::{
 use iri_rs::IriBuf;
 use serde_json::Value;
 use sqlx::PgPool;
-use std::sync::Arc;
+use std::{
+    sync::Arc,
+    time::{Duration, Instant},
+};
 use tokio::sync::broadcast;
 use tracing::{debug, warn};
 use urn_rs::Urn;
@@ -35,26 +38,59 @@ pub struct SpatialSyncWorker {
     index: Arc<SpatialEntityIndex>,
     repo: EntityRepository,
     tenant: TenantRef,
+    lag_log_interval: Duration,
 }
 
 impl SpatialSyncWorker {
     /// Construct a new worker listening on `rx` and writing into `index`.
-    pub fn new(rx: broadcast::Receiver<ChangeEvent>, index: Arc<SpatialEntityIndex>, pool: &PgPool, tenant: TenantRef) -> SpatialSyncWorker {
+    ///
+    /// `lag_log_interval` is the minimum spacing between aggregated lag-warning
+    /// log lines: skipped events are counted between summaries so a single
+    /// `WARN` per interval carries the total drift, instead of amplifying the
+    /// lag with one log per overrun.
+    pub fn new(
+        rx: broadcast::Receiver<ChangeEvent>,
+        index: Arc<SpatialEntityIndex>,
+        pool: &PgPool,
+        tenant: TenantRef,
+        lag_log_interval: Duration,
+    ) -> SpatialSyncWorker {
         SpatialSyncWorker {
             rx,
             index,
             repo: EntityRepository::new(pool),
             tenant,
+            lag_log_interval,
         }
     }
 
     /// Drive the worker until the broadcast channel is closed.
+    ///
+    /// After each successful `recv().await` the loop drains any further events
+    /// available on the broadcast channel via `try_recv()` and applies them as
+    /// one logical batch. This lets the consumer catch up after a burst
+    /// without yielding to the executor between events. R-tree updates are
+    /// idempotent so repeated events for the same id within one drain are
+    /// safe.
     pub async fn run(mut self) {
+        let mut lag_throttle = LagThrottle::new(self.lag_log_interval);
         loop {
             match self.rx.recv().await {
-                Ok(event) => self.handle(event).await,
+                Ok(event) => {
+                    self.handle(event).await;
+                    loop {
+                        match self.rx.try_recv() {
+                            Ok(event) => self.handle(event).await,
+                            Err(broadcast::error::TryRecvError::Empty) => break,
+                            Err(broadcast::error::TryRecvError::Lagged(n)) => {
+                                lag_throttle.record(n);
+                            }
+                            Err(broadcast::error::TryRecvError::Closed) => return,
+                        }
+                    }
+                }
                 Err(broadcast::error::RecvError::Lagged(n)) => {
-                    warn!("spatial_sync lagged by {} events -- periodic rebuild will heal drift", n);
+                    lag_throttle.record(n);
                 }
                 Err(broadcast::error::RecvError::Closed) => break,
             }
@@ -154,6 +190,44 @@ impl SpatialSyncWorker {
     }
 }
 
+/// Aggregates broadcast-receiver `Lagged(n)` overruns and emits at most one
+/// warning per `interval`, carrying the running total of skipped events
+/// since the previous summary. Tracing emissions during a burst would
+/// themselves contend on the worker thread and amplify the lag they
+/// describe — this collapses every overrun into one summary line per
+/// window.
+struct LagThrottle {
+    interval: Duration,
+    pending: u64,
+    last_emit: Instant,
+}
+
+impl LagThrottle {
+    fn new(interval: Duration) -> LagThrottle {
+        // Backdate the anchor so the first overrun emits immediately.
+        let last_emit = Instant::now().checked_sub(interval).unwrap_or_else(Instant::now);
+        LagThrottle {
+            interval,
+            pending: 0,
+            last_emit,
+        }
+    }
+
+    fn record(&mut self, skipped: u64) {
+        self.pending = self.pending.saturating_add(skipped);
+        let now = Instant::now();
+        if now.duration_since(self.last_emit) >= self.interval {
+            warn!(
+                skipped = self.pending,
+                interval_secs = self.interval.as_secs(),
+                "spatial_sync lagged -- periodic rebuild will heal drift"
+            );
+            self.pending = 0;
+            self.last_emit = now;
+        }
+    }
+}
+
 fn unwrap_to_object(value: &Value) -> Option<&serde_json::Map<String, Value>> {
     match value {
         Value::Array(arr) => arr.first().and_then(Value::as_object),
@@ -182,4 +256,96 @@ fn extract_geoproperty_geojson(obj: &serde_json::Map<String, Value>, iri: &str) 
 fn parse_wkb(raw: &str) -> Option<crate::domain::geometry::Wkb> {
     let value: Value = serde_json::from_str(raw).ok()?;
     crate::domain::geometry::Wkb::from_geojson_value(&value).ok()
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::expect_used, clippy::unwrap_used)]
+    use super::*;
+    use crate::{domain::uri::Uri, query::compiled::GeoRel, service::spatial::SpatialKey};
+    use geo::{Coord, LineString, Polygon};
+    use iri_rs::iri;
+    use serde_json::json;
+    use sqlx::PgPool;
+
+    const LOCATION_IRI: &str = "https://uri.etsi.org/ngsi-ld/location";
+    const TYPE_IRI: &str = "https://example.org/Sensor";
+    const VALUE_IRI: &str = "https://uri.etsi.org/ngsi-ld/hasValue";
+
+    fn lazy_pool() -> PgPool {
+        // connect_lazy never opens a connection; the test exercises only the
+        // payload-aware path, which never reaches the repository.
+        PgPool::connect_lazy("postgres://localhost/nonexistent").expect("connect_lazy should not fail")
+    }
+
+    fn entity_payload(id: &str, lon: f64, lat: f64) -> Value {
+        json!({
+            "@id": id,
+            "@type": [TYPE_IRI],
+            LOCATION_IRI: [{
+                "@type": ["https://uri.etsi.org/ngsi-ld/GeoProperty"],
+                VALUE_IRI: [{
+                    "@type": "https://purl.org/geojson/vocab#Feature",
+                    "@value": format!("{{\"type\":\"Point\",\"coordinates\":[{lon},{lat}]}}")
+                }]
+            }]
+        })
+    }
+
+    fn create_event(id: &str, lon: f64, lat: f64) -> ChangeEvent {
+        let uri: Uri = id.parse().expect("valid URI");
+        let payload = entity_payload(id, lon, lat);
+        ChangeEvent::new(uri, vec![TYPE_IRI.to_string()], TriggerReason::EntityCreated)
+            .with_changed_attributes(vec![LOCATION_IRI.to_string()])
+            .with_current_payload(Arc::new(payload))
+    }
+
+    fn delete_event(id: &str) -> ChangeEvent {
+        let uri: Uri = id.parse().expect("valid URI");
+        ChangeEvent::new(uri, vec![TYPE_IRI.to_string()], TriggerReason::EntityDeleted)
+    }
+
+    fn world_bbox() -> geo::Geometry<f64> {
+        let ring = LineString::from(vec![
+            Coord { x: -180.0, y: -90.0 },
+            Coord { x: 180.0, y: -90.0 },
+            Coord { x: 180.0, y: 90.0 },
+            Coord { x: -180.0, y: 90.0 },
+            Coord { x: -180.0, y: -90.0 },
+        ]);
+        geo::Geometry::Polygon(Polygon::new(ring, Vec::new()))
+    }
+
+    #[tokio::test]
+    async fn worker_applies_bursted_events_and_honours_delete_after_create() {
+        let index = Arc::new(SpatialEntityIndex::new());
+        let (tx, rx) = broadcast::channel::<ChangeEvent>(16);
+
+        let worker = SpatialSyncWorker::new(rx, Arc::clone(&index), &lazy_pool(), TenantRef::UnnamedDefault, Duration::from_secs(60));
+        let driver = tokio::spawn(worker.run());
+
+        for i in 0..10 {
+            let id = format!("urn:ngsi-ld:Sensor:{i}");
+            tx.send(create_event(&id, f64::from(i), 0.0)).expect("create event sent");
+        }
+        // Delete one of the created entities; the worker must process the
+        // delete after the create even when both arrive within a single drain
+        // iteration.
+        tx.send(delete_event("urn:ngsi-ld:Sensor:3")).expect("delete event sent");
+
+        drop(tx);
+        driver.await.expect("worker terminates cleanly");
+
+        let key = SpatialKey::new(
+            TenantRef::UnnamedDefault,
+            iri_rs::IriBuf::from(iri!("https://example.org/Sensor")),
+            iri_rs::IriBuf::from(iri!("https://uri.etsi.org/ngsi-ld/location")),
+        );
+        let candidates = index
+            .query(&key, &GeoRel::Intersects, &world_bbox())
+            .expect("partition should be warm after creates");
+        pretty_assertions::assert_eq!(candidates.len(), 9);
+        let deleted: Urn = "urn:ngsi-ld:Sensor:3".parse().expect("valid URN");
+        assert!(!candidates.contains(&deleted), "delete event should remove urn:ngsi-ld:Sensor:3");
+    }
 }

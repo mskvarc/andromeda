@@ -332,6 +332,20 @@ pub struct NotificationConfig {
 pub struct SpatialConfig {
     #[config(env = "ANDROMEDA_SPATIAL_REBUILD_INTERVAL_SECS", default = 1800)]
     pub rebuild_interval_secs: u64,
+
+    /// Capacity (in events) of the broker-internal `ChangeEvent` broadcast
+    /// channel that fans entity mutations out to spatial_sync and any other
+    /// internal consumers. Sized to absorb mass-upsert bursts without forcing
+    /// the periodic rebuild to heal drift. Default 65_536.
+    #[config(env = "ANDROMEDA_SPATIAL_CHANGE_CHANNEL_CAPACITY", default = 65_536)]
+    pub change_channel_capacity: usize,
+
+    /// Minimum interval (seconds) between aggregated spatial_sync lag-warning
+    /// log lines. The worker counts skipped events between summaries so a
+    /// single line per interval carries the total drift since the previous
+    /// summary. Default 5 s.
+    #[config(env = "ANDROMEDA_SPATIAL_LAG_LOG_INTERVAL_SECS", default = 5)]
+    pub lag_log_interval_secs: u64,
 }
 
 #[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, Display, EnumString)]
@@ -581,6 +595,12 @@ fn validate_config(config: &RuntimeConfig) -> Result<(), AndromedaError> {
     if config.spatial.rebuild_interval_secs == 0 {
         return Err(AndromedaError::internal("spatial.rebuild_interval_secs must be at least 1"));
     }
+    if config.spatial.change_channel_capacity == 0 {
+        return Err(AndromedaError::internal("spatial.change_channel_capacity must be at least 1"));
+    }
+    if config.spatial.lag_log_interval_secs == 0 {
+        return Err(AndromedaError::internal("spatial.lag_log_interval_secs must be at least 1"));
+    }
 
     Ok(())
 }
@@ -694,7 +714,11 @@ mod tests {
                     ping_interval_secs: 30,
                 },
             },
-            spatial: SpatialConfig { rebuild_interval_secs: 1800 },
+            spatial: SpatialConfig {
+                rebuild_interval_secs: 1800,
+                change_channel_capacity: 65_536,
+                lag_log_interval_secs: 5,
+            },
             observability: ObservabilityConfig { log_level: LogLevel::Info },
         }
     }
@@ -879,6 +903,31 @@ port = 1600
         config.spatial.rebuild_interval_secs = 0;
 
         assert!(validate_config(&config).is_err());
+    }
+
+    #[test]
+    fn validate_rejects_zero_spatial_change_channel_capacity() {
+        let mut config = test_runtime_config_with_preload("contexts/test.jsonld");
+        config.spatial.change_channel_capacity = 0;
+
+        assert!(validate_config(&config).is_err());
+    }
+
+    #[test]
+    fn validate_rejects_zero_spatial_lag_log_interval_secs() {
+        let mut config = test_runtime_config_with_preload("contexts/test.jsonld");
+        config.spatial.lag_log_interval_secs = 0;
+
+        assert!(validate_config(&config).is_err());
+    }
+
+    #[test]
+    #[serial]
+    fn env_overrides_spatial_change_channel_capacity() {
+        unsafe { std::env::set_var("ANDROMEDA_SPATIAL_CHANGE_CHANNEL_CAPACITY", "12345") };
+        let config = RuntimeConfig::builder().env().load().expect("config should load");
+        unsafe { std::env::remove_var("ANDROMEDA_SPATIAL_CHANGE_CHANNEL_CAPACITY") };
+        pretty_assertions::assert_eq!(config.spatial.change_channel_capacity, 12345);
     }
 
     #[test]

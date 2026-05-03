@@ -32,12 +32,28 @@ use crate::{
     },
 };
 use chrono::{DateTime, SecondsFormat, Utc};
+use dashmap::DashMap;
 use serde_json::{Map, Value};
 use sqlx::postgres::PgPool;
-use std::{collections::HashSet, sync::Arc};
-use tokio::sync::broadcast;
+use std::{
+    collections::HashSet,
+    sync::{Arc, Weak},
+    time::Duration,
+};
+use tokio::sync::{Mutex, OwnedMutexGuard, broadcast};
 use tracing::debug;
 use urn_rs::Urn;
+
+/// Map type used to coordinate writes by entity id.
+///
+/// See [`EntityService::acquire_id_locks`] for usage and lifetime.
+type IdLockMap = DashMap<String, Arc<Mutex<()>>>;
+
+/// Interval (in seconds) between sweeps of the per-id lock-coalescing map.
+/// Sized to be roughly two orders of magnitude longer than a typical
+/// chunk-write so the dominant cost is the writes themselves, not the
+/// sweep.
+const ID_LOCK_GC_INTERVAL_SECS: u64 = 60;
 
 /// Configuration for outbox-based notification delivery (Phase 1: dual-write).
 #[derive(Clone, Debug)]
@@ -120,6 +136,13 @@ pub struct EntityService {
     async_side_effect_threshold: Option<usize>,
     /// Outbox write configuration, present when outbox is enabled.
     outbox: Option<OutboxWriteConfig>,
+    /// Per-entity-id coalescing locks. Each chunk-write handler acquires the
+    /// owned mutex guards for the ids it touches *before* asking the database
+    /// pool for a connection. Concurrent batches with overlapping ids
+    /// therefore serialise on broker-side mutexes (cheap) instead of
+    /// `entities.id` row locks (which would otherwise hold a pool connection
+    /// for the duration of the wait). See [`Self::acquire_id_locks`].
+    id_locks: Arc<IdLockMap>,
 }
 
 impl EntityService {
@@ -136,6 +159,8 @@ impl EntityService {
     ) -> EntityService {
         let repo = EntityRepository::new(pool);
         let temporal_recorder = TemporalRecorder::new(temporal_repo);
+        let id_locks: Arc<IdLockMap> = Arc::new(DashMap::new());
+        spawn_id_lock_gc(Arc::downgrade(&id_locks));
 
         debug!("Entity service created!");
 
@@ -154,7 +179,20 @@ impl EntityService {
             batch_prepare_blocking_threshold: batch_config.prepare_blocking_threshold.max(1),
             async_side_effect_threshold: batch_config.async_side_effect_threshold,
             outbox,
+            id_locks,
         }
+    }
+
+    /// Acquire owned mutex guards for every distinct id in `ids`, in sorted
+    /// order so concurrent callers cannot deadlock. Locks are released when
+    /// the returned `Vec` is dropped.
+    ///
+    /// Callers must invoke this *before* asking the unit-of-work factory for
+    /// a connection: the goal is to serialise overlapping batches on
+    /// broker-side mutexes so the second caller never holds a pool slot while
+    /// it waits.
+    pub(crate) async fn acquire_id_locks(&self, ids: &[String]) -> Vec<OwnedMutexGuard<()>> {
+        acquire_id_locks_in(&self.id_locks, ids).await
     }
 
     /// Decide which side-effect path to take based on the client's
@@ -563,6 +601,56 @@ impl EntityService {
     }
 }
 
+/// Acquire mutex guards for `ids` against `map`, in deterministic sorted
+/// order. Sorting eliminates lock-ordering deadlocks between concurrent
+/// callers whose id sets overlap.
+///
+/// Callers receive owned guards so the locks remain held for the lifetime
+/// of the returned `Vec`. Drop the vec to release every lock at once.
+pub(crate) async fn acquire_id_locks_in(map: &IdLockMap, ids: &[String]) -> Vec<OwnedMutexGuard<()>> {
+    let mut sorted: Vec<String> = ids.to_vec();
+    sorted.sort_unstable();
+    sorted.dedup();
+
+    let mut guards = Vec::with_capacity(sorted.len());
+    for id in sorted {
+        let lock = map.entry(id).or_insert_with(|| Arc::new(Mutex::new(()))).value().clone();
+        guards.push(lock.lock_owned().await);
+    }
+    guards
+}
+
+/// Drop entries whose only `Arc` reference is the map itself: nothing else
+/// is holding the mutex, so the entry can be reclaimed without losing
+/// coordination.
+///
+/// `DashMap::retain` holds each bucket's lock while inspecting and removing
+/// entries from that bucket. Concurrent calls to [`acquire_id_locks_in`]
+/// for the same id must take the same bucket lock to insert or read the
+/// `Arc<Mutex<()>>`, so they cannot observe a partially-removed state.
+pub(crate) fn gc_id_locks(map: &IdLockMap) {
+    map.retain(|_, lock| Arc::strong_count(lock) > 1);
+}
+
+/// Spawn a background task that periodically prunes unused entries from
+/// `weak`. Holding a [`Weak`] instead of a strong [`Arc`] means the task
+/// exits as soon as the owning [`EntityService`] is dropped — no manual
+/// shutdown plumbing required.
+fn spawn_id_lock_gc(weak: Weak<IdLockMap>) {
+    tokio::spawn(async move {
+        let mut ticker = tokio::time::interval(Duration::from_secs(ID_LOCK_GC_INTERVAL_SECS));
+        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        ticker.tick().await; // skip the immediate first tick.
+        loop {
+            ticker.tick().await;
+            let Some(map) = weak.upgrade() else {
+                break;
+            };
+            gc_id_locks(&map);
+        }
+    });
+}
+
 /// Pure routing logic for [`EntityService::effective_side_effect_mode`].
 ///
 /// Split from the method so the decision table can be unit-tested without
@@ -836,7 +924,8 @@ pub(crate) fn inject_attr_sys_attrs(obj: &mut Map<String, Value>, created_at_val
 #[cfg(test)]
 mod tests {
     #![allow(clippy::expect_used, clippy::unwrap_used)]
-    use super::{BatchSideEffectMode, normalize_entity_attributes, resolve_side_effect_mode};
+    use super::{BatchSideEffectMode, IdLockMap, acquire_id_locks_in, gc_id_locks, normalize_entity_attributes, resolve_side_effect_mode};
+    use std::sync::Arc;
 
     #[test]
     fn prefer_respond_async_with_none_threshold_routes_to_enqueue() {
@@ -863,6 +952,35 @@ mod tests {
     fn no_async_opt_in_routes_to_inline_regardless_of_threshold() {
         assert_eq!(resolve_side_effect_mode(None, false, 1000), BatchSideEffectMode::Inline);
         assert_eq!(resolve_side_effect_mode(Some(1), false, 1000), BatchSideEffectMode::Inline);
+    }
+
+    #[tokio::test]
+    async fn id_lock_gc_reclaims_unused_entries_after_guards_drop() {
+        let map: Arc<IdLockMap> = Arc::new(IdLockMap::new());
+        let ids = vec!["urn:ngsi-ld:A".to_string(), "urn:ngsi-ld:B".to_string(), "urn:ngsi-ld:C".to_string()];
+
+        let guards = acquire_id_locks_in(&map, &ids).await;
+        pretty_assertions::assert_eq!(map.len(), 3);
+
+        // While guards are alive, GC must keep every entry — strong_count > 1.
+        gc_id_locks(&map);
+        pretty_assertions::assert_eq!(map.len(), 3);
+
+        drop(guards);
+        // Once the only outstanding `Arc` is the map's own, GC reclaims the entry.
+        gc_id_locks(&map);
+        pretty_assertions::assert_eq!(map.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn id_lock_acquire_dedupes_and_orders_ids() {
+        let map: Arc<IdLockMap> = Arc::new(IdLockMap::new());
+        // Duplicates must collapse to a single entry; sorted ordering eliminates
+        // deadlocks between concurrent callers with overlapping id sets.
+        let ids = vec!["b".to_string(), "a".to_string(), "b".to_string(), "c".to_string(), "a".to_string()];
+        let guards = acquire_id_locks_in(&map, &ids).await;
+        pretty_assertions::assert_eq!(guards.len(), 3);
+        pretty_assertions::assert_eq!(map.len(), 3);
     }
 
     #[test]

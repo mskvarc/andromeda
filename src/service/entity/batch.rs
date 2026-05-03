@@ -647,6 +647,9 @@ impl EntityService {
             return Ok(BatchResult { success: Vec::new(), errors });
         }
 
+        let chunk_ids: Vec<String> = prepared.iter().map(|p| p.id.clone()).collect();
+        let _id_guards = self.acquire_id_locks(&chunk_ids).await;
+
         let mut entity_data = HashMap::with_capacity(prepared.len());
         let mut columns = PreparedEntityColumns::with_capacity(prepared.len());
         for prepared_entity in prepared {
@@ -750,6 +753,9 @@ impl EntityService {
         }
 
         let prepared_ids: Vec<String> = prepared.iter().map(|entity| entity.id.clone()).collect();
+        // Hold the per-id locks across the read-modify-write window so two
+        // concurrent updates for the same id can't lose each other's writes.
+        let _id_guards = self.acquire_id_locks(&prepared_ids).await;
         let existing_map = self.repo.get_batch(&prepared_ids).await?;
 
         let mut effect_entities = HashMap::with_capacity(prepared.len());
@@ -819,6 +825,9 @@ impl EntityService {
         }
 
         let prepared_ids: Vec<String> = prepared.iter().map(|entity| entity.id.clone()).collect();
+        // Hold the per-id locks across the read-modify-write window so two
+        // concurrent merges for the same id can't lose each other's writes.
+        let _id_guards = self.acquire_id_locks(&prepared_ids).await;
         let existing_map = self.repo.get_batch(&prepared_ids).await?;
 
         let mut effect_entities = HashMap::with_capacity(prepared.len());
@@ -875,6 +884,9 @@ impl EntityService {
                 Vec::new(),
             ));
         }
+
+        let chunk_ids: Vec<String> = prepared.iter().map(|p| p.id.clone()).collect();
+        let _id_guards = self.acquire_id_locks(&chunk_ids).await;
 
         let mut entity_data = HashMap::with_capacity(prepared.len());
         let mut columns = PreparedEntityColumns::with_capacity(prepared.len());
@@ -942,6 +954,10 @@ impl EntityService {
         }
 
         let prepared_ids: Vec<String> = prepared.iter().map(|entity| entity.id.clone()).collect();
+        // Hold the per-id locks across the read-modify-write window: concurrent
+        // upsert-update calls for the same id must not race the snapshot
+        // read, the merge, and the write.
+        let _id_guards = self.acquire_id_locks(&prepared_ids).await;
         let existing_map = self.repo.get_batch(&prepared_ids).await?;
 
         let mut created_effects = HashMap::new();
@@ -1106,6 +1122,8 @@ impl EntityService {
 
     async fn batch_delete_chunk(&self, chunk: &[String], original_batch_size: usize, mode: BatchSideEffectMode) -> Result<DeleteChunkOutcome, AndromedaError> {
         let _ = original_batch_size;
+        let chunk_ids: Vec<String> = chunk.to_vec();
+        let _id_guards = self.acquire_id_locks(&chunk_ids).await;
         let (deleted, uow_slot) = match mode {
             BatchSideEffectMode::Inline => (self.repo.delete_batch(chunk).await?, None),
             BatchSideEffectMode::Enqueue => {
