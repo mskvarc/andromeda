@@ -498,6 +498,7 @@ mod tests {
             previous_attributes: None,
             sys_attrs_snapshot: None,
             origin: ChangeOrigin::Local,
+            current_payload: None,
         }
     }
 

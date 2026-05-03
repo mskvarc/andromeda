@@ -165,12 +165,22 @@ impl EntityService {
         }
     }
 
-    fn emit_attr_change(&self, entity_id: Uri, entity_types: Vec<String>, trigger: TriggerReason, changed_attributes: Vec<String>, previous: Option<Value>) {
-        self.emit_change(
-            ChangeEvent::new(entity_id, entity_types, trigger)
-                .with_changed_attributes(changed_attributes)
-                .with_optional_previous(previous),
-        );
+    fn emit_attr_change(
+        &self,
+        entity_id: Uri,
+        entity_types: Vec<String>,
+        trigger: TriggerReason,
+        changed_attributes: Vec<String>,
+        previous: Option<Value>,
+        current_payload: Option<Arc<Value>>,
+    ) {
+        let mut event = ChangeEvent::new(entity_id, entity_types, trigger)
+            .with_changed_attributes(changed_attributes)
+            .with_optional_previous(previous);
+        if let Some(payload) = current_payload {
+            event = event.with_current_payload(payload);
+        }
+        self.emit_change(event);
     }
 
     async fn fetch_entity_types(&self, id: &str) -> Vec<String> {
@@ -274,7 +284,13 @@ impl EntityService {
         }
         uow.commit().await?;
 
-        self.emit_change(ChangeEvent::new(entity.id.clone(), types, TriggerReason::EntityCreated).with_changed_attributes(extract_attribute_keys(&expanded))); // clone: owned Uri for event
+        let changed_attrs = extract_attribute_keys(&expanded);
+        let payload_arc = Arc::new(expanded);
+        self.emit_change(
+            ChangeEvent::new(entity.id.clone(), types, TriggerReason::EntityCreated) // clone: owned Uri for event
+                .with_changed_attributes(changed_attrs)
+                .with_current_payload(payload_arc),
+        );
 
         Ok(urn)
     }
@@ -335,6 +351,7 @@ impl EntityService {
         }
         uow.commit().await?;
 
+        let payload_arc = Arc::new(existing);
         for deleted_attr in &deleted_attrs {
             self.emit_attr_change(
                 entity_uri.clone(), // clone: value needed by subsequent loop iterations and final emit
@@ -342,10 +359,18 @@ impl EntityService {
                 TriggerReason::AttributeDeleted,
                 vec![deleted_attr.clone()],  // clone: owned copy from borrowed iterator
                 previous_attributes.clone(), // clone: value needed by subsequent loop iterations and final emit
+                Some(Arc::clone(&payload_arc)),
             );
         }
 
-        self.emit_attr_change(entity_uri, types, TriggerReason::EntityUpdated, changed_attrs, previous_attributes);
+        self.emit_attr_change(
+            entity_uri,
+            types,
+            TriggerReason::EntityUpdated,
+            changed_attrs,
+            previous_attributes,
+            Some(payload_arc),
+        );
 
         Ok(())
     }
@@ -381,7 +406,12 @@ impl EntityService {
         }
         uow.commit().await?;
 
-        self.emit_change(ChangeEvent::new(entity_uri, types, TriggerReason::EntityUpdated).with_changed_attributes(changed_attrs));
+        let payload_arc = Arc::new(expanded);
+        self.emit_change(
+            ChangeEvent::new(entity_uri, types, TriggerReason::EntityUpdated)
+                .with_changed_attributes(changed_attrs)
+                .with_current_payload(payload_arc),
+        );
 
         Ok(())
     }

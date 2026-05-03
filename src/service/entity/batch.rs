@@ -478,10 +478,14 @@ impl EntityService {
 
             let id_arc: Arc<str> = Arc::from(id.as_str());
             let expanded_arc = Arc::new(effect.expanded);
-            temporal_entities.push((Arc::clone(&id_arc), expanded_arc));
+            temporal_entities.push((Arc::clone(&id_arc), Arc::clone(&expanded_arc)));
             match id.parse::<Uri>() {
                 Ok(entity_uri) => {
-                    change_events.push(ChangeEvent::new(entity_uri, effect.types, trigger_reason).with_changed_attributes(effect.changed_attributes));
+                    change_events.push(
+                        ChangeEvent::new(entity_uri, effect.types, trigger_reason)
+                            .with_changed_attributes(effect.changed_attributes)
+                            .with_current_payload(expanded_arc),
+                    );
                 }
                 Err(_error) => {
                     tracing::error!(entity_id = %id, event = "entity_uri_parse_failed");
@@ -520,10 +524,15 @@ impl EntityService {
             };
 
             let id_arc: Arc<str> = Arc::from(id.as_str());
-            temporal_entities.push((Arc::clone(&id_arc), Arc::new(expanded)));
+            let expanded_arc = Arc::new(expanded);
+            temporal_entities.push((Arc::clone(&id_arc), Arc::clone(&expanded_arc)));
             match id.parse::<Uri>() {
                 Ok(entity_uri) => {
-                    change_events.push(ChangeEvent::new(entity_uri, effect.types, trigger_reason).with_changed_attributes(effect.changed_attributes));
+                    change_events.push(
+                        ChangeEvent::new(entity_uri, effect.types, trigger_reason)
+                            .with_changed_attributes(effect.changed_attributes)
+                            .with_current_payload(expanded_arc),
+                    );
                 }
                 Err(_error) => {
                     tracing::error!(entity_id = %id, event = "entity_uri_parse_failed");
@@ -568,10 +577,15 @@ impl EntityService {
             } else {
                 TriggerReason::EntityUpdated
             };
-            temporal_entities.push((Arc::clone(&id_arc), Arc::new(expanded)));
+            let expanded_arc = Arc::new(expanded);
+            temporal_entities.push((Arc::clone(&id_arc), Arc::clone(&expanded_arc)));
             match id.parse::<Uri>() {
                 Ok(entity_uri) => {
-                    change_events.push(ChangeEvent::new(entity_uri, effect.types, trigger_reason).with_changed_attributes(effect.changed_attributes));
+                    change_events.push(
+                        ChangeEvent::new(entity_uri, effect.types, trigger_reason)
+                            .with_changed_attributes(effect.changed_attributes)
+                            .with_current_payload(expanded_arc),
+                    );
                 }
                 Err(_error) => {
                     tracing::error!(entity_id = %id, event = "entity_uri_parse_failed");

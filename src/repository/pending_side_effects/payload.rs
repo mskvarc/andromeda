@@ -150,6 +150,11 @@ impl TryFrom<PersistedChangeEvent> for ChangeEvent {
             previous_attributes: persisted.previous_attributes.map(Arc::new),
             sys_attrs_snapshot: persisted.sys_attrs_snapshot.map(SysAttrsSnapshot::from),
             origin,
+            // current_payload is intentionally not persisted: the durable queue
+            // path is opt-in/async, and consumers (spatial sync) fall back to
+            // fetching when this is absent. Persisting it would double-store
+            // the expanded entity (already in `temporal_entities`).
+            current_payload: None,
         })
     }
 }

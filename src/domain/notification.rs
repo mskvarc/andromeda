@@ -84,6 +84,13 @@ pub struct ChangeEvent {
     pub sys_attrs_snapshot: Option<SysAttrsSnapshot>,
     /// Whether this event originated locally or from a forwarded context source (clause 5.5.13).
     pub origin: ChangeOrigin,
+    /// Post-mutation expanded entity payload, when the emitter has it in
+    /// memory (every service write path does). Consumers that would
+    /// otherwise re-fetch from the database (e.g. spatial index sync) read
+    /// this directly to avoid an extra query per event during batch ingest.
+    /// `None` for events emitted by background workers that only know the
+    /// entity id (e.g. expiration sweeps); consumers fall back to fetching.
+    pub current_payload: Option<Arc<Value>>,
 }
 
 impl ChangeEvent {
@@ -98,6 +105,7 @@ impl ChangeEvent {
             previous_attributes: None,
             sys_attrs_snapshot: None,
             origin: ChangeOrigin::Local,
+            current_payload: None,
         }
     }
 
@@ -123,6 +131,14 @@ impl ChangeEvent {
 
     pub const fn with_sys_attrs(mut self, sys_attrs: Option<SysAttrsSnapshot>) -> ChangeEvent {
         self.sys_attrs_snapshot = sys_attrs;
+        self
+    }
+
+    /// Attach the post-mutation expanded payload so payload-aware consumers
+    /// (notably [`crate::worker::spatial_sync::SpatialSyncWorker`]) skip the
+    /// per-event entity fetch during high-throughput batch ingest.
+    pub fn with_current_payload(mut self, payload: Arc<Value>) -> ChangeEvent {
+        self.current_payload = Some(payload);
         self
     }
 }

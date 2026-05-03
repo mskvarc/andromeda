@@ -5,6 +5,14 @@
 //! replace the new geometry, or remove the entity outright on delete. The
 //! worker complements (does not replace) the periodic rebuild task, which
 //! heals drift from missed events.
+//!
+//! The worker is payload-aware: when `ChangeEvent::current_payload` is set
+//! (every service write path populates it), the post-mutation expanded
+//! entity is read directly off the event and no database round-trip is
+//! performed. This keeps high-throughput batch ingest free of the
+//! per-event refetch that would otherwise contend with the batch writer
+//! itself. Events without a payload (background expiration sweeps) still
+//! fall back to fetching from the entity store.
 
 use crate::{
     domain::notification::{ChangeEvent, TriggerReason},
@@ -81,17 +89,26 @@ impl SpatialSyncWorker {
     }
 
     async fn sync_entity(&self, urn: &Urn, event: &ChangeEvent) {
-        // Fetch the current expanded payload to read the entity's geometries.
-        let id_str = urn.to_string();
-        let payload = match self.repo.get(&id_str).await {
-            Ok(Some(v)) => v,
-            Ok(None) => {
-                self.index.remove(urn);
-                return;
-            }
-            Err(e) => {
-                debug!("spatial_sync: fetch failed for {}: {}", urn, e);
-                return;
+        // Prefer the in-memory post-mutation payload carried on the event
+        // (populated by every service write path). Falling back to a DB
+        // fetch is reserved for events emitted by background workers that
+        // only know the entity id (e.g. expiration sweeps), keeping the
+        // hot batch-ingest path query-free.
+        let payload: Arc<Value> = match &event.current_payload {
+            Some(p) => Arc::clone(p),
+            None => {
+                let id_str = urn.to_string();
+                match self.repo.get(&id_str).await {
+                    Ok(Some(v)) => Arc::new(v),
+                    Ok(None) => {
+                        self.index.remove(urn);
+                        return;
+                    }
+                    Err(e) => {
+                        debug!("spatial_sync: fetch failed for {}: {}", urn, e);
+                        return;
+                    }
+                }
             }
         };
 

@@ -17,6 +17,7 @@ use crate::{
     },
 };
 use serde_json::Value;
+use std::sync::Arc;
 use urn_rs::Urn;
 
 impl EntityService {
@@ -51,11 +52,14 @@ impl EntityService {
         uow.commit().await?;
 
         let entity_types = extract_entity_types(&existing);
+        let all_attr_keys = extract_attribute_keys(&expanded);
+        let payload_arc = Arc::new(existing);
         self.emit_change(
-            ChangeEvent::new(entity_uri, entity_types, TriggerReason::AttributeCreated).with_changed_attributes(extract_attribute_keys(&expanded)),
+            ChangeEvent::new(entity_uri, entity_types, TriggerReason::AttributeCreated)
+                .with_changed_attributes(extract_attribute_keys(&expanded))
+                .with_current_payload(payload_arc),
         );
 
-        let all_attr_keys = extract_attribute_keys(&expanded);
         Ok((all_attr_keys, not_appended))
     }
 
@@ -92,6 +96,10 @@ impl EntityService {
         uow.commit().await?;
 
         let entity_types = self.fetch_entity_types(&id).await;
+        let all_changed = extract_attribute_keys(&expanded);
+        let created_attrs: Vec<String> = all_changed.iter().filter(|a| !attrs_before.contains(a.as_str())).cloned().collect(); // clone: owned strings from filtered references
+        let updated_attrs: Vec<String> = all_changed.iter().filter(|a| attrs_before.contains(a.as_str())).cloned().collect(); // clone: owned strings from filtered references
+        let payload_arc = Arc::new(existing);
 
         for deleted_attr in &deleted_attrs {
             self.emit_attr_change(
@@ -100,12 +108,9 @@ impl EntityService {
                 TriggerReason::AttributeDeleted,
                 vec![deleted_attr.clone()],  // clone: owned copy from borrowed iterator
                 previous_attributes.clone(), // clone: value needed by subsequent loop iterations and final emit
+                Some(Arc::clone(&payload_arc)),
             );
         }
-
-        let all_changed = extract_attribute_keys(&expanded);
-        let created_attrs: Vec<String> = all_changed.iter().filter(|a| !attrs_before.contains(a.as_str())).cloned().collect(); // clone: owned strings from filtered references
-        let updated_attrs: Vec<String> = all_changed.iter().filter(|a| attrs_before.contains(a.as_str())).cloned().collect(); // clone: owned strings from filtered references
 
         if !created_attrs.is_empty() {
             self.emit_attr_change(
@@ -114,11 +119,19 @@ impl EntityService {
                 TriggerReason::AttributeCreated,
                 created_attrs,
                 previous_attributes.clone(), // clone: value also needed by subsequent AttributeUpdated emit
+                Some(Arc::clone(&payload_arc)),
             );
         }
 
         if !updated_attrs.is_empty() {
-            self.emit_attr_change(entity_uri, entity_types, TriggerReason::AttributeUpdated, updated_attrs, previous_attributes);
+            self.emit_attr_change(
+                entity_uri,
+                entity_types,
+                TriggerReason::AttributeUpdated,
+                updated_attrs,
+                previous_attributes,
+                Some(payload_arc),
+            );
         }
 
         Ok(not_updated)
@@ -175,7 +188,8 @@ impl EntityService {
         };
 
         let entity_types = self.fetch_entity_types(&id).await;
-        self.emit_attr_change(entity_uri, entity_types, trigger, vec![attr_iri], previous_attributes);
+        let payload_arc = Arc::new(existing);
+        self.emit_attr_change(entity_uri, entity_types, trigger, vec![attr_iri], previous_attributes, Some(payload_arc));
 
         Ok(())
     }
@@ -221,7 +235,15 @@ impl EntityService {
         uow.commit().await?;
 
         let entity_types = self.fetch_entity_types(&id).await;
-        self.emit_attr_change(entity_uri, entity_types, TriggerReason::AttributeDeleted, vec![attr_iri], previous_attributes);
+        let payload_arc = Arc::new(existing);
+        self.emit_attr_change(
+            entity_uri,
+            entity_types,
+            TriggerReason::AttributeDeleted,
+            vec![attr_iri],
+            previous_attributes,
+            Some(payload_arc),
+        );
 
         Ok(())
     }
@@ -263,7 +285,15 @@ impl EntityService {
         uow.commit().await?;
 
         let entity_types = self.fetch_entity_types(&id).await;
-        self.emit_attr_change(entity_uri, entity_types, TriggerReason::AttributeUpdated, vec![attr_iri], previous_attributes);
+        let payload_arc = Arc::new(existing);
+        self.emit_attr_change(
+            entity_uri,
+            entity_types,
+            TriggerReason::AttributeUpdated,
+            vec![attr_iri],
+            previous_attributes,
+            Some(payload_arc),
+        );
 
         Ok(())
     }
