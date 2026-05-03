@@ -81,6 +81,6 @@ mod tests {
         };
         let expanded = property.expand::<serde_json::Value>();
         let obj = expanded.as_object().expect("object");
-        assert!(obj.contains_key(vocab::expanded::PREVIOUS_JSON.as_str()));
+        assert!(obj.contains_key(vocab::expanded::properties::PREVIOUS_JSON.as_str()));
     }
 }

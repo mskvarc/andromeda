@@ -2498,6 +2498,7 @@ dependencies = [
  "jsonld-expansion",
  "jsonld-serialization",
  "jsonld-syntax",
+ "jsonld-vocab",
  "jstrict",
  "locspan",
  "rdf-rs",
@@ -2646,6 +2647,17 @@ dependencies = [
  "serde",
  "smallvec",
  "thiserror 2.0.18",
+]
+
+[[package]]
+name = "jsonld-vocab"
+version = "0.22.0"
+dependencies = [
+ "heck 0.5.0",
+ "proc-macro2",
+ "quote",
+ "serde_json",
+ "syn 2.0.117",
 ]
 
 [[package]]

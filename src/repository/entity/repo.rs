@@ -108,9 +108,9 @@ impl EntityRepository {
     /// lives in the SQL function definition, so the repository only supplies
     /// the narrow trigger and SQL wiring.
     pub async fn purge_expired_attributes(&self) -> Result<Vec<String>, AndromedaError> {
-        let location_iri = crate::jsonld::vocab::expanded::LOCATION.as_str();
-        let observation_space_iri = crate::jsonld::vocab::expanded::OBSERVATION_SPACE.as_str();
-        let operation_space_iri = crate::jsonld::vocab::expanded::OPERATION_SPACE.as_str();
+        let location_iri = crate::jsonld::vocab::expanded::properties::LOCATION.as_str();
+        let observation_space_iri = crate::jsonld::vocab::expanded::properties::OBSERVATION_SPACE.as_str();
+        let operation_space_iri = crate::jsonld::vocab::expanded::properties::OPERATION_SPACE.as_str();
 
         let rows: Vec<(String,)> = sqlx::query_as(
             r#"

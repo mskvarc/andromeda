@@ -266,7 +266,7 @@ impl EntityService {
 
         let attr_iri = self.engine.expand_term(attr_name, context).await?;
 
-        if attr_iri == vocab::expanded::SCOPE.as_str() {
+        if attr_iri == vocab::expanded::properties::SCOPE.as_str() {
             return Err(AndromedaError::entity_validation("Scope is not a replaceable attribute"));
         }
 

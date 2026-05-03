@@ -8,7 +8,7 @@ mod vocab {
 }
 
 fn main() {
-    let _: &'static Iri = vocab::expanded::PROPERTY;
-    let _: &'static Iri = vocab::expanded::NULL_URI;
-    assert_eq!(vocab::expanded::PROPERTY.as_str(), "https://uri.etsi.org/ngsi-ld/Property");
+    let _: &'static Iri = vocab::expanded::classes::PROPERTY;
+    let _: &'static Iri = vocab::expanded::properties::NULL_URI;
+    assert_eq!(vocab::expanded::classes::PROPERTY.as_str(), "https://uri.etsi.org/ngsi-ld/Property");
 }

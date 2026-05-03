@@ -191,9 +191,9 @@ impl NotificationWorker {
                         );
                         if let Some(obj) = bare.as_object_mut() {
                             obj.insert(
-                                vocab::expanded::DELETED_AT.as_str().to_string(),
+                                vocab::expanded::properties::DELETED_AT.as_str().to_string(),
                                 serde_json::json!([{
-                                    "@type": vocab::expanded::DATE_TIME.as_str(),
+                                    "@type": vocab::expanded::classes::DATE_TIME.as_str(),
                                     "@value": event.occurred_at.to_rfc3339_opts(SecondsFormat::Millis, true)
                                 }]),
                             );
@@ -206,7 +206,7 @@ impl NotificationWorker {
             }
         } else if let Some(snapshot) = event.entity_snapshot.as_deref() {
             let deleted_at_value = serde_json::json!([{
-                "@type": vocab::expanded::DATE_TIME.as_str(),
+                "@type": vocab::expanded::classes::DATE_TIME.as_str(),
                 "@value": event.occurred_at.to_rfc3339_opts(SecondsFormat::Millis, true)
             }]);
             let mut data = match snapshot {
@@ -214,15 +214,15 @@ impl NotificationWorker {
                 other => other.clone(),
             };
             if let Some(obj) = data.as_object_mut() {
-                obj.insert(vocab::expanded::DELETED_AT.as_str().to_string(), deleted_at_value);
+                obj.insert(vocab::expanded::properties::DELETED_AT.as_str().to_string(), deleted_at_value);
             }
             Some(serde_json::json!([data]))
         } else {
             Some(serde_json::json!([{
                 "@id": event.entity_id,
                 "@type": event.entity_types,
-                (vocab::expanded::DELETED_AT.as_str()): [{
-                    "@type": vocab::expanded::DATE_TIME.as_str(),
+                (vocab::expanded::properties::DELETED_AT.as_str()): [{
+                    "@type": vocab::expanded::classes::DATE_TIME.as_str(),
                     "@value": event.occurred_at.to_rfc3339_opts(SecondsFormat::Millis, true)
                 }]
             }]))
@@ -455,7 +455,7 @@ fn extract_entity_geometry(entity_data: &Value, geoproperty_iri: &str) -> Option
     let geojson_value = prop_value
         .as_array()
         .and_then(|arr| arr.first())
-        .and_then(|inst| inst.get(vocab::expanded::VALUE.as_str()))
+        .and_then(|inst| inst.get(vocab::expanded::properties::VALUE.as_str()))
         .and_then(|v| v.as_array())
         .and_then(|arr| arr.first())
         .and_then(|v| v.get("@value"))?;

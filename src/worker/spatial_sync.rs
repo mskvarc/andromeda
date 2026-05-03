@@ -125,7 +125,7 @@ impl SpatialSyncWorker {
 
         let candidate_iris: Vec<String> = {
             let mut v: Vec<String> = event.changed_attributes.clone();
-            let location = vocab::expanded::LOCATION.as_str().to_string();
+            let location = vocab::expanded::properties::LOCATION.as_str().to_string();
             if !v.contains(&location) {
                 v.push(location);
             }
@@ -167,7 +167,7 @@ fn extract_geoproperty_geojson(obj: &serde_json::Map<String, Value>, iri: &str) 
     let geojson_value = prop_value
         .as_array()
         .and_then(|arr| arr.first())
-        .and_then(|inst| inst.get(vocab::expanded::VALUE.as_str()))
+        .and_then(|inst| inst.get(vocab::expanded::properties::VALUE.as_str()))
         .and_then(|v| v.as_array())
         .and_then(|arr| arr.first())
         .and_then(|v| v.get("@value"));

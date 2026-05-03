@@ -249,7 +249,8 @@ fn predicate_to_condition(pred: &Predicate, payload_col: &str) -> Result<Conditi
 /// Converts comparison predicate to sea-query condition.
 fn compare_to_condition(path: &AttrPath, op: CmpOp, rhs: &CompareValue, payload_col: &str) -> Result<Condition, AndromedaError> {
     let jsonpath = value_extraction_jsonpath(&path.attr, &path.sub_attrs, &path.value_path);
-    let has_object_jsonpath = value_extraction_jsonpath_with_predicate(&path.attr, &path.sub_attrs, &path.value_path, vocab::expanded::OBJECT.as_str());
+    let has_object_jsonpath =
+        value_extraction_jsonpath_with_predicate(&path.attr, &path.sub_attrs, &path.value_path, vocab::expanded::properties::OBJECT.as_str());
 
     let extract_expr = format!("jsonb_path_query_first(\"{}\", '{}')", payload_col, escape_jsonpath(&jsonpath));
     let extract_object = format!("jsonb_path_query_first(\"{}\", '{}')", payload_col, escape_jsonpath(&has_object_jsonpath));
@@ -307,7 +308,7 @@ fn compare_to_condition(path: &AttrPath, op: CmpOp, rhs: &CompareValue, payload_
 
 /// Converts GeoQuery to sea-query condition using PostGIS helpers.
 fn geo_to_condition(geo: &GeoQuery, payload_col: &str) -> Result<Condition, AndromedaError> {
-    let is_default_location = geo.geoproperty_iri == vocab::expanded::LOCATION.as_str();
+    let is_default_location = geo.geoproperty_iri == vocab::expanded::properties::LOCATION.as_str();
 
     // Build geometry extraction expression as SimpleExpr
     let geo_extract_expr = if is_default_location {
@@ -317,7 +318,7 @@ fn geo_to_condition(geo: &GeoQuery, payload_col: &str) -> Result<Condition, Andr
         let jsonpath = format!(
             "$[0].\"{}\"[0].\"{}\"[0].\"@value\"",
             escape_jsonpath_key(&geo.geoproperty_iri),
-            escape_jsonpath_key(vocab::expanded::VALUE.as_str())
+            escape_jsonpath_key(vocab::expanded::properties::VALUE.as_str())
         );
         let extract = SeaExpr::cust(format!("jsonb_path_query_first(\"{}\", '{}')::text", payload_col, jsonpath));
         validated_geom_from_geojson(extract)
@@ -345,7 +346,7 @@ fn geo_to_condition(geo: &GeoQuery, payload_col: &str) -> Result<Condition, Andr
                 let jsonpath = format!(
                     "$[0].\"{}\"[0].\"{}\"[0].\"@value\"",
                     escape_jsonpath_key(&geo.geoproperty_iri),
-                    escape_jsonpath_key(vocab::expanded::VALUE.as_str())
+                    escape_jsonpath_key(vocab::expanded::properties::VALUE.as_str())
                 );
                 SeaExpr::cust(format!(
                     "ST_MakeValid(ST_SetSRID(ST_GeomFromGeoJSON(jsonb_path_query_first(\"{}\", '{}')::text), 4326))::geography",
@@ -380,8 +381,8 @@ fn geo_to_condition(geo: &GeoQuery, payload_col: &str) -> Result<Condition, Andr
 
     // For default location, add expiration guard to exclude expired location attributes
     if is_default_location {
-        let location_iri = vocab::expanded::LOCATION.as_str();
-        let expires_at_iri = vocab::expanded::EXPIRES_AT.as_str();
+        let location_iri = vocab::expanded::properties::LOCATION.as_str();
+        let expires_at_iri = vocab::expanded::properties::EXPIRES_AT.as_str();
         let guard_sql = format!(
             "EXISTS (\
                 SELECT 1 FROM jsonb_array_elements(\"{}\"->0->'{}') AS inst(elem) \
@@ -468,7 +469,7 @@ fn add_order_clause(
             let json_path = format!(
                 "$[0].\"{}\"[0].\"{}\"[0].\"@value\"",
                 escape_jsonpath_key(&term.attr_iri),
-                escape_jsonpath_key(vocab::expanded::VALUE.as_str())
+                escape_jsonpath_key(vocab::expanded::properties::VALUE.as_str())
             );
             let collation = term.collation.as_ref().map(|c| format!(" COLLATE \"{}\"", c.as_str())).unwrap_or_default();
             let order_expr = format!("jsonb_path_query_first(\"payload\", '{}'){}", json_path, collation);
@@ -485,7 +486,7 @@ fn add_order_clause(
 // Helper functions
 
 fn value_extraction_jsonpath(attr_iri: &str, sub_attrs: &[String], value_path: &[String]) -> String {
-    value_extraction_jsonpath_with_predicate(attr_iri, sub_attrs, value_path, vocab::expanded::VALUE.as_str())
+    value_extraction_jsonpath_with_predicate(attr_iri, sub_attrs, value_path, vocab::expanded::properties::VALUE.as_str())
 }
 
 fn value_extraction_jsonpath_with_predicate(attr_iri: &str, sub_attrs: &[String], value_path: &[String], predicate_iri: &str) -> String {
@@ -494,7 +495,11 @@ fn value_extraction_jsonpath_with_predicate(attr_iri: &str, sub_attrs: &[String]
         path.push_str(&format!("[0].\"{}\"", escape_jsonpath_key(sub)));
     }
     path.push_str(&format!("[0].\"{}\"[0]", escape_jsonpath_key(predicate_iri)));
-    let value_key = if predicate_iri == vocab::expanded::OBJECT.as_str() { "@id" } else { "@value" };
+    let value_key = if predicate_iri == vocab::expanded::properties::OBJECT.as_str() {
+        "@id"
+    } else {
+        "@value"
+    };
     path.push_str(&format!(".\"{}\"", value_key));
     for key in value_path {
         path.push_str(&format!(".\"{}\"", escape_jsonpath_key(key)));
@@ -520,14 +525,14 @@ fn build_reference_wkb(geometry: &str, coordinates: &serde_json::Value) -> Resul
 }
 
 fn build_geo_extract_geography(geoproperty_iri: &str) -> String {
-    let is_default_location = geoproperty_iri == vocab::expanded::LOCATION.as_str();
+    let is_default_location = geoproperty_iri == vocab::expanded::properties::LOCATION.as_str();
     if is_default_location {
         "\"location_geo\"".to_string()
     } else {
         format!(
             "ST_MakeValid(ST_SetSRID(ST_GeomFromGeoJSON((jsonb_path_query_first(\"payload\", '$[0].\"{}\"[0].\"{}\"[0].\"@value\"')::text)), 4326))::geography",
             escape_jsonpath_key(geoproperty_iri),
-            escape_jsonpath_key(vocab::expanded::VALUE.as_str())
+            escape_jsonpath_key(vocab::expanded::properties::VALUE.as_str())
         )
     }
 }
@@ -757,10 +762,10 @@ mod tests {
             },
             geometry: "Point".to_string(),
             coordinates: serde_json::json!([13.4, 52.5]),
-            geoproperty_iri: vocab::expanded::LOCATION.as_str().to_string(),
+            geoproperty_iri: vocab::expanded::properties::LOCATION.as_str().to_string(),
         });
         q.order_by = vec![CompiledOrderTerm {
-            attr_iri: vocab::expanded::LOCATION.as_str().to_string(),
+            attr_iri: vocab::expanded::properties::LOCATION.as_str().to_string(),
             direction: OrderDirection::DistAsc,
             collation: None,
         }];
@@ -779,10 +784,10 @@ mod tests {
             },
             geometry: "Point".to_string(),
             coordinates: serde_json::json!([2.3, 48.8]),
-            geoproperty_iri: vocab::expanded::LOCATION.as_str().to_string(),
+            geoproperty_iri: vocab::expanded::properties::LOCATION.as_str().to_string(),
         });
         q.order_by = vec![CompiledOrderTerm {
-            attr_iri: vocab::expanded::LOCATION.as_str().to_string(),
+            attr_iri: vocab::expanded::properties::LOCATION.as_str().to_string(),
             direction: OrderDirection::DistDesc,
             collation: None,
         }];
@@ -795,7 +800,7 @@ mod tests {
     fn build_with_order_by_dist_without_geo_returns_error() {
         let mut q = empty_query();
         q.order_by = vec![CompiledOrderTerm {
-            attr_iri: vocab::expanded::LOCATION.as_str().to_string(),
+            attr_iri: vocab::expanded::properties::LOCATION.as_str().to_string(),
             direction: OrderDirection::DistAsc,
             collation: None,
         }];
@@ -813,7 +818,7 @@ mod tests {
         .unwrap();
         q.ordering_geometry = Some(OrderingGeometry::new(wkb));
         q.order_by = vec![CompiledOrderTerm {
-            attr_iri: vocab::expanded::LOCATION.as_str().to_string(),
+            attr_iri: vocab::expanded::properties::LOCATION.as_str().to_string(),
             direction: OrderDirection::DistAsc,
             collation: None,
         }];
@@ -837,7 +842,7 @@ mod tests {
             },
             geometry: "Point".to_string(),
             coordinates: serde_json::json!([2.3522, 48.8566]),
-            geoproperty_iri: vocab::expanded::LOCATION.as_str().to_string(),
+            geoproperty_iri: vocab::expanded::properties::LOCATION.as_str().to_string(),
         });
         let wkb = crate::domain::geometry::Wkb::from_geojson_value(&serde_json::json!({
             "type": "Point",
@@ -846,7 +851,7 @@ mod tests {
         .unwrap();
         q.ordering_geometry = Some(OrderingGeometry::new(wkb));
         q.order_by = vec![CompiledOrderTerm {
-            attr_iri: vocab::expanded::LOCATION.as_str().to_string(),
+            attr_iri: vocab::expanded::properties::LOCATION.as_str().to_string(),
             direction: OrderDirection::DistAsc,
             collation: None,
         }];
@@ -869,7 +874,7 @@ mod tests {
             },
             geometry: "Point".to_string(),
             coordinates: serde_json::json!([13.4, 52.5]),
-            geoproperty_iri: vocab::expanded::LOCATION.as_str().to_string(),
+            geoproperty_iri: vocab::expanded::properties::LOCATION.as_str().to_string(),
         });
         let built = build_query(&q).unwrap();
         assert!(built.sql.contains("ST_DWithin"), "should contain spatial predicate");
@@ -899,7 +904,7 @@ mod tests {
             georel: GeoRel::Within,
             geometry: "Polygon".to_string(),
             coordinates: serde_json::json!([[[0.0, 0.0], [10.0, 0.0], [10.0, 10.0], [0.0, 10.0], [0.0, 0.0]]]),
-            geoproperty_iri: vocab::expanded::LOCATION.as_str().to_string(),
+            geoproperty_iri: vocab::expanded::properties::LOCATION.as_str().to_string(),
         });
         let built = build_query(&q).unwrap();
         assert!(built.sql.contains("ST_Within"), "should contain ST_Within spatial predicate");
@@ -930,7 +935,7 @@ mod tests {
                 georel: georel.clone(),
                 geometry: "Point".to_string(),
                 coordinates: serde_json::json!([1.0, 2.0]),
-                geoproperty_iri: vocab::expanded::LOCATION.as_str().to_string(),
+                geoproperty_iri: vocab::expanded::properties::LOCATION.as_str().to_string(),
             });
             let built = build_query(&q).unwrap();
             assert!(built.sql.contains("ST_GeomFromEWKB"), "{georel:?} SQL missing ST_GeomFromEWKB");

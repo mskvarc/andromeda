@@ -29,12 +29,12 @@ pub fn instance_is_null_sentinel(instance: &Value) -> bool {
             .and_then(|v| v.as_object())
             .and_then(|o| o.get(value_key))
             .and_then(|v| v.as_str())
-            .is_some_and(|s| s == vocab::expanded::NULL_URI.as_str() || s == vocab::expanded::NULL_IRI.as_str())
+            .is_some_and(|s| s == vocab::expanded::properties::NULL_URI.as_str() || s == vocab::expanded::properties::NULL_IRI.as_str())
     };
 
-    check_value_null(vocab::expanded::VALUE.as_str(), "@value")
-        || check_value_null(vocab::expanded::OBJECT.as_str(), "@id")
-        || check_value_null(vocab::expanded::LANGUAGE_MAP.as_str(), "@value")
+    check_value_null(vocab::expanded::properties::VALUE.as_str(), "@value")
+        || check_value_null(vocab::expanded::properties::OBJECT.as_str(), "@id")
+        || check_value_null(vocab::expanded::properties::LANGUAGE_MAP.as_str(), "@value")
 }
 
 // ---------------------------------------------------------------------------
@@ -44,7 +44,7 @@ pub fn instance_is_null_sentinel(instance: &Value) -> bool {
 /// Extract the `datasetId` (`@id` value) from an expanded attribute instance.
 pub fn get_instance_dataset_id(instance: &Value) -> Option<String> {
     instance
-        .get(vocab::expanded::DATASET_ID.as_str())
+        .get(vocab::expanded::properties::DATASET_ID.as_str())
         .and_then(|v| v.as_array())
         .and_then(|arr| arr.first())
         .and_then(|v| v.as_object())
@@ -100,7 +100,7 @@ pub fn extract_scopes(expanded: &Value) -> Vec<String> {
     let Some(obj) = expanded_object_ref(expanded) else {
         return Vec::new();
     };
-    let Some(scope_value) = obj.get(vocab::expanded::SCOPE.as_str()) else {
+    let Some(scope_value) = obj.get(vocab::expanded::properties::SCOPE.as_str()) else {
         return Vec::new();
     };
     match scope_value {
@@ -121,7 +121,7 @@ pub fn extract_scopes(expanded: &Value) -> Vec<String> {
 pub fn extract_expires_at(expanded: &Value) -> Option<chrono::DateTime<chrono::Utc>> {
     let obj = expanded_object_ref(expanded)?;
     let dt_str = obj
-        .get(vocab::expanded::EXPIRES_AT.as_str())?
+        .get(vocab::expanded::properties::EXPIRES_AT.as_str())?
         .as_array()
         .and_then(|arr| arr.first())
         .and_then(|v| v.get("@value"))
@@ -135,17 +135,17 @@ pub fn extract_expires_at(expanded: &Value) -> Option<chrono::DateTime<chrono::U
 
 /// Extract the entity's `location` GeoProperty decoded into canonical [`Wkb`].
 pub fn extract_location_wkb(expanded: &Value) -> Option<Wkb> {
-    extract_geo_property_wkb(expanded, vocab::expanded::LOCATION)
+    extract_geo_property_wkb(expanded, vocab::expanded::properties::LOCATION)
 }
 
 /// Extract the entity's `observationSpace` GeoProperty decoded into canonical [`Wkb`].
 pub fn extract_observation_space_wkb(expanded: &Value) -> Option<Wkb> {
-    extract_geo_property_wkb(expanded, vocab::expanded::OBSERVATION_SPACE)
+    extract_geo_property_wkb(expanded, vocab::expanded::properties::OBSERVATION_SPACE)
 }
 
 /// Extract the entity's `operationSpace` GeoProperty decoded into canonical [`Wkb`].
 pub fn extract_operation_space_wkb(expanded: &Value) -> Option<Wkb> {
-    extract_geo_property_wkb(expanded, vocab::expanded::OPERATION_SPACE)
+    extract_geo_property_wkb(expanded, vocab::expanded::properties::OPERATION_SPACE)
 }
 
 fn extract_geo_property_wkb(expanded: &Value, iri: Iri<&'static str>) -> Option<Wkb> {
@@ -167,7 +167,7 @@ fn geo_node_for_property<'a>(expanded: &'a Value, iri: Iri<&'static str>) -> Opt
     let prop = obj.get(iri.as_str())?;
     prop.as_array()
         .and_then(|arr| arr.last())
-        .and_then(|inst| inst.get(vocab::expanded::VALUE.as_str()))
+        .and_then(|inst| inst.get(vocab::expanded::properties::VALUE.as_str()))
         .and_then(|v| v.as_array())
         .and_then(|arr| arr.first())
 }
@@ -201,7 +201,7 @@ fn expanded_geo_node_to_geometry(node: &Value) -> Option<Geometry<f64>> {
     let obj = node.as_object()?;
     let geom_type = obj.get("@type")?.as_array()?.first()?.as_str()?.strip_prefix(vocab::prefix::GEOJSON.as_str())?;
 
-    let coords_outer = obj.get(vocab::expanded::COORDINATES.as_str())?.as_array()?.first()?;
+    let coords_outer = obj.get(vocab::expanded::properties::COORDINATES.as_str())?.as_array()?.first()?;
 
     match geom_type {
         "Point" => Some(Geometry::Point(Point::from(walk_position(coords_outer)?))),
@@ -485,7 +485,7 @@ pub fn append_entity_attrs(entity: &mut Value, attrs: &Value, no_overwrite: bool
         }
 
         // Scope: merge arrays with deduplication
-        if key == vocab::expanded::SCOPE.as_str() {
+        if key == vocab::expanded::properties::SCOPE.as_str() {
             if let (Some(Value::Array(existing_scopes)), Some(new_scopes)) = (entity_obj.get_mut(key), value.as_array()) {
                 if no_overwrite {
                     // noOverwrite: add scope values that don't already exist
@@ -581,7 +581,7 @@ pub fn update_entity_attrs(entity: &mut Value, attrs: &Value) -> Result<Vec<Stri
         }
 
         // Scope: only update if already present, otherwise report as not updated
-        if key == vocab::expanded::SCOPE.as_str() {
+        if key == vocab::expanded::properties::SCOPE.as_str() {
             if entity_obj.contains_key(key) {
                 entity_obj.insert(key.clone(), value.clone());
             } else {
@@ -655,7 +655,7 @@ pub fn partial_update_attr(entity: &mut Value, attr_iri: &str, dataset_id: Optio
 
         let found = instances.iter_mut().find(|instance| {
             instance
-                .get(vocab::expanded::DATASET_ID.as_str())
+                .get(vocab::expanded::properties::DATASET_ID.as_str())
                 .and_then(|v| v.as_array())
                 .and_then(|arr| arr.first())
                 .and_then(|obj| obj.get("@id"))

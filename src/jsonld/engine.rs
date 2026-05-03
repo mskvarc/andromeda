@@ -50,21 +50,21 @@ use tracing::info;
 mod static_keys {
     use super::{LazyLock, vocab};
 
-    pub(super) static PROPERTY: LazyLock<String> = LazyLock::new(|| vocab::expanded::PROPERTY.as_str().to_owned());
-    pub(super) static RELATIONSHIP: LazyLock<String> = LazyLock::new(|| vocab::expanded::RELATIONSHIP.as_str().to_owned());
-    pub(super) static GEO_PROPERTY: LazyLock<String> = LazyLock::new(|| vocab::expanded::GEO_PROPERTY.as_str().to_owned());
-    pub(super) static LANGUAGE_PROPERTY: LazyLock<String> = LazyLock::new(|| vocab::expanded::LANGUAGE_PROPERTY.as_str().to_owned());
-    pub(super) static VOCAB_PROPERTY: LazyLock<String> = LazyLock::new(|| vocab::expanded::VOCAB_PROPERTY.as_str().to_owned());
-    pub(super) static JSON_PROPERTY: LazyLock<String> = LazyLock::new(|| vocab::expanded::JSON_PROPERTY.as_str().to_owned());
-    pub(super) static VALUE: LazyLock<String> = LazyLock::new(|| vocab::expanded::VALUE.as_str().to_owned());
-    pub(super) static OBJECT: LazyLock<String> = LazyLock::new(|| vocab::expanded::OBJECT.as_str().to_owned());
-    pub(super) static LANGUAGE_MAP: LazyLock<String> = LazyLock::new(|| vocab::expanded::LANGUAGE_MAP.as_str().to_owned());
-    pub(super) static VOCAB: LazyLock<String> = LazyLock::new(|| vocab::expanded::VOCAB.as_str().to_owned());
-    pub(super) static JSON: LazyLock<String> = LazyLock::new(|| vocab::expanded::JSON.as_str().to_owned());
-    pub(super) static SCOPE: LazyLock<String> = LazyLock::new(|| vocab::expanded::SCOPE.as_str().to_owned());
-    pub(super) static DATE_TIME: LazyLock<String> = LazyLock::new(|| vocab::expanded::DATE_TIME.as_str().to_owned());
-    pub(super) static COORDINATES: LazyLock<String> = LazyLock::new(|| vocab::expanded::COORDINATES.as_str().to_owned());
-    pub(super) static BBOX: LazyLock<String> = LazyLock::new(|| vocab::expanded::BBOX.as_str().to_owned());
+    pub(super) static PROPERTY: LazyLock<String> = LazyLock::new(|| vocab::expanded::classes::PROPERTY.as_str().to_owned());
+    pub(super) static RELATIONSHIP: LazyLock<String> = LazyLock::new(|| vocab::expanded::classes::RELATIONSHIP.as_str().to_owned());
+    pub(super) static GEO_PROPERTY: LazyLock<String> = LazyLock::new(|| vocab::expanded::classes::GEO_PROPERTY.as_str().to_owned());
+    pub(super) static LANGUAGE_PROPERTY: LazyLock<String> = LazyLock::new(|| vocab::expanded::classes::LANGUAGE_PROPERTY.as_str().to_owned());
+    pub(super) static VOCAB_PROPERTY: LazyLock<String> = LazyLock::new(|| vocab::expanded::classes::VOCAB_PROPERTY.as_str().to_owned());
+    pub(super) static JSON_PROPERTY: LazyLock<String> = LazyLock::new(|| vocab::expanded::classes::JSON_PROPERTY.as_str().to_owned());
+    pub(super) static VALUE: LazyLock<String> = LazyLock::new(|| vocab::expanded::properties::VALUE.as_str().to_owned());
+    pub(super) static OBJECT: LazyLock<String> = LazyLock::new(|| vocab::expanded::properties::OBJECT.as_str().to_owned());
+    pub(super) static LANGUAGE_MAP: LazyLock<String> = LazyLock::new(|| vocab::expanded::properties::LANGUAGE_MAP.as_str().to_owned());
+    pub(super) static VOCAB: LazyLock<String> = LazyLock::new(|| vocab::expanded::properties::VOCAB.as_str().to_owned());
+    pub(super) static JSON: LazyLock<String> = LazyLock::new(|| vocab::expanded::properties::JSON.as_str().to_owned());
+    pub(super) static SCOPE: LazyLock<String> = LazyLock::new(|| vocab::expanded::properties::SCOPE.as_str().to_owned());
+    pub(super) static DATE_TIME: LazyLock<String> = LazyLock::new(|| vocab::expanded::classes::DATE_TIME.as_str().to_owned());
+    pub(super) static COORDINATES: LazyLock<String> = LazyLock::new(|| vocab::expanded::properties::COORDINATES.as_str().to_owned());
+    pub(super) static BBOX: LazyLock<String> = LazyLock::new(|| vocab::expanded::properties::BBOX.as_str().to_owned());
 }
 
 // ---------------------------------------------------------------------------
@@ -1279,7 +1279,7 @@ fn parse_user_context_into(value: &serde_json::Value, table: &mut UserTermTable)
                             if let Some(id_iri) = id {
                                 let coercion = match type_str {
                                     Some("@id") => Some(TermCoercion::Id),
-                                    Some(t) if t == vocab::expanded::DATE_TIME.as_str() => Some(TermCoercion::DateTime),
+                                    Some(t) if t == vocab::expanded::classes::DATE_TIME.as_str() => Some(TermCoercion::DateTime),
                                     Some("DateTime") => Some(TermCoercion::DateTime),
                                     Some(other) => Some(TermCoercion::TypeIri(Box::<str>::from(other))),
                                     None => None,

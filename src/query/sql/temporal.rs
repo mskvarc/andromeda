@@ -615,7 +615,7 @@ fn q_expr_to_condition(expr: &Expr, payload_col: &str) -> Result<Condition, Andr
                 let op_str = cmp_op_sql(op);
                 let (cast, bind_val) = scalar_to_sql_bind(scalar);
                 let has_object_jsonpath =
-                    value_extraction_jsonpath_with_predicate(&path.attr, &path.sub_attrs, &path.value_path, vocab::expanded::OBJECT.as_str());
+                    value_extraction_jsonpath_with_predicate(&path.attr, &path.sub_attrs, &path.value_path, vocab::expanded::properties::OBJECT.as_str());
                 let extract_object = format!("jsonb_path_query_first({}, '{}')", quoted_col, has_object_jsonpath);
                 let sql = format!(
                     "(COALESCE(({} #>> '{{}}'), ({} #>> '{{}}')){}  {} $1{})",
@@ -691,7 +691,7 @@ fn q_expr_to_condition(expr: &Expr, payload_col: &str) -> Result<Condition, Andr
 fn geo_to_condition(geo: &GeoQuery, payload_col: &str) -> Result<Condition, AndromedaError> {
     use crate::query::compiled::GeoRel;
 
-    let is_default_location = geo.geoproperty_iri == vocab::expanded::LOCATION.as_str();
+    let is_default_location = geo.geoproperty_iri == vocab::expanded::properties::LOCATION.as_str();
     let quoted_col = quote_col_ref(payload_col);
 
     // Build geometry extraction expression
@@ -706,7 +706,7 @@ fn geo_to_condition(geo: &GeoQuery, payload_col: &str) -> Result<Condition, Andr
             "ST_MakeValid(ST_SetSRID(ST_GeomFromGeoJSON((jsonb_path_query_first({}, '$[0].\"{}\"[0].\"{}\"[0].\"@value\"')::text)), 4326))",
             quoted_col,
             escape_jsonpath_key(&geo.geoproperty_iri),
-            escape_jsonpath_key(vocab::expanded::VALUE.as_str())
+            escape_jsonpath_key(vocab::expanded::properties::VALUE.as_str())
         )
     };
 
@@ -762,8 +762,8 @@ fn geo_to_condition(geo: &GeoQuery, payload_col: &str) -> Result<Condition, Andr
     // For default location, add expiration guard
     if is_default_location {
         let quoted_col = quote_col_ref(payload_col);
-        let location_iri = vocab::expanded::LOCATION.as_str();
-        let expires_at_iri = vocab::expanded::EXPIRES_AT.as_str();
+        let location_iri = vocab::expanded::properties::LOCATION.as_str();
+        let expires_at_iri = vocab::expanded::properties::EXPIRES_AT.as_str();
         let guard_sql = format!(
             "EXISTS (\
                 SELECT 1 FROM jsonb_array_elements({}->0->'{}') AS inst(elem) \
@@ -868,7 +868,7 @@ fn single_scope_to_temporal_exists(
 // ============================================================================
 
 fn value_extraction_jsonpath(attr_iri: &str, sub_attrs: &[String], value_path: &[String]) -> String {
-    value_extraction_jsonpath_with_predicate(attr_iri, sub_attrs, value_path, vocab::expanded::VALUE.as_str())
+    value_extraction_jsonpath_with_predicate(attr_iri, sub_attrs, value_path, vocab::expanded::properties::VALUE.as_str())
 }
 
 fn value_extraction_jsonpath_with_predicate(attr_iri: &str, sub_attrs: &[String], value_path: &[String], predicate_iri: &str) -> String {
@@ -880,7 +880,11 @@ fn value_extraction_jsonpath_with_predicate(attr_iri: &str, sub_attrs: &[String]
 
     path.push_str(&format!("[0].\"{}\"[0]", escape_jsonpath_key(predicate_iri)));
 
-    let value_key = if predicate_iri == vocab::expanded::OBJECT.as_str() { "@id" } else { "@value" };
+    let value_key = if predicate_iri == vocab::expanded::properties::OBJECT.as_str() {
+        "@id"
+    } else {
+        "@value"
+    };
 
     path.push_str(&format!(".\"{}\"", value_key));
     for key in value_path {

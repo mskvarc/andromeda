@@ -199,7 +199,7 @@ fn extract_geoproperty_wkb(entity: &Value, geoproperty_iri: &str) -> Option<crat
     let geojson_value = prop_value
         .as_array()
         .and_then(|arr| arr.first())
-        .and_then(|inst| inst.get(vocab::expanded::VALUE.as_str()))
+        .and_then(|inst| inst.get(vocab::expanded::properties::VALUE.as_str()))
         .and_then(|v| v.as_array())
         .and_then(|arr| arr.first())
         .and_then(|v| v.get("@value"))?;

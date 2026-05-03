@@ -360,7 +360,7 @@ pub fn compile_geo_q(geo_q: &serde_json::Value, sub_id: &str) -> Option<Compiled
     let geoproperty_iri = geo_obj
         .get("geoproperty")
         .and_then(|v| v.as_str())
-        .map_or_else(|| vocab::expanded::LOCATION.as_str().to_owned(), ToOwned::to_owned);
+        .map_or_else(|| vocab::expanded::properties::LOCATION.as_str().to_owned(), ToOwned::to_owned);
 
     let geojson_value = serde_json::json!({
         "type": geometry_str,

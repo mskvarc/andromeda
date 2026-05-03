@@ -628,7 +628,7 @@ impl TemporalService {
         for attr_iri in aggr_data.keys() {
             let mut skeleton = serde_json::Map::new();
             skeleton.insert("@id".to_string(), json!(entity_id));
-            skeleton.insert(attr_iri.clone(), json!([{"@type": [vocab::expanded::PROPERTY]}])); // clone: owned key for JSON map insertion
+            skeleton.insert(attr_iri.clone(), json!([{"@type": [vocab::expanded::classes::PROPERTY]}])); // clone: owned key for JSON map insertion
             if let Ok(compacted) = self.engine.compact(Value::Object(skeleton), context, CompactOptions::default()).await
                 && let Some(obj) = compacted.as_object()
             {

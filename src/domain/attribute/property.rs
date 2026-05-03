@@ -116,8 +116,8 @@ mod tests {
         pretty_assertions::assert_eq!(property.value_type.as_deref(), Some("Integer"));
         let expanded = property.expand::<serde_json::Value>();
         let obj = expanded.as_object().expect("object");
-        assert!(obj.contains_key(vocab::expanded::VALUE_TYPE.as_str()));
-        assert!(obj.contains_key(vocab::expanded::CREATED_AT.as_str()));
-        assert!(obj.contains_key(vocab::expanded::MODIFIED_AT.as_str()));
+        assert!(obj.contains_key(vocab::expanded::properties::VALUE_TYPE.as_str()));
+        assert!(obj.contains_key(vocab::expanded::properties::CREATED_AT.as_str()));
+        assert!(obj.contains_key(vocab::expanded::properties::MODIFIED_AT.as_str()));
     }
 }

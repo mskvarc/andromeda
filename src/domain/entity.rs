@@ -663,7 +663,7 @@ mod tests {
         let expanded = entity.expand::<serde_json::Value>();
         let obj = expanded.as_object().expect("expanded is object");
 
-        let scope = &obj[vocab::expanded::SCOPE.as_str()];
+        let scope = &obj[vocab::expanded::properties::SCOPE.as_str()];
         pretty_assertions::assert_eq!(scope, &json!([{"@value": "/Madrid/Gardens"}]));
     }
 
@@ -687,9 +687,9 @@ mod tests {
         let obj = expanded.as_object().expect("expanded is object");
 
         // Timestamps should be typed values
-        assert!(obj.contains_key(vocab::expanded::CREATED_AT.as_str()));
-        let created = &obj[vocab::expanded::CREATED_AT.as_str()];
-        pretty_assertions::assert_eq!(created[0]["@type"], vocab::expanded::DATE_TIME.as_str());
+        assert!(obj.contains_key(vocab::expanded::properties::CREATED_AT.as_str()));
+        let created = &obj[vocab::expanded::properties::CREATED_AT.as_str()];
+        pretty_assertions::assert_eq!(created[0]["@type"], vocab::expanded::classes::DATE_TIME.as_str());
 
         // Flattened attribute
         assert!(obj.contains_key("temperature"));
@@ -708,14 +708,14 @@ mod tests {
         let expanded = entity.expand::<serde_json::Value>();
         let obj = expanded.as_object().expect("expanded is object");
 
-        assert!(!obj.contains_key(vocab::expanded::SCOPE.as_str()));
-        assert!(!obj.contains_key(vocab::expanded::EXPIRES_AT.as_str()));
-        assert!(!obj.contains_key(vocab::expanded::LOCATION.as_str()));
-        assert!(!obj.contains_key(vocab::expanded::OBSERVATION_SPACE.as_str()));
-        assert!(!obj.contains_key(vocab::expanded::OPERATION_SPACE.as_str()));
-        assert!(!obj.contains_key(vocab::expanded::CREATED_AT.as_str()));
-        assert!(!obj.contains_key(vocab::expanded::MODIFIED_AT.as_str()));
-        assert!(!obj.contains_key(vocab::expanded::DELETED_AT.as_str()));
+        assert!(!obj.contains_key(vocab::expanded::properties::SCOPE.as_str()));
+        assert!(!obj.contains_key(vocab::expanded::properties::EXPIRES_AT.as_str()));
+        assert!(!obj.contains_key(vocab::expanded::properties::LOCATION.as_str()));
+        assert!(!obj.contains_key(vocab::expanded::properties::OBSERVATION_SPACE.as_str()));
+        assert!(!obj.contains_key(vocab::expanded::properties::OPERATION_SPACE.as_str()));
+        assert!(!obj.contains_key(vocab::expanded::properties::CREATED_AT.as_str()));
+        assert!(!obj.contains_key(vocab::expanded::properties::MODIFIED_AT.as_str()));
+        assert!(!obj.contains_key(vocab::expanded::properties::DELETED_AT.as_str()));
     }
 
     #[test]
@@ -735,7 +735,7 @@ mod tests {
         let expanded = entity.expand::<serde_json::Value>();
         let obj = expanded.as_object().expect("expanded is object");
 
-        let location = &obj[vocab::expanded::LOCATION.as_str()];
+        let location = &obj[vocab::expanded::properties::LOCATION.as_str()];
         // Location is an AttributeValue, expanded via custom
         let arr = location.as_array().expect("location is array");
         assert!(!arr.is_empty());

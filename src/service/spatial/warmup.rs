@@ -32,7 +32,7 @@ pub async fn warmup_location(index: &Arc<SpatialEntityIndex>, pool: &PgPool, ten
         .await
         .map_err(|e| AndromedaError::internal(format!("spatial warmup query failed: {}", e)))?;
 
-    let Ok(location_iri) = IriBuf::new(vocab::expanded::LOCATION.as_str().to_string()) else {
+    let Ok(location_iri) = IriBuf::new(vocab::expanded::properties::LOCATION.as_str().to_string()) else {
         return Err(AndromedaError::internal("spatial warmup: LOCATION IRI invalid"));
     };
 

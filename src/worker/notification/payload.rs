@@ -104,8 +104,8 @@ pub async fn build_notification_data(params: NotificationBuildParams<'_>) -> Vec
         if sub.notification_sys_attrs == SysAttrsInclusion::Include
             && let Some(obj) = expanded_entity_object_mut(&mut entity)
         {
-            let ca = obj.get(vocab::expanded::CREATED_AT.as_str()).cloned();
-            let ma = obj.get(vocab::expanded::MODIFIED_AT.as_str()).cloned();
+            let ca = obj.get(vocab::expanded::properties::CREATED_AT.as_str()).cloned();
+            let ma = obj.get(vocab::expanded::properties::MODIFIED_AT.as_str()).cloned();
             if let (Some(ca), Some(ma)) = (ca, ma) {
                 let default_context_prefix = format!("{}default-context/", vocab::prefix::NGSI_LD.as_str());
                 inject_attr_sys_attrs(obj, &ca, &ma, &default_context_prefix);
@@ -512,8 +512,9 @@ pub fn strip_to_structural_keys(entity: &Value, sys_attrs: SysAttrsInclusion) ->
     for (key, value) in obj {
         let keep = key == "@id"
             || key == "@type"
-            || key == vocab::expanded::DELETED_AT.as_str()
-            || (sys_attrs == SysAttrsInclusion::Include && (key == vocab::expanded::CREATED_AT.as_str() || key == vocab::expanded::MODIFIED_AT.as_str()));
+            || key == vocab::expanded::properties::DELETED_AT.as_str()
+            || (sys_attrs == SysAttrsInclusion::Include
+                && (key == vocab::expanded::properties::CREATED_AT.as_str() || key == vocab::expanded::properties::MODIFIED_AT.as_str()));
         if keep {
             stripped.insert(key.clone(), value.clone());
         }
@@ -527,10 +528,10 @@ fn nullify_entity_attributes(entity: &mut Value) {
         .keys()
         .filter(|k| {
             !k.starts_with('@')
-                && *k != vocab::expanded::CREATED_AT.as_str()
-                && *k != vocab::expanded::MODIFIED_AT.as_str()
-                && *k != vocab::expanded::DELETED_AT.as_str()
-                && *k != vocab::expanded::SCOPE.as_str()
+                && *k != vocab::expanded::properties::CREATED_AT.as_str()
+                && *k != vocab::expanded::properties::MODIFIED_AT.as_str()
+                && *k != vocab::expanded::properties::DELETED_AT.as_str()
+                && *k != vocab::expanded::properties::SCOPE.as_str()
         })
         .cloned()
         .collect();
@@ -546,21 +547,21 @@ fn nullify_entity_attributes(entity: &mut Value) {
 fn nullify_attribute_instance(instance: &mut Value) {
     let Some(obj) = instance.as_object_mut() else { return };
 
-    let null_value = serde_json::json!([{"@value": vocab::expanded::NULL_URI}]);
-    let null_object = serde_json::json!([{"@id": vocab::expanded::NULL_URI}]);
-    let null_json = serde_json::json!([{"@value": vocab::expanded::NULL_URI, "@type": "@json"}]);
-    let null_vocab = serde_json::json!([{"@id": vocab::expanded::NULL_URI}]);
+    let null_value = serde_json::json!([{"@value": vocab::expanded::properties::NULL_URI}]);
+    let null_object = serde_json::json!([{"@id": vocab::expanded::properties::NULL_URI}]);
+    let null_json = serde_json::json!([{"@value": vocab::expanded::properties::NULL_URI, "@type": "@json"}]);
+    let null_vocab = serde_json::json!([{"@id": vocab::expanded::properties::NULL_URI}]);
 
-    if obj.contains_key(vocab::expanded::OBJECT.as_str()) {
-        obj.insert(vocab::expanded::OBJECT.as_str().to_string(), null_object);
-    } else if obj.contains_key(vocab::expanded::LANGUAGE_MAP.as_str()) {
-        obj.insert(vocab::expanded::LANGUAGE_MAP.as_str().to_string(), null_value);
-    } else if obj.contains_key(vocab::expanded::JSON.as_str()) {
-        obj.insert(vocab::expanded::JSON.as_str().to_string(), null_json);
-    } else if obj.contains_key(vocab::expanded::VOCAB.as_str()) {
-        obj.insert(vocab::expanded::VOCAB.as_str().to_string(), null_vocab);
+    if obj.contains_key(vocab::expanded::properties::OBJECT.as_str()) {
+        obj.insert(vocab::expanded::properties::OBJECT.as_str().to_string(), null_object);
+    } else if obj.contains_key(vocab::expanded::properties::LANGUAGE_MAP.as_str()) {
+        obj.insert(vocab::expanded::properties::LANGUAGE_MAP.as_str().to_string(), null_value);
+    } else if obj.contains_key(vocab::expanded::properties::JSON.as_str()) {
+        obj.insert(vocab::expanded::properties::JSON.as_str().to_string(), null_json);
+    } else if obj.contains_key(vocab::expanded::properties::VOCAB.as_str()) {
+        obj.insert(vocab::expanded::properties::VOCAB.as_str().to_string(), null_vocab);
     } else {
-        obj.insert(vocab::expanded::VALUE.as_str().to_string(), null_value);
+        obj.insert(vocab::expanded::properties::VALUE.as_str().to_string(), null_value);
     }
 }
 
@@ -578,9 +579,12 @@ fn fix_null_language_maps(entity: &mut Value) {
                     None
                 }
             })
-            == Some(vocab::expanded::NULL_URI.as_str());
+            == Some(vocab::expanded::properties::NULL_URI.as_str());
         if is_null_lang_map && let Some(attr) = value.as_object_mut() {
-            attr.insert("languageMap".to_string(), Value::String(vocab::expanded::NULL_URI.as_str().to_string()));
+            attr.insert(
+                "languageMap".to_string(),
+                Value::String(vocab::expanded::properties::NULL_URI.as_str().to_string()),
+            );
         }
     }
 }
@@ -608,7 +612,7 @@ fn inject_deleted_attributes(entity: &mut Value, changed_attributes: &[String], 
             if let Some(mut instance) = first_instance {
                 nullify_attribute_instance(&mut instance);
                 if let Some(obj) = instance.as_object_mut() {
-                    obj.remove(vocab::expanded::DATASET_ID.as_str());
+                    obj.remove(vocab::expanded::properties::DATASET_ID.as_str());
                 }
                 if let Some(ts) = deleted_at {
                     inject_deleted_at_on_instance(&mut instance, ts);
@@ -635,7 +639,7 @@ fn inject_deleted_instances(
         .iter()
         .map(|inst| {
             inst.as_object()
-                .and_then(|o| o.get(vocab::expanded::DATASET_ID.as_str()))
+                .and_then(|o| o.get(vocab::expanded::properties::DATASET_ID.as_str()))
                 .and_then(|v| v.as_array())
                 .and_then(|a| a.first())
                 .and_then(|v| v.as_object())
@@ -649,7 +653,7 @@ fn inject_deleted_instances(
     for prev_inst in prev_arr {
         let prev_ds_id = prev_inst
             .as_object()
-            .and_then(|o| o.get(vocab::expanded::DATASET_ID.as_str()))
+            .and_then(|o| o.get(vocab::expanded::properties::DATASET_ID.as_str()))
             .and_then(|v| v.as_array())
             .and_then(|a| a.first())
             .and_then(|v| v.as_object())
@@ -677,9 +681,9 @@ fn inject_deleted_instances(
 fn inject_deleted_at_on_instance(instance: &mut Value, ts: DateTime<Utc>) {
     if let Some(obj) = instance.as_object_mut() {
         obj.insert(
-            vocab::expanded::DELETED_AT.as_str().to_string(),
+            vocab::expanded::properties::DELETED_AT.as_str().to_string(),
             serde_json::json!([{
-                "@type": vocab::expanded::DATE_TIME.as_str(),
+                "@type": vocab::expanded::classes::DATE_TIME.as_str(),
                 "@value": ts.to_rfc3339_opts(SecondsFormat::Millis, true)
             }]),
         );
@@ -718,7 +722,7 @@ fn filter_entity_by_dataset_id(entity: &mut Value, dataset_ids: &[String]) {
             .filter(|instance| {
                 let instance_dataset_id = instance
                     .as_object()
-                    .and_then(|o| o.get(vocab::expanded::DATASET_ID.as_str()))
+                    .and_then(|o| o.get(vocab::expanded::properties::DATASET_ID.as_str()))
                     .and_then(|v| v.as_array())
                     .and_then(|a| a.first())
                     .and_then(|v| v.as_object())

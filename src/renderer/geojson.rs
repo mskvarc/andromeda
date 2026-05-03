@@ -122,9 +122,9 @@ fn entity_to_feature(entity: &Value, geometry_property: Option<&str>) -> Feature
 /// Extract a GeoJSON [`geojson::Geometry`] from an entity object using the
 /// configured geometry property name.
 fn extract_geometry(obj: &Map<String, Value>, geometry_property: Option<&str>) -> Option<geojson::Geometry> {
-    let geom_key = geometry_property.unwrap_or(vocab::compact::LOCATION);
-    let location_keys: &[&str] = &[vocab::compact::LOCATION, vocab::expanded::LOCATION.as_str()];
-    let keys: &[&str] = if geom_key == vocab::compact::LOCATION {
+    let geom_key = geometry_property.unwrap_or(vocab::compact::properties::LOCATION);
+    let location_keys: &[&str] = &[vocab::compact::properties::LOCATION, vocab::expanded::properties::LOCATION.as_str()];
+    let keys: &[&str] = if geom_key == vocab::compact::properties::LOCATION {
         location_keys
     } else {
         // Single custom key -- use a local slice

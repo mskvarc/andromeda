@@ -93,6 +93,6 @@ mod tests {
         };
         let expanded = relationship.expand::<serde_json::Value>();
         let obj = expanded.as_object().expect("object");
-        assert!(obj.contains_key(vocab::expanded::OBJECT_TYPE.as_str()));
+        assert!(obj.contains_key(vocab::expanded::properties::OBJECT_TYPE.as_str()));
     }
 }

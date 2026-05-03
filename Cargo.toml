@@ -36,7 +36,7 @@ headers = "0.4.1"
 indexmap = { version = "2.14.0", features = ["serde"] }
 iri-rs = { version = "3.3.4", features = ["serde", "static"] }
 iso8601-duration = { version = "0.2.0", features = ["chrono", "serde"] }
-jsonld = { path = "../fork/json-ld/jsonld", features = ["expandable-serde_json", "reqwest", "serde", "serde_json"] }
+jsonld = { path = "../fork/json-ld/jsonld", features = ["expandable-serde_json", "reqwest", "serde", "serde_json", "vocab"] }
 jsonld-core = { path = "../fork/json-ld/jsonld-core" }
 jsonld-expandable-core = { path = "../fork/json-ld/jsonld-expandable-core", features = ["chrono", "serde_json"] }
 jsonld-syntax = { path = "../fork/json-ld/jsonld-syntax", features = ["serde_json"] }

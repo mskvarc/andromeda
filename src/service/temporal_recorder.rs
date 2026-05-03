@@ -22,13 +22,13 @@ use urn_rs::Urn;
 fn is_system_attribute(attr_name: &str) -> bool {
     matches!(
         attr_name,
-        value if value == vocab::expanded::CREATED_AT.as_str()
-            || value == vocab::expanded::DATASET_ID.as_str()
-            || value == vocab::expanded::DELETED_AT.as_str()
-            || value == vocab::expanded::INSTANCE_ID.as_str()
-            || value == vocab::expanded::MODIFIED_AT.as_str()
-            || value == vocab::expanded::OBSERVED_AT.as_str()
-            || value == vocab::expanded::UNIT_CODE.as_str()
+        value if value == vocab::expanded::properties::CREATED_AT.as_str()
+            || value == vocab::expanded::properties::DATASET_ID.as_str()
+            || value == vocab::expanded::properties::DELETED_AT.as_str()
+            || value == vocab::expanded::properties::INSTANCE_ID.as_str()
+            || value == vocab::expanded::properties::MODIFIED_AT.as_str()
+            || value == vocab::expanded::properties::OBSERVED_AT.as_str()
+            || value == vocab::expanded::properties::UNIT_CODE.as_str()
     )
 }
 
@@ -114,7 +114,7 @@ impl TemporalRecorder {
 
             // Handle scope specially: scopes are NOT attributes -- they go to scope_history,
             // not through the TEA/attribute_history pipeline (NGSI-LD clause 4.5.4).
-            if attr_name == vocab::expanded::SCOPE.as_str() {
+            if attr_name == vocab::expanded::properties::SCOPE.as_str() {
                 if let Some(scope_arr) = attr_value.as_array() {
                     for scope_entry in scope_arr {
                         if let Some(scope_val) = scope_entry.as_object().and_then(|o| o.get("@value")).and_then(|v| v.as_str()) {
@@ -314,7 +314,7 @@ impl TemporalRecorder {
                     continue;
                 }
 
-                if attr_name == vocab::expanded::SCOPE.as_str() {
+                if attr_name == vocab::expanded::properties::SCOPE.as_str() {
                     if let Some(scope_arr) = attr_value.as_array() {
                         for scope_entry in scope_arr {
                             if let Some(scope_val) = scope_entry.as_object().and_then(|o| o.get("@value")).and_then(|v| v.as_str()) {
@@ -475,7 +475,7 @@ impl TemporalRecorder {
             time: Utc::now(),
             tea_id: uuid::Uuid::nil(),
             value_number: None,
-            value_string: Some(vocab::expanded::NULL_URI.as_str().to_owned()),
+            value_string: Some(vocab::expanded::properties::NULL_URI.as_str().to_owned()),
             value_bool: None,
             value_geo: None,
             value_object: None,
@@ -623,7 +623,7 @@ fn extract_typed_value(instance: &Value, attribute_type: AttributeType) -> Resul
     match attribute_type {
         AttributeType::Relationship => {
             let uri = instance
-                .get(vocab::expanded::OBJECT.as_str())
+                .get(vocab::expanded::properties::OBJECT.as_str())
                 .and_then(|v| v.as_array())
                 .and_then(|arr| arr.first())
                 .and_then(|obj| obj.get("@id"))
@@ -633,7 +633,7 @@ fn extract_typed_value(instance: &Value, attribute_type: AttributeType) -> Resul
         }
         AttributeType::GeoProperty => {
             let geo_node = instance
-                .get(vocab::expanded::VALUE.as_str())
+                .get(vocab::expanded::properties::VALUE.as_str())
                 .and_then(|v| v.as_array())
                 .and_then(|arr| arr.first())
                 .ok_or_else(|| AndromedaError::temporal_validation("GeoProperty missing value"))?;
@@ -656,7 +656,7 @@ fn extract_typed_value(instance: &Value, attribute_type: AttributeType) -> Resul
         }
         AttributeType::VocabProperty => {
             let arr = instance
-                .get(vocab::expanded::VOCAB.as_str())
+                .get(vocab::expanded::properties::VOCAB.as_str())
                 .and_then(|v| v.as_array())
                 .ok_or_else(|| AndromedaError::temporal_validation("VocabProperty missing vocab value"))?;
             if arr.len() > 1 {
@@ -673,13 +673,13 @@ fn extract_typed_value(instance: &Value, attribute_type: AttributeType) -> Resul
         }
         AttributeType::LanguageProperty => {
             let lang_map = instance
-                .get(vocab::expanded::LANGUAGE_MAP.as_str())
+                .get(vocab::expanded::properties::LANGUAGE_MAP.as_str())
                 .ok_or_else(|| AndromedaError::temporal_validation("LanguageProperty missing languageMap"))?;
             Ok(TypedValue::Object(lang_map.clone())) // clone: need owned Value for TypedValue enum; lang_map is borrowed from instance
         }
         AttributeType::JsonProperty => {
             let json_val = instance
-                .get(vocab::expanded::JSON.as_str())
+                .get(vocab::expanded::properties::JSON.as_str())
                 .and_then(|v| v.as_array())
                 .and_then(|arr| arr.first())
                 .and_then(|obj| obj.get("@value"))
@@ -688,7 +688,7 @@ fn extract_typed_value(instance: &Value, attribute_type: AttributeType) -> Resul
         }
         AttributeType::ListProperty => {
             let list = instance
-                .get(vocab::expanded::VALUE_LIST.as_str())
+                .get(vocab::expanded::properties::VALUE_LIST.as_str())
                 .and_then(|v| v.as_array())
                 .and_then(|arr| arr.first())
                 .and_then(|obj| obj.get("@list"))
@@ -697,7 +697,7 @@ fn extract_typed_value(instance: &Value, attribute_type: AttributeType) -> Resul
         }
         AttributeType::ListRelationship => {
             let list = instance
-                .get(vocab::expanded::OBJECT_LIST.as_str())
+                .get(vocab::expanded::properties::OBJECT_LIST.as_str())
                 .and_then(|v| v.as_array())
                 .and_then(|arr| arr.first())
                 .and_then(|obj| obj.get("@list"))
@@ -711,7 +711,7 @@ fn extract_typed_value(instance: &Value, attribute_type: AttributeType) -> Resul
         AttributeType::Property => {
             // Property -- uses hasValue
             let has_value = instance
-                .get(vocab::expanded::VALUE.as_str())
+                .get(vocab::expanded::properties::VALUE.as_str())
                 .and_then(|v| v.as_array())
                 .and_then(|arr| arr.first())
                 .ok_or_else(|| AndromedaError::temporal_validation("Property missing value"))?;
@@ -719,7 +719,7 @@ fn extract_typed_value(instance: &Value, attribute_type: AttributeType) -> Resul
             if let Some(value) = has_value.get("@value") {
                 let type_hint = has_value.get("@type").and_then(|t| t.as_str());
 
-                if (type_hint == Some(vocab::expanded::DATE_TIME.as_str()) || type_hint == Some(vocab::expanded::XSD_DATETIME.as_str()))
+                if (type_hint == Some(vocab::expanded::classes::DATE_TIME.as_str()) || type_hint == Some(vocab::expanded::properties::XSD_DATETIME.as_str()))
                     && let Some(s) = value.as_str()
                 {
                     return Ok(TypedValue::DateTime(s.to_string()));
@@ -742,7 +742,7 @@ fn extract_typed_value(instance: &Value, attribute_type: AttributeType) -> Resul
 
 fn extract_observed_at(instance: &Value) -> Option<String> {
     instance
-        .get(vocab::expanded::OBSERVED_AT.as_str())
+        .get(vocab::expanded::properties::OBSERVED_AT.as_str())
         .and_then(|v| v.as_array())
         .and_then(|arr| arr.first())
         .and_then(|obj| obj.get("@value"))
@@ -752,7 +752,7 @@ fn extract_observed_at(instance: &Value) -> Option<String> {
 
 fn extract_dataset_id(instance: &Value) -> Option<Urn> {
     instance
-        .get(vocab::expanded::DATASET_ID.as_str())
+        .get(vocab::expanded::properties::DATASET_ID.as_str())
         .and_then(|v| v.as_array())
         .and_then(|arr| arr.first())
         .and_then(|obj| obj.get("@id"))
@@ -762,7 +762,7 @@ fn extract_dataset_id(instance: &Value) -> Option<Urn> {
 
 fn extract_or_generate_instance_id(instance: &Value) -> String {
     instance
-        .get(vocab::expanded::INSTANCE_ID.as_str())
+        .get(vocab::expanded::properties::INSTANCE_ID.as_str())
         .and_then(|v| v.as_array())
         .and_then(|arr| arr.first())
         .and_then(|obj| obj.get("@id"))
@@ -774,14 +774,14 @@ fn extract_or_generate_instance_id(instance: &Value) -> String {
 fn is_metadata_skip_key(key: &str) -> bool {
     key == "@id"
         || key == "@type"
-        || key == vocab::expanded::DATASET_ID.as_str()
-        || key == vocab::expanded::JSON.as_str()
-        || key == vocab::expanded::LANGUAGE_MAP.as_str()
-        || key == vocab::expanded::OBJECT.as_str()
-        || key == vocab::expanded::VALUE.as_str()
-        || key == vocab::expanded::VOCAB.as_str()
-        || key == vocab::expanded::INSTANCE_ID.as_str()
-        || key == vocab::expanded::OBSERVED_AT.as_str()
+        || key == vocab::expanded::properties::DATASET_ID.as_str()
+        || key == vocab::expanded::properties::JSON.as_str()
+        || key == vocab::expanded::properties::LANGUAGE_MAP.as_str()
+        || key == vocab::expanded::properties::OBJECT.as_str()
+        || key == vocab::expanded::properties::VALUE.as_str()
+        || key == vocab::expanded::properties::VOCAB.as_str()
+        || key == vocab::expanded::properties::INSTANCE_ID.as_str()
+        || key == vocab::expanded::properties::OBSERVED_AT.as_str()
 }
 
 fn collect_metadata(instance: &Value) -> Option<Value> {
@@ -804,15 +804,15 @@ mod tests {
     #[test]
     fn metadata_skip_key_matches_known_values() {
         assert!(is_metadata_skip_key("@id"));
-        assert!(is_metadata_skip_key(vocab::expanded::DATASET_ID.as_str()));
-        assert!(is_metadata_skip_key(vocab::expanded::VALUE.as_str()));
+        assert!(is_metadata_skip_key(vocab::expanded::properties::DATASET_ID.as_str()));
+        assert!(is_metadata_skip_key(vocab::expanded::properties::VALUE.as_str()));
         assert!(!is_metadata_skip_key("https://example.com/custom"));
     }
 
     #[test]
     fn system_attribute_matches_known_values() {
-        assert!(is_system_attribute(vocab::expanded::CREATED_AT.as_str()));
-        assert!(is_system_attribute(vocab::expanded::UNIT_CODE.as_str()));
+        assert!(is_system_attribute(vocab::expanded::properties::CREATED_AT.as_str()));
+        assert!(is_system_attribute(vocab::expanded::properties::UNIT_CODE.as_str()));
         assert!(!is_system_attribute("https://example.com/custom"));
     }
 }
