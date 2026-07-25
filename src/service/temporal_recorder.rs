@@ -71,6 +71,7 @@ struct PendingHistory {
     time: DateTime<Utc>,
     db_params: DbValueParams,
     instance_id: String,
+    instance_id_client_supplied: bool,
     observed_at: Option<DateTime<Utc>>,
     metadata: Option<Value>,
 }
@@ -171,7 +172,7 @@ impl TemporalRecorder {
         let value_type = typed_value.value_type();
         let dataset_id = extract_dataset_id(instance);
         let observed_at_str = extract_observed_at(instance);
-        let instance_id = extract_or_generate_instance_id(instance);
+        let (instance_id, instance_id_client_supplied) = extract_or_generate_instance_id(instance);
         let metadata = collect_metadata(instance);
 
         let time = observed_at_str
@@ -214,6 +215,7 @@ impl TemporalRecorder {
                 instance_id,
                 observed_at,
                 metadata,
+                instance_id_client_supplied,
             }])
             .await?;
 
@@ -249,11 +251,15 @@ impl TemporalRecorder {
     /// temporal rows inside the caller-provided transaction so the entity
     /// INSERT and temporal history share a single commit fsync and roll
     /// back atomically on any sub-statement failure.
+    ///
+    /// Returns the history rows actually written so the caller can
+    /// queue them with the unit-of-work for post-commit
+    /// `attribute_current` materialisation.
     pub async fn record_entities_batch_in_tx(
         &self,
         tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         entities: &[(Arc<str>, Arc<Value>)],
-    ) -> Result<(), AndromedaError> {
+    ) -> Result<Vec<HistoryBatchEntry>, AndromedaError> {
         let prepared = Self::prepare_batch_arc(entities);
         self.flush_prepared_in_tx(tx, prepared).await
     }
@@ -266,14 +272,18 @@ impl TemporalRecorder {
         tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         entity_id: &str,
         expanded: &Value,
-    ) -> Result<(), AndromedaError> {
+    ) -> Result<Vec<HistoryBatchEntry>, AndromedaError> {
         let prepared = Self::prepare_batch_refs(&[(entity_id, expanded)]);
         self.flush_prepared_in_tx(tx, prepared).await
     }
 
-    async fn flush_prepared_in_tx(&self, tx: &mut sqlx::Transaction<'_, sqlx::Postgres>, prepared: PreparedBatch) -> Result<(), AndromedaError> {
+    async fn flush_prepared_in_tx(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        prepared: PreparedBatch,
+    ) -> Result<Vec<HistoryBatchEntry>, AndromedaError> {
         if prepared.tea_entries.is_empty() && prepared.scope_entries.is_empty() {
-            return Ok(());
+            return Ok(Vec::new());
         }
 
         let tea_results = self.repo.upsert_tea_batch_in_tx(tx, &prepared.tea_entries).await?;
@@ -284,7 +294,7 @@ impl TemporalRecorder {
             self.repo.insert_scope_history_batch_in_tx(tx, &prepared.scope_entries).await?;
         }
 
-        Ok(())
+        Ok(history_entries)
     }
 
     fn prepare_batch_arc(entities: &[(Arc<str>, Arc<Value>)]) -> PreparedBatch {
@@ -354,7 +364,7 @@ impl TemporalRecorder {
                     let value_type = typed_value.value_type();
                     let dataset_id = extract_dataset_id(instance);
                     let observed_at_str = extract_observed_at(instance);
-                    let instance_id = extract_or_generate_instance_id(instance);
+                    let (instance_id, instance_id_client_supplied) = extract_or_generate_instance_id(instance);
                     let metadata = collect_metadata(instance);
 
                     let time = observed_at_str
@@ -377,6 +387,7 @@ impl TemporalRecorder {
                         time,
                         db_params: typed_value.into_db_params(),
                         instance_id,
+                        instance_id_client_supplied,
                         observed_at,
                         metadata,
                     });
@@ -426,6 +437,7 @@ impl TemporalRecorder {
                 instance_id: ph.instance_id.clone(),
                 observed_at: ph.observed_at,
                 metadata: ph.metadata.clone(),
+                instance_id_client_supplied: ph.instance_id_client_supplied,
             });
         }
         history_entries
@@ -433,20 +445,24 @@ impl TemporalRecorder {
 
     /// Record a tombstone for a deleted attribute (soft-delete) inside the
     /// caller's transaction.
+    ///
+    /// Returns the single history row written so the caller can queue
+    /// it with the unit-of-work for post-commit `attribute_current`
+    /// materialisation.
     pub async fn record_attribute_deletion_in_tx(
         &self,
         tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         entity_id: &str,
         attr_iri: &str,
         dataset_id: Option<&str>,
-    ) -> Result<(), AndromedaError> {
+    ) -> Result<Vec<HistoryBatchEntry>, AndromedaError> {
         let (tea_entry, history_entry) = self.build_deletion_entries(entity_id, attr_iri, dataset_id).await?;
         let tea_results = self.repo.upsert_tea_batch_in_tx(tx, std::slice::from_ref(&tea_entry)).await?;
         let tea_id = first_tea_id(tea_results)?;
         let mut history = history_entry;
         history.tea_id = tea_id;
         self.repo.insert_history_batch_in_tx(tx, std::slice::from_ref(&history)).await?;
-        Ok(())
+        Ok(vec![history])
     }
 
     async fn build_deletion_entries(
@@ -484,6 +500,7 @@ impl TemporalRecorder {
             instance_id: format!("urn:ngsi-ld:attribute:instance:{}", uuid::Uuid::new_v4()),
             observed_at: None,
             metadata: None,
+            instance_id_client_supplied: false,
         };
         Ok((tea_entry, history_entry))
     }
@@ -760,14 +777,17 @@ fn extract_dataset_id(instance: &Value) -> Option<Urn> {
         .and_then(|value| Urn::try_from(value).ok())
 }
 
-fn extract_or_generate_instance_id(instance: &Value) -> String {
+fn extract_or_generate_instance_id(instance: &Value) -> (String, bool) {
     instance
         .get(vocab::expanded::properties::INSTANCE_ID.as_str())
         .and_then(|v| v.as_array())
         .and_then(|arr| arr.first())
         .and_then(|obj| obj.get("@id"))
         .and_then(|v| v.as_str())
-        .map_or_else(|| format!("urn:ngsi-ld:attribute:instance:{}", uuid::Uuid::new_v4()), String::from)
+        .map_or_else(
+            || (format!("urn:ngsi-ld:attribute:instance:{}", uuid::Uuid::new_v4()), false),
+            |s| (s.to_owned(), true),
+        )
 }
 
 /// Returns whether the metadata key is stored in dedicated columns instead.
@@ -814,5 +834,94 @@ mod tests {
         assert!(is_system_attribute(vocab::expanded::properties::CREATED_AT.as_str()));
         assert!(is_system_attribute(vocab::expanded::properties::UNIT_CODE.as_str()));
         assert!(!is_system_attribute("https://example.com/custom"));
+    }
+
+    #[test]
+    fn extract_instance_id_flags_client_supplied_when_present() {
+        let instance = serde_json::json!({
+            vocab::expanded::properties::INSTANCE_ID.as_str(): [
+                {"@id": "urn:ngsi-ld:attribute:instance:provided"}
+            ]
+        });
+        let (id, supplied) = extract_or_generate_instance_id(&instance);
+        assert_eq!(id, "urn:ngsi-ld:attribute:instance:provided");
+        assert!(supplied);
+    }
+
+    #[test]
+    fn extract_instance_id_flags_generated_when_absent() {
+        let instance = serde_json::json!({});
+        let (id, supplied) = extract_or_generate_instance_id(&instance);
+        assert!(id.starts_with("urn:ngsi-ld:attribute:instance:"));
+        assert!(!supplied);
+    }
+
+    #[test]
+    fn prepare_batch_refs_propagates_client_supplied_flag() {
+        let attr = vocab::expanded::properties::VALUE.as_str();
+        let property_type = AttributeType::Property.iri_str();
+        let entity = serde_json::json!({
+            "@id": "urn:ngsi-ld:Entity:e1",
+            "@type": ["urn:ngsi-ld:Type:T"],
+            "https://example.com/withId": [{
+                "@type": [property_type],
+                attr: [{"@value": 1}],
+                vocab::expanded::properties::INSTANCE_ID.as_str(): [
+                    {"@id": "urn:ngsi-ld:attribute:instance:client"}
+                ]
+            }],
+            "https://example.com/noId": [{
+                "@type": [property_type],
+                attr: [{"@value": 2}]
+            }],
+        });
+        let entities = [("urn:ngsi-ld:Entity:e1", &entity)];
+        let prepared = TemporalRecorder::prepare_batch_refs(&entities);
+        assert_eq!(prepared.pending_histories.len(), 2);
+        let with_id = prepared
+            .pending_histories
+            .iter()
+            .find(|p| p.instance_id == "urn:ngsi-ld:attribute:instance:client")
+            .expect("client-supplied entry");
+        let without_id = prepared
+            .pending_histories
+            .iter()
+            .find(|p| p.instance_id != "urn:ngsi-ld:attribute:instance:client")
+            .expect("generated entry");
+        assert!(with_id.instance_id_client_supplied);
+        assert!(!without_id.instance_id_client_supplied);
+    }
+
+    #[test]
+    fn build_history_entries_carries_flag_to_history_batch_entry() {
+        let attr = vocab::expanded::properties::VALUE.as_str();
+        let property_type = AttributeType::Property.iri_str();
+        let entity = serde_json::json!({
+            "@id": "urn:ngsi-ld:Entity:e1",
+            "@type": ["urn:ngsi-ld:Type:T"],
+            "https://example.com/withId": [{
+                "@type": [property_type],
+                attr: [{"@value": 1}],
+                vocab::expanded::properties::INSTANCE_ID.as_str(): [
+                    {"@id": "urn:ngsi-ld:attribute:instance:client"}
+                ]
+            }],
+        });
+        let entities = [("urn:ngsi-ld:Entity:e1", &entity)];
+        let prepared = TemporalRecorder::prepare_batch_refs(&entities);
+        let tea_results: Vec<TeaBatchResultRow> = prepared
+            .tea_entries
+            .iter()
+            .map(|t| TeaBatchResultRow {
+                id: uuid::Uuid::new_v4(),
+                entity_id: t.entity_id.clone(),
+                attribute_name: t.attribute_name.clone(),
+                dataset_id: t.dataset_id.clone(),
+            })
+            .collect();
+        let history = TemporalRecorder::build_history_entries(&prepared, &tea_results);
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0].instance_id, "urn:ngsi-ld:attribute:instance:client");
+        assert!(history[0].instance_id_client_supplied);
     }
 }

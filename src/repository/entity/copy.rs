@@ -12,20 +12,17 @@
 //!
 //! [`COPY`]: https://www.postgresql.org/docs/current/sql-copy.html
 
-use crate::{core::error::AndromedaError, repository::entity::params::PreparedEntityColumns};
-use chrono::{DateTime, Utc};
-use serde_json::Value;
+use crate::{
+    core::error::AndromedaError,
+    repository::{
+        copy::{write_bytea_opt, write_field_count, write_header, write_jsonb, write_text, write_timestamptz_opt, write_trailer},
+        entity::params::PreparedEntityColumns,
+    },
+};
 use sqlx::{Executor, Postgres, Transaction};
-
-/// Postgres binary-COPY header signature (`PGCOPY\n\377\r\n\0`).
-const COPY_HEADER_SIGNATURE: &[u8] = b"PGCOPY\n\xff\r\n\0";
 
 /// Number of columns written per staged entity tuple.
 const STAGE_ENTITIES_FIELD_COUNT: i16 = 8;
-
-/// Offset (microseconds) between the Unix epoch and Postgres's
-/// timestamptz epoch of 2000-01-01 00:00:00 UTC.
-const POSTGRES_EPOCH_MICROS: i64 = 946_684_800_000_000;
 
 /// DDL for the per-transaction staging table. Dropped automatically on
 /// transaction commit, so concurrent chunk writes on separate pool
@@ -87,7 +84,7 @@ fn encode_entities_copy_stream(columns: &PreparedEntityColumns) -> Vec<u8> {
     let mut buf = Vec::with_capacity(estimated_stream_bytes(columns));
     write_header(&mut buf);
     for index in 0..columns.ids.len() {
-        write_field_count(&mut buf);
+        write_field_count(&mut buf, STAGE_ENTITIES_FIELD_COUNT);
         write_text(&mut buf, &columns.ids[index]);
         write_jsonb(&mut buf, &columns.types_json[index]);
         write_jsonb(&mut buf, &columns.scope_paths_json[index]);
@@ -106,72 +103,13 @@ const fn estimated_stream_bytes(columns: &PreparedEntityColumns) -> usize {
     19 + columns.ids.len() * 1024
 }
 
-fn write_header(buf: &mut Vec<u8>) {
-    buf.extend_from_slice(COPY_HEADER_SIGNATURE);
-    // 32-bit flags field — no OIDs, no special flags.
-    buf.extend_from_slice(&0i32.to_be_bytes());
-    // 32-bit header-extension length — zero.
-    buf.extend_from_slice(&0i32.to_be_bytes());
-}
-
-fn write_field_count(buf: &mut Vec<u8>) {
-    buf.extend_from_slice(&STAGE_ENTITIES_FIELD_COUNT.to_be_bytes());
-}
-
-fn write_trailer(buf: &mut Vec<u8>) {
-    buf.extend_from_slice(&(-1i16).to_be_bytes());
-}
-
-fn write_text(buf: &mut Vec<u8>, value: &str) {
-    let bytes = value.as_bytes();
-    write_length(buf, bytes.len() as i32);
-    buf.extend_from_slice(bytes);
-}
-
-fn write_jsonb(buf: &mut Vec<u8>, value: &Value) {
-    let json = serde_json::to_vec(value).unwrap_or_else(|_| b"null".to_vec());
-    let total_len = json.len() as i32 + 1; // +1 for the jsonb version byte
-    write_length(buf, total_len);
-    buf.push(0x01); // jsonb binary version
-    buf.extend_from_slice(&json);
-}
-
-fn write_bytea_opt(buf: &mut Vec<u8>, value: Option<&[u8]>) {
-    match value {
-        Some(bytes) => {
-            write_length(buf, bytes.len() as i32);
-            buf.extend_from_slice(bytes);
-        }
-        None => write_null(buf),
-    }
-}
-
-fn write_timestamptz_opt(buf: &mut Vec<u8>, value: Option<DateTime<Utc>>) {
-    match value {
-        Some(ts) => {
-            let micros = ts.timestamp_micros().saturating_sub(POSTGRES_EPOCH_MICROS);
-            write_length(buf, 8);
-            buf.extend_from_slice(&micros.to_be_bytes());
-        }
-        None => write_null(buf),
-    }
-}
-
-fn write_length(buf: &mut Vec<u8>, len: i32) {
-    buf.extend_from_slice(&len.to_be_bytes());
-}
-
-fn write_null(buf: &mut Vec<u8>) {
-    buf.extend_from_slice(&(-1i32).to_be_bytes());
-}
-
 #[cfg(test)]
 mod tests {
     #![allow(clippy::expect_used)]
     use super::*;
-    use crate::domain::geometry::Wkb;
+    use crate::{domain::geometry::Wkb, repository::copy::COPY_HEADER_SIGNATURE};
     use bytes::Bytes;
-    use chrono::TimeZone;
+    use chrono::{TimeZone, Utc};
 
     fn sample_columns() -> PreparedEntityColumns {
         let mut columns = PreparedEntityColumns::with_capacity(2);
@@ -218,29 +156,5 @@ mod tests {
         let stream = encode_entities_copy_stream(&empty);
         // 11 (signature) + 4 (flags) + 4 (ext len) + 2 (trailer)
         pretty_assertions::assert_eq!(stream.len(), 21);
-    }
-
-    #[test]
-    fn null_bytea_encodes_as_minus_one_length() {
-        let mut buf = Vec::new();
-        write_bytea_opt(&mut buf, None);
-        pretty_assertions::assert_eq!(buf, vec![0xff, 0xff, 0xff, 0xff]);
-    }
-
-    #[test]
-    fn jsonb_has_version_prefix() {
-        let mut buf = Vec::new();
-        write_jsonb(&mut buf, &serde_json::json!({"a": 1}));
-        // first 4 bytes = length (big-endian), fifth = 0x01 version tag
-        pretty_assertions::assert_eq!(buf[4], 0x01);
-    }
-
-    #[test]
-    fn timestamptz_offset_against_postgres_epoch() {
-        let mut buf = Vec::new();
-        let epoch_2000 = Utc.timestamp_opt(946_684_800, 0).unwrap();
-        write_timestamptz_opt(&mut buf, Some(epoch_2000));
-        // 4-byte length prefix (8) + 8 zero bytes (midnight Jan 1 2000)
-        pretty_assertions::assert_eq!(buf, vec![0, 0, 0, 8, 0, 0, 0, 0, 0, 0, 0, 0]);
     }
 }

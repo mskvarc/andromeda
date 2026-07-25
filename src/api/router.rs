@@ -45,13 +45,14 @@ use crate::{
         temporal::TemporalService,
     },
     tenancy::{
-        database::migrate_tenant_db,
+        database::{configure_pool_options, migrate_tenant_db},
         runtime::TenantRuntimeManager,
         types::{TenantCreationPolicy, TenantRef},
     },
     transport::{dispatch::TransportDispatcher, http::HttpTransportConfig, mqtt::MqttPoolConfig, sse::SseConnectionRegistry, ws::WsConnectionRegistry},
     version::Version,
     worker::{
+        attribute_current_materializer::AttributeCurrentMaterializer,
         csr_interval::CsrIntervalWorker,
         csr_notification::CsrNotificationWorker,
         data_expiration::DataExpirationWorker,
@@ -71,7 +72,6 @@ use axum::{
     response::IntoResponse,
     routing::{delete, get, patch, post, put},
 };
-use sqlx::postgres::PgPoolOptions;
 use std::sync::Arc;
 use tokio::task::JoinHandle;
 use tower_helmet::HelmetLayer;
@@ -235,7 +235,9 @@ pub async fn build_tenant_state(
         TenantRef::UnnamedDefault => config.database.max_connections,
         TenantRef::Named(_) => config.tenancy.tenant_max_connections,
     };
-    let pool = PgPoolOptions::new().max_connections(max_connections).connect(db_url).await?;
+    let pool = configure_pool_options(max_connections, config.database.synchronous_commit)
+        .connect(db_url)
+        .await?;
 
     migrate_tenant_db(&pool).await?;
 
@@ -294,7 +296,7 @@ pub async fn build_tenant_state(
     let batch_chunk_concurrency = config.performance.batch_chunk_concurrency.unwrap_or(4).max(1);
     let batch_chunk_write_concurrency = config.performance.batch_chunk_write_concurrency.unwrap_or(4).max(1);
 
-    let temporal_repo = Arc::new(TemporalRepository::new(&pool).with_features(timescale_features));
+    let temporal_repo = Arc::new(TemporalRepository::new(&pool, config.performance.bulk_write_mode).with_features(timescale_features));
     if config.performance.preload_attribute_names
         && let Err(error) = temporal_repo.preload_attribute_names().await
     {
@@ -328,7 +330,24 @@ pub async fn build_tenant_state(
         tracing::warn!("spatial warmup failed: {}", e);
     }
 
-    let uow_factory = Arc::new(UnitOfWorkFactory::new(&pool, Arc::clone(&temporal_repo), config.performance.bulk_write_mode));
+    let (attribute_current_tx, attribute_current_rx) = tokio::sync::mpsc::unbounded_channel();
+    let pool_arc = Arc::new(pool.clone()); // clone: Arc-wrap the per-tenant pool for the materializer worker
+    let materializer = AttributeCurrentMaterializer::new(
+        attribute_current_rx,
+        Arc::clone(&pool_arc),
+        std::time::Duration::from_secs(config.spatial.lag_log_interval_secs.max(1)),
+    );
+    if let Err(e) = materializer.reconcile_on_startup().await {
+        tracing::warn!(error = %e, event = "attribute_current_reconcile_failed");
+    }
+    worker_handles.push(tokio::spawn(materializer.run()));
+
+    let uow_factory = Arc::new(UnitOfWorkFactory::new(
+        &pool,
+        Arc::clone(&temporal_repo),
+        config.performance.bulk_write_mode,
+        attribute_current_tx,
+    ));
 
     let entity_service = Arc::new(EntityService::new(
         &pool,

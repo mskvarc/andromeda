@@ -1,7 +1,26 @@
-use crate::{core::error::AndromedaError, tenancy::types::TenantName};
+use crate::{
+    core::{config::SynchronousCommit, error::AndromedaError},
+    tenancy::types::TenantName,
+};
 use sqlx::{Connection, Executor, PgConnection, postgres::PgPoolOptions};
 use std::hash::{Hash, Hasher};
 use url::Url;
+
+/// Build a [`PgPoolOptions`] tuned with the broker's connection-level
+/// settings: a per-connection `SET synchronous_commit = '<mode>'`
+/// applied via `after_connect`.
+///
+/// Centralised so every pool the broker opens (main, per-tenant,
+/// migration helpers) shares identical durability semantics.
+pub(crate) fn configure_pool_options(max_connections: u32, synchronous_commit: SynchronousCommit) -> PgPoolOptions {
+    PgPoolOptions::new().max_connections(max_connections).after_connect(move |conn, _meta| {
+        Box::pin(async move {
+            let stmt = format!("SET synchronous_commit = '{}'", synchronous_commit.as_postgres_setting());
+            conn.execute(stmt.as_str()).await?;
+            Ok(())
+        })
+    })
+}
 
 /// Parsed database URL wrapper used by tenancy helpers.
 #[derive(Debug, Clone)]
@@ -94,8 +113,12 @@ pub(crate) async fn migrate_tenant_db(pool: &sqlx::PgPool) -> Result<(), Androme
     Ok(())
 }
 
-pub(crate) async fn migrate_single_tenant_db(database_url: &str, tenant_max_connections: u32) -> Result<(), AndromedaError> {
-    let pool = PgPoolOptions::new().max_connections(tenant_max_connections).connect(database_url).await?;
+pub(crate) async fn migrate_single_tenant_db(
+    database_url: &str,
+    tenant_max_connections: u32,
+    synchronous_commit: SynchronousCommit,
+) -> Result<(), AndromedaError> {
+    let pool = configure_pool_options(tenant_max_connections, synchronous_commit).connect(database_url).await?;
     migrate_tenant_db(&pool).await?;
     pool.close().await;
     Ok(())

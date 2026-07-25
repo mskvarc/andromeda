@@ -1,3 +1,4 @@
+pub mod attribute_current_materializer;
 pub mod csr_interval;
 pub mod csr_notification;
 pub mod data_expiration;

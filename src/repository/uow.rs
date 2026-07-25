@@ -17,9 +17,10 @@ use crate::{
         },
         outbox::repo::OutboxRepository,
         pending_side_effects::{payload::PersistedBatchSideEffectJob, repo::PendingSideEffectsRepository},
-        temporal::repo::TemporalRepository,
+        temporal::{params::HistoryBatchEntry, repo::TemporalRepository},
     },
     service::temporal_recorder::TemporalRecorder,
+    worker::attribute_current_materializer::{AttributeCurrentEvent, AttributeCurrentSender},
 };
 use serde_json::Value;
 use sqlx::{Postgres, Transaction, postgres::PgPool};
@@ -30,23 +31,31 @@ use uuid::Uuid;
 /// Tenant-scoped factory for [`UnitOfWork`] instances.
 ///
 /// Holds the per-tenant connection pool, the shared
-/// [`TemporalRecorder`], and the bulk-write mode used to dispatch
-/// entity batch inserts. Constructed once per tenant in
-/// `build_tenant_state` and shared via `Arc`.
+/// [`TemporalRecorder`], the bulk-write mode used to dispatch entity
+/// batch inserts, and the post-commit `attribute_current` materializer
+/// channel sender. Constructed once per tenant in `build_tenant_state`
+/// and shared via `Arc`.
 #[derive(Debug)]
 pub struct UnitOfWorkFactory {
     pool: PgPool,
     temporal_recorder: Arc<TemporalRecorder>,
     bulk_write_mode: BulkWriteMode,
+    attribute_current_sender: AttributeCurrentSender,
 }
 
 impl UnitOfWorkFactory {
     /// Create a factory backed by the given pool and recorder.
-    pub fn new(pool: &PgPool, temporal_repo: Arc<TemporalRepository>, bulk_write_mode: BulkWriteMode) -> UnitOfWorkFactory {
+    pub fn new(
+        pool: &PgPool,
+        temporal_repo: Arc<TemporalRepository>,
+        bulk_write_mode: BulkWriteMode,
+        attribute_current_sender: AttributeCurrentSender,
+    ) -> UnitOfWorkFactory {
         UnitOfWorkFactory {
             pool: pool.clone(), // clone: Arc ref-count bump
             temporal_recorder: Arc::new(TemporalRecorder::new(temporal_repo)),
             bulk_write_mode,
+            attribute_current_sender,
         }
     }
 
@@ -58,6 +67,8 @@ impl UnitOfWorkFactory {
             tx: Some(tx),
             temporal_recorder: Arc::clone(&self.temporal_recorder),
             bulk_write_mode: self.bulk_write_mode,
+            attribute_current_sender: self.attribute_current_sender.clone(), // clone: per-UoW handle (mpsc Sender clone is cheap)
+            pending_attribute_current: Vec::new(),
         })
     }
 }
@@ -69,10 +80,17 @@ impl UnitOfWorkFactory {
 /// for observability; rollback errors themselves are swallowed by
 /// sqlx. The `tx` field is `Option`-wrapped so `commit()` can move
 /// the transaction out without conflicting with `Drop`.
+///
+/// `pending_attribute_current` accumulates history rows that will be
+/// projected into `attribute_current` after `commit()` succeeds. They
+/// are dispatched via the materializer channel exactly once, after
+/// commit; if the unit-of-work rolls back, the entries are dropped.
 pub struct UnitOfWork {
     tx: Option<Transaction<'static, Postgres>>,
     temporal_recorder: Arc<TemporalRecorder>,
     bulk_write_mode: BulkWriteMode,
+    attribute_current_sender: AttributeCurrentSender,
+    pending_attribute_current: Vec<HistoryBatchEntry>,
 }
 
 impl UnitOfWork {
@@ -132,19 +150,26 @@ impl UnitOfWork {
     /// Record all attribute observations from one expanded entity.
     pub async fn record_entity_attributes(&mut self, id: &str, expanded: &Value) -> Result<(), AndromedaError> {
         let recorder = Arc::clone(&self.temporal_recorder); // clone: Arc ref-count bump to allow tx_mut borrow concurrently
-        recorder.record_entity_attributes_in_tx(self.tx_mut()?, id, expanded).await
+        let history = recorder.record_entity_attributes_in_tx(self.tx_mut()?, id, expanded).await?;
+        self.pending_attribute_current.extend(history);
+        Ok(())
     }
 
     /// Record a tombstone for a deleted attribute.
     pub async fn record_attribute_deletion(&mut self, id: &str, attr_iri: &str, dataset_id: Option<&str>) -> Result<(), AndromedaError> {
         let recorder = Arc::clone(&self.temporal_recorder); // clone: Arc ref-count bump to allow tx_mut borrow concurrently
-        recorder.record_attribute_deletion_in_tx(self.tx_mut()?, id, attr_iri, dataset_id).await
+        let history = recorder.record_attribute_deletion_in_tx(self.tx_mut()?, id, attr_iri, dataset_id).await?;
+        self.pending_attribute_current.extend(history);
+        Ok(())
     }
 
     /// Record a batch of expanded entity observations in one call.
     pub async fn record_entities_batch(&mut self, entries: &[(Arc<str>, Arc<Value>)]) -> Result<(), AndromedaError> {
         let recorder = Arc::clone(&self.temporal_recorder); // clone: Arc ref-count bump to allow tx_mut borrow concurrently
-        recorder.record_entities_batch_in_tx(self.tx_mut()?, entries).await
+        let tx = self.tx_mut()?;
+        let history = recorder.record_entities_batch_in_tx(tx, entries).await?;
+        self.pending_attribute_current.extend(history);
+        Ok(())
     }
 
     // ---------------------------------------------------------------------
@@ -171,6 +196,12 @@ impl UnitOfWork {
 
     /// Commit the underlying transaction. Subsequent operations on this
     /// instance will return an error.
+    ///
+    /// Once the database commit succeeds, any queued
+    /// `attribute_current` updates are dispatched on the materializer
+    /// channel. A closed channel (worker exited) is intentionally
+    /// swallowed: `attribute_history` is the canonical source, and
+    /// the startup reconcile will refill the projection.
     #[tracing::instrument(skip_all)]
     pub async fn commit(mut self) -> Result<(), AndromedaError> {
         let tx = self
@@ -178,6 +209,10 @@ impl UnitOfWork {
             .take()
             .ok_or_else(|| AndromedaError::internal("UnitOfWork commit called twice".to_string()))?;
         tx.commit().await?;
+        if !self.pending_attribute_current.is_empty() {
+            let event: AttributeCurrentEvent = Arc::new(std::mem::take(&mut self.pending_attribute_current));
+            let _ = self.attribute_current_sender.send(event);
+        }
         Ok(())
     }
 }

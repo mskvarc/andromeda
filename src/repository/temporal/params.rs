@@ -65,7 +65,7 @@ pub struct TeaBatchEntry {
 }
 
 /// Input for a single attribute history observation in a bulk insert.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct HistoryBatchEntry {
     /// TimescaleDB partition key.
     pub time: DateTime<Utc>,
@@ -91,6 +91,10 @@ pub struct HistoryBatchEntry {
     pub observed_at: Option<DateTime<Utc>>,
     /// Additional metadata (sub-attributes, unitCode, etc.).
     pub metadata: Option<Value>,
+    /// True when `instance_id` came from the client's `instanceId` JSON-LD
+    /// term (NGSI-LD section 4.5.7) rather than being server-generated. Drives
+    /// whether the broker must run the dedup DELETE before INSERT.
+    pub instance_id_client_supplied: bool,
 }
 
 /// A single scope history observation used for both reads and bulk inserts.

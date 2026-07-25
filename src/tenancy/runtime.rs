@@ -5,13 +5,13 @@ use crate::{
         error::AndromedaError,
     },
     tenancy::{
-        database::{DatabaseUrl, create_database_if_missing, generate_db_name, migrate_main_db, migrate_single_tenant_db},
+        database::{DatabaseUrl, configure_pool_options, create_database_if_missing, generate_db_name, migrate_main_db, migrate_single_tenant_db},
         types::{TenantCreationPolicy, TenantName, TenantRef, TenantStatus},
     },
     transport::{dispatch::TransportDispatcher, mqtt::MqttTransportPool},
 };
 use dashmap::DashMap;
-use sqlx::{Row, postgres::PgPoolOptions};
+use sqlx::Row;
 use std::{
     collections::HashSet,
     sync::{
@@ -59,8 +59,7 @@ pub struct TenantRuntimeManager {
 impl TenantRuntimeManager {
     /// Create a new tenant runtime manager, connecting to the main database and running migrations.
     pub async fn new(config: Arc<RuntimeConfig>) -> Result<Arc<TenantRuntimeManager>, AndromedaError> {
-        let main_pool = PgPoolOptions::new()
-            .max_connections(config.database.max_connections)
+        let main_pool = configure_pool_options(config.database.max_connections, config.database.synchronous_commit)
             .connect(&config.database.url)
             .await?;
 
@@ -326,7 +325,7 @@ impl TenantRuntimeManager {
         tx.commit().await?;
 
         let tenant_url = self.database_url.with_db_name(&db_name);
-        migrate_single_tenant_db(&tenant_url, self.tenancy.tenant_max_connections).await?;
+        migrate_single_tenant_db(&tenant_url, self.tenancy.tenant_max_connections, self.config.database.synchronous_commit).await?;
 
         Ok(db_name)
     }

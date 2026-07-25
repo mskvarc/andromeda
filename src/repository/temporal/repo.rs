@@ -1,11 +1,12 @@
 //! SQL-only repository for the NGSI-LD Temporal API.
 
 use crate::{
-    core::error::AndromedaError,
+    core::{config::BulkWriteMode, error::AndromedaError},
     domain::{geometry::Wkb, temporal::TeaEntry},
     query::sql::BindValue,
     repository::{
         temporal::{
+            copy::insert_history_batch_via_copy_in_tx,
             mapper::row_to_tea,
             params::{DeleteScope, HistoryBatchEntry, ScopeHistoryEntry, TeaBatchEntry, UpdateInstanceParams},
             rows::TeaBatchResultRow,
@@ -27,15 +28,22 @@ pub struct TemporalRepository {
     attr_name_cache: Arc<DashMap<String, i16>>,
     /// TSL capability probe.
     timescale_features: TimescaleFeatures,
+    /// Dispatch mode for bulk history INSERTs.
+    bulk_write_mode: BulkWriteMode,
 }
 
 impl TemporalRepository {
     /// Create a new repository backed by the given connection pool.
-    pub fn new(pool: &PgPool) -> TemporalRepository {
+    ///
+    /// `bulk_write_mode` controls dispatch for `insert_history_batch_in_tx`:
+    /// `Unnest` keeps the legacy `UNNEST(..)` driver-side path; `CopyStaging`
+    /// routes through a per-transaction binary-COPY staging table.
+    pub fn new(pool: &PgPool, bulk_write_mode: BulkWriteMode) -> TemporalRepository {
         TemporalRepository {
             pool: pool.clone(), // clone: Arc ref-count bump
             attr_name_cache: Arc::new(DashMap::new()),
             timescale_features: TimescaleFeatures::empty(),
+            bulk_write_mode,
         }
     }
 
@@ -392,121 +400,24 @@ impl TemporalRepository {
     }
 
     /// Transactional variant of [`Self::insert_history_batch`]. Runs the
-    /// dedup `DELETE`s, the history `INSERT`, and the `attribute_current`
-    /// upsert against the caller's transaction without committing.
+    /// dedup `DELETE`s and the history `INSERT` against the caller's
+    /// transaction without committing.
+    ///
+    /// The `attribute_current` projection is **not** maintained here
+    /// any more: callers queue the entries on the unit-of-work and the
+    /// materializer worker applies them after commit (see
+    /// [`crate::worker::attribute_current_materializer`]).
     pub async fn insert_history_batch_in_tx(&self, tx: &mut Transaction<'_, Postgres>, entries: &[HistoryBatchEntry]) -> Result<(), AndromedaError> {
         if entries.is_empty() {
             return Ok(());
         }
 
-        let len = entries.len();
-        let mut times = Vec::with_capacity(len);
-        let mut tea_ids = Vec::with_capacity(len);
-        let mut value_numbers: Vec<Option<f64>> = Vec::with_capacity(len);
-        let mut value_strings: Vec<Option<&str>> = Vec::with_capacity(len);
-        let mut value_bools: Vec<Option<bool>> = Vec::with_capacity(len);
-        let mut value_geos: Vec<Option<&Wkb>> = Vec::with_capacity(len);
-        let mut value_objects: Vec<Option<&Value>> = Vec::with_capacity(len);
-        let mut value_datetimes: Vec<Option<DateTime<Utc>>> = Vec::with_capacity(len);
-        let mut value_uris: Vec<Option<&str>> = Vec::with_capacity(len);
-        let mut instance_ids = Vec::with_capacity(len);
-        let mut observed_ats: Vec<Option<DateTime<Utc>>> = Vec::with_capacity(len);
-        let mut metadatas: Vec<Option<&Value>> = Vec::with_capacity(len);
+        run_history_dedup_deletes(tx, entries).await?;
 
-        let mut dedup_tea_ids = Vec::with_capacity(len);
-        let mut dedup_instance_ids = Vec::with_capacity(len);
-        let mut dedup_observed_ats: Vec<Option<DateTime<Utc>>> = Vec::with_capacity(len);
-
-        for e in entries {
-            times.push(e.time);
-            tea_ids.push(e.tea_id);
-            value_numbers.push(e.value_number);
-            value_strings.push(e.value_string.as_deref());
-            value_bools.push(e.value_bool);
-            value_geos.push(e.value_geo.as_ref());
-            value_objects.push(e.value_object.as_ref());
-            value_datetimes.push(e.value_datetime);
-            value_uris.push(e.value_uri.as_deref());
-            instance_ids.push(e.instance_id.as_str());
-            observed_ats.push(e.observed_at);
-            metadatas.push(e.metadata.as_ref());
-
-            dedup_tea_ids.push(e.tea_id);
-            dedup_instance_ids.push(e.instance_id.as_str());
-            dedup_observed_ats.push(e.observed_at);
+        match self.bulk_write_mode {
+            BulkWriteMode::Unnest => insert_history_batch_unnest_in_tx(tx, entries).await?,
+            BulkWriteMode::CopyStaging => insert_history_batch_via_copy_in_tx(tx, entries).await?,
         }
-
-        sqlx::query(
-            r#"
-            DELETE FROM attribute_history ah
-            USING UNNEST($1::uuid[], $2::text[])
-                AS d(tea_id, instance_id)
-            WHERE ah.tea_id = d.tea_id AND ah.instance_id = d.instance_id
-            "#,
-        )
-        .bind(&dedup_tea_ids)
-        .bind(&dedup_instance_ids)
-        .execute(&mut **tx)
-        .await?;
-
-        let filtered: Vec<(uuid::Uuid, DateTime<Utc>)> = dedup_tea_ids
-            .iter()
-            .zip(dedup_observed_ats.iter())
-            .filter_map(|(tid, obs)| obs.map(|o| (*tid, o)))
-            .collect();
-
-        if !filtered.is_empty() {
-            let (obs_tea_ids, obs_ats): (Vec<uuid::Uuid>, Vec<DateTime<Utc>>) = filtered.into_iter().unzip();
-            sqlx::query(
-                r#"
-                DELETE FROM attribute_history ah
-                USING UNNEST($1::uuid[], $2::timestamptz[])
-                    AS d(tea_id, observed_at)
-                WHERE ah.tea_id = d.tea_id AND ah.observed_at = d.observed_at
-                "#,
-            )
-            .bind(&obs_tea_ids)
-            .bind(&obs_ats)
-            .execute(&mut **tx)
-            .await?;
-        }
-
-        sqlx::query(
-            r#"
-            INSERT INTO attribute_history
-                (time, tea_id, value_number, value_string, value_bool,
-                 value_geo, value_object, value_datetime, value_uri,
-                 instance_id, observed_at, metadata)
-            SELECT
-                d.time, d.tea_id, d.value_number, d.value_string, d.value_bool,
-                CASE WHEN d.value_geo IS NOT NULL THEN ST_MakeValid(ST_GeomFromEWKB(d.value_geo)) ELSE NULL END,
-                d.value_object, d.value_datetime, d.value_uri,
-                d.instance_id, d.observed_at, d.metadata
-            FROM UNNEST(
-                $1::timestamptz[], $2::uuid[], $3::double precision[], $4::text[], $5::boolean[],
-                $6::bytea[], $7::jsonb[], $8::timestamptz[], $9::text[],
-                $10::text[], $11::timestamptz[], $12::jsonb[]
-            ) AS d(time, tea_id, value_number, value_string, value_bool,
-                   value_geo, value_object, value_datetime, value_uri,
-                   instance_id, observed_at, metadata)
-            "#,
-        )
-        .bind(&times)
-        .bind(&tea_ids)
-        .bind(&value_numbers)
-        .bind(&value_strings)
-        .bind(&value_bools)
-        .bind(&value_geos)
-        .bind(&value_objects)
-        .bind(&value_datetimes)
-        .bind(&value_uris)
-        .bind(&instance_ids)
-        .bind(&observed_ats)
-        .bind(&metadatas)
-        .execute(&mut **tx)
-        .await?;
-
-        sync_attribute_current_batch(tx, entries).await?;
 
         Ok(())
     }
@@ -649,14 +560,69 @@ fn rows_to_tea_results(rows: Vec<sqlx::postgres::PgRow>) -> Vec<TeaBatchResultRo
         .collect()
 }
 
-async fn sync_attribute_current_batch(tx: &mut Transaction<'_, Postgres>, entries: &[HistoryBatchEntry]) -> Result<(), AndromedaError> {
-    if entries.is_empty() {
-        return Ok(());
+/// Run the dedup `DELETE`s that must precede a history-batch INSERT.
+///
+/// 1. `(tea_id, instance_id)` pass — only when at least one entry has a
+///    client-supplied instance_id (server-generated UUIDv4 ids are
+///    statistically unique, so the DELETE would always be zero-yield).
+/// 2. `(tea_id, observed_at)` pass — only when at least one entry carries
+///    a non-null `observed_at`.
+async fn run_history_dedup_deletes(tx: &mut Transaction<'_, Postgres>, entries: &[HistoryBatchEntry]) -> Result<(), AndromedaError> {
+    let mut any_instance_client_supplied = false;
+    let mut tea_ids = Vec::with_capacity(entries.len());
+    let mut instance_ids = Vec::with_capacity(entries.len());
+    let mut observed_pairs: Vec<(uuid::Uuid, DateTime<Utc>)> = Vec::with_capacity(entries.len());
+    for e in entries {
+        tea_ids.push(e.tea_id);
+        instance_ids.push(e.instance_id.as_str());
+        if let Some(obs) = e.observed_at {
+            observed_pairs.push((e.tea_id, obs));
+        }
+        any_instance_client_supplied |= e.instance_id_client_supplied;
     }
 
+    if any_instance_client_supplied {
+        sqlx::query(
+            r#"
+            DELETE FROM attribute_history ah
+            USING UNNEST($1::uuid[], $2::text[])
+                AS d(tea_id, instance_id)
+            WHERE ah.tea_id = d.tea_id AND ah.instance_id = d.instance_id
+            "#,
+        )
+        .bind(&tea_ids)
+        .bind(&instance_ids)
+        .execute(&mut **tx)
+        .await?;
+    }
+
+    if !observed_pairs.is_empty() {
+        let (obs_tea_ids, obs_ats): (Vec<uuid::Uuid>, Vec<DateTime<Utc>>) = observed_pairs.into_iter().unzip();
+        sqlx::query(
+            r#"
+            DELETE FROM attribute_history ah
+            USING UNNEST($1::uuid[], $2::timestamptz[])
+                AS d(tea_id, observed_at)
+            WHERE ah.tea_id = d.tea_id AND ah.observed_at = d.observed_at
+            "#,
+        )
+        .bind(&obs_tea_ids)
+        .bind(&obs_ats)
+        .execute(&mut **tx)
+        .await?;
+    }
+
+    Ok(())
+}
+
+/// Driver-side `UNNEST(..)` history-batch INSERT.
+///
+/// Kept for the `BulkWriteMode::Unnest` branch and as a fall-back if the
+/// binary-COPY path is disabled at runtime.
+async fn insert_history_batch_unnest_in_tx(tx: &mut Transaction<'_, Postgres>, entries: &[HistoryBatchEntry]) -> Result<(), AndromedaError> {
     let len = entries.len();
-    let mut tea_ids = Vec::with_capacity(len);
     let mut times = Vec::with_capacity(len);
+    let mut tea_ids = Vec::with_capacity(len);
     let mut value_numbers: Vec<Option<f64>> = Vec::with_capacity(len);
     let mut value_strings: Vec<Option<&str>> = Vec::with_capacity(len);
     let mut value_bools: Vec<Option<bool>> = Vec::with_capacity(len);
@@ -664,10 +630,13 @@ async fn sync_attribute_current_batch(tx: &mut Transaction<'_, Postgres>, entrie
     let mut value_objects: Vec<Option<&Value>> = Vec::with_capacity(len);
     let mut value_datetimes: Vec<Option<DateTime<Utc>>> = Vec::with_capacity(len);
     let mut value_uris: Vec<Option<&str>> = Vec::with_capacity(len);
+    let mut instance_ids = Vec::with_capacity(len);
+    let mut observed_ats: Vec<Option<DateTime<Utc>>> = Vec::with_capacity(len);
+    let mut metadatas: Vec<Option<&Value>> = Vec::with_capacity(len);
 
     for e in entries {
-        tea_ids.push(e.tea_id);
         times.push(e.time);
+        tea_ids.push(e.tea_id);
         value_numbers.push(e.value_number);
         value_strings.push(e.value_string.as_deref());
         value_bools.push(e.value_bool);
@@ -675,45 +644,33 @@ async fn sync_attribute_current_batch(tx: &mut Transaction<'_, Postgres>, entrie
         value_objects.push(e.value_object.as_ref());
         value_datetimes.push(e.value_datetime);
         value_uris.push(e.value_uri.as_deref());
+        instance_ids.push(e.instance_id.as_str());
+        observed_ats.push(e.observed_at);
+        metadatas.push(e.metadata.as_ref());
     }
 
     sqlx::query(
         r#"
-        INSERT INTO attribute_current (
-            tea_id, entity_id, attribute_name_id, dataset_id, value_type,
-            value_number, value_string, value_bool, value_geo,
-            value_object, value_datetime, value_uri, modified_at
-        )
-        SELECT DISTINCT ON (d.tea_id)
-            d.tea_id, tea.entity_id, tea.attribute_name_id, tea.dataset_id, tea.value_type,
-            d.value_number, d.value_string, d.value_bool,
+        INSERT INTO attribute_history
+            (time, tea_id, value_number, value_string, value_bool,
+             value_geo, value_object, value_datetime, value_uri,
+             instance_id, observed_at, metadata)
+        SELECT
+            d.time, d.tea_id, d.value_number, d.value_string, d.value_bool,
             CASE WHEN d.value_geo IS NOT NULL THEN ST_MakeValid(ST_GeomFromEWKB(d.value_geo)) ELSE NULL END,
-            d.value_object, d.value_datetime, d.value_uri, d.time
+            d.value_object, d.value_datetime, d.value_uri,
+            d.instance_id, d.observed_at, d.metadata
         FROM UNNEST(
-            $1::uuid[], $2::timestamptz[], $3::double precision[], $4::text[], $5::boolean[],
-            $6::bytea[], $7::jsonb[], $8::timestamptz[], $9::text[]
-        ) AS d(tea_id, time, value_number, value_string, value_bool,
-               value_geo, value_object, value_datetime, value_uri)
-        JOIN temporal_entity_attributes tea ON tea.id = d.tea_id
-        ORDER BY d.tea_id, d.time DESC
-        ON CONFLICT (tea_id) DO UPDATE SET
-            entity_id         = EXCLUDED.entity_id,
-            attribute_name_id = EXCLUDED.attribute_name_id,
-            dataset_id        = EXCLUDED.dataset_id,
-            value_type        = EXCLUDED.value_type,
-            value_number      = EXCLUDED.value_number,
-            value_string      = EXCLUDED.value_string,
-            value_bool        = EXCLUDED.value_bool,
-            value_geo         = EXCLUDED.value_geo,
-            value_object      = EXCLUDED.value_object,
-            value_datetime    = EXCLUDED.value_datetime,
-            value_uri         = EXCLUDED.value_uri,
-            modified_at       = EXCLUDED.modified_at
-        WHERE attribute_current.modified_at <= EXCLUDED.modified_at
+            $1::timestamptz[], $2::uuid[], $3::double precision[], $4::text[], $5::boolean[],
+            $6::bytea[], $7::jsonb[], $8::timestamptz[], $9::text[],
+            $10::text[], $11::timestamptz[], $12::jsonb[]
+        ) AS d(time, tea_id, value_number, value_string, value_bool,
+               value_geo, value_object, value_datetime, value_uri,
+               instance_id, observed_at, metadata)
         "#,
     )
-    .bind(&tea_ids)
     .bind(&times)
+    .bind(&tea_ids)
     .bind(&value_numbers)
     .bind(&value_strings)
     .bind(&value_bools)
@@ -721,6 +678,9 @@ async fn sync_attribute_current_batch(tx: &mut Transaction<'_, Postgres>, entrie
     .bind(&value_objects)
     .bind(&value_datetimes)
     .bind(&value_uris)
+    .bind(&instance_ids)
+    .bind(&observed_ats)
+    .bind(&metadatas)
     .execute(&mut **tx)
     .await?;
 

@@ -46,6 +46,43 @@ pub enum CorsMode {
     Permissive,
 }
 
+/// Postgres `synchronous_commit` setting applied per pool connection.
+///
+/// Defaults to `Off` to trade a 200–600 ms durability window on crash
+/// for ~2x commit throughput; the broker is operating as an observation
+/// ingest node where last-second-of-writes loss is acceptable per the
+/// user's chosen profile. Reversible per-deploy by setting the env var
+/// to one of the stricter values below.
+#[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, Display, EnumString, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case", ascii_case_insensitive)]
+pub enum SynchronousCommit {
+    /// Wait for the local WAL to be flushed (Postgres default).
+    On,
+    /// Acknowledge before any flush; small data-loss window on crash.
+    #[default]
+    Off,
+    /// Equivalent to `On` for this server, ignoring synchronous standbys.
+    Local,
+    /// Wait for synchronous standby to apply WAL.
+    RemoteApply,
+    /// Wait for synchronous standby to write WAL to OS buffer.
+    RemoteWrite,
+}
+
+impl SynchronousCommit {
+    /// Render the variant as the literal Postgres `SET` value.
+    pub const fn as_postgres_setting(self) -> &'static str {
+        match self {
+            SynchronousCommit::On => "on",
+            SynchronousCommit::Off => "off",
+            SynchronousCommit::Local => "local",
+            SynchronousCommit::RemoteApply => "remote_apply",
+            SynchronousCommit::RemoteWrite => "remote_write",
+        }
+    }
+}
+
 /// Bulk-write execution mode for batch entity INSERT/UPDATE/UPSERT paths.
 #[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, Display, EnumString, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
@@ -90,6 +127,12 @@ pub struct DatabaseConfig {
 
     #[config(env = "ANDROMEDA_DATABASE_MAX_CONNECTIONS", default = 32)]
     pub max_connections: u32,
+
+    /// `synchronous_commit` mode applied per connection via `after_connect`.
+    /// Default `off` trades a small durability window on crash for ~2x
+    /// commit throughput.
+    #[config(env = "ANDROMEDA_DATABASE_SYNCHRONOUS_COMMIT", default = "off")]
+    pub synchronous_commit: SynchronousCommit,
 }
 
 #[derive(Config, Debug, Clone, Serialize)]
@@ -650,6 +693,7 @@ mod tests {
             database: DatabaseConfig {
                 url: "postgres://postgres:postgres@localhost:5432/postgres".to_string(),
                 max_connections: 32,
+                synchronous_commit: SynchronousCommit::Off,
             },
             jsonld: JsonLdConfig {
                 allow_remote_contexts: true,
@@ -958,6 +1002,54 @@ port = 1600
     #[test]
     fn default_precedence_summary_matches_contract() {
         pretty_assertions::assert_eq!(RuntimeConfig::precedence_summary(), "CLI host/port > environment > config file > defaults");
+    }
+
+    #[test]
+    fn synchronous_commit_default_is_off() {
+        let config = RuntimeConfig::builder().env().load().expect("config should load");
+        pretty_assertions::assert_eq!(config.database.synchronous_commit, SynchronousCommit::Off);
+    }
+
+    #[test]
+    #[serial]
+    fn synchronous_commit_parses_all_modes() {
+        let cases = [
+            ("on", SynchronousCommit::On),
+            ("off", SynchronousCommit::Off),
+            ("local", SynchronousCommit::Local),
+            ("remote_apply", SynchronousCommit::RemoteApply),
+            ("remote_write", SynchronousCommit::RemoteWrite),
+        ];
+        for (raw, expected) in cases {
+            unsafe { std::env::set_var("ANDROMEDA_DATABASE_SYNCHRONOUS_COMMIT", raw) };
+            let config = RuntimeConfig::builder().env().load().expect("config should load");
+            unsafe { std::env::remove_var("ANDROMEDA_DATABASE_SYNCHRONOUS_COMMIT") };
+            pretty_assertions::assert_eq!(config.database.synchronous_commit, expected);
+        }
+    }
+
+    #[test]
+    #[serial]
+    fn synchronous_commit_invalid_mode_errors() {
+        unsafe { std::env::set_var("ANDROMEDA_DATABASE_SYNCHRONOUS_COMMIT", "enabled") };
+        let result = RuntimeConfig::builder().env().load();
+        unsafe { std::env::remove_var("ANDROMEDA_DATABASE_SYNCHRONOUS_COMMIT") };
+        assert!(result.is_err(), "expected parse error for invalid synchronous_commit value");
+    }
+
+    #[test]
+    fn batch_chunk_size_default_is_512() {
+        let config = RuntimeConfig::builder().env().load().expect("config should load");
+        pretty_assertions::assert_eq!(config.performance.batch_chunk_size, 512);
+    }
+
+    #[test]
+    fn synchronous_commit_renders_postgres_setting_strings() {
+        pretty_assertions::assert_eq!(SynchronousCommit::On.as_postgres_setting(), "on");
+        pretty_assertions::assert_eq!(SynchronousCommit::Off.as_postgres_setting(), "off");
+        pretty_assertions::assert_eq!(SynchronousCommit::Local.as_postgres_setting(), "local");
+        pretty_assertions::assert_eq!(SynchronousCommit::RemoteApply.as_postgres_setting(), "remote_apply");
+        pretty_assertions::assert_eq!(SynchronousCommit::RemoteWrite.as_postgres_setting(), "remote_write");
     }
 
     #[test]
