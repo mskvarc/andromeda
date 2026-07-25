@@ -9,7 +9,7 @@ use crate::{
     query::{
         compiled::{CompiledCsrQuery, GeoRel},
         q::ast::{AttrPath, CmpOp, CompareValue, Expr, Predicate, Scalar},
-        sql::{BindValue, BuiltQuery},
+        sql::{BuiltQuery, sea_values_to_bind_values},
     },
 };
 use sea_query::{Alias, Condition, Expr as SeaExpr, Order, PostgresQueryBuilder, Query};
@@ -391,32 +391,6 @@ fn scalar_to_value(scalar: &Scalar) -> (&'static str, String) {
         Scalar::Str(s) => ("", s.clone()),
         Scalar::DateTime(s) | Scalar::Date(s) | Scalar::Time(s) => ("", s.clone()),
     }
-}
-
-/// Converts sea-query Values to BindValue vector for repository compatibility.
-fn sea_values_to_bind_values(values: sea_query::Values) -> Result<Vec<BindValue<'static>>, AndromedaError> {
-    values
-        .0
-        .into_iter()
-        .map(|v| match v {
-            sea_query::Value::String(Some(s)) => Ok(BindValue::String(Cow::Owned(s.to_string()))),
-            sea_query::Value::Int(Some(i)) => Ok(BindValue::I64(i64::from(i))),
-            sea_query::Value::BigInt(Some(i)) => Ok(BindValue::I64(i)),
-            sea_query::Value::BigUnsigned(Some(u)) => Ok(BindValue::I64(u as i64)),
-            sea_query::Value::Unsigned(Some(u)) => Ok(BindValue::I64(i64::from(u))),
-            sea_query::Value::TinyInt(Some(i)) => Ok(BindValue::I64(i64::from(i))),
-            sea_query::Value::TinyUnsigned(Some(u)) => Ok(BindValue::I64(i64::from(u))),
-            sea_query::Value::SmallInt(Some(i)) => Ok(BindValue::I64(i64::from(i))),
-            sea_query::Value::SmallUnsigned(Some(u)) => Ok(BindValue::I64(i64::from(u))),
-            sea_query::Value::Bool(Some(b)) => Ok(BindValue::String(Cow::Owned(b.to_string()))),
-            sea_query::Value::Double(Some(f)) => Ok(BindValue::String(Cow::Owned(f.to_string()))),
-            sea_query::Value::Float(Some(f)) => Ok(BindValue::String(Cow::Owned(f.to_string()))),
-            sea_query::Value::Bytes(Some(b)) => Ok(BindValue::Bytes(Cow::Owned(*b))),
-            other => Err(AndromedaError::internal(format!(
-                "unexpected sea_query::Value variant in bind conversion: {other:?}"
-            ))),
-        })
-        .collect()
 }
 
 #[cfg(test)]

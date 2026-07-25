@@ -1,6 +1,7 @@
 use crate::{
     core::error::AndromedaError,
     domain::{
+        expanded::removed_attribute_instances,
         notification::{ChangeEvent, TriggerReason},
         uri::Uri,
     },
@@ -319,9 +320,14 @@ impl EntityService {
         let mut modified_count = 0u32;
 
         for entity_id in entity_ids {
-            let Some(mut existing) = self.repo.get(entity_id).await? else {
+            // Each entity is its own unit of work: the payload rewrite and the
+            // tombstones for the purged instances must commit together, and a
+            // single entity failing must not roll back the ones already purged.
+            let mut uow = self.uow.begin().await?;
+            let Some(mut existing) = uow.get_entity(entity_id).await? else {
                 continue;
             };
+            let previous = existing.clone(); // clone: "before" snapshot for the removal diff; `existing` is mutated in place
 
             let obj = match &mut existing {
                 Value::Array(arr) => arr.first_mut().and_then(|v| v.as_object_mut()),
@@ -356,7 +362,10 @@ impl EntityService {
                 obj.remove(key);
             }
 
-            self.repo.save(build_save_params(entity_id, &existing)).await?;
+            let removed = removed_attribute_instances(&previous, &existing);
+            uow.save_entity(build_save_params(entity_id, &existing)).await?;
+            uow.record_removed_attributes(entity_id, &removed).await?;
+            uow.commit().await?;
             modified_count += 1;
         }
 

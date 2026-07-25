@@ -30,7 +30,7 @@ use crate::{
 use sqlx::{Executor, Postgres, Transaction};
 
 /// Number of columns written per staged history tuple.
-const STAGE_ATTRIBUTE_HISTORY_FIELD_COUNT: i16 = 12;
+const STAGE_ATTRIBUTE_HISTORY_FIELD_COUNT: i16 = 13;
 
 const CREATE_STAGE_ATTRIBUTE_HISTORY_SQL: &str = r#"
 CREATE TEMP TABLE stage_attribute_history (
@@ -45,19 +45,20 @@ CREATE TEMP TABLE stage_attribute_history (
     value_uri       text,
     instance_id     text NOT NULL,
     observed_at     timestamptz,
-    metadata        jsonb
+    metadata        jsonb,
+    recorded_at     timestamptz NOT NULL
 ) ON COMMIT DROP
 "#;
 
 const COPY_INTO_STAGE_SQL: &str = "COPY stage_attribute_history (time, tea_id, value_number, value_string, value_bool, \
-     value_geo, value_object, value_datetime, value_uri, instance_id, observed_at, metadata) \
+     value_geo, value_object, value_datetime, value_uri, instance_id, observed_at, metadata, recorded_at) \
      FROM STDIN WITH (FORMAT binary)";
 
 const INSERT_FROM_STAGE_SQL: &str = r#"
 INSERT INTO attribute_history (
     time, tea_id, value_number, value_string, value_bool,
     value_geo, value_object, value_datetime, value_uri,
-    instance_id, observed_at, metadata
+    instance_id, observed_at, metadata, recorded_at
 )
 SELECT
     s.time, s.tea_id, s.value_number, s.value_string, s.value_bool,
@@ -65,7 +66,7 @@ SELECT
          THEN ST_MakeValid(ST_GeomFromEWKB(s.value_geo))
          ELSE NULL END,
     s.value_object, s.value_datetime, s.value_uri,
-    s.instance_id, s.observed_at, s.metadata
+    s.instance_id, s.observed_at, s.metadata, s.recorded_at
 FROM stage_attribute_history s
 "#;
 
@@ -109,6 +110,7 @@ pub(crate) fn encode_history_copy_stream(entries: &[HistoryBatchEntry]) -> Vec<u
         write_text(&mut buf, entry.instance_id.as_str());
         write_timestamptz_opt(&mut buf, entry.observed_at);
         write_jsonb_opt(&mut buf, entry.metadata.as_ref());
+        write_timestamptz(&mut buf, entry.recorded_at);
     }
     write_trailer(&mut buf);
     buf
@@ -141,6 +143,7 @@ mod tests {
             instance_id: instance_id.to_string(),
             observed_at: None,
             metadata: None,
+            recorded_at: Utc.timestamp_opt(1_700_000_000, 0).unwrap(),
             instance_id_client_supplied: false,
         }
     }
@@ -160,7 +163,7 @@ mod tests {
     }
 
     #[test]
-    fn binary_copy_emits_field_count_12_per_tuple() {
+    fn binary_copy_emits_field_count_13_per_tuple() {
         let entries = [
             make_entry(uuid::Uuid::nil(), "i0"),
             make_entry(uuid::Uuid::nil(), "i1"),
@@ -168,7 +171,29 @@ mod tests {
         ];
         let buf = encode_history_copy_stream(&entries);
         // Header is 19 bytes; first tuple field count starts at byte 19.
-        assert_eq!(&buf[19..21], &[0x00, 0x0c]);
+        assert_eq!(&buf[19..21], &[0x00, 0x0d]);
+    }
+
+    #[test]
+    fn binary_copy_encodes_recorded_at_as_trailing_timestamptz() {
+        let entries = [make_entry(uuid::Uuid::nil(), "i")];
+        let buf = encode_history_copy_stream(&entries);
+        // recorded_at is the last field: the stream ends with the 2-byte
+        // trailer preceded by the 4-byte length prefix and 8-byte payload.
+        let offset = buf.len() - 2 - 12;
+        assert_eq!(&buf[offset..offset + 4], &[0, 0, 0, 8]);
+        let micros = i64::from_be_bytes([
+            buf[offset + 4],
+            buf[offset + 5],
+            buf[offset + 6],
+            buf[offset + 7],
+            buf[offset + 8],
+            buf[offset + 9],
+            buf[offset + 10],
+            buf[offset + 11],
+        ]);
+        let expected = 1_700_000_000_i64.saturating_mul(1_000_000) - 946_684_800_000_000_i64;
+        assert_eq!(micros, expected);
     }
 
     #[test]

@@ -4,7 +4,12 @@
 
 use crate::{
     core::error::AndromedaError,
-    domain::{attribute_type::AttributeType, expanded::expanded_geo_node_to_wkb, geometry::Wkb, temporal::ValueType},
+    domain::{
+        attribute_type::AttributeType,
+        expanded::{expanded_geo_node_to_wkb, is_system_attribute},
+        geometry::Wkb,
+        temporal::ValueType,
+    },
     jsonld::vocab,
     query::sql::scope_to_ltree,
     repository::temporal::{
@@ -12,25 +17,12 @@ use crate::{
         repo::TemporalRepository,
         rows::TeaBatchResultRow,
     },
+    worker::attribute_current_materializer::AttributeCurrentQueue,
 };
 use chrono::{DateTime, Utc};
+use iri_rs::IriBuf;
 use serde_json::Value;
 use std::sync::Arc;
-use urn_rs::Urn;
-
-/// Returns whether the given expanded IRI is an NGSI-LD system attribute.
-fn is_system_attribute(attr_name: &str) -> bool {
-    matches!(
-        attr_name,
-        value if value == vocab::expanded::properties::CREATED_AT.as_str()
-            || value == vocab::expanded::properties::DATASET_ID.as_str()
-            || value == vocab::expanded::properties::DELETED_AT.as_str()
-            || value == vocab::expanded::properties::INSTANCE_ID.as_str()
-            || value == vocab::expanded::properties::MODIFIED_AT.as_str()
-            || value == vocab::expanded::properties::OBSERVED_AT.as_str()
-            || value == vocab::expanded::properties::UNIT_CODE.as_str()
-    )
-}
 
 /// Named parameters for temporal value storage, replacing the 7-element tuple.
 pub(crate) struct DbValueParams {
@@ -51,9 +43,17 @@ pub(crate) struct DbValueParams {
 }
 
 /// Records attribute history into temporal tables when entities are created or modified.
+///
+/// Holds the `attribute_current` queue because not every caller writes through a
+/// [`UnitOfWork`](crate::repository::uow::UnitOfWork). The transactional methods
+/// return their history rows for the unit of work to publish after commit; the
+/// non-transactional ones commit internally, so they have to publish here or the
+/// projection never learns about the write — which would make those attributes
+/// invisible to `q` filters compiled against `attribute_current`.
 #[derive(Debug)]
 pub struct TemporalRecorder {
     repo: Arc<TemporalRepository>,
+    attribute_current: AttributeCurrentQueue,
 }
 
 /// Intermediate batch state: rows collected from the expanded entities but
@@ -78,8 +78,8 @@ struct PendingHistory {
 
 impl TemporalRecorder {
     /// Create a new temporal recorder backed by the given repository.
-    pub const fn new(repo: Arc<TemporalRepository>) -> TemporalRecorder {
-        TemporalRecorder { repo }
+    pub const fn new(repo: Arc<TemporalRepository>, attribute_current: AttributeCurrentQueue) -> TemporalRecorder {
+        TemporalRecorder { repo, attribute_current }
     }
 
     /// Look up TEA entries for a given entity + attribute IRI.
@@ -201,23 +201,26 @@ impl TemporalRecorder {
 
         let p = typed_value.into_db_params();
 
-        self.repo
-            .insert_history_batch(&[HistoryBatchEntry {
-                time,
-                tea_id,
-                value_number: p.value_number,
-                value_string: p.value_string,
-                value_bool: p.value_bool,
-                value_geo: p.value_geo,
-                value_object: p.value_object,
-                value_datetime: p.value_datetime,
-                value_uri: p.value_uri,
-                instance_id,
-                observed_at,
-                metadata,
-                instance_id_client_supplied,
-            }])
-            .await?;
+        let entry = HistoryBatchEntry {
+            time,
+            tea_id,
+            value_number: p.value_number,
+            value_string: p.value_string,
+            value_bool: p.value_bool,
+            value_geo: p.value_geo,
+            value_object: p.value_object,
+            value_datetime: p.value_datetime,
+            value_uri: p.value_uri,
+            instance_id,
+            observed_at,
+            metadata,
+            recorded_at: Utc::now(),
+            instance_id_client_supplied,
+        };
+        self.repo.insert_history_batch(std::slice::from_ref(&entry)).await?;
+        // Committed by `insert_history_batch` itself, so the projection has to
+        // be told here; there is no unit of work to do it after commit.
+        self.attribute_current.publish(vec![entry]).await;
 
         Ok(())
     }
@@ -243,6 +246,10 @@ impl TemporalRecorder {
         if !prepared.scope_entries.is_empty() {
             self.repo.insert_scope_history_batch(&prepared.scope_entries).await?;
         }
+
+        // As in `record_attribute_instance`: this path commits internally, so
+        // nothing else will publish these rows to the projection.
+        self.attribute_current.publish(history_entries).await;
 
         Ok(())
     }
@@ -380,7 +387,7 @@ impl TemporalRecorder {
                         entity_id: entity_id_str.to_owned(),
                         attribute_name: attr_name.clone(),
                         attribute_type,
-                        dataset_id: dataset_id.map(|u| u.to_string()),
+                        dataset_id: dataset_id.map(|id| id.as_str().to_owned()),
                         value_type,
                     });
                     pending_histories.push(PendingHistory {
@@ -404,7 +411,14 @@ impl TemporalRecorder {
         }
     }
 
+    /// Pair prepared observations with their TEA UUIDs.
+    ///
+    /// `recorded_at` is stamped once for the whole batch rather than per row:
+    /// every row in a unit of work is written by the same commit, so they share
+    /// a write-order position. A per-row `Utc::now()` would impose an arbitrary
+    /// intra-batch ordering on rows that are in fact simultaneous.
     fn build_history_entries(prepared: &PreparedBatch, tea_results: &[TeaBatchResultRow]) -> Vec<HistoryBatchEntry> {
+        let recorded_at = Utc::now();
         let mut tea_id_map: std::collections::HashMap<(&str, &str, Option<&str>), uuid::Uuid> = std::collections::HashMap::with_capacity(tea_results.len());
         for r in tea_results {
             tea_id_map.insert((r.entity_id.as_str(), r.attribute_name.as_str(), r.dataset_id.as_deref()), r.id);
@@ -437,6 +451,7 @@ impl TemporalRecorder {
                 instance_id: ph.instance_id.clone(),
                 observed_at: ph.observed_at,
                 metadata: ph.metadata.clone(),
+                recorded_at,
                 instance_id_client_supplied: ph.instance_id_client_supplied,
             });
         }
@@ -472,14 +487,13 @@ impl TemporalRecorder {
         dataset_id: Option<&str>,
     ) -> Result<(TeaBatchEntry, HistoryBatchEntry), AndromedaError> {
         let teas = self.repo.get_teas_for_entity_attr(entity_id, attr_iri).await?;
-        let parsed_dataset_id = dataset_id.map(Urn::try_from).transpose()?;
         let attr_type = teas
             .iter()
-            .find(|t| t.dataset_id.as_ref() == parsed_dataset_id.as_ref())
+            .find(|t| t.dataset_id.as_ref().map(IriBuf::as_str) == dataset_id)
             .or_else(|| teas.first())
             .map_or(AttributeType::Property, |t| t.attribute_type);
 
-        let dataset_id_str = parsed_dataset_id.as_ref().map(ToString::to_string);
+        let dataset_id_str = dataset_id.map(ToOwned::to_owned);
         let tea_entry = TeaBatchEntry {
             entity_id: entity_id.to_owned(),
             attribute_name: attr_iri.to_owned(),
@@ -487,8 +501,9 @@ impl TemporalRecorder {
             dataset_id: dataset_id_str,
             value_type: ValueType::String,
         };
+        let now = Utc::now();
         let history_entry = HistoryBatchEntry {
-            time: Utc::now(),
+            time: now,
             tea_id: uuid::Uuid::nil(),
             value_number: None,
             value_string: Some(vocab::expanded::properties::NULL_URI.as_str().to_owned()),
@@ -500,6 +515,7 @@ impl TemporalRecorder {
             instance_id: format!("urn:ngsi-ld:attribute:instance:{}", uuid::Uuid::new_v4()),
             observed_at: None,
             metadata: None,
+            recorded_at: now,
             instance_id_client_supplied: false,
         };
         Ok((tea_entry, history_entry))
@@ -767,14 +783,20 @@ fn extract_observed_at(instance: &Value) -> Option<String> {
         .map(String::from)
 }
 
-fn extract_dataset_id(instance: &Value) -> Option<Urn> {
+/// Extract an attribute instance's `datasetId` (NGSI-LD 5.2.5).
+///
+/// Typed as a URI, not a URN: the specification constrains `datasetId` to a
+/// URI. Parsing it as a URN discarded every plain-URI dataset identifier,
+/// which silently merged distinct instances onto the default one and produced
+/// a wrong `attribute_current` grain.
+fn extract_dataset_id(instance: &Value) -> Option<IriBuf> {
     instance
         .get(vocab::expanded::properties::DATASET_ID.as_str())
         .and_then(|v| v.as_array())
         .and_then(|arr| arr.first())
         .and_then(|obj| obj.get("@id"))
         .and_then(|v| v.as_str())
-        .and_then(|value| Urn::try_from(value).ok())
+        .and_then(|value| IriBuf::new(value.to_owned()).ok())
 }
 
 fn extract_or_generate_instance_id(instance: &Value) -> (String, bool) {
@@ -923,5 +945,58 @@ mod tests {
         assert_eq!(history.len(), 1);
         assert_eq!(history[0].instance_id, "urn:ngsi-ld:attribute:instance:client");
         assert!(history[0].instance_id_client_supplied);
+    }
+
+    #[test]
+    fn dataset_id_accepts_a_plain_uri() {
+        // NGSI-LD 5.2.5 types datasetId as a URI. Parsing it as a URN discarded
+        // every non-URN identifier, merging distinct instances onto the default
+        // one and giving attribute_current the wrong grain.
+        let instance = serde_json::json!({
+            vocab::expanded::properties::DATASET_ID.as_str(): [{"@id": "http://example.org/d1"}]
+        });
+        pretty_assertions::assert_eq!(extract_dataset_id(&instance).as_ref().map(IriBuf::as_str), Some("http://example.org/d1"));
+    }
+
+    #[test]
+    fn dataset_id_still_accepts_a_urn() {
+        let instance = serde_json::json!({
+            vocab::expanded::properties::DATASET_ID.as_str(): [{"@id": "urn:ngsi-ld:Dataset:d1"}]
+        });
+        pretty_assertions::assert_eq!(extract_dataset_id(&instance).as_ref().map(IriBuf::as_str), Some("urn:ngsi-ld:Dataset:d1"));
+    }
+
+    #[test]
+    fn dataset_id_is_absent_when_the_instance_has_none() {
+        assert!(extract_dataset_id(&serde_json::json!({})).is_none());
+    }
+
+    #[test]
+    fn history_entries_share_one_recorded_at_per_batch() {
+        // Every row in a unit of work is written by the same commit, so they
+        // share a write-order position; a per-row clock read would impose an
+        // arbitrary ordering on simultaneous rows.
+        let attr = vocab::expanded::properties::VALUE.as_str();
+        let property_type = AttributeType::Property.iri_str();
+        let entity = serde_json::json!({
+            "@id": "urn:ngsi-ld:Entity:e1",
+            "https://example.com/a": [{"@type": [property_type], attr: [{"@value": 1}]}],
+            "https://example.com/b": [{"@type": [property_type], attr: [{"@value": 2}]}],
+        });
+        let entities = [("urn:ngsi-ld:Entity:e1", &entity)];
+        let prepared = TemporalRecorder::prepare_batch_refs(&entities);
+        let tea_results: Vec<TeaBatchResultRow> = prepared
+            .tea_entries
+            .iter()
+            .map(|t| TeaBatchResultRow {
+                id: uuid::Uuid::new_v4(),
+                entity_id: t.entity_id.clone(),
+                attribute_name: t.attribute_name.clone(),
+                dataset_id: t.dataset_id.clone(),
+            })
+            .collect();
+        let history = TemporalRecorder::build_history_entries(&prepared, &tea_results);
+        pretty_assertions::assert_eq!(history.len(), 2);
+        pretty_assertions::assert_eq!(history[0].recorded_at, history[1].recorded_at);
     }
 }

@@ -3,6 +3,8 @@
 //! Each submodule provides a repository struct backed by PostgreSQL (via `sqlx`)
 //! or an in-memory store, encapsulating all SQL queries and data mapping logic.
 
+/// Shared `attribute_names` dictionary cache.
+pub mod attribute_names;
 pub mod copy;
 pub mod csource_registration;
 pub mod csource_subscription;

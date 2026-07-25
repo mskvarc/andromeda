@@ -7,24 +7,25 @@
 
 use crate::{
     core::{config::BulkWriteMode, error::AndromedaError},
-    domain::outbox::NewOutboxEntry,
+    domain::{expanded::AttributeInstanceKey, outbox::NewOutboxEntry},
     repository::{
         entity::{
             copy::create_batch_via_copy_in_tx,
             params::{EntityCreateParams, EntitySaveParams, PreparedEntityColumns},
             repo::EntityRepository,
-            rows::DeletedEntity,
+            rows::{DeletedEntity, PurgedEntity},
         },
         outbox::repo::OutboxRepository,
         pending_side_effects::{payload::PersistedBatchSideEffectJob, repo::PendingSideEffectsRepository},
         temporal::{params::HistoryBatchEntry, repo::TemporalRepository},
     },
     service::temporal_recorder::TemporalRecorder,
-    worker::attribute_current_materializer::{AttributeCurrentEvent, AttributeCurrentSender},
+    worker::attribute_current_materializer::AttributeCurrentQueue,
 };
+use iri_rs::IriBuf;
 use serde_json::Value;
 use sqlx::{Postgres, Transaction, postgres::PgPool};
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 use urn_rs::Urn;
 use uuid::Uuid;
 
@@ -40,7 +41,7 @@ pub struct UnitOfWorkFactory {
     pool: PgPool,
     temporal_recorder: Arc<TemporalRecorder>,
     bulk_write_mode: BulkWriteMode,
-    attribute_current_sender: AttributeCurrentSender,
+    attribute_current_queue: AttributeCurrentQueue,
 }
 
 impl UnitOfWorkFactory {
@@ -49,13 +50,13 @@ impl UnitOfWorkFactory {
         pool: &PgPool,
         temporal_repo: Arc<TemporalRepository>,
         bulk_write_mode: BulkWriteMode,
-        attribute_current_sender: AttributeCurrentSender,
+        attribute_current_queue: AttributeCurrentQueue,
     ) -> UnitOfWorkFactory {
         UnitOfWorkFactory {
-            pool: pool.clone(), // clone: Arc ref-count bump
-            temporal_recorder: Arc::new(TemporalRecorder::new(temporal_repo)),
+            pool: pool.clone(),                                                                                 // clone: Arc ref-count bump
+            temporal_recorder: Arc::new(TemporalRecorder::new(temporal_repo, attribute_current_queue.clone())), // clone: recorder and factory each hold a producer handle
             bulk_write_mode,
-            attribute_current_sender,
+            attribute_current_queue,
         }
     }
 
@@ -67,7 +68,7 @@ impl UnitOfWorkFactory {
             tx: Some(tx),
             temporal_recorder: Arc::clone(&self.temporal_recorder),
             bulk_write_mode: self.bulk_write_mode,
-            attribute_current_sender: self.attribute_current_sender.clone(), // clone: per-UoW handle (mpsc Sender clone is cheap)
+            attribute_current_queue: self.attribute_current_queue.clone(), // clone: per-UoW handle (mpsc Sender clone is cheap)
             pending_attribute_current: Vec::new(),
         })
     }
@@ -89,7 +90,7 @@ pub struct UnitOfWork {
     tx: Option<Transaction<'static, Postgres>>,
     temporal_recorder: Arc<TemporalRecorder>,
     bulk_write_mode: BulkWriteMode,
-    attribute_current_sender: AttributeCurrentSender,
+    attribute_current_queue: AttributeCurrentQueue,
     pending_attribute_current: Vec<HistoryBatchEntry>,
 }
 
@@ -103,6 +104,16 @@ impl UnitOfWork {
     // ---------------------------------------------------------------------
     // Entity writes
     // ---------------------------------------------------------------------
+
+    /// Read a single entity payload inside this unit of work.
+    pub async fn get_entity(&mut self, id: &str) -> Result<Option<Value>, AndromedaError> {
+        EntityRepository::get_in_tx(self.tx_mut()?, id).await
+    }
+
+    /// Read several entity payloads inside this unit of work.
+    pub async fn get_entities(&mut self, ids: &[String]) -> Result<HashMap<String, Value>, AndromedaError> {
+        EntityRepository::get_batch_in_tx(self.tx_mut()?, ids).await
+    }
 
     /// Insert a single entity row.
     pub async fn create_entity(&mut self, params: EntityCreateParams<'_>) -> Result<Urn, AndromedaError> {
@@ -143,6 +154,12 @@ impl UnitOfWork {
         EntityRepository::delete_batch_in_tx(self.tx_mut()?, ids).await
     }
 
+    /// Remove past-due attribute instances from every affected entity payload,
+    /// returning the before/after payloads so the caller can tombstone them.
+    pub async fn purge_expired_attributes(&mut self) -> Result<Vec<PurgedEntity>, AndromedaError> {
+        EntityRepository::purge_expired_attributes_in_tx(self.tx_mut()?).await
+    }
+
     // ---------------------------------------------------------------------
     // Temporal writes
     // ---------------------------------------------------------------------
@@ -152,6 +169,20 @@ impl UnitOfWork {
         let recorder = Arc::clone(&self.temporal_recorder); // clone: Arc ref-count bump to allow tx_mut borrow concurrently
         let history = recorder.record_entity_attributes_in_tx(self.tx_mut()?, id, expanded).await?;
         self.pending_attribute_current.extend(history);
+        Ok(())
+    }
+
+    /// Record tombstones for every attribute instance a replacement dropped.
+    ///
+    /// Pair with [`crate::domain::expanded::removed_attribute_instances`] on
+    /// any path that overwrites `entities.payload` wholesale: without this the
+    /// temporal history never learns the attribute went away and
+    /// `attribute_current` keeps serving its last value to `q` filters.
+    pub async fn record_removed_attributes(&mut self, id: &str, removed: &[AttributeInstanceKey]) -> Result<(), AndromedaError> {
+        for key in removed {
+            self.record_attribute_deletion(id, key.attr.as_str(), key.dataset_id.as_ref().map(IriBuf::as_str))
+                .await?;
+        }
         Ok(())
     }
 
@@ -199,9 +230,12 @@ impl UnitOfWork {
     ///
     /// Once the database commit succeeds, any queued
     /// `attribute_current` updates are dispatched on the materializer
-    /// channel. A closed channel (worker exited) is intentionally
-    /// swallowed: `attribute_history` is the canonical source, and
-    /// the startup reconcile will refill the projection.
+    /// queue. The queue is bounded, so a materializer that has fallen
+    /// behind delays this call — the transaction is already committed and
+    /// released at that point, so the wait costs no database resources. A
+    /// closed channel (worker exited) is intentionally swallowed:
+    /// `attribute_history` is the canonical source, and the startup
+    /// reconcile will refill the projection.
     #[tracing::instrument(skip_all)]
     pub async fn commit(mut self) -> Result<(), AndromedaError> {
         let tx = self
@@ -209,10 +243,8 @@ impl UnitOfWork {
             .take()
             .ok_or_else(|| AndromedaError::internal("UnitOfWork commit called twice".to_string()))?;
         tx.commit().await?;
-        if !self.pending_attribute_current.is_empty() {
-            let event: AttributeCurrentEvent = Arc::new(std::mem::take(&mut self.pending_attribute_current));
-            let _ = self.attribute_current_sender.send(event);
-        }
+        let pending = std::mem::take(&mut self.pending_attribute_current);
+        self.attribute_current_queue.publish(pending).await;
         Ok(())
     }
 }

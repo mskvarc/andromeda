@@ -20,7 +20,7 @@ pub enum AttributeType {
 
 impl AttributeType {
     /// Returns the expanded IRI for this attribute type as an [`Iri`].
-    pub fn iri(self) -> Iri<&'static str> {
+    pub const fn iri(self) -> Iri<&'static str> {
         match self {
             Self::Property => vocab::expanded::classes::PROPERTY,
             Self::Relationship => vocab::expanded::classes::RELATIONSHIP,
@@ -40,7 +40,7 @@ impl AttributeType {
 
     /// Returns the expanded IRI of the value container for this attribute type
     /// as an [`Iri`].
-    pub fn value_key(self) -> Iri<&'static str> {
+    pub const fn value_key(self) -> Iri<&'static str> {
         match self {
             Self::Property | Self::GeoProperty => vocab::expanded::properties::VALUE,
             Self::Relationship => vocab::expanded::properties::OBJECT,

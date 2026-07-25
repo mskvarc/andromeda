@@ -13,6 +13,7 @@ use crate::{
     core::{batch_activity::BatchActivityTracker, error::AndromedaError},
     domain::{
         entity::{Entity, EntityPatch},
+        expanded::removed_attribute_instances,
         notification::{ChangeEvent, TriggerReason},
         outbox::NewOutboxEntry,
         uri::Uri,
@@ -30,6 +31,7 @@ use crate::{
         subscription_matching::matches_entity_filters,
         temporal_recorder::TemporalRecorder,
     },
+    worker::attribute_current_materializer::AttributeCurrentQueue,
 };
 use chrono::{DateTime, SecondsFormat, Utc};
 use dashmap::DashMap;
@@ -156,9 +158,10 @@ impl EntityService {
         batch_config: BatchExecutionConfig,
         batch_activity: BatchActivityTracker,
         outbox: Option<OutboxWriteConfig>,
+        attribute_current_queue: AttributeCurrentQueue,
     ) -> EntityService {
         let repo = EntityRepository::new(pool);
-        let temporal_recorder = TemporalRecorder::new(temporal_repo);
+        let temporal_recorder = TemporalRecorder::new(temporal_repo, attribute_current_queue);
         let id_locks: Arc<IdLockMap> = Arc::new(DashMap::new());
         spawn_id_lock_gc(Arc::downgrade(&id_locks));
 
@@ -427,6 +430,9 @@ impl EntityService {
         let entity_uri = Uri::from(id.clone()); // clone: owned Urn for Uri conversion; id is &Urn
         let id = id.to_string();
 
+        // Existence is checked before expansion so a request against a missing
+        // entity still reports 404 rather than a payload-validation error; the
+        // authoritative read happens again inside the unit of work below.
         if self.repo.get(&id).await?.is_none() {
             return Err(AndromedaError::entity_not_found(id));
         }
@@ -445,9 +451,19 @@ impl EntityService {
             Vec::new()
         };
 
+        // The prior payload is read inside the unit of work so the replacement
+        // diff cannot be computed against a snapshot a concurrent writer has
+        // already superseded. A full replacement drops every attribute the new
+        // payload omits (NGSI-LD 5.6.3), and each of those needs a tombstone so
+        // the temporal history and `attribute_current` follow the payload.
         let mut uow = self.uow.begin().await?;
+        let Some(previous) = uow.get_entity(&id).await? else {
+            return Err(AndromedaError::entity_not_found(id));
+        };
+        let removed = removed_attribute_instances(&previous, &expanded);
         uow.save_entity(build_save_params(&id, &expanded)).await?;
         uow.record_entity_attributes(&id, &expanded).await?;
+        uow.record_removed_attributes(&id, &removed).await?;
         if !outbox_entries.is_empty() {
             uow.insert_outbox_batch(&outbox_entries).await?;
         }

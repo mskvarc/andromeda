@@ -1,0 +1,46 @@
+-- ============================================================================
+-- 0027: Drop both GIN indexes on entities.payload.
+-- ============================================================================
+-- Neither index has ever served a query, and after the q-filter rewrite that
+-- compiles predicates against `attribute_current` there is no plausible future
+-- consumer either. Together they are the largest write-amplification cost on
+-- the ingest path: every entity write reindexes the entire expanded JSON-LD
+-- payload twice.
+--
+-- `idx_entities_payload` -- GIN (payload), from 0005
+-- ----------------------------------------------------
+-- Added for "ad-hoc JSONPath queries (q filter)". GIN `jsonb_ops` serves the
+-- `?`, `?|`, `?&` and `@>` operators, and only when the left operand is the
+-- bare indexed column. Every attribute-existence predicate the broker emits is
+-- of the form
+--
+--     "payload"->0 ? $1
+--
+-- whose left operand is an *expression*, not the column, so the index is not
+-- eligible. The predicate has always been a sequential scan. Making it
+-- index-eligible would need `GIN ((payload->0))`, which is another full-payload
+-- GIN -- exactly the write cost being removed here.
+--
+-- After the rewrite, `q` existence predicates no longer touch the payload at
+-- all: they resolve through `temporal_entity_attributes` (leading
+-- `(entity_id, attribute_name_id)` prefix of its uniqueness constraint) with an
+-- `attribute_current` primary-key probe to exclude tombstones. The remaining
+-- payload probe is the `attrs=` query parameter, which was never index-served
+-- and is unaffected by this migration.
+--
+-- `idx_entities_payload_pathops` -- GIN (payload jsonb_path_ops), from 0014
+-- -------------------------------------------------------------------------
+-- Added speculatively "for when q filters are rewritten to use containment".
+-- `jsonb_path_ops` supports containment (`@>`) exclusively. There is not a
+-- single `@>` in the codebase, and the rewrite compiles to `EXISTS` subqueries
+-- on `attribute_current`, not to containment. The index never had a consumer
+-- and now never will.
+--
+-- Reversibility: both are plain `CREATE INDEX` statements against a column that
+-- still exists; either can be recreated if a containment-based access path is
+-- ever introduced. Dropping them does not change any query result, only the
+-- plan cost of writes.
+-- ============================================================================
+
+DROP INDEX IF EXISTS idx_entities_payload;
+DROP INDEX IF EXISTS idx_entities_payload_pathops;

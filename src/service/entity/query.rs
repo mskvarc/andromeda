@@ -9,14 +9,16 @@ use crate::{
     query::{
         compiled::{CompiledEntityQuery, CompiledOrderTerm, GeoQuery, IcuCollation, IdPattern, OrderingGeometry, Pagination, ScopeQuery},
         compiled_cache::{CompiledQueryCache, CompiledQueryKey},
+        sql::q_filter::{ResolvedAttributeNames, referenced_attribute_iris},
     },
     renderer::SysAttrsInclusion,
-    repository::entity::repo::EntityRepository,
+    repository::{attribute_names::AttributeNameCache, entity::repo::EntityRepository},
     service::{
         csource_forwarding::{ForwardedEntities, merge_query_results},
         spatial::{SpatialKey, build_ref_geometry, entity_index::SpatialEntityIndex, flatten_or_type_iris},
     },
     tenancy::types::TenantRef,
+    worker::attribute_current_materializer::AttributeCurrentBarrier,
 };
 use iri_rs::IriBuf;
 use serde_json::Value;
@@ -36,6 +38,8 @@ pub struct EntityQueryService {
     compiled_cache: CompiledQueryCache,
     spatial: Arc<SpatialEntityIndex>,
     tenant: TenantRef,
+    attribute_current: AttributeCurrentBarrier,
+    attribute_names: Arc<AttributeNameCache>,
 }
 
 type ResolveLinkedResult = Result<HashMap<String, Entity>, AndromedaError>;
@@ -43,7 +47,14 @@ type ResolveLinkedFuture<'a> = Pin<Box<dyn Future<Output = ResolveLinkedResult> 
 
 impl EntityQueryService {
     /// Create a new entity query service backed by the given connection pool.
-    pub fn new(pool: &PgPool, engine: JsonLdEngine, spatial: Arc<SpatialEntityIndex>, tenant: TenantRef) -> EntityQueryService {
+    pub fn new(
+        pool: &PgPool,
+        engine: JsonLdEngine,
+        spatial: Arc<SpatialEntityIndex>,
+        tenant: TenantRef,
+        attribute_current: AttributeCurrentBarrier,
+        attribute_names: Arc<AttributeNameCache>,
+    ) -> EntityQueryService {
         let repo = EntityRepository::new(pool);
         EntityQueryService {
             repo,
@@ -51,7 +62,35 @@ impl EntityQueryService {
             compiled_cache: CompiledQueryCache::new(),
             spatial,
             tenant,
+            attribute_current,
+            attribute_names,
         }
+    }
+
+    /// Resolve the attribute IRIs a compiled `q` filter references, and wait
+    /// for the `attribute_current` projection to catch up if any of them will
+    /// be answered from it.
+    ///
+    /// Resolution happens here, per execution, rather than at compile time:
+    /// compiled queries are cached for minutes, and an attribute IRI that was
+    /// unknown when the filter was first compiled must not stay pinned as
+    /// unknown — its predicates would keep compiling to a constant `FALSE`
+    /// long after the attribute started being written.
+    ///
+    /// The barrier is only taken when at least one IRI resolved. Nothing
+    /// resolving means every projection-backed predicate is already a constant
+    /// `FALSE`, so there is no pending write that could change the answer.
+    async fn resolve_q_attributes(&self, compiled: &CompiledEntityQuery) -> Result<ResolvedAttributeNames, AndromedaError> {
+        let Some(q_expr) = &compiled.q_expr else {
+            return Ok(ResolvedAttributeNames::default());
+        };
+        let mut iris = Vec::new();
+        referenced_attribute_iris(q_expr, &mut iris);
+        let resolved = self.attribute_names.lookup(&iris).await?;
+        if !resolved.is_empty() {
+            self.attribute_current.wait_for_pending_writes().await;
+        }
+        Ok(resolved)
     }
 
     /// Return a reference to the underlying JSON-LD engine.
@@ -148,7 +187,8 @@ impl EntityQueryService {
     pub async fn query(&self, query: &EntityQueryParameters, context: &ContextSpec) -> Result<(Vec<Entity>, Option<i64>), AndromedaError> {
         let compiled = self.compile_query_cached(query, context, true).await?;
         let compiled_for_repo = self.spatial_prefilter(&compiled);
-        let query_result = self.repo.query_compiled(&compiled_for_repo).await?;
+        let attribute_names = self.resolve_q_attributes(&compiled_for_repo).await?;
+        let query_result = self.repo.query_compiled(&compiled_for_repo, &attribute_names).await?;
         let sys_attrs = query.parse_options().sys_attrs;
 
         // Batch-fetch sys_attrs for all entities in one query instead of N+1
@@ -316,7 +356,8 @@ impl EntityQueryService {
 
     /// Execute a compiled query returning only entity IDs.
     pub async fn query_ids(&self, compiled: &CompiledEntityQuery) -> Result<Vec<String>, AndromedaError> {
-        self.repo.query_ids(compiled).await
+        let attribute_names = self.resolve_q_attributes(compiled).await?;
+        self.repo.query_ids(compiled, &attribute_names).await
     }
 
     /// Merge local query results with forwarded context source results.

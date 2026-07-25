@@ -18,6 +18,20 @@ pub struct DeletedEntity {
     pub expires_at: Option<DateTime<Utc>>,
 }
 
+/// One entity whose payload had past-due attribute instances removed.
+///
+/// Carries both sides of the rewrite so the caller can diff them and record a
+/// tombstone per expired attribute instance.
+#[derive(Debug)]
+pub struct PurgedEntity {
+    /// Entity identifier.
+    pub id: String,
+    /// The expanded payload before expired instances were removed.
+    pub previous_payload: Value,
+    /// The expanded payload after expired instances were removed.
+    pub payload: Value,
+}
+
 /// Result of an entity query containing matched rows and an optional total count.
 #[derive(Debug)]
 pub struct QueryResult {

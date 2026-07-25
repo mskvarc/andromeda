@@ -11,13 +11,11 @@ use crate::{
     jsonld::vocab,
     query::{
         compiled::{CompiledTemporalQuery, GeoQuery, TypeExpr},
-        q::ast::Expr,
         sql::{
             BindValue,
             BuiltQuery,
             postgres_ext::{
                 any_eq,
-                jsonb_key_exists,
                 regex_match,
                 st_contains,
                 st_disjoint,
@@ -28,8 +26,10 @@ use crate::{
                 st_within,
                 validated_geom_from_ewkb,
             },
+            q_filter::{self, QFilterTarget, ResolvedAttributeNames},
             schema::{Ah, An, AttributeHistory, AttributeNames, E, Entities, Tea, TemporalEntityAttributes},
             scope_to_lquery,
+            sea_values_to_bind_values,
         },
     },
 };
@@ -73,9 +73,9 @@ const fn time_column_expr_unprefixed(timeproperty: TimeProp) -> &'static str {
 }
 
 /// Build Stage 1 query: find entity IDs matching entity-level filters.
-pub fn build_stage1_entity_ids(compiled: &CompiledTemporalQuery) -> Result<BuiltQuery<'static>, AndromedaError> {
+pub fn build_stage1_entity_ids(compiled: &CompiledTemporalQuery, attribute_names: &ResolvedAttributeNames) -> Result<BuiltQuery<'static>, AndromedaError> {
     // Build entity-level conditions (applied to entities table via alias "e")
-    let entity_conditions = build_entity_conditions_for_temporal(compiled)?;
+    let entity_conditions = build_entity_conditions_for_temporal(compiled, attribute_names)?;
 
     // Build temporal-specific conditions
     let temporal_conditions = build_temporal_stage1_conditions(compiled)?;
@@ -164,7 +164,7 @@ pub fn build_stage1_entity_ids(compiled: &CompiledTemporalQuery) -> Result<Built
 }
 
 /// Build entity-level conditions for temporal queries (using "e" alias for entities table).
-fn build_entity_conditions_for_temporal(compiled: &CompiledTemporalQuery) -> Result<Condition, AndromedaError> {
+fn build_entity_conditions_for_temporal(compiled: &CompiledTemporalQuery, attribute_names: &ResolvedAttributeNames) -> Result<Condition, AndromedaError> {
     let mut condition = Condition::all();
 
     // ID filter: e.id = ANY($N)
@@ -190,10 +190,10 @@ fn build_entity_conditions_for_temporal(compiled: &CompiledTemporalQuery) -> Res
         condition = condition.add(type_cond);
     }
 
-    // Q expression filter
+    // Q expression filter. Correlated on the TEA catalogue's entity_id, which
+    // is the driving table for stage 1.
     if let Some(q_expr) = &compiled.q_expr {
-        let q_cond = q_expr_to_condition(q_expr, "e.payload")?;
-        condition = condition.add(q_cond);
+        condition = condition.add(q_filter::compile(q_expr, QFilterTarget::TemporalStage1, attribute_names)?);
     }
 
     // Geo filter
@@ -571,122 +571,6 @@ fn type_expr_to_condition(expr: &TypeExpr) -> Condition {
     }
 }
 
-/// Converts Q expression (NGSI-LD query language) to sea-query Condition.
-fn q_expr_to_condition(expr: &Expr, payload_col: &str) -> Result<Condition, AndromedaError> {
-    use crate::query::q::ast::{AttrPath, CmpOp, CompareValue, Predicate};
-
-    fn pred_to_condition(pred: &Predicate, payload_col: &str) -> Result<Condition, AndromedaError> {
-        let quoted_col = quote_col_ref(payload_col);
-        match pred {
-            Predicate::Exists(path) => {
-                // payload->0 ? $N
-                Ok(Condition::all().add(jsonb_key_exists(
-                    SeaExpr::cust(format!("{}->0", quoted_col)),
-                    SeaExpr::val(path.attr.as_str()).into(),
-                )))
-            }
-            Predicate::Compare { path, op, rhs } => compare_to_condition(path, *op, rhs, payload_col),
-            Predicate::MatchPattern { path, pattern } => {
-                let jsonpath = value_extraction_jsonpath(&path.attr, &path.sub_attrs, &path.value_path);
-                let sql = format!(
-                    "jsonb_path_exists({}, '{}') AND (jsonb_path_query_first({}, '{}')#>>'{{}}')::text ~ $1",
-                    quoted_col, jsonpath, quoted_col, jsonpath
-                );
-                Ok(Condition::all().add(SeaExpr::cust_with_values(sql, [pattern.clone()])))
-            }
-            Predicate::NotMatchPattern { path, pattern } => {
-                let jsonpath = value_extraction_jsonpath(&path.attr, &path.sub_attrs, &path.value_path);
-                let sql = format!(
-                    "NOT (jsonb_path_exists({}, '{}') AND (jsonb_path_query_first({}, '{}')#>>'{{}}')::text ~ $1)",
-                    quoted_col, jsonpath, quoted_col, jsonpath
-                );
-                Ok(Condition::all().add(SeaExpr::cust_with_values(sql, [pattern.clone()])))
-            }
-        }
-    }
-
-    fn compare_to_condition(path: &AttrPath, op: CmpOp, rhs: &CompareValue, payload_col: &str) -> Result<Condition, AndromedaError> {
-        let quoted_col = quote_col_ref(payload_col);
-        let jsonpath = value_extraction_jsonpath(&path.attr, &path.sub_attrs, &path.value_path);
-        let extract_expr = format!("jsonb_path_query_first({}, '{}')", quoted_col, jsonpath);
-
-        match rhs {
-            CompareValue::Scalar(scalar) => {
-                let op_str = cmp_op_sql(op);
-                let (cast, bind_val) = scalar_to_sql_bind(scalar);
-                let has_object_jsonpath =
-                    value_extraction_jsonpath_with_predicate(&path.attr, &path.sub_attrs, &path.value_path, vocab::expanded::properties::OBJECT.as_str());
-                let extract_object = format!("jsonb_path_query_first({}, '{}')", quoted_col, has_object_jsonpath);
-                let sql = format!(
-                    "(COALESCE(({} #>> '{{}}'), ({} #>> '{{}}')){}  {} $1{})",
-                    extract_expr, extract_object, cast, op_str, cast
-                );
-                Ok(Condition::all().add(SeaExpr::cust_with_values(sql, [bind_val])))
-            }
-            CompareValue::Range { min, max } => {
-                let (cast, bind_min) = scalar_to_sql_bind(min);
-                let (_, bind_max) = scalar_to_sql_bind(max);
-                match op {
-                    CmpOp::Equal => {
-                        let sql = format!(
-                            "(({} #>> '{{}}')){}  >= $1{} AND (({} #>> '{{}}')){}  <= $2{}",
-                            extract_expr, cast, cast, extract_expr, cast, cast
-                        );
-                        Ok(Condition::all().add(SeaExpr::cust_with_values(sql, [bind_min, bind_max])))
-                    }
-                    CmpOp::Unequal => {
-                        let sql = format!(
-                            "(({} #>> '{{}}')){}  < $1{} OR (({} #>> '{{}}')){}  > $2{}",
-                            extract_expr, cast, cast, extract_expr, cast, cast
-                        );
-                        Ok(Condition::all().add(SeaExpr::cust_with_values(sql, [bind_min, bind_max])))
-                    }
-                    _ => Err(AndromedaError::query_validation("Range values only supported with == and != operators")),
-                }
-            }
-            CompareValue::ValueList(values) => {
-                let mut parts = Vec::new();
-                let mut bind_vals = Vec::new();
-                for (i, v) in values.iter().enumerate() {
-                    let (cast, bind_val) = scalar_to_sql_bind(v);
-                    parts.push(format!("(({} #>> '{{}}')){}  = ${}{}", extract_expr, cast, i + 1, cast));
-                    bind_vals.push(bind_val);
-                }
-                let joined = parts.join(" OR ");
-                match op {
-                    CmpOp::Equal => {
-                        let sql = format!("({})", joined);
-                        Ok(Condition::all().add(SeaExpr::cust_with_values(sql, bind_vals)))
-                    }
-                    CmpOp::Unequal => {
-                        let sql = format!("NOT ({})", joined);
-                        Ok(Condition::all().add(SeaExpr::cust_with_values(sql, bind_vals)))
-                    }
-                    _ => Err(AndromedaError::query_validation("Value lists only supported with == and != operators")),
-                }
-            }
-        }
-    }
-
-    match expr {
-        Expr::And(terms) => {
-            let mut cond = Condition::all();
-            for term in terms {
-                cond = cond.add(q_expr_to_condition(term, payload_col)?);
-            }
-            Ok(cond)
-        }
-        Expr::Or(terms) => {
-            let mut cond = Condition::any();
-            for term in terms {
-                cond = cond.add(q_expr_to_condition(term, payload_col)?);
-            }
-            Ok(cond)
-        }
-        Expr::Pred(pred) => pred_to_condition(pred, payload_col),
-    }
-}
-
 /// Geo filter to condition using PostGIS helpers.
 fn geo_to_condition(geo: &GeoQuery, payload_col: &str) -> Result<Condition, AndromedaError> {
     use crate::query::compiled::GeoRel;
@@ -867,57 +751,8 @@ fn single_scope_to_temporal_exists(
 // Utility functions
 // ============================================================================
 
-fn value_extraction_jsonpath(attr_iri: &str, sub_attrs: &[String], value_path: &[String]) -> String {
-    value_extraction_jsonpath_with_predicate(attr_iri, sub_attrs, value_path, vocab::expanded::properties::VALUE.as_str())
-}
-
-fn value_extraction_jsonpath_with_predicate(attr_iri: &str, sub_attrs: &[String], value_path: &[String], predicate_iri: &str) -> String {
-    let mut path = format!("$[0].\"{}\"", escape_jsonpath_key(attr_iri));
-
-    for sub in sub_attrs {
-        path.push_str(&format!("[0].\"{}\"", escape_jsonpath_key(sub)));
-    }
-
-    path.push_str(&format!("[0].\"{}\"[0]", escape_jsonpath_key(predicate_iri)));
-
-    let value_key = if predicate_iri == vocab::expanded::properties::OBJECT.as_str() {
-        "@id"
-    } else {
-        "@value"
-    };
-
-    path.push_str(&format!(".\"{}\"", value_key));
-    for key in value_path {
-        path.push_str(&format!(".\"{}\"", escape_jsonpath_key(key)));
-    }
-
-    path
-}
-
 fn escape_jsonpath_key(key: &str) -> String {
     key.replace('\\', "\\\\").replace('"', "\\\"")
-}
-
-const fn cmp_op_sql(op: crate::query::q::ast::CmpOp) -> &'static str {
-    use crate::query::q::ast::CmpOp;
-    match op {
-        CmpOp::Equal => "=",
-        CmpOp::Unequal => "!=",
-        CmpOp::Greater => ">",
-        CmpOp::GreaterEq => ">=",
-        CmpOp::Less => "<",
-        CmpOp::LessEq => "<=",
-    }
-}
-
-fn scalar_to_sql_bind(scalar: &crate::query::q::ast::Scalar) -> (&'static str, String) {
-    use crate::query::q::ast::Scalar;
-    match scalar {
-        Scalar::Number(n) => ("::numeric", n.to_string()),
-        Scalar::Bool(b) => ("::boolean", b.to_string()),
-        Scalar::Str(s) => ("", s.clone()),
-        Scalar::DateTime(s) | Scalar::Date(s) | Scalar::Time(s) => ("", s.clone()),
-    }
 }
 
 fn build_reference_wkb(geometry: &str, coordinates: &serde_json::Value) -> Result<Wkb, AndromedaError> {
@@ -926,32 +761,6 @@ fn build_reference_wkb(geometry: &str, coordinates: &serde_json::Value) -> Resul
         "coordinates": coordinates
     });
     Wkb::from_geojson_value(&geojson).map_err(|error| AndromedaError::query_validation(format!("Invalid geo-query reference geometry: {}", error)))
-}
-
-/// Convert sea-query Values to BindValue vector for repository compatibility.
-fn sea_values_to_bind_values(values: sea_query::Values) -> Result<Vec<BindValue<'static>>, AndromedaError> {
-    values
-        .0
-        .into_iter()
-        .map(|v| match v {
-            sea_query::Value::String(Some(s)) => Ok(BindValue::String(Cow::Owned(s.to_string()))),
-            sea_query::Value::Int(Some(i)) => Ok(BindValue::I64(i64::from(i))),
-            sea_query::Value::BigInt(Some(i)) => Ok(BindValue::I64(i)),
-            sea_query::Value::BigUnsigned(Some(u)) => Ok(BindValue::I64(u as i64)),
-            sea_query::Value::Unsigned(Some(u)) => Ok(BindValue::I64(i64::from(u))),
-            sea_query::Value::TinyInt(Some(i)) => Ok(BindValue::I64(i64::from(i))),
-            sea_query::Value::TinyUnsigned(Some(u)) => Ok(BindValue::I64(i64::from(u))),
-            sea_query::Value::SmallInt(Some(i)) => Ok(BindValue::I64(i64::from(i))),
-            sea_query::Value::SmallUnsigned(Some(u)) => Ok(BindValue::I64(i64::from(u))),
-            sea_query::Value::Bool(Some(b)) => Ok(BindValue::String(Cow::Owned(b.to_string()))),
-            sea_query::Value::Double(Some(f)) => Ok(BindValue::String(Cow::Owned(f.to_string()))),
-            sea_query::Value::Float(Some(f)) => Ok(BindValue::String(Cow::Owned(f.to_string()))),
-            sea_query::Value::Bytes(Some(b)) => Ok(BindValue::Bytes(Cow::Owned(*b))),
-            other => Err(AndromedaError::internal(format!(
-                "unexpected sea_query::Value variant in bind conversion: {other:?}"
-            ))),
-        })
-        .collect()
 }
 
 #[cfg(test)]
@@ -1072,7 +881,7 @@ mod tests {
     fn build_entity_id_selection_with_type() {
         let mut compiled = minimal_compiled();
         compiled.types = Some(vec!["https://uri.etsi.org/ngsi-ld/default-context/Vehicle".to_string()]);
-        let result = build_stage1_entity_ids(&compiled).unwrap();
+        let result = build_stage1_entity_ids(&compiled, &ResolvedAttributeNames::default()).unwrap();
         assert!(result.sql.contains("SELECT DISTINCT"));
         assert!(result.sql.contains("\"e\".\"types\""));
         assert!(result.sql.contains("JOIN \"attribute_names\""));
@@ -1085,7 +894,7 @@ mod tests {
         compiled.timerel = Some(TimeRel::Before);
         compiled.time_at = Some(DateTime::parse_from_rfc3339("2030-01-01T00:00:00Z").unwrap().with_timezone(&Utc));
 
-        let result = build_stage1_entity_ids(&compiled).unwrap();
+        let result = build_stage1_entity_ids(&compiled, &ResolvedAttributeNames::default()).unwrap();
 
         assert!(
             !result.sql.contains("< $1::timestamptz"),
@@ -1100,7 +909,7 @@ mod tests {
     #[test]
     fn stage1_includes_attribute_names_join() {
         let compiled = minimal_compiled();
-        let result = build_stage1_entity_ids(&compiled).unwrap();
+        let result = build_stage1_entity_ids(&compiled, &ResolvedAttributeNames::default()).unwrap();
         assert!(result.sql.contains("JOIN \"attribute_names\""));
     }
 
@@ -1108,7 +917,7 @@ mod tests {
     fn stage1_includes_scope_q_filter() {
         let mut compiled = minimal_compiled();
         compiled.scope_q = Some(ScopeQuery::new("/Madrid/Gardens".to_string()));
-        let result = build_stage1_entity_ids(&compiled).unwrap();
+        let result = build_stage1_entity_ids(&compiled, &ResolvedAttributeNames::default()).unwrap();
         assert!(result.sql.contains("scope_history"), "SQL should reference scope_history table");
         assert!(result.sql.contains("lquery"), "SQL should contain lquery cast");
     }
@@ -1117,7 +926,7 @@ mod tests {
     fn stage1_scope_q_with_or_and_semantics() {
         let mut compiled = minimal_compiled();
         compiled.scope_q = Some(ScopeQuery::new("/A;/B,/C".to_string()));
-        let result = build_stage1_entity_ids(&compiled).unwrap();
+        let result = build_stage1_entity_ids(&compiled, &ResolvedAttributeNames::default()).unwrap();
         assert!(result.sql.contains("AND"), "SQL should contain AND for semicolon-separated scopes");
         assert!(result.sql.contains("OR"), "SQL should contain OR for comma-separated scopes");
     }
@@ -1126,7 +935,7 @@ mod tests {
     fn stage1_scope_q_with_wildcards() {
         let mut compiled = minimal_compiled();
         compiled.scope_q = Some(ScopeQuery::new("/Madrid/#".to_string()));
-        let _result = build_stage1_entity_ids(&compiled).unwrap();
+        let _result = build_stage1_entity_ids(&compiled, &ResolvedAttributeNames::default()).unwrap();
         // The wildcard is embedded in the bind values which sea-query manages
     }
 
@@ -1136,7 +945,7 @@ mod tests {
         compiled.scope_q = Some(ScopeQuery::new("/Madrid".to_string()));
         compiled.timerel = Some(TimeRel::Before);
         compiled.time_at = Some(DateTime::parse_from_rfc3339("2024-06-01T00:00:00Z").unwrap().with_timezone(&Utc));
-        let result = build_stage1_entity_ids(&compiled).unwrap();
+        let result = build_stage1_entity_ids(&compiled, &ResolvedAttributeNames::default()).unwrap();
         assert!(result.sql.contains("scope_history"), "SQL should reference scope_history table");
     }
 
@@ -1147,7 +956,7 @@ mod tests {
         compiled.timerel = Some(TimeRel::Between);
         compiled.time_at = Some(DateTime::parse_from_rfc3339("2024-01-01T00:00:00Z").unwrap().with_timezone(&Utc));
         compiled.end_time_at = Some(DateTime::parse_from_rfc3339("2024-06-01T00:00:00Z").unwrap().with_timezone(&Utc));
-        let result = build_stage1_entity_ids(&compiled).unwrap();
+        let result = build_stage1_entity_ids(&compiled, &ResolvedAttributeNames::default()).unwrap();
         assert!(result.sql.contains(">="), "Between should have >= on sh.time");
         assert!(result.sql.contains("<"), "Between should have < on sh.time");
     }
@@ -1158,7 +967,7 @@ mod tests {
         compiled.scope_q = Some(ScopeQuery::new("/A/#".to_string()));
         compiled.timerel = Some(TimeRel::After);
         compiled.time_at = Some(DateTime::parse_from_rfc3339("2024-03-01T00:00:00Z").unwrap().with_timezone(&Utc));
-        let result = build_stage1_entity_ids(&compiled).unwrap();
+        let result = build_stage1_entity_ids(&compiled, &ResolvedAttributeNames::default()).unwrap();
         assert!(result.sql.contains(">="), "After should have >= on sh.time");
     }
 
@@ -1167,7 +976,7 @@ mod tests {
         let mut compiled = minimal_compiled();
         compiled.scope_q = Some(ScopeQuery::new("/A".to_string()));
         // No timerel/time_at set
-        let result = build_stage1_entity_ids(&compiled).unwrap();
+        let result = build_stage1_entity_ids(&compiled, &ResolvedAttributeNames::default()).unwrap();
         assert!(result.sql.contains("scope_history"), "Should still query scope_history");
     }
 
@@ -1177,7 +986,7 @@ mod tests {
         compiled.scope_q = Some(ScopeQuery::new("/A;/B,/C".to_string()));
         compiled.timerel = Some(TimeRel::Before);
         compiled.time_at = Some(DateTime::parse_from_rfc3339("2024-06-01T00:00:00Z").unwrap().with_timezone(&Utc));
-        let result = build_stage1_entity_ids(&compiled).unwrap();
+        let result = build_stage1_entity_ids(&compiled, &ResolvedAttributeNames::default()).unwrap();
         // /A;/B -> AND, ,/C -> OR
         assert!(result.sql.contains("AND"), "Semicolon scopes produce AND");
         assert!(result.sql.contains("OR"), "Comma scopes produce OR");
@@ -1187,9 +996,34 @@ mod tests {
     }
 
     #[test]
+    fn stage1_q_filter_correlates_on_the_catalogue_entity_id() {
+        use crate::{domain::temporal::AttributeNameId, query::q::parser};
+        let mut compiled = minimal_compiled();
+        compiled.q_expr = Some(parser::parse("\"https://example.com/speed\">50").unwrap());
+        let names = ResolvedAttributeNames::from_pairs([("https://example.com/speed".to_string(), AttributeNameId::from(7))]);
+        let result = build_stage1_entity_ids(&compiled, &names).unwrap();
+        assert!(result.sql.contains("\"attribute_current\""), "{}", result.sql);
+        assert!(
+            result.sql.contains("\"ac\".\"entity_id\" = \"tea\".\"entity_id\""),
+            "stage 1 drives from the TEA catalogue, so the probe correlates there: {}",
+            result.sql
+        );
+        assert!(!result.sql.contains("jsonb_path_query_first"), "{}", result.sql);
+    }
+
+    #[test]
+    fn stage1_q_filter_on_an_unknown_attribute_is_unsatisfiable() {
+        use crate::query::q::parser;
+        let mut compiled = minimal_compiled();
+        compiled.q_expr = Some(parser::parse("\"https://example.com/never-written\">50").unwrap());
+        let result = build_stage1_entity_ids(&compiled, &ResolvedAttributeNames::default()).unwrap();
+        assert!(result.sql.contains("FALSE"), "{}", result.sql);
+    }
+
+    #[test]
     fn no_scope_q_unchanged() {
         let compiled = minimal_compiled();
-        let result = build_stage1_entity_ids(&compiled).unwrap();
+        let result = build_stage1_entity_ids(&compiled, &ResolvedAttributeNames::default()).unwrap();
         assert!(!result.sql.contains("scope_history"), "No scope_history reference without scopeQ");
     }
 }

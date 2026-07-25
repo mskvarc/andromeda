@@ -24,6 +24,7 @@ use crate::{
         ws,
     },
     repository::{
+        attribute_names::AttributeNameCache,
         csource_registration::repo::CsourceRegistrationRepository,
         csource_subscription::repo::CsourceSubscriptionRepository,
         entity::repo::EntityRepository,
@@ -296,18 +297,33 @@ pub async fn build_tenant_state(
     let batch_chunk_concurrency = config.performance.batch_chunk_concurrency.unwrap_or(4).max(1);
     let batch_chunk_write_concurrency = config.performance.batch_chunk_write_concurrency.unwrap_or(4).max(1);
 
-    let temporal_repo = Arc::new(TemporalRepository::new(&pool, config.performance.bulk_write_mode).with_features(timescale_features));
+    // One dictionary cache per tenant, shared by the temporal write path (which
+    // mints missing entries) and the q-filter read path (which must not).
+    let attribute_name_cache = Arc::new(AttributeNameCache::new(&pool));
     if config.performance.preload_attribute_names
-        && let Err(error) = temporal_repo.preload_attribute_names().await
+        && let Err(error) = attribute_name_cache.preload().await
     {
         tracing::warn!(error = %error, event = "attribute_names_preload_failed");
     }
+    let temporal_repo =
+        Arc::new(TemporalRepository::new(&pool, config.performance.bulk_write_mode, Arc::clone(&attribute_name_cache)).with_features(timescale_features));
+
+    let pool_arc = Arc::new(pool.clone()); // clone: Arc-wrap the per-tenant pool for the materializer worker
+    let (materializer, attribute_current_queue, attribute_current_barrier) = AttributeCurrentMaterializer::new(
+        Arc::clone(&pool_arc),
+        std::time::Duration::from_secs(config.spatial.lag_log_interval_secs.max(1)),
+    );
+    if let Err(e) = materializer.reconcile_on_startup().await {
+        tracing::warn!(error = %e, event = "attribute_current_reconcile_failed");
+    }
+    worker_handles.push(tokio::spawn(materializer.run()));
 
     if config.performance.batch_async_side_effect_threshold.is_some() {
         let pending_repo = crate::repository::pending_side_effects::repo::PendingSideEffectsRepository::new(&pool);
         let worker = PendingSideEffectsWorker::new(
             pending_repo,
             Arc::clone(&temporal_repo),
+            attribute_current_queue.clone(), // clone: producer handle shared with the other services
             Some(change_tx.clone()),
             crate::worker::pending_side_effects::WorkerConfig {
                 poll_interval: std::time::Duration::from_secs(config.performance.pending_side_effects_poll_secs.max(1)),
@@ -330,23 +346,11 @@ pub async fn build_tenant_state(
         tracing::warn!("spatial warmup failed: {}", e);
     }
 
-    let (attribute_current_tx, attribute_current_rx) = tokio::sync::mpsc::unbounded_channel();
-    let pool_arc = Arc::new(pool.clone()); // clone: Arc-wrap the per-tenant pool for the materializer worker
-    let materializer = AttributeCurrentMaterializer::new(
-        attribute_current_rx,
-        Arc::clone(&pool_arc),
-        std::time::Duration::from_secs(config.spatial.lag_log_interval_secs.max(1)),
-    );
-    if let Err(e) = materializer.reconcile_on_startup().await {
-        tracing::warn!(error = %e, event = "attribute_current_reconcile_failed");
-    }
-    worker_handles.push(tokio::spawn(materializer.run()));
-
     let uow_factory = Arc::new(UnitOfWorkFactory::new(
         &pool,
         Arc::clone(&temporal_repo),
         config.performance.bulk_write_mode,
-        attribute_current_tx,
+        attribute_current_queue.clone(), // clone: producer handle shared with the other services
     ));
 
     let entity_service = Arc::new(EntityService::new(
@@ -372,12 +376,16 @@ pub async fn build_tenant_state(
         } else {
             None
         },
+        attribute_current_queue.clone(), // clone: producer handle shared with the other services
     ));
     let temporal_service = Arc::new(TemporalService::new(
         &pool,
         Arc::clone(&temporal_repo),
         engine.clone(),
         config.temporal.default_last_n,
+        attribute_current_barrier.clone(),
+        attribute_current_queue,
+        Arc::clone(&attribute_name_cache),
     ));
     let context_service = Arc::new(JsonLdContextService::new(&pool, engine.clone()));
     let subscription_service = Arc::new(SubscriptionService::new(&pool, engine.clone(), Some(sub_change_tx.clone())));
@@ -407,7 +415,14 @@ pub async fn build_tenant_state(
     let _shutdown_tx = shutdown_tx;
 
     let spatial_change_rx = change_tx.subscribe();
-    let notification_entity_query = EntityQueryService::new(&pool, engine.clone(), Arc::clone(&spatial_index), tenant.clone());
+    let notification_entity_query = EntityQueryService::new(
+        &pool,
+        engine.clone(),
+        Arc::clone(&spatial_index),
+        tenant.clone(),
+        attribute_current_barrier.clone(),
+        Arc::clone(&attribute_name_cache),
+    );
     let notification_worker = NotificationWorker::new(
         change_tx.subscribe(),
         sub_change_tx.subscribe(),
@@ -458,7 +473,13 @@ pub async fn build_tenant_state(
     worker_handles.push(tokio::spawn(csr_notification_worker.run()));
 
     // Combined entity and attribute expiration worker (§4.22).
-    let data_expiration_worker = DataExpirationWorker::new(EntityRepository::new(&pool), Some(change_tx), expiration_interval, batch_activity);
+    let data_expiration_worker = DataExpirationWorker::new(
+        EntityRepository::new(&pool),
+        Arc::clone(&uow_factory),
+        Some(change_tx),
+        expiration_interval,
+        batch_activity,
+    );
     worker_handles.push(tokio::spawn(data_expiration_worker.run()));
 
     // Snapshot expiration worker (NGSI-LD 5.16 -- clean up expired snapshots)
@@ -498,7 +519,14 @@ pub async fn build_tenant_state(
     );
     worker_handles.push(tokio::spawn(csr_interval_worker.run()));
 
-    let entity_query_service = Arc::new(EntityQueryService::new(&pool, engine.clone(), Arc::clone(&spatial_index), tenant));
+    let entity_query_service = Arc::new(EntityQueryService::new(
+        &pool,
+        engine.clone(),
+        Arc::clone(&spatial_index),
+        tenant,
+        attribute_current_barrier,
+        attribute_name_cache,
+    ));
     let entity_discovery_service = Arc::new(EntityDiscoveryService::new(&pool, engine.clone()));
 
     let forwarding_service = Arc::new(crate::service::csource_forwarding::CsourceForwardingService::new(

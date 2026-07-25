@@ -91,6 +91,13 @@ pub struct HistoryBatchEntry {
     pub observed_at: Option<DateTime<Utc>>,
     /// Additional metadata (sub-attributes, unitCode, etc.).
     pub metadata: Option<Value>,
+    /// Server wall-clock instant at which this observation was produced.
+    ///
+    /// Distinct from `time`, which carries the client-supplied `observedAt`
+    /// when present and is therefore not a write-order key. `recorded_at`
+    /// gives the `attribute_current` projection last-write-wins semantics so
+    /// it tracks `entities.payload` rather than `observedAt` order.
+    pub recorded_at: DateTime<Utc>,
     /// True when `instance_id` came from the client's `instanceId` JSON-LD
     /// term (NGSI-LD section 4.5.7) rather than being server-generated. Drives
     /// whether the broker must run the dedup DELETE before INSERT.

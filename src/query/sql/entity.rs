@@ -6,9 +6,7 @@ use crate::{
     jsonld::vocab,
     query::{
         compiled::{CompiledEntityQuery, CompiledOrderTerm, GeoQuery, GeoRel, OrderDirection, OrderingGeometry, TypeExpr},
-        q::ast::{AttrPath, CmpOp, CompareValue, Expr, Predicate, Scalar},
         sql::{
-            BindValue,
             BuiltQuery,
             postgres_ext::{
                 any_eq,
@@ -25,20 +23,21 @@ use crate::{
                 validated_geom_from_ewkb,
                 validated_geom_from_geojson,
             },
+            q_filter::{self, QFilterTarget, ResolvedAttributeNames},
             schema::Entities,
             scope_to_lquery,
+            sea_values_to_bind_values,
         },
     },
 };
 use sea_query::{Asterisk, Condition, Expr as SeaExpr, Func, Order, PostgresQueryBuilder, Query, SelectStatement};
-use std::borrow::Cow;
 
 /// Builds a parameterized SQL query to retrieve entity payloads from the `entities` table.
 ///
 /// Generates filter conditions from the compiled query (IDs, types, attrs, q expression,
 /// geo filter, scope query), ordering, and pagination clauses.
-pub fn build_query(query: &CompiledEntityQuery) -> Result<BuiltQuery<'static>, AndromedaError> {
-    let condition = build_entity_conditions(query)?;
+pub fn build_query(query: &CompiledEntityQuery, attribute_names: &ResolvedAttributeNames) -> Result<BuiltQuery<'static>, AndromedaError> {
+    let condition = build_entity_conditions(query, attribute_names)?;
 
     let mut select = Query::select();
     select.column(Entities::Payload).from(Entities::Table).cond_where(condition.clone());
@@ -87,8 +86,8 @@ pub const TOTAL_COUNT_COLUMN: &str = "total_count";
 ///
 /// Similar to [`build_query`] but selects `id` instead of `payload`, used for
 /// operations that only need to identify matching entities.
-pub fn build_ids_query(query: &CompiledEntityQuery) -> Result<BuiltQuery<'static>, AndromedaError> {
-    let condition = build_entity_conditions(query)?;
+pub fn build_ids_query(query: &CompiledEntityQuery, attribute_names: &ResolvedAttributeNames) -> Result<BuiltQuery<'static>, AndromedaError> {
+    let condition = build_entity_conditions(query, attribute_names)?;
 
     let mut select = Query::select();
     select.column(Entities::Id).from(Entities::Table).cond_where(condition);
@@ -113,7 +112,7 @@ pub fn build_ids_query(query: &CompiledEntityQuery) -> Result<BuiltQuery<'static
 }
 
 /// Builds sea-query `Condition` from compiled entity query filters.
-fn build_entity_conditions(query: &CompiledEntityQuery) -> Result<Condition, AndromedaError> {
+fn build_entity_conditions(query: &CompiledEntityQuery, attribute_names: &ResolvedAttributeNames) -> Result<Condition, AndromedaError> {
     let mut condition = Condition::all();
 
     // ID filter: id = ANY($N)
@@ -145,8 +144,7 @@ fn build_entity_conditions(query: &CompiledEntityQuery) -> Result<Condition, And
 
     // Q expression filter
     if let Some(q_expr) = &query.q_expr {
-        let q_cond = q_expr_to_condition(q_expr, "payload")?;
-        condition = condition.add(q_cond);
+        condition = condition.add(q_filter::compile(q_expr, QFilterTarget::Entities, attribute_names)?);
     }
 
     // Geo filter
@@ -184,124 +182,6 @@ fn type_expr_to_condition(expr: &TypeExpr) -> Condition {
                 cond = cond.add(type_expr_to_condition(child));
             }
             cond
-        }
-    }
-}
-
-/// Converts Q expression (NGSI-LD query language) to sea-query Condition.
-fn q_expr_to_condition(expr: &Expr, payload_col: &str) -> Result<Condition, AndromedaError> {
-    match expr {
-        Expr::And(terms) => {
-            let mut cond = Condition::all();
-            for term in terms {
-                cond = cond.add(q_expr_to_condition(term, payload_col)?);
-            }
-            Ok(cond)
-        }
-        Expr::Or(terms) => {
-            let mut cond = Condition::any();
-            for term in terms {
-                cond = cond.add(q_expr_to_condition(term, payload_col)?);
-            }
-            Ok(cond)
-        }
-        Expr::Pred(pred) => predicate_to_condition(pred, payload_col),
-    }
-}
-
-/// Converts a predicate to sea-query condition.
-fn predicate_to_condition(pred: &Predicate, payload_col: &str) -> Result<Condition, AndromedaError> {
-    match pred {
-        Predicate::Exists(path) => {
-            // payload->0 ? $N
-            Ok(Condition::all().add(jsonb_key_exists(
-                SeaExpr::cust(format!("\"{}\"->0", payload_col)),
-                SeaExpr::val(path.attr.as_str()).into(),
-            )))
-        }
-        Predicate::Compare { path, op, rhs } => compare_to_condition(path, *op, rhs, payload_col),
-        Predicate::MatchPattern { path, pattern } => {
-            let jsonpath = value_extraction_jsonpath(&path.attr, &path.sub_attrs, &path.value_path);
-            // jsonb_path_exists(payload, 'path') AND (jsonb_path_query_first(payload, 'path')#>>'{}')::text ~ $N
-            let sql = format!(
-                "jsonb_path_exists(\"{}\", '{}') AND (jsonb_path_query_first(\"{}\", '{}')#>>'{{}}')::text ~ ",
-                payload_col,
-                escape_jsonpath(&jsonpath),
-                payload_col,
-                escape_jsonpath(&jsonpath)
-            );
-            Ok(Condition::all().add(SeaExpr::cust_with_values(format!("{} $1", sql), [pattern.clone()])))
-        }
-        Predicate::NotMatchPattern { path, pattern } => {
-            let jsonpath = value_extraction_jsonpath(&path.attr, &path.sub_attrs, &path.value_path);
-            let sql = format!(
-                "NOT (jsonb_path_exists(\"{}\", '{}') AND (jsonb_path_query_first(\"{}\", '{}')#>>'{{}}')::text ~ ",
-                payload_col,
-                escape_jsonpath(&jsonpath),
-                payload_col,
-                escape_jsonpath(&jsonpath)
-            );
-            Ok(Condition::all().add(SeaExpr::cust_with_values(format!("{} $1)", sql), [pattern.clone()])))
-        }
-    }
-}
-
-/// Converts comparison predicate to sea-query condition.
-fn compare_to_condition(path: &AttrPath, op: CmpOp, rhs: &CompareValue, payload_col: &str) -> Result<Condition, AndromedaError> {
-    let jsonpath = value_extraction_jsonpath(&path.attr, &path.sub_attrs, &path.value_path);
-    let has_object_jsonpath =
-        value_extraction_jsonpath_with_predicate(&path.attr, &path.sub_attrs, &path.value_path, vocab::expanded::properties::OBJECT.as_str());
-
-    let extract_expr = format!("jsonb_path_query_first(\"{}\", '{}')", payload_col, escape_jsonpath(&jsonpath));
-    let extract_object = format!("jsonb_path_query_first(\"{}\", '{}')", payload_col, escape_jsonpath(&has_object_jsonpath));
-
-    match rhs {
-        CompareValue::Scalar(scalar) => {
-            let op_str = cmp_op_sql(op);
-            let (cast, value) = scalar_to_value(scalar);
-            // COALESCE((extract #>> '{}'), (extract_object #>> '{}'))::cast op $N::cast
-            let sql = format!(
-                "(COALESCE(({} #>> '{{}}'), ({} #>> '{{}}')){} {} $1{})",
-                extract_expr, extract_object, cast, op_str, cast
-            );
-            Ok(Condition::all().add(SeaExpr::cust_with_values(sql, [value])))
-        }
-        CompareValue::Range { min, max } => {
-            let (cast, min_val) = scalar_to_value(min);
-            let (_, max_val) = scalar_to_value(max);
-            match op {
-                CmpOp::Equal => {
-                    let sql = format!(
-                        "(({} #>> '{{}}')){} >= $1{} AND (({} #>> '{{}}')){} <= $2{}",
-                        extract_expr, cast, cast, extract_expr, cast, cast
-                    );
-                    Ok(Condition::all().add(SeaExpr::cust_with_values(sql, [min_val, max_val])))
-                }
-                CmpOp::Unequal => {
-                    let sql = format!(
-                        "(({} #>> '{{}}')){} < $1{} OR (({} #>> '{{}}')){} > $2{}",
-                        extract_expr, cast, cast, extract_expr, cast, cast
-                    );
-                    Ok(Condition::all().add(SeaExpr::cust_with_values(sql, [min_val, max_val])))
-                }
-                _ => Err(AndromedaError::query_validation("Range values only supported with == and != operators")),
-            }
-        }
-        CompareValue::ValueList(values) => {
-            let mut parts = Vec::with_capacity(values.len());
-            let mut bind_values = Vec::with_capacity(values.len());
-            for (i, v) in values.iter().enumerate() {
-                let (cast, val) = scalar_to_value(v);
-                parts.push(format!("(({} #>> '{{}}')){} = ${}{}", extract_expr, cast, i + 1, cast));
-                bind_values.push(val);
-            }
-            let joined = parts.join(" OR ");
-            let sql = match op {
-                CmpOp::Equal => format!("({})", joined),
-                CmpOp::Unequal => format!("NOT ({})", joined),
-                _ => return Err(AndromedaError::query_validation("Value lists only supported with == and != operators")),
-            };
-            Ok(Condition::all().add(SeaExpr::cust_with_values(sql, bind_values)))
         }
     }
 }
@@ -485,34 +365,8 @@ fn add_order_clause(
 
 // Helper functions
 
-fn value_extraction_jsonpath(attr_iri: &str, sub_attrs: &[String], value_path: &[String]) -> String {
-    value_extraction_jsonpath_with_predicate(attr_iri, sub_attrs, value_path, vocab::expanded::properties::VALUE.as_str())
-}
-
-fn value_extraction_jsonpath_with_predicate(attr_iri: &str, sub_attrs: &[String], value_path: &[String], predicate_iri: &str) -> String {
-    let mut path = format!("$[0].\"{}\"", escape_jsonpath_key(attr_iri));
-    for sub in sub_attrs {
-        path.push_str(&format!("[0].\"{}\"", escape_jsonpath_key(sub)));
-    }
-    path.push_str(&format!("[0].\"{}\"[0]", escape_jsonpath_key(predicate_iri)));
-    let value_key = if predicate_iri == vocab::expanded::properties::OBJECT.as_str() {
-        "@id"
-    } else {
-        "@value"
-    };
-    path.push_str(&format!(".\"{}\"", value_key));
-    for key in value_path {
-        path.push_str(&format!(".\"{}\"", escape_jsonpath_key(key)));
-    }
-    path
-}
-
 fn escape_jsonpath_key(key: &str) -> String {
     key.replace('\\', "\\\\").replace('"', "\\\"")
-}
-
-fn escape_jsonpath(path: &str) -> String {
-    path.replace('\'', "''")
 }
 
 /// Build canonical [`Wkb`] from an NGSI-LD `GeoQuery` geometry/coordinates pair.
@@ -537,61 +391,30 @@ fn build_geo_extract_geography(geoproperty_iri: &str) -> String {
     }
 }
 
-const fn cmp_op_sql(op: CmpOp) -> &'static str {
-    match op {
-        CmpOp::Equal => "=",
-        CmpOp::Unequal => "!=",
-        CmpOp::Greater => ">",
-        CmpOp::GreaterEq => ">=",
-        CmpOp::Less => "<",
-        CmpOp::LessEq => "<=",
-    }
-}
-
-fn scalar_to_value(scalar: &Scalar) -> (&'static str, String) {
-    match scalar {
-        Scalar::Number(n) => ("::numeric", n.to_string()),
-        Scalar::Bool(b) => ("::boolean", b.to_string()),
-        Scalar::Str(s) => ("", s.clone()),
-        Scalar::DateTime(s) | Scalar::Date(s) | Scalar::Time(s) => ("", s.clone()),
-    }
-}
-
-/// Converts sea-query Values to BindValue vector for repository compatibility.
-fn sea_values_to_bind_values(values: sea_query::Values) -> Result<Vec<BindValue<'static>>, AndromedaError> {
-    values
-        .0
-        .into_iter()
-        .map(|v| match v {
-            sea_query::Value::String(Some(s)) => Ok(BindValue::String(Cow::Owned(s.to_string()))),
-            sea_query::Value::Int(Some(i)) => Ok(BindValue::I64(i64::from(i))),
-            sea_query::Value::BigInt(Some(i)) => Ok(BindValue::I64(i)),
-            sea_query::Value::BigUnsigned(Some(u)) => Ok(BindValue::I64(u as i64)),
-            sea_query::Value::Unsigned(Some(u)) => Ok(BindValue::I64(i64::from(u))),
-            sea_query::Value::TinyInt(Some(i)) => Ok(BindValue::I64(i64::from(i))),
-            sea_query::Value::TinyUnsigned(Some(u)) => Ok(BindValue::I64(i64::from(u))),
-            sea_query::Value::SmallInt(Some(i)) => Ok(BindValue::I64(i64::from(i))),
-            sea_query::Value::SmallUnsigned(Some(u)) => Ok(BindValue::I64(i64::from(u))),
-            sea_query::Value::Bool(Some(b)) => Ok(BindValue::String(Cow::Owned(b.to_string()))),
-            sea_query::Value::Double(Some(f)) => Ok(BindValue::String(Cow::Owned(f.to_string()))),
-            sea_query::Value::Float(Some(f)) => Ok(BindValue::String(Cow::Owned(f.to_string()))),
-            sea_query::Value::Bytes(Some(b)) => Ok(BindValue::Bytes(Cow::Owned(*b))),
-            other => Err(AndromedaError::internal(format!(
-                "unexpected sea_query::Value variant in bind conversion: {other:?}"
-            ))),
-        })
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
     #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::*;
-    use crate::query::{
-        compiled::{CompiledEntityQuery, CompiledOrderTerm, GeoQuery, GeoRel, IcuCollation, IdPattern, OrderDirection, OrderingGeometry, ScopeQuery, TypeExpr},
-        q::{
-            ast::{AttrPath, CmpOp, CompareValue, Expr, Predicate, Scalar},
-            parser,
+    use crate::{
+        domain::temporal::AttributeNameId,
+        query::{
+            compiled::{
+                CompiledEntityQuery,
+                CompiledOrderTerm,
+                GeoQuery,
+                GeoRel,
+                IcuCollation,
+                IdPattern,
+                OrderDirection,
+                OrderingGeometry,
+                ScopeQuery,
+                TypeExpr,
+            },
+            q::{
+                ast::{AttrPath, CmpOp, CompareValue, Expr, Predicate, Scalar},
+                parser,
+            },
+            sql::BindValue,
         },
     };
 
@@ -615,7 +438,7 @@ mod tests {
     #[test]
     fn build_empty_query_returns_base_sql() {
         let q = empty_query();
-        let built = build_query(&q).unwrap();
+        let built = build_query(&q, &ResolvedAttributeNames::default()).unwrap();
         assert!(built.sql.contains("SELECT"));
         assert!(built.sql.contains("\"payload\""));
         assert!(built.sql.contains("\"entities\""));
@@ -628,7 +451,7 @@ mod tests {
     fn build_with_ids() {
         let mut q = empty_query();
         q.ids = Some(vec!["urn:a".to_string(), "urn:b".to_string()]);
-        let built = build_query(&q).unwrap();
+        let built = build_query(&q, &ResolvedAttributeNames::default()).unwrap();
         assert!(built.sql.contains("\"id\" IN"));
     }
 
@@ -636,7 +459,7 @@ mod tests {
     fn build_with_id_pattern() {
         let mut q = empty_query();
         q.id_pattern = Some(IdPattern::new("urn:ngsi-ld:Vehicle:.*").unwrap());
-        let built = build_query(&q).unwrap();
+        let built = build_query(&q, &ResolvedAttributeNames::default()).unwrap();
         assert!(built.sql.contains("\"id\" ~"));
     }
 
@@ -644,7 +467,7 @@ mod tests {
     fn build_with_single_type() {
         let mut q = empty_query();
         q.type_expr = Some(TypeExpr::Type("https://example.com/Vehicle".to_string()));
-        let built = build_query(&q).unwrap();
+        let built = build_query(&q, &ResolvedAttributeNames::default()).unwrap();
         assert!(built.sql.contains("= ANY"));
         assert!(built.sql.contains("\"types\""));
     }
@@ -653,7 +476,7 @@ mod tests {
     fn build_with_multiple_types_or() {
         let mut q = empty_query();
         q.type_expr = Some(TypeExpr::Or(vec![TypeExpr::Type("TypeA".to_string()), TypeExpr::Type("TypeB".to_string())]));
-        let built = build_query(&q).unwrap();
+        let built = build_query(&q, &ResolvedAttributeNames::default()).unwrap();
         assert!(built.sql.contains("= ANY"));
         assert!(built.sql.contains("OR"));
     }
@@ -662,7 +485,7 @@ mod tests {
     fn build_with_multiple_types_and() {
         let mut q = empty_query();
         q.type_expr = Some(TypeExpr::And(vec![TypeExpr::Type("TypeA".to_string()), TypeExpr::Type("TypeB".to_string())]));
-        let built = build_query(&q).unwrap();
+        let built = build_query(&q, &ResolvedAttributeNames::default()).unwrap();
         assert!(built.sql.contains("= ANY"));
         assert!(built.sql.contains("AND"));
     }
@@ -675,7 +498,7 @@ mod tests {
             TypeExpr::And(vec![TypeExpr::Type("Home".to_string()), TypeExpr::Type("Vehicle".to_string())]),
             TypeExpr::Type("Motorhome".to_string()),
         ]));
-        let built = build_query(&q).unwrap();
+        let built = build_query(&q, &ResolvedAttributeNames::default()).unwrap();
         assert!(built.sql.contains("= ANY"));
         assert!(built.sql.contains("AND"));
         assert!(built.sql.contains("OR"));
@@ -686,31 +509,75 @@ mod tests {
         let mut q = empty_query();
         q.pagination.count = true;
         q.type_expr = Some(TypeExpr::Type("Vehicle".to_string()));
-        let built = build_query(&q).unwrap();
+        let built = build_query(&q, &ResolvedAttributeNames::default()).unwrap();
         assert!(built.count_sql.is_some());
         assert!(built.count_sql.unwrap().contains("COUNT(*)"));
+    }
+
+    fn temperature_is_known() -> ResolvedAttributeNames {
+        ResolvedAttributeNames::from_pairs([("https://example.com/temperature".to_string(), AttributeNameId::from(12))])
     }
 
     #[test]
     fn build_with_q_existence() {
         let mut q = empty_query();
-        q.q_expr = Some(parser::parse("temperature").unwrap());
-        let built = build_query(&q).unwrap();
-        assert!(built.sql.contains("\"payload\"->0 ?"));
+        q.q_expr = Some(parser::parse("\"https://example.com/temperature\"").unwrap());
+        let built = build_query(&q, &temperature_is_known()).unwrap();
+        // Existence resolves through the temporal catalogue: `payload->0 ? $1`
+        // could never use the GIN index on `payload`.
+        assert!(built.sql.contains("\"temporal_entity_attributes\" AS \"tea_q\""), "{}", built.sql);
+        assert!(!built.sql.contains("\"payload\"->0 ?"), "{}", built.sql);
     }
 
     #[test]
     fn build_with_q_comparison() {
         let mut cq = empty_query();
-        let expr = Expr::Pred(Predicate::Compare {
+        cq.q_expr = Some(Expr::Pred(Predicate::Compare {
             path: AttrPath::simple("https://example.com/temperature"),
             op: CmpOp::Greater,
             rhs: CompareValue::Scalar(Scalar::Number(50.into())),
-        });
-        cq.q_expr = Some(expr);
-        let built = build_query(&cq).unwrap();
-        assert!(built.sql.contains("jsonb_path_query_first"));
-        assert!(built.sql.contains(">"));
+        }));
+        let built = build_query(&cq, &temperature_is_known()).unwrap();
+        assert!(built.sql.contains("EXISTS"), "{}", built.sql);
+        assert!(built.sql.contains("\"ac\".\"value_number\" >"), "{}", built.sql);
+        assert!(
+            !built.sql.contains("jsonb_path_query_first"),
+            "value predicates no longer scan the payload: {}",
+            built.sql
+        );
+    }
+
+    #[test]
+    fn count_sql_reuses_the_main_query_bind_vector() {
+        // The repository binds one vector against both statements, so the
+        // placeholder sequence has to be identical up to the pagination
+        // parameters the count query omits.
+        let mut cq = empty_query();
+        cq.pagination.count = true;
+        cq.q_expr = Some(Expr::Pred(Predicate::Compare {
+            path: AttrPath::simple("https://example.com/temperature"),
+            op: CmpOp::Greater,
+            rhs: CompareValue::Scalar(Scalar::Number(50.into())),
+        }));
+        let built = build_query(&cq, &temperature_is_known()).unwrap();
+        let count_sql = built.count_sql.expect("count sql");
+        let placeholders = |sql: &str| {
+            let mut found: Vec<String> = Vec::new();
+            let bytes = sql.as_bytes();
+            for (index, byte) in bytes.iter().enumerate() {
+                if *byte == b'$' {
+                    let digits: String = sql[index + 1..].chars().take_while(char::is_ascii_digit).collect();
+                    if !digits.is_empty() {
+                        found.push(digits);
+                    }
+                }
+            }
+            found
+        };
+        let main = placeholders(&built.sql);
+        let counted = placeholders(&count_sql);
+        assert_eq!(counted, main[..counted.len()], "count query must reuse the leading binds verbatim");
+        assert_eq!(counted, vec!["1".to_string(), "2".to_string()], "attribute id then value: {count_sql}");
     }
 
     #[test]
@@ -718,7 +585,7 @@ mod tests {
         let mut q = empty_query();
         q.pagination.limit = 50;
         q.pagination.offset = 100;
-        let built = build_query(&q).unwrap();
+        let built = build_query(&q, &ResolvedAttributeNames::default()).unwrap();
         assert!(built.sql.contains("LIMIT"));
         assert!(built.sql.contains("OFFSET"));
         // sea-query parameterizes limit/offset as bind values
@@ -733,7 +600,7 @@ mod tests {
             direction: OrderDirection::Asc,
             collation: None,
         }];
-        let built = build_query(&q).unwrap();
+        let built = build_query(&q, &ResolvedAttributeNames::default()).unwrap();
         assert!(built.sql.contains("ORDER BY"));
         assert!(built.sql.contains("ASC"));
         assert!(built.sql.contains("hasValue"));
@@ -747,7 +614,7 @@ mod tests {
             direction: OrderDirection::Asc,
             collation: Some(IcuCollation::new("und-u-ks-identic".to_string())),
         }];
-        let built = build_query(&q).unwrap();
+        let built = build_query(&q, &ResolvedAttributeNames::default()).unwrap();
         assert!(built.sql.contains("COLLATE \"und-u-ks-identic\""));
         assert!(built.sql.contains("ASC"));
     }
@@ -769,7 +636,7 @@ mod tests {
             direction: OrderDirection::DistAsc,
             collation: None,
         }];
-        let built = build_query(&q).unwrap();
+        let built = build_query(&q, &ResolvedAttributeNames::default()).unwrap();
         assert!(built.sql.contains("ST_Distance"));
         assert!(built.sql.contains("ASC"));
     }
@@ -791,7 +658,7 @@ mod tests {
             direction: OrderDirection::DistDesc,
             collation: None,
         }];
-        let built = build_query(&q).unwrap();
+        let built = build_query(&q, &ResolvedAttributeNames::default()).unwrap();
         assert!(built.sql.contains("ST_Distance"));
         assert!(built.sql.contains("DESC"));
     }
@@ -804,7 +671,7 @@ mod tests {
             direction: OrderDirection::DistAsc,
             collation: None,
         }];
-        let result = build_query(&q);
+        let result = build_query(&q, &ResolvedAttributeNames::default());
         assert!(result.is_err());
     }
 
@@ -822,7 +689,7 @@ mod tests {
             direction: OrderDirection::DistAsc,
             collation: None,
         }];
-        let built = build_query(&q).unwrap();
+        let built = build_query(&q, &ResolvedAttributeNames::default()).unwrap();
         assert!(built.sql.contains("ST_Distance"));
         assert!(built.sql.contains("ASC"));
         assert!(built.sql.contains("ST_GeomFromEWKB"));
@@ -855,7 +722,7 @@ mod tests {
             direction: OrderDirection::DistAsc,
             collation: None,
         }];
-        let built = build_query(&q).unwrap();
+        let built = build_query(&q, &ResolvedAttributeNames::default()).unwrap();
         assert!(built.sql.contains("ST_Distance"));
         // Ordering geometry (Berlin) takes precedence over the geo query (Paris);
         // since reference geometries are now bound as EWKB bytes, verify that the
@@ -876,7 +743,7 @@ mod tests {
             coordinates: serde_json::json!([13.4, 52.5]),
             geoproperty_iri: vocab::expanded::properties::LOCATION.as_str().to_string(),
         });
-        let built = build_query(&q).unwrap();
+        let built = build_query(&q, &ResolvedAttributeNames::default()).unwrap();
         assert!(built.sql.contains("ST_DWithin"), "should contain spatial predicate");
         assert!(built.sql.contains("EXISTS"), "should contain EXISTS expiration guard");
         assert!(built.sql.contains("expiresAt"), "should reference expiresAt IRI");
@@ -892,7 +759,7 @@ mod tests {
             coordinates: serde_json::json!([[[0.0, 0.0], [10.0, 0.0], [10.0, 10.0], [0.0, 10.0], [0.0, 0.0]]]),
             geoproperty_iri: "https://example.com/customGeo".to_string(),
         });
-        let built = build_query(&q).unwrap();
+        let built = build_query(&q, &ResolvedAttributeNames::default()).unwrap();
         assert!(built.sql.contains("ST_Within"), "should contain spatial predicate");
         assert!(!built.sql.contains("EXISTS"), "should NOT contain EXISTS guard for non-default geoproperty");
     }
@@ -906,7 +773,7 @@ mod tests {
             coordinates: serde_json::json!([[[0.0, 0.0], [10.0, 0.0], [10.0, 10.0], [0.0, 10.0], [0.0, 0.0]]]),
             geoproperty_iri: vocab::expanded::properties::LOCATION.as_str().to_string(),
         });
-        let built = build_query(&q).unwrap();
+        let built = build_query(&q, &ResolvedAttributeNames::default()).unwrap();
         assert!(built.sql.contains("ST_Within"), "should contain ST_Within spatial predicate");
         assert!(matches!(built.bind_values[1], BindValue::I64(20)), "limit should be I64(20)");
         assert!(matches!(built.bind_values[2], BindValue::I64(0)), "offset should be I64(0)");
@@ -937,7 +804,7 @@ mod tests {
                 coordinates: serde_json::json!([1.0, 2.0]),
                 geoproperty_iri: vocab::expanded::properties::LOCATION.as_str().to_string(),
             });
-            let built = build_query(&q).unwrap();
+            let built = build_query(&q, &ResolvedAttributeNames::default()).unwrap();
             assert!(built.sql.contains("ST_GeomFromEWKB"), "{georel:?} SQL missing ST_GeomFromEWKB");
             // Default-location path must not re-decode GeoJSON for the reference side.
             assert!(
@@ -963,7 +830,7 @@ mod tests {
             coordinates: serde_json::json!([1.0, 2.0]),
             geoproperty_iri: "https://example.com/customGeo".to_string(),
         });
-        let built = build_query(&q).unwrap();
+        let built = build_query(&q, &ResolvedAttributeNames::default()).unwrap();
         assert!(built.sql.contains("ST_GeomFromGeoJSON"), "column-side JSONB extraction must remain");
         assert!(built.sql.contains("ST_GeomFromEWKB"), "reference side must still bind EWKB");
     }
@@ -972,7 +839,7 @@ mod tests {
     fn scope_exact_generates_lquery() {
         let mut q = empty_query();
         q.scope_q = Some(ScopeQuery::new("/A/B".to_string()));
-        let built = build_query(&q).unwrap();
+        let built = build_query(&q, &ResolvedAttributeNames::default()).unwrap();
         assert!(built.sql.contains("::lquery"), "SQL should cast to lquery");
     }
 
@@ -980,7 +847,7 @@ mod tests {
     fn scope_hash_generates_lquery() {
         let mut q = empty_query();
         q.scope_q = Some(ScopeQuery::new("/A/#".to_string()));
-        let built = build_query(&q).unwrap();
+        let built = build_query(&q, &ResolvedAttributeNames::default()).unwrap();
         assert!(built.sql.contains("::lquery"));
     }
 
@@ -988,7 +855,7 @@ mod tests {
     fn scope_or_generates_disjunction() {
         let mut q = empty_query();
         q.scope_q = Some(ScopeQuery::new("/A,/B".to_string()));
-        let built = build_query(&q).unwrap();
+        let built = build_query(&q, &ResolvedAttributeNames::default()).unwrap();
         assert!(built.sql.contains(" OR "), "SQL should contain OR for comma-separated scopes");
     }
 
@@ -996,7 +863,7 @@ mod tests {
     fn scope_and_generates_conjunction() {
         let mut q = empty_query();
         q.scope_q = Some(ScopeQuery::new("/A;/B".to_string()));
-        let built = build_query(&q).unwrap();
+        let built = build_query(&q, &ResolvedAttributeNames::default()).unwrap();
         assert!(built.sql.contains(" AND "), "SQL should contain AND for semicolon-separated scopes");
     }
 
@@ -1004,7 +871,7 @@ mod tests {
     fn scope_complex_generates_mixed() {
         let mut q = empty_query();
         q.scope_q = Some(ScopeQuery::new("/A;/B,/C/#".to_string()));
-        let built = build_query(&q).unwrap();
+        let built = build_query(&q, &ResolvedAttributeNames::default()).unwrap();
         assert!(built.sql.contains(" AND "), "SQL should contain AND");
         assert!(built.sql.contains(" OR "), "SQL should contain OR");
     }

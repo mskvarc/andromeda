@@ -17,6 +17,7 @@ use crate::{
         temporal::repo::TemporalRepository,
     },
     service::{entity::BatchSideEffectJob, temporal_recorder::TemporalRecorder},
+    worker::attribute_current_materializer::AttributeCurrentQueue,
 };
 use chrono::Utc;
 use std::{sync::Arc, time::Duration};
@@ -56,12 +57,13 @@ impl PendingSideEffectsWorker {
     pub const fn new(
         repo: PendingSideEffectsRepository,
         temporal_repo: Arc<TemporalRepository>,
+        attribute_current_queue: AttributeCurrentQueue,
         change_tx: Option<broadcast::Sender<ChangeEvent>>,
         config: WorkerConfig,
     ) -> PendingSideEffectsWorker {
         PendingSideEffectsWorker {
             repo,
-            temporal_recorder: TemporalRecorder::new(temporal_repo),
+            temporal_recorder: TemporalRecorder::new(temporal_repo, attribute_current_queue),
             change_tx,
             config,
         }

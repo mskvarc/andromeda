@@ -1,0 +1,133 @@
+; ============================================================================
+; NGSI-LD query language (`q`) -- ABNF grammar
+; ============================================================================
+; Mirrors the ABNF of ETSI GS CIM 009 v1.9.1 clause 4.9 verbatim. Every rule is
+; reproduced exactly as the specification states it; only layout, section
+; headers and these comments are local additions.
+;
+; DOCUMENTATION ONLY. Unlike the other files in `grammar/`, nothing derives a
+; parser from this one: no `#[grammar(file = ...)]` attribute references
+; `grammar/.generated/query.abnf`. `build.rs` composes every `*.abnf` in this
+; directory with `_unicode.abnf` into `grammar/.generated/` indiscriminately, so
+; a composed copy does get written -- it is simply never consumed.
+;
+; The `q` parser lives in `src/query/q/parser.rs` and is hand-written, because
+; the language needs operator precedence and value typing that a pure ABNF
+; recogniser does not express. This file is the reference that parser is checked
+; against; keep the two in step when the specification changes.
+;
+; `unicodeLetter` and `unicodeNumber` come from `_unicode.abnf`. `String`,
+; `Number`, `URI`, `dateTime`, `date`, `time`, `true`, `false` and `RegExp` are
+; the external productions the specification imports.
+; ============================================================================
+
+; ----------------------------------------------------------------------------
+; Query structure
+; ----------------------------------------------------------------------------
+; A query is a sequence of terms joined by logical operators. Parenthesised
+; groups exist solely to override the default precedence (see "Logical
+; operators" below).
+
+Query = (QueryTerm / QueryTermAssoc) *(LogicalOp (QueryTerm / QueryTermAssoc))
+                                                ; whole filter: term (op term)*
+QueryTermAssoc = %x28 QueryTerm *(LogicalOp QueryTerm) %x29
+                                                ; (QueryTerm) -- explicit grouping
+
+; ----------------------------------------------------------------------------
+; Query terms
+; ----------------------------------------------------------------------------
+; Each alternative is one predicate. The bare `Attribute` form is an existence
+; test; the rest compare or pattern-match the attribute's value.
+;
+; `equal` and `unequal` take `CompEqualityValue` rather than `ComparableValue`
+; because only they admit ranges, value lists, booleans and URIs -- the ordering
+; operators are undefined over those.
+
+QueryTerm = Attribute                           ; existence: attribute is present
+QueryTerm =/ Attribute Operator ComparableValue ; ordering / equality on a scalar
+QueryTerm =/ Attribute equal CompEqualityValue  ; == also accepts range/list/URI
+QueryTerm =/ Attribute unequal CompEqualityValue
+                                                ; != mirrors ==
+QueryTerm =/ Attribute patternOp RegExp         ; ~=  regular-expression match
+QueryTerm =/ Attribute notPatternOp RegExp      ; !~= negated match
+
+; ----------------------------------------------------------------------------
+; Attribute paths
+; ----------------------------------------------------------------------------
+; An attribute reference may traverse three different axes:
+;
+;   * `.`  -- into sub-attributes of an instance   (temperature.observedAt)
+;   * `[]` -- into a compound (JSON object) value  (address[city])
+;   * `{}` -- across a Relationship into the       (isParked{name})
+;             linked entity
+;
+; The `{}` form may be chained, and may constrain the linked entity's type.
+
+Attribute = LinkedEntityRelation
+LinkedEntityRelation = AttrName %x7B LinkedEntityPath %x7D
+                                                ; AttrName{LinkedEntityPath}
+LinkedEntityRelation =/ ValuePath                ; or a plain local path
+LinkedEntityPath = *1(EntityType 1*(%x2C EntityType) %x3A) AttrName %x7B LinkedEntityPath %x7D
+                                                ; *1(EntityType 1*(,EntityType):)AttrName{LinkedEntityPath}
+                                                ; optional type constraint, then recurse
+LinkedEntityPath =/ ValuePath                    ; terminal segment of the traversal
+ValuePath = DottedPath *1(%x5B DottedPath %x5D)  ; DottedPath *1([DottedPath])
+                                                ; sub-attribute path, then value path
+DottedPath = AttrName *(%x2E AttrName)           ; AttrName *(.AttrName)
+
+; ----------------------------------------------------------------------------
+; Operators
+; ----------------------------------------------------------------------------
+; Two-character forms are listed before the single-character prefixes they
+; extend, so `>=` is never read as `>` followed by `=`.
+
+Operator = equal / unequal / greaterEq / greater / lessEq / less
+equal = %x3D %x3D                               ; ==
+unequal = %x21 %x3D                             ; !=
+greater = %x3E                                  ; >
+greaterEq = %x3E %x3D                           ; >=
+less = %x3C                                     ; <
+lessEq = %x3C %x3D                              ; <=
+patternOp = %x7E %x3D                           ; ~=
+notPatternOp = %x21 %x7E %x3D                   ; !~=
+
+; ----------------------------------------------------------------------------
+; Values
+; ----------------------------------------------------------------------------
+; `ComparableValue` is the ordered domain -- the only one over which `<`, `>`,
+; `<=` and `>=` are defined. Booleans and URIs are equality-only, which is why
+; they appear under `CompEqualityValue` and never under `Operator`.
+
+ComparableValue = Number / quotedStr / dateTime / date / time
+                                                ; ordered: usable with < > <= >=
+OtherValue = false / true                       ; equality only
+Value = ComparableValue / OtherValue
+Range = ComparableValue dots ComparableValue    ; min..max, both bounds inclusive
+ValueList = Value 1*(%x2C Value)                ; Value 1*(, Value)
+CompEqualityValue = OtherValue / ValueList / Range / URI
+                                                ; right-hand side of == and !=
+dots = %x2E %x2E                                ; ..
+
+; ----------------------------------------------------------------------------
+; Logical operators
+; ----------------------------------------------------------------------------
+; `;` binds tighter than `|`, so `a;b|c` parses as `(a;b)|c`. `QueryTermAssoc`
+; is the only way to impose the other grouping.
+
+andOp = %x3B                                    ; ;  conjunction (binds tighter)
+orOp = %x7C                                     ; |  disjunction
+LogicalOp = andOp / orOp
+
+; ----------------------------------------------------------------------------
+; Lexical
+; ----------------------------------------------------------------------------
+; Attribute and type names are context terms, not IRIs: they are expanded
+; against the request's `@context` before the filter is evaluated (clause 4.9).
+; A name therefore begins with a letter and continues with letters, digits or
+; `_`.
+
+TermChar = unicodeNumber / unicodeLetter
+TermChar =/ %x5F                                ; _
+AttrName = unicodeLetter *TermChar
+EntityType = unicodeLetter *TermChar
+quotedStr = String                              ; "*char"

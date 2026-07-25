@@ -148,7 +148,7 @@ impl Error {
     ///
     /// This is used to decide whether a fallback to core-only compaction
     /// is appropriate.
-    pub fn is_protected_term_error(e: &CompactErrorTyped) -> bool {
+    pub const fn is_protected_term_error(e: &CompactErrorTyped) -> bool {
         match e {
             CompactError::ContextProcessing(cpe) => is_protected_term_redefinition(cpe),
             CompactError::Expand(ExpandError::ContextProcessing(cpe)) => is_protected_term_redefinition(cpe),

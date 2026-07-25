@@ -19,23 +19,24 @@
 use crate::{core::error::AndromedaError, repository::temporal::params::HistoryBatchEntry};
 use sqlx::{PgPool, postgres::PgConnection};
 use std::{
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
     time::{Duration, Instant},
 };
-use tokio::sync::mpsc;
-use tracing::{info, warn};
+use tokio::sync::{mpsc, watch};
+use tracing::{error, info, warn};
 
-/// Inflight batch of history entries waiting to be projected into
-/// `attribute_current`. The `Arc` wrapper avoids cloning the producer's
-/// vector when the channel queue is shallow (single consumer, no other
-/// outstanding refs ⇒ `Arc::try_unwrap` succeeds).
-pub type AttributeCurrentEvent = Arc<Vec<HistoryBatchEntry>>;
-
-/// Producer-side channel handle used by the unit-of-work commit hook.
-pub type AttributeCurrentSender = mpsc::UnboundedSender<AttributeCurrentEvent>;
-
-/// Consumer-side channel handle owned by the worker.
-pub type AttributeCurrentReceiver = mpsc::UnboundedReceiver<AttributeCurrentEvent>;
+/// Depth of the materializer queue, in batches.
+///
+/// The queue is bounded so a materializer that falls behind applies
+/// backpressure to committers instead of growing without limit. Enqueueing
+/// happens *after* the database commit, so a full queue never holds a
+/// transaction open — it only delays the producer's return. Sized to absorb a
+/// multi-second stall at batch-ingest rates while keeping the worst-case
+/// resident set bounded.
+const QUEUE_CAPACITY: usize = 1_024;
 
 /// Hard cap on entries materialised in a single SQL statement.
 ///
@@ -47,30 +48,137 @@ pub type AttributeCurrentReceiver = mpsc::UnboundedReceiver<AttributeCurrentEven
 /// leaving the rest of the pool free for ingestion.
 const MAX_DRAIN_BATCH: usize = 5_000;
 
+/// A batch of history entries queued for projection into `attribute_current`,
+/// tagged with its position in the issue order.
+///
+/// The `Arc` wrapper avoids cloning the producer's vector when the channel
+/// queue is shallow (single consumer, no other outstanding refs ⇒
+/// `Arc::try_unwrap` succeeds).
+#[derive(Debug)]
+pub struct AttributeCurrentEvent {
+    /// Monotonic issue sequence, assigned by [`AttributeCurrentQueue::publish`].
+    seq: u64,
+    /// History rows to project.
+    entries: Arc<Vec<HistoryBatchEntry>>,
+}
+
+/// Consumer-side channel handle owned by the worker.
+type AttributeCurrentReceiver = mpsc::Receiver<AttributeCurrentEvent>;
+
+/// Producer handle used by the unit-of-work commit hook.
+///
+/// Assigns each published batch a monotonic sequence number before enqueueing
+/// it, which is what lets [`AttributeCurrentBarrier`] express "everything
+/// issued before now" without putting a message on the queue.
+#[derive(Debug, Clone)]
+pub struct AttributeCurrentQueue {
+    tx: mpsc::Sender<AttributeCurrentEvent>,
+    issued: Arc<AtomicU64>,
+}
+
+impl AttributeCurrentQueue {
+    /// Queue a batch of history rows for projection.
+    ///
+    /// Awaits queue capacity when the materializer is behind. A closed channel
+    /// (worker exited) is logged and swallowed: `attribute_history` is the
+    /// canonical source and the startup reconcile refills the projection.
+    pub async fn publish(&self, entries: Vec<HistoryBatchEntry>) {
+        if entries.is_empty() {
+            return;
+        }
+        let seq = self.issued.fetch_add(1, Ordering::AcqRel) + 1;
+        let event = AttributeCurrentEvent {
+            seq,
+            entries: Arc::new(entries),
+        };
+        if self.tx.send(event).await.is_err() {
+            warn!(event = "attribute_current_publish_failed");
+        }
+    }
+}
+
+/// Read-your-writes barrier for the query path.
+///
+/// Held by the services that compile `q` filters against `attribute_current`.
+/// [`AttributeCurrentBarrier::wait_for_pending_writes`] samples the current
+/// issue high-water mark and waits until the materializer's applied watermark
+/// reaches it, so a query issued after a committed write observes that write.
+///
+/// This is a watermark rather than a queued barrier message deliberately: a
+/// barrier message would sit in the same FIFO as the batches, forcing a drain
+/// boundary at every `q`-filtered query and coupling read latency to write
+/// backlog. Sampling a watermark adds no queue traffic, does not fragment the
+/// worker's batching, and lets concurrent waiters share one notification.
+#[derive(Debug, Clone)]
+pub struct AttributeCurrentBarrier {
+    issued: Arc<AtomicU64>,
+    applied: watch::Receiver<u64>,
+}
+
+impl AttributeCurrentBarrier {
+    /// Wait until every batch queued before this call has been applied.
+    ///
+    /// A dead worker (closed watch channel) is logged and then ignored:
+    /// availability of the read path is preferred over blocking it on a
+    /// background worker.
+    pub async fn wait_for_pending_writes(&self) {
+        let target = self.issued.load(Ordering::Acquire);
+        let mut applied = self.applied.clone(); // clone: per-call cursor; watch::Receiver clone is cheap
+        if *applied.borrow_and_update() >= target {
+            return;
+        }
+        while applied.changed().await.is_ok() {
+            if *applied.borrow_and_update() >= target {
+                return;
+            }
+        }
+        error!(target_seq = target, event = "attribute_current_barrier_worker_gone");
+    }
+}
+
 /// Background worker that drains `attribute_current` events and applies
 /// them via a short-lived database connection acquired from the shared
 /// pool.
 pub struct AttributeCurrentMaterializer {
     rx: AttributeCurrentReceiver,
+    applied: watch::Sender<u64>,
     pool: Arc<PgPool>,
     apply_log_interval: Duration,
 }
 
 impl AttributeCurrentMaterializer {
-    /// Construct a new materializer.
+    /// Construct a materializer together with its producer and barrier handles.
     ///
     /// `apply_log_interval` throttles the success-path INFO log; errors
     /// are always logged immediately.
-    pub const fn new(rx: AttributeCurrentReceiver, pool: Arc<PgPool>, apply_log_interval: Duration) -> AttributeCurrentMaterializer {
-        AttributeCurrentMaterializer { rx, pool, apply_log_interval }
+    pub fn new(pool: Arc<PgPool>, apply_log_interval: Duration) -> (AttributeCurrentMaterializer, AttributeCurrentQueue, AttributeCurrentBarrier) {
+        let (tx, rx) = mpsc::channel(QUEUE_CAPACITY);
+        let (applied_tx, applied_rx) = watch::channel(0u64);
+        let issued = Arc::new(AtomicU64::new(0));
+        let queue = AttributeCurrentQueue {
+            tx,
+            issued: Arc::clone(&issued),
+        };
+        let barrier = AttributeCurrentBarrier { issued, applied: applied_rx };
+        let worker = AttributeCurrentMaterializer {
+            rx,
+            applied: applied_tx,
+            pool,
+            apply_log_interval,
+        };
+        (worker, queue, barrier)
     }
 
     /// One-shot reconcile run before the worker enters its drain loop.
     ///
     /// Refills `attribute_current` from `attribute_history` for every
     /// TEA whose latest observation is newer than the current row (or
-    /// the current row is missing entirely). Bounded by the staleness
-    /// window since the last successful drain.
+    /// the current row is missing entirely).
+    ///
+    /// This is a full pass over `attribute_history` with a per-TEA
+    /// `DISTINCT ON`: it is a startup one-shot whose cost scales with
+    /// retention, not a steady-state query. Making it incremental needs a
+    /// durable "last applied" marker, which the projection does not carry.
     pub async fn reconcile_on_startup(&self) -> Result<u64, AndromedaError> {
         let result = sqlx::query(RECONCILE_FROM_HISTORY_SQL).execute(&*self.pool).await?;
         let rows = result.rows_affected();
@@ -85,13 +193,20 @@ impl AttributeCurrentMaterializer {
     /// Each iteration blocks on the first event, then drains every
     /// further event currently buffered, and applies them as one batch.
     /// This lets the consumer catch up on bursts without re-acquiring a
-    /// DB connection per producer commit.
+    /// DB connection per producer commit. After each applied batch the
+    /// watermark advances to the highest *fully applied* sequence, which is
+    /// what [`AttributeCurrentBarrier`] waits on.
     pub async fn run(mut self) {
         let mut last_log = Instant::now().checked_sub(self.apply_log_interval).unwrap_or_else(Instant::now);
-        let mut carry: Vec<HistoryBatchEntry> = Vec::new();
-        while let Some(buffered) = next_buffered_batch(&mut self.rx, MAX_DRAIN_BATCH, &mut carry).await {
-            if !buffered.is_empty() {
-                self.apply_batch(&buffered, &mut last_log).await;
+        let mut carry = DrainCarry::default();
+        while let Some(drained) = next_buffered_batch(&mut self.rx, MAX_DRAIN_BATCH, &mut carry).await {
+            if !drained.entries.is_empty() {
+                self.apply_batch(&drained.entries, &mut last_log).await;
+            }
+            if drained.completed_seq > 0 {
+                // Ignore send errors: a watermark with no receivers is a
+                // broker with no in-flight q-filtered queries.
+                let _ = self.applied.send(drained.completed_seq);
             }
         }
     }
@@ -137,6 +252,7 @@ pub async fn apply_attribute_current_batch(conn: &mut PgConnection, entries: &[H
     let mut value_objects: Vec<Option<&serde_json::Value>> = Vec::with_capacity(len);
     let mut value_datetimes: Vec<Option<chrono::DateTime<chrono::Utc>>> = Vec::with_capacity(len);
     let mut value_uris: Vec<Option<&str>> = Vec::with_capacity(len);
+    let mut recorded_ats: Vec<chrono::DateTime<chrono::Utc>> = Vec::with_capacity(len);
 
     for e in entries {
         tea_ids.push(e.tea_id);
@@ -148,6 +264,7 @@ pub async fn apply_attribute_current_batch(conn: &mut PgConnection, entries: &[H
         value_objects.push(e.value_object.as_ref());
         value_datetimes.push(e.value_datetime);
         value_uris.push(e.value_uri.as_deref());
+        recorded_ats.push(e.recorded_at);
     }
 
     sqlx::query(APPLY_ATTRIBUTE_CURRENT_SQL)
@@ -160,6 +277,7 @@ pub async fn apply_attribute_current_batch(conn: &mut PgConnection, entries: &[H
         .bind(&value_objects)
         .bind(&value_datetimes)
         .bind(&value_uris)
+        .bind(&recorded_ats)
         .execute(conn)
         .await?;
 
@@ -168,8 +286,27 @@ pub async fn apply_attribute_current_batch(conn: &mut PgConnection, entries: &[H
 
 /// Extract the inner `Vec` from an `Arc` without cloning when the
 /// caller is the only owner; fall back to `Vec::clone` otherwise.
-fn take_or_clone(arc: AttributeCurrentEvent) -> Vec<HistoryBatchEntry> {
+fn take_or_clone(arc: Arc<Vec<HistoryBatchEntry>>) -> Vec<HistoryBatchEntry> {
     Arc::try_unwrap(arc).unwrap_or_else(|shared| (*shared).clone())
+}
+
+/// Entries left over from the previous drain because they exceeded the
+/// per-apply cap, together with the sequence number of the event they came
+/// from. That sequence may only be published once the leftovers are applied,
+/// so the barrier never reports a partially applied batch as complete.
+#[derive(Debug, Default)]
+struct DrainCarry {
+    entries: Vec<HistoryBatchEntry>,
+    /// Sequence of the partially consumed event; `0` when `entries` is empty.
+    seq: u64,
+}
+
+/// One drain pass: the entries to apply, plus the highest sequence number that
+/// is fully contained in this batch (`0` when none completed).
+#[derive(Debug)]
+struct DrainedBatch {
+    entries: Vec<HistoryBatchEntry>,
+    completed_seq: u64,
 }
 
 /// Drain at most `max` history entries from the channel for one apply
@@ -179,28 +316,48 @@ fn take_or_clone(arc: AttributeCurrentEvent) -> Vec<HistoryBatchEntry> {
 /// `carry` so the next call applies it first — no entries are lost.
 ///
 /// Returns `None` only when the channel is closed and no carry remains.
-async fn next_buffered_batch(rx: &mut AttributeCurrentReceiver, max: usize, carry: &mut Vec<HistoryBatchEntry>) -> Option<Vec<HistoryBatchEntry>> {
-    let mut buffered = std::mem::take(carry);
+async fn next_buffered_batch(rx: &mut AttributeCurrentReceiver, max: usize, carry: &mut DrainCarry) -> Option<DrainedBatch> {
+    let mut buffered = std::mem::take(&mut carry.entries);
+    let mut pending_seq = std::mem::take(&mut carry.seq);
+    let mut completed_seq = 0u64;
+
     if buffered.is_empty() {
         let first = rx.recv().await?;
-        buffered = take_or_clone(first);
+        pending_seq = first.seq;
+        buffered = take_or_clone(first.entries);
     }
 
     while buffered.len() < max {
         match rx.try_recv() {
-            Ok(next) => buffered.extend(take_or_clone(next)),
+            Ok(next) => {
+                // Everything up to `pending_seq` is now wholly inside `buffered`.
+                completed_seq = completed_seq.max(pending_seq);
+                pending_seq = next.seq;
+                buffered.extend(take_or_clone(next.entries));
+            }
             Err(_) => break,
         }
     }
 
     if buffered.len() > max {
-        let tail = buffered.split_off(max);
-        *carry = tail;
+        carry.entries = buffered.split_off(max);
+        carry.seq = pending_seq;
+    } else {
+        completed_seq = completed_seq.max(pending_seq);
     }
 
-    Some(buffered)
+    Some(DrainedBatch {
+        entries: buffered,
+        completed_seq,
+    })
 }
 
+/// Apply statement for a drained batch.
+///
+/// Ordering and the staleness guard both key on `COALESCE(recorded_at, time)`,
+/// not `time`: `time` carries the client-supplied `observedAt` when present, so
+/// a back-dated write would otherwise fail to supersede the row it replaces and
+/// the projection would drift away from `entities.payload`.
 const APPLY_ATTRIBUTE_CURRENT_SQL: &str = r#"
 INSERT INTO attribute_current (
     tea_id, entity_id, attribute_name_id, dataset_id, value_type,
@@ -211,14 +368,14 @@ SELECT DISTINCT ON (d.tea_id)
     d.tea_id, tea.entity_id, tea.attribute_name_id, tea.dataset_id, tea.value_type,
     d.value_number, d.value_string, d.value_bool,
     CASE WHEN d.value_geo IS NOT NULL THEN ST_MakeValid(ST_GeomFromEWKB(d.value_geo)) ELSE NULL END,
-    d.value_object, d.value_datetime, d.value_uri, d.time
+    d.value_object, d.value_datetime, d.value_uri, COALESCE(d.recorded_at, d.time)
 FROM UNNEST(
     $1::uuid[], $2::timestamptz[], $3::double precision[], $4::text[], $5::boolean[],
-    $6::bytea[], $7::jsonb[], $8::timestamptz[], $9::text[]
+    $6::bytea[], $7::jsonb[], $8::timestamptz[], $9::text[], $10::timestamptz[]
 ) AS d(tea_id, time, value_number, value_string, value_bool,
-       value_geo, value_object, value_datetime, value_uri)
+       value_geo, value_object, value_datetime, value_uri, recorded_at)
 JOIN temporal_entity_attributes tea ON tea.id = d.tea_id
-ORDER BY d.tea_id, d.time DESC
+ORDER BY d.tea_id, COALESCE(d.recorded_at, d.time) DESC
 ON CONFLICT (tea_id) DO UPDATE SET
     entity_id         = EXCLUDED.entity_id,
     attribute_name_id = EXCLUDED.attribute_name_id,
@@ -247,12 +404,12 @@ INSERT INTO attribute_current (
 SELECT DISTINCT ON (ah.tea_id)
     ah.tea_id, tea.entity_id, tea.attribute_name_id, tea.dataset_id, tea.value_type,
     ah.value_number, ah.value_string, ah.value_bool, ah.value_geo,
-    ah.value_object, ah.value_datetime, ah.value_uri, ah.time
+    ah.value_object, ah.value_datetime, ah.value_uri, COALESCE(ah.recorded_at, ah.time)
 FROM attribute_history ah
 JOIN temporal_entity_attributes tea ON tea.id = ah.tea_id
 LEFT JOIN attribute_current ac ON ac.tea_id = ah.tea_id
-WHERE ac.tea_id IS NULL OR ah.time > ac.modified_at
-ORDER BY ah.tea_id, ah.time DESC
+WHERE ac.tea_id IS NULL OR COALESCE(ah.recorded_at, ah.time) > ac.modified_at
+ORDER BY ah.tea_id, COALESCE(ah.recorded_at, ah.time) DESC
 ON CONFLICT (tea_id) DO UPDATE SET
     entity_id         = EXCLUDED.entity_id,
     attribute_name_id = EXCLUDED.attribute_name_id,
@@ -289,7 +446,15 @@ mod tests {
             instance_id: format!("urn:ngsi-ld:attribute:instance:{tea_id}"),
             observed_at: None,
             metadata: None,
+            recorded_at: Utc.timestamp_opt(1_700_000_000, 0).unwrap(),
             instance_id_client_supplied: false,
+        }
+    }
+
+    fn event(seq: u64, count: usize) -> AttributeCurrentEvent {
+        AttributeCurrentEvent {
+            seq,
+            entries: Arc::new(entries(count)),
         }
     }
 
@@ -322,14 +487,15 @@ mod tests {
 
     #[tokio::test]
     async fn materializer_drains_single_event_and_applies() {
-        let (tx, mut rx) = mpsc::unbounded_channel::<AttributeCurrentEvent>();
-        tx.send(Arc::new(entries(3))).expect("send");
+        let (tx, mut rx) = mpsc::channel::<AttributeCurrentEvent>(8);
+        tx.send(event(1, 3)).await.expect("send");
         drop(tx);
 
-        let mut carry = Vec::new();
+        let mut carry = DrainCarry::default();
         let batch = next_buffered_batch(&mut rx, MAX_DRAIN_BATCH, &mut carry).await.expect("batch");
-        assert_eq!(batch.len(), 3);
-        assert!(carry.is_empty());
+        assert_eq!(batch.entries.len(), 3);
+        assert_eq!(batch.completed_seq, 1);
+        assert!(carry.entries.is_empty());
 
         let next = next_buffered_batch(&mut rx, MAX_DRAIN_BATCH, &mut carry).await;
         assert!(next.is_none(), "channel closed and carry empty -> None");
@@ -337,31 +503,32 @@ mod tests {
 
     #[tokio::test]
     async fn materializer_drains_multiple_events_in_one_pass() {
-        let (tx, mut rx) = mpsc::unbounded_channel::<AttributeCurrentEvent>();
-        for _ in 0..5 {
-            tx.send(Arc::new(entries(2))).expect("send");
+        let (tx, mut rx) = mpsc::channel::<AttributeCurrentEvent>(8);
+        for seq in 1..=5 {
+            tx.send(event(seq, 2)).await.expect("send");
         }
         drop(tx);
 
-        let mut carry = Vec::new();
+        let mut carry = DrainCarry::default();
         let batch = next_buffered_batch(&mut rx, MAX_DRAIN_BATCH, &mut carry).await.expect("batch");
-        assert_eq!(batch.len(), 10, "five 2-entry events drained as one 10-entry batch");
-        assert!(carry.is_empty());
+        assert_eq!(batch.entries.len(), 10, "five 2-entry events drained as one 10-entry batch");
+        assert_eq!(batch.completed_seq, 5, "watermark covers every event in the batch");
+        assert!(carry.entries.is_empty());
     }
 
     #[tokio::test]
     async fn materializer_caps_at_max_drain_batch() {
-        let (tx, mut rx) = mpsc::unbounded_channel::<AttributeCurrentEvent>();
+        let (tx, mut rx) = mpsc::channel::<AttributeCurrentEvent>(8);
         // 4 events of 30 entries each = 120 entries with a max of 50.
-        for _ in 0..4 {
-            tx.send(Arc::new(entries(30))).expect("send");
+        for seq in 1..=4 {
+            tx.send(event(seq, 30)).await.expect("send");
         }
         drop(tx);
 
-        let mut carry = Vec::new();
+        let mut carry = DrainCarry::default();
         let mut applied: Vec<usize> = Vec::new();
         while let Some(batch) = next_buffered_batch(&mut rx, 50, &mut carry).await {
-            applied.push(batch.len());
+            applied.push(batch.entries.len());
         }
         assert!(!applied.is_empty(), "should have applied at least one batch");
         for size in &applied {
@@ -371,25 +538,89 @@ mod tests {
         assert_eq!(total, 120, "all entries must be flushed across multiple batches");
     }
 
-    #[test]
-    fn uow_pending_attribute_current_send_dispatches_arc_event() {
-        let (tx, mut rx) = mpsc::unbounded_channel::<AttributeCurrentEvent>();
-        let pending = entries(2);
-        // Mirror UoW commit logic in isolation.
-        let event: AttributeCurrentEvent = Arc::new(pending);
-        tx.send(event).expect("send");
+    #[tokio::test]
+    async fn watermark_never_reports_a_partially_applied_event() {
+        // Two 30-entry events with a cap of 50: the first batch takes all of
+        // event 1 plus 20 rows of event 2, so only seq 1 may be published.
+        let (tx, mut rx) = mpsc::channel::<AttributeCurrentEvent>(8);
+        tx.send(event(1, 30)).await.expect("send");
+        tx.send(event(2, 30)).await.expect("send");
         drop(tx);
-        let received = rx.try_recv().expect("event");
-        assert_eq!(received.len(), 2);
+
+        let mut carry = DrainCarry::default();
+        let first = next_buffered_batch(&mut rx, 50, &mut carry).await.expect("batch");
+        assert_eq!(first.entries.len(), 50);
+        assert_eq!(first.completed_seq, 1, "event 2 is only half applied — must not be published");
+        assert_eq!(carry.entries.len(), 10);
+        assert_eq!(carry.seq, 2);
+
+        let second = next_buffered_batch(&mut rx, 50, &mut carry).await.expect("batch");
+        assert_eq!(second.entries.len(), 10);
+        assert_eq!(second.completed_seq, 2, "event 2 completes once its tail is applied");
+    }
+
+    #[tokio::test]
+    async fn barrier_returns_once_watermark_reaches_issued_high_water() {
+        let (worker, queue, barrier) = AttributeCurrentMaterializer::new(
+            Arc::new(PgPool::connect_lazy("postgres://invalid/invalid").expect("lazy pool")),
+            Duration::from_secs(60),
+        );
+        queue.publish(entries(1)).await;
+        queue.publish(entries(1)).await;
+
+        // Nothing applied yet: the barrier must not be satisfied.
+        assert_eq!(*barrier.applied.borrow(), 0);
+        assert_eq!(barrier.issued.load(Ordering::Acquire), 2);
+
+        // Publishing the watermark for both events releases the barrier.
+        worker.applied.send(2).expect("watermark send");
+        barrier.wait_for_pending_writes().await;
+    }
+
+    #[tokio::test]
+    async fn barrier_is_satisfied_immediately_when_nothing_is_queued() {
+        let (_worker, _queue, barrier) = AttributeCurrentMaterializer::new(
+            Arc::new(PgPool::connect_lazy("postgres://invalid/invalid").expect("lazy pool")),
+            Duration::from_secs(60),
+        );
+        barrier.wait_for_pending_writes().await;
+    }
+
+    #[tokio::test]
+    async fn queue_publish_assigns_monotonic_sequences() {
+        let (worker, queue, _barrier) = AttributeCurrentMaterializer::new(
+            Arc::new(PgPool::connect_lazy("postgres://invalid/invalid").expect("lazy pool")),
+            Duration::from_secs(60),
+        );
+        let mut rx = worker.rx;
+        queue.publish(entries(1)).await;
+        queue.publish(entries(1)).await;
+        assert_eq!(rx.try_recv().expect("first").seq, 1);
+        assert_eq!(rx.try_recv().expect("second").seq, 2);
+    }
+
+    #[tokio::test]
+    async fn queue_publish_ignores_empty_batches() {
+        let (worker, queue, barrier) = AttributeCurrentMaterializer::new(
+            Arc::new(PgPool::connect_lazy("postgres://invalid/invalid").expect("lazy pool")),
+            Duration::from_secs(60),
+        );
+        let mut rx = worker.rx;
+        queue.publish(Vec::new()).await;
+        assert!(rx.try_recv().is_err(), "empty batch must not occupy a queue slot");
+        assert_eq!(barrier.issued.load(Ordering::Acquire), 0, "empty batch must not advance the high-water mark");
     }
 
     #[test]
-    fn uow_rollback_does_not_emit_event() {
-        let (tx, mut rx) = mpsc::unbounded_channel::<AttributeCurrentEvent>();
-        // Producer drops without sending — mirrors UoW dropped without commit().
-        let _pending = entries(1);
-        drop(tx);
-        let received = rx.try_recv();
-        assert!(received.is_err(), "no event should have been emitted");
+    fn apply_sql_orders_and_guards_on_recorded_at() {
+        assert!(
+            APPLY_ATTRIBUTE_CURRENT_SQL.contains("ORDER BY d.tea_id, COALESCE(d.recorded_at, d.time) DESC"),
+            "last-write-wins ordering must key on recorded_at, not the observedAt-bearing time column"
+        );
+        assert!(
+            APPLY_ATTRIBUTE_CURRENT_SQL.contains("WHERE attribute_current.modified_at <= EXCLUDED.modified_at"),
+            "staleness guard must reject out-of-order applies"
+        );
+        assert!(RECONCILE_FROM_HISTORY_SQL.contains("COALESCE(ah.recorded_at, ah.time) > ac.modified_at"));
     }
 }

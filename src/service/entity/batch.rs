@@ -2,7 +2,7 @@ use crate::{
     core::error::AndromedaError,
     domain::{
         entity::Entity,
-        expanded::{self, append_entity_attrs, merge_entity, update_entity_attrs},
+        expanded::{self, AttributeInstanceKey, append_entity_attrs, merge_entity, removed_attribute_instances, update_entity_attrs},
         geometry::Wkb,
         notification::{ChangeEvent, SysAttrsSnapshot, TriggerReason},
         uri::Uri,
@@ -924,12 +924,49 @@ impl EntityService {
             columns.expires_ats.push(expires_at);
         }
 
+        // Replace-mode upsert overwrites `entities.payload` wholesale, so any
+        // attribute the replacement omits is deleted (NGSI-LD 5.6.8) and needs
+        // a tombstone. The prior payloads are read inside the same transaction
+        // that writes the replacements, so the diff cannot be computed against
+        // a snapshot another writer has already moved past.
+        //
+        // The diff is taken against `entities.payload` rather than the TEA
+        // catalogue on purpose: TEA rows outlive the attributes they describe
+        // (deletion writes a tombstone, it does not drop the row), so diffing
+        // against them would re-tombstone already-deleted attributes on every
+        // upsert.
         let mut uow = self.uow.begin().await?;
+        let previous = uow.get_entities(&chunk_ids).await?;
+        let removals = Self::collect_replaced_attribute_removals(&entity_data, &columns.payloads, &previous);
+
         let upserted = uow.upsert_entities_batch(&columns).await?;
         let mut payloads = columns.payloads.into_iter().map(Some).collect::<Vec<_>>();
         let (job, success, created) = Self::drain_upsert_indexed_effect_entities(&mut entity_data, &mut payloads, upserted);
+        for (id, removed) in &removals {
+            uow.record_removed_attributes(id, removed).await?;
+        }
         self.commit_chunk_side_effects(uow, job, mode).await?;
         Ok((BatchResult { success, errors: Vec::new() }, created))
+    }
+
+    /// Attribute instances each replaced entity drops, keyed by entity id.
+    ///
+    /// Entities absent from `previous` were created rather than replaced and
+    /// contribute nothing.
+    fn collect_replaced_attribute_removals(
+        entity_data: &HashMap<String, IndexedBatchEffectEntity>,
+        payloads: &[Value],
+        previous: &HashMap<String, Value>,
+    ) -> Vec<(String, Vec<AttributeInstanceKey>)> {
+        entity_data
+            .iter()
+            .filter_map(|(id, entry)| {
+                let prior = previous.get(id)?;
+                let replacement = payloads.get(entry.payload_index)?;
+                let removed = removed_attribute_instances(prior, replacement);
+                (!removed.is_empty()).then(|| (id.clone(), removed)) // clone: owned key for the returned pair
+            })
+            .collect()
     }
 
     async fn batch_upsert_update_chunk(

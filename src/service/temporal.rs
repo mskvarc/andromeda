@@ -10,7 +10,10 @@ use crate::{
     jsonld::{CompactOptions, ContextSpec, JsonLdEngine, term_resolver, vocab},
     query::{
         compiled::{CompiledTemporalQuery, GeoQuery, IdPattern, LastNOrigin, Pagination, ScopeQuery},
-        sql::temporal::{build_stage1_entity_ids, build_temporal_history_query},
+        sql::{
+            q_filter::{ResolvedAttributeNames, referenced_attribute_iris},
+            temporal::{build_stage1_entity_ids, build_temporal_history_query},
+        },
     },
     renderer::{
         Renderer,
@@ -23,6 +26,7 @@ use crate::{
         },
     },
     repository::{
+        attribute_names::AttributeNameCache,
         entity::{params::EntityCreateParams, repo::EntityRepository},
         temporal::{params::DeleteScope, repo::TemporalRepository},
     },
@@ -31,6 +35,7 @@ use crate::{
         entity::{extract::extract_geo_wkb, extract_entity_types},
         temporal_recorder::TemporalRecorder,
     },
+    worker::attribute_current_materializer::{AttributeCurrentBarrier, AttributeCurrentQueue},
 };
 use chrono::{DateTime, SecondsFormat, Utc};
 use serde_json::{Value, json};
@@ -115,6 +120,8 @@ pub struct TemporalService {
     entity_repo: EntityRepository,
     engine: JsonLdEngine,
     default_last_n: u32,
+    attribute_current: AttributeCurrentBarrier,
+    attribute_names: Arc<AttributeNameCache>,
 }
 
 /// Result of create_or_update operation.
@@ -159,8 +166,16 @@ pub struct TemporalQueryResult {
 
 impl TemporalService {
     /// Create a new temporal service with the given connection pool, shared temporal repository, JSON-LD engine, and default lastN cap.
-    pub fn new(pool: &sqlx::postgres::PgPool, temporal_repo: Arc<TemporalRepository>, engine: JsonLdEngine, default_last_n: u32) -> TemporalService {
-        let recorder = TemporalRecorder::new(temporal_repo.clone()); // clone: Arc ref-count bump; repo is shared between service and recorder
+    pub fn new(
+        pool: &sqlx::postgres::PgPool,
+        temporal_repo: Arc<TemporalRepository>,
+        engine: JsonLdEngine,
+        default_last_n: u32,
+        attribute_current: AttributeCurrentBarrier,
+        attribute_current_queue: AttributeCurrentQueue,
+        attribute_names: Arc<AttributeNameCache>,
+    ) -> TemporalService {
+        let recorder = TemporalRecorder::new(temporal_repo.clone(), attribute_current_queue); // clone: Arc ref-count bump; repo is shared between service and recorder
         let entity_repo = EntityRepository::new(pool);
 
         TemporalService {
@@ -169,7 +184,28 @@ impl TemporalService {
             entity_repo,
             engine,
             default_last_n,
+            attribute_current,
+            attribute_names,
         }
+    }
+
+    /// Resolve the attribute IRIs a temporal `q` filter references and wait for
+    /// the `attribute_current` projection if any of them will be read from it.
+    ///
+    /// Mirrors the entity query path; see
+    /// [`crate::service::entity::query::EntityQueryService`] for why resolution
+    /// is per execution rather than per compilation.
+    async fn resolve_q_attributes(&self, compiled: &CompiledTemporalQuery) -> Result<ResolvedAttributeNames, AndromedaError> {
+        let Some(q_expr) = &compiled.q_expr else {
+            return Ok(ResolvedAttributeNames::default());
+        };
+        let mut iris = Vec::new();
+        referenced_attribute_iris(q_expr, &mut iris);
+        let resolved = self.attribute_names.lookup(&iris).await?;
+        if !resolved.is_empty() {
+            self.attribute_current.wait_for_pending_writes().await;
+        }
+        Ok(resolved)
     }
 
     /// Return a reference to the underlying JSON-LD engine.
@@ -463,7 +499,8 @@ impl TemporalService {
 
         let compiled = self.compile_temporal_query(params, context).await?;
 
-        let stage1 = build_stage1_entity_ids(&compiled)?;
+        let attribute_names = self.resolve_q_attributes(&compiled).await?;
+        let stage1 = build_stage1_entity_ids(&compiled, &attribute_names)?;
 
         let entity_id_rows = self.repo.execute_temporal_query(&stage1.sql, &stage1.bind_values).await?;
 
@@ -713,7 +750,8 @@ impl TemporalService {
     pub async fn query_ids(&self, params: &TemporalQueryParameters, context: &ContextSpec) -> Result<Vec<String>, AndromedaError> {
         params.validate(true)?;
         let compiled = self.compile_temporal_query(params, context).await?;
-        let stage1 = build_stage1_entity_ids(&compiled)?;
+        let attribute_names = self.resolve_q_attributes(&compiled).await?;
+        let stage1 = build_stage1_entity_ids(&compiled, &attribute_names)?;
         let entity_id_rows = self.repo.execute_temporal_query(&stage1.sql, &stage1.bind_values).await?;
         Ok(entity_id_rows.iter().filter_map(|r| r.try_get("entity_id").ok()).collect())
     }

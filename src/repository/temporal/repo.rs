@@ -5,6 +5,7 @@ use crate::{
     domain::{geometry::Wkb, temporal::TeaEntry},
     query::sql::BindValue,
     repository::{
+        attribute_names::AttributeNameCache,
         temporal::{
             copy::insert_history_batch_via_copy_in_tx,
             mapper::row_to_tea,
@@ -15,17 +16,16 @@ use crate::{
     },
 };
 use chrono::{DateTime, Utc};
-use dashmap::DashMap;
 use serde_json::Value;
 use sqlx::{Postgres, Row, Transaction, postgres::PgPool};
-use std::{collections::HashMap, sync::Arc};
+use std::sync::Arc;
 
 /// PostgreSQL/TimescaleDB-backed repository for NGSI-LD temporal entity data.
 #[derive(Debug)]
 pub struct TemporalRepository {
     pool: PgPool,
-    /// In-process cache for attribute name dictionary lookups.
-    attr_name_cache: Arc<DashMap<String, i16>>,
+    /// Shared `attribute_names` dictionary cache.
+    attribute_names: Arc<AttributeNameCache>,
     /// TSL capability probe.
     timescale_features: TimescaleFeatures,
     /// Dispatch mode for bulk history INSERTs.
@@ -38,10 +38,10 @@ impl TemporalRepository {
     /// `bulk_write_mode` controls dispatch for `insert_history_batch_in_tx`:
     /// `Unnest` keeps the legacy `UNNEST(..)` driver-side path; `CopyStaging`
     /// routes through a per-transaction binary-COPY staging table.
-    pub fn new(pool: &PgPool, bulk_write_mode: BulkWriteMode) -> TemporalRepository {
+    pub fn new(pool: &PgPool, bulk_write_mode: BulkWriteMode, attribute_names: Arc<AttributeNameCache>) -> TemporalRepository {
         TemporalRepository {
             pool: pool.clone(), // clone: Arc ref-count bump
-            attr_name_cache: Arc::new(DashMap::new()),
+            attribute_names,
             timescale_features: TimescaleFeatures::empty(),
             bulk_write_mode,
         }
@@ -51,63 +51,6 @@ impl TemporalRepository {
     pub const fn with_features(mut self, features: TimescaleFeatures) -> TemporalRepository {
         self.timescale_features = features;
         self
-    }
-
-    /// Populate the in-process `attribute_names` dictionary cache from the
-    /// database. Eliminates the cold-hit `INSERT ... ON CONFLICT DO NOTHING`
-    /// round-trip otherwise incurred on first use of each attribute IRI.
-    pub async fn preload_attribute_names(&self) -> Result<(), AndromedaError> {
-        let rows = sqlx::query("SELECT id, name FROM attribute_names").fetch_all(&self.pool).await?;
-        for row in rows {
-            let id: i16 = row.get("id");
-            let name: String = row.get("name");
-            self.attr_name_cache.insert(name, id);
-        }
-        Ok(())
-    }
-
-    async fn resolve_attribute_name_ids(&self, names: &[&str]) -> Result<HashMap<String, i16>, AndromedaError> {
-        if names.is_empty() {
-            return Ok(HashMap::new());
-        }
-
-        let mut result = HashMap::with_capacity(names.len());
-        let mut uncached: Vec<&str> = Vec::new();
-
-        for name in names {
-            if let Some(id) = self.attr_name_cache.get(*name) {
-                result.insert((*name).to_owned(), *id);
-            } else {
-                uncached.push(name);
-            }
-        }
-
-        if uncached.is_empty() {
-            return Ok(result);
-        }
-
-        sqlx::query(
-            "INSERT INTO attribute_names (name) \
-             SELECT name FROM UNNEST($1::text[]) AS t(name) \
-             ON CONFLICT (name) DO NOTHING",
-        )
-        .bind(&uncached)
-        .execute(&self.pool)
-        .await?;
-
-        let rows = sqlx::query("SELECT id, name FROM attribute_names WHERE name = ANY($1)")
-            .bind(&uncached)
-            .fetch_all(&self.pool)
-            .await?;
-
-        for row in rows {
-            let name: String = row.get("name");
-            let id: i16 = row.get("id");
-            self.attr_name_cache.insert(name.clone(), id);
-            result.insert(name, id);
-        }
-
-        Ok(result)
     }
 
     /// TEA entries for a specific attribute.
@@ -228,8 +171,16 @@ impl TemporalRepository {
     }
 
     /// Delete a specific attribute instance. Returns 404 if no row was deleted.
+    ///
+    /// Deleting the newest instance of an attribute changes what "current"
+    /// means, so `attribute_current` is rebuilt for the affected TEA in the
+    /// same transaction: refilled from the newest surviving history row, or
+    /// dropped entirely when none survives. Without this the projection keeps
+    /// serving the value that was just deleted.
     pub async fn delete_instance(&self, instance_id: &str, entity_id: &str, attribute_name: &str) -> Result<(), AndromedaError> {
-        let result = sqlx::query(
+        let mut tx = self.pool.begin().await?;
+
+        let deleted = sqlx::query(
             r#"
             DELETE FROM attribute_history
             WHERE instance_id = $1
@@ -238,19 +189,24 @@ impl TemporalRepository {
                 JOIN attribute_names an ON an.id = tea.attribute_name_id
                 WHERE tea.entity_id = $2 AND an.name = $3
             )
-            RETURNING instance_id
+            RETURNING tea_id
             "#,
         )
         .bind(instance_id)
         .bind(entity_id)
         .bind(attribute_name)
-        .fetch_optional(&self.pool)
+        .fetch_optional(&mut *tx)
         .await?;
 
-        if result.is_none() {
+        let Some(row) = deleted else {
             return Err(AndromedaError::temporal_not_found(format!("Attribute instance {instance_id} not found")));
-        }
+        };
+        let tea_id: uuid::Uuid = row.try_get("tea_id")?;
 
+        sqlx::query(DELETE_ORPHANED_ATTRIBUTE_CURRENT_SQL).bind(tea_id).execute(&mut *tx).await?;
+        sqlx::query(REMATERIALIZE_ATTRIBUTE_CURRENT_SQL).bind(tea_id).execute(&mut *tx).await?;
+
+        tx.commit().await?;
         Ok(())
     }
 
@@ -367,7 +323,7 @@ impl TemporalRepository {
                 .filter_map(|e| seen.insert(e.attribute_name.as_str()).then_some(e.attribute_name.as_str()))
                 .collect()
         };
-        let name_to_id = self.resolve_attribute_name_ids(&distinct_names).await?;
+        let name_to_id = self.attribute_names.resolve_or_create(&distinct_names).await?;
 
         let mut entity_ids = Vec::with_capacity(entries.len());
         let mut attr_name_ids: Vec<i16> = Vec::with_capacity(entries.len());
@@ -380,7 +336,7 @@ impl TemporalRepository {
                 .get(e.attribute_name.as_str())
                 .ok_or_else(|| AndromedaError::internal(format!("Attribute name '{}' not found in dictionary after resolve", e.attribute_name)))?;
             entity_ids.push(e.entity_id.as_str());
-            attr_name_ids.push(*attr_id);
+            attr_name_ids.push(attr_id.get());
             attribute_types.push(e.attribute_type.short_name());
             dataset_ids.push(e.dataset_id.as_deref());
             value_types.push(e.value_type.as_str());
@@ -549,6 +505,58 @@ WHERE NOT EXISTS (
 )
 "#;
 
+/// Drop the projection row for a TEA whose history is now empty.
+const DELETE_ORPHANED_ATTRIBUTE_CURRENT_SQL: &str = r#"
+DELETE FROM attribute_current ac
+WHERE ac.tea_id = $1
+  AND NOT EXISTS (SELECT 1 FROM attribute_history ah WHERE ah.tea_id = $1)
+"#;
+
+/// Rebuild the projection row for one TEA from its newest surviving history row.
+///
+/// The `ON CONFLICT` update is unconditional — deliberately unlike the
+/// materializer's staleness-guarded upsert. Deleting the newest instance makes
+/// the correct current value *older* than the row already in the projection, so
+/// a `modified_at <= EXCLUDED.modified_at` guard would reject exactly the write
+/// that is needed here.
+///
+/// The `ORDER BY COALESCE(recorded_at, time) DESC` cannot use
+/// `idx_attribute_history_tea_time`, so this costs one index probe per chunk
+/// rather than a single seek. Acceptable on a single-instance delete, which is
+/// not an ingest path; it does grow with retention.
+const REMATERIALIZE_ATTRIBUTE_CURRENT_SQL: &str = r#"
+INSERT INTO attribute_current (
+    tea_id, entity_id, attribute_name_id, dataset_id, value_type,
+    value_number, value_string, value_bool, value_geo,
+    value_object, value_datetime, value_uri, modified_at
+)
+SELECT
+    latest.tea_id, tea.entity_id, tea.attribute_name_id, tea.dataset_id, tea.value_type,
+    latest.value_number, latest.value_string, latest.value_bool, latest.value_geo,
+    latest.value_object, latest.value_datetime, latest.value_uri,
+    COALESCE(latest.recorded_at, latest.time)
+FROM (
+    SELECT * FROM attribute_history ah
+    WHERE ah.tea_id = $1
+    ORDER BY COALESCE(ah.recorded_at, ah.time) DESC
+    LIMIT 1
+) AS latest
+JOIN temporal_entity_attributes tea ON tea.id = latest.tea_id
+ON CONFLICT (tea_id) DO UPDATE SET
+    entity_id         = EXCLUDED.entity_id,
+    attribute_name_id = EXCLUDED.attribute_name_id,
+    dataset_id        = EXCLUDED.dataset_id,
+    value_type        = EXCLUDED.value_type,
+    value_number      = EXCLUDED.value_number,
+    value_string      = EXCLUDED.value_string,
+    value_bool        = EXCLUDED.value_bool,
+    value_geo         = EXCLUDED.value_geo,
+    value_object      = EXCLUDED.value_object,
+    value_datetime    = EXCLUDED.value_datetime,
+    value_uri         = EXCLUDED.value_uri,
+    modified_at       = EXCLUDED.modified_at
+"#;
+
 fn rows_to_tea_results(rows: Vec<sqlx::postgres::PgRow>) -> Vec<TeaBatchResultRow> {
     rows.into_iter()
         .map(|row| TeaBatchResultRow {
@@ -633,6 +641,7 @@ async fn insert_history_batch_unnest_in_tx(tx: &mut Transaction<'_, Postgres>, e
     let mut instance_ids = Vec::with_capacity(len);
     let mut observed_ats: Vec<Option<DateTime<Utc>>> = Vec::with_capacity(len);
     let mut metadatas: Vec<Option<&Value>> = Vec::with_capacity(len);
+    let mut recorded_ats: Vec<DateTime<Utc>> = Vec::with_capacity(len);
 
     for e in entries {
         times.push(e.time);
@@ -647,6 +656,7 @@ async fn insert_history_batch_unnest_in_tx(tx: &mut Transaction<'_, Postgres>, e
         instance_ids.push(e.instance_id.as_str());
         observed_ats.push(e.observed_at);
         metadatas.push(e.metadata.as_ref());
+        recorded_ats.push(e.recorded_at);
     }
 
     sqlx::query(
@@ -654,19 +664,19 @@ async fn insert_history_batch_unnest_in_tx(tx: &mut Transaction<'_, Postgres>, e
         INSERT INTO attribute_history
             (time, tea_id, value_number, value_string, value_bool,
              value_geo, value_object, value_datetime, value_uri,
-             instance_id, observed_at, metadata)
+             instance_id, observed_at, metadata, recorded_at)
         SELECT
             d.time, d.tea_id, d.value_number, d.value_string, d.value_bool,
             CASE WHEN d.value_geo IS NOT NULL THEN ST_MakeValid(ST_GeomFromEWKB(d.value_geo)) ELSE NULL END,
             d.value_object, d.value_datetime, d.value_uri,
-            d.instance_id, d.observed_at, d.metadata
+            d.instance_id, d.observed_at, d.metadata, d.recorded_at
         FROM UNNEST(
             $1::timestamptz[], $2::uuid[], $3::double precision[], $4::text[], $5::boolean[],
             $6::bytea[], $7::jsonb[], $8::timestamptz[], $9::text[],
-            $10::text[], $11::timestamptz[], $12::jsonb[]
+            $10::text[], $11::timestamptz[], $12::jsonb[], $13::timestamptz[]
         ) AS d(time, tea_id, value_number, value_string, value_bool,
                value_geo, value_object, value_datetime, value_uri,
-               instance_id, observed_at, metadata)
+               instance_id, observed_at, metadata, recorded_at)
         "#,
     )
     .bind(&times)
@@ -681,6 +691,7 @@ async fn insert_history_batch_unnest_in_tx(tx: &mut Transaction<'_, Postgres>, e
     .bind(&instance_ids)
     .bind(&observed_ats)
     .bind(&metadatas)
+    .bind(&recorded_ats)
     .execute(&mut **tx)
     .await?;
 

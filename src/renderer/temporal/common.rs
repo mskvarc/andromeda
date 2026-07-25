@@ -17,7 +17,6 @@ use iri_rs::IriBuf;
 use serde_json::{Value, json};
 use sqlx::{Row, postgres::PgRow};
 use std::str::FromStr;
-use urn_rs::Urn;
 
 pub(crate) type TimeRange = (DateTime<Utc>, DateTime<Utc>);
 
@@ -30,7 +29,10 @@ pub(crate) fn parse_tea_entry(row: &PgRow) -> Result<TeaEntry, AndromedaError> {
     let attribute_type = AttributeType::from_str(&attribute_type_raw)
         .map_err(|e| AndromedaError::internal(format!("Invalid temporal attribute type '{}': {}", attribute_type_raw, e)))?;
 
-    let dataset_id = row.try_get::<Option<String>, _>("dataset_id")?.map(|raw| Urn::from_str(&raw)).transpose()?;
+    let dataset_id = row
+        .try_get::<Option<String>, _>("dataset_id")?
+        .map(|raw| IriBuf::new(raw.clone()).map_err(|e| AndromedaError::internal(format!("Invalid temporal dataset id '{}': {}", raw, e))))
+        .transpose()?;
 
     let value_type_raw: String = row.try_get("value_type")?;
     let value_type =
@@ -77,7 +79,7 @@ pub(crate) fn history_row_to_expanded_instance(row: &PgRow, tea: &TeaEntry, sys_
             instance.insert(vocab::expanded::properties::INSTANCE_ID.as_str().to_string(), json!([{"@id": instance_id}]));
         }
         if let Some(ds_id) = &tea.dataset_id {
-            instance.insert(vocab::expanded::properties::DATASET_ID.as_str().to_string(), json!([{"@id": ds_id}]));
+            instance.insert(vocab::expanded::properties::DATASET_ID.as_str().to_string(), json!([{"@id": ds_id.as_str()}]));
         }
         return Ok(Value::Object(instance));
     }
@@ -188,7 +190,7 @@ pub(crate) fn history_row_to_expanded_instance(row: &PgRow, tea: &TeaEntry, sys_
     instance.insert(vocab::expanded::properties::INSTANCE_ID.as_str().to_string(), json!([{"@id": instance_id}]));
 
     if let Some(ds_id) = &tea.dataset_id {
-        instance.insert(vocab::expanded::properties::DATASET_ID.as_str().to_string(), json!([{"@id": ds_id}]));
+        instance.insert(vocab::expanded::properties::DATASET_ID.as_str().to_string(), json!([{"@id": ds_id.as_str()}]));
     }
 
     if let Ok(Some(meta)) = row.try_get::<Option<Value>, _>("metadata")

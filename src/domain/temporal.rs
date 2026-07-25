@@ -4,16 +4,37 @@
 //! history of attribute values over time.
 
 use crate::domain::attribute_type::AttributeType;
+use derive_more::From;
 use iri_rs::IriBuf;
 use strum::{Display, EnumString};
-use urn_rs::Urn;
+
+/// Dictionary key for an expanded attribute IRI in the `attribute_names` table.
+///
+/// `attribute_names` normalises attribute IRIs to a `SMALLINT` so the temporal
+/// catalogue, the history hypertable, and the `attribute_current` projection can
+/// all index on a two-byte key instead of a full IRI.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, From)]
+pub struct AttributeNameId(i16);
+
+impl AttributeNameId {
+    /// The underlying `SMALLINT` value, for SQL binding.
+    pub const fn get(self) -> i16 {
+        self.0
+    }
+}
 
 /// A typed row from the temporal_entity_attributes table.
 #[derive(Debug, Clone)]
 pub struct TeaEntry {
     pub attribute_name: IriBuf,
     pub attribute_type: AttributeType,
-    pub dataset_id: Option<Urn>,
+    /// Multi-attribute discriminator (NGSI-LD 5.2.5).
+    ///
+    /// Typed as a URI rather than a URN: the specification constrains
+    /// `datasetId` to a URI, and plain-URI dataset identifiers are legal. The
+    /// previous `Urn` typing silently discarded them, collapsing distinct
+    /// instances onto the default one.
+    pub dataset_id: Option<IriBuf>,
     pub value_type: ValueType,
 }
 

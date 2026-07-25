@@ -1,0 +1,22 @@
+-- ============================================================================
+-- 0026: attribute_history.recorded_at -- server wall-clock write order.
+-- ============================================================================
+-- `attribute_history.time` is the TimescaleDB partition key and carries the
+-- *application* timestamp: `observedAt` when the client supplied one, else the
+-- server clock. That makes it unusable as a write-order key -- a client may
+-- back-date or forward-date `observedAt` freely (NGSI-LD 5.2.5), so a later
+-- write can carry an earlier `time` than the row it supersedes.
+--
+-- The `attribute_current` projection needs last-write-wins semantics so it
+-- tracks `entities.payload` (which is unconditionally overwritten by the most
+-- recent write) rather than `observedAt` order. `recorded_at` is that key: the
+-- server wall-clock instant at which the unit-of-work produced the batch.
+--
+-- Nullable, no DEFAULT, no backfill -- this is a metadata-only DDL change and
+-- therefore safe on TimescaleDB compressed chunks. Rows written before this
+-- migration keep `recorded_at IS NULL`; every consumer orders by
+-- `COALESCE(recorded_at, time)` so historical rows fall back to the previous
+-- behaviour instead of sorting as NULL.
+-- ============================================================================
+
+ALTER TABLE attribute_history ADD COLUMN recorded_at TIMESTAMPTZ;

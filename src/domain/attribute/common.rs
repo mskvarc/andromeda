@@ -349,7 +349,7 @@ impl<V: JsonValue> ToJsonValue<V> for InlineEntity {
 
 impl Expandable for OneOrMany<Uri> {
     fn expand<V: JsonValue>(&self) -> V {
-        V::array(self.iter().map(|value| id_object::<V>(&value.to_string())))
+        V::array(self.iter().map(|value| id_object::<V>(value.as_ref())))
     }
 }
 
@@ -361,7 +361,7 @@ impl<V: JsonValue> ToJsonValue<V> for OneOrMany<Uri> {
 
 impl Expandable for OneOrMany<NgsiLdReference> {
     fn expand<V: JsonValue>(&self) -> V {
-        V::array(self.iter().map(|value| id_object::<V>(&value.to_string())))
+        V::array(self.iter().map(|value| id_object::<V>(value.as_ref())))
     }
 }
 
@@ -393,7 +393,7 @@ impl<V: JsonValue> ToJsonValue<V> for NgsiLdValue {
     fn to_json_value(&self) -> V {
         match self {
             NgsiLdValue::Json(value) => crate::domain::attribute::serde_json_value_to_json_value::<V>(value),
-            NgsiLdValue::Uri(uri) => V::string(&uri.to_string()),
+            NgsiLdValue::Uri(uri) => V::string(uri.as_ref()),
             NgsiLdValue::DateTime(dt) => V::from_string(dt.to_rfc3339_opts(chrono::SecondsFormat::Millis, true)),
             NgsiLdValue::Date(d) => V::string(d.as_str()),
             NgsiLdValue::Time(t) => V::string(t.as_str()),

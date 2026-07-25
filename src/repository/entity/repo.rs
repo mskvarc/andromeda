@@ -5,11 +5,11 @@ use crate::{
     domain::notification::SysAttrsSnapshot,
     query::{
         compiled::CompiledEntityQuery,
-        sql::{self, BindValue},
+        sql::{self, BindValue, q_filter::ResolvedAttributeNames},
     },
     repository::entity::{
         params::{EntityCreateParams, EntitySaveParams, PreparedEntityColumns},
-        rows::{AttributeSummaryRow, DeletedEntity, QueryResult},
+        rows::{AttributeSummaryRow, DeletedEntity, PurgedEntity, QueryResult},
     },
 };
 use serde_json::Value;
@@ -75,6 +75,41 @@ impl EntityRepository {
         Ok(result)
     }
 
+    /// Transactional variant of [`Self::get`].
+    ///
+    /// Lets a read-modify-write sequence take its "before" snapshot inside the
+    /// same transaction that writes the result, so a concurrent writer cannot
+    /// slip between the read and the write and have its attributes tombstoned
+    /// by a diff computed against a stale payload.
+    pub async fn get_in_tx(tx: &mut Transaction<'_, Postgres>, id: &str) -> Result<Option<Value>, AndromedaError> {
+        let result: Option<Value> = sqlx::query_scalar("SELECT payload FROM entities WHERE id = $1")
+            .bind(id)
+            .fetch_optional(&mut **tx)
+            .await?;
+
+        Ok(result)
+    }
+
+    /// Fetch expanded payloads for multiple entities inside the caller's
+    /// transaction. See [`Self::get_in_tx`] for why the read is transactional.
+    pub async fn get_batch_in_tx(tx: &mut Transaction<'_, Postgres>, ids: &[String]) -> Result<HashMap<String, Value>, AndromedaError> {
+        if ids.is_empty() {
+            return Ok(HashMap::new());
+        }
+        let rows = sqlx::query("SELECT id, payload FROM entities WHERE id = ANY($1)")
+            .bind(ids)
+            .fetch_all(&mut **tx)
+            .await?;
+
+        let mut result = HashMap::with_capacity(ids.len());
+        for row in rows {
+            let id: String = row.get("id");
+            let payload: Value = row.get("payload");
+            result.insert(id, payload);
+        }
+        Ok(result)
+    }
+
     /// Retrieve system attributes for a single entity.
     pub async fn get_sys_attrs(&self, id: &str) -> Result<Option<SysAttrsSnapshot>, AndromedaError> {
         let row = sqlx::query("SELECT created_at, modified_at, expires_at FROM entities WHERE id = $1")
@@ -107,60 +142,90 @@ impl EntityRepository {
     /// service/worker layer; the *what* (the filter rule: past-due expiresAt)
     /// lives in the SQL function definition, so the repository only supplies
     /// the narrow trigger and SQL wiring.
-    pub async fn purge_expired_attributes(&self) -> Result<Vec<String>, AndromedaError> {
+    ///
+    /// Returns the payload both before and after the rewrite for every
+    /// affected entity. The caller needs the "before" side to work out which
+    /// attribute instances expired, so it can record the matching tombstones
+    /// in this same transaction — an expiring attribute is a deletion, and
+    /// without the tombstone the temporal history and the `attribute_current`
+    /// projection keep serving a value the payload no longer has.
+    ///
+    /// Both payloads come from one statement, and therefore one snapshot: the
+    /// `candidates` CTE reads the pre-update rows while the `purged` CTE
+    /// writes them, so the pair is guaranteed consistent without a second
+    /// round trip or an explicit row lock.
+    pub async fn purge_expired_attributes_in_tx(tx: &mut Transaction<'_, Postgres>) -> Result<Vec<PurgedEntity>, AndromedaError> {
         let location_iri = crate::jsonld::vocab::expanded::properties::LOCATION.as_str();
         let observation_space_iri = crate::jsonld::vocab::expanded::properties::OBSERVATION_SPACE.as_str();
         let operation_space_iri = crate::jsonld::vocab::expanded::properties::OPERATION_SPACE.as_str();
 
-        let rows: Vec<(String,)> = sqlx::query_as(
+        let rows = sqlx::query(
             r#"
-            UPDATE entities
-            SET payload = remove_expired_attribute_instances(payload, NOW()),
-                modified_at = NOW(),
-                location = CASE
-                    WHEN remove_expired_attribute_instances(payload, NOW())->0 ? $1
-                    THEN location
-                    ELSE NULL
-                END,
-                observation_space = CASE
-                    WHEN remove_expired_attribute_instances(payload, NOW())->0 ? $2
-                    THEN observation_space
-                    ELSE NULL
-                END,
-                operation_space = CASE
-                    WHEN remove_expired_attribute_instances(payload, NOW())->0 ? $3
-                    THEN operation_space
-                    ELSE NULL
-                END
-            WHERE EXISTS (
-                SELECT 1
-                FROM (
-                    SELECT key, value
-                    FROM jsonb_each(payload->0)
-                    WHERE key NOT LIKE '@%' AND jsonb_typeof(value) = 'array'
-                ) AS kv(key, val),
-                LATERAL jsonb_array_elements(kv.val) AS inst(elem)
-                WHERE (inst.elem #>>'{https://uri.etsi.org/ngsi-ld/expiresAt,0,@value}')::timestamptz <= NOW()
+            WITH candidates AS (
+                SELECT id, payload AS previous_payload
+                FROM entities
+                WHERE EXISTS (
+                    SELECT 1
+                    FROM (
+                        SELECT key, value
+                        FROM jsonb_each(payload->0)
+                        WHERE key NOT LIKE '@%' AND jsonb_typeof(value) = 'array'
+                    ) AS kv(key, val),
+                    LATERAL jsonb_array_elements(kv.val) AS inst(elem)
+                    WHERE (inst.elem #>>'{https://uri.etsi.org/ngsi-ld/expiresAt,0,@value}')::timestamptz <= NOW()
+                )
+            ),
+            purged AS (
+                UPDATE entities
+                SET payload = remove_expired_attribute_instances(entities.payload, NOW()),
+                    modified_at = NOW(),
+                    location = CASE
+                        WHEN remove_expired_attribute_instances(entities.payload, NOW())->0 ? $1
+                        THEN entities.location
+                        ELSE NULL
+                    END,
+                    observation_space = CASE
+                        WHEN remove_expired_attribute_instances(entities.payload, NOW())->0 ? $2
+                        THEN entities.observation_space
+                        ELSE NULL
+                    END,
+                    operation_space = CASE
+                        WHEN remove_expired_attribute_instances(entities.payload, NOW())->0 ? $3
+                        THEN entities.operation_space
+                        ELSE NULL
+                    END
+                FROM candidates c
+                WHERE entities.id = c.id
+                RETURNING entities.id, entities.payload
             )
-            RETURNING id
+            SELECT p.id, c.previous_payload, p.payload
+            FROM purged p
+            JOIN candidates c ON c.id = p.id
             "#,
         )
         .bind(location_iri)
         .bind(observation_space_iri)
         .bind(operation_space_iri)
-        .fetch_all(&self.pool)
+        .fetch_all(&mut **tx)
         .await?;
 
-        Ok(rows.into_iter().map(|(id,)| id).collect())
+        let purged = rows
+            .into_iter()
+            .map(|row| PurgedEntity {
+                id: row.get("id"),
+                previous_payload: row.get("previous_payload"),
+                payload: row.get("payload"),
+            })
+            .collect();
+        Ok(purged)
     }
 
-    /// Save (overwrite) an existing entity with pre-extracted columns.
-    /// Returns rows affected.
-    pub async fn save(&self, params: EntitySaveParams<'_>) -> Result<u64, AndromedaError> {
-        Self::save_impl(&self.pool, params).await
-    }
-
-    /// Transactional variant of [`Self::save`].
+    /// Overwrite an existing entity with pre-extracted columns, inside the
+    /// caller's transaction. Returns rows affected.
+    ///
+    /// Transaction-only by design: every payload overwrite has to be paired
+    /// with the temporal records and tombstones that describe it, so there is
+    /// no pool-level variant that would let a caller write the payload alone.
     pub async fn save_in_tx(tx: &mut Transaction<'_, Postgres>, params: EntitySaveParams<'_>) -> Result<u64, AndromedaError> {
         Self::save_impl(&mut **tx, params).await
     }
@@ -199,10 +264,10 @@ impl EntityRepository {
     }
 
     /// Execute a compiled entity query and return matching payloads.
-    pub async fn query_compiled(&self, compiled: &CompiledEntityQuery) -> Result<QueryResult, AndromedaError> {
-        let built = sql::entity::build_query(compiled)?;
+    pub async fn query_compiled(&self, compiled: &CompiledEntityQuery, attribute_names: &ResolvedAttributeNames) -> Result<QueryResult, AndromedaError> {
+        let built = sql::entity::build_query(compiled, attribute_names)?;
 
-        tracing::info!("Built SQL: {} with binds: {:?}", built.sql, built.bind_values);
+        tracing::debug!("Built SQL: {} with binds: {:?}", built.sql, built.bind_values);
 
         let (rows, window_count) = self.execute_dynamic_query(&built.sql, &built.bind_values, built.count_sql.is_some()).await?;
 
@@ -457,10 +522,10 @@ impl EntityRepository {
     }
 
     /// Execute a compiled query and return only the matching entity identifiers.
-    pub async fn query_ids(&self, compiled: &CompiledEntityQuery) -> Result<Vec<String>, AndromedaError> {
-        let built = sql::entity::build_ids_query(compiled)?;
+    pub async fn query_ids(&self, compiled: &CompiledEntityQuery, attribute_names: &ResolvedAttributeNames) -> Result<Vec<String>, AndromedaError> {
+        let built = sql::entity::build_ids_query(compiled, attribute_names)?;
 
-        tracing::info!("Built IDs SQL: {} with binds: {:?}", built.sql, built.bind_values);
+        tracing::debug!("Built IDs SQL: {} with binds: {:?}", built.sql, built.bind_values);
 
         let query = crate::bind_values!(sqlx::query(&built.sql), &built.bind_values);
 
