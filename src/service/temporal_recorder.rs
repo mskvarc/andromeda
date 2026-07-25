@@ -487,11 +487,19 @@ impl TemporalRecorder {
         dataset_id: Option<&str>,
     ) -> Result<(TeaBatchEntry, HistoryBatchEntry), AndromedaError> {
         let teas = self.repo.get_teas_for_entity_attr(entity_id, attr_iri).await?;
-        let attr_type = teas
+        let existing = teas
             .iter()
             .find(|t| t.dataset_id.as_ref().map(IriBuf::as_str) == dataset_id)
-            .or_else(|| teas.first())
-            .map_or(AttributeType::Property, |t| t.attribute_type);
+            .or_else(|| teas.first());
+        let attr_type = existing.map_or(AttributeType::Property, |t| t.attribute_type);
+        // Keep the catalogue describing what the attribute *is*, not what the
+        // tombstone row happens to store. The tombstone lives in `value_string`,
+        // but writing `ValueType::String` here overwrote the TEA's declared type
+        // via the upsert, and the temporal renderer dispatches on that type — so
+        // every pre-deletion numeric observation then rendered with no value at
+        // all. Tombstone rows are recognised by their sentinel and short-circuit
+        // the type dispatch, so they do not need the type to describe them.
+        let value_type = existing.map_or(ValueType::String, |t| t.value_type);
 
         let dataset_id_str = dataset_id.map(ToOwned::to_owned);
         let tea_entry = TeaBatchEntry {
@@ -499,7 +507,7 @@ impl TemporalRecorder {
             attribute_name: attr_iri.to_owned(),
             attribute_type: attr_type,
             dataset_id: dataset_id_str,
-            value_type: ValueType::String,
+            value_type,
         };
         let now = Utc::now();
         let history_entry = HistoryBatchEntry {

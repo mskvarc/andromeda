@@ -32,7 +32,7 @@ use crate::{
     },
     service::{
         csource_forwarding::{ForwardedTemporalEntities, merge_temporal_query_results},
-        entity::{extract::extract_geo_wkb, extract_entity_types},
+        entity::{extract::extract_geo_wkb, extract_entity_types, normalize_entity_attributes},
         temporal_recorder::TemporalRecorder,
     },
     worker::attribute_current_materializer::{AttributeCurrentBarrier, AttributeCurrentQueue},
@@ -218,7 +218,8 @@ impl TemporalService {
     // -------------------------------------------------------------------------
 
     /// Create a new temporal entity or append attributes to an existing one.
-    pub async fn create_or_update(&self, payload: Value, context: &ContextSpec) -> Result<CreateOrUpdateResult, AndromedaError> {
+    pub async fn create_or_update(&self, mut payload: Value, context: &ContextSpec) -> Result<CreateOrUpdateResult, AndromedaError> {
+        normalize_entity_attributes(&mut payload);
         let expanded = self.engine.expand(payload.clone(), context).await?; // clone: expand() consumes the Value; payload is still used below for type extraction
         let entity_obj = expanded
             .as_array()
@@ -285,11 +286,12 @@ impl TemporalService {
     }
 
     /// Add temporal attributes to an existing temporal entity.
-    pub async fn add_attrs(&self, entity_id: &str, payload: Value, context: &ContextSpec) -> Result<(), AndromedaError> {
+    pub async fn add_attrs(&self, entity_id: &str, mut payload: Value, context: &ContextSpec) -> Result<(), AndromedaError> {
         if !self.repo.tea_exists_for_entity(entity_id).await? {
             return Err(AndromedaError::temporal_not_found(entity_id.to_string()));
         }
 
+        normalize_entity_attributes(&mut payload);
         let expanded = self.engine.expand(payload, context).await?;
         self.add_attrs_internal(entity_id, &expanded).await?;
         Ok(())

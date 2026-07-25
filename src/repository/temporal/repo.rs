@@ -17,7 +17,12 @@ use crate::{
 };
 use chrono::{DateTime, Utc};
 use serde_json::Value;
-use sqlx::{Postgres, Row, Transaction, postgres::PgPool};
+use sqlx::{
+    Postgres,
+    Row,
+    Transaction,
+    postgres::{PgConnection, PgPool},
+};
 use std::sync::Arc;
 
 /// PostgreSQL/TimescaleDB-backed repository for NGSI-LD temporal entity data.
@@ -203,8 +208,7 @@ impl TemporalRepository {
         };
         let tea_id: uuid::Uuid = row.try_get("tea_id")?;
 
-        sqlx::query(DELETE_ORPHANED_ATTRIBUTE_CURRENT_SQL).bind(tea_id).execute(&mut *tx).await?;
-        sqlx::query(REMATERIALIZE_ATTRIBUTE_CURRENT_SQL).bind(tea_id).execute(&mut *tx).await?;
+        repair_attribute_current(&mut tx, tea_id).await?;
 
         tx.commit().await?;
         Ok(())
@@ -504,6 +508,25 @@ WHERE NOT EXISTS (
       AND u.dataset_id IS NOT DISTINCT FROM i.dataset_id
 )
 "#;
+
+/// Rebuild one TEA's `attribute_current` row from `attribute_history`.
+///
+/// `attribute_history` is the canonical record, so this recomputes the
+/// projection rather than trusting any in-memory state. It is used from two
+/// places: after deleting an attribute instance, where the surviving newest row
+/// becomes current; and by the materializer when an apply fails, where it turns
+/// a row the projection could not accept into a correct outcome instead of a
+/// silent gap.
+///
+/// Both cases are covered without special-casing. If the owning TEA is gone the
+/// refill selects nothing and the orphan delete removes any stale row, which is
+/// the right answer. If the TEA is present the newest surviving observation is
+/// restored.
+pub async fn repair_attribute_current(conn: &mut PgConnection, tea_id: uuid::Uuid) -> Result<(), AndromedaError> {
+    sqlx::query(DELETE_ORPHANED_ATTRIBUTE_CURRENT_SQL).bind(tea_id).execute(&mut *conn).await?;
+    sqlx::query(REMATERIALIZE_ATTRIBUTE_CURRENT_SQL).bind(tea_id).execute(&mut *conn).await?;
+    Ok(())
+}
 
 /// Drop the projection row for a TEA whose history is now empty.
 const DELETE_ORPHANED_ATTRIBUTE_CURRENT_SQL: &str = r#"

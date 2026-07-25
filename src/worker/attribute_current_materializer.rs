@@ -16,7 +16,10 @@
 //! whose latest history row is newer than the current row, so the
 //! projection re-converges on every restart.
 
-use crate::{core::error::AndromedaError, repository::temporal::params::HistoryBatchEntry};
+use crate::{
+    core::error::AndromedaError,
+    repository::temporal::{params::HistoryBatchEntry, repo::repair_attribute_current},
+};
 use sqlx::{PgPool, postgres::PgConnection};
 use std::{
     sync::{
@@ -222,10 +225,22 @@ impl AttributeCurrentMaterializer {
             }
         };
         let outcome = apply_batch_isolating_failures(&mut conn, entries).await;
+        if outcome.repaired > 0 {
+            info!(
+                repaired = outcome.repaired,
+                applied = outcome.applied,
+                event = "attribute_current_rows_repaired"
+            );
+        }
         if outcome.dropped > 0 {
-            warn!(
+            // The projection is now missing data that no barrier can account
+            // for: `wait_for_pending_writes` will report these writes as
+            // applied. Until the next write for the affected attributes, or a
+            // restart reconcile, `q` filters may answer from stale state.
+            error!(
                 dropped = outcome.dropped,
                 applied = outcome.applied,
+                repaired = outcome.repaired,
                 error = %outcome.last_error.as_ref().map_or_else(|| "unknown".to_string(), ToString::to_string),
                 event = "attribute_current_rows_dropped"
             );
@@ -241,9 +256,13 @@ impl AttributeCurrentMaterializer {
 /// Result of applying one drained batch.
 #[derive(Debug, Default)]
 struct AppliedBatch {
-    /// Rows written to the projection.
+    /// Rows written to the projection by the normal apply.
     applied: usize,
-    /// Rows that no statement could apply and were abandoned.
+    /// Rows the apply rejected, whose TEA was afterwards recomputed from
+    /// `attribute_history`. The projection is correct for these.
+    repaired: usize,
+    /// Rows that neither the apply nor the repair could account for. These are
+    /// the only ones that leave the projection genuinely stale.
     dropped: usize,
     /// The error reported by the last abandoned row, for the log line.
     last_error: Option<AndromedaError>,
@@ -261,6 +280,15 @@ struct AppliedBatch {
 /// happens after an error — and one bad row costs `O(log n)` extra statements
 /// rather than the batch.
 ///
+/// A row that still fails alone is not abandoned. It is repaired by recomputing
+/// its TEA's projection row from `attribute_history`, which is canonical. That
+/// resolves both shapes of failure correctly: if the owning TEA was deleted, the
+/// repair selects nothing and removes any stale row, which is the right state;
+/// if the failure was transient, the newest observation is restored. This is
+/// what keeps [`AttributeCurrentBarrier`] honest — without it a dropped row
+/// would leave the projection stale while the barrier reported the write as
+/// applied, and nothing would correct it before the next restart.
+///
 /// Each apply is its own implicit transaction (no surrounding `BEGIN`), so a
 /// failed statement leaves the connection usable for the retries. The statement
 /// is an idempotent upsert guarded on `modified_at`, so re-applying a row that
@@ -272,12 +300,15 @@ async fn apply_batch_isolating_failures(conn: &mut PgConnection, entries: &[Hist
     while let Some(chunk) = pending.pop() {
         match apply_attribute_current_batch(conn, chunk).await {
             Ok(()) => outcome.applied += chunk.len(),
-            Err(error) => match chunk.len() {
+            Err(_apply_error) => match chunk.len() {
                 0 => {}
-                1 => {
-                    outcome.dropped += 1;
-                    outcome.last_error = Some(error);
-                }
+                1 => match repair_attribute_current(conn, chunk[0].tea_id).await {
+                    Ok(()) => outcome.repaired += 1,
+                    Err(repair_error) => {
+                        outcome.dropped += 1;
+                        outcome.last_error = Some(repair_error);
+                    }
+                },
                 len => {
                     let (left, right) = chunk.split_at(len / 2);
                     pending.push(left);

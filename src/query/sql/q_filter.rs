@@ -155,7 +155,7 @@ fn compile_predicate(pred: &Predicate, target: QFilterTarget, names: &ResolvedAt
     match pred {
         Predicate::Exists(path) => Ok(compile_exists(path, target, names)),
         Predicate::Compare { path, op, rhs } => {
-            if is_projection_eligible(path) {
+            if is_projection_eligible(path) && !exceeds_projection_precision(rhs) {
                 match names.get(&path.attr) {
                     Some(id) => compile_compare_on_projection(id, *op, rhs, target),
                     None => Ok(unsatisfiable()),
@@ -174,6 +174,42 @@ fn compile_predicate(pred: &Predicate, target: QFilterTarget, names: &ResolvedAt
 /// compound value paths (`address[city]`) live inside the JSONB payload.
 const fn is_projection_eligible(path: &AttrPath) -> bool {
     path.sub_attrs.is_empty() && path.value_path.is_empty()
+}
+
+/// Largest integer magnitude `f64` represents exactly.
+const F64_EXACT_INTEGER_LIMIT: i128 = 1 << 53;
+
+/// Whether a comparison target is outside what the projection can represent.
+///
+/// `attribute_current.value_number` is `double precision`, but JSONB stores
+/// numbers as exact `numeric`, so the payload holds the precise value while the
+/// projection holds a rounded one. Beyond 2^53 those disagree, and a probe
+/// against the projection would answer from the rounded copy: `GET` on the
+/// entity would show the exact value while the filter denied it existed.
+///
+/// Such predicates go to the JSONB fallback instead, which reads the payload and
+/// compares as `numeric`. That is slower and unindexed, but it is the only
+/// source that still holds the value the client wrote.
+fn exceeds_projection_precision(rhs: &CompareValue) -> bool {
+    fn scalar_exceeds(scalar: &Scalar) -> bool {
+        let Scalar::Number(number) = scalar else {
+            return false;
+        };
+        // Only integers can exceed f64's exact range while still being written
+        // precisely in JSON; a value the client wrote as a float is already an
+        // f64-shaped quantity.
+        number
+            .as_i64()
+            .map(|value| i128::from(value).abs() > F64_EXACT_INTEGER_LIMIT)
+            .or_else(|| number.as_u64().map(|value| i128::from(value) > F64_EXACT_INTEGER_LIMIT))
+            .unwrap_or(false)
+    }
+
+    match rhs {
+        CompareValue::Scalar(scalar) => scalar_exceeds(scalar),
+        CompareValue::Range { min, max } => scalar_exceeds(min) || scalar_exceeds(max),
+        CompareValue::ValueList(values) => values.iter().any(scalar_exceeds),
+    }
 }
 
 /// A predicate that no row can satisfy.
@@ -695,6 +731,37 @@ mod tests {
     }
 
     // -- fallback ------------------------------------------------------------
+
+    #[test]
+    fn integers_beyond_f64_precision_fall_back_to_the_payload() {
+        // The projection stores `double precision`; JSONB stores exact numeric.
+        // Probing the projection here would answer from the rounded copy, so the
+        // entity would be visible via GET but denied by the filter.
+        let (sql, _) = render(&format!("{}==12345678901234567", quoted(SPEED)));
+        assert!(sql.contains("jsonb_path_query_first"), "{sql}");
+        assert!(!sql.contains("attribute_current"), "{sql}");
+    }
+
+    #[test]
+    fn integers_within_f64_precision_still_use_the_projection() {
+        let (sql, _) = render(&format!("{}==9007199254740991", quoted(SPEED)));
+        assert!(sql.contains("attribute_current"), "2^53-1 is exact in f64: {sql}");
+    }
+
+    #[test]
+    fn a_range_bound_beyond_f64_precision_falls_back() {
+        let (sql, _) = render(&format!("{}==1..12345678901234567", quoted(SPEED)));
+        assert!(sql.contains("jsonb_path_query_first"), "one lossy bound taints the range: {sql}");
+        assert!(!sql.contains("attribute_current"), "{sql}");
+    }
+
+    #[test]
+    fn floats_are_never_treated_as_lossy() {
+        // A value written as a float is already an f64-shaped quantity; only
+        // large integers can lose precision moving into the projection.
+        let (sql, _) = render(&format!("{}>1.5", quoted(SPEED)));
+        assert!(sql.contains("\"ac\".\"value_number\" >"), "{sql}");
+    }
 
     #[test]
     fn sub_attribute_predicate_falls_back_to_jsonpath() {

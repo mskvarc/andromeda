@@ -46,6 +46,46 @@ pub(crate) fn parse_tea_entry(row: &PgRow) -> Result<TeaEntry, AndromedaError> {
     })
 }
 
+/// Decide which typed column actually holds this row's value.
+///
+/// The catalogue's `value_type` is the *declared* type and can disagree with the
+/// row in front of us. Recording an attribute deletion used to rewrite the TEA's
+/// `value_type` to `String` (the tombstone sentinel lives in `value_string`),
+/// and because rendering dispatches on that type, every pre-deletion numeric
+/// observation of the attribute then rendered with no value at all — the
+/// `String` arm asked for `value_string`, which is NULL on a numeric row. The
+/// recorder no longer rewrites the type, but databases written by earlier builds
+/// still carry rewritten rows, so detection is column-driven here rather than
+/// trusting the catalogue.
+///
+/// `chk_attribute_history_*` guarantees exactly one value column is populated,
+/// so the populated column identifies the type unambiguously. The declared type
+/// is only a fallback for a row with no value at all.
+fn effective_value_type(row: &PgRow, declared: ValueType) -> ValueType {
+    if row.try_get::<Option<f64>, _>("value_number").ok().flatten().is_some() {
+        return ValueType::Number;
+    }
+    if row.try_get::<Option<bool>, _>("value_bool").ok().flatten().is_some() {
+        return ValueType::Boolean;
+    }
+    if row.try_get::<Option<DateTime<Utc>>, _>("value_datetime").ok().flatten().is_some() {
+        return ValueType::DateTime;
+    }
+    if row.try_get::<Option<String>, _>("value_uri").ok().flatten().is_some() {
+        return ValueType::Uri;
+    }
+    if row.try_get::<Option<Value>, _>("value_object").ok().flatten().is_some() {
+        return ValueType::Object;
+    }
+    if row.try_get::<Option<Vec<u8>>, _>("value_geo_ewkb").ok().flatten().is_some() {
+        return ValueType::Geometry;
+    }
+    if row.try_get::<Option<String>, _>("value_string").ok().flatten().is_some() {
+        return ValueType::String;
+    }
+    declared
+}
+
 pub(crate) fn history_row_to_expanded_instance(row: &PgRow, tea: &TeaEntry, sys_attrs: SysAttrsInclusion) -> Result<Value, AndromedaError> {
     let mut instance = serde_json::Map::new();
 
@@ -84,22 +124,7 @@ pub(crate) fn history_row_to_expanded_instance(row: &PgRow, tea: &TeaEntry, sys_
         return Ok(Value::Object(instance));
     }
 
-    let effective_value_type = if tea.value_type == ValueType::Object {
-        match row.try_get::<Option<Value>, _>("value_object") {
-            Ok(Some(_)) => ValueType::Object,
-            Ok(None) | Err(_) => {
-                if row.try_get::<Option<String>, _>("value_string").ok().flatten().is_some() {
-                    ValueType::String
-                } else if row.try_get::<Option<f64>, _>("value_number").ok().flatten().is_some() {
-                    ValueType::Number
-                } else {
-                    ValueType::Object
-                }
-            }
-        }
-    } else {
-        tea.value_type
-    };
+    let effective_value_type = effective_value_type(row, tea.value_type);
 
     match effective_value_type {
         ValueType::Number => {
