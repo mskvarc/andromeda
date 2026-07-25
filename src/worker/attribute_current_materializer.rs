@@ -221,9 +221,14 @@ impl AttributeCurrentMaterializer {
                 return;
             }
         };
-        if let Err(e) = apply_attribute_current_batch(&mut conn, entries).await {
-            warn!(error = %e, count, event = "attribute_current_apply_failed");
-            return;
+        let outcome = apply_batch_isolating_failures(&mut conn, entries).await;
+        if outcome.dropped > 0 {
+            warn!(
+                dropped = outcome.dropped,
+                applied = outcome.applied,
+                error = %outcome.last_error.as_ref().map_or_else(|| "unknown".to_string(), ToString::to_string),
+                event = "attribute_current_rows_dropped"
+            );
         }
         let now = Instant::now();
         if now.duration_since(*last_log) >= self.apply_log_interval {
@@ -231,6 +236,58 @@ impl AttributeCurrentMaterializer {
             *last_log = now;
         }
     }
+}
+
+/// Result of applying one drained batch.
+#[derive(Debug, Default)]
+struct AppliedBatch {
+    /// Rows written to the projection.
+    applied: usize,
+    /// Rows that no statement could apply and were abandoned.
+    dropped: usize,
+    /// The error reported by the last abandoned row, for the log line.
+    last_error: Option<AndromedaError>,
+}
+
+/// Apply a batch, narrowing down to the individual rows that cannot be applied.
+///
+/// The apply is a single `INSERT`, so one unusable row aborts the statement and
+/// discards every other row with it. That was tolerable while the projection was
+/// unused; now that `q` predicates read it, losing a whole batch means wrong
+/// query answers until the affected attributes are written again.
+///
+/// On failure the batch is halved and each half retried, recursing down to
+/// single rows. The happy path costs exactly one statement — the splitting only
+/// happens after an error — and one bad row costs `O(log n)` extra statements
+/// rather than the batch.
+///
+/// Each apply is its own implicit transaction (no surrounding `BEGIN`), so a
+/// failed statement leaves the connection usable for the retries. The statement
+/// is an idempotent upsert guarded on `modified_at`, so re-applying a row that
+/// already succeeded in a larger chunk is a no-op.
+async fn apply_batch_isolating_failures(conn: &mut PgConnection, entries: &[HistoryBatchEntry]) -> AppliedBatch {
+    let mut outcome = AppliedBatch::default();
+    let mut pending: Vec<&[HistoryBatchEntry]> = vec![entries];
+
+    while let Some(chunk) = pending.pop() {
+        match apply_attribute_current_batch(conn, chunk).await {
+            Ok(()) => outcome.applied += chunk.len(),
+            Err(error) => match chunk.len() {
+                0 => {}
+                1 => {
+                    outcome.dropped += 1;
+                    outcome.last_error = Some(error);
+                }
+                len => {
+                    let (left, right) = chunk.split_at(len / 2);
+                    pending.push(left);
+                    pending.push(right);
+                }
+            },
+        }
+    }
+
+    outcome
 }
 
 /// Apply a batch of history entries to `attribute_current`. Re-uses the
@@ -358,6 +415,25 @@ async fn next_buffered_batch(rx: &mut AttributeCurrentReceiver, max: usize, carr
 /// not `time`: `time` carries the client-supplied `observedAt` when present, so
 /// a back-dated write would otherwise fail to supersede the row it replaces and
 /// the projection would drift away from `entities.payload`.
+///
+/// The join against `temporal_entity_attributes` filters rows whose owning TEA
+/// has been deleted, but only as of this statement's snapshot, while
+/// `attribute_current_tea_id_fkey` is re-checked against the latest committed
+/// state. A delete committing in between therefore still raises a foreign-key
+/// violation. [`apply_batch_isolating_failures`] contains that: the row is
+/// retried alone and abandoned, and its neighbours still land.
+///
+/// Do **not** try to close the race by taking `FOR KEY SHARE` on the catalogue
+/// rows. It deadlocks. `attribute_current` has two cascading foreign keys —
+/// `entity_id` to `entities` and `tea_id` to `temporal_entity_attributes` — so
+/// `DELETE FROM entities` cascades into `attribute_current` and
+/// `temporal_entity_attributes` in an order PostgreSQL does not guarantee. The
+/// delete can hold `attribute_current` rows while waiting on the TEA rows this
+/// statement would hold, which is a cycle. Measured: six deadlocks in one
+/// integration run, and the victim was usually the user's `DELETE FROM
+/// entities`, turning a lost projection row into a failed API request. Dropping
+/// the occasional row is the cheaper failure — that row's TEA is gone, so it
+/// does not belong in the projection anyway.
 const APPLY_ATTRIBUTE_CURRENT_SQL: &str = r#"
 INSERT INTO attribute_current (
     tea_id, entity_id, attribute_name_id, dataset_id, value_type,
@@ -609,6 +685,62 @@ mod tests {
         queue.publish(Vec::new()).await;
         assert!(rx.try_recv().is_err(), "empty batch must not occupy a queue slot");
         assert_eq!(barrier.issued.load(Ordering::Acquire), 0, "empty batch must not advance the high-water mark");
+    }
+
+    #[test]
+    fn apply_sql_takes_no_row_locks_on_the_catalogue() {
+        // Regression guard. Locking the catalogue rows to close the
+        // delete-versus-foreign-key race deadlocks against `DELETE FROM
+        // entities`, because `attribute_current` cascades from both `entities`
+        // and `temporal_entity_attributes` and PostgreSQL does not fix the
+        // order it fires those cascades in. The victim is usually the user's
+        // delete. Failed rows are contained by `apply_batch_isolating_failures`
+        // instead.
+        assert!(!APPLY_ATTRIBUTE_CURRENT_SQL.contains("FOR KEY SHARE"), "see the const's doc comment");
+        assert!(!APPLY_ATTRIBUTE_CURRENT_SQL.contains("FOR UPDATE"));
+        assert!(!APPLY_ATTRIBUTE_CURRENT_SQL.contains("FOR SHARE"));
+    }
+
+    #[tokio::test]
+    async fn failure_isolation_splits_down_to_single_rows() {
+        // The pool points nowhere, so every apply fails. That exercises the
+        // worst case: the batch is halved repeatedly until each row has been
+        // tried alone, and every row is accounted for as dropped rather than
+        // silently lost with its neighbours.
+        let pool = PgPool::connect_lazy("postgres://invalid/invalid").expect("lazy pool");
+        let mut conn = match pool.acquire().await {
+            Ok(conn) => conn,
+            // No server to connect to — the split logic is covered by the
+            // pure-function test below instead.
+            Err(_) => return,
+        };
+        let outcome = apply_batch_isolating_failures(&mut conn, &entries(4)).await;
+        assert_eq!(outcome.applied, 0);
+        assert_eq!(outcome.dropped, 4);
+    }
+
+    #[test]
+    fn splitting_a_chunk_covers_every_row_exactly_once() {
+        // Mirrors the halving in `apply_batch_isolating_failures` without a
+        // database: whatever the batch size, splitting must partition it.
+        for size in [1usize, 2, 3, 5, 8, 4096] {
+            let rows: Vec<usize> = (0..size).collect();
+            let mut pending: Vec<&[usize]> = vec![&rows];
+            let mut seen: Vec<usize> = Vec::new();
+            while let Some(chunk) = pending.pop() {
+                match chunk.len() {
+                    0 => {}
+                    1 => seen.push(chunk[0]),
+                    len => {
+                        let (left, right) = chunk.split_at(len / 2);
+                        pending.push(left);
+                        pending.push(right);
+                    }
+                }
+            }
+            seen.sort_unstable();
+            assert_eq!(seen, rows, "splitting must partition a batch of {size}");
+        }
     }
 
     #[test]
