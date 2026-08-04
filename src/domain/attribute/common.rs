@@ -22,18 +22,18 @@ use urn_rs::Urn;
 pub struct AttributeSystemFields {
     /// System-generated creation timestamp.
     #[serde(default)]
-    #[jsonld(property = "ngsi:createdAt", typed_value, datatype = "https://uri.etsi.org/ngsi-ld/DateTime")]
+    #[jsonld(property = "ngsi:createdAt", coerce = "https://uri.etsi.org/ngsi-ld/DateTime")]
     pub created_at: Option<DateTime<Utc>>,
     /// System-generated deletion timestamp.
     #[serde(default)]
-    #[jsonld(property = "ngsi:deletedAt", typed_value, datatype = "https://uri.etsi.org/ngsi-ld/DateTime")]
+    #[jsonld(property = "ngsi:deletedAt", coerce = "https://uri.etsi.org/ngsi-ld/DateTime")]
     pub deleted_at: Option<DateTime<Utc>>,
     /// URI uniquely identifying an attribute instance.
-    #[jsonld(property = "ngsi:instanceId", id_ref)]
+    #[jsonld(property = "ngsi:instanceId", coerce = "@id")]
     pub instance_id: Option<Uri>,
     /// System-generated last modification timestamp.
     #[serde(default)]
-    #[jsonld(property = "ngsi:modifiedAt", typed_value, datatype = "https://uri.etsi.org/ngsi-ld/DateTime")]
+    #[jsonld(property = "ngsi:modifiedAt", coerce = "https://uri.etsi.org/ngsi-ld/DateTime")]
     pub modified_at: Option<DateTime<Utc>>,
 }
 
@@ -44,18 +44,18 @@ pub struct AttributeSystemFields {
 #[jsonld(fragment, prefix(ngsi = "https://uri.etsi.org/ngsi-ld/", xsd = "http://www.w3.org/2001/XMLSchema#"))]
 pub struct CommonAttributeFields {
     /// Dataset identifier separating multi-instance attributes.
-    #[jsonld(property = "ngsi:datasetId", id_ref)]
+    #[jsonld(property = "ngsi:datasetId", coerce = "@id")]
     pub dataset_id: Option<Urn>,
     /// Attribute expiration timestamp.
     #[serde(default)]
-    #[jsonld(property = "ngsi:expiresAt", typed_value, datatype = "https://uri.etsi.org/ngsi-ld/DateTime")]
+    #[jsonld(property = "ngsi:expiresAt", coerce = "https://uri.etsi.org/ngsi-ld/DateTime")]
     pub expires_at: Option<DateTime<Utc>>,
     /// Observation timestamp for the attribute value.
     #[serde(default)]
-    #[jsonld(property = "ngsi:observedAt", typed_value, datatype = "https://uri.etsi.org/ngsi-ld/DateTime")]
+    #[jsonld(property = "ngsi:observedAt", coerce = "https://uri.etsi.org/ngsi-ld/DateTime")]
     pub observed_at: Option<DateTime<Utc>>,
     #[serde(flatten)]
-    #[jsonld(flatten_object)]
+    #[jsonld(flatten)]
     pub system: AttributeSystemFields,
 }
 

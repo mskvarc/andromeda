@@ -20,16 +20,16 @@ use serde_with::skip_serializing_none;
 )]
 pub struct VocabProperty {
     /// One or more vocabulary references.
-    #[jsonld(property = "ngsi:hasVocab", custom)]
+    #[jsonld(property = "ngsi:hasVocab", passthrough)]
     pub vocab: OneOrMany<CompactString>,
     /// Optional JSON-LD datatype for `vocab`.
-    #[jsonld(property = "ngsi:hasValueType", vocab)]
+    #[jsonld(property = "ngsi:hasValueType", coerce = "@id")]
     pub value_type: Option<CompactString>,
     /// Previous vocabulary reference emitted in notifications when `showChanges` is active.
-    #[jsonld(property = "ngsi:hasPreviousVocab", custom)]
+    #[jsonld(property = "ngsi:hasPreviousVocab", passthrough)]
     pub previous_vocab: Option<OneOrMany<CompactString>>,
     #[serde(flatten)]
-    #[jsonld(flatten_object)]
+    #[jsonld(flatten)]
     pub common: CommonAttributeFields,
     #[serde(flatten)]
     #[jsonld(flatten_map)]

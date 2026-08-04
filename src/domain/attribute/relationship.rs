@@ -23,19 +23,19 @@ use serde_with::skip_serializing_none;
 )]
 pub struct Relationship {
     /// One or more target object URIs.
-    #[jsonld(property = "ngsi:hasObject", custom)]
+    #[jsonld(property = "ngsi:hasObject", passthrough)]
     pub object: OneOrMany<Uri>,
     /// Optional target node type(s).
-    #[jsonld(property = "ngsi:hasObjectType", custom)]
+    #[jsonld(property = "ngsi:hasObjectType", passthrough)]
     pub object_type: Option<OneOrMany<CompactString>>,
     /// Previous target object emitted in notifications when `showChanges` is active.
-    #[jsonld(property = "ngsi:hasPreviousObject", custom)]
+    #[jsonld(property = "ngsi:hasPreviousObject", passthrough)]
     pub previous_object: Option<OneOrMany<Uri>>,
     /// Inline linked entity or entities returned for `join=inline`.
-    #[jsonld(property = "ngsi:entity", custom)]
+    #[jsonld(property = "ngsi:entity", passthrough)]
     pub entity: Option<InlineEntity>,
     #[serde(flatten)]
-    #[jsonld(flatten_object)]
+    #[jsonld(flatten)]
     pub common: CommonAttributeFields,
     #[serde(flatten)]
     #[jsonld(flatten_map)]

@@ -19,7 +19,7 @@ pub struct Types {
     #[serde(rename = "type")]
     #[jsonld(skip)]
     pub type_: String,
-    #[jsonld(property = "ngsi:typeList", vocab_vec)]
+    #[jsonld(property = "ngsi:typeList", coerce = "@id", vec)]
     pub type_list: Vec<String>,
 }
 
@@ -39,7 +39,7 @@ pub struct EntityTypeInfo {
     #[serde(rename = "type")]
     #[jsonld(skip)]
     pub type_: String,
-    #[jsonld(property = "ngsi:typeName", vocab)]
+    #[jsonld(property = "ngsi:typeName", coerce = "@id")]
     pub type_name: String,
     #[jsonld(property = "ngsi:entityCount")]
     pub entity_count: i64,
@@ -60,9 +60,9 @@ pub struct AttributeDetail {
     #[serde(rename = "type")]
     #[jsonld(skip)]
     pub type_: String,
-    #[jsonld(property = "ngsi:attributeName", vocab)]
+    #[jsonld(property = "ngsi:attributeName", coerce = "@id")]
     pub attribute_name: String,
-    #[jsonld(property = "ngsi:attributeTypes", vocab_vec)]
+    #[jsonld(property = "ngsi:attributeTypes", coerce = "@id", vec)]
     pub attribute_types: Vec<String>,
 }
 
@@ -82,9 +82,9 @@ pub struct EntityType {
     #[serde(rename = "type")]
     #[jsonld(skip)]
     pub type_: String,
-    #[jsonld(property = "ngsi:typeName", vocab)]
+    #[jsonld(property = "ngsi:typeName", coerce = "@id")]
     pub type_name: String,
-    #[jsonld(property = "ngsi:attributeNames", vocab_vec)]
+    #[jsonld(property = "ngsi:attributeNames", coerce = "@id", vec)]
     pub attribute_names: Vec<String>,
 }
 
@@ -103,7 +103,7 @@ pub struct AttributeList {
     #[serde(rename = "type")]
     #[jsonld(skip)]
     pub type_: String,
-    #[jsonld(property = "ngsi:attributeList", vocab_vec)]
+    #[jsonld(property = "ngsi:attributeList", coerce = "@id", vec)]
     pub attribute_list: Vec<String>,
 }
 
@@ -123,12 +123,12 @@ pub struct Attribute {
     #[serde(rename = "type")]
     #[jsonld(skip)]
     pub type_: String,
-    #[jsonld(property = "ngsi:attributeName", vocab)]
+    #[jsonld(property = "ngsi:attributeName", coerce = "@id")]
     pub attribute_name: String,
-    #[jsonld(property = "ngsi:attributeTypes", vocab_vec)]
+    #[jsonld(property = "ngsi:attributeTypes", coerce = "@id", vec)]
     pub attribute_types: Vec<String>,
     #[jsonld(property = "ngsi:attributeCount")]
     pub attribute_count: Option<i64>,
-    #[jsonld(property = "ngsi:typeNames", vocab_vec)]
+    #[jsonld(property = "ngsi:typeNames", coerce = "@id", vec)]
     pub type_names: Option<Vec<String>>,
 }

@@ -44,16 +44,16 @@ pub struct Property {
     #[jsonld(property = "ngsi:hasValue")]
     pub value: NgsiLdValue,
     /// Measurement unit code.
-    #[jsonld(property = "ngsi:unitCode", vocab)]
+    #[jsonld(property = "ngsi:unitCode", coerce = "@id")]
     pub unit_code: Option<UnitCodeRef>,
     /// Optional JSON-LD datatype for `value`.
-    #[jsonld(property = "ngsi:hasValueType", vocab)]
+    #[jsonld(property = "ngsi:hasValueType", coerce = "@id")]
     pub value_type: Option<CompactString>,
     /// Previous value emitted in notifications when `showChanges` is active.
     #[jsonld(property = "ngsi:hasPreviousValue")]
     pub previous_value: Option<NgsiLdValue>,
     #[serde(flatten)]
-    #[jsonld(flatten_object)]
+    #[jsonld(flatten)]
     pub common: CommonAttributeFields,
     #[serde(flatten)]
     #[jsonld(flatten_map)]

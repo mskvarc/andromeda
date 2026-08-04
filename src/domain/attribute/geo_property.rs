@@ -19,16 +19,16 @@ use serde_with::skip_serializing_none;
 )]
 pub struct GeoProperty {
     /// Geometry value, stored internally as canonical WKB and serialized as GeoJSON at the wire boundary.
-    #[jsonld(property = "ngsi:hasValue", json_value)]
+    #[jsonld(property = "ngsi:hasValue", coerce = "@json")]
     pub value: Wkb,
     /// Optional JSON-LD datatype for `value`.
-    #[jsonld(property = "ngsi:hasValueType", vocab)]
+    #[jsonld(property = "ngsi:hasValueType", coerce = "@id")]
     pub value_type: Option<compact_str::CompactString>,
     /// Previous geometry value emitted in notifications when `showChanges` is active.
-    #[jsonld(property = "ngsi:hasPreviousValue", json_value)]
+    #[jsonld(property = "ngsi:hasPreviousValue", coerce = "@json")]
     pub previous_value: Option<Wkb>,
     #[serde(flatten)]
-    #[jsonld(flatten_object)]
+    #[jsonld(flatten)]
     pub common: CommonAttributeFields,
     #[serde(flatten)]
     #[jsonld(flatten_map)]

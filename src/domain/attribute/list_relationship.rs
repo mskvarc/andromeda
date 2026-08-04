@@ -19,16 +19,16 @@ use serde_with::skip_serializing_none;
     prefix(ngsi = "https://uri.etsi.org/ngsi-ld/", xsd = "http://www.w3.org/2001/XMLSchema#")
 )]
 pub struct ListRelationship {
-    #[jsonld(property = "ngsi:hasObjectList", list, id_ref)]
+    #[jsonld(property = "ngsi:hasObjectList", container = "list", coerce = "@id")]
     pub object_list: RelationshipObjectList,
-    #[jsonld(property = "ngsi:hasObjectType", custom)]
+    #[jsonld(property = "ngsi:hasObjectType", passthrough)]
     pub object_type: Option<OneOrMany<CompactString>>,
-    #[jsonld(property = "ngsi:entityList", custom)]
+    #[jsonld(property = "ngsi:entityList", passthrough)]
     pub entity_list: Option<InlineEntity>,
-    #[jsonld(property = "ngsi:hasPreviousObjectList", list, id_ref)]
+    #[jsonld(property = "ngsi:hasPreviousObjectList", container = "list", coerce = "@id")]
     pub previous_object_list: Option<RelationshipObjectList>,
     #[serde(flatten)]
-    #[jsonld(flatten_object)]
+    #[jsonld(flatten)]
     pub common: CommonAttributeFields,
     #[serde(flatten)]
     #[jsonld(flatten_map)]

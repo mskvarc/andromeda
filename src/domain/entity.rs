@@ -59,46 +59,46 @@ impl ExpandableTypeValue for EntityTypeValue {
 #[skip_serializing_none]
 #[derive(Debug, Clone, Serialize, Deserialize, Expandable)]
 #[serde(rename_all = "camelCase")]
-#[jsonld(type_field, prefix(ngsi = "https://uri.etsi.org/ngsi-ld/", xsd = "http://www.w3.org/2001/XMLSchema#"))]
+#[jsonld(prefix(ngsi = "https://uri.etsi.org/ngsi-ld/", xsd = "http://www.w3.org/2001/XMLSchema#"))]
 pub struct Entity {
     #[jsonld(id)]
     pub id: Uri,
     #[serde(rename = "type")]
     #[jsonld(type_value)]
     pub type_: EntityTypeValue,
-    #[jsonld(property = "ngsi:scope", custom)]
+    #[jsonld(property = "ngsi:scope", passthrough)]
     pub scope: Option<ScopeValue>,
 
     /// Entity expiration timestamp (clause 4.22).
     #[serde(default)]
-    #[jsonld(property = "ngsi:expiresAt", typed_value, datatype = "https://uri.etsi.org/ngsi-ld/DateTime")]
+    #[jsonld(property = "ngsi:expiresAt", coerce = "https://uri.etsi.org/ngsi-ld/DateTime")]
     pub expires_at: Option<DateTime<Utc>>,
 
     /// Default geospatial property (clause 4.7).
-    #[jsonld(property = "ngsi:location", custom)]
+    #[jsonld(property = "ngsi:location", passthrough)]
     pub location: Option<AttributeValue>,
 
     /// Observation space geometry (clause 5.2.4).
-    #[jsonld(property = "ngsi:observationSpace", custom)]
+    #[jsonld(property = "ngsi:observationSpace", passthrough)]
     pub observation_space: Option<AttributeValue>,
 
     /// Operation space geometry (clause 5.2.4).
-    #[jsonld(property = "ngsi:operationSpace", custom)]
+    #[jsonld(property = "ngsi:operationSpace", passthrough)]
     pub operation_space: Option<AttributeValue>,
 
     /// System-generated creation timestamp (clause 4.8, Table 5.2.2-1).
     #[serde(default)]
-    #[jsonld(property = "ngsi:createdAt", typed_value, datatype = "https://uri.etsi.org/ngsi-ld/DateTime")]
+    #[jsonld(property = "ngsi:createdAt", coerce = "https://uri.etsi.org/ngsi-ld/DateTime")]
     pub created_at: Option<DateTime<Utc>>,
 
     /// System-generated modification timestamp (clause 4.8, Table 5.2.2-1).
     #[serde(default)]
-    #[jsonld(property = "ngsi:modifiedAt", typed_value, datatype = "https://uri.etsi.org/ngsi-ld/DateTime")]
+    #[jsonld(property = "ngsi:modifiedAt", coerce = "https://uri.etsi.org/ngsi-ld/DateTime")]
     pub modified_at: Option<DateTime<Utc>>,
 
     /// Deletion timestamp, output-only in notifications/temporal (clause 4.8).
     #[serde(default)]
-    #[jsonld(property = "ngsi:deletedAt", typed_value, datatype = "https://uri.etsi.org/ngsi-ld/DateTime")]
+    #[jsonld(property = "ngsi:deletedAt", coerce = "https://uri.etsi.org/ngsi-ld/DateTime")]
     pub deleted_at: Option<DateTime<Utc>>,
 
     #[serde(flatten)]

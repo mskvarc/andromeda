@@ -101,16 +101,16 @@ impl ExpandableLanguageMap for LanguageMap {
 )]
 pub struct LanguageProperty {
     /// Language-indexed string map.
-    #[jsonld(property = "ngsi:hasLanguageMap", language_map)]
+    #[jsonld(property = "ngsi:hasLanguageMap", container = "language")]
     pub language_map: LanguageMap,
     /// Fixed JSON-LD datatype for language-tagged strings.
-    #[jsonld(property = "ngsi:hasValueType", vocab)]
+    #[jsonld(property = "ngsi:hasValueType", coerce = "@id")]
     pub value_type: Option<CompactString>,
     /// Previous language map emitted in notifications when `showChanges` is active.
-    #[jsonld(property = "ngsi:hasPreviousLanguageMap", language_map)]
+    #[jsonld(property = "ngsi:hasPreviousLanguageMap", container = "language")]
     pub previous_language_map: Option<LanguageMap>,
     #[serde(flatten)]
-    #[jsonld(flatten_object)]
+    #[jsonld(flatten)]
     pub common: CommonAttributeFields,
     #[serde(flatten)]
     #[jsonld(flatten_map)]

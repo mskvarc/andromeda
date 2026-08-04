@@ -18,16 +18,16 @@ use serde_with::skip_serializing_none;
 )]
 pub struct JsonProperty {
     /// Raw non-expandable JSON payload.
-    #[jsonld(property = "ngsi:hasJSON", json_value)]
+    #[jsonld(property = "ngsi:hasJSON", coerce = "@json")]
     pub json: Value,
     /// Optional JSON-LD datatype for `json`.
-    #[jsonld(property = "ngsi:hasValueType", vocab)]
+    #[jsonld(property = "ngsi:hasValueType", coerce = "@id")]
     pub value_type: Option<CompactString>,
     /// Previous JSON payload emitted in notifications when `showChanges` is active.
-    #[jsonld(property = "ngsi:hasPreviousJson", json_value)]
+    #[jsonld(property = "ngsi:hasPreviousJson", coerce = "@json")]
     pub previous_json: Option<Value>,
     #[serde(flatten)]
-    #[jsonld(flatten_object)]
+    #[jsonld(flatten)]
     pub common: CommonAttributeFields,
     #[serde(flatten)]
     #[jsonld(flatten_map)]

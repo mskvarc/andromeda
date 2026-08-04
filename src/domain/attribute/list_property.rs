@@ -19,14 +19,14 @@ use serde_with::skip_serializing_none;
     prefix(ngsi = "https://uri.etsi.org/ngsi-ld/", xsd = "http://www.w3.org/2001/XMLSchema#")
 )]
 pub struct ListProperty {
-    #[jsonld(property = "ngsi:hasValueList", list)]
+    #[jsonld(property = "ngsi:hasValueList", container = "list")]
     pub value_list: Vec<NgsiLdValue>,
-    #[jsonld(property = "ngsi:hasValueType", vocab)]
+    #[jsonld(property = "ngsi:hasValueType", coerce = "@id")]
     pub value_type: Option<CompactString>,
-    #[jsonld(property = "ngsi:hasPreviousValueList", list)]
+    #[jsonld(property = "ngsi:hasPreviousValueList", container = "list")]
     pub previous_value_list: Option<Vec<NgsiLdValue>>,
     #[serde(flatten)]
-    #[jsonld(flatten_object)]
+    #[jsonld(flatten)]
     pub common: CommonAttributeFields,
     #[serde(flatten)]
     #[jsonld(flatten_map)]
