@@ -26,7 +26,7 @@ use crate::{
         uow::UnitOfWorkFactory,
     },
     service::{
-        entity::extract::{build_save_params, extract_geo_wkb},
+        entity::extract::{build_save_params, extract_geo_geometries},
         subscription_cache::SubscriptionCache,
         subscription_matching::matches_entity_filters,
         temporal_recorder::TemporalRecorder,
@@ -285,7 +285,7 @@ impl EntityService {
         let scopes = extract_scopes(&expanded);
         let scope_paths: Vec<String> = scopes.iter().map(|s| crate::query::sql::scope_to_ltree(s)).collect();
         let expires_at = crate::domain::expanded::extract_expires_at(&expanded);
-        let (location_wkb, observation_space_wkb, operation_space_wkb) = extract_geo_wkb(&expanded);
+        let (location, observation_space, operation_space) = extract_geo_geometries(&expanded);
 
         let outbox_entries = if self.outbox.is_some() {
             self.build_outbox_entries(
@@ -307,9 +307,9 @@ impl EntityService {
                 types: types_refs.as_ref(),
                 scope_paths,
                 payload: &expanded,
-                location_wkb,
-                observation_space_wkb,
-                operation_space_wkb,
+                location,
+                observation_space,
+                operation_space,
                 expires_at,
             })
             .await?;

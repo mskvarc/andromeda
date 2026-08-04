@@ -33,7 +33,7 @@ use crate::{
     },
     service::{
         csource_forwarding::{ForwardedTemporalEntities, merge_temporal_query_results},
-        entity::{extract::extract_geo_wkb, extract_entity_types, normalize_entity_attributes},
+        entity::{extract::extract_geo_geometries, extract_entity_types, normalize_entity_attributes},
         temporal_recorder::TemporalRecorder,
     },
     worker::attribute_current_materializer::AttributeCurrentBarrier,
@@ -273,7 +273,7 @@ impl TemporalService {
             // check, and it does not lose a race to a concurrent temporal write
             // for the same new identifier.
             let expires_at = extract_expires_at(&expanded);
-            let (location_wkb, observation_space_wkb, operation_space_wkb) = extract_geo_wkb(&expanded);
+            let (location, observation_space, operation_space) = extract_geo_geometries(&expanded);
 
             let mut uow = self.uow.begin().await?;
             uow.ensure_entity_placeholder(EntityCreateParams {
@@ -281,9 +281,9 @@ impl TemporalService {
                 types: &types,
                 scope_paths: Vec::new(),
                 payload: &expanded,
-                location_wkb,
-                observation_space_wkb,
-                operation_space_wkb,
+                location,
+                observation_space,
+                operation_space,
                 expires_at,
             })
             .await?;

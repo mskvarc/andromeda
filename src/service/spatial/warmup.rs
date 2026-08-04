@@ -7,14 +7,14 @@
 
 use crate::{
     core::error::AndromedaError,
-    domain::{geometry::Wkb, vocab},
+    domain::{geometry::Geometry, vocab},
+    repository::geometry::Ewkb,
     service::spatial::{
         SpatialKey,
         entity_index::{SpatialEntityIndex, SpatialEntry},
     },
     tenancy::types::TenantRef,
 };
-use bytes::Bytes;
 use iri_rs::IriBuf;
 use sqlx::PgPool;
 use std::{collections::HashMap, sync::Arc, time::Instant};
@@ -41,12 +41,15 @@ pub async fn warmup_location(index: &Arc<SpatialEntityIndex>, pool: &PgPool, ten
         let Ok(urn) = id_raw.parse::<Urn>() else {
             continue;
         };
-        let wkb = Wkb::from_postgis_bytes(Bytes::from(ewkb_bytes));
+        let Ok(geometry) = Ewkb::try_from(ewkb_bytes.as_slice()).and_then(|ewkb| Geometry::try_from(&ewkb)) else {
+            warn!(entity = %id_raw, "spatial warmup: skipping entity with undecodable location EWKB");
+            continue;
+        };
         for t in &types {
             let Ok(type_iri) = IriBuf::new(t.clone()) else {
                 continue;
             };
-            let Some(entry) = SpatialEntry::new(urn.clone(), wkb.clone()) else {
+            let Some(entry) = SpatialEntry::new(urn.clone(), geometry.clone()) else {
                 continue;
             };
             per_type.entry(type_iri).or_default().push(entry);

@@ -5,7 +5,7 @@
 use crate::{
     core::error::AndromedaError,
     domain::{
-        geometry::Wkb,
+        geometry::Geometry,
         temporal::{AggrMethod, TemporalFormat, TimeProp, TimeRel},
         vocab,
     },
@@ -32,6 +32,7 @@ use crate::{
             sea_values_to_bind_values,
         },
     },
+    repository::geometry::{Ewkb, encode},
 };
 use sea_query::{Alias, Condition, Expr as SeaExpr, Func, JoinType, PostgresQueryBuilder, Query};
 use std::borrow::Cow;
@@ -594,9 +595,9 @@ fn geo_to_condition(geo: &GeoQuery, payload_col: &str) -> Result<Condition, Andr
         )
     };
 
-    let ref_wkb = build_reference_wkb(&geo.geometry, &geo.coordinates)?;
+    let ref_ewkb = build_reference_ewkb(&geo.geometry, &geo.coordinates)?;
     let geo_extract_expr = SeaExpr::cust(&geo_extract_sql);
-    let ref_geom_expr = validated_geom_from_ewkb(SeaExpr::val(ref_wkb.to_vec()).into());
+    let ref_geom_expr = validated_geom_from_ewkb(SeaExpr::val(ref_ewkb.to_vec()).into());
 
     // Build spatial condition using PostGIS helpers
     let spatial_expr = match &geo.georel {
@@ -618,7 +619,7 @@ fn geo_to_condition(geo: &GeoQuery, payload_col: &str) -> Result<Condition, Andr
             };
             let geo_col_expr: sea_query::SimpleExpr = SeaExpr::cust(&geo_col_sql);
             let ref_geom_geo_expr: sea_query::SimpleExpr =
-                SeaExpr::cust_with_exprs("ST_MakeValid(ST_GeomFromEWKB($1))::geography", [SeaExpr::val(ref_wkb.to_vec()).into()]);
+                SeaExpr::cust_with_exprs("ST_MakeValid(ST_GeomFromEWKB($1))::geography", [SeaExpr::val(ref_ewkb.to_vec()).into()]);
 
             let mut parts = Vec::new();
             if let Some(max) = max_distance {
@@ -755,12 +756,14 @@ fn escape_jsonpath_key(key: &str) -> String {
     key.replace('\\', "\\\\").replace('"', "\\\"")
 }
 
-fn build_reference_wkb(geometry: &str, coordinates: &serde_json::Value) -> Result<Wkb, AndromedaError> {
+fn build_reference_ewkb(geometry: &str, coordinates: &serde_json::Value) -> Result<Ewkb, AndromedaError> {
     let geojson = serde_json::json!({
         "type": geometry,
         "coordinates": coordinates
     });
-    Wkb::from_geojson_value(&geojson).map_err(|error| AndromedaError::query_validation(format!("Invalid geo-query reference geometry: {}", error)))
+    let parsed =
+        Geometry::from_geojson_value(&geojson).map_err(|error| AndromedaError::query_validation(format!("Invalid geo-query reference geometry: {}", error)))?;
+    encode(&parsed)
 }
 
 #[cfg(test)]

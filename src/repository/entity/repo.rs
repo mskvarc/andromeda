@@ -7,9 +7,12 @@ use crate::{
         compiled::CompiledEntityQuery,
         sql::{self, BindValue, q_filter::ResolvedAttributeNames},
     },
-    repository::entity::{
-        params::{EntityCreateParams, EntitySaveParams, PreparedEntityColumns},
-        rows::{AttributeSummaryRow, DeletedEntity, PurgedEntity, QueryResult},
+    repository::{
+        entity::{
+            params::{EntityCreateParams, EntitySaveParams, PreparedEntityColumns},
+            rows::{AttributeSummaryRow, DeletedEntity, PurgedEntity, QueryResult},
+        },
+        geometry::encode_optional,
     },
 };
 use serde_json::Value;
@@ -72,9 +75,9 @@ impl EntityRepository {
             .bind(params.types)
             .bind(&params.scope_paths)
             .bind(params.payload)
-            .bind(params.location_wkb)
-            .bind(params.observation_space_wkb)
-            .bind(params.operation_space_wkb)
+            .bind(encode_optional(params.location.as_ref())?)
+            .bind(encode_optional(params.observation_space.as_ref())?)
+            .bind(encode_optional(params.operation_space.as_ref())?)
             .bind(params.expires_at)
             .execute(&mut **tx)
             .await?;
@@ -103,9 +106,9 @@ impl EntityRepository {
             .bind(params.types)
             .bind(&params.scope_paths)
             .bind(params.payload)
-            .bind(params.location_wkb)
-            .bind(params.observation_space_wkb)
-            .bind(params.operation_space_wkb)
+            .bind(encode_optional(params.location.as_ref())?)
+            .bind(encode_optional(params.observation_space.as_ref())?)
+            .bind(encode_optional(params.operation_space.as_ref())?)
             .bind(params.expires_at)
             .execute(&mut **tx)
             .await?;
@@ -295,9 +298,9 @@ impl EntityRepository {
         .bind(params.payload)
         .bind(&params.types)
         .bind(&params.scope_paths)
-        .bind(params.location_wkb)
-        .bind(params.observation_space_wkb)
-        .bind(params.operation_space_wkb)
+        .bind(encode_optional(params.location.as_ref())?)
+        .bind(encode_optional(params.observation_space.as_ref())?)
+        .bind(encode_optional(params.operation_space.as_ref())?)
         .bind(params.expires_at)
         .execute(executor)
         .await?;

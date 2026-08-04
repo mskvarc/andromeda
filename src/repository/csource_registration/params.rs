@@ -1,7 +1,7 @@
 //! Repository input parameters for context source registrations.
 
 use crate::{
-    domain::{geometry::Wkb, registration::ForwardingMode},
+    domain::{geometry::Geometry, registration::ForwardingMode},
     tenancy::types::TenantName,
 };
 use chrono::{DateTime, Utc};
@@ -22,12 +22,12 @@ pub struct CreateCsrParams<'a> {
     pub observation_interval: Option<&'a Value>,
     /// Expected interval between management interactions.
     pub management_interval: Option<&'a Value>,
-    /// Canonical WKB for `location`.
-    pub location_wkb: Option<Wkb>,
-    /// Canonical WKB for `observationSpace`.
-    pub observation_space_wkb: Option<Wkb>,
-    /// Canonical WKB for `operationSpace`.
-    pub operation_space_wkb: Option<Wkb>,
+    /// The `location` geometry.
+    pub location: Option<Geometry>,
+    /// The `observationSpace` geometry.
+    pub observation_space: Option<Geometry>,
+    /// The `operationSpace` geometry.
+    pub operation_space: Option<Geometry>,
     /// Expiration timestamp for the registration.
     pub expires_at: Option<DateTime<Utc>>,
     /// Base endpoint URL of the context source.
@@ -106,12 +106,12 @@ pub struct CsrUpdateFragment {
     pub observation_interval: Option<Option<Value>>,
     /// Updated management interval.
     pub management_interval: Option<Option<Value>>,
-    /// Updated `location` WKB (`Some(None)` clears, `Some(Some(_))` replaces).
-    pub location: Option<Option<Wkb>>,
-    /// Updated `observationSpace` WKB.
-    pub observation_space: Option<Option<Wkb>>,
-    /// Updated `operationSpace` WKB.
-    pub operation_space: Option<Option<Wkb>>,
+    /// Updated `location` geometry (`Some(None)` clears, `Some(Some(_))` replaces).
+    pub location: Option<Option<Geometry>>,
+    /// Updated `observationSpace` geometry.
+    pub observation_space: Option<Option<Geometry>>,
+    /// Updated `operationSpace` geometry.
+    pub operation_space: Option<Option<Geometry>>,
     /// Updated expiration timestamp.
     pub expires_at: Option<Option<DateTime<Utc>>>,
     /// Updated endpoint URL.

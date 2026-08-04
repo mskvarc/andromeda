@@ -6,8 +6,8 @@ use crate::{
     core::error::AndromedaError,
     domain::{
         attribute_type::AttributeType,
-        expanded::{expanded_geo_node_to_wkb, is_system_attribute},
-        geometry::Wkb,
+        expanded::{expanded_geo_node_to_geometry, is_system_attribute},
+        geometry::Geometry,
         temporal::ValueType,
         vocab,
     },
@@ -31,8 +31,8 @@ pub(crate) struct DbValueParams {
     pub value_string: Option<String>,
     /// Boolean value for boolean-typed properties.
     pub value_bool: Option<bool>,
-    /// Canonical WKB for geo-typed properties.
-    pub value_geo: Option<Wkb>,
+    /// Geometry value for geo-typed properties.
+    pub value_geo: Option<Geometry>,
     /// Arbitrary JSON value for object-typed or complex properties.
     pub value_object: Option<Value>,
     /// Datetime value for datetime-typed properties.
@@ -454,7 +454,7 @@ enum TypedValue {
     Number(f64),
     String(String),
     Boolean(bool),
-    Geometry(Wkb),
+    Geometry(Geometry),
     Object(Value),
     DateTime(String),
     Uri(String),
@@ -527,9 +527,10 @@ fn extract_typed_value(instance: &Value, attribute_type: AttributeType) -> Resul
                         .map_err(|error| AndromedaError::temporal_validation(format!("Invalid GeoProperty GeoJSON string: {}", error)))?,
                     None => val.clone(), // clone: need owned Value for from_geojson_value
                 };
-                Wkb::from_geojson_value(&geo_value).map_err(|error| AndromedaError::temporal_validation(format!("Invalid GeoProperty geometry: {}", error)))?
+                Geometry::from_geojson_value(&geo_value)
+                    .map_err(|error| AndromedaError::temporal_validation(format!("Invalid GeoProperty geometry: {}", error)))?
             } else {
-                expanded_geo_node_to_wkb(geo_node).ok_or_else(|| AndromedaError::temporal_validation("Invalid expanded GeoProperty geometry"))?
+                expanded_geo_node_to_geometry(geo_node).ok_or_else(|| AndromedaError::temporal_validation("Invalid expanded GeoProperty geometry"))?
             };
             Ok(TypedValue::Geometry(wkb))
         }

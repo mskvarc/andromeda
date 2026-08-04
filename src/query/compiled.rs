@@ -7,7 +7,7 @@
 
 use crate::{
     domain::{
-        geometry::Wkb,
+        geometry::Geometry,
         temporal::{AggrMethod, TemporalFormat, TimeProp, TimeRel},
     },
     query::{error::QueryError, q::ast::Expr},
@@ -225,13 +225,13 @@ pub struct CompiledOrderTerm {
 /// reference point instead of the geo-query geometry.
 #[derive(Debug, Clone, PartialEq)]
 pub struct OrderingGeometry {
-    /// Canonical WKB form bound directly into SQL distance predicates.
-    pub geometry: Wkb,
+    /// The reference geometry the distance predicates measure from.
+    pub geometry: Geometry,
 }
 
 impl OrderingGeometry {
-    /// Wrap a canonical WKB geometry into an ordering reference.
-    pub const fn new(geometry: Wkb) -> OrderingGeometry {
+    /// Wrap a geometry into an ordering reference.
+    pub const fn new(geometry: Geometry) -> OrderingGeometry {
         OrderingGeometry { geometry }
     }
 }

@@ -5,8 +5,8 @@
 //! functions with no I/O — the caller is responsible for loading and persisting
 //! the entity.
 
-use crate::domain::{geometry::Wkb, vocab};
-use geo::{Coord, Geometry, LineString, MultiLineString, MultiPoint, MultiPolygon, Point, Polygon};
+use crate::domain::{geometry::Geometry, vocab};
+use geo::{Coord, Geometry as GeoGeometry, LineString, MultiLineString, MultiPoint, MultiPolygon, Point, Polygon};
 use iri_rs::{Iri, IriBuf};
 use serde_json::{Map, Value};
 use std::collections::HashSet;
@@ -214,30 +214,30 @@ pub fn extract_expires_at(expanded: &Value) -> Option<chrono::DateTime<chrono::U
 }
 
 // ---------------------------------------------------------------------------
-// GeoProperty extraction (WKB-only public surface)
+// GeoProperty extraction
 // ---------------------------------------------------------------------------
 
-/// Extract the entity's `location` GeoProperty decoded into canonical [`Wkb`].
-pub fn extract_location_wkb(expanded: &Value) -> Option<Wkb> {
-    extract_geo_property_wkb(expanded, vocab::expanded::properties::LOCATION)
+/// Extract the entity's `location` GeoProperty decoded into a [`Geometry`].
+pub fn extract_location_geometry(expanded: &Value) -> Option<Geometry> {
+    extract_geo_property_geometry(expanded, vocab::expanded::properties::LOCATION)
 }
 
-/// Extract the entity's `observationSpace` GeoProperty decoded into canonical [`Wkb`].
-pub fn extract_observation_space_wkb(expanded: &Value) -> Option<Wkb> {
-    extract_geo_property_wkb(expanded, vocab::expanded::properties::OBSERVATION_SPACE)
+/// Extract the entity's `observationSpace` GeoProperty decoded into a [`Geometry`].
+pub fn extract_observation_space_geometry(expanded: &Value) -> Option<Geometry> {
+    extract_geo_property_geometry(expanded, vocab::expanded::properties::OBSERVATION_SPACE)
 }
 
-/// Extract the entity's `operationSpace` GeoProperty decoded into canonical [`Wkb`].
-pub fn extract_operation_space_wkb(expanded: &Value) -> Option<Wkb> {
-    extract_geo_property_wkb(expanded, vocab::expanded::properties::OPERATION_SPACE)
+/// Extract the entity's `operationSpace` GeoProperty decoded into a [`Geometry`].
+pub fn extract_operation_space_geometry(expanded: &Value) -> Option<Geometry> {
+    extract_geo_property_geometry(expanded, vocab::expanded::properties::OPERATION_SPACE)
 }
 
-fn extract_geo_property_wkb(expanded: &Value, iri: Iri<&'static str>) -> Option<Wkb> {
+fn extract_geo_property_geometry(expanded: &Value, iri: Iri<&'static str>) -> Option<Geometry> {
     let geo_node = geo_node_for_property(expanded, iri)?;
     if let Some(literal) = geo_node.get("@value") {
-        return literal_geojson_to_wkb(literal);
+        return literal_geojson_to_geometry(literal);
     }
-    expanded_geo_node_to_wkb(geo_node)
+    expanded_geo_node_to_geometry(geo_node)
 }
 
 /// Look up the inner GeoJSON node for an expanded GeoProperty attribute.
@@ -256,19 +256,19 @@ fn geo_node_for_property<'a>(expanded: &'a Value, iri: Iri<&'static str>) -> Opt
         .and_then(|arr| arr.first())
 }
 
-/// Decode a literal-GeoJSON `@value` (string or already-compact object) into [`Wkb`].
-fn literal_geojson_to_wkb(literal: &Value) -> Option<Wkb> {
+/// Decode a literal-GeoJSON `@value` (string or already-compact object) into a [`Geometry`].
+fn literal_geojson_to_geometry(literal: &Value) -> Option<Geometry> {
     match literal {
         Value::String(s) => {
             let value: Value = serde_json::from_str(s).ok()?;
-            Wkb::from_geojson_value(&value).ok()
+            Geometry::from_geojson_value(&value).ok()
         }
-        Value::Object(_) => Wkb::from_geojson_value(literal).ok(),
+        Value::Object(_) => Geometry::from_geojson_value(literal).ok(),
         Value::Null | Value::Bool(_) | Value::Number(_) | Value::Array(_) => None,
     }
 }
 
-/// Walk an expanded JSON-LD GeoJSON node directly into canonical [`Wkb`].
+/// Walk an expanded JSON-LD GeoJSON node directly into a [`Geometry`].
 ///
 /// Replaces the legacy "reconstruct compact-GeoJSON string → re-parse →
 /// `serde_json::from_value` clone → `geojson::Geometry`" round-trip with a
@@ -276,32 +276,31 @@ fn literal_geojson_to_wkb(literal: &Value) -> Option<Wkb> {
 /// intermediate `Value` cloning, no string serialisation, no second JSON
 /// parser pass. Returns `None` for unknown geometry types or malformed
 /// input so the caller can fall through to the slow path if needed.
-pub fn expanded_geo_node_to_wkb(node: &Value) -> Option<Wkb> {
-    let geometry = expanded_geo_node_to_geometry(node)?;
-    Wkb::from_geo(&geometry).ok()
+pub fn expanded_geo_node_to_geometry(node: &Value) -> Option<Geometry> {
+    walk_expanded_geo_node(node).map(Geometry::from)
 }
 
-fn expanded_geo_node_to_geometry(node: &Value) -> Option<Geometry<f64>> {
+fn walk_expanded_geo_node(node: &Value) -> Option<GeoGeometry<f64>> {
     let obj = node.as_object()?;
     let geom_type = obj.get("@type")?.as_array()?.first()?.as_str()?.strip_prefix(vocab::prefix::GEOJSON.as_str())?;
 
     let coords_outer = obj.get(vocab::expanded::properties::COORDINATES.as_str())?.as_array()?.first()?;
 
     match geom_type {
-        "Point" => Some(Geometry::Point(Point::from(walk_position(coords_outer)?))),
+        "Point" => Some(GeoGeometry::Point(Point::from(walk_position(coords_outer)?))),
         "MultiPoint" => {
             let points: Vec<Point<f64>> = walk_position_list(coords_outer)?.into_iter().map(Point::from).collect();
-            Some(Geometry::MultiPoint(MultiPoint::new(points)))
+            Some(GeoGeometry::MultiPoint(MultiPoint::new(points)))
         }
-        "LineString" => Some(Geometry::LineString(LineString::from(walk_position_list(coords_outer)?))),
+        "LineString" => Some(GeoGeometry::LineString(LineString::from(walk_position_list(coords_outer)?))),
         "MultiLineString" => {
             let lines = walk_linestring_list(coords_outer)?;
-            Some(Geometry::MultiLineString(MultiLineString::new(lines)))
+            Some(GeoGeometry::MultiLineString(MultiLineString::new(lines)))
         }
-        "Polygon" => Some(Geometry::Polygon(walk_polygon(coords_outer)?)),
+        "Polygon" => Some(GeoGeometry::Polygon(walk_polygon(coords_outer)?)),
         "MultiPolygon" => {
             let polys = walk_polygon_list(coords_outer)?;
-            Some(Geometry::MultiPolygon(MultiPolygon::new(polys)))
+            Some(GeoGeometry::MultiPolygon(MultiPolygon::new(polys)))
         }
         _other => None,
     }
@@ -999,15 +998,15 @@ mod tests {
         assert!(extract_expires_at(&entity).is_none());
     }
 
-    /// Build the expected canonical [`Wkb`] for a known compact-GeoJSON object
-    /// by routing through the legacy `from_geojson_value` path; the direct
-    /// walker must produce byte-equal output.
-    fn wkb_from_compact(compact: &serde_json::Value) -> Wkb {
-        Wkb::from_geojson_value(compact).expect("compact geojson decodes")
+    /// Build the expected [`Geometry`] for a known compact-GeoJSON object by
+    /// routing through the `from_geojson_value` path; the direct walker must
+    /// produce an equal geometry.
+    fn geometry_from_compact(compact: &serde_json::Value) -> Geometry {
+        Geometry::from_geojson_value(compact).expect("compact geojson decodes")
     }
 
     #[test]
-    fn expanded_geo_node_walker_decodes_point_byte_equal_to_legacy() {
+    fn expanded_geo_node_walker_decodes_point_identically_to_the_geojson_path() {
         let expanded = json!({
             "@type": ["https://purl.org/geojson/vocab#Point"],
             "https://purl.org/geojson/vocab#coordinates": [
@@ -1015,7 +1014,10 @@ mod tests {
             ]
         });
         let compact = json!({"type": "Point", "coordinates": [16.37_f64, 48.20_f64]});
-        pretty_assertions::assert_eq!(expanded_geo_node_to_wkb(&expanded).expect("walker decodes Point"), wkb_from_compact(&compact));
+        pretty_assertions::assert_eq!(
+            expanded_geo_node_to_geometry(&expanded).expect("walker decodes Point"),
+            geometry_from_compact(&compact)
+        );
     }
 
     #[test]
@@ -1035,8 +1037,8 @@ mod tests {
             "coordinates": [[0.0, 0.0], [1.0, 2.0], [3.0, 4.0]]
         });
         pretty_assertions::assert_eq!(
-            expanded_geo_node_to_wkb(&expanded).expect("walker decodes LineString"),
-            wkb_from_compact(&compact)
+            expanded_geo_node_to_geometry(&expanded).expect("walker decodes LineString"),
+            geometry_from_compact(&compact)
         );
     }
 
@@ -1070,7 +1072,10 @@ mod tests {
                 [[1.0, 1.0], [2.0, 1.0], [2.0, 2.0], [1.0, 2.0], [1.0, 1.0]]
             ]
         });
-        pretty_assertions::assert_eq!(expanded_geo_node_to_wkb(&expanded).expect("walker decodes Polygon"), wkb_from_compact(&compact));
+        pretty_assertions::assert_eq!(
+            expanded_geo_node_to_geometry(&expanded).expect("walker decodes Polygon"),
+            geometry_from_compact(&compact)
+        );
     }
 
     #[test]
@@ -1086,8 +1091,8 @@ mod tests {
         });
         let multipoint_compact = json!({"type": "MultiPoint", "coordinates": [[0.0, 0.0], [1.0, 1.0]]});
         pretty_assertions::assert_eq!(
-            expanded_geo_node_to_wkb(&multipoint_expanded).expect("MultiPoint"),
-            wkb_from_compact(&multipoint_compact)
+            expanded_geo_node_to_geometry(&multipoint_expanded).expect("MultiPoint"),
+            geometry_from_compact(&multipoint_compact)
         );
 
         let multilinestring_expanded = json!({
@@ -1110,8 +1115,8 @@ mod tests {
             "coordinates": [[[0.0, 0.0], [1.0, 1.0]], [[2.0, 2.0], [3.0, 3.0]]]
         });
         pretty_assertions::assert_eq!(
-            expanded_geo_node_to_wkb(&multilinestring_expanded).expect("MultiLineString"),
-            wkb_from_compact(&multilinestring_compact)
+            expanded_geo_node_to_geometry(&multilinestring_expanded).expect("MultiLineString"),
+            geometry_from_compact(&multilinestring_compact)
         );
     }
 
@@ -1123,7 +1128,7 @@ mod tests {
                 {"@list": [{"@value": 0.0_f64}, {"@value": 0.0_f64}]}
             ]
         });
-        assert!(expanded_geo_node_to_wkb(&expanded).is_none());
+        assert!(expanded_geo_node_to_geometry(&expanded).is_none());
     }
 
     #[test]
@@ -1140,7 +1145,7 @@ mod tests {
             }]
         }]);
         let compact = json!({"type": "Point", "coordinates": [16.37_f64, 48.20_f64]});
-        pretty_assertions::assert_eq!(extract_location_wkb(&entity).expect("location WKB"), wkb_from_compact(&compact));
+        pretty_assertions::assert_eq!(extract_location_geometry(&entity).expect("location WKB"), geometry_from_compact(&compact));
     }
 
     // -- attribute instance diffing ------------------------------------------

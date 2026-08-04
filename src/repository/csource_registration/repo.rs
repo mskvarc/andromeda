@@ -4,7 +4,10 @@ use crate::{
     core::error::AndromedaError,
     domain::{registration::ContextSourceRegistration, uri::NGSI_LD_URN_NID},
     query::{compiled::CompiledCsrQuery, sql::csr as csr_sql},
-    repository::csource_registration::{mapper::row_to_csr, params::CreateCsrParams},
+    repository::{
+        csource_registration::{mapper::row_to_csr, params::CreateCsrParams},
+        geometry::encode_optional,
+    },
     service::csource_merge::ResolvedCsrUpdate,
     tenancy::types::TenantName,
 };
@@ -100,9 +103,9 @@ impl CsourceRegistrationRepository {
         .bind(params.tenant)
         .bind(params.observation_interval.cloned())
         .bind(params.management_interval.cloned())
-        .bind(params.location_wkb.as_ref())
-        .bind(params.observation_space_wkb.as_ref())
-        .bind(params.operation_space_wkb.as_ref())
+        .bind(encode_optional(params.location.as_ref())?)
+        .bind(encode_optional(params.observation_space.as_ref())?)
+        .bind(encode_optional(params.operation_space.as_ref())?)
         .bind(params.expires_at)
         .bind(params.endpoint)
         .bind(params.accept)
@@ -212,9 +215,9 @@ impl CsourceRegistrationRepository {
         .bind(values.tenant.as_ref().map(TenantName::as_str))
         .bind(&values.observation_interval)
         .bind(&values.management_interval)
-        .bind(values.location_wkb.as_ref())
-        .bind(values.observation_space_wkb.as_ref())
-        .bind(values.operation_space_wkb.as_ref())
+        .bind(encode_optional(values.location.as_ref())?)
+        .bind(encode_optional(values.observation_space.as_ref())?)
+        .bind(encode_optional(values.operation_space.as_ref())?)
         .bind(values.expires_at)
         .bind(values.endpoint.as_str())
         .bind(values.accept.as_deref())

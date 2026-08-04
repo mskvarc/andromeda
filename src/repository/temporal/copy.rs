@@ -24,6 +24,7 @@ use crate::{
             write_trailer,
             write_uuid,
         },
+        geometry::{Ewkb, encode_optional},
         temporal::params::HistoryBatchEntry,
     },
 };
@@ -82,7 +83,7 @@ pub async fn insert_history_batch_via_copy_in_tx(tx: &mut Transaction<'_, Postgr
 
     tx.execute(CREATE_STAGE_ATTRIBUTE_HISTORY_SQL).await?;
 
-    let payload = encode_history_copy_stream(entries);
+    let payload = encode_history_copy_stream(entries)?;
     {
         let mut copy = tx.copy_in_raw(COPY_INTO_STAGE_SQL).await?;
         copy.send(payload.as_slice()).await?;
@@ -93,7 +94,7 @@ pub async fn insert_history_batch_via_copy_in_tx(tx: &mut Transaction<'_, Postgr
     Ok(())
 }
 
-pub(crate) fn encode_history_copy_stream(entries: &[HistoryBatchEntry]) -> Vec<u8> {
+pub(crate) fn encode_history_copy_stream(entries: &[HistoryBatchEntry]) -> Result<Vec<u8>, AndromedaError> {
     let mut buf = Vec::with_capacity(estimated_stream_bytes(entries.len()));
     write_header(&mut buf);
     for entry in entries {
@@ -103,7 +104,7 @@ pub(crate) fn encode_history_copy_stream(entries: &[HistoryBatchEntry]) -> Vec<u
         write_f64_opt(&mut buf, entry.value_number);
         write_text_opt(&mut buf, entry.value_string.as_deref());
         write_bool_opt(&mut buf, entry.value_bool);
-        write_bytea_opt(&mut buf, entry.value_geo.as_ref().map(|wkb| wkb.to_vec()).as_deref());
+        write_bytea_opt(&mut buf, encode_optional(entry.value_geo.as_ref())?.as_ref().map(Ewkb::to_vec).as_deref());
         write_jsonb_opt(&mut buf, entry.value_object.as_ref());
         write_timestamptz_opt(&mut buf, entry.value_datetime);
         write_text_opt(&mut buf, entry.value_uri.as_deref());
@@ -113,7 +114,7 @@ pub(crate) fn encode_history_copy_stream(entries: &[HistoryBatchEntry]) -> Vec<u
         write_timestamptz(&mut buf, entry.recorded_at);
     }
     write_trailer(&mut buf);
-    buf
+    Ok(buf)
 }
 
 const fn estimated_stream_bytes(rows: usize) -> usize {
@@ -151,14 +152,14 @@ mod tests {
     #[test]
     fn binary_copy_buffer_starts_with_pgcopy_signature() {
         let entries = [make_entry(uuid::Uuid::nil(), "urn:ngsi-ld:attribute:instance:0")];
-        let buf = encode_history_copy_stream(&entries);
+        let buf = encode_history_copy_stream(&entries).expect("copy stream encodes");
         assert!(buf.starts_with(COPY_HEADER_SIGNATURE));
     }
 
     #[test]
     fn binary_copy_buffer_ends_with_neg_one_terminator() {
         let entries = [make_entry(uuid::Uuid::nil(), "urn:ngsi-ld:attribute:instance:0")];
-        let buf = encode_history_copy_stream(&entries);
+        let buf = encode_history_copy_stream(&entries).expect("copy stream encodes");
         assert_eq!(&buf[buf.len() - 2..], &[0xff, 0xff]);
     }
 
@@ -169,7 +170,7 @@ mod tests {
             make_entry(uuid::Uuid::nil(), "i1"),
             make_entry(uuid::Uuid::nil(), "i2"),
         ];
-        let buf = encode_history_copy_stream(&entries);
+        let buf = encode_history_copy_stream(&entries).expect("copy stream encodes");
         // Header is 19 bytes; first tuple field count starts at byte 19.
         assert_eq!(&buf[19..21], &[0x00, 0x0d]);
     }
@@ -177,7 +178,7 @@ mod tests {
     #[test]
     fn binary_copy_encodes_recorded_at_as_trailing_timestamptz() {
         let entries = [make_entry(uuid::Uuid::nil(), "i")];
-        let buf = encode_history_copy_stream(&entries);
+        let buf = encode_history_copy_stream(&entries).expect("copy stream encodes");
         // recorded_at is the last field: the stream ends with the 2-byte
         // trailer preceded by the 4-byte length prefix and 8-byte payload.
         let offset = buf.len() - 2 - 12;
@@ -200,7 +201,7 @@ mod tests {
     fn binary_copy_encodes_uuid_as_16_raw_bytes() {
         let uid = uuid::Uuid::from_bytes([0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf0, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88]);
         let entries = [make_entry(uid, "i")];
-        let buf = encode_history_copy_stream(&entries);
+        let buf = encode_history_copy_stream(&entries).expect("copy stream encodes");
         // Header (19) + field count (2) + time field (4 + 8) = offset 33 for tea_id length prefix.
         let tea_offset = 19 + 2 + 4 + 8;
         assert_eq!(&buf[tea_offset..tea_offset + 4], &[0, 0, 0, 16]);
@@ -211,7 +212,7 @@ mod tests {
     fn binary_copy_encodes_optional_f64_value_number() {
         let mut entry = make_entry(uuid::Uuid::nil(), "i");
         entry.value_number = Some(2.75);
-        let buf = encode_history_copy_stream(&[entry]);
+        let buf = encode_history_copy_stream(&[entry]).expect("copy stream encodes");
         // After header (19) + field_count (2) + time (4+8) + tea_id (4+16) = 53.
         let offset = 19 + 2 + 12 + 20;
         assert_eq!(&buf[offset..offset + 4], &[0, 0, 0, 8]);
@@ -221,7 +222,7 @@ mod tests {
     #[test]
     fn binary_copy_encodes_none_as_neg_one_length() {
         let entry = make_entry(uuid::Uuid::nil(), "i");
-        let buf = encode_history_copy_stream(&[entry]);
+        let buf = encode_history_copy_stream(&[entry]).expect("copy stream encodes");
         let offset = 19 + 2 + 12 + 20;
         assert_eq!(&buf[offset..offset + 4], &[0xff, 0xff, 0xff, 0xff]);
     }
@@ -230,7 +231,7 @@ mod tests {
     fn binary_copy_encodes_optional_bool_as_single_byte() {
         let mut entry_t = make_entry(uuid::Uuid::nil(), "i");
         entry_t.value_bool = Some(true);
-        let buf_t = encode_history_copy_stream(&[entry_t]);
+        let buf_t = encode_history_copy_stream(&[entry_t]).expect("copy stream encodes");
         // Offsets: 19 (header) + 2 (fc) + 12 (time) + 20 (uuid) + 4 (null number) + 4 (null string) = 61.
         let offset = 19 + 2 + 12 + 20 + 4 + 4;
         assert_eq!(&buf_t[offset..offset + 4], &[0, 0, 0, 1]);
@@ -238,7 +239,7 @@ mod tests {
 
         let mut entry_f = make_entry(uuid::Uuid::nil(), "i");
         entry_f.value_bool = Some(false);
-        let buf_f = encode_history_copy_stream(&[entry_f]);
+        let buf_f = encode_history_copy_stream(&[entry_f]).expect("copy stream encodes");
         assert_eq!(&buf_f[offset..offset + 4], &[0, 0, 0, 1]);
         assert_eq!(buf_f[offset + 4], 0x00);
     }
@@ -247,7 +248,7 @@ mod tests {
     fn binary_copy_encodes_jsonb_with_version_byte() {
         let mut entry = make_entry(uuid::Uuid::nil(), "i");
         entry.value_object = Some(serde_json::json!({"a": 1}));
-        let buf = encode_history_copy_stream(&[entry]);
+        let buf = encode_history_copy_stream(&[entry]).expect("copy stream encodes");
         // Offsets: 19 + 2 + 12 + 20 + 4 + 4 + 4 + 4 (geo null) = 69 — that's value_object length prefix.
         let offset = 19 + 2 + 12 + 20 + 4 + 4 + 4 + 4;
         // 4-byte length, then version byte 0x01, then UTF-8 JSON.
@@ -260,7 +261,7 @@ mod tests {
     #[test]
     fn binary_copy_encodes_timestamptz_microseconds_since_2000() {
         let entries = [make_entry(uuid::Uuid::nil(), "i")];
-        let buf = encode_history_copy_stream(&entries);
+        let buf = encode_history_copy_stream(&entries).expect("copy stream encodes");
         // Time field directly after field-count: header (19) + fc (2) = 21.
         let len = i32::from_be_bytes([buf[21], buf[22], buf[23], buf[24]]);
         assert_eq!(len, 8);
@@ -273,7 +274,7 @@ mod tests {
     fn binary_copy_text_field_encodes_utf8_with_length_prefix() {
         let id = "urn:ngsi-ld:attribute:instance:client";
         let entries = [make_entry(uuid::Uuid::nil(), id)];
-        let buf = encode_history_copy_stream(&entries);
+        let buf = encode_history_copy_stream(&entries).expect("copy stream encodes");
         // Locate instance_id. Layout up to instance_id length prefix:
         // header(19) + field_count(2) + time(4+8) + tea_id(4+16)
         //   + 7 NULL fields (value_number, value_string, value_bool,

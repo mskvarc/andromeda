@@ -16,6 +16,7 @@
 
 use crate::{
     domain::{
+        geometry::Geometry,
         notification::{ChangeEvent, TriggerReason},
         vocab,
     },
@@ -174,7 +175,7 @@ impl SpatialSyncWorker {
             let Some(geojson_str) = extract_geoproperty_geojson(obj, &iri) else {
                 continue;
             };
-            let Some(wkb) = parse_wkb(&geojson_str) else {
+            let Some(wkb) = parse_geometry(&geojson_str) else {
                 continue;
             };
             let Ok(geoproperty_iri) = IriBuf::new(iri) else {
@@ -255,9 +256,9 @@ fn extract_geoproperty_geojson(obj: &serde_json::Map<String, Value>, iri: &str) 
     }
 }
 
-fn parse_wkb(raw: &str) -> Option<crate::domain::geometry::Wkb> {
+fn parse_geometry(raw: &str) -> Option<Geometry> {
     let value: Value = serde_json::from_str(raw).ok()?;
-    crate::domain::geometry::Wkb::from_geojson_value(&value).ok()
+    Geometry::from_geojson_value(&value).ok()
 }
 
 #[cfg(test)]

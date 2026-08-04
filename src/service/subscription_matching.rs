@@ -6,6 +6,7 @@
 
 use crate::{
     domain::{
+        geometry::Geometry,
         notification::{ChangeEvent, ChangeOrigin, CompiledGeoQuery, CompiledGeoRel, CompiledScopePattern, CompiledScopeTerm, CompiledSubscription},
         subscription::SubscriptionStatus,
         vocab,
@@ -162,25 +163,22 @@ pub fn matches_entity_filters(sub: &CompiledSubscription, entity_data: &Value) -
 pub fn matches_compiled_geo_query(geo_q: &CompiledGeoQuery, entity_data: &Value) -> bool {
     use geo::algorithm::{Contains, Intersects};
 
-    let Some(entity_wkb) = extract_geoproperty_wkb(entity_data, &geo_q.geoproperty_iri) else {
+    let Some(entity_geometry) = extract_geoproperty_geometry(entity_data, &geo_q.geoproperty_iri) else {
         return false;
     };
-
-    let Ok(entity_geom) = entity_wkb.to_geo() else {
-        return false;
-    };
+    let entity_geom: &geo::Geometry<f64> = entity_geometry.as_ref();
 
     let ref_geom = &geo_q.ref_geometry;
 
     match geo_q.georel {
-        CompiledGeoRel::Within => ref_geom.contains(&entity_geom),
+        CompiledGeoRel::Within => ref_geom.contains(entity_geom),
         CompiledGeoRel::Contains => entity_geom.contains(ref_geom),
         CompiledGeoRel::Intersects => entity_geom.intersects(ref_geom),
         CompiledGeoRel::Disjoint => !entity_geom.intersects(ref_geom),
-        CompiledGeoRel::Equals => entity_geom.contains(ref_geom) && ref_geom.contains(&entity_geom),
+        CompiledGeoRel::Equals => entity_geom.contains(ref_geom) && ref_geom.contains(entity_geom),
         CompiledGeoRel::Overlaps => entity_geom.intersects(ref_geom),
         CompiledGeoRel::Near { max_distance, min_distance } => {
-            let distance = haversine_distance_m(&entity_geom, ref_geom);
+            let distance = haversine_distance_m(entity_geom, ref_geom);
             let max_ok = max_distance.is_none_or(|max| distance <= max);
             let min_ok = min_distance.is_none_or(|min| distance >= min);
             max_ok && min_ok
@@ -188,7 +186,7 @@ pub fn matches_compiled_geo_query(geo_q: &CompiledGeoQuery, entity_data: &Value)
     }
 }
 
-fn extract_geoproperty_wkb(entity: &Value, geoproperty_iri: &str) -> Option<crate::domain::geometry::Wkb> {
+fn extract_geoproperty_geometry(entity: &Value, geoproperty_iri: &str) -> Option<Geometry> {
     let obj = match entity {
         Value::Array(arr) => arr.first().and_then(|v| v.as_object()),
         Value::Object(obj) => Some(obj),
@@ -207,9 +205,9 @@ fn extract_geoproperty_wkb(entity: &Value, geoproperty_iri: &str) -> Option<crat
     match geojson_value {
         Value::String(s) => {
             let parsed: Value = serde_json::from_str(s).ok()?;
-            crate::domain::geometry::Wkb::from_geojson_value(&parsed).ok()
+            Geometry::from_geojson_value(&parsed).ok()
         }
-        val if val.is_object() => crate::domain::geometry::Wkb::from_geojson_value(val).ok(),
+        val if val.is_object() => Geometry::from_geojson_value(val).ok(),
         _ => None,
     }
 }

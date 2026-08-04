@@ -2,7 +2,7 @@
 
 use crate::{
     core::error::AndromedaError,
-    domain::{geometry::Wkb, vocab},
+    domain::{geometry::Geometry, vocab},
     query::{
         compiled::{CompiledEntityQuery, CompiledOrderTerm, GeoQuery, GeoRel, OrderDirection, OrderingGeometry, TypeExpr},
         sql::{
@@ -28,6 +28,7 @@ use crate::{
             sea_values_to_bind_values,
         },
     },
+    repository::geometry::{Ewkb, encode},
 };
 use sea_query::{Asterisk, Condition, Expr as SeaExpr, Func, Order, PostgresQueryBuilder, Query, SelectStatement};
 
@@ -204,8 +205,8 @@ fn geo_to_condition(geo: &GeoQuery, payload_col: &str) -> Result<Condition, Andr
     };
 
     // Build canonical reference WKB; bind as bytea for ST_GeomFromEWKB.
-    let ref_wkb = build_reference_wkb(&geo.geometry, &geo.coordinates)?;
-    let ref_geom_expr = validated_geom_from_ewkb(SeaExpr::val(ref_wkb.to_vec()).into());
+    let ref_ewkb = build_reference_ewkb(&geo.geometry, &geo.coordinates)?;
+    let ref_geom_expr = validated_geom_from_ewkb(SeaExpr::val(ref_ewkb.to_vec()).into());
 
     // Build spatial condition using PostGIS helpers
     let spatial_expr = match &geo.georel {
@@ -233,7 +234,7 @@ fn geo_to_condition(geo: &GeoQuery, payload_col: &str) -> Result<Condition, Andr
                 ))
             };
             let ref_geom_geo_expr: sea_query::SimpleExpr =
-                SeaExpr::cust_with_exprs("ST_MakeValid(ST_GeomFromEWKB($1))::geography", [SeaExpr::val(ref_wkb.to_vec()).into()]);
+                SeaExpr::cust_with_exprs("ST_MakeValid(ST_GeomFromEWKB($1))::geography", [SeaExpr::val(ref_ewkb.to_vec()).into()]);
 
             let mut parts = Vec::new();
             if let Some(max) = max_distance {
@@ -328,10 +329,10 @@ fn add_order_clause(
 
         if term.direction.is_distance() {
             // Distance-based ordering — reference geometry binds as EWKB.
-            let ref_wkb = if let Some(og) = ordering_geometry {
-                og.geometry.clone()
+            let ref_ewkb = if let Some(og) = ordering_geometry {
+                encode(&og.geometry)?
             } else if let Some(geo) = geo {
-                build_reference_wkb(&geo.geometry, &geo.coordinates)?
+                build_reference_ewkb(&geo.geometry, &geo.coordinates)?
             } else {
                 return Err(AndromedaError::query_validation(
                     "Distance-based ordering requires either a geo-query or orderFrom parameter".to_string(),
@@ -340,7 +341,7 @@ fn add_order_clause(
             let geo_col = build_geo_extract_geography(&term.attr_iri);
             let dist_expr: sea_query::SimpleExpr = SeaExpr::cust_with_exprs(
                 format!("ST_Distance({}, ST_MakeValid(ST_GeomFromEWKB($1))::geography)", geo_col),
-                [SeaExpr::val(ref_wkb.to_vec()).into()],
+                [SeaExpr::val(ref_ewkb.to_vec()).into()],
             );
             select.order_by_expr(dist_expr, order);
         } else {
@@ -368,13 +369,16 @@ fn escape_jsonpath_key(key: &str) -> String {
     key.replace('\\', "\\\\").replace('"', "\\\"")
 }
 
-/// Build canonical [`Wkb`] from an NGSI-LD `GeoQuery` geometry/coordinates pair.
-fn build_reference_wkb(geometry: &str, coordinates: &serde_json::Value) -> Result<Wkb, AndromedaError> {
+/// Build the reference [`Ewkb`] an NGSI-LD `GeoQuery` binds into its spatial
+/// predicates, from the query's `geometry`/`coordinates` pair.
+fn build_reference_ewkb(geometry: &str, coordinates: &serde_json::Value) -> Result<Ewkb, AndromedaError> {
     let geojson = serde_json::json!({
         "type": geometry,
         "coordinates": coordinates
     });
-    Wkb::from_geojson_value(&geojson).map_err(|error| AndromedaError::query_validation(format!("Invalid geo-query reference geometry: {}", error)))
+    let parsed =
+        Geometry::from_geojson_value(&geojson).map_err(|error| AndromedaError::query_validation(format!("Invalid geo-query reference geometry: {}", error)))?;
+    encode(&parsed)
 }
 
 fn build_geo_extract_geography(geoproperty_iri: &str) -> String {
@@ -677,12 +681,12 @@ mod tests {
     #[test]
     fn build_with_order_by_dist_with_ordering_geometry() {
         let mut q = empty_query();
-        let wkb = crate::domain::geometry::Wkb::from_geojson_value(&serde_json::json!({
+        let geometry = Geometry::from_geojson_value(&serde_json::json!({
             "type": "Point",
             "coordinates": [13.3986, 52.5547],
         }))
         .unwrap();
-        q.ordering_geometry = Some(OrderingGeometry::new(wkb));
+        q.ordering_geometry = Some(OrderingGeometry::new(geometry));
         q.order_by = vec![CompiledOrderTerm {
             attr_iri: vocab::expanded::properties::LOCATION.as_str().to_string(),
             direction: OrderDirection::DistAsc,
@@ -710,12 +714,12 @@ mod tests {
             coordinates: serde_json::json!([2.3522, 48.8566]),
             geoproperty_iri: vocab::expanded::properties::LOCATION.as_str().to_string(),
         });
-        let wkb = crate::domain::geometry::Wkb::from_geojson_value(&serde_json::json!({
+        let geometry = Geometry::from_geojson_value(&serde_json::json!({
             "type": "Point",
             "coordinates": [13.3986, 52.5547],
         }))
         .unwrap();
-        q.ordering_geometry = Some(OrderingGeometry::new(wkb));
+        q.ordering_geometry = Some(OrderingGeometry::new(geometry));
         q.order_by = vec![CompiledOrderTerm {
             attr_iri: vocab::expanded::properties::LOCATION.as_str().to_string(),
             direction: OrderDirection::DistAsc,

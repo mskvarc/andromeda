@@ -7,7 +7,7 @@
 use crate::{
     core::error::AndromedaError,
     domain::{
-        geometry::Wkb,
+        geometry::Geometry,
         registration::{ContextSourceRegistration, ForwardingMode},
     },
     repository::csource_registration::params::CsrUpdateFragment,
@@ -57,12 +57,12 @@ pub struct ResolvedCsrUpdate {
     pub context_source_alias: Option<String>,
     /// New non-standard-properties blob (after shallow merge).
     pub additional_properties: Option<Value>,
-    /// New `location` WKB.
-    pub location_wkb: Option<Wkb>,
-    /// New `observation_space` WKB.
-    pub observation_space_wkb: Option<Wkb>,
-    /// New `operation_space` WKB.
-    pub operation_space_wkb: Option<Wkb>,
+    /// New `location` geometry.
+    pub location: Option<Geometry>,
+    /// New `observation_space` geometry.
+    pub observation_space: Option<Geometry>,
+    /// New `operation_space` geometry.
+    pub operation_space: Option<Geometry>,
 }
 
 /// Apply a partial `CsrUpdateFragment` on top of an existing CSR, producing
@@ -117,30 +117,30 @@ pub fn apply_fragment(existing: ContextSourceRegistration, fragment: &CsrUpdateF
         (None, None) => None,
     };
 
-    let location_wkb = match fragment.location.as_ref() {
+    let location = match fragment.location.as_ref() {
         Some(frag) => frag.clone(), // clone: own fragment side; fragment is borrowed
         None => existing
             .location
             .as_ref()
-            .map(Wkb::from_geojson_value)
+            .map(Geometry::from_geojson_value)
             .transpose()
             .map_err(|error| AndromedaError::csr_validation(format!("invalid existing location GeoJSON: {error}")))?,
     };
-    let observation_space_wkb = match fragment.observation_space.as_ref() {
+    let observation_space = match fragment.observation_space.as_ref() {
         Some(frag) => frag.clone(), // clone: own fragment side; fragment is borrowed
         None => existing
             .observation_space
             .as_ref()
-            .map(Wkb::from_geojson_value)
+            .map(Geometry::from_geojson_value)
             .transpose()
             .map_err(|error| AndromedaError::csr_validation(format!("invalid existing observationSpace GeoJSON: {error}")))?,
     };
-    let operation_space_wkb = match fragment.operation_space.as_ref() {
+    let operation_space = match fragment.operation_space.as_ref() {
         Some(frag) => frag.clone(), // clone: own fragment side; fragment is borrowed
         None => existing
             .operation_space
             .as_ref()
-            .map(Wkb::from_geojson_value)
+            .map(Geometry::from_geojson_value)
             .transpose()
             .map_err(|error| AndromedaError::csr_validation(format!("invalid existing operationSpace GeoJSON: {error}")))?,
     };
@@ -164,8 +164,8 @@ pub fn apply_fragment(existing: ContextSourceRegistration, fragment: &CsrUpdateF
         jsonld_context,
         context_source_alias,
         additional_properties,
-        location_wkb,
-        observation_space_wkb,
-        operation_space_wkb,
+        location,
+        observation_space,
+        operation_space,
     })
 }

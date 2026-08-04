@@ -3,6 +3,7 @@ use crate::{
     domain::{
         attribute::{Attribute, AttributeValue},
         entity::Entity,
+        geometry::Geometry,
     },
     http::parameter::query::{SharedQueryParams, entity::EntityQueryParameters},
     jsonld::{CompactOptions, ContextSpec, JsonLdEngine},
@@ -469,9 +470,9 @@ impl EntityQueryService {
                 "type": geometry_type,
                 "coordinates": coordinates
             });
-            let wkb = crate::domain::geometry::Wkb::from_geojson_value(&geojson_value)
+            let geometry = Geometry::from_geojson_value(&geojson_value)
                 .map_err(|e| AndromedaError::entity_validation(format!("Invalid orderFrom/orderGeometry combination: {}", e)))?;
-            Some(OrderingGeometry::new(wkb))
+            Some(OrderingGeometry::new(geometry))
         } else {
             None
         };

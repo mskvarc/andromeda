@@ -3,7 +3,7 @@ use crate::{
     domain::{
         entity::Entity,
         expanded::{self, AttributeInstanceKey, append_entity_attrs, merge_entity, removed_attribute_instances, update_entity_attrs},
-        geometry::Wkb,
+        geometry::Geometry,
         notification::{ChangeEvent, SysAttrsSnapshot, TriggerReason},
         uri::Uri,
     },
@@ -63,12 +63,12 @@ struct PreparedEntity {
     scopes: Vec<String>,
     /// Attribute keys changed by this request payload.
     changed_attributes: Vec<String>,
-    /// Canonical WKB for `location`, if present.
-    location: Option<Wkb>,
-    /// Canonical WKB for `observationSpace`, if present.
-    observation_space: Option<Wkb>,
-    /// Canonical WKB for `operationSpace`, if present.
-    operation_space: Option<Wkb>,
+    /// The `location` geometry, if present.
+    location: Option<Geometry>,
+    /// The `observationSpace` geometry, if present.
+    observation_space: Option<Geometry>,
+    /// The `operationSpace` geometry, if present.
+    operation_space: Option<Geometry>,
     /// Entity expiration timestamp (ETSI GS CIM 009 clause 4.22).
     expires_at: Option<chrono::DateTime<chrono::Utc>>,
 }
@@ -121,7 +121,11 @@ type DeleteChunkOutcome = (Vec<String>, Vec<(String, AndromedaError)>);
 /// Output of one entry processed by the fastpath chunk worker.
 enum FastPoolOutput {
     /// Fastpath produced a result (success or per-entity failure).
-    Done { idx: usize, result: PreparedSlot },
+    ///
+    /// Boxed because a [`PreparedEntity`] is an order of magnitude larger than
+    /// a [`ClassifiedEntry`], and these are collected into one `Vec` per chunk;
+    /// inlining it would size every element for the largest variant.
+    Done { idx: usize, result: Box<PreparedSlot> },
     /// Fastpath bailed at runtime (e.g. unsupported attribute shape);
     /// the entry must be retried on the slow path.
     Demoted(ClassifiedEntry),
@@ -161,7 +165,7 @@ fn process_fast_entry(entry: ClassifiedEntry, engine: &JsonLdEngine, handle: &Ba
     match engine.try_fast_expand(&entry.value, handle) {
         Some(expanded) => FastPoolOutput::Done {
             idx: entry.idx,
-            result: EntityService::build_prepared_entity(entry.id, expanded),
+            result: Box::new(EntityService::build_prepared_entity(entry.id, expanded)),
         },
         None => FastPoolOutput::Demoted(entry),
     }
@@ -191,9 +195,9 @@ fn row_from_expanded(id: String, expanded: Value) -> (PreparedEntityRow, Vec<Str
             .map(|s| Value::String(sql::scope_to_ltree(&s)))
             .collect(),
     );
-    let location = expanded::extract_location_wkb(&expanded);
-    let observation_space = expanded::extract_observation_space_wkb(&expanded);
-    let operation_space = expanded::extract_operation_space_wkb(&expanded);
+    let location = expanded::extract_location_geometry(&expanded);
+    let observation_space = expanded::extract_observation_space_geometry(&expanded);
+    let operation_space = expanded::extract_operation_space_geometry(&expanded);
     let expires_at = expanded::extract_expires_at(&expanded);
 
     (
@@ -240,9 +244,9 @@ impl EntityService {
         let changed_attributes = extract_attribute_keys(&expanded);
         let types = extract_entity_types(&expanded);
         let scopes = extract_scopes(&expanded);
-        let location = expanded::extract_location_wkb(&expanded);
-        let observation_space = expanded::extract_observation_space_wkb(&expanded);
-        let operation_space = expanded::extract_operation_space_wkb(&expanded);
+        let location = expanded::extract_location_geometry(&expanded);
+        let observation_space = expanded::extract_observation_space_geometry(&expanded);
+        let operation_space = expanded::extract_operation_space_geometry(&expanded);
         let expires_at = expanded::extract_expires_at(&expanded);
 
         Ok(PreparedEntity {
@@ -310,7 +314,7 @@ impl EntityService {
                 for (id, error) in spawn_errors {
                     outputs.push(FastPoolOutput::Done {
                         idx: usize::MAX,
-                        result: Err((id, error)),
+                        result: Box::new(Err((id, error))),
                     });
                 }
                 while let Some(result) = joinset.join_next().await {
@@ -319,10 +323,10 @@ impl EntityService {
                         Err(error) => {
                             outputs.push(FastPoolOutput::Done {
                                 idx: usize::MAX,
-                                result: Err((
+                                result: Box::new(Err((
                                     "unknown".to_string(),
                                     AndromedaError::internal(format!("Batch preparation task failed: {error}")),
-                                )),
+                                ))),
                             });
                         }
                     }
@@ -427,11 +431,11 @@ impl EntityService {
             match output {
                 FastPoolOutput::Done { idx, result } => {
                     if idx < len {
-                        indexed_results[idx] = Some(result);
+                        indexed_results[idx] = Some(*result);
                     } else {
                         // Pool-level error (e.g. JoinError) — record it
                         // without an index slot.
-                        if let Err(err) = result {
+                        if let Err(err) = *result {
                             errors.push(err);
                         }
                     }
@@ -678,9 +682,7 @@ impl EntityService {
                         .scope_paths_json
                         .push(Value::Array(scopes.into_iter().map(|s| Value::String(sql::scope_to_ltree(&s))).collect()));
                     columns.push_payload(expanded)?;
-                    columns.locations.push(location);
-                    columns.obs_spaces.push(observation_space);
-                    columns.op_spaces.push(operation_space);
+                    columns.push_geometries(location.as_ref(), observation_space.as_ref(), operation_space.as_ref())?;
                     columns.expires_ats.push(expires_at);
                     entry.insert(IndexedBatchEffectEntity {
                         changed_attributes,
@@ -918,9 +920,7 @@ impl EntityService {
                 .scope_paths_json
                 .push(Value::Array(scopes.into_iter().map(|s| Value::String(sql::scope_to_ltree(&s))).collect()));
             columns.push_payload(expanded)?;
-            columns.locations.push(location);
-            columns.obs_spaces.push(observation_space);
-            columns.op_spaces.push(operation_space);
+            columns.push_geometries(location.as_ref(), observation_space.as_ref(), operation_space.as_ref())?;
             columns.expires_ats.push(expires_at);
         }
 
@@ -1047,9 +1047,7 @@ impl EntityService {
                     .scope_paths_json
                     .push(Value::Array(scopes.into_iter().map(|s| Value::String(sql::scope_to_ltree(&s))).collect()));
                 created_columns.push_payload(expanded)?;
-                created_columns.locations.push(location);
-                created_columns.obs_spaces.push(observation_space);
-                created_columns.op_spaces.push(operation_space);
+                created_columns.push_geometries(location.as_ref(), observation_space.as_ref(), operation_space.as_ref())?;
                 created_columns.expires_ats.push(expires_at);
             }
         }

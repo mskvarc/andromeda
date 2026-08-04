@@ -1,4 +1,4 @@
-use crate::domain::{entity::Entity, geometry::Wkb, name::NameBuf, uri::Uri};
+use crate::domain::{entity::Entity, geometry::Geometry, name::NameBuf, uri::Uri};
 use chrono::{DateTime, Utc};
 use compact_str::CompactString;
 use derive_more::{AsRef, Deref, Display, From};
@@ -196,8 +196,8 @@ pub enum NgsiLdValue {
     Date(NgsiLdDate),
     /// A Time value.
     Time(NgsiLdTime),
-    /// A geometry value, carried as canonical WKB internally.
-    Geometry(Wkb),
+    /// A GeoJSON geometry value (clause 4.7).
+    Geometry(Geometry),
 }
 
 impl Serialize for NgsiLdValue {
@@ -295,10 +295,10 @@ fn parse_relationship_object_entry(value: &Value) -> Result<Uri, String> {
     Uri::from_str(object).map_err(|error| error.to_string())
 }
 
-fn try_geometry(value: &Value) -> Option<Wkb> {
+fn try_geometry(value: &Value) -> Option<Geometry> {
     let object = value.as_object()?;
     object.get("type").zip(object.get("coordinates"))?;
-    Wkb::from_geojson_value(value).ok()
+    Geometry::from_geojson_value(value).ok()
 }
 
 fn validate_reference(value: &str) -> Result<(), NgsiLdReferenceError> {
@@ -395,9 +395,7 @@ impl<V: JsonValue> ToJsonValue<V> for NgsiLdValue {
             NgsiLdValue::DateTime(dt) => V::from_string(dt.to_rfc3339_opts(chrono::SecondsFormat::Millis, true)),
             NgsiLdValue::Date(d) => V::string(d.as_str()),
             NgsiLdValue::Time(t) => V::string(t.as_str()),
-            NgsiLdValue::Geometry(g) => {
-                crate::domain::attribute::serde_json_value_to_json_value::<V>(&serde_json::to_value(g).unwrap_or(serde_json::Value::Null))
-            }
+            NgsiLdValue::Geometry(g) => g.to_json_value(),
         }
     }
 }

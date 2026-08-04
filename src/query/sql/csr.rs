@@ -3,7 +3,7 @@
 use crate::{
     core::error::AndromedaError,
     domain::{
-        geometry::Wkb,
+        geometry::Geometry,
         temporal::{TimeProp, TimeRel},
     },
     query::{
@@ -11,6 +11,7 @@ use crate::{
         q::ast::{AttrPath, CmpOp, CompareValue, Expr, Predicate, Scalar},
         sql::{BuiltQuery, sea_values_to_bind_values},
     },
+    repository::geometry::{Ewkb, encode},
 };
 use sea_query::{Alias, Condition, Expr as SeaExpr, Order, PostgresQueryBuilder, Query};
 use std::borrow::Cow;
@@ -139,8 +140,8 @@ fn build_csr_conditions(query: &CompiledCsrQuery) -> Result<Condition, Andromeda
 
     // Geo filter: CSRs without a location still match (per NGSI-LD spec).
     if let Some(ref geo) = query.geo {
-        let ref_wkb = build_reference_wkb(&geo.geometry, &geo.coordinates)?;
-        let ref_wkb_bytes = ref_wkb.to_vec();
+        let ref_ewkb = build_reference_ewkb(&geo.geometry, &geo.coordinates)?;
+        let ref_ewkb_bytes = ref_ewkb.to_vec();
         let ref_geom_frag = "ST_MakeValid(ST_GeomFromEWKB($1))";
 
         let spatial_sql = match &geo.georel {
@@ -168,7 +169,7 @@ fn build_csr_conditions(query: &CompiledCsrQuery) -> Result<Condition, Andromeda
 
         condition = condition.add(SeaExpr::cust_with_exprs(
             format!("(\"location\" IS NULL OR {})", spatial_sql),
-            [SeaExpr::val(ref_wkb_bytes).into()],
+            [SeaExpr::val(ref_ewkb_bytes).into()],
         ));
     }
 
@@ -222,7 +223,7 @@ fn build_csr_conditions(query: &CompiledCsrQuery) -> Result<Condition, Andromeda
 ///
 /// For polygons, closes the ring when the caller supplied an open form (matches
 /// the prior GeoJSON-building behaviour).
-fn build_reference_wkb(geometry: &str, coordinates: &serde_json::Value) -> Result<Wkb, AndromedaError> {
+fn build_reference_ewkb(geometry: &str, coordinates: &serde_json::Value) -> Result<Ewkb, AndromedaError> {
     let coords_value = match geometry {
         "Polygon" => {
             if let Some(arr) = coordinates.as_array() {
@@ -250,7 +251,9 @@ fn build_reference_wkb(geometry: &str, coordinates: &serde_json::Value) -> Resul
         "type": geometry,
         "coordinates": *coords_value
     });
-    Wkb::from_geojson_value(&geojson).map_err(|error| AndromedaError::query_validation(format!("Invalid CSR geo-query reference geometry: {}", error)))
+    let parsed = Geometry::from_geojson_value(&geojson)
+        .map_err(|error| AndromedaError::query_validation(format!("Invalid CSR geo-query reference geometry: {}", error)))?;
+    encode(&parsed)
 }
 
 // --- Q expression to SQL for CSR additional_properties ---

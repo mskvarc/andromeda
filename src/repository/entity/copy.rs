@@ -17,6 +17,7 @@ use crate::{
     repository::{
         copy::{write_bytea_opt, write_field_count, write_header, write_jsonb, write_text, write_timestamptz_opt, write_trailer},
         entity::params::PreparedEntityColumns,
+        geometry::Ewkb,
     },
 };
 use sqlx::{Executor, Postgres, Transaction};
@@ -89,9 +90,9 @@ fn encode_entities_copy_stream(columns: &PreparedEntityColumns) -> Vec<u8> {
         write_jsonb(&mut buf, &columns.types_json[index]);
         write_jsonb(&mut buf, &columns.scope_paths_json[index]);
         write_jsonb(&mut buf, &columns.payloads[index]);
-        write_bytea_opt(&mut buf, columns.locations[index].as_ref().map(|wkb| wkb.to_vec()).as_deref());
-        write_bytea_opt(&mut buf, columns.obs_spaces[index].as_ref().map(|wkb| wkb.to_vec()).as_deref());
-        write_bytea_opt(&mut buf, columns.op_spaces[index].as_ref().map(|wkb| wkb.to_vec()).as_deref());
+        write_bytea_opt(&mut buf, columns.locations[index].as_ref().map(Ewkb::to_vec).as_deref());
+        write_bytea_opt(&mut buf, columns.obs_spaces[index].as_ref().map(Ewkb::to_vec).as_deref());
+        write_bytea_opt(&mut buf, columns.op_spaces[index].as_ref().map(Ewkb::to_vec).as_deref());
         write_timestamptz_opt(&mut buf, columns.expires_ats[index]);
     }
     write_trailer(&mut buf);
@@ -107,8 +108,7 @@ const fn estimated_stream_bytes(columns: &PreparedEntityColumns) -> usize {
 mod tests {
     #![allow(clippy::expect_used)]
     use super::*;
-    use crate::{domain::geometry::Wkb, repository::copy::COPY_HEADER_SIGNATURE};
-    use bytes::Bytes;
+    use crate::{domain::geometry::Geometry, repository::copy::COPY_HEADER_SIGNATURE};
     use chrono::{TimeZone, Utc};
 
     fn sample_columns() -> PreparedEntityColumns {
@@ -125,12 +125,9 @@ mod tests {
         columns
             .push_payload(serde_json::json!({"@id": "urn:ngsi-ld:Building:2"}))
             .expect("payload serialises");
-        columns.locations.push(Some(Wkb::from_postgis_bytes(Bytes::from_static(&[0x01, 0x02, 0x03]))));
-        columns.locations.push(None);
-        columns.obs_spaces.push(None);
-        columns.obs_spaces.push(None);
-        columns.op_spaces.push(None);
-        columns.op_spaces.push(None);
+        let point = Geometry::from_geojson_value(&serde_json::json!({ "type": "Point", "coordinates": [1.0, 2.0] })).expect("point parses");
+        columns.push_geometries(Some(&point), None, None).expect("geometry encodes");
+        columns.push_geometries(None, None, None).expect("geometry encodes");
         columns.expires_ats.push(Some(Utc.timestamp_opt(1_700_000_000, 0).unwrap()));
         columns.expires_ats.push(None);
         columns
