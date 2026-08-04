@@ -1,13 +1,21 @@
 //! NGSI-LD subscription types (ETSI GS CIM 009 clause 5.2.12).
 
 use crate::{
+    attribute::name::AttributeName,
+    constant_string,
     response_format::{JoinMode, ResponseFormat},
-    serde_helpers,
+    rfc3339,
+    uri::Uri,
 };
 use chrono::{DateTime, Utc};
+use langtag::LangTagBuf;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use strum::{Display, EnumIter, EnumString, IntoStaticStr};
+use url::Url;
+use urn_rs::Urn;
+
+constant_string!(SubscriptionType, "Subscription");
 
 /// Trigger conditions that cause a notification to be sent (ETSI GS CIM 009 clause 5.3.3).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Display, EnumString)]
@@ -92,7 +100,7 @@ pub struct Endpoint {
 pub struct NotificationParams {
     /// Attributes to include in notifications (empty means all).
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub attributes: Option<Vec<String>>,
+    pub attributes: Option<Vec<AttributeName>>,
     /// Representation format for notification payloads.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub format: Option<ResponseFormat>,
@@ -106,10 +114,10 @@ pub struct NotificationParams {
     pub show_changes: Option<bool>,
     /// Attributes to include (allowlist filter).
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub pick: Option<Vec<String>>,
+    pub pick: Option<Vec<AttributeName>>,
     /// Attributes to exclude (denylist filter).
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub omit: Option<Vec<String>>,
+    pub omit: Option<Vec<AttributeName>>,
     /// Join mode for linked entity retrieval.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub join: Option<JoinMode>,
@@ -117,13 +125,13 @@ pub struct NotificationParams {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub join_level: Option<u32>,
     /// Timestamp of the last notification sent.
-    #[serde(skip_serializing_if = "Option::is_none", with = "serde_helpers::rfc3339_option", default)]
+    #[serde(skip_serializing_if = "Option::is_none", with = "rfc3339::optional_datetime", default)]
     pub last_notification: Option<DateTime<Utc>>,
     /// Timestamp of the last successful notification delivery.
-    #[serde(skip_serializing_if = "Option::is_none", with = "serde_helpers::rfc3339_option", default)]
+    #[serde(skip_serializing_if = "Option::is_none", with = "rfc3339::optional_datetime", default)]
     pub last_success: Option<DateTime<Utc>>,
     /// Timestamp of the last failed notification delivery.
-    #[serde(skip_serializing_if = "Option::is_none", with = "serde_helpers::rfc3339_option", default)]
+    #[serde(skip_serializing_if = "Option::is_none", with = "rfc3339::optional_datetime", default)]
     pub last_failure: Option<DateTime<Utc>>,
     /// Total number of notification delivery attempts.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -131,10 +139,6 @@ pub struct NotificationParams {
     /// Status of the last notification delivery attempt.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub status: Option<NotificationStatus>,
-}
-
-fn default_subscription_type() -> String {
-    "Subscription".to_string()
 }
 
 /// NGSI-LD Subscription (ETSI GS CIM 009 clause 5.2.12).
@@ -146,11 +150,11 @@ fn default_subscription_type() -> String {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Subscription {
-    /// Subscription identifier.
-    pub id: String,
-    /// JSON-LD type (always "Subscription").
-    #[serde(rename = "type", default = "default_subscription_type")]
-    pub type_: String,
+    /// Subscription identifier (clause 5.2.12: a URI, not necessarily an NGSI-LD URN).
+    pub id: Uri,
+    /// JSON-LD type (always `Subscription`).
+    #[serde(rename = "type", default)]
+    pub type_: SubscriptionType,
     /// Human-readable subscription name.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub subscription_name: Option<String>,
@@ -162,35 +166,41 @@ pub struct Subscription {
     pub entities: Option<Vec<EntitySelector>>,
     /// Attribute names to watch for changes.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub watched_attributes: Option<Vec<String>>,
+    pub watched_attributes: Option<Vec<AttributeName>>,
     /// Conditions that trigger a notification.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub notification_trigger: Option<Vec<NotificationTrigger>>,
     /// Periodic notification interval in seconds (alternative to watched attributes).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub time_interval: Option<f64>,
-    /// NGSI-LD query expression to filter matching entities.
+    /// NGSI-LD query expression to filter matching entities (clause 4.9).
+    ///
+    /// Held as written rather than as a parsed AST: the `q` grammar's parser
+    /// lives above this crate, in the broker's query layer, so typing this
+    /// member means moving that parser below the domain first.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub q: Option<String>,
     /// Geo-spatial query expression (clause 5.2.13).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub geo_q: Option<Value>,
-    /// Scope query expression.
+    /// Scope query expression (clause 4.18). Held as written, for the same
+    /// reason as `q`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub scope_q: Option<String>,
-    /// Context source filter expression.
+    /// Context source filter expression (clause 4.13). Held as written, for the
+    /// same reason as `q`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub csf: Option<String>,
     /// Dataset ids to subscribe to.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub dataset_id: Option<Vec<String>>,
+    pub dataset_id: Option<Vec<Urn>>,
     /// Whether the subscription is currently active.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub is_active: Option<bool>,
     /// Notification delivery configuration.
     pub notification: NotificationParams,
     /// Expiration timestamp after which the subscription becomes inactive.
-    #[serde(skip_serializing_if = "Option::is_none", with = "serde_helpers::rfc3339_option", default)]
+    #[serde(skip_serializing_if = "Option::is_none", with = "rfc3339::optional_datetime", default)]
     pub expires_at: Option<DateTime<Utc>>,
     /// Minimum interval in seconds between consecutive notifications (clause 5.2.12).
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -200,20 +210,20 @@ pub struct Subscription {
     pub temporal_q: Option<Value>,
     /// Preferred language for multi-language properties.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub lang: Option<String>,
+    pub lang: Option<LangTagBuf>,
     /// JSON-LD context for term expansion.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub jsonld_context: Option<String>,
+    pub jsonld_context: Option<Url>,
     /// Whether to restrict matching to local entities only (clause 5.5.13).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub local_only: Option<bool>,
     /// Current lifecycle status of the subscription.
     pub status: SubscriptionStatus,
     /// Timestamp when the subscription was created.
-    #[serde(with = "serde_helpers::rfc3339")]
+    #[serde(with = "rfc3339::datetime")]
     pub created_at: DateTime<Utc>,
     /// Timestamp when the subscription was last modified.
-    #[serde(with = "serde_helpers::rfc3339")]
+    #[serde(with = "rfc3339::datetime")]
     pub modified_at: DateTime<Utc>,
 }
 

@@ -1,8 +1,12 @@
-use crate::uri::Uri;
+//! Tenant identifiers and the tenant listing the broker exposes (ETSI GS CIM 009 clause 6.3.14).
+
+use crate::{constant_string, uri::Uri};
 use derive_more::Display;
 use serde::{Deserialize, Serialize};
 use static_regular_grammar::RegularGrammar;
 use std::str::FromStr;
+
+constant_string!(TenantListType, "TenantList");
 
 /// Tenant list response for `GET /ngsi-ld/v1/tenants`.
 ///
@@ -18,15 +22,6 @@ pub struct TenantList {
     pub type_: TenantListType,
     /// Named tenants known to the broker, sorted ascending.
     pub tenant_list: Vec<TenantName>,
-}
-
-/// Type discriminator for [`TenantList`].
-#[derive(Debug, Clone, Serialize, Deserialize, strum::Display, strum::EnumString)]
-pub enum TenantListType {
-    /// `TenantList`.
-    #[serde(rename = "TenantList")]
-    #[strum(serialize = "TenantList")]
-    TenantList,
 }
 
 /// Maximum tenant identifier length. NGSI-LD v1.9.1 clause 6.3.14 does not

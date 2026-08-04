@@ -163,7 +163,8 @@ impl SpatialSyncWorker {
         self.index.remove(urn);
 
         let candidate_iris: Vec<String> = {
-            let mut v: Vec<String> = event.changed_attributes.clone();
+            // clone: the index keys by owned IRI strings and the event is borrowed
+            let mut v: Vec<String> = event.changed_attributes.iter().map(ToString::to_string).collect();
             let location = vocab::expanded::properties::LOCATION.as_str().to_string();
             if !v.contains(&location) {
                 v.push(location);
@@ -265,8 +266,8 @@ fn parse_geometry(raw: &str) -> Option<Geometry> {
 mod tests {
     #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::*;
-    use crate::{query::compiled::GeoRel, service::spatial::SpatialKey};
-    use andromeda_domain::uri::Uri;
+    use crate::service::spatial::SpatialKey;
+    use andromeda_domain::{geo_rel::GeoRel, uri::Uri};
     use geo::{Coord, LineString, Polygon};
     use iri_rs::iri;
     use serde_json::json;
@@ -299,14 +300,14 @@ mod tests {
     fn create_event(id: &str, lon: f64, lat: f64) -> ChangeEvent {
         let uri: Uri = id.parse().expect("valid URI");
         let payload = entity_payload(id, lon, lat);
-        ChangeEvent::new(uri, vec![TYPE_IRI.to_string()], TriggerReason::EntityCreated)
-            .with_changed_attributes(vec![LOCATION_IRI.to_string()])
+        ChangeEvent::new(uri, vec![TYPE_IRI.parse().expect("valid test type name")], TriggerReason::EntityCreated)
+            .with_changed_attributes(vec![LOCATION_IRI.parse().expect("valid test attribute name")])
             .with_current_payload(Arc::new(payload))
     }
 
     fn delete_event(id: &str) -> ChangeEvent {
         let uri: Uri = id.parse().expect("valid URI");
-        ChangeEvent::new(uri, vec![TYPE_IRI.to_string()], TriggerReason::EntityDeleted)
+        ChangeEvent::new(uri, vec![TYPE_IRI.parse().expect("valid test type name")], TriggerReason::EntityDeleted)
     }
 
     fn world_bbox() -> geo::Geometry<f64> {

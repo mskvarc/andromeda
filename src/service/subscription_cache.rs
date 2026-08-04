@@ -10,7 +10,7 @@ use crate::{
     renderer::SysAttrsInclusion,
     repository::subscription_store::repo::SubscriptionStore,
     service::{
-        compiled_subscription::{CompiledGeoQuery, CompiledGeoRel, CompiledScopePattern, CompiledScopeTerm, CompiledSelector, CompiledSubscription},
+        compiled_subscription::{CompiledGeoQuery, CompiledScopePattern, CompiledScopeTerm, CompiledSelector, CompiledSubscription},
         spatial::{
             SpatialKey,
             subscription_index::{SpatialSubscriptionIndex, SubEntry},
@@ -85,7 +85,7 @@ impl SubscriptionCache {
         for sub in subscriptions {
             if let Some(compiled) = compile_subscription(&sub) {
                 self.index_insert(&compiled);
-                self.inner.insert(sub.id.clone(), Arc::new(compiled));
+                self.inner.insert(sub.id.to_string(), Arc::new(compiled));
             }
         }
         Ok(())
@@ -135,7 +135,7 @@ impl SubscriptionCache {
     pub fn find_matching(&self, event: &ChangeEvent) -> Vec<Arc<CompiledSubscription>> {
         let mut candidate_ids: HashSet<String> = self.untyped.iter().map(|entry| entry.key().clone()).collect();
         for event_type in &event.entity_types {
-            if let Some(entry) = self.by_type.get(event_type) {
+            if let Some(entry) = self.by_type.get(event_type.as_str()) {
                 for id in entry.value() {
                     candidate_ids.insert(id.clone());
                 }
@@ -275,7 +275,10 @@ pub fn compile_subscription(sub: &Subscription) -> Option<CompiledSubscription> 
         |t| t.iter().map(|nt| nt.to_string()).collect(),
     );
 
-    let watched_attrs = sub.watched_attributes.as_ref().map(|attrs| attrs.iter().cloned().collect::<HashSet<String>>()); // clone: owned strings for HashSet
+    let watched_attrs = sub
+        .watched_attributes
+        .as_ref()
+        .map(|attrs| attrs.iter().map(ToString::to_string).collect::<HashSet<String>>());
 
     let compiled_q = sub.q.as_ref().and_then(|q_str| match q::parser::parse(q_str) {
         Ok(expr) => Some(expr),
@@ -302,7 +305,7 @@ pub fn compile_subscription(sub: &Subscription) -> Option<CompiledSubscription> 
     };
 
     Some(CompiledSubscription {
-        id: sub.id.clone(),
+        id: sub.id.to_string(),
         status: sub.status,
         endpoint_uri: sub.notification.endpoint.uri.clone(),
         endpoint_accept: sub.notification.endpoint.accept.clone(),
@@ -321,12 +324,12 @@ pub fn compile_subscription(sub: &Subscription) -> Option<CompiledSubscription> 
             SysAttrsInclusion::Strip
         },
         notification_show_changes: sub.notification.show_changes.unwrap_or(false),
-        jsonld_context: sub.jsonld_context.clone(),
+        jsonld_context: sub.jsonld_context.as_ref().map(ToString::to_string),
         expires_at: sub.expires_at,
         compiled_q,
-        compiled_geo_q: sub.geo_q.as_ref().and_then(|v| compile_geo_q(v, &sub.id)),
+        compiled_geo_q: sub.geo_q.as_ref().and_then(|v| compile_geo_q(v, sub.id.as_ref())),
         compiled_scope_q: sub.scope_q.as_deref().map(compile_scope_q),
-        dataset_id: sub.dataset_id.clone(),
+        dataset_id: sub.dataset_id.as_ref().map(|ids| ids.iter().map(ToString::to_string).collect()),
         notification_join: sub.notification.join.map(|j| j.to_string()),
         notification_join_level: sub.notification.join_level.unwrap_or(1).min(5),
         compiled_csf,
@@ -376,40 +379,13 @@ pub fn compile_geo_q(geo_q: &serde_json::Value, sub_id: &str) -> Option<Compiled
         }
     };
 
-    let georel = compile_geo_rel(georel_str)?;
+    let georel = georel_str.parse().ok()?;
 
     Some(CompiledGeoQuery {
         ref_geometry,
         georel,
         geoproperty_iri,
     })
-}
-
-fn compile_geo_rel(raw: &str) -> Option<CompiledGeoRel> {
-    let parts: Vec<&str> = raw.split(';').collect();
-    let rel = parts.first()?.trim();
-    match rel {
-        "within" => Some(CompiledGeoRel::Within),
-        "contains" => Some(CompiledGeoRel::Contains),
-        "intersects" => Some(CompiledGeoRel::Intersects),
-        "disjoint" => Some(CompiledGeoRel::Disjoint),
-        "equals" => Some(CompiledGeoRel::Equals),
-        "overlaps" => Some(CompiledGeoRel::Overlaps),
-        "near" => {
-            let mut max_distance = None;
-            let mut min_distance = None;
-            for part in &parts[1..] {
-                let part = part.trim();
-                if let Some(val) = part.strip_prefix("maxDistance==") {
-                    max_distance = val.parse().ok();
-                } else if let Some(val) = part.strip_prefix("minDistance==") {
-                    min_distance = val.parse().ok();
-                }
-            }
-            Some(CompiledGeoRel::Near { max_distance, min_distance })
-        }
-        _ => None,
-    }
 }
 
 /// Pre-parse a `scopeQ` string into its disjunctive-normal-form term tree.

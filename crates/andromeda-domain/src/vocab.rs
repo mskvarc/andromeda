@@ -10,8 +10,8 @@
 //!
 //! ```ignore
 //! use crate::vocab;
-//! let iri: iri_rs::Iri<&'static str> = vocab::expanded::properties::CREATED_AT;
-//! let compact_name: &'static str = vocab::compact::properties::CREATED_AT;
+//! let iri: iri_rs::Iri<&'static str> = expanded_properties::CREATED_AT;
+//! let compact_name: &'static str = compact_properties::CREATED_AT;
 //! let prefix: iri_rs::Iri<&'static str> = vocab::prefix::NGSI_LD;
 //! let expanded: Option<&str> = vocab::compact_to_expanded("createdAt");
 //! ```
@@ -23,7 +23,11 @@ jsonld::vocab! {
 #[cfg(test)]
 mod tests {
     #![allow(clippy::expect_used, clippy::unwrap_used)]
-    use super::*;
+    use super::{COMPACT_TO_EXPANDED, EXPANDED_TO_COMPACT, TERM_COUNT, compact_to_expanded, expanded_to_compact, prefix};
+    use crate::vocab::{
+        compact::{classes as compact_classes, properties as compact_properties},
+        expanded::{classes as expanded_classes, properties as expanded_properties},
+    };
     use iri_rs::Iri;
 
     #[test]
@@ -69,30 +73,30 @@ mod tests {
 
     #[test]
     fn known_class_constants_match_iris() {
-        let _: Iri<&'static str> = expanded::classes::PROPERTY;
-        pretty_assertions::assert_eq!(expanded::classes::PROPERTY.as_str(), "https://uri.etsi.org/ngsi-ld/Property");
-        pretty_assertions::assert_eq!(expanded::classes::RELATIONSHIP.as_str(), "https://uri.etsi.org/ngsi-ld/Relationship");
-        pretty_assertions::assert_eq!(expanded::classes::GEO_PROPERTY.as_str(), "https://uri.etsi.org/ngsi-ld/GeoProperty");
-        pretty_assertions::assert_eq!(expanded::classes::DATE_TIME.as_str(), "https://uri.etsi.org/ngsi-ld/DateTime");
+        let _: Iri<&'static str> = expanded_classes::PROPERTY;
+        pretty_assertions::assert_eq!(expanded_classes::PROPERTY.as_str(), "https://uri.etsi.org/ngsi-ld/Property");
+        pretty_assertions::assert_eq!(expanded_classes::RELATIONSHIP.as_str(), "https://uri.etsi.org/ngsi-ld/Relationship");
+        pretty_assertions::assert_eq!(expanded_classes::GEO_PROPERTY.as_str(), "https://uri.etsi.org/ngsi-ld/GeoProperty");
+        pretty_assertions::assert_eq!(expanded_classes::DATE_TIME.as_str(), "https://uri.etsi.org/ngsi-ld/DateTime");
     }
 
     #[test]
     fn known_property_constants_match_iris() {
-        pretty_assertions::assert_eq!(expanded::properties::VALUE.as_str(), "https://uri.etsi.org/ngsi-ld/hasValue");
-        pretty_assertions::assert_eq!(expanded::properties::OBJECT.as_str(), "https://uri.etsi.org/ngsi-ld/hasObject");
-        pretty_assertions::assert_eq!(expanded::properties::LANGUAGE_MAP.as_str(), "https://uri.etsi.org/ngsi-ld/hasLanguageMap");
-        pretty_assertions::assert_eq!(expanded::properties::VOCAB.as_str(), "https://uri.etsi.org/ngsi-ld/hasVocab");
-        pretty_assertions::assert_eq!(expanded::properties::JSON.as_str(), "https://uri.etsi.org/ngsi-ld/hasJSON");
-        pretty_assertions::assert_eq!(expanded::properties::VALUE_LIST.as_str(), "https://uri.etsi.org/ngsi-ld/hasValueList");
-        pretty_assertions::assert_eq!(expanded::properties::OBJECT_LIST.as_str(), "https://uri.etsi.org/ngsi-ld/hasObjectList");
-        pretty_assertions::assert_eq!(expanded::properties::CREATED_AT.as_str(), "https://uri.etsi.org/ngsi-ld/createdAt");
-        pretty_assertions::assert_eq!(expanded::properties::MODIFIED_AT.as_str(), "https://uri.etsi.org/ngsi-ld/modifiedAt");
-        pretty_assertions::assert_eq!(expanded::properties::OBSERVED_AT.as_str(), "https://uri.etsi.org/ngsi-ld/observedAt");
-        pretty_assertions::assert_eq!(expanded::properties::DELETED_AT.as_str(), "https://uri.etsi.org/ngsi-ld/deletedAt");
-        pretty_assertions::assert_eq!(expanded::properties::DATASET_ID.as_str(), "https://uri.etsi.org/ngsi-ld/datasetId");
-        pretty_assertions::assert_eq!(expanded::properties::INSTANCE_ID.as_str(), "https://uri.etsi.org/ngsi-ld/instanceId");
-        pretty_assertions::assert_eq!(expanded::properties::UNIT_CODE.as_str(), "https://uri.etsi.org/ngsi-ld/unitCode");
-        pretty_assertions::assert_eq!(expanded::properties::SCOPE.as_str(), "https://uri.etsi.org/ngsi-ld/scope");
+        pretty_assertions::assert_eq!(expanded_properties::VALUE.as_str(), "https://uri.etsi.org/ngsi-ld/hasValue");
+        pretty_assertions::assert_eq!(expanded_properties::OBJECT.as_str(), "https://uri.etsi.org/ngsi-ld/hasObject");
+        pretty_assertions::assert_eq!(expanded_properties::LANGUAGE_MAP.as_str(), "https://uri.etsi.org/ngsi-ld/hasLanguageMap");
+        pretty_assertions::assert_eq!(expanded_properties::VOCAB.as_str(), "https://uri.etsi.org/ngsi-ld/hasVocab");
+        pretty_assertions::assert_eq!(expanded_properties::JSON.as_str(), "https://uri.etsi.org/ngsi-ld/hasJSON");
+        pretty_assertions::assert_eq!(expanded_properties::VALUE_LIST.as_str(), "https://uri.etsi.org/ngsi-ld/hasValueList");
+        pretty_assertions::assert_eq!(expanded_properties::OBJECT_LIST.as_str(), "https://uri.etsi.org/ngsi-ld/hasObjectList");
+        pretty_assertions::assert_eq!(expanded_properties::CREATED_AT.as_str(), "https://uri.etsi.org/ngsi-ld/createdAt");
+        pretty_assertions::assert_eq!(expanded_properties::MODIFIED_AT.as_str(), "https://uri.etsi.org/ngsi-ld/modifiedAt");
+        pretty_assertions::assert_eq!(expanded_properties::OBSERVED_AT.as_str(), "https://uri.etsi.org/ngsi-ld/observedAt");
+        pretty_assertions::assert_eq!(expanded_properties::DELETED_AT.as_str(), "https://uri.etsi.org/ngsi-ld/deletedAt");
+        pretty_assertions::assert_eq!(expanded_properties::DATASET_ID.as_str(), "https://uri.etsi.org/ngsi-ld/datasetId");
+        pretty_assertions::assert_eq!(expanded_properties::INSTANCE_ID.as_str(), "https://uri.etsi.org/ngsi-ld/instanceId");
+        pretty_assertions::assert_eq!(expanded_properties::UNIT_CODE.as_str(), "https://uri.etsi.org/ngsi-ld/unitCode");
+        pretty_assertions::assert_eq!(expanded_properties::SCOPE.as_str(), "https://uri.etsi.org/ngsi-ld/scope");
     }
 
     #[test]
@@ -103,34 +107,34 @@ mod tests {
 
     #[test]
     fn external_iri_constants_are_correct() {
-        pretty_assertions::assert_eq!(expanded::properties::NULL_URI.as_str(), "urn:ngsi-ld:null");
-        pretty_assertions::assert_eq!(expanded::properties::NULL_IRI.as_str(), "https://uri.etsi.org/ngsi-ld/null");
-        pretty_assertions::assert_eq!(expanded::properties::XSD_DATETIME.as_str(), "http://www.w3.org/2001/XMLSchema#dateTime");
-        pretty_assertions::assert_eq!(expanded::properties::JSONLD_CONTEXT_REL.as_str(), "http://www.w3.org/ns/json-ld#context");
+        pretty_assertions::assert_eq!(expanded_properties::NULL_URI.as_str(), "urn:ngsi-ld:null");
+        pretty_assertions::assert_eq!(expanded_properties::NULL_IRI.as_str(), "https://uri.etsi.org/ngsi-ld/null");
+        pretty_assertions::assert_eq!(expanded_properties::XSD_DATETIME.as_str(), "http://www.w3.org/2001/XMLSchema#dateTime");
+        pretty_assertions::assert_eq!(expanded_properties::JSONLD_CONTEXT_REL.as_str(), "http://www.w3.org/ns/json-ld#context");
     }
 
     #[test]
     fn nested_core_context_terms_are_available() {
-        pretty_assertions::assert_eq!(expanded::properties::ENTITY_ID_SEALED.as_str(), "https://uri.etsi.org/ngsi-ld/entityIdSealed");
+        pretty_assertions::assert_eq!(expanded_properties::ENTITY_ID_SEALED.as_str(), "https://uri.etsi.org/ngsi-ld/entityIdSealed");
         pretty_assertions::assert_eq!(
-            expanded::properties::ENTITY_TYPE_SEALED.as_str(),
+            expanded_properties::ENTITY_TYPE_SEALED.as_str(),
             "https://uri.etsi.org/ngsi-ld/entityTypeSealed"
         );
     }
 
     #[test]
     fn geojson_terms_resolve_to_purl_vocab() {
-        assert!(expanded::properties::COORDINATES.as_str().starts_with(prefix::GEOJSON.as_str()));
-        assert!(expanded::properties::BBOX.as_str().starts_with(prefix::GEOJSON.as_str()));
-        assert!(expanded::properties::GEOMETRY.as_str().starts_with(prefix::GEOJSON.as_str()));
-        assert!(expanded::properties::FEATURES.as_str().starts_with(prefix::GEOJSON.as_str()));
+        assert!(expanded_properties::COORDINATES.as_str().starts_with(prefix::GEOJSON.as_str()));
+        assert!(expanded_properties::BBOX.as_str().starts_with(prefix::GEOJSON.as_str()));
+        assert!(expanded_properties::GEOMETRY.as_str().starts_with(prefix::GEOJSON.as_str()));
+        assert!(expanded_properties::FEATURES.as_str().starts_with(prefix::GEOJSON.as_str()));
     }
 
     #[test]
     fn compact_module_constants_are_correct() {
-        pretty_assertions::assert_eq!(compact::classes::PROPERTY, "Property");
-        pretty_assertions::assert_eq!(compact::classes::RELATIONSHIP, "Relationship");
-        pretty_assertions::assert_eq!(compact::properties::CREATED_AT, "createdAt");
-        pretty_assertions::assert_eq!(compact::classes::GEO_PROPERTY, "GeoProperty");
+        pretty_assertions::assert_eq!(compact_classes::PROPERTY, "Property");
+        pretty_assertions::assert_eq!(compact_classes::RELATIONSHIP, "Relationship");
+        pretty_assertions::assert_eq!(compact_properties::CREATED_AT, "createdAt");
+        pretty_assertions::assert_eq!(compact_classes::GEO_PROPERTY, "GeoProperty");
     }
 }

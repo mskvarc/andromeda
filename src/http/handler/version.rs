@@ -19,7 +19,7 @@ pub async fn check(Extension(version): Extension<Version>) -> Result<impl IntoRe
 
     let response = VersionResponse {
         id: Uri::Urn(id),
-        type_: VersionType::VersionInfo,
+        type_: VersionType,
         version_info,
     };
 

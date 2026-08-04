@@ -4,7 +4,7 @@ use crate::{
     core::error::AndromedaError,
     repository::geometry::{Ewkb, encode_optional},
 };
-use andromeda_domain::geometry::Geometry;
+use andromeda_domain::{entity_type::EntityTypeName, geometry::Geometry};
 use chrono::{DateTime, Utc};
 use serde_json::Value;
 
@@ -16,8 +16,8 @@ pub struct EntitySaveParams<'a> {
     pub id: &'a str,
     /// Full expanded JSON-LD payload (persisted as JSONB).
     pub payload: &'a Value,
-    /// Extracted type IRIs.
-    pub types: Vec<String>,
+    /// Extracted type names.
+    pub types: Vec<EntityTypeName>,
     /// Extracted scope paths in ltree dot notation.
     pub scope_paths: Vec<String>,
     /// Hoisted `location` GeoProperty geometry, if present.

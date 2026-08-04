@@ -6,20 +6,29 @@ use crate::{
         EntityService,
         extract::build_save_params,
         extract_attribute_keys,
-        extract_entity_types,
         normalize_entity_attributes,
         unwrap_expanded_ref,
         validate_attribute_envelopes,
     },
 };
 use andromeda_domain::{
-    expanded::{DatasetSelection, ExpandedEntityError, OverwritePolicy, removed_attribute_instances},
+    attribute::name::AttributeName,
+    expanded::{
+        entity_member::extract_types,
+        instance_key::removed_attribute_instances,
+        mutation::{
+            attribute::{delete_attr, partial_update_attr, replace_attr},
+            entity::{append_entity_attrs, update_entity_attrs},
+            error::ExpandedEntityError,
+            selection::{DatasetSelection, OverwritePolicy},
+        },
+    },
     notification::{ChangeEvent, TriggerReason},
     uri::Uri,
     vocab,
 };
 use serde_json::Value;
-use std::sync::Arc;
+use std::{collections::HashSet, sync::Arc};
 use urn_rs::Urn;
 
 // Lives here rather than beside `AndromedaError` because the domain crate must
@@ -57,7 +66,7 @@ impl EntityService {
         mut fragment: Value,
         overwrite: OverwritePolicy,
         context: &ContextSpec,
-    ) -> Result<(Vec<String>, Vec<String>), AndromedaError> {
+    ) -> Result<(Vec<AttributeName>, Vec<String>), AndromedaError> {
         let entity_uri = Uri::from(id.clone()); // clone: owned Urn for Uri conversion; id is &Urn
         let id = id.to_string();
 
@@ -68,14 +77,14 @@ impl EntityService {
 
         // Load existing entity, apply append, save back
         let mut existing = self.repo.get(&id).await?.ok_or_else(|| AndromedaError::entity_not_found(&id))?;
-        let not_appended = andromeda_domain::expanded::append_entity_attrs(&mut existing, attrs, overwrite)?;
+        let not_appended = append_entity_attrs(&mut existing, attrs, overwrite)?;
 
         let mut uow = self.uow.begin().await?;
         uow.save_entity(build_save_params(&id, &existing)).await?;
         uow.record_entity_attributes(&id, &expanded).await?;
         uow.commit().await?;
 
-        let entity_types = extract_entity_types(&existing);
+        let entity_types = extract_types(&existing);
         let all_attr_keys = extract_attribute_keys(&expanded);
         let payload_arc = Arc::new(existing);
         self.emit_change(
@@ -104,25 +113,25 @@ impl EntityService {
         // Single fetch: used for deletion detection, showChanges, and update
         let mut existing = self.repo.get(&id).await?.ok_or_else(|| AndromedaError::entity_not_found(&id))?;
         let previous_attributes = self.change_tx.as_ref().map(|_| existing.clone()); // clone: snapshot before mutation for showChanges diff
-        let attrs_before: std::collections::HashSet<String> = extract_attribute_keys(&existing).into_iter().collect();
-        let not_updated = andromeda_domain::expanded::update_entity_attrs(&mut existing, attrs)?;
+        let attrs_before: HashSet<AttributeName> = extract_attribute_keys(&existing).into_iter().collect();
+        let not_updated = update_entity_attrs(&mut existing, attrs)?;
 
         // Detect which attributes were deleted by the update
-        let attrs_after: std::collections::HashSet<String> = extract_attribute_keys(&existing).into_iter().collect();
-        let deleted_attrs: Vec<String> = attrs_before.difference(&attrs_after).cloned().collect(); // clone: owned strings from set difference
+        let attrs_after: HashSet<AttributeName> = extract_attribute_keys(&existing).into_iter().collect();
+        let deleted_attrs: Vec<AttributeName> = attrs_before.difference(&attrs_after).cloned().collect(); // clone: owned names from set difference
 
         let mut uow = self.uow.begin().await?;
         uow.save_entity(build_save_params(&id, &existing)).await?;
         uow.record_entity_attributes(&id, &expanded).await?;
         for deleted_attr in &deleted_attrs {
-            uow.record_attribute_deletion(&id, deleted_attr, None).await?;
+            uow.record_attribute_deletion(&id, deleted_attr.as_str(), None).await?;
         }
         uow.commit().await?;
 
         let entity_types = self.fetch_entity_types(&id).await;
         let all_changed = extract_attribute_keys(&expanded);
-        let created_attrs: Vec<String> = all_changed.iter().filter(|a| !attrs_before.contains(a.as_str())).cloned().collect(); // clone: owned strings from filtered references
-        let updated_attrs: Vec<String> = all_changed.iter().filter(|a| attrs_before.contains(a.as_str())).cloned().collect(); // clone: owned strings from filtered references
+        let created_attrs: Vec<AttributeName> = all_changed.iter().filter(|a| !attrs_before.contains(a.as_str())).cloned().collect(); // clone: owned names from filtered references
+        let updated_attrs: Vec<AttributeName> = all_changed.iter().filter(|a| attrs_before.contains(a.as_str())).cloned().collect(); // clone: owned names from filtered references
         let payload_arc = Arc::new(existing);
 
         for deleted_attr in &deleted_attrs {
@@ -182,13 +191,13 @@ impl EntityService {
         // Single fetch: used for showChanges, deletion detection, and partial update
         let mut existing = self.repo.get(&id).await?.ok_or_else(|| AndromedaError::entity_not_found(&id))?;
         let previous_attributes = self.change_tx.as_ref().map(|_| existing.clone()); // clone: snapshot before mutation for showChanges diff
-        let attrs_before: std::collections::HashSet<String> = extract_attribute_keys(&existing).into_iter().collect();
+        let attrs_before: HashSet<AttributeName> = extract_attribute_keys(&existing).into_iter().collect();
 
-        andromeda_domain::expanded::partial_update_attr(&mut existing, &attr_iri, dataset_id, attr_value)?;
+        partial_update_attr(&mut existing, &attr_iri, dataset_id, attr_value)?;
 
         // Detect if the attribute was actually deleted (null sentinel)
-        let attrs_after: std::collections::HashSet<String> = extract_attribute_keys(&existing).into_iter().collect();
-        let was_deleted = attrs_before.contains(&attr_iri) && !attrs_after.contains(&attr_iri);
+        let attrs_after: HashSet<AttributeName> = extract_attribute_keys(&existing).into_iter().collect();
+        let was_deleted = attrs_before.contains(attr_iri.as_str()) && !attrs_after.contains(attr_iri.as_str());
 
         let mut uow = self.uow.begin().await?;
         uow.save_entity(build_save_params(&id, &existing)).await?;
@@ -207,7 +216,14 @@ impl EntityService {
 
         let entity_types = self.fetch_entity_types(&id).await;
         let payload_arc = Arc::new(existing);
-        self.emit_attr_change(entity_uri, entity_types, trigger, vec![attr_iri], previous_attributes, Some(payload_arc));
+        self.emit_attr_change(
+            entity_uri,
+            entity_types,
+            trigger,
+            vec![attr_name_of(&attr_iri)?],
+            previous_attributes,
+            Some(payload_arc),
+        );
 
         Ok(())
     }
@@ -236,7 +252,7 @@ impl EntityService {
             DatasetSelection::Default => vec![None],
         };
 
-        andromeda_domain::expanded::delete_attr(&mut existing, &attr_iri, selection)?;
+        delete_attr(&mut existing, &attr_iri, selection)?;
 
         let mut uow = self.uow.begin().await?;
         uow.save_entity(build_save_params(&id, &existing)).await?;
@@ -251,7 +267,7 @@ impl EntityService {
             entity_uri,
             entity_types,
             TriggerReason::AttributeDeleted,
-            vec![attr_iri],
+            vec![attr_name_of(&attr_iri)?],
             previous_attributes,
             Some(payload_arc),
         );
@@ -288,7 +304,7 @@ impl EntityService {
         // Single fetch: used for showChanges and replacement
         let mut existing = self.repo.get(&id).await?.ok_or_else(|| AndromedaError::entity_not_found(&id))?;
         let previous_attributes = self.change_tx.as_ref().map(|_| existing.clone()); // clone: snapshot before mutation for showChanges diff
-        andromeda_domain::expanded::replace_attr(&mut existing, &attr_iri, dataset_id, attr_value)?;
+        replace_attr(&mut existing, &attr_iri, dataset_id, attr_value)?;
 
         let mut uow = self.uow.begin().await?;
         uow.save_entity(build_save_params(&id, &existing)).await?;
@@ -301,7 +317,7 @@ impl EntityService {
             entity_uri,
             entity_types,
             TriggerReason::AttributeUpdated,
-            vec![attr_iri],
+            vec![attr_name_of(&attr_iri)?],
             previous_attributes,
             Some(payload_arc),
         );
@@ -381,4 +397,15 @@ impl EntityService {
 
         Ok(modified_count)
     }
+}
+
+/// Parse an expanded attribute IRI into the domain's attribute-name type.
+///
+/// The IRI comes straight out of JSON-LD term expansion, so a value that fails
+/// the NGSI-LD name grammar means the caller asked for something that cannot
+/// name an attribute at all.
+fn attr_name_of(attr_iri: &str) -> Result<AttributeName, AndromedaError> {
+    attr_iri
+        .parse()
+        .map_err(|err| AndromedaError::entity_validation(format!("Invalid attribute name '{attr_iri}': {err}")))
 }

@@ -6,14 +6,35 @@
 //! storage encoding appears here: PostGIS EWKB is a persistence concern and
 //! lives with the store, in the broker's repository layer.
 
-use crate::attribute::serde_json_value_to_json_value;
+use crate::attribute::expansion::serde_json_value_to_json_value;
 use derive_more::{AsRef, From};
 use geo::algorithm::BoundingRect;
 use geojson::{Geometry as GeoJsonGeometry, GeometryValue};
 use jsonld_expandable_core::{JsonValue, ToJsonValue};
 use serde::{Deserialize, Serialize, Serializer};
 use serde_json::Value;
+use strum::{Display, EnumString};
 use thiserror::Error;
+
+/// The `type` member of a GeoJSON geometry object (IETF RFC 7946 section 1.4).
+///
+/// The variant names are the RFC's tokens verbatim, which is also the casing
+/// NGSI-LD carries them in (clause 4.7); no serde renaming applies.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Display, EnumString)]
+pub enum GeometryType {
+    /// A single position.
+    Point,
+    /// An array of positions.
+    MultiPoint,
+    /// An array of two or more positions.
+    LineString,
+    /// An array of LineString coordinate arrays.
+    MultiLineString,
+    /// An array of linear ring coordinate arrays.
+    Polygon,
+    /// An array of Polygon coordinate arrays.
+    MultiPolygon,
+}
 
 /// Errors produced by [`Geometry`] conversions.
 #[derive(Debug, Error)]
@@ -57,6 +78,7 @@ impl Geometry {
     /// geometry object, or [`GeometryError::Geojson`] if it is one that `geo`
     /// cannot represent.
     pub fn from_geojson_value(value: &Value) -> Result<Geometry, GeometryError> {
+        // clone: `serde_json::from_value` consumes the value it decodes
         let geometry: GeoJsonGeometry = serde_json::from_value(value.clone())?;
         Geometry::from_geojson(&geometry)
     }
@@ -180,6 +202,7 @@ mod tests {
     #[test]
     fn a_geo_geometry_converts_in_and_out_without_a_named_constructor() {
         let source = geo::Geometry::Point(geo::Point::new(1.5, 2.5));
+        // clone: the source geometry is compared against the converted one below
         let geometry = Geometry::from(source.clone());
         pretty_assertions::assert_eq!(AsRef::<geo::Geometry<f64>>::as_ref(&geometry), &source);
     }

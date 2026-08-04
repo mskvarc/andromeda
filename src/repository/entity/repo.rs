@@ -296,7 +296,8 @@ impl EntityRepository {
         )
         .bind(params.id)
         .bind(params.payload)
-        .bind(&params.types)
+        // The column is `text[]`; the domain name type is not an sqlx `Encode`, so it is rendered here at the persistence boundary.
+        .bind(params.types.iter().map(ToString::to_string).collect::<Vec<_>>())
         .bind(&params.scope_paths)
         .bind(encode_optional(params.location.as_ref())?)
         .bind(encode_optional(params.observation_space.as_ref())?)

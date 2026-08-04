@@ -17,6 +17,7 @@ use andromeda_domain::{
     registration::ForwardingMode,
     temporal::{TimeProp, TimeRel},
     tenant::TenantName,
+    uri::Uri,
 };
 use chrono::{DateTime, Utc};
 use serde_json::Value;
@@ -307,9 +308,12 @@ impl CsourceRegistrationService {
 
         let params = extract_create_params(&payload)?;
         self.repo.create(&id, &params).await?;
+        let csr_uri: Uri = id
+            .parse()
+            .map_err(|_| AndromedaError::csr_validation("Context source registration id must be a valid URI"))?;
 
         self.emit_csr_change(CsrChangeEvent {
-            csr_id: id.clone(), // clone: id is also returned via Ok(id) below
+            csr_id: csr_uri,
             trigger_reason: CsrTriggerReason::NewlyMatching,
             csr_snapshot: None,
         });
@@ -502,9 +506,12 @@ impl CsourceRegistrationService {
         if updated == 0 {
             return Err(AndromedaError::csr_not_found(id));
         }
+        let csr_uri: Uri = id
+            .parse()
+            .map_err(|_| AndromedaError::csr_validation("Context source registration id must be a valid URI"))?;
 
         self.emit_csr_change(CsrChangeEvent {
-            csr_id: id.to_string(),
+            csr_id: csr_uri,
             trigger_reason: CsrTriggerReason::Updated,
             csr_snapshot: pre_update_snapshot,
         });
@@ -526,9 +533,12 @@ impl CsourceRegistrationService {
         if deleted == 0 {
             return Err(AndromedaError::csr_not_found(id));
         }
+        let csr_uri: Uri = id
+            .parse()
+            .map_err(|_| AndromedaError::csr_validation("Context source registration id must be a valid URI"))?;
 
         self.emit_csr_change(CsrChangeEvent {
-            csr_id: id.to_string(),
+            csr_id: csr_uri,
             trigger_reason: CsrTriggerReason::NoLongerMatching,
             csr_snapshot: snapshot,
         });

@@ -112,7 +112,7 @@ impl CsrNotificationWorker {
         self.cache.clear();
         for sub in subscriptions {
             if let Some(compiled) = compile_csr_subscription(&sub) {
-                self.cache.insert(sub.id.clone(), Arc::new(compiled));
+                self.cache.insert(sub.id.to_string(), Arc::new(compiled));
             }
         }
         Ok(())
@@ -237,7 +237,7 @@ impl CsrNotificationWorker {
             subscription_id: sub_uri,
             notified_at: Utc::now(),
             data: matching_csrs,
-            trigger_reason: Some("newlyMatching".to_string()),
+            trigger_reason: Some(CsrTriggerReason::NewlyMatching),
         };
 
         let payload = match serde_json::to_value(&notification) {
@@ -292,7 +292,7 @@ impl CsrNotificationWorker {
         // Fetch the CSR data (use snapshot for deletes)
         let csr_data = match event.trigger_reason {
             CsrTriggerReason::NoLongerMatching => event.csr_snapshot.clone(),
-            _ => match self.csr_repo.get(&event.csr_id).await {
+            _ => match self.csr_repo.get(event.csr_id.as_ref()).await {
                 Ok(Some(csr)) => serde_json::to_value(&csr).ok(),
                 Ok(None) => {
                     debug!("CSR {} no longer exists, skipping notification", event.csr_id);
@@ -316,11 +316,10 @@ impl CsrNotificationWorker {
             return;
         }
 
-        let trigger_reason = event.trigger_reason.to_string();
+        let trigger_reason = event.trigger_reason;
         let _results: Vec<()> = stream::iter(matching)
             .map(|compiled_sub| {
                 let csr_data = csr_data.clone();
-                let trigger_reason = trigger_reason.clone();
                 async move {
                     let sub_id = compiled_sub.id.clone();
 
@@ -360,7 +359,7 @@ impl CsrNotificationWorker {
                         subscription_id: sub_uri,
                         notified_at: Utc::now(),
                         data: vec![filtered_csr],
-                        trigger_reason: Some(trigger_reason.clone()),
+                        trigger_reason: Some(trigger_reason),
                     };
 
                     let payload = match serde_json::to_value(&notification) {
@@ -410,7 +409,7 @@ impl CsrNotificationWorker {
     /// to subscriptions that matched the old CSR but not the new one.
     async fn handle_csr_update_with_snapshot(&self, event: &CsrChangeEvent, pre_update: &Value) {
         // Fetch post-update CSR from DB
-        let post_update = match self.csr_repo.get(&event.csr_id).await {
+        let post_update = match self.csr_repo.get(event.csr_id.as_ref()).await {
             Ok(Some(csr)) => match serde_json::to_value(&csr) {
                 Ok(v) => v,
                 Err(_) => return,
@@ -434,7 +433,7 @@ impl CsrNotificationWorker {
             .map(|sub| {
                 let post_update = post_update.clone();
                 async move {
-                    self.send_csr_notification(&sub, &post_update, "updated").await;
+                    self.send_csr_notification(&sub, &post_update, CsrTriggerReason::Updated).await;
                 }
             })
             .buffer_unordered(CSR_NOTIFICATION_CONCURRENCY)
@@ -446,7 +445,7 @@ impl CsrNotificationWorker {
             matched_before.iter().filter(|sub| !after_ids.contains(sub.id.as_str())).cloned().collect();
         let _no_longer_matching: Vec<()> = stream::iter(no_longer_matching_subs)
             .map(|sub| async move {
-                self.send_csr_notification(&sub, pre_update, "noLongerMatching").await;
+                self.send_csr_notification(&sub, pre_update, CsrTriggerReason::NoLongerMatching).await;
             })
             .buffer_unordered(CSR_NOTIFICATION_CONCURRENCY)
             .collect()
@@ -459,7 +458,7 @@ impl CsrNotificationWorker {
             .map(|sub| {
                 let post_update = post_update.clone();
                 async move {
-                    self.send_csr_notification(&sub, &post_update, "newlyMatching").await;
+                    self.send_csr_notification(&sub, &post_update, CsrTriggerReason::NewlyMatching).await;
                 }
             })
             .buffer_unordered(CSR_NOTIFICATION_CONCURRENCY)
@@ -467,7 +466,7 @@ impl CsrNotificationWorker {
             .await;
     }
 
-    async fn send_csr_notification(&self, compiled_sub: &CompiledCsrSubscription, csr_data: &Value, trigger_reason: &str) {
+    async fn send_csr_notification(&self, compiled_sub: &CompiledCsrSubscription, csr_data: &Value, trigger_reason: CsrTriggerReason) {
         let sub_id = &compiled_sub.id;
 
         match self
@@ -505,7 +504,7 @@ impl CsrNotificationWorker {
             subscription_id: sub_uri,
             notified_at: Utc::now(),
             data: vec![filtered_csr],
-            trigger_reason: Some(trigger_reason.to_string()),
+            trigger_reason: Some(trigger_reason),
         };
 
         let payload = match serde_json::to_value(&notification) {
@@ -574,7 +573,10 @@ fn compile_csr_subscription(sub: &Subscription) -> Option<CompiledCsrSubscriptio
         })
         .unwrap_or_default();
 
-    let watched_attrs = sub.watched_attributes.as_ref().map(|attrs| attrs.iter().cloned().collect::<HashSet<String>>());
+    let watched_attrs = sub
+        .watched_attributes
+        .as_ref()
+        .map(|attrs| attrs.iter().map(ToString::to_string).collect::<HashSet<String>>());
 
     let endpoint_transport = match parse_endpoint_transport(&sub.notification.endpoint.uri, sub.notification.endpoint.notifier_info.as_deref()) {
         Ok(t) => t,
@@ -593,7 +595,7 @@ fn compile_csr_subscription(sub: &Subscription) -> Option<CompiledCsrSubscriptio
     });
 
     Some(CompiledCsrSubscription {
-        id: sub.id.clone(),
+        id: sub.id.to_string(),
         status: sub.status,
         endpoint_uri: sub.notification.endpoint.uri.clone(),
         endpoint_accept: sub.notification.endpoint.accept.clone(),
@@ -603,7 +605,7 @@ fn compile_csr_subscription(sub: &Subscription) -> Option<CompiledCsrSubscriptio
         watched_attrs,
         throttling_secs: sub.throttling,
         time_interval_secs: sub.time_interval,
-        jsonld_context: sub.jsonld_context.clone(),
+        jsonld_context: sub.jsonld_context.as_ref().map(ToString::to_string),
         expires_at: sub.expires_at,
         compiled_csf,
     })

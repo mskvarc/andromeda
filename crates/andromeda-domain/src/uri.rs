@@ -1,5 +1,8 @@
+//! The identifier type every NGSI-LD resource is named by (ETSI GS CIM 009 clause 4.6.2).
+
 use derive_more::{Display, From};
 use serde::{Deserialize, Serialize};
+use std::str::FromStr;
 use thiserror::Error;
 use url::Url;
 use urn_rs::Urn;
@@ -36,7 +39,7 @@ impl AsRef<str> for Uri {
     }
 }
 
-impl std::str::FromStr for Uri {
+impl FromStr for Uri {
     type Err = UriParseError;
 
     fn from_str(s: &str) -> Result<Uri, UriParseError> {

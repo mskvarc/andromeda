@@ -1,8 +1,9 @@
 use crate::{
     core::error::AndromedaError,
     jsonld::{ContextSpec, JsonLdEngine},
-    query::compiled::{GeoQuery, GeoRel},
+    query::{compiled::GeoQuery, error::QueryError},
 };
+use andromeda_domain::geo_rel::GeoRel;
 
 /// Compile geo query parameters into a [`GeoQuery`].
 ///
@@ -33,7 +34,7 @@ pub async fn compile_geo_query(
         serde_json::from_str(coordinates_str).map_err(|e| AndromedaError::query_validation(format!("Invalid coordinates JSON: {}", e)))?;
 
     Ok(Some(GeoQuery {
-        georel: GeoRel::parse(georel_str)?,
+        georel: georel_str.parse::<GeoRel>().map_err(QueryError::from)?,
         geometry: geometry_str.to_string(),
         coordinates: coordinates_value,
         geoproperty_iri,

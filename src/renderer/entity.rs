@@ -11,9 +11,14 @@ use crate::{
     renderer::Renderer,
 };
 use andromeda_domain::{
-    attribute::{Attribute, AttributeValue, LanguageMapKey, LanguageMapValue, LanguageProperty},
+    attribute::{
+        Attribute,
+        AttributeValue,
+        language_property::{LanguageMapKey, LanguageMapValue, LanguageProperty},
+        name::AttributeName,
+    },
     entity::Entity,
-    serde_helpers,
+    rfc3339,
 };
 use chrono::{DateTime, SecondsFormat, Utc};
 use indexmap::IndexMap;
@@ -147,7 +152,7 @@ impl<'a> Renderer for EntityRenderer<'a> {
             }
 
             for (key, attr) in &self.entity.attrs {
-                map.insert(key.clone(), render_attribute_value(attr, self.language_filter)?);
+                map.insert(key.to_string(), render_attribute_value(attr, self.language_filter)?);
             }
 
             Value::Object(map)
@@ -300,12 +305,12 @@ struct NegotiatedProperty<'a> {
     type_: &'static str,
     value: &'a LanguageMapValue,
     lang: String,
-    #[serde(skip_serializing_if = "Option::is_none", with = "serde_helpers::rfc3339_option", default)]
+    #[serde(skip_serializing_if = "Option::is_none", with = "rfc3339::optional_datetime", default)]
     observed_at: Option<DateTime<Utc>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     dataset_id: &'a Option<Urn>,
     #[serde(flatten)]
-    sub_attributes: &'a IndexMap<String, AttributeValue>,
+    sub_attributes: &'a IndexMap<AttributeName, AttributeValue>,
 }
 
 impl<'a> NegotiatedProperty<'a> {
@@ -319,7 +324,7 @@ impl<'a> NegotiatedProperty<'a> {
             },
             observed_at: language_property.common.observed_at,
             dataset_id: &language_property.common.dataset_id,
-            sub_attributes: &language_property.sub_attributes,
+            sub_attributes: &language_property.common.sub_attributes,
         }
     }
 }

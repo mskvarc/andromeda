@@ -8,7 +8,7 @@
 //! notification will go out over -- all concerns above the data model.
 
 use crate::{query::q::ast::Expr, renderer::SysAttrsInclusion, transport::endpoint::EndpointTransport};
-use andromeda_domain::subscription::SubscriptionStatus;
+use andromeda_domain::{attribute::name::AttributeName, geo_rel::GeoRel, subscription::SubscriptionStatus};
 use chrono::{DateTime, Utc};
 use regex::Regex;
 use serde_json::Value;
@@ -55,7 +55,7 @@ pub struct CompiledSubscription {
     pub selectors: Vec<CompiledSelector>,
     pub throttling_secs: Option<f64>,
     pub time_interval_secs: Option<f64>,
-    pub notification_attributes: Option<Vec<String>>,
+    pub notification_attributes: Option<Vec<AttributeName>>,
     pub notification_format: Option<String>,
     pub notification_sys_attrs: SysAttrsInclusion,
     pub notification_show_changes: bool,
@@ -88,21 +88,9 @@ pub struct CompiledGeoQuery {
     /// Reference geometry the entity geometry is compared against. Authoritative decoded form.
     pub ref_geometry: geo::Geometry,
     /// Parsed georel operator + distance modifiers.
-    pub georel: CompiledGeoRel,
+    pub georel: GeoRel,
     /// Expanded IRI of the entity geoproperty to read.
     pub geoproperty_iri: String,
-}
-
-/// Parsed `georel` value including `near` distance modifiers.
-#[derive(Debug, Clone, PartialEq)]
-pub enum CompiledGeoRel {
-    Within,
-    Contains,
-    Intersects,
-    Disjoint,
-    Equals,
-    Overlaps,
-    Near { max_distance: Option<f64>, min_distance: Option<f64> },
 }
 
 /// Pre-parsed `scopeQ` pattern (ETSI GS CIM 009 clause 4.18).

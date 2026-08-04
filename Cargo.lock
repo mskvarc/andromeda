@@ -168,6 +168,7 @@ dependencies = [
  "jsonld",
  "jsonld-expandable-core",
  "langtag",
+ "mediatype",
  "pretty_assertions",
  "regex",
  "serde",
@@ -2968,6 +2969,9 @@ name = "mediatype"
 version = "0.23.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0695a693e38d35838dd34bc3ab19911395f6837ccf55c7271189cfb12cb8b57f"
+dependencies = [
+ "serde",
+]
 
 [[package]]
 name = "memchr"

@@ -520,7 +520,12 @@ pub fn merge_update_fields(
             .get("watchedAttributes")
             .map(|v| serde_json::from_value(v.clone()).map_err(|e| AndromedaError::subscription_validation(format!("Invalid 'watchedAttributes': {}", e)))) // clone: serde_json::from_value consumes the Value
             .transpose()?
-            .or_else(|| existing.watched_attributes.clone()), // clone: fallback to existing owned value
+            .or_else(|| {
+                existing
+                    .watched_attributes
+                    .as_ref()
+                    .map(|names| names.iter().map(ToString::to_string).collect())
+            }),
         notification_trigger: payload
             .get("notificationTrigger")
             .map(|v| {
@@ -543,7 +548,7 @@ pub fn merge_update_fields(
                 .get("datasetId")
                 .map(|v| serde_json::from_value(v.clone()).map_err(|e| AndromedaError::subscription_validation(format!("Invalid 'datasetId': {}", e)))) // clone: serde_json::from_value consumes the Value
                 .transpose()?
-                .or_else(|| existing.dataset_id.clone()) // clone: fallback to existing owned value
+                .or_else(|| existing.dataset_id.as_ref().map(|ids| ids.iter().map(ToString::to_string).collect()))
         } else {
             None
         },
@@ -573,12 +578,16 @@ pub fn merge_update_fields(
             .cloned() // clone: need owned Value from borrowed payload
             .or_else(|| existing.temporal_q.clone()) // clone: fallback to existing owned value
             .filter(|v| !v.is_null()),
-        lang: payload.get("lang").and_then(|v| v.as_str()).map(String::from).or_else(|| existing.lang.clone()), // clone: fallback to existing owned value
+        lang: payload
+            .get("lang")
+            .and_then(|v| v.as_str())
+            .map(String::from)
+            .or_else(|| existing.lang.as_ref().map(ToString::to_string)),
         jsonld_context: payload
             .get("jsonldContext")
             .and_then(|v| v.as_str())
             .map(String::from)
-            .or_else(|| existing.jsonld_context.clone()), // clone: fallback to existing owned value
+            .or_else(|| existing.jsonld_context.as_ref().map(ToString::to_string)),
         local_only: payload.get("localOnly").and_then(|v| v.as_bool()).or(existing.local_only).unwrap_or(false),
     })
 }

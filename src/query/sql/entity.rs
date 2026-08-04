@@ -3,7 +3,7 @@
 use crate::{
     core::error::AndromedaError,
     query::{
-        compiled::{CompiledEntityQuery, CompiledOrderTerm, GeoQuery, GeoRel, OrderDirection, OrderingGeometry, TypeExpr},
+        compiled::{CompiledEntityQuery, CompiledOrderTerm, GeoQuery, OrderDirection, OrderingGeometry, TypeExpr},
         sql::{
             BuiltQuery,
             postgres_ext::{
@@ -29,7 +29,7 @@ use crate::{
     },
     repository::geometry::{Ewkb, encode},
 };
-use andromeda_domain::{geometry::Geometry, vocab};
+use andromeda_domain::{geo_rel::GeoRel, geometry::Geometry, vocab};
 use sea_query::{Asterisk, Condition, Expr as SeaExpr, Func, Order, PostgresQueryBuilder, Query, SelectStatement};
 
 /// Builds a parameterized SQL query to retrieve entity payloads from the `entities` table.
@@ -399,7 +399,7 @@ mod tests {
     #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::*;
     use crate::query::{
-        compiled::{CompiledEntityQuery, CompiledOrderTerm, GeoQuery, GeoRel, IcuCollation, IdPattern, OrderDirection, OrderingGeometry, ScopeQuery, TypeExpr},
+        compiled::{CompiledEntityQuery, CompiledOrderTerm, GeoQuery, IcuCollation, IdPattern, OrderDirection, OrderingGeometry, ScopeQuery, TypeExpr},
         q::{
             ast::{AttrPath, CmpOp, CompareValue, Expr, Predicate, Scalar},
             parser,

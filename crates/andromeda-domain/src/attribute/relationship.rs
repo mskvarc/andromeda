@@ -1,12 +1,10 @@
+//! The Relationship attribute family (ETSI GS CIM 009 clause 5.2.6).
+
 use crate::{
-    attribute::{
-        AttributeValue,
-        common::{CommonAttributeFields, InlineEntity, OneOrMany},
-    },
+    attribute::{common_fields::CommonAttributeFields, inline_entity::InlineEntity, one_or_many::OneOrMany},
     uri::Uri,
 };
 use compact_str::CompactString;
-use indexmap::IndexMap;
 use jsonld::Expandable;
 use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
@@ -32,20 +30,18 @@ pub struct Relationship {
     /// Inline linked entity or entities returned for `join=inline`.
     #[jsonld(property = "ngsi:entity", passthrough)]
     pub entity: Option<InlineEntity>,
+    /// Members shared with every other attribute family.
     #[serde(flatten)]
     #[jsonld(flatten)]
     pub common: CommonAttributeFields,
-    #[serde(flatten)]
-    #[jsonld(flatten_map)]
-    pub sub_attributes: IndexMap<String, AttributeValue>,
 }
 
 #[cfg(test)]
 mod tests {
     #![allow(clippy::expect_used, clippy::unwrap_used)]
     use crate::{
-        attribute::{Attribute, common::OneOrMany},
-        vocab,
+        attribute::{Attribute, one_or_many::OneOrMany},
+        vocab::expanded::properties as expanded_properties,
     };
     use jsonld::Expandable;
 
@@ -79,16 +75,16 @@ mod tests {
         };
         let expanded = relationship.expand::<serde_json::Value>();
         let obj = expanded.as_object().expect("object");
-        assert!(obj.contains_key(vocab::expanded::properties::OBJECT_TYPE.as_str()));
+        assert!(obj.contains_key(expanded_properties::OBJECT_TYPE.as_str()));
     }
 
     #[test]
     fn the_relationship_default_matches_the_field_by_field_literal() {
-        use crate::attribute::Relationship;
+        use crate::attribute::relationship::Relationship;
         let actual = Relationship::default();
         pretty_assertions::assert_eq!(actual.object, OneOrMany::Many(Vec::new()));
         assert!(actual.object_type.is_none() && actual.previous_object.is_none() && actual.entity.is_none());
-        assert!(actual.sub_attributes.is_empty());
+        assert!(actual.common.sub_attributes.is_empty());
         assert!(actual.common.dataset_id.is_none() && actual.common.observed_at.is_none() && actual.common.expires_at.is_none());
     }
 }

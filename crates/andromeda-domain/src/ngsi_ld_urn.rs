@@ -1,3 +1,5 @@
+//! The `urn:ngsi-ld:<Kind>:<id>` identifiers the broker generates for its own resources.
+
 use crate::uri::Uri;
 use derive_more::{AsRef, Deref, Display};
 use serde::{Deserialize, Serialize};
@@ -6,27 +8,35 @@ use urn_rs::Urn;
 
 macro_rules! ngsi_ld_urn_id {
     ($name:ident, $error:ident, $constant:literal) => {
+        #[doc = concat!("A `urn:ngsi-ld:", $constant, ":<id>` identifier.")]
         #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Display, AsRef, Deref)]
         #[display("{_0}")]
         #[serde(try_from = "String", into = "String")]
         pub struct $name(Urn);
 
+        #[doc = concat!("Why a value could not be read as a `urn:ngsi-ld:", $constant, ":<id>` identifier.")]
         #[derive(Debug, Error, Clone, PartialEq, Eq)]
         pub enum $error {
+            /// The value is not a syntactically valid URN at all.
             #[error("invalid URN: {0}")]
             InvalidUrn(String),
+            /// The URN names a different kind of resource.
             #[error("identifier must use the 'urn:ngsi-ld:{0}:' prefix", $constant)]
             WrongConstant,
+            /// The URN carries the right prefix but no identifier after it.
             #[error("identifier suffix must not be empty")]
             EmptyId,
+            /// The identifier itself contains a `:`, which would make the kind ambiguous.
             #[error("identifier suffix must not contain ':'")]
             ExtraColonInSuffix,
         }
 
         impl $name {
+            /// The resource kind this identifier names.
             pub const KIND: &'static str = $constant;
             const PREFIX: &'static str = concat!("urn:ngsi-ld:", $constant, ":");
 
+            /// Borrow the identifier as the URN it wraps.
             pub const fn as_urn(&self) -> &Urn {
                 &self.0
             }

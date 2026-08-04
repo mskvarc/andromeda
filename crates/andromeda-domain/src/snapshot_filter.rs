@@ -23,20 +23,28 @@ use url::Url;
 /// Filterable member of the `Snapshot` resource (clause 5.2.41).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, StrumDisplay, EnumString)]
 pub enum SnapshotField {
+    /// The snapshot's identifier.
     #[strum(serialize = "id")]
     Id,
+    /// The snapshot's execution priority.
     #[strum(serialize = "snapshotPriority")]
     SnapshotPriority,
+    /// The snapshot's status.
     #[strum(serialize = "status")]
     Status,
+    /// The endpoint notified on status changes.
     #[strum(serialize = "endpoint")]
     Endpoint,
+    /// When the snapshot was requested.
     #[strum(serialize = "createdAt")]
     CreatedAt,
+    /// When the snapshot was last changed.
     #[strum(serialize = "modifiedAt")]
     ModifiedAt,
+    /// When the snapshot stops being usable.
     #[strum(serialize = "expiresAt")]
     ExpiresAt,
+    /// When the snapshot was last read.
     #[strum(serialize = "lastUsedAt")]
     LastUsedAt,
 }
@@ -60,16 +68,22 @@ impl SnapshotField {
 /// Comparison operator (NGSI-LD clause 4.9).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, StrumDisplay)]
 pub enum SnapshotOp {
+    /// Equality.
     #[strum(serialize = "==")]
     Eq,
+    /// Inequality.
     #[strum(serialize = "!=")]
     Neq,
+    /// Strictly less than.
     #[strum(serialize = "<")]
     Lt,
+    /// Less than or equal.
     #[strum(serialize = "<=")]
     Lte,
+    /// Strictly greater than.
     #[strum(serialize = ">")]
     Gt,
+    /// Greater than or equal.
     #[strum(serialize = ">=")]
     Gte,
 }
@@ -91,18 +105,25 @@ impl SnapshotOp {
 /// Typed value of a filter term, constrained by its field.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SnapshotValue {
+    /// A snapshot identifier, for the `id` field.
     Id(SnapshotId),
+    /// A priority, for the `snapshotPriority` field.
     Priority(SnapshotPriority),
+    /// A status, for the `status` field.
     Status(SnapshotStatus),
+    /// An endpoint URL, for the `endpoint` field.
     Endpoint(Url),
+    /// A timestamp, for any of the four time fields.
     DateTime(DateTime<Utc>),
 }
 
 /// Top-level conjunction between filter terms (clause 4.9).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, StrumDisplay)]
 pub enum Conjunction {
+    /// Every term must match.
     #[strum(serialize = ";")]
     And,
+    /// At least one term must match.
     #[strum(serialize = "|")]
     Or,
 }
@@ -110,31 +131,52 @@ pub enum Conjunction {
 /// A single `field op value` filter term.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SnapshotPurgeTerm {
+    /// Snapshot member the term filters on.
     pub field: SnapshotField,
+    /// Comparison the term applies.
     pub op: SnapshotOp,
+    /// Value the member is compared against.
     pub value: SnapshotValue,
 }
 
 /// Parsed filter for `DELETE /snapshots?q=...`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SnapshotPurgeFilter {
+    /// The individual `field op value` terms.
     pub terms: Vec<SnapshotPurgeTerm>,
+    /// How the terms combine.
     pub conjunction: Conjunction,
 }
 
 /// Parsing failures for the snapshot purge `q` expression.
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum SnapshotQParseError {
+    /// The expression held no terms.
     #[error("q expression must not be empty")]
     Empty,
+    /// A term carried no recognised comparison operator.
     #[error("term missing comparison operator: {0}")]
     MissingOperator(CompactString),
+    /// A term named a member the `Snapshot` resource does not have.
     #[error("unknown snapshot field: {0}")]
     UnknownField(CompactString),
+    /// The operator is not defined for that member's type.
     #[error("operator '{op}' is not supported for field '{field}'")]
-    OperatorNotSupported { field: SnapshotField, op: SnapshotOp },
+    OperatorNotSupported {
+        /// Member the term filters on.
+        field: SnapshotField,
+        /// Operator that member rejects.
+        op: SnapshotOp,
+    },
+    /// The value did not parse as the member's type.
     #[error("invalid value for field '{field}': {detail}")]
-    InvalidValue { field: SnapshotField, detail: CompactString },
+    InvalidValue {
+        /// Member the term filters on.
+        field: SnapshotField,
+        /// Underlying parse failure.
+        detail: CompactString,
+    },
+    /// The expression used both `;` and `|`, which clause 4.9 does not define.
     #[error("q expression mixes ';' and '|' conjunctions; use one consistently")]
     MixedConjunctions,
 }

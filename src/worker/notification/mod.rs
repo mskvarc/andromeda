@@ -16,6 +16,7 @@ use crate::{
     },
 };
 use andromeda_domain::{
+    entity_type::EntityTypeName,
     notification::{ChangeEvent, Notification, NotificationType, SubscriptionChange, TriggerReason},
     uri::{NGSI_LD_URN_NID, Uri},
     vocab,
@@ -389,7 +390,7 @@ impl NotificationWorker {
     /// `matches_entity_filters` call still re-checks for safety but evaluates
     /// far fewer geometries when many geo-enabled subscriptions exist but
     /// few overlap any given entity.
-    fn spatial_narrow(&self, matching: Vec<Arc<CompiledSubscription>>, entity_data: &Value, entity_types: &[String]) -> Vec<Arc<CompiledSubscription>> {
+    fn spatial_narrow(&self, matching: Vec<Arc<CompiledSubscription>>, entity_data: &Value, entity_types: &[EntityTypeName]) -> Vec<Arc<CompiledSubscription>> {
         let spatial = self.cache.spatial();
         let tenant = self.cache.tenant().clone();
 
@@ -489,9 +490,9 @@ mod tests {
     fn make_event(entity_id: &str, types: Vec<&str>, trigger: TriggerReason, attrs: Vec<&str>) -> ChangeEvent {
         ChangeEvent {
             entity_id: entity_id.parse().expect("valid test URI"),
-            entity_types: types.into_iter().map(String::from).collect(),
+            entity_types: types.into_iter().map(|t| t.parse().expect("valid test type name")).collect(),
             trigger_reason: trigger,
-            changed_attributes: attrs.into_iter().map(String::from).collect(),
+            changed_attributes: attrs.into_iter().map(|a| a.parse().expect("valid test attribute name")).collect(),
             occurred_at: Utc::now(),
             entity_snapshot: None,
             previous_attributes: None,
@@ -740,7 +741,7 @@ mod tests {
             "https://example.com/speed": [{"@value": 50}],
             "https://example.com/location": [{"@value": "Madrid"}]
         });
-        let filtered = filter_entity_attributes(&entity, &["https://example.com/speed".to_string()]);
+        let filtered = filter_entity_attributes(&entity, &["https://example.com/speed".parse().expect("valid test attribute name")]);
         assert!(filtered.get("@id").is_some());
         assert!(filtered.get("@type").is_some());
         assert!(filtered.get("https://example.com/speed").is_some());

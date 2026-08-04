@@ -1,9 +1,7 @@
-use crate::attribute::{
-    AttributeValue,
-    common::{CommonAttributeFields, NgsiLdValue},
-};
+//! The ListProperty attribute family (ETSI GS CIM 009 clause 5.2.36).
+
+use crate::attribute::{common_fields::CommonAttributeFields, value::NgsiLdValue};
 use compact_str::CompactString;
-use indexmap::IndexMap;
 use jsonld::Expandable;
 use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
@@ -17,23 +15,25 @@ use serde_with::skip_serializing_none;
     prefix(ngsi = "https://uri.etsi.org/ngsi-ld/", xsd = "http://www.w3.org/2001/XMLSchema#")
 )]
 pub struct ListProperty {
+    /// Ordered list of values.
     #[jsonld(property = "ngsi:hasValueList", container = "list")]
     pub value_list: Vec<NgsiLdValue>,
+    /// Optional JSON-LD datatype for `valueList`.
     #[jsonld(property = "ngsi:hasValueType", coerce = "@id")]
     pub value_type: Option<CompactString>,
+    /// Previous value list emitted in notifications when `showChanges` is active.
     #[jsonld(property = "ngsi:hasPreviousValueList", container = "list")]
     pub previous_value_list: Option<Vec<NgsiLdValue>>,
+    /// Members shared with every other attribute family.
     #[serde(flatten)]
     #[jsonld(flatten)]
     pub common: CommonAttributeFields,
-    #[serde(flatten)]
-    #[jsonld(flatten_map)]
-    pub sub_attributes: IndexMap<String, AttributeValue>,
 }
 
 #[cfg(test)]
 mod tests {
     #![allow(clippy::expect_used, clippy::unwrap_used)]
+    use crate::attribute::Attribute;
     use jsonld::Expandable;
 
     #[test]
@@ -43,8 +43,8 @@ mod tests {
             "valueList": [1, 2, 3],
             "previousValueList": [0, 1, 2]
         });
-        let attr: crate::attribute::Attribute = serde_json::from_value(json).expect("list_property");
-        let crate::attribute::Attribute::ListProperty(lp) = &attr else {
+        let attr: Attribute = serde_json::from_value(json).expect("list_property");
+        let Attribute::ListProperty(lp) = &attr else {
             unreachable!("expected ListProperty");
         };
         let expanded = lp.expand::<serde_json::Value>();
@@ -58,19 +58,17 @@ mod tests {
 
     #[test]
     fn the_list_property_default_matches_the_field_by_field_literal() {
-        use crate::attribute::{ListProperty, common::CommonAttributeFields};
-        use indexmap::IndexMap;
+        use crate::attribute::{common_fields::CommonAttributeFields, list_property::ListProperty};
         let expected = ListProperty {
             value_list: Vec::new(),
             value_type: None,
             previous_value_list: None,
             common: CommonAttributeFields::default(),
-            sub_attributes: IndexMap::new(),
         };
         let actual = ListProperty::default();
         pretty_assertions::assert_eq!(actual.value_list.len(), expected.value_list.len());
         assert!(actual.value_type.is_none() && actual.previous_value_list.is_none());
-        assert!(actual.sub_attributes.is_empty());
+        assert!(actual.common.sub_attributes.is_empty());
         assert!(actual.common.dataset_id.is_none() && actual.common.observed_at.is_none() && actual.common.expires_at.is_none());
     }
 }

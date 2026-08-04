@@ -1,4 +1,12 @@
-use crate::ngsi_ld_urn::{SnapshotId, SnapshotNotificationId, SnapshotNotificationIdParseError};
+//! The Snapshot resource and its notification payload (ETSI GS CIM 009 clauses 5.2.41 to 5.3.4).
+
+use crate::{
+    attribute::name::AttributeName,
+    constant_string,
+    geo_rel::GeoRel,
+    geometry::GeometryType,
+    ngsi_ld_urn::{SnapshotId, SnapshotNotificationId, SnapshotNotificationIdParseError},
+};
 use chrono::{DateTime, Utc};
 use compact_str::CompactString;
 use derive_more::Display;
@@ -11,15 +19,22 @@ use thiserror::Error;
 use url::Url;
 use uuid::Uuid;
 
+constant_string!(SnapshotNotificationType, "SnapshotNotification");
+
 /// Status of a snapshot operation (ETSI GS CIM 009 clause 5.2.41, `snapshotStatus`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, StrumDisplay, EnumString, EnumIter, IntoStaticStr)]
 #[serde(rename_all = "camelCase")]
 #[strum(serialize_all = "camelCase")]
 pub enum SnapshotStatus {
+    /// The snapshot's queries are still running.
     Preparing,
+    /// Every query completed and produced results.
     Success,
+    /// Some queries completed and some failed.
     Partial,
+    /// Every query completed and none matched anything.
     Empty,
+    /// Every query failed.
     Failure,
 }
 
@@ -28,8 +43,11 @@ pub enum SnapshotStatus {
 #[serde(rename_all = "camelCase")]
 #[strum(serialize_all = "camelCase")]
 pub enum ExecutionResultStatus {
+    /// The query completed and produced results.
     Success,
+    /// The query failed; see the accompanying problem details.
     Failure,
+    /// The query completed and matched nothing.
     Empty,
 }
 
@@ -39,8 +57,11 @@ pub enum ExecutionResultStatus {
 pub struct SnapshotPriority(u8);
 
 impl SnapshotPriority {
+    /// Lowest priority the spec allows.
     pub const MIN: u8 = 1;
+    /// Highest priority the spec allows.
     pub const MAX: u8 = 10;
+    /// Priority applied when the request does not state one.
     pub const DEFAULT: SnapshotPriority = SnapshotPriority(5);
 
     /// Returns the integer representation.
@@ -97,6 +118,7 @@ impl From<SnapshotPriority> for u8 {
 /// Parsing or validation errors for [`SnapshotPriority`].
 #[derive(Debug, Error)]
 pub enum SnapshotPriorityParseError {
+    /// The value sits outside the `1..=10` range clause 5.2.41 allows.
     #[error("snapshotPriority must be between 1 and 10, got {0}")]
     OutOfRange(i64),
 }
@@ -105,7 +127,9 @@ pub enum SnapshotPriorityParseError {
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct KeyValuePair {
+    /// The entry's key.
     pub key: CompactString,
+    /// The entry's value.
     pub value: CompactString,
 }
 
@@ -114,19 +138,33 @@ pub struct KeyValuePair {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Snapshot {
+    /// Generated identifier of this snapshot.
     pub id: SnapshotId,
+    /// Entity queries the snapshot materialises.
     pub snapshot_queries: Option<Vec<Value>>,
+    /// Temporal queries the snapshot materialises.
     pub snapshot_temporal_queries: Option<Vec<Value>>,
+    /// How long the snapshot stays usable after its last use.
     pub snapshot_lifetime: Option<Iso8601Duration>,
+    /// Execution priority, `1..=10`.
     pub snapshot_priority: SnapshotPriority,
+    /// Endpoint notified when the snapshot's status changes.
     pub endpoint: Option<Url>,
+    /// Headers to send with the status notification.
     pub receiver_info: Option<Vec<KeyValuePair>>,
+    /// Current status of the snapshot.
     pub status: SnapshotStatus,
+    /// Per-entity-query execution details.
     pub queries_details: Option<Vec<ExecutionResultDetails>>,
+    /// Per-temporal-query execution details.
     pub temporal_queries_details: Option<Vec<ExecutionResultDetails>>,
+    /// When the snapshot was requested.
     pub created_at: DateTime<Utc>,
+    /// When it was last changed.
     pub modified_at: DateTime<Utc>,
+    /// When it stops being usable.
     pub expires_at: DateTime<Utc>,
+    /// When it was last read, if it ever was.
     pub last_used_at: Option<DateTime<Utc>>,
 }
 
@@ -135,15 +173,10 @@ pub struct Snapshot {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ExecutionResultDetails {
+    /// RFC 7807 problem details for a failed execution.
     pub problem_details: Option<Value>,
+    /// Outcome of this single execution.
     pub result_status: ExecutionResultStatus,
-}
-
-/// JSON-LD `@type` for snapshot notifications (Table 5.3.4-1).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum SnapshotNotificationType {
-    #[serde(rename = "SnapshotNotification")]
-    SnapshotNotification,
 }
 
 /// Notification payload sent to a snapshot endpoint on status changes (clause 5.3.4).
@@ -175,6 +208,7 @@ pub struct SnapshotNotification {
 /// Errors produced while building snapshot notifications.
 #[derive(Debug, Error)]
 pub enum SnapshotNotificationBuildError {
+    /// The generated notification URN did not satisfy its own grammar.
     #[error("invalid generated snapshot notification id URN: {0}")]
     InvalidNotificationId(SnapshotNotificationIdParseError),
 }
@@ -210,10 +244,10 @@ pub struct SnapshotQuery {
     pub geo_q: Option<SnapshotGeoQuery>,
     /// Scope query string (comma = OR, semicolon = AND).
     pub scope_q: Option<String>,
-    /// Attribute IRIs to include in the result.
-    pub attrs: Option<Vec<String>>,
-    /// Attribute IRIs to exclude from the result.
-    pub omit: Option<Vec<String>>,
+    /// Attribute names to include in the result.
+    pub attrs: Option<Vec<AttributeName>>,
+    /// Attribute names to exclude from the result.
+    pub omit: Option<Vec<AttributeName>>,
     /// Temporal query parameters (present only in `snapshotTemporalQueries`).
     pub temporal_q: Option<SnapshotTemporalQuery>,
 }
@@ -235,10 +269,10 @@ pub struct SnapshotEntitySelector {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SnapshotGeoQuery {
-    /// Spatial relationship (e.g. "within", "near;maxDistance==1000").
-    pub georel: String,
-    /// GeoJSON geometry type (e.g. "Point", "Polygon").
-    pub geometry: String,
+    /// Spatial relationship (clause 4.10).
+    pub georel: GeoRel,
+    /// GeoJSON geometry type (RFC 7946 section 1.4).
+    pub geometry: GeometryType,
     /// GeoJSON coordinates.
     pub coordinates: Value,
     /// IRI of the GeoProperty to query against.
@@ -271,9 +305,11 @@ impl Snapshot {
         let id = format!("urn:ngsi-ld:SnapshotNotification:{}", Uuid::new_v4())
             .parse::<SnapshotNotificationId>()
             .map_err(SnapshotNotificationBuildError::InvalidNotificationId)?;
+        // clone: the notification owns its copy of the snapshot's id and
+        // execution details, and the snapshot itself is only borrowed here.
         Ok(SnapshotNotification {
             id,
-            type_: SnapshotNotificationType::SnapshotNotification,
+            type_: SnapshotNotificationType,
             expires_at: self.expires_at,
             notified_at: Utc::now(),
             snapshot_id: self.id.clone(),
@@ -289,18 +325,25 @@ impl Snapshot {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SnapshotInput {
+    /// Client-supplied identifier; the broker generates one when absent.
     #[serde(default)]
     pub id: Option<SnapshotId>,
+    /// Entity queries to materialise.
     #[serde(default)]
     pub snapshot_queries: Option<Vec<Value>>,
+    /// Temporal queries to materialise.
     #[serde(default)]
     pub snapshot_temporal_queries: Option<Vec<Value>>,
+    /// How long the snapshot should stay usable.
     #[serde(default)]
     pub snapshot_lifetime: Option<Iso8601Duration>,
+    /// Requested execution priority, validated into [`SnapshotPriority`].
     #[serde(default)]
     pub snapshot_priority: Option<i16>,
+    /// Endpoint to notify on status changes.
     #[serde(default)]
     pub endpoint: Option<Url>,
+    /// Headers to send with the status notification.
     #[serde(default)]
     pub receiver_info: Option<Vec<KeyValuePair>>,
 }
@@ -309,8 +352,10 @@ pub struct SnapshotInput {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SnapshotPatch {
+    /// New lifetime, when the patch changes it.
     #[serde(default)]
     pub snapshot_lifetime: Option<Iso8601Duration>,
+    /// New priority, when the patch changes it.
     #[serde(default)]
     pub snapshot_priority: Option<i16>,
 }
@@ -319,6 +364,8 @@ pub struct SnapshotPatch {
 mod tests {
     #![allow(clippy::expect_used, clippy::unwrap_used)]
     use crate::{
+        geo_rel::GeoRel,
+        geometry::GeometryType,
         ngsi_ld_urn::SnapshotId,
         snapshot::{SnapshotPriority, SnapshotStatus},
     };
@@ -451,8 +498,8 @@ mod tests {
         pretty_assertions::assert_eq!(query.q.as_deref(), Some("speed>50"));
         assert!(query.geo_q.is_some());
         let geo = query.geo_q.unwrap();
-        pretty_assertions::assert_eq!(geo.georel, "within");
-        pretty_assertions::assert_eq!(geo.geometry, "Polygon");
+        pretty_assertions::assert_eq!(geo.georel, GeoRel::Within);
+        pretty_assertions::assert_eq!(geo.geometry, GeometryType::Polygon);
         pretty_assertions::assert_eq!(query.scope_q.as_deref(), Some("/Madrid"));
         pretty_assertions::assert_eq!(query.attrs.unwrap().len(), 2);
         pretty_assertions::assert_eq!(query.omit.unwrap().len(), 1);

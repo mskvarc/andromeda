@@ -26,7 +26,9 @@ impl AttributeNameId {
 /// A typed row from the temporal_entity_attributes table.
 #[derive(Debug, Clone)]
 pub struct TeaEntry {
+    /// Expanded IRI of the attribute this row belongs to.
     pub attribute_name: IriBuf,
+    /// Attribute family the recorded instances belong to.
     pub attribute_type: AttributeType,
     /// Multi-attribute discriminator (NGSI-LD 5.2.5).
     ///
@@ -35,6 +37,7 @@ pub struct TeaEntry {
     /// previous `Urn` typing silently discarded them, collapsing distinct
     /// instances onto the default one.
     pub dataset_id: Option<IriBuf>,
+    /// Storage column the recorded values live in.
     pub value_type: ValueType,
 }
 
@@ -90,12 +93,19 @@ pub enum TemporalFormat {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Display, EnumString)]
 #[strum(serialize_all = "PascalCase")]
 pub enum ValueType {
+    /// A JSON number.
     Number,
+    /// A JSON string with no further NGSI-LD meaning.
     String,
+    /// A JSON boolean.
     Boolean,
+    /// A GeoJSON geometry (clause 4.7).
     Geometry,
+    /// A JSON object or array, stored verbatim.
     Object,
+    /// An RFC 3339 timestamp.
     DateTime,
+    /// A URI.
     Uri,
 }
 

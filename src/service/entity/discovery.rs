@@ -4,8 +4,9 @@ use crate::{
     repository::entity::{repo::EntityRepository, rows::AttributeSummaryRow},
 };
 use andromeda_domain::{
+    attribute_list::{AttributeDetail, AttributeInfo, AttributeList},
+    entity_type_list::{EntityType, EntityTypeInfo, EntityTypeList},
     ngsi_ld_urn::{AttributeListId, EntityTypeListId},
-    types::{AttributeDetail, EntityType, EntityTypeInfo, Types},
     uri::NGSI_LD_URN_NID,
 };
 use jsonld::Expandable;
@@ -29,7 +30,7 @@ impl EntityDiscoveryService {
     }
 
     /// List all known entity types as a compacted `EntityTypeList`.
-    pub async fn types(&self, context: &ContextSpec) -> Result<Types, AndromedaError> {
+    pub async fn types(&self, context: &ContextSpec) -> Result<EntityTypeList, AndromedaError> {
         const TYPE: &str = "EntityTypeList";
 
         let id = UrnBuilder::new(NGSI_LD_URN_NID, &format!("{}:{}", TYPE, Uuid::new_v4())).build()?;
@@ -62,7 +63,7 @@ impl EntityDiscoveryService {
         }
         type_list.sort();
 
-        let result = Types {
+        let result = EntityTypeList {
             id,
             type_: TYPE.to_owned(),
             type_list,
@@ -222,7 +223,7 @@ impl EntityDiscoveryService {
             let mut attributes = Vec::new();
             for (iri, meta) in attr_data {
                 let iri: String = iri;
-                attributes.push(andromeda_domain::types::Attribute {
+                attributes.push(AttributeInfo {
                     id: iri.clone(), // clone: value also needed for attribute_name field
                     type_: "Attribute".to_string(),
                     attribute_name: iri.clone(), // clone: separate owned field, iri consumed by later field would not suffice
@@ -296,7 +297,7 @@ impl EntityDiscoveryService {
             let id = UrnBuilder::new(NGSI_LD_URN_NID, &format!("AttributeList:{}", Uuid::new_v4())).build()?;
             let id = AttributeListId::try_from(id)?;
 
-            let list = andromeda_domain::types::AttributeList {
+            let list = AttributeList {
                 id,
                 type_: "AttributeList".to_string(),
                 attribute_list: compacted_names,
@@ -316,7 +317,7 @@ impl EntityDiscoveryService {
             .await?
             .ok_or_else(|| AndromedaError::entity_not_found(attr_id))?;
 
-        let attr = andromeda_domain::types::Attribute {
+        let attr = AttributeInfo {
             id: attr_iri.clone(), // clone: value also needed for attribute_name field below
             type_: "Attribute".to_string(),
             attribute_name: attr_iri,

@@ -32,12 +32,17 @@ use crate::{
     },
     service::{
         csource_forwarding::{ForwardedTemporalEntities, merge_temporal_query_results},
-        entity::{extract::extract_geo_geometries, extract_entity_types, normalize_entity_attributes},
+        entity::{extract::extract_geo_geometries, normalize_entity_attributes},
         temporal_recorder::TemporalRecorder,
     },
     worker::attribute_current_materializer::AttributeCurrentBarrier,
 };
-use andromeda_domain::{expanded::extract_expires_at, temporal::TemporalFormat, vocab};
+use andromeda_domain::{
+    entity_type::EntityTypeName,
+    expanded::entity_member::{extract_expires_at, extract_types},
+    temporal::TemporalFormat,
+    vocab,
+};
 use chrono::{DateTime, SecondsFormat, Utc};
 use serde_json::{Value, json};
 use sqlx::Row;
@@ -268,7 +273,7 @@ impl TemporalService {
             }
 
             // The base entity row is a placeholder using the expanded payload so
-            // that extract_entity_types() can find @type in the stored JSON. No
+            // that extract_types() can find @type in the stored JSON. No
             // pre-flight existence check: the statement's conflict clause is the
             // check, and it does not lose a race to a concurrent temporal write
             // for the same new identifier.
@@ -464,7 +469,7 @@ impl TemporalService {
         }
 
         let entity_types = if let Some(entity_payload) = self.entity_repo.get(entity_id).await? {
-            extract_entity_types(&entity_payload)
+            extract_types(&entity_payload)
         } else {
             Vec::new()
         };
@@ -541,9 +546,9 @@ impl TemporalService {
 
         // Batch-fetch entity payloads to extract types (avoids N+1 queries)
         let entity_payloads = self.entity_repo.get_batch(&entity_ids).await?;
-        let entity_types_map: std::collections::HashMap<String, Vec<String>> = entity_payloads
+        let entity_types_map: std::collections::HashMap<String, Vec<EntityTypeName>> = entity_payloads
             .iter()
-            .map(|(id, payload)| (id.clone(), extract_entity_types(payload))) // clone: owned key for HashMap entry
+            .map(|(id, payload)| (id.clone(), extract_types(payload))) // clone: owned key for HashMap entry
             .collect();
 
         let mut entities = Vec::new();
@@ -677,7 +682,7 @@ impl TemporalService {
     async fn build_aggregated_compacted(
         &self,
         entity_id: &str,
-        entity_types: &[String],
+        entity_types: &[EntityTypeName],
         rows: &[sqlx::postgres::PgRow],
         compiled: &CompiledTemporalQuery,
         context: &ContextSpec,
@@ -742,12 +747,12 @@ impl TemporalService {
             }
             compacted_type
         } else {
-            let type_values = if has_explicit_context(context) {
-                entity_types.to_vec()
+            let type_values: Vec<String> = if has_explicit_context(context) {
+                entity_types.iter().map(ToString::to_string).collect()
             } else {
                 entity_types
                     .iter()
-                    .map(|type_name| iri_short_name(type_name).unwrap_or_else(|| type_name.clone())) // clone: fallback owned String when no short form
+                    .map(|type_name| iri_short_name(type_name.as_str()).unwrap_or_else(|| type_name.to_string()))
                     .collect()
             };
             json!(type_values)

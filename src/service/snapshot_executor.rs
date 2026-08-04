@@ -288,7 +288,12 @@ pub fn snapshot_query_to_entity_params(query: &SnapshotQuery) -> Result<EntityQu
             geometry,
             coordinates,
             geoproperty,
-        }) => (Some(georel.clone()), Some(geometry.clone()), Some(coordinates.to_string()), geoproperty.clone()),
+        }) => (
+            Some(georel.to_string()),
+            Some(geometry.to_string()),
+            Some(coordinates.to_string()),
+            geoproperty.clone(), // clone: the borrowed query keeps its own copy
+        ),
         None => (None, None, None, None),
     };
 
@@ -296,7 +301,10 @@ pub fn snapshot_query_to_entity_params(query: &SnapshotQuery) -> Result<EntityQu
         id: if ids.is_empty() { None } else { Some(ids.join(",")) },
         entity_type: if types.is_empty() { None } else { Some(types.join(",")) },
         id_pattern,
-        attrs: query.attrs.as_ref().map(|a| a.join(",")),
+        attrs: query
+            .attrs
+            .as_ref()
+            .map(|names| names.iter().map(ToString::to_string).collect::<Vec<_>>().join(",")),
         q: query.q.clone(),
         georel,
         geometry,
@@ -308,7 +316,10 @@ pub fn snapshot_query_to_entity_params(query: &SnapshotQuery) -> Result<EntityQu
         options: None,
         local: None,
         pick: None,
-        omit: query.omit.as_ref().map(|o| o.join(",")),
+        omit: query
+            .omit
+            .as_ref()
+            .map(|names| names.iter().map(ToString::to_string).collect::<Vec<_>>().join(",")),
         order_by: None,
         scope_q: query.scope_q.clone(),
         lang: None,
@@ -344,7 +355,12 @@ pub fn snapshot_query_to_temporal_params(query: &SnapshotQuery) -> Result<Tempor
             geometry,
             coordinates,
             geoproperty,
-        }) => (Some(georel.clone()), Some(geometry.clone()), Some(coordinates.to_string()), geoproperty.clone()),
+        }) => (
+            Some(georel.to_string()),
+            Some(geometry.to_string()),
+            Some(coordinates.to_string()),
+            geoproperty.clone(), // clone: the borrowed query keeps its own copy
+        ),
         None => (None, None, None, None),
     };
 
@@ -352,7 +368,10 @@ pub fn snapshot_query_to_temporal_params(query: &SnapshotQuery) -> Result<Tempor
         id: if ids.is_empty() { None } else { Some(ids.join(",")) },
         entity_type: if types.is_empty() { None } else { Some(types.join(",")) },
         id_pattern,
-        attrs: query.attrs.as_ref().map(|a| a.join(",")),
+        attrs: query
+            .attrs
+            .as_ref()
+            .map(|names| names.iter().map(ToString::to_string).collect::<Vec<_>>().join(",")),
         q: query.q.clone(),
         georel,
         geometry,
@@ -372,7 +391,10 @@ pub fn snapshot_query_to_temporal_params(query: &SnapshotQuery) -> Result<Tempor
         count: None,
         _order_by: None,
         pick: None,
-        omit: query.omit.as_ref().map(|o| o.join(",")),
+        omit: query
+            .omit
+            .as_ref()
+            .map(|names| names.iter().map(ToString::to_string).collect::<Vec<_>>().join(",")),
         dataset_id: None,
         _lang: None,
         local: None,
@@ -445,7 +467,15 @@ const fn compute_final_status(any_success_with_results: bool, any_failure: bool,
 mod tests {
     #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::*;
-    use andromeda_domain::snapshot::{SnapshotEntitySelector, SnapshotGeoQuery, SnapshotQuery, SnapshotTemporalQuery};
+    use andromeda_domain::{
+        attribute::name::AttributeName,
+        geometry::GeometryType,
+        snapshot::{SnapshotEntitySelector, SnapshotGeoQuery, SnapshotQuery, SnapshotTemporalQuery},
+    };
+
+    fn attribute_name(raw: &str) -> AttributeName {
+        raw.parse().expect("valid attribute name")
+    }
 
     fn base_query() -> SnapshotQuery {
         SnapshotQuery {
@@ -498,8 +528,8 @@ mod tests {
         // Clause 5.7.2 geo-query, 5.2.13
         let mut q = base_query();
         q.geo_q = Some(SnapshotGeoQuery {
-            georel: "near;maxDistance==1000".to_string(),
-            geometry: "Point".to_string(),
+            georel: "near;maxDistance==1000".parse().expect("valid georel"),
+            geometry: GeometryType::Point,
             coordinates: serde_json::json!([13.4, 52.5]),
             geoproperty: Some("location".to_string()),
         });
@@ -523,8 +553,8 @@ mod tests {
     fn translates_attrs_and_omit_to_entity_params() {
         // Clause 5.5.9 attrs/omit projection
         let mut q = base_query();
-        q.attrs = Some(vec!["speed".to_string(), "fuel".to_string()]);
-        q.omit = Some(vec!["name".to_string()]);
+        q.attrs = Some(vec![attribute_name("speed"), attribute_name("fuel")]);
+        q.omit = Some(vec![attribute_name("name")]);
         let params = snapshot_query_to_entity_params(&q).expect("translate");
         pretty_assertions::assert_eq!(params.attrs.as_deref(), Some("speed,fuel"));
         pretty_assertions::assert_eq!(params.omit.as_deref(), Some("name"));

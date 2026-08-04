@@ -3,9 +3,11 @@
 //! Returns a custom JSON shape (not an NGSI-LD entity) with component-level
 //! health information including database pool statistics and ping latency.
 
-use crate::uri::Uri;
+use crate::{constant_string, uri::Uri};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+
+constant_string!(HealthCheckType, "HealthCheck");
 
 /// Top-level health check response for `GET /ngsi-ld/v1/health`.
 ///
@@ -21,15 +23,6 @@ pub struct HealthCheckResponse {
     pub type_: HealthCheckType,
     /// Aggregated health status and per-component details.
     pub health_check: HealthCheckDetails,
-}
-
-/// Type discriminator for [`HealthCheckResponse`].
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, strum::Display, strum::EnumString)]
-pub enum HealthCheckType {
-    /// `HealthCheck`.
-    #[serde(rename = "HealthCheck")]
-    #[strum(serialize = "HealthCheck")]
-    HealthCheck,
 }
 
 /// Aggregated health status with per-component breakdown.
@@ -118,7 +111,7 @@ mod tests {
 
         HealthCheckResponse {
             id: Uri::Urn(id_urn),
-            type_: HealthCheckType::HealthCheck,
+            type_: HealthCheckType,
             health_check: HealthCheckDetails {
                 status: HealthStatus::Up,
                 components,

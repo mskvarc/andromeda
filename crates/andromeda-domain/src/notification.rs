@@ -1,4 +1,6 @@
-use crate::{constant_string, uri::Uri};
+//! Change events and the notification payloads they produce (ETSI GS CIM 009 clause 5.3).
+
+use crate::{attribute::name::AttributeName, constant_string, entity_type::EntityTypeName, uri::Uri};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -24,14 +26,13 @@ pub enum ChangeOrigin {
 /// System attribute timestamps captured before entity deletion.
 #[derive(Clone, Debug)]
 pub struct SysAttrsSnapshot {
+    /// Creation timestamp the entity carried.
     pub created_at: DateTime<Utc>,
+    /// Last modification timestamp the entity carried.
     pub modified_at: DateTime<Utc>,
+    /// Expiration timestamp the entity carried, if any.
     pub expires_at: Option<DateTime<Utc>>,
 }
-
-// ---------------------------------------------------------------------------
-// Notification types from NGSI-LD spec (ETSI GS CIM 009 clause 5.3.1)
-// ---------------------------------------------------------------------------
 
 /// Trigger reason for entity notifications (ETSI GS CIM 009 clause 5.3.3).
 ///
@@ -39,11 +40,17 @@ pub struct SysAttrsSnapshot {
 #[derive(Clone, Copy, Debug, Display, EnumString, PartialEq, Eq)]
 #[strum(serialize_all = "camelCase")]
 pub enum TriggerReason {
+    /// An entity was created.
     EntityCreated,
+    /// An entity was updated.
     EntityUpdated,
+    /// An entity was deleted.
     EntityDeleted,
+    /// An attribute was created on an entity.
     AttributeCreated,
+    /// An attribute was updated on an entity.
     AttributeUpdated,
+    /// An attribute was deleted from an entity.
     AttributeDeleted,
 }
 
@@ -64,10 +71,15 @@ impl TriggerReason {
 /// Represents an entity mutation that may trigger notifications.
 #[derive(Clone, Debug)]
 pub struct ChangeEvent {
+    /// Identifier of the mutated entity.
     pub entity_id: Uri,
-    pub entity_types: Vec<String>,
+    /// Types the mutated entity declares.
+    pub entity_types: Vec<EntityTypeName>,
+    /// What kind of mutation this was.
     pub trigger_reason: TriggerReason,
-    pub changed_attributes: Vec<String>,
+    /// Names of the attributes the mutation touched.
+    pub changed_attributes: Vec<AttributeName>,
+    /// When the mutation happened.
     pub occurred_at: DateTime<Utc>,
     /// For EntityDeleted events, a snapshot of the entity before deletion (expanded form).
     pub entity_snapshot: Option<Arc<Value>>,
@@ -87,7 +99,8 @@ pub struct ChangeEvent {
 }
 
 impl ChangeEvent {
-    pub fn new(entity_id: Uri, entity_types: Vec<String>, trigger_reason: TriggerReason) -> ChangeEvent {
+    /// Build an event for a mutation that has just happened locally.
+    pub fn new(entity_id: Uri, entity_types: Vec<EntityTypeName>, trigger_reason: TriggerReason) -> ChangeEvent {
         ChangeEvent {
             entity_id,
             entity_types,
@@ -102,26 +115,31 @@ impl ChangeEvent {
         }
     }
 
-    pub fn with_changed_attributes(mut self, attrs: Vec<String>) -> ChangeEvent {
+    /// Record which attributes the mutation touched.
+    pub fn with_changed_attributes(mut self, attrs: Vec<AttributeName>) -> ChangeEvent {
         self.changed_attributes = attrs;
         self
     }
 
+    /// Attach the pre-deletion entity snapshot.
     pub fn with_snapshot(mut self, snapshot: Value) -> ChangeEvent {
         self.entity_snapshot = Some(Arc::new(snapshot));
         self
     }
 
+    /// Attach the pre-mutation entity state, for `showChanges`.
     pub fn with_previous(mut self, previous: Value) -> ChangeEvent {
         self.previous_attributes = Some(Arc::new(previous));
         self
     }
 
+    /// Attach the pre-mutation entity state when the caller has it.
     pub fn with_optional_previous(mut self, previous: Option<Value>) -> ChangeEvent {
         self.previous_attributes = previous.map(Arc::new);
         self
     }
 
+    /// Attach the timestamps captured before a deletion.
     pub const fn with_sys_attrs(mut self, sys_attrs: Option<SysAttrsSnapshot>) -> ChangeEvent {
         self.sys_attrs_snapshot = sys_attrs;
         self
@@ -144,27 +162,38 @@ impl ChangeEvent {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Notification {
+    /// Generated notification identifier.
     pub id: Uri,
+    /// Always `Notification`.
     #[serde(rename = "type")]
     pub type_: NotificationType,
+    /// Subscription this notification answers.
     pub subscription_id: Uri,
+    /// When the notification was generated.
     pub notified_at: DateTime<Utc>,
+    /// The entity representations that triggered it.
     pub data: Vec<Value>,
 }
 
 /// Trigger reason for CSR notifications (ETSI GS CIM 009 clause 5.3.2).
-#[derive(Clone, Debug, PartialEq, Display, EnumString)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Display, EnumString)]
+#[serde(rename_all = "camelCase")]
 #[strum(serialize_all = "camelCase")]
 pub enum CsrTriggerReason {
+    /// The registration started matching the subscription.
     NewlyMatching,
+    /// A matching registration changed.
     Updated,
+    /// The registration stopped matching the subscription.
     NoLongerMatching,
 }
 
 /// Represents a CSR mutation that may trigger CSR subscription notifications.
 #[derive(Clone, Debug)]
 pub struct CsrChangeEvent {
-    pub csr_id: String,
+    /// Identifier of the mutated registration.
+    pub csr_id: Uri,
+    /// What kind of mutation this was.
     pub trigger_reason: CsrTriggerReason,
     /// For delete events, a snapshot of the CSR before deletion.
     pub csr_snapshot: Option<Value>,
@@ -179,34 +208,35 @@ pub struct CsrChangeEvent {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CsourceNotification {
+    /// Generated notification identifier.
     pub id: Uri,
-
+    /// Always `CsourceNotification`.
     #[serde(rename = "type")]
     pub type_: CsourceNotificationType,
-
+    /// Subscription this notification answers.
     pub subscription_id: Uri,
-
+    /// When the notification was generated.
     pub notified_at: DateTime<Utc>,
-
+    /// The registration representations that triggered it.
     pub data: Vec<Value>,
-
-    pub trigger_reason: Option<String>,
+    /// Why the notification fired.
+    pub trigger_reason: Option<CsrTriggerReason>,
 }
-
-// ---------------------------------------------------------------------------
-// Subscription compilation types
-// ---------------------------------------------------------------------------
 
 /// Signals subscription CRUD changes for cache invalidation.
 #[derive(Clone, Debug)]
 pub enum SubscriptionChange {
-    Upserted(Uri), // subscription id
-    Deleted(Uri),  // subscription id
+    /// The subscription with this id was created or replaced.
+    Upserted(Uri),
+    /// The subscription with this id was deleted.
+    Deleted(Uri),
 }
 
 /// Signals CSR subscription CRUD changes for cache invalidation.
 #[derive(Clone, Debug)]
 pub enum CsourceSubscriptionChange {
+    /// The CSR subscription with this id was created or replaced.
     Upserted(Uri),
+    /// The CSR subscription with this id was deleted.
     Deleted(Uri),
 }

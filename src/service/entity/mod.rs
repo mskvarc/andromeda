@@ -26,8 +26,10 @@ use crate::{
     },
 };
 use andromeda_domain::{
+    attribute::name::AttributeName,
     entity::{Entity, EntityPatch},
-    expanded::removed_attribute_instances,
+    entity_type::EntityTypeName,
+    expanded::{entity_member::extract_types, instance_key::removed_attribute_instances},
     notification::{ChangeEvent, TriggerReason},
     outbox::NewOutboxEntry,
     uri::Uri,
@@ -216,9 +218,9 @@ impl EntityService {
     fn emit_attr_change(
         &self,
         entity_id: Uri,
-        entity_types: Vec<String>,
+        entity_types: Vec<EntityTypeName>,
         trigger: TriggerReason,
-        changed_attributes: Vec<String>,
+        changed_attributes: Vec<AttributeName>,
         previous: Option<Value>,
         current_payload: Option<Arc<Value>>,
     ) {
@@ -231,9 +233,9 @@ impl EntityService {
         self.emit_change(event);
     }
 
-    async fn fetch_entity_types(&self, id: &str) -> Vec<String> {
+    async fn fetch_entity_types(&self, id: &str) -> Vec<EntityTypeName> {
         match self.repo.get(id).await {
-            Ok(Some(stored)) => extract_entity_types(&stored),
+            Ok(Some(stored)) => extract_types(&stored),
             _other => vec![],
         }
     }
@@ -280,11 +282,11 @@ impl EntityService {
         let expanded = self.engine.expand(entity_json, context).await?;
         validate_attribute_envelopes(&expanded)?;
 
-        let types = extract_entity_types(&expanded);
-        let types_refs: Vec<&str> = types.iter().map(String::as_str).collect();
+        let types = extract_types(&expanded);
+        let types_refs: Vec<&str> = types.iter().map(EntityTypeName::as_str).collect();
         let scopes = extract_scopes(&expanded);
         let scope_paths: Vec<String> = scopes.iter().map(|s| crate::query::sql::scope_to_ltree(s)).collect();
-        let expires_at = andromeda_domain::expanded::extract_expires_at(&expanded);
+        let expires_at = andromeda_domain::expanded::entity_member::extract_expires_at(&expanded);
         let (location, observation_space, operation_space) = extract_geo_geometries(&expanded);
 
         let outbox_entries = if self.outbox.is_some() {
@@ -336,19 +338,19 @@ impl EntityService {
         let id = id.to_string();
 
         let mut existing = self.repo.get(&id).await?.ok_or_else(|| AndromedaError::entity_not_found(&id))?;
-        let attrs_before: HashSet<String> = extract_attribute_keys(&existing).into_iter().collect();
+        let attrs_before: HashSet<AttributeName> = extract_attribute_keys(&existing).into_iter().collect();
         let previous_attributes = self.change_tx.as_ref().map(|_| existing.clone()); // clone: snapshot before mutation for showChanges diff
 
         let mut patch_json = serde_json::to_value(patch).map_err(|err| AndromedaError::entity_validation(format!("Invalid patch payload: {}", err)))?;
         normalize_entity_attributes(&mut patch_json);
         let expanded = self.engine.expand(patch_json, context).await?;
         validate_attribute_envelopes(&expanded)?;
-        andromeda_domain::expanded::merge_entity(&mut existing, &expanded)?;
+        andromeda_domain::expanded::mutation::entity::merge_entity(&mut existing, &expanded)?;
 
         let types = self.fetch_entity_types(&id).await;
         let changed_attrs = extract_attribute_keys(&expanded);
-        let attrs_after: HashSet<String> = extract_attribute_keys(&existing).into_iter().collect();
-        let deleted_attrs: Vec<String> = attrs_before.difference(&attrs_after).cloned().collect(); // clone: owned strings from set difference
+        let attrs_after: HashSet<AttributeName> = extract_attribute_keys(&existing).into_iter().collect();
+        let deleted_attrs: Vec<AttributeName> = attrs_before.difference(&attrs_after).cloned().collect(); // clone: owned names from set difference
 
         let outbox_entries = if self.outbox.is_some() {
             let mut entries = Vec::new();
@@ -379,7 +381,7 @@ impl EntityService {
         uow.save_entity(build_save_params(&id, &existing)).await?;
         uow.record_entity_attributes(&id, &expanded).await?;
         for deleted_attr in &deleted_attrs {
-            uow.record_attribute_deletion(&id, deleted_attr, None).await?;
+            uow.record_attribute_deletion(&id, deleted_attr.as_str(), None).await?;
         }
         if !outbox_entries.is_empty() {
             uow.insert_outbox_batch(&outbox_entries).await?;
@@ -473,7 +475,7 @@ impl EntityService {
             Some(expanded) => expanded,
             None => return Err(AndromedaError::entity_not_found(id)),
         };
-        let entity_types = extract_entity_types(&entity_snapshot);
+        let entity_types = extract_types(&entity_snapshot);
 
         // Capture sys_attrs before deletion so notifications can include them
         let sys_attrs_snapshot = match self.repo.get_sys_attrs(&id).await {
@@ -557,9 +559,9 @@ impl EntityService {
     fn build_outbox_entries(
         &self,
         entity_id: &Uri,
-        entity_types: &[String],
+        entity_types: &[EntityTypeName],
         trigger: TriggerReason,
-        changed_attrs: &[String],
+        changed_attrs: &[AttributeName],
         entity_snapshot: Option<&Value>,
         previous_snapshot: Option<&Value>,
     ) -> Vec<NewOutboxEntry> {
@@ -669,9 +671,6 @@ pub(crate) const fn resolve_side_effect_mode(async_threshold: Option<usize>, cli
 // Shared helpers (used across submodules)
 // ---------------------------------------------------------------------------
 
-/// Re-export of type extraction for expanded JSON-LD entities.
-pub(crate) use andromeda_domain::expanded::extract_types as extract_entity_types;
-
 /// Extract scope values from an expanded JSON-LD entity.
 pub(crate) fn extract_scopes(expanded: &Value) -> Vec<String> {
     let obj = match expanded {
@@ -698,14 +697,16 @@ pub(crate) fn extract_scopes(expanded: &Value) -> Vec<String> {
     }
 }
 
-fn extract_attribute_keys(expanded: &Value) -> Vec<String> {
+fn extract_attribute_keys(expanded: &Value) -> Vec<AttributeName> {
     let obj = match expanded {
         Value::Array(arr) => arr.first().and_then(|v| v.as_object()),
         Value::Object(obj) => Some(obj),
         _other => None,
     };
 
-    obj.map(|o| o.keys().filter(|k| !k.starts_with('@')).cloned().collect()) // clone: owned keys from borrowed JSON map
+    // Keys that do not satisfy the NGSI-LD name grammar cannot name an
+    // attribute, so they are skipped rather than reported as changed.
+    obj.map(|o| o.keys().filter(|k| !k.starts_with('@')).filter_map(|k| k.parse().ok()).collect())
         .unwrap_or_default()
 }
 

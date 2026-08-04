@@ -1,3 +1,5 @@
+//! The `@context` resources the broker caches, hosts, and serves (ETSI GS CIM 009 clause 5.13).
+
 use crate::uri::Uri;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -9,8 +11,11 @@ use url::Url;
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Display, EnumString, EnumIter, IntoStaticStr)]
 #[strum(serialize_all = "PascalCase")]
 pub enum ContextKind {
+    /// Fetched from its origin and held in the broker's cache.
     Cached,
+    /// Uploaded to the broker, which serves it under its own URL.
     Hosted,
+    /// Created by the broker when a payload inlined a context body.
     ImplicitlyCreated,
 }
 
@@ -18,14 +23,22 @@ pub enum ContextKind {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ContextMetadata {
+    /// Origin URL, absent for contexts the broker itself created.
     #[serde(rename = "URL")]
     pub url: Option<Url>,
+    /// Identifier under which the broker serves this context.
     pub local_id: Uri,
+    /// How the broker came to hold this context.
     pub kind: ContextKind,
+    /// When the broker first stored it.
     pub created_at: DateTime<Utc>,
+    /// When the cached copy stops being valid, if it expires at all.
     pub expires_at: Option<DateTime<Utc>>,
+    /// When it was last read.
     pub last_usage: DateTime<Utc>,
+    /// How many times it has been read.
     pub number_of_hits: u64,
+    /// Implementation-specific extra information (clause 5.13).
     pub extra_info: Option<Value>,
 }
 

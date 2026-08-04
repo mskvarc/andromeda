@@ -56,8 +56,10 @@ use crate::{
     },
 };
 use andromeda_domain::{
-    entity::{Entity, EntityPatch, EntityTypeValue},
-    expanded::{DatasetSelection, OverwritePolicy},
+    attribute::name::AttributeName,
+    entity::{Entity, EntityPatch},
+    entity_type::{EntityTypeName, EntityTypeValue},
+    expanded::mutation::selection::{DatasetSelection, OverwritePolicy},
     uri::Uri,
 };
 use axum::{
@@ -107,7 +109,7 @@ pub async fn create(
     let entity_id = entity.id.to_string();
     let entity_type_str: &str = match &entity.type_ {
         EntityTypeValue::Single(s) => s.as_str(),
-        EntityTypeValue::Multiple(v) => v.first().map_or("", String::as_str),
+        EntityTypeValue::Multiple(v) => v.first().map_or("", EntityTypeName::as_str),
     };
 
     let (forwarded, _) = state
@@ -965,7 +967,7 @@ pub async fn append_attrs(
         if not_appended.is_empty() {
             return Ok(StatusCode::NO_CONTENT.into_response());
         }
-        let updated: Vec<&String> = all_attrs.iter().filter(|a| !not_appended.contains(a)).collect();
+        let updated: Vec<&AttributeName> = all_attrs.iter().filter(|a| !not_appended.contains(&a.to_string())).collect();
         let not_updated_details: Vec<serde_json::Value> = not_appended
             .iter()
             .map(|attr| serde_json::json!({ "attributeName": attr, "reason": "Already exists" }))

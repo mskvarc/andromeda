@@ -21,6 +21,7 @@ iso8601-duration = { version = "0.2.0", features = ["chrono", "serde"] }
 jsonld = { path = "../../../publish/jsonld/jsonld", features = ["expandable-serde-json", "expandable-chrono", "serde", "serde-json", "vocab"] }
 jsonld-expandable-core = { path = "../../../publish/jsonld/jsonld-expandable-core", features = ["chrono", "serde-json"] }
 langtag = { version = "1.1.0", features = ["serde"] }
+mediatype = { version = "0.23.0", features = ["serde"] }
 regex = "1.12.3"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"

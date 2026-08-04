@@ -8,9 +8,14 @@ use crate::{
     core::error::AndromedaError,
     repository::subscription_store::{params::DatasetIdPresence, rows::SubscriptionRow},
 };
-use andromeda_domain::subscription::{NotificationParams, NotificationStatus, NotificationTrigger, Subscription};
+use andromeda_domain::{
+    subscription::{NotificationParams, NotificationStatus, NotificationTrigger, Subscription, SubscriptionType},
+    uri::Uri,
+};
 use chrono::{DateTime, Utc};
+use langtag::LangTagBuf;
 use sqlx::Row;
+use url::Url;
 
 /// Read a `SubscriptionRow` from a `PgRow`, honouring [`DatasetIdPresence`].
 pub fn row_from_pg(row: &sqlx::postgres::PgRow, dataset_id_presence: DatasetIdPresence) -> Result<SubscriptionRow, AndromedaError> {
@@ -29,7 +34,6 @@ pub fn row_from_pg(row: &sqlx::postgres::PgRow, dataset_id_presence: DatasetIdPr
     let status_label: String = row.get("status");
     Ok(SubscriptionRow {
         id: row.get("id"),
-        type_: row.get("type"),
         subscription_name: row.get("subscription_name"),
         description: row.get("description"),
         entities_json: row.get("entities"),
@@ -82,28 +86,54 @@ pub fn row_to_subscription(row: SubscriptionRow) -> Result<Subscription, Androme
     notification.last_failure = row.last_failure;
     notification.status = notification_status_from_timestamps(row.last_success, row.last_failure);
 
+    let id: Uri = row
+        .id
+        .parse()
+        .map_err(|e| AndromedaError::internal(format!("Invalid subscription id '{}': {e}", row.id)))?;
+    let watched_attributes = row
+        .watched_attributes
+        .map(|names| names.iter().map(|raw| raw.parse()).collect::<Result<Vec<_>, _>>())
+        .transpose()
+        .map_err(|e| AndromedaError::internal(format!("Invalid watched attribute name: {e}")))?;
+    let dataset_id = row
+        .dataset_id
+        .map(|ids| ids.iter().map(|raw| raw.parse()).collect::<Result<Vec<_>, _>>())
+        .transpose()
+        .map_err(|e| AndromedaError::internal(format!("Invalid subscription datasetId: {e}")))?;
+    let lang = row
+        .lang
+        .map(LangTagBuf::new)
+        .transpose()
+        .map_err(|e| AndromedaError::internal(format!("Invalid subscription lang: {e}")))?;
+    let jsonld_context = row
+        .jsonld_context
+        .as_deref()
+        .map(Url::parse)
+        .transpose()
+        .map_err(|e| AndromedaError::internal(format!("Invalid subscription jsonldContext: {e}")))?;
+
     Ok(Subscription {
-        id: row.id,
-        type_: row.type_,
+        id,
+        type_: SubscriptionType,
         subscription_name: row.subscription_name,
         description: row.description,
         entities,
-        watched_attributes: row.watched_attributes,
+        watched_attributes,
         notification_trigger,
         time_interval: row.time_interval,
         q: row.q,
         geo_q: row.geo_q,
         scope_q: row.scope_q,
         csf: row.csf,
-        dataset_id: row.dataset_id,
+        dataset_id,
         is_active: Some(row.is_active),
         notification,
         expires_at: row.expires_at,
         throttling: row.throttling,
         status: row.status,
         temporal_q: row.temporal_q,
-        lang: row.lang,
-        jsonld_context: row.jsonld_context,
+        lang,
+        jsonld_context,
         local_only: if row.local_only { Some(true) } else { None },
         created_at: row.created_at,
         modified_at: row.modified_at,

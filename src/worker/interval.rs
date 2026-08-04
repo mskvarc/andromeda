@@ -19,6 +19,7 @@ use futures::{StreamExt, stream};
 use serde_json::Value;
 use std::{sync::Arc, time::Duration};
 use tracing::{debug, error, info};
+use url::Url;
 use uuid::Uuid;
 
 use super::notification::payload::{context_for_subscription_raw, filter_entity_attributes, normalize_compacted_entity};
@@ -80,7 +81,7 @@ impl IntervalWorker {
                         Ok(e) => e,
                         Err(e) => {
                             error!("IntervalWorker failed to fetch entities for {}: {}", sub.id, e);
-                            if let Err(e) = this.sub_repo.mark_failure(&sub.id).await {
+                            if let Err(e) = this.sub_repo.mark_failure(sub.id.as_ref()).await {
                                 debug!("Failed to mark failure for {}: {}", sub.id, e);
                             }
                             return;
@@ -108,7 +109,7 @@ impl IntervalWorker {
                     }
 
                     // Claim slot only once we know we are actually going to send a notification.
-                    let claimed = match this.sub_repo.claim_notification_slot(&sub.id, None).await {
+                    let claimed = match this.sub_repo.claim_notification_slot(sub.id.as_ref(), None).await {
                         Ok(c) => c,
                         Err(e) => {
                             debug!("IntervalWorker failed to claim slot for {}: {}", sub.id, e);
@@ -127,17 +128,11 @@ impl IntervalWorker {
                             return;
                         }
                     };
-                    let sub_uri = match sub.id.parse::<Uri>() {
-                        Ok(u) => u,
-                        Err(_) => {
-                            error!("Invalid subscription URI: {}", sub.id);
-                            return;
-                        }
-                    };
                     let notification = Notification {
                         id: notification_id,
                         type_: NotificationType,
-                        subscription_id: sub_uri,
+                        // clone: the notification owns its subscription id and the subscription is still needed below
+                        subscription_id: sub.id.clone(),
                         notified_at: Utc::now(),
                         data,
                     };
@@ -152,7 +147,7 @@ impl IntervalWorker {
 
                     let endpoint_uri = &sub.notification.endpoint.uri;
                     let accept = sub.notification.endpoint.accept.as_deref();
-                    let jsonld_context = sub.jsonld_context.as_deref();
+                    let jsonld_context = sub.jsonld_context.as_ref().map(Url::as_str);
 
                     let endpoint_transport = match parse_endpoint_transport(endpoint_uri, sub.notification.endpoint.notifier_info.as_deref()) {
                         Ok(t) => t,
@@ -169,7 +164,7 @@ impl IntervalWorker {
                         sub.notification.endpoint.receiver_info.as_deref(),
                         jsonld_context,
                         this.tenant.tenant_name(),
-                        &sub.id,
+                        sub.id.as_ref(),
                     ) {
                         Ok(r) => r,
                         Err(e) => {
@@ -181,10 +176,10 @@ impl IntervalWorker {
                     let success = matches!(this.transport.deliver(&endpoint_transport, &request).await, DeliveryResult::Delivered);
 
                     if success {
-                        if let Err(e) = this.sub_repo.mark_success(&sub.id).await {
+                        if let Err(e) = this.sub_repo.mark_success(sub.id.as_ref()).await {
                             debug!("Failed to mark success for {}: {}", sub.id, e);
                         }
-                    } else if let Err(e) = this.sub_repo.mark_failure(&sub.id).await {
+                    } else if let Err(e) = this.sub_repo.mark_failure(sub.id.as_ref()).await {
                         debug!("Failed to mark failure for {}: {}", sub.id, e);
                     }
                 })
@@ -252,7 +247,7 @@ impl IntervalWorker {
                 entity
             };
 
-            let context = context_for_subscription_raw(sub.jsonld_context.as_deref());
+            let context = context_for_subscription_raw(sub.jsonld_context.as_ref().map(Url::as_str));
             let include_context = sub.notification.endpoint.accept.as_deref().is_some_and(|v| v == "application/ld+json");
             let compacted = match self
                 .engine
@@ -321,7 +316,7 @@ fn apply_subscription_filters(sub: &Subscription, entities: Vec<Value>) -> Vec<V
         }
     });
 
-    let compiled_geo = sub.geo_q.as_ref().and_then(|v| compile_geo_q(v, &sub.id));
+    let compiled_geo = sub.geo_q.as_ref().and_then(|v| compile_geo_q(v, sub.id.as_ref()));
     let compiled_scope = sub.scope_q.as_deref().map(compile_scope_q);
 
     let has_filters = compiled_q.is_some() || compiled_geo.is_some() || compiled_scope.is_some();

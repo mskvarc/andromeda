@@ -13,7 +13,7 @@ use crate::{
 };
 use andromeda_domain::{
     attribute_type::AttributeType,
-    expanded::{expanded_geo_node_to_geometry, is_system_attribute},
+    expanded::{geo_property::expanded_geo_node_to_geometry, instance_key::is_system_attribute},
     geometry::Geometry,
     temporal::ValueType,
     vocab,

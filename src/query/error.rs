@@ -11,6 +11,7 @@
 //! `MalformedRequest`, semantically invalid data becomes `QueryValidation`.
 
 use crate::query::compiled::IcuCollationError;
+use andromeda_domain::geo_rel::GeoRelParseError;
 
 /// Errors raised while validating, parsing, compiling or planning a query.
 #[derive(Debug, thiserror::Error)]
@@ -86,18 +87,9 @@ pub enum QueryError {
     // -----------------------------------------------------------------------
     // Geo query (NGSI-LD 4.10)
     // -----------------------------------------------------------------------
-    /// The `georel` value was not a known relationship.
-    #[error("geo: unknown relationship {0}")]
-    GeoUnknownRel(String),
-    /// `maxDistance` or `minDistance` could not be parsed as a float.
-    #[error("geo: invalid distance value {value}")]
-    GeoInvalidDistance {
-        /// The raw distance value from the request.
-        value: String,
-        /// The underlying float-parse error.
-        #[source]
-        source: std::num::ParseFloatError,
-    },
+    /// The `georel` value could not be parsed.
+    #[error("geo: {0}")]
+    GeoRel(#[from] GeoRelParseError),
     /// Some but not all of the four required geo components were provided.
     #[error("geo: all of georel, geometry, coordinates must be provided together")]
     GeoIncomplete,

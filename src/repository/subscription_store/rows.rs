@@ -19,8 +19,6 @@ use andromeda_domain::subscription::SubscriptionStatus;
 pub struct SubscriptionRow {
     /// Subscription identifier.
     pub id: String,
-    /// Declared NGSI-LD type (`Subscription`).
-    pub type_: String,
     /// Optional human-readable name.
     pub subscription_name: Option<String>,
     /// Optional free-text description.

@@ -1,11 +1,9 @@
-use crate::attribute::{
-    AttributeValue,
-    common::{CommonAttributeFields, NgsiLdValue},
-};
+//! The Property attribute family (ETSI GS CIM 009 clause 5.2.5).
+
+use crate::attribute::{common_fields::CommonAttributeFields, value::NgsiLdValue};
 use cefact_units::UnitCode;
 use compact_str::CompactString;
 use derive_more::{Deref, From};
-use indexmap::IndexMap;
 use jsonld::Expandable;
 use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
@@ -50,18 +48,19 @@ pub struct Property {
     /// Previous value emitted in notifications when `showChanges` is active.
     #[jsonld(property = "ngsi:hasPreviousValue")]
     pub previous_value: Option<NgsiLdValue>,
+    /// Members shared with every other attribute family.
     #[serde(flatten)]
     #[jsonld(flatten)]
     pub common: CommonAttributeFields,
-    #[serde(flatten)]
-    #[jsonld(flatten_map)]
-    pub sub_attributes: IndexMap<CompactString, AttributeValue>,
 }
 
 #[cfg(test)]
 mod tests {
     #![allow(clippy::expect_used, clippy::unwrap_used)]
-    use crate::{attribute::Attribute, vocab};
+    use crate::{
+        attribute::{Attribute, value::NgsiLdValue},
+        vocab::expanded::properties as expanded_properties,
+    };
     use jsonld::Expandable;
 
     #[test]
@@ -77,10 +76,10 @@ mod tests {
         let Attribute::Property(property) = attr else {
             unreachable!("expected Property");
         };
-        assert!(matches!(property.value, crate::attribute::common::NgsiLdValue::DateTime(_)));
+        assert!(matches!(property.value, NgsiLdValue::DateTime(_)));
         pretty_assertions::assert_eq!(property.value_type.as_deref(), Some("DateTime"));
         assert!(property.previous_value.is_some());
-        assert!(property.common.system.instance_id.is_some());
+        assert!(property.common.instance_id.is_some());
     }
 
     #[test]
@@ -99,18 +98,18 @@ mod tests {
         pretty_assertions::assert_eq!(property.value_type.as_deref(), Some("Integer"));
         let expanded = property.expand::<serde_json::Value>();
         let obj = expanded.as_object().expect("object");
-        assert!(obj.contains_key(vocab::expanded::properties::VALUE_TYPE.as_str()));
-        assert!(obj.contains_key(vocab::expanded::properties::CREATED_AT.as_str()));
-        assert!(obj.contains_key(vocab::expanded::properties::MODIFIED_AT.as_str()));
+        assert!(obj.contains_key(expanded_properties::VALUE_TYPE.as_str()));
+        assert!(obj.contains_key(expanded_properties::CREATED_AT.as_str()));
+        assert!(obj.contains_key(expanded_properties::MODIFIED_AT.as_str()));
     }
 
     #[test]
     fn the_property_default_matches_the_field_by_field_literal() {
-        use crate::attribute::{Property, common::NgsiLdValue};
+        use crate::attribute::property::Property;
         let actual = Property::default();
         pretty_assertions::assert_eq!(actual.value, NgsiLdValue::Json(serde_json::Value::Null));
         assert!(actual.unit_code.is_none() && actual.value_type.is_none() && actual.previous_value.is_none());
-        assert!(actual.sub_attributes.is_empty());
+        assert!(actual.common.sub_attributes.is_empty());
         assert!(actual.common.dataset_id.is_none() && actual.common.observed_at.is_none() && actual.common.expires_at.is_none());
     }
 }

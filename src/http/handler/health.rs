@@ -24,7 +24,7 @@ pub async fn check(Extension(health): Extension<Health>) -> Result<impl IntoResp
 
     let response = HealthCheckResponse {
         id: Uri::Urn(id),
-        type_: HealthCheckType::HealthCheck,
+        type_: HealthCheckType,
         health_check: HealthCheckDetails { status, components },
     };
 

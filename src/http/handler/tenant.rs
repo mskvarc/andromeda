@@ -32,7 +32,7 @@ pub async fn query(
 
     let response = TenantList {
         id: Uri::Urn(id),
-        type_: TenantListType::TenantList,
+        type_: TenantListType,
         tenant_list,
     };
 

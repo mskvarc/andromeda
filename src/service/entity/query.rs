@@ -603,8 +603,8 @@ impl EntityQueryService {
             if !query.pick.is_empty() {
                 let mut keys_to_remove = Vec::new();
                 for key in entity.attrs.keys() {
-                    let iri = self.engine.expand_term(key, context).await?;
-                    if !query.pick.contains(&iri) && !query.pick.contains(key) {
+                    let iri = self.engine.expand_term(key.as_str(), context).await?;
+                    if !query.pick.contains(&iri) && !query.pick.iter().any(|pick| pick == key.as_str()) {
                         keys_to_remove.push(key.clone()); // clone: owned key to avoid borrowing entity.attrs during removal
                     }
                 }
@@ -616,8 +616,8 @@ impl EntityQueryService {
             if !query.omit.is_empty() {
                 let mut keys_to_remove = Vec::new();
                 for key in entity.attrs.keys() {
-                    let iri = self.engine.expand_term(key, context).await?;
-                    if query.omit.contains(&iri) || query.omit.contains(key) {
+                    let iri = self.engine.expand_term(key.as_str(), context).await?;
+                    if query.omit.contains(&iri) || query.omit.iter().any(|omit| omit == key.as_str()) {
                         keys_to_remove.push(key.clone()); // clone: owned key to avoid borrowing entity.attrs during removal
                     }
                 }

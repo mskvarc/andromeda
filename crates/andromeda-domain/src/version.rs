@@ -3,8 +3,10 @@
 //! Returns a custom JSON shape (not an NGSI-LD entity) with build-time
 //! metadata and runtime database extension versions.
 
-use crate::uri::Uri;
+use crate::{constant_string, uri::Uri};
 use serde::{Deserialize, Serialize};
+
+constant_string!(VersionType, "VersionInfo");
 
 /// Top-level version response for `GET /ngsi-ld/v1/version`.
 ///
@@ -20,15 +22,6 @@ pub struct VersionResponse {
     pub type_: VersionType,
     /// Nested version details for Andromeda and database extensions.
     pub version_info: VersionInfo,
-}
-
-/// Type discriminator for [`VersionResponse`].
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, strum::Display, strum::EnumString)]
-pub enum VersionType {
-    /// `VersionInfo`.
-    #[serde(rename = "VersionInfo")]
-    #[strum(serialize = "VersionInfo")]
-    VersionInfo,
 }
 
 /// Build-time and runtime version details.
@@ -98,7 +91,7 @@ mod tests {
 
         VersionResponse {
             id: Uri::Urn(id_urn),
-            type_: VersionType::VersionInfo,
+            type_: VersionType,
             version_info: VersionInfo {
                 andromeda: AndromedaVersion {
                     version: "v0.1.0".to_owned(),
@@ -169,7 +162,7 @@ mod tests {
 
     #[test]
     fn version_type_serializes_as_version_info() {
-        let json = serde_json::to_value(VersionType::VersionInfo).unwrap();
+        let json = serde_json::to_value(VersionType).unwrap();
         pretty_assertions::assert_eq!(json, serde_json::Value::String("VersionInfo".to_owned()));
     }
 

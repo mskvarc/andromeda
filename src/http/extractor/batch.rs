@@ -234,3 +234,47 @@ pub fn parse_batch_entities(
 
     Ok((entities, merged_context, parse_errors))
 }
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::expect_used, clippy::unwrap_used)]
+    use crate::{
+        http::extractor::{batch::parse_batch_entities, context::ContextUrl},
+        jsonld::ContextSpec,
+    };
+    use axum::{
+        body::Bytes,
+        http::{HeaderMap, HeaderValue, Uri, header::CONTENT_TYPE},
+    };
+
+    fn json_headers() -> HeaderMap {
+        let mut headers = HeaderMap::new();
+        headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+        headers
+    }
+
+    #[test]
+    fn a_malformed_attribute_key_rejects_only_its_own_entity() {
+        // NGSI-LD clause 5.6.7: batch creation reports failures per entity, so
+        // one entity whose attribute key is not a valid NGSI-LD name must not
+        // take the rest of the batch with it.
+        let body = Bytes::from(
+            serde_json::to_vec(&serde_json::json!([
+                {"id": "urn:ngsi-ld:Vehicle:1", "type": "Vehicle", "speed": {"type": "Property", "value": 10}},
+                {"id": "urn:ngsi-ld:Vehicle:2", "type": "Vehicle", "bad name": {"type": "Property", "value": 20}},
+                {"id": "urn:ngsi-ld:Vehicle:3", "type": "Vehicle", "speed": {"type": "Property", "value": 30}}
+            ]))
+            .expect("serialises"),
+        );
+        let uri = Uri::from_static("/ngsi-ld/v1/entityOperations/create");
+        let (entities, _context, errors) = parse_batch_entities(&body, &json_headers(), &ContextUrl(ContextSpec::none()), &uri).expect("batch parses");
+
+        pretty_assertions::assert_eq!(entities.len(), 2);
+        pretty_assertions::assert_eq!(
+            entities.iter().map(|entity| entity.id.to_string()).collect::<Vec<_>>(),
+            vec!["urn:ngsi-ld:Vehicle:1".to_string(), "urn:ngsi-ld:Vehicle:3".to_string()]
+        );
+        pretty_assertions::assert_eq!(errors.len(), 1);
+        pretty_assertions::assert_eq!(errors[0].entity_id, "urn:ngsi-ld:Vehicle:2");
+    }
+}

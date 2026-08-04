@@ -40,7 +40,8 @@ impl OutboxRepository {
                 .push_bind(entry.trigger.to_string())
                 .push_bind(&entry.entity_snapshot)
                 .push_bind(&entry.previous_snapshot)
-                .push_bind(&entry.changed_attrs);
+                // The column is `text[]`; the domain name type is not an sqlx `Encode`, so it is rendered here at the persistence boundary.
+                .push_bind(entry.changed_attrs.iter().map(ToString::to_string).collect::<Vec<_>>());
         });
         builder.build().execute(&mut **tx).await?;
 

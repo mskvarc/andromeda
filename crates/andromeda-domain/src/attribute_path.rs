@@ -1,3 +1,10 @@
+//! The dotted attribute path used to address a sub-attribute (ETSI GS CIM 009 clause 4.5.3).
+
+// `RegularGrammar` emits an undocumented owned type and accessor alongside the
+// grammar type below, and an item-level allow does not reach macro-generated
+// siblings. This module defines exactly one grammar type and nothing else.
+#![allow(missing_docs)]
+
 use static_regular_grammar::RegularGrammar;
 
 /// A validated NGSI-LD attribute path (ETSI GS CIM 009 v1.9.1, clauses

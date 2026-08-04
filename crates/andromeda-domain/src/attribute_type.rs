@@ -1,6 +1,9 @@
 //! NGSI-LD Attribute type enum (ETSI GS CIM 009 clause 5.2.4).
 
-use crate::vocab;
+use crate::vocab::{
+    compact::properties as compact_properties,
+    expanded::{classes as expanded_classes, properties as expanded_properties},
+};
 use iri_rs::Iri;
 use serde::{Deserialize, Serialize};
 use strum::{Display, EnumString};
@@ -8,13 +11,21 @@ use strum::{Display, EnumString};
 /// The eight NGSI-LD attribute types.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Display, EnumString, strum::IntoStaticStr)]
 pub enum AttributeType {
+    /// A Property (clause 5.2.5).
     Property,
+    /// A Relationship (clause 5.2.6).
     Relationship,
+    /// A GeoProperty (clause 5.2.7).
     GeoProperty,
+    /// A VocabProperty (clause 5.2.35).
     VocabProperty,
+    /// A LanguageProperty (clause 5.2.32).
     LanguageProperty,
+    /// A JsonProperty (clause 5.2.38).
     JsonProperty,
+    /// A ListProperty (clause 5.2.36).
     ListProperty,
+    /// A ListRelationship (clause 5.2.37).
     ListRelationship,
 }
 
@@ -22,14 +33,14 @@ impl AttributeType {
     /// Returns the expanded IRI for this attribute type as an [`Iri`].
     pub const fn iri(self) -> Iri<&'static str> {
         match self {
-            Self::Property => vocab::expanded::classes::PROPERTY,
-            Self::Relationship => vocab::expanded::classes::RELATIONSHIP,
-            Self::GeoProperty => vocab::expanded::classes::GEO_PROPERTY,
-            Self::VocabProperty => vocab::expanded::classes::VOCAB_PROPERTY,
-            Self::LanguageProperty => vocab::expanded::classes::LANGUAGE_PROPERTY,
-            Self::JsonProperty => vocab::expanded::classes::JSON_PROPERTY,
-            Self::ListProperty => vocab::expanded::classes::LIST_PROPERTY,
-            Self::ListRelationship => vocab::expanded::classes::LIST_RELATIONSHIP,
+            Self::Property => expanded_classes::PROPERTY,
+            Self::Relationship => expanded_classes::RELATIONSHIP,
+            Self::GeoProperty => expanded_classes::GEO_PROPERTY,
+            Self::VocabProperty => expanded_classes::VOCAB_PROPERTY,
+            Self::LanguageProperty => expanded_classes::LANGUAGE_PROPERTY,
+            Self::JsonProperty => expanded_classes::JSON_PROPERTY,
+            Self::ListProperty => expanded_classes::LIST_PROPERTY,
+            Self::ListRelationship => expanded_classes::LIST_RELATIONSHIP,
         }
     }
 
@@ -42,13 +53,13 @@ impl AttributeType {
     /// as an [`Iri`].
     pub const fn value_key(self) -> Iri<&'static str> {
         match self {
-            Self::Property | Self::GeoProperty => vocab::expanded::properties::VALUE,
-            Self::Relationship => vocab::expanded::properties::OBJECT,
-            Self::VocabProperty => vocab::expanded::properties::VOCAB,
-            Self::LanguageProperty => vocab::expanded::properties::LANGUAGE_MAP,
-            Self::JsonProperty => vocab::expanded::properties::JSON,
-            Self::ListProperty => vocab::expanded::properties::VALUE_LIST,
-            Self::ListRelationship => vocab::expanded::properties::OBJECT_LIST,
+            Self::Property | Self::GeoProperty => expanded_properties::VALUE,
+            Self::Relationship => expanded_properties::OBJECT,
+            Self::VocabProperty => expanded_properties::VOCAB,
+            Self::LanguageProperty => expanded_properties::LANGUAGE_MAP,
+            Self::JsonProperty => expanded_properties::JSON,
+            Self::ListProperty => expanded_properties::VALUE_LIST,
+            Self::ListRelationship => expanded_properties::OBJECT_LIST,
         }
     }
 
@@ -61,37 +72,37 @@ impl AttributeType {
     #[allow(dead_code)]
     pub const fn compacted_value_key(self) -> &'static str {
         match self {
-            Self::Property | Self::GeoProperty => vocab::compact::properties::VALUE,
-            Self::Relationship => vocab::compact::properties::OBJECT,
-            Self::VocabProperty => vocab::compact::properties::VOCAB,
-            Self::LanguageProperty => vocab::compact::properties::LANGUAGE_MAP,
-            Self::JsonProperty => vocab::compact::properties::JSON,
-            Self::ListProperty => vocab::compact::properties::VALUE_LIST,
-            Self::ListRelationship => vocab::compact::properties::OBJECT_LIST,
+            Self::Property | Self::GeoProperty => compact_properties::VALUE,
+            Self::Relationship => compact_properties::OBJECT,
+            Self::VocabProperty => compact_properties::VOCAB,
+            Self::LanguageProperty => compact_properties::LANGUAGE_MAP,
+            Self::JsonProperty => compact_properties::JSON,
+            Self::ListProperty => compact_properties::VALUE_LIST,
+            Self::ListRelationship => compact_properties::OBJECT_LIST,
         }
     }
 
     /// Returns the compacted previous-value key for showChanges support.
     pub const fn previous_key(self) -> &'static str {
         match self {
-            Self::Relationship => vocab::compact::properties::PREVIOUS_OBJECT,
-            Self::LanguageProperty => vocab::compact::properties::PREVIOUS_LANGUAGE_MAP,
-            Self::JsonProperty => vocab::compact::properties::PREVIOUS_JSON,
-            Self::VocabProperty => vocab::compact::properties::PREVIOUS_VOCAB,
-            Self::ListRelationship => vocab::compact::properties::PREVIOUS_OBJECT_LIST,
-            Self::ListProperty => vocab::compact::properties::PREVIOUS_VALUE_LIST,
-            Self::Property | Self::GeoProperty => vocab::compact::properties::PREVIOUS_VALUE,
+            Self::Relationship => compact_properties::PREVIOUS_OBJECT,
+            Self::LanguageProperty => compact_properties::PREVIOUS_LANGUAGE_MAP,
+            Self::JsonProperty => compact_properties::PREVIOUS_JSON,
+            Self::VocabProperty => compact_properties::PREVIOUS_VOCAB,
+            Self::ListRelationship => compact_properties::PREVIOUS_OBJECT_LIST,
+            Self::ListProperty => compact_properties::PREVIOUS_VALUE_LIST,
+            Self::Property | Self::GeoProperty => compact_properties::PREVIOUS_VALUE,
         }
     }
 
     /// Returns (plural_key, singular_key) for temporal values format.
     pub const fn temporal_values_keys(self) -> (&'static str, &'static str) {
         match self {
-            Self::Relationship | Self::ListRelationship => (vocab::compact::properties::OBJECTS, vocab::compact::properties::OBJECT),
-            Self::LanguageProperty => (vocab::compact::properties::LANGUAGE_MAPS, vocab::compact::properties::LANGUAGE_MAP),
-            Self::JsonProperty => (vocab::compact::properties::JSONS, vocab::compact::properties::JSON),
-            Self::VocabProperty => (vocab::compact::properties::VOCABS, vocab::compact::properties::VOCAB),
-            Self::Property | Self::GeoProperty | Self::ListProperty => (vocab::compact::properties::VALUES, vocab::compact::properties::VALUE),
+            Self::Relationship | Self::ListRelationship => (compact_properties::OBJECTS, compact_properties::OBJECT),
+            Self::LanguageProperty => (compact_properties::LANGUAGE_MAPS, compact_properties::LANGUAGE_MAP),
+            Self::JsonProperty => (compact_properties::JSONS, compact_properties::JSON),
+            Self::VocabProperty => (compact_properties::VOCABS, compact_properties::VOCAB),
+            Self::Property | Self::GeoProperty | Self::ListProperty => (compact_properties::VALUES, compact_properties::VALUE),
         }
     }
 
@@ -110,110 +121,110 @@ impl AttributeType {
     pub const fn reserved_fields(self) -> &'static [&'static str] {
         match self {
             Self::Property => &[
-                vocab::compact::properties::VALUE,
-                vocab::compact::properties::PREVIOUS_VALUE,
-                vocab::compact::properties::UNIT_CODE,
-                vocab::compact::properties::VALUE_TYPE,
-                vocab::compact::properties::OBSERVED_AT,
-                vocab::compact::properties::EXPIRES_AT,
-                vocab::compact::properties::DATASET_ID,
-                vocab::compact::properties::INSTANCE_ID,
-                vocab::compact::properties::CREATED_AT,
-                vocab::compact::properties::MODIFIED_AT,
-                vocab::compact::properties::DELETED_AT,
+                compact_properties::VALUE,
+                compact_properties::PREVIOUS_VALUE,
+                compact_properties::UNIT_CODE,
+                compact_properties::VALUE_TYPE,
+                compact_properties::OBSERVED_AT,
+                compact_properties::EXPIRES_AT,
+                compact_properties::DATASET_ID,
+                compact_properties::INSTANCE_ID,
+                compact_properties::CREATED_AT,
+                compact_properties::MODIFIED_AT,
+                compact_properties::DELETED_AT,
                 "name",
             ],
             Self::Relationship => &[
-                vocab::compact::properties::OBJECT,
-                vocab::compact::properties::PREVIOUS_OBJECT,
-                vocab::compact::properties::OBJECT_TYPE,
-                vocab::compact::properties::ENTITY,
-                vocab::compact::properties::OBSERVED_AT,
-                vocab::compact::properties::EXPIRES_AT,
-                vocab::compact::properties::DATASET_ID,
-                vocab::compact::properties::INSTANCE_ID,
-                vocab::compact::properties::CREATED_AT,
-                vocab::compact::properties::MODIFIED_AT,
-                vocab::compact::properties::DELETED_AT,
+                compact_properties::OBJECT,
+                compact_properties::PREVIOUS_OBJECT,
+                compact_properties::OBJECT_TYPE,
+                compact_properties::ENTITY,
+                compact_properties::OBSERVED_AT,
+                compact_properties::EXPIRES_AT,
+                compact_properties::DATASET_ID,
+                compact_properties::INSTANCE_ID,
+                compact_properties::CREATED_AT,
+                compact_properties::MODIFIED_AT,
+                compact_properties::DELETED_AT,
                 "name",
             ],
             Self::GeoProperty => &[
-                vocab::compact::properties::VALUE,
-                vocab::compact::properties::PREVIOUS_VALUE,
-                vocab::compact::properties::VALUE_TYPE,
-                vocab::compact::properties::OBSERVED_AT,
-                vocab::compact::properties::EXPIRES_AT,
-                vocab::compact::properties::DATASET_ID,
-                vocab::compact::properties::INSTANCE_ID,
-                vocab::compact::properties::CREATED_AT,
-                vocab::compact::properties::MODIFIED_AT,
-                vocab::compact::properties::DELETED_AT,
+                compact_properties::VALUE,
+                compact_properties::PREVIOUS_VALUE,
+                compact_properties::VALUE_TYPE,
+                compact_properties::OBSERVED_AT,
+                compact_properties::EXPIRES_AT,
+                compact_properties::DATASET_ID,
+                compact_properties::INSTANCE_ID,
+                compact_properties::CREATED_AT,
+                compact_properties::MODIFIED_AT,
+                compact_properties::DELETED_AT,
                 "name",
             ],
             Self::VocabProperty => &[
-                vocab::compact::properties::VOCAB,
-                vocab::compact::properties::PREVIOUS_VOCAB,
-                vocab::compact::properties::VALUE_TYPE,
-                vocab::compact::properties::OBSERVED_AT,
-                vocab::compact::properties::EXPIRES_AT,
-                vocab::compact::properties::DATASET_ID,
-                vocab::compact::properties::INSTANCE_ID,
-                vocab::compact::properties::CREATED_AT,
-                vocab::compact::properties::MODIFIED_AT,
-                vocab::compact::properties::DELETED_AT,
+                compact_properties::VOCAB,
+                compact_properties::PREVIOUS_VOCAB,
+                compact_properties::VALUE_TYPE,
+                compact_properties::OBSERVED_AT,
+                compact_properties::EXPIRES_AT,
+                compact_properties::DATASET_ID,
+                compact_properties::INSTANCE_ID,
+                compact_properties::CREATED_AT,
+                compact_properties::MODIFIED_AT,
+                compact_properties::DELETED_AT,
                 "name",
             ],
             Self::LanguageProperty => &[
-                vocab::compact::properties::LANGUAGE_MAP,
-                vocab::compact::properties::PREVIOUS_LANGUAGE_MAP,
-                vocab::compact::properties::VALUE_TYPE,
-                vocab::compact::properties::OBSERVED_AT,
-                vocab::compact::properties::EXPIRES_AT,
-                vocab::compact::properties::DATASET_ID,
-                vocab::compact::properties::INSTANCE_ID,
-                vocab::compact::properties::CREATED_AT,
-                vocab::compact::properties::MODIFIED_AT,
-                vocab::compact::properties::DELETED_AT,
+                compact_properties::LANGUAGE_MAP,
+                compact_properties::PREVIOUS_LANGUAGE_MAP,
+                compact_properties::VALUE_TYPE,
+                compact_properties::OBSERVED_AT,
+                compact_properties::EXPIRES_AT,
+                compact_properties::DATASET_ID,
+                compact_properties::INSTANCE_ID,
+                compact_properties::CREATED_AT,
+                compact_properties::MODIFIED_AT,
+                compact_properties::DELETED_AT,
                 "name",
             ],
             Self::JsonProperty => &[
-                vocab::compact::properties::JSON,
-                vocab::compact::properties::PREVIOUS_JSON,
-                vocab::compact::properties::VALUE_TYPE,
-                vocab::compact::properties::OBSERVED_AT,
-                vocab::compact::properties::EXPIRES_AT,
-                vocab::compact::properties::DATASET_ID,
-                vocab::compact::properties::INSTANCE_ID,
-                vocab::compact::properties::CREATED_AT,
-                vocab::compact::properties::MODIFIED_AT,
-                vocab::compact::properties::DELETED_AT,
+                compact_properties::JSON,
+                compact_properties::PREVIOUS_JSON,
+                compact_properties::VALUE_TYPE,
+                compact_properties::OBSERVED_AT,
+                compact_properties::EXPIRES_AT,
+                compact_properties::DATASET_ID,
+                compact_properties::INSTANCE_ID,
+                compact_properties::CREATED_AT,
+                compact_properties::MODIFIED_AT,
+                compact_properties::DELETED_AT,
                 "name",
             ],
             Self::ListProperty => &[
-                vocab::compact::properties::VALUE_LIST,
-                vocab::compact::properties::PREVIOUS_VALUE_LIST,
-                vocab::compact::properties::VALUE_TYPE,
-                vocab::compact::properties::OBSERVED_AT,
-                vocab::compact::properties::EXPIRES_AT,
-                vocab::compact::properties::DATASET_ID,
-                vocab::compact::properties::INSTANCE_ID,
-                vocab::compact::properties::CREATED_AT,
-                vocab::compact::properties::MODIFIED_AT,
-                vocab::compact::properties::DELETED_AT,
+                compact_properties::VALUE_LIST,
+                compact_properties::PREVIOUS_VALUE_LIST,
+                compact_properties::VALUE_TYPE,
+                compact_properties::OBSERVED_AT,
+                compact_properties::EXPIRES_AT,
+                compact_properties::DATASET_ID,
+                compact_properties::INSTANCE_ID,
+                compact_properties::CREATED_AT,
+                compact_properties::MODIFIED_AT,
+                compact_properties::DELETED_AT,
                 "name",
             ],
             Self::ListRelationship => &[
-                vocab::compact::properties::OBJECT_LIST,
-                vocab::compact::properties::PREVIOUS_OBJECT_LIST,
-                vocab::compact::properties::OBJECT_TYPE,
-                vocab::compact::properties::ENTITY_LIST,
-                vocab::compact::properties::OBSERVED_AT,
-                vocab::compact::properties::EXPIRES_AT,
-                vocab::compact::properties::DATASET_ID,
-                vocab::compact::properties::INSTANCE_ID,
-                vocab::compact::properties::CREATED_AT,
-                vocab::compact::properties::MODIFIED_AT,
-                vocab::compact::properties::DELETED_AT,
+                compact_properties::OBJECT_LIST,
+                compact_properties::PREVIOUS_OBJECT_LIST,
+                compact_properties::OBJECT_TYPE,
+                compact_properties::ENTITY_LIST,
+                compact_properties::OBSERVED_AT,
+                compact_properties::EXPIRES_AT,
+                compact_properties::DATASET_ID,
+                compact_properties::INSTANCE_ID,
+                compact_properties::CREATED_AT,
+                compact_properties::MODIFIED_AT,
+                compact_properties::DELETED_AT,
                 "name",
             ],
         }
@@ -311,11 +322,11 @@ mod tests {
 
     #[test]
     fn value_key_mapping() {
-        pretty_assertions::assert_eq!(AttributeType::Property.value_key(), vocab::expanded::properties::VALUE);
-        pretty_assertions::assert_eq!(AttributeType::Relationship.value_key(), vocab::expanded::properties::OBJECT);
-        pretty_assertions::assert_eq!(AttributeType::VocabProperty.value_key(), vocab::expanded::properties::VOCAB);
-        pretty_assertions::assert_eq!(AttributeType::LanguageProperty.value_key(), vocab::expanded::properties::LANGUAGE_MAP);
-        pretty_assertions::assert_eq!(AttributeType::JsonProperty.value_key(), vocab::expanded::properties::JSON);
+        pretty_assertions::assert_eq!(AttributeType::Property.value_key(), expanded_properties::VALUE);
+        pretty_assertions::assert_eq!(AttributeType::Relationship.value_key(), expanded_properties::OBJECT);
+        pretty_assertions::assert_eq!(AttributeType::VocabProperty.value_key(), expanded_properties::VOCAB);
+        pretty_assertions::assert_eq!(AttributeType::LanguageProperty.value_key(), expanded_properties::LANGUAGE_MAP);
+        pretty_assertions::assert_eq!(AttributeType::JsonProperty.value_key(), expanded_properties::JSON);
     }
 
     #[test]

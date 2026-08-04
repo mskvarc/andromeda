@@ -1,6 +1,7 @@
-use crate::attribute::{AttributeValue, common::CommonAttributeFields};
+//! The JsonProperty attribute family (ETSI GS CIM 009 clause 5.2.38).
+
+use crate::attribute::common_fields::CommonAttributeFields;
 use compact_str::CompactString;
-use indexmap::IndexMap;
 use jsonld::Expandable;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -24,18 +25,16 @@ pub struct JsonProperty {
     /// Previous JSON payload emitted in notifications when `showChanges` is active.
     #[jsonld(property = "ngsi:hasPreviousJson", coerce = "@json")]
     pub previous_json: Option<Value>,
+    /// Members shared with every other attribute family.
     #[serde(flatten)]
     #[jsonld(flatten)]
     pub common: CommonAttributeFields,
-    #[serde(flatten)]
-    #[jsonld(flatten_map)]
-    pub sub_attributes: IndexMap<String, AttributeValue>,
 }
 
 #[cfg(test)]
 mod tests {
     #![allow(clippy::expect_used, clippy::unwrap_used)]
-    use crate::{attribute::Attribute, vocab};
+    use crate::{attribute::Attribute, vocab::expanded::properties as expanded_properties};
     use jsonld::Expandable;
 
     #[test]
@@ -65,16 +64,16 @@ mod tests {
         };
         let expanded = property.expand::<serde_json::Value>();
         let obj = expanded.as_object().expect("object");
-        assert!(obj.contains_key(vocab::expanded::properties::PREVIOUS_JSON.as_str()));
+        assert!(obj.contains_key(expanded_properties::PREVIOUS_JSON.as_str()));
     }
 
     #[test]
     fn the_json_property_default_matches_the_field_by_field_literal() {
-        use crate::attribute::JsonProperty;
+        use crate::attribute::json_property::JsonProperty;
         let actual = JsonProperty::default();
         pretty_assertions::assert_eq!(actual.json, serde_json::Value::Null);
         assert!(actual.value_type.is_none() && actual.previous_json.is_none());
-        assert!(actual.sub_attributes.is_empty());
+        assert!(actual.common.sub_attributes.is_empty());
         assert!(actual.common.dataset_id.is_none() && actual.common.observed_at.is_none() && actual.common.expires_at.is_none());
     }
 }

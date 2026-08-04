@@ -9,6 +9,7 @@ use crate::{
         temporal::common::{TimeRange, history_row_to_expanded_instance, parse_tea_entry},
     },
 };
+use andromeda_domain::entity_type::EntityTypeName;
 use chrono::{DateTime, Utc};
 use indexmap::IndexMap;
 use serde_json::{Value, json};
@@ -39,14 +40,19 @@ pub struct TemporalEntityBuildResult {
 #[derive(Debug)]
 pub struct TemporalEntityRenderer<'a> {
     entity_id: &'a str,
-    entity_types: &'a [String],
+    entity_types: &'a [EntityTypeName],
     rows: &'a [PgRow],
     compiled: &'a CompiledTemporalQuery,
 }
 
 impl<'a> TemporalEntityRenderer<'a> {
     /// Create a renderer for the given entity and row set.
-    pub const fn new(entity_id: &'a str, entity_types: &'a [String], rows: &'a [PgRow], compiled: &'a CompiledTemporalQuery) -> TemporalEntityRenderer<'a> {
+    pub const fn new(
+        entity_id: &'a str,
+        entity_types: &'a [EntityTypeName],
+        rows: &'a [PgRow],
+        compiled: &'a CompiledTemporalQuery,
+    ) -> TemporalEntityRenderer<'a> {
         TemporalEntityRenderer {
             entity_id,
             entity_types,

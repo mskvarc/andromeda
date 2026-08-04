@@ -33,7 +33,7 @@ use crate::{
         entity::{BatchSideEffectMode, provision_forwarding::ForwardingModes, query::EntityQueryService},
     },
 };
-use andromeda_domain::{entity::EntityTypeValue, expanded::OverwritePolicy};
+use andromeda_domain::{entity_type::EntityTypeValue, expanded::mutation::selection::OverwritePolicy};
 use axum::{
     body::Bytes,
     extract::OriginalUri,

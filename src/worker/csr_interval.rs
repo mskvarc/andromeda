@@ -18,6 +18,7 @@ use chrono::Utc;
 use serde_json::Value;
 use std::{sync::Arc, time::Duration};
 use tracing::{debug, error, info};
+use url::Url;
 use uuid::Uuid;
 
 pub struct CsrIntervalWorker {
@@ -65,7 +66,7 @@ impl CsrIntervalWorker {
                     Ok(c) => c,
                     Err(e) => {
                         error!("CsrIntervalWorker failed to fetch CSRs for {}: {}", sub.id, e);
-                        if let Err(e) = self.sub_repo.mark_failure(&sub.id).await {
+                        if let Err(e) = self.sub_repo.mark_failure(sub.id.as_ref()).await {
                             debug!("Failed to mark failure for {}: {}", sub.id, e);
                         }
                         continue;
@@ -77,7 +78,7 @@ impl CsrIntervalWorker {
                 }
 
                 // Claim slot only when we are about to emit a notification.
-                let claimed = match self.sub_repo.claim_notification_slot(&sub.id, None).await {
+                let claimed = match self.sub_repo.claim_notification_slot(sub.id.as_ref(), None).await {
                     Ok(c) => c,
                     Err(e) => {
                         debug!("CsrIntervalWorker failed to claim slot for {}: {}", sub.id, e);
@@ -96,17 +97,11 @@ impl CsrIntervalWorker {
                         continue;
                     }
                 };
-                let sub_uri = match sub.id.parse::<Uri>() {
-                    Ok(u) => u,
-                    Err(_) => {
-                        error!("Invalid subscription URI: {}", sub.id);
-                        continue;
-                    }
-                };
                 let notification = CsourceNotification {
                     id: notification_id,
                     type_: CsourceNotificationType,
-                    subscription_id: sub_uri,
+                    // clone: the notification owns its subscription id and the subscription is still needed below
+                    subscription_id: sub.id.clone(),
                     notified_at: Utc::now(),
                     data: csrs,
                     trigger_reason: None,
@@ -122,7 +117,7 @@ impl CsrIntervalWorker {
 
                 let endpoint_uri = &sub.notification.endpoint.uri;
                 let accept = sub.notification.endpoint.accept.as_deref();
-                let jsonld_context = sub.jsonld_context.as_deref();
+                let jsonld_context = sub.jsonld_context.as_ref().map(Url::as_str);
 
                 let endpoint_transport = match parse_endpoint_transport(endpoint_uri, sub.notification.endpoint.notifier_info.as_deref()) {
                     Ok(t) => t,
@@ -139,7 +134,7 @@ impl CsrIntervalWorker {
                     sub.notification.endpoint.receiver_info.as_deref(),
                     jsonld_context,
                     self.tenant.tenant_name(),
-                    &sub.id,
+                    sub.id.as_ref(),
                 ) {
                     Ok(r) => r,
                     Err(e) => {
@@ -151,11 +146,11 @@ impl CsrIntervalWorker {
                 let success = matches!(self.transport.deliver(&endpoint_transport, &request).await, DeliveryResult::Delivered);
 
                 if success {
-                    if let Err(e) = self.sub_repo.mark_success(&sub.id).await {
+                    if let Err(e) = self.sub_repo.mark_success(sub.id.as_ref()).await {
                         debug!("Failed to mark success for {}: {}", sub.id, e);
                     }
                 } else {
-                    if let Err(e) = self.sub_repo.mark_failure(&sub.id).await {
+                    if let Err(e) = self.sub_repo.mark_failure(sub.id.as_ref()).await {
                         debug!("Failed to mark failure for {}: {}", sub.id, e);
                     }
                 }

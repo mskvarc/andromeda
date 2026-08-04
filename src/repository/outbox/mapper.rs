@@ -5,6 +5,7 @@
 
 use crate::repository::outbox::rows::OutboxEntryRow;
 use andromeda_domain::{
+    attribute::reference::NgsiLdReferenceError,
     notification::TriggerReason,
     outbox::{OutboxEntry, OutboxEntryId, WorkerInstanceId},
     uri::Uri,
@@ -29,6 +30,13 @@ pub enum OutboxMapperError {
     SubscriptionUri {
         /// Raw database value.
         value: String,
+    },
+    /// Stored attribute name does not satisfy the NGSI-LD name grammar.
+    #[error("invalid changed attribute name: {source}")]
+    AttributeName {
+        /// Underlying parse error.
+        #[source]
+        source: NgsiLdReferenceError,
     },
     /// Stored entity identifier is not a valid URI.
     #[error("invalid entity URI '{value}'")]
@@ -61,7 +69,12 @@ pub fn row_to_domain(row: OutboxEntryRow) -> Result<OutboxEntry, OutboxMapperErr
         trigger,
         entity_snapshot: row.entity_snapshot,
         previous_snapshot: row.previous_snapshot,
-        changed_attrs: row.changed_attrs,
+        changed_attrs: row
+            .changed_attrs
+            .iter()
+            .map(|raw| raw.parse())
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|source| OutboxMapperError::AttributeName { source })?,
         created_at: row.created_at,
         claimed_at: row.claimed_at,
         claimed_by: row.claimed_by.map(WorkerInstanceId::from),

@@ -1,4 +1,6 @@
-use crate::{ngsi_ld_urn::EntityMapId, uri::Uri};
+//! The EntityMap resource that pins a distributed query's result set (ETSI GS CIM 009 clause 5.2.39).
+
+use crate::{constant_string, ngsi_ld_urn::EntityMapId, uri::Uri};
 use chrono::{DateTime, Utc};
 use compact_str::CompactString;
 use derive_more::Display;
@@ -8,12 +10,7 @@ use std::str::FromStr;
 use thiserror::Error;
 use urn_rs::Urn;
 
-/// JSON-LD `@type` for EntityMap resources.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum EntityMapType {
-    #[serde(rename = "EntityMap")]
-    EntityMap,
-}
+constant_string!(EntityMapType, "EntityMap");
 
 /// Dataset identifier reference inside `entityMap` values.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Display)]
@@ -61,6 +58,7 @@ impl TryFrom<String> for EntityMapDatasetId {
 /// Parsing errors for [`EntityMapDatasetId`].
 #[derive(Debug, Error, Clone, Copy, PartialEq, Eq)]
 pub enum EntityMapDatasetIdParseError {
+    /// The value was neither `@none` nor a valid URI.
     #[error("entityMap dataset id must be '@none' or a valid URI")]
     InvalidUri,
 }
@@ -69,13 +67,19 @@ pub enum EntityMapDatasetIdParseError {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EntityMap {
+    /// Generated identifier of this map.
     pub id: EntityMapId,
+    /// Always `EntityMap`.
     #[serde(rename = "type")]
     pub type_: EntityMapType,
+    /// When the map stops being usable for follow-up pages.
     pub expires_at: DateTime<Utc>,
+    /// Identifiers of every entity the originating query matched, in order.
     #[serde(rename = "ids")]
     pub entity_ids: Vec<Uri>,
+    /// Datasets held for each matched entity.
     pub entity_map: IndexMap<Uri, Vec<EntityMapDatasetId>>,
+    /// Maps held by context sources that contributed to the same query.
     pub linked_maps: IndexMap<CompactString, EntityMapId>,
 }
 
@@ -84,11 +88,12 @@ impl EntityMap {
     pub fn new(id: EntityMapId, expires_at: DateTime<Utc>, entity_ids: Vec<Uri>) -> EntityMap {
         let mut entity_map = IndexMap::new();
         for entity_id in &entity_ids {
+            // clone: the map owns its keys and `entity_ids` keeps the originals
             entity_map.insert(entity_id.clone(), vec![EntityMapDatasetId::None]);
         }
         EntityMap {
             id,
-            type_: EntityMapType::EntityMap,
+            type_: EntityMapType,
             expires_at,
             entity_ids,
             entity_map,

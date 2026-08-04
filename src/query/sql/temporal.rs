@@ -574,7 +574,7 @@ fn type_expr_to_condition(expr: &TypeExpr) -> Condition {
 
 /// Geo filter to condition using PostGIS helpers.
 fn geo_to_condition(geo: &GeoQuery, payload_col: &str) -> Result<Condition, AndromedaError> {
-    use crate::query::compiled::GeoRel;
+    use andromeda_domain::geo_rel::GeoRel;
 
     let is_default_location = geo.geoproperty_iri == vocab::expanded::properties::LOCATION.as_str();
     let quoted_col = quote_col_ref(payload_col);

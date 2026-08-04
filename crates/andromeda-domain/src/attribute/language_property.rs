@@ -1,4 +1,6 @@
-use crate::attribute::{AttributeValue, common::CommonAttributeFields};
+//! The LanguageProperty attribute family and its language map (ETSI GS CIM 009 clause 5.2.32).
+
+use crate::attribute::common_fields::CommonAttributeFields;
 use compact_str::CompactString;
 use derive_more::{Deref, From};
 use indexmap::IndexMap;
@@ -111,12 +113,10 @@ pub struct LanguageProperty {
     /// Previous language map emitted in notifications when `showChanges` is active.
     #[jsonld(property = "ngsi:hasPreviousLanguageMap", container = "language")]
     pub previous_language_map: Option<LanguageMap>,
+    /// Members shared with every other attribute family.
     #[serde(flatten)]
     #[jsonld(flatten)]
     pub common: CommonAttributeFields,
-    #[serde(flatten)]
-    #[jsonld(flatten_map)]
-    pub sub_attributes: IndexMap<String, AttributeValue>,
 }
 
 fn language_entry<V: JsonValue>(key: &LanguageMapKey, value: &str) -> V {
@@ -132,10 +132,12 @@ fn language_entry<V: JsonValue>(key: &LanguageMapKey, value: &str) -> V {
 mod tests {
     #![allow(clippy::expect_used, clippy::unwrap_used)]
     use crate::{
-        attribute::{Attribute, LanguageMapKey, LanguageMapValue},
-        vocab,
+        attribute::{
+            Attribute,
+            language_property::{LanguageMapKey, LanguageMapValue, LanguageProperty},
+        },
+        vocab::expanded::properties as expanded_properties,
     };
-    use indexmap::IndexMap;
     use jsonld::Expandable;
 
     #[test]
@@ -156,24 +158,23 @@ mod tests {
 
     #[test]
     fn language_map_expands_as_language_tagged_values() {
-        let mut map = IndexMap::new();
+        let mut map = indexmap::IndexMap::new();
         map.insert(LanguageMapKey::None, LanguageMapValue::Single("default".to_string()));
-        let property = crate::attribute::LanguageProperty {
+        let property = LanguageProperty {
             language_map: map.into(),
             ..Default::default()
         };
         let expanded = property.expand::<serde_json::Value>();
         let obj = expanded.as_object().expect("object");
-        assert!(obj.contains_key(vocab::expanded::properties::LANGUAGE_MAP.as_str()));
+        assert!(obj.contains_key(expanded_properties::LANGUAGE_MAP.as_str()));
     }
 
     #[test]
     fn the_language_property_default_matches_the_field_by_field_literal() {
-        use crate::attribute::LanguageProperty;
         let actual = LanguageProperty::default();
         assert!(actual.language_map.is_empty());
         assert!(actual.value_type.is_none() && actual.previous_language_map.is_none());
-        assert!(actual.sub_attributes.is_empty());
+        assert!(actual.common.sub_attributes.is_empty());
         assert!(actual.common.dataset_id.is_none() && actual.common.observed_at.is_none() && actual.common.expires_at.is_none());
     }
 }

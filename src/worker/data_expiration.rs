@@ -3,7 +3,7 @@ use crate::{
     repository::{entity::repo::EntityRepository, uow::UnitOfWorkFactory},
 };
 use andromeda_domain::{
-    expanded::removed_attribute_instances,
+    expanded::instance_key::removed_attribute_instances,
     notification::{ChangeEvent, TriggerReason},
     uri::Uri,
 };

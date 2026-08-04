@@ -2,18 +2,24 @@
 
 use crate::core::error::AndromedaError;
 use andromeda_domain::{
-    registration::{ContextSourceRegistration, CsrOperation, CsrStatus, ForwardingMode},
+    registration::{ContextSourceRegistration, ContextSourceRegistrationType, CsrOperation, CsrStatus, ForwardingMode},
     scope::ScopeBuf,
     tenant::TenantName,
+    uri::Uri,
 };
 use chrono::{DateTime, Utc};
+use iso8601_duration::Duration as Iso8601Duration;
+use mediatype::MediaTypeBuf;
 use serde_json::Value;
 use sqlx::Row;
+use url::Url;
 
 /// Convert a `context_source_registrations` row into the domain type.
 pub fn row_to_csr(row: &sqlx::postgres::PgRow) -> Result<ContextSourceRegistration, AndromedaError> {
-    let id: String = row.get("id");
-    let type_: String = row.get("type");
+    let id_raw: String = row.get("id");
+    let id: Uri = id_raw
+        .parse()
+        .map_err(|e| AndromedaError::internal(format!("Invalid CSR id '{id_raw}': {e}")))?;
     let registration_name: Option<String> = row.get("registration_name");
     let description: Option<String> = row.get("description");
     let information_json: Value = row.get("information");
@@ -28,8 +34,13 @@ pub fn row_to_csr(row: &sqlx::postgres::PgRow) -> Result<ContextSourceRegistrati
     let observation_space: Option<Value> = row.get("observation_space");
     let operation_space: Option<Value> = row.get("operation_space");
     let expires_at: Option<DateTime<Utc>> = row.get("expires_at");
-    let endpoint: String = row.get("endpoint");
-    let accept: Option<String> = row.get("accept");
+    let endpoint_raw: String = row.get("endpoint");
+    let endpoint = Url::parse(&endpoint_raw).map_err(|e| AndromedaError::internal(format!("Invalid CSR endpoint '{endpoint_raw}': {e}")))?;
+    let accept: Option<MediaTypeBuf> = row
+        .get::<Option<String>, _>("accept")
+        .map(|raw| raw.parse())
+        .transpose()
+        .map_err(|e| AndromedaError::internal(format!("Invalid CSR accept media type: {e}")))?;
     // `mode` and `status` are projected as `::text`; the PostgreSQL enum labels
     // and the domain `EnumString` share one definition, so a label the broker
     // does not know becomes a typed parse error here rather than an opaque
@@ -58,10 +69,19 @@ pub fn row_to_csr(row: &sqlx::postgres::PgRow) -> Result<ContextSourceRegistrati
                 .collect::<Result<Vec<_>, _>>()
         })
         .transpose()?;
-    let refresh_rate: Option<String> = row.get("refresh_rate");
+    let refresh_rate: Option<Iso8601Duration> = row
+        .get::<Option<String>, _>("refresh_rate")
+        .map(|raw| raw.parse::<Iso8601Duration>().map_err(|e| format!("{e:?}")))
+        .transpose()
+        .map_err(|e| AndromedaError::internal(format!("Invalid CSR refreshRate: {e}")))?;
     let management: Option<Value> = row.get("management");
     let context_source_info: Option<Value> = row.get("context_source_info");
-    let jsonld_context: Option<String> = row.get("jsonld_context");
+    let jsonld_context: Option<Url> = row
+        .get::<Option<String>, _>("jsonld_context")
+        .as_deref()
+        .map(Url::parse)
+        .transpose()
+        .map_err(|e| AndromedaError::internal(format!("Invalid CSR jsonldContext: {e}")))?;
     let context_source_alias: Option<String> = match row.try_get("context_source_alias") {
         Ok(v) => v,
         Err(sqlx::Error::ColumnNotFound(_)) | Err(sqlx::Error::ColumnDecode { .. }) => None,
@@ -83,7 +103,7 @@ pub fn row_to_csr(row: &sqlx::postgres::PgRow) -> Result<ContextSourceRegistrati
 
     Ok(ContextSourceRegistration {
         id,
-        type_,
+        type_: ContextSourceRegistrationType,
         registration_name,
         description,
         information,

@@ -6,6 +6,7 @@ use crate::{
     repository::csource_registration::repo::CsourceRegistrationRepository,
 };
 use andromeda_domain::{
+    attribute::name::AttributeName,
     entity::Entity,
     registration::{ContextSourceRegistration, CsrOperation, ForwardingMode},
     tenant::TenantName,
@@ -15,6 +16,7 @@ use headers::Header;
 use serde_json::Value;
 use sqlx::postgres::PgPool;
 use tracing::{debug, warn};
+use url::Url;
 
 /// Service for forwarding NGSI-LD operations to registered context sources.
 pub struct CsourceForwardingService {
@@ -386,13 +388,13 @@ impl CsourceForwardingService {
                 let mode = csr.mode.unwrap_or_default();
                 match self.forward_get(&url, context_url, csr.tenant.as_ref(), incoming_via).await {
                     ForwardGetOutcome::Success(Value::Array(arr), cs_warnings) => {
-                        let (entities, parse_warnings) = parse_forwarded_entities(&csr.id, arr);
+                        let (entities, parse_warnings) = parse_forwarded_entities(csr.id.as_ref(), arr);
                         let mut warnings = cs_warnings;
                         warnings.extend(parse_warnings);
                         Some(ForwardedEntities { mode, entities, warnings })
                     }
                     ForwardGetOutcome::Success(obj @ Value::Object(_), cs_warnings) => {
-                        let (entities, parse_warnings) = parse_forwarded_entities(&csr.id, vec![obj]);
+                        let (entities, parse_warnings) = parse_forwarded_entities(csr.id.as_ref(), vec![obj]);
                         let mut warnings = cs_warnings;
                         warnings.extend(parse_warnings);
                         Some(ForwardedEntities { mode, entities, warnings })
@@ -497,7 +499,7 @@ impl CsourceForwardingService {
                 let mode = csr.mode.unwrap_or_default();
                 match self.forward_get(&url, context_url, csr.tenant.as_ref(), incoming_via).await {
                     ForwardGetOutcome::Success(obj @ Value::Object(_), cs_warnings) => {
-                        let (entities, parse_warnings) = parse_forwarded_entities(&csr.id, vec![obj]);
+                        let (entities, parse_warnings) = parse_forwarded_entities(csr.id.as_ref(), vec![obj]);
                         let mut warnings = cs_warnings;
                         warnings.extend(parse_warnings);
                         Some(ForwardedEntities { mode, entities, warnings })
@@ -619,7 +621,7 @@ impl CsourceForwardingService {
                 } else {
                     let id = request_ref.entity_id.unwrap_or("");
                     let encoded_id = percent_encoding::utf8_percent_encode(id, PATH_ENCODE_SET).to_string();
-                    let base = csr.endpoint.trim_end_matches('/');
+                    let base = csr.endpoint.as_str().trim_end_matches('/');
                     let suffix = request_ref.path_suffix.unwrap_or("");
                     match request_ref.query_string {
                         Some(qs) if !qs.is_empty() => format!("{base}/ngsi-ld/v1/entities/{encoded_id}{suffix}?{qs}"),
@@ -704,7 +706,7 @@ impl CsourceForwardingService {
         let request_ref = &request;
         let results: Vec<ForwardedWriteResult> = stream::iter(matching_csrs)
             .map(|csr| async move {
-                let base = csr.endpoint.trim_end_matches('/');
+                let base = csr.endpoint.as_str().trim_end_matches('/');
                 let url = match request_ref.query_string {
                     Some(qs) if !qs.is_empty() => format!("{base}/ngsi-ld/v1{}?{qs}", request_ref.batch_path),
                     _ => format!("{base}/ngsi-ld/v1{}", request_ref.batch_path),
@@ -890,7 +892,7 @@ impl CsourceForwardingService {
             if page.is_empty() {
                 break;
             }
-            cursor = page.last().map(|c| c.id.clone()); // clone: own String for next loop cursor
+            cursor = page.last().map(|c| c.id.to_string());
             csrs.extend(page);
             if csrs.len() % usize::try_from(PAGE).unwrap_or(usize::MAX) != 0 {
                 break;
@@ -1216,15 +1218,15 @@ fn build_forwarding_query_string(entity_type: Option<&str>, entity_ids: Option<&
 }
 
 /// Build a forwarding URL for entity creation (POST).
-fn build_create_url(endpoint: &str) -> String {
-    let base = endpoint.trim_end_matches('/');
+fn build_create_url(endpoint: &Url) -> String {
+    let base = endpoint.as_str().trim_end_matches('/');
     format!("{}/ngsi-ld/v1/entities", base)
 }
 
 /// Build a forwarding URL for entity queries.
 /// The endpoint may already contain a path (e.g., for redirect mode).
-fn build_query_url(endpoint: &str, query_string: &str) -> String {
-    let base = endpoint.trim_end_matches('/');
+fn build_query_url(endpoint: &Url, query_string: &str) -> String {
+    let base = endpoint.as_str().trim_end_matches('/');
     if query_string.is_empty() {
         format!("{}/ngsi-ld/v1/entities", base)
     } else {
@@ -1252,8 +1254,8 @@ const PATH_ENCODE_SET: &percent_encoding::AsciiSet = &percent_encoding::CONTROLS
     .add(b'}');
 
 /// Build a forwarding URL for entity retrieval by ID.
-fn build_retrieve_url(endpoint: &str, entity_id: &str, query_string: &str) -> String {
-    let base = endpoint.trim_end_matches('/');
+fn build_retrieve_url(endpoint: &Url, entity_id: &str, query_string: &str) -> String {
+    let base = endpoint.as_str().trim_end_matches('/');
     let encoded_id = percent_encoding::utf8_percent_encode(entity_id, PATH_ENCODE_SET).to_string();
     if query_string.is_empty() {
         format!("{}/ngsi-ld/v1/entities/{}", base, encoded_id)
@@ -1263,8 +1265,8 @@ fn build_retrieve_url(endpoint: &str, entity_id: &str, query_string: &str) -> St
 }
 
 /// Build a forwarding URL for discovery queries (types, attributes).
-pub(crate) fn build_discovery_url(endpoint: &str, path: &str, query_string: &str) -> String {
-    let base = endpoint.trim_end_matches('/');
+pub(crate) fn build_discovery_url(endpoint: &Url, path: &str, query_string: &str) -> String {
+    let base = endpoint.as_str().trim_end_matches('/');
     if query_string.is_empty() {
         format!("{}/ngsi-ld/v1{}", base, path)
     } else {
@@ -1273,8 +1275,8 @@ pub(crate) fn build_discovery_url(endpoint: &str, path: &str, query_string: &str
 }
 
 /// Build a forwarding URL for temporal entity queries.
-pub(crate) fn build_temporal_query_url(endpoint: &str, query_string: &str) -> String {
-    let base = endpoint.trim_end_matches('/');
+pub(crate) fn build_temporal_query_url(endpoint: &Url, query_string: &str) -> String {
+    let base = endpoint.as_str().trim_end_matches('/');
     if query_string.is_empty() {
         format!("{}/ngsi-ld/v1/temporal/entities", base)
     } else {
@@ -1283,8 +1285,8 @@ pub(crate) fn build_temporal_query_url(endpoint: &str, query_string: &str) -> St
 }
 
 /// Build a forwarding URL for temporal entity retrieval by ID.
-pub(crate) fn build_temporal_retrieve_url(endpoint: &str, entity_id: &str, query_string: &str) -> String {
-    let base = endpoint.trim_end_matches('/');
+pub(crate) fn build_temporal_retrieve_url(endpoint: &Url, entity_id: &str, query_string: &str) -> String {
+    let base = endpoint.as_str().trim_end_matches('/');
     let encoded_id = percent_encoding::utf8_percent_encode(entity_id, PATH_ENCODE_SET).to_string();
     if query_string.is_empty() {
         format!("{}/ngsi-ld/v1/temporal/entities/{}", base, encoded_id)
@@ -1299,26 +1301,15 @@ pub(crate) fn build_temporal_retrieve_url(endpoint: &str, entity_id: &str, query
 fn collect_exclusive_attrs(csr: &ContextSourceRegistration) -> Vec<String> {
     let mut attrs = Vec::new();
     for info in &csr.information {
-        if let Some(ref props) = info.property_names {
-            for prop in props {
-                attrs.push(prop.clone()); // clone: owned value for collected attrs Vec
-                // Also add compacted form (last path/fragment segment) for matching
-                // against deserialized EntityPatch attr keys which are compacted
-                if let Some(short) = compact_iri(prop)
-                    && short != *prop
-                {
-                    attrs.push(short);
-                }
-            }
-        }
-        if let Some(ref rels) = info.relationship_names {
-            for rel in rels {
-                attrs.push(rel.clone()); // clone: owned value for collected attrs Vec
-                if let Some(short) = compact_iri(rel)
-                    && short != *rel
-                {
-                    attrs.push(short);
-                }
+        for name in info.property_names.iter().chain(info.relationship_names.iter()).flatten() {
+            attrs.push(name.to_string());
+            // Also add the compacted form (last path/fragment segment) for
+            // matching against deserialized EntityPatch attr keys, which are
+            // compacted.
+            if let Some(short) = compact_iri(name.as_str())
+                && short != name.as_str()
+            {
+                attrs.push(short);
             }
         }
     }
@@ -1459,8 +1450,15 @@ pub fn collect_temporal_warnings(results: &[ForwardedTemporalEntities]) -> Vec<N
 /// Gathers attribute names marked as exclusive across all forwarded write
 /// results. Used by provision handlers to strip exclusive attributes from
 /// local operations per spec 4.3.6.3.
-pub fn collect_forwarded_exclusive_attrs(results: &[ForwardedWriteResult]) -> Vec<String> {
-    results.iter().flat_map(|r| r.exclusive_attrs.iter().cloned()).collect() // clone: owned strings from borrowed slice
+pub fn collect_forwarded_exclusive_attrs(results: &[ForwardedWriteResult]) -> Vec<AttributeName> {
+    // A forwarded name that is not a valid NGSI-LD attribute name cannot key a
+    // locally held attribute, so dropping it here removes nothing that a
+    // subsequent strip would have matched.
+    results
+        .iter()
+        .flat_map(|r| r.exclusive_attrs.iter())
+        .filter_map(|name| name.parse().ok())
+        .collect()
 }
 
 /// Strip exclusive attributes from a JSON Value object.
@@ -1468,10 +1466,10 @@ pub fn collect_forwarded_exclusive_attrs(results: &[ForwardedWriteResult]) -> Ve
 /// Removes keys matching `exclusive_attrs` from a `Value::Object`. This is a
 /// no-op for non-object values. Used for attribute fragment payloads (append,
 /// update_attrs) that are `Value` rather than `EntityPatch`.
-pub fn strip_exclusive_attrs_from_value(fragment: &mut Value, exclusive_attrs: &[String]) {
+pub fn strip_exclusive_attrs_from_value(fragment: &mut Value, exclusive_attrs: &[AttributeName]) {
     if let Some(obj) = fragment.as_object_mut() {
         for attr in exclusive_attrs {
-            obj.remove(attr);
+            obj.remove(attr.as_str());
         }
     }
 }
@@ -1861,7 +1859,12 @@ mod tests {
         merge_query_results,
         strip_exclusive_attrs_from_value,
     };
-    use andromeda_domain::registration::ForwardingMode;
+    use andromeda_domain::{attribute::name::AttributeName, registration::ForwardingMode};
+    use url::Url;
+
+    fn attribute_name(raw: &str) -> AttributeName {
+        raw.parse().expect("valid attribute name")
+    }
 
     fn entity_from_json(value: serde_json::Value) -> andromeda_domain::entity::Entity {
         serde_json::from_value(value).expect("test entity fixture")
@@ -2112,7 +2115,7 @@ mod tests {
     fn build_discovery_url_with_query_string() {
         use crate::service::csource_forwarding::build_discovery_url;
 
-        let url = build_discovery_url("http://cs1.example.com", "/types", "details=true");
+        let url = build_discovery_url(&Url::parse("http://cs1.example.com").expect("valid url"), "/types", "details=true");
         pretty_assertions::assert_eq!(url, "http://cs1.example.com/ngsi-ld/v1/types?details=true");
     }
 
@@ -2120,7 +2123,7 @@ mod tests {
     fn build_discovery_url_without_query_string() {
         use crate::service::csource_forwarding::build_discovery_url;
 
-        let url = build_discovery_url("http://cs1.example.com/", "/attributes", "");
+        let url = build_discovery_url(&Url::parse("http://cs1.example.com/").expect("valid url"), "/attributes", "");
         pretty_assertions::assert_eq!(url, "http://cs1.example.com/ngsi-ld/v1/attributes");
     }
 
@@ -2128,7 +2131,10 @@ mod tests {
     fn build_temporal_query_url_with_params() {
         use crate::service::csource_forwarding::build_temporal_query_url;
 
-        let url = build_temporal_query_url("http://cs1.example.com", "type=Vehicle&timerel=after&timeAt=2024-01-01T00:00:00Z");
+        let url = build_temporal_query_url(
+            &Url::parse("http://cs1.example.com").expect("valid url"),
+            "type=Vehicle&timerel=after&timeAt=2024-01-01T00:00:00Z",
+        );
         pretty_assertions::assert_eq!(
             url,
             "http://cs1.example.com/ngsi-ld/v1/temporal/entities?type=Vehicle&timerel=after&timeAt=2024-01-01T00:00:00Z"
@@ -2139,7 +2145,11 @@ mod tests {
     fn build_temporal_retrieve_url_with_id() {
         use crate::service::csource_forwarding::build_temporal_retrieve_url;
 
-        let url = build_temporal_retrieve_url("http://cs1.example.com", "urn:ngsi-ld:Vehicle:1", "timerel=after&timeAt=2024-01-01T00:00:00Z");
+        let url = build_temporal_retrieve_url(
+            &Url::parse("http://cs1.example.com").expect("valid url"),
+            "urn:ngsi-ld:Vehicle:1",
+            "timerel=after&timeAt=2024-01-01T00:00:00Z",
+        );
         pretty_assertions::assert_eq!(
             url,
             "http://cs1.example.com/ngsi-ld/v1/temporal/entities/urn:ngsi-ld:Vehicle:1?timerel=after&timeAt=2024-01-01T00:00:00Z"
@@ -2188,9 +2198,9 @@ mod tests {
         ];
         let attrs = collect_forwarded_exclusive_attrs(&results);
         pretty_assertions::assert_eq!(attrs.len(), 3);
-        assert!(attrs.contains(&"speed".to_string()));
-        assert!(attrs.contains(&"fuel".to_string()));
-        assert!(attrs.contains(&"temperature".to_string()));
+        for expected in ["speed", "fuel", "temperature"] {
+            assert!(attrs.iter().any(|attr| attr.as_str() == expected), "{expected} missing");
+        }
     }
 
     #[test]
@@ -2200,7 +2210,7 @@ mod tests {
             "fuel": { "type": "Property", "value": 50 },
             "name": { "type": "Property", "value": "Car" }
         });
-        strip_exclusive_attrs_from_value(&mut value, &["speed".to_string(), "fuel".to_string()]);
+        strip_exclusive_attrs_from_value(&mut value, &[attribute_name("speed"), attribute_name("fuel")]);
         let obj = value.as_object().expect("is object");
         pretty_assertions::assert_eq!(obj.len(), 1);
         assert!(obj.contains_key("name"));
@@ -2211,7 +2221,7 @@ mod tests {
         let mut value = serde_json::json!({
             "name": { "type": "Property", "value": "Car" }
         });
-        strip_exclusive_attrs_from_value(&mut value, &["speed".to_string()]);
+        strip_exclusive_attrs_from_value(&mut value, &[attribute_name("speed")]);
         let obj = value.as_object().expect("is object");
         pretty_assertions::assert_eq!(obj.len(), 1);
     }
@@ -2219,7 +2229,7 @@ mod tests {
     #[test]
     fn strip_exclusive_attrs_from_value_non_object_noop() {
         let mut value = serde_json::json!([1, 2, 3]);
-        strip_exclusive_attrs_from_value(&mut value, &["speed".to_string()]);
+        strip_exclusive_attrs_from_value(&mut value, &[attribute_name("speed")]);
         assert!(value.is_array());
     }
 

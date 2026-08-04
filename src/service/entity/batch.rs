@@ -11,7 +11,6 @@ use crate::{
         BatchSideEffectMode,
         EntityService,
         extract_attribute_keys,
-        extract_entity_types,
         extract_scopes,
         normalize_entity_attributes,
         unwrap_expanded_ref,
@@ -19,8 +18,18 @@ use crate::{
     },
 };
 use andromeda_domain::{
+    attribute::name::AttributeName,
     entity::Entity,
-    expanded::{self, AttributeInstanceKey, OverwritePolicy, append_entity_attrs, merge_entity, removed_attribute_instances, update_entity_attrs},
+    entity_type::EntityTypeName,
+    expanded::{
+        entity_member::{self, extract_expires_at, extract_types},
+        geo_property::{extract_location_geometry, extract_observation_space_geometry, extract_operation_space_geometry},
+        instance_key::{AttributeInstanceKey, removed_attribute_instances},
+        mutation::{
+            entity::{append_entity_attrs, merge_entity, update_entity_attrs},
+            selection::OverwritePolicy,
+        },
+    },
     geometry::Geometry,
     notification::{ChangeEvent, SysAttrsSnapshot, TriggerReason},
     uri::Uri,
@@ -57,12 +66,12 @@ struct PreparedEntity {
     id: String,
     /// Expanded JSON-LD payload (the canonical stored form).
     expanded: Value,
-    /// Entity type IRIs extracted from the expanded payload.
-    types: Vec<String>,
+    /// Entity type names extracted from the expanded payload.
+    types: Vec<EntityTypeName>,
     /// Scope values extracted from the expanded payload.
     scopes: Vec<String>,
-    /// Attribute keys changed by this request payload.
-    changed_attributes: Vec<String>,
+    /// Attribute names changed by this request payload.
+    changed_attributes: Vec<AttributeName>,
     /// The `location` geometry, if present.
     location: Option<Geometry>,
     /// The `observationSpace` geometry, if present.
@@ -172,38 +181,38 @@ fn process_fast_entry(entry: ClassifiedEntry, engine: &JsonLdEngine, handle: &Ba
 }
 
 struct BatchEffectEntity {
-    changed_attributes: Vec<String>,
+    changed_attributes: Vec<AttributeName>,
     expanded: Value,
-    types: Vec<String>,
+    types: Vec<EntityTypeName>,
 }
 
 struct IndexedBatchEffectEntity {
-    changed_attributes: Vec<String>,
+    changed_attributes: Vec<AttributeName>,
     payload_index: usize,
-    types: Vec<String>,
+    types: Vec<EntityTypeName>,
 }
 
 /// Build a [`PreparedEntityRow`] from an already-merged expanded payload.
 ///
 /// Used by update/merge/upsert flows where the caller has already produced the
 /// final merged payload and needs a row for `save_batch`.
-fn row_from_expanded(id: String, expanded: Value) -> (PreparedEntityRow, Vec<String>) {
-    let types = expanded::extract_types(&expanded);
+fn row_from_expanded(id: String, expanded: Value) -> (PreparedEntityRow, Vec<EntityTypeName>) {
+    let types = extract_types(&expanded);
     let scope_paths_json = Value::Array(
-        expanded::extract_scopes(&expanded)
+        entity_member::extract_scopes(&expanded)
             .into_iter()
             .map(|s| Value::String(sql::scope_to_ltree(&s)))
             .collect(),
     );
-    let location = expanded::extract_location_geometry(&expanded);
-    let observation_space = expanded::extract_observation_space_geometry(&expanded);
-    let operation_space = expanded::extract_operation_space_geometry(&expanded);
-    let expires_at = expanded::extract_expires_at(&expanded);
+    let location = extract_location_geometry(&expanded);
+    let observation_space = extract_observation_space_geometry(&expanded);
+    let operation_space = extract_operation_space_geometry(&expanded);
+    let expires_at = extract_expires_at(&expanded);
 
     (
         PreparedEntityRow {
             id,
-            types_json: Value::Array(types.iter().cloned().map(Value::String).collect()),
+            types_json: Value::Array(types.iter().map(|entity_type| Value::String(entity_type.to_string())).collect()),
             scope_paths_json,
             payload: expanded,
             location,
@@ -242,12 +251,12 @@ impl EntityService {
     fn build_prepared_entity(id: String, expanded: Value) -> PreparedSlot {
         validate_attribute_envelopes(&expanded).map_err(|err| (id.clone(), err))?;
         let changed_attributes = extract_attribute_keys(&expanded);
-        let types = extract_entity_types(&expanded);
+        let types = extract_types(&expanded);
         let scopes = extract_scopes(&expanded);
-        let location = expanded::extract_location_geometry(&expanded);
-        let observation_space = expanded::extract_observation_space_geometry(&expanded);
-        let operation_space = expanded::extract_operation_space_geometry(&expanded);
-        let expires_at = expanded::extract_expires_at(&expanded);
+        let location = extract_location_geometry(&expanded);
+        let observation_space = extract_observation_space_geometry(&expanded);
+        let operation_space = extract_operation_space_geometry(&expanded);
+        let expires_at = extract_expires_at(&expanded);
 
         Ok(PreparedEntity {
             id,
@@ -677,7 +686,9 @@ impl EntityService {
                         expires_at,
                     } = prepared_entity;
                     columns.ids.push(id);
-                    columns.types_json.push(Value::Array(types.iter().cloned().map(Value::String).collect()));
+                    columns
+                        .types_json
+                        .push(Value::Array(types.iter().map(|entity_type| Value::String(entity_type.to_string())).collect()));
                     columns
                         .scope_paths_json
                         .push(Value::Array(scopes.into_iter().map(|s| Value::String(sql::scope_to_ltree(&s))).collect()));
@@ -905,7 +916,7 @@ impl EntityService {
                 operation_space,
                 expires_at,
             } = prepared_entity;
-            let types_json = Value::Array(types.iter().cloned().map(Value::String).collect());
+            let types_json = Value::Array(types.iter().map(|entity_type| Value::String(entity_type.to_string())).collect());
             entity_data.insert(
                 id.clone(),
                 IndexedBatchEffectEntity {
@@ -1032,7 +1043,7 @@ impl EntityService {
                     operation_space,
                     expires_at,
                 } = prepared_entity;
-                let types_json = Value::Array(types.iter().cloned().map(Value::String).collect());
+                let types_json = Value::Array(types.iter().map(|entity_type| Value::String(entity_type.to_string())).collect());
                 created_effects.insert(
                     id.clone(),
                     IndexedBatchEffectEntity {
@@ -1178,7 +1189,7 @@ impl EntityService {
         let mut success = Vec::new();
         let mut change_events = Vec::with_capacity(deleted.len() * 2);
         for deleted_entity in deleted {
-            let entity_types = extract_entity_types(&deleted_entity.payload);
+            let entity_types = extract_types(&deleted_entity.payload);
             let attr_keys = extract_attribute_keys(&deleted_entity.payload);
             let sys_attrs = SysAttrsSnapshot {
                 created_at: deleted_entity.created_at,

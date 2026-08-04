@@ -7,7 +7,13 @@
 //! form; the store encodes them to EWKB at the bind.
 
 use crate::{query::sql::scope_to_ltree, repository::entity::params::EntitySaveParams};
-use andromeda_domain::{expanded, geometry::Geometry};
+use andromeda_domain::{
+    expanded::{
+        entity_member::{extract_expires_at, extract_scopes, extract_types},
+        geo_property::{extract_location_geometry, extract_observation_space_geometry, extract_operation_space_geometry},
+    },
+    geometry::Geometry,
+};
 use serde_json::Value;
 
 /// Build [`EntitySaveParams`] for `save()` from an expanded JSON-LD payload.
@@ -16,12 +22,12 @@ use serde_json::Value;
 /// geometries, and `expiresAt` so the repository can bind typed columns
 /// without touching the payload.
 pub fn build_save_params<'a>(id: &'a str, entity: &'a Value) -> EntitySaveParams<'a> {
-    let types = expanded::extract_types(entity);
-    let scope_paths: Vec<String> = expanded::extract_scopes(entity).iter().map(|s| scope_to_ltree(s)).collect();
-    let location = expanded::extract_location_geometry(entity);
-    let observation_space = expanded::extract_observation_space_geometry(entity);
-    let operation_space = expanded::extract_operation_space_geometry(entity);
-    let expires_at = expanded::extract_expires_at(entity);
+    let types = extract_types(entity);
+    let scope_paths: Vec<String> = extract_scopes(entity).iter().map(|s| scope_to_ltree(s)).collect();
+    let location = extract_location_geometry(entity);
+    let observation_space = extract_observation_space_geometry(entity);
+    let operation_space = extract_operation_space_geometry(entity);
+    let expires_at = extract_expires_at(entity);
     EntitySaveParams {
         id,
         payload: entity,
@@ -39,8 +45,8 @@ pub fn build_save_params<'a>(id: &'a str, entity: &'a Value) -> EntitySaveParams
 /// that already own the id/types/scopes (e.g. `EntityCreateParams`).
 pub fn extract_geo_geometries(entity: &Value) -> (Option<Geometry>, Option<Geometry>, Option<Geometry>) {
     (
-        expanded::extract_location_geometry(entity),
-        expanded::extract_observation_space_geometry(entity),
-        expanded::extract_operation_space_geometry(entity),
+        extract_location_geometry(entity),
+        extract_observation_space_geometry(entity),
+        extract_operation_space_geometry(entity),
     )
 }

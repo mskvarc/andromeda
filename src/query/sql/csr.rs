@@ -3,13 +3,14 @@
 use crate::{
     core::error::AndromedaError,
     query::{
-        compiled::{CompiledCsrQuery, GeoRel},
+        compiled::CompiledCsrQuery,
         q::ast::{AttrPath, CmpOp, CompareValue, Expr, Predicate, Scalar},
         sql::{BuiltQuery, sea_values_to_bind_values},
     },
     repository::geometry::{Ewkb, encode},
 };
 use andromeda_domain::{
+    geo_rel::GeoRel,
     geometry::Geometry,
     temporal::{TimeProp, TimeRel},
 };

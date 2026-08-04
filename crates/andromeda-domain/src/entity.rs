@@ -1,32 +1,38 @@
-use crate::{attribute::AttributeValue, notification::SysAttrsSnapshot, scope::ScopeBuf, uri::Uri};
+//! The NGSI-LD Entity and the partial form its patch operations accept (ETSI GS CIM 009 clause 5.2.4).
+
+use crate::{
+    attribute::{Attribute, AttributeValue, name::AttributeName},
+    entity_type::EntityTypeValue,
+    notification::SysAttrsSnapshot,
+    scope::ScopeBuf,
+    uri::Uri,
+};
 use chrono::{DateTime, Utc};
 use indexmap::IndexMap;
-use jsonld::{Expandable, ExpandableTypeValue};
+use jsonld::Expandable;
 use jsonld_expandable_core::JsonValue;
 use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
-
-/// Single or multiple entity type values.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(untagged)]
-pub enum EntityTypeValue {
-    Single(String),
-    Multiple(Vec<String>),
-}
+use std::{
+    iter::once,
+    slice::{Iter, from_ref},
+};
 
 /// Single or multiple scope values on an entity (ETSI GS CIM 009 clause 5.2.4).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum ScopeValue {
+    /// Exactly one scope.
     Single(ScopeBuf),
+    /// Several scopes declared together.
     Multiple(Vec<ScopeBuf>),
 }
 
 impl ScopeValue {
     /// Iterate the contained scopes uniformly regardless of variant.
-    pub fn iter(&self) -> std::slice::Iter<'_, ScopeBuf> {
+    pub fn iter(&self) -> Iter<'_, ScopeBuf> {
         match self {
-            ScopeValue::Single(s) => std::slice::from_ref(s).iter(),
+            ScopeValue::Single(s) => from_ref(s).iter(),
             ScopeValue::Multiple(v) => v.iter(),
         }
     }
@@ -34,16 +40,7 @@ impl ScopeValue {
 
 impl Expandable for ScopeValue {
     fn expand<V: JsonValue>(&self) -> V {
-        V::array(self.iter().map(|s| V::object(std::iter::once(("@value".to_string(), V::string(s.as_str()))))))
-    }
-}
-
-impl ExpandableTypeValue for EntityTypeValue {
-    fn to_type_array<V: JsonValue>(&self) -> V {
-        match self {
-            EntityTypeValue::Single(s) => V::array(std::iter::once(V::string(s))),
-            EntityTypeValue::Multiple(v) => V::array(v.iter().map(|s| V::string(s))),
-        }
+        V::array(self.iter().map(|s| V::object(once(("@value".to_string(), V::string(s.as_str()))))))
     }
 }
 
@@ -60,11 +57,14 @@ impl ExpandableTypeValue for EntityTypeValue {
 #[serde(rename_all = "camelCase")]
 #[jsonld(prefix(ngsi = "https://uri.etsi.org/ngsi-ld/", xsd = "http://www.w3.org/2001/XMLSchema#"))]
 pub struct Entity {
+    /// Entity identifier (clause 5.2.4).
     #[jsonld(id)]
     pub id: Uri,
+    /// One or more entity types.
     #[serde(rename = "type")]
     #[jsonld(type_value)]
     pub type_: EntityTypeValue,
+    /// Scopes the entity belongs to (clause 4.18).
     #[jsonld(property = "ngsi:scope", passthrough)]
     pub scope: Option<ScopeValue>,
 
@@ -100,9 +100,10 @@ pub struct Entity {
     #[jsonld(property = "ngsi:deletedAt", coerce = "https://uri.etsi.org/ngsi-ld/DateTime")]
     pub deleted_at: Option<DateTime<Utc>>,
 
+    /// Every other attribute the entity carries, keyed by attribute name.
     #[serde(flatten)]
     #[jsonld(flatten_map)]
-    pub attrs: IndexMap<String, AttributeValue>,
+    pub attrs: IndexMap<AttributeName, AttributeValue>,
 }
 
 impl Entity {
@@ -127,7 +128,7 @@ impl Entity {
     /// If a multi-instance attribute has all instances expired, the attribute
     /// key is removed entirely.
     pub fn remove_expired_attributes(&mut self, now: DateTime<Utc>) {
-        fn is_expired(attr: &crate::attribute::Attribute, now: DateTime<Utc>) -> bool {
+        fn is_expired(attr: &Attribute, now: DateTime<Utc>) -> bool {
             attr.expires_at().is_some_and(|exp| exp <= now)
         }
 
@@ -210,7 +211,7 @@ impl Entity {
         }
 
         for (key, attr) in &self.attrs {
-            map.insert(key.clone(), simplify_attribute_value(attr));
+            map.insert(key.to_string(), simplify_attribute_value(attr));
         }
 
         serde_json::Value::Object(map)
@@ -234,6 +235,9 @@ fn simplify_attribute_value(attr: &AttributeValue) -> serde_json::Value {
             // For language-negotiated or other raw values that still
             // have an NGSI-LD attribute envelope, extract the value.
             if let Some(obj) = v.as_object() {
+                // clone: the simplified form is an owned `Value` and the
+                // attribute is only borrowed, so each arm below hands back a
+                // copy of either the payload member or the whole envelope.
                 match obj.get("type").and_then(|t| t.as_str()) {
                     Some("Property") | Some("GeoProperty") | Some("VocabProperty") => obj.get("value").cloned().unwrap_or_else(|| v.clone()),
                     Some("Relationship") => obj.get("object").cloned().unwrap_or_else(|| v.clone()),
@@ -261,9 +265,12 @@ fn simplify_attribute_value(attr: &AttributeValue) -> serde_json::Value {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EntityPatch {
+    /// Entity identifier, when the payload repeats it.
     pub id: Option<Uri>,
+    /// Entity types, when the payload repeats them.
     #[serde(rename = "type")]
     pub type_: Option<EntityTypeValue>,
+    /// Scopes the entity belongs to (clause 4.18).
     pub scope: Option<ScopeValue>,
 
     /// Entity expiration timestamp (clause 4.22).
@@ -279,8 +286,9 @@ pub struct EntityPatch {
     /// Operation space geometry (clause 5.2.4).
     pub operation_space: Option<AttributeValue>,
 
+    /// Every other attribute the patch carries, keyed by attribute name.
     #[serde(flatten)]
-    pub attrs: IndexMap<String, AttributeValue>,
+    pub attrs: IndexMap<AttributeName, AttributeValue>,
 }
 
 impl EntityPatch {
@@ -288,9 +296,9 @@ impl EntityPatch {
     ///
     /// Removes attributes whose names appear in `exclusive_attrs` from this
     /// patch. Returns `true` if any attributes remain after stripping.
-    pub fn strip_exclusive_attrs(&mut self, exclusive_attrs: &[String]) -> bool {
+    pub fn strip_exclusive_attrs(&mut self, exclusive_attrs: &[AttributeName]) -> bool {
         for attr in exclusive_attrs {
-            self.attrs.shift_remove(attr);
+            self.attrs.shift_remove(attr.as_str());
         }
         !self.attrs.is_empty()
     }
@@ -300,7 +308,11 @@ impl EntityPatch {
 mod tests {
     #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::{Entity, EntityPatch};
-    use crate::{attribute::AttributeValue, notification::SysAttrsSnapshot, vocab};
+    use crate::{
+        attribute::{AttributeValue, name::AttributeName},
+        notification::SysAttrsSnapshot,
+        vocab::expanded::{classes as expanded_classes, properties as expanded_properties},
+    };
     use chrono::{Datelike, TimeZone, Utc};
     use serde_json::json;
 
@@ -659,7 +671,7 @@ mod tests {
         let expanded = entity.expand::<serde_json::Value>();
         let obj = expanded.as_object().expect("expanded is object");
 
-        let scope = &obj[vocab::expanded::properties::SCOPE.as_str()];
+        let scope = &obj[expanded_properties::SCOPE.as_str()];
         pretty_assertions::assert_eq!(scope, &json!([{"@value": "/Madrid/Gardens"}]));
     }
 
@@ -683,9 +695,9 @@ mod tests {
         let obj = expanded.as_object().expect("expanded is object");
 
         // Timestamps should be typed values
-        assert!(obj.contains_key(vocab::expanded::properties::CREATED_AT.as_str()));
-        let created = &obj[vocab::expanded::properties::CREATED_AT.as_str()];
-        pretty_assertions::assert_eq!(created[0]["@type"], vocab::expanded::classes::DATE_TIME.as_str());
+        assert!(obj.contains_key(expanded_properties::CREATED_AT.as_str()));
+        let created = &obj[expanded_properties::CREATED_AT.as_str()];
+        pretty_assertions::assert_eq!(created[0]["@type"], expanded_classes::DATE_TIME.as_str());
 
         // Flattened attribute
         assert!(obj.contains_key("temperature"));
@@ -704,14 +716,14 @@ mod tests {
         let expanded = entity.expand::<serde_json::Value>();
         let obj = expanded.as_object().expect("expanded is object");
 
-        assert!(!obj.contains_key(vocab::expanded::properties::SCOPE.as_str()));
-        assert!(!obj.contains_key(vocab::expanded::properties::EXPIRES_AT.as_str()));
-        assert!(!obj.contains_key(vocab::expanded::properties::LOCATION.as_str()));
-        assert!(!obj.contains_key(vocab::expanded::properties::OBSERVATION_SPACE.as_str()));
-        assert!(!obj.contains_key(vocab::expanded::properties::OPERATION_SPACE.as_str()));
-        assert!(!obj.contains_key(vocab::expanded::properties::CREATED_AT.as_str()));
-        assert!(!obj.contains_key(vocab::expanded::properties::MODIFIED_AT.as_str()));
-        assert!(!obj.contains_key(vocab::expanded::properties::DELETED_AT.as_str()));
+        assert!(!obj.contains_key(expanded_properties::SCOPE.as_str()));
+        assert!(!obj.contains_key(expanded_properties::EXPIRES_AT.as_str()));
+        assert!(!obj.contains_key(expanded_properties::LOCATION.as_str()));
+        assert!(!obj.contains_key(expanded_properties::OBSERVATION_SPACE.as_str()));
+        assert!(!obj.contains_key(expanded_properties::OPERATION_SPACE.as_str()));
+        assert!(!obj.contains_key(expanded_properties::CREATED_AT.as_str()));
+        assert!(!obj.contains_key(expanded_properties::MODIFIED_AT.as_str()));
+        assert!(!obj.contains_key(expanded_properties::DELETED_AT.as_str()));
     }
 
     #[test]
@@ -731,7 +743,7 @@ mod tests {
         let expanded = entity.expand::<serde_json::Value>();
         let obj = expanded.as_object().expect("expanded is object");
 
-        let location = &obj[vocab::expanded::properties::LOCATION.as_str()];
+        let location = &obj[expanded_properties::LOCATION.as_str()];
         // Location is an AttributeValue, expanded via custom
         let arr = location.as_array().expect("location is array");
         assert!(!arr.is_empty());
@@ -744,7 +756,7 @@ mod tests {
             "fuel": { "type": "Property", "value": 50 }
         }))
         .unwrap();
-        let exclusive = vec!["temperature".to_string()];
+        let exclusive = vec!["temperature".parse::<AttributeName>().expect("name")];
         assert!(patch.strip_exclusive_attrs(&exclusive));
         pretty_assertions::assert_eq!(patch.attrs.len(), 2);
     }
@@ -756,7 +768,7 @@ mod tests {
             "fuel": { "type": "Property", "value": 50 }
         }))
         .unwrap();
-        let exclusive = vec!["speed".to_string()];
+        let exclusive = vec!["speed".parse::<AttributeName>().expect("name")];
         assert!(patch.strip_exclusive_attrs(&exclusive));
         pretty_assertions::assert_eq!(patch.attrs.len(), 1);
         assert!(patch.attrs.contains_key("fuel"));
@@ -768,7 +780,7 @@ mod tests {
             "speed": { "type": "Property", "value": 100 }
         }))
         .unwrap();
-        let exclusive = vec!["speed".to_string()];
+        let exclusive = vec!["speed".parse::<AttributeName>().expect("name")];
         assert!(!patch.strip_exclusive_attrs(&exclusive));
         assert!(patch.attrs.is_empty());
     }
@@ -779,7 +791,7 @@ mod tests {
             "speed": { "type": "Property", "value": 100 }
         }))
         .unwrap();
-        let exclusive: Vec<String> = Vec::new();
+        let exclusive: Vec<AttributeName> = Vec::new();
         assert!(patch.strip_exclusive_attrs(&exclusive));
         pretty_assertions::assert_eq!(patch.attrs.len(), 1);
     }

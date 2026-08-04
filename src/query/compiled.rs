@@ -10,6 +10,7 @@ use crate::{
     renderer::SysAttrsInclusion,
 };
 use andromeda_domain::{
+    geo_rel::GeoRel,
     geometry::Geometry,
     temporal::{AggrMethod, TemporalFormat, TimeProp, TimeRel},
 };
@@ -250,72 +251,6 @@ pub struct GeoQuery {
     pub coordinates: serde_json::Value,
     /// The fully expanded IRI of the GeoProperty to query against.
     pub geoproperty_iri: String,
-}
-
-/// Geo-spatial relationship operators per NGSI-LD 4.10.
-///
-/// These correspond to the `georel` query parameter values defined in the spec.
-#[derive(Debug, Clone, PartialEq)]
-pub enum GeoRel {
-    /// Matches entities whose geometry is entirely within the reference geometry.
-    Within,
-    /// Matches entities whose geometry contains the reference geometry.
-    Contains,
-    /// Matches entities whose geometry intersects the reference geometry.
-    Intersects,
-    /// Matches entities whose geometry is disjoint from the reference geometry.
-    Disjoint,
-    /// Matches entities whose geometry is topologically equal to the reference geometry.
-    Equals,
-    /// Matches entities whose geometry overlaps the reference geometry.
-    Overlaps,
-    /// Matches entities within a distance range from the reference geometry.
-    /// At least one of `max_distance` or `min_distance` must be specified.
-    Near {
-        /// Maximum distance in meters. Entities farther than this are excluded.
-        max_distance: Option<f64>,
-        /// Minimum distance in meters. Entities closer than this are excluded.
-        min_distance: Option<f64>,
-    },
-}
-
-impl GeoRel {
-    /// Parses a `georel` query parameter string into a `GeoRel` variant.
-    ///
-    /// The input may include modifier parameters separated by semicolons,
-    /// e.g. `"near;maxDistance==1000"` or `"near;minDistance==50;maxDistance==500"`.
-    pub fn parse(s: &str) -> Result<Self, QueryError> {
-        let parts: Vec<&str> = s.split(';').collect();
-        let rel = parts[0].trim();
-        match rel {
-            "within" => Ok(GeoRel::Within),
-            "contains" => Ok(GeoRel::Contains),
-            "intersects" => Ok(GeoRel::Intersects),
-            "disjoint" => Ok(GeoRel::Disjoint),
-            "equals" => Ok(GeoRel::Equals),
-            "overlaps" => Ok(GeoRel::Overlaps),
-            "near" => {
-                let mut max_distance = None;
-                let mut min_distance = None;
-                for part in &parts[1..] {
-                    let part = part.trim();
-                    if let Some(val) = part.strip_prefix("maxDistance==") {
-                        max_distance = Some(val.parse::<f64>().map_err(|source| QueryError::GeoInvalidDistance {
-                            value: val.to_string(),
-                            source,
-                        })?);
-                    } else if let Some(val) = part.strip_prefix("minDistance==") {
-                        min_distance = Some(val.parse::<f64>().map_err(|source| QueryError::GeoInvalidDistance {
-                            value: val.to_string(),
-                            source,
-                        })?);
-                    }
-                }
-                Ok(GeoRel::Near { max_distance, min_distance })
-            }
-            _ => Err(QueryError::GeoUnknownRel(rel.to_string())),
-        }
-    }
 }
 
 /// A fully compiled Context Source Registration (CSR) query.

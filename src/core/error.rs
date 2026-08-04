@@ -559,8 +559,7 @@ impl From<QueryError> for AndromedaError {
             | QueryError::ParamFormatInvalid(_) => ErrorKind::MalformedRequest(err.to_string()),
             QueryError::QInvalidNumber(_)
             | QueryError::IdPatternRegex(_)
-            | QueryError::GeoUnknownRel(_)
-            | QueryError::GeoInvalidDistance { .. }
+            | QueryError::GeoRel(_)
             | QueryError::IcuCollation(_)
             | QueryError::ParamIdInvalid(_)
             | QueryError::ParamIdListEmpty
@@ -784,12 +783,12 @@ mod tests {
 
     #[test]
     fn query_error_geo_distance_preserves_source_chain() {
-        let err = QueryError::GeoInvalidDistance {
+        let err = QueryError::GeoRel(andromeda_domain::geo_rel::GeoRelParseError::InvalidDistance {
             value: "nope".to_string(),
             source: "nope".parse::<f64>().unwrap_err(),
-        };
-        // err.source() must expose the underlying ParseFloatError for callers
-        // that want to introspect the cause.
+        });
+        // err.source() must expose the underlying georel parse error for
+        // callers that want to introspect the cause.
         let source = std::error::Error::source(&err);
         assert!(source.is_some());
     }

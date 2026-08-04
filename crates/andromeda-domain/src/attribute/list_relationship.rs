@@ -1,9 +1,7 @@
-use crate::attribute::{
-    AttributeValue,
-    common::{CommonAttributeFields, InlineEntity, OneOrMany, RelationshipObjectList},
-};
+//! The ListRelationship attribute family (ETSI GS CIM 009 clause 5.2.37).
+
+use crate::attribute::{common_fields::CommonAttributeFields, inline_entity::InlineEntity, object_list::RelationshipObjectList, one_or_many::OneOrMany};
 use compact_str::CompactString;
-use indexmap::IndexMap;
 use jsonld::Expandable;
 use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
@@ -17,25 +15,28 @@ use serde_with::skip_serializing_none;
     prefix(ngsi = "https://uri.etsi.org/ngsi-ld/", xsd = "http://www.w3.org/2001/XMLSchema#")
 )]
 pub struct ListRelationship {
+    /// Ordered list of target object URIs.
     #[jsonld(property = "ngsi:hasObjectList", container = "list", coerce = "@id")]
     pub object_list: RelationshipObjectList,
+    /// Optional target node type(s).
     #[jsonld(property = "ngsi:hasObjectType", passthrough)]
     pub object_type: Option<OneOrMany<CompactString>>,
+    /// Inline linked entities returned for `join=inline`.
     #[jsonld(property = "ngsi:entityList", passthrough)]
     pub entity_list: Option<InlineEntity>,
+    /// Previous object list emitted in notifications when `showChanges` is active.
     #[jsonld(property = "ngsi:hasPreviousObjectList", container = "list", coerce = "@id")]
     pub previous_object_list: Option<RelationshipObjectList>,
+    /// Members shared with every other attribute family.
     #[serde(flatten)]
     #[jsonld(flatten)]
     pub common: CommonAttributeFields,
-    #[serde(flatten)]
-    #[jsonld(flatten_map)]
-    pub sub_attributes: IndexMap<String, AttributeValue>,
 }
 
 #[cfg(test)]
 mod tests {
     #![allow(clippy::expect_used, clippy::unwrap_used)]
+    use crate::attribute::Attribute;
     use jsonld::Expandable;
 
     #[test]
@@ -45,8 +46,8 @@ mod tests {
             "objectList": ["urn:ngsi-ld:Entity:1", "urn:ngsi-ld:Entity:2"],
             "previousObjectList": ["urn:ngsi-ld:Entity:0"]
         });
-        let attr: crate::attribute::Attribute = serde_json::from_value(json).expect("list_relationship");
-        let crate::attribute::Attribute::ListRelationship(lr) = &attr else {
+        let attr: Attribute = serde_json::from_value(json).expect("list_relationship");
+        let Attribute::ListRelationship(lr) = &attr else {
             unreachable!("expected ListRelationship");
         };
         let expanded = lr.expand::<serde_json::Value>();
@@ -63,11 +64,11 @@ mod tests {
 
     #[test]
     fn the_list_relationship_default_matches_the_field_by_field_literal() {
-        use crate::attribute::{ListRelationship, common::RelationshipObjectList};
+        use crate::attribute::{list_relationship::ListRelationship, object_list::RelationshipObjectList};
         let actual = ListRelationship::default();
         pretty_assertions::assert_eq!(actual.object_list, RelationshipObjectList(Vec::new()));
         assert!(actual.object_type.is_none() && actual.entity_list.is_none() && actual.previous_object_list.is_none());
-        assert!(actual.sub_attributes.is_empty());
+        assert!(actual.common.sub_attributes.is_empty());
         assert!(actual.common.dataset_id.is_none() && actual.common.observed_at.is_none() && actual.common.expires_at.is_none());
     }
 }

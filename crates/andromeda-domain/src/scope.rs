@@ -1,3 +1,10 @@
+//! The NGSI-LD scope path grammar (ETSI GS CIM 009 clause 4.18).
+
+// `RegularGrammar` emits an undocumented owned type and accessor alongside the
+// grammar type below, and an item-level allow does not reach macro-generated
+// siblings. This module defines exactly one grammar type and nothing else.
+#![allow(missing_docs)]
+
 use static_regular_grammar::RegularGrammar;
 
 /// A validated NGSI-LD scope path (ETSI GS CIM 009 clause 4.18).

@@ -4,7 +4,7 @@
 //! enabling atomic persistence of notification intents alongside entity
 //! mutations (ETSI GS CIM 009 clause 5.3).
 
-use crate::{notification::TriggerReason, uri::Uri};
+use crate::{attribute::name::AttributeName, notification::TriggerReason, uri::Uri};
 use chrono::{DateTime, Utc};
 use derive_more::{Display, From};
 use serde_json::Value;
@@ -47,8 +47,8 @@ pub struct OutboxEntry {
     pub entity_snapshot: Option<Value>,
     /// Entity state before the mutation (for showChanges support).
     pub previous_snapshot: Option<Value>,
-    /// Attribute IRIs that were changed by the mutation.
-    pub changed_attrs: Vec<String>,
+    /// Names of the attributes the mutation changed.
+    pub changed_attrs: Vec<AttributeName>,
     /// Timestamp when the outbox entry was created.
     pub created_at: DateTime<Utc>,
     /// Timestamp when a worker claimed this entry for delivery.
@@ -82,8 +82,8 @@ pub struct NewOutboxEntry {
     pub entity_snapshot: Option<Value>,
     /// Entity state before the mutation.
     pub previous_snapshot: Option<Value>,
-    /// Attribute IRIs that were changed.
-    pub changed_attrs: Vec<String>,
+    /// Names of the attributes the mutation changed.
+    pub changed_attrs: Vec<AttributeName>,
 }
 
 #[cfg(test)]

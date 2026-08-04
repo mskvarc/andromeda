@@ -1,8 +1,7 @@
-use crate::{
-    attribute::{AttributeValue, common::CommonAttributeFields},
-    geometry::Geometry,
-};
-use indexmap::IndexMap;
+//! The GeoProperty attribute family (ETSI GS CIM 009 clause 5.2.7).
+
+use crate::{attribute::common_fields::CommonAttributeFields, geometry::Geometry};
+use compact_str::CompactString;
 use jsonld::Expandable;
 use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
@@ -21,22 +20,20 @@ pub struct GeoProperty {
     pub value: Geometry,
     /// Optional JSON-LD datatype for `value`.
     #[jsonld(property = "ngsi:hasValueType", coerce = "@id")]
-    pub value_type: Option<compact_str::CompactString>,
+    pub value_type: Option<CompactString>,
     /// Previous geometry value emitted in notifications when `showChanges` is active.
     #[jsonld(property = "ngsi:hasPreviousValue", coerce = "@json")]
     pub previous_value: Option<Geometry>,
+    /// Members shared with every other attribute family.
     #[serde(flatten)]
     #[jsonld(flatten)]
     pub common: CommonAttributeFields,
-    #[serde(flatten)]
-    #[jsonld(flatten_map)]
-    pub sub_attributes: IndexMap<String, AttributeValue>,
 }
 
 #[cfg(test)]
 mod tests {
     #![allow(clippy::expect_used, clippy::unwrap_used)]
-    use crate::{attribute::Attribute, vocab};
+    use crate::{attribute::Attribute, vocab::expanded::properties as expanded_properties};
     use jsonld::Expandable;
 
     #[test]
@@ -66,6 +63,6 @@ mod tests {
         };
         let expanded = property.expand::<serde_json::Value>();
         let obj = expanded.as_object().expect("object");
-        assert!(obj.contains_key(vocab::expanded::properties::VALUE_TYPE.as_str()));
+        assert!(obj.contains_key(expanded_properties::VALUE_TYPE.as_str()));
     }
 }

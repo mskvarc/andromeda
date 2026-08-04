@@ -5,11 +5,8 @@
 //! exact `georel` predicate inline using the `geo` crate, matching the
 //! semantics of [`crate::service::subscription_matching::matches_compiled_geo_query`].
 
-use crate::{
-    query::compiled::GeoRel,
-    service::spatial::{SpatialKey, distance::haversine_distance_m},
-};
-use andromeda_domain::geometry::Geometry;
+use crate::service::spatial::{SpatialKey, distance::haversine_distance_m};
+use andromeda_domain::{geo_rel::GeoRel, geometry::Geometry};
 use dashmap::DashMap;
 use geo::algorithm::{Contains, Intersects};
 use parking_lot::RwLock;

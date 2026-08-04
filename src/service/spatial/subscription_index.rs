@@ -6,12 +6,13 @@
 //! geo-enabled subscription in the cache.
 
 use crate::service::{
-    compiled_subscription::{CompiledGeoQuery, CompiledGeoRel},
+    compiled_subscription::CompiledGeoQuery,
     spatial::{
         SpatialKey,
         distance::{haversine_distance_m, metres_to_degrees_coarse},
     },
 };
+use andromeda_domain::geo_rel::GeoRel;
 use dashmap::DashMap;
 use geo::algorithm::{BoundingRect, Contains, Intersects};
 use parking_lot::RwLock;
@@ -33,7 +34,7 @@ pub struct SubEntry {
     /// Reference geometry parsed from `geoQ.coordinates` at compile time.
     pub ref_geometry: geo::Geometry<f64>,
     /// Compiled georel operator (copied from `CompiledGeoQuery::georel`).
-    pub georel: CompiledGeoRel,
+    pub georel: GeoRel,
     /// AABB used by the R-tree for candidate pruning.
     pub envelope: AABB<[f64; 2]>,
 }
@@ -45,7 +46,7 @@ impl SubEntry {
         let mut min = [rect.min().x, rect.min().y];
         let mut max = [rect.max().x, rect.max().y];
 
-        if let CompiledGeoRel::Near { max_distance: Some(m), .. } = &compiled.georel {
+        if let GeoRel::Near { max_distance: Some(m), .. } = &compiled.georel {
             let d = metres_to_degrees_coarse(*m);
             min[0] -= d;
             min[1] -= d;
@@ -110,9 +111,7 @@ impl SpatialSubscriptionIndex {
         // scan fully in that case (rare — most geoQ filters use positive
         // predicates).
         for entry in tree.iter() {
-            if matches!(entry.georel, CompiledGeoRel::Disjoint)
-                && !entry.envelope.intersects(&env)
-                && exact_match(&entry.georel, entity_geometry, &entry.ref_geometry)
+            if matches!(entry.georel, GeoRel::Disjoint) && !entry.envelope.intersects(&env) && exact_match(&entry.georel, entity_geometry, &entry.ref_geometry)
             {
                 out.push(entry.subscription_id.clone());
             }
@@ -151,15 +150,15 @@ impl SpatialSubscriptionIndex {
     }
 }
 
-fn exact_match(georel: &CompiledGeoRel, entity_geom: &geo::Geometry<f64>, ref_geom: &geo::Geometry<f64>) -> bool {
+fn exact_match(georel: &GeoRel, entity_geom: &geo::Geometry<f64>, ref_geom: &geo::Geometry<f64>) -> bool {
     match georel {
-        CompiledGeoRel::Within => ref_geom.contains(entity_geom),
-        CompiledGeoRel::Contains => entity_geom.contains(ref_geom),
-        CompiledGeoRel::Intersects => entity_geom.intersects(ref_geom),
-        CompiledGeoRel::Disjoint => !entity_geom.intersects(ref_geom),
-        CompiledGeoRel::Equals => entity_geom.contains(ref_geom) && ref_geom.contains(entity_geom),
-        CompiledGeoRel::Overlaps => entity_geom.intersects(ref_geom),
-        CompiledGeoRel::Near { max_distance, min_distance } => {
+        GeoRel::Within => ref_geom.contains(entity_geom),
+        GeoRel::Contains => entity_geom.contains(ref_geom),
+        GeoRel::Intersects => entity_geom.intersects(ref_geom),
+        GeoRel::Disjoint => !entity_geom.intersects(ref_geom),
+        GeoRel::Equals => entity_geom.contains(ref_geom) && ref_geom.contains(entity_geom),
+        GeoRel::Overlaps => entity_geom.intersects(ref_geom),
+        GeoRel::Near { max_distance, min_distance } => {
             let d = haversine_distance_m(entity_geom, ref_geom);
             let max_ok = max_distance.is_none_or(|m| d <= m);
             let min_ok = min_distance.is_none_or(|m| d >= m);
@@ -207,7 +206,7 @@ mod tests {
         geo::Geometry::Polygon(Polygon::new(LineString::from(coords), Vec::new()))
     }
 
-    fn compiled(ref_geom: geo::Geometry<f64>, georel: CompiledGeoRel) -> CompiledGeoQuery {
+    fn compiled(ref_geom: geo::Geometry<f64>, georel: GeoRel) -> CompiledGeoQuery {
         CompiledGeoQuery {
             ref_geometry: ref_geom,
             georel,
@@ -218,7 +217,7 @@ mod tests {
     #[test]
     fn candidates_returns_sub_for_entity_in_subscription_area() {
         let idx = SpatialSubscriptionIndex::new();
-        let entry = SubEntry::from_compiled("sub-1".to_string(), &compiled(square(0.0, 0.0, 1.0), CompiledGeoRel::Within)).expect("bbox");
+        let entry = SubEntry::from_compiled("sub-1".to_string(), &compiled(square(0.0, 0.0, 1.0), GeoRel::Within)).expect("bbox");
         idx.insert(key(), entry);
 
         let got = idx.candidates(&key(), &point(0.5, 0.5));
@@ -232,7 +231,7 @@ mod tests {
             "sub-near".to_string(),
             &compiled(
                 point(0.0, 0.0),
-                CompiledGeoRel::Near {
+                GeoRel::Near {
                     max_distance: Some(100.0),
                     min_distance: None,
                 },
@@ -252,7 +251,7 @@ mod tests {
             "sub-5km".to_string(),
             &compiled(
                 point(0.0, 0.0),
-                CompiledGeoRel::Near {
+                GeoRel::Near {
                     max_distance: Some(5_000.0),
                     min_distance: None,
                 },
@@ -273,7 +272,7 @@ mod tests {
     #[test]
     fn remove_subscription_clears_bucket() {
         let idx = SpatialSubscriptionIndex::new();
-        let entry = SubEntry::from_compiled("sub-1".to_string(), &compiled(square(0.0, 0.0, 1.0), CompiledGeoRel::Within)).expect("bbox");
+        let entry = SubEntry::from_compiled("sub-1".to_string(), &compiled(square(0.0, 0.0, 1.0), GeoRel::Within)).expect("bbox");
         idx.insert(key(), entry);
         idx.remove("sub-1");
 
@@ -284,7 +283,7 @@ mod tests {
     #[test]
     fn different_geoproperty_isolated() {
         let idx = SpatialSubscriptionIndex::new();
-        let entry = SubEntry::from_compiled("sub-obs".to_string(), &compiled(square(0.0, 0.0, 1.0), CompiledGeoRel::Within)).expect("bbox");
+        let entry = SubEntry::from_compiled("sub-obs".to_string(), &compiled(square(0.0, 0.0, 1.0), GeoRel::Within)).expect("bbox");
         idx.insert(observation_space_key(), entry);
 
         // Query under the `location` key must not see the `observationSpace` sub.

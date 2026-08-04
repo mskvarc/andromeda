@@ -6,9 +6,10 @@
 
 use crate::{
     query::q,
-    service::compiled_subscription::{CompiledGeoQuery, CompiledGeoRel, CompiledScopePattern, CompiledScopeTerm, CompiledSubscription},
+    service::compiled_subscription::{CompiledGeoQuery, CompiledScopePattern, CompiledScopeTerm, CompiledSubscription},
 };
 use andromeda_domain::{
+    geo_rel::GeoRel,
     geometry::Geometry,
     notification::{ChangeEvent, ChangeOrigin},
     subscription::SubscriptionStatus,
@@ -63,9 +64,9 @@ pub fn matches_subscription(sub: &CompiledSubscription, event: &ChangeEvent) -> 
         let entity_id_str = event.entity_id.to_string(); // convert once for string-based comparisons below
         let any_selector_matches = sub.selectors.iter().any(|sel| {
             let type_matches = if let Some(ref pattern) = sel.type_pattern {
-                event.entity_types.iter().any(|t| pattern.is_match(t))
+                event.entity_types.iter().any(|t| pattern.is_match(t.as_str()))
             } else {
-                event.entity_types.contains(&sel.type_)
+                event.entity_types.iter().any(|t| t.as_str() == sel.type_)
             };
             if !type_matches {
                 debug!(
@@ -104,7 +105,7 @@ pub fn matches_subscription(sub: &CompiledSubscription, event: &ChangeEvent) -> 
     }
 
     if let Some(ref watched) = sub.watched_attrs
-        && !event.changed_attributes.iter().any(|a| watched.contains(a))
+        && !event.changed_attributes.iter().any(|a| watched.contains(a.as_str()))
     {
         debug!(
             "Subscription {} skipped: watchedAttributes {:?} did not match event attrs {:?}",
@@ -172,13 +173,13 @@ pub fn matches_compiled_geo_query(geo_q: &CompiledGeoQuery, entity_data: &Value)
     let ref_geom = &geo_q.ref_geometry;
 
     match geo_q.georel {
-        CompiledGeoRel::Within => ref_geom.contains(entity_geom),
-        CompiledGeoRel::Contains => entity_geom.contains(ref_geom),
-        CompiledGeoRel::Intersects => entity_geom.intersects(ref_geom),
-        CompiledGeoRel::Disjoint => !entity_geom.intersects(ref_geom),
-        CompiledGeoRel::Equals => entity_geom.contains(ref_geom) && ref_geom.contains(entity_geom),
-        CompiledGeoRel::Overlaps => entity_geom.intersects(ref_geom),
-        CompiledGeoRel::Near { max_distance, min_distance } => {
+        GeoRel::Within => ref_geom.contains(entity_geom),
+        GeoRel::Contains => entity_geom.contains(ref_geom),
+        GeoRel::Intersects => entity_geom.intersects(ref_geom),
+        GeoRel::Disjoint => !entity_geom.intersects(ref_geom),
+        GeoRel::Equals => entity_geom.contains(ref_geom) && ref_geom.contains(entity_geom),
+        GeoRel::Overlaps => entity_geom.intersects(ref_geom),
+        GeoRel::Near { max_distance, min_distance } => {
             let distance = haversine_distance_m(entity_geom, ref_geom);
             let max_ok = max_distance.is_none_or(|max| distance <= max);
             let min_ok = min_distance.is_none_or(|min| distance >= min);
@@ -303,10 +304,10 @@ mod tests {
     fn make_event() -> ChangeEvent {
         ChangeEvent::new(
             "urn:ngsi-ld:Entity:001".parse().expect("valid test URI"),
-            vec!["Building".to_string()],
+            vec!["Building".parse().expect("valid test type name")],
             TriggerReason::EntityCreated,
         )
-        .with_changed_attributes(vec!["temperature".to_string()])
+        .with_changed_attributes(vec!["temperature".parse().expect("valid test attribute name")])
     }
 
     #[test]
@@ -336,7 +337,7 @@ mod tests {
         let sub = make_sub();
         let event = ChangeEvent::new(
             "urn:ngsi-ld:Entity:001".parse().expect("valid test URI"),
-            vec!["Building".to_string()],
+            vec!["Building".parse().expect("valid test type name")],
             TriggerReason::EntityDeleted,
         );
         assert!(!matches_subscription(&sub, &event));

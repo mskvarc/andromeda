@@ -9,7 +9,7 @@ use crate::{
         entity::{expanded_entity_object_mut, inject_attr_sys_attrs, query::EntityQueryService},
     },
 };
-use andromeda_domain::{entity::Entity, notification::TriggerReason, vocab};
+use andromeda_domain::{attribute::name::AttributeName, entity::Entity, notification::TriggerReason, vocab};
 use chrono::{DateTime, SecondsFormat, Utc};
 use serde_json::Value;
 use std::{
@@ -41,7 +41,7 @@ pub struct NotificationBuildParams<'a> {
     pub previous_attributes: Option<&'a Value>,
     pub sub: &'a CompiledSubscription,
     pub trigger_reason: &'a TriggerReason,
-    pub changed_attributes: &'a [String],
+    pub changed_attributes: &'a [AttributeName],
     pub occurred_at: DateTime<Utc>,
     pub entity_query: &'a EntityQueryService,
     pub compaction_cache: Option<&'a NotificationCompactionCache>,
@@ -92,9 +92,9 @@ pub async fn build_notification_data(params: NotificationBuildParams<'_>) -> Vec
         } else {
             None
         };
-        let filtered_changed: Vec<String>;
+        let filtered_changed: Vec<AttributeName>;
         let effective_changed = if let Some(ref watched) = sub.watched_attrs {
-            filtered_changed = changed_attributes.iter().filter(|a| watched.contains(*a)).cloned().collect();
+            filtered_changed = changed_attributes.iter().filter(|a| watched.contains(a.as_str())).cloned().collect();
             &filtered_changed
         } else {
             changed_attributes
@@ -589,7 +589,7 @@ fn fix_null_language_maps(entity: &mut Value) {
     }
 }
 
-fn inject_deleted_attributes(entity: &mut Value, changed_attributes: &[String], previous_attributes: Option<&Value>, deleted_at: Option<DateTime<Utc>>) {
+fn inject_deleted_attributes(entity: &mut Value, changed_attributes: &[AttributeName], previous_attributes: Option<&Value>, deleted_at: Option<DateTime<Utc>>) {
     let Some(prev) = previous_attributes else { return };
     let prev_obj = match prev {
         Value::Array(arr) => arr.first().and_then(|v| v.as_object()),
@@ -599,7 +599,8 @@ fn inject_deleted_attributes(entity: &mut Value, changed_attributes: &[String], 
     let Some(prev_obj) = prev_obj else { return };
     let Some(entity_obj) = entity.as_object_mut() else { return };
 
-    for attr_iri in changed_attributes {
+    for attr_name in changed_attributes {
+        let attr_iri = attr_name.as_str();
         if entity_obj.contains_key(attr_iri) {
             inject_deleted_instances(entity_obj, attr_iri, prev_obj, deleted_at);
             continue;
@@ -617,7 +618,7 @@ fn inject_deleted_attributes(entity: &mut Value, changed_attributes: &[String], 
                 if let Some(ts) = deleted_at {
                     inject_deleted_at_on_instance(&mut instance, ts);
                 }
-                entity_obj.insert(attr_iri.clone(), serde_json::json!([instance]));
+                entity_obj.insert(attr_iri.to_string(), serde_json::json!([instance]));
             }
         }
     }
@@ -690,12 +691,12 @@ fn inject_deleted_at_on_instance(instance: &mut Value, ts: DateTime<Utc>) {
     }
 }
 
-pub fn filter_entity_attributes(entity: &Value, attrs: &[String]) -> Value {
+pub fn filter_entity_attributes(entity: &Value, attrs: &[AttributeName]) -> Value {
     let Some(obj) = entity.as_object() else { return entity.clone() };
 
     let mut filtered = serde_json::Map::new();
     for (key, value) in obj {
-        if key.starts_with('@') || attrs.iter().any(|a| a == key) {
+        if key.starts_with('@') || attrs.iter().any(|a| a.as_str() == key) {
             filtered.insert(key.clone(), value.clone());
         }
     }
@@ -744,12 +745,12 @@ fn filter_entity_by_dataset_id(entity: &mut Value, dataset_ids: &[String]) {
     }
 }
 
-async fn inject_previous_values(current: &mut Value, previous: &Value, changed_attributes: &[String], engine: &JsonLdEngine, context: &ContextSpec) {
+async fn inject_previous_values(current: &mut Value, previous: &Value, changed_attributes: &[AttributeName], engine: &JsonLdEngine, context: &ContextSpec) {
     let (Some(curr_obj), Some(prev_obj)) = (current.as_object_mut(), previous.as_object()) else {
         return;
     };
 
-    let changed_set: HashSet<&str> = changed_attributes.iter().map(String::as_str).collect();
+    let changed_set: HashSet<&str> = changed_attributes.iter().map(AttributeName::as_str).collect();
     let keys: Vec<String> = curr_obj.keys().filter(|k| !k.starts_with('@') && *k != "id" && *k != "type").cloned().collect();
 
     for key in keys {

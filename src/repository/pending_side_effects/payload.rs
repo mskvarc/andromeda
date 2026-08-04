@@ -75,9 +75,9 @@ impl From<&ChangeEvent> for PersistedChangeEvent {
     fn from(event: &ChangeEvent) -> PersistedChangeEvent {
         PersistedChangeEvent {
             entity_id: event.entity_id.to_string(),
-            entity_types: event.entity_types.clone(),
+            entity_types: event.entity_types.iter().map(ToString::to_string).collect(),
             trigger_reason: event.trigger_reason.to_string(),
-            changed_attributes: event.changed_attributes.clone(),
+            changed_attributes: event.changed_attributes.iter().map(ToString::to_string).collect(),
             occurred_at: event.occurred_at,
             entity_snapshot: event.entity_snapshot.as_ref().map(|arc| (**arc).clone()),
             previous_attributes: event.previous_attributes.as_ref().map(|arc| (**arc).clone()),
@@ -137,11 +137,27 @@ impl TryFrom<PersistedChangeEvent> for ChangeEvent {
             other => return Err(AndromedaError::internal(format!("invalid origin in queued change event: {other}"))),
         };
 
+        // Names that no longer satisfy the NGSI-LD grammar cannot name a type
+        // or an attribute, so a queued event carrying one is rejected outright
+        // rather than delivered with the offending member silently dropped.
+        let entity_types = persisted
+            .entity_types
+            .iter()
+            .map(|raw| raw.parse())
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|err| AndromedaError::internal(format!("invalid entity type in queued change event: {err}")))?;
+        let changed_attributes = persisted
+            .changed_attributes
+            .iter()
+            .map(|raw| raw.parse())
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|err| AndromedaError::internal(format!("invalid attribute name in queued change event: {err}")))?;
+
         Ok(ChangeEvent {
             entity_id,
-            entity_types: persisted.entity_types,
+            entity_types,
             trigger_reason,
-            changed_attributes: persisted.changed_attributes,
+            changed_attributes,
             occurred_at: persisted.occurred_at,
             entity_snapshot: persisted.entity_snapshot.map(Arc::new),
             previous_attributes: persisted.previous_attributes.map(Arc::new),
