@@ -7,12 +7,33 @@ version = "0.1.0"
 edition = "2024"
 authors = ["Matej Škvarč <matej.skvarc@senlab.io>"]
 
+[workspace.dependencies]
+andromeda-test-common = { path = "lib/andromeda-test-common" }
+
+[workspace.lints.clippy]
+branches_sharing_code = "warn"
+cloned_instead_of_copied = "warn"
+expect_used = "deny"
+get_unwrap = "deny"
+map_unwrap_or = "deny"
+missing_const_for_fn = "warn"
+needless_collect = "warn"
+panic = "deny"
+redundant_clone = "warn"
+unwrap_used = "deny"
+used_underscore_binding = "warn"
+wildcard_dependencies = "warn"
+wildcard_imports = "warn"
+
 [package]
 name = "andromeda"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
 build = "build.rs"
+
+[lints]
+workspace = true
 
 [dependencies]
 async-trait = "0.1.89"
@@ -82,7 +103,7 @@ uuid = { version = "1.23.1", features = ["fast-rng", "serde", "v4"] }
 shadow-rs = "2.0.0"
 
 [dev-dependencies]
-andromeda-test-common = { path = "lib/andromeda-test-common" }
+andromeda-test-common.workspace = true
 futures = "0.3.32"
 pretty_assertions = "1.4.1"
 serial_test = "3.4.0"
@@ -93,20 +114,3 @@ lto = "thin"
 codegen-units = 16
 opt-level = 3
 debug = true
-
-[lints.clippy]
-unwrap_used = "deny"
-expect_used = "deny"
-panic = "deny"
-get_unwrap = "deny"
-wildcard_dependencies = "warn"
-wildcard_imports = "warn"
-used_underscore_binding = "warn"
-missing_const_for_fn = "warn"
-branches_sharing_code = "warn"
-cloned_instead_of_copied = "warn"
-# unnecessary_self_imports = "warn"
-redundant_clone = "warn"
-# pub_use = "warn"
-needless_collect = "warn"
-map_unwrap_or = "deny"

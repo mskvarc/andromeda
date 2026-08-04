@@ -7,7 +7,7 @@
 
 use crate::config::DATABASE_URL;
 use sqlx::PgPool;
-use std::sync::OnceLock;
+use std::{num::NonZeroUsize, sync::OnceLock, thread::available_parallelism};
 use tokio::sync::Mutex;
 
 static POOL: OnceLock<Mutex<Option<PgPool>>> = OnceLock::new();
@@ -48,7 +48,7 @@ pub async fn pool() -> Result<PgPool, sqlx::Error> {
 }
 
 fn num_cpus() -> usize {
-    std::thread::available_parallelism().map(std::num::NonZeroUsize::get).unwrap_or(4)
+    available_parallelism().map_or(4, NonZeroUsize::get)
 }
 
 /// Truncate every tenant-scoped table in the default tenant database.

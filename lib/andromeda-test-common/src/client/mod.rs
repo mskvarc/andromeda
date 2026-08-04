@@ -88,7 +88,7 @@ impl NgsiLdClient {
     }
 
     /// Borrow the underlying `reqwest::Client`.
-    pub fn http(&self) -> &Client {
+    pub const fn http(&self) -> &Client {
         &self.http
     }
 
@@ -97,7 +97,7 @@ impl NgsiLdClient {
         self.tenant.as_deref()
     }
 
-    pub(crate) fn base_url(&self) -> &'static str {
+    pub(crate) const fn base_url(&self) -> &'static str {
         BASE_URL
     }
 

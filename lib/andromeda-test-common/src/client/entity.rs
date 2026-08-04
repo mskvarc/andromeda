@@ -19,7 +19,7 @@ pub struct CreateEntity<'a> {
 impl<'a> CreateEntity<'a> {
     /// Use `application/ld+json` with the `@context` embedded in the body
     /// (the default).
-    pub fn with_ld_json(mut self) -> CreateEntity<'a> {
+    pub const fn with_ld_json(mut self) -> CreateEntity<'a> {
         self.content_type = "application/ld+json";
         self.link_context = None;
         self
@@ -27,7 +27,7 @@ impl<'a> CreateEntity<'a> {
 
     /// Use `application/json` with the `@context` supplied via a `Link`
     /// header (NGSI-LD 6.3.5).
-    pub fn with_json(mut self, context_url: &'a str) -> CreateEntity<'a> {
+    pub const fn with_json(mut self, context_url: &'a str) -> CreateEntity<'a> {
         self.content_type = "application/json";
         self.link_context = Some(context_url);
         self
@@ -56,7 +56,7 @@ impl<'a> CreateEntity<'a> {
 impl NgsiLdClient {
     /// Begin a `POST /entities` request with body `entity` and the default
     /// `application/ld+json` content type.
-    pub fn post_entity<'a>(&'a self, entity: &'a Value) -> CreateEntity<'a> {
+    pub const fn post_entity<'a>(&'a self, entity: &'a Value) -> CreateEntity<'a> {
         CreateEntity {
             client: self,
             body: entity,
