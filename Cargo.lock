@@ -2286,9 +2286,9 @@ checksum = "d98f6fed1fde3f8c21bc40a1abb88dd75e67924f9cffc3ef95607bad8017f8e2"
 
 [[package]]
 name = "iri-rs"
-version = "3.3.7"
+version = "3.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fbb819c9e36ae74bd6c8c442e20bcc802aaaea9db3313992f91fb170cd9b3f5a"
+checksum = "d5929b5166612fabd0b50df754181061bd7d3875e7934f2edd86bedff099acf8"
 dependencies = [
  "iri-rs-core",
  "iri-rs-static",
@@ -2296,9 +2296,9 @@ dependencies = [
 
 [[package]]
 name = "iri-rs-core"
-version = "3.3.7"
+version = "3.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5646e158ff645ca12bcb702a4cadc2a9749843b08c2d91c36242d6bff4fc2849"
+checksum = "96909dac7d6254a3d8209458466f30459ec9ddd3902ea6d9281dd788618cd59b"
 dependencies = [
  "memchr",
  "pct",

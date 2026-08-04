@@ -26,7 +26,13 @@ pub fn row_to_snapshot(row: &sqlx::postgres::PgRow) -> Result<Snapshot, Andromed
         .parse::<SnapshotId>()
         .map_err(|e| AndromedaError::internal(format!("Invalid snapshot id '{id_str}': {e}")))?;
 
-    let status: SnapshotStatus = row.try_get("status")?;
+    // `status` is projected as `status::text`; the label mapping lives in the
+    // domain's `EnumString`, so an unexpected label is a typed parse error
+    // rather than an opaque sqlx decode failure.
+    let status_label: String = row.try_get("status")?;
+    let status = status_label
+        .parse::<SnapshotStatus>()
+        .map_err(|e| AndromedaError::internal(format!("Invalid snapshot status '{status_label}': {e}")))?;
 
     let snapshot_lifetime = row
         .try_get::<Option<String>, _>("snapshot_lifetime")?

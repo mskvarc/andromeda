@@ -35,7 +35,7 @@ impl SnapshotRepository {
     pub async fn create(&self, params: InsertSnapshotParams<'_>) -> Result<(), AndromedaError> {
         sqlx::query(
             "INSERT INTO snapshots (id, snapshot_queries, snapshot_temporal_queries, snapshot_lifetime, snapshot_priority, endpoint, receiver_info, status, queries_details, temporal_queries_details, created_at, modified_at, expires_at, last_used_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)",
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8::snapshot_status, $9, $10, $11, $12, $13, $14)",
         )
         .bind(params.id.as_str())
         .bind(params.snapshot_queries_json)
@@ -44,7 +44,7 @@ impl SnapshotRepository {
         .bind(params.snapshot_priority)
         .bind(params.endpoint.map(Url::as_str))
         .bind(params.receiver_info_json)
-        .bind(params.status)
+        .bind(<&str>::from(params.status))
         .bind(params.queries_details_json)
         .bind(params.temporal_queries_details_json)
         .bind(params.created_at)
@@ -59,7 +59,7 @@ impl SnapshotRepository {
     /// Retrieve a snapshot by its identifier.
     pub async fn get(&self, id: &SnapshotId) -> Result<Option<Snapshot>, AndromedaError> {
         let row = sqlx::query(
-            "SELECT id, snapshot_queries, snapshot_temporal_queries, snapshot_lifetime, snapshot_priority, endpoint, receiver_info, status, queries_details, temporal_queries_details, created_at, modified_at, expires_at, last_used_at FROM snapshots WHERE id = $1",
+            "SELECT id, snapshot_queries, snapshot_temporal_queries, snapshot_lifetime, snapshot_priority, endpoint, receiver_info, status::text AS status, queries_details, temporal_queries_details, created_at, modified_at, expires_at, last_used_at FROM snapshots WHERE id = $1",
         )
         .bind(id.as_str())
         .fetch_optional(&self.pool)
@@ -132,7 +132,8 @@ impl SnapshotRepository {
                     qb.push_bind(priority.as_i16());
                 }
                 SnapshotValue::Status(status) => {
-                    qb.push_bind(*status);
+                    qb.push_bind(<&str>::from(*status));
+                    qb.push("::snapshot_status");
                 }
                 SnapshotValue::Endpoint(url) => {
                     qb.push_bind(url.as_str().to_string());
@@ -215,11 +216,11 @@ impl SnapshotRepository {
         temporal_queries_details: Option<&[ExecutionResultDetails]>,
     ) -> Result<u64, AndromedaError> {
         let result = sqlx::query(
-            "UPDATE snapshots SET status = $2, queries_details = $3, temporal_queries_details = $4, modified_at = NOW() \
+            "UPDATE snapshots SET status = $2::snapshot_status, queries_details = $3, temporal_queries_details = $4, modified_at = NOW() \
              WHERE id = $1 AND status = 'preparing'",
         )
         .bind(id.as_str())
-        .bind(status)
+        .bind(<&str>::from(status))
         .bind(queries_details.and_then(|d| serde_json::to_value(d).ok()))
         .bind(temporal_queries_details.and_then(|d| serde_json::to_value(d).ok()))
         .execute(&self.pool)

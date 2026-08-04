@@ -1,6 +1,5 @@
 //! Persistence-shaped row structs for the `jsonld_contexts` table.
 
-use crate::domain::jsonld_context::ContextKind;
 use chrono::{DateTime, Utc};
 use serde_json::Value;
 
@@ -11,8 +10,10 @@ pub(crate) struct ContextMetadataRow {
     pub local_id: String,
     /// Public URL, if any.
     pub url: Option<String>,
-    /// Stored kind.
-    pub kind: ContextKind,
+    /// Stored kind, as the raw `jsonld_context_kind` label. Projected via
+    /// `kind::text`; the mapper turns it into the domain enum so an unknown
+    /// label surfaces as a typed error rather than an sqlx decode failure.
+    pub kind: String,
     /// Creation timestamp.
     pub created_at: DateTime<Utc>,
     /// Expiry timestamp, if set.

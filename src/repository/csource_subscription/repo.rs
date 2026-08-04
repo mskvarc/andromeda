@@ -34,7 +34,7 @@ impl CsourceSubscriptionRepository {
                 $1, 'csource', 'Subscription', $2, $3, $4,
                 $5, $6, $7,
                 $8, $9, $10, $11, $12, $13,
-                $14, $15, $16, $17, $18,
+                $14, $15, $16::subscription_status, $17, $18,
                 $19, NOW(), NOW()
             )
             "#,
@@ -54,7 +54,7 @@ impl CsourceSubscriptionRepository {
         .bind(fields.notification.cloned())
         .bind(fields.expires_at)
         .bind(fields.throttling)
-        .bind(status)
+        .bind(<&str>::from(status))
         .bind(fields.temporal_q.cloned())
         .bind(fields.lang)
         .bind(fields.jsonld_context)
@@ -85,7 +85,7 @@ impl CsourceSubscriptionRepository {
                 notification = $13,
                 expires_at = $14,
                 throttling = $15,
-                status = $16,
+                status = $16::subscription_status,
                 lang = $17,
                 jsonld_context = $18,
                 modified_at = NOW()
@@ -107,7 +107,7 @@ impl CsourceSubscriptionRepository {
         .bind(fields.notification.cloned())
         .bind(fields.expires_at)
         .bind(fields.throttling)
-        .bind(status)
+        .bind(<&str>::from(status))
         .bind(fields.lang)
         .bind(fields.jsonld_context)
         .execute(&self.pool)
@@ -123,7 +123,7 @@ crate::impl_subscription_store!(
     columns: "id, type, subscription_name, description, entities, \
               watched_attributes, notification_trigger, time_interval, \
               q, geo_q, scope_q, csf, is_active, notification, \
-              expires_at, throttling, status, temporal_q, lang, \
+              expires_at, throttling, status::text AS status, temporal_q, lang, \
               jsonld_context, local_only, times_sent, last_notification, \
               last_success, last_failure, created_at, modified_at",
     has_dataset_id: DatasetIdPresence::Absent

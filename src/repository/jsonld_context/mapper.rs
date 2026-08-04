@@ -1,7 +1,10 @@
 //! Row-to-domain mapping for the JSON-LD context store.
 
 use crate::{
-    domain::{jsonld_context::ContextMetadata, uri::Uri},
+    domain::{
+        jsonld_context::{ContextKind, ContextMetadata},
+        uri::Uri,
+    },
     repository::jsonld_context::rows::ContextMetadataRow,
 };
 use thiserror::Error;
@@ -29,6 +32,12 @@ pub enum ContextMapperError {
         /// Raw database value.
         value: i64,
     },
+    /// The `kind` column held a label no [`ContextKind`] variant covers.
+    #[error("unknown jsonld_context_kind in database: {value}")]
+    Kind {
+        /// Raw database value.
+        value: String,
+    },
 }
 
 /// Convert a detailed-projection row into the domain [`ContextMetadata`].
@@ -44,10 +53,12 @@ pub fn row_to_metadata(row: ContextMetadataRow) -> Result<ContextMetadata, Conte
 
     let number_of_hits = u64::try_from(row.number_of_hits).map_err(|_| ContextMapperError::NegativeHits { value: row.number_of_hits })?;
 
+    let kind: ContextKind = row.kind.parse().map_err(|_| ContextMapperError::Kind { value: row.kind.clone() })?;
+
     Ok(ContextMetadata {
         url,
         local_id,
-        kind: row.kind,
+        kind,
         created_at: row.created_at,
         expires_at: row.expires_at,
         last_usage: row.last_usage,

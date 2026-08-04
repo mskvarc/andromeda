@@ -23,6 +23,10 @@ pub fn row_from_pg(row: &sqlx::postgres::PgRow, dataset_id_presence: DatasetIdPr
         Err(sqlx::Error::ColumnNotFound(_)) | Err(sqlx::Error::ColumnDecode { .. }) => false,
         Err(e) => return Err(AndromedaError::internal(format!("Failed to read local_only column: {e}"))),
     };
+    // `status` is projected as `status::text`; the label mapping lives in the
+    // domain's `EnumString`, so a row carrying a label this build does not know
+    // becomes a typed parse error instead of an opaque sqlx decode failure.
+    let status_label: String = row.get("status");
     Ok(SubscriptionRow {
         id: row.get("id"),
         type_: row.get("type"),
@@ -41,7 +45,9 @@ pub fn row_from_pg(row: &sqlx::postgres::PgRow, dataset_id_presence: DatasetIdPr
         notification_json: row.get("notification"),
         expires_at: row.get("expires_at"),
         throttling: row.get("throttling"),
-        status: row.get("status"),
+        status: status_label
+            .parse()
+            .map_err(|e| AndromedaError::internal(format!("Invalid subscription status '{status_label}': {e}")))?,
         temporal_q: row.get("temporal_q"),
         lang: row.get("lang"),
         jsonld_context: row.get("jsonld_context"),

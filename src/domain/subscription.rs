@@ -7,7 +7,7 @@ use crate::domain::{
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use strum::{Display, EnumString};
+use strum::{Display, EnumIter, EnumString, IntoStaticStr};
 
 /// Trigger conditions that cause a notification to be sent (ETSI GS CIM 009 clause 5.3.3).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Display, EnumString)]
@@ -29,10 +29,9 @@ pub enum NotificationTrigger {
 }
 
 /// Lifecycle status of a subscription (ETSI GS CIM 009 clause 5.2.12, status member).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Display, EnumString, sqlx::Type)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Display, EnumString, EnumIter, IntoStaticStr)]
 #[serde(rename_all = "camelCase")]
 #[strum(serialize_all = "camelCase")]
-#[sqlx(type_name = "subscription_status", rename_all = "lowercase")]
 pub enum SubscriptionStatus {
     /// The subscription is active and will generate notifications.
     Active,
@@ -223,6 +222,49 @@ mod tests {
     #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::*;
     use std::str::FromStr;
+    use strum::IntoEnumIterator;
+
+    /// Labels of the PostgreSQL `subscription_status` enum, verbatim from
+    /// `migrations/tenant/0003_types.sql`.
+    const SUBSCRIPTION_STATUS_LABELS: [(&str, SubscriptionStatus); 3] = [
+        ("active", SubscriptionStatus::Active),
+        ("paused", SubscriptionStatus::Paused),
+        ("expired", SubscriptionStatus::Expired),
+    ];
+
+    #[test]
+    fn subscription_status_parses_from_its_postgres_label() {
+        for (label, expected) in SUBSCRIPTION_STATUS_LABELS {
+            pretty_assertions::assert_eq!(label.parse::<SubscriptionStatus>().expect(label), expected);
+        }
+    }
+
+    #[test]
+    fn subscription_status_renders_the_label_postgres_expects() {
+        for (label, variant) in SUBSCRIPTION_STATUS_LABELS {
+            pretty_assertions::assert_eq!(variant.to_string(), label);
+            pretty_assertions::assert_eq!(<&str>::from(variant), label);
+        }
+    }
+
+    #[test]
+    fn subscription_status_round_trips_through_its_label_for_every_variant() {
+        // Exhaustive over `EnumIter`: this is what replaces the type-level
+        // guarantee `sqlx::Type` used to give. A variant added without a
+        // matching migration fails here rather than in a production query.
+        for variant in SubscriptionStatus::iter() {
+            pretty_assertions::assert_eq!(variant.to_string().parse::<SubscriptionStatus>().expect("round trip"), variant);
+            assert!(
+                SUBSCRIPTION_STATUS_LABELS.iter().any(|(_, known)| *known == variant),
+                "{variant:?} has no PostgreSQL label in subscription_status"
+            );
+        }
+    }
+
+    #[test]
+    fn an_unknown_subscription_status_label_is_a_parse_error_not_a_panic() {
+        assert!("not-a-status".parse::<SubscriptionStatus>().is_err());
+    }
 
     #[test]
     fn notification_trigger_display_and_parse_round_trip() {

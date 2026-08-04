@@ -110,20 +110,20 @@ impl JsonLdContextRepository {
                     SELECT
                         id as local_id,
                         url,
-                        kind,
+                        kind::text AS kind,
                         created_at,
                         expires_at,
                         last_usage,
                         number_of_hits,
                         extra_info
                     FROM jsonld_contexts
-                    WHERE ($1::jsonld_context_kind IS NULL OR kind = $1)
+                    WHERE ($1::text IS NULL OR kind = $1::jsonld_context_kind)
                       AND ($2::text IS NULL OR id > $2)
                     ORDER BY id
                     LIMIT $3
                     "#,
                 )
-                .bind(params.kind)
+                .bind(params.kind.map(<&str>::from))
                 .bind(after_str)
                 .bind(limit)
                 .fetch_all(&self.pool)
@@ -136,13 +136,13 @@ impl JsonLdContextRepository {
                     r#"
                     SELECT id, url
                     FROM jsonld_contexts
-                    WHERE ($1::jsonld_context_kind IS NULL OR kind = $1)
+                    WHERE ($1::text IS NULL OR kind = $1::jsonld_context_kind)
                       AND ($2::text IS NULL OR id > $2)
                     ORDER BY id
                     LIMIT $3
                     "#,
                 )
-                .bind(params.kind)
+                .bind(params.kind.map(<&str>::from))
                 .bind(after_str)
                 .bind(limit)
                 .fetch_all(&self.pool)
@@ -162,7 +162,7 @@ impl JsonLdContextRepository {
                     SELECT
                         id as local_id,
                         url,
-                        kind,
+                        kind::text AS kind,
                         created_at,
                         expires_at,
                         last_usage,
@@ -210,9 +210,9 @@ impl JsonLdContextRepository {
 
     /// Looks up internal id, kind, and optional URL for a context.
     pub async fn get_kind_and_url(&self, identifier: &str) -> Result<Option<(String, ContextKind, Option<String>)>, AndromedaError> {
-        let row_opt: Option<(String, ContextKind, Option<String>)> = sqlx::query_as(
+        let row_opt: Option<(String, String, Option<String>)> = sqlx::query_as(
             r#"
-                SELECT id, kind, url
+                SELECT id, kind::text AS kind, url
                 FROM jsonld_contexts
                 WHERE id = $1 OR url = $1
                 "#,
@@ -221,7 +221,14 @@ impl JsonLdContextRepository {
         .fetch_optional(&self.pool)
         .await?;
 
-        Ok(row_opt)
+        row_opt
+            .map(|(id, kind_label, url)| {
+                let kind = kind_label
+                    .parse::<ContextKind>()
+                    .map_err(|e| AndromedaError::internal(format!("Invalid JSON-LD context kind '{kind_label}': {e}")))?;
+                Ok((id, kind, url))
+            })
+            .transpose()
     }
 
     /// Replaces the JSON-LD payload for a context identified by its internal ID.

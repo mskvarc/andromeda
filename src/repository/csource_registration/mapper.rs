@@ -32,7 +32,14 @@ pub fn row_to_csr(row: &sqlx::postgres::PgRow) -> Result<ContextSourceRegistrati
     let expires_at: Option<DateTime<Utc>> = row.get("expires_at");
     let endpoint: String = row.get("endpoint");
     let accept: Option<String> = row.get("accept");
-    let mode: ForwardingMode = row.get("mode");
+    // `mode` and `status` are projected as `::text`; the PostgreSQL enum labels
+    // and the domain `EnumString` share one definition, so a label the broker
+    // does not know becomes a typed parse error here rather than an opaque
+    // sqlx decode failure deep in the driver.
+    let mode_label: String = row.get("mode");
+    let mode = mode_label
+        .parse::<ForwardingMode>()
+        .map_err(|e| AndromedaError::internal(format!("Invalid CSR mode '{mode_label}': {e}")))?;
     let operations: Option<Vec<CsrOperation>> = row
         .get::<Option<Vec<String>>, _>("operations")
         .or_else(|| Some(vec!["federationOps".to_string()]))
@@ -62,7 +69,10 @@ pub fn row_to_csr(row: &sqlx::postgres::PgRow) -> Result<ContextSourceRegistrati
         Err(sqlx::Error::ColumnNotFound(_)) | Err(sqlx::Error::ColumnDecode { .. }) => None,
         Err(e) => return Err(AndromedaError::internal(format!("Failed to read context_source_alias column: {e}"))),
     };
-    let status: CsrStatus = row.get("status");
+    let status_label: String = row.get("status");
+    let status = status_label
+        .parse::<CsrStatus>()
+        .map_err(|e| AndromedaError::internal(format!("Invalid CSR status '{status_label}': {e}")))?;
     let times_sent: i32 = row.get("times_sent");
     let times_failed: i32 = row.get("times_failed");
     let last_success: Option<DateTime<Utc>> = row.get("last_success");

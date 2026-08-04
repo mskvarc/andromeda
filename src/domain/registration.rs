@@ -7,13 +7,12 @@ use crate::{
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use strum::{Display, EnumString};
+use strum::{Display, EnumIter, EnumString, IntoStaticStr};
 
 /// Forwarding mode for distributed operations (ETSI GS CIM 009 clause 4.3.6 / 5.2.9).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize, Display, EnumString, sqlx::Type)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize, Display, EnumString, EnumIter, IntoStaticStr)]
 #[serde(rename_all = "camelCase")]
 #[strum(serialize_all = "camelCase")]
-#[sqlx(type_name = "csr_mode", rename_all = "lowercase")]
 pub enum ForwardingMode {
     /// The registration supplements local data (default).
     #[default]
@@ -72,10 +71,9 @@ impl<'de> Deserialize<'de> for CsrOperation {
 }
 
 /// Health status of a context source registration (ETSI GS CIM 009 clause 5.2.9, status member).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Display, EnumString, sqlx::Type)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Display, EnumString, EnumIter, IntoStaticStr)]
 #[serde(rename_all = "camelCase")]
 #[strum(serialize_all = "camelCase")]
-#[sqlx(type_name = "csr_status", rename_all = "lowercase")]
 pub enum CsrStatus {
     /// The context source is reachable and healthy.
     Ok,
@@ -203,6 +201,83 @@ mod tests {
     #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::*;
     use std::str::FromStr;
+    use strum::IntoEnumIterator;
+
+    /// Labels of the PostgreSQL `csr_mode` enum, verbatim from
+    /// `migrations/tenant/0003_types.sql`.
+    const CSR_MODE_LABELS: [(&str, ForwardingMode); 4] = [
+        ("inclusive", ForwardingMode::Inclusive),
+        ("exclusive", ForwardingMode::Exclusive),
+        ("redirect", ForwardingMode::Redirect),
+        ("auxiliary", ForwardingMode::Auxiliary),
+    ];
+
+    /// Labels of the PostgreSQL `csr_status` enum.
+    const CSR_STATUS_LABELS: [(&str, CsrStatus); 2] = [("ok", CsrStatus::Ok), ("failed", CsrStatus::Failed)];
+
+    #[test]
+    fn forwarding_mode_parses_from_its_postgres_label() {
+        for (label, expected) in CSR_MODE_LABELS {
+            pretty_assertions::assert_eq!(label.parse::<ForwardingMode>().expect(label), expected);
+        }
+    }
+
+    #[test]
+    fn forwarding_mode_renders_the_label_postgres_expects() {
+        for (label, variant) in CSR_MODE_LABELS {
+            pretty_assertions::assert_eq!(variant.to_string(), label);
+            pretty_assertions::assert_eq!(<&str>::from(variant), label);
+        }
+    }
+
+    #[test]
+    fn forwarding_mode_round_trips_through_its_label_for_every_variant() {
+        // Exhaustive over `EnumIter`, replacing the type-level guarantee
+        // `sqlx::Type` used to give.
+        for variant in ForwardingMode::iter() {
+            pretty_assertions::assert_eq!(variant.to_string().parse::<ForwardingMode>().expect("round trip"), variant);
+            assert!(
+                CSR_MODE_LABELS.iter().any(|(_, known)| *known == variant),
+                "{variant:?} has no PostgreSQL label in csr_mode"
+            );
+        }
+    }
+
+    #[test]
+    fn an_unknown_forwarding_mode_label_is_a_parse_error_not_a_panic() {
+        assert!("not-a-mode".parse::<ForwardingMode>().is_err());
+    }
+
+    #[test]
+    fn csr_status_parses_from_its_postgres_label() {
+        for (label, expected) in CSR_STATUS_LABELS {
+            pretty_assertions::assert_eq!(label.parse::<CsrStatus>().expect(label), expected);
+        }
+    }
+
+    #[test]
+    fn csr_status_renders_the_label_postgres_expects() {
+        for (label, variant) in CSR_STATUS_LABELS {
+            pretty_assertions::assert_eq!(variant.to_string(), label);
+            pretty_assertions::assert_eq!(<&str>::from(variant), label);
+        }
+    }
+
+    #[test]
+    fn csr_status_round_trips_through_its_label_for_every_variant() {
+        for variant in CsrStatus::iter() {
+            pretty_assertions::assert_eq!(variant.to_string().parse::<CsrStatus>().expect("round trip"), variant);
+            assert!(
+                CSR_STATUS_LABELS.iter().any(|(_, known)| *known == variant),
+                "{variant:?} has no PostgreSQL label in csr_status"
+            );
+        }
+    }
+
+    #[test]
+    fn an_unknown_csr_status_label_is_a_parse_error_not_a_panic() {
+        assert!("not-a-status".parse::<CsrStatus>().is_err());
+    }
 
     #[test]
     fn forwarding_mode_default_is_inclusive() {

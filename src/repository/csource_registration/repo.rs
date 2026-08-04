@@ -27,10 +27,10 @@ fn csr_column_projection() -> sea_query::SimpleExpr {
          ST_AsGeoJSON(location)::JSONB AS location, \
          ST_AsGeoJSON(observation_space)::JSONB AS observation_space, \
          ST_AsGeoJSON(operation_space)::JSONB AS operation_space, \
-         expires_at, endpoint, accept, mode, \
+         expires_at, endpoint, accept, mode::text AS mode, \
          operations, scope, refresh_rate, \
          management, context_source_info, jsonld_context, context_source_alias, \
-         status, times_sent, times_failed, \
+         status::text AS status, times_sent, times_failed, \
          last_success, last_failure, created_at, modified_at, \
          additional_properties",
     )
@@ -88,7 +88,7 @@ impl CsourceRegistrationRepository {
                 CASE WHEN $8 IS NOT NULL THEN ST_MakeValid(ST_GeomFromEWKB($8)) ELSE NULL END,
                 CASE WHEN $9 IS NOT NULL THEN ST_MakeValid(ST_GeomFromEWKB($9)) ELSE NULL END,
                 CASE WHEN $10 IS NOT NULL THEN ST_MakeValid(ST_GeomFromEWKB($10)) ELSE NULL END,
-                $11, $12, $13, $14,
+                $11, $12, $13, $14::csr_mode,
                 $15, $16, $17,
                 $18, $19, $20,
                 $21, $22,
@@ -109,7 +109,7 @@ impl CsourceRegistrationRepository {
         .bind(params.expires_at)
         .bind(params.endpoint)
         .bind(params.accept)
-        .bind(params.mode)
+        .bind(<&str>::from(params.mode))
         .bind(params.operations.as_deref())
         .bind(params.scope.as_deref())
         .bind(params.refresh_rate)
@@ -195,7 +195,7 @@ impl CsourceRegistrationRepository {
                 expires_at = $11,
                 endpoint = $12,
                 accept = $13,
-                mode = $14,
+                mode = $14::csr_mode,
                 operations = $15,
                 scope = $16,
                 refresh_rate = $17,
@@ -221,7 +221,7 @@ impl CsourceRegistrationRepository {
         .bind(values.expires_at)
         .bind(values.endpoint.as_str())
         .bind(values.accept.as_deref())
-        .bind(values.mode)
+        .bind(<&str>::from(values.mode))
         .bind(values.operations.as_deref())
         .bind(values.scope.as_deref())
         .bind(values.refresh_rate.as_deref())

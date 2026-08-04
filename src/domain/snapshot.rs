@@ -6,16 +6,15 @@ use iso8601_duration::Duration as Iso8601Duration;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use serde_with::skip_serializing_none;
-use strum::{Display as StrumDisplay, EnumString};
+use strum::{Display as StrumDisplay, EnumIter, EnumString, IntoStaticStr};
 use thiserror::Error;
 use url::Url;
 use uuid::Uuid;
 
 /// Status of a snapshot operation (ETSI GS CIM 009 clause 5.2.41, `snapshotStatus`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, StrumDisplay, EnumString, sqlx::Type)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, StrumDisplay, EnumString, EnumIter, IntoStaticStr)]
 #[serde(rename_all = "camelCase")]
 #[strum(serialize_all = "camelCase")]
-#[sqlx(type_name = "snapshot_status", rename_all = "lowercase")]
 pub enum SnapshotStatus {
     Preparing,
     Success,
@@ -320,6 +319,50 @@ mod tests {
         snapshot::{SnapshotPriority, SnapshotStatus},
     };
     use iso8601_duration::Duration as Iso8601Duration;
+    use strum::IntoEnumIterator;
+
+    /// Labels of the PostgreSQL `snapshot_status` enum, verbatim from
+    /// `migrations/tenant/0003_types.sql`.
+    const SNAPSHOT_STATUS_LABELS: [(&str, SnapshotStatus); 5] = [
+        ("preparing", SnapshotStatus::Preparing),
+        ("success", SnapshotStatus::Success),
+        ("partial", SnapshotStatus::Partial),
+        ("empty", SnapshotStatus::Empty),
+        ("failure", SnapshotStatus::Failure),
+    ];
+
+    #[test]
+    fn snapshot_status_parses_from_its_postgres_label() {
+        for (label, expected) in SNAPSHOT_STATUS_LABELS {
+            pretty_assertions::assert_eq!(label.parse::<SnapshotStatus>().expect(label), expected);
+        }
+    }
+
+    #[test]
+    fn snapshot_status_renders_the_label_postgres_expects() {
+        for (label, variant) in SNAPSHOT_STATUS_LABELS {
+            pretty_assertions::assert_eq!(variant.to_string(), label);
+            pretty_assertions::assert_eq!(<&str>::from(variant), label);
+        }
+    }
+
+    #[test]
+    fn snapshot_status_round_trips_through_its_label_for_every_variant() {
+        // Exhaustive over `EnumIter`, replacing the type-level guarantee
+        // `sqlx::Type` used to give.
+        for variant in SnapshotStatus::iter() {
+            pretty_assertions::assert_eq!(variant.to_string().parse::<SnapshotStatus>().expect("round trip"), variant);
+            assert!(
+                SNAPSHOT_STATUS_LABELS.iter().any(|(_, known)| *known == variant),
+                "{variant:?} has no PostgreSQL label in snapshot_status"
+            );
+        }
+    }
+
+    #[test]
+    fn an_unknown_snapshot_status_label_is_a_parse_error_not_a_panic() {
+        assert!("not-a-status".parse::<SnapshotStatus>().is_err());
+    }
 
     #[test]
     fn snapshot_urn_accepts_snapshot_prefix() {
