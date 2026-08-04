@@ -59,10 +59,10 @@ headers = "0.4.1"
 indexmap = { version = "2.14.0", features = ["serde"] }
 iri-rs = { version = "3.4.0", features = ["serde", "static"] }
 iso8601-duration = { version = "0.2.0", features = ["chrono", "serde"] }
-jsonld = { path = "../publish/jsonld/jsonld", features = ["expandable-serde-json", "expandable-chrono", "reqwest", "serde", "serde-json", "vocab"] }
-jsonld-core = { path = "../publish/jsonld/jsonld-core" }
-jsonld-expandable-core = { path = "../publish/jsonld/jsonld-expandable-core", features = ["chrono", "serde-json"] }
-jsonld-syntax = { path = "../publish/jsonld/jsonld-syntax", features = ["serde-json"] }
+jsonld = { version = "0.22.0", features = ["expandable-serde-json", "expandable-chrono", "reqwest", "serde", "serde-json", "vocab"] }
+jsonld-core = "0.22.0"
+jsonld-expandable-core = { version = "0.22.0", features = ["chrono", "serde-json"] }
+jsonld-syntax = { version = "0.22.0", features = ["serde-json"] }
 langtag = { version = "1.1.0", features = ["serde"] }
 mediatype = "0.23.0"
 mimalloc = "0.1.50"

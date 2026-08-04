@@ -2506,6 +2506,8 @@ checksum = "c22a2041e3874a055a4eb03ea2395aaccdefa84ce75b31d542d72a741c3c6ad3"
 [[package]]
 name = "jsonld"
 version = "0.22.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a671ad80c2daae18a48e0c5f0b7f234cfb9f483522ff3321f2dd0ce2b1a17540"
 dependencies = [
  "contextual",
  "iri-rs",
@@ -2526,6 +2528,8 @@ dependencies = [
 [[package]]
 name = "jsonld-compaction"
 version = "0.22.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "10a45bdbc2014371049e18ae1f2893e9ea4b473692f2ec70b553c1a336a160db"
 dependencies = [
  "contextual",
  "jsonld-context-processing",
@@ -2541,6 +2545,8 @@ dependencies = [
 [[package]]
 name = "jsonld-context-processing"
 version = "0.22.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "15decd47eec459792f9e0b116e7be49766db358ac4101bdbdb230be25887d4b7"
 dependencies = [
  "contextual",
  "foldhash 0.2.0",
@@ -2555,6 +2561,8 @@ dependencies = [
 [[package]]
 name = "jsonld-core"
 version = "0.22.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c0d61b1a7c95fdb3fe263e3f6796ff3ff8ac91c4319386fad0c4908e95e70527"
 dependencies = [
  "contextual",
  "educe 0.7.6",
@@ -2585,6 +2593,8 @@ dependencies = [
 [[package]]
 name = "jsonld-expandable"
 version = "0.22.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "798adf62d91acdabe385f48633f3deeee6cc5f525ebd49fed48fe555eab9d053"
 dependencies = [
  "jsonld-expandable-core",
  "proc-macro-crate",
@@ -2596,6 +2606,8 @@ dependencies = [
 [[package]]
 name = "jsonld-expandable-core"
 version = "0.22.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3fdc92dfa2d2632d851ab15289470417128e4cf3b9372cb2d05320ca3881aa71"
 dependencies = [
  "chrono",
  "proc-macro2",
@@ -2607,6 +2619,8 @@ dependencies = [
 [[package]]
 name = "jsonld-expansion"
 version = "0.22.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "16fcb9eb2ece13ba6bb251a30a158f2c9e324f9eab74e8d2e166dddb141c05de"
 dependencies = [
  "contextual",
  "jsonld-context-processing",
@@ -2622,6 +2636,8 @@ dependencies = [
 [[package]]
 name = "jsonld-serialization"
 version = "0.22.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2fb83b71daec97930cb65696f3843809efa95d82eb2e252bf27da89f1f630537"
 dependencies = [
  "iri-rs",
  "jsonld-core",
@@ -2635,6 +2651,8 @@ dependencies = [
 [[package]]
 name = "jsonld-syntax"
 version = "0.22.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0129b9d8d1e0bdaba48efa6de676d2d12bd85f7ab80c28e5ced2f81f99bc52c6"
 dependencies = [
  "contextual",
  "educe 0.7.6",
@@ -2653,6 +2671,8 @@ dependencies = [
 [[package]]
 name = "jsonld-vocab"
 version = "0.22.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "de11a9b0b6e32f4b3e9f32a7bd04719759fd54e54f80a59b9b27f6b9d3470512"
 dependencies = [
  "heck 0.5.0",
  "proc-macro-crate",
