@@ -28,7 +28,7 @@ use crate::{
     request_method_on_collection,
     unique_id,
 };
-use reqwest::StatusCode;
+use reqwest::{Method, StatusCode};
 use serde_json::json;
 use serial_test::serial;
 
@@ -167,7 +167,7 @@ async fn entity_merge_missing_id_returns_error() {
         "@context": TEST_SUITE_CONTEXT
     });
 
-    let (status, _) = request_method_on_collection(&c, "PATCH", Some(&fragment)).await;
+    let (status, _) = request_method_on_collection(&c, Method::PATCH, Some(&fragment)).await;
     assert!(
         status == StatusCode::BAD_REQUEST || status == StatusCode::METHOD_NOT_ALLOWED,
         "missing ID should return 400 or 405, got {status}",

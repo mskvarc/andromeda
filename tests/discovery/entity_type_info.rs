@@ -18,7 +18,7 @@ use crate::{
     unique_id,
 };
 
-fn sort_attribute_details(details: &mut Vec<Value>) {
+fn sort_attribute_details(details: &mut [Value]) {
     details.sort_by(|a, b| a["attributeName"].as_str().unwrap().cmp(b["attributeName"].as_str().unwrap()));
 }
 

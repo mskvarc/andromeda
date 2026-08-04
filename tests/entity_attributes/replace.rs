@@ -21,7 +21,7 @@ use crate::{
     vehicle_speed_multi_instances,
     vehicle_speed_two_datasetid,
 };
-use reqwest::StatusCode;
+use reqwest::{Method, StatusCode};
 use serde_json::json;
 use serial_test::serial;
 
@@ -146,7 +146,7 @@ async fn attribute_replace_invalid_entity_id_returns_400() {
         "@context": TEST_SUITE_CONTEXT
     });
 
-    let (status, _) = request_attrs_method(&c, "PUT", "/entities/not-a-valid-uri/attrs/speed", Some(&fragment)).await;
+    let (status, _) = request_attrs_method(&c, Method::PUT, "/entities/not-a-valid-uri/attrs/speed", Some(&fragment)).await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "invalid entity ID should return 400");
 }
 
@@ -184,7 +184,7 @@ async fn attribute_replace_invalid_attribute_name_returns_400() {
         "@context": TEST_SUITE_CONTEXT
     });
 
-    let (status, _) = request_attrs_method(&c, "PUT", &format!("/entities/{id}/attrs/@invalid"), Some(&fragment)).await;
+    let (status, _) = request_attrs_method(&c, Method::PUT, &format!("/entities/{id}/attrs/@invalid"), Some(&fragment)).await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "invalid attribute name should return 400");
 }
 

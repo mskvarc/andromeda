@@ -5,6 +5,7 @@
 //! `wait_for_subscription_notification` / `wait_for_no_subscription_notification`
 //! helpers for per-subscription assertions.
 
+use crate::config::callback_url;
 use axum::{Router, body::Bytes, http::HeaderMap as AxumHeaderMap, response::IntoResponse, routing::post};
 use serde_json::Value;
 use std::{sync::Arc, time::Duration};
@@ -88,10 +89,11 @@ impl NotificationReceiver {
         }
     }
 
-    /// External URL the broker dials. Uses `host.docker.internal` so a
-    /// containerised broker can reach the host-bound test process.
+    /// External URL the broker dials, built from
+    /// [`callback_host`](crate::config::callback_host) so the same receiver
+    /// works for a containerised and a host-run broker.
     pub fn endpoint_url(&self) -> String {
-        format!("http://host.docker.internal:{}{}", self.port, self.endpoint_path)
+        callback_url(self.port, &self.endpoint_path)
     }
 
     /// Drop every captured notification. Called between subscription

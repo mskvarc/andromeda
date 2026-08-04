@@ -128,12 +128,11 @@ impl MockServer {
         let s = self.state.read().await;
         s.stubs
             .get(&(method.to_string(), path.to_string()))
-            .map(|e| e.count.load(Ordering::Relaxed))
-            .unwrap_or(0)
+            .map_or(0, |e| e.count.load(Ordering::Relaxed))
     }
 
     fn url(&self, path: &str) -> String {
-        format!("http://host.docker.internal:{}{path}", self.port)
+        callback_url(self.port, path)
     }
 
     fn stop(&mut self) {

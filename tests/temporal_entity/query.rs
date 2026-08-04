@@ -664,10 +664,10 @@ async fn temporal_query_pagination_last_n_before_success() {
     assert!(status == StatusCode::OK || status == StatusCode::PARTIAL_CONTENT);
 
     let arr = body.as_array().expect("response should be array");
-    if status == StatusCode::PARTIAL_CONTENT || !arr.is_empty() {
-        if let Some((unit, _, _, _)) = parse_content_range(&headers) {
-            assert_eq!(unit, "date-time");
-        }
+    if (status == StatusCode::PARTIAL_CONTENT || !arr.is_empty())
+        && let Some((unit, _, _, _)) = parse_content_range(&headers)
+    {
+        assert_eq!(unit, "date-time");
     }
 }
 
@@ -691,10 +691,10 @@ async fn temporal_query_pagination_last_n_between_success() {
     assert!(status == StatusCode::OK || status == StatusCode::PARTIAL_CONTENT);
 
     let arr = body.as_array().expect("response should be array");
-    if status == StatusCode::PARTIAL_CONTENT || !arr.is_empty() {
-        if let Some((unit, _, _, _)) = parse_content_range(&headers) {
-            assert_eq!(unit, "date-time");
-        }
+    if (status == StatusCode::PARTIAL_CONTENT || !arr.is_empty())
+        && let Some((unit, _, _, _)) = parse_content_range(&headers)
+    {
+        assert_eq!(unit, "date-time");
     }
 }
 
@@ -714,10 +714,10 @@ async fn temporal_query_pagination_last_n_after_success() {
     assert!(status == StatusCode::OK || status == StatusCode::PARTIAL_CONTENT);
 
     let arr = body.as_array().expect("response should be array");
-    if status == StatusCode::PARTIAL_CONTENT || !arr.is_empty() {
-        if let Some((unit, _, _, _)) = parse_content_range(&headers) {
-            assert_eq!(unit, "date-time");
-        }
+    if (status == StatusCode::PARTIAL_CONTENT || !arr.is_empty())
+        && let Some((unit, _, _, _)) = parse_content_range(&headers)
+    {
+        assert_eq!(unit, "date-time");
     }
 }
 
@@ -741,13 +741,13 @@ async fn temporal_query_pagination_temporal_values_after_success() {
     assert!(status == StatusCode::OK || status == StatusCode::PARTIAL_CONTENT);
 
     let arr = body.as_array().expect("response should be array");
-    if status == StatusCode::PARTIAL_CONTENT || !arr.is_empty() {
-        if let Some((unit, range_start, range_end, _)) = parse_content_range(&headers) {
-            assert_eq!(unit, "date-time");
-            let mrt = get_most_recent_timestamp_vehicles(arr, "temporalValues").unwrap_or_default();
-            assert_eq!(range_start, "2019-01-01T01:01:00Z");
-            assert_eq!(range_end, mrt);
-        }
+    if (status == StatusCode::PARTIAL_CONTENT || !arr.is_empty())
+        && let Some((unit, range_start, range_end, _)) = parse_content_range(&headers)
+    {
+        assert_eq!(unit, "date-time");
+        let mrt = get_most_recent_timestamp_vehicles(arr, "temporalValues").unwrap_or_default();
+        assert_eq!(range_start, "2019-01-01T01:01:00Z");
+        assert_eq!(range_end, mrt);
     }
 }
 
@@ -778,10 +778,10 @@ async fn temporal_query_post_pagination_success() {
     let (status, _, headers) = post_temporal_query(&c, &query, Some(TEST_SUITE_CONTEXT)).await;
     assert!(status == StatusCode::OK || status == StatusCode::PARTIAL_CONTENT);
 
-    if status == StatusCode::PARTIAL_CONTENT {
-        if let Some((unit, _, _, _)) = parse_content_range(&headers) {
-            assert_eq!(unit, "date-time");
-        }
+    if status == StatusCode::PARTIAL_CONTENT
+        && let Some((unit, _, _, _)) = parse_content_range(&headers)
+    {
+        assert_eq!(unit, "date-time");
     }
 }
 

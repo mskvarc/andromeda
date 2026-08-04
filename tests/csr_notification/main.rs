@@ -407,7 +407,7 @@ impl NotificationReceiver {
         });
 
         NotificationReceiver {
-            endpoint_url: format!("http://host.docker.internal:{port}/notify"),
+            endpoint_url: callback_url(port, "/notify"),
             notifications,
             notify,
             shutdown_tx: Some(shutdown_tx),

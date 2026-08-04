@@ -4,6 +4,7 @@
 //! suite consumes this single implementation rather than reimplementing
 //! the stub per module.
 
+use crate::config::callback_url;
 use axum::{Router, extract::Request, response::IntoResponse};
 use reqwest::Method;
 use serde_json::Value;
@@ -163,11 +164,11 @@ impl ContextSourceMock {
         guard.total_count.load(Ordering::Relaxed)
     }
 
-    /// Resolve the external URL the broker will dial. Uses
-    /// `host.docker.internal` because the broker typically runs in a
-    /// container while the test process binds on the host.
+    /// Resolve the external URL the broker will dial, built from
+    /// [`callback_host`](crate::config::callback_host) so the mock is
+    /// reachable whether the broker runs in a container or on the host.
     pub fn url(&self, path: &str) -> String {
-        format!("http://host.docker.internal:{}{path}", self.port)
+        callback_url(self.port, path)
     }
 
     /// Trigger graceful shutdown.

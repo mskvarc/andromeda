@@ -20,7 +20,11 @@ use axum::response::IntoResponse;
 use reqwest::{Client, StatusCode};
 use serde_json::{Value, json};
 use sqlx::PgPool;
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::HashMap,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 use tokio::sync::RwLock;
 use uuid::Uuid;
 
@@ -97,9 +101,10 @@ impl ContextServer {
         }
     }
 
-    /// URL using host.docker.internal so the broker (in Docker) can reach us.
+    /// URL the broker dials to fetch a served `@context`, on whichever host
+    /// name reaches this test process.
     fn url(&self, path: &str) -> String {
-        format!("http://host.docker.internal:{}{path}", self.port)
+        callback_url(self.port, path)
     }
 
     fn stop(&mut self) {
@@ -140,6 +145,38 @@ async fn get_context(client: &Client, id: &str, query: &str) -> (StatusCode, Val
     let status = resp.status();
     let body: Value = resp.json().await.unwrap_or_default();
     (status, body)
+}
+
+/// Upper bound on how long the broker may take to persist a context hit.
+///
+/// `numberOfHits` is accumulated in memory and folded into the
+/// `jsonld_contexts` row by a background task every
+/// `performance.context_hit_flush_secs` seconds (default 5). NGSI-LD 5.13.3.5
+/// requires the broker to maintain the counter, not to persist it
+/// synchronously per access, so a read taken immediately after a request that
+/// used the context legitimately still sees the old value. A hit landing just
+/// after a tick waits a full interval plus the flush write; three intervals
+/// leaves room for that without making a genuine failure hang.
+const HIT_FLUSH_TIMEOUT: Duration = Duration::from_secs(15);
+
+/// Re-read cadence while waiting for a hit flush.
+const HIT_POLL_INTERVAL: Duration = Duration::from_millis(250);
+
+/// Read `numberOfHits` for a context, waiting for the periodic flush to carry
+/// it past `baseline`.
+///
+/// Returns the last value observed, so a caller whose wait times out asserts
+/// against the number the broker actually served rather than a sentinel.
+async fn wait_for_hits_above(client: &Client, ctx_id: &str, baseline: u64) -> u64 {
+    let deadline = Instant::now() + HIT_FLUSH_TIMEOUT;
+    loop {
+        let (_, body) = get_context(client, ctx_id, "details=true").await;
+        let hits = body["numberOfHits"].as_u64().unwrap_or(0);
+        if hits > baseline || Instant::now() >= deadline {
+            return hits;
+        }
+        tokio::time::sleep(HIT_POLL_INTERVAL).await;
+    }
 }
 
 /// GET /jsonldContexts with optional query params.

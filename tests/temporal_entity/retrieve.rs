@@ -202,7 +202,7 @@ async fn temporal_retrieve_timerel_between_success() {
     if let Some(speed_arr) = body.get("speed").and_then(|v| v.as_array()) {
         for instance in speed_arr {
             let ts = instance.get("observedAt").and_then(|v| v.as_str()).unwrap_or("");
-            assert!(ts >= "2020-08-01T12:00:00Z" && ts <= "2020-08-01T13:00:00Z", "instance should be in range");
+            assert!(("2020-08-01T12:00:00Z"..="2020-08-01T13:00:00Z").contains(&ts), "instance should be in range");
         }
     }
 }
@@ -533,10 +533,10 @@ async fn temporal_retrieve_pagination_basic_returns_206() {
         "pagination test should return 200 or 206"
     );
 
-    if status == StatusCode::PARTIAL_CONTENT {
-        if let Some((unit, _, _, _)) = parse_content_range(&headers) {
-            assert_eq!(unit, "date-time");
-        }
+    if status == StatusCode::PARTIAL_CONTENT
+        && let Some((unit, _, _, _)) = parse_content_range(&headers)
+    {
+        assert_eq!(unit, "date-time");
     }
     assert!(body.get("speed").is_some());
 }
@@ -555,11 +555,11 @@ async fn temporal_retrieve_pagination_last_n_returns_206() {
     let (status, body, headers) = get_temporal_entity(&c, &id, "lastN=20", "application/ld+json", Some(TEST_SUITE_CONTEXT)).await;
     assert!(status == StatusCode::OK || status == StatusCode::PARTIAL_CONTENT);
 
-    if status == StatusCode::PARTIAL_CONTENT {
-        if let Some((unit, _, _, size)) = parse_content_range(&headers) {
-            assert_eq!(unit, "date-time");
-            assert_eq!(size, "20");
-        }
+    if status == StatusCode::PARTIAL_CONTENT
+        && let Some((unit, _, _, size)) = parse_content_range(&headers)
+    {
+        assert_eq!(unit, "date-time");
+        assert_eq!(size, "20");
     }
     assert!(body.get("speed").is_some());
 }
@@ -585,11 +585,11 @@ async fn temporal_retrieve_pagination_last_n_before_returns_206() {
     .await;
     assert!(status == StatusCode::OK || status == StatusCode::PARTIAL_CONTENT);
 
-    if status == StatusCode::PARTIAL_CONTENT {
-        if let Some((unit, range_start, _, _)) = parse_content_range(&headers) {
-            assert_eq!(unit, "date-time");
-            assert_eq!(range_start, "2021-01-01T01:01:00Z");
-        }
+    if status == StatusCode::PARTIAL_CONTENT
+        && let Some((unit, range_start, _, _)) = parse_content_range(&headers)
+    {
+        assert_eq!(unit, "date-time");
+        assert_eq!(range_start, "2021-01-01T01:01:00Z");
     }
     assert!(body.get("speed").is_some());
 }
@@ -615,13 +615,13 @@ async fn temporal_retrieve_pagination_after_returns_206() {
     .await;
     assert!(status == StatusCode::OK || status == StatusCode::PARTIAL_CONTENT);
 
-    if status == StatusCode::PARTIAL_CONTENT {
-        if let Some((unit, range_start, range_end, _)) = parse_content_range(&headers) {
-            assert_eq!(unit, "date-time");
-            let mrt = get_most_recent_timestamp(&body, "").unwrap_or_default();
-            assert_eq!(range_start, "2019-01-01T01:01:00Z");
-            assert_eq!(range_end, mrt);
-        }
+    if status == StatusCode::PARTIAL_CONTENT
+        && let Some((unit, range_start, range_end, _)) = parse_content_range(&headers)
+    {
+        assert_eq!(unit, "date-time");
+        let mrt = get_most_recent_timestamp(&body, "").unwrap_or_default();
+        assert_eq!(range_start, "2019-01-01T01:01:00Z");
+        assert_eq!(range_end, mrt);
     }
     assert!(body.get("speed").is_some());
 }
@@ -647,13 +647,13 @@ async fn temporal_retrieve_pagination_temporal_values_after_returns_206() {
     .await;
     assert!(status == StatusCode::OK || status == StatusCode::PARTIAL_CONTENT);
 
-    if status == StatusCode::PARTIAL_CONTENT {
-        if let Some((unit, range_start, range_end, _)) = parse_content_range(&headers) {
-            assert_eq!(unit, "date-time");
-            let mrt = get_most_recent_timestamp(&body, "temporalValues").unwrap_or_default();
-            assert_eq!(range_start, "2019-01-01T01:01:00Z");
-            assert_eq!(range_end, mrt);
-        }
+    if status == StatusCode::PARTIAL_CONTENT
+        && let Some((unit, range_start, range_end, _)) = parse_content_range(&headers)
+    {
+        assert_eq!(unit, "date-time");
+        let mrt = get_most_recent_timestamp(&body, "temporalValues").unwrap_or_default();
+        assert_eq!(range_start, "2019-01-01T01:01:00Z");
+        assert_eq!(range_end, mrt);
     }
     assert!(body.get("speed").is_some());
 }
@@ -774,10 +774,10 @@ async fn temporal_retrieve_deleted_at_property_success() {
     assert_eq!(status, StatusCode::OK);
 
     // fuelLevel should have deletedAt
-    if let Some(fuel_arr) = body.get("fuelLevel").and_then(|v| v.as_array()) {
-        if !fuel_arr.is_empty() {
-            assert!(fuel_arr[0].get("deletedAt").is_some(), "deletedAt should be present on fuelLevel");
-        }
+    if let Some(fuel_arr) = body.get("fuelLevel").and_then(|v| v.as_array())
+        && !fuel_arr.is_empty()
+    {
+        assert!(fuel_arr[0].get("deletedAt").is_some(), "deletedAt should be present on fuelLevel");
     }
 }
 
@@ -800,10 +800,10 @@ async fn temporal_retrieve_deleted_at_relationship_success() {
     let (status, body, _) = get_temporal_entity(&c, &id, "timeproperty=deletedAt", "application/ld+json", Some(TEST_SUITE_CONTEXT)).await;
     assert_eq!(status, StatusCode::OK);
 
-    if let Some(parked_arr) = body.get("isParkedIn").and_then(|v| v.as_array()) {
-        if !parked_arr.is_empty() {
-            assert!(parked_arr[0].get("deletedAt").is_some(), "deletedAt should be present on isParkedIn");
-        }
+    if let Some(parked_arr) = body.get("isParkedIn").and_then(|v| v.as_array())
+        && !parked_arr.is_empty()
+    {
+        assert!(parked_arr[0].get("deletedAt").is_some(), "deletedAt should be present on isParkedIn");
     }
 }
 
@@ -826,10 +826,10 @@ async fn temporal_retrieve_deleted_at_language_property_success() {
     let (status, body, _) = get_temporal_entity(&c, &id, "timeproperty=deletedAt", "application/ld+json", Some(TEST_SUITE_CONTEXT)).await;
     assert_eq!(status, StatusCode::OK);
 
-    if let Some(name_arr) = body.get("name").and_then(|v| v.as_array()) {
-        if !name_arr.is_empty() {
-            assert!(name_arr[0].get("deletedAt").is_some(), "deletedAt should be present on name");
-        }
+    if let Some(name_arr) = body.get("name").and_then(|v| v.as_array())
+        && !name_arr.is_empty()
+    {
+        assert!(name_arr[0].get("deletedAt").is_some(), "deletedAt should be present on name");
     }
 }
 
@@ -862,13 +862,12 @@ async fn temporal_retrieve_deleted_at_temporal_values_property_success() {
     assert_eq!(status, StatusCode::OK);
 
     // In temporalValues with deletedAt, the simplified array should contain deletion timestamp
-    if let Some(fuel) = body.get("fuelLevel") {
-        if let Some(values) = fuel.get("values").and_then(|v| v.as_array()) {
-            if !values.is_empty() {
-                // Second element of first entry should be the deletedAt timestamp
-                assert!(values[0].get(1).is_some());
-            }
-        }
+    if let Some(fuel) = body.get("fuelLevel")
+        && let Some(values) = fuel.get("values").and_then(|v| v.as_array())
+        && !values.is_empty()
+    {
+        // Second element of first entry should be the deletedAt timestamp
+        assert!(values[0].get(1).is_some());
     }
 }
 
@@ -893,10 +892,10 @@ async fn temporal_retrieve_deleted_at_scope_success() {
     let (status, body, _) = get_temporal_entity(&c, &id, "timeproperty=deletedAt", "application/ld+json", Some(TEST_SUITE_CONTEXT)).await;
     assert_eq!(status, StatusCode::OK);
 
-    if let Some(scope_arr) = body.get("scope").and_then(|v| v.as_array()) {
-        if !scope_arr.is_empty() {
-            assert!(scope_arr[0].get("deletedAt").is_some(), "deletedAt should be present on scope");
-        }
+    if let Some(scope_arr) = body.get("scope").and_then(|v| v.as_array())
+        && !scope_arr.is_empty()
+    {
+        assert!(scope_arr[0].get("deletedAt").is_some(), "deletedAt should be present on scope");
     }
 }
 
@@ -924,11 +923,10 @@ async fn temporal_retrieve_deleted_at_temporal_values_scope_success() {
     .await;
     assert_eq!(status, StatusCode::OK);
 
-    if let Some(scope) = body.get("scope") {
-        if let Some(values) = scope.get("values").and_then(|v| v.as_array()) {
-            if !values.is_empty() {
-                assert!(values[0].get(1).is_some());
-            }
-        }
+    if let Some(scope) = body.get("scope")
+        && let Some(values) = scope.get("values").and_then(|v| v.as_array())
+        && !values.is_empty()
+    {
+        assert!(values[0].get(1).is_some());
     }
 }

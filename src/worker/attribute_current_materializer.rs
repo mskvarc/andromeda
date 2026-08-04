@@ -51,6 +51,12 @@ const QUEUE_CAPACITY: usize = 1_024;
 /// leaving the rest of the pool free for ingestion.
 const MAX_DRAIN_BATCH: usize = 5_000;
 
+// A zero cap would make `next_buffered_batch` carry every drained entry
+// forward without ever applying one; an unbounded one reintroduces the
+// connection starvation described above. Checked here rather than in a unit
+// test, where the assertion is a compile-time constant either way.
+const _: () = assert!(MAX_DRAIN_BATCH > 0 && MAX_DRAIN_BATCH <= 1_000_000);
+
 /// A batch of history entries queued for projection into `attribute_current`,
 /// tagged with its position in the issue order.
 ///
@@ -580,12 +586,6 @@ mod tests {
         let _shared = Arc::clone(&arc);
         let recovered = take_or_clone(arc);
         assert_eq!(recovered.len(), 1);
-    }
-
-    #[test]
-    fn max_drain_batch_is_finite_cap() {
-        assert!(MAX_DRAIN_BATCH > 0);
-        assert!(MAX_DRAIN_BATCH <= 1_000_000);
     }
 
     fn entries(count: usize) -> Vec<HistoryBatchEntry> {

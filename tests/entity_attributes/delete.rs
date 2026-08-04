@@ -26,7 +26,7 @@ use crate::{
     vehicle_speed_only_multi_instances,
     vehicle_speed_two_datasetid,
 };
-use reqwest::StatusCode;
+use reqwest::{Method, StatusCode};
 use serial_test::serial;
 
 // ---------------------------------------------------------------------------
@@ -103,7 +103,7 @@ async fn attribute_delete_empty_entity_id_returns_error() {
     clean_database().await;
     let c = client();
 
-    let (status, _) = request_attrs_method(&c, "DELETE", "/entities//attrs/speed", None).await;
+    let (status, _) = request_attrs_method(&c, Method::DELETE, "/entities//attrs/speed", None).await;
     assert!(
         status == StatusCode::BAD_REQUEST || status == StatusCode::NOT_FOUND || status == StatusCode::METHOD_NOT_ALLOWED,
         "empty entity ID should return error status, got {status}"
@@ -116,7 +116,7 @@ async fn attribute_delete_invalid_entity_id_returns_400() {
     clean_database().await;
     let c = client();
 
-    let (status, _) = request_attrs_method(&c, "DELETE", "/entities/not-a-valid-uri/attrs/speed", None).await;
+    let (status, _) = request_attrs_method(&c, Method::DELETE, "/entities/not-a-valid-uri/attrs/speed", None).await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "invalid entity ID should return 400");
 }
 
@@ -131,7 +131,7 @@ async fn attribute_delete_missing_attribute_name_returns_405() {
     let status = create_entity(&c, &entity).await;
     assert_eq!(status, StatusCode::CREATED);
 
-    let (status, _) = request_attrs_method(&c, "DELETE", &format!("/entities/{id}/attrs"), None).await;
+    let (status, _) = request_attrs_method(&c, Method::DELETE, &format!("/entities/{id}/attrs"), None).await;
     assert_eq!(status, StatusCode::METHOD_NOT_ALLOWED, "DELETE /attrs without attribute name should return 405");
 }
 

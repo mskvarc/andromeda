@@ -227,9 +227,9 @@ mod tests {
     #[test]
     fn f64_opt_some_writes_eight_be_bytes() {
         let mut buf = Vec::new();
-        write_f64_opt(&mut buf, Some(3.14));
+        write_f64_opt(&mut buf, Some(2.75));
         assert_eq!(&buf[..4], &[0, 0, 0, 8]);
-        assert_eq!(&buf[4..], &3.14f64.to_be_bytes());
+        assert_eq!(&buf[4..], &2.75f64.to_be_bytes());
     }
 
     #[test]

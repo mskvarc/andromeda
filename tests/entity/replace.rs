@@ -22,7 +22,7 @@ use crate::{
     request_method_on_collection,
     unique_id,
 };
-use reqwest::StatusCode;
+use reqwest::{Method, StatusCode};
 use serde_json::json;
 use serial_test::serial;
 
@@ -99,7 +99,7 @@ async fn entity_replace_missing_id_returns_error() {
         "@context": TEST_SUITE_CONTEXT
     });
 
-    let (status, _) = request_method_on_collection(&c, "PUT", Some(&replacement)).await;
+    let (status, _) = request_method_on_collection(&c, Method::PUT, Some(&replacement)).await;
     // PUT on /entities (collection) without an ID
     assert!(
         status == StatusCode::BAD_REQUEST || status == StatusCode::METHOD_NOT_ALLOWED,

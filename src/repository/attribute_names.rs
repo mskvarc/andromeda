@@ -138,22 +138,35 @@ impl AttributeNameCache {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sqlx::postgres::PgConnectOptions;
 
+    /// A cache over a pool that can never connect.
+    ///
+    /// Every test below asserts that some path issues no statement, and an
+    /// unroutable host is what turns a violation into a failure instead of a
+    /// silent round trip to whatever database the environment points at.
+    /// `connect_lazy_with` does not dial on construction, so building it is
+    /// infallible.
     fn cache() -> AttributeNameCache {
-        #![allow(clippy::expect_used)]
-        AttributeNameCache::new(&PgPool::connect_lazy("postgres://invalid/invalid").expect("lazy pool"))
+        AttributeNameCache::new(&PgPool::connect_lazy_with(PgConnectOptions::new().host("invalid.invalid").port(1)))
     }
 
     #[tokio::test]
     async fn lookup_of_no_names_does_not_touch_the_database() {
-        let resolved = cache().lookup(&[]).await.expect("empty lookup");
-        assert!(resolved.is_empty());
+        let resolved = cache().lookup(&[]).await;
+        assert!(
+            resolved.is_ok_and(|names| names.is_empty()),
+            "an empty lookup must resolve to nothing without a query"
+        );
     }
 
     #[tokio::test]
     async fn resolve_or_create_of_no_names_does_not_touch_the_database() {
-        let resolved = cache().resolve_or_create(&[]).await.expect("empty resolve");
-        assert!(resolved.is_empty());
+        let resolved = cache().resolve_or_create(&[]).await;
+        assert!(
+            resolved.is_ok_and(|names| names.is_empty()),
+            "an empty resolve must create nothing without a query"
+        );
     }
 
     #[tokio::test]
@@ -161,8 +174,12 @@ mod tests {
         let cache = cache();
         cache.ids.insert("https://example.com/speed".to_string(), AttributeNameId::from(7));
         // The pool points nowhere, so this only succeeds if no query is issued.
-        let resolved = cache.lookup(&["https://example.com/speed".to_string()]).await.expect("cached lookup");
-        assert_eq!(resolved.get("https://example.com/speed"), Some(AttributeNameId::from(7)));
+        let resolved = cache
+            .lookup(&["https://example.com/speed".to_string()])
+            .await
+            .ok()
+            .and_then(|names| names.get("https://example.com/speed"));
+        assert_eq!(resolved, Some(AttributeNameId::from(7)));
     }
 
     #[tokio::test]

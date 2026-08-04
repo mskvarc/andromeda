@@ -108,7 +108,7 @@ impl MockServer {
     }
 
     fn url(&self, path: &str) -> String {
-        format!("http://host.docker.internal:{}{path}", self.port)
+        callback_url(self.port, path)
     }
 
     fn stop(&mut self) {

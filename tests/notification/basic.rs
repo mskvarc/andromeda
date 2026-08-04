@@ -1,6 +1,7 @@
 #![allow(clippy::expect_used, clippy::unwrap_used)]
 use std::time::Duration;
 
+use andromeda_test_common::config::callback_url;
 use reqwest::StatusCode;
 
 use crate::helpers::{
@@ -450,8 +451,10 @@ async fn notification_failed_delivery_sets_failed_status_and_last_failure_timest
     let _ = create_entity(&http_client, &building_simple_entity(&entity_id)).await;
 
     let subscription_id = unique_subscription_id("046_13");
-    let unreachable_endpoint = "http://host.docker.internal:19999/notify";
-    let subscription = subscription_with_endpoint(&subscription_id, unreachable_endpoint);
+    // Same host every other callback uses, on a port nothing listens on, so the
+    // delivery failure is a refused connection rather than an unresolvable name.
+    let unreachable_endpoint = callback_url(19999, "/notify");
+    let subscription = subscription_with_endpoint(&subscription_id, &unreachable_endpoint);
     let _ = create_subscription(&http_client, &subscription).await;
     let _ = append_entity_attrs(&http_client, &entity_id, &fragment_air_quality_level()).await;
 

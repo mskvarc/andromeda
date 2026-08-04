@@ -27,7 +27,7 @@ use crate::{
     unique_id,
     vehicle_speed_two_datasetid,
 };
-use reqwest::StatusCode;
+use reqwest::{Method, StatusCode};
 use serde_json::json;
 use serial_test::serial;
 
@@ -98,7 +98,7 @@ async fn attribute_partial_update_empty_entity_id_returns_error() {
         "@context": TEST_SUITE_CONTEXT
     });
 
-    let (status, _) = request_attrs_method(&c, "PATCH", "/entities//attrs/speed", Some(&fragment)).await;
+    let (status, _) = request_attrs_method(&c, Method::PATCH, "/entities//attrs/speed", Some(&fragment)).await;
     assert!(
         status == StatusCode::BAD_REQUEST || status == StatusCode::NOT_FOUND || status == StatusCode::METHOD_NOT_ALLOWED,
         "empty entity ID should return error status, got {status}"
@@ -116,7 +116,7 @@ async fn attribute_partial_update_invalid_entity_id_returns_400() {
         "@context": TEST_SUITE_CONTEXT
     });
 
-    let (status, _) = request_attrs_method(&c, "PATCH", "/entities/not-a-valid-uri/attrs/speed", Some(&fragment)).await;
+    let (status, _) = request_attrs_method(&c, Method::PATCH, "/entities/not-a-valid-uri/attrs/speed", Some(&fragment)).await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "invalid URI should return 400");
 }
 

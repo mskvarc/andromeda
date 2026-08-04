@@ -568,7 +568,7 @@ async fn spatial_georel_limit_caps_result_set() {
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(body.as_array().map(Vec::len).unwrap_or(0), 2);
+    assert_eq!(body.as_array().map_or(0, Vec::len), 2);
     scope.cleanup().await.expect("cleanup failed");
 }
 

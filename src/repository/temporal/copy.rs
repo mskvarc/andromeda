@@ -210,12 +210,12 @@ mod tests {
     #[test]
     fn binary_copy_encodes_optional_f64_value_number() {
         let mut entry = make_entry(uuid::Uuid::nil(), "i");
-        entry.value_number = Some(3.14);
+        entry.value_number = Some(2.75);
         let buf = encode_history_copy_stream(&[entry]);
         // After header (19) + field_count (2) + time (4+8) + tea_id (4+16) = 53.
         let offset = 19 + 2 + 12 + 20;
         assert_eq!(&buf[offset..offset + 4], &[0, 0, 0, 8]);
-        assert_eq!(&buf[offset + 4..offset + 12], &3.14f64.to_be_bytes());
+        assert_eq!(&buf[offset + 4..offset + 12], &2.75f64.to_be_bytes());
     }
 
     #[test]

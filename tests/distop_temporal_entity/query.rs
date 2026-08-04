@@ -125,12 +125,11 @@ impl MockServer {
         let s = self.state.read().await;
         s.stubs
             .get(&(method.to_string(), path.to_string()))
-            .map(|e| e.count.load(Ordering::Relaxed))
-            .unwrap_or(0)
+            .map_or(0, |e| e.count.load(Ordering::Relaxed))
     }
 
     fn url(&self, path: &str) -> String {
-        format!("http://host.docker.internal:{}{path}", self.port)
+        callback_url(self.port, path)
     }
 
     fn stop(&mut self) {
@@ -545,11 +544,10 @@ async fn distop_temporal_query_auxiliary_mode_supplements_only() {
     pretty_assertions::assert_eq!(status, StatusCode::OK);
 
     let entities = body.as_array().expect("response should be array");
-    let returned_ids: Vec<&str> = entities.iter().filter_map(|e| e["id"].as_str()).collect();
 
     // Remote-only entity should not be added in auxiliary mode
     assert!(
-        !returned_ids.contains(&remote_id.as_str()),
+        !entities.iter().any(|e| e["id"].as_str() == Some(remote_id.as_str())),
         "auxiliary mode should not add new entities, but remote entity was found"
     );
 

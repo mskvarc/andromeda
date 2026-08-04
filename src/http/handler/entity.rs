@@ -19,6 +19,7 @@ use crate::{
             query::ValidatedQuery,
             via::IncomingVia,
         },
+        model::deferred_split_filters::DeferredSplitFilters,
         parameter::{
             DeleteAttrParams,
             LocalOnlyParams,
@@ -522,27 +523,18 @@ pub async fn query(
         let split_entities = query.split_entities.unwrap_or(false) && !is_local;
 
         // splitEntities (spec 5.7.2.4): defer q/geoQ/scopeQ filtering to post-merge
-        let deferred_q;
-        let deferred_georel;
-        let deferred_geometry;
-        let deferred_coordinates;
-        let deferred_geoproperty;
-        let deferred_scope_q;
-        if split_entities {
-            deferred_q = query.q.take();
-            deferred_georel = query.georel.take();
-            deferred_geometry = query.geometry.take();
-            deferred_coordinates = query.coordinates.take();
-            deferred_geoproperty = query.geoproperty.take();
-            deferred_scope_q = query.scope_q.take();
+        let deferred = if split_entities {
+            DeferredSplitFilters {
+                q: query.q.take(),
+                georel: query.georel.take(),
+                geometry: query.geometry.take(),
+                coordinates: query.coordinates.take(),
+                geoproperty: query.geoproperty.take(),
+                scope_q: query.scope_q.take(),
+            }
         } else {
-            deferred_q = None;
-            deferred_georel = None;
-            deferred_geometry = None;
-            deferred_coordinates = None;
-            deferred_geoproperty = None;
-            deferred_scope_q = None;
-        }
+            DeferredSplitFilters::default()
+        };
 
         let (local_entities, total_count) = service.query(&query, &context).await.with_instance(&uri)?;
 
@@ -615,25 +607,25 @@ pub async fn query(
 
         // splitEntities post-merge filtering: apply deferred q/geoQ/scopeQ (spec 5.7.2.4)
         if split_entities {
-            let q_expr = if let Some(ref q_str) = deferred_q {
+            let q_expr = if let Some(ref q_str) = deferred.q {
                 expand_q_expression(Some(q_str), service.engine(), &context).await.ok().flatten()
             } else {
                 None
             };
-            let geo_val = if let (Some(georel), Some(geometry), Some(coordinates)) = (&deferred_georel, &deferred_geometry, &deferred_coordinates) {
+            let geo_val = if let (Some(georel), Some(geometry), Some(coordinates)) = (&deferred.georel, &deferred.geometry, &deferred.coordinates) {
                 let mut value = serde_json::json!({
                     "georel": georel,
                     "geometry": geometry,
                     "coordinates": coordinates,
                 });
-                if let Some(ref geoprop) = deferred_geoproperty {
+                if let Some(ref geoprop) = deferred.geoproperty {
                     value["geoproperty"] = Value::String(geoprop.clone());
                 }
                 Some(value)
             } else {
                 None
             };
-            let compiled_scope = deferred_scope_q.as_deref().map(compile_scope_q);
+            let compiled_scope = deferred.scope_q.as_deref().map(compile_scope_q);
             let compiled_geo = geo_val.as_ref().and_then(|v| compile_geo_q(v, "split-entities"));
 
             let mut filtered = Vec::with_capacity(entities.len());

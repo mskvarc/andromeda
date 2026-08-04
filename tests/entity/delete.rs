@@ -7,7 +7,7 @@
 //! - Non-existent entity
 
 use crate::{building_simple_attributes, clean_database, client, create_entity, delete_entity, get_entity, request_method_on_collection, unique_id};
-use reqwest::StatusCode;
+use reqwest::{Method, StatusCode};
 use serial_test::serial;
 
 // ---------------------------------------------------------------------------
@@ -43,7 +43,7 @@ async fn entity_delete_missing_id_returns_400() {
     clean_database().await;
     let c = client();
 
-    let (status, _) = request_method_on_collection(&c, "DELETE", None).await;
+    let (status, _) = request_method_on_collection(&c, Method::DELETE, None).await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "DELETE on /entities without filters should return 400");
 }
 

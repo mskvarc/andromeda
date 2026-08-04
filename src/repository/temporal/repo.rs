@@ -2,7 +2,10 @@
 
 use crate::{
     core::{config::BulkWriteMode, error::AndromedaError},
-    domain::{geometry::Wkb, temporal::TeaEntry},
+    domain::{
+        geometry::Wkb,
+        temporal::{AttributeNameId, TeaEntry},
+    },
     query::sql::BindValue,
     repository::{
         attribute_names::AttributeNameCache,
@@ -23,7 +26,10 @@ use sqlx::{
     Transaction,
     postgres::{PgConnection, PgPool},
 };
-use std::sync::Arc;
+use std::{
+    collections::{HashMap, HashSet, hash_map::Entry},
+    sync::Arc,
+};
 
 /// PostgreSQL/TimescaleDB-backed repository for NGSI-LD temporal entity data.
 #[derive(Debug)]
@@ -277,6 +283,11 @@ impl TemporalRepository {
 
     /// Bulk upsert TEA catalog entries in a single SQL round-trip using `UNNEST`,
     /// inside the caller's transaction.
+    ///
+    /// Entries sharing a catalogue key collapse into one statement row — see
+    /// [`tea_batch_binds`] — so the result holds one row per *distinct* key
+    /// rather than one per entry. Callers pair their history rows to TEA ids by
+    /// that same key, so this is the shape they need.
     pub async fn upsert_tea_batch_in_tx(
         &self,
         tx: &mut Transaction<'_, Postgres>,
@@ -285,48 +296,17 @@ impl TemporalRepository {
         if entries.is_empty() {
             return Ok(Vec::new());
         }
-        let (entity_ids, attr_name_ids, attribute_types, dataset_ids, value_types) = self.tea_batch_binds(entries).await?;
+        let name_to_id = self.attribute_names.resolve_or_create(&distinct_attribute_names(entries)).await?;
+        let binds = tea_batch_binds(entries, &name_to_id)?;
         let rows = sqlx::query(TEA_UPSERT_SQL)
-            .bind(&entity_ids)
-            .bind(&attr_name_ids)
-            .bind(&attribute_types)
-            .bind(&dataset_ids)
-            .bind(&value_types)
+            .bind(&binds.entity_ids)
+            .bind(&binds.attribute_name_ids)
+            .bind(&binds.attribute_types)
+            .bind(&binds.dataset_ids)
+            .bind(&binds.value_types)
             .fetch_all(&mut **tx)
             .await?;
         Ok(rows_to_tea_results(rows))
-    }
-
-    async fn tea_batch_binds<'a>(
-        &self,
-        entries: &'a [TeaBatchEntry],
-    ) -> Result<(Vec<&'a str>, Vec<i16>, Vec<&'static str>, Vec<Option<&'a str>>, Vec<&'static str>), AndromedaError> {
-        let distinct_names: Vec<&str> = {
-            let mut seen = std::collections::HashSet::new();
-            entries
-                .iter()
-                .filter_map(|e| seen.insert(e.attribute_name.as_str()).then_some(e.attribute_name.as_str()))
-                .collect()
-        };
-        let name_to_id = self.attribute_names.resolve_or_create(&distinct_names).await?;
-
-        let mut entity_ids = Vec::with_capacity(entries.len());
-        let mut attr_name_ids: Vec<i16> = Vec::with_capacity(entries.len());
-        let mut attribute_types = Vec::with_capacity(entries.len());
-        let mut dataset_ids = Vec::with_capacity(entries.len());
-        let mut value_types = Vec::with_capacity(entries.len());
-
-        for e in entries {
-            let attr_id = name_to_id
-                .get(e.attribute_name.as_str())
-                .ok_or_else(|| AndromedaError::internal(format!("Attribute name '{}' not found in dictionary after resolve", e.attribute_name)))?;
-            entity_ids.push(e.entity_id.as_str());
-            attr_name_ids.push(attr_id.get());
-            attribute_types.push(e.attribute_type.short_name());
-            dataset_ids.push(e.dataset_id.as_deref());
-            value_types.push(e.value_type.as_str());
-        }
-        Ok((entity_ids, attr_name_ids, attribute_types, dataset_ids, value_types))
     }
 
     /// Bulk insert attribute history rows inside the caller's transaction.
@@ -402,6 +382,78 @@ impl TemporalRepository {
 
         Ok(())
     }
+}
+
+/// Column-major bind arrays for [`TEA_UPSERT_SQL`]: one element per statement
+/// row, in the order `UNNEST` unpacks them.
+#[derive(Default)]
+struct TeaBatchBinds<'a> {
+    entity_ids: Vec<&'a str>,
+    attribute_name_ids: Vec<i16>,
+    attribute_types: Vec<&'static str>,
+    dataset_ids: Vec<Option<&'a str>>,
+    value_types: Vec<&'static str>,
+}
+
+/// The distinct attribute IRIs across `entries`, in first-seen order.
+fn distinct_attribute_names(entries: &[TeaBatchEntry]) -> Vec<&str> {
+    let mut seen = HashSet::with_capacity(entries.len());
+    entries
+        .iter()
+        .filter_map(|e| seen.insert(e.attribute_name.as_str()).then_some(e.attribute_name.as_str()))
+        .collect()
+}
+
+/// Build the bind arrays for [`TEA_UPSERT_SQL`], collapsing entries that share
+/// the catalogue's conflict key `(entity_id, attribute_name_id, dataset_id)`.
+///
+/// The collapse is not an optimisation, it is what makes the statement legal.
+/// A temporal write carries one [`TeaBatchEntry`] per attribute *instance*, so a
+/// request holding several instances of one attribute — which 5.6.12.4 requires
+/// to be stored, all of them — proposes the same catalogue key several times.
+/// PostgreSQL rejects that outright: an `INSERT ... ON CONFLICT DO UPDATE` whose
+/// input contains a key twice raises `21000`, "cannot affect row a second time",
+/// and takes the statement, the transaction and the whole request with it. The
+/// history rows are unaffected by the collapse — they are keyed by `instance_id`
+/// and every one of them is still written, pointing at the single TEA row.
+///
+/// The last entry for a key describes the resulting row. `attribute_type` and
+/// `value_type` record what the attribute currently *is*, and the pre-batching
+/// write path applied instances one statement at a time, so the newest
+/// description is the one that survived there too.
+fn tea_batch_binds<'a>(entries: &'a [TeaBatchEntry], name_to_id: &HashMap<String, AttributeNameId>) -> Result<TeaBatchBinds<'a>, AndromedaError> {
+    let mut binds = TeaBatchBinds {
+        entity_ids: Vec::with_capacity(entries.len()),
+        attribute_name_ids: Vec::with_capacity(entries.len()),
+        attribute_types: Vec::with_capacity(entries.len()),
+        dataset_ids: Vec::with_capacity(entries.len()),
+        value_types: Vec::with_capacity(entries.len()),
+    };
+    let mut row_of: HashMap<(&'a str, i16, Option<&'a str>), usize> = HashMap::with_capacity(entries.len());
+
+    for e in entries {
+        let attribute_name_id = name_to_id
+            .get(e.attribute_name.as_str())
+            .ok_or_else(|| AndromedaError::internal(format!("Attribute name '{}' not found in dictionary after resolve", e.attribute_name)))?
+            .get();
+        match row_of.entry((e.entity_id.as_str(), attribute_name_id, e.dataset_id.as_deref())) {
+            Entry::Occupied(occupied) => {
+                let row = *occupied.get();
+                binds.attribute_types[row] = e.attribute_type.short_name();
+                binds.value_types[row] = e.value_type.as_str();
+            }
+            Entry::Vacant(vacant) => {
+                vacant.insert(binds.entity_ids.len());
+                binds.entity_ids.push(e.entity_id.as_str());
+                binds.attribute_name_ids.push(attribute_name_id);
+                binds.attribute_types.push(e.attribute_type.short_name());
+                binds.dataset_ids.push(e.dataset_id.as_deref());
+                binds.value_types.push(e.value_type.as_str());
+            }
+        }
+    }
+
+    Ok(binds)
 }
 
 // The upsert skips no-op writes via `WHERE ... IS DISTINCT FROM EXCLUDED ...`
@@ -684,6 +736,26 @@ async fn insert_history_batch_unnest_in_tx(tx: &mut Transaction<'_, Postgres>, e
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::{attribute_type::AttributeType, temporal::ValueType};
+
+    const ENTITY: &str = "urn:ngsi-ld:Vehicle:A100";
+    const SPEED: &str = "https://uri.etsi.org/ngsi-ld/default-context/speed";
+    const BRAND: &str = "https://uri.etsi.org/ngsi-ld/default-context/brand";
+
+    fn tea_entry(attribute_name: &str, dataset_id: Option<&str>, value_type: ValueType) -> TeaBatchEntry {
+        TeaBatchEntry {
+            entity_id: ENTITY.to_owned(),
+            attribute_name: attribute_name.to_owned(),
+            attribute_type: AttributeType::Property,
+            dataset_id: dataset_id.map(ToOwned::to_owned),
+            value_type,
+        }
+    }
+
+    /// Dictionary stand-in: the ids are arbitrary, only their distinctness matters.
+    fn name_ids() -> HashMap<String, AttributeNameId> {
+        HashMap::from([(SPEED.to_owned(), AttributeNameId::from(1i16)), (BRAND.to_owned(), AttributeNameId::from(2i16))])
+    }
 
     #[test]
     fn update_instance_returns_the_owning_tea_id() {
@@ -692,5 +764,80 @@ mod tests {
         // leaving attribute_current serving the value the PATCH superseded.
         assert!(UPDATE_INSTANCE_SQL.contains("RETURNING tea_id"));
         assert!(!UPDATE_INSTANCE_SQL.contains("RETURNING instance_id"));
+    }
+
+    #[test]
+    fn the_dedupe_key_is_the_statements_conflict_target() {
+        // tea_batch_binds collapses on (entity_id, attribute_name_id,
+        // dataset_id). If the statement's conflict target ever moves, the
+        // collapse stops matching it and 21000 comes back.
+        assert!(TEA_UPSERT_SQL.contains("ON CONFLICT (entity_id, attribute_name_id, dataset_id) DO UPDATE"));
+    }
+
+    #[test]
+    fn several_instances_of_one_attribute_bind_a_single_catalogue_row() {
+        // The regression: POST /temporal/entities with three instances of one
+        // attribute produced three identical catalogue keys in one
+        // INSERT ... ON CONFLICT DO UPDATE, which PostgreSQL rejects with
+        // 21000 -- failing the whole request, not just the attribute.
+        let entries = [
+            tea_entry(SPEED, None, ValueType::Number),
+            tea_entry(SPEED, None, ValueType::Number),
+            tea_entry(SPEED, None, ValueType::Number),
+        ];
+
+        let binds = tea_batch_binds(&entries, &name_ids()).unwrap_or_default();
+
+        assert_eq!(binds.entity_ids, vec![ENTITY]);
+        assert_eq!(binds.attribute_name_ids, vec![1i16]);
+        assert_eq!(binds.dataset_ids, vec![None]);
+        assert_eq!(binds.value_types, vec!["Number"]);
+    }
+
+    #[test]
+    fn the_last_entry_for_a_key_describes_the_bound_catalogue_row() {
+        let entries = [tea_entry(SPEED, None, ValueType::Number), tea_entry(SPEED, None, ValueType::String)];
+
+        let binds = tea_batch_binds(&entries, &name_ids()).unwrap_or_default();
+
+        assert_eq!(binds.value_types, vec!["String"]);
+    }
+
+    #[test]
+    fn entries_differing_by_attribute_or_dataset_stay_separate_rows() {
+        // Distinct attribute names, and distinct dataset ids under one name, are
+        // distinct catalogue rows. `dataset_id` is UNIQUE NULLS NOT DISTINCT
+        // (migration 0007), so None collides with None and must collapse -- the
+        // first two entries here are one row, not two.
+        let entries = [
+            tea_entry(SPEED, None, ValueType::Number),
+            tea_entry(SPEED, None, ValueType::Number),
+            tea_entry(SPEED, Some("urn:ngsi-ld:Dataset:gps"), ValueType::Number),
+            tea_entry(BRAND, None, ValueType::String),
+        ];
+
+        let binds = tea_batch_binds(&entries, &name_ids()).unwrap_or_default();
+
+        assert_eq!(binds.attribute_name_ids, vec![1i16, 1i16, 2i16]);
+        assert_eq!(binds.dataset_ids, vec![None, Some("urn:ngsi-ld:Dataset:gps"), None]);
+        assert_eq!(binds.value_types, vec!["Number", "Number", "String"]);
+    }
+
+    #[test]
+    fn distinct_attribute_names_are_deduplicated_in_first_seen_order() {
+        let entries = [
+            tea_entry(BRAND, None, ValueType::String),
+            tea_entry(SPEED, None, ValueType::Number),
+            tea_entry(BRAND, Some("urn:ngsi-ld:Dataset:vin"), ValueType::String),
+        ];
+
+        assert_eq!(distinct_attribute_names(&entries), vec![BRAND, SPEED]);
+    }
+
+    #[test]
+    fn an_attribute_missing_from_the_dictionary_is_an_internal_error() {
+        let entries = [tea_entry("https://uri.etsi.org/ngsi-ld/default-context/unresolved", None, ValueType::Number)];
+
+        assert!(tea_batch_binds(&entries, &name_ids()).is_err());
     }
 }

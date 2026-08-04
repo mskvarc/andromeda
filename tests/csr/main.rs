@@ -296,7 +296,7 @@ fn csr_with_management_interval(id: &str) -> Value {
 }
 
 /// Invalid JSON string (malformed).
-fn csr_invalid_json_string() -> &'static str {
+const fn csr_invalid_json_string() -> &'static str {
     r#"{"id": "urn:ngsi-ld:ContextSourceRegistration:randomUUID","type": "ContextSourceRegistration",,"endpoint": "http://my.new.csource.org:1026"}"#
 }
 

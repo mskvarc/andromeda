@@ -21,6 +21,7 @@ use crate::{
     list_contexts,
     setup_cached_context,
     unique_id,
+    wait_for_hits_above,
 };
 use serde_json::json;
 
@@ -105,9 +106,9 @@ async fn serve_hosted_number_of_hits_increases() {
     let (status, _) = create_entity(&c, &entity).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
-    // Check numberOfHits increased
-    let (_, body) = get_context(&c, &ctx_id, "details=true").await;
-    let new_hits = body["numberOfHits"].as_u64().unwrap_or(0);
+    // Check numberOfHits increased. The counter is flushed to the row by a
+    // background task, not by the create, so this waits for that flush.
+    let new_hits = wait_for_hits_above(&c, &ctx_id, initial_hits).await;
     assert!(new_hits > initial_hits, "numberOfHits should have increased: {new_hits} > {initial_hits}");
 
     delete_entity(&c, &entity_id).await;
@@ -189,9 +190,8 @@ async fn serve_implicitly_created_number_of_hits_increases() {
     let (status, _) = create_entity(&c, &entity).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
-    // Check hits increased
-    let (_, body) = get_context(&c, &ctx_id, "details=true").await;
-    let new_hits = body["numberOfHits"].as_u64().unwrap_or(0);
+    // Check hits increased, once the background flush has folded them in.
+    let new_hits = wait_for_hits_above(&c, &ctx_id, initial_hits).await;
     assert!(new_hits > initial_hits, "numberOfHits should increase: {new_hits} > {initial_hits}");
 
     delete_entity(&c, &entity_id).await;
@@ -246,12 +246,12 @@ async fn serve_cached_number_of_hits_increases() {
     let (status, _) = create_entity(&c, &entity).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
-    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-
-    // Find cached context and check initial hits
+    // Find cached context and take the baseline only once the first entity's
+    // hit is on the row. Reading before the flush would leave the baseline at
+    // zero, and the second read could then pass on the first entity's hit
+    // alone without the second one ever being counted.
     let cached_id = find_cached_context_id(&c, &ctx_url).await;
-    let (_, body) = get_context(&c, &cached_id, "details=true").await;
-    let hits_after_first = body["numberOfHits"].as_u64().unwrap_or(0);
+    let hits_after_first = wait_for_hits_above(&c, &cached_id, 0).await;
 
     // Create second entity using same context
     let entity_id2 = unique_id("urn:ngsi-ld:Testing:cache-hits-2");
@@ -265,8 +265,7 @@ async fn serve_cached_number_of_hits_increases() {
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     // Check hits increased
-    let (_, body) = get_context(&c, &cached_id, "details=true").await;
-    let hits_after_second = body["numberOfHits"].as_u64().unwrap_or(0);
+    let hits_after_second = wait_for_hits_above(&c, &cached_id, hits_after_first).await;
     assert!(
         hits_after_second > hits_after_first,
         "numberOfHits should increase: {hits_after_second} > {hits_after_first}"

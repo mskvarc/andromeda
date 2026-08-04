@@ -19,7 +19,7 @@ mod replace;
 mod retrieve;
 
 use andromeda_test_common::{db::TRUNCATE_ALL, prelude::*};
-use reqwest::{Client, StatusCode};
+use reqwest::{Client, Method, StatusCode};
 use serde_json::{Value, json};
 use sqlx::PgPool;
 use uuid::Uuid;
@@ -901,14 +901,12 @@ async fn delete_entities_by_query(client: &Client, query: &str, link: Option<&st
     (status, body)
 }
 
-async fn request_method_on_collection(client: &Client, method: &str, body: Option<&Value>) -> (StatusCode, Value) {
-    let builder = match method {
-        "PATCH" => client.patch(format!("{BASE_URL}/entities")),
-        "PUT" => client.put(format!("{BASE_URL}/entities")),
-        "DELETE" => client.delete(format!("{BASE_URL}/entities")),
-        _ => panic!("unsupported method: {method}"),
-    };
-    let builder = builder.header("Content-Type", "application/ld+json");
+/// Send `method` at `/entities` — the collection URL, which accepts no
+/// entity-modifying method — to assert the broker rejects it.
+async fn request_method_on_collection(client: &Client, method: Method, body: Option<&Value>) -> (StatusCode, Value) {
+    let builder = client
+        .request(method, format!("{BASE_URL}/entities"))
+        .header("Content-Type", "application/ld+json");
     let resp = if let Some(b) = body {
         builder.json(b).send().await.expect("request failed")
     } else {

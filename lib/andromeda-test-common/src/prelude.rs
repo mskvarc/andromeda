@@ -18,7 +18,7 @@ pub use crate::{
         NgsiLdResponse,
         entity::{require_location, results_count},
     },
-    config::{BASE_URL, COMPOUND_CONTEXT, CORE_CONTEXT, DATABASE_URL, TEST_SUITE_CONTEXT},
+    config::{BASE_URL, COMPOUND_CONTEXT, CORE_CONTEXT, DATABASE_URL, TEST_SUITE_CONTEXT, callback_url},
     error,
     header::{jsonld_link_header, warning_header_values},
     ids,

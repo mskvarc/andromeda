@@ -9,6 +9,7 @@ use std::{
     },
 };
 
+use andromeda_test_common::config::callback_url;
 use axum::{extract::Request, response::IntoResponse};
 use reqwest::{Client, Method, StatusCode, header::HeaderMap};
 use serde_json::{Value, json};
@@ -150,7 +151,7 @@ impl MockServer {
     }
 
     pub fn url(&self, path: &str) -> String {
-        format!("http://host.docker.internal:{}{path}", self.port)
+        callback_url(self.port, path)
     }
 
     pub fn stop(&mut self) {

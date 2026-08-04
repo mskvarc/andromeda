@@ -274,7 +274,7 @@ impl NotificationReceiver {
     }
 
     pub fn endpoint_url(&self) -> String {
-        format!("http://host.docker.internal:{}{}", self.port, self.endpoint_path)
+        callback_url(self.port, &self.endpoint_path)
     }
 
     pub async fn wait_for_subscription_notification(&self, subscription_id: &str, timeout: Duration) -> CapturedNotification {

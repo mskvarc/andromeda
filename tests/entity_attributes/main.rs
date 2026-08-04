@@ -20,7 +20,7 @@ mod replace;
 mod update;
 
 use andromeda_test_common::{db::TRUNCATE_ALL, prelude::*};
-use reqwest::{Client, StatusCode};
+use reqwest::{Client, Method, StatusCode};
 use serde_json::{Value, json};
 use sqlx::PgPool;
 use uuid::Uuid;
@@ -704,15 +704,12 @@ async fn delete_entity_attr_delete_all(client: &Client, id: &str, attr_name: &st
     (status, body)
 }
 
-async fn request_attrs_method(client: &Client, method: &str, path: &str, body: Option<&Value>) -> (StatusCode, Value) {
-    let builder = match method {
-        "POST" => client.post(format!("{BASE_URL}{path}")),
-        "PATCH" => client.patch(format!("{BASE_URL}{path}")),
-        "PUT" => client.put(format!("{BASE_URL}{path}")),
-        "DELETE" => client.delete(format!("{BASE_URL}{path}")),
-        _ => panic!("unsupported method: {method}"),
-    };
-    let builder = builder.header("Content-Type", "application/ld+json");
+/// Send `method` at a raw `path`, bypassing the typed per-operation helpers so
+/// a test can drive a malformed or unroutable attribute URL.
+async fn request_attrs_method(client: &Client, method: Method, path: &str, body: Option<&Value>) -> (StatusCode, Value) {
+    let builder = client
+        .request(method, format!("{BASE_URL}{path}"))
+        .header("Content-Type", "application/ld+json");
     let resp = if let Some(b) = body {
         builder.json(b).send().await.expect("request failed")
     } else {

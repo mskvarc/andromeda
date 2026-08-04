@@ -384,7 +384,7 @@ impl NotificationReceiver {
     }
 
     pub fn endpoint_url(&self) -> String {
-        format!("http://host.docker.internal:{}/notify", self.port)
+        callback_url(self.port, "/notify")
     }
 
     pub async fn wait_for_notification(&self, timeout: Duration) -> CapturedNotification {
