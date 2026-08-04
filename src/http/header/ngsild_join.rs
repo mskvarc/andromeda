@@ -2,7 +2,7 @@
 //!
 //! Carries join mode equivalent to the `join` query parameter.
 
-use crate::domain::response_format::JoinMode;
+use andromeda_domain::response_format::JoinMode;
 use axum::http::{HeaderName, HeaderValue};
 use std::str::FromStr;
 

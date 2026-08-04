@@ -1,8 +1,5 @@
-use crate::{
-    core::error::AndromedaError,
-    domain::{entity_map::EntityMap, ngsi_ld_urn::EntityMapId, uri::Uri},
-    repository::entity_map::EntityMapStore,
-};
+use crate::{core::error::AndromedaError, repository::entity_map::EntityMapStore};
+use andromeda_domain::{entity_map::EntityMap, ngsi_ld_urn::EntityMapId, uri::Uri};
 use chrono::{DateTime, Utc};
 use iso8601_duration::Duration as Iso8601Duration;
 use std::{collections::HashSet, str::FromStr};
@@ -122,10 +119,10 @@ fn compute_entity_map_expires_at(created_at: DateTime<Utc>, lifetime: Option<&Is
 mod tests {
     #![allow(clippy::expect_used, clippy::unwrap_used)]
     use crate::{
-        domain::uri::Uri,
         repository::entity_map::EntityMapStore,
         service::entity_map::{parse_entity_map_urn, parse_iso8601_duration, parse_uri_csv},
     };
+    use andromeda_domain::uri::Uri;
     use std::str::FromStr;
 
     fn make_service() -> super::EntityMapService {

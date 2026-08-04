@@ -6,12 +6,8 @@
 //! `forward_provision`, then uses these helpers to classify the result modes
 //! and build multi-status responses.
 
-use crate::{
-    core::error::AndromedaError,
-    domain::registration::ForwardingMode,
-    http::error::batch::BatchEntityError,
-    service::csource_forwarding::ForwardedWriteResult,
-};
+use crate::{core::error::AndromedaError, http::error::batch::BatchEntityError, service::csource_forwarding::ForwardedWriteResult};
+use andromeda_domain::registration::ForwardingMode;
 use serde_json::Value;
 
 /// Classified forwarding modes present in a set of forwarded write results.

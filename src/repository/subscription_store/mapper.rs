@@ -6,9 +6,9 @@
 
 use crate::{
     core::error::AndromedaError,
-    domain::subscription::{NotificationParams, NotificationStatus, NotificationTrigger, Subscription},
     repository::subscription_store::{params::DatasetIdPresence, rows::SubscriptionRow},
 };
+use andromeda_domain::subscription::{NotificationParams, NotificationStatus, NotificationTrigger, Subscription};
 use chrono::{DateTime, Utc};
 use sqlx::Row;
 

@@ -5,6 +5,7 @@
 //! the core functionality for entity management, subscriptions, and context
 //! source registration.
 
+pub mod compiled_subscription;
 pub mod csource_extract;
 pub mod csource_forwarding;
 pub mod csource_merge;

@@ -1,13 +1,9 @@
 //! Handler for the `/version` endpoint.
 
-use crate::{
-    core::error::AndromedaError,
-    domain::{
-        uri::{NGSI_LD_URN_NID, Uri},
-        version::{VersionResponse, VersionType},
-    },
-    http::error::problem::NgsiLdError,
-    version::Version,
+use crate::{core::error::AndromedaError, http::error::problem::NgsiLdError, version::Version};
+use andromeda_domain::{
+    uri::{NGSI_LD_URN_NID, Uri},
+    version::{VersionResponse, VersionType},
 };
 use axum::{Extension, Json, http::StatusCode, response::IntoResponse};
 use urn_rs::UrnBuilder;

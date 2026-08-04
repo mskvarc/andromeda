@@ -6,10 +6,10 @@
 //! headers from analogous pagination state.
 
 use crate::{
-    domain::temporal::TimeRel,
     query::compiled::{CompiledTemporalQuery, LastNOrigin},
     service::temporal::format_datetime,
 };
+use andromeda_domain::temporal::TimeRel;
 use chrono::{DateTime, Utc};
 
 type TimeRange = (DateTime<Utc>, DateTime<Utc>);

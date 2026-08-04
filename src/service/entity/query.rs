@@ -1,10 +1,5 @@
 use crate::{
     core::error::AndromedaError,
-    domain::{
-        attribute::{Attribute, AttributeValue},
-        entity::Entity,
-        geometry::Geometry,
-    },
     http::parameter::query::{SharedQueryParams, entity::EntityQueryParameters},
     jsonld::{CompactOptions, ContextSpec, JsonLdEngine},
     query::{
@@ -20,6 +15,11 @@ use crate::{
     },
     tenancy::types::TenantRef,
     worker::attribute_current_materializer::AttributeCurrentBarrier,
+};
+use andromeda_domain::{
+    attribute::{Attribute, AttributeValue},
+    entity::Entity,
+    geometry::Geometry,
 };
 use iri_rs::IriBuf;
 use serde_json::Value;

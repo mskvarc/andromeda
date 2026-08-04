@@ -4,7 +4,8 @@
 //! current state plus a [`StatusUpdateFields`] patch. Belongs to the service
 //! layer because it is pure business logic (no I/O, no SQL).
 
-use crate::{domain::subscription::SubscriptionStatus, repository::subscription_store::params::StatusUpdateFields};
+use crate::repository::subscription_store::params::StatusUpdateFields;
+use andromeda_domain::subscription::SubscriptionStatus;
 use chrono::Utc;
 
 /// Derive the new subscription status based on the current status and the update fields provided.
@@ -32,7 +33,7 @@ pub fn compute_updated_status(current_status: SubscriptionStatus, fields: &Statu
 mod tests {
     #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::{StatusUpdateFields, compute_updated_status};
-    use crate::domain::subscription::SubscriptionStatus;
+    use andromeda_domain::subscription::SubscriptionStatus;
     use chrono::{Duration, Utc};
 
     #[test]

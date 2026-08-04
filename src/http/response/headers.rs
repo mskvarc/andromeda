@@ -1,7 +1,6 @@
 //! Shared header logic for NGSI-LD responses.
 
 use crate::{
-    domain::ngsi_ld_urn::SnapshotId,
     http::header::{
         link::Link,
         ngsild_entity_map::NgsiLdEntityMap,
@@ -11,6 +10,7 @@ use crate::{
     jsonld::ContextSpec,
     renderer::ContextLocation,
 };
+use andromeda_domain::ngsi_ld_urn::SnapshotId;
 use axum::http::{HeaderMap, HeaderValue};
 use headers::HeaderMapExt;
 use urn_rs::Urn;

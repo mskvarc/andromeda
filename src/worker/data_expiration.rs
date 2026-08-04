@@ -1,11 +1,11 @@
 use crate::{
     core::{batch_activity::BatchActivityTracker, error::AndromedaError},
-    domain::{
-        expanded::removed_attribute_instances,
-        notification::{ChangeEvent, TriggerReason},
-        uri::Uri,
-    },
     repository::{entity::repo::EntityRepository, uow::UnitOfWorkFactory},
+};
+use andromeda_domain::{
+    expanded::removed_attribute_instances,
+    notification::{ChangeEvent, TriggerReason},
+    uri::Uri,
 };
 use std::{sync::Arc, time::Duration};
 use tokio::sync::broadcast;

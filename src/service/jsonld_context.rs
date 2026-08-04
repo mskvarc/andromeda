@@ -1,9 +1,5 @@
 use crate::{
     core::error::AndromedaError,
-    domain::{
-        jsonld_context::{ContextGetResult, ContextKind, ContextListResult, ContextMetadata},
-        uri::Uri,
-    },
     jsonld::{
         JsonLdEngine,
         core_context::{NGSI_LD_CORE_CONTEXT_URL, NGSI_LD_CORE_CONTEXT_V19, is_ngsi_ld_core_context_url},
@@ -13,6 +9,10 @@ use crate::{
         params::{DetailLevel, ListContextsParams},
         repo::{FetchedContext, JsonLdContextRepository, ListedContexts},
     },
+};
+use andromeda_domain::{
+    jsonld_context::{ContextGetResult, ContextKind, ContextListResult, ContextMetadata},
+    uri::Uri,
 };
 use chrono::Utc;
 use serde_json::Value;
@@ -186,7 +186,7 @@ fn build_core_context_metadata(identifier: &str) -> Result<ContextMetadata, Andr
 mod tests {
     #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::{build_core_context_metadata, core_context_payload, is_core_context_url};
-    use crate::domain::{jsonld_context::ContextKind, uri::Uri};
+    use andromeda_domain::{jsonld_context::ContextKind, uri::Uri};
     use url::Url;
 
     #[test]

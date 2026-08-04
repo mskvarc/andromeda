@@ -1,6 +1,6 @@
 //! Repository input parameter types for temporal data.
 
-use crate::domain::{attribute_type::AttributeType, geometry::Geometry, temporal::ValueType};
+use andromeda_domain::{attribute_type::AttributeType, geometry::Geometry, temporal::ValueType};
 use chrono::{DateTime, Utc};
 use serde_json::Value;
 

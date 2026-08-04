@@ -4,14 +4,11 @@
 //! Pure service-layer logic: no I/O, no SQL. The repository applies the
 //! produced [`ResolvedCsrUpdate`] as an unconditional UPDATE.
 
-use crate::{
-    core::error::AndromedaError,
-    domain::{
-        geometry::Geometry,
-        registration::{ContextSourceRegistration, ForwardingMode},
-    },
-    repository::csource_registration::params::CsrUpdateFragment,
-    tenancy::types::TenantName,
+use crate::{core::error::AndromedaError, repository::csource_registration::params::CsrUpdateFragment};
+use andromeda_domain::{
+    geometry::Geometry,
+    registration::{ContextSourceRegistration, ForwardingMode},
+    tenant::TenantName,
 };
 use chrono::{DateTime, Utc};
 use serde_json::Value;

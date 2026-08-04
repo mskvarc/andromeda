@@ -6,25 +6,11 @@
 //! matching) and the entity service (outbox entry generation).
 
 use crate::{
-    domain::{
-        notification::{
-            ChangeEvent,
-            CompiledGeoQuery,
-            CompiledGeoRel,
-            CompiledScopePattern,
-            CompiledScopeTerm,
-            CompiledSelector,
-            CompiledSubscription,
-            SubscriptionChange,
-            TriggerReason,
-        },
-        subscription::{EntitySelector, Subscription, SubscriptionStatus},
-        vocab,
-    },
     query::q,
     renderer::SysAttrsInclusion,
     repository::subscription_store::repo::SubscriptionStore,
     service::{
+        compiled_subscription::{CompiledGeoQuery, CompiledGeoRel, CompiledScopePattern, CompiledScopeTerm, CompiledSelector, CompiledSubscription},
         spatial::{
             SpatialKey,
             subscription_index::{SpatialSubscriptionIndex, SubEntry},
@@ -33,6 +19,11 @@ use crate::{
     },
     tenancy::types::TenantRef,
     transport::endpoint::parse_endpoint_transport,
+};
+use andromeda_domain::{
+    notification::{ChangeEvent, SubscriptionChange, TriggerReason},
+    subscription::{EntitySelector, Subscription, SubscriptionStatus},
+    vocab,
 };
 use dashmap::DashMap;
 use iri_rs::IriBuf;
@@ -486,10 +477,8 @@ fn compile_selector(selector: &EntitySelector) -> Option<CompiledSelector> {
 mod tests {
     #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::*;
-    use crate::{
-        domain::{notification::CompiledSelector, subscription::SubscriptionStatus},
-        transport::endpoint::EndpointTransport,
-    };
+    use crate::transport::endpoint::EndpointTransport;
+    use andromeda_domain::subscription::SubscriptionStatus;
 
     fn make_compiled_sub(id: &str, type_: &str, triggers: Vec<&str>) -> CompiledSubscription {
         CompiledSubscription {

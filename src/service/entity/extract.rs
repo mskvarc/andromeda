@@ -6,11 +6,8 @@
 //! persistence call is made. Geometries leave here in the domain's GeoJSON
 //! form; the store encodes them to EWKB at the bind.
 
-use crate::{
-    domain::{expanded, geometry::Geometry},
-    query::sql::scope_to_ltree,
-    repository::entity::params::EntitySaveParams,
-};
+use crate::{query::sql::scope_to_ltree, repository::entity::params::EntitySaveParams};
+use andromeda_domain::{expanded, geometry::Geometry};
 use serde_json::Value;
 
 /// Build [`EntitySaveParams`] for `save()` from an expanded JSON-LD payload.

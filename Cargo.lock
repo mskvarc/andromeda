@@ -83,6 +83,7 @@ dependencies = [
 name = "andromeda"
 version = "0.1.0"
 dependencies = [
+ "andromeda-domain",
  "andromeda-test-common",
  "async-trait",
  "axum",
@@ -147,6 +148,35 @@ dependencies = [
  "tracing-subscriber",
  "url",
  "urlencoding",
+ "urn-rs",
+ "uuid",
+]
+
+[[package]]
+name = "andromeda-domain"
+version = "0.1.0"
+dependencies = [
+ "cefact-units",
+ "chrono",
+ "compact_str",
+ "derive_more",
+ "geo",
+ "geojson 1.0.0",
+ "indexmap 2.14.0",
+ "iri-rs",
+ "iso8601-duration",
+ "jsonld",
+ "jsonld-expandable-core",
+ "langtag",
+ "pretty_assertions",
+ "regex",
+ "serde",
+ "serde_json",
+ "serde_with",
+ "static-regular-grammar",
+ "strum",
+ "thiserror 2.0.19",
+ "url",
  "urn-rs",
  "uuid",
 ]

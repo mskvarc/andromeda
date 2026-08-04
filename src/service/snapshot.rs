@@ -1,10 +1,5 @@
 use crate::{
     core::error::AndromedaError,
-    domain::{
-        ngsi_ld_urn::SnapshotId,
-        snapshot::{KeyValuePair, Snapshot, SnapshotInput, SnapshotPatch, SnapshotPriority, SnapshotStatus},
-        snapshot_filter::SnapshotPurgeFilter,
-    },
     http::error::{batch::BatchEntityError, problem::NgsiLdErrorType},
     repository::snapshot::repo::SnapshotRepository,
     service::{
@@ -18,6 +13,11 @@ use crate::{
         dispatch::{DeliveryResult, TransportDispatcher, build_delivery_request},
         endpoint::EndpointTransport,
     },
+};
+use andromeda_domain::{
+    ngsi_ld_urn::SnapshotId,
+    snapshot::{KeyValuePair, Snapshot, SnapshotInput, SnapshotPatch, SnapshotPriority, SnapshotStatus},
+    snapshot_filter::SnapshotPurgeFilter,
 };
 use chrono::Utc;
 use iso8601_duration::Duration as Iso8601Duration;

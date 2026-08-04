@@ -1,6 +1,5 @@
 use crate::{
     core::error::AndromedaError,
-    domain::{notification::CsourceSubscriptionChange, subscription::Subscription, uri::Uri},
     jsonld::{ContextSpec, JsonLdEngine},
     repository::csource_subscription::repo::CsourceSubscriptionRepository,
     service::{
@@ -8,6 +7,7 @@ use crate::{
         subscription_core,
     },
 };
+use andromeda_domain::{notification::CsourceSubscriptionChange, subscription::Subscription, uri::Uri};
 use async_trait::async_trait;
 use serde_json::Value;
 use sqlx::postgres::PgPool;

@@ -3,11 +3,11 @@
 use crate::{
     api::state::AppState,
     core::error::{AndromedaError, ResultInstanceExt},
-    domain::{
-        tenant::{TenantList, TenantListType},
-        uri::{NGSI_LD_URN_NID, Uri},
-    },
     http::{error::problem::NgsiLdError, extractor::query::ValidatedQuery, parameter::EmptyParams},
+};
+use andromeda_domain::{
+    tenant::{TenantList, TenantListType},
+    uri::{NGSI_LD_URN_NID, Uri},
 };
 use axum::{
     Json,

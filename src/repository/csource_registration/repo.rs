@@ -2,15 +2,14 @@
 
 use crate::{
     core::error::AndromedaError,
-    domain::{registration::ContextSourceRegistration, uri::NGSI_LD_URN_NID},
     query::{compiled::CompiledCsrQuery, sql::csr as csr_sql},
     repository::{
         csource_registration::{mapper::row_to_csr, params::CreateCsrParams},
         geometry::encode_optional,
     },
     service::csource_merge::ResolvedCsrUpdate,
-    tenancy::types::TenantName,
 };
+use andromeda_domain::{registration::ContextSourceRegistration, tenant::TenantName, uri::NGSI_LD_URN_NID};
 use sea_query::{Alias, Expr as SeaExpr, Order, PostgresQueryBuilder, Query, SelectStatement};
 use sea_query_binder::SqlxBinder;
 use sqlx::postgres::PgPool;

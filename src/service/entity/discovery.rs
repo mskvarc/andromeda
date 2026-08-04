@@ -1,12 +1,12 @@
 use crate::{
     core::error::AndromedaError,
-    domain::{
-        ngsi_ld_urn::{AttributeListId, EntityTypeListId},
-        types::{AttributeDetail, EntityType, EntityTypeInfo, Types},
-        uri::NGSI_LD_URN_NID,
-    },
     jsonld::{CompactOptions, ContextSpec, ContextStripping, JsonLdEngine},
     repository::entity::{repo::EntityRepository, rows::AttributeSummaryRow},
+};
+use andromeda_domain::{
+    ngsi_ld_urn::{AttributeListId, EntityTypeListId},
+    types::{AttributeDetail, EntityType, EntityTypeInfo, Types},
+    uri::NGSI_LD_URN_NID,
 };
 use jsonld::Expandable;
 use serde_json::Value;
@@ -222,7 +222,7 @@ impl EntityDiscoveryService {
             let mut attributes = Vec::new();
             for (iri, meta) in attr_data {
                 let iri: String = iri;
-                attributes.push(crate::domain::types::Attribute {
+                attributes.push(andromeda_domain::types::Attribute {
                     id: iri.clone(), // clone: value also needed for attribute_name field
                     type_: "Attribute".to_string(),
                     attribute_name: iri.clone(), // clone: separate owned field, iri consumed by later field would not suffice
@@ -296,7 +296,7 @@ impl EntityDiscoveryService {
             let id = UrnBuilder::new(NGSI_LD_URN_NID, &format!("AttributeList:{}", Uuid::new_v4())).build()?;
             let id = AttributeListId::try_from(id)?;
 
-            let list = crate::domain::types::AttributeList {
+            let list = andromeda_domain::types::AttributeList {
                 id,
                 type_: "AttributeList".to_string(),
                 attribute_list: compacted_names,
@@ -316,7 +316,7 @@ impl EntityDiscoveryService {
             .await?
             .ok_or_else(|| AndromedaError::entity_not_found(attr_id))?;
 
-        let attr = crate::domain::types::Attribute {
+        let attr = andromeda_domain::types::Attribute {
             id: attr_iri.clone(), // clone: value also needed for attribute_name field below
             type_: "Attribute".to_string(),
             attribute_name: attr_iri,
@@ -417,7 +417,7 @@ fn extract_attribute_types(value: &Value) -> Option<Vec<String>> {
             let types: Vec<String> = arr
                 .iter()
                 .filter_map(|v| v.as_str())
-                .filter_map(|s| crate::domain::attribute_type::AttributeType::from_iri_suffix(s).map(|t| t.to_string()))
+                .filter_map(|s| andromeda_domain::attribute_type::AttributeType::from_iri_suffix(s).map(|t| t.to_string()))
                 .collect();
             if types.is_empty() { None } else { Some(types) }
         }

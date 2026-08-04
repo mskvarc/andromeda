@@ -5,13 +5,14 @@
 //! delivery) and the subscription cache (outbox entry generation).
 
 use crate::{
-    domain::{
-        geometry::Geometry,
-        notification::{ChangeEvent, ChangeOrigin, CompiledGeoQuery, CompiledGeoRel, CompiledScopePattern, CompiledScopeTerm, CompiledSubscription},
-        subscription::SubscriptionStatus,
-        vocab,
-    },
     query::q,
+    service::compiled_subscription::{CompiledGeoQuery, CompiledGeoRel, CompiledScopePattern, CompiledScopeTerm, CompiledSubscription},
+};
+use andromeda_domain::{
+    geometry::Geometry,
+    notification::{ChangeEvent, ChangeOrigin},
+    subscription::SubscriptionStatus,
+    vocab,
 };
 use chrono::Utc;
 use serde_json::Value;
@@ -263,13 +264,10 @@ fn compiled_scope_term_matches(term: &CompiledScopeTerm, scope: &str) -> bool {
 mod tests {
     #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::*;
-    use crate::{
-        domain::{
-            notification::{ChangeEvent, ChangeOrigin, CompiledSubscription, TriggerReason},
-            subscription::SubscriptionStatus,
-        },
-        renderer::SysAttrsInclusion,
-        transport::endpoint::EndpointTransport,
+    use crate::{renderer::SysAttrsInclusion, transport::endpoint::EndpointTransport};
+    use andromeda_domain::{
+        notification::{ChangeEvent, ChangeOrigin, TriggerReason},
+        subscription::SubscriptionStatus,
     };
 
     fn make_sub() -> CompiledSubscription {

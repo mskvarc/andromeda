@@ -1,11 +1,13 @@
 //! Background worker that periodically deletes entities whose expiresAt has passed (§4.22).
 
 use crate::{
-    domain::{
+    repository::entity::repo::EntityRepository,
+};
+use andromeda_domain::{
+    {
         notification::{ChangeEvent, TriggerReason},
         uri::Uri,
     },
-    repository::entity::repo::EntityRepository,
 };
 use std::time::Duration;
 use tokio::sync::broadcast;

@@ -10,17 +10,15 @@ use bytes::Bytes;
 use serde_json::Value;
 use tracing::{debug, warn};
 
-use crate::{
-    tenancy::types::TenantName,
-    transport::{
-        endpoint::{EndpointTransport, extract_key_value_pairs},
-        http::{HttpTransport, HttpTransportConfig},
-        mqtt::{MqttPoolConfig, MqttTransportHandle, MqttTransportPool},
-        sse::{SseConnectionRegistry, SseNotificationEvent},
-        types::{DeliveryOutcome, DeliveryRequest, NotificationTransport, TenantHeaderValue, TransportError, content_type_for_accept},
-        ws::{WsConnectionRegistry, WsNotificationMessage},
-    },
+use crate::transport::{
+    endpoint::{EndpointTransport, extract_key_value_pairs},
+    http::{HttpTransport, HttpTransportConfig},
+    mqtt::{MqttPoolConfig, MqttTransportHandle, MqttTransportPool},
+    sse::{SseConnectionRegistry, SseNotificationEvent},
+    types::{DeliveryOutcome, DeliveryRequest, NotificationTransport, TenantHeaderValue, TransportError, content_type_for_accept},
+    ws::{WsConnectionRegistry, WsNotificationMessage},
 };
+use andromeda_domain::tenant::TenantName;
 
 /// Unified transport dispatcher routing to HTTP, MQTT, SSE, or WebSocket.
 pub struct TransportDispatcher {

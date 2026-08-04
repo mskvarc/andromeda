@@ -3,11 +3,11 @@
 
 use crate::{
     core::error::AndromedaError,
-    domain::subscription::Subscription,
     jsonld::{ContextSpec, JsonLdEngine},
     query::q,
     repository::subscription_store::params::SubscriptionFields,
 };
+use andromeda_domain::subscription::Subscription;
 use chrono::Utc;
 use serde_json::Value;
 use tracing::warn;

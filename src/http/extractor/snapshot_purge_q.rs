@@ -5,10 +5,8 @@
 //! query parameter. Missing or malformed values produce `400 BadRequestData`
 //! (clause 6.3.2).
 
-use crate::{
-    domain::snapshot_filter::{SnapshotPurgeFilter, parse_snapshot_q},
-    http::extractor::error::ExtractorRejection,
-};
+use crate::http::extractor::error::ExtractorRejection;
+use andromeda_domain::snapshot_filter::{SnapshotPurgeFilter, parse_snapshot_q};
 use axum::{extract::FromRequestParts, http::request::Parts};
 use serde::Deserialize;
 

@@ -3,7 +3,6 @@
 use crate::{
     api::tenant::TenantState,
     core::error::{AndromedaError, ResultInstanceExt},
-    domain::uri::Uri,
     http::{
         error::problem::NgsiLdError,
         extractor::{accept::AcceptFormat, context::ContextUrl, entity_query::EntityQuery, prefer::PreferHeader},
@@ -18,6 +17,7 @@ use crate::{
     },
     service::entity_map::parse_iso8601_duration,
 };
+use andromeda_domain::uri::Uri;
 use axum::{
     Json,
     extract::{OriginalUri, Path},

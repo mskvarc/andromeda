@@ -2,9 +2,9 @@
 
 use crate::{
     core::error::AndromedaError,
-    domain::subscription::SubscriptionStatus,
     repository::subscription_store::params::{DatasetIdPresence, SubscriptionFields},
 };
+use andromeda_domain::subscription::SubscriptionStatus;
 use sqlx::postgres::PgPool;
 use tracing::info;
 

@@ -7,13 +7,13 @@
 
 use crate::{
     core::error::AndromedaError,
-    domain::{
-        attribute::{Attribute, AttributeValue, LanguageMapKey, LanguageMapValue, LanguageProperty},
-        entity::Entity,
-        serde_helpers,
-    },
     http::model::language::{LanguageFilter, LanguageRange},
     renderer::Renderer,
+};
+use andromeda_domain::{
+    attribute::{Attribute, AttributeValue, LanguageMapKey, LanguageMapValue, LanguageProperty},
+    entity::Entity,
+    serde_helpers,
 };
 use chrono::{DateTime, SecondsFormat, Utc};
 use indexmap::IndexMap;
@@ -591,7 +591,8 @@ pub(crate) fn decode_percent_encoded_uris(value: &mut Value) {
 mod tests {
     #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::{EntityRenderer, RenderMode, concise_value, decode_percent_encoded_uris};
-    use crate::{domain::entity::Entity, http::model::language::LanguageFilter, renderer::Renderer};
+    use crate::{http::model::language::LanguageFilter, renderer::Renderer};
+    use andromeda_domain::entity::Entity;
     use serde_json::{Value, json};
 
     fn parse_entity(value: Value) -> Entity {

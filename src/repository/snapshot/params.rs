@@ -1,6 +1,6 @@
 //! Repository input parameters for snapshot persistence.
 
-use crate::domain::{ngsi_ld_urn::SnapshotId, snapshot::SnapshotStatus};
+use andromeda_domain::{ngsi_ld_urn::SnapshotId, snapshot::SnapshotStatus};
 use chrono::{DateTime, Utc};
 use serde_json::Value;
 use sqlx::postgres::PgPool;

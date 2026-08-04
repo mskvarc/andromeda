@@ -1,15 +1,11 @@
 pub(crate) mod payload;
 
 use crate::{
-    domain::{
-        notification::{ChangeEvent, CompiledSubscription, Notification, NotificationType, SubscriptionChange, TriggerReason},
-        uri::{NGSI_LD_URN_NID, Uri},
-        vocab,
-    },
     jsonld::JsonLdEngine,
     renderer::SysAttrsInclusion,
     repository::{entity::repo::EntityRepository, subscription::repo::SubscriptionRepository, subscription_store::repo::SubscriptionStore},
     service::{
+        compiled_subscription::CompiledSubscription,
         entity::{inject_sys_attrs, query::EntityQueryService},
         subscription_cache::SubscriptionCache,
         subscription_throttle::ceiling_for_throttle,
@@ -18,6 +14,11 @@ use crate::{
         dispatch::{DeliveryResult, TransportDispatcher, build_delivery_request},
         endpoint::EndpointTransport,
     },
+};
+use andromeda_domain::{
+    notification::{ChangeEvent, Notification, NotificationType, SubscriptionChange, TriggerReason},
+    uri::{NGSI_LD_URN_NID, Uri},
+    vocab,
 };
 use chrono::{SecondsFormat, Utc};
 use futures::{StreamExt, stream};
@@ -477,14 +478,11 @@ mod tests {
     #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::*;
     use crate::{
-        domain::{
-            notification::{ChangeOrigin, CompiledSelector},
-            subscription::SubscriptionStatus,
-        },
         query::q::parser,
-        service::subscription_matching::matches_subscription,
+        service::{compiled_subscription::CompiledSelector, subscription_matching::matches_subscription},
         transport::endpoint::EndpointTransport,
     };
+    use andromeda_domain::{notification::ChangeOrigin, subscription::SubscriptionStatus};
     use payload::filter_entity_attributes;
     use regex::Regex;
 

@@ -1,11 +1,5 @@
 use crate::{
     core::error::AndromedaError,
-    domain::{
-        expanded::{DatasetSelection, ExpandedEntityError, OverwritePolicy, removed_attribute_instances},
-        notification::{ChangeEvent, TriggerReason},
-        uri::Uri,
-        vocab,
-    },
     jsonld::ContextSpec,
     query::compiled::PurgeMode,
     service::entity::{
@@ -17,6 +11,12 @@ use crate::{
         unwrap_expanded_ref,
         validate_attribute_envelopes,
     },
+};
+use andromeda_domain::{
+    expanded::{DatasetSelection, ExpandedEntityError, OverwritePolicy, removed_attribute_instances},
+    notification::{ChangeEvent, TriggerReason},
+    uri::Uri,
+    vocab,
 };
 use serde_json::Value;
 use std::sync::Arc;
@@ -68,7 +68,7 @@ impl EntityService {
 
         // Load existing entity, apply append, save back
         let mut existing = self.repo.get(&id).await?.ok_or_else(|| AndromedaError::entity_not_found(&id))?;
-        let not_appended = crate::domain::expanded::append_entity_attrs(&mut existing, attrs, overwrite)?;
+        let not_appended = andromeda_domain::expanded::append_entity_attrs(&mut existing, attrs, overwrite)?;
 
         let mut uow = self.uow.begin().await?;
         uow.save_entity(build_save_params(&id, &existing)).await?;
@@ -105,7 +105,7 @@ impl EntityService {
         let mut existing = self.repo.get(&id).await?.ok_or_else(|| AndromedaError::entity_not_found(&id))?;
         let previous_attributes = self.change_tx.as_ref().map(|_| existing.clone()); // clone: snapshot before mutation for showChanges diff
         let attrs_before: std::collections::HashSet<String> = extract_attribute_keys(&existing).into_iter().collect();
-        let not_updated = crate::domain::expanded::update_entity_attrs(&mut existing, attrs)?;
+        let not_updated = andromeda_domain::expanded::update_entity_attrs(&mut existing, attrs)?;
 
         // Detect which attributes were deleted by the update
         let attrs_after: std::collections::HashSet<String> = extract_attribute_keys(&existing).into_iter().collect();
@@ -184,7 +184,7 @@ impl EntityService {
         let previous_attributes = self.change_tx.as_ref().map(|_| existing.clone()); // clone: snapshot before mutation for showChanges diff
         let attrs_before: std::collections::HashSet<String> = extract_attribute_keys(&existing).into_iter().collect();
 
-        crate::domain::expanded::partial_update_attr(&mut existing, &attr_iri, dataset_id, attr_value)?;
+        andromeda_domain::expanded::partial_update_attr(&mut existing, &attr_iri, dataset_id, attr_value)?;
 
         // Detect if the attribute was actually deleted (null sentinel)
         let attrs_after: std::collections::HashSet<String> = extract_attribute_keys(&existing).into_iter().collect();
@@ -236,7 +236,7 @@ impl EntityService {
             DatasetSelection::Default => vec![None],
         };
 
-        crate::domain::expanded::delete_attr(&mut existing, &attr_iri, selection)?;
+        andromeda_domain::expanded::delete_attr(&mut existing, &attr_iri, selection)?;
 
         let mut uow = self.uow.begin().await?;
         uow.save_entity(build_save_params(&id, &existing)).await?;
@@ -288,7 +288,7 @@ impl EntityService {
         // Single fetch: used for showChanges and replacement
         let mut existing = self.repo.get(&id).await?.ok_or_else(|| AndromedaError::entity_not_found(&id))?;
         let previous_attributes = self.change_tx.as_ref().map(|_| existing.clone()); // clone: snapshot before mutation for showChanges diff
-        crate::domain::expanded::replace_attr(&mut existing, &attr_iri, dataset_id, attr_value)?;
+        andromeda_domain::expanded::replace_attr(&mut existing, &attr_iri, dataset_id, attr_value)?;
 
         let mut uow = self.uow.begin().await?;
         uow.save_entity(build_save_params(&id, &existing)).await?;

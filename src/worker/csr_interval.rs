@@ -1,9 +1,4 @@
 use crate::{
-    domain::{
-        notification::{CsourceNotification, CsourceNotificationType},
-        subscription::Subscription,
-        uri::{NGSI_LD_URN_NID, Uri},
-    },
     repository::{
         csource_registration::repo::CsourceRegistrationRepository,
         csource_subscription::repo::CsourceSubscriptionRepository,
@@ -13,6 +8,11 @@ use crate::{
         dispatch::{DeliveryResult, TransportDispatcher, build_delivery_request},
         endpoint::parse_endpoint_transport,
     },
+};
+use andromeda_domain::{
+    notification::{CsourceNotification, CsourceNotificationType},
+    subscription::Subscription,
+    uri::{NGSI_LD_URN_NID, Uri},
 };
 use chrono::Utc;
 use serde_json::Value;

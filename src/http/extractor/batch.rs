@@ -6,7 +6,6 @@
 
 use crate::{
     core::error::AndromedaError,
-    domain::entity::Entity,
     http::{
         error::{
             batch::BatchEntityError,
@@ -16,6 +15,7 @@ use crate::{
     },
     jsonld::ContextSpec,
 };
+use andromeda_domain::entity::Entity;
 use axum::{
     body::Bytes,
     extract::{FromRequest, Request},

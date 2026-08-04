@@ -1,16 +1,11 @@
 //! Private helpers shared across temporal renderers.
 
-use crate::{
-    core::error::AndromedaError,
-    domain::{
-        attribute_type::AttributeType,
-        geometry::Geometry,
-        temporal::{TeaEntry, ValueType},
-        vocab,
-    },
-    renderer::SysAttrsInclusion,
-    repository::geometry::Ewkb,
-    service::temporal::format_datetime,
+use crate::{core::error::AndromedaError, renderer::SysAttrsInclusion, repository::geometry::Ewkb, service::temporal::format_datetime};
+use andromeda_domain::{
+    attribute_type::AttributeType,
+    geometry::Geometry,
+    temporal::{TeaEntry, ValueType},
+    vocab,
 };
 use chrono::{DateTime, Utc};
 use iri_rs::IriBuf;

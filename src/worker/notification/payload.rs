@@ -2,15 +2,14 @@
 //! filtering, nullification, and format simplification.
 
 use crate::{
-    domain::{
-        entity::Entity,
-        notification::{CompiledSubscription, TriggerReason},
-        vocab,
-    },
     jsonld::{CompactOptions, ContextSpec, ContextStripping, JsonLdEngine},
     renderer::{Renderer, SysAttrsInclusion, entity::RenderMode, snapshot::SnapshotRenderer},
-    service::entity::{expanded_entity_object_mut, inject_attr_sys_attrs, query::EntityQueryService},
+    service::{
+        compiled_subscription::CompiledSubscription,
+        entity::{expanded_entity_object_mut, inject_attr_sys_attrs, query::EntityQueryService},
+    },
 };
+use andromeda_domain::{entity::Entity, notification::TriggerReason, vocab};
 use chrono::{DateTime, SecondsFormat, Utc};
 use serde_json::Value;
 use std::{
@@ -779,7 +778,7 @@ fn previous_key_for_attr(val: &Value) -> &'static str {
     val.as_object()
         .and_then(|o| o.get("type"))
         .and_then(|t| t.as_str())
-        .and_then(|s| s.parse::<crate::domain::attribute_type::AttributeType>().ok())
+        .and_then(|s| s.parse::<andromeda_domain::attribute_type::AttributeType>().ok())
         .map_or("previousValue", |t| t.previous_key())
 }
 

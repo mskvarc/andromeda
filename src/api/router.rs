@@ -1,7 +1,6 @@
 use crate::{
     api::state::{AndromedaState, AppState},
     core::{batch_activity::BatchActivityTracker, config::RuntimeConfig, error::AndromedaError},
-    domain::notification::{ChangeEvent, CsourceSubscriptionChange, CsrChangeEvent, SubscriptionChange},
     health::{Health, database::DatabaseHealthIndicator, mqtt::MqttHealthIndicator},
     http::handler::{
         attribute,
@@ -66,6 +65,7 @@ use crate::{
         subscription_expiration::SubscriptionExpirationWorker,
     },
 };
+use andromeda_domain::notification::{ChangeEvent, CsourceSubscriptionChange, CsrChangeEvent, SubscriptionChange};
 use axum::{
     Router,
     extract::DefaultBodyLimit,

@@ -2,16 +2,16 @@
 
 use crate::{
     core::error::AndromedaError,
-    domain::{
-        geometry::Geometry,
-        temporal::{TimeProp, TimeRel},
-    },
     query::{
         compiled::{CompiledCsrQuery, GeoRel},
         q::ast::{AttrPath, CmpOp, CompareValue, Expr, Predicate, Scalar},
         sql::{BuiltQuery, sea_values_to_bind_values},
     },
     repository::geometry::{Ewkb, encode},
+};
+use andromeda_domain::{
+    geometry::Geometry,
+    temporal::{TimeProp, TimeRel},
 };
 use sea_query::{Alias, Condition, Expr as SeaExpr, Order, PostgresQueryBuilder, Query};
 use std::borrow::Cow;
@@ -400,13 +400,11 @@ fn scalar_to_value(scalar: &Scalar) -> (&'static str, String) {
 mod tests {
     #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::*;
-    use crate::{
-        domain::temporal::{TimeProp, TimeRel},
-        query::{
-            compiled::{CompiledCsrQuery, CompiledCsrTemporalFilter, GeoQuery, IdPattern},
-            q::parser,
-        },
+    use crate::query::{
+        compiled::{CompiledCsrQuery, CompiledCsrTemporalFilter, GeoQuery, IdPattern},
+        q::parser,
     };
+    use andromeda_domain::temporal::{TimeProp, TimeRel};
     use chrono::{DateTime, Utc};
 
     fn dt(s: &str) -> DateTime<Utc> {

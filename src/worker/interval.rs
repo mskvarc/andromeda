@@ -1,10 +1,4 @@
 use crate::{
-    domain::{
-        entity::Entity,
-        notification::{Notification, NotificationType},
-        subscription::Subscription,
-        uri::{NGSI_LD_URN_NID, Uri},
-    },
     jsonld::{CompactOptions, ContextSpec, ContextStripping, JsonLdEngine},
     query::q,
     repository::{entity::repo::EntityRepository, subscription::repo::SubscriptionRepository, subscription_store::repo::SubscriptionStore},
@@ -13,6 +7,12 @@ use crate::{
         dispatch::{DeliveryResult, TransportDispatcher, build_delivery_request},
         endpoint::parse_endpoint_transport,
     },
+};
+use andromeda_domain::{
+    entity::Entity,
+    notification::{Notification, NotificationType},
+    subscription::Subscription,
+    uri::{NGSI_LD_URN_NID, Uri},
 };
 use chrono::Utc;
 use futures::{StreamExt, stream};

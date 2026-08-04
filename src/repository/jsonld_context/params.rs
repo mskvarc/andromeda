@@ -1,6 +1,6 @@
 //! Repository input parameters for the JSON-LD context store.
 
-use crate::domain::uri::Uri;
+use andromeda_domain::uri::Uri;
 
 /// SQL projection shape selector — whether to fetch full metadata columns or
 /// just identifier/url for listing and retrieval.
@@ -16,7 +16,7 @@ pub enum DetailLevel {
 #[derive(Debug)]
 pub struct ListContextsParams<'a> {
     /// Optional kind filter.
-    pub kind: Option<&'a crate::domain::jsonld_context::ContextKind>,
+    pub kind: Option<&'a andromeda_domain::jsonld_context::ContextKind>,
     /// Projection shape (Summary vs Full).
     pub detail_level: DetailLevel,
     /// Keyset cursor — return rows with `id > after`.

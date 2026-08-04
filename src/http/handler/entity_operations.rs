@@ -1,7 +1,6 @@
 use crate::{
     api::tenant::{TenantState, TenantStateOrCreate},
     core::error::{AndromedaError, ResultInstanceExt},
-    domain::{entity::EntityTypeValue, expanded::OverwritePolicy},
     http::{
         error::{batch::BatchOperationResult, problem::NgsiLdError},
         extractor::{
@@ -34,6 +33,7 @@ use crate::{
         entity::{BatchSideEffectMode, provision_forwarding::ForwardingModes, query::EntityQueryService},
     },
 };
+use andromeda_domain::{entity::EntityTypeValue, expanded::OverwritePolicy};
 use axum::{
     body::Bytes,
     extract::OriginalUri,

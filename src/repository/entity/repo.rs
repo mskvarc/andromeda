@@ -2,7 +2,6 @@
 
 use crate::{
     core::error::AndromedaError,
-    domain::{notification::SysAttrsSnapshot, vocab::expanded::properties},
     query::{
         compiled::CompiledEntityQuery,
         sql::{self, BindValue, q_filter::ResolvedAttributeNames},
@@ -15,6 +14,7 @@ use crate::{
         geometry::encode_optional,
     },
 };
+use andromeda_domain::{notification::SysAttrsSnapshot, vocab::expanded::properties};
 use serde_json::Value;
 use sqlx::{Executor, Postgres, Row, Transaction, postgres::PgPool};
 use std::collections::HashMap;

@@ -12,12 +12,12 @@
 
 use crate::{
     core::error::AndromedaError,
-    domain::entity::Entity,
     renderer::{
         Renderer,
         entity::{RenderMode, apply_inline_join, concise_value, simplify_value},
     },
 };
+use andromeda_domain::entity::Entity;
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 

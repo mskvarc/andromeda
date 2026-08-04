@@ -41,9 +41,9 @@
 
 use crate::{
     core::error::AndromedaError,
-    domain::{temporal::AttributeNameId, vocab},
     query::q::ast::{AttrPath, CmpOp, CompareValue, Expr, Predicate, Scalar},
 };
+use andromeda_domain::{temporal::AttributeNameId, vocab};
 use chrono::{DateTime, Utc};
 use sea_query::{Condition, Expr as SeaExpr, Value as SeaValue};
 use std::collections::HashMap;

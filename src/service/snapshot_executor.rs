@@ -11,19 +11,6 @@
 //! `snapshot_entities` / `snapshot_temporal_entities`.
 
 use crate::{
-    domain::{
-        ngsi_ld_urn::SnapshotId,
-        snapshot::{
-            ExecutionResultDetails,
-            ExecutionResultStatus,
-            Snapshot,
-            SnapshotEntitySelector,
-            SnapshotGeoQuery,
-            SnapshotQuery,
-            SnapshotStatus,
-            SnapshotTemporalQuery,
-        },
-    },
     http::parameter::query::{entity::EntityQueryParameters, temporal::TemporalQueryParameters},
     jsonld::ContextSpec,
     repository::snapshot::{params::SnapshotEntityInput, repo::SnapshotRepository},
@@ -32,6 +19,19 @@ use crate::{
         entity::query::EntityQueryService,
         snapshot_status::validate_preparing_transition,
         temporal::TemporalService,
+    },
+};
+use andromeda_domain::{
+    ngsi_ld_urn::SnapshotId,
+    snapshot::{
+        ExecutionResultDetails,
+        ExecutionResultStatus,
+        Snapshot,
+        SnapshotEntitySelector,
+        SnapshotGeoQuery,
+        SnapshotQuery,
+        SnapshotStatus,
+        SnapshotTemporalQuery,
     },
 };
 use compact_str::CompactString;
@@ -445,7 +445,7 @@ const fn compute_final_status(any_success_with_results: bool, any_failure: bool,
 mod tests {
     #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::*;
-    use crate::domain::snapshot::{SnapshotEntitySelector, SnapshotGeoQuery, SnapshotQuery, SnapshotTemporalQuery};
+    use andromeda_domain::snapshot::{SnapshotEntitySelector, SnapshotGeoQuery, SnapshotQuery, SnapshotTemporalQuery};
 
     fn base_query() -> SnapshotQuery {
         SnapshotQuery {

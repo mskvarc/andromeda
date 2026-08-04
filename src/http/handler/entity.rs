@@ -1,11 +1,6 @@
 use crate::{
     api::tenant::{TenantState, TenantStateOrCreate},
     core::error::{AndromedaError, ResultInstanceExt},
-    domain::{
-        entity::{Entity, EntityPatch, EntityTypeValue},
-        expanded::{DatasetSelection, OverwritePolicy},
-        uri::Uri,
-    },
     http::{
         error::{
             batch::{BatchEntityError, BatchOperationResult},
@@ -59,6 +54,11 @@ use crate::{
         subscription_cache::{compile_geo_q, compile_scope_q},
         subscription_matching::{matches_compiled_geo_query, matches_compiled_scope_pattern},
     },
+};
+use andromeda_domain::{
+    entity::{Entity, EntityPatch, EntityTypeValue},
+    expanded::{DatasetSelection, OverwritePolicy},
+    uri::Uri,
 };
 use axum::{
     Json,

@@ -6,12 +6,12 @@
 //! has been parsed into an AST.
 
 use crate::{
-    domain::{
-        geometry::Geometry,
-        temporal::{AggrMethod, TemporalFormat, TimeProp, TimeRel},
-    },
     query::{error::QueryError, q::ast::Expr},
     renderer::SysAttrsInclusion,
+};
+use andromeda_domain::{
+    geometry::Geometry,
+    temporal::{AggrMethod, TemporalFormat, TimeProp, TimeRel},
 };
 use chrono::{DateTime, Utc};
 use langtag::LangTagBuf;

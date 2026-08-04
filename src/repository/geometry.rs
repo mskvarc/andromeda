@@ -3,11 +3,12 @@
 //!
 //! NGSI-LD says nothing about EWKB: ETSI GS CIM 009 v1.9.1 specifies
 //! GeoProperty values as GeoJSON per RFC 7946, and that is what
-//! [`crate::domain::geometry::Geometry`] models. EWKB is what PostGIS accepts
+//! [`andromeda_domain::geometry::Geometry`] models. EWKB is what PostGIS accepts
 //! natively on its binary protocol, so the encode and decode happen here, at
 //! the store boundary, and nowhere above it.
 
-use crate::{core::error::AndromedaError, domain::geometry::Geometry};
+use crate::core::error::AndromedaError;
+use andromeda_domain::geometry::Geometry;
 use bytes::Bytes;
 use geozero::{CoordDimensions, ToGeo, ToWkb, wkb::Ewkb as GeozeroEwkb};
 use sqlx::{
@@ -265,5 +266,26 @@ mod tests {
         bytes[5..9].copy_from_slice(&3857_i32.to_le_bytes());
         let error = Ewkb::try_from(bytes.as_slice()).expect_err("must reject");
         assert!(matches!(error, EwkbError::UnexpectedSrid { srid: 3857 }), "got {error:?}");
+    }
+
+    #[test]
+    fn the_domain_crate_declares_no_persistence_dependencies() {
+        // The boundary the extraction bought. If any of these reappears in the
+        // domain manifest, a storage concern has drifted back below the line
+        // and this test is the only thing that notices.
+        const MANIFEST: &str = include_str!("../../crates/andromeda-domain/Cargo.toml");
+        let dependencies = MANIFEST
+            .split("[dependencies]")
+            .nth(1)
+            .expect("domain manifest has a [dependencies] table")
+            .split("\n[")
+            .next()
+            .expect("dependency table is terminated");
+        for forbidden in ["sqlx", "geozero", "bytes", "axum", "reqwest", "confique", "clap", "tokio"] {
+            assert!(
+                !dependencies.lines().any(|line| line.trim_start().starts_with(forbidden)),
+                "andromeda-domain must not depend on {forbidden}"
+            );
+        }
     }
 }

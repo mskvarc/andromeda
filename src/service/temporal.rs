@@ -2,7 +2,6 @@
 
 use crate::{
     core::error::AndromedaError,
-    domain::{expanded::extract_expires_at, temporal::TemporalFormat, vocab},
     http::{
         parameter::query::{SharedQueryParams, temporal::TemporalQueryParameters},
         response::content_range::build_content_range,
@@ -38,6 +37,7 @@ use crate::{
     },
     worker::attribute_current_materializer::AttributeCurrentBarrier,
 };
+use andromeda_domain::{expanded::extract_expires_at, temporal::TemporalFormat, vocab};
 use chrono::{DateTime, SecondsFormat, Utc};
 use serde_json::{Value, json};
 use sqlx::Row;

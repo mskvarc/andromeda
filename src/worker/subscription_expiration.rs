@@ -1,13 +1,11 @@
-use crate::{
-    domain::{
-        notification::{CsourceSubscriptionChange, SubscriptionChange},
-        uri::Uri,
-    },
-    repository::{
-        csource_subscription::repo::CsourceSubscriptionRepository,
-        subscription::repo::SubscriptionRepository,
-        subscription_store::repo::SubscriptionStore,
-    },
+use crate::repository::{
+    csource_subscription::repo::CsourceSubscriptionRepository,
+    subscription::repo::SubscriptionRepository,
+    subscription_store::repo::SubscriptionStore,
+};
+use andromeda_domain::{
+    notification::{CsourceSubscriptionChange, SubscriptionChange},
+    uri::Uri,
 };
 use std::time::Duration;
 use tokio::sync::broadcast;

@@ -1,7 +1,8 @@
 //! Temporal simplify renderer: deserializes a compacted temporal entity value
 //! and produces its key-values simplified form.
 
-use crate::{core::error::AndromedaError, domain::entity::Entity, renderer::Renderer};
+use crate::{core::error::AndromedaError, renderer::Renderer};
+use andromeda_domain::entity::Entity;
 use serde_json::Value;
 
 /// Payload shape for [`TemporalSimplifyRenderer`].

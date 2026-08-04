@@ -6,10 +6,6 @@
 
 use crate::{
     core::error::AndromedaError,
-    domain::{
-        subscription::{Subscription, SubscriptionStatus},
-        uri::Uri,
-    },
     jsonld::{
         ContextSpec,
         JsonLdEngine,
@@ -21,6 +17,10 @@ use crate::{
     },
     service::{subscription_core, subscription_status::compute_updated_status},
     transport::endpoint::parse_endpoint_transport,
+};
+use andromeda_domain::{
+    subscription::{Subscription, SubscriptionStatus},
+    uri::Uri,
 };
 use async_trait::async_trait;
 use serde_json::Value;

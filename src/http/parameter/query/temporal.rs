@@ -1,11 +1,7 @@
 //! Query parameters for the NGSI-LD Temporal API.
 
-use crate::{
-    domain::temporal::{AggrMethod, TemporalFormat, TimeProp, TimeRel},
-    http::model::temporal_query_request::TemporalQueryRequest,
-    impl_shared_query_params,
-    query::error::QueryError,
-};
+use crate::{http::model::temporal_query_request::TemporalQueryRequest, impl_shared_query_params, query::error::QueryError};
+use andromeda_domain::temporal::{AggrMethod, TemporalFormat, TimeProp, TimeRel};
 use serde::Deserialize;
 
 /// Raw HTTP query parameters for temporal entity queries.

@@ -1,7 +1,6 @@
 //! NGSI-LD response type for entity collections with pre-rendered payload.
 
 use crate::{
-    domain::ngsi_ld_urn::SnapshotId,
     http::{
         header::{ngsild_results_count::NgsiLdResultsCount, ngsild_warning::NgsiLdWarning, preference_applied::PreferenceApplied},
         response::{
@@ -11,6 +10,7 @@ use crate::{
     },
     renderer::{VersionAdaptation, response::RenderedOutput},
 };
+use andromeda_domain::ngsi_ld_urn::SnapshotId;
 use axum::{
     http::{HeaderMap, HeaderValue, StatusCode, header::CONTENT_TYPE},
     response::{IntoResponse, Response},

@@ -1,7 +1,8 @@
 //! Service-side helpers that materialise snapshot JSON columns for
 //! persistence, so the repository receives already-serialised blobs.
 
-use crate::{core::error::AndromedaError, domain::snapshot::Snapshot, repository::snapshot::params::InsertSnapshotParams};
+use crate::{core::error::AndromedaError, repository::snapshot::params::InsertSnapshotParams};
+use andromeda_domain::snapshot::Snapshot;
 use serde_json::Value;
 
 /// Build an [`InsertSnapshotParams`] from a domain [`Snapshot`].

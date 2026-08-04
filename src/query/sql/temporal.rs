@@ -4,11 +4,6 @@
 
 use crate::{
     core::error::AndromedaError,
-    domain::{
-        geometry::Geometry,
-        temporal::{AggrMethod, TemporalFormat, TimeProp, TimeRel},
-        vocab,
-    },
     query::{
         compiled::{CompiledTemporalQuery, GeoQuery, TypeExpr},
         sql::{
@@ -33,6 +28,11 @@ use crate::{
         },
     },
     repository::geometry::{Ewkb, encode},
+};
+use andromeda_domain::{
+    geometry::Geometry,
+    temporal::{AggrMethod, TemporalFormat, TimeProp, TimeRel},
+    vocab,
 };
 use sea_query::{Alias, Condition, Expr as SeaExpr, Func, JoinType, PostgresQueryBuilder, Query};
 use std::borrow::Cow;
@@ -1000,7 +1000,8 @@ mod tests {
 
     #[test]
     fn stage1_q_filter_correlates_on_the_catalogue_entity_id() {
-        use crate::{domain::temporal::AttributeNameId, query::q::parser};
+        use crate::query::q::parser;
+        use andromeda_domain::temporal::AttributeNameId;
         let mut compiled = minimal_compiled();
         compiled.q_expr = Some(parser::parse("\"https://example.com/speed\">50").unwrap());
         let names = ResolvedAttributeNames::from_pairs([("https://example.com/speed".to_string(), AttributeNameId::from(7))]);

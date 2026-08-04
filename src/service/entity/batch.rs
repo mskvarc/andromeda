@@ -1,12 +1,5 @@
 use crate::{
     core::error::AndromedaError,
-    domain::{
-        entity::Entity,
-        expanded::{self, AttributeInstanceKey, OverwritePolicy, append_entity_attrs, merge_entity, removed_attribute_instances, update_entity_attrs},
-        geometry::Geometry,
-        notification::{ChangeEvent, SysAttrsSnapshot, TriggerReason},
-        uri::Uri,
-    },
     jsonld::{BatchContextHandle, ContextSpec, JsonLdEngine},
     query::sql,
     repository::{
@@ -24,6 +17,13 @@ use crate::{
         unwrap_expanded_ref,
         validate_attribute_envelopes,
     },
+};
+use andromeda_domain::{
+    entity::Entity,
+    expanded::{self, AttributeInstanceKey, OverwritePolicy, append_entity_attrs, merge_entity, removed_attribute_instances, update_entity_attrs},
+    geometry::Geometry,
+    notification::{ChangeEvent, SysAttrsSnapshot, TriggerReason},
+    uri::Uri,
 };
 use futures::{StreamExt, stream};
 use serde_json::Value;

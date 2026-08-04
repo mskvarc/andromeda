@@ -4,19 +4,19 @@
 
 use crate::{
     core::error::AndromedaError,
-    domain::{
-        attribute_type::AttributeType,
-        expanded::{expanded_geo_node_to_geometry, is_system_attribute},
-        geometry::Geometry,
-        temporal::ValueType,
-        vocab,
-    },
     query::sql::scope_to_ltree,
     repository::temporal::{
         params::{HistoryBatchEntry, HistoryValues, ScopeHistoryEntry, TeaBatchEntry, UpdateInstanceParams},
         repo::TemporalRepository,
         rows::TeaBatchResultRow,
     },
+};
+use andromeda_domain::{
+    attribute_type::AttributeType,
+    expanded::{expanded_geo_node_to_geometry, is_system_attribute},
+    geometry::Geometry,
+    temporal::ValueType,
+    vocab,
 };
 use chrono::{DateTime, Utc};
 use iri_rs::IriBuf;
@@ -81,7 +81,7 @@ impl TemporalRecorder {
     }
 
     /// Look up TEA entries for a given entity + attribute IRI.
-    pub async fn get_teas_for_entity_attr(&self, entity_id: &str, attr_iri: &str) -> Result<Vec<crate::domain::temporal::TeaEntry>, AndromedaError> {
+    pub async fn get_teas_for_entity_attr(&self, entity_id: &str, attr_iri: &str) -> Result<Vec<andromeda_domain::temporal::TeaEntry>, AndromedaError> {
         self.repo.get_teas_for_entity_attr(entity_id, attr_iri).await
     }
 

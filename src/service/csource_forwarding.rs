@@ -1,14 +1,14 @@
 use crate::{
     core::error::AndromedaError,
-    domain::{
-        entity::Entity,
-        registration::{ContextSourceRegistration, CsrOperation, ForwardingMode},
-    },
     http::header::{link::Link, ngsild_tenant::NgsiLdTenant, ngsild_warning::NgsiLdWarning, via::Via},
     jsonld::{ContextSpec, JsonLdEngine},
     query::q::{ast::Expr, eval::evaluate as eval_q_expr},
     repository::csource_registration::repo::CsourceRegistrationRepository,
-    tenancy::types::TenantName,
+};
+use andromeda_domain::{
+    entity::Entity,
+    registration::{ContextSourceRegistration, CsrOperation, ForwardingMode},
+    tenant::TenantName,
 };
 use futures::{StreamExt, stream};
 use headers::Header;
@@ -1851,21 +1851,19 @@ pub fn merge_temporal_retrieve_results(local_entity: Option<Value>, remote_resul
 #[cfg(test)]
 mod tests {
     #![allow(clippy::expect_used, clippy::unwrap_used)]
-    use crate::{
-        domain::registration::ForwardingMode,
-        service::csource_forwarding::{
-            ForwardedEntities,
-            ForwardedTemporalEntities,
-            ForwardedWriteResult,
-            NgsiLdWarning,
-            collect_forwarded_exclusive_attrs,
-            collect_warnings,
-            merge_query_results,
-            strip_exclusive_attrs_from_value,
-        },
+    use crate::service::csource_forwarding::{
+        ForwardedEntities,
+        ForwardedTemporalEntities,
+        ForwardedWriteResult,
+        NgsiLdWarning,
+        collect_forwarded_exclusive_attrs,
+        collect_warnings,
+        merge_query_results,
+        strip_exclusive_attrs_from_value,
     };
+    use andromeda_domain::registration::ForwardingMode;
 
-    fn entity_from_json(value: serde_json::Value) -> crate::domain::entity::Entity {
+    fn entity_from_json(value: serde_json::Value) -> andromeda_domain::entity::Entity {
         serde_json::from_value(value).expect("test entity fixture")
     }
 

@@ -3,7 +3,6 @@
 use crate::{
     api::tenant::TenantState,
     core::error::{AndromedaError, ResultInstanceExt},
-    domain::snapshot::{SnapshotInput, SnapshotPatch},
     http::{
         error::{
             batch::BatchOperationResult,
@@ -14,6 +13,7 @@ use crate::{
     },
     service::snapshot::PurgeOutcome,
 };
+use andromeda_domain::snapshot::{SnapshotInput, SnapshotPatch};
 use axum::{
     Json,
     extract::{OriginalUri, Path},

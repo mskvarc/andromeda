@@ -5,11 +5,11 @@
 
 use crate::{
     core::error::AndromedaError,
-    domain::temporal::{AggrMethod, ValueType},
     query::compiled::CompiledTemporalQuery,
     renderer::{Renderer, temporal::common::extract_typed_agg},
     service::temporal::format_datetime,
 };
+use andromeda_domain::temporal::{AggrMethod, ValueType};
 use chrono::{DateTime, Utc};
 use indexmap::IndexMap;
 use serde_json::{Value, json};

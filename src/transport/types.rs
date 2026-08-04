@@ -13,10 +13,8 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use mediatype::MediaTypeBuf;
 
-use crate::{
-    http::model::response_format::{APPLICATION_GEO_JSON, APPLICATION_JSON, APPLICATION_LD_JSON},
-    tenancy::types::TenantName,
-};
+use crate::http::model::response_format::{APPLICATION_GEO_JSON, APPLICATION_JSON, APPLICATION_LD_JSON};
+use andromeda_domain::tenant::TenantName;
 
 /// Unique identifier for a single streaming client connection (SSE or WebSocket).
 ///

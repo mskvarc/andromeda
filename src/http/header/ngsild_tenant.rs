@@ -3,7 +3,7 @@
 //! Identifies the tenant scope for multi-tenant deployments.
 //! The value must be a non-empty string.
 
-use crate::tenancy::types::TenantName;
+use andromeda_domain::tenant::TenantName;
 use axum::http::{HeaderName, HeaderValue};
 
 static NGSILD_TENANT: HeaderName = HeaderName::from_static("ngsild-tenant");

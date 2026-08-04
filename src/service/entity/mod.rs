@@ -11,13 +11,6 @@ pub mod query;
 
 use crate::{
     core::{batch_activity::BatchActivityTracker, error::AndromedaError},
-    domain::{
-        entity::{Entity, EntityPatch},
-        expanded::removed_attribute_instances,
-        notification::{ChangeEvent, TriggerReason},
-        outbox::NewOutboxEntry,
-        uri::Uri,
-    },
     jsonld::{ContextSpec, JsonLdEngine},
     repository::{
         entity::{params::EntityCreateParams, repo::EntityRepository},
@@ -31,6 +24,13 @@ use crate::{
         subscription_matching::matches_entity_filters,
         temporal_recorder::TemporalRecorder,
     },
+};
+use andromeda_domain::{
+    entity::{Entity, EntityPatch},
+    expanded::removed_attribute_instances,
+    notification::{ChangeEvent, TriggerReason},
+    outbox::NewOutboxEntry,
+    uri::Uri,
 };
 use chrono::{DateTime, SecondsFormat, Utc};
 use dashmap::DashMap;
@@ -284,7 +284,7 @@ impl EntityService {
         let types_refs: Vec<&str> = types.iter().map(String::as_str).collect();
         let scopes = extract_scopes(&expanded);
         let scope_paths: Vec<String> = scopes.iter().map(|s| crate::query::sql::scope_to_ltree(s)).collect();
-        let expires_at = crate::domain::expanded::extract_expires_at(&expanded);
+        let expires_at = andromeda_domain::expanded::extract_expires_at(&expanded);
         let (location, observation_space, operation_space) = extract_geo_geometries(&expanded);
 
         let outbox_entries = if self.outbox.is_some() {
@@ -343,7 +343,7 @@ impl EntityService {
         normalize_entity_attributes(&mut patch_json);
         let expanded = self.engine.expand(patch_json, context).await?;
         validate_attribute_envelopes(&expanded)?;
-        crate::domain::expanded::merge_entity(&mut existing, &expanded)?;
+        andromeda_domain::expanded::merge_entity(&mut existing, &expanded)?;
 
         let types = self.fetch_entity_types(&id).await;
         let changed_attrs = extract_attribute_keys(&expanded);
@@ -670,7 +670,7 @@ pub(crate) const fn resolve_side_effect_mode(async_threshold: Option<usize>, cli
 // ---------------------------------------------------------------------------
 
 /// Re-export of type extraction for expanded JSON-LD entities.
-pub(crate) use crate::domain::expanded::extract_types as extract_entity_types;
+pub(crate) use andromeda_domain::expanded::extract_types as extract_entity_types;
 
 /// Extract scope values from an expanded JSON-LD entity.
 pub(crate) fn extract_scopes(expanded: &Value) -> Vec<String> {
@@ -762,14 +762,14 @@ fn is_explicit_attribute_object(obj: &Map<String, Value>) -> bool {
 }
 
 fn is_known_attribute_type(attr_type: &str) -> bool {
-    attr_type.parse::<crate::domain::attribute_type::AttributeType>().is_ok()
+    attr_type.parse::<andromeda_domain::attribute_type::AttributeType>().is_ok()
 }
 
 fn normalize_explicit_attribute_object(obj: &mut Map<String, Value>) {
     let Some(attr_type_str) = obj.get("type").and_then(Value::as_str) else {
         return;
     };
-    let reserved = match attr_type_str.parse::<crate::domain::attribute_type::AttributeType>() {
+    let reserved = match attr_type_str.parse::<andromeda_domain::attribute_type::AttributeType>() {
         Ok(t) => t.reserved_fields(),
         Err(_) => return,
     };
@@ -789,7 +789,7 @@ fn wrap_raw_as_property(raw: Value) -> Value {
     Value::Object(property)
 }
 
-use crate::domain::vocab;
+use andromeda_domain::vocab;
 
 fn validate_attribute_envelopes(expanded: &Value) -> Result<(), AndromedaError> {
     let entities = match expanded {

@@ -4,14 +4,10 @@
 //! used across multiple handler modules (entities, temporal, subscriptions,
 //! context source registrations, snapshots, entity maps).
 
-use crate::{
-    core::error::AndromedaError,
-    domain::{
-        name::Name,
-        ngsi_ld_urn::{EntityMapId, SnapshotId},
-    },
-    http::error::problem::NgsiLdError,
-    renderer::SysAttrsInclusion,
+use crate::{core::error::AndromedaError, http::error::problem::NgsiLdError, renderer::SysAttrsInclusion};
+use andromeda_domain::{
+    name::Name,
+    ngsi_ld_urn::{EntityMapId, SnapshotId},
 };
 use axum::http::Uri;
 use url::Url;

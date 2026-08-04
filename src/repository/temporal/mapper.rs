@@ -1,11 +1,9 @@
 //! Row-to-domain conversions for temporal data.
 
-use crate::{
-    core::error::AndromedaError,
-    domain::{
-        attribute_type::AttributeType,
-        temporal::{TeaEntry, ValueType},
-    },
+use crate::core::error::AndromedaError;
+use andromeda_domain::{
+    attribute_type::AttributeType,
+    temporal::{TeaEntry, ValueType},
 };
 use iri_rs::IriBuf;
 use sqlx::{Row, postgres::PgRow};

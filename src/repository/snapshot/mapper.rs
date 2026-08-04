@@ -1,11 +1,9 @@
 //! Row-to-domain conversions for snapshot records.
 
-use crate::{
-    core::error::AndromedaError,
-    domain::{
-        ngsi_ld_urn::SnapshotId,
-        snapshot::{ExecutionResultDetails, KeyValuePair, Snapshot, SnapshotPriority, SnapshotStatus},
-    },
+use crate::core::error::AndromedaError;
+use andromeda_domain::{
+    ngsi_ld_urn::SnapshotId,
+    snapshot::{ExecutionResultDetails, KeyValuePair, Snapshot, SnapshotPriority, SnapshotStatus},
 };
 use iso8601_duration::Duration as Iso8601Duration;
 use serde_json::Value;

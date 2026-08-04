@@ -5,13 +5,10 @@
 //! themselves, so this module defines a parallel shape using plain field
 //! types and converts to/from the domain form at the repository boundary.
 
-use crate::{
-    core::error::AndromedaError,
-    domain::{
-        notification::{ChangeEvent, ChangeOrigin, SysAttrsSnapshot, TriggerReason},
-        uri::Uri,
-    },
-    service::entity::BatchSideEffectJob,
+use crate::{core::error::AndromedaError, service::entity::BatchSideEffectJob};
+use andromeda_domain::{
+    notification::{ChangeEvent, ChangeOrigin, SysAttrsSnapshot, TriggerReason},
+    uri::Uri,
 };
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};

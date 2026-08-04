@@ -1,6 +1,5 @@
 mod api;
 mod core;
-mod domain;
 mod health;
 mod http;
 mod jsonld;

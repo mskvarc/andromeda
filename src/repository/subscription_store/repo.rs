@@ -4,11 +4,8 @@
 //! context-source subscriptions. The `impl_subscription_store!` macro
 //! generates implementations backed by the `subscriptions` table.
 
-use crate::{
-    core::error::AndromedaError,
-    domain::subscription::{Subscription, SubscriptionStatus},
-    repository::subscription_store::params::SubscriptionFields,
-};
+use crate::{core::error::AndromedaError, repository::subscription_store::params::SubscriptionFields};
+use andromeda_domain::subscription::{Subscription, SubscriptionStatus};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 
@@ -56,7 +53,7 @@ macro_rules! impl_subscription_store {
     ($type:ty, kind: $kind:literal, columns: $columns:literal, has_dataset_id: $hdi:expr) => {
         #[async_trait::async_trait]
         impl $crate::repository::subscription_store::repo::SubscriptionStore for $type {
-            async fn get(&self, id: &str) -> Result<Option<$crate::domain::subscription::Subscription>, $crate::core::error::AndromedaError> {
+            async fn get(&self, id: &str) -> Result<Option<andromeda_domain::subscription::Subscription>, $crate::core::error::AndromedaError> {
                 let pg_row = sqlx::query(concat!("SELECT ", $columns, " FROM subscriptions WHERE id = $1 AND kind = '", $kind, "'"))
                     .bind(id)
                     .fetch_optional(&self.pool)
@@ -75,7 +72,7 @@ macro_rules! impl_subscription_store {
                 &self,
                 limit: Option<i64>,
                 offset: Option<i64>,
-            ) -> Result<(Vec<$crate::domain::subscription::Subscription>, i64), $crate::core::error::AndromedaError> {
+            ) -> Result<(Vec<andromeda_domain::subscription::Subscription>, i64), $crate::core::error::AndromedaError> {
                 let limit = limit.unwrap_or(100);
                 let offset = offset.unwrap_or(0);
 
@@ -129,7 +126,7 @@ macro_rules! impl_subscription_store {
                 Ok(row.0)
             }
 
-            async fn list_active(&self) -> Result<Vec<$crate::domain::subscription::Subscription>, $crate::core::error::AndromedaError> {
+            async fn list_active(&self) -> Result<Vec<andromeda_domain::subscription::Subscription>, $crate::core::error::AndromedaError> {
                 let pg_rows = sqlx::query(concat!(
                     "SELECT ",
                     $columns,
@@ -227,7 +224,7 @@ macro_rules! impl_subscription_store {
                 &self,
                 id: &str,
                 fields: &$crate::repository::subscription_store::params::SubscriptionFields<'_>,
-                status: $crate::domain::subscription::SubscriptionStatus,
+                status: andromeda_domain::subscription::SubscriptionStatus,
             ) -> Result<(), $crate::core::error::AndromedaError> {
                 self.create(id, fields, status).await
             }
@@ -236,12 +233,12 @@ macro_rules! impl_subscription_store {
                 &self,
                 id: &str,
                 fields: &$crate::repository::subscription_store::params::SubscriptionFields<'_>,
-                status: $crate::domain::subscription::SubscriptionStatus,
+                status: andromeda_domain::subscription::SubscriptionStatus,
             ) -> Result<u64, $crate::core::error::AndromedaError> {
                 self.update(id, fields, status).await
             }
 
-            async fn find_due_interval_subscriptions(&self) -> Result<Vec<$crate::domain::subscription::Subscription>, $crate::core::error::AndromedaError> {
+            async fn find_due_interval_subscriptions(&self) -> Result<Vec<andromeda_domain::subscription::Subscription>, $crate::core::error::AndromedaError> {
                 let pg_rows = sqlx::query(concat!(
                     "SELECT ",
                     $columns,

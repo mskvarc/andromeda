@@ -2,9 +2,9 @@
 
 use crate::{
     core::error::AndromedaError,
-    domain::geometry::Geometry,
     repository::geometry::{Ewkb, encode_optional},
 };
+use andromeda_domain::geometry::Geometry;
 use chrono::{DateTime, Utc};
 use serde_json::Value;
 

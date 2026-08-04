@@ -3,7 +3,6 @@
 use crate::{
     api::tenant::TenantState,
     core::error::{AndromedaError, ResultInstanceExt},
-    domain::jsonld_context::ContextKind,
     http::{
         error::problem::NgsiLdError,
         extractor::query::ValidatedQuery,
@@ -12,6 +11,7 @@ use crate::{
     jsonld::core_context::is_ngsi_ld_core_context_url,
     repository::jsonld_context::params::DetailLevel,
 };
+use andromeda_domain::jsonld_context::ContextKind;
 use axum::{
     Json,
     body::Bytes,

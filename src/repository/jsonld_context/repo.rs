@@ -2,13 +2,13 @@
 
 use crate::{
     core::error::AndromedaError,
-    domain::{jsonld_context::ContextKind, uri::NGSI_LD_URN_NID},
     jsonld::ContextCache,
     repository::jsonld_context::{
         params::{DetailLevel, ListContextsParams},
         rows::{ContextMetadataRow, ContextSummaryRow},
     },
 };
+use andromeda_domain::{jsonld_context::ContextKind, uri::NGSI_LD_URN_NID};
 use async_trait::async_trait;
 use serde_json::Value;
 use sqlx::{postgres::PgPool, types::Json};
@@ -18,7 +18,7 @@ use uuid::Uuid;
 /// Summary-projection list output: either detailed rows or summary rows.
 ///
 /// The repository returns this raw; the service layer assembles the public
-/// [`crate::domain::jsonld_context::ContextListResult`].
+/// [`andromeda_domain::jsonld_context::ContextListResult`].
 #[derive(Debug)]
 pub enum ListedContexts {
     /// Full metadata projection.

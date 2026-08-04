@@ -7,7 +7,6 @@
 
 use crate::{
     core::{config::BulkWriteMode, error::AndromedaError},
-    domain::{expanded::AttributeInstanceKey, outbox::NewOutboxEntry},
     repository::{
         entity::{
             copy::create_batch_via_copy_in_tx,
@@ -22,6 +21,7 @@ use crate::{
     service::temporal_recorder::TemporalRecorder,
     worker::attribute_current_materializer::AttributeCurrentQueue,
 };
+use andromeda_domain::{expanded::AttributeInstanceKey, outbox::NewOutboxEntry};
 use iri_rs::IriBuf;
 use serde_json::Value;
 use sqlx::{Postgres, Transaction, postgres::PgPool};
@@ -183,7 +183,7 @@ impl UnitOfWork {
 
     /// Record tombstones for every attribute instance a replacement dropped.
     ///
-    /// Pair with [`crate::domain::expanded::removed_attribute_instances`] on
+    /// Pair with [`andromeda_domain::expanded::removed_attribute_instances`] on
     /// any path that overwrites `entities.payload` wholesale: without this the
     /// temporal history never learns the attribute went away and
     /// `attribute_current` keeps serving its last value to `q` filters.

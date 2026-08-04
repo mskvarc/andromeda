@@ -6,10 +6,11 @@ use crate::{
     },
     tenancy::{
         database::{DatabaseUrl, configure_pool_options, create_database_if_missing, generate_db_name, migrate_main_db, migrate_single_tenant_db},
-        types::{TenantCreationPolicy, TenantName, TenantRef, TenantStatus},
+        types::{TenantCreationPolicy, TenantRef, TenantStatus},
     },
     transport::{dispatch::TransportDispatcher, mqtt::MqttTransportPool},
 };
+use andromeda_domain::tenant::TenantName;
 use dashmap::DashMap;
 use sqlx::Row;
 use std::{

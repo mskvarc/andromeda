@@ -2,7 +2,6 @@
 
 use crate::{
     core::{config::BulkWriteMode, error::AndromedaError},
-    domain::temporal::{AttributeNameId, TeaEntry},
     query::sql::BindValue,
     repository::{
         attribute_names::AttributeNameCache,
@@ -16,6 +15,7 @@ use crate::{
         timescale_features::TimescaleFeatures,
     },
 };
+use andromeda_domain::temporal::{AttributeNameId, TeaEntry};
 use chrono::{DateTime, Utc};
 use serde_json::Value;
 use sqlx::{
@@ -734,7 +734,7 @@ async fn insert_history_batch_unnest_in_tx(tx: &mut Transaction<'_, Postgres>, e
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::{attribute_type::AttributeType, temporal::ValueType};
+    use andromeda_domain::{attribute_type::AttributeType, temporal::ValueType};
 
     const ENTITY: &str = "urn:ngsi-ld:Vehicle:A100";
     const SPEED: &str = "https://uri.etsi.org/ngsi-ld/default-context/speed";

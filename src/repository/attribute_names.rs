@@ -6,7 +6,8 @@
 //! `q`-filter read path (which must not) resolve through this one cache, so a
 //! tenant holds a single copy of the dictionary rather than one per repository.
 
-use crate::{core::error::AndromedaError, domain::temporal::AttributeNameId, query::sql::q_filter::ResolvedAttributeNames};
+use crate::{core::error::AndromedaError, query::sql::q_filter::ResolvedAttributeNames};
+use andromeda_domain::temporal::AttributeNameId;
 use dashmap::DashMap;
 use sqlx::{Row, postgres::PgPool};
 use std::collections::HashMap;

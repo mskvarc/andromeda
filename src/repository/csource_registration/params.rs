@@ -1,9 +1,6 @@
 //! Repository input parameters for context source registrations.
 
-use crate::{
-    domain::{geometry::Geometry, registration::ForwardingMode},
-    tenancy::types::TenantName,
-};
+use andromeda_domain::{geometry::Geometry, registration::ForwardingMode, tenant::TenantName};
 use chrono::{DateTime, Utc};
 use serde_json::Value;
 

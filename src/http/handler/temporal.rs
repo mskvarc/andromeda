@@ -3,7 +3,6 @@
 use crate::{
     api::tenant::{TenantState, TenantStateOrCreate},
     core::error::{AndromedaError, ResultInstanceExt},
-    domain::{registration::ForwardingMode, uri::Uri},
     http::{
         error::problem::NgsiLdError,
         extractor::{
@@ -35,6 +34,7 @@ use crate::{
         temporal::{CreateOrUpdateResult, TemporalQueryResult, TemporalService},
     },
 };
+use andromeda_domain::{registration::ForwardingMode, uri::Uri};
 use axum::{
     extract::{OriginalUri, Path},
     http::StatusCode,

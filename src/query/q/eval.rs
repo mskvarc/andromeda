@@ -70,7 +70,7 @@ fn resolve_values(obj: &serde_json::Map<String, Value>, path: &AttrPath) -> Vec<
 
 /// Resolve one attribute instance down to the value the predicate compares.
 fn resolve_instance_value(instance: &Value, path: &AttrPath) -> Option<Value> {
-    use crate::domain::vocab;
+    use andromeda_domain::vocab;
     let has_value = vocab::expanded::properties::VALUE.as_str();
     let has_object = vocab::expanded::properties::OBJECT.as_str();
 

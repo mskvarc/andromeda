@@ -5,9 +5,9 @@
 //! can be matched against O(log n) candidate subscriptions instead of every
 //! geo-enabled subscription in the cache.
 
-use crate::{
-    domain::notification::{CompiledGeoQuery, CompiledGeoRel},
-    service::spatial::{
+use crate::service::{
+    compiled_subscription::{CompiledGeoQuery, CompiledGeoRel},
+    spatial::{
         SpatialKey,
         distance::{haversine_distance_m, metres_to_degrees_coarse},
     },

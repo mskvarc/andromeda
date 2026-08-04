@@ -1,12 +1,10 @@
 //! Row-to-domain mapping for context source registrations.
 
-use crate::{
-    core::error::AndromedaError,
-    domain::{
-        registration::{ContextSourceRegistration, CsrOperation, CsrStatus, ForwardingMode},
-        scope::ScopeBuf,
-    },
-    tenancy::types::TenantName,
+use crate::core::error::AndromedaError;
+use andromeda_domain::{
+    registration::{ContextSourceRegistration, CsrOperation, CsrStatus, ForwardingMode},
+    scope::ScopeBuf,
+    tenant::TenantName,
 };
 use chrono::{DateTime, Utc};
 use serde_json::Value;

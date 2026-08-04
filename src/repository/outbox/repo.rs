@@ -4,11 +4,8 @@
 //! structs. Parsing into domain types is the responsibility of
 //! [`super::mapper`].
 
-use crate::{
-    core::error::AndromedaError,
-    domain::outbox::{NewOutboxEntry, OutboxEntryId, WorkerInstanceId},
-    repository::outbox::rows::OutboxEntryRow,
-};
+use crate::{core::error::AndromedaError, repository::outbox::rows::OutboxEntryRow};
+use andromeda_domain::outbox::{NewOutboxEntry, OutboxEntryId, WorkerInstanceId};
 use chrono::{DateTime, Utc};
 use sqlx::{QueryBuilder, postgres::PgPool};
 

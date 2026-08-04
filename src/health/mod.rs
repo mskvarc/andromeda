@@ -7,7 +7,7 @@
 pub mod database;
 pub mod mqtt;
 
-use crate::domain::health::{ComponentDetail, ComponentName, HealthStatus};
+use andromeda_domain::health::{ComponentDetail, ComponentName, HealthStatus};
 use std::{collections::BTreeMap, future::Future, pin::Pin, sync::Arc};
 
 /// A single component health check.

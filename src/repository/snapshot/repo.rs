@@ -2,15 +2,15 @@
 
 use crate::{
     core::error::AndromedaError,
-    domain::{
-        ngsi_ld_urn::SnapshotId,
-        snapshot::{ExecutionResultDetails, Snapshot, SnapshotPriority, SnapshotStatus},
-        snapshot_filter::{Conjunction, SnapshotPurgeFilter, SnapshotValue},
-    },
     repository::snapshot::{
         mapper::row_to_snapshot,
         params::{InsertSnapshotParams, SnapshotEntityInput, SnapshotQueryParams},
     },
+};
+use andromeda_domain::{
+    ngsi_ld_urn::SnapshotId,
+    snapshot::{ExecutionResultDetails, Snapshot, SnapshotPriority, SnapshotStatus},
+    snapshot_filter::{Conjunction, SnapshotPurgeFilter, SnapshotValue},
 };
 use chrono::{DateTime, Utc};
 use iso8601_duration::Duration as Iso8601Duration;

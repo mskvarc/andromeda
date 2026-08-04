@@ -2,7 +2,7 @@
 //!
 //! Backed by a concurrent `DashMap` with automatic expiry cleanup on insert.
 
-use crate::domain::{entity_map::EntityMap, ngsi_ld_urn::EntityMapId};
+use andromeda_domain::{entity_map::EntityMap, ngsi_ld_urn::EntityMapId};
 use chrono::{DateTime, Utc};
 use dashmap::DashMap;
 

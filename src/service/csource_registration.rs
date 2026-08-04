@@ -1,10 +1,5 @@
 use crate::{
     core::error::AndromedaError,
-    domain::{
-        notification::{CsrChangeEvent, CsrTriggerReason},
-        registration::ForwardingMode,
-        temporal::{TimeProp, TimeRel},
-    },
     http::parameter::query::{SharedQueryParams, csr::CsrQueryParameters},
     jsonld::{ContextSpec, JsonLdEngine},
     query::{
@@ -16,7 +11,12 @@ use crate::{
         repo::CsourceRegistrationRepository,
     },
     service::{csource_extract::unwrap_geo_property_to_geometry, csource_merge::apply_fragment},
-    tenancy::types::TenantName,
+};
+use andromeda_domain::{
+    notification::{CsrChangeEvent, CsrTriggerReason},
+    registration::ForwardingMode,
+    temporal::{TimeProp, TimeRel},
+    tenant::TenantName,
 };
 use chrono::{DateTime, Utc};
 use serde_json::Value;

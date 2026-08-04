@@ -108,7 +108,8 @@ const fn estimated_stream_bytes(columns: &PreparedEntityColumns) -> usize {
 mod tests {
     #![allow(clippy::expect_used)]
     use super::*;
-    use crate::{domain::geometry::Geometry, repository::copy::COPY_HEADER_SIGNATURE};
+    use crate::repository::copy::COPY_HEADER_SIGNATURE;
+    use andromeda_domain::geometry::Geometry;
     use chrono::{TimeZone, Utc};
 
     fn sample_columns() -> PreparedEntityColumns {

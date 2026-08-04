@@ -15,14 +15,14 @@
 //! fall back to fetching from the entity store.
 
 use crate::{
-    domain::{
-        geometry::Geometry,
-        notification::{ChangeEvent, TriggerReason},
-        vocab,
-    },
     repository::entity::repo::EntityRepository,
     service::spatial::{SpatialKey, entity_index::SpatialEntityIndex},
     tenancy::types::TenantRef,
+};
+use andromeda_domain::{
+    geometry::Geometry,
+    notification::{ChangeEvent, TriggerReason},
+    vocab,
 };
 use iri_rs::IriBuf;
 use serde_json::Value;
@@ -265,7 +265,8 @@ fn parse_geometry(raw: &str) -> Option<Geometry> {
 mod tests {
     #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::*;
-    use crate::{domain::uri::Uri, query::compiled::GeoRel, service::spatial::SpatialKey};
+    use crate::{query::compiled::GeoRel, service::spatial::SpatialKey};
+    use andromeda_domain::uri::Uri;
     use geo::{Coord, LineString, Polygon};
     use iri_rs::iri;
     use serde_json::json;

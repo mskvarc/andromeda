@@ -3,13 +3,11 @@
 //! Converts a persistence-shaped [`OutboxEntryRow`] into the domain
 //! [`OutboxEntry`] by fallibly parsing URIs and the trigger reason.
 
-use crate::{
-    domain::{
-        notification::TriggerReason,
-        outbox::{OutboxEntry, OutboxEntryId, WorkerInstanceId},
-        uri::Uri,
-    },
-    repository::outbox::rows::OutboxEntryRow,
+use crate::repository::outbox::rows::OutboxEntryRow;
+use andromeda_domain::{
+    notification::TriggerReason,
+    outbox::{OutboxEntry, OutboxEntryId, WorkerInstanceId},
+    uri::Uri,
 };
 use std::str::FromStr;
 use thiserror::Error;

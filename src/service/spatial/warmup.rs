@@ -7,7 +7,6 @@
 
 use crate::{
     core::error::AndromedaError,
-    domain::{geometry::Geometry, vocab},
     repository::geometry::Ewkb,
     service::spatial::{
         SpatialKey,
@@ -15,6 +14,7 @@ use crate::{
     },
     tenancy::types::TenantRef,
 };
+use andromeda_domain::{geometry::Geometry, vocab};
 use iri_rs::IriBuf;
 use sqlx::PgPool;
 use std::{collections::HashMap, sync::Arc, time::Instant};
