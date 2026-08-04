@@ -53,8 +53,8 @@ impl UnitOfWorkFactory {
         attribute_current_queue: AttributeCurrentQueue,
     ) -> UnitOfWorkFactory {
         UnitOfWorkFactory {
-            pool: pool.clone(),                                                                                 // clone: Arc ref-count bump
-            temporal_recorder: Arc::new(TemporalRecorder::new(temporal_repo, attribute_current_queue.clone())), // clone: recorder and factory each hold a producer handle
+            pool: pool.clone(), // clone: Arc ref-count bump
+            temporal_recorder: Arc::new(TemporalRecorder::new(temporal_repo)),
             bulk_write_mode,
             attribute_current_queue,
         }
@@ -118,6 +118,15 @@ impl UnitOfWork {
     /// Insert a single entity row.
     pub async fn create_entity(&mut self, params: EntityCreateParams<'_>) -> Result<Urn, AndromedaError> {
         EntityRepository::create_in_tx(self.tx_mut()?, params).await
+    }
+
+    /// Insert the `entities` row a temporal write depends on, leaving any
+    /// existing row untouched.
+    ///
+    /// See [`EntityRepository::ensure_placeholder_in_tx`] for why this is not
+    /// [`Self::create_entity`] with a conflict clause.
+    pub async fn ensure_entity_placeholder(&mut self, params: EntityCreateParams<'_>) -> Result<(), AndromedaError> {
+        EntityRepository::ensure_placeholder_in_tx(self.tx_mut()?, params).await
     }
 
     /// Update a single entity row, returning rows affected.

@@ -17,7 +17,6 @@ use crate::{
         repo::TemporalRepository,
         rows::TeaBatchResultRow,
     },
-    worker::attribute_current_materializer::AttributeCurrentQueue,
 };
 use chrono::{DateTime, Utc};
 use iri_rs::IriBuf;
@@ -44,16 +43,15 @@ pub(crate) struct DbValueParams {
 
 /// Records attribute history into temporal tables when entities are created or modified.
 ///
-/// Holds the `attribute_current` queue because not every caller writes through a
-/// [`UnitOfWork`](crate::repository::uow::UnitOfWork). The transactional methods
-/// return their history rows for the unit of work to publish after commit; the
-/// non-transactional ones commit internally, so they have to publish here or the
-/// projection never learns about the write — which would make those attributes
-/// invisible to `q` filters compiled against `attribute_current`.
+/// Every write method takes the caller's transaction and returns the history
+/// rows it wrote, leaving both the commit and the `attribute_current` publish to
+/// the [`UnitOfWork`](crate::repository::uow::UnitOfWork) that owns them. The
+/// recorder therefore holds no queue handle of its own: a method that committed
+/// internally would have to publish its own rows, and could not be composed with
+/// the entity write it belongs to.
 #[derive(Debug)]
 pub struct TemporalRecorder {
     repo: Arc<TemporalRepository>,
-    attribute_current: AttributeCurrentQueue,
 }
 
 /// Intermediate batch state: rows collected from the expanded entities but
@@ -78,8 +76,8 @@ struct PendingHistory {
 
 impl TemporalRecorder {
     /// Create a new temporal recorder backed by the given repository.
-    pub const fn new(repo: Arc<TemporalRepository>, attribute_current: AttributeCurrentQueue) -> TemporalRecorder {
-        TemporalRecorder { repo, attribute_current }
+    pub const fn new(repo: Arc<TemporalRepository>) -> TemporalRecorder {
+        TemporalRecorder { repo }
     }
 
     /// Look up TEA entries for a given entity + attribute IRI.
@@ -87,177 +85,17 @@ impl TemporalRecorder {
         self.repo.get_teas_for_entity_attr(entity_id, attr_iri).await
     }
 
-    /// Record all attributes from an expanded JSON-LD entity into temporal tables.
-    ///
-    /// Invalid attributes are skipped with a warning log rather than failing
-    /// the entire operation. This allows valid attributes to be recorded even
-    /// when some attributes have issues.
-    pub async fn record_entity_attributes(&self, entity_id: &str, expanded: &Value) -> Result<(), AndromedaError> {
-        let obj = match expanded {
-            Value::Array(arr) => arr.first().and_then(|v| v.as_object()),
-            Value::Object(obj) => Some(obj),
-            _other => None,
-        };
-
-        let Some(obj) = obj else {
-            return Ok(());
-        };
-
-        for (attr_name, attr_value) in obj {
-            if attr_name.starts_with('@') {
-                continue;
-            }
-
-            // Skip NGSI-LD system-level attributes (observedAt, createdAt, etc.)
-            if is_system_attribute(attr_name) {
-                continue;
-            }
-
-            // Handle scope specially: scopes are NOT attributes -- they go to scope_history,
-            // not through the TEA/attribute_history pipeline (NGSI-LD clause 4.5.4).
-            if attr_name == vocab::expanded::properties::SCOPE.as_str() {
-                if let Some(scope_arr) = attr_value.as_array() {
-                    for scope_entry in scope_arr {
-                        if let Some(scope_val) = scope_entry.as_object().and_then(|o| o.get("@value")).and_then(|v| v.as_str()) {
-                            let entry = ScopeHistoryEntry {
-                                time: Utc::now(),
-                                entity_id: entity_id.to_string(),
-                                scope_path: scope_to_ltree(scope_val),
-                                instance_id: format!("urn:ngsi-ld:scope:instance:{}", uuid::Uuid::new_v4()),
-                            };
-                            if let Err(e) = self.repo.insert_scope_history(&entry).await {
-                                tracing::warn!("Failed to record scope history for entity {}: {}", entity_id, e);
-                            }
-                        }
-                    }
-                }
-                continue;
-            }
-
-            let instances = match attr_value {
-                Value::Array(arr) => arr,
-                _other => continue,
-            };
-
-            for instance in instances {
-                if let Some(inst_obj) = instance.as_object() {
-                    // Skip instances that don't look like NGSI-LD attribute instances
-                    // (they must have an @type indicating Property, Relationship, etc.)
-                    if !is_ngsi_ld_attribute_instance(inst_obj) {
-                        continue;
-                    }
-
-                    match self.record_attribute_instance(entity_id, attr_name, &Value::Object(inst_obj.clone())).await {
-                        // clone: method requires owned Value; inst_obj is borrowed from instances iterator
-                        Ok(()) => {}
-                        Err(e) => {
-                            tracing::warn!("Failed to record temporal data for entity {}: {}", entity_id, e);
-                        }
-                    }
-                }
-            }
-        }
-
-        Ok(())
-    }
-
-    /// Record a single expanded attribute instance through the batch write path.
-    ///
-    /// Routes a single observation through [`TemporalRepository::upsert_tea_batch`]
-    /// and [`TemporalRepository::insert_history_batch`] so that the single- and
-    /// bulk-ingest code paths share identical SQL and dedup semantics.
-    pub async fn record_attribute_instance(&self, entity_id: &str, attr_name: &str, instance: &Value) -> Result<(), AndromedaError> {
-        let attribute_type = detect_attribute_type(instance);
-        let typed_value = extract_typed_value(instance, attribute_type)?;
-        let value_type = typed_value.value_type();
-        let dataset_id = extract_dataset_id(instance);
-        let observed_at_str = extract_observed_at(instance);
-        let (instance_id, instance_id_client_supplied) = extract_or_generate_instance_id(instance);
-        let metadata = collect_metadata(instance);
-
-        let time = observed_at_str
-            .as_ref()
-            .and_then(|s| DateTime::parse_from_rfc3339(s).map(|dt| dt.with_timezone(&Utc)).ok())
-            .unwrap_or_else(Utc::now);
-
-        let observed_at = observed_at_str
-            .as_ref()
-            .and_then(|s| DateTime::parse_from_rfc3339(s).map(|dt| dt.with_timezone(&Utc)).ok());
-
-        let dataset_id_str = dataset_id.as_ref().map(ToString::to_string);
-        let tea_entries = [TeaBatchEntry {
-            entity_id: entity_id.to_owned(),
-            attribute_name: attr_name.to_owned(),
-            attribute_type,
-            dataset_id: dataset_id_str,
-            value_type,
-        }];
-        let tea_results = self.repo.upsert_tea_batch(&tea_entries).await?;
-        let tea_id = tea_results
-            .into_iter()
-            .next()
-            .ok_or_else(|| AndromedaError::internal("upsert_tea_batch returned no rows for single entry".to_string()))?
-            .id;
-
-        let p = typed_value.into_db_params();
-
-        let entry = HistoryBatchEntry {
-            time,
-            tea_id,
-            value_number: p.value_number,
-            value_string: p.value_string,
-            value_bool: p.value_bool,
-            value_geo: p.value_geo,
-            value_object: p.value_object,
-            value_datetime: p.value_datetime,
-            value_uri: p.value_uri,
-            instance_id,
-            observed_at,
-            metadata,
-            recorded_at: Utc::now(),
-            instance_id_client_supplied,
-        };
-        self.repo.insert_history_batch(std::slice::from_ref(&entry)).await?;
-        // Committed by `insert_history_batch` itself, so the projection has to
-        // be told here; there is no unit of work to do it after commit.
-        self.attribute_current.publish(vec![entry]).await;
-
-        Ok(())
-    }
-
-    /// Record all attributes from multiple expanded entities in bulk.
+    /// Record all attributes from multiple expanded entities in bulk, inside the
+    /// caller-provided transaction.
     ///
     /// Collects all TEA entries and history rows across all entities, then
     /// executes two bulk SQL operations (TEA upsert + history insert) instead
-    /// of N * M * 5 sequential round-trips.
+    /// of N * M * 5 sequential round-trips. Sharing the caller's transaction
+    /// means the entity INSERT and the temporal history share a single commit
+    /// fsync and roll back atomically on any sub-statement failure.
     ///
     /// Invalid attributes are skipped with a warning rather than failing the
-    /// entire batch.
-    pub async fn record_entities_batch(&self, entities: &[(Arc<str>, Arc<Value>)]) -> Result<(), AndromedaError> {
-        let prepared = Self::prepare_batch_arc(entities);
-        if prepared.tea_entries.is_empty() && prepared.scope_entries.is_empty() {
-            return Ok(());
-        }
-
-        let tea_results = self.repo.upsert_tea_batch(&prepared.tea_entries).await?;
-        let history_entries = Self::build_history_entries(&prepared, &tea_results);
-        self.repo.insert_history_batch(&history_entries).await?;
-
-        if !prepared.scope_entries.is_empty() {
-            self.repo.insert_scope_history_batch(&prepared.scope_entries).await?;
-        }
-
-        // As in `record_attribute_instance`: this path commits internally, so
-        // nothing else will publish these rows to the projection.
-        self.attribute_current.publish(history_entries).await;
-
-        Ok(())
-    }
-
-    /// Transactional variant of [`Self::record_entities_batch`]. Writes all
-    /// temporal rows inside the caller-provided transaction so the entity
-    /// INSERT and temporal history share a single commit fsync and roll
-    /// back atomically on any sub-statement failure.
+    /// entire batch; a *database* failure fails the whole call.
     ///
     /// Returns the history rows actually written so the caller can
     /// queue them with the unit-of-work for post-commit
@@ -271,7 +109,7 @@ impl TemporalRecorder {
         self.flush_prepared_in_tx(tx, prepared).await
     }
 
-    /// Transactional variant of [`Self::record_entity_attributes`]. Borrows the
+    /// Single-entity form of [`Self::record_entities_batch_in_tx`]. Borrows the
     /// payload directly so the single-entity hot path avoids the `Arc<Value>`
     /// clone the bulk path requires for the durable-queue handoff.
     pub async fn record_entity_attributes_in_tx(
@@ -977,6 +815,46 @@ mod tests {
     #[test]
     fn dataset_id_is_absent_when_the_instance_has_none() {
         assert!(extract_dataset_id(&serde_json::json!({})).is_none());
+    }
+
+    #[test]
+    fn two_instances_sharing_one_observed_at_are_both_prepared() {
+        // NGSI-LD 5.6.12.4: the instances "shall be added" to the target
+        // Temporal Evolution -- pure addition, with no notion of replacing an
+        // instance that happens to share a timestamp. 4.5.7 makes instanceId the
+        // instance identity, so collapsing two client-supplied instances would
+        // destroy one and leave it unaddressable.
+        let attr = vocab::expanded::properties::VALUE.as_str();
+        let observed_at = vocab::expanded::properties::OBSERVED_AT.as_str();
+        let instance_id = vocab::expanded::properties::INSTANCE_ID.as_str();
+        let property_type = AttributeType::Property.iri_str();
+        let entity = serde_json::json!({
+            "@id": "urn:ngsi-ld:Entity:e1",
+            "https://example.com/a": [
+                {
+                    "@type": [property_type],
+                    attr: [{"@value": 1}],
+                    observed_at: [{"@value": "2026-07-25T10:00:00Z"}],
+                    instance_id: [{"@id": "urn:ngsi-ld:attribute:instance:first"}],
+                },
+                {
+                    "@type": [property_type],
+                    attr: [{"@value": 2}],
+                    observed_at: [{"@value": "2026-07-25T10:00:00Z"}],
+                    instance_id: [{"@id": "urn:ngsi-ld:attribute:instance:second"}],
+                },
+            ],
+        });
+        let entities = [("urn:ngsi-ld:Entity:e1", &entity)];
+        let prepared = TemporalRecorder::prepare_batch_refs(&entities);
+        pretty_assertions::assert_eq!(prepared.pending_histories.len(), 2);
+        let ids: Vec<&str> = prepared.pending_histories.iter().map(|p| p.instance_id.as_str()).collect();
+        pretty_assertions::assert_eq!(ids, vec!["urn:ngsi-ld:attribute:instance:first", "urn:ngsi-ld:attribute:instance:second"]);
+        let observed: Vec<Option<DateTime<Utc>>> = prepared.pending_histories.iter().map(|p| p.observed_at).collect();
+        pretty_assertions::assert_eq!(observed[0], observed[1]);
+        // Both share the attribute, so both resolve to one TEA.
+        pretty_assertions::assert_eq!(prepared.tea_index, vec![0, 1]);
+        pretty_assertions::assert_eq!(prepared.tea_entries[0].attribute_name, prepared.tea_entries[1].attribute_name);
     }
 
     #[test]

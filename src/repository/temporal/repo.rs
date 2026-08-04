@@ -215,45 +215,42 @@ impl TemporalRepository {
     }
 
     /// Modify a specific attribute instance.
+    ///
+    /// Rewriting the newest instance of an attribute changes what "current"
+    /// means, so `attribute_current` is rebuilt for the affected TEA in the same
+    /// transaction. Without this a `PATCH` of the newest instance leaves the
+    /// projection holding the superseded value, and `q` filters compiled against
+    /// `attribute_current` answer from it.
     pub async fn update_instance(&self, params: UpdateInstanceParams<'_>) -> Result<(), AndromedaError> {
-        let result = sqlx::query(
-            r#"
-            UPDATE attribute_history
-            SET value_number = $4, value_string = $5, value_bool = $6,
-                value_geo = CASE WHEN $7 IS NOT NULL THEN ST_MakeValid(ST_GeomFromEWKB($7)) ELSE NULL END,
-                value_object = $8, value_datetime = $9, value_uri = $10,
-                observed_at = $11, metadata = $12
-            WHERE instance_id = $1
-            AND tea_id IN (
-                SELECT tea.id FROM temporal_entity_attributes tea
-                JOIN attribute_names an ON an.id = tea.attribute_name_id
-                WHERE tea.entity_id = $2 AND an.name = $3
-            )
-            RETURNING instance_id
-            "#,
-        )
-        .bind(params.instance_id)
-        .bind(params.entity_id)
-        .bind(params.attribute_name)
-        .bind(params.values.value_number)
-        .bind(params.values.value_string)
-        .bind(params.values.value_bool)
-        .bind(params.values.value_geo)
-        .bind(params.values.value_object)
-        .bind(params.values.value_datetime)
-        .bind(params.values.value_uri)
-        .bind(params.observed_at)
-        .bind(params.values.metadata)
-        .fetch_optional(&self.pool)
-        .await?;
+        let mut tx = self.pool.begin().await?;
 
-        if result.is_none() {
+        let updated = sqlx::query(UPDATE_INSTANCE_SQL)
+            .bind(params.instance_id)
+            .bind(params.entity_id)
+            .bind(params.attribute_name)
+            .bind(params.values.value_number)
+            .bind(params.values.value_string)
+            .bind(params.values.value_bool)
+            .bind(params.values.value_geo)
+            .bind(params.values.value_object)
+            .bind(params.values.value_datetime)
+            .bind(params.values.value_uri)
+            .bind(params.observed_at)
+            .bind(params.values.metadata)
+            .fetch_optional(&mut *tx)
+            .await?;
+
+        let Some(row) = updated else {
             return Err(AndromedaError::temporal_not_found(format!(
                 "Attribute instance {} not found",
                 params.instance_id
             )));
-        }
+        };
+        let tea_id: uuid::Uuid = row.try_get("tea_id")?;
 
+        repair_attribute_current(&mut tx, tea_id).await?;
+
+        tx.commit().await?;
         Ok(())
     }
 
@@ -278,24 +275,8 @@ impl TemporalRepository {
         Ok(row)
     }
 
-    /// Bulk upsert TEA catalog entries in a single SQL round-trip using `UNNEST`.
-    pub async fn upsert_tea_batch(&self, entries: &[TeaBatchEntry]) -> Result<Vec<TeaBatchResultRow>, AndromedaError> {
-        if entries.is_empty() {
-            return Ok(Vec::new());
-        }
-        let (entity_ids, attr_name_ids, attribute_types, dataset_ids, value_types) = self.tea_batch_binds(entries).await?;
-        let rows = sqlx::query(TEA_UPSERT_SQL)
-            .bind(&entity_ids)
-            .bind(&attr_name_ids)
-            .bind(&attribute_types)
-            .bind(&dataset_ids)
-            .bind(&value_types)
-            .fetch_all(&self.pool)
-            .await?;
-        Ok(rows_to_tea_results(rows))
-    }
-
-    /// Transactional variant of [`Self::upsert_tea_batch`].
+    /// Bulk upsert TEA catalog entries in a single SQL round-trip using `UNNEST`,
+    /// inside the caller's transaction.
     pub async fn upsert_tea_batch_in_tx(
         &self,
         tx: &mut Transaction<'_, Postgres>,
@@ -348,19 +329,9 @@ impl TemporalRepository {
         Ok((entity_ids, attr_name_ids, attribute_types, dataset_ids, value_types))
     }
 
-    /// Bulk insert attribute history rows in a single transaction.
-    pub async fn insert_history_batch(&self, entries: &[HistoryBatchEntry]) -> Result<(), AndromedaError> {
-        if entries.is_empty() {
-            return Ok(());
-        }
-        let mut tx = self.pool.begin().await?;
-        self.insert_history_batch_in_tx(&mut tx, entries).await?;
-        tx.commit().await?;
-        Ok(())
-    }
-
-    /// Transactional variant of [`Self::insert_history_batch`]. Runs the
-    /// dedup `DELETE`s and the history `INSERT` against the caller's
+    /// Bulk insert attribute history rows inside the caller's transaction.
+    ///
+    /// Runs the dedup `DELETE`s and the history `INSERT` against the caller's
     /// transaction without committing.
     ///
     /// The `attribute_current` projection is **not** maintained here
@@ -382,37 +353,7 @@ impl TemporalRepository {
         Ok(())
     }
 
-    /// Insert a single scope history observation.
-    pub async fn insert_scope_history(&self, entry: &ScopeHistoryEntry) -> Result<(), AndromedaError> {
-        sqlx::query(
-            r#"
-            INSERT INTO scope_history (time, entity_id, scope_path, instance_id)
-            VALUES ($1, $2, $3::ltree, $4)
-            ON CONFLICT (entity_id, time, instance_id) DO NOTHING
-            "#,
-        )
-        .bind(entry.time)
-        .bind(&entry.entity_id)
-        .bind(&entry.scope_path)
-        .bind(&entry.instance_id)
-        .execute(&self.pool)
-        .await?;
-
-        Ok(())
-    }
-
-    /// Bulk insert scope history observations in a single transaction.
-    pub async fn insert_scope_history_batch(&self, entries: &[ScopeHistoryEntry]) -> Result<(), AndromedaError> {
-        if entries.is_empty() {
-            return Ok(());
-        }
-        let mut tx = self.pool.begin().await?;
-        self.insert_scope_history_batch_in_tx(&mut tx, entries).await?;
-        tx.commit().await?;
-        Ok(())
-    }
-
-    /// Transactional variant of [`Self::insert_scope_history_batch`].
+    /// Bulk insert scope history observations inside the caller's transaction.
     pub async fn insert_scope_history_batch_in_tx(&self, tx: &mut Transaction<'_, Postgres>, entries: &[ScopeHistoryEntry]) -> Result<(), AndromedaError> {
         if entries.is_empty() {
             return Ok(());
@@ -507,6 +448,25 @@ WHERE NOT EXISTS (
       AND u.attribute_name_id  = i.attribute_name_id
       AND u.dataset_id IS NOT DISTINCT FROM i.dataset_id
 )
+"#;
+
+/// Rewrite one attribute instance in place.
+///
+/// `RETURNING tea_id` rather than the instance id: the caller needs the owning
+/// TEA to rebuild `attribute_current`, and the instance id it already has.
+const UPDATE_INSTANCE_SQL: &str = r#"
+UPDATE attribute_history
+SET value_number = $4, value_string = $5, value_bool = $6,
+    value_geo = CASE WHEN $7 IS NOT NULL THEN ST_MakeValid(ST_GeomFromEWKB($7)) ELSE NULL END,
+    value_object = $8, value_datetime = $9, value_uri = $10,
+    observed_at = $11, metadata = $12
+WHERE instance_id = $1
+AND tea_id IN (
+    SELECT tea.id FROM temporal_entity_attributes tea
+    JOIN attribute_names an ON an.id = tea.attribute_name_id
+    WHERE tea.entity_id = $2 AND an.name = $3
+)
+RETURNING tea_id
 "#;
 
 /// Rebuild one TEA's `attribute_current` row from `attribute_history`.
@@ -719,4 +679,18 @@ async fn insert_history_batch_unnest_in_tx(tx: &mut Transaction<'_, Postgres>, e
     .await?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn update_instance_returns_the_owning_tea_id() {
+        // The projection repair that follows the UPDATE keys on the TEA. The
+        // statement used to return instance_id, which the caller already holds,
+        // leaving attribute_current serving the value the PATCH superseded.
+        assert!(UPDATE_INSTANCE_SQL.contains("RETURNING tea_id"));
+        assert!(!UPDATE_INSTANCE_SQL.contains("RETURNING instance_id"));
+    }
 }

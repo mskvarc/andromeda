@@ -48,7 +48,7 @@ moka = { version = "0.12.15", features = ["future"] }
 parking_lot = "0.12.5"
 percent-encoding = "2.3.2"
 problem_details = { version = "0.9.0", features = ["axum"] }
-rdf-rs = { git = "ssh://git@github.com/mskvarc/rdf-rs.git" }
+rdfx = { git = "ssh://git@github.com/mskvarc/rdf-rs.git" }
 regex = "1.12.3"
 reqwest = { version = "0.13.2", features = ["json"] }
 rstar = "0.12.2"
@@ -87,6 +87,16 @@ futures = "0.3.32"
 pretty_assertions = "1.4.1"
 serial_test = "3.4.0"
 urlencoding = "2.1.3"
+
+# Temporary: the json-ld fork still declares SSH git dependencies for these.
+# Until those manifests move to registry dependencies, the git copies must stay
+# in the graph, so `ld-core` keeps pointing at the pre-migration checkout.
+[patch."ssh://git@github.com/mskvarc/rdf-rs.git"]
+rdfx = { path = "../publish/rdfx" }
+
+[patch."ssh://git@github.com/mskvarc/ld-core.git"]
+ld-core = { path = "../ld-core/ld-core" }
+ld-core-derive = { path = "../ld-core/ld-core-derive" }
 
 [profile.release]
 lto = "thin"

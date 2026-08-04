@@ -31,7 +31,6 @@ use crate::{
         subscription_matching::matches_entity_filters,
         temporal_recorder::TemporalRecorder,
     },
-    worker::attribute_current_materializer::AttributeCurrentQueue,
 };
 use chrono::{DateTime, SecondsFormat, Utc};
 use dashmap::DashMap;
@@ -158,10 +157,9 @@ impl EntityService {
         batch_config: BatchExecutionConfig,
         batch_activity: BatchActivityTracker,
         outbox: Option<OutboxWriteConfig>,
-        attribute_current_queue: AttributeCurrentQueue,
     ) -> EntityService {
         let repo = EntityRepository::new(pool);
-        let temporal_recorder = TemporalRecorder::new(temporal_repo, attribute_current_queue);
+        let temporal_recorder = TemporalRecorder::new(temporal_repo);
         let id_locks: Arc<IdLockMap> = Arc::new(DashMap::new());
         spawn_id_lock_gc(Arc::downgrade(&id_locks));
 
@@ -240,30 +238,17 @@ impl EntityService {
         }
     }
 
-    async fn apply_batch_side_effects(&self, job: BatchSideEffectJob) {
-        let BatchSideEffectJob {
-            temporal_entities,
-            change_events,
-        } = job;
-
-        if let Err(error) = self.temporal_recorder.record_entities_batch(&temporal_entities).await {
-            tracing::warn!(error = %error, event = "temporal_batch_recording_failed");
-        }
-
-        for event in change_events {
+    /// Emit a chunk's buffered change events inline.
+    ///
+    /// Only the batch **delete** path reaches this, and its job carries no
+    /// temporal entities. Every path that does write temporal rows pairs them
+    /// with the entity write inside a
+    /// [`UnitOfWork`](crate::repository::uow::UnitOfWork), so there is no
+    /// history left for this method to record.
+    fn apply_inline_side_effects(&self, job: BatchSideEffectJob) {
+        for event in job.change_events {
             self.emit_change(event);
         }
-    }
-
-    /// Route a chunk's side-effects either inline or through the durable
-    /// queue. The `Enqueue` branch is only reachable when the caller has
-    /// already paired it with the entity write inside a transaction; this
-    /// method handles only the inline case.
-    async fn apply_inline_side_effects(&self, job: BatchSideEffectJob) {
-        if job.temporal_entities.is_empty() && job.change_events.is_empty() {
-            return;
-        }
-        self.apply_batch_side_effects(job).await;
     }
 
     /// Persist a side-effect job into the durable queue inside the given

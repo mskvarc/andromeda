@@ -27,7 +27,7 @@ use jsonld::{
 };
 use jsonld_syntax::Parse;
 use moka::future::Cache;
-use rdf_rs::vocabulary::{BlankIdIndex, IndexVocabulary, IriIndex};
+use rdfx::vocabulary::{BlankIdIndex, IndexVocabulary, IriIndex};
 use std::{
     borrow::Cow,
     collections::HashMap,

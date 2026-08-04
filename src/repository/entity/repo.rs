@@ -17,6 +17,36 @@ use sqlx::{Executor, Postgres, Row, Transaction, postgres::PgPool};
 use std::collections::HashMap;
 use urn_rs::Urn;
 
+/// Expands to the `INSERT INTO entities` statement shared by
+/// [`EntityRepository::create_in_tx`] and
+/// [`EntityRepository::ensure_placeholder_in_tx`], with no conflict clause.
+///
+/// A macro rather than a `const` because the two statements differ only by a
+/// trailing clause and `concat!` composes literals, not constants. Hand-copying
+/// the column list into both would let a new column reach one statement and
+/// silently miss the other.
+macro_rules! entity_insert_sql {
+    () => {
+        r#"
+            INSERT INTO entities (id, types, scope_paths, payload, location, observation_space, operation_space, expires_at)
+            VALUES ($1, $2, $3::ltree[], $4,
+                    CASE WHEN $5 IS NOT NULL THEN ST_MakeValid(ST_GeomFromEWKB($5)) ELSE NULL END,
+                    CASE WHEN $6 IS NOT NULL THEN ST_MakeValid(ST_GeomFromEWKB($6)) ELSE NULL END,
+                    CASE WHEN $7 IS NOT NULL THEN ST_MakeValid(ST_GeomFromEWKB($7)) ELSE NULL END,
+                    $8)
+            "#
+    };
+}
+
+/// Plain entity INSERT. Must stay free of any conflict clause: the Entity API
+/// answers 409 off its duplicate-key error (NGSI-LD 6.4.3.1).
+const ENTITY_INSERT_SQL: &str = entity_insert_sql!();
+
+/// [`ENTITY_INSERT_SQL`] made idempotent, for callers that need the row to exist
+/// rather than to have created it. See
+/// [`EntityRepository::ensure_placeholder_in_tx`].
+const ENTITY_PLACEHOLDER_INSERT_SQL: &str = concat!(entity_insert_sql!(), "ON CONFLICT (id) DO NOTHING\n");
+
 /// Repository for persisting and querying NGSI-LD entities.
 #[derive(Debug)]
 pub struct EntityRepository {
@@ -29,40 +59,58 @@ impl EntityRepository {
         EntityRepository { pool: pool.clone() } // clone: Arc ref-count bump
     }
 
-    /// Insert a new entity and return its URN identifier.
-    pub async fn create(&self, params: EntityCreateParams<'_>) -> Result<Urn, AndromedaError> {
-        Self::create_impl(&self.pool, params).await
-    }
-
-    /// Transactional variant of [`Self::create`].
+    /// Insert a new entity and return its URN identifier, inside the caller's
+    /// transaction.
+    ///
+    /// Deliberately has no conflict clause: the Entity API answers 409 off this
+    /// statement's duplicate-key error (NGSI-LD 6.4.3.1). Callers that only need
+    /// the row to be present want [`Self::ensure_placeholder_in_tx`] instead.
     pub async fn create_in_tx(tx: &mut Transaction<'_, Postgres>, params: EntityCreateParams<'_>) -> Result<Urn, AndromedaError> {
-        Self::create_impl(&mut **tx, params).await
-    }
-
-    async fn create_impl<'e>(executor: impl Executor<'e, Database = sqlx::Postgres>, params: EntityCreateParams<'_>) -> Result<Urn, AndromedaError> {
         tracing::info!("Storing entity {} with types: {:?}", params.id, params.types);
-        sqlx::query(
-            r#"
-            INSERT INTO entities (id, types, scope_paths, payload, location, observation_space, operation_space, expires_at)
-            VALUES ($1, $2, $3::ltree[], $4,
-                    CASE WHEN $5 IS NOT NULL THEN ST_MakeValid(ST_GeomFromEWKB($5)) ELSE NULL END,
-                    CASE WHEN $6 IS NOT NULL THEN ST_MakeValid(ST_GeomFromEWKB($6)) ELSE NULL END,
-                    CASE WHEN $7 IS NOT NULL THEN ST_MakeValid(ST_GeomFromEWKB($7)) ELSE NULL END,
-                    $8)
-            "#,
-        )
-        .bind(params.id)
-        .bind(params.types)
-        .bind(&params.scope_paths)
-        .bind(params.payload)
-        .bind(params.location_wkb)
-        .bind(params.observation_space_wkb)
-        .bind(params.operation_space_wkb)
-        .bind(params.expires_at)
-        .execute(executor)
-        .await?;
+        sqlx::query(ENTITY_INSERT_SQL)
+            .bind(params.id)
+            .bind(params.types)
+            .bind(&params.scope_paths)
+            .bind(params.payload)
+            .bind(params.location_wkb)
+            .bind(params.observation_space_wkb)
+            .bind(params.operation_space_wkb)
+            .bind(params.expires_at)
+            .execute(&mut **tx)
+            .await?;
 
         Ok(params.id.parse::<Urn>()?)
+    }
+
+    /// Insert the `entities` row a temporal write depends on, leaving any
+    /// existing row untouched.
+    ///
+    /// `temporal_entity_attributes.entity_id` has a foreign key to
+    /// `entities(id)` (migration 0007), so the Temporal API has to materialise a
+    /// placeholder row before it can record history for an entity the Entity API
+    /// has never seen. Its semantics are *ensure the row exists*, not *create
+    /// it*: two concurrent `POST /temporal/entities` requests for the same new
+    /// identifier are both legitimate and neither should fail.
+    ///
+    /// This is deliberately a separate statement from [`Self::create_in_tx`]
+    /// rather than an added `ON CONFLICT` clause on the shared one: the Entity
+    /// API answers 409 off that statement's duplicate-key error (NGSI-LD
+    /// 6.4.3.1), so suppressing the conflict there would silence a required
+    /// response.
+    pub async fn ensure_placeholder_in_tx(tx: &mut Transaction<'_, Postgres>, params: EntityCreateParams<'_>) -> Result<(), AndromedaError> {
+        sqlx::query(ENTITY_PLACEHOLDER_INSERT_SQL)
+            .bind(params.id)
+            .bind(params.types)
+            .bind(&params.scope_paths)
+            .bind(params.payload)
+            .bind(params.location_wkb)
+            .bind(params.observation_space_wkb)
+            .bind(params.operation_space_wkb)
+            .bind(params.expires_at)
+            .execute(&mut **tx)
+            .await?;
+
+        Ok(())
     }
 
     /// Retrieve an entity's expanded payload by identifier.
@@ -721,5 +769,29 @@ impl EntityRepository {
             })
             .collect();
         Ok(result)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn plain_entity_insert_carries_no_conflict_clause() {
+        // The Entity API answers 409 off this statement's duplicate-key error
+        // (NGSI-LD 6.4.3.1). A conflict clause here would swallow it and turn a
+        // duplicate create into a silent success.
+        assert!(!ENTITY_INSERT_SQL.contains("ON CONFLICT"));
+    }
+
+    #[test]
+    fn placeholder_insert_is_the_plain_insert_plus_a_do_nothing_clause() {
+        // Derived from the shared statement rather than copied, so a column
+        // added for one reaches the other and the only difference between the
+        // two stays the conflict clause.
+        pretty_assertions::assert_eq!(
+            ENTITY_PLACEHOLDER_INSERT_SQL.strip_prefix(ENTITY_INSERT_SQL).map(str::trim),
+            Some("ON CONFLICT (id) DO NOTHING")
+        );
     }
 }

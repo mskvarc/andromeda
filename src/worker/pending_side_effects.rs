@@ -2,22 +2,21 @@
 //!
 //! Drains the `pending_side_effects` table with at-least-once semantics.
 //! Each leased job is decoded into a [`BatchSideEffectJob`] and executed:
-//! the temporal history rows are written, and any buffered `ChangeEvent`s
-//! are re-emitted on the broadcast channel so downstream notification
-//! consumers observe the batch. On success the row is `ack`'ed (deleted);
-//! on failure the worker computes an exponential backoff and `nack`s the
-//! row, and dead-letters once the attempt count exceeds the configured
-//! maximum.
+//! the temporal history rows are written in one unit of work, and any
+//! buffered `ChangeEvent`s are re-emitted on the broadcast channel so
+//! downstream notification consumers observe the batch. On success the row
+//! is `ack`'ed (deleted); on failure the worker computes an exponential
+//! backoff and `nack`s the row, and dead-letters once the attempt count
+//! exceeds the configured maximum.
 
 use crate::{
     core::error::AndromedaError,
     domain::notification::ChangeEvent,
     repository::{
         pending_side_effects::{payload::PersistedBatchSideEffectJob, repo::PendingSideEffectsRepository, rows::LeasedSideEffect},
-        temporal::repo::TemporalRepository,
+        uow::UnitOfWorkFactory,
     },
-    service::{entity::BatchSideEffectJob, temporal_recorder::TemporalRecorder},
-    worker::attribute_current_materializer::AttributeCurrentQueue,
+    service::entity::BatchSideEffectJob,
 };
 use chrono::Utc;
 use std::{sync::Arc, time::Duration};
@@ -47,26 +46,20 @@ pub struct WorkerConfig {
 /// Background worker that drains the durable side-effect queue.
 pub struct PendingSideEffectsWorker {
     repo: PendingSideEffectsRepository,
-    temporal_recorder: TemporalRecorder,
+    uow: Arc<UnitOfWorkFactory>,
     change_tx: Option<broadcast::Sender<ChangeEvent>>,
     config: WorkerConfig,
 }
 
 impl PendingSideEffectsWorker {
-    /// Create a new worker bound to the tenant's shared temporal repository.
+    /// Create a new worker bound to the tenant's unit-of-work factory.
     pub const fn new(
         repo: PendingSideEffectsRepository,
-        temporal_repo: Arc<TemporalRepository>,
-        attribute_current_queue: AttributeCurrentQueue,
+        uow: Arc<UnitOfWorkFactory>,
         change_tx: Option<broadcast::Sender<ChangeEvent>>,
         config: WorkerConfig,
     ) -> PendingSideEffectsWorker {
-        PendingSideEffectsWorker {
-            repo,
-            temporal_recorder: TemporalRecorder::new(temporal_repo, attribute_current_queue),
-            change_tx,
-            config,
-        }
+        PendingSideEffectsWorker { repo, uow, change_tx, config }
     }
 
     /// Run the poll loop until the task is aborted.
@@ -138,7 +131,12 @@ impl PendingSideEffectsWorker {
             change_events,
         } = job;
 
-        self.temporal_recorder.record_entities_batch(&temporal_entities).await?;
+        // One unit of work for the whole replayed job: the TEA upsert, the
+        // history insert and the scope insert either all land or none do, so a
+        // retry after a mid-job failure has nothing partial to heal.
+        let mut uow = self.uow.begin().await?;
+        uow.record_entities_batch(&temporal_entities).await?;
+        uow.commit().await?;
 
         if let Some(tx) = &self.change_tx {
             for event in change_events {

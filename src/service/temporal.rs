@@ -2,7 +2,7 @@
 
 use crate::{
     core::error::AndromedaError,
-    domain::temporal::TemporalFormat,
+    domain::{expanded::extract_expires_at, temporal::TemporalFormat},
     http::{
         parameter::query::{SharedQueryParams, temporal::TemporalQueryParameters},
         response::content_range::build_content_range,
@@ -29,13 +29,14 @@ use crate::{
         attribute_names::AttributeNameCache,
         entity::{params::EntityCreateParams, repo::EntityRepository},
         temporal::{params::DeleteScope, repo::TemporalRepository},
+        uow::UnitOfWorkFactory,
     },
     service::{
         csource_forwarding::{ForwardedTemporalEntities, merge_temporal_query_results},
         entity::{extract::extract_geo_wkb, extract_entity_types, normalize_entity_attributes},
         temporal_recorder::TemporalRecorder,
     },
-    worker::attribute_current_materializer::{AttributeCurrentBarrier, AttributeCurrentQueue},
+    worker::attribute_current_materializer::AttributeCurrentBarrier,
 };
 use chrono::{DateTime, SecondsFormat, Utc};
 use serde_json::{Value, json};
@@ -117,6 +118,7 @@ fn normalize_temporal_payload_without_context(value: &mut Value) {
 pub struct TemporalService {
     repo: Arc<TemporalRepository>,
     recorder: TemporalRecorder,
+    uow: Arc<UnitOfWorkFactory>,
     entity_repo: EntityRepository,
     engine: JsonLdEngine,
     default_last_n: u32,
@@ -165,22 +167,23 @@ pub struct TemporalQueryResult {
 }
 
 impl TemporalService {
-    /// Create a new temporal service with the given connection pool, shared temporal repository, JSON-LD engine, and default lastN cap.
+    /// Create a new temporal service with the given connection pool, shared temporal repository, unit-of-work factory, JSON-LD engine, and default lastN cap.
     pub fn new(
         pool: &sqlx::postgres::PgPool,
         temporal_repo: Arc<TemporalRepository>,
+        uow: Arc<UnitOfWorkFactory>,
         engine: JsonLdEngine,
         default_last_n: u32,
         attribute_current: AttributeCurrentBarrier,
-        attribute_current_queue: AttributeCurrentQueue,
         attribute_names: Arc<AttributeNameCache>,
     ) -> TemporalService {
-        let recorder = TemporalRecorder::new(temporal_repo.clone(), attribute_current_queue); // clone: Arc ref-count bump; repo is shared between service and recorder
+        let recorder = TemporalRecorder::new(temporal_repo.clone()); // clone: Arc ref-count bump; repo is shared between service and recorder
         let entity_repo = EntityRepository::new(pool);
 
         TemporalService {
             repo: temporal_repo,
             recorder,
+            uow,
             entity_repo,
             engine,
             default_last_n,
@@ -218,6 +221,13 @@ impl TemporalService {
     // -------------------------------------------------------------------------
 
     /// Create a new temporal entity or append attributes to an existing one.
+    ///
+    /// The entity placeholder row and every history row it carries are written
+    /// in a single transaction: NGSI-LD 6.18.3.1 defines only 201/204/400 for
+    /// `POST /temporal/entities`, so there is no way to report that some
+    /// attributes were stored and others were not. A database failure therefore
+    /// rolls the request back whole rather than reporting success over partial
+    /// history.
     pub async fn create_or_update(&self, mut payload: Value, context: &ContextSpec) -> Result<CreateOrUpdateResult, AndromedaError> {
         normalize_entity_attributes(&mut payload);
         let expanded = self.engine.expand(payload.clone(), context).await?; // clone: expand() consumes the Value; payload is still used below for type extraction
@@ -248,39 +258,38 @@ impl TemporalService {
             self.add_attrs_internal(entity_id, &expanded).await?;
             Ok(CreateOrUpdateResult::Updated)
         } else {
-            // Create base entity placeholder if it doesn't exist in the entities table yet,
-            // because temporal_entity_attributes has a FOREIGN KEY constraint to entities(id).
-            let base_exists = self.entity_repo.exists(entity_id).await?;
-            if !base_exists {
-                let mut types = Vec::new();
-                if let Some(type_arr) = entity_obj.get("@type").and_then(|v| v.as_array()) {
-                    for t in type_arr {
-                        if let Some(t_str) = t.as_str() {
-                            types.push(t_str);
-                        }
+            let mut types = Vec::new();
+            if let Some(type_arr) = entity_obj.get("@type").and_then(|v| v.as_array()) {
+                for t in type_arr {
+                    if let Some(t_str) = t.as_str() {
+                        types.push(t_str);
                     }
                 }
-
-                // Save initial base entity using the expanded payload so that
-                // extract_entity_types() can find @type in the stored JSON.
-                let expires_at = crate::domain::expanded::extract_expires_at(&expanded);
-                let (location_wkb, observation_space_wkb, operation_space_wkb) = extract_geo_wkb(&expanded);
-                let _ = self
-                    .entity_repo
-                    .create(EntityCreateParams {
-                        id: entity_id,
-                        types: &types,
-                        scope_paths: Vec::new(),
-                        payload: &expanded,
-                        location_wkb,
-                        observation_space_wkb,
-                        operation_space_wkb,
-                        expires_at,
-                    })
-                    .await;
             }
 
-            self.recorder.record_entity_attributes(entity_id, &expanded).await?;
+            // The base entity row is a placeholder using the expanded payload so
+            // that extract_entity_types() can find @type in the stored JSON. No
+            // pre-flight existence check: the statement's conflict clause is the
+            // check, and it does not lose a race to a concurrent temporal write
+            // for the same new identifier.
+            let expires_at = extract_expires_at(&expanded);
+            let (location_wkb, observation_space_wkb, operation_space_wkb) = extract_geo_wkb(&expanded);
+
+            let mut uow = self.uow.begin().await?;
+            uow.ensure_entity_placeholder(EntityCreateParams {
+                id: entity_id,
+                types: &types,
+                scope_paths: Vec::new(),
+                payload: &expanded,
+                location_wkb,
+                observation_space_wkb,
+                operation_space_wkb,
+                expires_at,
+            })
+            .await?;
+            uow.record_entity_attributes(entity_id, &expanded).await?;
+            uow.commit().await?;
+
             Ok(CreateOrUpdateResult::Created(entity_id.to_string()))
         }
     }
@@ -297,8 +306,22 @@ impl TemporalService {
         Ok(())
     }
 
+    /// Append every observation in `expanded` to the entity's Temporal Evolution
+    /// in one transaction.
+    ///
+    /// No entity placeholder is written here: the caller has already established
+    /// that the entity has `temporal_entity_attributes` rows, and their foreign
+    /// key to `entities(id)` cascades on delete, so the base row is necessarily
+    /// present.
+    ///
+    /// A database failure fails the whole request. NGSI-LD 6.20.3.1 defines only
+    /// 204/400/404 for `POST /temporal/entities/{id}/attrs`, and 204 means "all
+    /// the Attributes were added successfully" -- there is no response code that
+    /// can report a subset having been stored.
     async fn add_attrs_internal(&self, entity_id: &str, expanded: &Value) -> Result<(), AndromedaError> {
-        self.recorder.record_entity_attributes(entity_id, expanded).await
+        let mut uow = self.uow.begin().await?;
+        uow.record_entity_attributes(entity_id, expanded).await?;
+        uow.commit().await
     }
 
     async fn resolve_attr_iri_for_entity(&self, entity_id: &str, attr_id: &str, context: &ContextSpec) -> Result<String, AndromedaError> {

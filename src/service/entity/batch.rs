@@ -1224,7 +1224,7 @@ impl EntityService {
             self.enqueue_batch_side_effects(&mut uow, &job).await?;
             uow.commit().await?;
         } else {
-            self.apply_inline_side_effects(job).await;
+            self.apply_inline_side_effects(job);
         }
 
         Ok((success, errors))

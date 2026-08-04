@@ -318,12 +318,30 @@ pub async fn build_tenant_state(
     }
     worker_handles.push(tokio::spawn(materializer.run()));
 
+    let subscription_cache = Arc::new(SubscriptionCache::new(tenant.clone()));
+    if let Err(e) = subscription_cache.reload(&SubscriptionRepository::new(&pool)).await {
+        tracing::error!("Failed to load subscription cache: {}", e);
+    }
+
+    let spatial_index = Arc::new(SpatialEntityIndex::new());
+    if let Err(e) = warmup::warmup_location(&spatial_index, &pool, &tenant).await {
+        tracing::warn!("spatial warmup failed: {}", e);
+    }
+
+    // Sole owner of the materializer producer handle: every write path reaches
+    // the projection through a unit of work, so no other service needs one.
+    let uow_factory = Arc::new(UnitOfWorkFactory::new(
+        &pool,
+        Arc::clone(&temporal_repo),
+        config.performance.bulk_write_mode,
+        attribute_current_queue,
+    ));
+
     if config.performance.batch_async_side_effect_threshold.is_some() {
         let pending_repo = crate::repository::pending_side_effects::repo::PendingSideEffectsRepository::new(&pool);
         let worker = PendingSideEffectsWorker::new(
             pending_repo,
-            Arc::clone(&temporal_repo),
-            attribute_current_queue.clone(), // clone: producer handle shared with the other services
+            Arc::clone(&uow_factory),
             Some(change_tx.clone()),
             crate::worker::pending_side_effects::WorkerConfig {
                 poll_interval: std::time::Duration::from_secs(config.performance.pending_side_effects_poll_secs.max(1)),
@@ -336,22 +354,6 @@ pub async fn build_tenant_state(
         );
         worker_handles.push(tokio::spawn(worker.run()));
     }
-    let subscription_cache = Arc::new(SubscriptionCache::new(tenant.clone()));
-    if let Err(e) = subscription_cache.reload(&SubscriptionRepository::new(&pool)).await {
-        tracing::error!("Failed to load subscription cache: {}", e);
-    }
-
-    let spatial_index = Arc::new(SpatialEntityIndex::new());
-    if let Err(e) = warmup::warmup_location(&spatial_index, &pool, &tenant).await {
-        tracing::warn!("spatial warmup failed: {}", e);
-    }
-
-    let uow_factory = Arc::new(UnitOfWorkFactory::new(
-        &pool,
-        Arc::clone(&temporal_repo),
-        config.performance.bulk_write_mode,
-        attribute_current_queue.clone(), // clone: producer handle shared with the other services
-    ));
 
     let entity_service = Arc::new(EntityService::new(
         &pool,
@@ -376,15 +378,14 @@ pub async fn build_tenant_state(
         } else {
             None
         },
-        attribute_current_queue.clone(), // clone: producer handle shared with the other services
     ));
     let temporal_service = Arc::new(TemporalService::new(
         &pool,
         Arc::clone(&temporal_repo),
+        Arc::clone(&uow_factory),
         engine.clone(),
         config.temporal.default_last_n,
         attribute_current_barrier.clone(),
-        attribute_current_queue,
         Arc::clone(&attribute_name_cache),
     ));
     let context_service = Arc::new(JsonLdContextService::new(&pool, engine.clone()));
