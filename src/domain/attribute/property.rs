@@ -31,7 +31,7 @@ impl From<UnitCodeRef> for UnitCode {
 
 /// NGSI-LD Property representation (ETSI GS CIM 009 clause 5.2.5).
 #[skip_serializing_none]
-#[derive(Debug, Clone, Serialize, Deserialize, Expandable)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, Expandable)]
 #[serde(rename_all = "camelCase")]
 #[jsonld(
     type = "ngsi:Property",
@@ -56,19 +56,6 @@ pub struct Property {
     #[serde(flatten)]
     #[jsonld(flatten_map)]
     pub sub_attributes: IndexMap<CompactString, AttributeValue>,
-}
-
-impl Default for Property {
-    fn default() -> Property {
-        Property {
-            value: NgsiLdValue::Json(serde_json::Value::Null),
-            unit_code: None,
-            value_type: None,
-            previous_value: None,
-            common: CommonAttributeFields::default(),
-            sub_attributes: IndexMap::new(),
-        }
-    }
 }
 
 #[cfg(test)]
@@ -115,5 +102,15 @@ mod tests {
         assert!(obj.contains_key(vocab::expanded::properties::VALUE_TYPE.as_str()));
         assert!(obj.contains_key(vocab::expanded::properties::CREATED_AT.as_str()));
         assert!(obj.contains_key(vocab::expanded::properties::MODIFIED_AT.as_str()));
+    }
+
+    #[test]
+    fn the_property_default_matches_the_field_by_field_literal() {
+        use crate::domain::attribute::{Property, common::NgsiLdValue};
+        let actual = Property::default();
+        pretty_assertions::assert_eq!(actual.value, NgsiLdValue::Json(serde_json::Value::Null));
+        assert!(actual.unit_code.is_none() && actual.value_type.is_none() && actual.previous_value.is_none());
+        assert!(actual.sub_attributes.is_empty());
+        assert!(actual.common.dataset_id.is_none() && actual.common.observed_at.is_none() && actual.common.expires_at.is_none());
     }
 }

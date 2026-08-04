@@ -10,7 +10,7 @@ use serde_with::skip_serializing_none;
 
 /// NGSI-LD ListRelationship representation (ETSI GS CIM 009 clause 5.2.37).
 #[skip_serializing_none]
-#[derive(Debug, Clone, Serialize, Deserialize, Expandable)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, Expandable)]
 #[serde(rename_all = "camelCase")]
 #[jsonld(
     type = "ngsi:ListRelationship",
@@ -31,19 +31,6 @@ pub struct ListRelationship {
     #[serde(flatten)]
     #[jsonld(flatten_map)]
     pub sub_attributes: IndexMap<String, AttributeValue>,
-}
-
-impl Default for ListRelationship {
-    fn default() -> ListRelationship {
-        ListRelationship {
-            object_list: RelationshipObjectList(Vec::new()),
-            object_type: None,
-            entity_list: None,
-            previous_object_list: None,
-            common: CommonAttributeFields::default(),
-            sub_attributes: IndexMap::new(),
-        }
-    }
 }
 
 #[cfg(test)]
@@ -72,5 +59,15 @@ mod tests {
             &serde_json::json!([{"@list": [{"@id": "urn:ngsi-ld:Entity:1"}, {"@id": "urn:ngsi-ld:Entity:2"}]}])
         );
         assert!(obj.contains_key("https://uri.etsi.org/ngsi-ld/hasPreviousObjectList"));
+    }
+
+    #[test]
+    fn the_list_relationship_default_matches_the_field_by_field_literal() {
+        use crate::domain::attribute::{ListRelationship, common::RelationshipObjectList};
+        let actual = ListRelationship::default();
+        pretty_assertions::assert_eq!(actual.object_list, RelationshipObjectList(Vec::new()));
+        assert!(actual.object_type.is_none() && actual.entity_list.is_none() && actual.previous_object_list.is_none());
+        assert!(actual.sub_attributes.is_empty());
+        assert!(actual.common.dataset_id.is_none() && actual.common.observed_at.is_none() && actual.common.expires_at.is_none());
     }
 }

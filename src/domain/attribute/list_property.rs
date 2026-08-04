@@ -10,7 +10,7 @@ use serde_with::skip_serializing_none;
 
 /// NGSI-LD ListProperty representation (ETSI GS CIM 009 clause 5.2.36).
 #[skip_serializing_none]
-#[derive(Debug, Clone, Serialize, Deserialize, Expandable)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, Expandable)]
 #[serde(rename_all = "camelCase")]
 #[jsonld(
     type = "ngsi:ListProperty",
@@ -29,18 +29,6 @@ pub struct ListProperty {
     #[serde(flatten)]
     #[jsonld(flatten_map)]
     pub sub_attributes: IndexMap<String, AttributeValue>,
-}
-
-impl Default for ListProperty {
-    fn default() -> ListProperty {
-        ListProperty {
-            value_list: Vec::new(),
-            value_type: None,
-            previous_value_list: None,
-            common: CommonAttributeFields::default(),
-            sub_attributes: IndexMap::new(),
-        }
-    }
 }
 
 #[cfg(test)]
@@ -66,5 +54,23 @@ mod tests {
         let has_value_list = &obj["https://uri.etsi.org/ngsi-ld/hasValueList"];
         pretty_assertions::assert_eq!(has_value_list, &serde_json::json!([{"@list": [1, 2, 3]}]));
         assert!(obj.contains_key("https://uri.etsi.org/ngsi-ld/hasPreviousValueList"));
+    }
+
+    #[test]
+    fn the_list_property_default_matches_the_field_by_field_literal() {
+        use crate::domain::attribute::{ListProperty, common::CommonAttributeFields};
+        use indexmap::IndexMap;
+        let expected = ListProperty {
+            value_list: Vec::new(),
+            value_type: None,
+            previous_value_list: None,
+            common: CommonAttributeFields::default(),
+            sub_attributes: IndexMap::new(),
+        };
+        let actual = ListProperty::default();
+        pretty_assertions::assert_eq!(actual.value_list.len(), expected.value_list.len());
+        assert!(actual.value_type.is_none() && actual.previous_value_list.is_none());
+        assert!(actual.sub_attributes.is_empty());
+        assert!(actual.common.dataset_id.is_none() && actual.common.observed_at.is_none() && actual.common.expires_at.is_none());
     }
 }

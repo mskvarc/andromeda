@@ -10,7 +10,7 @@ use serde_with::skip_serializing_none;
 
 /// NGSI-LD VocabProperty representation (ETSI GS CIM 009 clause 5.2.35).
 #[skip_serializing_none]
-#[derive(Debug, Clone, Serialize, Deserialize, Expandable)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, Expandable)]
 #[serde(rename_all = "camelCase")]
 #[jsonld(
     type = "ngsi:VocabProperty",
@@ -32,18 +32,6 @@ pub struct VocabProperty {
     #[serde(flatten)]
     #[jsonld(flatten_map)]
     pub sub_attributes: IndexMap<String, AttributeValue>,
-}
-
-impl Default for VocabProperty {
-    fn default() -> VocabProperty {
-        VocabProperty {
-            vocab: OneOrMany::Many(Vec::new()),
-            value_type: None,
-            previous_vocab: None,
-            common: CommonAttributeFields::default(),
-            sub_attributes: IndexMap::new(),
-        }
-    }
 }
 
 #[cfg(test)]
@@ -85,5 +73,15 @@ mod tests {
         let obj = expanded.as_object().expect("object");
         assert!(obj.contains_key(vocab::expanded::properties::VOCAB.as_str()));
         assert!(obj.contains_key(vocab::expanded::properties::VALUE_TYPE.as_str()));
+    }
+
+    #[test]
+    fn the_vocab_property_default_matches_the_field_by_field_literal() {
+        use crate::domain::attribute::VocabProperty;
+        let actual = VocabProperty::default();
+        pretty_assertions::assert_eq!(actual.vocab, OneOrMany::Many(Vec::new()));
+        assert!(actual.value_type.is_none() && actual.previous_vocab.is_none());
+        assert!(actual.sub_attributes.is_empty());
+        assert!(actual.common.dataset_id.is_none() && actual.common.observed_at.is_none() && actual.common.expires_at.is_none());
     }
 }

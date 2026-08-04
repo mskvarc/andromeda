@@ -54,6 +54,10 @@ impl SnapshotPriority {
     }
 }
 
+// Hand-written because no derive can express it: `#[derive(Default)]` on a
+// newtype forwards to the inner type, and `u8::default()` is `0`, which is
+// outside the valid `MIN..=MAX` range and would make the default value one this
+// type refuses to construct through `TryFrom`.
 impl Default for SnapshotPriority {
     fn default() -> SnapshotPriority {
         SnapshotPriority::DEFAULT
@@ -480,5 +484,16 @@ mod tests {
         use crate::domain::snapshot::SnapshotQuery;
         let result = serde_json::from_str::<SnapshotQuery>("not valid json");
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn the_default_snapshot_priority_is_five_and_stays_valid() {
+        let default = SnapshotPriority::default();
+        pretty_assertions::assert_eq!(default, SnapshotPriority::DEFAULT);
+        pretty_assertions::assert_eq!(default.as_u8(), 5);
+        assert!((SnapshotPriority::MIN..=SnapshotPriority::MAX).contains(&default.as_u8()));
+        // `u8::default()` is 0, which the range rejects, so a derived `Default`
+        // would produce a value `TryFrom` refuses to build.
+        assert!(SnapshotPriority::try_from(u8::default()).is_err());
     }
 }

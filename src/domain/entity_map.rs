@@ -1,8 +1,10 @@
 use crate::domain::{ngsi_ld_urn::EntityMapId, uri::Uri};
 use chrono::{DateTime, Utc};
 use compact_str::CompactString;
+use derive_more::Display;
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
+use std::str::FromStr;
 use thiserror::Error;
 use urn_rs::Urn;
 
@@ -14,33 +16,45 @@ pub enum EntityMapType {
 }
 
 /// Dataset identifier reference inside `entityMap` values.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Display)]
 #[serde(try_from = "String", into = "String")]
 pub enum EntityMapDatasetId {
     /// Default dataset marker.
+    #[display("@none")]
     None,
     /// Concrete dataset identifier URI.
+    #[display("{_0}")]
     Uri(Urn),
 }
 
+// The wire form is produced by the derived `Display`; this exists only because
+// `#[serde(into = "String")]` demands an `Into<String>` and cannot use `Display`.
 impl From<EntityMapDatasetId> for String {
     fn from(value: EntityMapDatasetId) -> String {
-        match value {
-            EntityMapDatasetId::None => "@none".to_string(),
-            EntityMapDatasetId::Uri(uri) => uri.to_string(),
-        }
+        value.to_string()
     }
 }
 
-impl TryFrom<String> for EntityMapDatasetId {
-    type Error = EntityMapDatasetIdParseError;
+impl FromStr for EntityMapDatasetId {
+    type Err = EntityMapDatasetIdParseError;
 
-    fn try_from(value: String) -> Result<Self, Self::Error> {
+    fn from_str(value: &str) -> Result<EntityMapDatasetId, EntityMapDatasetIdParseError> {
         if value == "@none" {
             return Ok(EntityMapDatasetId::None);
         }
         let uri = value.parse::<Urn>().map_err(|_| EntityMapDatasetIdParseError::InvalidUri)?;
         Ok(EntityMapDatasetId::Uri(uri))
+    }
+}
+
+// Parsing lives in `FromStr` so borrowed call sites do not allocate; this
+// adapter exists only because `#[serde(try_from = "String")]` requires it, and
+// it consumes the `String` serde has already built.
+impl TryFrom<String> for EntityMapDatasetId {
+    type Error = EntityMapDatasetIdParseError;
+
+    fn try_from(value: String) -> Result<EntityMapDatasetId, EntityMapDatasetIdParseError> {
+        value.parse()
     }
 }
 
@@ -85,5 +99,19 @@ impl EntityMap {
     /// Returns whether this map has already expired.
     pub fn is_expired(&self) -> bool {
         Utc::now() >= self.expires_at
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::expect_used, clippy::unwrap_used)]
+    use super::*;
+
+    #[test]
+    fn an_entity_map_dataset_id_parses_from_a_borrowed_str() {
+        pretty_assertions::assert_eq!("@none".parse::<EntityMapDatasetId>().expect("none"), EntityMapDatasetId::None);
+        let parsed = "urn:ngsi-ld:Dataset:A".parse::<EntityMapDatasetId>().expect("urn");
+        pretty_assertions::assert_eq!(String::from(parsed), "urn:ngsi-ld:Dataset:A");
+        assert!("not a urn".parse::<EntityMapDatasetId>().is_err());
     }
 }

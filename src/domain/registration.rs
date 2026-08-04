@@ -57,6 +57,11 @@ pub enum CsrOperation {
     Other(String),
 }
 
+// Hand-written rather than `#[serde(rename_all = "camelCase")]`: a derived
+// enum representation cannot funnel an unrecognised token into `Other(String)`,
+// and dropping unknown operations would silently discard part of a
+// registration. The wire casing comes from the `strum(serialize_all)` above, so
+// there is still exactly one place that decides it.
 impl Serialize for CsrOperation {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         serializer.serialize_str(&self.to_string())
@@ -64,9 +69,14 @@ impl Serialize for CsrOperation {
 }
 
 impl<'de> Deserialize<'de> for CsrOperation {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let s = String::deserialize(deserializer)?;
-        Ok(s.parse().unwrap()) // Infallible
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<CsrOperation, D::Error> {
+        let raw = String::deserialize(deserializer)?;
+        // `#[strum(default)]` on `Other` makes the parse total, so the fallback
+        // is unreachable rather than a swallowed failure.
+        match raw.parse::<CsrOperation>() {
+            Ok(operation) => Ok(operation),
+            Err(_) => Ok(CsrOperation::Other(raw)),
+        }
     }
 }
 

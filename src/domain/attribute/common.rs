@@ -6,7 +6,7 @@ use crate::domain::{
 };
 use chrono::{DateTime, Utc};
 use compact_str::CompactString;
-use derive_more::{AsRef, Deref, Display, From};
+use derive_more::{AsRef, Deref, Display, From, Into};
 use iri_rs::IriBuf;
 use jsonld::Expandable;
 use jsonld_expandable_core::{JsonValue, ToJsonValue};
@@ -72,6 +72,16 @@ pub enum OneOrMany<T> {
     Many(Vec<T>),
 }
 
+// `#[derive(Default)]` needs a `#[default]` variant and `#[default]` only
+// applies to unit variants, so neither `One(T)` nor `Many(Vec<T>)` can carry
+// it. One hand-written impl here replaces the ones that would otherwise sit on
+// every attribute struct holding a `OneOrMany` field.
+impl<T> Default for OneOrMany<T> {
+    fn default() -> OneOrMany<T> {
+        OneOrMany::Many(Vec::new())
+    }
+}
+
 impl<T> OneOrMany<T> {
     /// Return an iterator over the contained values.
     pub fn iter(&self) -> std::slice::Iter<'_, T> {
@@ -111,65 +121,80 @@ pub enum NgsiLdReferenceError {
 /// NGSI-LD reference value used by `vocab`, `valueType`, and `objectType` members.
 ///
 /// The compact wire form can be a short name, a compact IRI, or an expanded IRI/URI.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Display, AsRef, Deref, From)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Display, AsRef, Deref, From, Into)]
 #[serde(try_from = "String", into = "String")]
 #[display("{_0}")]
+#[into(String)]
 pub struct NgsiLdReference(CompactString);
 
-impl TryFrom<String> for NgsiLdReference {
-    type Error = NgsiLdReferenceError;
+impl FromStr for NgsiLdReference {
+    type Err = NgsiLdReferenceError;
 
-    fn try_from(value: String) -> Result<NgsiLdReference, NgsiLdReferenceError> {
-        validate_reference(&value)?;
+    fn from_str(value: &str) -> Result<NgsiLdReference, NgsiLdReferenceError> {
+        validate_reference(value)?;
         Ok(NgsiLdReference(CompactString::from(value)))
     }
 }
 
-impl From<NgsiLdReference> for String {
-    fn from(value: NgsiLdReference) -> String {
-        value.0.into_string()
+// Parsing lives in `FromStr` so borrowed call sites do not allocate; this
+// adapter exists only because `#[serde(try_from = "String")]` requires it.
+impl TryFrom<String> for NgsiLdReference {
+    type Error = NgsiLdReferenceError;
+
+    fn try_from(value: String) -> Result<NgsiLdReference, NgsiLdReferenceError> {
+        value.parse()
     }
 }
 
 /// NGSI-LD `Date` lexical form as defined by clause 4.6.3.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Display, AsRef, Deref, From)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Display, AsRef, Deref, From, Into)]
 #[serde(try_from = "String", into = "String")]
 #[display("{_0}")]
+#[into(String)]
 pub struct NgsiLdDate(CompactString);
 
-impl TryFrom<String> for NgsiLdDate {
-    type Error = NgsiLdValueError;
+impl FromStr for NgsiLdDate {
+    type Err = NgsiLdValueError;
 
-    fn try_from(value: String) -> Result<NgsiLdDate, NgsiLdValueError> {
-        chrono::NaiveDate::parse_from_str(&value, "%Y-%m-%d").map_err(|_| NgsiLdValueError::InvalidDate(value.clone()))?;
+    fn from_str(value: &str) -> Result<NgsiLdDate, NgsiLdValueError> {
+        chrono::NaiveDate::parse_from_str(value, "%Y-%m-%d").map_err(|_| NgsiLdValueError::InvalidDate(value.to_string()))?;
         Ok(NgsiLdDate(CompactString::from(value)))
     }
 }
 
-impl From<NgsiLdDate> for String {
-    fn from(value: NgsiLdDate) -> String {
-        value.0.into_string()
+// Parsing lives in `FromStr` so borrowed call sites do not allocate; this
+// adapter exists only because `#[serde(try_from = "String")]` requires it.
+impl TryFrom<String> for NgsiLdDate {
+    type Error = NgsiLdValueError;
+
+    fn try_from(value: String) -> Result<NgsiLdDate, NgsiLdValueError> {
+        value.parse()
     }
 }
 
 /// NGSI-LD `Time` lexical form as defined by clause 4.6.3.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Display, AsRef, Deref, From)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Display, AsRef, Deref, From, Into)]
 #[serde(try_from = "String", into = "String")]
 #[display("{_0}")]
+#[into(String)]
 pub struct NgsiLdTime(CompactString);
 
-impl TryFrom<String> for NgsiLdTime {
-    type Error = NgsiLdValueError;
+impl FromStr for NgsiLdTime {
+    type Err = NgsiLdValueError;
 
-    fn try_from(value: String) -> Result<NgsiLdTime, NgsiLdValueError> {
-        parse_ngsi_ld_time(&value)?;
+    fn from_str(value: &str) -> Result<NgsiLdTime, NgsiLdValueError> {
+        parse_ngsi_ld_time(value)?;
         Ok(NgsiLdTime(CompactString::from(value)))
     }
 }
 
-impl From<NgsiLdTime> for String {
-    fn from(value: NgsiLdTime) -> String {
-        value.0.into_string()
+// Parsing lives in `FromStr` so borrowed call sites do not allocate; this
+// adapter exists only because `#[serde(try_from = "String")]` requires it.
+impl TryFrom<String> for NgsiLdTime {
+    type Error = NgsiLdValueError;
+
+    fn try_from(value: String) -> Result<NgsiLdTime, NgsiLdValueError> {
+        value.parse()
     }
 }
 
@@ -205,6 +230,19 @@ pub enum NgsiLdValue {
     Geometry(Geometry),
 }
 
+// Same unit-variant limitation as `OneOrMany`: `Json(Value)` cannot carry
+// `#[default]`, so this one impl stands in for the one `Property` would need.
+impl Default for NgsiLdValue {
+    fn default() -> NgsiLdValue {
+        NgsiLdValue::Json(Value::Null)
+    }
+}
+
+// Hand-written on both halves: the wire form is an untagged JSON value whose
+// variant is decided by inspecting the payload (a string that parses as a URI,
+// a DateTime, a Date or a Time; an object that looks like GeoJSON). Serde has
+// no derive for "sniff the shape and pick a variant", and `#[serde(untagged)]`
+// would try each variant's own Deserialize in declaration order instead.
 impl Serialize for NgsiLdValue {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         match self {
@@ -231,10 +269,10 @@ impl<'de> Deserialize<'de> for NgsiLdValue {
             if let Ok(datetime) = chrono::DateTime::parse_from_rfc3339(string) {
                 return Ok(NgsiLdValue::DateTime(datetime.with_timezone(&Utc)));
             }
-            if let Ok(date) = NgsiLdDate::try_from(string.to_string()) {
+            if let Ok(date) = string.parse::<NgsiLdDate>() {
                 return Ok(NgsiLdValue::Date(date));
             }
-            if let Ok(time) = NgsiLdTime::try_from(string.to_string()) {
+            if let Ok(time) = string.parse::<NgsiLdTime>() {
                 return Ok(NgsiLdValue::Time(time));
             }
         }
@@ -243,14 +281,13 @@ impl<'de> Deserialize<'de> for NgsiLdValue {
 }
 
 /// `objectList` / `previousObjectList` value as defined by clause 5.2.37.
-#[derive(Debug, Clone, PartialEq, Eq, AsRef, Deref, From)]
+///
+/// `#[serde(transparent)]` gives the serialise half — a bare JSON array of URI
+/// strings. The deserialise half stays hand-written below because it validates
+/// each entry, which no derive expresses.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, AsRef, Deref, From)]
+#[serde(transparent)]
 pub struct RelationshipObjectList(pub Vec<Uri>);
-
-impl Serialize for RelationshipObjectList {
-    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        self.0.serialize(serializer)
-    }
-}
 
 impl<'de> Deserialize<'de> for RelationshipObjectList {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<RelationshipObjectList, D::Error> {
@@ -422,8 +459,9 @@ impl<V: JsonValue> ToJsonValue<V> for NgsiLdValue {
 #[cfg(test)]
 mod tests {
     #![allow(clippy::expect_used, clippy::unwrap_used)]
-    use super::{NgsiLdDate, NgsiLdReference, NgsiLdTime, NgsiLdValue, OneOrMany, RelationshipObjectList};
+    use super::{NgsiLdDate, NgsiLdReference, NgsiLdTime, NgsiLdValue, OneOrMany, RelationshipObjectList, Uri};
     use chrono::{TimeZone, Utc};
+    use std::str::FromStr;
 
     #[test]
     fn ngsi_ld_reference_accepts_short_name() {
@@ -480,5 +518,39 @@ mod tests {
         let value = NgsiLdValue::DateTime(Utc.with_ymd_and_hms(2026, 4, 12, 12, 0, 0).unwrap());
         let json = serde_json::to_value(&value).expect("serialize");
         pretty_assertions::assert_eq!(json, serde_json::json!("2026-04-12T12:00:00Z"));
+    }
+
+    #[test]
+    fn relationship_object_list_serialises_transparently() {
+        // Clause 5.2.37: `objectList` is a plain JSON array of URI strings.
+        let list = RelationshipObjectList(vec![
+            Uri::from_str("urn:ngsi-ld:Entity:1").expect("uri a"),
+            Uri::from_str("urn:ngsi-ld:Entity:2").expect("uri b"),
+        ]);
+        pretty_assertions::assert_eq!(
+            serde_json::to_value(&list).expect("serialises"),
+            serde_json::json!(["urn:ngsi-ld:Entity:1", "urn:ngsi-ld:Entity:2"])
+        );
+    }
+
+    #[test]
+    fn an_ngsi_ld_date_parses_from_a_borrowed_str() {
+        let parsed: NgsiLdDate = "2026-08-04".parse().expect("valid date");
+        pretty_assertions::assert_eq!(parsed.as_ref(), "2026-08-04");
+        assert!("not-a-date".parse::<NgsiLdDate>().is_err());
+    }
+
+    #[test]
+    fn an_ngsi_ld_time_parses_from_a_borrowed_str() {
+        let parsed: NgsiLdTime = "12:34:56Z".parse().expect("valid time");
+        pretty_assertions::assert_eq!(parsed.as_ref(), "12:34:56Z");
+        assert!("not-a-time".parse::<NgsiLdTime>().is_err());
+    }
+
+    #[test]
+    fn an_ngsi_ld_reference_parses_from_a_borrowed_str() {
+        let parsed: NgsiLdReference = "https://example.com/Vehicle".parse().expect("valid reference");
+        pretty_assertions::assert_eq!(String::from(parsed), "https://example.com/Vehicle");
+        assert!("".parse::<NgsiLdReference>().is_err());
     }
 }

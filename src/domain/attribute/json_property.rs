@@ -8,7 +8,7 @@ use serde_with::skip_serializing_none;
 
 /// NGSI-LD JsonProperty representation (ETSI GS CIM 009 clause 5.2.38).
 #[skip_serializing_none]
-#[derive(Debug, Clone, Serialize, Deserialize, Expandable)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, Expandable)]
 #[serde(rename_all = "camelCase")]
 #[jsonld(
     type = "ngsi:JsonProperty",
@@ -30,18 +30,6 @@ pub struct JsonProperty {
     #[serde(flatten)]
     #[jsonld(flatten_map)]
     pub sub_attributes: IndexMap<String, AttributeValue>,
-}
-
-impl Default for JsonProperty {
-    fn default() -> JsonProperty {
-        JsonProperty {
-            json: Value::Null,
-            value_type: None,
-            previous_json: None,
-            common: CommonAttributeFields::default(),
-            sub_attributes: IndexMap::new(),
-        }
-    }
 }
 
 #[cfg(test)]
@@ -78,5 +66,15 @@ mod tests {
         let expanded = property.expand::<serde_json::Value>();
         let obj = expanded.as_object().expect("object");
         assert!(obj.contains_key(vocab::expanded::properties::PREVIOUS_JSON.as_str()));
+    }
+
+    #[test]
+    fn the_json_property_default_matches_the_field_by_field_literal() {
+        use crate::domain::attribute::JsonProperty;
+        let actual = JsonProperty::default();
+        pretty_assertions::assert_eq!(actual.json, serde_json::Value::Null);
+        assert!(actual.value_type.is_none() && actual.previous_json.is_none());
+        assert!(actual.sub_attributes.is_empty());
+        assert!(actual.common.dataset_id.is_none() && actual.common.observed_at.is_none() && actual.common.expires_at.is_none());
     }
 }

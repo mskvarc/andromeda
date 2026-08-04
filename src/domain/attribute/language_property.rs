@@ -27,6 +27,9 @@ impl fmt::Display for LanguageMapKey {
     }
 }
 
+// Hand-written on both halves: the key is either the JSON-LD keyword `@none`
+// or a BCP 47 tag, and no derive can express that split over a foreign
+// `LangTagBuf` whose validation has to run on the way in.
 impl Serialize for LanguageMapKey {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         serializer.serialize_str(&self.to_string())
@@ -92,7 +95,7 @@ impl ExpandableLanguageMap for LanguageMap {
 
 /// NGSI-LD LanguageProperty representation (ETSI GS CIM 009 clause 5.2.32).
 #[skip_serializing_none]
-#[derive(Debug, Clone, Serialize, Deserialize, Expandable)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, Expandable)]
 #[serde(rename_all = "camelCase")]
 #[jsonld(
     type = "ngsi:LanguageProperty",
@@ -114,18 +117,6 @@ pub struct LanguageProperty {
     #[serde(flatten)]
     #[jsonld(flatten_map)]
     pub sub_attributes: IndexMap<String, AttributeValue>,
-}
-
-impl Default for LanguageProperty {
-    fn default() -> LanguageProperty {
-        LanguageProperty {
-            language_map: LanguageMap::default(),
-            value_type: None,
-            previous_language_map: None,
-            common: CommonAttributeFields::default(),
-            sub_attributes: IndexMap::new(),
-        }
-    }
 }
 
 fn language_entry<V: JsonValue>(key: &LanguageMapKey, value: &str) -> V {
@@ -174,5 +165,15 @@ mod tests {
         let expanded = property.expand::<serde_json::Value>();
         let obj = expanded.as_object().expect("object");
         assert!(obj.contains_key(vocab::expanded::properties::LANGUAGE_MAP.as_str()));
+    }
+
+    #[test]
+    fn the_language_property_default_matches_the_field_by_field_literal() {
+        use crate::domain::attribute::LanguageProperty;
+        let actual = LanguageProperty::default();
+        assert!(actual.language_map.is_empty());
+        assert!(actual.value_type.is_none() && actual.previous_language_map.is_none());
+        assert!(actual.sub_attributes.is_empty());
+        assert!(actual.common.dataset_id.is_none() && actual.common.observed_at.is_none() && actual.common.expires_at.is_none());
     }
 }
