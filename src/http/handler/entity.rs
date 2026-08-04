@@ -3,6 +3,7 @@ use crate::{
     core::error::{AndromedaError, ResultInstanceExt},
     domain::{
         entity::{Entity, EntityPatch, EntityTypeValue},
+        expanded::{DatasetSelection, OverwritePolicy},
         uri::Uri,
     },
     http::{
@@ -927,6 +928,11 @@ pub async fn append_attrs(
     let id = parse_entity_id(&id, &uri)?;
     let context = context.merge(body_context);
     let no_overwrite = params.options.as_deref().is_some_and(|o: &str| o.contains("noOverwrite"));
+    let overwrite = if no_overwrite {
+        OverwritePolicy::Preserve
+    } else {
+        OverwritePolicy::Overwrite
+    };
 
     // Forward to matching context sources
     let context_url = context.link_contexts().first().map(|s| s.as_str());
@@ -954,7 +960,7 @@ pub async fn append_attrs(
 
     if forwarded.is_empty() {
         // No matching CSRs — append locally
-        let (all_attrs, not_appended) = service.append_attrs(&id, fragment, no_overwrite, &context).await.with_instance(&uri)?;
+        let (all_attrs, not_appended) = service.append_attrs(&id, fragment, overwrite, &context).await.with_instance(&uri)?;
 
         if not_appended.is_empty() {
             return Ok(StatusCode::NO_CONTENT.into_response());
@@ -982,7 +988,7 @@ pub async fn append_attrs(
     }
 
     // Apply locally (ignore errors for inclusive -- remote already succeeded)
-    let local_result = service.append_attrs(&id, local_fragment, no_overwrite, &context).await;
+    let local_result = service.append_attrs(&id, local_fragment, overwrite, &context).await;
     let remote_errors = has_remote_errors(&forwarded);
 
     if let Ok((_, not_appended)) = &local_result
@@ -1150,7 +1156,7 @@ pub async fn partial_update_attr(
     if modes.has_redirect || modes.has_exclusive {
         // Per spec 4.3.6.3: exclusive attributes shall not be held locally.
         if modes.has_exclusive
-            && let Err(e) = service.delete_attr(&id, &attr_id, None, true, &context).await
+            && let Err(e) = service.delete_attr(&id, &attr_id, DatasetSelection::All, &context).await
         {
             tracing::warn!(error = %e, entity_id = %id, attr_id = %attr_id, "Failed to delete exclusive attribute locally");
         }
@@ -1182,6 +1188,16 @@ pub async fn delete_attr(
     validate_attr_name(&attr_id, &uri)?;
     let context: ContextSpec = context.into_inner();
     let delete_all = params.delete_all.unwrap_or(false);
+    // NGSI-LD clause 5.6.5: `deleteAll` wins over `datasetId`, and with neither
+    // present the default (no-datasetId) instance is the target.
+    let selection = if delete_all {
+        DatasetSelection::All
+    } else {
+        match params.dataset_id.as_deref() {
+            Some(dataset_id) => DatasetSelection::Single(dataset_id),
+            None => DatasetSelection::Default,
+        }
+    };
 
     // Forward to matching context sources
     let context_url = context.link_contexts().first().map(|s| s.as_str());
@@ -1216,10 +1232,7 @@ pub async fn delete_attr(
         .with_instance(&uri)?;
 
     if forwarded.is_empty() {
-        service
-            .delete_attr(&id, &attr_id, params.dataset_id.as_deref(), delete_all, &context)
-            .await
-            .with_instance(&uri)?;
+        service.delete_attr(&id, &attr_id, selection, &context).await.with_instance(&uri)?;
         return Ok(StatusCode::NO_CONTENT.into_response());
     }
 
@@ -1230,7 +1243,7 @@ pub async fn delete_attr(
     }
 
     // Inclusive: delete locally and combine results
-    let local_result = service.delete_attr(&id, &attr_id, params.dataset_id.as_deref(), delete_all, &context).await;
+    let local_result = service.delete_attr(&id, &attr_id, selection, &context).await;
 
     if local_result.is_ok() && !has_remote_errors(&forwarded) {
         return Ok(StatusCode::NO_CONTENT.into_response());

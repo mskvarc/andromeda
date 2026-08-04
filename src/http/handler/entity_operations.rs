@@ -1,7 +1,7 @@
 use crate::{
     api::tenant::{TenantState, TenantStateOrCreate},
     core::error::{AndromedaError, ResultInstanceExt},
-    domain::entity::EntityTypeValue,
+    domain::{entity::EntityTypeValue, expanded::OverwritePolicy},
     http::{
         error::{batch::BatchOperationResult, problem::NgsiLdError},
         extractor::{
@@ -431,6 +431,11 @@ pub async fn batch_update(
     }
 
     let no_overwrite = params.options.as_deref().is_some_and(|o| o.contains("noOverwrite"));
+    let overwrite = if no_overwrite {
+        OverwritePolicy::Preserve
+    } else {
+        OverwritePolicy::Overwrite
+    };
 
     // Distributed forwarding per spec 5.6.9
     let context_url = context.link_contexts().first().map(|s| s.as_str());
@@ -469,7 +474,7 @@ pub async fn batch_update(
     }
 
     let mode = service.effective_side_effect_mode(prefer.respond_mode == Some(RespondMode::Async), entities.len());
-    let batch = service.batch_update(&entities, &context, no_overwrite, mode).await.with_instance(&uri)?;
+    let batch = service.batch_update(&entities, &context, overwrite, mode).await.with_instance(&uri)?;
     let mut result: BatchOperationResult = batch.into();
     result.errors.append(&mut parse_errors);
 

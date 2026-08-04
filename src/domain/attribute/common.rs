@@ -1,4 +1,9 @@
-use crate::domain::{entity::Entity, geometry::Geometry, name::NameBuf, uri::Uri};
+use crate::domain::{
+    entity::Entity,
+    geometry::Geometry,
+    name::NameBuf,
+    uri::{Uri, UriParseError},
+};
 use chrono::{DateTime, Utc};
 use compact_str::CompactString;
 use derive_more::{AsRef, Deref, Display, From};
@@ -282,17 +287,31 @@ impl IntoIterator for RelationshipObjectList {
 /// Output-only inline entity payload for `Relationship.entity`.
 pub type InlineEntity = OneOrMany<Entity>;
 
-fn parse_relationship_object_entry(value: &Value) -> Result<Uri, String> {
-    if let Some(uri) = value.as_str() {
-        return Uri::from_str(uri).map_err(|error| error.to_string());
-    }
+/// Failures parsing one entry of an NGSI-LD `objectList` (clause 5.2.37).
+#[derive(Debug, Error)]
+pub enum RelationshipObjectEntryError {
+    /// The entry was neither a URI string nor an `{"object": …}` wrapper.
+    #[error("relationship object list entries must be strings or {{\"object\": ...}} objects")]
+    NotAnObjectReference,
+    /// The entry held a value that is not a valid URI.
+    #[error("invalid relationship object URI: {source}")]
+    Uri {
+        /// Underlying URI parse failure.
+        #[source]
+        source: UriParseError,
+    },
+}
 
-    let object = value
-        .as_object()
-        .and_then(|object| object.get("object"))
-        .and_then(Value::as_str)
-        .ok_or_else(|| "relationship object list entries must be strings or {\"object\": ...} objects".to_string())?;
-    Uri::from_str(object).map_err(|error| error.to_string())
+fn parse_relationship_object_entry(value: &Value) -> Result<Uri, RelationshipObjectEntryError> {
+    let raw = match value.as_str() {
+        Some(uri) => uri,
+        None => value
+            .as_object()
+            .and_then(|object| object.get("object"))
+            .and_then(Value::as_str)
+            .ok_or(RelationshipObjectEntryError::NotAnObjectReference)?,
+    };
+    Uri::from_str(raw).map_err(|source| RelationshipObjectEntryError::Uri { source })
 }
 
 fn try_geometry(value: &Value) -> Option<Geometry> {

@@ -2,7 +2,7 @@ use crate::{
     core::error::AndromedaError,
     domain::{
         entity::Entity,
-        expanded::{self, AttributeInstanceKey, append_entity_attrs, merge_entity, removed_attribute_instances, update_entity_attrs},
+        expanded::{self, AttributeInstanceKey, OverwritePolicy, append_entity_attrs, merge_entity, removed_attribute_instances, update_entity_attrs},
         geometry::Geometry,
         notification::{ChangeEvent, SysAttrsSnapshot, TriggerReason},
         uri::Uri,
@@ -744,7 +744,7 @@ impl EntityService {
         &self,
         entities: &[Entity],
         context: &ContextSpec,
-        no_overwrite: bool,
+        overwrite: OverwritePolicy,
         original_batch_size: usize,
         mode: BatchSideEffectMode,
     ) -> Result<BatchResult, AndromedaError> {
@@ -771,10 +771,10 @@ impl EntityService {
             };
 
             let attrs = unwrap_expanded_ref(&prepared_entity.expanded);
-            if no_overwrite {
+            if overwrite == OverwritePolicy::Preserve {
                 let skipped = has_overlapping_attrs(&existing, attrs);
-                if let Err(message) = append_entity_attrs(&mut existing, attrs, true) {
-                    errors.push((id, AndromedaError::internal(message)));
+                if let Err(error) = append_entity_attrs(&mut existing, attrs, OverwritePolicy::Preserve) {
+                    errors.push((id, error.into()));
                     continue;
                 }
                 if skipped {
@@ -784,12 +784,12 @@ impl EntityService {
                     ));
                 }
             } else {
-                if let Err(message) = update_entity_attrs(&mut existing, attrs) {
-                    errors.push((id, AndromedaError::internal(message)));
+                if let Err(error) = update_entity_attrs(&mut existing, attrs) {
+                    errors.push((id, error.into()));
                     continue;
                 }
-                if let Err(message) = append_entity_attrs(&mut existing, attrs, false) {
-                    errors.push((id, AndromedaError::internal(message)));
+                if let Err(error) = append_entity_attrs(&mut existing, attrs, OverwritePolicy::Overwrite) {
+                    errors.push((id, error.into()));
                     continue;
                 }
             }
@@ -842,8 +842,8 @@ impl EntityService {
                 continue;
             };
 
-            if let Err(message) = merge_entity(&mut existing, &prepared_entity.expanded) {
-                errors.push((id, AndromedaError::internal(message)));
+            if let Err(error) = merge_entity(&mut existing, &prepared_entity.expanded) {
+                errors.push((id, error.into()));
                 continue;
             }
 
@@ -1006,8 +1006,8 @@ impl EntityService {
             let id = prepared_entity.id.clone();
             if let Some(existing) = existing_map.get(&id) {
                 let mut merged = existing.clone();
-                if let Err(message) = merge_entity(&mut merged, &prepared_entity.expanded) {
-                    errors.push((id, AndromedaError::internal(message)));
+                if let Err(error) = merge_entity(&mut merged, &prepared_entity.expanded) {
+                    errors.push((id, error.into()));
                     continue;
                 }
 
@@ -1237,14 +1237,14 @@ impl EntityService {
         &self,
         entities: &[Entity],
         context: &ContextSpec,
-        no_overwrite: bool,
+        overwrite: OverwritePolicy,
         mode: BatchSideEffectMode,
     ) -> Result<BatchResult, AndromedaError> {
         self.batch_activity.record_activity();
         let chunk_len = self.batch_chunk_len(entities.len());
         let batch_size = entities.len();
         let chunk_results: Vec<Result<BatchResult, AndromedaError>> = stream::iter(entities.chunks(chunk_len))
-            .map(|chunk| async move { self.batch_update_chunk(chunk, context, no_overwrite, batch_size, mode).await })
+            .map(|chunk| async move { self.batch_update_chunk(chunk, context, overwrite, batch_size, mode).await })
             .buffered(self.batch_chunk_write_concurrency)
             .collect()
             .await;

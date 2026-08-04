@@ -343,7 +343,7 @@ impl EntityService {
         normalize_entity_attributes(&mut patch_json);
         let expanded = self.engine.expand(patch_json, context).await?;
         validate_attribute_envelopes(&expanded)?;
-        crate::domain::expanded::merge_entity(&mut existing, &expanded).map_err(AndromedaError::internal)?;
+        crate::domain::expanded::merge_entity(&mut existing, &expanded)?;
 
         let types = self.fetch_entity_types(&id).await;
         let changed_attrs = extract_attribute_keys(&expanded);

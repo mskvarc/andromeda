@@ -1,7 +1,7 @@
 use crate::{
     core::error::AndromedaError,
     domain::{
-        expanded::removed_attribute_instances,
+        expanded::{DatasetSelection, ExpandedEntityError, OverwritePolicy, removed_attribute_instances},
         notification::{ChangeEvent, TriggerReason},
         uri::Uri,
         vocab,
@@ -22,6 +22,28 @@ use serde_json::Value;
 use std::sync::Arc;
 use urn_rs::Urn;
 
+// Lives here rather than beside `AndromedaError` because the domain crate must
+// not know the broker's transport-aware error type, and this module is the one
+// that owns attribute mutation at the service layer.
+impl From<ExpandedEntityError> for AndromedaError {
+    /// Map each mutation failure onto the NGSI-LD ProblemDetails type clause
+    /// 5.5.2 requires: a malformed request body is `BadRequestData` (400),
+    /// while a well-formed request naming an attribute, dataset or instance
+    /// the entity does not have is `ResourceNotFound` (404).
+    fn from(error: ExpandedEntityError) -> AndromedaError {
+        match error {
+            ExpandedEntityError::EntityNotExpanded
+            | ExpandedEntityError::PatchNotExpanded
+            | ExpandedEntityError::AttributesNotObject
+            | ExpandedEntityError::AttributeTypeMismatch { .. } => AndromedaError::entity_validation(error.to_string()),
+            ExpandedEntityError::AttributeNotFound { .. }
+            | ExpandedEntityError::AttributeHasNoInstances { .. }
+            | ExpandedEntityError::DatasetNotFound { .. }
+            | ExpandedEntityError::DefaultInstanceNotFound { .. } => AndromedaError::entity_not_found(error.to_string()),
+        }
+    }
+}
+
 impl EntityService {
     /// 5.6.3 Append Entity Attributes
     ///
@@ -33,7 +55,7 @@ impl EntityService {
         &self,
         id: &Urn,
         mut fragment: Value,
-        no_overwrite: bool,
+        overwrite: OverwritePolicy,
         context: &ContextSpec,
     ) -> Result<(Vec<String>, Vec<String>), AndromedaError> {
         let entity_uri = Uri::from(id.clone()); // clone: owned Urn for Uri conversion; id is &Urn
@@ -46,7 +68,7 @@ impl EntityService {
 
         // Load existing entity, apply append, save back
         let mut existing = self.repo.get(&id).await?.ok_or_else(|| AndromedaError::entity_not_found(&id))?;
-        let not_appended = crate::domain::expanded::append_entity_attrs(&mut existing, attrs, no_overwrite).map_err(AndromedaError::entity_validation)?;
+        let not_appended = crate::domain::expanded::append_entity_attrs(&mut existing, attrs, overwrite)?;
 
         let mut uow = self.uow.begin().await?;
         uow.save_entity(build_save_params(&id, &existing)).await?;
@@ -83,7 +105,7 @@ impl EntityService {
         let mut existing = self.repo.get(&id).await?.ok_or_else(|| AndromedaError::entity_not_found(&id))?;
         let previous_attributes = self.change_tx.as_ref().map(|_| existing.clone()); // clone: snapshot before mutation for showChanges diff
         let attrs_before: std::collections::HashSet<String> = extract_attribute_keys(&existing).into_iter().collect();
-        let not_updated = crate::domain::expanded::update_entity_attrs(&mut existing, attrs).map_err(AndromedaError::entity_validation)?;
+        let not_updated = crate::domain::expanded::update_entity_attrs(&mut existing, attrs)?;
 
         // Detect which attributes were deleted by the update
         let attrs_after: std::collections::HashSet<String> = extract_attribute_keys(&existing).into_iter().collect();
@@ -162,13 +184,7 @@ impl EntityService {
         let previous_attributes = self.change_tx.as_ref().map(|_| existing.clone()); // clone: snapshot before mutation for showChanges diff
         let attrs_before: std::collections::HashSet<String> = extract_attribute_keys(&existing).into_iter().collect();
 
-        crate::domain::expanded::partial_update_attr(&mut existing, &attr_iri, dataset_id, attr_value).map_err(|msg| {
-            if msg.contains("type mismatch") {
-                AndromedaError::entity_validation(msg)
-            } else {
-                AndromedaError::entity_not_found(msg)
-            }
-        })?;
+        crate::domain::expanded::partial_update_attr(&mut existing, &attr_iri, dataset_id, attr_value)?;
 
         // Detect if the attribute was actually deleted (null sentinel)
         let attrs_after: std::collections::HashSet<String> = extract_attribute_keys(&existing).into_iter().collect();
@@ -197,14 +213,7 @@ impl EntityService {
     }
 
     /// 5.6.5 Delete Entity Attribute
-    pub async fn delete_attr(
-        &self,
-        id: &Urn,
-        attr_name: &str,
-        dataset_id: Option<&str>,
-        delete_all: bool,
-        context: &ContextSpec,
-    ) -> Result<(), AndromedaError> {
+    pub async fn delete_attr(&self, id: &Urn, attr_name: &str, selection: DatasetSelection<'_>, context: &ContextSpec) -> Result<(), AndromedaError> {
         let entity_uri = Uri::from(id.clone()); // clone: owned Urn for Uri conversion; id is &Urn
         let id = id.to_string();
 
@@ -215,19 +224,19 @@ impl EntityService {
         let previous_attributes = self.change_tx.as_ref().map(|_| existing.clone()); // clone: snapshot before mutation for showChanges diff
 
         // Resolve target dataset ids for tombstones before mutating the entity payload.
-        let tombstone_targets: Vec<Option<String>> = if delete_all {
-            match self.temporal_recorder.get_teas_for_entity_attr(&id, &attr_iri).await {
+        let tombstone_targets: Vec<Option<String>> = match selection {
+            DatasetSelection::All => match self.temporal_recorder.get_teas_for_entity_attr(&id, &attr_iri).await {
                 Ok(teas) => teas.iter().map(|tea| tea.dataset_id.as_ref().map(ToString::to_string)).collect(),
                 Err(e) => {
                     tracing::warn!(error = %e, entity_id = %id, event = "tea_lookup_failed_for_deletion");
                     Vec::new()
                 }
-            }
-        } else {
-            vec![dataset_id.map(ToString::to_string)]
+            },
+            DatasetSelection::Single(dataset_id) => vec![Some(dataset_id.to_string())],
+            DatasetSelection::Default => vec![None],
         };
 
-        crate::domain::expanded::delete_attr(&mut existing, &attr_iri, dataset_id, delete_all).map_err(AndromedaError::entity_not_found)?;
+        crate::domain::expanded::delete_attr(&mut existing, &attr_iri, selection)?;
 
         let mut uow = self.uow.begin().await?;
         uow.save_entity(build_save_params(&id, &existing)).await?;
@@ -279,7 +288,7 @@ impl EntityService {
         // Single fetch: used for showChanges and replacement
         let mut existing = self.repo.get(&id).await?.ok_or_else(|| AndromedaError::entity_not_found(&id))?;
         let previous_attributes = self.change_tx.as_ref().map(|_| existing.clone()); // clone: snapshot before mutation for showChanges diff
-        crate::domain::expanded::replace_attr(&mut existing, &attr_iri, dataset_id, attr_value).map_err(AndromedaError::entity_not_found)?;
+        crate::domain::expanded::replace_attr(&mut existing, &attr_iri, dataset_id, attr_value)?;
 
         let mut uow = self.uow.begin().await?;
         uow.save_entity(build_save_params(&id, &existing)).await?;

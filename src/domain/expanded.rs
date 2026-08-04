@@ -10,6 +10,7 @@ use geo::{Coord, Geometry as GeoGeometry, LineString, MultiLineString, MultiPoin
 use iri_rs::{Iri, IriBuf};
 use serde_json::{Map, Value};
 use std::collections::HashSet;
+use thiserror::Error;
 
 // ---------------------------------------------------------------------------
 // Null sentinel detection
@@ -495,11 +496,101 @@ fn remove_instances_by_dataset(entity_obj: &mut Map<String, Value>, key: &str, d
 // Entity-level mutation operations
 // ---------------------------------------------------------------------------
 
+/// Failures of the entity-level mutation operations in this module.
+///
+/// Every variant carries the offending attribute and dataset identifiers as
+/// separate fields rather than baked into a message, so the HTTP layer can map
+/// each one onto the ProblemDetails type NGSI-LD clause 5.5.2 requires instead
+/// of reporting one undifferentiated failure.
+///
+/// The identifiers are plain strings because that is what the expanded payload
+/// itself uses for attribute keys; when the attribute map gains an IRI key
+/// type, these fields follow it.
+#[derive(Debug, Error, PartialEq, Eq)]
+pub enum ExpandedEntityError {
+    /// The entity value was not an expanded JSON-LD node (nor an array wrapping one).
+    #[error("entity data is not a valid JSON-LD expanded value")]
+    EntityNotExpanded,
+    /// The patch value was not an expanded JSON-LD node.
+    #[error("patch data is not a valid JSON-LD expanded value")]
+    PatchNotExpanded,
+    /// The attribute fragment was not a JSON object.
+    #[error("attributes must be a JSON object")]
+    AttributesNotObject,
+    /// The entity carries no attribute under this IRI.
+    #[error("attribute {attribute} not found")]
+    AttributeNotFound {
+        /// Expanded IRI of the attribute that was looked up.
+        attribute: String,
+    },
+    /// The attribute exists but holds no instance array to target.
+    #[error("attribute {attribute} has no instances")]
+    AttributeHasNoInstances {
+        /// Expanded IRI of the attribute that was looked up.
+        attribute: String,
+    },
+    /// The attribute exists but has no instance with the requested `datasetId`.
+    #[error("attribute {attribute} with datasetId {dataset_id} not found")]
+    DatasetNotFound {
+        /// Expanded IRI of the attribute that was looked up.
+        attribute: String,
+        /// The `datasetId` that selected no instance.
+        dataset_id: String,
+    },
+    /// The attribute exists but has no default (no-`datasetId`) instance.
+    #[error("attribute {attribute} default instance not found")]
+    DefaultInstanceNotFound {
+        /// Expanded IRI of the attribute that was looked up.
+        attribute: String,
+    },
+    /// The fragment declares a type that the stored instance does not share.
+    #[error("attribute type mismatch for {attribute}: fragment declares {fragment_types:?}, instance is {instance_types:?}")]
+    AttributeTypeMismatch {
+        /// Expanded IRI of the attribute that was looked up.
+        attribute: String,
+        /// Expanded type IRIs declared by the incoming fragment.
+        fragment_types: Vec<String>,
+        /// Expanded type IRIs carried by the stored instance.
+        instance_types: Vec<String>,
+    },
+}
+
+/// Whether an append replaces an attribute instance that already exists
+/// (NGSI-LD clause 5.6.3, `noOverwrite` option).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OverwritePolicy {
+    /// Existing instances are replaced by the incoming ones.
+    Overwrite,
+    /// Existing instances are kept and the incoming ones reported as not appended.
+    Preserve,
+}
+
+/// Which instances of a multi-attribute an operation targets
+/// (NGSI-LD clause 5.6.5).
+///
+/// One parameter rather than a `datasetId` plus a `deleteAll` flag, so
+/// "delete everything, but only dataset A" cannot be expressed at all.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DatasetSelection<'a> {
+    /// Every instance, regardless of `datasetId`.
+    All,
+    /// The single instance carrying this `datasetId`.
+    Single(&'a str),
+    /// The default instance, the one with no `datasetId`.
+    Default,
+}
+
 /// NGSI-LD Merge Patch (clause 5.6.1): deep-merge `patch` into `entity`, handling
 /// null sentinels for attribute deletion.
-pub fn merge_entity(entity: &mut Value, patch: &Value) -> Result<(), String> {
-    let entity_obj = expanded_object_mut(entity).ok_or("Entity data is not a valid JSON-LD expanded value")?;
-    let patch_obj = expanded_object_ref(patch).ok_or("Patch data is not a valid JSON-LD expanded value")?;
+///
+/// # Errors
+///
+/// Returns [`ExpandedEntityError::EntityNotExpanded`] or
+/// [`ExpandedEntityError::PatchNotExpanded`] if either side is not an expanded
+/// JSON-LD node.
+pub fn merge_entity(entity: &mut Value, patch: &Value) -> Result<(), ExpandedEntityError> {
+    let entity_obj = expanded_object_mut(entity).ok_or(ExpandedEntityError::EntityNotExpanded)?;
+    let patch_obj = expanded_object_ref(patch).ok_or(ExpandedEntityError::PatchNotExpanded)?;
 
     for (key, value) in patch_obj {
         // Merge @type arrays (union, deduplicate) so entity type additions work
@@ -549,16 +640,25 @@ pub fn merge_entity(entity: &mut Value, patch: &Value) -> Result<(), String> {
 }
 
 /// Append attributes (clause 5.6.3): add attributes from `attrs` to `entity`.
-/// With `no_overwrite`, existing instances (matched by datasetId) are kept;
-/// new instances with a different datasetId are still appended.
-/// Without `no_overwrite`, instances are merged by datasetId.
 ///
-/// Returns `(not_appended)` -- a list of attribute IRIs where at least one
-/// instance was NOT appended (because `no_overwrite` was set and the instance
-/// already existed).
-pub fn append_entity_attrs(entity: &mut Value, attrs: &Value, no_overwrite: bool) -> Result<Vec<String>, String> {
-    let entity_obj = expanded_object_mut(entity).ok_or("Entity data is not a valid JSON-LD expanded value")?;
-    let attrs_obj = attrs.as_object().ok_or("Attributes must be a JSON object")?;
+/// Under [`OverwritePolicy::Preserve`], existing instances (matched by
+/// datasetId) are kept; new instances with a different datasetId are still
+/// appended. Under [`OverwritePolicy::Overwrite`], instances are merged by
+/// datasetId.
+///
+/// Returns the attribute IRIs where at least one instance was NOT appended
+/// because [`OverwritePolicy::Preserve`] was in force and the instance already
+/// existed.
+///
+/// # Errors
+///
+/// Returns [`ExpandedEntityError::EntityNotExpanded`] if `entity` is not an
+/// expanded JSON-LD node, or [`ExpandedEntityError::AttributesNotObject`] if
+/// `attrs` is not a JSON object.
+pub fn append_entity_attrs(entity: &mut Value, attrs: &Value, overwrite: OverwritePolicy) -> Result<Vec<String>, ExpandedEntityError> {
+    let entity_obj = expanded_object_mut(entity).ok_or(ExpandedEntityError::EntityNotExpanded)?;
+    let attrs_obj = attrs.as_object().ok_or(ExpandedEntityError::AttributesNotObject)?;
+    let no_overwrite = overwrite == OverwritePolicy::Preserve;
 
     let mut not_appended = Vec::new();
 
@@ -641,9 +741,15 @@ pub fn append_entity_attrs(entity: &mut Value, attrs: &Value, no_overwrite: bool
 ///
 /// Returns a list of attribute IRIs that were NOT updated (e.g. scope not
 /// present). The caller uses this to decide between 204 and 207.
-pub fn update_entity_attrs(entity: &mut Value, attrs: &Value) -> Result<Vec<String>, String> {
-    let entity_obj = expanded_object_mut(entity).ok_or("Entity data is not a valid JSON-LD expanded value")?;
-    let attrs_obj = attrs.as_object().ok_or("Attributes must be a JSON object")?;
+///
+/// # Errors
+///
+/// Returns [`ExpandedEntityError::EntityNotExpanded`] if `entity` is not an
+/// expanded JSON-LD node, or [`ExpandedEntityError::AttributesNotObject`] if
+/// `attrs` is not a JSON object.
+pub fn update_entity_attrs(entity: &mut Value, attrs: &Value) -> Result<Vec<String>, ExpandedEntityError> {
+    let entity_obj = expanded_object_mut(entity).ok_or(ExpandedEntityError::EntityNotExpanded)?;
+    let attrs_obj = attrs.as_object().ok_or(ExpandedEntityError::AttributesNotObject)?;
 
     let mut not_updated = Vec::new();
 
@@ -708,11 +814,22 @@ pub fn update_entity_attrs(entity: &mut Value, attrs: &Value) -> Result<Vec<Stri
 /// Partial update of a single attribute (clause 5.6.4): merge `fragment` into the
 /// attribute identified by `attr_iri`, optionally targeting a specific
 /// `dataset_id`.
-pub fn partial_update_attr(entity: &mut Value, attr_iri: &str, dataset_id: Option<&str>, fragment: &Value) -> Result<(), String> {
-    let entity_obj = expanded_object_mut(entity).ok_or("Entity data is not a valid JSON-LD expanded value")?;
+///
+/// # Errors
+///
+/// Returns [`ExpandedEntityError::AttributeNotFound`],
+/// [`ExpandedEntityError::AttributeHasNoInstances`],
+/// [`ExpandedEntityError::DatasetNotFound`],
+/// [`ExpandedEntityError::DefaultInstanceNotFound`] or
+/// [`ExpandedEntityError::AttributeTypeMismatch`] depending on which part of
+/// the lookup fails.
+pub fn partial_update_attr(entity: &mut Value, attr_iri: &str, dataset_id: Option<&str>, fragment: &Value) -> Result<(), ExpandedEntityError> {
+    let entity_obj = expanded_object_mut(entity).ok_or(ExpandedEntityError::EntityNotExpanded)?;
 
     if !entity_obj.contains_key(attr_iri) {
-        return Err(format!("Attribute {} not found", attr_iri));
+        return Err(ExpandedEntityError::AttributeNotFound {
+            attribute: attr_iri.to_string(),
+        });
     }
 
     // datasetId selection is controlled by query parameter (datasetId).
@@ -733,7 +850,9 @@ pub fn partial_update_attr(entity: &mut Value, attr_iri: &str, dataset_id: Optio
 
     if let Some(ds_id) = effective_ds {
         let Some(Value::Array(instances)) = entity_obj.get_mut(attr_iri) else {
-            return Err(format!("Attribute {} has no instances", attr_iri));
+            return Err(ExpandedEntityError::AttributeHasNoInstances {
+                attribute: attr_iri.to_string(),
+            });
         };
 
         let found = instances.iter_mut().find(|instance| {
@@ -752,14 +871,19 @@ pub fn partial_update_attr(entity: &mut Value, attr_iri: &str, dataset_id: Optio
                 merge_json(instance, fragment);
             }
             None => {
-                return Err(format!("Attribute {} with datasetId {} not found", attr_iri, ds_id));
+                return Err(ExpandedEntityError::DatasetNotFound {
+                    attribute: attr_iri.to_string(),
+                    dataset_id: ds_id.to_string(),
+                });
             }
         }
     } else {
         // No datasetId: target the default instance (the one without datasetId)
         let Some(Value::Array(instances)) = entity_obj.get_mut(attr_iri) else {
             let Some(attr_value) = entity_obj.get_mut(attr_iri) else {
-                return Err(format!("Attribute {} not found", attr_iri));
+                return Err(ExpandedEntityError::AttributeNotFound {
+                    attribute: attr_iri.to_string(),
+                });
             };
             if !fragment_types.is_empty() {
                 validate_type_match(&fragment_types, attr_value, attr_iri)?;
@@ -776,7 +900,9 @@ pub fn partial_update_attr(entity: &mut Value, attr_iri: &str, dataset_id: Optio
                 merge_json(instance, fragment);
             }
             None => {
-                return Err(format!("Attribute {} default instance not found", attr_iri));
+                return Err(ExpandedEntityError::DefaultInstanceNotFound {
+                    attribute: attr_iri.to_string(),
+                });
             }
         }
     }
@@ -785,7 +911,7 @@ pub fn partial_update_attr(entity: &mut Value, attr_iri: &str, dataset_id: Optio
 }
 
 /// Check that the fragment's @type (if specified) matches the instance's @type.
-fn validate_type_match(fragment_types: &[&str], instance: &Value, attr_iri: &str) -> Result<(), String> {
+fn validate_type_match(fragment_types: &[&str], instance: &Value, attr_iri: &str) -> Result<(), ExpandedEntityError> {
     if fragment_types.is_empty() {
         return Ok(());
     }
@@ -801,32 +927,60 @@ fn validate_type_match(fragment_types: &[&str], instance: &Value, attr_iri: &str
     if fragment_types.iter().any(|ft| instance_types.contains(ft)) {
         Ok(())
     } else {
-        Err(format!("Attribute type mismatch for {}", attr_iri))
+        Err(ExpandedEntityError::AttributeTypeMismatch {
+            attribute: attr_iri.to_string(),
+            fragment_types: fragment_types.iter().map(|t| (*t).to_string()).collect(),
+            instance_types: instance_types.into_iter().map(str::to_string).collect(),
+        })
     }
 }
 
 /// Delete a single attribute (clause 5.6.5).
 ///
-/// - `delete_all`: remove the key entirely.
-/// - `dataset_id`: remove only the matching instance.
-/// - Neither: remove the default (no-datasetId) instance.
-pub fn delete_attr(entity: &mut Value, attr_iri: &str, dataset_id: Option<&str>, delete_all: bool) -> Result<(), String> {
-    let entity_obj = expanded_object_mut(entity).ok_or("Entity data is not a valid JSON-LD expanded value")?;
+/// [`DatasetSelection::All`] removes the key entirely;
+/// [`DatasetSelection::Single`] removes only the matching instance;
+/// [`DatasetSelection::Default`] removes the instance carrying no `datasetId`.
+///
+/// # Errors
+///
+/// Returns [`ExpandedEntityError::AttributeNotFound`] if the entity has no such
+/// attribute, or [`ExpandedEntityError::DatasetNotFound`] /
+/// [`ExpandedEntityError::DefaultInstanceNotFound`] if the selected instance is
+/// absent.
+pub fn delete_attr(entity: &mut Value, attr_iri: &str, selection: DatasetSelection<'_>) -> Result<(), ExpandedEntityError> {
+    let entity_obj = expanded_object_mut(entity).ok_or(ExpandedEntityError::EntityNotExpanded)?;
 
     if !entity_obj.contains_key(attr_iri) {
-        return Err(format!("Attribute {} not found", attr_iri));
+        return Err(ExpandedEntityError::AttributeNotFound {
+            attribute: attr_iri.to_string(),
+        });
     }
 
-    if delete_all {
-        entity_obj.remove(attr_iri);
-    } else if !remove_instances_by_dataset(entity_obj, attr_iri, dataset_id) {
-        return match dataset_id {
-            Some(ds_id) => Err(format!("Attribute {} with datasetId {} not found", attr_iri, ds_id)),
-            None => Err(format!("Attribute {} default instance not found", attr_iri)),
-        };
+    match selection {
+        DatasetSelection::All => {
+            entity_obj.remove(attr_iri);
+            Ok(())
+        }
+        DatasetSelection::Single(dataset_id) => {
+            if remove_instances_by_dataset(entity_obj, attr_iri, Some(dataset_id)) {
+                Ok(())
+            } else {
+                Err(ExpandedEntityError::DatasetNotFound {
+                    attribute: attr_iri.to_string(),
+                    dataset_id: dataset_id.to_string(),
+                })
+            }
+        }
+        DatasetSelection::Default => {
+            if remove_instances_by_dataset(entity_obj, attr_iri, None) {
+                Ok(())
+            } else {
+                Err(ExpandedEntityError::DefaultInstanceNotFound {
+                    attribute: attr_iri.to_string(),
+                })
+            }
+        }
     }
-
-    Ok(())
 }
 
 /// Replace a single attribute (clause 5.6.19): fully replaces the attribute value.
@@ -834,10 +988,18 @@ pub fn delete_attr(entity: &mut Value, attr_iri: &str, dataset_id: Option<&str>,
 /// When `dataset_id` is provided (from query parameter), it specifies which instance to replace.
 /// Otherwise, the datasetId from `value` is used to match. If neither specifies a datasetId,
 /// the default instance (without datasetId) is replaced.
-pub fn replace_attr(entity: &mut Value, attr_iri: &str, dataset_id: Option<&str>, value: &Value) -> Result<(), String> {
-    let entity_obj = expanded_object_mut(entity).ok_or("Entity data is not a valid JSON-LD expanded value")?;
+///
+/// # Errors
+///
+/// Returns [`ExpandedEntityError::AttributeNotFound`] if the entity has no such
+/// attribute, or [`ExpandedEntityError::DatasetNotFound`] /
+/// [`ExpandedEntityError::DefaultInstanceNotFound`] if no instance matches.
+pub fn replace_attr(entity: &mut Value, attr_iri: &str, dataset_id: Option<&str>, value: &Value) -> Result<(), ExpandedEntityError> {
+    let entity_obj = expanded_object_mut(entity).ok_or(ExpandedEntityError::EntityNotExpanded)?;
 
-    let existing = entity_obj.get(attr_iri).ok_or_else(|| format!("Attribute {} not found", attr_iri))?;
+    let existing = entity_obj.get(attr_iri).ok_or_else(|| ExpandedEntityError::AttributeNotFound {
+        attribute: attr_iri.to_string(),
+    })?;
 
     // Query param datasetId takes precedence over value's datasetId
     let target_ds: Option<String> = match dataset_id {
@@ -863,8 +1025,13 @@ pub fn replace_attr(entity: &mut Value, attr_iri: &str, dataset_id: Option<&str>
 
         if !replaced {
             return match target_ds {
-                Some(ds) => Err(format!("Attribute {} with datasetId {} not found", attr_iri, ds)),
-                None => Err(format!("Attribute {} default instance not found", attr_iri)),
+                Some(dataset_id) => Err(ExpandedEntityError::DatasetNotFound {
+                    attribute: attr_iri.to_string(),
+                    dataset_id,
+                }),
+                None => Err(ExpandedEntityError::DefaultInstanceNotFound {
+                    attribute: attr_iri.to_string(),
+                }),
             };
         }
 
@@ -943,7 +1110,7 @@ mod tests {
     fn append_no_overwrite_skips_existing() {
         let mut entity = json!([{"https://example.com/a": [{"@value": 1}]}]);
         let attrs = json!({"https://example.com/a": [{"@value": 99}], "https://example.com/b": [{"@value": 2}]});
-        append_entity_attrs(&mut entity, &attrs, true).unwrap();
+        append_entity_attrs(&mut entity, &attrs, OverwritePolicy::Preserve).unwrap();
         pretty_assertions::assert_eq!(entity[0]["https://example.com/a"][0]["@value"], 1);
         pretty_assertions::assert_eq!(entity[0]["https://example.com/b"][0]["@value"], 2);
     }
@@ -951,14 +1118,14 @@ mod tests {
     #[test]
     fn delete_attr_removes_key() {
         let mut entity = json!([{"https://example.com/a": [{"@value": 1}]}]);
-        delete_attr(&mut entity, "https://example.com/a", None, true).unwrap();
+        delete_attr(&mut entity, "https://example.com/a", DatasetSelection::All).unwrap();
         assert!(entity[0].get("https://example.com/a").is_none());
     }
 
     #[test]
     fn delete_attr_not_found() {
         let mut entity = json!([{"https://example.com/a": [{"@value": 1}]}]);
-        let result = delete_attr(&mut entity, "https://example.com/missing", None, true);
+        let result = delete_attr(&mut entity, "https://example.com/missing", DatasetSelection::All);
         assert!(result.is_err());
     }
 
@@ -1236,5 +1403,165 @@ mod tests {
         let keys = attribute_instance_keys(&payload);
         pretty_assertions::assert_eq!(keys.len(), 1);
         assert!(keys.iter().all(|key| key.attr.as_str() == "https://example.com/a"));
+    }
+
+    // -----------------------------------------------------------------------
+    // Named-enum parameters and typed mutation errors
+    // -----------------------------------------------------------------------
+
+    /// Entity with three `speed` instances: datasets `A`, `B`, and the default.
+    fn entity_with_three_speed_instances() -> Value {
+        json!([{
+            "@id": "urn:ngsi-ld:Vehicle:1",
+            "https://example.com/speed": [
+                {"https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": 10}],
+                 "https://uri.etsi.org/ngsi-ld/datasetId": [{"@id": "urn:ngsi-ld:Dataset:A"}]},
+                {"https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": 20}],
+                 "https://uri.etsi.org/ngsi-ld/datasetId": [{"@id": "urn:ngsi-ld:Dataset:B"}]},
+                {"https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": 30}]}
+            ]
+        }])
+    }
+
+    fn speed_values(entity: &Value) -> Vec<i64> {
+        entity[0]["https://example.com/speed"]
+            .as_array()
+            .expect("speed instances")
+            .iter()
+            .filter_map(|instance| instance["https://uri.etsi.org/ngsi-ld/hasValue"][0]["@value"].as_i64())
+            .collect()
+    }
+
+    #[test]
+    fn appending_an_existing_attribute_with_preserve_leaves_it_untouched() {
+        // NGSI-LD append semantics with the `noOverwrite` option, ETSI GS CIM
+        // 009 v1.9.1 clause 5.6.3.
+        let mut entity = json!([{"https://example.com/speed": [{"https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": 10}]}]}]);
+        let attrs = json!({"https://example.com/speed": [{"https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": 20}]}]});
+        let not_appended = append_entity_attrs(&mut entity, &attrs, OverwritePolicy::Preserve).expect("append succeeds");
+        pretty_assertions::assert_eq!(speed_values(&entity), vec![10]);
+        pretty_assertions::assert_eq!(not_appended, vec!["https://example.com/speed".to_string()]);
+    }
+
+    #[test]
+    fn appending_an_existing_attribute_with_overwrite_replaces_it() {
+        let mut entity = json!([{"https://example.com/speed": [{"https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": 10}]}]}]);
+        let attrs = json!({"https://example.com/speed": [{"https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": 20}]}]});
+        let not_appended = append_entity_attrs(&mut entity, &attrs, OverwritePolicy::Overwrite).expect("append succeeds");
+        pretty_assertions::assert_eq!(speed_values(&entity), vec![20]);
+        assert!(not_appended.is_empty(), "{not_appended:?}");
+    }
+
+    #[test]
+    fn deleting_all_instances_removes_every_dataset() {
+        let mut entity = entity_with_three_speed_instances();
+        delete_attr(&mut entity, "https://example.com/speed", DatasetSelection::All).expect("delete succeeds");
+        assert!(entity[0].get("https://example.com/speed").is_none());
+    }
+
+    #[test]
+    fn deleting_a_single_instance_removes_only_that_dataset() {
+        let mut entity = entity_with_three_speed_instances();
+        delete_attr(&mut entity, "https://example.com/speed", DatasetSelection::Single("urn:ngsi-ld:Dataset:A")).expect("delete succeeds");
+        pretty_assertions::assert_eq!(speed_values(&entity), vec![20, 30]);
+    }
+
+    #[test]
+    fn deleting_the_default_instance_leaves_the_datasets_alone() {
+        let mut entity = entity_with_three_speed_instances();
+        delete_attr(&mut entity, "https://example.com/speed", DatasetSelection::Default).expect("delete succeeds");
+        pretty_assertions::assert_eq!(speed_values(&entity), vec![10, 20]);
+    }
+
+    #[test]
+    fn deleting_an_absent_attribute_is_a_typed_error() {
+        let mut entity = json!([{"https://example.com/other": [{"@value": 1}]}]);
+        let error = delete_attr(&mut entity, "https://example.com/speed", DatasetSelection::All).expect_err("must fail");
+        pretty_assertions::assert_eq!(
+            error,
+            ExpandedEntityError::AttributeNotFound {
+                attribute: "https://example.com/speed".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn deleting_an_absent_dataset_is_a_typed_error() {
+        let mut entity = entity_with_three_speed_instances();
+        let error = delete_attr(&mut entity, "https://example.com/speed", DatasetSelection::Single("urn:ngsi-ld:Dataset:Z")).expect_err("must fail");
+        pretty_assertions::assert_eq!(
+            error,
+            ExpandedEntityError::DatasetNotFound {
+                attribute: "https://example.com/speed".to_string(),
+                dataset_id: "urn:ngsi-ld:Dataset:Z".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn a_type_mismatch_in_a_partial_update_is_a_typed_error() {
+        let mut entity = json!([{
+            "https://example.com/speed": [{
+                "@type": ["https://uri.etsi.org/ngsi-ld/Property"],
+                "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": 10}]
+            }]
+        }]);
+        let fragment = json!({
+            "@type": ["https://uri.etsi.org/ngsi-ld/Relationship"],
+            "https://uri.etsi.org/ngsi-ld/hasObject": [{"@id": "urn:ngsi-ld:Vehicle:2"}]
+        });
+        let error = partial_update_attr(&mut entity, "https://example.com/speed", None, &fragment).expect_err("must fail");
+        pretty_assertions::assert_eq!(
+            error,
+            ExpandedEntityError::AttributeTypeMismatch {
+                attribute: "https://example.com/speed".to_string(),
+                fragment_types: vec!["https://uri.etsi.org/ngsi-ld/Relationship".to_string()],
+                instance_types: vec!["https://uri.etsi.org/ngsi-ld/Property".to_string()],
+            }
+        );
+    }
+
+    #[test]
+    fn partially_updating_an_absent_attribute_is_a_typed_error() {
+        let mut entity = json!([{"https://example.com/other": [{"@value": 1}]}]);
+        let error = partial_update_attr(&mut entity, "https://example.com/speed", None, &json!({})).expect_err("must fail");
+        pretty_assertions::assert_eq!(
+            error,
+            ExpandedEntityError::AttributeNotFound {
+                attribute: "https://example.com/speed".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn replacing_an_absent_dataset_is_a_typed_error() {
+        let mut entity = entity_with_three_speed_instances();
+        let replacement = json!({"https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": 99}]});
+        let error = replace_attr(&mut entity, "https://example.com/speed", Some("urn:ngsi-ld:Dataset:Z"), &replacement).expect_err("must fail");
+        pretty_assertions::assert_eq!(
+            error,
+            ExpandedEntityError::DatasetNotFound {
+                attribute: "https://example.com/speed".to_string(),
+                dataset_id: "urn:ngsi-ld:Dataset:Z".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn a_non_expanded_entity_is_a_typed_error() {
+        let mut entity = json!("not an entity");
+        pretty_assertions::assert_eq!(
+            merge_entity(&mut entity, &json!([{}])).expect_err("must fail"),
+            ExpandedEntityError::EntityNotExpanded
+        );
+    }
+
+    #[test]
+    fn a_non_object_attribute_fragment_is_a_typed_error() {
+        let mut entity = json!([{}]);
+        pretty_assertions::assert_eq!(
+            append_entity_attrs(&mut entity, &json!([]), OverwritePolicy::Overwrite).expect_err("must fail"),
+            ExpandedEntityError::AttributesNotObject
+        );
     }
 }
