@@ -2,7 +2,7 @@
 
 use crate::{
     core::error::AndromedaError,
-    domain::notification::SysAttrsSnapshot,
+    domain::{notification::SysAttrsSnapshot, vocab::expanded::properties},
     query::{
         compiled::CompiledEntityQuery,
         sql::{self, BindValue, q_filter::ResolvedAttributeNames},
@@ -203,9 +203,9 @@ impl EntityRepository {
     /// writes them, so the pair is guaranteed consistent without a second
     /// round trip or an explicit row lock.
     pub async fn purge_expired_attributes_in_tx(tx: &mut Transaction<'_, Postgres>) -> Result<Vec<PurgedEntity>, AndromedaError> {
-        let location_iri = crate::jsonld::vocab::expanded::properties::LOCATION.as_str();
-        let observation_space_iri = crate::jsonld::vocab::expanded::properties::OBSERVATION_SPACE.as_str();
-        let operation_space_iri = crate::jsonld::vocab::expanded::properties::OPERATION_SPACE.as_str();
+        let location_iri = properties::LOCATION.as_str();
+        let observation_space_iri = properties::OBSERVATION_SPACE.as_str();
+        let operation_space_iri = properties::OPERATION_SPACE.as_str();
 
         let rows = sqlx::query(
             r#"

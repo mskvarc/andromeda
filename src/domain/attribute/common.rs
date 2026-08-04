@@ -1,12 +1,10 @@
-use crate::{
-    domain::{entity::Entity, geometry::Wkb, name::NameBuf, uri::Uri},
-    jsonld::{Expandable, JsonValue},
-};
+use crate::domain::{entity::Entity, geometry::Wkb, name::NameBuf, uri::Uri};
 use chrono::{DateTime, Utc};
 use compact_str::CompactString;
 use derive_more::{AsRef, Deref, Display, From};
 use iri_rs::IriBuf;
-use jsonld_expandable_core::ToJsonValue;
+use jsonld::Expandable;
+use jsonld_expandable_core::{JsonValue, ToJsonValue};
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error as _};
 use serde_json::Value;
 use serde_with::skip_serializing_none;

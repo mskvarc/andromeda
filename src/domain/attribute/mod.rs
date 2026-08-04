@@ -17,8 +17,8 @@ pub use property::Property;
 pub use relationship::Relationship;
 pub use vocab_property::VocabProperty;
 
-use crate::jsonld::Expandable;
 use chrono::{DateTime, Utc};
+use jsonld::Expandable;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

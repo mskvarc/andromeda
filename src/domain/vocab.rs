@@ -9,7 +9,7 @@
 //! # Usage
 //!
 //! ```ignore
-//! use crate::jsonld::vocab;
+//! use crate::domain::vocab;
 //! let iri: iri_rs::Iri<&'static str> = vocab::expanded::properties::CREATED_AT;
 //! let compact_name: &'static str = vocab::compact::properties::CREATED_AT;
 //! let prefix: iri_rs::Iri<&'static str> = vocab::prefix::NGSI_LD;

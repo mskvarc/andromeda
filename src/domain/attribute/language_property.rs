@@ -1,10 +1,9 @@
-use crate::{
-    domain::attribute::{AttributeValue, common::CommonAttributeFields},
-    jsonld::{Expandable, ExpandableLanguageMap, JsonValue},
-};
+use crate::domain::attribute::{AttributeValue, common::CommonAttributeFields};
 use compact_str::CompactString;
 use derive_more::{Deref, From};
 use indexmap::IndexMap;
+use jsonld::{Expandable, ExpandableLanguageMap};
+use jsonld_expandable_core::JsonValue;
 use langtag::LangTagBuf;
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error as _};
 use serde_with::skip_serializing_none;
@@ -141,11 +140,12 @@ fn language_entry<V: JsonValue>(key: &LanguageMapKey, value: &str) -> V {
 #[cfg(test)]
 mod tests {
     #![allow(clippy::expect_used, clippy::unwrap_used)]
-    use crate::{
-        domain::attribute::{Attribute, LanguageMapKey, LanguageMapValue},
-        jsonld::{Expandable, vocab},
+    use crate::domain::{
+        attribute::{Attribute, LanguageMapKey, LanguageMapValue},
+        vocab,
     };
     use indexmap::IndexMap;
+    use jsonld::Expandable;
 
     #[test]
     fn language_property_round_trip_supports_previous_language_map() {

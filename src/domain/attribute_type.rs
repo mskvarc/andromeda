@@ -1,6 +1,6 @@
 //! NGSI-LD Attribute type enum (ETSI GS CIM 009 clause 5.2.4).
 
-use crate::jsonld::vocab;
+use crate::domain::vocab;
 use iri_rs::Iri;
 use serde::{Deserialize, Serialize};
 use strum::{Display, EnumString};

@@ -5,7 +5,7 @@
 //! crate for type-safe construction; `@context` is injected post-serialization
 //! because it is an NGSI-LD extension absent from the GeoJSON spec.
 
-use crate::{core::error::AndromedaError, jsonld::vocab, renderer::Renderer};
+use crate::{core::error::AndromedaError, domain::vocab, renderer::Renderer};
 use geojson::{Feature, FeatureCollection, feature::Id};
 use serde_json::{Map, Value};
 

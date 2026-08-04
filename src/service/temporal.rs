@@ -2,12 +2,12 @@
 
 use crate::{
     core::error::AndromedaError,
-    domain::{expanded::extract_expires_at, temporal::TemporalFormat},
+    domain::{expanded::extract_expires_at, temporal::TemporalFormat, vocab},
     http::{
         parameter::query::{SharedQueryParams, temporal::TemporalQueryParameters},
         response::content_range::build_content_range,
     },
-    jsonld::{CompactOptions, ContextSpec, JsonLdEngine, term_resolver, vocab},
+    jsonld::{CompactOptions, ContextSpec, JsonLdEngine, term_resolver},
     query::{
         compiled::{CompiledTemporalQuery, GeoQuery, IdPattern, LastNOrigin, Pagination, ScopeQuery},
         sql::{

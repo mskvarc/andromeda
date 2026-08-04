@@ -7,8 +7,8 @@ use crate::{
     domain::{
         geometry::Wkb,
         temporal::{AggrMethod, TemporalFormat, TimeProp, TimeRel},
+        vocab,
     },
-    jsonld::vocab,
     query::{
         compiled::{CompiledTemporalQuery, GeoQuery, TypeExpr},
         sql::{

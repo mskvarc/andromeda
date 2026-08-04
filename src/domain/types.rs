@@ -1,7 +1,5 @@
-use crate::{
-    domain::ngsi_ld_urn::{AttributeListId, EntityTypeListId},
-    jsonld::Expandable,
-};
+use crate::domain::ngsi_ld_urn::{AttributeListId, EntityTypeListId};
+use jsonld::Expandable;
 use serde::{Deserialize, Serialize};
 
 /// NGSI-LD EntityTypeList representation (ETSI GS CIM 009 clause 5.2.24).

@@ -135,8 +135,8 @@ impl ChangeEvent {
     }
 
     /// Attach the post-mutation expanded payload so payload-aware consumers
-    /// (notably [`crate::worker::spatial_sync::SpatialSyncWorker`]) skip the
-    /// per-event entity fetch during high-throughput batch ingest.
+    /// (notably the spatial sync worker) skip the per-event entity fetch
+    /// during high-throughput batch ingest.
     pub fn with_current_payload(mut self, payload: Arc<Value>) -> ChangeEvent {
         self.current_payload = Some(payload);
         self

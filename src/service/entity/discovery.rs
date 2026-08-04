@@ -5,9 +5,10 @@ use crate::{
         types::{AttributeDetail, EntityType, EntityTypeInfo, Types},
         uri::NGSI_LD_URN_NID,
     },
-    jsonld::{CompactOptions, ContextSpec, ContextStripping, Expandable, JsonLdEngine},
+    jsonld::{CompactOptions, ContextSpec, ContextStripping, JsonLdEngine},
     repository::entity::{repo::EntityRepository, rows::AttributeSummaryRow},
 };
+use jsonld::Expandable;
 use serde_json::Value;
 use sqlx::postgres::PgPool;
 use std::collections::{HashMap, HashSet};

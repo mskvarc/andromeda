@@ -8,8 +8,8 @@ use crate::{
     domain::{
         notification::{ChangeEvent, ChangeOrigin, CompiledGeoQuery, CompiledGeoRel, CompiledScopePattern, CompiledScopeTerm, CompiledSubscription},
         subscription::SubscriptionStatus,
+        vocab,
     },
-    jsonld::vocab,
     query::q,
 };
 use chrono::Utc;

@@ -5,7 +5,7 @@
 //! functions with no I/O — the caller is responsible for loading and persisting
 //! the entity.
 
-use crate::{domain::geometry::Wkb, jsonld::vocab};
+use crate::domain::{geometry::Wkb, vocab};
 use geo::{Coord, Geometry, LineString, MultiLineString, MultiPoint, MultiPolygon, Point, Polygon};
 use iri_rs::{Iri, IriBuf};
 use serde_json::{Map, Value};

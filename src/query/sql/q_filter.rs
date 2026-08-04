@@ -41,8 +41,7 @@
 
 use crate::{
     core::error::AndromedaError,
-    domain::temporal::AttributeNameId,
-    jsonld::vocab,
+    domain::{temporal::AttributeNameId, vocab},
     query::q::ast::{AttrPath, CmpOp, CompareValue, Expr, Predicate, Scalar},
 };
 use chrono::{DateTime, Utc};

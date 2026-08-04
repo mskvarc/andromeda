@@ -2,8 +2,7 @@
 
 use crate::{
     core::error::AndromedaError,
-    domain::geometry::Wkb,
-    jsonld::vocab,
+    domain::{geometry::Wkb, vocab},
     query::{
         compiled::{CompiledEntityQuery, CompiledOrderTerm, GeoQuery, GeoRel, OrderDirection, OrderingGeometry, TypeExpr},
         sql::{

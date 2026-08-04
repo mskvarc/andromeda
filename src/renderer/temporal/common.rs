@@ -6,8 +6,8 @@ use crate::{
         attribute_type::AttributeType,
         geometry::Wkb,
         temporal::{TeaEntry, ValueType},
+        vocab,
     },
-    jsonld::vocab,
     renderer::SysAttrsInclusion,
     service::temporal::format_datetime,
 };

@@ -3,19 +3,21 @@
 //! [`JsonLdEngine`] provides expand and compact operations.  Use
 //! [`JsonLdEngineBuilder`] to configure and construct an engine instance.
 
-use crate::jsonld::{
-    Error,
-    context::{self, ContextSpec, CoreContextPolicy},
-    core_context::{
-        ANDROMEDA_CORE_CONTEXT,
-        ANDROMEDA_CORE_CONTEXT_URL,
-        NGSI_LD_CORE_CONTEXT_MAP,
-        NGSI_LD_CORE_CONTEXT_URL,
-        NGSI_LD_CORE_CONTEXT_URL_LIST,
-        is_ngsi_ld_core_context_url,
+use crate::{
+    domain::vocab,
+    jsonld::{
+        Error,
+        context::{self, ContextSpec, CoreContextPolicy},
+        core_context::{
+            ANDROMEDA_CORE_CONTEXT,
+            ANDROMEDA_CORE_CONTEXT_URL,
+            NGSI_LD_CORE_CONTEXT_MAP,
+            NGSI_LD_CORE_CONTEXT_URL,
+            NGSI_LD_CORE_CONTEXT_URL_LIST,
+            is_ngsi_ld_core_context_url,
+        },
+        loader::{ContextCache, ContextRegistry, HitCounter, HttpContextLoader},
     },
-    loader::{ContextCache, ContextRegistry, HitCounter, HttpContextLoader},
-    vocab,
 };
 use contextual::WithContext;
 use dashmap::DashMap;

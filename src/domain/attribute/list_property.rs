@@ -1,12 +1,10 @@
-use crate::{
-    domain::attribute::{
-        AttributeValue,
-        common::{CommonAttributeFields, NgsiLdValue},
-    },
-    jsonld::Expandable,
+use crate::domain::attribute::{
+    AttributeValue,
+    common::{CommonAttributeFields, NgsiLdValue},
 };
 use compact_str::CompactString;
 use indexmap::IndexMap;
+use jsonld::Expandable;
 use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
 
@@ -48,7 +46,7 @@ impl Default for ListProperty {
 #[cfg(test)]
 mod tests {
     #![allow(clippy::expect_used, clippy::unwrap_used)]
-    use crate::jsonld::Expandable;
+    use jsonld::Expandable;
 
     #[test]
     fn list_property_expanded_has_list_container() {

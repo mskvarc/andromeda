@@ -1,14 +1,12 @@
-use crate::{
-    domain::attribute::{
-        AttributeValue,
-        common::{CommonAttributeFields, NgsiLdValue},
-    },
-    jsonld::Expandable,
+use crate::domain::attribute::{
+    AttributeValue,
+    common::{CommonAttributeFields, NgsiLdValue},
 };
 use cefact_units::UnitCode;
 use compact_str::CompactString;
 use derive_more::{Deref, From};
 use indexmap::IndexMap;
+use jsonld::Expandable;
 use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
 
@@ -76,10 +74,8 @@ impl Default for Property {
 #[cfg(test)]
 mod tests {
     #![allow(clippy::expect_used, clippy::unwrap_used)]
-    use crate::{
-        domain::attribute::Attribute,
-        jsonld::{Expandable, vocab},
-    };
+    use crate::domain::{attribute::Attribute, vocab};
+    use jsonld::Expandable;
 
     #[test]
     fn property_round_trip_supports_value_type_and_previous_value() {

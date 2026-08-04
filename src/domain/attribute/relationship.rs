@@ -1,15 +1,13 @@
-use crate::{
-    domain::{
-        attribute::{
-            AttributeValue,
-            common::{CommonAttributeFields, InlineEntity, OneOrMany},
-        },
-        uri::Uri,
+use crate::domain::{
+    attribute::{
+        AttributeValue,
+        common::{CommonAttributeFields, InlineEntity, OneOrMany},
     },
-    jsonld::Expandable,
+    uri::Uri,
 };
 use compact_str::CompactString;
 use indexmap::IndexMap;
+use jsonld::Expandable;
 use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
 
@@ -58,10 +56,11 @@ impl Default for Relationship {
 #[cfg(test)]
 mod tests {
     #![allow(clippy::expect_used, clippy::unwrap_used)]
-    use crate::{
-        domain::attribute::{Attribute, common::OneOrMany},
-        jsonld::{Expandable, vocab},
+    use crate::domain::{
+        attribute::{Attribute, common::OneOrMany},
+        vocab,
     };
+    use jsonld::Expandable;
 
     #[test]
     fn relationship_round_trip_supports_object_arrays_and_object_type() {

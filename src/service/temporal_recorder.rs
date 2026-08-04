@@ -9,8 +9,8 @@ use crate::{
         expanded::{expanded_geo_node_to_wkb, is_system_attribute},
         geometry::Wkb,
         temporal::ValueType,
+        vocab,
     },
-    jsonld::vocab,
     query::sql::scope_to_ltree,
     repository::temporal::{
         params::{HistoryBatchEntry, HistoryValues, ScopeHistoryEntry, TeaBatchEntry, UpdateInstanceParams},

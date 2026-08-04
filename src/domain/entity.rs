@@ -1,9 +1,8 @@
-use crate::{
-    domain::{attribute::AttributeValue, notification::SysAttrsSnapshot, scope::ScopeBuf, uri::Uri},
-    jsonld::{Expandable, ExpandableTypeValue, JsonValue},
-};
+use crate::domain::{attribute::AttributeValue, notification::SysAttrsSnapshot, scope::ScopeBuf, uri::Uri};
 use chrono::{DateTime, Utc};
 use indexmap::IndexMap;
+use jsonld::{Expandable, ExpandableTypeValue};
+use jsonld_expandable_core::JsonValue;
 use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
 
@@ -301,10 +300,7 @@ impl EntityPatch {
 mod tests {
     #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::{Entity, EntityPatch};
-    use crate::{
-        domain::{attribute::AttributeValue, notification::SysAttrsSnapshot},
-        jsonld::vocab,
-    };
+    use crate::domain::{attribute::AttributeValue, notification::SysAttrsSnapshot, vocab};
     use chrono::{Datelike, TimeZone, Utc};
     use serde_json::json;
 
@@ -618,7 +614,7 @@ mod tests {
 
     #[test]
     fn entity_expanded_has_dynamic_type_and_id() {
-        use crate::jsonld::Expandable;
+        use jsonld::Expandable;
 
         let payload = json!({
             "id": "urn:ngsi-ld:Building:001",
@@ -635,7 +631,7 @@ mod tests {
 
     #[test]
     fn entity_expanded_with_multiple_types() {
-        use crate::jsonld::Expandable;
+        use jsonld::Expandable;
 
         let payload = json!({
             "id": "urn:ngsi-ld:Building:002",
@@ -651,7 +647,7 @@ mod tests {
 
     #[test]
     fn entity_expanded_includes_scope() {
-        use crate::jsonld::Expandable;
+        use jsonld::Expandable;
 
         let payload = json!({
             "id": "urn:ngsi-ld:Building:003",
@@ -669,7 +665,7 @@ mod tests {
 
     #[test]
     fn entity_expanded_includes_timestamps_and_attributes() {
-        use crate::jsonld::Expandable;
+        use jsonld::Expandable;
 
         let payload = json!({
             "id": "urn:ngsi-ld:Building:004",
@@ -697,7 +693,7 @@ mod tests {
 
     #[test]
     fn entity_expanded_omits_none_fields() {
-        use crate::jsonld::Expandable;
+        use jsonld::Expandable;
 
         let payload = json!({
             "id": "urn:ngsi-ld:Building:005",
@@ -720,7 +716,7 @@ mod tests {
 
     #[test]
     fn entity_expanded_includes_location() {
-        use crate::jsonld::Expandable;
+        use jsonld::Expandable;
 
         let payload = json!({
             "id": "urn:ngsi-ld:Building:006",

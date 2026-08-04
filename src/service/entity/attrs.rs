@@ -4,8 +4,9 @@ use crate::{
         expanded::removed_attribute_instances,
         notification::{ChangeEvent, TriggerReason},
         uri::Uri,
+        vocab,
     },
-    jsonld::{ContextSpec, vocab},
+    jsonld::ContextSpec,
     query::compiled::PurgeMode,
     service::entity::{
         EntityService,

@@ -4,8 +4,9 @@ use crate::{
     domain::{
         notification::{ChangeEvent, CompiledSubscription, Notification, NotificationType, SubscriptionChange, TriggerReason},
         uri::{NGSI_LD_URN_NID, Uri},
+        vocab,
     },
-    jsonld::{JsonLdEngine, vocab},
+    jsonld::JsonLdEngine,
     renderer::SysAttrsInclusion,
     repository::{entity::repo::EntityRepository, subscription::repo::SubscriptionRepository, subscription_store::repo::SubscriptionStore},
     service::{

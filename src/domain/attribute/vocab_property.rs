@@ -1,12 +1,10 @@
-use crate::{
-    domain::attribute::{
-        AttributeValue,
-        common::{CommonAttributeFields, OneOrMany},
-    },
-    jsonld::Expandable,
+use crate::domain::attribute::{
+    AttributeValue,
+    common::{CommonAttributeFields, OneOrMany},
 };
 use compact_str::CompactString;
 use indexmap::IndexMap;
+use jsonld::Expandable;
 use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
 
@@ -51,10 +49,11 @@ impl Default for VocabProperty {
 #[cfg(test)]
 mod tests {
     #![allow(clippy::expect_used, clippy::unwrap_used)]
-    use crate::{
-        domain::attribute::{Attribute, common::OneOrMany},
-        jsonld::{Expandable, vocab},
+    use crate::domain::{
+        attribute::{Attribute, common::OneOrMany},
+        vocab,
     };
+    use jsonld::Expandable;
 
     #[test]
     fn vocab_property_round_trip_supports_single_and_many() {

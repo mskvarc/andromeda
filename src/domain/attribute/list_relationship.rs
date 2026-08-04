@@ -1,12 +1,10 @@
-use crate::{
-    domain::attribute::{
-        AttributeValue,
-        common::{CommonAttributeFields, InlineEntity, OneOrMany, RelationshipObjectList},
-    },
-    jsonld::Expandable,
+use crate::domain::attribute::{
+    AttributeValue,
+    common::{CommonAttributeFields, InlineEntity, OneOrMany, RelationshipObjectList},
 };
 use compact_str::CompactString;
 use indexmap::IndexMap;
+use jsonld::Expandable;
 use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
 
@@ -51,7 +49,7 @@ impl Default for ListRelationship {
 #[cfg(test)]
 mod tests {
     #![allow(clippy::expect_used, clippy::unwrap_used)]
-    use crate::jsonld::Expandable;
+    use jsonld::Expandable;
 
     #[test]
     fn list_relationship_expanded_has_list_of_id_refs() {

@@ -789,7 +789,7 @@ fn wrap_raw_as_property(raw: Value) -> Value {
     Value::Object(property)
 }
 
-use crate::jsonld::vocab;
+use crate::domain::vocab;
 
 fn validate_attribute_envelopes(expanded: &Value) -> Result<(), AndromedaError> {
     let entities = match expanded {

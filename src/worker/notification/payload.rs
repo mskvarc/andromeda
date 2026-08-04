@@ -5,8 +5,9 @@ use crate::{
     domain::{
         entity::Entity,
         notification::{CompiledSubscription, TriggerReason},
+        vocab,
     },
-    jsonld::{CompactOptions, ContextSpec, ContextStripping, JsonLdEngine, vocab},
+    jsonld::{CompactOptions, ContextSpec, ContextStripping, JsonLdEngine},
     renderer::{Renderer, SysAttrsInclusion, entity::RenderMode, snapshot::SnapshotRenderer},
     service::entity::{expanded_entity_object_mut, inject_attr_sys_attrs, query::EntityQueryService},
 };

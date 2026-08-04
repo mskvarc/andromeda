@@ -1,11 +1,9 @@
-use crate::{
-    domain::{
-        attribute::{AttributeValue, common::CommonAttributeFields},
-        geometry::Wkb,
-    },
-    jsonld::Expandable,
+use crate::domain::{
+    attribute::{AttributeValue, common::CommonAttributeFields},
+    geometry::Wkb,
 };
 use indexmap::IndexMap;
+use jsonld::Expandable;
 use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
 
@@ -38,10 +36,8 @@ pub struct GeoProperty {
 #[cfg(test)]
 mod tests {
     #![allow(clippy::expect_used, clippy::unwrap_used)]
-    use crate::{
-        domain::attribute::Attribute,
-        jsonld::{Expandable, vocab},
-    };
+    use crate::domain::{attribute::Attribute, vocab};
+    use jsonld::Expandable;
 
     #[test]
     fn geo_property_round_trip_supports_previous_value() {

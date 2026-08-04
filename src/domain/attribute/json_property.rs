@@ -1,9 +1,7 @@
-use crate::{
-    domain::attribute::{AttributeValue, common::CommonAttributeFields},
-    jsonld::Expandable,
-};
+use crate::domain::attribute::{AttributeValue, common::CommonAttributeFields};
 use compact_str::CompactString;
 use indexmap::IndexMap;
+use jsonld::Expandable;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use serde_with::skip_serializing_none;
@@ -49,10 +47,8 @@ impl Default for JsonProperty {
 #[cfg(test)]
 mod tests {
     #![allow(clippy::expect_used, clippy::unwrap_used)]
-    use crate::{
-        domain::attribute::Attribute,
-        jsonld::{Expandable, vocab},
-    };
+    use crate::domain::{attribute::Attribute, vocab};
+    use jsonld::Expandable;
 
     #[test]
     fn json_property_round_trip_supports_previous_json() {

@@ -15,8 +15,10 @@
 //! fall back to fetching from the entity store.
 
 use crate::{
-    domain::notification::{ChangeEvent, TriggerReason},
-    jsonld::vocab,
+    domain::{
+        notification::{ChangeEvent, TriggerReason},
+        vocab,
+    },
     repository::entity::repo::EntityRepository,
     service::spatial::{SpatialKey, entity_index::SpatialEntityIndex},
     tenancy::types::TenantRef,
