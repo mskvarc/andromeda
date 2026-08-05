@@ -9,7 +9,7 @@ use andromeda_domain::{
     registration::{ContextSourceRegistration, CsrOperation, ForwardingMode},
 };
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, tenant::TenantName};
-use andromeda_query::filter::{eval::evaluate as eval_q_expr, expression::Expr};
+use andromeda_ngsi_ld_query::filter::{eval::evaluate as eval_q_expr, expression::Expr};
 use futures::{StreamExt, stream};
 use headers::Header;
 use serde_json::Value;

@@ -11,8 +11,11 @@ authors = ["Matej Škvarč <matej.skvarc@senlab.io>"]
 andromeda-domain = { path = "crates/andromeda-domain" }
 andromeda-geometry = { path = "crates/andromeda-geometry" }
 andromeda-ngsi-ld-lexicon = { path = "crates/andromeda-ngsi-ld-lexicon" }
+andromeda-ngsi-ld-query = { path = "crates/andromeda-ngsi-ld-query" }
 andromeda-ngsi-ld-vocabulary = { path = "crates/andromeda-ngsi-ld-vocabulary" }
-andromeda-query = { path = "crates/andromeda-query" }
+andromeda-postgresql-context-query = { path = "crates/andromeda-postgresql-context-query" }
+andromeda-postgresql-query = { path = "crates/andromeda-postgresql-query" }
+andromeda-postgresql-temporal-query = { path = "crates/andromeda-postgresql-temporal-query" }
 andromeda-test-common = { path = "lib/andromeda-test-common" }
 
 [workspace.lints.clippy]
@@ -44,8 +47,11 @@ workspace = true
 andromeda-domain.workspace = true
 andromeda-geometry.workspace = true
 andromeda-ngsi-ld-lexicon.workspace = true
+andromeda-ngsi-ld-query.workspace = true
 andromeda-ngsi-ld-vocabulary.workspace = true
-andromeda-query.workspace = true
+andromeda-postgresql-context-query.workspace = true
+andromeda-postgresql-query.workspace = true
+andromeda-postgresql-temporal-query.workspace = true
 async-trait = "0.1.89"
 axum = { version = "0.8.9", features = ["ws"] }
 backon = "1.6.0"

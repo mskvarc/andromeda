@@ -10,8 +10,8 @@ use andromeda_domain::{
     subscription::SubscriptionStatus,
 };
 use andromeda_geometry::{geometry::Geometry, relation::matches_geo};
+use andromeda_ngsi_ld_query::filter::eval;
 use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
-use andromeda_query::filter::eval;
 use chrono::Utc;
 use serde_json::Value;
 use std::sync::Arc;

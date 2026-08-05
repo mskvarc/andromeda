@@ -10,7 +10,7 @@ use crate::{
 };
 use andromeda_domain::{entity::Entity, notification::Notification, subscription::Subscription};
 use andromeda_ngsi_ld_lexicon::uri::{NGSI_LD_URN_NID, Uri};
-use andromeda_query::filter::{eval, parser};
+use andromeda_ngsi_ld_query::filter::{eval, parser};
 use chrono::Utc;
 use futures::{StreamExt, stream};
 use mediatype::MediaTypeBuf;

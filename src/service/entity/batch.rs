@@ -32,7 +32,7 @@ use andromeda_domain::{
 };
 use andromeda_geometry::geometry::Geometry;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, scope::grammar::ScopeBuf, uri::Uri};
-use andromeda_query::scope::ltree::scope_to_ltree;
+use andromeda_postgresql_query::ltree::scope_to_ltree;
 use futures::{StreamExt, stream};
 use serde_json::Value;
 use std::{

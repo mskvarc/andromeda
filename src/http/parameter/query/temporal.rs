@@ -2,7 +2,7 @@
 
 use crate::{http::model::temporal_query_request::TemporalQueryRequest, impl_shared_query_params};
 use andromeda_domain::temporal::{AggrMethod, TemporalFormat, TimeProp, TimeRel};
-use andromeda_query::error::QueryError;
+use andromeda_ngsi_ld_query::error::QueryError;
 use serde::Deserialize;
 
 /// Raw HTTP query parameters for temporal entity queries.

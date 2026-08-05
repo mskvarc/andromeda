@@ -3,8 +3,8 @@
 //!
 //! Expansion of a parsed `q` filter is not here: those walkers are shaped by
 //! the filter AST, so they live with it in
-//! [`andromeda_query::filter::expansion`], reached through the
-//! [`TermExpander`](andromeda_query::term_expander::TermExpander) trait.
+//! [`andromeda_ngsi_ld_query::filter::expansion`], reached through the
+//! [`TermExpander`](andromeda_ngsi_ld_query::term_expander::TermExpander) trait.
 
 use crate::{
     core::error::AndromedaError,

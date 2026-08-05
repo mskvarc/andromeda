@@ -17,7 +17,7 @@ use andromeda_domain::{
 use andromeda_geometry::geometry::Geometry;
 use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, scope::grammar::Scope};
 use andromeda_ngsi_ld_vocabulary::expanded::{classes as expanded_classes, properties as expanded_properties};
-use andromeda_query::scope::ltree::scope_to_ltree;
+use andromeda_postgresql_query::ltree::scope_to_ltree;
 use chrono::{DateTime, Utc};
 use iri_rs::IriBuf;
 use serde_json::Value;

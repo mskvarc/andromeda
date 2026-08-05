@@ -24,8 +24,8 @@ use andromeda_domain::{
     notification::{ChangeEvent, TriggerReason},
 };
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
+use andromeda_ngsi_ld_query::projection::purge::PurgeMode;
 use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
-use andromeda_query::projection::purge::PurgeMode;
 use serde_json::Value;
 use std::{collections::HashSet, sync::Arc};
 use urn_rs::Urn;

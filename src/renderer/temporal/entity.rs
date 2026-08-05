@@ -9,7 +9,7 @@ use crate::{
     },
 };
 use andromeda_ngsi_ld_lexicon::entity_type_name::EntityTypeName;
-use andromeda_query::temporal::compiled::CompiledTemporalQuery;
+use andromeda_ngsi_ld_query::temporal::compiled::CompiledTemporalQuery;
 use chrono::{DateTime, Utc};
 use indexmap::IndexMap;
 use serde_json::{Value, json};

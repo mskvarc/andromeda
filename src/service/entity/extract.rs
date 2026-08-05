@@ -12,7 +12,7 @@ use andromeda_domain::expanded::{
     geo_property::{extract_location_geometry, extract_observation_space_geometry, extract_operation_space_geometry},
 };
 use andromeda_geometry::geometry::Geometry;
-use andromeda_query::scope::ltree::scope_to_ltree;
+use andromeda_postgresql_query::ltree::scope_to_ltree;
 use serde_json::Value;
 
 /// Build [`EntitySaveParams`] for `save()` from an expanded JSON-LD payload.

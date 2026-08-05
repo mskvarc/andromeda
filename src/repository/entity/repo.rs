@@ -11,12 +11,10 @@ use crate::{
     },
 };
 use andromeda_domain::notification::SysAttrsSnapshot;
+use andromeda_ngsi_ld_query::entity::compiled::CompiledEntityQuery;
 use andromeda_ngsi_ld_vocabulary::expanded::properties;
-use andromeda_query::{
-    entity::{compiled::CompiledEntityQuery, sql as entity_sql},
-    filter::sql::attribute_names::ResolvedAttributeNames,
-    sql::bind::BindValue,
-};
+use andromeda_postgresql_context_query::entity as entity_sql;
+use andromeda_postgresql_query::{bind::BindValue, q_predicate::attribute_names::ResolvedAttributeNames};
 use serde_json::Value;
 use sqlx::{Executor, Postgres, Row, Transaction, postgres::PgPool};
 use std::collections::HashMap;

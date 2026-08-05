@@ -35,13 +35,11 @@ use andromeda_domain::{
     temporal::TemporalFormat,
 };
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, uri::Uri};
-use andromeda_ngsi_ld_vocabulary::expanded::classes as expanded_classes;
-use andromeda_query::{
+use andromeda_ngsi_ld_query::{
     error::QueryError,
     filter::{
         expansion::{apply_expand_values, apply_json_keys, expand_q_expression},
         path::expanded_attribute_name,
-        sql::{attribute_names::ResolvedAttributeNames, projection::referenced_attribute_names},
     },
     geo::{compile as geo_compile, query::GeoQuery},
     identifier::parse_id_list,
@@ -57,11 +55,13 @@ use andromeda_query::{
         instance_selection::InstanceSelection,
         last_n::LastNOrigin,
         representation::Representation,
-        sql::{history::build_temporal_history_query, stage1::build_stage1_entity_ids},
         window::TemporalWindow,
     },
     type_selection::expansion::expand_entity_types,
 };
+use andromeda_ngsi_ld_vocabulary::expanded::classes as expanded_classes;
+use andromeda_postgresql_query::q_predicate::{attribute_names::ResolvedAttributeNames, projection::referenced_attribute_names};
+use andromeda_postgresql_temporal_query::{history::build_temporal_history_query, stage1::build_stage1_entity_ids};
 use chrono::{DateTime, SecondsFormat, Utc};
 use iri_rs::IriBuf;
 use serde_json::{Value, json};

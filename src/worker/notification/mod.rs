@@ -484,7 +484,7 @@ mod tests {
         transport::endpoint::EndpointTransport,
     };
     use andromeda_domain::{notification::ChangeOrigin, subscription::SubscriptionStatus};
-    use andromeda_query::filter::parser;
+    use andromeda_ngsi_ld_query::filter::parser;
     use payload::filter_entity_attributes;
     use regex::Regex;
 

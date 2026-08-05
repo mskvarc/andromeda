@@ -15,7 +15,7 @@ use crate::{
     },
 };
 use andromeda_domain::temporal::{AttributeNameId, TeaEntry};
-use andromeda_query::sql::bind::BindValue;
+use andromeda_postgresql_query::bind::BindValue;
 use chrono::{DateTime, Utc};
 use serde_json::Value;
 use sqlx::{

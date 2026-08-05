@@ -5,7 +5,7 @@
 //! on the JSON-LD side of the boundary.
 
 use crate::jsonld::{ContextSpec, JsonLdEngine};
-use andromeda_query::{error::QueryError, term_expander::TermExpander};
+use andromeda_ngsi_ld_query::{error::QueryError, term_expander::TermExpander};
 use iri_rs::IriBuf;
 
 /// A [`JsonLdEngine`] paired with the `@context` one request selected.

@@ -16,7 +16,7 @@ pub mod subscription_index;
 pub mod warmup;
 
 use crate::tenancy::types::TenantRef;
-use andromeda_query::type_selection::grammar::TypeExpr;
+use andromeda_ngsi_ld_query::type_selection::grammar::TypeExpr;
 use iri_rs::IriBuf;
 
 /// Partition key for both spatial indexes.

@@ -6,7 +6,7 @@ use crate::{
     renderer::entity::RenderMode,
 };
 use andromeda_domain::sys_attrs::SysAttrsInclusion;
-use andromeda_query::{
+use andromeda_ngsi_ld_query::{
     error::QueryError,
     ordering::{
         collation::IcuCollation,
@@ -344,7 +344,7 @@ impl From<QueryRequest> for EntityQueryParameters {
 mod tests {
     use super::*;
     use crate::{http::parameter::query::SharedQueryParams, params_from_query};
-    use andromeda_query::ordering::term::OrderDirection;
+    use andromeda_ngsi_ld_query::ordering::term::OrderDirection;
 
     fn params_from_query(query: &str) -> EntityQueryParameters {
         params_from_query!(query, EntityQueryParameters)

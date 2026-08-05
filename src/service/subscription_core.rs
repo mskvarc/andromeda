@@ -7,7 +7,7 @@ use crate::{
     repository::subscription_store::params::SubscriptionFields,
 };
 use andromeda_domain::subscription::Subscription;
-use andromeda_query::filter::{expansion::expand_q_expr, expression::Expr, parser, predicate::Predicate, serialize};
+use andromeda_ngsi_ld_query::filter::{expansion::expand_q_expr, expression::Expr, parser, predicate::Predicate, serialize};
 use chrono::Utc;
 use serde_json::Value;
 use tracing::warn;

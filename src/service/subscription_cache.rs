@@ -23,8 +23,8 @@ use andromeda_domain::{
     subscription::{EntitySelector, Subscription, SubscriptionStatus},
     sys_attrs::SysAttrsInclusion,
 };
+use andromeda_ngsi_ld_query::filter::parser;
 use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
-use andromeda_query::filter::parser;
 use dashmap::DashMap;
 use iri_rs::IriBuf;
 use regex::Regex;

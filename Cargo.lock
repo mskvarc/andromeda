@@ -86,8 +86,11 @@ dependencies = [
  "andromeda-domain",
  "andromeda-geometry",
  "andromeda-ngsi-ld-lexicon",
+ "andromeda-ngsi-ld-query",
  "andromeda-ngsi-ld-vocabulary",
- "andromeda-query",
+ "andromeda-postgresql-context-query",
+ "andromeda-postgresql-query",
+ "andromeda-postgresql-temporal-query",
  "andromeda-test-common",
  "async-trait",
  "axum",
@@ -220,16 +223,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "andromeda-ngsi-ld-vocabulary"
-version = "0.1.0"
-dependencies = [
- "iri-rs",
- "jsonld",
- "pretty_assertions",
-]
-
-[[package]]
-name = "andromeda-query"
+name = "andromeda-ngsi-ld-query"
 version = "0.1.0"
 dependencies = [
  "andromeda-domain",
@@ -243,11 +237,70 @@ dependencies = [
  "percent-encoding",
  "pretty_assertions",
  "regex",
- "sea-query",
  "serde_json",
  "thiserror 2.0.19",
  "tokio",
  "typed-builder",
+ "urn-rs",
+]
+
+[[package]]
+name = "andromeda-ngsi-ld-vocabulary"
+version = "0.1.0"
+dependencies = [
+ "iri-rs",
+ "jsonld",
+ "pretty_assertions",
+]
+
+[[package]]
+name = "andromeda-postgresql-context-query"
+version = "0.1.0"
+dependencies = [
+ "andromeda-domain",
+ "andromeda-geometry",
+ "andromeda-ngsi-ld-lexicon",
+ "andromeda-ngsi-ld-query",
+ "andromeda-ngsi-ld-vocabulary",
+ "andromeda-postgresql-query",
+ "chrono",
+ "iri-rs",
+ "pretty_assertions",
+ "sea-query",
+ "serde_json",
+]
+
+[[package]]
+name = "andromeda-postgresql-query"
+version = "0.1.0"
+dependencies = [
+ "andromeda-domain",
+ "andromeda-geometry",
+ "andromeda-ngsi-ld-lexicon",
+ "andromeda-ngsi-ld-query",
+ "andromeda-ngsi-ld-vocabulary",
+ "chrono",
+ "iri-rs",
+ "pretty_assertions",
+ "sea-query",
+ "serde_json",
+ "thiserror 2.0.19",
+]
+
+[[package]]
+name = "andromeda-postgresql-temporal-query"
+version = "0.1.0"
+dependencies = [
+ "andromeda-domain",
+ "andromeda-geometry",
+ "andromeda-ngsi-ld-lexicon",
+ "andromeda-ngsi-ld-query",
+ "andromeda-postgresql-query",
+ "chrono",
+ "iri-rs",
+ "pretty_assertions",
+ "sea-query",
+ "serde_json",
  "urn-rs",
 ]
 

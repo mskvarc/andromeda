@@ -40,7 +40,7 @@ use andromeda_ngsi_ld_lexicon::{
     scope::grammar::ScopeBuf,
     uri::Uri,
 };
-use andromeda_query::scope::ltree::scope_to_ltree;
+use andromeda_postgresql_query::ltree::scope_to_ltree;
 use chrono::{DateTime, SecondsFormat, Utc};
 use dashmap::DashMap;
 use serde_json::{Map, Value};

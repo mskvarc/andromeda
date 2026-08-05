@@ -14,7 +14,7 @@ use andromeda_domain::{
     temporal::{TimeProp, TimeRel},
 };
 use andromeda_ngsi_ld_lexicon::{tenant::TenantName, uri::Uri};
-use andromeda_query::{
+use andromeda_ngsi_ld_query::{
     csr::compiled::{CompiledCsrQuery, CompiledCsrTemporalFilter},
     filter::parser,
     geo::compile as geo_compile,

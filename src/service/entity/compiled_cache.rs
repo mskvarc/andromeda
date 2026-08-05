@@ -13,7 +13,7 @@
 //! in the cache owner and does not need to be part of the key.
 
 use crate::{http::parameter::query::entity::EntityQueryParameters, jsonld::ContextSpec};
-use andromeda_query::entity::compiled::CompiledEntityQuery;
+use andromeda_ngsi_ld_query::entity::compiled::CompiledEntityQuery;
 use moka::future::Cache;
 use std::{
     fmt::Write,

@@ -2,7 +2,7 @@
 
 use crate::{http::parameter::query::is_valid_uri, impl_shared_query_params};
 use andromeda_domain::sys_attrs::SysAttrsInclusion;
-use andromeda_query::error::QueryError;
+use andromeda_ngsi_ld_query::error::QueryError;
 use serde::Deserialize;
 
 /// Raw HTTP query parameters for Context Source Registration discovery.

@@ -18,7 +18,7 @@ use andromeda_domain::{
     subscription::{Subscription, SubscriptionStatus},
 };
 use andromeda_ngsi_ld_lexicon::uri::{NGSI_LD_URN_NID, Uri};
-use andromeda_query::filter::{eval, parser};
+use andromeda_ngsi_ld_query::filter::{eval, parser};
 use chrono::Utc;
 use dashmap::DashMap;
 use futures::{StreamExt, stream};

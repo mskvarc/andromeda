@@ -35,7 +35,7 @@ use crate::{
 };
 use andromeda_domain::registration::ForwardingMode;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
-use andromeda_query::filter::{eval::evaluate, expansion::expand_q_expression};
+use andromeda_ngsi_ld_query::filter::{eval::evaluate, expansion::expand_q_expression};
 use axum::{
     extract::{OriginalUri, Path},
     http::StatusCode,

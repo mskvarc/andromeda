@@ -9,7 +9,7 @@ use crate::{
     service::temporal::format_datetime,
 };
 use andromeda_domain::temporal::{AggrMethod, ValueType};
-use andromeda_query::temporal::compiled::CompiledTemporalQuery;
+use andromeda_ngsi_ld_query::temporal::compiled::CompiledTemporalQuery;
 use chrono::{DateTime, Utc};
 use indexmap::IndexMap;
 use serde_json::{Value, json};

@@ -60,7 +60,7 @@ use andromeda_domain::{
     sys_attrs::SysAttrsInclusion,
 };
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, uri::Uri};
-use andromeda_query::{
+use andromeda_ngsi_ld_query::{
     filter::{eval::evaluate, expansion::expand_q_expression},
     projection::purge::{PurgeMode, parse_attribute_list},
 };

@@ -15,7 +15,8 @@ use andromeda_ngsi_ld_lexicon::ngsi_ld_urn::{
     SnapshotIdParseError,
     SnapshotNotificationIdParseError,
 };
-use andromeda_query::error::QueryError;
+use andromeda_ngsi_ld_query::error::QueryError;
+use andromeda_postgresql_query::error::RenderError;
 use axum::http::Uri;
 use confique::Error as ConfigError;
 use reqwest::Error as ReqwestError;
@@ -596,17 +597,27 @@ impl From<QueryError> for AndromedaError {
             | QueryError::ValueListOperatorUnsupported
             | QueryError::DistanceOrderWithoutReference
             | QueryError::ParamOther(_) => ErrorKind::QueryValidation(err.to_string()),
-            // Neither the client nor the request shape caused these: a
-            // geometry that already parsed failed to encode, a term the
-            // processor accepted failed to expand, or sea-query produced a
-            // value with no typed bind. They are broker faults.
-            QueryError::ReferenceGeometryEncoding(_)
-            | QueryError::TermExpansion { .. }
-            | QueryError::TermNotAnIri { .. }
-            | QueryError::AttributeNameInvalid { .. }
-            | QueryError::BindConversion(_) => ErrorKind::Internal(err.to_string()),
+            // Neither the client nor the request shape caused these: a term the
+            // processor accepted failed to expand, or an expanded IRI turned
+            // out not to name an attribute. They are broker faults.
+            QueryError::TermExpansion { .. } | QueryError::TermNotAnIri { .. } | QueryError::AttributeNameInvalid { .. } => {
+                ErrorKind::Internal(err.to_string())
+            }
         };
         kind.into()
+    }
+}
+
+impl From<RenderError> for AndromedaError {
+    fn from(err: RenderError) -> AndromedaError {
+        match err {
+            // The query itself was at fault; it is classified where it is defined.
+            RenderError::Query(query) => query.into(),
+            // Neither the client nor the request shape caused these: a geometry
+            // that already parsed failed to encode, or sea-query produced a
+            // value with no typed bind. They are broker faults.
+            RenderError::BindConversion(_) | RenderError::ReferenceGeometryEncoding(_) => ErrorKind::Internal(err.to_string()).into(),
+        }
     }
 }
 

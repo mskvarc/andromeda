@@ -18,20 +18,19 @@ use andromeda_domain::{
 };
 use andromeda_geometry::geometry::Geometry;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
-use andromeda_query::{
+use andromeda_ngsi_ld_query::{
     entity::{compiled::CompiledEntityQuery, selection::EntitySelection},
     error::QueryError,
     filter::{
         expansion::{apply_expand_values, apply_json_keys, expand_q_expression},
         path::expanded_attribute_name,
-        sql::{attribute_names::ResolvedAttributeNames, projection::referenced_attribute_names},
     },
     geo::{compile as geo_compile, query::GeoQuery},
     identifier::parse_id_list,
     ordering::{
         collation::IcuCollation,
         compiled::ResultOrdering,
-        distance::OrderingGeometry,
+        geometry::OrderingGeometry,
         term::{CompiledOrderTerm, OrderTarget, RawOrderTarget},
     },
     pagination::{CountPolicy, Pagination},
@@ -44,6 +43,7 @@ use andromeda_query::{
     term_expander::TermExpander,
     type_selection::{expansion::expand_type_expression, parser as type_parser},
 };
+use andromeda_postgresql_query::q_predicate::{attribute_names::ResolvedAttributeNames, projection::referenced_attribute_names};
 use iri_rs::IriBuf;
 use serde_json::Value;
 use sqlx::postgres::PgPool;
