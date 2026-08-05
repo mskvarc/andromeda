@@ -18,8 +18,8 @@ use crate::{
     service::{subscription_core, subscription_status::compute_updated_status},
     transport::endpoint::parse_endpoint_transport,
 };
-use andromeda_domain::subscription::{Subscription, SubscriptionStatus};
 use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_model::subscription::{Subscription, SubscriptionStatus};
 use async_trait::async_trait;
 use serde_json::Value;
 

@@ -19,8 +19,8 @@ use crate::{
     service::spatial::{SpatialKey, entity_index::SpatialEntityIndex},
     tenancy::types::TenantRef,
 };
-use andromeda_domain::notification::{ChangeEvent, TriggerReason};
 use andromeda_ngsi_ld_geometry::geometry::Geometry;
+use andromeda_ngsi_ld_model::notification::{ChangeEvent, TriggerReason};
 use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
 use iri_rs::IriBuf;
 use serde_json::Value;

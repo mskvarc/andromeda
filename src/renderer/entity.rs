@@ -10,14 +10,14 @@ use crate::{
     http::model::language::{LanguageFilter, LanguageRange},
     renderer::Renderer,
 };
-use andromeda_domain::{
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, rfc3339};
+use andromeda_ngsi_ld_model::{
     attribute::{
         instance::{Attribute, AttributeValue},
         language_property::{LanguageMapKey, LanguageMapValue, LanguageProperty},
     },
     entity::Entity,
 };
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, rfc3339};
 use chrono::{DateTime, SecondsFormat, Utc};
 use indexmap::IndexMap;
 use langtag::LangTagBuf;
@@ -594,7 +594,7 @@ pub(crate) fn decode_percent_encoded_uris(value: &mut Value) {
 mod tests {
     use super::{EntityRenderer, RenderMode, concise_value, decode_percent_encoded_uris};
     use crate::{http::model::language::LanguageFilter, renderer::Renderer};
-    use andromeda_domain::entity::Entity;
+    use andromeda_ngsi_ld_model::entity::Entity;
     use serde_json::{Value, json};
 
     fn parse_entity(value: Value) -> Entity {

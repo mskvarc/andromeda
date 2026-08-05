@@ -6,8 +6,8 @@
 //! types and converts to/from the domain form at the repository boundary.
 
 use crate::{core::error::AndromedaError, service::entity::BatchSideEffectJob};
-use andromeda_domain::notification::{ChangeEvent, ChangeOrigin, SysAttrsSnapshot, TriggerReason};
 use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_model::notification::{ChangeEvent, ChangeOrigin, SysAttrsSnapshot, TriggerReason};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;

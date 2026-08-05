@@ -8,13 +8,13 @@ edition = "2024"
 authors = ["Matej Škvarč <matej.skvarc@senlab.io>"]
 
 [workspace.dependencies]
-andromeda-domain = { path = "crates/andromeda-domain" }
 andromeda-ngsi-ld-geometry = { path = "crates/andromeda-ngsi-ld-geometry" }
-andromeda-postgresql-encoding = { path = "crates/andromeda-postgresql-encoding" }
 andromeda-ngsi-ld-lexicon = { path = "crates/andromeda-ngsi-ld-lexicon" }
+andromeda-ngsi-ld-model = { path = "crates/andromeda-ngsi-ld-model" }
 andromeda-ngsi-ld-query = { path = "crates/andromeda-ngsi-ld-query" }
 andromeda-ngsi-ld-vocabulary = { path = "crates/andromeda-ngsi-ld-vocabulary" }
 andromeda-postgresql-context-query = { path = "crates/andromeda-postgresql-context-query" }
+andromeda-postgresql-encoding = { path = "crates/andromeda-postgresql-encoding" }
 andromeda-postgresql-query = { path = "crates/andromeda-postgresql-query" }
 andromeda-postgresql-temporal-query = { path = "crates/andromeda-postgresql-temporal-query" }
 andromeda-test-common = { path = "lib/andromeda-test-common" }
@@ -45,9 +45,9 @@ build = "build.rs"
 workspace = true
 
 [dependencies]
-andromeda-domain.workspace = true
 andromeda-ngsi-ld-geometry.workspace = true
 andromeda-ngsi-ld-lexicon.workspace = true
+andromeda-ngsi-ld-model.workspace = true
 andromeda-ngsi-ld-query.workspace = true
 andromeda-ngsi-ld-vocabulary.workspace = true
 andromeda-postgresql-context-query.workspace = true
@@ -105,6 +105,7 @@ tower = { version = "0.5.3", features = ["util"] }
 tower-helmet = "0.3.0"
 tower-http = { version = "0.6.8", features = ["compression-full", "cors", "decompression-full", "normalize-path", "request-id", "sensitive-headers", "timeout", "trace", "util"] }
 tower-layer = "0.3.3"
+typed-builder = "0.23.2"
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["json", "env-filter"] }
 url = { version = "2.5.8", features = ["serde"] }

@@ -22,6 +22,7 @@
 #![deny(missing_docs)]
 #![deny(clippy::missing_docs_in_private_items)]
 
+pub mod attribute_name_id;
 pub mod bind;
 pub mod built;
 pub mod error;

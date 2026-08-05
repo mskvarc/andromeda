@@ -8,8 +8,8 @@ use crate::{
         rows::{ContextMetadataRow, ContextSummaryRow},
     },
 };
-use andromeda_domain::jsonld_context::ContextKind;
 use andromeda_ngsi_ld_lexicon::uri::NGSI_LD_URN_NID;
+use andromeda_ngsi_ld_model::jsonld_context::ContextKind;
 use async_trait::async_trait;
 use serde_json::Value;
 use sqlx::{postgres::PgPool, types::Json};
@@ -19,7 +19,7 @@ use uuid::Uuid;
 /// Summary-projection list output: either detailed rows or summary rows.
 ///
 /// The repository returns this raw; the service layer assembles the public
-/// [`andromeda_domain::jsonld_context::ContextListResult`].
+/// [`andromeda_ngsi_ld_model::jsonld_context::ContextListResult`].
 #[derive(Debug)]
 pub enum ListedContexts {
     /// Full metadata projection.

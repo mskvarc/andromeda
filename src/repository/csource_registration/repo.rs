@@ -8,8 +8,8 @@ use crate::{
     },
     service::csource_merge::ResolvedCsrUpdate,
 };
-use andromeda_domain::registration::ContextSourceRegistration;
 use andromeda_ngsi_ld_lexicon::{tenant::TenantName, uri::NGSI_LD_URN_NID};
+use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
 use andromeda_ngsi_ld_query::csr::compiled::CompiledCsrQuery;
 use andromeda_postgresql_context_query::csr::statement as csr_sql;
 use sea_query::{Alias, Expr as SeaExpr, Order, PostgresQueryBuilder, Query, SelectStatement};

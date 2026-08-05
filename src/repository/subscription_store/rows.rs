@@ -10,7 +10,7 @@
 use chrono::{DateTime, Utc};
 use serde_json::Value;
 
-use andromeda_domain::subscription::SubscriptionStatus;
+use andromeda_ngsi_ld_model::subscription::SubscriptionStatus;
 
 /// A subscription row read from the `subscriptions` table. Column presence
 /// matches the macro-generated projection list; optional/nullable columns

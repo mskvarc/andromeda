@@ -1,7 +1,7 @@
 //! SQL generation for Context Source Registration queries using sea-query.
 
 use crate::csr::filter::csr_expr_to_condition;
-use andromeda_domain::temporal::{TimeProp, TimeRel};
+use andromeda_ngsi_ld_lexicon::{time_prop::TimeProp, time_rel::TimeRel};
 use andromeda_ngsi_ld_query::{csr::compiled::CompiledCsrQuery, error::QueryError};
 use andromeda_postgresql_query::{
     bind::sea_values_to_bind_values,

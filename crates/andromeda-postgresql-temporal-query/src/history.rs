@@ -5,8 +5,7 @@ use crate::{
     aggregation::build_aggregation_query_sql,
     time_column::{history_column, unprefixed_column},
 };
-use andromeda_domain::temporal::{TemporalFormat, TimeProp, TimeRel};
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::{temporal_format::TemporalFormat, time_prop::TimeProp, time_rel::TimeRel, uri::Uri};
 use andromeda_ngsi_ld_query::{
     error::QueryError,
     temporal::{compiled::CompiledTemporalQuery, dataset::DatasetFilter},
@@ -139,10 +138,8 @@ ORDER BY "an"."name", {} ASC"#,
 #[cfg(test)]
 mod tests {
     use super::*;
-    use andromeda_domain::{
-        sys_attrs::SysAttrsInclusion,
-        temporal::{AggrMethod, TemporalFormat, TimeProp},
-    };
+    use andromeda_ngsi_ld_lexicon::{aggr_method::AggrMethod, temporal_format::TemporalFormat, time_prop::TimeProp};
+    use andromeda_ngsi_ld_model::sys_attrs::SysAttrsInclusion;
     use andromeda_ngsi_ld_query::temporal::{
         aggregation_period::AggregationPeriod,
         dataset::DatasetSelector,

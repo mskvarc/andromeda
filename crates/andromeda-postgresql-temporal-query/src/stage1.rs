@@ -1,7 +1,7 @@
 //! Stage 1 of a temporal query: select the entity ids that match every filter.
 
 use crate::time_column::history_column;
-use andromeda_domain::temporal::TimeRel;
+use andromeda_ngsi_ld_lexicon::time_rel::TimeRel;
 use andromeda_ngsi_ld_query::{
     pagination::CountPolicy,
     temporal::{compiled::CompiledTemporalQuery, dataset::DatasetFilter},
@@ -232,18 +232,16 @@ fn build_temporal_stage1_conditions(compiled: &CompiledTemporalQuery) -> Result<
 #[cfg(test)]
 mod tests {
     use super::*;
-    use andromeda_domain::{
-        sys_attrs::SysAttrsInclusion,
-        temporal::{AttributeNameId, TemporalFormat, TimeProp},
-    };
     use andromeda_ngsi_ld_geometry::{geo_rel::GeoRel, geometry::Geometry};
-    use andromeda_ngsi_ld_lexicon::uri::Uri;
+    use andromeda_ngsi_ld_lexicon::{temporal_format::TemporalFormat, time_prop::TimeProp, uri::Uri};
+    use andromeda_ngsi_ld_model::sys_attrs::SysAttrsInclusion;
     use andromeda_ngsi_ld_query::{
         filter::parser,
         geo::query::GeoQuery,
         scope::query::ScopeQuery,
         temporal::{entity_selection::EntitySelection, instance_selection::InstanceSelection, representation::Representation, window::TemporalWindow},
     };
+    use andromeda_postgresql_query::attribute_name_id::AttributeNameId;
     use chrono::{DateTime, Utc};
 
     fn ids(raw: &[&str]) -> Vec<Uri> {

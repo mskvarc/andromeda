@@ -1,6 +1,6 @@
 //! Repository input parameter types for temporal data.
 
-use andromeda_domain::temporal::ValueType;
+use crate::repository::temporal::value_type::ValueType;
 use andromeda_ngsi_ld_geometry::geometry::Geometry;
 use andromeda_ngsi_ld_lexicon::attribute_type::AttributeType;
 use chrono::{DateTime, Utc};

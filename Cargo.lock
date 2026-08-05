@@ -83,9 +83,9 @@ dependencies = [
 name = "andromeda"
 version = "0.1.0"
 dependencies = [
- "andromeda-domain",
  "andromeda-ngsi-ld-geometry",
  "andromeda-ngsi-ld-lexicon",
+ "andromeda-ngsi-ld-model",
  "andromeda-ngsi-ld-query",
  "andromeda-ngsi-ld-vocabulary",
  "andromeda-postgresql-context-query",
@@ -148,41 +148,9 @@ dependencies = [
  "tower-layer",
  "tracing",
  "tracing-subscriber",
- "url",
- "urlencoding",
- "urn-rs",
- "uuid",
-]
-
-[[package]]
-name = "andromeda-domain"
-version = "0.1.0"
-dependencies = [
- "andromeda-ngsi-ld-geometry",
- "andromeda-ngsi-ld-lexicon",
- "andromeda-ngsi-ld-vocabulary",
- "cefact-units",
- "chrono",
- "compact_str",
- "derive_more",
- "geo",
- "geojson",
- "indexmap 2.14.0",
- "iri-rs",
- "iso8601-duration",
- "jsonld",
- "jsonld-expandable-core",
- "langtag",
- "mediatype",
- "pretty_assertions",
- "regex",
- "serde",
- "serde_json",
- "serde_with",
- "strum",
- "thiserror 2.0.19",
  "typed-builder",
  "url",
+ "urlencoding",
  "urn-rs",
  "uuid",
 ]
@@ -222,12 +190,45 @@ dependencies = [
 ]
 
 [[package]]
+name = "andromeda-ngsi-ld-model"
+version = "0.1.0"
+dependencies = [
+ "andromeda-ngsi-ld-geometry",
+ "andromeda-ngsi-ld-lexicon",
+ "andromeda-ngsi-ld-vocabulary",
+ "cefact-units",
+ "chrono",
+ "compact_str",
+ "derive_more",
+ "geo",
+ "geojson",
+ "indexmap 2.14.0",
+ "iri-rs",
+ "iso8601-duration",
+ "jsonld",
+ "jsonld-expandable-core",
+ "langtag",
+ "mediatype",
+ "pretty_assertions",
+ "regex",
+ "serde",
+ "serde_json",
+ "serde_with",
+ "strum",
+ "thiserror 2.0.19",
+ "typed-builder",
+ "url",
+ "urn-rs",
+ "uuid",
+]
+
+[[package]]
 name = "andromeda-ngsi-ld-query"
 version = "0.1.0"
 dependencies = [
- "andromeda-domain",
  "andromeda-ngsi-ld-geometry",
  "andromeda-ngsi-ld-lexicon",
+ "andromeda-ngsi-ld-model",
  "andromeda-ngsi-ld-vocabulary",
  "chrono",
  "iri-rs",
@@ -256,7 +257,6 @@ dependencies = [
 name = "andromeda-postgresql-context-query"
 version = "0.1.0"
 dependencies = [
- "andromeda-domain",
  "andromeda-ngsi-ld-geometry",
  "andromeda-ngsi-ld-lexicon",
  "andromeda-ngsi-ld-query",
@@ -287,13 +287,13 @@ dependencies = [
 name = "andromeda-postgresql-query"
 version = "0.1.0"
 dependencies = [
- "andromeda-domain",
  "andromeda-ngsi-ld-geometry",
  "andromeda-ngsi-ld-lexicon",
  "andromeda-ngsi-ld-query",
  "andromeda-ngsi-ld-vocabulary",
  "andromeda-postgresql-encoding",
  "chrono",
+ "derive_more",
  "iri-rs",
  "pretty_assertions",
  "sea-query",
@@ -305,9 +305,9 @@ dependencies = [
 name = "andromeda-postgresql-temporal-query"
 version = "0.1.0"
 dependencies = [
- "andromeda-domain",
  "andromeda-ngsi-ld-geometry",
  "andromeda-ngsi-ld-lexicon",
+ "andromeda-ngsi-ld-model",
  "andromeda-ngsi-ld-query",
  "andromeda-postgresql-query",
  "chrono",

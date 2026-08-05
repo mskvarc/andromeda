@@ -15,6 +15,7 @@
 #![deny(missing_docs)]
 #![deny(clippy::missing_docs_in_private_items)]
 
+pub mod aggr_method;
 pub mod attribute_name;
 pub mod attribute_path;
 pub mod attribute_type;
@@ -26,5 +27,8 @@ pub mod ngsi_ld_urn;
 pub mod reference;
 pub mod rfc3339;
 pub mod scope;
+pub mod temporal_format;
 pub mod tenant;
+pub mod time_prop;
+pub mod time_rel;
 pub mod uri;

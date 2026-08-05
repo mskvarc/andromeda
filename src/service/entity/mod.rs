@@ -27,18 +27,18 @@ use crate::{
         temporal_recorder::TemporalRecorder,
     },
 };
-use andromeda_domain::{
-    entity::{Entity, EntityPatch},
-    expanded::{entity_member::extract_types, instance_key::removed_attribute_instances},
-    notification::{ChangeEvent, TriggerReason},
-    outbox::NewOutboxEntry,
-};
 use andromeda_ngsi_ld_lexicon::{
     attribute_name::AttributeName,
     attribute_type::AttributeType,
     entity_type_name::EntityTypeName,
     scope::grammar::ScopeBuf,
     uri::Uri,
+};
+use andromeda_ngsi_ld_model::{
+    entity::{Entity, EntityPatch},
+    expanded::{entity_member::extract_types, instance_key::removed_attribute_instances},
+    notification::{ChangeEvent, TriggerReason},
+    outbox::NewOutboxEntry,
 };
 use andromeda_postgresql_query::ltree::scope_to_ltree;
 use chrono::{DateTime, SecondsFormat, Utc};
@@ -293,7 +293,7 @@ impl EntityService {
         let types_refs: Vec<&str> = types.iter().map(EntityTypeName::as_str).collect();
         let scopes = extract_scopes(&expanded);
         let scope_paths: Vec<String> = scopes.iter().map(|scope| scope_to_ltree(scope)).collect();
-        let expires_at = andromeda_domain::expanded::entity_member::extract_expires_at(&expanded);
+        let expires_at = andromeda_ngsi_ld_model::expanded::entity_member::extract_expires_at(&expanded);
         let (location, observation_space, operation_space) = extract_geo_geometries(&expanded);
 
         let outbox_entries = if self.outbox.is_some() {
@@ -352,7 +352,7 @@ impl EntityService {
         normalize_entity_attributes(&mut patch_json);
         let expanded = self.engine.expand(patch_json, context).await?;
         validate_attribute_envelopes(&expanded)?;
-        andromeda_domain::expanded::mutation::entity::merge_entity(&mut existing, &expanded)?;
+        andromeda_ngsi_ld_model::expanded::mutation::entity::merge_entity(&mut existing, &expanded)?;
 
         let types = self.fetch_entity_types(&id).await;
         let changed_attrs = extract_attribute_keys(&expanded);

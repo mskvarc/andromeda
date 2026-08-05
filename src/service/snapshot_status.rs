@@ -4,7 +4,7 @@
 //! before any `update_status` request reaches the repository.
 
 use crate::core::error::AndromedaError;
-use andromeda_domain::snapshot::SnapshotStatus;
+use andromeda_ngsi_ld_model::snapshot::SnapshotStatus;
 
 /// Validate that a `preparing -> status` transition is permitted by the
 /// snapshot state machine (ETSI GS CIM 009 clause 5.16.4).
@@ -19,7 +19,7 @@ pub fn validate_preparing_transition(status: SnapshotStatus) -> Result<(), Andro
 #[cfg(test)]
 mod tests {
     use super::validate_preparing_transition;
-    use andromeda_domain::snapshot::SnapshotStatus;
+    use andromeda_ngsi_ld_model::snapshot::SnapshotStatus;
 
     #[test]
     fn preparing_to_success_is_valid() {

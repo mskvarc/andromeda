@@ -5,11 +5,11 @@
 //! delivery) and the subscription cache (outbox entry generation).
 
 use crate::service::compiled_subscription::{CompiledGeoQuery, CompiledScopePattern, CompiledScopeTerm, CompiledSubscription};
-use andromeda_domain::{
+use andromeda_ngsi_ld_geometry::{geometry::Geometry, relation::matches_geo};
+use andromeda_ngsi_ld_model::{
     notification::{ChangeEvent, ChangeOrigin},
     subscription::SubscriptionStatus,
 };
-use andromeda_ngsi_ld_geometry::{geometry::Geometry, relation::matches_geo};
 use andromeda_ngsi_ld_query::filter::eval;
 use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
 use chrono::Utc;
@@ -227,7 +227,7 @@ fn compiled_scope_term_matches(term: &CompiledScopeTerm, scope: &str) -> bool {
 mod tests {
     use super::*;
     use crate::transport::endpoint::EndpointTransport;
-    use andromeda_domain::{
+    use andromeda_ngsi_ld_model::{
         notification::{ChangeEvent, ChangeOrigin, TriggerReason},
         subscription::SubscriptionStatus,
         sys_attrs::SysAttrsInclusion,

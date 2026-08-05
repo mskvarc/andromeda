@@ -8,7 +8,8 @@ use crate::{
     core::error::AndromedaError,
     repository::subscription_store::{params::DatasetIdPresence, rows::SubscriptionRow},
 };
-use andromeda_domain::subscription::{
+use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_model::subscription::{
     NotificationParams,
     NotificationStatus,
     NotificationTrigger,
@@ -18,7 +19,6 @@ use andromeda_domain::subscription::{
     SubscriptionLifecycle,
     SubscriptionSelection,
 };
-use andromeda_ngsi_ld_lexicon::uri::Uri;
 use chrono::{DateTime, Utc};
 use langtag::LangTagBuf;
 use sqlx::Row;

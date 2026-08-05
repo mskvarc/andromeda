@@ -3,8 +3,13 @@
 //! Checks the health of all pooled MQTT connections and reports aggregate
 //! status alongside per-connection details including `$SYS` broker metadata.
 
-use crate::{health::HealthIndicator, transport::mqtt::MqttTransportPool};
-use andromeda_domain::health::{ComponentDetail, ComponentName, HealthStatus};
+use crate::{
+    health::{
+        HealthIndicator,
+        report::{ComponentDetail, ComponentName, HealthStatus},
+    },
+    transport::mqtt::MqttTransportPool,
+};
 use std::{collections::BTreeMap, future::Future, pin::Pin, sync::Arc};
 
 /// Health indicator for MQTT notification transport connections.

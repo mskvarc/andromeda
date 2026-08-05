@@ -1,7 +1,7 @@
 //! Repository input parameters for snapshot persistence.
 
-use andromeda_domain::snapshot::SnapshotStatus;
 use andromeda_ngsi_ld_lexicon::ngsi_ld_urn::SnapshotId;
+use andromeda_ngsi_ld_model::snapshot::SnapshotStatus;
 use chrono::{DateTime, Utc};
 use serde_json::Value;
 use sqlx::postgres::PgPool;

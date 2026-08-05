@@ -11,13 +11,13 @@ use crate::{
     tenancy::types::TenantRef,
     worker::attribute_current_materializer::AttributeCurrentBarrier,
 };
-use andromeda_domain::{
+use andromeda_ngsi_ld_geometry::geometry::Geometry;
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
+use andromeda_ngsi_ld_model::{
     attribute::instance::{Attribute, AttributeValue},
     entity::Entity,
     sys_attrs::SysAttrsInclusion,
 };
-use andromeda_ngsi_ld_geometry::geometry::Geometry;
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
 use andromeda_ngsi_ld_query::{
     entity::{compiled::CompiledEntityQuery, selection::EntitySelection},
     error::QueryError,

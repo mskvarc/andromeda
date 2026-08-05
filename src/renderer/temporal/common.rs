@@ -1,12 +1,13 @@
 //! Private helpers shared across temporal renderers.
 
-use crate::{core::error::AndromedaError, service::temporal::format_datetime};
-use andromeda_domain::{
-    sys_attrs::SysAttrsInclusion,
-    temporal::{TeaEntry, ValueType},
+use crate::{
+    core::error::AndromedaError,
+    repository::temporal::{entry::TeaEntry, value_type::ValueType},
+    service::temporal::format_datetime,
 };
 use andromeda_ngsi_ld_geometry::geometry::Geometry;
 use andromeda_ngsi_ld_lexicon::attribute_type::AttributeType;
+use andromeda_ngsi_ld_model::sys_attrs::SysAttrsInclusion;
 use andromeda_ngsi_ld_vocabulary::{
     expanded::{classes as expanded_classes, properties as expanded_properties},
     prefix,

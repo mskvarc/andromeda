@@ -50,7 +50,7 @@ use crate::{
         types::{TenantCreationPolicy, TenantRef},
     },
     transport::{dispatch::TransportDispatcher, http::HttpTransportConfig, mqtt::MqttPoolConfig, sse::SseConnectionRegistry, ws::WsConnectionRegistry},
-    version::Version,
+    version::service::Version,
     worker::{
         attribute_current_materializer::AttributeCurrentMaterializer,
         csr_interval::CsrIntervalWorker,
@@ -65,7 +65,7 @@ use crate::{
         subscription_expiration::SubscriptionExpirationWorker,
     },
 };
-use andromeda_domain::notification::{ChangeEvent, CsourceSubscriptionChange, CsrChangeEvent, SubscriptionChange};
+use andromeda_ngsi_ld_model::notification::{ChangeEvent, CsourceSubscriptionChange, CsrChangeEvent, SubscriptionChange};
 use axum::{
     Router,
     extract::DefaultBodyLimit,

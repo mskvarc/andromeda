@@ -1,7 +1,7 @@
 //! Query parameters for the NGSI-LD Context Source Registration discovery API.
 
 use crate::{http::parameter::query::is_valid_uri, impl_shared_query_params};
-use andromeda_domain::sys_attrs::SysAttrsInclusion;
+use andromeda_ngsi_ld_model::sys_attrs::SysAttrsInclusion;
 use andromeda_ngsi_ld_query::error::QueryError;
 use serde::Deserialize;
 

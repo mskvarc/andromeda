@@ -53,13 +53,13 @@ use crate::{
         subscription_matching::{matches_compiled_geo_query, matches_compiled_scope_pattern},
     },
 };
-use andromeda_domain::{
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, uri::Uri};
+use andromeda_ngsi_ld_model::{
     entity::{Entity, EntityPatch},
     entity_type::EntityTypeValue,
     expanded::mutation::selection::{DatasetSelection, OverwritePolicy},
     sys_attrs::SysAttrsInclusion,
 };
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, uri::Uri};
 use andromeda_ngsi_ld_query::{
     filter::{eval::evaluate, expansion::expand_q_expression},
     projection::purge::{PurgeMode, parse_attribute_list},

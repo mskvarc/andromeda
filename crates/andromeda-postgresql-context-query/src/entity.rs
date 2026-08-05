@@ -237,7 +237,6 @@ fn add_order_clause(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use andromeda_domain::temporal::AttributeNameId;
     use andromeda_ngsi_ld_geometry::{geo_rel::GeoRel, geometry::Geometry};
     use andromeda_ngsi_ld_lexicon::uri::Uri;
     use andromeda_ngsi_ld_query::{
@@ -255,7 +254,7 @@ mod tests {
         type_selection::grammar::TypeExpr,
     };
     use andromeda_ngsi_ld_vocabulary::expanded::properties::LOCATION;
-    use andromeda_postgresql_query::bind::BindValue;
+    use andromeda_postgresql_query::{attribute_name_id::AttributeNameId, bind::BindValue};
     use iri_rs::IriBuf;
 
     fn ids(raw: &[&str]) -> Vec<Uri> {

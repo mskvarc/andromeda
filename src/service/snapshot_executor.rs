@@ -21,11 +21,11 @@ use crate::{
         temporal::TemporalService,
     },
 };
-use andromeda_domain::{
+use andromeda_ngsi_ld_lexicon::ngsi_ld_urn::SnapshotId;
+use andromeda_ngsi_ld_model::{
     snapshot::{ExecutionResultDetails, ExecutionResultStatus, Snapshot, SnapshotStatus},
     snapshot_query::{SnapshotEntitySelector, SnapshotGeoQuery, SnapshotQuery, SnapshotTemporalQuery},
 };
-use andromeda_ngsi_ld_lexicon::ngsi_ld_urn::SnapshotId;
 use chrono::{DateTime, SecondsFormat, Utc};
 use compact_str::CompactString;
 use serde_json::Value;
@@ -468,12 +468,9 @@ const fn compute_final_status(any_success_with_results: bool, any_failure: bool,
 #[cfg(test)]
 mod tests {
     use super::*;
-    use andromeda_domain::{
-        snapshot_query::{SnapshotEntitySelector, SnapshotGeoQuery, SnapshotQuery, SnapshotTemporalQuery},
-        temporal::{AggrMethod, TimeProp, TimeRel},
-    };
     use andromeda_ngsi_ld_geometry::geometry::GeometryType;
-    use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
+    use andromeda_ngsi_ld_lexicon::{aggr_method::AggrMethod, attribute_name::AttributeName, time_prop::TimeProp, time_rel::TimeRel};
+    use andromeda_ngsi_ld_model::snapshot_query::{SnapshotEntitySelector, SnapshotGeoQuery, SnapshotQuery, SnapshotTemporalQuery};
 
     fn attribute_name(raw: &str) -> AttributeName {
         raw.parse().expect("valid attribute name")

@@ -10,7 +10,8 @@ use crate::{
         validate_attribute_envelopes,
     },
 };
-use andromeda_domain::{
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
+use andromeda_ngsi_ld_model::{
     expanded::{
         entity_member::extract_types,
         instance_key::removed_attribute_instances,
@@ -23,7 +24,6 @@ use andromeda_domain::{
     },
     notification::{ChangeEvent, TriggerReason},
 };
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
 use andromeda_ngsi_ld_query::projection::purge::PurgeMode;
 use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
 use serde_json::Value;

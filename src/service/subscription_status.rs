@@ -5,7 +5,7 @@
 //! layer because it is pure business logic (no I/O, no SQL).
 
 use crate::repository::subscription_store::params::StatusUpdateFields;
-use andromeda_domain::subscription::SubscriptionStatus;
+use andromeda_ngsi_ld_model::subscription::SubscriptionStatus;
 use chrono::Utc;
 
 /// Derive the new subscription status based on the current status and the update fields provided.
@@ -32,7 +32,7 @@ pub fn compute_updated_status(current_status: SubscriptionStatus, fields: &Statu
 #[cfg(test)]
 mod tests {
     use super::{StatusUpdateFields, compute_updated_status};
-    use andromeda_domain::subscription::SubscriptionStatus;
+    use andromeda_ngsi_ld_model::subscription::SubscriptionStatus;
     use chrono::{Duration, Utc};
 
     #[test]

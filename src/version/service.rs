@@ -1,8 +1,10 @@
 //! Version service that collects build-time metadata and runtime database
 //! extension versions.
 
-use crate::core::error::AndromedaError;
-use andromeda_domain::version::{AndromedaVersion, ExtensionVersion, TimescaleDbVersion, VersionInfo};
+use crate::{
+    core::error::AndromedaError,
+    version::report::{AndromedaVersion, ExtensionVersion, TimescaleDbVersion, VersionInfo},
+};
 use shadow_rs::shadow;
 use sqlx::PgPool;
 

@@ -9,8 +9,8 @@ use crate::{
         entity::{expanded_entity_object_mut, inject_attr_sys_attrs, query::EntityQueryService},
     },
 };
-use andromeda_domain::{entity::Entity, notification::TriggerReason, sys_attrs::SysAttrsInclusion};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType};
+use andromeda_ngsi_ld_model::{entity::Entity, notification::TriggerReason, sys_attrs::SysAttrsInclusion};
 use andromeda_ngsi_ld_vocabulary::{
     expanded::{classes as expanded_classes, properties as expanded_properties},
     prefix,

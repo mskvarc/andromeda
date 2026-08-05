@@ -4,9 +4,8 @@
 //! time, so these are the read side of `snapshotQueries` and
 //! `snapshotTemporalQueries` rather than members of the resource itself.
 
-use crate::temporal::{AggrMethod, TimeProp, TimeRel};
 use andromeda_ngsi_ld_geometry::{geo_rel::GeoRel, geometry::GeometryType};
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, rfc3339};
+use andromeda_ngsi_ld_lexicon::{aggr_method::AggrMethod, attribute_name::AttributeName, rfc3339, time_prop::TimeProp, time_rel::TimeRel};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;

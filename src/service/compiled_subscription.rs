@@ -8,9 +8,9 @@
 //! notification will go out over -- all concerns above the data model.
 
 use crate::transport::endpoint::EndpointTransport;
-use andromeda_domain::{subscription::SubscriptionStatus, sys_attrs::SysAttrsInclusion};
 use andromeda_ngsi_ld_geometry::geo_rel::GeoRel;
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
+use andromeda_ngsi_ld_model::{subscription::SubscriptionStatus, sys_attrs::SysAttrsInclusion};
 use andromeda_ngsi_ld_query::filter::expression::Expr;
 use chrono::{DateTime, Utc};
 use regex::Regex;

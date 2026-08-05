@@ -15,7 +15,7 @@ use crate::{
     },
     jsonld::ContextSpec,
 };
-use andromeda_domain::entity::Entity;
+use andromeda_ngsi_ld_model::entity::Entity;
 use axum::{
     body::Bytes,
     extract::{FromRequest, Request},

@@ -2,7 +2,7 @@
 //! persistence, so the repository receives already-serialised blobs.
 
 use crate::{core::error::AndromedaError, repository::snapshot::params::InsertSnapshotParams};
-use andromeda_domain::snapshot::Snapshot;
+use andromeda_ngsi_ld_model::snapshot::Snapshot;
 use serde_json::Value;
 
 /// Build an [`InsertSnapshotParams`] from a domain [`Snapshot`].

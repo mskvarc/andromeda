@@ -5,11 +5,11 @@
 //! context source registrations, snapshots, entity maps).
 
 use crate::{core::error::AndromedaError, http::error::problem::NgsiLdError};
-use andromeda_domain::sys_attrs::SysAttrsInclusion;
 use andromeda_ngsi_ld_lexicon::{
     name::grammar::Name,
     ngsi_ld_urn::{EntityMapId, SnapshotId},
 };
+use andromeda_ngsi_ld_model::sys_attrs::SysAttrsInclusion;
 use axum::http::Uri;
 use url::Url;
 use urn_rs::Urn;

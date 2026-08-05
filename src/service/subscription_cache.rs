@@ -18,7 +18,7 @@ use crate::{
     tenancy::types::TenantRef,
     transport::endpoint::parse_endpoint_transport,
 };
-use andromeda_domain::{
+use andromeda_ngsi_ld_model::{
     notification::{ChangeEvent, SubscriptionChange, TriggerReason},
     subscription::{EntitySelector, Subscription, SubscriptionStatus},
     sys_attrs::SysAttrsInclusion,
@@ -455,7 +455,7 @@ fn compile_selector(selector: &EntitySelector) -> Option<CompiledSelector> {
 mod tests {
     use super::*;
     use crate::transport::endpoint::EndpointTransport;
-    use andromeda_domain::subscription::SubscriptionStatus;
+    use andromeda_ngsi_ld_model::subscription::SubscriptionStatus;
 
     fn make_compiled_sub(id: &str, type_: &str, triggers: Vec<&str>) -> CompiledSubscription {
         CompiledSubscription {
@@ -477,7 +477,7 @@ mod tests {
             time_interval_secs: None,
             notification_attributes: None,
             notification_format: None,
-            notification_sys_attrs: andromeda_domain::sys_attrs::SysAttrsInclusion::Strip,
+            notification_sys_attrs: andromeda_ngsi_ld_model::sys_attrs::SysAttrsInclusion::Strip,
             notification_show_changes: false,
             jsonld_context: None,
             expires_at: None,

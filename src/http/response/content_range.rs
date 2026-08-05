@@ -6,7 +6,7 @@
 //! headers from analogous pagination state.
 
 use crate::service::temporal::format_datetime;
-use andromeda_domain::temporal::TimeRel;
+use andromeda_ngsi_ld_lexicon::time_rel::TimeRel;
 use andromeda_ngsi_ld_query::temporal::{compiled::CompiledTemporalQuery, last_n::LastNOrigin};
 use chrono::{DateTime, Utc};
 

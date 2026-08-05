@@ -7,11 +7,11 @@ use crate::{
         params::{InsertSnapshotParams, SnapshotEntityInput, SnapshotQueryParams},
     },
 };
-use andromeda_domain::{
+use andromeda_ngsi_ld_lexicon::ngsi_ld_urn::SnapshotId;
+use andromeda_ngsi_ld_model::{
     snapshot::{ExecutionResultDetails, Snapshot, SnapshotPriority, SnapshotStatus},
     snapshot_filter::{Conjunction, SnapshotPurgeFilter, SnapshotValue},
 };
-use andromeda_ngsi_ld_lexicon::ngsi_ld_urn::SnapshotId;
 use chrono::{DateTime, Utc};
 use iso8601_duration::Duration as Iso8601Duration;
 use serde_json::Value;

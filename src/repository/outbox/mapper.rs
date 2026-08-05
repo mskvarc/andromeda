@@ -4,11 +4,11 @@
 //! [`OutboxEntry`] by fallibly parsing URIs and the trigger reason.
 
 use crate::repository::outbox::rows::OutboxEntryRow;
-use andromeda_domain::{
+use andromeda_ngsi_ld_lexicon::{reference::NgsiLdReferenceError, uri::Uri};
+use andromeda_ngsi_ld_model::{
     notification::TriggerReason,
     outbox::{OutboxEntry, OutboxEntryId, WorkerInstanceId},
 };
-use andromeda_ngsi_ld_lexicon::{reference::NgsiLdReferenceError, uri::Uri};
 use std::str::FromStr;
 use thiserror::Error;
 

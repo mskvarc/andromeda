@@ -113,10 +113,10 @@ fn value_extraction_jsonpath(path: &AttrPath, terminal_iri: &str) -> String {
 mod tests {
     use super::*;
     use crate::{
+        attribute_name_id::AttributeNameId,
         q_predicate::{attribute_names::ResolvedAttributeNames, projection::compile},
         schema::Entities,
     };
-    use andromeda_domain::temporal::AttributeNameId;
     use andromeda_ngsi_ld_query::filter::{expression::Expr, parser, predicate::Predicate, scalar::Scalar};
     use sea_query::{PostgresQueryBuilder, Query};
 

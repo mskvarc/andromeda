@@ -5,8 +5,8 @@ use crate::{
     core::error::{AndromedaError, ResultInstanceExt},
     http::{error::problem::NgsiLdError, extractor::query::ValidatedQuery, parameter::EmptyParams},
 };
-use andromeda_domain::tenant_list::{TenantList, TenantListType};
 use andromeda_ngsi_ld_lexicon::uri::{NGSI_LD_URN_NID, Uri};
+use andromeda_ngsi_ld_model::tenant_list::{TenantList, TenantListType};
 use axum::{
     Json,
     extract::{OriginalUri, State},

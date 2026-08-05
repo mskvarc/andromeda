@@ -1,6 +1,6 @@
 //! Attribute-name dictionary resolution for a compiled `q` filter.
 
-use andromeda_domain::temporal::AttributeNameId;
+use crate::attribute_name_id::AttributeNameId;
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use std::collections::HashMap;
 

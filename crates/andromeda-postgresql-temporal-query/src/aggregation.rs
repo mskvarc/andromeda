@@ -1,7 +1,7 @@
 //! Aggregated temporal values: `time_bucket` windows and the aggregate
 //! expressions of clause 4.5.19.
 
-use andromeda_domain::temporal::AggrMethod;
+use andromeda_ngsi_ld_lexicon::aggr_method::AggrMethod;
 use andromeda_ngsi_ld_query::temporal::compiled::CompiledTemporalQuery;
 use andromeda_postgresql_query::{
     bind::{BindBuilder, BindValue},
@@ -142,10 +142,8 @@ ORDER BY {}"#,
 #[cfg(test)]
 mod tests {
     use super::*;
-    use andromeda_domain::{
-        sys_attrs::SysAttrsInclusion,
-        temporal::{TemporalFormat, TimeProp},
-    };
+    use andromeda_ngsi_ld_lexicon::{temporal_format::TemporalFormat, time_prop::TimeProp};
+    use andromeda_ngsi_ld_model::sys_attrs::SysAttrsInclusion;
     use andromeda_ngsi_ld_query::temporal::{
         aggregation_period::AggregationPeriod,
         entity_selection::EntitySelection,

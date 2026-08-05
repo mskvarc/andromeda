@@ -8,12 +8,11 @@ use crate::{
     },
     service::{csource_extract::unwrap_geo_property_to_geometry, csource_merge::apply_fragment},
 };
-use andromeda_domain::{
+use andromeda_ngsi_ld_lexicon::{tenant::TenantName, time_prop::TimeProp, time_rel::TimeRel, uri::Uri};
+use andromeda_ngsi_ld_model::{
     notification::{CsrChangeEvent, CsrTriggerReason},
     registration::ForwardingMode,
-    temporal::{TimeProp, TimeRel},
 };
-use andromeda_ngsi_ld_lexicon::{tenant::TenantName, uri::Uri};
 use andromeda_ngsi_ld_query::{
     csr::compiled::{CompiledCsrQuery, CompiledCsrTemporalFilter},
     filter::parser,

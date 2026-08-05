@@ -7,9 +7,8 @@
 //! tenant holds a single copy of the dictionary rather than one per repository.
 
 use crate::core::error::AndromedaError;
-use andromeda_domain::temporal::AttributeNameId;
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
-use andromeda_postgresql_query::q_predicate::attribute_names::ResolvedAttributeNames;
+use andromeda_postgresql_query::{attribute_name_id::AttributeNameId, q_predicate::attribute_names::ResolvedAttributeNames};
 use dashmap::DashMap;
 use sqlx::{Row, postgres::PgPool};
 use std::collections::HashMap;

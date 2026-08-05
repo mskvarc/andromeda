@@ -4,11 +4,11 @@ use crate::{
     jsonld::{ContextSpec, JsonLdEngine},
     repository::csource_registration::repo::CsourceRegistrationRepository,
 };
-use andromeda_domain::{
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, tenant::TenantName};
+use andromeda_ngsi_ld_model::{
     entity::Entity,
     registration::{ContextSourceRegistration, CsrOperation, ForwardingMode},
 };
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, tenant::TenantName};
 use andromeda_ngsi_ld_query::filter::{eval::evaluate as eval_q_expr, expression::Expr};
 use futures::{StreamExt, stream};
 use headers::Header;
@@ -1857,15 +1857,15 @@ mod tests {
         merge_query_results,
         strip_exclusive_attrs_from_value,
     };
-    use andromeda_domain::registration::ForwardingMode;
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
+    use andromeda_ngsi_ld_model::registration::ForwardingMode;
     use url::Url;
 
     fn attribute_name(raw: &str) -> AttributeName {
         raw.parse().expect("valid attribute name")
     }
 
-    fn entity_from_json(value: serde_json::Value) -> andromeda_domain::entity::Entity {
+    fn entity_from_json(value: serde_json::Value) -> andromeda_ngsi_ld_model::entity::Entity {
         serde_json::from_value(value).expect("test entity fixture")
     }
 

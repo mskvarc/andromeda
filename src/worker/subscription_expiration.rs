@@ -3,8 +3,8 @@ use crate::repository::{
     subscription::repo::SubscriptionRepository,
     subscription_store::repo::SubscriptionStore,
 };
-use andromeda_domain::notification::{CsourceSubscriptionChange, SubscriptionChange};
 use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_model::notification::{CsourceSubscriptionChange, SubscriptionChange};
 use std::time::Duration;
 use tokio::sync::broadcast;
 use tracing::{error, info};

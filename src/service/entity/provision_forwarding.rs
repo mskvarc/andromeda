@@ -7,7 +7,7 @@
 //! and build multi-status responses.
 
 use crate::{core::error::AndromedaError, http::error::batch::BatchEntityError, service::csource_forwarding::ForwardedWriteResult};
-use andromeda_domain::registration::ForwardingMode;
+use andromeda_ngsi_ld_model::registration::ForwardingMode;
 use serde_json::Value;
 
 /// Classified forwarding modes present in a set of forwarded write results.

@@ -29,12 +29,11 @@ use crate::{
     },
     worker::attribute_current_materializer::AttributeCurrentBarrier,
 };
-use andromeda_domain::{
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, temporal_format::TemporalFormat, uri::Uri};
+use andromeda_ngsi_ld_model::{
     expanded::entity_member::{extract_expires_at, extract_types},
     sys_attrs::SysAttrsInclusion,
-    temporal::TemporalFormat,
 };
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, uri::Uri};
 use andromeda_ngsi_ld_query::{
     error::QueryError,
     filter::{

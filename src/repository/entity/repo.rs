@@ -10,7 +10,7 @@ use crate::{
         ewkb_binding::geometry_bytes,
     },
 };
-use andromeda_domain::notification::SysAttrsSnapshot;
+use andromeda_ngsi_ld_model::notification::SysAttrsSnapshot;
 use andromeda_ngsi_ld_query::entity::compiled::CompiledEntityQuery;
 use andromeda_ngsi_ld_vocabulary::expanded::properties;
 use andromeda_postgresql_context_query::entity as entity_sql;

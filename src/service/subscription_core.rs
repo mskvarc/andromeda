@@ -6,7 +6,7 @@ use crate::{
     jsonld::{ContextSpec, JsonLdEngine, term_expansion::ContextualExpander},
     repository::subscription_store::params::SubscriptionFields,
 };
-use andromeda_domain::subscription::Subscription;
+use andromeda_ngsi_ld_model::subscription::Subscription;
 use andromeda_ngsi_ld_query::filter::{expansion::expand_q_expr, expression::Expr, parser, predicate::Predicate, serialize};
 use chrono::Utc;
 use serde_json::Value;

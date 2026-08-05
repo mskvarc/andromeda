@@ -7,6 +7,7 @@ use crate::{
         ewkb_binding::geometry_bytes,
         temporal::{
             copy::insert_history_batch_via_copy_in_tx,
+            entry::TeaEntry,
             mapper::row_to_tea,
             params::{DeleteScope, HistoryBatchEntry, ScopeHistoryEntry, TeaBatchEntry, UpdateInstanceParams},
             rows::TeaBatchResultRow,
@@ -14,8 +15,7 @@ use crate::{
         timescale_features::TimescaleFeatures,
     },
 };
-use andromeda_domain::temporal::{AttributeNameId, TeaEntry};
-use andromeda_postgresql_query::bind::BindValue;
+use andromeda_postgresql_query::{attribute_name_id::AttributeNameId, bind::BindValue};
 use chrono::{DateTime, Utc};
 use serde_json::Value;
 use sqlx::{
@@ -734,7 +734,7 @@ async fn insert_history_batch_unnest_in_tx(tx: &mut Transaction<'_, Postgres>, e
 #[cfg(test)]
 mod tests {
     use super::*;
-    use andromeda_domain::temporal::ValueType;
+    use crate::repository::temporal::value_type::ValueType;
     use andromeda_ngsi_ld_lexicon::attribute_type::AttributeType;
 
     const ENTITY: &str = "urn:ngsi-ld:Vehicle:A100";

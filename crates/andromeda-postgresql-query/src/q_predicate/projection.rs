@@ -2,6 +2,7 @@
 //! projection.
 
 use crate::{
+    attribute_name_id::AttributeNameId,
     bind::BindBuilder,
     error::RenderError,
     q_predicate::{
@@ -10,7 +11,6 @@ use crate::{
         target::QFilterTarget,
     },
 };
-use andromeda_domain::temporal::AttributeNameId;
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_query::{
     error::QueryError,

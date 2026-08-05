@@ -14,13 +14,13 @@ use crate::{
         endpoint::EndpointTransport,
     },
 };
-use andromeda_domain::{
-    notification::{ChangeEvent, Notification, NotificationType, SubscriptionChange, TriggerReason},
-    sys_attrs::SysAttrsInclusion,
-};
 use andromeda_ngsi_ld_lexicon::{
     entity_type_name::EntityTypeName,
     uri::{NGSI_LD_URN_NID, Uri},
+};
+use andromeda_ngsi_ld_model::{
+    notification::{ChangeEvent, Notification, NotificationType, SubscriptionChange, TriggerReason},
+    sys_attrs::SysAttrsInclusion,
 };
 use andromeda_ngsi_ld_vocabulary::expanded::{classes as expanded_classes, properties as expanded_properties};
 use chrono::{SecondsFormat, Utc};
@@ -483,7 +483,7 @@ mod tests {
         service::{compiled_subscription::CompiledSelector, subscription_matching::matches_subscription},
         transport::endpoint::EndpointTransport,
     };
-    use andromeda_domain::{notification::ChangeOrigin, subscription::SubscriptionStatus};
+    use andromeda_ngsi_ld_model::{notification::ChangeOrigin, subscription::SubscriptionStatus};
     use andromeda_ngsi_ld_query::filter::parser;
     use payload::filter_entity_attributes;
     use regex::Regex;

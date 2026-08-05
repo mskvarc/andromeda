@@ -1,6 +1,6 @@
 //! The interval of the time axis a temporal query reads.
 
-use andromeda_domain::temporal::{TimeProp, TimeRel};
+use andromeda_ngsi_ld_lexicon::{time_prop::TimeProp, time_rel::TimeRel};
 use chrono::{DateTime, Utc};
 use typed_builder::TypedBuilder;
 

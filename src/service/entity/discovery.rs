@@ -3,16 +3,16 @@ use crate::{
     jsonld::{CompactOptions, ContextSpec, ContextStripping, JsonLdEngine},
     repository::entity::{repo::EntityRepository, rows::AttributeSummaryRow},
 };
-use andromeda_domain::{
-    attribute_list::{AttributeDetail, AttributeInfo, AttributeList, AttributeListType, AttributeResourceType},
-    entity_type_list::{EntityType, EntityTypeInfo, EntityTypeInfoType, EntityTypeList, EntityTypeListType, EntityTypeType},
-};
 use andromeda_ngsi_ld_lexicon::{
     attribute_name::AttributeName,
     attribute_type::AttributeType,
     entity_type_name::EntityTypeName,
     ngsi_ld_urn::{AttributeListId, EntityTypeListId},
     uri::NGSI_LD_URN_NID,
+};
+use andromeda_ngsi_ld_model::{
+    attribute_list::{AttributeDetail, AttributeInfo, AttributeList, AttributeListType, AttributeResourceType},
+    entity_type_list::{EntityType, EntityTypeInfo, EntityTypeInfoType, EntityTypeList, EntityTypeListType, EntityTypeType},
 };
 use jsonld::Expandable;
 use serde_json::Value;

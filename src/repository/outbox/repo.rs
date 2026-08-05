@@ -5,7 +5,7 @@
 //! [`super::mapper`].
 
 use crate::{core::error::AndromedaError, repository::outbox::rows::OutboxEntryRow};
-use andromeda_domain::outbox::{NewOutboxEntry, OutboxEntryId, WorkerInstanceId};
+use andromeda_ngsi_ld_model::outbox::{NewOutboxEntry, OutboxEntryId, WorkerInstanceId};
 use chrono::{DateTime, Utc};
 use sqlx::{QueryBuilder, postgres::PgPool};
 

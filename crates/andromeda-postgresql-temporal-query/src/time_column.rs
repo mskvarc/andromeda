@@ -1,6 +1,6 @@
 //! The time column a temporal statement filters and orders on.
 
-use andromeda_domain::temporal::TimeProp;
+use andromeda_ngsi_ld_lexicon::time_prop::TimeProp;
 
 /// Time column expression for a statement that reads `attribute_history` under
 /// the alias `ah`.
@@ -26,7 +26,7 @@ pub const fn unprefixed_column(timeproperty: TimeProp) -> &'static str {
 #[cfg(test)]
 mod tests {
     use crate::time_column::{history_column, unprefixed_column};
-    use andromeda_domain::temporal::TimeProp;
+    use andromeda_ngsi_ld_lexicon::time_prop::TimeProp;
 
     #[test]
     fn observed_at_falls_back_to_the_write_time() {

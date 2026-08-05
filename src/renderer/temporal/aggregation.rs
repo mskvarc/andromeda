@@ -6,9 +6,10 @@
 use crate::{
     core::error::AndromedaError,
     renderer::{Renderer, temporal::common::extract_typed_agg},
+    repository::temporal::value_type::ValueType,
     service::temporal::format_datetime,
 };
-use andromeda_domain::temporal::{AggrMethod, ValueType};
+use andromeda_ngsi_ld_lexicon::aggr_method::AggrMethod;
 use andromeda_ngsi_ld_query::temporal::compiled::CompiledTemporalQuery;
 use chrono::{DateTime, Utc};
 use indexmap::IndexMap;

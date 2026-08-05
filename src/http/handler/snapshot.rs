@@ -13,7 +13,7 @@ use crate::{
     },
     service::snapshot::PurgeOutcome,
 };
-use andromeda_domain::snapshot::{SnapshotInput, SnapshotPatch};
+use andromeda_ngsi_ld_model::snapshot::{SnapshotInput, SnapshotPatch};
 use axum::{
     Json,
     extract::{OriginalUri, Path},

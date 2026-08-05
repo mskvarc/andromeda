@@ -16,7 +16,7 @@ pub enum DetailLevel {
 #[derive(Debug)]
 pub struct ListContextsParams<'a> {
     /// Optional kind filter.
-    pub kind: Option<&'a andromeda_domain::jsonld_context::ContextKind>,
+    pub kind: Option<&'a andromeda_ngsi_ld_model::jsonld_context::ContextKind>,
     /// Projection shape (Summary vs Full).
     pub detail_level: DetailLevel,
     /// Keyset cursor — return rows with `id > after`.

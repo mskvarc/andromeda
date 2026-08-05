@@ -2,11 +2,11 @@ use crate::{
     core::{batch_activity::BatchActivityTracker, error::AndromedaError},
     repository::{entity::repo::EntityRepository, uow::UnitOfWorkFactory},
 };
-use andromeda_domain::{
+use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_model::{
     expanded::instance_key::removed_attribute_instances,
     notification::{ChangeEvent, TriggerReason},
 };
-use andromeda_ngsi_ld_lexicon::uri::Uri;
 use std::{sync::Arc, time::Duration};
 use tokio::sync::broadcast;
 use tracing::{debug, error, info};

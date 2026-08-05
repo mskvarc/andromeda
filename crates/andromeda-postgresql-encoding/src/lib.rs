@@ -41,8 +41,8 @@ mod tests {
 
         let boundaries = [
             Boundary {
-                name: "andromeda-domain",
-                manifest: include_str!("../../andromeda-domain/Cargo.toml"),
+                name: "andromeda-ngsi-ld-model",
+                manifest: include_str!("../../andromeda-ngsi-ld-model/Cargo.toml"),
                 forbidden: BACKEND_CODECS,
             },
             Boundary {

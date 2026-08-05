@@ -5,7 +5,7 @@
 //! before they are sent as HTTP responses.
 
 use crate::{core::error::AndromedaError, renderer::Renderer};
-use andromeda_domain::sys_attrs::SysAttrsInclusion;
+use andromeda_ngsi_ld_model::sys_attrs::SysAttrsInclusion;
 use serde_json::Value;
 
 /// Flavor selector for [`SubscriptionRenderer`].

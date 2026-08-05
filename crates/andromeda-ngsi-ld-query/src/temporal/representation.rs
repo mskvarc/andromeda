@@ -1,10 +1,8 @@
 //! How a temporal query renders the instances it selected.
 
 use crate::temporal::aggregation_period::AggregationPeriod;
-use andromeda_domain::{
-    sys_attrs::SysAttrsInclusion,
-    temporal::{AggrMethod, TemporalFormat},
-};
+use andromeda_ngsi_ld_lexicon::{aggr_method::AggrMethod, temporal_format::TemporalFormat};
+use andromeda_ngsi_ld_model::sys_attrs::SysAttrsInclusion;
 use typed_builder::TypedBuilder;
 
 /// The response shape of a temporal query.

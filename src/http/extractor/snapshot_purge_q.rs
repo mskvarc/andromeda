@@ -6,7 +6,7 @@
 //! (clause 6.3.2).
 
 use crate::http::extractor::error::ExtractorRejection;
-use andromeda_domain::snapshot_filter::{SnapshotPurgeFilter, parse_snapshot_q};
+use andromeda_ngsi_ld_model::snapshot_filter::{SnapshotPurgeFilter, parse_snapshot_q};
 use axum::{extract::FromRequestParts, http::request::Parts};
 use serde::Deserialize;
 

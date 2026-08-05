@@ -3,8 +3,10 @@
 //! Checks PostgreSQL connectivity by acquiring a connection and measuring ping
 //! latency, and reports pool statistics (size, idle connections).
 
-use crate::health::HealthIndicator;
-use andromeda_domain::health::{ComponentDetail, ComponentName, HealthStatus};
+use crate::health::{
+    HealthIndicator,
+    report::{ComponentDetail, ComponentName, HealthStatus},
+};
 use sqlx::PgPool;
 use std::{collections::BTreeMap, future::Future, pin::Pin};
 

@@ -127,9 +127,9 @@ fn csr_compare_to_condition(path: &AttrPath, op: CmpOp, rhs: &CompareValue) -> R
 #[cfg(test)]
 mod tests {
     use super::*;
-    use andromeda_domain::temporal::AttributeNameId;
     use andromeda_ngsi_ld_query::filter::{eval::evaluate, parser, scalar::Scalar};
     use andromeda_postgresql_query::{
+        attribute_name_id::AttributeNameId,
         q_predicate::{attribute_names::ResolvedAttributeNames, projection::compile, target::QFilterTarget},
         schema::Entities,
     };

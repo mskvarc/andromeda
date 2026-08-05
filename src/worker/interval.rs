@@ -8,8 +8,8 @@ use crate::{
         endpoint::parse_endpoint_transport,
     },
 };
-use andromeda_domain::{entity::Entity, notification::Notification, subscription::Subscription};
 use andromeda_ngsi_ld_lexicon::uri::{NGSI_LD_URN_NID, Uri};
+use andromeda_ngsi_ld_model::{entity::Entity, notification::Notification, subscription::Subscription};
 use andromeda_ngsi_ld_query::filter::{eval, parser};
 use chrono::Utc;
 use futures::{StreamExt, stream};

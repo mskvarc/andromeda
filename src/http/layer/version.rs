@@ -3,7 +3,7 @@
 //! Applying this layer to a router makes the [`Version`] instance available to
 //! handlers via `Extension<Version>`.
 
-use crate::version::Version;
+use crate::version::service::Version;
 use axum::Extension;
 use tower_layer::Layer;
 

@@ -5,7 +5,7 @@ use crate::{
     impl_shared_query_params,
     renderer::entity::RenderMode,
 };
-use andromeda_domain::sys_attrs::SysAttrsInclusion;
+use andromeda_ngsi_ld_model::sys_attrs::SysAttrsInclusion;
 use andromeda_ngsi_ld_query::{
     error::QueryError,
     ordering::{

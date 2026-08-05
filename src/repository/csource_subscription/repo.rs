@@ -4,7 +4,7 @@ use crate::{
     core::error::AndromedaError,
     repository::subscription_store::params::{DatasetIdPresence, SubscriptionFields},
 };
-use andromeda_domain::subscription::SubscriptionStatus;
+use andromeda_ngsi_ld_model::subscription::SubscriptionStatus;
 use sqlx::postgres::PgPool;
 use tracing::info;
 

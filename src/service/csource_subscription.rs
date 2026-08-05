@@ -7,8 +7,8 @@ use crate::{
         subscription_core,
     },
 };
-use andromeda_domain::{notification::CsourceSubscriptionChange, subscription::Subscription};
 use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_model::{notification::CsourceSubscriptionChange, subscription::Subscription};
 use async_trait::async_trait;
 use serde_json::Value;
 use sqlx::postgres::PgPool;

@@ -3,8 +3,8 @@
 use crate::{
     repository::entity::repo::EntityRepository,
 };
-use andromeda_domain::notification::ChangeEvent;
-use andromeda_domain::notification::TriggerReason;
+use andromeda_ngsi_ld_model::notification::ChangeEvent;
+use andromeda_ngsi_ld_model::notification::TriggerReason;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use std::time::Duration;
 use tokio::sync::broadcast;

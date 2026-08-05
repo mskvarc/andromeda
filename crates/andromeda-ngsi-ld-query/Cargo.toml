@@ -8,9 +8,9 @@ authors.workspace = true
 workspace = true
 
 [dependencies]
-andromeda-domain.workspace = true
 andromeda-ngsi-ld-geometry.workspace = true
 andromeda-ngsi-ld-lexicon.workspace = true
+andromeda-ngsi-ld-model.workspace = true
 andromeda-ngsi-ld-vocabulary.workspace = true
 chrono = { version = "0.4.44", features = ["serde"] }
 iri-rs = { version = "3.4.0", features = ["serde", "static"] }

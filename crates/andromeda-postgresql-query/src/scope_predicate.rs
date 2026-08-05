@@ -9,7 +9,7 @@ use crate::{
     error::RenderError,
     ltree::{ltree_matches, pattern_to_lquery},
 };
-use andromeda_domain::temporal::TimeRel;
+use andromeda_ngsi_ld_lexicon::time_rel::TimeRel;
 use andromeda_ngsi_ld_query::scope::{pattern::ScopePattern, query::ScopeQuery};
 use chrono::{DateTime, Utc};
 use sea_query::{Condition, Expr as SeaExpr, SimpleExpr};

@@ -302,10 +302,9 @@ mod tests {
     use crate::{
         snapshot::{Snapshot, SnapshotPriority, SnapshotStatus},
         snapshot_query::{SnapshotQuery, SnapshotTemporalQuery},
-        temporal::{AggrMethod, TimeProp, TimeRel},
     };
     use andromeda_ngsi_ld_geometry::{geo_rel::GeoRel, geometry::GeometryType};
-    use andromeda_ngsi_ld_lexicon::ngsi_ld_urn::SnapshotId;
+    use andromeda_ngsi_ld_lexicon::{aggr_method::AggrMethod, ngsi_ld_urn::SnapshotId, time_prop::TimeProp, time_rel::TimeRel};
     use chrono::{DateTime, Utc};
     use iso8601_duration::Duration as Iso8601Duration;
     use strum::IntoEnumIterator;

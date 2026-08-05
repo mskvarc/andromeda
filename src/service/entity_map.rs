@@ -1,6 +1,6 @@
 use crate::{core::error::AndromedaError, repository::entity_map::EntityMapStore};
-use andromeda_domain::entity_map::EntityMap;
 use andromeda_ngsi_ld_lexicon::{ngsi_ld_urn::EntityMapId, uri::Uri};
+use andromeda_ngsi_ld_model::entity_map::EntityMap;
 use chrono::{DateTime, Utc};
 use iso8601_duration::Duration as Iso8601Duration;
 use std::{collections::HashSet, str::FromStr};
