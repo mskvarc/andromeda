@@ -1,0 +1,19 @@
+[package]
+name = "andromeda-postgresql-encoding"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+andromeda-ngsi-ld-geometry.workspace = true
+bytes = "1.11.1"
+geo = "0.33.1"
+geozero = { version = "0.15.1", default-features = false, features = ["with-geo", "with-wkb"] }
+thiserror = "2.0.18"
+
+[dev-dependencies]
+pretty_assertions = "1.4.1"
+serde_json = "1.0.149"

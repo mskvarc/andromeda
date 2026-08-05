@@ -13,8 +13,9 @@ use crate::{
     },
     tenancy::types::TenantRef,
 };
-use andromeda_geometry::{ewkb::Ewkb, geometry::Geometry};
+use andromeda_ngsi_ld_geometry::geometry::Geometry;
 use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
+use andromeda_postgresql_encoding::ewkb::Ewkb;
 use iri_rs::IriBuf;
 use sqlx::PgPool;
 use std::{collections::HashMap, sync::Arc, time::Instant};

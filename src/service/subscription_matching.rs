@@ -9,7 +9,7 @@ use andromeda_domain::{
     notification::{ChangeEvent, ChangeOrigin},
     subscription::SubscriptionStatus,
 };
-use andromeda_geometry::{geometry::Geometry, relation::matches_geo};
+use andromeda_ngsi_ld_geometry::{geometry::Geometry, relation::matches_geo};
 use andromeda_ngsi_ld_query::filter::eval;
 use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
 use chrono::Utc;

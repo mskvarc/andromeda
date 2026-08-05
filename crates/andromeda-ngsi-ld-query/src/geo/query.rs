@@ -1,6 +1,6 @@
 //! The compiled form of an NGSI-LD geo query (clause 4.10).
 
-use andromeda_geometry::{geo_rel::GeoRel, geometry::Geometry};
+use andromeda_ngsi_ld_geometry::{geo_rel::GeoRel, geometry::Geometry};
 use iri_rs::IriBuf;
 
 /// A compiled geo-spatial query, per NGSI-LD 4.10.

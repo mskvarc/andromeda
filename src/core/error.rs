@@ -441,8 +441,8 @@ impl From<ErrorKind> for AndromedaError {
 /// An EWKB codec failure is never client-caused: the geometry was already
 /// validated as GeoJSON before it reached the store boundary, so a failure here
 /// is a broker or driver fault.
-impl From<andromeda_geometry::ewkb::EwkbError> for AndromedaError {
-    fn from(error: andromeda_geometry::ewkb::EwkbError) -> AndromedaError {
+impl From<andromeda_postgresql_encoding::ewkb::EwkbError> for AndromedaError {
+    fn from(error: andromeda_postgresql_encoding::ewkb::EwkbError) -> AndromedaError {
         AndromedaError::internal(format!("EWKB codec: {error}"))
     }
 }
@@ -827,7 +827,7 @@ mod tests {
 
     #[test]
     fn query_error_geo_distance_preserves_source_chain() {
-        let err = QueryError::GeoRel(andromeda_geometry::geo_rel::GeoRelParseError::InvalidDistance {
+        let err = QueryError::GeoRel(andromeda_ngsi_ld_geometry::geo_rel::GeoRelParseError::InvalidDistance {
             value: "nope".to_string(),
             source: "nope".parse::<f64>().unwrap_err(),
         });

@@ -20,7 +20,7 @@ use crate::{
     tenancy::types::TenantRef,
 };
 use andromeda_domain::notification::{ChangeEvent, TriggerReason};
-use andromeda_geometry::geometry::Geometry;
+use andromeda_ngsi_ld_geometry::geometry::Geometry;
 use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
 use iri_rs::IriBuf;
 use serde_json::Value;
@@ -264,7 +264,7 @@ fn parse_geometry(raw: &str) -> Option<Geometry> {
 mod tests {
     use super::*;
     use crate::service::spatial::SpatialKey;
-    use andromeda_geometry::geo_rel::GeoRel;
+    use andromeda_ngsi_ld_geometry::geo_rel::GeoRel;
     use andromeda_ngsi_ld_lexicon::uri::Uri;
     use geo::{Coord, LineString, Polygon};
     use iri_rs::iri;

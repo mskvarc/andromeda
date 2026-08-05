@@ -472,7 +472,7 @@ mod tests {
         snapshot_query::{SnapshotEntitySelector, SnapshotGeoQuery, SnapshotQuery, SnapshotTemporalQuery},
         temporal::{AggrMethod, TimeProp, TimeRel},
     };
-    use andromeda_geometry::geometry::GeometryType;
+    use andromeda_ngsi_ld_geometry::geometry::GeometryType;
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 
     fn attribute_name(raw: &str) -> AttributeName {

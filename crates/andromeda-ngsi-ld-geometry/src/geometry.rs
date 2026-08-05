@@ -3,8 +3,9 @@
 //! NGSI-LD (ETSI GS CIM 009 v1.9.1, clause 4.7 and Table 5.2.7-1) defines
 //! GeoProperty values as GeoJSON geometries per IETF RFC 7946, in WGS84 /
 //! CRS84. That is the representation this type serialises to and from. The
-//! PostGIS binary encoding lives beside it in [`crate::ewkb`], reached only by
-//! the store.
+//! PostGIS binary encoding is not a specification artefact and lives outside
+//! this crate, in `andromeda-postgresql-encoding`, reached only by the store
+//! and by the statement renderers that bind a reference geometry.
 
 use geo::algorithm::BoundingRect;
 use geojson::{Geometry as GeoJsonGeometry, GeometryValue};

@@ -9,7 +9,8 @@ authors = ["Matej Škvarč <matej.skvarc@senlab.io>"]
 
 [workspace.dependencies]
 andromeda-domain = { path = "crates/andromeda-domain" }
-andromeda-geometry = { path = "crates/andromeda-geometry" }
+andromeda-ngsi-ld-geometry = { path = "crates/andromeda-ngsi-ld-geometry" }
+andromeda-postgresql-encoding = { path = "crates/andromeda-postgresql-encoding" }
 andromeda-ngsi-ld-lexicon = { path = "crates/andromeda-ngsi-ld-lexicon" }
 andromeda-ngsi-ld-query = { path = "crates/andromeda-ngsi-ld-query" }
 andromeda-ngsi-ld-vocabulary = { path = "crates/andromeda-ngsi-ld-vocabulary" }
@@ -45,11 +46,12 @@ workspace = true
 
 [dependencies]
 andromeda-domain.workspace = true
-andromeda-geometry.workspace = true
+andromeda-ngsi-ld-geometry.workspace = true
 andromeda-ngsi-ld-lexicon.workspace = true
 andromeda-ngsi-ld-query.workspace = true
 andromeda-ngsi-ld-vocabulary.workspace = true
 andromeda-postgresql-context-query.workspace = true
+andromeda-postgresql-encoding.workspace = true
 andromeda-postgresql-query.workspace = true
 andromeda-postgresql-temporal-query.workspace = true
 async-trait = "0.1.89"

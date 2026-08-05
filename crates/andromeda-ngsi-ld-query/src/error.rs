@@ -17,7 +17,7 @@
 //! internal errors.
 
 use crate::ordering::collation::IcuCollationError;
-use andromeda_geometry::{geo_rel::GeoRelParseError, geometry::GeometryError};
+use andromeda_ngsi_ld_geometry::{geo_rel::GeoRelParseError, geometry::GeometryError};
 use andromeda_ngsi_ld_lexicon::reference::NgsiLdReferenceError;
 
 /// Errors raised while validating, parsing, compiling or planning a query.

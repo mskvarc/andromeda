@@ -5,12 +5,13 @@ use andromeda_domain::{
     sys_attrs::SysAttrsInclusion,
     temporal::{TeaEntry, ValueType},
 };
-use andromeda_geometry::{ewkb::Ewkb, geometry::Geometry};
+use andromeda_ngsi_ld_geometry::geometry::Geometry;
 use andromeda_ngsi_ld_lexicon::attribute_type::AttributeType;
 use andromeda_ngsi_ld_vocabulary::{
     expanded::{classes as expanded_classes, properties as expanded_properties},
     prefix,
 };
+use andromeda_postgresql_encoding::ewkb::Ewkb;
 use chrono::{DateTime, Utc};
 use iri_rs::IriBuf;
 use serde_json::{Value, json};

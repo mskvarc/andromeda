@@ -11,7 +11,7 @@ use andromeda_domain::expanded::{
     entity_member::{extract_expires_at, extract_scopes, extract_types},
     geo_property::{extract_location_geometry, extract_observation_space_geometry, extract_operation_space_geometry},
 };
-use andromeda_geometry::geometry::Geometry;
+use andromeda_ngsi_ld_geometry::geometry::Geometry;
 use andromeda_postgresql_query::ltree::scope_to_ltree;
 use serde_json::Value;
 

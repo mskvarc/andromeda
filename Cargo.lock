@@ -84,11 +84,12 @@ name = "andromeda"
 version = "0.1.0"
 dependencies = [
  "andromeda-domain",
- "andromeda-geometry",
+ "andromeda-ngsi-ld-geometry",
  "andromeda-ngsi-ld-lexicon",
  "andromeda-ngsi-ld-query",
  "andromeda-ngsi-ld-vocabulary",
  "andromeda-postgresql-context-query",
+ "andromeda-postgresql-encoding",
  "andromeda-postgresql-query",
  "andromeda-postgresql-temporal-query",
  "andromeda-test-common",
@@ -157,7 +158,7 @@ dependencies = [
 name = "andromeda-domain"
 version = "0.1.0"
 dependencies = [
- "andromeda-geometry",
+ "andromeda-ngsi-ld-geometry",
  "andromeda-ngsi-ld-lexicon",
  "andromeda-ngsi-ld-vocabulary",
  "cefact-units",
@@ -187,13 +188,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "andromeda-geometry"
+name = "andromeda-ngsi-ld-geometry"
 version = "0.1.0"
 dependencies = [
- "bytes",
  "geo",
  "geojson",
- "geozero",
  "jsonld-expandable-core",
  "pretty_assertions",
  "serde",
@@ -227,7 +226,7 @@ name = "andromeda-ngsi-ld-query"
 version = "0.1.0"
 dependencies = [
  "andromeda-domain",
- "andromeda-geometry",
+ "andromeda-ngsi-ld-geometry",
  "andromeda-ngsi-ld-lexicon",
  "andromeda-ngsi-ld-vocabulary",
  "chrono",
@@ -258,10 +257,11 @@ name = "andromeda-postgresql-context-query"
 version = "0.1.0"
 dependencies = [
  "andromeda-domain",
- "andromeda-geometry",
+ "andromeda-ngsi-ld-geometry",
  "andromeda-ngsi-ld-lexicon",
  "andromeda-ngsi-ld-query",
  "andromeda-ngsi-ld-vocabulary",
+ "andromeda-postgresql-encoding",
  "andromeda-postgresql-query",
  "chrono",
  "iri-rs",
@@ -271,14 +271,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "andromeda-postgresql-encoding"
+version = "0.1.0"
+dependencies = [
+ "andromeda-ngsi-ld-geometry",
+ "bytes",
+ "geo",
+ "geozero",
+ "pretty_assertions",
+ "serde_json",
+ "thiserror 2.0.19",
+]
+
+[[package]]
 name = "andromeda-postgresql-query"
 version = "0.1.0"
 dependencies = [
  "andromeda-domain",
- "andromeda-geometry",
+ "andromeda-ngsi-ld-geometry",
  "andromeda-ngsi-ld-lexicon",
  "andromeda-ngsi-ld-query",
  "andromeda-ngsi-ld-vocabulary",
+ "andromeda-postgresql-encoding",
  "chrono",
  "iri-rs",
  "pretty_assertions",
@@ -292,7 +306,7 @@ name = "andromeda-postgresql-temporal-query"
 version = "0.1.0"
 dependencies = [
  "andromeda-domain",
- "andromeda-geometry",
+ "andromeda-ngsi-ld-geometry",
  "andromeda-ngsi-ld-lexicon",
  "andromeda-ngsi-ld-query",
  "andromeda-postgresql-query",

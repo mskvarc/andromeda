@@ -5,7 +5,7 @@
 //! `snapshotTemporalQueries` rather than members of the resource itself.
 
 use crate::temporal::{AggrMethod, TimeProp, TimeRel};
-use andromeda_geometry::{geo_rel::GeoRel, geometry::GeometryType};
+use andromeda_ngsi_ld_geometry::{geo_rel::GeoRel, geometry::GeometryType};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, rfc3339};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};

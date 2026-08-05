@@ -1,7 +1,7 @@
 //! The NGSI-LD value family (ETSI GS CIM 009 clause 4.6.3).
 
 use crate::attribute::expansion::serde_json_value_to_json_value;
-use andromeda_geometry::geometry::Geometry;
+use andromeda_ngsi_ld_geometry::geometry::Geometry;
 use andromeda_ngsi_ld_lexicon::{
     date_time::{NgsiLdDate, NgsiLdTime},
     uri::Uri,

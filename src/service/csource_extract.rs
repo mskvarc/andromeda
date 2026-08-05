@@ -5,7 +5,7 @@
 //! insert or update.
 
 use crate::core::error::AndromedaError;
-use andromeda_geometry::geometry::Geometry;
+use andromeda_ngsi_ld_geometry::geometry::Geometry;
 use serde_json::Value;
 
 /// If `v` is a GeoProperty wrapper `{"type":"GeoProperty","value":{...}}`,
@@ -25,7 +25,7 @@ pub fn unwrap_geo_property_to_geometry(v: &Value) -> Result<Geometry, AndromedaE
 #[cfg(test)]
 mod tests {
     use super::unwrap_geo_property_to_geometry;
-    use andromeda_geometry::geometry::Geometry;
+    use andromeda_ngsi_ld_geometry::geometry::Geometry;
     use serde_json::json;
 
     fn roundtrip(geometry: Geometry) -> serde_json::Value {

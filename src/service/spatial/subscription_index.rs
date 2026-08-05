@@ -6,7 +6,7 @@
 //! geo-enabled subscription in the cache.
 
 use crate::service::{compiled_subscription::CompiledGeoQuery, spatial::SpatialKey};
-use andromeda_geometry::{distance::metres_to_degrees_coarse, geo_rel::GeoRel, relation::matches_geo};
+use andromeda_ngsi_ld_geometry::{distance::metres_to_degrees_coarse, geo_rel::GeoRel, relation::matches_geo};
 use dashmap::DashMap;
 use geo::algorithm::BoundingRect;
 use parking_lot::RwLock;

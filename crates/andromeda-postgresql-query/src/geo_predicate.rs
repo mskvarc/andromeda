@@ -25,9 +25,10 @@ use crate::{
         validated_geom_from_geojson_sql,
     },
 };
-use andromeda_geometry::{ewkb::encode, geo_rel::GeoRel};
+use andromeda_ngsi_ld_geometry::geo_rel::GeoRel;
 use andromeda_ngsi_ld_query::{error::QueryError, geo::query::GeoQuery};
 use andromeda_ngsi_ld_vocabulary::expanded::properties::{EXPIRES_AT, LOCATION, VALUE};
+use andromeda_postgresql_encoding::ewkb::encode;
 use sea_query::{Condition, Expr as SeaExpr, SimpleExpr};
 
 /// Where a geo predicate reads the subject geometry from.
@@ -234,7 +235,7 @@ fn quote_col_ref(col_ref: &str) -> String {
 mod tests {
     use super::*;
     use crate::schema::Entities;
-    use andromeda_geometry::geometry::Geometry;
+    use andromeda_ngsi_ld_geometry::geometry::Geometry;
     use iri_rs::IriBuf;
     use sea_query::{PostgresQueryBuilder, Query};
 

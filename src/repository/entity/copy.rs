@@ -107,7 +107,7 @@ const fn estimated_stream_bytes(columns: &PreparedEntityColumns) -> usize {
 mod tests {
     use super::*;
     use crate::repository::copy::COPY_HEADER_SIGNATURE;
-    use andromeda_geometry::geometry::Geometry;
+    use andromeda_ngsi_ld_geometry::geometry::Geometry;
     use chrono::{TimeZone, Utc};
 
     fn sample_columns() -> PreparedEntityColumns {

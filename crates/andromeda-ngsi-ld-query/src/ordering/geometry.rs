@@ -1,6 +1,6 @@
 //! The reference geometry a distance ordering measures from (clause 4.23, clause 5.2.43).
 
-use andromeda_geometry::geometry::Geometry;
+use andromeda_ngsi_ld_geometry::geometry::Geometry;
 
 /// A reference geometry for distance-based ordering (NGSI-LD S4.23, S5.2.43).
 ///

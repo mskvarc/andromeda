@@ -16,7 +16,7 @@ use andromeda_domain::{
     entity::Entity,
     sys_attrs::SysAttrsInclusion,
 };
-use andromeda_geometry::geometry::Geometry;
+use andromeda_ngsi_ld_geometry::geometry::Geometry;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
 use andromeda_ngsi_ld_query::{
     entity::{compiled::CompiledEntityQuery, selection::EntitySelection},

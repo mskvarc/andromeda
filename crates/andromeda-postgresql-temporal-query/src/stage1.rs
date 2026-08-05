@@ -236,7 +236,7 @@ mod tests {
         sys_attrs::SysAttrsInclusion,
         temporal::{AttributeNameId, TemporalFormat, TimeProp},
     };
-    use andromeda_geometry::{geo_rel::GeoRel, geometry::Geometry};
+    use andromeda_ngsi_ld_geometry::{geo_rel::GeoRel, geometry::Geometry};
     use andromeda_ngsi_ld_lexicon::uri::Uri;
     use andromeda_ngsi_ld_query::{
         filter::parser,

@@ -14,7 +14,7 @@ use andromeda_domain::{
     expanded::{geo_property::expanded_geo_node_to_geometry, instance_key::is_system_attribute},
     temporal::ValueType,
 };
-use andromeda_geometry::geometry::Geometry;
+use andromeda_ngsi_ld_geometry::geometry::Geometry;
 use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, scope::grammar::Scope};
 use andromeda_ngsi_ld_vocabulary::expanded::{classes as expanded_classes, properties as expanded_properties};
 use andromeda_postgresql_query::ltree::scope_to_ltree;

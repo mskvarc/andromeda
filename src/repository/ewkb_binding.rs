@@ -1,7 +1,7 @@
 //! Binding geometries into PostgreSQL statements.
 //!
 //! `andromeda-geometry` deliberately declares no `sqlx` dependency, so
-//! [`Ewkb`](andromeda_geometry::ewkb::Ewkb) implements none of sqlx's traits.
+//! [`Ewkb`](andromeda_postgresql_encoding::ewkb::Ewkb) implements none of sqlx's traits.
 //! Every geometry bind goes through this module instead, which hands sqlx the
 //! raw buffer as `bytea`; the statement's `ST_GeomFromEWKB($n)` projects it to
 //! PostGIS `geometry` on the server. The SRID is already embedded, so no
@@ -9,7 +9,8 @@
 //! `pg_type` OID lookup.
 
 use crate::core::error::AndromedaError;
-use andromeda_geometry::{ewkb::encode, geometry::Geometry};
+use andromeda_ngsi_ld_geometry::geometry::Geometry;
+use andromeda_postgresql_encoding::ewkb::encode;
 
 /// Encode an absent-or-present geometry into the buffer a `bytea` bind takes.
 ///

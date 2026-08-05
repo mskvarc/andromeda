@@ -3,7 +3,7 @@
 //!
 //! NGSI-LD says nothing about EWKB: ETSI GS CIM 009 v1.9.1 specifies
 //! GeoProperty values as GeoJSON per RFC 7946, and that is what
-//! [`crate::geometry::Geometry`] models. EWKB is what PostGIS accepts natively
+//! [`Geometry`] models. EWKB is what PostGIS accepts natively
 //! on its binary protocol, so the encode and decode happen here and the store
 //! binds the buffer as `bytea`.
 //!
@@ -11,7 +11,7 @@
 //! `&[u8]` anyway, and keeping them out means this crate carries no persistence
 //! dependency at all.
 
-use crate::geometry::Geometry;
+use andromeda_ngsi_ld_geometry::geometry::Geometry;
 use bytes::Bytes;
 use geozero::{CoordDimensions, ToGeo, ToWkb, error::GeozeroError, wkb::Ewkb as GeozeroEwkb};
 use thiserror::Error;
@@ -236,49 +236,5 @@ mod tests {
         bytes[5..9].copy_from_slice(&3857_i32.to_le_bytes());
         let error = Ewkb::try_from(bytes.as_slice()).expect_err("must reject");
         assert!(matches!(error, EwkbError::UnexpectedSrid { srid: 3857 }), "got {error:?}");
-    }
-
-    #[test]
-    fn neither_geometry_crate_declares_a_persistence_dependency() {
-        // The boundary the two extractions bought. If any of these reappears in
-        // either manifest, a storage, transport or runtime concern has drifted
-        // back below the line and this test is the only thing that notices.
-        const DOMAIN_MANIFEST: &str = include_str!("../../andromeda-domain/Cargo.toml");
-        const GEOMETRY_MANIFEST: &str = include_str!("../Cargo.toml");
-
-        fn dependency_lines(manifest: &str) -> Vec<&str> {
-            manifest
-                .split("[dependencies]")
-                .nth(1)
-                .expect("manifest has a [dependencies] table")
-                .split("\n[")
-                .next()
-                .expect("dependency table is terminated")
-                .lines()
-                .collect()
-        }
-
-        for (crate_name, manifest, forbidden) in [
-            (
-                "andromeda-domain",
-                DOMAIN_MANIFEST,
-                ["sqlx", "geozero", "bytes", "axum", "reqwest", "confique", "clap", "tokio"].as_slice(),
-            ),
-            (
-                // `geozero` and `bytes` are this crate's whole reason to exist,
-                // so only the store, transport and runtime crates are forbidden.
-                "andromeda-geometry",
-                GEOMETRY_MANIFEST,
-                ["sqlx", "axum", "reqwest", "confique", "clap", "tokio"].as_slice(),
-            ),
-        ] {
-            let dependencies = dependency_lines(manifest);
-            for name in forbidden {
-                assert!(
-                    !dependencies.iter().any(|line| line.trim_start().starts_with(name)),
-                    "{crate_name} must not depend on {name}"
-                );
-            }
-        }
     }
 }

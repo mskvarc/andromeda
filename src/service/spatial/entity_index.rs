@@ -4,11 +4,11 @@
 //! storing the full entity geometry.
 //!
 //! What the index decides is *which* entries are worth comparing. What a
-//! comparison means is [`andromeda_geometry::relation::matches_geo`], the one
+//! comparison means is [`andromeda_ngsi_ld_geometry::relation::matches_geo`], the one
 //! reading of clause 4.10 every in-memory matcher shares.
 
 use crate::service::spatial::SpatialKey;
-use andromeda_geometry::{geo_rel::GeoRel, geometry::Geometry, relation::matches_geo};
+use andromeda_ngsi_ld_geometry::{geo_rel::GeoRel, geometry::Geometry, relation::matches_geo};
 use dashmap::DashMap;
 use parking_lot::RwLock;
 use rstar::{AABB, PointDistance, RTree, RTreeObject};

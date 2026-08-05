@@ -1,7 +1,7 @@
 //! Compilation of the geo query parameter group into a [`GeoQuery`].
 
 use crate::{error::QueryError, geo::query::GeoQuery, term_expander::TermExpander};
-use andromeda_geometry::{geo_rel::GeoRel, geometry::Geometry};
+use andromeda_ngsi_ld_geometry::{geo_rel::GeoRel, geometry::Geometry};
 
 /// The GeoProperty a geo query addresses when the request names none.
 const DEFAULT_GEOPROPERTY: &str = "location";

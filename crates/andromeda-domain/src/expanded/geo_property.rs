@@ -1,7 +1,7 @@
 //! Decoding GeoProperty values out of an expanded payload (ETSI GS CIM 009 clause 4.7).
 
 use crate::expanded::node::expanded_object_ref;
-use andromeda_geometry::geometry::{Geometry, GeometryType};
+use andromeda_ngsi_ld_geometry::geometry::{Geometry, GeometryType};
 use andromeda_ngsi_ld_vocabulary::{expanded::properties, prefix};
 use geo::{Coord, Geometry as GeoGeometry, LineString, MultiLineString, MultiPoint, MultiPolygon, Point, Polygon};
 use iri_rs::Iri;
@@ -177,7 +177,7 @@ fn walk_polygon_list(node: &Value) -> Option<Vec<Polygon<f64>>> {
 #[cfg(test)]
 mod tests {
     use crate::expanded::geo_property::{expanded_geo_node_to_geometry, extract_location_geometry};
-    use andromeda_geometry::geometry::Geometry;
+    use andromeda_ngsi_ld_geometry::geometry::Geometry;
     use serde_json::json;
 
     /// Build the expected [`Geometry`] for a known compact-GeoJSON object by

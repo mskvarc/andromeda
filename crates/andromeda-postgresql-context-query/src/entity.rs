@@ -1,7 +1,6 @@
 //! SQL generation for entity queries using sea-query.
 
 use crate::order_geography::geo_extract_geography;
-use andromeda_geometry::ewkb::encode;
 use andromeda_ngsi_ld_query::{
     entity::compiled::CompiledEntityQuery,
     error::QueryError,
@@ -14,6 +13,7 @@ use andromeda_ngsi_ld_query::{
     pagination::CountPolicy,
 };
 use andromeda_ngsi_ld_vocabulary::expanded::properties::VALUE;
+use andromeda_postgresql_encoding::ewkb::encode;
 use andromeda_postgresql_query::{
     bind::sea_values_to_bind_values,
     built::BuiltQuery,
@@ -238,7 +238,7 @@ fn add_order_clause(
 mod tests {
     use super::*;
     use andromeda_domain::temporal::AttributeNameId;
-    use andromeda_geometry::{geo_rel::GeoRel, geometry::Geometry};
+    use andromeda_ngsi_ld_geometry::{geo_rel::GeoRel, geometry::Geometry};
     use andromeda_ngsi_ld_lexicon::uri::Uri;
     use andromeda_ngsi_ld_query::{
         entity::selection::EntitySelection,

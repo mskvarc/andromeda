@@ -1,7 +1,7 @@
 //! Repository input parameter types for entity persistence.
 
 use crate::{core::error::AndromedaError, repository::ewkb_binding::geometry_bytes};
-use andromeda_geometry::geometry::Geometry;
+use andromeda_ngsi_ld_geometry::geometry::Geometry;
 use andromeda_ngsi_ld_lexicon::entity_type_name::EntityTypeName;
 use chrono::{DateTime, Utc};
 use serde_json::Value;
