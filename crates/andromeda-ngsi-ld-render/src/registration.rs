@@ -3,7 +3,6 @@
 //! Handles stripping of system attributes and runtime status fields from
 //! CSR payloads before they are sent as HTTP responses.
 
-use crate::{core::error::AndromedaError, renderer::Renderer};
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 use serde_json::Value;
 
@@ -14,7 +13,9 @@ use serde_json::Value;
 /// and `modifiedAt`.
 #[derive(Debug)]
 pub struct RegistrationRenderer {
+    /// The registration payload to scrub.
     payload: Value,
+    /// Whether the clause 4.8 system attributes survive.
     sys_attrs: SysAttrsInclusion,
 }
 
@@ -32,18 +33,18 @@ impl RegistrationRenderer {
         self.sys_attrs = sys_attrs;
         self
     }
-}
 
-impl Renderer for RegistrationRenderer {
-    type Output = Value;
-
-    fn render(self) -> Result<Value, AndromedaError> {
+    /// Strip the members clause 4.5.8 withholds and return the payload.
+    ///
+    /// Removing members cannot fail, so this answers with the value rather
+    /// than a `Result` no caller could act on.
+    pub fn render(self) -> Value {
         let RegistrationRenderer { mut payload, sys_attrs } = self;
         if sys_attrs == SysAttrsInclusion::Include {
-            return Ok(payload);
+            return payload;
         }
         let Some(obj) = payload.as_object_mut() else {
-            return Ok(payload);
+            return payload;
         };
         obj.remove("status");
         obj.remove("timesSent");
@@ -52,7 +53,7 @@ impl Renderer for RegistrationRenderer {
         obj.remove("lastFailure");
         obj.remove("createdAt");
         obj.remove("modifiedAt");
-        Ok(payload)
+        payload
     }
 }
 
@@ -62,7 +63,7 @@ mod tests {
     use serde_json::json;
 
     fn render(value: Value, sys_attrs: SysAttrsInclusion) -> Value {
-        RegistrationRenderer::new(value).with_sys_attrs(sys_attrs).render().expect("render")
+        RegistrationRenderer::new(value).with_sys_attrs(sys_attrs).render()
     }
 
     #[test]

@@ -15,16 +15,10 @@ use crate::{
             query::ValidatedQuery,
             via::IncomingVia,
         },
-        response::{collection::NgsiLdCollectionResponse, single::NgsiLdResponse},
+        response::{collection::NgsiLdCollectionResponse, render::start_rendering, single::NgsiLdResponse},
         validation::{parse_entity_id, validate_attr_name},
     },
     jsonld::{ContextSpec, term_expansion::ContextualExpander},
-    renderer::{
-        Renderer,
-        entity::EntityRenderer,
-        response::{ResponsePayload, ResponseRenderer},
-        snapshot::SnapshotRenderer,
-    },
     service::{
         csource_forwarding::{
             CsrModeFilter,
@@ -58,6 +52,7 @@ use andromeda_ngsi_ld_query::{
     projection::purge::{PurgeMode, parse_attribute_list},
     scope::query::ScopeQuery,
 };
+use andromeda_ngsi_ld_render::{entity::EntityRenderer, response::ResponsePayload, snapshot::SnapshotRenderer};
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 use andromeda_ngsi_ld_request::{
     attribute_deletion::DeleteAttrParams,
@@ -223,8 +218,8 @@ pub async fn get(
             .with_mode(mode)
             .render()?;
 
-        let rendered = ResponseRenderer::new(accept.media_type(), context, prefer)
-            .with_geometry_property(params.geometry_property.clone())
+        let rendered = start_rendering(accept.media_type(), &context, prefer)
+            .with_geometry_property(params.geometry_property.as_deref())
             .with_payload(ResponsePayload::Single(result))
             .render()?;
         return Ok(NgsiLdResponse::ok(rendered).with_snapshot_uri(snapshot_id).into_response());
@@ -347,7 +342,7 @@ pub async fn get(
                         .with_instance(&uri)?,
                 );
             }
-            let rendered = ResponseRenderer::new(accept.media_type(), context, prefer)
+            let rendered = start_rendering(accept.media_type(), &context, prefer)
                 .with_payload(ResponsePayload::Collection(all_entities))
                 .render()?;
             return Ok(NgsiLdCollectionResponse::ok(rendered).with_warnings(warnings).into_response());
@@ -359,8 +354,8 @@ pub async fn get(
                 .with_mode(mode)
                 .render()
                 .with_instance(&uri)?;
-            let rendered = ResponseRenderer::new(accept.media_type(), context, prefer)
-                .with_geometry_property(params.geometry_property.clone())
+            let rendered = start_rendering(accept.media_type(), &context, prefer)
+                .with_geometry_property(params.geometry_property.as_deref())
                 .with_payload(ResponsePayload::Single(entity_value))
                 .render()?;
             return Ok(NgsiLdResponse::ok(rendered).with_warnings(warnings).into_response());
@@ -372,8 +367,8 @@ pub async fn get(
         .with_mode(mode)
         .render()
         .with_instance(&uri)?;
-    let rendered = ResponseRenderer::new(accept.media_type(), context, prefer)
-        .with_geometry_property(params.geometry_property.clone())
+    let rendered = start_rendering(accept.media_type(), &context, prefer)
+        .with_geometry_property(params.geometry_property.as_deref())
         .with_payload(ResponsePayload::Single(entity_value))
         .render()?;
     Ok(NgsiLdResponse::ok(rendered).with_warnings(warnings).into_response())
@@ -510,8 +505,8 @@ pub async fn query(
                 })
                 .collect::<Result<Vec<_>, _>>()?;
 
-            let rendered = ResponseRenderer::new(accept.media_type(), context, prefer)
-                .with_geometry_property(query.geometry_property.clone())
+            let rendered = start_rendering(accept.media_type(), &context, prefer)
+                .with_geometry_property(query.geometry_property.as_deref())
                 .with_payload(ResponsePayload::Collection(filtered))
                 .render()?;
             let response = NgsiLdCollectionResponse::ok(rendered)
@@ -736,8 +731,8 @@ pub async fn query(
                             .with_instance(&uri)?,
                     );
                 }
-                let rendered = ResponseRenderer::new(accept.media_type(), context, prefer)
-                    .with_geometry_property(query.geometry_property.clone())
+                let rendered = start_rendering(accept.media_type(), &context, prefer)
+                    .with_geometry_property(query.geometry_property.as_deref())
                     .with_payload(ResponsePayload::Collection(all_values))
                     .render()?;
                 let mut response = NgsiLdCollectionResponse::ok(rendered).with_status(status).with_warnings(warnings);
@@ -761,8 +756,8 @@ pub async fn query(
                             .with_instance(&uri)?,
                     );
                 }
-                let rendered = ResponseRenderer::new(accept.media_type(), context, prefer)
-                    .with_geometry_property(query.geometry_property.clone())
+                let rendered = start_rendering(accept.media_type(), &context, prefer)
+                    .with_geometry_property(query.geometry_property.as_deref())
                     .with_payload(ResponsePayload::Collection(entity_values))
                     .render()?;
                 let mut response = NgsiLdCollectionResponse::ok(rendered).with_status(status).with_warnings(warnings);
@@ -786,8 +781,8 @@ pub async fn query(
             })
             .collect::<Result<Vec<_>, _>>()
             .with_instance(&uri)?;
-        let rendered_output = ResponseRenderer::new(accept.media_type(), context, prefer)
-            .with_geometry_property(query.geometry_property.clone())
+        let rendered_output = start_rendering(accept.media_type(), &context, prefer)
+            .with_geometry_property(query.geometry_property.as_deref())
             .with_payload(ResponsePayload::Collection(rendered))
             .render()?;
         let mut response = NgsiLdCollectionResponse::ok(rendered_output).with_status(status).with_warnings(warnings);

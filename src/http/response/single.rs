@@ -1,14 +1,12 @@
 //! NGSI-LD response type for single entities with pre-rendered payload.
 
-use crate::{
-    http::response::{
-        headers::{CommonHeadersOptions, apply_common_headers},
-        sonic_json::SonicJson,
-    },
-    renderer::{VersionAdaptation, response::RenderedOutput},
+use crate::http::response::{
+    headers::{CommonHeadersOptions, apply_common_headers},
+    sonic_json::SonicJson,
 };
 use andromeda_ngsi_ld_http_headers::{ngsild_warning::NgsiLdWarning, preference_applied::PreferenceApplied};
 use andromeda_ngsi_ld_lexicon::ngsi_ld_urn::SnapshotId;
+use andromeda_ngsi_ld_render::{response::RenderedOutput, version::VersionAdaptation};
 use axum::{
     http::{HeaderMap, HeaderValue, StatusCode, header::CONTENT_TYPE},
     response::{IntoResponse, Response},
@@ -20,7 +18,7 @@ use headers::HeaderMapExt;
 /// Constructed from a [`RenderedOutput`] produced by the rendering pipeline:
 ///
 /// ```ignore
-/// let rendered = ResponseRenderer::new(format, context, prefer)
+/// let rendered = start_rendering(format, &context, prefer)
 ///     .with_payload(ResponsePayload::Single(entity_value))
 ///     .render()?;
 /// NgsiLdResponse::ok(rendered)
@@ -97,9 +95,7 @@ impl IntoResponse for NgsiLdResponse {
         };
 
         let mut headers = HeaderMap::new();
-        if let Ok(ct) = self.rendered.content_type.parse() {
-            headers.insert(CONTENT_TYPE, ct);
-        }
+        headers.insert(CONTENT_TYPE, HeaderValue::from_static(self.rendered.media_type.as_str()));
 
         if self.rendered.version_adaptation == VersionAdaptation::Applied {
             headers.typed_insert(PreferenceApplied::version_conformance());
@@ -107,7 +103,7 @@ impl IntoResponse for NgsiLdResponse {
 
         apply_common_headers(
             &mut headers,
-            &self.rendered.context,
+            &self.rendered.context_links,
             CommonHeadersOptions {
                 location: self.location.as_deref(),
                 entity_map_uri: self.entity_map_uri.as_deref(),

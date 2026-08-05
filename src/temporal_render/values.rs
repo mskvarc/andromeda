@@ -3,7 +3,6 @@
 //! [`TemporalValuesRenderer`] transforms a compacted temporal entity into the
 //! `temporalValues` simplified representation.
 
-use crate::{core::error::AndromedaError, renderer::Renderer};
 use andromeda_ngsi_ld_lexicon::attribute_type::AttributeType;
 use indexmap::IndexMap;
 use serde_json::{Value, json};
@@ -24,15 +23,15 @@ impl TemporalValuesRenderer {
     pub const fn new(payload: Value) -> TemporalValuesRenderer {
         TemporalValuesRenderer { payload }
     }
-}
 
-impl Renderer for TemporalValuesRenderer {
-    type Output = Value;
-
-    fn render(self) -> Result<Value, AndromedaError> {
+    /// Collapse each attribute into the clause 4.5.5 `temporalValues` pairs.
+    ///
+    /// Collapsing cannot fail, so this answers with the value rather than a
+    /// `Result` no caller could act on.
+    pub fn render(self) -> Value {
         let obj = match self.payload {
             Value::Object(m) => m,
-            other => return Ok(other),
+            other => return other,
         };
 
         const RESERVED: &[&str] = &["id", "type", "@context", "createdAt", "modifiedAt", "deletedAt"];
@@ -110,7 +109,7 @@ impl Renderer for TemporalValuesRenderer {
             }
         }
 
-        Ok(Value::Object(result))
+        Value::Object(result)
     }
 }
 
@@ -119,7 +118,7 @@ mod tests {
     use super::*;
 
     fn transform(input: Value) -> Value {
-        TemporalValuesRenderer::new(input).render().expect("render")
+        TemporalValuesRenderer::new(input).render()
     }
 
     #[test]

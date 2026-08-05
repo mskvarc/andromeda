@@ -56,6 +56,7 @@ pub const fn of(kind: &ErrorKind) -> NgsiLdErrorType {
         | ErrorKind::TracingInit(_)
         | ErrorKind::Io(_)
         | ErrorKind::ExternalRequest(_)
+        | ErrorKind::Rendering(_)
         | ErrorKind::Internal(_) => NgsiLdErrorType::InternalError,
     }
 }
@@ -64,6 +65,7 @@ pub const fn of(kind: &ErrorKind) -> NgsiLdErrorType {
 mod tests {
     use crate::{core::error::ErrorKind, http::error::category};
     use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
+    use andromeda_ngsi_ld_render::error::{RenderedShape, RepresentationError};
 
     #[test]
     fn each_family_of_failures_reports_the_category_clause_5_5_2_gives_it() {
@@ -78,6 +80,13 @@ mod tests {
             (ErrorKind::MultiTenancyNotSupported, NgsiLdErrorType::NoMultiTenantSupport),
             (ErrorKind::NonexistentTenant("x".into()), NgsiLdErrorType::NonexistentTenant),
             (ErrorKind::Internal("x".into()), NgsiLdErrorType::InternalError),
+            (
+                ErrorKind::Rendering(RepresentationError::serialization(
+                    RenderedShape::Entity,
+                    serde_json::from_str::<u8>("not a number").expect_err("the input is not a u8"),
+                )),
+                NgsiLdErrorType::InternalError,
+            ),
         ] {
             pretty_assertions::assert_eq!(category::of(&kind), expected, "wrong category for {kind:?}");
         }

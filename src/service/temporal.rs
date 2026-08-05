@@ -4,15 +4,6 @@ use crate::{
     core::error::AndromedaError,
     http::response::content_range::build_content_range,
     jsonld::{CompactOptions, ContextSpec, JsonLdEngine, term_expansion::ContextualExpander, term_resolver},
-    renderer::{
-        Renderer,
-        temporal::{
-            aggregation::TemporalAggregationRenderer,
-            array_normalizer::TemporalArrayNormalizer,
-            entity::TemporalEntityRenderer,
-            values::TemporalValuesRenderer,
-        },
-    },
     repository::{
         attribute_names::AttributeNameCache,
         entity::{params::EntityCreateParams, repo::EntityRepository},
@@ -23,6 +14,12 @@ use crate::{
         csource_forwarding::{ForwardedTemporalEntities, merge_temporal_query_results},
         entity::{extract::extract_geo_geometries, normalize_entity_attributes},
         temporal_recorder::TemporalRecorder,
+    },
+    temporal_render::{
+        aggregation::TemporalAggregationRenderer,
+        array_normalizer::TemporalArrayNormalizer,
+        entity::TemporalEntityRenderer,
+        values::TemporalValuesRenderer,
     },
     worker::attribute_current_materializer::AttributeCurrentBarrier,
 };
@@ -57,16 +54,11 @@ use andromeda_ngsi_ld_request::query::{SharedQueryParams, temporal::TemporalQuer
 use andromeda_ngsi_ld_vocabulary::expanded::classes as expanded_classes;
 use andromeda_postgresql_query::q_predicate::{attribute_names::ResolvedAttributeNames, projection::referenced_attribute_names};
 use andromeda_postgresql_temporal_query::{history::build_temporal_history_query, stage1::build_stage1_entity_ids};
-use chrono::{DateTime, SecondsFormat, Utc};
+use chrono::{DateTime, Utc};
 use iri_rs::IriBuf;
 use serde_json::{Value, json};
 use sqlx::Row;
 use std::{collections::HashSet, sync::Arc};
-
-/// Format a DateTime<Utc> as ISO 8601 with second precision.
-pub(crate) fn format_datetime(dt: DateTime<Utc>) -> String {
-    dt.to_rfc3339_opts(SecondsFormat::Secs, true)
-}
 
 /// Return short IRI token from fragment or last path segment.
 fn iri_short_name(iri: &str) -> Option<String> {
@@ -517,13 +509,13 @@ impl TemporalService {
 
         let result = TemporalEntityRenderer::new(entity_id, &entity_types, &rows, &compiled).render()?;
         let compacted = self.engine.compact(result.entity, context, CompactOptions::default()).await?;
-        let mut compacted = TemporalArrayNormalizer::new(compacted).render()?;
+        let mut compacted = TemporalArrayNormalizer::new(compacted).render();
         if !has_explicit_context(context) {
             normalize_temporal_payload_without_context(&mut compacted);
         }
 
         let value = if format == TemporalFormat::TemporalValues {
-            TemporalValuesRenderer::new(compacted).render()?
+            TemporalValuesRenderer::new(compacted).render()
         } else {
             compacted
         };
@@ -629,36 +621,18 @@ impl TemporalService {
                                 overall_partition_total = Some(overall_partition_total.map_or(pt, |m: i64| m.max(pt)));
                             }
                             match self.engine.compact(result.entity, context, CompactOptions::default()).await {
-                                Ok(compacted) => match TemporalArrayNormalizer::new(compacted).render() {
-                                    Ok(mut compacted) => {
-                                        if !has_explicit_context(context) {
-                                            normalize_temporal_payload_without_context(&mut compacted);
-                                        }
-                                        let result = if compiled.representation.format == TemporalFormat::TemporalValues {
-                                            match TemporalValuesRenderer::new(compacted).render() {
-                                                Ok(values) => values,
-                                                Err(e) => {
-                                                    tracing::warn!(error = %e, entity_id = %entity_id, "Failed to render temporal values");
-                                                    warnings.push(TemporalQueryWarning {
-                                                        entity_id: entity_id.clone(),
-                                                        message: e.to_string(),
-                                                    });
-                                                    continue;
-                                                }
-                                            }
-                                        } else {
-                                            compacted
-                                        };
-                                        entities.push(result);
+                                Ok(compacted) => {
+                                    let mut compacted = TemporalArrayNormalizer::new(compacted).render();
+                                    if !has_explicit_context(context) {
+                                        normalize_temporal_payload_without_context(&mut compacted);
                                     }
-                                    Err(e) => {
-                                        tracing::warn!(error = %e, entity_id = %entity_id, "Failed to normalize temporal arrays");
-                                        warnings.push(TemporalQueryWarning {
-                                            entity_id: entity_id.clone(),
-                                            message: e.to_string(),
-                                        });
-                                    }
-                                },
+                                    let result = if compiled.representation.format == TemporalFormat::TemporalValues {
+                                        TemporalValuesRenderer::new(compacted).render()
+                                    } else {
+                                        compacted
+                                    };
+                                    entities.push(result);
+                                }
                                 Err(e) => {
                                     tracing::warn!(error = %e, entity_id = %entity_id, "Failed to compact temporal entity");
                                     warnings.push(TemporalQueryWarning {

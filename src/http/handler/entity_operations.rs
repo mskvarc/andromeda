@@ -14,12 +14,7 @@ use crate::{
             snapshot::SnapshotHeader,
             via::IncomingVia,
         },
-        response::{batch::NgsiLdBatchResponse, collection::NgsiLdCollectionResponse, sonic_json::SonicJson},
-    },
-    renderer::{
-        Renderer,
-        entity::EntityRenderer,
-        response::{ResponsePayload, ResponseRenderer},
+        response::{batch::NgsiLdBatchResponse, collection::NgsiLdCollectionResponse, render::start_rendering, sonic_json::SonicJson},
     },
     service::{
         csource_forwarding::{CsrModeFilter, ForwardBatchProvisionRequest, ForwardQueryRequest, ForwardingOperation, collect_warnings},
@@ -29,6 +24,7 @@ use crate::{
 use andromeda_ngsi_ld_http_headers::{preference::RespondMode, preference_applied::PreferenceApplied};
 use andromeda_ngsi_ld_model::{entity_type::EntityTypeValue, expanded::mutation::selection::OverwritePolicy};
 use andromeda_ngsi_ld_problem_details::batch_operation::BatchOperationResult;
+use andromeda_ngsi_ld_render::{entity::EntityRenderer, response::ResponsePayload};
 use andromeda_ngsi_ld_request::{
     body::query::QueryRequest,
     entity_operations::{PostQueryParams, UpdateParams, UpsertParams},
@@ -84,7 +80,7 @@ pub async fn query(
             .query_snapshot_entities(&snapshot_id, entity_type, entity_ids.as_deref(), limit, offset)
             .await
             .with_instance(&uri)?;
-        let rendered = ResponseRenderer::new(accept.media_type(), context, PreferHeader::default())
+        let rendered = start_rendering(accept.media_type(), &context, PreferHeader::default())
             .with_payload(ResponsePayload::Collection(entities))
             .render()?;
         return Ok(NgsiLdCollectionResponse::ok(rendered).into_response());
@@ -110,7 +106,7 @@ pub async fn query(
     let opts = params.parse_options();
     let join_mode = params.join.clone();
     let join_level = params.join_level.unwrap_or(1);
-    let geometry_property = params.geometry_property.clone();
+    let geometry_property = params.geometry_property.as_deref();
 
     let is_local = params.local.unwrap_or(false);
     let (local_entities, total_count) = service.query(&params, &context).await.with_instance(&uri)?;
@@ -178,7 +174,7 @@ pub async fn query(
                         .with_instance(&uri)?,
                 );
             }
-            let rendered = ResponseRenderer::new(accept.media_type(), context, protocol.prefer)
+            let rendered = start_rendering(accept.media_type(), &context, protocol.prefer)
                 .with_geometry_property(geometry_property)
                 .with_payload(ResponsePayload::Collection(all_values))
                 .render()?;
@@ -200,7 +196,7 @@ pub async fn query(
                         .with_instance(&uri)?,
                 );
             }
-            let rendered = ResponseRenderer::new(accept.media_type(), context, protocol.prefer)
+            let rendered = start_rendering(accept.media_type(), &context, protocol.prefer)
                 .with_geometry_property(geometry_property)
                 .with_payload(ResponsePayload::Collection(entity_values))
                 .render()?;
@@ -222,7 +218,7 @@ pub async fn query(
         })
         .collect::<Result<Vec<_>, _>>()
         .with_instance(&uri)?;
-    let rendered = ResponseRenderer::new(accept.media_type(), context, protocol.prefer)
+    let rendered = start_rendering(accept.media_type(), &context, protocol.prefer)
         .with_geometry_property(geometry_property)
         .with_payload(ResponsePayload::Collection(entity_values))
         .render()?;
@@ -299,7 +295,7 @@ pub async fn batch_create(
     if result.errors.is_empty() {
         let value = serde_json::to_value(&result.success)
             .map_err(|e| AndromedaError::internal(format!("Failed to serialize batch result: {}", e)).with_instance(&uri))?;
-        let rendered = ResponseRenderer::new(accept.media_type(), context, PreferHeader::default())
+        let rendered = start_rendering(accept.media_type(), &context, PreferHeader::default())
             .with_payload(ResponsePayload::Batch(value))
             .render()?;
         Ok(apply_preference_applied(
@@ -309,7 +305,7 @@ pub async fn batch_create(
     } else {
         let value =
             serde_json::to_value(&result).map_err(|e| AndromedaError::internal(format!("Failed to serialize batch result: {}", e)).with_instance(&uri))?;
-        let rendered = ResponseRenderer::new(accept.media_type(), context, PreferHeader::default())
+        let rendered = start_rendering(accept.media_type(), &context, PreferHeader::default())
             .with_payload(ResponsePayload::Batch(value))
             .render()?;
         Ok(apply_preference_applied(
@@ -391,7 +387,7 @@ pub async fn batch_upsert(
         } else {
             let value = serde_json::to_value(&created_ids)
                 .map_err(|e| AndromedaError::internal(format!("Failed to serialize batch result: {}", e)).with_instance(&uri))?;
-            let rendered = ResponseRenderer::new(accept.media_type(), context, PreferHeader::default())
+            let rendered = start_rendering(accept.media_type(), &context, PreferHeader::default())
                 .with_payload(ResponsePayload::Batch(value))
                 .render()?;
             Ok(apply_preference_applied(
@@ -402,7 +398,7 @@ pub async fn batch_upsert(
     } else {
         let value =
             serde_json::to_value(&result).map_err(|e| AndromedaError::internal(format!("Failed to serialize batch result: {}", e)).with_instance(&uri))?;
-        let rendered = ResponseRenderer::new(accept.media_type(), context, PreferHeader::default())
+        let rendered = start_rendering(accept.media_type(), &context, PreferHeader::default())
             .with_payload(ResponsePayload::Batch(value))
             .render()?;
         Ok(apply_preference_applied(
@@ -486,7 +482,7 @@ pub async fn batch_update(
     } else {
         let value =
             serde_json::to_value(&result).map_err(|e| AndromedaError::internal(format!("Failed to serialize batch result: {}", e)).with_instance(&uri))?;
-        let rendered = ResponseRenderer::new(accept.media_type(), context, PreferHeader::default())
+        let rendered = start_rendering(accept.media_type(), &context, PreferHeader::default())
             .with_payload(ResponsePayload::Batch(value))
             .render()?;
         Ok(apply_preference_applied(
@@ -561,7 +557,7 @@ pub async fn batch_merge(
     } else {
         let value =
             serde_json::to_value(&result).map_err(|e| AndromedaError::internal(format!("Failed to serialize batch result: {}", e)).with_instance(&uri))?;
-        let rendered = ResponseRenderer::new(accept.media_type(), context, PreferHeader::default())
+        let rendered = start_rendering(accept.media_type(), &context, PreferHeader::default())
             .with_payload(ResponsePayload::Batch(value))
             .render()?;
         Ok(NgsiLdBatchResponse::new(StatusCode::MULTI_STATUS, rendered).into_response())
@@ -640,7 +636,7 @@ pub async fn batch_delete(
     } else {
         let value =
             serde_json::to_value(&result).map_err(|e| AndromedaError::internal(format!("Failed to serialize batch result: {}", e)).with_instance(&uri))?;
-        let rendered = ResponseRenderer::new(accept.media_type(), context, PreferHeader::default())
+        let rendered = start_rendering(accept.media_type(), &context, PreferHeader::default())
             .with_payload(ResponsePayload::Batch(value))
             .render()?;
         Ok(apply_preference_applied(

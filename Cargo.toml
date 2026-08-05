@@ -15,6 +15,7 @@ andromeda-ngsi-ld-lexicon = { path = "crates/andromeda-ngsi-ld-lexicon" }
 andromeda-ngsi-ld-model = { path = "crates/andromeda-ngsi-ld-model" }
 andromeda-ngsi-ld-problem-details = { path = "crates/andromeda-ngsi-ld-problem-details" }
 andromeda-ngsi-ld-query = { path = "crates/andromeda-ngsi-ld-query" }
+andromeda-ngsi-ld-render = { path = "crates/andromeda-ngsi-ld-render" }
 andromeda-ngsi-ld-request = { path = "crates/andromeda-ngsi-ld-request" }
 andromeda-ngsi-ld-representation = { path = "crates/andromeda-ngsi-ld-representation" }
 andromeda-ngsi-ld-vocabulary = { path = "crates/andromeda-ngsi-ld-vocabulary" }
@@ -56,6 +57,7 @@ andromeda-ngsi-ld-lexicon.workspace = true
 andromeda-ngsi-ld-model.workspace = true
 andromeda-ngsi-ld-problem-details.workspace = true
 andromeda-ngsi-ld-query.workspace = true
+andromeda-ngsi-ld-render.workspace = true
 andromeda-ngsi-ld-representation.workspace = true
 andromeda-ngsi-ld-request.workspace = true
 andromeda-ngsi-ld-vocabulary.workspace = true

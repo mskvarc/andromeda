@@ -16,6 +16,7 @@ use andromeda_ngsi_ld_lexicon::ngsi_ld_urn::{
     SnapshotNotificationIdParseError,
 };
 use andromeda_ngsi_ld_query::error::QueryError;
+use andromeda_ngsi_ld_render::error::RepresentationError;
 use andromeda_ngsi_ld_request::error::ParameterError;
 use andromeda_postgresql_query::error::RenderError;
 use axum::http::Uri;
@@ -204,6 +205,10 @@ pub enum ErrorKind {
     #[error("External request failed: {0}")]
     ExternalRequest(#[source] reqwest::Error),
 
+    /// A response representation could not be built.
+    #[error("Response rendering failed")]
+    Rendering(#[from] RepresentationError),
+
     /// An internal error that does not fit another category.
     #[error("{0}")]
     Internal(String),
@@ -221,6 +226,7 @@ impl ErrorKind {
                 | ErrorKind::TracingInit(_)
                 | ErrorKind::Io(_)
                 | ErrorKind::ExternalRequest(_)
+                | ErrorKind::Rendering(_)
                 | ErrorKind::Internal(_)
         )
     }
@@ -636,6 +642,15 @@ impl From<RenderError> for AndromedaError {
             // value with no typed bind. They are broker faults.
             RenderError::BindConversion(_) | RenderError::ReferenceGeometryEncoding(_) => ErrorKind::Internal(err.to_string()).into(),
         }
+    }
+}
+
+/// A rendering failure is never client-caused: the resource was validated on
+/// the way in and the representation options are typed, so a failure here is a
+/// broker fault.
+impl From<RepresentationError> for AndromedaError {
+    fn from(error: RepresentationError) -> AndromedaError {
+        ErrorKind::Rendering(error).into()
     }
 }
 

@@ -1,13 +1,27 @@
-//! RFC 3339 serde adapters for the timestamp members Andromeda writes itself.
+//! The RFC 3339 rendering of the timestamp members Andromeda writes itself.
 //!
 //! Chrono's own `Serialize` emits sub-second precision that varies with the
 //! stored value; NGSI-LD timestamps are compared as strings by clients, so the
-//! members that Andromeda generates go through these adapters to fix the
-//! rendering at whole seconds with a `Z` suffix.
+//! members that Andromeda generates go through [`whole_seconds`] to fix the
+//! rendering at whole seconds with a `Z` suffix. The serde adapters below are
+//! that same rendering reached through `#[serde(with = …)]`; a caller building
+//! a timestamp into a JSON value by hand calls the function directly.
+
+use chrono::{DateTime, SecondsFormat, Utc};
+
+/// Render a UTC timestamp as RFC 3339 with whole-second precision.
+///
+/// The single reading of the format every NGSI-LD timestamp Andromeda
+/// generates is written in: `2024-06-15T12:30:00Z`, never a sub-second
+/// fraction and never a numeric offset.
+pub fn whole_seconds(dt: DateTime<Utc>) -> String {
+    dt.to_rfc3339_opts(SecondsFormat::Secs, true)
+}
 
 /// Serialize and deserialize a required `DateTime<Utc>` as an RFC 3339 string.
 pub mod datetime {
-    use chrono::{DateTime, SecondsFormat, Utc};
+    use crate::rfc3339::whole_seconds;
+    use chrono::{DateTime, Utc};
     use serde::{Deserialize, Deserializer, Serializer, de::Error};
 
     /// Render the timestamp as an RFC 3339 string with whole-second precision.
@@ -19,7 +33,7 @@ pub mod datetime {
     where
         S: Serializer,
     {
-        serializer.serialize_str(&dt.to_rfc3339_opts(SecondsFormat::Secs, true))
+        serializer.serialize_str(&whole_seconds(*dt))
     }
 
     /// Parse an RFC 3339 string into a UTC timestamp.
@@ -39,7 +53,8 @@ pub mod datetime {
 
 /// Serialize and deserialize an optional `DateTime<Utc>` as an RFC 3339 string.
 pub mod optional_datetime {
-    use chrono::{DateTime, SecondsFormat, Utc};
+    use crate::rfc3339::whole_seconds;
+    use chrono::{DateTime, Utc};
     use serde::{Deserialize, Deserializer, Serializer, de::Error};
 
     /// Render the timestamp when present, and JSON `null` when absent.
@@ -52,7 +67,7 @@ pub mod optional_datetime {
         S: Serializer,
     {
         match opt {
-            Some(dt) => serializer.serialize_some(&dt.to_rfc3339_opts(SecondsFormat::Secs, true)),
+            Some(dt) => serializer.serialize_some(&whole_seconds(*dt)),
             None => serializer.serialize_none(),
         }
     }
@@ -77,6 +92,7 @@ pub mod optional_datetime {
 
 #[cfg(test)]
 mod tests {
+    use crate::rfc3339::whole_seconds;
     use chrono::{DateTime, TimeZone, Utc};
     use serde::{Deserialize, Serialize};
 
@@ -90,6 +106,25 @@ mod tests {
     struct TestOptional {
         #[serde(with = "super::optional_datetime", skip_serializing_if = "Option::is_none", default)]
         ts: Option<DateTime<Utc>>,
+    }
+
+    #[test]
+    fn a_sub_second_timestamp_renders_at_whole_seconds_with_a_z_suffix() {
+        let dt = Utc.with_ymd_and_hms(2024, 6, 15, 12, 30, 0).unwrap() + chrono::Duration::microseconds(123_456);
+        pretty_assertions::assert_eq!(whole_seconds(dt), "2024-06-15T12:30:00Z");
+    }
+
+    #[test]
+    fn the_serde_adapters_render_exactly_what_the_function_does() {
+        // Two readings of one format is how they drift; this pins them to one.
+        let dt = Utc.with_ymd_and_hms(2024, 6, 15, 12, 30, 0).unwrap() + chrono::Duration::milliseconds(750);
+        let expected = serde_json::Value::String(whole_seconds(dt));
+
+        let required = serde_json::to_value(TestRequired { ts: dt }).unwrap();
+        pretty_assertions::assert_eq!(required["ts"], expected);
+
+        let optional = serde_json::to_value(TestOptional { ts: Some(dt) }).unwrap();
+        pretty_assertions::assert_eq!(optional["ts"], expected);
     }
 
     #[test]

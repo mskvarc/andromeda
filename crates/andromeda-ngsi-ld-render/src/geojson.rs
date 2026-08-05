@@ -5,7 +5,7 @@
 //! crate for type-safe construction; `@context` is injected post-serialization
 //! because it is an NGSI-LD extension absent from the GeoJSON spec.
 
-use crate::{core::error::AndromedaError, renderer::Renderer};
+use crate::error::{RenderedShape, RepresentationError};
 use andromeda_ngsi_ld_vocabulary::{compact::properties as compact_properties, expanded::properties as expanded_properties};
 use geojson::{Feature, FeatureCollection, feature::Id};
 use serde_json::{Map, Value};
@@ -23,9 +23,13 @@ pub enum GeoJsonShape {
 /// Renders NGSI-LD JSON objects into GeoJSON Features or FeatureCollections.
 #[derive(Debug)]
 pub struct GeoJsonRenderer<'a> {
+    /// The entity or entity array to wrap.
     payload: Value,
+    /// The `@context` to inject into the envelope, if it goes in the body.
     context_value: Option<Value>,
+    /// The attribute the geometry is taken from; `location` when absent.
     geometry_property: Option<&'a str>,
+    /// Which envelope to build.
     shape: GeoJsonShape,
 }
 
@@ -59,14 +63,18 @@ impl<'a> GeoJsonRenderer<'a> {
     }
 }
 
-impl<'a> Renderer for GeoJsonRenderer<'a> {
-    type Output = Value;
-
-    fn render(self) -> Result<Value, AndromedaError> {
+impl<'a> GeoJsonRenderer<'a> {
+    /// Wrap the payload in the clause 6.3.8 GeoJSON envelope.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RepresentationError::Serialization`] when the assembled Feature or
+    /// FeatureCollection cannot be turned into a JSON value.
+    pub fn render(self) -> Result<Value, RepresentationError> {
         let mut value = match self.shape {
             GeoJsonShape::Feature => {
                 let feature = entity_to_feature(&self.payload, self.geometry_property);
-                serde_json::to_value(feature).map_err(|e| AndromedaError::internal(format!("Failed to serialize GeoJSON Feature: {}", e)))?
+                serde_json::to_value(feature).map_err(|error| RepresentationError::serialization(RenderedShape::GeoJsonFeature, error))?
             }
             GeoJsonShape::FeatureCollection => {
                 let features = match &self.payload {
@@ -78,7 +86,7 @@ impl<'a> Renderer for GeoJsonRenderer<'a> {
                     features,
                     foreign_members: None,
                 };
-                serde_json::to_value(collection).map_err(|e| AndromedaError::internal(format!("Failed to serialize GeoJSON FeatureCollection: {}", e)))?
+                serde_json::to_value(collection).map_err(|error| RepresentationError::serialization(RenderedShape::GeoJsonFeatureCollection, error))?
             }
         };
         if let Some(ctx) = self.context_value

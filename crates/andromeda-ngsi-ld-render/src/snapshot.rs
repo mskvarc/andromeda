@@ -1,6 +1,6 @@
 //! Renderer for pre-compacted `serde_json::Value` payloads.
 //!
-//! While [`crate::renderer::entity::EntityRenderer`] operates on an `&Entity`
+//! While [`crate::entity::EntityRenderer`] operates on an `&Entity`
 //! domain object, [`SnapshotRenderer`] operates on a `Value` that has already
 //! gone through JSON-LD compaction. It serves two use cases:
 //!
@@ -10,13 +10,7 @@
 //!    an inline-join expansion and/or concise/simplified transformation before
 //!    being delivered.
 
-use crate::{
-    core::error::AndromedaError,
-    renderer::{
-        Renderer,
-        entity::{apply_inline_join, concise_value, simplify_value},
-    },
-};
+use crate::{concise::concise_value, error::RepresentationError, inline_join::apply_inline_join, simplify::simplify_value};
 use andromeda_ngsi_ld_model::entity::Entity;
 use andromeda_ngsi_ld_representation::response_format::ResponseFormat;
 use serde_json::Value;
@@ -26,9 +20,13 @@ use std::collections::{HashMap, HashSet};
 /// filtering, inline-join expansion, and representation-mode transformation.
 #[derive(Debug)]
 pub struct SnapshotRenderer<'a> {
+    /// The already-compacted payload to render.
     payload: Value,
+    /// The attribute keys the response is narrowed to, if it is narrowed.
     attrs_filter: Option<&'a [&'a str]>,
+    /// The clause 4.5.1 rendering to produce.
     mode: ResponseFormat,
+    /// The entities `join=inline` resolves relationships against, if any.
     inline_linked_entities: Option<&'a HashMap<String, Entity>>,
 }
 
@@ -60,12 +58,14 @@ impl<'a> SnapshotRenderer<'a> {
         self.inline_linked_entities = Some(linked);
         self
     }
-}
 
-impl<'a> Renderer for SnapshotRenderer<'a> {
-    type Output = Value;
-
-    fn render(self) -> Result<Value, AndromedaError> {
+    /// Apply the attribute filter, the inline join and the representation mode.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RepresentationError::Serialization`] when a linked entity brought in
+    /// by `join=inline` cannot be turned into a JSON value.
+    pub fn render(self) -> Result<Value, RepresentationError> {
         let SnapshotRenderer {
             mut payload,
             attrs_filter,

@@ -4,9 +4,22 @@
 //! a 203 Non-Authoritative Information and adapts the payload to remove or
 //! reformat fields that did not exist in the requested version.
 
-use crate::{core::error::AndromedaError, renderer::Renderer};
 use andromeda_ngsi_ld_http_headers::version::NgsiLdVersion;
 use serde_json::Value;
+
+/// Whether version adaptation was applied to a response payload.
+///
+/// Clause 4.3.6.8: a broker that adapts a payload to an older version is no
+/// longer speaking authoritatively about it, so the response carries 203
+/// rather than 200. The flag travels with the rendered output because the
+/// status code is decided after rendering, by whoever writes the response.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VersionAdaptation {
+    /// The payload was adapted to an older NGSI-LD version.
+    Applied,
+    /// No version adaptation was performed.
+    None,
+}
 
 /// Adapt a serialized NGSI-LD entity payload to conform to an older spec version.
 ///
@@ -18,7 +31,9 @@ use serde_json::Value;
 /// Handles both single entities (JSON objects) and entity arrays.
 #[derive(Debug)]
 pub struct VersionRenderer {
+    /// The spec version the payload is adapted down to.
     target: NgsiLdVersion,
+    /// The payload being adapted.
     payload: Value,
 }
 
@@ -33,15 +48,15 @@ impl VersionRenderer {
         self.payload = payload;
         self
     }
-}
 
-impl Renderer for VersionRenderer {
-    type Output = Value;
-
-    fn render(self) -> Result<Value, AndromedaError> {
+    /// Apply the clause 4.3.6.8 fallback tables and return the payload.
+    ///
+    /// Removing members cannot fail, so this answers with the value rather
+    /// than a `Result` no caller could act on.
+    pub fn render(self) -> Value {
         let VersionRenderer { target, mut payload } = self;
         if target >= NgsiLdVersion::CONFORMANT {
-            return Ok(payload);
+            return payload;
         }
 
         match &mut payload {
@@ -53,7 +68,7 @@ impl Renderer for VersionRenderer {
             }
             Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => {}
         }
-        Ok(payload)
+        payload
     }
 }
 
@@ -214,7 +229,7 @@ mod tests {
     use serde_json::json;
 
     fn adapt(target: NgsiLdVersion, value: Value) -> Value {
-        VersionRenderer::new(target).with_payload(value).render().expect("render")
+        VersionRenderer::new(target).with_payload(value).render()
     }
 
     #[test]

@@ -4,7 +4,6 @@
 //! objects. NGSI-LD temporal attributes must always be arrays, so
 //! [`TemporalArrayNormalizer`] re-wraps them.
 
-use crate::{core::error::AndromedaError, renderer::Renderer};
 use serde_json::Value;
 use std::mem::replace;
 
@@ -21,12 +20,12 @@ impl TemporalArrayNormalizer {
     pub const fn new(payload: Value) -> TemporalArrayNormalizer {
         TemporalArrayNormalizer { payload }
     }
-}
 
-impl Renderer for TemporalArrayNormalizer {
-    type Output = Value;
-
-    fn render(self) -> Result<Value, AndromedaError> {
+    /// Re-wrap every temporal attribute that compaction collapsed.
+    ///
+    /// Re-wrapping cannot fail, so this answers with the value rather than a
+    /// `Result` no caller could act on.
+    pub fn render(self) -> Value {
         let mut payload = self.payload;
         if let Some(obj) = payload.as_object_mut() {
             for (key, value) in obj.iter_mut() {
@@ -39,7 +38,7 @@ impl Renderer for TemporalArrayNormalizer {
                 }
             }
         }
-        Ok(payload)
+        payload
     }
 }
 
@@ -49,7 +48,7 @@ mod tests {
     use serde_json::json;
 
     fn normalize(value: Value) -> Value {
-        TemporalArrayNormalizer::new(value).render().expect("render")
+        TemporalArrayNormalizer::new(value).render()
     }
 
     #[test]

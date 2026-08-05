@@ -3,13 +3,8 @@
 //! (NGSI-LD aggregation methods: avg, min, max, sum, sumsq, stddev,
 //! totalCount, distinctCount).
 
-use crate::{
-    core::error::AndromedaError,
-    renderer::{Renderer, temporal::common::extract_typed_agg},
-    repository::temporal::value_type::ValueType,
-    service::temporal::format_datetime,
-};
-use andromeda_ngsi_ld_lexicon::aggr_method::AggrMethod;
+use crate::{core::error::AndromedaError, repository::temporal::value_type::ValueType, temporal_render::history_row::extract_typed_agg};
+use andromeda_ngsi_ld_lexicon::{aggr_method::AggrMethod, rfc3339::whole_seconds};
 use andromeda_ngsi_ld_query::temporal::compiled::CompiledTemporalQuery;
 use chrono::{DateTime, Utc};
 use indexmap::IndexMap;
@@ -35,10 +30,14 @@ impl<'a> TemporalAggregationRenderer<'a> {
     }
 }
 
-impl<'a> Renderer for TemporalAggregationRenderer<'a> {
-    type Output = IndexMap<String, Value>;
-
-    fn render(self) -> Result<IndexMap<String, Value>, AndromedaError> {
+impl<'a> TemporalAggregationRenderer<'a> {
+    /// Group the bucketed rows and extract each requested aggregation method.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when a row cannot be read or declares a value type the
+    /// store does not define.
+    pub fn render(self) -> Result<IndexMap<String, Value>, AndromedaError> {
         let TemporalAggregationRenderer { rows, compiled } = self;
 
         type GroupKey = (String, Option<String>);
@@ -95,10 +94,8 @@ impl<'a> Renderer for TemporalAggregationRenderer<'a> {
 
                     let bucket_start: Value = row
                         .try_get::<DateTime<Utc>, _>("bucket_start")
-                        .map_or(Value::Null, |dt| json!(format_datetime(dt)));
-                    let bucket_end: Value = row
-                        .try_get::<DateTime<Utc>, _>("bucket_end")
-                        .map_or(Value::Null, |dt| json!(format_datetime(dt)));
+                        .map_or(Value::Null, |dt| json!(whole_seconds(dt)));
+                    let bucket_end: Value = row.try_get::<DateTime<Utc>, _>("bucket_end").map_or(Value::Null, |dt| json!(whole_seconds(dt)));
 
                     triples.push(json!([val, bucket_start, bucket_end]));
                 }

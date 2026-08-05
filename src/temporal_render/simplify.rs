@@ -1,11 +1,9 @@
 //! Temporal simplify renderer: deserializes a compacted temporal entity value
 //! and produces its key-values simplified form.
 
-use crate::{
-    core::error::AndromedaError,
-    renderer::{Renderer, simplify::simplify_entity},
-};
+use crate::core::error::AndromedaError;
 use andromeda_ngsi_ld_model::entity::Entity;
+use andromeda_ngsi_ld_render::simplify::simplify_entity;
 use serde_json::Value;
 
 /// Payload shape for [`TemporalSimplifyRenderer`].
@@ -62,10 +60,13 @@ impl TemporalSimplifyRenderer {
     }
 }
 
-impl Renderer for TemporalSimplifyRenderer {
-    type Output = TemporalSimplifyOutput;
-
-    fn render(self) -> Result<TemporalSimplifyOutput, AndromedaError> {
+impl TemporalSimplifyRenderer {
+    /// Simplify the payload, whichever shape it carries.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when a value does not deserialise as an entity.
+    pub fn render(self) -> Result<TemporalSimplifyOutput, AndromedaError> {
         match self.payload {
             TemporalSimplifyPayload::Single(value) => Ok(TemporalSimplifyOutput::Single(simplify_value(value)?)),
             TemporalSimplifyPayload::Collection(values) => {

@@ -9,17 +9,14 @@ use crate::{
         response::{
             collection::NgsiLdCollectionResponse,
             pagination::{PaginationMediaType, PaginationStyle, append_pagination_links},
+            render::start_rendering,
             single::NgsiLdResponse,
         },
         validation::parse_csr_id,
     },
     jsonld::ContextSpec,
-    renderer::{
-        Renderer,
-        registration::RegistrationRenderer,
-        response::{ResponsePayload, ResponseRenderer},
-    },
 };
+use andromeda_ngsi_ld_render::{registration::RegistrationRenderer, response::ResponsePayload};
 use andromeda_ngsi_ld_request::query::{SharedQueryParams, csr::CsrQueryParameters};
 use axum::{
     extract::{OriginalUri, Path},
@@ -63,9 +60,9 @@ pub async fn get(
 
     let csr = service.get(&registration_id, &context).await.with_instance(&uri)?;
 
-    let csr = RegistrationRenderer::new(csr).with_sys_attrs(options.sys_attrs).render()?;
+    let csr = RegistrationRenderer::new(csr).with_sys_attrs(options.sys_attrs).render();
 
-    let rendered = ResponseRenderer::new(accept.media_type(), context, PreferHeader::default())
+    let rendered = start_rendering(accept.media_type(), &context, PreferHeader::default())
         .with_payload(ResponsePayload::Single(csr))
         .render()?;
     Ok(NgsiLdResponse::ok(rendered).into_response())
@@ -91,9 +88,9 @@ pub async fn query(
     let csrs = csrs
         .into_iter()
         .map(|csr| RegistrationRenderer::new(csr).with_sys_attrs(options.sys_attrs).render())
-        .collect::<Result<Vec<_>, _>>()?;
+        .collect::<Vec<_>>();
 
-    let rendered = ResponseRenderer::new(accept.media_type(), context, PreferHeader::default())
+    let rendered = start_rendering(accept.media_type(), &context, PreferHeader::default())
         .with_payload(ResponsePayload::Collection(csrs))
         .render()?;
     let response = NgsiLdCollectionResponse::ok(rendered).with_total_count(total as usize);

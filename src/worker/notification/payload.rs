@@ -3,7 +3,6 @@
 
 use crate::{
     jsonld::{CompactOptions, ContextSpec, ContextStripping, JsonLdEngine},
-    renderer::{Renderer, simplify::simplify_entity, snapshot::SnapshotRenderer},
     service::{
         compiled_subscription::CompiledSubscription,
         entity::{expanded_entity_object_mut, inject_attr_sys_attrs, query::EntityQueryService},
@@ -11,6 +10,7 @@ use crate::{
 };
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType};
 use andromeda_ngsi_ld_model::{entity::Entity, notification::TriggerReason};
+use andromeda_ngsi_ld_render::{simplify::simplify_entity, snapshot::SnapshotRenderer};
 use andromeda_ngsi_ld_representation::{response_format::ResponseFormat, sys_attrs::SysAttrsInclusion};
 use andromeda_ngsi_ld_vocabulary::{
     expanded::{classes as expanded_classes, properties as expanded_properties},

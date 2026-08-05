@@ -4,7 +4,6 @@
 //! and JSON-LD context from subscription and CSR subscription payloads
 //! before they are sent as HTTP responses.
 
-use crate::{core::error::AndromedaError, renderer::Renderer};
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 use serde_json::Value;
 
@@ -29,8 +28,11 @@ pub enum SubscriptionFlavor {
 /// `jsonldContext` plus notification runtime fields.
 #[derive(Debug)]
 pub struct SubscriptionRenderer {
+    /// The subscription payload to scrub.
     payload: Value,
+    /// Which of the two subscription resources this is.
     flavor: SubscriptionFlavor,
+    /// Whether the clause 4.8 system attributes survive.
     sys_attrs: SysAttrsInclusion,
 }
 
@@ -49,22 +51,22 @@ impl SubscriptionRenderer {
         self.sys_attrs = sys_attrs;
         self
     }
-}
 
-impl Renderer for SubscriptionRenderer {
-    type Output = Value;
-
-    fn render(self) -> Result<Value, AndromedaError> {
+    /// Strip the members clause 4.5.8 withholds and return the payload.
+    ///
+    /// Removing members cannot fail, so this answers with the value rather
+    /// than a `Result` no caller could act on.
+    pub fn render(self) -> Value {
         let SubscriptionRenderer {
             mut payload,
             flavor,
             sys_attrs,
         } = self;
         if sys_attrs == SysAttrsInclusion::Include {
-            return Ok(payload);
+            return payload;
         }
         let Some(obj) = payload.as_object_mut() else {
-            return Ok(payload);
+            return payload;
         };
         obj.remove("createdAt");
         obj.remove("modifiedAt");
@@ -91,7 +93,7 @@ impl Renderer for SubscriptionRenderer {
                 }
             }
         }
-        Ok(payload)
+        payload
     }
 }
 
@@ -111,6 +113,7 @@ pub struct JsonldContextStripOutput {
 /// be surfaced to the response context before being stripped from the body.
 #[derive(Debug)]
 pub struct JsonldContextStripRenderer {
+    /// The subscription payload the context is taken out of.
     payload: Value,
 }
 
@@ -119,15 +122,15 @@ impl JsonldContextStripRenderer {
     pub const fn new(payload: Value) -> JsonldContextStripRenderer {
         JsonldContextStripRenderer { payload }
     }
-}
 
-impl Renderer for JsonldContextStripRenderer {
-    type Output = JsonldContextStripOutput;
-
-    fn render(self) -> Result<JsonldContextStripOutput, AndromedaError> {
+    /// Remove `jsonldContext` and answer with it alongside the payload.
+    ///
+    /// Removing a member cannot fail, so this answers with the value rather
+    /// than a `Result` no caller could act on.
+    pub fn render(self) -> JsonldContextStripOutput {
         let mut payload = self.payload;
         let extracted = payload.as_object_mut().and_then(|obj| obj.remove("jsonldContext"));
-        Ok(JsonldContextStripOutput { payload, extracted })
+        JsonldContextStripOutput { payload, extracted }
     }
 }
 
@@ -137,17 +140,13 @@ mod tests {
     use serde_json::json;
 
     fn render_local(value: Value, sys_attrs: SysAttrsInclusion) -> Value {
-        SubscriptionRenderer::new(value, SubscriptionFlavor::Local)
-            .with_sys_attrs(sys_attrs)
-            .render()
-            .expect("render")
+        SubscriptionRenderer::new(value, SubscriptionFlavor::Local).with_sys_attrs(sys_attrs).render()
     }
 
     fn render_csource(value: Value, sys_attrs: SysAttrsInclusion) -> Value {
         SubscriptionRenderer::new(value, SubscriptionFlavor::ContextSource)
             .with_sys_attrs(sys_attrs)
             .render()
-            .expect("render")
     }
 
     #[test]
@@ -253,7 +252,7 @@ mod tests {
             "id": "urn:ngsi-ld:Subscription:1",
             "jsonldContext": "https://example.org/ctx"
         });
-        let output = JsonldContextStripRenderer::new(value).render().expect("render");
+        let output = JsonldContextStripRenderer::new(value).render();
         pretty_assertions::assert_eq!(output.extracted, Some(json!("https://example.org/ctx")));
         assert!(output.payload.get("jsonldContext").is_none());
     }
@@ -261,7 +260,7 @@ mod tests {
     #[test]
     fn strip_jsonld_context_returns_none_when_absent() {
         let value = json!({"id": "urn:ngsi-ld:Subscription:1"});
-        let output = JsonldContextStripRenderer::new(value).render().expect("render");
+        let output = JsonldContextStripRenderer::new(value).render();
         assert!(output.extracted.is_none());
     }
 }

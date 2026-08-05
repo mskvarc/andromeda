@@ -1,6 +1,5 @@
 use crate::{
     jsonld::{CompactOptions, ContextSpec, ContextStripping, JsonLdEngine},
-    renderer::simplify::simplify_entity,
     repository::{entity::repo::EntityRepository, subscription::repo::SubscriptionRepository, subscription_store::repo::SubscriptionStore},
     service::entity::inject_sys_attrs,
     transport::{
@@ -12,6 +11,7 @@ use andromeda_ngsi_ld_http_headers::media_type::APPLICATION_LD_JSON;
 use andromeda_ngsi_ld_lexicon::uri::{NGSI_LD_URN_NID, Uri};
 use andromeda_ngsi_ld_model::{entity::Entity, notification::Notification, subscription::Subscription};
 use andromeda_ngsi_ld_query::filter::eval;
+use andromeda_ngsi_ld_render::simplify::simplify_entity;
 use chrono::Utc;
 use futures::{StreamExt, stream};
 use mediatype::MediaTypeBuf;

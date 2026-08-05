@@ -9,16 +9,16 @@ use crate::{
         response::{
             collection::NgsiLdCollectionResponse,
             pagination::{PaginationMediaType, PaginationStyle, append_pagination_links},
+            render::start_rendering,
             single::NgsiLdResponse,
         },
         validation::parse_list_options,
     },
     jsonld::ContextSpec,
-    renderer::{
-        Renderer,
-        response::{ResponsePayload, ResponseRenderer},
-        subscription::{JsonldContextStripRenderer, SubscriptionFlavor, SubscriptionRenderer},
-    },
+};
+use andromeda_ngsi_ld_render::{
+    response::ResponsePayload,
+    subscription::{JsonldContextStripRenderer, SubscriptionFlavor, SubscriptionRenderer},
 };
 use andromeda_ngsi_ld_request::{empty::EmptyParams, subscription::ListParams};
 use axum::{
@@ -66,17 +66,17 @@ pub async fn get(
 
     let subscription = SubscriptionRenderer::new(subscription, SubscriptionFlavor::Local)
         .with_sys_attrs(options.sys_attrs)
-        .render()?;
+        .render();
 
     // Extract jsonldContext from body and use it for the response context
-    let strip = JsonldContextStripRenderer::new(subscription).render()?;
+    let strip = JsonldContextStripRenderer::new(subscription).render();
     let response_context = match strip.extracted.as_ref().and_then(|v| v.as_str()) {
         Some(url) => ContextSpec::from_links(vec![url.to_string()]),
         None => context,
     };
     let subscription = strip.payload;
 
-    let rendered = ResponseRenderer::new(accept.media_type(), response_context, PreferHeader::default())
+    let rendered = start_rendering(accept.media_type(), &response_context, PreferHeader::default())
         .with_payload(ResponsePayload::Single(subscription))
         .render()?;
     let response = NgsiLdResponse::ok(rendered).into_response();
@@ -115,13 +115,13 @@ pub async fn query(
         .map(|sub| {
             let sub = SubscriptionRenderer::new(sub, SubscriptionFlavor::Local)
                 .with_sys_attrs(options.sys_attrs)
-                .render()?;
+                .render();
             // Strip jsonldContext from each subscription body
-            Ok::<_, AndromedaError>(JsonldContextStripRenderer::new(sub).render()?.payload)
+            JsonldContextStripRenderer::new(sub).render().payload
         })
-        .collect::<Result<Vec<_>, _>>()?;
+        .collect::<Vec<_>>();
 
-    let rendered = ResponseRenderer::new(accept.media_type(), context, PreferHeader::default())
+    let rendered = start_rendering(accept.media_type(), &context, PreferHeader::default())
         .with_payload(ResponsePayload::Collection(subscriptions))
         .render()?;
     let mut response = NgsiLdCollectionResponse::ok(rendered);

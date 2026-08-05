@@ -77,6 +77,23 @@ impl AttributeType {
         self.value_key().into_inner()
     }
 
+    /// Returns the compacted key of the value container for this attribute type.
+    ///
+    /// The same eight-way table as [`AttributeType::value_key`], spelled in the
+    /// compacted terms clause 4.5.1 uses. A rendering works on compacted JSON
+    /// and needs this one; an expansion or a store predicate needs the IRI.
+    pub const fn compact_value_key(self) -> &'static str {
+        match self {
+            Self::Property | Self::GeoProperty => compact_properties::VALUE,
+            Self::Relationship => compact_properties::OBJECT,
+            Self::VocabProperty => compact_properties::VOCAB,
+            Self::LanguageProperty => compact_properties::LANGUAGE_MAP,
+            Self::JsonProperty => compact_properties::JSON,
+            Self::ListProperty => compact_properties::VALUE_LIST,
+            Self::ListRelationship => compact_properties::OBJECT_LIST,
+        }
+    }
+
     /// Returns the compacted previous-value key for showChanges support.
     pub const fn previous_key(self) -> &'static str {
         match self {
@@ -310,6 +327,44 @@ mod tests {
             assert!(
                 key.as_str().starts_with("https://"),
                 "value_key_str for {variant} should be an expanded IRI, got {key}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_expanded_and_compacted_value_keys_group_the_variants_the_same_way() {
+        // The two are not textually related -- `value` expands to `hasValue` --
+        // so what can be checked is that they say the same thing about which
+        // attribute types share a value member. Today only `Property` and
+        // `GeoProperty` do; a variant added to one table under a different
+        // grouping than the other fails here rather than silently rendering
+        // one attribute type as another.
+        let by_expanded: Vec<Vec<AttributeType>> = grouped(AttributeType::value_key_str);
+        let by_compact: Vec<Vec<AttributeType>> = grouped(AttributeType::compact_value_key);
+        pretty_assertions::assert_eq!(by_expanded, by_compact);
+    }
+
+    /// The variants grouped by the key the given reading gives them.
+    fn grouped(key_of: fn(AttributeType) -> &'static str) -> Vec<Vec<AttributeType>> {
+        let mut groups: Vec<(&'static str, Vec<AttributeType>)> = Vec::new();
+        for variant in AttributeType::ALL {
+            let key = key_of(variant);
+            match groups.iter_mut().find(|(seen, _)| *seen == key) {
+                Some((_, members)) => members.push(variant),
+                None => groups.push((key, vec![variant])),
+            }
+        }
+        groups.into_iter().map(|(_, members)| members).collect()
+    }
+
+    #[test]
+    fn every_compacted_value_key_is_a_bare_term_not_an_iri() {
+        for variant in AttributeType::ALL {
+            let compact = variant.compact_value_key();
+            assert!(!compact.is_empty(), "compact_value_key for {variant} is empty");
+            assert!(
+                !compact.contains(':') && !compact.contains('/'),
+                "compact_value_key for {variant} should be a compacted term, got {compact}"
             );
         }
     }

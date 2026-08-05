@@ -89,6 +89,7 @@ dependencies = [
  "andromeda-ngsi-ld-model",
  "andromeda-ngsi-ld-problem-details",
  "andromeda-ngsi-ld-query",
+ "andromeda-ngsi-ld-render",
  "andromeda-ngsi-ld-representation",
  "andromeda-ngsi-ld-request",
  "andromeda-ngsi-ld-vocabulary",
@@ -288,6 +289,29 @@ dependencies = [
  "thiserror 2.0.19",
  "tokio",
  "typed-builder",
+ "urn-rs",
+]
+
+[[package]]
+name = "andromeda-ngsi-ld-render"
+version = "0.1.0"
+dependencies = [
+ "andromeda-layer-guard",
+ "andromeda-ngsi-ld-http-headers",
+ "andromeda-ngsi-ld-lexicon",
+ "andromeda-ngsi-ld-model",
+ "andromeda-ngsi-ld-representation",
+ "andromeda-ngsi-ld-vocabulary",
+ "chrono",
+ "geojson",
+ "indexmap 2.14.0",
+ "langtag",
+ "percent-encoding",
+ "pretty_assertions",
+ "serde",
+ "serde_json",
+ "strum",
+ "thiserror 2.0.19",
  "urn-rs",
 ]
 

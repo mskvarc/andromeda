@@ -1,6 +1,5 @@
 //! Shared header logic for NGSI-LD responses.
 
-use crate::{jsonld::ContextSpec, renderer::ContextLocation};
 use andromeda_ngsi_ld_http_headers::{
     link::header::Link,
     ngsild_entity_map::NgsiLdEntityMap,
@@ -8,6 +7,7 @@ use andromeda_ngsi_ld_http_headers::{
     ngsild_warning::{NgsiLdWarning, NgsiLdWarningHeader},
 };
 use andromeda_ngsi_ld_lexicon::ngsi_ld_urn::SnapshotId;
+use andromeda_ngsi_ld_render::context::ContextLocation;
 use axum::http::{HeaderMap, HeaderValue};
 use headers::HeaderMapExt;
 use urn_rs::Urn;
@@ -27,7 +27,11 @@ pub struct CommonHeadersOptions<'a> {
 }
 
 /// Apply common NGSI-LD headers to a HeaderMap.
-pub fn apply_common_headers(headers: &mut HeaderMap, context: &ContextSpec, options: CommonHeadersOptions<'_>) {
+///
+/// `context_links` is what the rendering already resolved; it is advertised
+/// only when the rendering put the `@context` in the headers rather than in
+/// the body, which is what `options.context_location` reports.
+pub fn apply_common_headers(headers: &mut HeaderMap, context_links: &[String], options: CommonHeadersOptions<'_>) {
     if let Some(loc) = options.location
         && let Ok(val) = HeaderValue::from_str(loc)
     {
@@ -49,7 +53,6 @@ pub fn apply_common_headers(headers: &mut HeaderMap, context: &ContextSpec, opti
     }
 
     if options.context_location == ContextLocation::LinkHeader {
-        let urls = context.for_presentation().to_link_headers();
-        Link::insert_jsonld_contexts(headers, &urls);
+        Link::insert_jsonld_contexts(headers, context_links);
     }
 }

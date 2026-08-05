@@ -13,15 +13,10 @@ use crate::{
             protocol::NgsiLdProtocolHeaders,
             query::ValidatedQuery,
         },
-        response::{collection::NgsiLdCollectionResponse, single::NgsiLdResponse},
+        response::{collection::NgsiLdCollectionResponse, render::start_rendering, single::NgsiLdResponse},
         validation::{parse_entity_id, validate_attr_name, validate_instance_id},
     },
     jsonld::{ContextSpec, term_expansion::ContextualExpander},
-    renderer::{
-        Renderer,
-        response::{ResponsePayload, ResponseRenderer},
-        temporal::simplify::{TemporalSimplifyPayload, TemporalSimplifyRenderer},
-    },
     repository::temporal::params::DeleteScope,
     service::{
         csource_forwarding::{CsrModeFilter, ForwardTemporalQueryRequest, ForwardingOperation, collect_temporal_warnings, merge_temporal_retrieve_results},
@@ -30,6 +25,7 @@ use crate::{
         subscription_matching::{matches_compiled_geo_query, matches_scope_query},
         temporal::{CreateOrUpdateResult, TemporalQueryResult, TemporalService},
     },
+    temporal_render::simplify::{TemporalSimplifyPayload, TemporalSimplifyRenderer},
 };
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::registration::ForwardingMode;
@@ -37,6 +33,7 @@ use andromeda_ngsi_ld_query::{
     filter::{eval::evaluate, expansion::expand_q_expression},
     scope::query::ScopeQuery,
 };
+use andromeda_ngsi_ld_render::response::ResponsePayload;
 use andromeda_ngsi_ld_request::{
     attribute_deletion::DeleteAttrParams,
     deferred_split_filters::DeferredSplitFilters,
@@ -121,7 +118,7 @@ pub async fn get(
         } else {
             entity_data
         };
-        let rendered = ResponseRenderer::new(accept.media_type(), context, PreferHeader::default())
+        let rendered = start_rendering(accept.media_type(), &context, PreferHeader::default())
             .with_payload(ResponsePayload::Single(data))
             .render()?;
         return Ok(NgsiLdResponse::ok(rendered).with_snapshot_uri(snapshot_id).into_response());
@@ -196,7 +193,7 @@ pub async fn get(
         entity_value
     };
 
-    let rendered = ResponseRenderer::new(accept.media_type(), context, PreferHeader::default())
+    let rendered = start_rendering(accept.media_type(), &context, PreferHeader::default())
         .with_payload(ResponsePayload::Single(data))
         .render()?;
     let mut builder = NgsiLdResponse::new(status, rendered).with_warnings(warnings);
@@ -257,7 +254,7 @@ pub async fn query(
         } else {
             entities
         };
-        let rendered = ResponseRenderer::new(accept.media_type(), context, PreferHeader::default())
+        let rendered = start_rendering(accept.media_type(), &context, PreferHeader::default())
             .with_payload(ResponsePayload::Collection(values))
             .render()?;
         let response = NgsiLdCollectionResponse::ok(rendered)
@@ -456,7 +453,7 @@ pub async fn query(
         entities
     };
 
-    let rendered = ResponseRenderer::new(accept.media_type(), context, PreferHeader::default())
+    let rendered = start_rendering(accept.media_type(), &context, PreferHeader::default())
         .with_payload(ResponsePayload::Collection(values))
         .render()?;
     let mut response = NgsiLdCollectionResponse::ok(rendered).with_status(status).with_warnings(forwarding_warnings);

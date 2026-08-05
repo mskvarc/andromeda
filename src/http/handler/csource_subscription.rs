@@ -9,16 +9,16 @@ use crate::{
         response::{
             collection::NgsiLdCollectionResponse,
             pagination::{PaginationMediaType, PaginationStyle, append_pagination_links},
+            render::start_rendering,
             single::NgsiLdResponse,
         },
         validation::parse_list_options,
     },
     jsonld::ContextSpec,
-    renderer::{
-        Renderer,
-        response::{ResponsePayload, ResponseRenderer},
-        subscription::{SubscriptionFlavor, SubscriptionRenderer},
-    },
+};
+use andromeda_ngsi_ld_render::{
+    response::ResponsePayload,
+    subscription::{SubscriptionFlavor, SubscriptionRenderer},
 };
 use andromeda_ngsi_ld_request::{csource_subscription::ListParams, empty::EmptyParams};
 use axum::{
@@ -64,9 +64,9 @@ pub async fn get(
 
     let subscription = SubscriptionRenderer::new(subscription, SubscriptionFlavor::ContextSource)
         .with_sys_attrs(options.sys_attrs)
-        .render()?;
+        .render();
 
-    let rendered = ResponseRenderer::new(accept.media_type(), context, PreferHeader::default())
+    let rendered = start_rendering(accept.media_type(), &context, PreferHeader::default())
         .with_payload(ResponsePayload::Single(subscription))
         .render()?;
     let response = NgsiLdResponse::ok(rendered).into_response();
@@ -119,9 +119,9 @@ pub async fn query(
                 .with_sys_attrs(options.sys_attrs)
                 .render()
         })
-        .collect::<Result<Vec<_>, _>>()?;
+        .collect::<Vec<_>>();
 
-    let rendered = ResponseRenderer::new(accept.media_type(), context, PreferHeader::default())
+    let rendered = start_rendering(accept.media_type(), &context, PreferHeader::default())
         .with_payload(ResponsePayload::Collection(subscriptions))
         .render()?;
     let mut response = NgsiLdCollectionResponse::ok(rendered);

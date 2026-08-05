@@ -1,17 +1,21 @@
-//! Private helpers shared across temporal renderers.
+//! Decoding an `attribute_history` row into an expanded attribute instance.
+//!
+//! The temporal API answers with the expanded JSON-LD form of an attribute
+//! instance, and the store keeps one instance per row with the value split
+//! across seven typed columns. Turning one into the other is this module, and
+//! it is the last place in the presentation layer that names a `PgRow` — the
+//! store gains a neutral row type when the temporal ports are declared, and
+//! this becomes a decoding of that instead.
 
 use crate::{
     core::error::AndromedaError,
     repository::temporal::{entry::TeaEntry, value_type::ValueType},
-    service::temporal::format_datetime,
+    temporal_render::geojson_ld::expand_geojson,
 };
 use andromeda_ngsi_ld_geometry::geometry::Geometry;
-use andromeda_ngsi_ld_lexicon::attribute_type::AttributeType;
+use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, rfc3339::whole_seconds};
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
-use andromeda_ngsi_ld_vocabulary::{
-    expanded::{classes as expanded_classes, properties as expanded_properties},
-    prefix,
-};
+use andromeda_ngsi_ld_vocabulary::expanded::{classes as expanded_classes, properties as expanded_properties};
 use andromeda_postgresql_encoding::ewkb::Ewkb;
 use chrono::{DateTime, Utc};
 use iri_rs::IriBuf;
@@ -19,9 +23,10 @@ use serde_json::{Value, json};
 use sqlx::{Row, postgres::PgRow};
 use std::str::FromStr;
 
-pub(crate) type TimeRange = (DateTime<Utc>, DateTime<Utc>);
+/// The observed time span of a set of history rows.
+pub type TimeRange = (DateTime<Utc>, DateTime<Utc>);
 
-pub(crate) fn parse_tea_entry(row: &PgRow) -> Result<TeaEntry, AndromedaError> {
+pub fn parse_tea_entry(row: &PgRow) -> Result<TeaEntry, AndromedaError> {
     let attribute_name_raw: String = row.try_get("attribute_name")?;
     let attribute_name = IriBuf::new(attribute_name_raw.clone())
         .map_err(|e| AndromedaError::internal(format!("Invalid temporal attribute IRI '{}': {}", attribute_name_raw, e)))?;
@@ -87,7 +92,7 @@ fn effective_value_type(row: &PgRow, declared: ValueType) -> ValueType {
     declared
 }
 
-pub(crate) fn history_row_to_expanded_instance(row: &PgRow, tea: &TeaEntry, sys_attrs: SysAttrsInclusion) -> Result<Value, AndromedaError> {
+pub fn history_row_to_expanded_instance(row: &PgRow, tea: &TeaEntry, sys_attrs: SysAttrsInclusion) -> Result<Value, AndromedaError> {
     let mut instance = serde_json::Map::new();
 
     instance.insert("@type".to_string(), json!([tea.attribute_type.iri().as_str()]));
@@ -112,7 +117,7 @@ pub(crate) fn history_row_to_expanded_instance(row: &PgRow, tea: &TeaEntry, sys_
         if let Ok(time) = row.try_get::<DateTime<Utc>, _>("time") {
             instance.insert(
                 expanded_properties::DELETED_AT.as_str().to_string(),
-                json!([{"@value": format_datetime(time), "@type": expanded_classes::DATE_TIME.as_str()}]),
+                json!([{"@value": whole_seconds(time), "@type": expanded_classes::DATE_TIME.as_str()}]),
             );
         }
         if tea.attribute_name != expanded_properties::SCOPE.as_str() {
@@ -185,7 +190,7 @@ pub(crate) fn history_row_to_expanded_instance(row: &PgRow, tea: &TeaEntry, sys_
             if let Ok(v) = row.try_get::<DateTime<Utc>, _>("value_datetime") {
                 instance.insert(
                     value_key.to_string(),
-                    json!([{"@value": format_datetime(v), "@type": expanded_classes::DATE_TIME.as_str()}]),
+                    json!([{"@value": whole_seconds(v), "@type": expanded_classes::DATE_TIME.as_str()}]),
                 );
             }
         }
@@ -199,7 +204,7 @@ pub(crate) fn history_row_to_expanded_instance(row: &PgRow, tea: &TeaEntry, sys_
     if let Ok(Some(observed_at)) = row.try_get::<Option<DateTime<Utc>>, _>("observed_at") {
         instance.insert(
             expanded_properties::OBSERVED_AT.as_str().to_string(),
-            json!([{"@value": format_datetime(observed_at), "@type": expanded_classes::DATE_TIME.as_str()}]),
+            json!([{"@value": whole_seconds(observed_at), "@type": expanded_classes::DATE_TIME.as_str()}]),
         );
     }
 
@@ -208,7 +213,7 @@ pub(crate) fn history_row_to_expanded_instance(row: &PgRow, tea: &TeaEntry, sys_
     {
         instance.insert(
             expanded_properties::CREATED_AT.as_str().to_string(),
-            json!([{"@value": format_datetime(time), "@type": expanded_classes::DATE_TIME.as_str()}]),
+            json!([{"@value": whole_seconds(time), "@type": expanded_classes::DATE_TIME.as_str()}]),
         );
     }
 
@@ -236,39 +241,11 @@ pub(crate) fn history_row_to_expanded_instance(row: &PgRow, tea: &TeaEntry, sys_
 /// For DateTime values, reads from the timestamptz column.
 /// For numeric-compatible types (Number, Boolean, Object/Array), reads the float column.
 /// Returns null for types where min/max is not applicable (Uri, Geometry).
-pub(crate) fn extract_typed_agg(row: &PgRow, value_type: ValueType, num_col: &str, str_col: &str, dt_col: &str) -> Value {
+pub fn extract_typed_agg(row: &PgRow, value_type: ValueType, num_col: &str, str_col: &str, dt_col: &str) -> Value {
     match value_type {
         ValueType::String => row.try_get::<String, _>(str_col).map_or(Value::Null, |v| json!(v)),
-        ValueType::DateTime => row.try_get::<DateTime<Utc>, _>(dt_col).map_or(Value::Null, |dt| json!(format_datetime(dt))),
+        ValueType::DateTime => row.try_get::<DateTime<Utc>, _>(dt_col).map_or(Value::Null, |dt| json!(whole_seconds(dt))),
         ValueType::Number | ValueType::Boolean | ValueType::Object => row.try_get::<f64, _>(num_col).map_or(Value::Null, |v| json!(v)),
         ValueType::Uri | ValueType::Geometry => Value::Null,
-    }
-}
-
-fn expand_geojson(geojson: &Value) -> Value {
-    let Some(obj) = geojson.as_object() else {
-        return geojson.clone();
-    };
-
-    let geo_type = obj.get("type").and_then(|v| v.as_str()).unwrap_or("Point");
-    let coordinates = obj.get("coordinates").cloned().unwrap_or(json!([]));
-    let expanded_coords = expand_coordinates(&coordinates);
-
-    json!({
-        "@type": [format!("{}{}", prefix::GEOJSON.as_str(), geo_type)],
-        format!("{}coordinates", prefix::GEOJSON.as_str()): [{"@list": expanded_coords}]
-    })
-}
-
-fn expand_coordinates(value: &Value) -> Value {
-    match value {
-        Value::Array(arr) => {
-            if arr.first().is_some_and(|v| v.is_number()) {
-                Value::Array(arr.iter().map(|v| json!({"@value": v})).collect())
-            } else {
-                Value::Array(arr.iter().map(|v| json!({"@list": expand_coordinates(v)})).collect())
-            }
-        }
-        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) | Value::Object(_) => json!({"@value": value}),
     }
 }
