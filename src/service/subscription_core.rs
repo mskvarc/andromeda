@@ -6,9 +6,13 @@ use crate::{
     jsonld::{ContextSpec, JsonLdEngine, term_expansion::ContextualExpander},
     repository::subscription_store::params::SubscriptionFields,
 };
-use andromeda_ngsi_ld_model::subscription::Subscription;
-use andromeda_ngsi_ld_query::filter::{expansion::expand_q_expr, expression::Expr, parser, predicate::Predicate, serialize};
+use andromeda_ngsi_ld_model::subscription::{EntitySelector, Subscription};
+use andromeda_ngsi_ld_query::{
+    filter::{expansion::expand_q_expr, expression::Expr, parser, predicate::Predicate, serialize},
+    scope::query::ScopeQuery,
+};
 use chrono::Utc;
+use serde::Deserialize;
 use serde_json::Value;
 use tracing::warn;
 
@@ -422,6 +426,36 @@ pub fn extract_create_fields<'a>(
         jsonld_context: payload.get("jsonldContext").and_then(|v| v.as_str()),
         local_only: payload.get("localOnly").and_then(|v| v.as_bool()).unwrap_or(false),
     }
+}
+
+/// Reject a subscription whose stored form this build could not read back.
+///
+/// Every filter and selector member of the resource is a parsed type, so a row
+/// a write produces has to satisfy the same grammars the read applies. Checking
+/// it here makes a bad value a 400 on the request that introduced it; without
+/// it the write succeeds against columns that are plain text and JSON, and the
+/// failure surfaces later as a 500 on a read of a row nobody can now attribute
+/// to a request.
+///
+/// This is the boundary rejection clause 5.5.2 requires for `q` (4.9),
+/// `scopeQ` (4.18), `csf` (4.13) and an `EntitySelector`'s `id`, `idPattern`
+/// and `type` (5.2.11).
+pub fn validate_persisted_shape(fields: &SubscriptionFields<'_>) -> Result<(), AndromedaError> {
+    if let Some(entities) = fields.entities {
+        Vec::<EntitySelector>::deserialize(entities).map_err(|e| AndromedaError::subscription_validation(format!("Invalid 'entities': {e}")))?;
+    }
+    if let Some(q) = fields.q {
+        q.parse::<Expr>()
+            .map_err(|e| AndromedaError::subscription_validation(format!("Invalid 'q': {e}")))?;
+    }
+    if let Some(scope_q) = fields.scope_q {
+        ScopeQuery::parse(scope_q).map_err(|e| AndromedaError::subscription_validation(format!("Invalid 'scopeQ': {e}")))?;
+    }
+    if let Some(csf) = fields.csf {
+        csf.parse::<Expr>()
+            .map_err(|e| AndromedaError::subscription_validation(format!("Invalid 'csf': {e}")))?;
+    }
+    Ok(())
 }
 
 /// Owned intermediate values produced by merging an update fragment with an existing subscription.

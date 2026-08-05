@@ -21,23 +21,47 @@ pub fn serialize(expr: &Expr) -> String {
 /// Write the boolean structure of an expression.
 fn write_expr(buf: &mut String, expr: &Expr) {
     match expr {
-        Expr::And(terms) => {
-            for (i, term) in terms.iter().enumerate() {
-                if i > 0 {
-                    buf.push(';');
-                }
-                write_expr(buf, term);
-            }
-        }
-        Expr::Or(terms) => {
-            for (i, term) in terms.iter().enumerate() {
-                if i > 0 {
-                    buf.push('|');
-                }
-                write_expr(buf, term);
-            }
-        }
+        Expr::And(terms) => write_terms(buf, terms, ';'),
+        Expr::Or(terms) => write_terms(buf, terms, '|'),
         Expr::Pred(pred) => write_predicate(buf, pred),
+    }
+}
+
+/// Write the operands of one boolean node, parenthesising any child the
+/// grammar would otherwise re-associate.
+///
+/// Clause 4.9 makes `;` bind tighter than `|` and provides `QueryTermAssoc` —
+/// a parenthesised group — as the only way to override that. A child therefore
+/// needs its own parentheses unless the default precedence already reproduces
+/// it, which is true in exactly one case: a conjunction directly inside a
+/// disjunction. Without this, `(a|b);c` rendered as `a|b;c` and read back as
+/// `a|(b;c)`, so a stored filter changed meaning the first time it was
+/// re-serialised.
+fn write_terms(buf: &mut String, terms: &[Expr], separator: char) {
+    for (index, term) in terms.iter().enumerate() {
+        if index > 0 {
+            buf.push(separator);
+        }
+        if needs_parentheses(term, separator) {
+            buf.push('(');
+            write_expr(buf, term);
+            buf.push(')');
+        } else {
+            write_expr(buf, term);
+        }
+    }
+}
+
+/// Whether a child of a node written with `separator` has to be parenthesised.
+const fn needs_parentheses(term: &Expr, separator: char) -> bool {
+    match term {
+        // A leaf binds tighter than every operator.
+        Expr::Pred(_) => false,
+        // `;` binds tighter than `|`, so a conjunction inside a disjunction
+        // reads back unchanged. Every other pairing — including one operator
+        // nested inside itself, which would otherwise flatten — does not.
+        Expr::And(_) => separator == ';',
+        Expr::Or(_) => true,
     }
 }
 
@@ -204,6 +228,31 @@ mod tests {
             pretty_assertions::assert_eq!(rendered, shape, "serialisation of {shape}");
             let reparsed = parse(&rendered).unwrap_or_else(|error| unreachable!("{rendered} must reparse: {error}"));
             pretty_assertions::assert_eq!(reparsed, parsed, "round trip of {shape}");
+        }
+    }
+
+    /// Clause 4.9's `QueryTermAssoc` is the only way to override the default
+    /// precedence, so a group the client wrote has to come back as a group. A
+    /// stored subscription is re-serialised whenever it is read back or
+    /// updated, and this used to drop the parentheses: `(a|b);c` became
+    /// `a|b;c`, which is `a|(b;c)`.
+    #[test]
+    fn an_explicit_group_survives_the_round_trip() {
+        let shapes = [
+            ("(a|b);c", "(a|b);c"),
+            ("a;(b|c)", "a;(b|c)"),
+            ("((a|b);c)|d", "(a|b);c|d"),
+            ("(a;b)|c", "a;b|c"),
+            ("a|b;c", "a|b;c"),
+            ("(a|b)|c", "(a|b)|c"),
+            ("(a;b);c", "(a;b);c"),
+        ];
+        for (input, expected) in shapes {
+            let parsed = parse(input).unwrap_or_else(|error| unreachable!("{input} must parse: {error}"));
+            let rendered = serialize(&parsed);
+            pretty_assertions::assert_eq!(rendered, expected, "serialisation of {input}");
+            let reparsed = parse(&rendered).unwrap_or_else(|error| unreachable!("{rendered} must reparse: {error}"));
+            pretty_assertions::assert_eq!(reparsed, parsed, "round trip of {input}");
         }
     }
 

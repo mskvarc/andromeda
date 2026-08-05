@@ -29,6 +29,15 @@ use crate::service::{
 
 const INTERVAL_NOTIFICATION_CONCURRENCY: usize = 20;
 
+/// Rows read per round trip while a periodic notification assembles its
+/// candidate set.
+///
+/// A selector whose type is a boolean expression cannot be pushed into a
+/// `WHERE`, so the broker reads every entity in the tenant and decides in
+/// memory. Reading that in pages bounds one round trip, and discarding
+/// non-matching rows as each page arrives is what bounds what is held.
+const INTERVAL_ENTITY_PAGE: u16 = 500;
+
 pub struct IntervalWorker {
     sub_repo: SubscriptionRepository,
     entity_repo: EntityRepository,
@@ -189,55 +198,60 @@ impl IntervalWorker {
     }
 
     async fn fetch_matching_entities(&self, sub: &Subscription) -> Result<Vec<Value>, crate::core::error::AndromedaError> {
+        let Some(selectors) = sub.selection.entities.as_ref() else {
+            // No entity selectors — every entity qualifies.
+            return self.collect_pages(None, |_| true).await;
+        };
+
         let mut all_entities = Vec::new();
-
-        if let Some(ref selectors) = sub.selection.entities {
-            for selector in selectors {
-                // A by-type lookup takes one type, so only a leaf selector can
-                // be pushed down; a boolean expression reads the candidates and
-                // is applied in memory. Passing the expression text as a type
-                // name, which is what happened before it was parsed, matched
-                // nothing at all.
-                let entities = match selector.type_.as_single_type() {
-                    Some(type_iri) => self.entity_repo.get_entities_by_type(type_iri, None, None).await?,
-                    None => self.entity_repo.get_all_entities(None, None).await?,
-                };
-
-                for entity in entities {
-                    if selector.type_.as_single_type().is_none() && !selector.type_.matches(&entity_types(&entity)) {
-                        continue;
+        for selector in selectors {
+            // A by-type lookup takes one type, so only a leaf selector can be
+            // pushed down; a boolean expression reads every entity and is
+            // applied in memory. Passing the expression text as a type name,
+            // which is what happened before it was parsed, matched nothing at
+            // all.
+            let single_type = selector.type_.as_single_type();
+            let matched = self
+                .collect_pages(single_type, |entity| {
+                    if single_type.is_none() && !selector.type_.matches(&entity_types(entity)) {
+                        return false;
                     }
-
-                    // Apply id / idPattern filtering
-                    let entity_id = entity
-                        .as_array()
-                        .and_then(|arr| arr.first())
-                        .or(Some(&entity))
-                        .and_then(|e| e.get("@id"))
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("");
-
-                    if let Some(ref id) = selector.id
-                        && entity_id != id.to_string()
+                    let entity_id = entity_id_of(entity);
+                    if let Some(id) = selector.id.as_ref()
+                        && entity_id != id.as_ref()
                     {
-                        continue;
+                        return false;
                     }
-
-                    if let Some(ref pattern) = selector.id_pattern
-                        && !pattern.is_match(entity_id)
-                    {
-                        continue;
-                    }
-
-                    all_entities.push(entity);
-                }
-            }
-        } else {
-            // No entity selectors — all entities
-            all_entities = self.entity_repo.get_all_entities(None, None).await?;
+                    selector.id_pattern.as_ref().is_none_or(|pattern| pattern.is_match(entity_id))
+                })
+                .await?;
+            all_entities.extend(matched);
         }
 
         Ok(all_entities)
+    }
+
+    /// Read entities a page at a time, keeping only those `keep` accepts.
+    ///
+    /// `type_iri` narrows the read to one entity type when the selector names
+    /// exactly one; otherwise every entity is a candidate and the predicate is
+    /// the only filter. See [`INTERVAL_ENTITY_PAGE`] for why this pages.
+    async fn collect_pages(&self, type_iri: Option<&str>, mut keep: impl FnMut(&Value) -> bool) -> Result<Vec<Value>, crate::core::error::AndromedaError> {
+        let limit = i64::from(INTERVAL_ENTITY_PAGE);
+        let mut kept = Vec::new();
+        let mut offset = 0_i64;
+        loop {
+            let page = match type_iri {
+                Some(iri) => self.entity_repo.get_entities_by_type(iri, Some(limit), Some(offset)).await?,
+                None => self.entity_repo.get_all_entities(Some(limit), Some(offset)).await?,
+            };
+            let exhausted = page.len() < usize::from(INTERVAL_ENTITY_PAGE);
+            kept.extend(page.into_iter().filter(|entity| keep(entity)));
+            if exhausted {
+                return Ok(kept);
+            }
+            offset += limit;
+        }
     }
 
     async fn prepare_notification_entities(&self, sub: &Subscription, entities: Vec<Value>) -> Result<Vec<Value>, crate::core::error::AndromedaError> {
@@ -312,17 +326,29 @@ impl IntervalWorker {
     }
 }
 
-/// The expanded type IRIs an entity payload declares.
-fn entity_types(entity: &Value) -> Vec<&str> {
-    let node = match entity {
+/// The node of an expanded entity payload, which the store hands back either
+/// bare or wrapped in a one-element array.
+fn entity_node(entity: &Value) -> Option<&Value> {
+    match entity {
         Value::Array(arr) => arr.first(),
         object @ Value::Object(_) => Some(object),
         Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => None,
-    };
-    node.and_then(|node| node.get("@type"))
+    }
+}
+
+/// The expanded type IRIs an entity payload declares.
+fn entity_types(entity: &Value) -> Vec<&str> {
+    entity_node(entity)
+        .and_then(|node| node.get("@type"))
         .and_then(Value::as_array)
         .map(|types| types.iter().filter_map(Value::as_str).collect())
         .unwrap_or_default()
+}
+
+/// The `@id` an entity payload carries, or the empty string when it carries
+/// none — which no selector id or pattern matches.
+fn entity_id_of(entity: &Value) -> &str {
+    entity_node(entity).and_then(|node| node.get("@id")).and_then(Value::as_str).unwrap_or_default()
 }
 
 fn extract_entity_id(entity: &Value) -> Option<String> {

@@ -145,6 +145,7 @@ where
         };
 
         let fields = subscription_core::extract_create_fields(&payload, &watched_attributes_vec, &notification_trigger_vec, &dataset_id_vec);
+        subscription_core::validate_persisted_shape(&fields)?;
 
         let status = compute_updated_status(
             SubscriptionStatus::Active,
@@ -228,6 +229,7 @@ where
 
         let merged = subscription_core::merge_update_fields(&payload, &existing, &existing_value, self.variant.use_entity_sub_merge_mode())?;
         let fields = merged.to_fields();
+        subscription_core::validate_persisted_shape(&fields)?;
 
         let status = compute_updated_status(
             existing.lifecycle.status,

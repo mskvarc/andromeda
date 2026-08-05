@@ -51,16 +51,6 @@ impl TimeInterval {
         }
     }
 
-    /// The clause 4.11 relation this interval was expressed with, if any.
-    pub const fn timerel(&self) -> Option<TimeRel> {
-        match self {
-            TimeInterval::Unbounded => None,
-            TimeInterval::Before(_) => Some(TimeRel::Before),
-            TimeInterval::After(_) => Some(TimeRel::After),
-            TimeInterval::Between { .. } => Some(TimeRel::Between),
-        }
-    }
-
     /// The reference instant, which every bounded interval carries.
     pub const fn reference(&self) -> Option<&DateTime<Utc>> {
         match self {

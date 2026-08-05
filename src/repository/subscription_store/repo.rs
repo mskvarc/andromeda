@@ -94,13 +94,7 @@ macro_rules! impl_subscription_store {
                 .fetch_all(&self.pool)
                 .await?;
 
-                let subscriptions = pg_rows
-                    .iter()
-                    .map(|pg| {
-                        let row = $crate::repository::subscription_store::mapper::row_from_pg(pg, $hdi)?;
-                        $crate::repository::subscription_store::mapper::row_to_subscription(row)
-                    })
-                    .collect::<Result<Vec<_>, _>>()?;
+                let subscriptions = $crate::repository::subscription_store::mapper::rows_to_subscriptions(&pg_rows, $hdi)?;
 
                 Ok((subscriptions, count_row.0))
             }
@@ -137,13 +131,7 @@ macro_rules! impl_subscription_store {
                 .fetch_all(&self.pool)
                 .await?;
 
-                pg_rows
-                    .iter()
-                    .map(|pg| {
-                        let row = $crate::repository::subscription_store::mapper::row_from_pg(pg, $hdi)?;
-                        $crate::repository::subscription_store::mapper::row_to_subscription(row)
-                    })
-                    .collect::<Result<Vec<_>, _>>()
+                $crate::repository::subscription_store::mapper::rows_to_subscriptions(&pg_rows, $hdi)
             }
 
             async fn claim_notification_slot(
@@ -260,13 +248,7 @@ macro_rules! impl_subscription_store {
                 .fetch_all(&self.pool)
                 .await?;
 
-                pg_rows
-                    .iter()
-                    .map(|pg| {
-                        let row = $crate::repository::subscription_store::mapper::row_from_pg(pg, $hdi)?;
-                        $crate::repository::subscription_store::mapper::row_to_subscription(row)
-                    })
-                    .collect::<Result<Vec<_>, _>>()
+                $crate::repository::subscription_store::mapper::rows_to_subscriptions(&pg_rows, $hdi)
             }
         }
     };

@@ -554,28 +554,29 @@ impl From<AttributeListIdParseError> for AndromedaError {
 
 impl From<ParameterError> for AndromedaError {
     fn from(err: ParameterError) -> AndromedaError {
-        // The language that owns a value already categorises its own rejection,
-        // so that arm delegates rather than restating the mapping.
-        let ParameterError::Query(query) = err else {
-            let kind = match &err {
-                // Structurally malformed: the value names nothing the broker has.
-                ParameterError::OptionsInvalid(_) | ParameterError::FormatInvalid(_) => ErrorKind::MalformedRequest(err.to_string()),
-                // Well-formed, but not a request the broker can answer.
-                ParameterError::IdPatternEmpty
-                | ParameterError::OrderGeometryInvalid(_)
-                | ParameterError::OrderGeometryCollection
-                | ParameterError::OrderFromInvalid { .. }
-                | ParameterError::DropKeepExclusive
-                | ParameterError::TimerelInvalid(_)
-                | ParameterError::TimerelTimeatRequired
-                | ParameterError::AggrMethodInvalid(_)
-                | ParameterError::SelectorRequired(_)
-                | ParameterError::AggrMethodsRequired => ErrorKind::QueryValidation(err.to_string()),
-                ParameterError::Query(_) => unreachable!("the Query arm is bound above"),
-            };
-            return kind.into();
+        // Rendered before the match so every arm can take `err` by value and
+        // still report it; borrowing it inside the match would keep the
+        // delegating arm from moving the wrapped `QueryError` out.
+        let message = err.to_string();
+        let kind = match err {
+            // The language that owns a value already categorises its own
+            // rejection, so this arm delegates rather than restating it.
+            ParameterError::Query(query) => return AndromedaError::from(query),
+            // Structurally malformed: the value names nothing the broker has.
+            ParameterError::OptionsInvalid(_) | ParameterError::FormatInvalid(_) => ErrorKind::MalformedRequest(message),
+            // Well-formed, but not a request the broker can answer.
+            ParameterError::IdPatternEmpty
+            | ParameterError::OrderGeometryInvalid(_)
+            | ParameterError::OrderGeometryCollection
+            | ParameterError::OrderFromInvalid { .. }
+            | ParameterError::DropKeepExclusive
+            | ParameterError::TimerelInvalid(_)
+            | ParameterError::TimerelTimeatRequired
+            | ParameterError::AggrMethodInvalid(_)
+            | ParameterError::SelectorRequired(_)
+            | ParameterError::AggrMethodsRequired => ErrorKind::QueryValidation(message),
         };
-        AndromedaError::from(query)
+        kind.into()
     }
 }
 

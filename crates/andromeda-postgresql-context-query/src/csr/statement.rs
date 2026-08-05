@@ -127,9 +127,14 @@ fn build_csr_conditions(query: &CompiledCsrQuery) -> Result<Condition, RenderErr
             TimeProp::Observed | TimeProp::Deleted => "observation_interval",
         };
 
+        // Clause 5.10.2: a registration that declares no interval may still
+        // serve the window, which is why every bounded arm below disjoins
+        // `IS NULL` rather than requiring the column to be present.
         match temporal.interval {
-            // Clause 5.10.2: a registration that declares no interval may still
-            // serve the window, so a NULL column matches every relation.
+            // An unbounded filter narrows nothing, so it emits no predicate at
+            // all. Discovery cannot reach this today — a temporal filter is
+            // only built when `timerel` and `timeAt` are both present — but the
+            // interval type admits it and the arm says what it would mean.
             TimeInterval::Unbounded => {}
             TimeInterval::Before(instant) => {
                 condition = condition.add(SeaExpr::cust_with_values(

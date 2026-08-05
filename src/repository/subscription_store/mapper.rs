@@ -23,6 +23,7 @@ use andromeda_ngsi_ld_query::scope::query::ScopeQuery;
 use chrono::{DateTime, Utc};
 use langtag::LangTagBuf;
 use sqlx::Row;
+use tracing::warn;
 use url::Url;
 
 /// Read a `SubscriptionRow` from a `PgRow`, honouring [`DatasetIdPresence`].
@@ -71,6 +72,35 @@ pub fn row_from_pg(row: &sqlx::postgres::PgRow, dataset_id_presence: DatasetIdPr
         created_at: row.get("created_at"),
         modified_at: row.get("modified_at"),
     })
+}
+
+/// Map every row that maps, and omit the ones that do not.
+///
+/// The resource holds its filters and selectors parsed, so a row written by an
+/// older build — or edited by hand — can carry a value this build's grammars
+/// reject. Failing the whole read for one of them takes every other
+/// subscription with it: a listing becomes a 500, and `list_active` empties the
+/// matching cache so no subscription fires at all. A multi-row read therefore
+/// reports what it can read and logs what it cannot, while
+/// [`row_to_subscription`] keeps its hard error for `get`, where the client
+/// named that one subscription and has to be told it is unreadable.
+///
+/// A listing's total still counts the stored rows, so it can exceed the number
+/// returned. That is the honest figure: the rows are there, this build cannot
+/// read them.
+pub fn rows_to_subscriptions(rows: &[sqlx::postgres::PgRow], dataset_id_presence: DatasetIdPresence) -> Result<Vec<Subscription>, AndromedaError> {
+    let mut subscriptions = Vec::with_capacity(rows.len());
+    for pg_row in rows {
+        let row = row_from_pg(pg_row, dataset_id_presence)?;
+        // clone: the identifier is needed for the log after `row` is consumed,
+        // and it is the only thing that names the row that failed
+        let id = row.id.clone();
+        match row_to_subscription(row) {
+            Ok(subscription) => subscriptions.push(subscription),
+            Err(error) => warn!(subscription_id = %id, %error, "subscription row could not be read and was omitted"),
+        }
+    }
+    Ok(subscriptions)
 }
 
 /// Convert a persistence-shaped `SubscriptionRow` into the domain [`Subscription`].

@@ -30,42 +30,23 @@ pub mod relation;
 mod boundary {
     /// The layer rule this crate is on the inside of.
     ///
-    /// A crate asserts its own manifest rather than a central test asserting
-    /// everyone's: the failure then names the crate that broke the rule, and a
-    /// crate added to the workspace cannot be forgotten by a table it was never
-    /// added to.
-    ///
+    /// Asserted here rather than by a central test so the failure names the
+    /// crate that broke the rule, and so a crate added to the workspace cannot
+    /// be forgotten by a table it was never added to. The rule itself is read
+    /// once, in `andromeda-layer-guard`, which every crate carries as a
+    /// dev-dependency and which declares nothing of its own.
     /// This crate is a leaf: it names no other crate in the workspace, because
     /// every geo-aware layer depends on it and an upward edge from here reaches
     /// all of them.
     #[test]
     fn this_crate_declares_only_what_its_layer_permits() {
-        /// Third-party crates this layer must never declare.
+        /// Third-party crates this layer must never ship.
         const FORBIDDEN: &[&str] = &["sqlx", "sea-query", "geozero", "bytes", "axum", "reqwest", "confique", "clap", "tokio"];
-        /// In-workspace crates this one may name. Anything else is an upward or
-        /// sideways edge.
-        const ALLOWED_IN_WORKSPACE: &[&str] = &[];
+        /// In-workspace crates this one may name, in any dependency table.
+        /// Anything else is an upward or sideways edge.
+        const ALLOWED_IN_WORKSPACE: &[&str] = &["andromeda-layer-guard"];
 
-        let manifest = include_str!("../Cargo.toml");
-        let dependencies: Vec<&str> = manifest
-            .split("[dependencies]")
-            .nth(1)
-            .unwrap_or_else(|| unreachable!("manifest has a [dependencies] table"))
-            .split("\n[")
-            .next()
-            .unwrap_or_else(|| unreachable!("dependency table is terminated"))
-            .lines()
-            .map(str::trim)
-            .filter(|line| !line.is_empty() && !line.starts_with('#'))
-            .collect();
-
-        for line in &dependencies {
-            let name = line.split(['=', '.', ' ']).next().unwrap_or_default();
-            assert!(!FORBIDDEN.contains(&name), "this crate must not depend on {name}");
-            if name.starts_with("andromeda-") {
-                assert!(ALLOWED_IN_WORKSPACE.contains(&name), "{name} is not an edge this crate's layer permits");
-            }
-        }
+        andromeda_layer_guard::manifest::assert_layer(env!("CARGO_MANIFEST_DIR"), FORBIDDEN, ALLOWED_IN_WORKSPACE);
     }
 }
 
@@ -75,44 +56,9 @@ mod dialect {
     ///
     /// The manifest guard above reads dependency names, which is exactly what a
     /// dialect emitted as a string constant slips past: a specification crate
-    /// can spell an entire SQL predicate without declaring `sea-query`. Six
-    /// items did — a comparison operator, a POSIX regex operator, an `AND`
-    /// composer, a JSONB cast, and two column mappings on a resource — and
-    /// nothing in the workspace could see them.
+    /// can spell an entire SQL predicate without declaring `sea-query`.
     #[test]
     fn no_source_file_in_this_crate_emits_a_storage_dialect() {
-        /// Fragments that only ever appear in a rendering, never in a grammar.
-        const DIALECT: &[&str] = &[
-            "::numeric",
-            "::boolean",
-            "::timestamptz",
-            "::lquery",
-            "::geography",
-            "ST_",
-            "jsonb_",
-            "= ANY(",
-            "SELECT ",
-        ];
-
-        for (path, source) in SOURCES {
-            // Comments may name the counterpart a backend renders — that is how
-            // two readings of one clause stay comparable. Only code is scanned.
-            let code: String = source.lines().filter(|line| !line.trim_start().starts_with("//")).collect();
-            for fragment in DIALECT {
-                assert!(
-                    !code.contains(fragment),
-                    "{path} emits '{fragment}'; how a value is spelled in a store belongs to that backend"
-                );
-            }
-        }
+        andromeda_layer_guard::dialect::assert_no_dialect(env!("CARGO_MANIFEST_DIR"));
     }
-
-    /// Every source file in this crate, so a new one cannot be added outside
-    /// the guard without the list saying so.
-    const SOURCES: &[(&str, &str)] = &[
-        ("distance.rs", include_str!("distance.rs")),
-        ("geo_rel.rs", include_str!("geo_rel.rs")),
-        ("geometry.rs", include_str!("geometry.rs")),
-        ("relation.rs", include_str!("relation.rs")),
-    ];
 }

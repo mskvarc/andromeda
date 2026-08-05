@@ -1,0 +1,247 @@
+//! Which crates a layer may name, read from a crate's own manifest.
+
+use std::{fs, path::Path};
+
+/// Which dependency table a declaration came from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DependencyKind {
+    /// `[dependencies]` — what the crate itself is built against.
+    Normal,
+    /// `[build-dependencies]` — what its build script is built against.
+    Build,
+    /// `[dev-dependencies]` — what its tests, benches and examples are built
+    /// against.
+    Development,
+}
+
+impl DependencyKind {
+    /// The table header that opens this kind.
+    const fn table(self) -> &'static str {
+        match self {
+            DependencyKind::Normal => "dependencies",
+            DependencyKind::Build => "build-dependencies",
+            DependencyKind::Development => "dev-dependencies",
+        }
+    }
+
+    /// The kind a table header names, if it names one.
+    fn of_table(table: &str) -> Option<DependencyKind> {
+        [DependencyKind::Normal, DependencyKind::Build, DependencyKind::Development]
+            .into_iter()
+            .find(|kind| kind.table() == table)
+    }
+
+    /// Whether a forbidden third-party crate may appear under this kind.
+    ///
+    /// A driver, a transport or a runtime under `[dependencies]` puts every
+    /// layer above the crate above that dependency, which is the coupling the
+    /// split exists to remove; the same is true of a build script, whose output
+    /// the crate is compiled from. Tests are different: a grammar crate whose
+    /// tests are `async` legitimately declares a runtime, and forbidding that
+    /// would say nothing about what the crate ships.
+    const fn admits_forbidden(self) -> bool {
+        matches!(self, DependencyKind::Development)
+    }
+}
+
+/// Assert that a crate declares only what its layer permits.
+///
+/// `forbidden` is the third-party denylist, applied to everything the crate
+/// ships. `allowed_in_workspace` is the positive list of in-workspace edges,
+/// applied to **every** table including `[dev-dependencies]` — a layering edge
+/// is a layering edge whichever table declares it, and reading only
+/// `[dependencies]` is precisely how `andromeda-ngsi-ld-query` depending on the
+/// data model stayed invisible while a dev-dependency held the other end of it.
+///
+/// # Panics
+///
+/// Panics when the crate declares a forbidden dependency, an in-workspace edge
+/// its layer does not permit, or when its manifest cannot be read.
+pub fn assert_layer(crate_root: &str, forbidden: &[&str], allowed_in_workspace: &[&str]) {
+    let path = Path::new(crate_root).join("Cargo.toml");
+    let manifest = fs::read_to_string(&path).unwrap_or_else(|error| unreachable!("{} is readable: {error}", path.display()));
+    assert_permitted(&declarations(&manifest), forbidden, allowed_in_workspace);
+}
+
+/// The rule itself, over declarations already read.
+///
+/// Separate from [`assert_layer`] so that what the rule rejects can be
+/// exercised without a manifest on disk — a guard nothing has ever seen fail is
+/// a guard nobody knows works.
+fn assert_permitted(declared: &[(DependencyKind, &str)], forbidden: &[&str], allowed_in_workspace: &[&str]) {
+    for (kind, name) in declared {
+        assert!(kind.admits_forbidden() || !forbidden.contains(name), "this crate must not depend on {name}");
+        if name.starts_with("andromeda-") {
+            assert!(
+                allowed_in_workspace.contains(name),
+                "{name} is not an edge this crate's layer permits ({kind:?} dependency)"
+            );
+        }
+    }
+}
+
+/// Every dependency a manifest declares, paired with the table it came from.
+///
+/// A deliberately small reader rather than a TOML parser, covering the three
+/// shapes Cargo manifests take: `name = …` inside a dependency table,
+/// `[dependencies.name]`, and a dependency table qualified by a `[target.…]`
+/// prefix. Anything it does not recognise yields no declaration, so a shape it
+/// cannot read fails open — which is why the crate that declares an edge also
+/// carries the test, where the omission is visible.
+fn declarations(manifest: &str) -> Vec<(DependencyKind, &str)> {
+    let mut declared = Vec::new();
+    let mut section: Option<DependencyKind> = None;
+
+    for line in manifest.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+
+        let Some(header) = line.strip_prefix('[').and_then(|rest| rest.strip_suffix(']')) else {
+            if let Some(kind) = section {
+                let name = line.split(['=', '.', ' ']).next().unwrap_or_default();
+                if !name.is_empty() {
+                    declared.push((kind, name));
+                }
+            }
+            continue;
+        };
+
+        // A header always closes the previous table, whether or not it opens a
+        // dependency one.
+        section = None;
+        let mut segments = header.split('.');
+        let first = segments.next().unwrap_or_default();
+        let rest: Vec<&str> = segments.collect();
+
+        match (DependencyKind::of_table(first), rest.as_slice()) {
+            // `[dependencies.serde]` names one dependency and opens a table of
+            // its own keys, none of which is a dependency name.
+            (Some(kind), [name]) => declared.push((kind, name.trim_matches('"'))),
+            // `[dependencies]`
+            (Some(kind), []) => section = Some(kind),
+            // `[target.'cfg(unix)'.dependencies]`
+            (_, segments) => {
+                if let Some(last) = segments.last() {
+                    section = DependencyKind::of_table(last);
+                }
+            }
+        }
+    }
+
+    declared
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::manifest::{DependencyKind, assert_permitted, declarations};
+
+    /// The layer a specification crate sits at, for the rejection tests below.
+    const FORBIDDEN: &[&str] = &["sqlx", "sea-query", "tokio"];
+    /// The only in-workspace edge that layer permits, for the same tests.
+    const ALLOWED: &[&str] = &["andromeda-ngsi-ld-lexicon"];
+
+    #[test]
+    #[should_panic(expected = "must not depend on sqlx")]
+    fn a_forbidden_dependency_is_rejected() {
+        assert_permitted(&[(DependencyKind::Normal, "sqlx")], FORBIDDEN, ALLOWED);
+    }
+
+    #[test]
+    #[should_panic(expected = "must not depend on sqlx")]
+    fn a_forbidden_build_dependency_is_rejected() {
+        // A build script's dependencies are compiled into what the crate ships.
+        assert_permitted(&[(DependencyKind::Build, "sqlx")], FORBIDDEN, ALLOWED);
+    }
+
+    #[test]
+    fn a_forbidden_crate_is_admitted_as_a_dev_dependency() {
+        // A grammar crate whose tests are async declares a runtime and ships none.
+        assert_permitted(&[(DependencyKind::Development, "tokio")], FORBIDDEN, ALLOWED);
+    }
+
+    #[test]
+    #[should_panic(expected = "andromeda-ngsi-ld-model is not an edge")]
+    fn an_in_workspace_edge_outside_the_allow_list_is_rejected() {
+        assert_permitted(&[(DependencyKind::Normal, "andromeda-ngsi-ld-model")], FORBIDDEN, ALLOWED);
+    }
+
+    #[test]
+    #[should_panic(expected = "andromeda-ngsi-ld-model is not an edge")]
+    fn an_in_workspace_edge_declared_only_for_tests_is_still_an_edge() {
+        // The half the previous reader could not see: the model/query inversion
+        // held one end of itself in a `[dev-dependencies]` table.
+        assert_permitted(&[(DependencyKind::Development, "andromeda-ngsi-ld-model")], FORBIDDEN, ALLOWED);
+    }
+
+    #[test]
+    fn a_permitted_edge_passes_in_every_table() {
+        for kind in [DependencyKind::Normal, DependencyKind::Build, DependencyKind::Development] {
+            assert_permitted(&[(kind, "andromeda-ngsi-ld-lexicon")], FORBIDDEN, ALLOWED);
+        }
+    }
+
+    #[test]
+    fn every_dependency_table_is_read_and_attributed_to_its_kind() {
+        let manifest = "\
+[package]
+name = \"example\"
+
+[dependencies]
+serde = { version = \"1.0.0\" }
+andromeda-ngsi-ld-lexicon.workspace = true
+
+[build-dependencies]
+static-regular-grammar = \"3.0.0\"
+
+[dev-dependencies]
+tokio = { version = \"1.0.0\", features = [\"full\"] }
+
+[lints]
+workspace = true
+";
+        assert_eq!(
+            declarations(manifest),
+            vec![
+                (DependencyKind::Normal, "serde"),
+                (DependencyKind::Normal, "andromeda-ngsi-ld-lexicon"),
+                (DependencyKind::Build, "static-regular-grammar"),
+                (DependencyKind::Development, "tokio"),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_dependency_declared_as_its_own_table_is_read() {
+        // The shape that used to slip past entirely: the reader split on the
+        // literal `[dependencies]`, which `[dependencies.sqlx]` is not.
+        let manifest = "[dependencies.sqlx]\nversion = \"0.8.6\"\n";
+        assert_eq!(declarations(manifest), vec![(DependencyKind::Normal, "sqlx")]);
+    }
+
+    #[test]
+    fn a_target_qualified_dependency_table_is_read() {
+        let manifest = "[target.'cfg(unix)'.dev-dependencies]\nnix = \"0.29.0\"\n";
+        assert_eq!(declarations(manifest), vec![(DependencyKind::Development, "nix")]);
+    }
+
+    #[test]
+    fn a_table_that_is_not_a_dependency_table_declares_nothing() {
+        let manifest = "[package.metadata.docs.rs]\nall-features = true\n";
+        assert!(declarations(manifest).is_empty());
+    }
+
+    #[test]
+    fn a_test_only_runtime_is_not_a_layering_violation_but_a_test_only_edge_is() {
+        // Both halves of the rule the previous reader could not express: a
+        // grammar crate whose tests are async legitimately declares `tokio`,
+        // and a dev-dependency on another workspace crate is still an edge.
+        let declared = declarations("[dev-dependencies]\ntokio = \"1.0.0\"\nandromeda-ngsi-ld-model.workspace = true\n");
+        assert_eq!(
+            declared,
+            vec![(DependencyKind::Development, "tokio"), (DependencyKind::Development, "andromeda-ngsi-ld-model"),]
+        );
+        assert!(declared.iter().all(|(kind, _)| kind.admits_forbidden()));
+    }
+}

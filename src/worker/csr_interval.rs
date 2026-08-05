@@ -199,7 +199,9 @@ fn matches_csr_for_subscription(csr_data: &Value, sub: &Subscription) -> bool {
                         }
                         if let Some(ref id) = sel.id {
                             let ent_id = ent.get("id").and_then(|v| v.as_str()).unwrap_or("");
-                            if ent_id != id.to_string() {
+                            // `AsRef` hands back the identifier's own text; rendering it
+                            // would allocate once per candidate in a matching loop.
+                            if ent_id != id.as_ref() {
                                 return false;
                             }
                         }
