@@ -2,10 +2,9 @@
 
 use crate::{
     core::{config::BulkWriteMode, error::AndromedaError},
-    query::sql::BindValue,
     repository::{
         attribute_names::AttributeNameCache,
-        geometry::{Ewkb, encode_optional},
+        ewkb_binding::geometry_bytes,
         temporal::{
             copy::insert_history_batch_via_copy_in_tx,
             mapper::row_to_tea,
@@ -16,6 +15,7 @@ use crate::{
     },
 };
 use andromeda_domain::temporal::{AttributeNameId, TeaEntry};
+use andromeda_query::sql::bind::BindValue;
 use chrono::{DateTime, Utc};
 use serde_json::Value;
 use sqlx::{
@@ -235,7 +235,7 @@ impl TemporalRepository {
             .bind(params.values.value_number)
             .bind(params.values.value_string)
             .bind(params.values.value_bool)
-            .bind(encode_optional(params.values.value_geo)?)
+            .bind(geometry_bytes(params.values.value_geo)?)
             .bind(params.values.value_object)
             .bind(params.values.value_datetime)
             .bind(params.values.value_uri)
@@ -667,7 +667,7 @@ async fn insert_history_batch_unnest_in_tx(tx: &mut Transaction<'_, Postgres>, e
     let mut value_numbers: Vec<Option<f64>> = Vec::with_capacity(len);
     let mut value_strings: Vec<Option<&str>> = Vec::with_capacity(len);
     let mut value_bools: Vec<Option<bool>> = Vec::with_capacity(len);
-    let mut value_geos: Vec<Option<Ewkb>> = Vec::with_capacity(len);
+    let mut value_geos: Vec<Option<Vec<u8>>> = Vec::with_capacity(len);
     let mut value_objects: Vec<Option<&Value>> = Vec::with_capacity(len);
     let mut value_datetimes: Vec<Option<DateTime<Utc>>> = Vec::with_capacity(len);
     let mut value_uris: Vec<Option<&str>> = Vec::with_capacity(len);
@@ -682,7 +682,7 @@ async fn insert_history_batch_unnest_in_tx(tx: &mut Transaction<'_, Postgres>, e
         value_numbers.push(e.value_number);
         value_strings.push(e.value_string.as_deref());
         value_bools.push(e.value_bool);
-        value_geos.push(encode_optional(e.value_geo.as_ref())?);
+        value_geos.push(geometry_bytes(e.value_geo.as_ref())?);
         value_objects.push(e.value_object.as_ref());
         value_datetimes.push(e.value_datetime);
         value_uris.push(e.value_uri.as_deref());

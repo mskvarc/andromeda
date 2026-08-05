@@ -6,8 +6,9 @@
 //! `q`-filter read path (which must not) resolve through this one cache, so a
 //! tenant holds a single copy of the dictionary rather than one per repository.
 
-use crate::{core::error::AndromedaError, query::sql::q_filter::ResolvedAttributeNames};
-use andromeda_domain::temporal::AttributeNameId;
+use crate::core::error::AndromedaError;
+use andromeda_domain::{attribute::name::AttributeName, temporal::AttributeNameId};
+use andromeda_query::filter::sql::attribute_names::ResolvedAttributeNames;
 use dashmap::DashMap;
 use sqlx::{Row, postgres::PgPool};
 use std::collections::HashMap;
@@ -105,30 +106,42 @@ impl AttributeNameCache {
     ///
     /// Misses are re-queried on every call rather than remembered, so an
     /// attribute becomes visible to `q` filters as soon as it is first written.
-    pub async fn lookup(&self, names: &[String]) -> Result<ResolvedAttributeNames, AndromedaError> {
+    pub async fn lookup(&self, names: &[AttributeName]) -> Result<ResolvedAttributeNames, AndromedaError> {
         if names.is_empty() {
             return Ok(ResolvedAttributeNames::default());
         }
 
-        let mut resolved: Vec<(String, AttributeNameId)> = Vec::with_capacity(names.len());
-        let mut missing: Vec<&str> = Vec::new();
+        let mut resolved: Vec<(AttributeName, AttributeNameId)> = Vec::with_capacity(names.len());
+        let mut missing: Vec<&AttributeName> = Vec::new();
         for name in names {
             match self.ids.get(name.as_str()) {
-                Some(id) => resolved.push((name.clone(), *id)), // clone: the returned map owns its keys
-                None => missing.push(name.as_str()),
+                // clone: the returned map owns its keys; the name is a `CompactString`
+                Some(id) => resolved.push((name.clone(), *id)),
+                None => missing.push(name),
             }
         }
 
         if !missing.is_empty() {
+            let missing_text: Vec<&str> = missing.iter().map(|name| name.as_str()).collect();
             let rows = sqlx::query("SELECT id, name FROM attribute_names WHERE name = ANY($1)")
-                .bind(&missing)
+                .bind(&missing_text)
                 .fetch_all(&self.pool)
                 .await?;
+            // The row's `name` is the text that was bound, so each hit is matched
+            // back to the typed name that produced it rather than reparsed: an
+            // `AttributeName` that reached the dictionary was valid on the way in.
+            let mut ids_by_text: HashMap<String, AttributeNameId> = HashMap::with_capacity(rows.len());
             for row in rows {
                 let name: String = row.get("name");
                 let id = AttributeNameId::from(row.try_get::<i16, _>("id")?);
                 self.ids.insert(name.clone(), id); // clone: cache keeps its own key
-                resolved.push((name, id));
+                ids_by_text.insert(name, id);
+            }
+            for name in missing {
+                if let Some(id) = ids_by_text.get(name.as_str()) {
+                    // clone: as above
+                    resolved.push((name.clone(), *id));
+                }
             }
         }
 
@@ -150,6 +163,11 @@ mod tests {
     /// infallible.
     fn cache() -> AttributeNameCache {
         AttributeNameCache::new(&PgPool::connect_lazy_with(PgConnectOptions::new().host("invalid.invalid").port(1)))
+    }
+
+    /// The one expanded attribute name these tests resolve.
+    fn speed() -> AttributeName {
+        "https://example.com/speed".parse().expect("valid attribute name")
     }
 
     #[tokio::test]
@@ -175,11 +193,7 @@ mod tests {
         let cache = cache();
         cache.ids.insert("https://example.com/speed".to_string(), AttributeNameId::from(7));
         // The pool points nowhere, so this only succeeds if no query is issued.
-        let resolved = cache
-            .lookup(&["https://example.com/speed".to_string()])
-            .await
-            .ok()
-            .and_then(|names| names.get("https://example.com/speed"));
+        let resolved = cache.lookup(&[speed()]).await.ok().and_then(|names| names.get(&speed()));
         assert_eq!(resolved, Some(AttributeNameId::from(7)));
     }
 

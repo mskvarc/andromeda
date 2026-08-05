@@ -17,7 +17,6 @@ use crate::{
     repository::{
         copy::{write_bytea_opt, write_field_count, write_header, write_jsonb, write_text, write_timestamptz_opt, write_trailer},
         entity::params::PreparedEntityColumns,
-        geometry::Ewkb,
     },
 };
 use sqlx::{Executor, Postgres, Transaction};
@@ -90,9 +89,9 @@ fn encode_entities_copy_stream(columns: &PreparedEntityColumns) -> Vec<u8> {
         write_jsonb(&mut buf, &columns.types_json[index]);
         write_jsonb(&mut buf, &columns.scope_paths_json[index]);
         write_jsonb(&mut buf, &columns.payloads[index]);
-        write_bytea_opt(&mut buf, columns.locations[index].as_ref().map(Ewkb::to_vec).as_deref());
-        write_bytea_opt(&mut buf, columns.obs_spaces[index].as_ref().map(Ewkb::to_vec).as_deref());
-        write_bytea_opt(&mut buf, columns.op_spaces[index].as_ref().map(Ewkb::to_vec).as_deref());
+        write_bytea_opt(&mut buf, columns.locations[index].as_deref());
+        write_bytea_opt(&mut buf, columns.obs_spaces[index].as_deref());
+        write_bytea_opt(&mut buf, columns.op_spaces[index].as_deref());
         write_timestamptz_opt(&mut buf, columns.expires_ats[index]);
     }
     write_trailer(&mut buf);
@@ -109,7 +108,7 @@ mod tests {
     #![allow(clippy::expect_used)]
     use super::*;
     use crate::repository::copy::COPY_HEADER_SIGNATURE;
-    use andromeda_domain::geometry::Geometry;
+    use andromeda_geometry::geometry::Geometry;
     use chrono::{TimeZone, Utc};
 
     fn sample_columns() -> PreparedEntityColumns {

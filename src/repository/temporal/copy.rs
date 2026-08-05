@@ -24,7 +24,7 @@ use crate::{
             write_trailer,
             write_uuid,
         },
-        geometry::{Ewkb, encode_optional},
+        ewkb_binding::geometry_bytes,
         temporal::params::HistoryBatchEntry,
     },
 };
@@ -104,7 +104,7 @@ pub(crate) fn encode_history_copy_stream(entries: &[HistoryBatchEntry]) -> Resul
         write_f64_opt(&mut buf, entry.value_number);
         write_text_opt(&mut buf, entry.value_string.as_deref());
         write_bool_opt(&mut buf, entry.value_bool);
-        write_bytea_opt(&mut buf, encode_optional(entry.value_geo.as_ref())?.as_ref().map(Ewkb::to_vec).as_deref());
+        write_bytea_opt(&mut buf, geometry_bytes(entry.value_geo.as_ref())?.as_deref());
         write_jsonb_opt(&mut buf, entry.value_object.as_ref());
         write_timestamptz_opt(&mut buf, entry.value_datetime);
         write_text_opt(&mut buf, entry.value_uri.as_deref());

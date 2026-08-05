@@ -5,9 +5,9 @@ use crate::{
         date_time::{NgsiLdDate, NgsiLdTime},
         expansion::serde_json_value_to_json_value,
     },
-    geometry::Geometry,
     uri::Uri,
 };
+use andromeda_geometry::geometry::Geometry;
 use chrono::{DateTime, SecondsFormat, Utc};
 use jsonld_expandable_core::{JsonValue, ToJsonValue};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};

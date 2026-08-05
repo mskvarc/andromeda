@@ -7,14 +7,14 @@
 
 use crate::{
     core::error::AndromedaError,
-    repository::geometry::Ewkb,
     service::spatial::{
         SpatialKey,
         entity_index::{SpatialEntityIndex, SpatialEntry},
     },
     tenancy::types::TenantRef,
 };
-use andromeda_domain::{geometry::Geometry, vocab};
+use andromeda_domain::vocab;
+use andromeda_geometry::{ewkb::Ewkb, geometry::Geometry};
 use iri_rs::IriBuf;
 use sqlx::PgPool;
 use std::{collections::HashMap, sync::Arc, time::Instant};

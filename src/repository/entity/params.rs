@@ -1,10 +1,8 @@
 //! Repository input parameter types for entity persistence.
 
-use crate::{
-    core::error::AndromedaError,
-    repository::geometry::{Ewkb, encode_optional},
-};
-use andromeda_domain::{entity_type::EntityTypeName, geometry::Geometry};
+use crate::{core::error::AndromedaError, repository::ewkb_binding::geometry_bytes};
+use andromeda_domain::entity_type::EntityTypeName;
+use andromeda_geometry::geometry::Geometry;
 use chrono::{DateTime, Utc};
 use serde_json::Value;
 
@@ -91,11 +89,11 @@ pub struct PreparedEntityColumns {
     /// instead of walking the `serde_json::Value` DOM per row inside sqlx.
     pub payload_json: Vec<String>,
     /// Location EWKB buffers.
-    pub(crate) locations: Vec<Option<Ewkb>>,
+    pub(crate) locations: Vec<Option<Vec<u8>>>,
     /// Observation-space EWKB buffers.
-    pub(crate) obs_spaces: Vec<Option<Ewkb>>,
+    pub(crate) obs_spaces: Vec<Option<Vec<u8>>>,
     /// Operation-space EWKB buffers.
-    pub(crate) op_spaces: Vec<Option<Ewkb>>,
+    pub(crate) op_spaces: Vec<Option<Vec<u8>>>,
     /// Expiration timestamps.
     pub expires_ats: Vec<Option<DateTime<Utc>>>,
 }
@@ -144,9 +142,9 @@ impl PreparedEntityColumns {
         observation_space: Option<&Geometry>,
         operation_space: Option<&Geometry>,
     ) -> Result<(), AndromedaError> {
-        self.locations.push(encode_optional(location)?);
-        self.obs_spaces.push(encode_optional(observation_space)?);
-        self.op_spaces.push(encode_optional(operation_space)?);
+        self.locations.push(geometry_bytes(location)?);
+        self.obs_spaces.push(geometry_bytes(observation_space)?);
+        self.op_spaces.push(geometry_bytes(operation_space)?);
         Ok(())
     }
 }

@@ -6,14 +6,13 @@
 //! persistence call is made. Geometries leave here in the domain's GeoJSON
 //! form; the store encodes them to EWKB at the bind.
 
-use crate::{query::sql::scope_to_ltree, repository::entity::params::EntitySaveParams};
-use andromeda_domain::{
-    expanded::{
-        entity_member::{extract_expires_at, extract_scopes, extract_types},
-        geo_property::{extract_location_geometry, extract_observation_space_geometry, extract_operation_space_geometry},
-    },
-    geometry::Geometry,
+use crate::repository::entity::params::EntitySaveParams;
+use andromeda_domain::expanded::{
+    entity_member::{extract_expires_at, extract_scopes, extract_types},
+    geo_property::{extract_location_geometry, extract_observation_space_geometry, extract_operation_space_geometry},
 };
+use andromeda_geometry::geometry::Geometry;
+use andromeda_query::scope::ltree::scope_to_ltree;
 use serde_json::Value;
 
 /// Build [`EntitySaveParams`] for `save()` from an expanded JSON-LD payload.
@@ -23,7 +22,7 @@ use serde_json::Value;
 /// without touching the payload.
 pub fn build_save_params<'a>(id: &'a str, entity: &'a Value) -> EntitySaveParams<'a> {
     let types = extract_types(entity);
-    let scope_paths: Vec<String> = extract_scopes(entity).iter().map(|s| scope_to_ltree(s)).collect();
+    let scope_paths: Vec<String> = extract_scopes(entity).iter().map(|scope| scope_to_ltree(scope)).collect();
     let location = extract_location_geometry(entity);
     let observation_space = extract_observation_space_geometry(entity);
     let operation_space = extract_operation_space_geometry(entity);

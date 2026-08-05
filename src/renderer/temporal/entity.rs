@@ -3,13 +3,13 @@
 
 use crate::{
     core::error::AndromedaError,
-    query::compiled::CompiledTemporalQuery,
     renderer::{
         Renderer,
         temporal::common::{TimeRange, history_row_to_expanded_instance, parse_tea_entry},
     },
 };
 use andromeda_domain::entity_type::EntityTypeName;
+use andromeda_query::temporal::compiled::CompiledTemporalQuery;
 use chrono::{DateTime, Utc};
 use indexmap::IndexMap;
 use serde_json::{Value, json};
@@ -83,8 +83,8 @@ impl<'a> Renderer for TemporalEntityRenderer<'a> {
             let tea = parse_tea_entry(row)?;
             let attr_name = tea.attribute_name.as_str().to_string();
 
-            if compiled.last_n_origin.is_system_capped()
-                && let Some(last_n) = compiled.last_n
+            if compiled.instances.last_n_origin.is_system_capped()
+                && let Some(last_n) = compiled.instances.last_n
                 && let Ok(total) = row.try_get::<i64, _>("partition_total")
             {
                 max_partition_total = Some(max_partition_total.map_or(total, |m: i64| m.max(total)));
@@ -103,7 +103,7 @@ impl<'a> Renderer for TemporalEntityRenderer<'a> {
                 max_time = Some(max_time.map_or(t, |m: DateTime<Utc>| m.max(t)));
             }
 
-            let instance = history_row_to_expanded_instance(row, &tea, compiled.sys_attrs)?;
+            let instance = history_row_to_expanded_instance(row, &tea, compiled.representation.sys_attrs)?;
             attrs.entry(attr_name).or_default().push((obs, instance));
         }
 
@@ -125,7 +125,7 @@ impl<'a> Renderer for TemporalEntityRenderer<'a> {
                     let has_gap = attr_ranges.iter().any(|(_, a_min, _)| attr_ranges.iter().any(|(_, _, b_max)| *b_max < *a_min));
 
                     if has_gap {
-                        let cut_max = if compiled.last_n_origin.is_user_specified() { g_max } else { g_min };
+                        let cut_max = if compiled.instances.last_n_origin.is_user_specified() { g_max } else { g_min };
                         let keep_range = attr_ranges.iter().find(|(_, min, max)| *min <= cut_max && cut_max <= *max);
 
                         if let Some((_, keep_min, keep_max)) = keep_range {

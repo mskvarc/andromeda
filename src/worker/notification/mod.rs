@@ -2,7 +2,6 @@ pub(crate) mod payload;
 
 use crate::{
     jsonld::JsonLdEngine,
-    renderer::SysAttrsInclusion,
     repository::{entity::repo::EntityRepository, subscription::repo::SubscriptionRepository, subscription_store::repo::SubscriptionStore},
     service::{
         compiled_subscription::CompiledSubscription,
@@ -18,6 +17,7 @@ use crate::{
 use andromeda_domain::{
     entity_type::EntityTypeName,
     notification::{ChangeEvent, Notification, NotificationType, SubscriptionChange, TriggerReason},
+    sys_attrs::SysAttrsInclusion,
     uri::{NGSI_LD_URN_NID, Uri},
     vocab,
 };
@@ -479,11 +479,11 @@ mod tests {
     #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::*;
     use crate::{
-        query::q::parser,
         service::{compiled_subscription::CompiledSelector, subscription_matching::matches_subscription},
         transport::endpoint::EndpointTransport,
     };
     use andromeda_domain::{notification::ChangeOrigin, subscription::SubscriptionStatus};
+    use andromeda_query::filter::parser;
     use payload::filter_entity_attributes;
     use regex::Regex;
 

@@ -7,8 +7,10 @@
 //! the query AST, the renderer's system-attribute policy and the transport a
 //! notification will go out over -- all concerns above the data model.
 
-use crate::{query::q::ast::Expr, renderer::SysAttrsInclusion, transport::endpoint::EndpointTransport};
-use andromeda_domain::{attribute::name::AttributeName, geo_rel::GeoRel, subscription::SubscriptionStatus};
+use crate::transport::endpoint::EndpointTransport;
+use andromeda_domain::{attribute::name::AttributeName, subscription::SubscriptionStatus, sys_attrs::SysAttrsInclusion};
+use andromeda_geometry::geo_rel::GeoRel;
+use andromeda_query::filter::expression::Expr;
 use chrono::{DateTime, Utc};
 use regex::Regex;
 use serde_json::Value;

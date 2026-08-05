@@ -5,16 +5,10 @@
 //! can be matched against O(log n) candidate subscriptions instead of every
 //! geo-enabled subscription in the cache.
 
-use crate::service::{
-    compiled_subscription::CompiledGeoQuery,
-    spatial::{
-        SpatialKey,
-        distance::{haversine_distance_m, metres_to_degrees_coarse},
-    },
-};
-use andromeda_domain::geo_rel::GeoRel;
+use crate::service::{compiled_subscription::CompiledGeoQuery, spatial::SpatialKey};
+use andromeda_geometry::{distance::metres_to_degrees_coarse, geo_rel::GeoRel, relation::matches_geo};
 use dashmap::DashMap;
-use geo::algorithm::{BoundingRect, Contains, Intersects};
+use geo::algorithm::BoundingRect;
 use parking_lot::RwLock;
 use rstar::{AABB, Envelope, RTree, RTreeObject};
 use std::sync::Arc;
@@ -102,7 +96,7 @@ impl SpatialSubscriptionIndex {
 
         let mut out = Vec::new();
         for entry in tree.locate_in_envelope_intersecting(&env) {
-            if exact_match(&entry.georel, entity_geometry, &entry.ref_geometry) {
+            if matches_geo(&entry.georel, entity_geometry, &entry.ref_geometry) {
                 out.push(entry.subscription_id.clone());
             }
         }
@@ -111,7 +105,7 @@ impl SpatialSubscriptionIndex {
         // scan fully in that case (rare — most geoQ filters use positive
         // predicates).
         for entry in tree.iter() {
-            if matches!(entry.georel, GeoRel::Disjoint) && !entry.envelope.intersects(&env) && exact_match(&entry.georel, entity_geometry, &entry.ref_geometry)
+            if matches!(entry.georel, GeoRel::Disjoint) && !entry.envelope.intersects(&env) && matches_geo(&entry.georel, entity_geometry, &entry.ref_geometry)
             {
                 out.push(entry.subscription_id.clone());
             }
@@ -146,23 +140,6 @@ impl SpatialSubscriptionIndex {
             for entry in to_remove {
                 tree.remove(&entry);
             }
-        }
-    }
-}
-
-fn exact_match(georel: &GeoRel, entity_geom: &geo::Geometry<f64>, ref_geom: &geo::Geometry<f64>) -> bool {
-    match georel {
-        GeoRel::Within => ref_geom.contains(entity_geom),
-        GeoRel::Contains => entity_geom.contains(ref_geom),
-        GeoRel::Intersects => entity_geom.intersects(ref_geom),
-        GeoRel::Disjoint => !entity_geom.intersects(ref_geom),
-        GeoRel::Equals => entity_geom.contains(ref_geom) && ref_geom.contains(entity_geom),
-        GeoRel::Overlaps => entity_geom.intersects(ref_geom),
-        GeoRel::Near { max_distance, min_distance } => {
-            let d = haversine_distance_m(entity_geom, ref_geom);
-            let max_ok = max_distance.is_none_or(|m| d <= m);
-            let min_ok = min_distance.is_none_or(|m| d >= m);
-            max_ok && min_ok
         }
     }
 }

@@ -2,9 +2,9 @@
 
 use crate::{
     expanded::node::expanded_object_ref,
-    geometry::Geometry,
     vocab::{expanded::properties, prefix},
 };
+use andromeda_geometry::geometry::Geometry;
 use geo::{Coord, Geometry as GeoGeometry, LineString, MultiLineString, MultiPoint, MultiPolygon, Point, Polygon};
 use iri_rs::Iri;
 use serde_json::Value;
@@ -166,10 +166,8 @@ fn walk_polygon_list(node: &Value) -> Option<Vec<Polygon<f64>>> {
 #[cfg(test)]
 mod tests {
     #![allow(clippy::expect_used, clippy::unwrap_used)]
-    use crate::{
-        expanded::geo_property::{expanded_geo_node_to_geometry, extract_location_geometry},
-        geometry::Geometry,
-    };
+    use crate::expanded::geo_property::{expanded_geo_node_to_geometry, extract_location_geometry};
+    use andromeda_geometry::geometry::Geometry;
     use serde_json::json;
 
     /// Build the expected [`Geometry`] for a known compact-GeoJSON object by

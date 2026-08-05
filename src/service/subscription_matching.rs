@@ -4,17 +4,14 @@
 //! a compiled subscription. Used by the notification worker (event-driven
 //! delivery) and the subscription cache (outbox entry generation).
 
-use crate::{
-    query::q,
-    service::compiled_subscription::{CompiledGeoQuery, CompiledScopePattern, CompiledScopeTerm, CompiledSubscription},
-};
+use crate::service::compiled_subscription::{CompiledGeoQuery, CompiledScopePattern, CompiledScopeTerm, CompiledSubscription};
 use andromeda_domain::{
-    geo_rel::GeoRel,
-    geometry::Geometry,
     notification::{ChangeEvent, ChangeOrigin},
     subscription::SubscriptionStatus,
     vocab,
 };
+use andromeda_geometry::{geometry::Geometry, relation::matches_geo};
+use andromeda_query::filter::eval;
 use chrono::Utc;
 use serde_json::Value;
 use std::sync::Arc;
@@ -127,7 +124,7 @@ pub fn matches_subscription(sub: &CompiledSubscription, event: &ChangeEvent) -> 
 /// Filters that are not configured (None) are skipped.
 pub fn matches_entity_filters(sub: &CompiledSubscription, entity_data: &Value) -> bool {
     if let Some(ref expr) = sub.compiled_q
-        && !q::eval::evaluate(expr, entity_data)
+        && !eval::evaluate(expr, entity_data)
     {
         debug!("Subscription {} skipped: q filter did not match entity", sub.id);
         return false;
@@ -148,7 +145,7 @@ pub fn matches_entity_filters(sub: &CompiledSubscription, entity_data: &Value) -
     }
 
     if let Some(ref csf_expr) = sub.compiled_csf
-        && !q::eval::evaluate(csf_expr, entity_data)
+        && !eval::evaluate(csf_expr, entity_data)
     {
         debug!("Subscription {} skipped: csf filter did not match entity", sub.id);
         return false;
@@ -163,36 +160,17 @@ pub fn matches_entity_filters(sub: &CompiledSubscription, entity_data: &Value) -
 /// time so event matching does not re-parse the GeoJSON reference geometry
 /// or georel operator.
 pub fn matches_compiled_geo_query(geo_q: &CompiledGeoQuery, entity_data: &Value) -> bool {
-    use geo::algorithm::{Contains, Intersects};
-
     let Some(entity_geometry) = extract_geoproperty_geometry(entity_data, &geo_q.geoproperty_iri) else {
         return false;
     };
-    let entity_geom: &geo::Geometry<f64> = entity_geometry.as_ref();
-
-    let ref_geom = &geo_q.ref_geometry;
-
-    match geo_q.georel {
-        GeoRel::Within => ref_geom.contains(entity_geom),
-        GeoRel::Contains => entity_geom.contains(ref_geom),
-        GeoRel::Intersects => entity_geom.intersects(ref_geom),
-        GeoRel::Disjoint => !entity_geom.intersects(ref_geom),
-        GeoRel::Equals => entity_geom.contains(ref_geom) && ref_geom.contains(entity_geom),
-        GeoRel::Overlaps => entity_geom.intersects(ref_geom),
-        GeoRel::Near { max_distance, min_distance } => {
-            let distance = haversine_distance_m(entity_geom, ref_geom);
-            let max_ok = max_distance.is_none_or(|max| distance <= max);
-            let min_ok = min_distance.is_none_or(|min| distance >= min);
-            max_ok && min_ok
-        }
-    }
+    matches_geo(&geo_q.georel, entity_geometry.as_ref(), &geo_q.ref_geometry)
 }
 
 fn extract_geoproperty_geometry(entity: &Value, geoproperty_iri: &str) -> Option<Geometry> {
     let obj = match entity {
-        Value::Array(arr) => arr.first().and_then(|v| v.as_object()),
+        Value::Array(arr) => arr.first().and_then(Value::as_object),
         Value::Object(obj) => Some(obj),
-        _ => None,
+        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => None,
     }?;
 
     let prop_value = obj.get(geoproperty_iri)?;
@@ -205,31 +183,15 @@ fn extract_geoproperty_geometry(entity: &Value, geoproperty_iri: &str) -> Option
         .and_then(|v| v.get("@value"))?;
 
     match geojson_value {
+        // A GeoProperty written as a JSON string carries the GeoJSON document
+        // verbatim, which clause 4.7 permits alongside the object form.
         Value::String(s) => {
             let parsed: Value = serde_json::from_str(s).ok()?;
             Geometry::from_geojson_value(&parsed).ok()
         }
-        val if val.is_object() => Geometry::from_geojson_value(val).ok(),
-        _ => None,
+        object @ Value::Object(_) => Geometry::from_geojson_value(object).ok(),
+        Value::Null | Value::Bool(_) | Value::Number(_) | Value::Array(_) => None,
     }
-}
-
-fn haversine_distance_m(a: &geo::Geometry, b: &geo::Geometry) -> f64 {
-    use geo::algorithm::Centroid;
-
-    let centroid_a = a.centroid().unwrap_or(geo::Point::new(0.0, 0.0));
-    let centroid_b = b.centroid().unwrap_or(geo::Point::new(0.0, 0.0));
-
-    let (lat1, lon1) = (centroid_a.y().to_radians(), centroid_a.x().to_radians());
-    let (lat2, lon2) = (centroid_b.y().to_radians(), centroid_b.x().to_radians());
-
-    let dlat = lat2 - lat1;
-    let dlon = lon2 - lon1;
-
-    let a = (dlat / 2.0).sin().powi(2) + lat1.cos() * lat2.cos() * (dlon / 2.0).sin().powi(2);
-    let c = 2.0 * a.sqrt().asin();
-
-    6_371_008.8 * c
 }
 
 /// Evaluate a pre-compiled scope query against entity scopes.
@@ -265,10 +227,11 @@ fn compiled_scope_term_matches(term: &CompiledScopeTerm, scope: &str) -> bool {
 mod tests {
     #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::*;
-    use crate::{renderer::SysAttrsInclusion, transport::endpoint::EndpointTransport};
+    use crate::transport::endpoint::EndpointTransport;
     use andromeda_domain::{
         notification::{ChangeEvent, ChangeOrigin, TriggerReason},
         subscription::SubscriptionStatus,
+        sys_attrs::SysAttrsInclusion,
     };
 
     fn make_sub() -> CompiledSubscription {

@@ -4,10 +4,8 @@
 //! and JSON-LD context from subscription and CSR subscription payloads
 //! before they are sent as HTTP responses.
 
-use crate::{
-    core::error::AndromedaError,
-    renderer::{Renderer, SysAttrsInclusion},
-};
+use crate::{core::error::AndromedaError, renderer::Renderer};
+use andromeda_domain::sys_attrs::SysAttrsInclusion;
 use serde_json::Value;
 
 /// Flavor selector for [`SubscriptionRenderer`].

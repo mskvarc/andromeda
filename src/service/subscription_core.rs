@@ -3,11 +3,11 @@
 
 use crate::{
     core::error::AndromedaError,
-    jsonld::{ContextSpec, JsonLdEngine},
-    query::q,
+    jsonld::{ContextSpec, JsonLdEngine, term_expansion::ContextualExpander},
     repository::subscription_store::params::SubscriptionFields,
 };
 use andromeda_domain::subscription::Subscription;
+use andromeda_query::filter::{expansion::expand_q_expr, expression::Expr, parser, predicate::Predicate, serialize};
 use chrono::Utc;
 use serde_json::Value;
 use tracing::warn;
@@ -17,10 +17,10 @@ use tracing::warn;
 // ---------------------------------------------------------------------------
 
 /// Check if a q expression contains at least one comparison (not just existence checks).
-fn q_has_comparison(expr: &q::ast::Expr) -> bool {
+fn q_has_comparison(expr: &Expr) -> bool {
     match expr {
-        q::ast::Expr::Pred(pred) => !matches!(pred, q::ast::Predicate::Exists(_)),
-        q::ast::Expr::And(terms) | q::ast::Expr::Or(terms) => terms.iter().any(q_has_comparison),
+        Expr::Pred(pred) => !matches!(pred, Predicate::Exists(_)),
+        Expr::And(terms) | Expr::Or(terms) => terms.iter().any(q_has_comparison),
     }
 }
 
@@ -110,7 +110,7 @@ pub fn validate_common_fields(payload: &Value) -> Result<(), AndromedaError> {
     }
 
     if let Some(q_str) = payload.get("q").and_then(|v| v.as_str()) {
-        let expr = q::parser::parse(q_str).map_err(|e| AndromedaError::subscription_validation(format!("Invalid q expression: {}", e)))?;
+        let expr = parser::parse(q_str).map_err(|e| AndromedaError::subscription_validation(format!("Invalid q expression: {}", e)))?;
         if !q_has_comparison(&expr) {
             return Err(AndromedaError::subscription_validation(
                 "Invalid q expression: must contain at least one comparison operator",
@@ -248,10 +248,10 @@ pub async fn expand_common_subscription_terms(engine: &JsonLdEngine, payload: &m
 
     // Expand q expression attribute terms
     if let Some(q_str) = payload.get("q").and_then(|v| v.as_str()).map(String::from)
-        && let Ok(expr) = q::parser::parse(&q_str)
-        && let Ok(expanded) = crate::jsonld::term_resolver::expand_q_expr(engine, expr, context).await
+        && let Ok(expr) = parser::parse(&q_str)
+        && let Ok(expanded) = expand_q_expr(expr, &ContextualExpander::new(engine, context)).await
     {
-        let expanded_str = q::serialize::serialize(&expanded);
+        let expanded_str = serialize::serialize(&expanded);
         if let Some(obj) = payload.as_object_mut() {
             obj.insert("q".to_string(), Value::String(expanded_str));
         }

@@ -6,10 +6,10 @@
 
 use crate::{core::error::AndromedaError, repository::csource_registration::params::CsrUpdateFragment};
 use andromeda_domain::{
-    geometry::Geometry,
     registration::{ContextSourceRegistration, ForwardingMode},
     tenant::TenantName,
 };
+use andromeda_geometry::geometry::Geometry;
 use chrono::{DateTime, Utc};
 use serde_json::Value;
 

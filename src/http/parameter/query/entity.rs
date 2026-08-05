@@ -3,11 +3,15 @@
 use crate::{
     http::{model::query_request::QueryRequest, parameter::query::is_valid_uri},
     impl_shared_query_params,
-    query::{
-        compiled::{IcuCollation, OrderDirection, OrderTerm},
-        error::QueryError,
+    renderer::entity::RenderMode,
+};
+use andromeda_domain::sys_attrs::SysAttrsInclusion;
+use andromeda_query::{
+    error::QueryError,
+    ordering::{
+        collation::IcuCollation,
+        term::{OrderDirection, OrderTerm},
     },
-    renderer::{SysAttrsInclusion, entity::RenderMode},
 };
 use serde::Deserialize;
 
@@ -340,7 +344,8 @@ impl From<QueryRequest> for EntityQueryParameters {
 mod tests {
     #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::*;
-    use crate::{http::parameter::query::SharedQueryParams, params_from_query, query::compiled::OrderDirection};
+    use crate::{http::parameter::query::SharedQueryParams, params_from_query};
+    use andromeda_query::ordering::term::OrderDirection;
 
     fn params_from_query(query: &str) -> EntityQueryParameters {
         params_from_query!(query, EntityQueryParameters)

@@ -84,12 +84,13 @@ name = "andromeda"
 version = "0.1.0"
 dependencies = [
  "andromeda-domain",
+ "andromeda-geometry",
+ "andromeda-query",
  "andromeda-test-common",
  "async-trait",
  "axum",
  "backon",
  "bytes",
- "cefact-units",
  "chrono",
  "clap",
  "clap-themes",
@@ -100,20 +101,17 @@ dependencies = [
  "derive_more",
  "futures",
  "geo",
- "geojson 1.0.0",
- "geozero",
+ "geojson",
  "headers",
  "indexmap 2.14.0",
  "iri-rs",
  "iso8601-duration",
  "jsonld",
  "jsonld-core",
- "jsonld-expandable-core",
  "jsonld-syntax",
  "langtag",
  "mediatype",
  "mimalloc",
- "mime",
  "moka",
  "parking_lot",
  "percent-encoding",
@@ -129,12 +127,10 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_urlencoded",
- "serde_with",
  "serial_test",
  "shadow-rs",
  "sonic-rs",
  "sqlx",
- "static-regular-grammar",
  "strum",
  "thiserror 2.0.19",
  "tokio",
@@ -156,12 +152,13 @@ dependencies = [
 name = "andromeda-domain"
 version = "0.1.0"
 dependencies = [
+ "andromeda-geometry",
  "cefact-units",
  "chrono",
  "compact_str",
  "derive_more",
  "geo",
- "geojson 1.0.0",
+ "geojson",
  "indexmap 2.14.0",
  "iri-rs",
  "iso8601-duration",
@@ -180,6 +177,43 @@ dependencies = [
  "url",
  "urn-rs",
  "uuid",
+]
+
+[[package]]
+name = "andromeda-geometry"
+version = "0.1.0"
+dependencies = [
+ "bytes",
+ "geo",
+ "geojson",
+ "geozero",
+ "jsonld-expandable-core",
+ "pretty_assertions",
+ "serde",
+ "serde_json",
+ "strum",
+ "thiserror 2.0.19",
+]
+
+[[package]]
+name = "andromeda-query"
+version = "0.1.0"
+dependencies = [
+ "andromeda-domain",
+ "andromeda-geometry",
+ "chrono",
+ "iri-rs",
+ "iso8601-duration",
+ "langtag",
+ "percent-encoding",
+ "pretty_assertions",
+ "regex",
+ "sea-query",
+ "serde_json",
+ "thiserror 2.0.19",
+ "tokio",
+ "typed-builder",
+ "urn-rs",
 ]
 
 [[package]]
@@ -1619,18 +1653,6 @@ dependencies = [
 
 [[package]]
 name = "geojson"
-version = "0.24.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e26f3c45b36fccc9cf2805e61d4da6bc4bbd5a3a9589b01afa3a40eff703bd79"
-dependencies = [
- "log",
- "serde",
- "serde_json",
- "thiserror 2.0.19",
-]
-
-[[package]]
-name = "geojson"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "510c094bfc76ea34d02eee00833254945b70491d79a9c0b050abed6eaa799ffb"
@@ -1650,11 +1672,9 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "db5eda63aa99ac06160fd53328ed75c34f14e3196d3f56a3649e247ed796e54b"
 dependencies = [
  "geo-types",
- "geojson 0.24.2",
  "log",
  "scroll",
  "serde_json",
- "sqlx",
  "thiserror 2.0.19",
  "wkt",
 ]
@@ -5412,6 +5432,26 @@ dependencies = [
  "rand 0.9.4",
  "sha1",
  "thiserror 2.0.19",
+]
+
+[[package]]
+name = "typed-builder"
+version = "0.23.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "31aa81521b70f94402501d848ccc0ecaa8f93c8eb6999eb9747e72287757ffda"
+dependencies = [
+ "typed-builder-macro",
+]
+
+[[package]]
+name = "typed-builder-macro"
+version = "0.23.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "076a02dc54dd46795c2e9c8282ed40bcfb1e22747e955de9389a1de28190fb26"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.117",
 ]
 
 [[package]]

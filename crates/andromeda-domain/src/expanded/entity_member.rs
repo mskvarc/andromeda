@@ -1,7 +1,7 @@
 //! Readers for the entity-level members of an expanded payload: `@type`,
 //! `scope` and `expiresAt`.
 
-use crate::{entity_type::EntityTypeName, expanded::node::expanded_object_ref, vocab::expanded::properties};
+use crate::{entity_type::EntityTypeName, expanded::node::expanded_object_ref, scope::ScopeBuf, vocab::expanded::properties};
 use chrono::{DateTime, Utc};
 use serde_json::Value;
 
@@ -18,7 +18,7 @@ pub fn extract_types(expanded: &Value) -> Vec<EntityTypeName> {
 }
 
 /// Extract scope strings from an expanded entity payload.
-pub fn extract_scopes(expanded: &Value) -> Vec<String> {
+pub fn extract_scopes(expanded: &Value) -> Vec<ScopeBuf> {
     let Some(obj) = expanded_object_ref(expanded) else {
         return Vec::new();
     };
@@ -28,7 +28,10 @@ pub fn extract_scopes(expanded: &Value) -> Vec<String> {
     match scope_value {
         Value::Array(arr) => arr
             .iter()
-            .filter_map(|v| v.as_object().and_then(|obj| obj.get("@value")).and_then(|v| v.as_str()).map(String::from))
+            // A value that does not satisfy the clause 4.18 scope grammar
+            // cannot name a scope, so it is skipped rather than stored as one.
+            .filter_map(|v| v.as_object().and_then(|obj| obj.get("@value")).and_then(|v| v.as_str()))
+            .filter_map(|raw| ScopeBuf::new(raw.to_string()).ok())
             .collect(),
         Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) | Value::Object(_) => Vec::new(),
     }
@@ -64,7 +67,7 @@ mod tests {
             ]
         }]);
         let scopes = extract_scopes(&entity);
-        pretty_assertions::assert_eq!(scopes, vec!["/Madrid", "/Traffic"]);
+        pretty_assertions::assert_eq!(scopes.iter().map(|scope| scope.as_str()).collect::<Vec<&str>>(), vec!["/Madrid", "/Traffic"]);
     }
 
     #[test]

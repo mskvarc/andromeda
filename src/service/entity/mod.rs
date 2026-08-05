@@ -1,5 +1,7 @@
 mod attrs;
 pub mod batch;
+/// Cache of compiled entity queries, owned by the query service.
+pub mod compiled_cache;
 /// Entity type and attribute discovery operations.
 pub mod discovery;
 /// Service-side `Value` extraction and persistence-params builders.
@@ -32,8 +34,10 @@ use andromeda_domain::{
     expanded::{entity_member::extract_types, instance_key::removed_attribute_instances},
     notification::{ChangeEvent, TriggerReason},
     outbox::NewOutboxEntry,
+    scope::ScopeBuf,
     uri::Uri,
 };
+use andromeda_query::scope::ltree::scope_to_ltree;
 use chrono::{DateTime, SecondsFormat, Utc};
 use dashmap::DashMap;
 use serde_json::{Map, Value};
@@ -285,7 +289,7 @@ impl EntityService {
         let types = extract_types(&expanded);
         let types_refs: Vec<&str> = types.iter().map(EntityTypeName::as_str).collect();
         let scopes = extract_scopes(&expanded);
-        let scope_paths: Vec<String> = scopes.iter().map(|s| crate::query::sql::scope_to_ltree(s)).collect();
+        let scope_paths: Vec<String> = scopes.iter().map(|scope| scope_to_ltree(scope)).collect();
         let expires_at = andromeda_domain::expanded::entity_member::extract_expires_at(&expanded);
         let (location, observation_space, operation_space) = extract_geo_geometries(&expanded);
 
@@ -672,7 +676,7 @@ pub(crate) const fn resolve_side_effect_mode(async_threshold: Option<usize>, cli
 // ---------------------------------------------------------------------------
 
 /// Extract scope values from an expanded JSON-LD entity.
-pub(crate) fn extract_scopes(expanded: &Value) -> Vec<String> {
+pub(crate) fn extract_scopes(expanded: &Value) -> Vec<ScopeBuf> {
     let obj = match expanded {
         Value::Array(arr) => arr.first().and_then(|v| v.as_object()),
         Value::Object(obj) => Some(obj),
@@ -688,11 +692,14 @@ pub(crate) fn extract_scopes(expanded: &Value) -> Vec<String> {
     };
 
     match scope_value {
+        // A value outside the clause 4.18 scope grammar cannot name a scope, so
+        // it is skipped rather than stored as one.
         Value::Array(arr) => arr
             .iter()
-            .filter_map(|v| v.as_object().and_then(|obj| obj.get("@value")).and_then(|v| v.as_str()).map(String::from))
+            .filter_map(|v| v.as_object().and_then(|obj| obj.get("@value")).and_then(|v| v.as_str()))
+            .filter_map(|raw| ScopeBuf::new(raw.to_string()).ok())
             .collect(),
-        Value::String(s) => vec![s.clone()], // clone: owned String needed for return value from borrowed JSON
+        Value::String(s) => ScopeBuf::new(s.to_string()).into_iter().collect(),
         _other => Vec::new(),
     }
 }

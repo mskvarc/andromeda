@@ -1,5 +1,4 @@
 use crate::{
-    query::q,
     repository::{
         csource_registration::repo::CsourceRegistrationRepository,
         csource_subscription::repo::CsourceSubscriptionRepository,
@@ -19,6 +18,7 @@ use andromeda_domain::{
     subscription::{Subscription, SubscriptionStatus},
     uri::{NGSI_LD_URN_NID, Uri},
 };
+use andromeda_query::filter::{eval, parser};
 use chrono::Utc;
 use dashmap::DashMap;
 use futures::{StreamExt, stream};
@@ -586,7 +586,7 @@ fn compile_csr_subscription(sub: &Subscription) -> Option<CompiledCsrSubscriptio
         }
     };
 
-    let compiled_csf = sub.csf.as_ref().and_then(|csf_str| match q::parser::parse(csf_str) {
+    let compiled_csf = sub.csf.as_ref().and_then(|csf_str| match parser::parse(csf_str) {
         Ok(expr) => Some(expr),
         Err(e) => {
             debug!("Failed to parse csf filter '{}' for CSR subscription {}: {}", csf_str, sub.id, e);
@@ -709,7 +709,7 @@ fn matches_csr_subscription(sub: &CompiledCsrSubscription, csr_data: &Value) -> 
 
     // Evaluate csf (Context Source Filter) against the CSR data
     if let Some(ref csf_expr) = sub.compiled_csf
-        && !q::eval::evaluate(csf_expr, csr_data)
+        && !eval::evaluate(csf_expr, csr_data)
     {
         return false;
     }

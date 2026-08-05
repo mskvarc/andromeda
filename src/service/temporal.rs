@@ -6,17 +6,9 @@ use crate::{
         parameter::query::{SharedQueryParams, temporal::TemporalQueryParameters},
         response::content_range::build_content_range,
     },
-    jsonld::{CompactOptions, ContextSpec, JsonLdEngine, term_resolver},
-    query::{
-        compiled::{CompiledTemporalQuery, GeoQuery, IdPattern, LastNOrigin, Pagination, ScopeQuery},
-        sql::{
-            q_filter::{ResolvedAttributeNames, referenced_attribute_iris},
-            temporal::{build_stage1_entity_ids, build_temporal_history_query},
-        },
-    },
+    jsonld::{CompactOptions, ContextSpec, JsonLdEngine, term_expansion::ContextualExpander, term_resolver},
     renderer::{
         Renderer,
-        SysAttrsInclusion,
         temporal::{
             aggregation::TemporalAggregationRenderer,
             array_normalizer::TemporalArrayNormalizer,
@@ -38,15 +30,45 @@ use crate::{
     worker::attribute_current_materializer::AttributeCurrentBarrier,
 };
 use andromeda_domain::{
+    attribute::name::AttributeName,
     entity_type::EntityTypeName,
     expanded::entity_member::{extract_expires_at, extract_types},
+    sys_attrs::SysAttrsInclusion,
     temporal::TemporalFormat,
+    uri::Uri,
     vocab,
 };
+use andromeda_query::{
+    error::QueryError,
+    filter::{
+        expansion::{apply_expand_values, apply_json_keys, expand_q_expression},
+        path::expanded_attribute_name,
+        sql::{attribute_names::ResolvedAttributeNames, projection::referenced_attribute_names},
+    },
+    geo::{compile as geo_compile, query::GeoQuery},
+    identifier::parse_id_list,
+    pagination::{CountPolicy, Pagination},
+    pattern::Pattern,
+    projection::expansion::expand_attrs,
+    scope::query::ScopeQuery,
+    temporal::{
+        aggregation_period::AggregationPeriod,
+        compiled::CompiledTemporalQuery,
+        dataset::DatasetSelector,
+        entity_selection::EntitySelection,
+        instance_selection::InstanceSelection,
+        last_n::LastNOrigin,
+        representation::Representation,
+        sql::{history::build_temporal_history_query, stage1::build_stage1_entity_ids},
+        window::TemporalWindow,
+    },
+    type_selection::expansion::expand_entity_types,
+};
 use chrono::{DateTime, SecondsFormat, Utc};
+use iri_rs::IriBuf;
 use serde_json::{Value, json};
 use sqlx::Row;
-use std::{borrow::Cow, collections::HashSet, sync::Arc};
+use std::{collections::HashSet, sync::Arc};
 
 /// Format a DateTime<Utc> as ISO 8601 with second precision.
 pub(crate) fn format_datetime(dt: DateTime<Utc>) -> String {
@@ -204,12 +226,12 @@ impl TemporalService {
     /// [`crate::service::entity::query::EntityQueryService`] for why resolution
     /// is per execution rather than per compilation.
     async fn resolve_q_attributes(&self, compiled: &CompiledTemporalQuery) -> Result<ResolvedAttributeNames, AndromedaError> {
-        let Some(q_expr) = &compiled.q_expr else {
+        let Some(q_expr) = &compiled.entities.q_expr else {
             return Ok(ResolvedAttributeNames::default());
         };
-        let mut iris = Vec::new();
-        referenced_attribute_iris(q_expr, &mut iris);
-        let resolved = self.attribute_names.lookup(&iris).await?;
+        let mut names = Vec::new();
+        referenced_attribute_names(q_expr, &mut names);
+        let resolved = self.attribute_names.lookup(&names).await?;
         if !resolved.is_empty() {
             self.attribute_current.wait_for_pending_writes().await;
         }
@@ -476,22 +498,21 @@ impl TemporalService {
 
         let compiled = self.compile_temporal_query(params, context).await?;
 
-        let stage2 = build_temporal_history_query(1, &compiled)?;
-        // Prepend entity_id to bind values (it's expected as $1)
-        let mut all_binds = vec![crate::query::sql::BindValue::String(Cow::Owned(entity_id.to_string()))];
-        all_binds.extend(stage2.bind_values);
-
-        let rows = self.repo.execute_temporal_query(&stage2.sql, &all_binds).await?;
+        let stage2 = build_temporal_history_query(
+            &entity_id.parse::<Uri>().map_err(|source| QueryError::ParamIdInvalid(source.to_string()))?,
+            &compiled,
+        )?;
+        let rows = self.repo.execute_temporal_query(&stage2.sql, &stage2.bind_values).await?;
 
         // When an attrs filter is specified and nothing matches, return 404
-        if rows.is_empty() && !compiled.attr_filter.is_empty() {
+        if rows.is_empty() && !compiled.instances.attr_filter.is_empty() {
             return Err(AndromedaError::temporal_not_found(format!(
                 "No temporal data found for the specified attributes on entity {}",
                 entity_id
             )));
         }
 
-        let format = compiled.format;
+        let format = compiled.representation.format;
 
         if format == TemporalFormat::AggregatedValues {
             let result = self.build_aggregated_compacted(entity_id, &entity_types, &rows, &compiled, context).await?;
@@ -515,7 +536,7 @@ impl TemporalService {
         };
 
         let content_range = if result.truncated {
-            build_content_range(&compiled, result.time_range, result.max_partition_total, compiled.last_n_origin)
+            build_content_range(&compiled, result.time_range, result.max_partition_total, compiled.instances.last_n_origin)
         } else {
             None
         };
@@ -536,7 +557,7 @@ impl TemporalService {
 
         let entity_ids: Vec<String> = entity_id_rows.iter().filter_map(|r| r.try_get("entity_id").ok()).collect();
 
-        let total_count = if compiled.pagination.count {
+        let total_count = if compiled.pagination.count == CountPolicy::Emit {
             let count_sql = stage1.count_sql.as_ref().ok_or_else(|| AndromedaError::internal("Count SQL not built"))?;
             let count_rows = self.repo.execute_temporal_query(count_sql, &stage1.bind_values).await?;
             count_rows.first().and_then(|r| r.try_get::<i64, _>("count").ok())
@@ -557,10 +578,17 @@ impl TemporalService {
         let mut overall_min: Option<DateTime<Utc>> = None;
         let mut overall_max: Option<DateTime<Utc>> = None;
         let mut overall_partition_total: Option<i64> = None;
-        let is_aggregated = compiled.format == TemporalFormat::AggregatedValues;
+        let is_aggregated = compiled.representation.format == TemporalFormat::AggregatedValues;
         for entity_id in entity_ids {
             let entity_types = entity_types_map.get(&entity_id).cloned().unwrap_or_default(); // clone: owned copy needed; map is borrowed while loop continues
-            let stage2 = match build_temporal_history_query(1, &compiled) {
+            // Stage 1 read these ids out of `entities.id`, so they were valid
+            // URIs on the way in; a failure here means the row is corrupt and is
+            // reported alongside the statement-building failures below.
+            let stage2 = match entity_id
+                .parse::<Uri>()
+                .map_err(|source| AndromedaError::from(QueryError::ParamIdInvalid(source.to_string())))
+                .and_then(|id| build_temporal_history_query(&id, &compiled).map_err(AndromedaError::from))
+            {
                 Ok(s) => s,
                 Err(e) => {
                     tracing::warn!(error = %e, entity_id = %entity_id, "Failed to build temporal history query");
@@ -571,10 +599,7 @@ impl TemporalService {
                     continue;
                 }
             };
-            // Prepend entity_id to bind values (it's expected as $1)
-            let mut all_binds = vec![crate::query::sql::BindValue::String(Cow::Owned(entity_id.clone()))]; // clone: entity_id used later in warnings and result building
-            all_binds.extend(stage2.bind_values);
-            let rows = match self.repo.execute_temporal_query(&stage2.sql, &all_binds).await {
+            let rows = match self.repo.execute_temporal_query(&stage2.sql, &stage2.bind_values).await {
                 Ok(r) => r,
                 Err(e) => {
                     tracing::warn!(error = %e, entity_id = %entity_id, "Failed to execute temporal query");
@@ -616,7 +641,7 @@ impl TemporalService {
                                         if !has_explicit_context(context) {
                                             normalize_temporal_payload_without_context(&mut compacted);
                                         }
-                                        let result = if compiled.format == TemporalFormat::TemporalValues {
+                                        let result = if compiled.representation.format == TemporalFormat::TemporalValues {
                                             match TemporalValuesRenderer::new(compacted).render() {
                                                 Ok(values) => values,
                                                 Err(e) => {
@@ -663,7 +688,12 @@ impl TemporalService {
         }
 
         let content_range = if any_truncated {
-            build_content_range(&compiled, overall_min.zip(overall_max), overall_partition_total, compiled.last_n_origin)
+            build_content_range(
+                &compiled,
+                overall_min.zip(overall_max),
+                overall_partition_total,
+                compiled.instances.last_n_origin,
+            )
         } else {
             None
         };
@@ -806,25 +836,31 @@ impl TemporalService {
         let id_pattern = params
             .id_pattern
             .as_deref()
-            .map(IdPattern::new)
+            .map(Pattern::parse)
             .transpose()
             .map_err(|e| AndromedaError::temporal_validation(e.to_string()))?;
 
-        let attr_filter = crate::query::compile::expand_attrs(&params.parse_attrs(), &self.engine, context).await?;
+        let attr_filter = expand_attrs(&params.parse_attrs(), &ContextualExpander::new(&self.engine, context)).await?;
 
-        let dataset_id_filter = params.parse_dataset_ids();
+        let dataset_id_filter = params
+            .parse_dataset_ids()
+            .iter()
+            .map(|raw| DatasetSelector::parse(raw))
+            .collect::<Result<Vec<DatasetSelector>, QueryError>>()?;
 
         let timerel = params.parse_timerel().transpose()?;
 
-        let q_expr = crate::query::compile::expand_q_expression(params.q.as_deref(), &self.engine, context).await?;
+        let aggr_period_duration = params.aggr_period_duration.as_deref().map(AggregationPeriod::parse).transpose()?.flatten();
+
+        let q_expr = expand_q_expression(params.q.as_deref(), &ContextualExpander::new(&self.engine, context)).await?;
 
         // Apply expandValues: expand string RHS values for specified attributes (spec temporal params)
         let q_expr = if let Some(q_expr) = q_expr {
             if let Some(ref ev) = params.expand_values {
                 let ev_attrs: Vec<String> = ev.split(',').map(|s| s.trim().to_string()).collect();
-                let ev_iris = crate::query::compile::expand_attrs(&ev_attrs, &self.engine, context).await?;
-                let ev_set: std::collections::HashSet<String> = ev_iris.into_iter().collect();
-                Some(crate::jsonld::term_resolver::apply_expand_values(&self.engine, q_expr, &ev_set, context).await?)
+                let ev_iris = expand_attrs(&ev_attrs, &ContextualExpander::new(&self.engine, context)).await?;
+                let ev_set = opted_in_attribute_names(&ev_iris)?;
+                Some(apply_expand_values(q_expr, &ev_set, &ContextualExpander::new(&self.engine, context)).await?)
             } else {
                 Some(q_expr)
             }
@@ -836,9 +872,9 @@ impl TemporalService {
         let q_expr = if let Some(q_expr) = q_expr {
             if let Some(ref jk) = params.json_keys {
                 let jk_attrs: Vec<String> = jk.split(',').map(|s| s.trim().to_string()).collect();
-                let jk_iris = crate::query::compile::expand_attrs(&jk_attrs, &self.engine, context).await?;
-                let jk_set: std::collections::HashSet<String> = jk_iris.into_iter().collect();
-                Some(crate::jsonld::term_resolver::apply_json_keys(&self.engine, q_expr, &jk_set, context).await?)
+                let jk_iris = expand_attrs(&jk_attrs, &ContextualExpander::new(&self.engine, context)).await?;
+                let jk_set = opted_in_attribute_names(&jk_iris)?;
+                Some(apply_json_keys(q_expr, &jk_set, &ContextualExpander::new(&self.engine, context)).await?)
             } else {
                 Some(q_expr)
             }
@@ -848,10 +884,9 @@ impl TemporalService {
 
         let geo = self.compile_geo_query(params, context).await?;
 
-        let types = if let Some(raw_types) = params.entity_type.as_deref() {
-            Some(crate::query::compile::expand_entity_types(raw_types, &self.engine, context).await?)
-        } else {
-            None
+        let types = match params.entity_type.as_deref() {
+            Some(raw_types) => expand_entity_types(raw_types, &ContextualExpander::new(&self.engine, context)).await?,
+            None => Vec::new(),
         };
 
         let format = params.parse_format();
@@ -876,62 +911,80 @@ impl TemporalService {
             params.last_n
         };
 
-        Ok(CompiledTemporalQuery {
-            ids: params.parse_ids(),
-            id_pattern,
-            types,
-            q_expr,
-            geo,
-            timerel,
-            time_at: params
-                .time_at
-                .as_deref()
-                .map(|s| {
-                    DateTime::parse_from_rfc3339(s)
-                        .map(|dt| dt.with_timezone(&Utc))
-                        .map_err(|e| AndromedaError::temporal_validation(format!("Invalid timeAt: {}", e)))
-                })
-                .transpose()?,
-            end_time_at: params
-                .end_time_at
-                .as_deref()
-                .map(|s| {
-                    DateTime::parse_from_rfc3339(s)
-                        .map(|dt| dt.with_timezone(&Utc))
-                        .map_err(|e| AndromedaError::temporal_validation(format!("Invalid endTimeAt: {}", e)))
-                })
-                .transpose()?,
-            timeproperty: params.parse_timeproperty(),
-            attr_filter,
-            dataset_id_filter,
-            last_n: effective_last_n,
-            last_n_origin,
-            format,
-            aggr_methods: params.parse_aggr_methods()?,
-            aggr_period_duration: params.aggr_period_duration.clone(), // clone: owned value for compiled query struct
-            pagination: Pagination {
+        let parse_instant = |raw: Option<&str>, field: &str| -> Result<Option<DateTime<Utc>>, AndromedaError> {
+            raw.map(|value| {
+                DateTime::parse_from_rfc3339(value)
+                    .map(|parsed| parsed.with_timezone(&Utc))
+                    .map_err(|source| AndromedaError::temporal_validation(format!("Invalid {field}: {source}")))
+            })
+            .transpose()
+        };
+
+        Ok(CompiledTemporalQuery::builder()
+            .entities(
+                EntitySelection::builder()
+                    .ids(parse_id_list(&params.parse_ids().unwrap_or_default())?)
+                    .id_pattern(id_pattern)
+                    .types(types)
+                    .q_expr(q_expr)
+                    .geo(geo)
+                    .scope_q(params.scope_q.as_deref().map(ScopeQuery::parse).transpose()?)
+                    .build(),
+            )
+            .window(
+                TemporalWindow::builder()
+                    .timerel(timerel)
+                    .time_at(parse_instant(params.time_at.as_deref(), "timeAt")?)
+                    .end_time_at(parse_instant(params.end_time_at.as_deref(), "endTimeAt")?)
+                    .timeproperty(params.parse_timeproperty())
+                    .build(),
+            )
+            .instances(
+                InstanceSelection::builder()
+                    .attr_filter(attr_filter)
+                    .dataset_id_filter(dataset_id_filter)
+                    .last_n(effective_last_n)
+                    .last_n_origin(last_n_origin)
+                    .build(),
+            )
+            .representation(
+                Representation::builder()
+                    .format(format)
+                    .aggr_methods(params.parse_aggr_methods()?)
+                    .aggr_period_duration(aggr_period_duration)
+                    .sys_attrs(if params.has_sys_attrs() {
+                        SysAttrsInclusion::Include
+                    } else {
+                        SysAttrsInclusion::Strip
+                    })
+                    .build(),
+            )
+            .pagination(Pagination {
                 limit: params.effective_limit(),
                 offset: params.effective_offset(),
-                count: params.count.unwrap_or(false),
-            },
-            sys_attrs: if params.has_sys_attrs() {
-                SysAttrsInclusion::Include
-            } else {
-                SysAttrsInclusion::Strip
-            },
-            scope_q: params.scope_q.as_ref().map(|s| ScopeQuery::new(s.clone())), // clone: owned String for ScopeQuery wrapper
-        })
+                count: match params.count {
+                    Some(true) => CountPolicy::Emit,
+                    Some(false) | None => CountPolicy::Omit,
+                },
+            })
+            .build())
     }
 
     async fn compile_geo_query(&self, params: &TemporalQueryParameters, context: &ContextSpec) -> Result<Option<GeoQuery>, AndromedaError> {
-        crate::query::compile::geo::compile_geo_query(
+        geo_compile::compile_geo_query(
             params.georel.as_deref(),
             params.geometry.as_deref(),
             params.coordinates.as_deref(),
             params.geoproperty.as_deref(),
-            &self.engine,
-            context,
+            &ContextualExpander::new(&self.engine, context),
         )
         .await
+        .map_err(AndromedaError::from)
     }
+}
+
+/// Read an expanded `expandValues` / `jsonKeys` selection as the attribute
+/// names a `q` filter is keyed by (clause 6.4.3.2).
+fn opted_in_attribute_names(iris: &[IriBuf]) -> Result<HashSet<AttributeName>, QueryError> {
+    iris.iter().map(expanded_attribute_name).collect()
 }

@@ -1,11 +1,7 @@
 use crate::{
     core::error::AndromedaError,
     http::parameter::query::{SharedQueryParams, csr::CsrQueryParameters},
-    jsonld::{ContextSpec, JsonLdEngine},
-    query::{
-        compiled::{CompiledCsrQuery, CompiledCsrTemporalFilter, IdPattern, Pagination},
-        q::parser,
-    },
+    jsonld::{ContextSpec, JsonLdEngine, term_expansion::ContextualExpander, term_resolver},
     repository::csource_registration::{
         params::{CreateCsrParams, CsrUpdateFragment},
         repo::CsourceRegistrationRepository,
@@ -18,6 +14,16 @@ use andromeda_domain::{
     temporal::{TimeProp, TimeRel},
     tenant::TenantName,
     uri::Uri,
+};
+use andromeda_query::{
+    csr::compiled::{CompiledCsrQuery, CompiledCsrTemporalFilter},
+    filter::parser,
+    geo::compile as geo_compile,
+    identifier::parse_id_list,
+    pagination::{CountPolicy, Pagination},
+    pattern::Pattern,
+    projection::expansion::expand_attrs,
+    term_expander::TermExpander,
 };
 use chrono::{DateTime, Utc};
 use serde_json::Value;
@@ -235,7 +241,7 @@ impl CsourceRegistrationService {
     }
 
     fn is_valid_uri(id: &str) -> bool {
-        crate::jsonld::term_resolver::is_valid_uri(id)
+        term_resolver::is_valid_uri(id)
     }
 
     /// Create a new context source registration from the given JSON payload.
@@ -356,29 +362,24 @@ impl CsourceRegistrationService {
     }
 
     async fn compile_csr_query(&self, params: &CsrQueryParameters, context: &ContextSpec) -> Result<CompiledCsrQuery, AndromedaError> {
+        let expander = ContextualExpander::new(&self.engine, context);
+
         // Expand type
-        let expanded_type = if let Some(ref t) = params.entity_type {
-            Some(self.engine.expand_type(t, context).await?)
-        } else {
-            None
+        let expanded_type = match params.entity_type.as_deref() {
+            Some(entity_type) => Some(expander.expand_type(entity_type).await?),
+            None => None,
         };
 
         // Expand attrs
-        let raw_attrs = params.parse_attrs();
-        let expanded_attrs = if !raw_attrs.is_empty() {
-            Some(crate::query::compile::expand_attrs(&raw_attrs, &self.engine, context).await?)
-        } else {
-            None
-        };
+        let expanded_attrs = expand_attrs(&params.parse_attrs(), &expander).await?;
 
         // Parse geo filter
-        let geo = crate::query::compile::geo::compile_geo_query(
+        let geo = geo_compile::compile_geo_query(
             params.georel.as_deref(),
             params.geometry.as_deref(),
             params.coordinates.as_deref(),
             None,
-            &self.engine,
-            context,
+            &ContextualExpander::new(&self.engine, context),
         )
         .await?;
 
@@ -405,12 +406,14 @@ impl CsourceRegistrationService {
                 .map(|s| s.parse::<TimeProp>())
                 .transpose()
                 .map_err(|e| AndromedaError::csr_validation(format!("Invalid timeproperty: {}", e)))?;
-            Some(CompiledCsrTemporalFilter {
-                timerel: parsed_timerel,
-                time_at: parsed_time_at,
-                end_time_at: parsed_end_time_at,
-                timeproperty: parsed_timeprop,
-            })
+            Some(
+                CompiledCsrTemporalFilter::builder()
+                    .timerel(parsed_timerel)
+                    .time_at(parsed_time_at)
+                    .end_time_at(parsed_end_time_at)
+                    .timeproperty(parsed_timeprop)
+                    .build(),
+            )
         } else {
             None
         };
@@ -426,25 +429,28 @@ impl CsourceRegistrationService {
             None
         };
 
-        Ok(CompiledCsrQuery {
-            ids: params.parse_ids(),
-            entity_type: expanded_type,
-            id_pattern: params
-                .id_pattern
-                .as_deref()
-                .map(IdPattern::new)
-                .transpose()
-                .map_err(|e| AndromedaError::csr_validation(e.to_string()))?,
-            attrs: expanded_attrs,
-            q_expr,
-            geo,
-            temporal,
-            pagination: Pagination {
+        Ok(CompiledCsrQuery::builder()
+            .ids(parse_id_list(&params.parse_ids().unwrap_or_default())?)
+            .entity_type(expanded_type)
+            .id_pattern(
+                params
+                    .id_pattern
+                    .as_deref()
+                    .map(Pattern::parse)
+                    .transpose()
+                    .map_err(|e| AndromedaError::csr_validation(e.to_string()))?,
+            )
+            .attrs(expanded_attrs)
+            .q_expr(q_expr)
+            .geo(geo)
+            .temporal(temporal)
+            .pagination(Pagination {
                 limit: params.effective_limit(),
                 offset: params.effective_offset(),
-                count: false,
-            },
-        })
+                // Clause 5.10.2 discovery has no count option of its own.
+                count: CountPolicy::Omit,
+            })
+            .build())
     }
 
     /// Update an existing context source registration with the given fragment.
@@ -608,7 +614,7 @@ impl CsourceRegistrationService {
                 {
                     for entity in entities_arr.iter_mut() {
                         if let Some(type_val) = entity.get("type").and_then(|v| v.as_str()) {
-                            let compacted = crate::jsonld::term_resolver::compact_type_iri(&self.engine, type_val, context).await;
+                            let compacted = term_resolver::compact_type_iri(&self.engine, type_val, context).await;
                             if let Some(obj) = entity.as_object_mut() {
                                 obj.insert("type".to_string(), Value::String(compacted));
                             }
@@ -623,7 +629,7 @@ impl CsourceRegistrationService {
                     let mut compacted_names = Vec::new();
                     for name in names_arr {
                         if let Some(n) = name.as_str() {
-                            compacted_names.push(Value::String(crate::jsonld::term_resolver::compact_attr_iri(&self.engine, n, context).await));
+                            compacted_names.push(Value::String(term_resolver::compact_attr_iri(&self.engine, n, context).await));
                         }
                     }
                     if let Some(obj) = info.as_object_mut() {
@@ -638,7 +644,7 @@ impl CsourceRegistrationService {
                     let mut compacted_names = Vec::new();
                     for name in names_arr {
                         if let Some(n) = name.as_str() {
-                            compacted_names.push(Value::String(crate::jsonld::term_resolver::compact_attr_iri(&self.engine, n, context).await));
+                            compacted_names.push(Value::String(term_resolver::compact_attr_iri(&self.engine, n, context).await));
                         }
                     }
                     if let Some(obj) = info.as_object_mut() {

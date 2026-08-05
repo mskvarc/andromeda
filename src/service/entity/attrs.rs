@@ -1,7 +1,6 @@
 use crate::{
     core::error::AndromedaError,
     jsonld::ContextSpec,
-    query::compiled::PurgeMode,
     service::entity::{
         EntityService,
         extract::build_save_params,
@@ -27,6 +26,7 @@ use andromeda_domain::{
     uri::Uri,
     vocab,
 };
+use andromeda_query::projection::purge::PurgeMode;
 use serde_json::Value;
 use std::{collections::HashSet, sync::Arc};
 use urn_rs::Urn;
@@ -337,7 +337,7 @@ impl EntityService {
             PurgeMode::Drop(attrs) | PurgeMode::Keep(attrs) => {
                 let mut expanded = Vec::with_capacity(attrs.len());
                 for attr in attrs {
-                    expanded.push(self.engine.expand_term(attr, context).await?);
+                    expanded.push(self.engine.expand_term(attr.as_str(), context).await?);
                 }
                 expanded
             }

@@ -3,7 +3,6 @@ mod core;
 mod health;
 mod http;
 mod jsonld;
-mod query;
 mod renderer;
 mod repository;
 mod server;

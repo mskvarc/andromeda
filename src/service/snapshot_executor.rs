@@ -469,9 +469,9 @@ mod tests {
     use super::*;
     use andromeda_domain::{
         attribute::name::AttributeName,
-        geometry::GeometryType,
         snapshot::{SnapshotEntitySelector, SnapshotGeoQuery, SnapshotQuery, SnapshotTemporalQuery},
     };
+    use andromeda_geometry::geometry::GeometryType;
 
     fn attribute_name(raw: &str) -> AttributeName {
         raw.parse().expect("valid attribute name")

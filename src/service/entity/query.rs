@@ -1,25 +1,48 @@
 use crate::{
     core::error::AndromedaError,
     http::parameter::query::{SharedQueryParams, entity::EntityQueryParameters},
-    jsonld::{CompactOptions, ContextSpec, JsonLdEngine},
-    query::{
-        compiled::{CompiledEntityQuery, CompiledOrderTerm, GeoQuery, IcuCollation, IdPattern, OrderingGeometry, Pagination, ScopeQuery},
-        compiled_cache::{CompiledQueryCache, CompiledQueryKey},
-        sql::q_filter::{ResolvedAttributeNames, referenced_attribute_iris},
-    },
-    renderer::SysAttrsInclusion,
+    jsonld::{CompactOptions, ContextSpec, JsonLdEngine, term_expansion::ContextualExpander},
     repository::{attribute_names::AttributeNameCache, entity::repo::EntityRepository},
     service::{
         csource_forwarding::{ForwardedEntities, merge_query_results},
-        spatial::{SpatialKey, build_ref_geometry, entity_index::SpatialEntityIndex, flatten_or_type_iris},
+        entity::compiled_cache::{CompiledQueryCache, CompiledQueryKey, LimitCap},
+        spatial::{SpatialKey, entity_index::SpatialEntityIndex, flatten_or_type_iris},
     },
     tenancy::types::TenantRef,
     worker::attribute_current_materializer::AttributeCurrentBarrier,
 };
 use andromeda_domain::{
-    attribute::{Attribute, AttributeValue},
+    attribute::{Attribute, AttributeValue, name::AttributeName},
     entity::Entity,
-    geometry::Geometry,
+    sys_attrs::SysAttrsInclusion,
+    uri::Uri,
+};
+use andromeda_geometry::geometry::Geometry;
+use andromeda_query::{
+    entity::{compiled::CompiledEntityQuery, selection::EntitySelection},
+    error::QueryError,
+    filter::{
+        expansion::{apply_expand_values, apply_json_keys, expand_q_expression},
+        path::expanded_attribute_name,
+        sql::{attribute_names::ResolvedAttributeNames, projection::referenced_attribute_names},
+    },
+    geo::{compile as geo_compile, query::GeoQuery},
+    identifier::parse_id_list,
+    ordering::{
+        collation::IcuCollation,
+        compiled::ResultOrdering,
+        distance::OrderingGeometry,
+        term::{CompiledOrderTerm, OrderTarget, RawOrderTarget},
+    },
+    pagination::{CountPolicy, Pagination},
+    pattern::Pattern,
+    projection::{
+        compiled::Projection,
+        expansion::{expand_attrs, expand_projection_terms},
+    },
+    scope::query::ScopeQuery,
+    term_expander::TermExpander,
+    type_selection::{expansion::expand_type_expression, parser as type_parser},
 };
 use iri_rs::IriBuf;
 use serde_json::Value;
@@ -82,12 +105,12 @@ impl EntityQueryService {
     /// resolving means every projection-backed predicate is already a constant
     /// `FALSE`, so there is no pending write that could change the answer.
     async fn resolve_q_attributes(&self, compiled: &CompiledEntityQuery) -> Result<ResolvedAttributeNames, AndromedaError> {
-        let Some(q_expr) = &compiled.q_expr else {
+        let Some(q_expr) = &compiled.selection.q_expr else {
             return Ok(ResolvedAttributeNames::default());
         };
-        let mut iris = Vec::new();
-        referenced_attribute_iris(q_expr, &mut iris);
-        let resolved = self.attribute_names.lookup(&iris).await?;
+        let mut names = Vec::new();
+        referenced_attribute_names(q_expr, &mut names);
+        let resolved = self.attribute_names.lookup(&names).await?;
         if !resolved.is_empty() {
             self.attribute_current.wait_for_pending_writes().await;
         }
@@ -165,7 +188,7 @@ impl EntityQueryService {
             if !attrs.is_empty() {
                 let mut wanted_iris = Vec::new();
                 for a in attrs {
-                    wanted_iris.push(self.engine.expand_term(a, context).await?);
+                    wanted_iris.push(self.expanded_key(a, context).await?);
                 }
                 self.filter_entity_attrs(&mut entity, &wanted_iris, context).await?;
 
@@ -186,7 +209,7 @@ impl EntityQueryService {
 
     /// Execute a parameterized entity query, returning matching entities and an optional total count.
     pub async fn query(&self, query: &EntityQueryParameters, context: &ContextSpec) -> Result<(Vec<Entity>, Option<i64>), AndromedaError> {
-        let compiled = self.compile_query_cached(query, context, true).await?;
+        let compiled = self.compile_query_cached(query, context, LimitCap::Capped).await?;
         let compiled_for_repo = self.spatial_prefilter(&compiled);
         let attribute_names = self.resolve_q_attributes(&compiled_for_repo).await?;
         let query_result = self.repo.query_compiled(&compiled_for_repo, &attribute_names).await?;
@@ -330,13 +353,13 @@ impl EntityQueryService {
 
     /// Compile an entity query with the default limit cap applied.
     pub async fn compile_query_public(&self, params: &EntityQueryParameters, context: &ContextSpec) -> Result<CompiledEntityQuery, AndromedaError> {
-        let arc = self.compile_query_cached(params, context, true).await?;
+        let arc = self.compile_query_cached(params, context, LimitCap::Capped).await?;
         Ok(Arc::unwrap_or_clone(arc))
     }
 
     /// Compile an entity query without applying a limit cap.
     pub async fn compile_query_uncapped(&self, params: &EntityQueryParameters, context: &ContextSpec) -> Result<CompiledEntityQuery, AndromedaError> {
-        let arc = self.compile_query_cached(params, context, false).await?;
+        let arc = self.compile_query_cached(params, context, LimitCap::Uncapped).await?;
         Ok(Arc::unwrap_or_clone(arc))
     }
 
@@ -349,10 +372,10 @@ impl EntityQueryService {
         &self,
         params: &EntityQueryParameters,
         context: &ContextSpec,
-        cap_limit: bool,
+        limit_cap: LimitCap,
     ) -> Result<Arc<CompiledEntityQuery>, AndromedaError> {
-        let key = CompiledQueryKey::from_params(params, context, cap_limit);
-        self.compiled_cache.get_or_compile(key, || self.compile_query(params, context, cap_limit)).await
+        let key = CompiledQueryKey::from_params(params, context, limit_cap);
+        self.compiled_cache.get_or_compile(key, || self.compile_query(params, context, limit_cap)).await
     }
 
     /// Execute a compiled query returning only entity IDs.
@@ -383,34 +406,34 @@ impl EntityQueryService {
     // Query compilation (private)
     // -------------------------------------------------------------------------
 
-    async fn compile_query(&self, params: &EntityQueryParameters, context: &ContextSpec, cap_limit: bool) -> Result<CompiledEntityQuery, AndromedaError> {
-        let ids = params.parse_ids();
+    async fn compile_query(&self, params: &EntityQueryParameters, context: &ContextSpec, limit_cap: LimitCap) -> Result<CompiledEntityQuery, AndromedaError> {
+        let ids = parse_id_list(&params.parse_ids().unwrap_or_default())?;
         let id_pattern = params
             .id_pattern
             .as_deref()
-            .map(IdPattern::new)
+            .map(Pattern::parse)
             .transpose()
             .map_err(|e| AndromedaError::entity_validation(e.to_string()))?;
 
         let type_expr = if let Some(raw_types) = params.entity_type.as_deref() {
-            let raw = crate::query::compile::type_expr::parse(raw_types)?;
-            let expanded = crate::query::compile::expand_type_expression(&raw, &self.engine, context).await?;
+            let raw = type_parser::parse(raw_types)?;
+            let expanded = expand_type_expression(&raw, &ContextualExpander::new(&self.engine, context)).await?;
             Some(expanded)
         } else {
             None
         };
 
-        let attrs = crate::query::compile::expand_attrs(&params.parse_attrs(), &self.engine, context).await?;
+        let attrs = expand_attrs(&params.parse_attrs(), &ContextualExpander::new(&self.engine, context)).await?;
 
-        let q_expr = crate::query::compile::expand_q_expression(params.q.as_deref(), &self.engine, context).await?;
+        let q_expr = expand_q_expression(params.q.as_deref(), &ContextualExpander::new(&self.engine, context)).await?;
 
         // Apply expandValues: expand string RHS values for specified attributes (spec 6.4.3.2)
         let q_expr = if let Some(q_expr) = q_expr {
             if let Some(ref ev) = params.expand_values {
                 let ev_attrs: Vec<String> = ev.split(',').map(|s| s.trim().to_string()).collect();
-                let ev_iris = crate::query::compile::expand_attrs(&ev_attrs, &self.engine, context).await?;
-                let ev_set: HashSet<String> = ev_iris.into_iter().collect();
-                Some(crate::jsonld::term_resolver::apply_expand_values(&self.engine, q_expr, &ev_set, context).await?)
+                let ev_iris = expand_attrs(&ev_attrs, &ContextualExpander::new(&self.engine, context)).await?;
+                let ev_set = opted_in_attribute_names(&ev_iris)?;
+                Some(apply_expand_values(q_expr, &ev_set, &ContextualExpander::new(&self.engine, context)).await?)
             } else {
                 Some(q_expr)
             }
@@ -422,9 +445,9 @@ impl EntityQueryService {
         let q_expr = if let Some(q_expr) = q_expr {
             if let Some(ref jk) = params.json_keys {
                 let jk_attrs: Vec<String> = jk.split(',').map(|s| s.trim().to_string()).collect();
-                let jk_iris = crate::query::compile::expand_attrs(&jk_attrs, &self.engine, context).await?;
-                let jk_set: HashSet<String> = jk_iris.into_iter().collect();
-                Some(crate::jsonld::term_resolver::apply_json_keys(&self.engine, q_expr, &jk_set, context).await?)
+                let jk_iris = expand_attrs(&jk_attrs, &ContextualExpander::new(&self.engine, context)).await?;
+                let jk_set = opted_in_attribute_names(&jk_iris)?;
+                Some(apply_json_keys(q_expr, &jk_set, &ContextualExpander::new(&self.engine, context)).await?)
             } else {
                 Some(q_expr)
             }
@@ -435,20 +458,20 @@ impl EntityQueryService {
         let geo = self.compile_geo_query(params, context).await?;
         let opts = params.parse_options();
 
-        let pick = crate::query::compile::expand_projection_terms(&params.parse_pick(), &self.engine, context).await?;
-        let omit = crate::query::compile::expand_projection_terms(&params.parse_omit(), &self.engine, context).await?;
+        let pick = expand_projection_terms(&params.parse_pick(), &ContextualExpander::new(&self.engine, context)).await?;
+        let omit = expand_projection_terms(&params.parse_omit(), &ContextualExpander::new(&self.engine, context)).await?;
 
         let order_by = {
             let raw = params.parse_order_by();
             let mut compiled = Vec::new();
             for term in &raw {
-                let attr_iri = if term.attr == "id" || term.attr == "type" {
-                    term.attr.clone() // clone: owned value for CompiledOrderTerm struct
-                } else {
-                    self.engine.expand_term(&term.attr, context).await?
+                let target = match RawOrderTarget::classify(&term.attr) {
+                    RawOrderTarget::Id => OrderTarget::Id,
+                    RawOrderTarget::Type => OrderTarget::Type,
+                    RawOrderTarget::Attribute(name) => OrderTarget::Attribute(self.expanded_key(name, context).await?),
                 };
                 compiled.push(CompiledOrderTerm {
-                    attr_iri,
+                    target,
                     direction: term.direction,
                     collation: params
                         .collation
@@ -486,37 +509,38 @@ impl EntityQueryService {
         }
 
         let pagination = Pagination {
-            limit: if cap_limit {
-                params.effective_limit()
-            } else {
-                params.effective_limit_uncapped()
+            limit: match limit_cap {
+                LimitCap::Capped => params.effective_limit(),
+                LimitCap::Uncapped => params.effective_limit_uncapped(),
             },
             offset: params.effective_offset(),
-            count: opts.count,
+            count: if opts.count { CountPolicy::Emit } else { CountPolicy::Omit },
         };
 
-        let compiled = CompiledEntityQuery {
-            ids,
-            id_pattern,
-            type_expr,
-            attrs,
-            q_expr,
-            geo,
-            ordering_geometry,
-            pagination,
-            pick,
-            omit,
-            order_by,
-            scope_q: params.scope_q.as_ref().map(|s| ScopeQuery::new(s.clone())), // clone: owned value for CompiledEntityQuery struct
-        };
+        let compiled = CompiledEntityQuery::builder()
+            .selection(
+                EntitySelection::builder()
+                    .ids(ids)
+                    .id_pattern(id_pattern)
+                    .type_expr(type_expr)
+                    .attrs(attrs)
+                    .q_expr(q_expr)
+                    .geo(geo)
+                    .scope_q(params.scope_q.as_deref().map(ScopeQuery::parse).transpose()?)
+                    .build(),
+            )
+            .projection(Projection::builder().pick(pick).omit(omit).build())
+            .ordering(ResultOrdering::builder().terms(order_by).geometry(ordering_geometry).build())
+            .pagination(pagination)
+            .build();
 
         tracing::info!("Compiled query: {:?}", compiled);
 
         Ok(compiled)
     }
 
-    /// Consult [`SpatialEntityIndex`] to narrow `compiled.ids` before SQL,
-    /// and drop `compiled.geo` when the index was able to produce an
+    /// Consult [`SpatialEntityIndex`] to narrow `compiled.selection.ids` before SQL,
+    /// and drop `compiled.selection.geo` when the index was able to produce an
     /// authoritative candidate set.
     ///
     /// Falls through (returns the original `Arc` unchanged) when the query
@@ -524,27 +548,24 @@ impl EntityQueryService {
     /// partition, or a reference geometry the `geo` crate can't parse. SQL
     /// still runs with the full georel filter in those cases.
     fn spatial_prefilter(&self, compiled: &Arc<CompiledEntityQuery>) -> Arc<CompiledEntityQuery> {
-        let Some(ref geo_q) = compiled.geo else {
+        let Some(ref geo_q) = compiled.selection.geo else {
             return Arc::clone(compiled);
         };
-        let Some(ref type_expr) = compiled.type_expr else {
+        let Some(ref type_expr) = compiled.selection.type_expr else {
             return Arc::clone(compiled);
         };
         let Some(type_iris) = flatten_or_type_iris(type_expr) else {
             return Arc::clone(compiled);
         };
-        let Ok(geoproperty_iri) = IriBuf::new(geo_q.geoproperty_iri.clone()) else {
-            return Arc::clone(compiled);
-        };
-        let Some(ref_geom) = build_ref_geometry(geo_q) else {
-            return Arc::clone(compiled);
-        };
+        // clone: the spatial key owns its IRI and outlives the borrowed query
+        let geoproperty_iri = geo_q.geoproperty_iri.clone();
+        let ref_geom: &geo::Geometry<f64> = geo_q.geometry.as_ref();
 
         let mut any_warm = false;
         let mut union: HashSet<Urn> = HashSet::new();
         for type_iri in type_iris {
             let key = SpatialKey::new(self.tenant.clone(), type_iri, geoproperty_iri.clone());
-            let Some(candidates) = self.spatial.query(&key, &geo_q.georel, &ref_geom) else {
+            let Some(candidates) = self.spatial.query(&key, &geo_q.georel, ref_geom) else {
                 // Any cold partition forces a fall-through: we would otherwise
                 // silently return an empty or incomplete set for that type.
                 return Arc::clone(compiled);
@@ -556,55 +577,50 @@ impl EntityQueryService {
             return Arc::clone(compiled);
         }
 
-        let candidate_ids: Vec<String> = union.into_iter().map(|u| u.to_string()).collect();
+        let candidate_ids: Vec<Uri> = union.into_iter().map(Uri::Urn).collect();
 
-        let final_ids = match &compiled.ids {
-            Some(user_ids) => {
-                let user_set: HashSet<&str> = user_ids.iter().map(String::as_str).collect();
-                candidate_ids.into_iter().filter(|id| user_set.contains(id.as_str())).collect()
-            }
-            None => candidate_ids,
+        let final_ids: Vec<Uri> = if compiled.selection.ids.is_empty() {
+            candidate_ids
+        } else {
+            let user_set: HashSet<&str> = compiled.selection.ids.iter().map(AsRef::as_ref).collect();
+            candidate_ids.into_iter().filter(|id| user_set.contains(AsRef::<str>::as_ref(id))).collect()
         };
 
         let mut cloned = (**compiled).clone();
-        cloned.ids = Some(final_ids);
-        cloned.geo = None;
-        tracing::debug!(
-            "spatial prefilter hit: {} candidate(s) for geoQ={:?}",
-            cloned.ids.as_ref().map_or(0, Vec::len),
-            geo_q.georel
-        );
+        cloned.selection.ids = final_ids;
+        cloned.selection.geo = None;
+        tracing::debug!("spatial prefilter hit: {} candidate(s) for geoQ={:?}", cloned.selection.ids.len(), geo_q.georel);
         Arc::new(cloned)
     }
 
     async fn compile_geo_query(&self, params: &EntityQueryParameters, context: &ContextSpec) -> Result<Option<GeoQuery>, AndromedaError> {
-        crate::query::compile::geo::compile_geo_query(
+        geo_compile::compile_geo_query(
             params.georel.as_deref(),
             params.geometry.as_deref(),
             params.coordinates.as_deref(),
             params.geoproperty.as_deref(),
-            &self.engine,
-            context,
+            &ContextualExpander::new(&self.engine, context),
         )
         .await
+        .map_err(AndromedaError::from)
     }
 
     async fn apply_projection(&self, entities: Vec<Entity>, query: &CompiledEntityQuery, context: &ContextSpec) -> Result<Vec<Entity>, AndromedaError> {
-        if query.pick.is_empty() && query.omit.is_empty() && query.attrs.is_empty() {
+        if query.projection.pick.is_empty() && query.projection.omit.is_empty() && query.selection.attrs.is_empty() {
             return Ok(entities);
         }
 
         let mut projected = Vec::with_capacity(entities.len());
         for mut entity in entities {
-            if !query.attrs.is_empty() {
-                self.filter_entity_attrs(&mut entity, &query.attrs, context).await?;
+            if !query.selection.attrs.is_empty() {
+                self.filter_entity_attrs(&mut entity, &query.selection.attrs, context).await?;
             }
 
-            if !query.pick.is_empty() {
+            if !query.projection.pick.is_empty() {
                 let mut keys_to_remove = Vec::new();
                 for key in entity.attrs.keys() {
-                    let iri = self.engine.expand_term(key.as_str(), context).await?;
-                    if !query.pick.contains(&iri) && !query.pick.iter().any(|pick| pick == key.as_str()) {
+                    let iri = self.expanded_key(key.as_str(), context).await?;
+                    if !query.projection.pick.iter().any(|term| term.matches_attribute(key.as_str(), &iri)) {
                         keys_to_remove.push(key.clone()); // clone: owned key to avoid borrowing entity.attrs during removal
                     }
                 }
@@ -613,11 +629,11 @@ impl EntityQueryService {
                 }
             }
 
-            if !query.omit.is_empty() {
+            if !query.projection.omit.is_empty() {
                 let mut keys_to_remove = Vec::new();
                 for key in entity.attrs.keys() {
-                    let iri = self.engine.expand_term(key.as_str(), context).await?;
-                    if query.omit.contains(&iri) || query.omit.iter().any(|omit| omit == key.as_str()) {
+                    let iri = self.expanded_key(key.as_str(), context).await?;
+                    if query.projection.omit.iter().any(|term| term.matches_attribute(key.as_str(), &iri)) {
                         keys_to_remove.push(key.clone()); // clone: owned key to avoid borrowing entity.attrs during removal
                     }
                 }
@@ -631,10 +647,10 @@ impl EntityQueryService {
         Ok(projected)
     }
 
-    async fn filter_entity_attrs(&self, entity: &mut Entity, wanted_iris: &[String], context: &ContextSpec) -> Result<(), AndromedaError> {
+    async fn filter_entity_attrs(&self, entity: &mut Entity, wanted_iris: &[IriBuf], context: &ContextSpec) -> Result<(), AndromedaError> {
         let mut keys_to_remove = Vec::new();
         for key in entity.attrs.keys() {
-            let iri = self.engine.expand_term(key, context).await?;
+            let iri = self.expanded_key(key.as_str(), context).await?;
             if !wanted_iris.contains(&iri) {
                 keys_to_remove.push(key.clone()); // clone: owned key to avoid borrowing entity.attrs during removal
             }
@@ -643,6 +659,14 @@ impl EntityQueryService {
             entity.attrs.shift_remove(&k);
         }
         Ok(())
+    }
+
+    /// Expand an attribute key of a compacted entity to the IRI it names.
+    async fn expanded_key(&self, key: &str, context: &ContextSpec) -> Result<IriBuf, AndromedaError> {
+        ContextualExpander::new(&self.engine, context)
+            .expand_term(key)
+            .await
+            .map_err(AndromedaError::from)
     }
 }
 
@@ -724,4 +748,10 @@ fn filter_entity_by_dataset_id(entity: &mut Entity, dataset_ids: &[String]) {
     for k in keys_to_remove {
         entity.attrs.shift_remove(&k);
     }
+}
+
+/// Read an expanded `expandValues` / `jsonKeys` selection as the attribute
+/// names a `q` filter is keyed by (clause 6.4.3.2).
+fn opted_in_attribute_names(iris: &[IriBuf]) -> Result<HashSet<AttributeName>, QueryError> {
+    iris.iter().map(expanded_attribute_name).collect()
 }

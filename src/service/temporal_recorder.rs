@@ -4,7 +4,6 @@
 
 use crate::{
     core::error::AndromedaError,
-    query::sql::scope_to_ltree,
     repository::temporal::{
         params::{HistoryBatchEntry, HistoryValues, ScopeHistoryEntry, TeaBatchEntry, UpdateInstanceParams},
         repo::TemporalRepository,
@@ -14,10 +13,12 @@ use crate::{
 use andromeda_domain::{
     attribute_type::AttributeType,
     expanded::{geo_property::expanded_geo_node_to_geometry, instance_key::is_system_attribute},
-    geometry::Geometry,
+    scope::Scope,
     temporal::ValueType,
     vocab,
 };
+use andromeda_geometry::geometry::Geometry;
+use andromeda_query::scope::ltree::scope_to_ltree;
 use chrono::{DateTime, Utc};
 use iri_rs::IriBuf;
 use serde_json::Value;
@@ -172,11 +173,18 @@ impl TemporalRecorder {
                 if attr_name == vocab::expanded::properties::SCOPE.as_str() {
                     if let Some(scope_arr) = attr_value.as_array() {
                         for scope_entry in scope_arr {
-                            if let Some(scope_val) = scope_entry.as_object().and_then(|o| o.get("@value")).and_then(|v| v.as_str()) {
+                            // A value outside the clause 4.18 grammar cannot name a
+                            // scope, so no history row is recorded for it.
+                            if let Some(scope) = scope_entry
+                                .as_object()
+                                .and_then(|o| o.get("@value"))
+                                .and_then(|v| v.as_str())
+                                .and_then(|raw| Scope::new(raw).ok())
+                            {
                                 scope_entries.push(ScopeHistoryEntry {
                                     time: Utc::now(),
                                     entity_id: entity_id_str.to_owned(),
-                                    scope_path: scope_to_ltree(scope_val),
+                                    scope_path: scope_to_ltree(scope),
                                     instance_id: format!("urn:ngsi-ld:scope:instance:{}", uuid::Uuid::new_v4()),
                                 });
                             }

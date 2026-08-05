@@ -6,8 +6,6 @@
 //! matching) and the entity service (outbox entry generation).
 
 use crate::{
-    query::q,
-    renderer::SysAttrsInclusion,
     repository::subscription_store::repo::SubscriptionStore,
     service::{
         compiled_subscription::{CompiledGeoQuery, CompiledScopePattern, CompiledScopeTerm, CompiledSelector, CompiledSubscription},
@@ -23,8 +21,10 @@ use crate::{
 use andromeda_domain::{
     notification::{ChangeEvent, SubscriptionChange, TriggerReason},
     subscription::{EntitySelector, Subscription, SubscriptionStatus},
+    sys_attrs::SysAttrsInclusion,
     vocab,
 };
+use andromeda_query::filter::parser;
 use dashmap::DashMap;
 use iri_rs::IriBuf;
 use regex::Regex;
@@ -280,7 +280,7 @@ pub fn compile_subscription(sub: &Subscription) -> Option<CompiledSubscription> 
         .as_ref()
         .map(|attrs| attrs.iter().map(ToString::to_string).collect::<HashSet<String>>());
 
-    let compiled_q = sub.q.as_ref().and_then(|q_str| match q::parser::parse(q_str) {
+    let compiled_q = sub.q.as_ref().and_then(|q_str| match parser::parse(q_str) {
         Ok(expr) => Some(expr),
         Err(e) => {
             debug!("Failed to parse q filter '{}' for subscription {}: {}", q_str, sub.id, e);
@@ -288,7 +288,7 @@ pub fn compile_subscription(sub: &Subscription) -> Option<CompiledSubscription> 
         }
     });
 
-    let compiled_csf = sub.csf.as_ref().and_then(|csf_str| match q::parser::parse(csf_str) {
+    let compiled_csf = sub.csf.as_ref().and_then(|csf_str| match parser::parse(csf_str) {
         Ok(expr) => Some(expr),
         Err(e) => {
             debug!("Failed to parse csf filter '{}' for subscription {}: {}", csf_str, sub.id, e);
@@ -476,7 +476,7 @@ mod tests {
             time_interval_secs: None,
             notification_attributes: None,
             notification_format: None,
-            notification_sys_attrs: crate::renderer::SysAttrsInclusion::Strip,
+            notification_sys_attrs: andromeda_domain::sys_attrs::SysAttrsInclusion::Strip,
             notification_show_changes: false,
             jsonld_context: None,
             expires_at: None,

@@ -3,13 +3,13 @@
 
 use crate::{
     jsonld::{CompactOptions, ContextSpec, ContextStripping, JsonLdEngine},
-    renderer::{Renderer, SysAttrsInclusion, entity::RenderMode, snapshot::SnapshotRenderer},
+    renderer::{Renderer, entity::RenderMode, snapshot::SnapshotRenderer},
     service::{
         compiled_subscription::CompiledSubscription,
         entity::{expanded_entity_object_mut, inject_attr_sys_attrs, query::EntityQueryService},
     },
 };
-use andromeda_domain::{attribute::name::AttributeName, entity::Entity, notification::TriggerReason, vocab};
+use andromeda_domain::{attribute::name::AttributeName, entity::Entity, notification::TriggerReason, sys_attrs::SysAttrsInclusion, vocab};
 use chrono::{DateTime, SecondsFormat, Utc};
 use serde_json::Value;
 use std::{

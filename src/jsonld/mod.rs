@@ -9,6 +9,7 @@ pub mod core_context;
 mod engine;
 mod error;
 pub mod loader;
+pub mod term_expansion;
 pub mod term_resolver;
 
 pub use context::{ContextSpec, CoreContextPolicy, default_core_context_url, set_default_core_context_url};

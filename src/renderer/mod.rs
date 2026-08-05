@@ -50,20 +50,6 @@ pub trait Renderer {
     fn render(self) -> Result<Self::Output, AndromedaError>;
 }
 
-/// Whether system-generated attributes (`createdAt`, `modifiedAt`) should be
-/// included in the response or stripped before serialization.
-///
-/// Replaces bare `bool` parameters in subscription, registration, and temporal
-/// rendering functions.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub enum SysAttrsInclusion {
-    /// Include `createdAt`, `modifiedAt`, and related system attributes.
-    Include,
-    /// Strip system attributes from the response.
-    #[default]
-    Strip,
-}
-
 /// Where the JSON-LD `@context` should appear in the response.
 ///
 /// For `application/json` responses the context goes in the `Link` header;

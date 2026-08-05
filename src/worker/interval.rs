@@ -1,6 +1,5 @@
 use crate::{
     jsonld::{CompactOptions, ContextSpec, ContextStripping, JsonLdEngine},
-    query::q,
     repository::{entity::repo::EntityRepository, subscription::repo::SubscriptionRepository, subscription_store::repo::SubscriptionStore},
     service::entity::inject_sys_attrs,
     transport::{
@@ -14,6 +13,7 @@ use andromeda_domain::{
     subscription::Subscription,
     uri::{NGSI_LD_URN_NID, Uri},
 };
+use andromeda_query::filter::{eval, parser};
 use chrono::Utc;
 use futures::{StreamExt, stream};
 use serde_json::Value;
@@ -308,7 +308,7 @@ fn extract_entity_id(entity: &Value) -> Option<String> {
 
 /// Apply q, geoQ, and scopeQ filters from a subscription to a list of expanded entities.
 fn apply_subscription_filters(sub: &Subscription, entities: Vec<Value>) -> Vec<Value> {
-    let compiled_q = sub.q.as_ref().and_then(|q_str| match q::parser::parse(q_str) {
+    let compiled_q = sub.q.as_ref().and_then(|q_str| match parser::parse(q_str) {
         Ok(expr) => Some(expr),
         Err(e) => {
             debug!("IntervalWorker: failed to parse q filter '{}' for subscription {}: {}", q_str, sub.id, e);
@@ -328,7 +328,7 @@ fn apply_subscription_filters(sub: &Subscription, entities: Vec<Value>) -> Vec<V
         .into_iter()
         .filter(|entity| {
             if let Some(ref expr) = compiled_q
-                && !q::eval::evaluate(expr, entity)
+                && !eval::evaluate(expr, entity)
             {
                 return false;
             }

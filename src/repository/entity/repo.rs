@@ -2,19 +2,20 @@
 
 use crate::{
     core::error::AndromedaError,
-    query::{
-        compiled::CompiledEntityQuery,
-        sql::{self, BindValue, q_filter::ResolvedAttributeNames},
-    },
     repository::{
         entity::{
             params::{EntityCreateParams, EntitySaveParams, PreparedEntityColumns},
             rows::{AttributeSummaryRow, DeletedEntity, PurgedEntity, QueryResult},
         },
-        geometry::encode_optional,
+        ewkb_binding::geometry_bytes,
     },
 };
 use andromeda_domain::{notification::SysAttrsSnapshot, vocab::expanded::properties};
+use andromeda_query::{
+    entity::{compiled::CompiledEntityQuery, sql as entity_sql},
+    filter::sql::attribute_names::ResolvedAttributeNames,
+    sql::bind::BindValue,
+};
 use serde_json::Value;
 use sqlx::{Executor, Postgres, Row, Transaction, postgres::PgPool};
 use std::collections::HashMap;
@@ -75,9 +76,9 @@ impl EntityRepository {
             .bind(params.types)
             .bind(&params.scope_paths)
             .bind(params.payload)
-            .bind(encode_optional(params.location.as_ref())?)
-            .bind(encode_optional(params.observation_space.as_ref())?)
-            .bind(encode_optional(params.operation_space.as_ref())?)
+            .bind(geometry_bytes(params.location.as_ref())?)
+            .bind(geometry_bytes(params.observation_space.as_ref())?)
+            .bind(geometry_bytes(params.operation_space.as_ref())?)
             .bind(params.expires_at)
             .execute(&mut **tx)
             .await?;
@@ -106,9 +107,9 @@ impl EntityRepository {
             .bind(params.types)
             .bind(&params.scope_paths)
             .bind(params.payload)
-            .bind(encode_optional(params.location.as_ref())?)
-            .bind(encode_optional(params.observation_space.as_ref())?)
-            .bind(encode_optional(params.operation_space.as_ref())?)
+            .bind(geometry_bytes(params.location.as_ref())?)
+            .bind(geometry_bytes(params.observation_space.as_ref())?)
+            .bind(geometry_bytes(params.operation_space.as_ref())?)
             .bind(params.expires_at)
             .execute(&mut **tx)
             .await?;
@@ -299,9 +300,9 @@ impl EntityRepository {
         // The column is `text[]`; the domain name type is not an sqlx `Encode`, so it is rendered here at the persistence boundary.
         .bind(params.types.iter().map(ToString::to_string).collect::<Vec<_>>())
         .bind(&params.scope_paths)
-        .bind(encode_optional(params.location.as_ref())?)
-        .bind(encode_optional(params.observation_space.as_ref())?)
-        .bind(encode_optional(params.operation_space.as_ref())?)
+        .bind(geometry_bytes(params.location.as_ref())?)
+        .bind(geometry_bytes(params.observation_space.as_ref())?)
+        .bind(geometry_bytes(params.operation_space.as_ref())?)
         .bind(params.expires_at)
         .execute(executor)
         .await?;
@@ -317,7 +318,7 @@ impl EntityRepository {
 
     /// Execute a compiled entity query and return matching payloads.
     pub async fn query_compiled(&self, compiled: &CompiledEntityQuery, attribute_names: &ResolvedAttributeNames) -> Result<QueryResult, AndromedaError> {
-        let built = sql::entity::build_query(compiled, attribute_names)?;
+        let built = entity_sql::build_query(compiled, attribute_names)?;
 
         tracing::debug!("Built SQL: {} with binds: {:?}", built.sql, built.bind_values);
 
@@ -340,7 +341,7 @@ impl EntityRepository {
         let total_count = if read_total_count {
             match row_iter.next() {
                 Some(first) => {
-                    let count = first.try_get::<i64, _>(sql::entity::TOTAL_COUNT_COLUMN).ok();
+                    let count = first.try_get::<i64, _>(entity_sql::TOTAL_COUNT_COLUMN).ok();
                     let data: Value = first.try_get("payload")?;
                     let mut results = Vec::with_capacity(row_iter.size_hint().0 + 1);
                     results.push(data);
@@ -575,7 +576,7 @@ impl EntityRepository {
 
     /// Execute a compiled query and return only the matching entity identifiers.
     pub async fn query_ids(&self, compiled: &CompiledEntityQuery, attribute_names: &ResolvedAttributeNames) -> Result<Vec<String>, AndromedaError> {
-        let built = sql::entity::build_ids_query(compiled, attribute_names)?;
+        let built = entity_sql::build_ids_query(compiled, attribute_names)?;
 
         tracing::debug!("Built IDs SQL: {} with binds: {:?}", built.sql, built.bind_values);
 

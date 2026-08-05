@@ -25,11 +25,9 @@ use crate::{
         response::{collection::NgsiLdCollectionResponse, single::NgsiLdResponse},
         validation::{parse_entity_id, validate_attr_name},
     },
-    jsonld::ContextSpec,
-    query::{compile::expand_q_expression, compiled::PurgeMode, q::eval::evaluate},
+    jsonld::{ContextSpec, term_expansion::ContextualExpander},
     renderer::{
         Renderer,
-        SysAttrsInclusion,
         entity::EntityRenderer,
         response::{ResponsePayload, ResponseRenderer},
         snapshot::SnapshotRenderer,
@@ -60,7 +58,12 @@ use andromeda_domain::{
     entity::{Entity, EntityPatch},
     entity_type::{EntityTypeName, EntityTypeValue},
     expanded::mutation::selection::{DatasetSelection, OverwritePolicy},
+    sys_attrs::SysAttrsInclusion,
     uri::Uri,
+};
+use andromeda_query::{
+    filter::{eval::evaluate, expansion::expand_q_expression},
+    projection::purge::{PurgeMode, parse_attribute_list},
 };
 use axum::{
     Json,
@@ -552,7 +555,7 @@ pub async fn query(
             let entity_ids_ref = entity_ids.as_deref();
 
             // Parse csf for CSR filtering during forwarding
-            let csf_expr = expand_q_expression(query.csf.as_deref(), state.entity_query.engine(), &context)
+            let csf_expr = expand_q_expression(query.csf.as_deref(), &ContextualExpander::new(state.entity_query.engine(), &context))
                 .await
                 .with_instance(&uri)?;
 
@@ -611,7 +614,10 @@ pub async fn query(
         // splitEntities post-merge filtering: apply deferred q/geoQ/scopeQ (spec 5.7.2.4)
         if split_entities {
             let q_expr = if let Some(ref q_str) = deferred.q {
-                expand_q_expression(Some(q_str), service.engine(), &context).await.ok().flatten()
+                expand_q_expression(Some(q_str), &ContextualExpander::new(service.engine(), &context))
+                    .await
+                    .ok()
+                    .flatten()
             } else {
                 None
             };
@@ -1292,9 +1298,9 @@ pub async fn delete_by_query(
 
     // Determine purge mode from drop/keep parameters (S5.6.21)
     let purge_mode = if let Some(ref drop_attrs) = query.drop {
-        PurgeMode::Drop(drop_attrs.split(',').map(|s| s.trim().to_string()).collect())
+        PurgeMode::Drop(parse_attribute_list(drop_attrs).with_instance(&uri)?)
     } else if let Some(ref keep_attrs) = query.keep {
-        PurgeMode::Keep(keep_attrs.split(',').map(|s| s.trim().to_string()).collect())
+        PurgeMode::Keep(parse_attribute_list(keep_attrs).with_instance(&uri)?)
     } else {
         PurgeMode::DeleteEntities
     };

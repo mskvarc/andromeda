@@ -19,7 +19,7 @@
 use crate::{
     core::error::AndromedaError,
     repository::{
-        geometry::{Ewkb, encode_optional},
+        ewkb_binding::geometry_bytes,
         temporal::{params::HistoryBatchEntry, repo::repair_attribute_current},
     },
 };
@@ -345,7 +345,7 @@ pub async fn apply_attribute_current_batch(conn: &mut PgConnection, entries: &[H
     let mut value_numbers: Vec<Option<f64>> = Vec::with_capacity(len);
     let mut value_strings: Vec<Option<&str>> = Vec::with_capacity(len);
     let mut value_bools: Vec<Option<bool>> = Vec::with_capacity(len);
-    let mut value_geos: Vec<Option<Ewkb>> = Vec::with_capacity(len);
+    let mut value_geos: Vec<Option<Vec<u8>>> = Vec::with_capacity(len);
     let mut value_objects: Vec<Option<&serde_json::Value>> = Vec::with_capacity(len);
     let mut value_datetimes: Vec<Option<chrono::DateTime<chrono::Utc>>> = Vec::with_capacity(len);
     let mut value_uris: Vec<Option<&str>> = Vec::with_capacity(len);
@@ -357,7 +357,7 @@ pub async fn apply_attribute_current_batch(conn: &mut PgConnection, entries: &[H
         value_numbers.push(e.value_number);
         value_strings.push(e.value_string.as_deref());
         value_bools.push(e.value_bool);
-        value_geos.push(encode_optional(e.value_geo.as_ref())?);
+        value_geos.push(geometry_bytes(e.value_geo.as_ref())?);
         value_objects.push(e.value_object.as_ref());
         value_datetimes.push(e.value_datetime);
         value_uris.push(e.value_uri.as_deref());

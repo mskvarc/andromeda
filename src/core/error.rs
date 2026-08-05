@@ -7,7 +7,7 @@
 //! [`AndromedaError`] wraps an [`ErrorKind`] with an optional request URI
 //! (`instance`) that handlers attach for RFC 7807 Problem Details responses.
 
-use crate::{jsonld::Error as JsonLdError, query::error::QueryError};
+use crate::jsonld::Error as JsonLdError;
 use andromeda_domain::ngsi_ld_urn::{
     AttributeListIdParseError,
     EntityMapIdParseError,
@@ -15,6 +15,7 @@ use andromeda_domain::ngsi_ld_urn::{
     SnapshotIdParseError,
     SnapshotNotificationIdParseError,
 };
+use andromeda_query::error::QueryError;
 use axum::http::Uri;
 use confique::Error as ConfigError;
 use reqwest::Error as ReqwestError;
@@ -436,6 +437,15 @@ impl From<ErrorKind> for AndromedaError {
     }
 }
 
+/// An EWKB codec failure is never client-caused: the geometry was already
+/// validated as GeoJSON before it reached the store boundary, so a failure here
+/// is a broker or driver fault.
+impl From<andromeda_geometry::ewkb::EwkbError> for AndromedaError {
+    fn from(error: andromeda_geometry::ewkb::EwkbError) -> AndromedaError {
+        AndromedaError::internal(format!("EWKB codec: {error}"))
+    }
+}
+
 // -- From impls that go through ErrorKind's #[from] --------------------------
 
 impl From<MigrateError> for AndromedaError {
@@ -558,11 +568,16 @@ impl From<QueryError> for AndromedaError {
             | QueryError::ParamOptionsInvalid(_)
             | QueryError::ParamFormatInvalid(_) => ErrorKind::MalformedRequest(err.to_string()),
             QueryError::QInvalidNumber(_)
-            | QueryError::IdPatternRegex(_)
+            | QueryError::QInvalidDateTime { .. }
+            | QueryError::QInvalidDate { .. }
+            | QueryError::QInvalidTime { .. }
+            | QueryError::PatternRegex(_)
             | QueryError::GeoRel(_)
             | QueryError::IcuCollation(_)
             | QueryError::ParamIdInvalid(_)
             | QueryError::ParamIdListEmpty
+            | QueryError::ParamDatasetIdInvalid(_)
+            | QueryError::ScopePatternInvalid(_)
             | QueryError::ParamIdPatternEmpty
             | QueryError::ParamOrderGeometryInvalid(_)
             | QueryError::ParamOrderGeometryCollection
@@ -572,8 +587,24 @@ impl From<QueryError> for AndromedaError {
             | QueryError::ParamTimerelTimeatRequired
             | QueryError::ParamTimerelTimeatPair
             | QueryError::ParamAggrMethodInvalid(_)
+            | QueryError::ParamAggrPeriodDurationInvalid(_)
             | QueryError::ParamEndTimeAtRequired
+            | QueryError::GeoCoordinatesInvalid(_)
+            | QueryError::ReferenceGeometry(_)
+            | QueryError::NearWithoutDistance
+            | QueryError::RangeOperatorUnsupported
+            | QueryError::ValueListOperatorUnsupported
+            | QueryError::DistanceOrderWithoutReference
             | QueryError::ParamOther(_) => ErrorKind::QueryValidation(err.to_string()),
+            // Neither the client nor the request shape caused these: a
+            // geometry that already parsed failed to encode, a term the
+            // processor accepted failed to expand, or sea-query produced a
+            // value with no typed bind. They are broker faults.
+            QueryError::ReferenceGeometryEncoding(_)
+            | QueryError::TermExpansion { .. }
+            | QueryError::TermNotAnIri { .. }
+            | QueryError::AttributeNameInvalid { .. }
+            | QueryError::BindConversion(_) => ErrorKind::Internal(err.to_string()),
         };
         kind.into()
     }
@@ -783,7 +814,7 @@ mod tests {
 
     #[test]
     fn query_error_geo_distance_preserves_source_chain() {
-        let err = QueryError::GeoRel(andromeda_domain::geo_rel::GeoRelParseError::InvalidDistance {
+        let err = QueryError::GeoRel(andromeda_geometry::geo_rel::GeoRelParseError::InvalidDistance {
             value: "nope".to_string(),
             source: "nope".parse::<f64>().unwrap_err(),
         });

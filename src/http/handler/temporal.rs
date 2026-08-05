@@ -18,8 +18,7 @@ use crate::{
         response::{collection::NgsiLdCollectionResponse, single::NgsiLdResponse},
         validation::{parse_entity_id, validate_attr_name, validate_instance_id},
     },
-    jsonld::ContextSpec,
-    query::{compile::expand_q_expression, q::eval::evaluate},
+    jsonld::{ContextSpec, term_expansion::ContextualExpander},
     renderer::{
         Renderer,
         response::{ResponsePayload, ResponseRenderer},
@@ -35,6 +34,7 @@ use crate::{
     },
 };
 use andromeda_domain::{registration::ForwardingMode, uri::Uri};
+use andromeda_query::filter::{eval::evaluate, expansion::expand_q_expression};
 use axum::{
     extract::{OriginalUri, Path},
     http::StatusCode,
@@ -354,7 +354,10 @@ pub async fn query(
     // splitEntities post-merge filtering: apply deferred q/geoQ/scopeQ (spec 5.7.4.4)
     if split_entities {
         let q_expr = if let Some(ref q_str) = deferred.q {
-            expand_q_expression(Some(q_str), service.engine(), &context).await.ok().flatten()
+            expand_q_expression(Some(q_str), &ContextualExpander::new(service.engine(), &context))
+                .await
+                .ok()
+                .flatten()
         } else {
             None
         };

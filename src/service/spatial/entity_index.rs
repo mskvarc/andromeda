@@ -1,14 +1,15 @@
 //! Entity-side R-tree cache.
 //!
 //! Partitioned by [`SpatialKey`]; each partition holds a `RTree<SpatialEntry>`
-//! storing the full entity geometry. [`SpatialEntityIndex::query`] runs the
-//! exact `georel` predicate inline using the `geo` crate, matching the
-//! semantics of [`crate::service::subscription_matching::matches_compiled_geo_query`].
+//! storing the full entity geometry.
+//!
+//! What the index decides is *which* entries are worth comparing. What a
+//! comparison means is [`andromeda_geometry::relation::matches_geo`], the one
+//! reading of clause 4.10 every in-memory matcher shares.
 
-use crate::service::spatial::{SpatialKey, distance::haversine_distance_m};
-use andromeda_domain::{geo_rel::GeoRel, geometry::Geometry};
+use crate::service::spatial::SpatialKey;
+use andromeda_geometry::{geo_rel::GeoRel, geometry::Geometry, relation::matches_geo};
 use dashmap::DashMap;
-use geo::algorithm::{Contains, Intersects};
 use parking_lot::RwLock;
 use rstar::{AABB, PointDistance, RTree, RTreeObject};
 use std::{collections::HashSet, sync::Arc};
@@ -150,53 +151,43 @@ impl SpatialEntityIndex {
     }
 }
 
-fn evaluate(tree: &RTree<SpatialEntry>, georel: &GeoRel, ref_geom: &geo::Geometry<f64>) -> HashSet<Urn> {
-    let mut out = HashSet::new();
+/// Which entries of a partition a relation has to be evaluated against.
+///
+/// The R-tree can only rule out entries whose bounding box misses the
+/// reference geometry's, which is sound for the containment and intersection
+/// relations and unsound for the two that match *away* from the reference.
+enum Candidates {
+    /// Every entry in the partition.
+    WholePartition,
+    /// Only the entries whose envelope meets the reference envelope.
+    EnvelopeIntersecting,
+}
 
+/// Candidate set a relation admits.
+const fn candidates_for(georel: &GeoRel) -> Candidates {
     match georel {
-        GeoRel::Near { max_distance, min_distance } => {
-            // Near requires scanning all entries (no bbox cutoff works for `min`).
-            for entry in tree.iter() {
-                let entry_geom: &geo::Geometry<f64> = entry.geometry.as_ref();
-                let d = haversine_distance_m(entry_geom, ref_geom);
-                let max_ok = max_distance.is_none_or(|m| d <= m);
-                let min_ok = min_distance.is_none_or(|m| d >= m);
-                if max_ok && min_ok {
-                    out.insert(entry.entity_id.clone());
-                }
-            }
-        }
-        GeoRel::Disjoint => {
-            // Disjoint = not intersects. Must consider every entry.
-            for entry in tree.iter() {
-                let entry_geom: &geo::Geometry<f64> = entry.geometry.as_ref();
-                if !entry_geom.intersects(ref_geom) {
-                    out.insert(entry.entity_id.clone());
-                }
-            }
-        }
-        _ => {
-            let ref_env = geometry_envelope(ref_geom);
-            // AABB prefilter — no decode paid for entries that fail the envelope test.
-            let candidates: Vec<&SpatialEntry> = tree.locate_in_envelope_intersecting(&ref_env).collect();
-            for entry in candidates {
-                let entry_geom: &geo::Geometry<f64> = entry.geometry.as_ref();
-                let matched = match georel {
-                    GeoRel::Within => ref_geom.contains(entry_geom),
-                    GeoRel::Contains => entry_geom.contains(ref_geom),
-                    GeoRel::Intersects => entry_geom.intersects(ref_geom),
-                    GeoRel::Equals => entry_geom.contains(ref_geom) && ref_geom.contains(entry_geom),
-                    GeoRel::Overlaps => entry_geom.intersects(ref_geom),
-                    GeoRel::Near { .. } | GeoRel::Disjoint => false,
-                };
-                if matched {
-                    out.insert(entry.entity_id.clone());
-                }
-            }
-        }
+        // No bounding-box cutoff is sound for `near`: `minDistance` matches
+        // entries that are arbitrarily far from the reference envelope.
+        GeoRel::Near { .. } |
+        // `disjoint` matches precisely the entries the envelope test discards.
+        GeoRel::Disjoint => Candidates::WholePartition,
+        GeoRel::Within | GeoRel::Contains | GeoRel::Intersects | GeoRel::Equals | GeoRel::Overlaps => Candidates::EnvelopeIntersecting,
     }
+}
 
-    out
+fn evaluate(tree: &RTree<SpatialEntry>, georel: &GeoRel, ref_geom: &geo::Geometry<f64>) -> HashSet<Urn> {
+    let candidates: Vec<&SpatialEntry> = match candidates_for(georel) {
+        Candidates::WholePartition => tree.iter().collect(),
+        // AABB prefilter — no exact predicate paid for entries that fail it.
+        Candidates::EnvelopeIntersecting => tree.locate_in_envelope_intersecting(&geometry_envelope(ref_geom)).collect(),
+    };
+
+    candidates
+        .into_iter()
+        .filter(|entry| matches_geo(georel, entry.geometry.as_ref(), ref_geom))
+        // clone: the returned set owns its identifiers, which outlive the tree borrow
+        .map(|entry| entry.entity_id.clone())
+        .collect()
 }
 
 fn geometry_envelope(g: &geo::Geometry<f64>) -> AABB<[f64; 2]> {

@@ -1,6 +1,7 @@
 //! The GeoProperty attribute family (ETSI GS CIM 009 clause 5.2.7).
 
-use crate::{attribute::common_fields::CommonAttributeFields, geometry::Geometry};
+use crate::attribute::common_fields::CommonAttributeFields;
+use andromeda_geometry::geometry::Geometry;
 use compact_str::CompactString;
 use jsonld::Expandable;
 use serde::{Deserialize, Serialize};

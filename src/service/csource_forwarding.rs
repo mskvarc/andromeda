@@ -2,7 +2,6 @@ use crate::{
     core::error::AndromedaError,
     http::header::{link::Link, ngsild_tenant::NgsiLdTenant, ngsild_warning::NgsiLdWarning, via::Via},
     jsonld::{ContextSpec, JsonLdEngine},
-    query::q::{ast::Expr, eval::evaluate as eval_q_expr},
     repository::csource_registration::repo::CsourceRegistrationRepository,
 };
 use andromeda_domain::{
@@ -11,6 +10,7 @@ use andromeda_domain::{
     registration::{ContextSourceRegistration, CsrOperation, ForwardingMode},
     tenant::TenantName,
 };
+use andromeda_query::filter::{eval::evaluate as eval_q_expr, expression::Expr};
 use futures::{StreamExt, stream};
 use headers::Header;
 use serde_json::Value;

@@ -1,0 +1,22 @@
+[package]
+name = "andromeda-geometry"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+bytes = "1.11.1"
+geo = "0.33.1"
+geojson = "1.0.0"
+geozero = { version = "0.15.1", default-features = false, features = ["with-geo", "with-wkb"] }
+jsonld-expandable-core = { version = "0.22.0", features = ["serde-json"] }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.149"
+strum = { version = "0.28.0", features = ["derive"] }
+thiserror = "2.0.18"
+
+[dev-dependencies]
+pretty_assertions = "1.4.1"

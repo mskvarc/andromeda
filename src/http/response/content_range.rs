@@ -5,11 +5,9 @@
 //! alongside [`crate::http::response::pagination`] which builds `Link`
 //! headers from analogous pagination state.
 
-use crate::{
-    query::compiled::{CompiledTemporalQuery, LastNOrigin},
-    service::temporal::format_datetime,
-};
+use crate::service::temporal::format_datetime;
 use andromeda_domain::temporal::TimeRel;
+use andromeda_query::temporal::{compiled::CompiledTemporalQuery, last_n::LastNOrigin};
 use chrono::{DateTime, Utc};
 
 type TimeRange = (DateTime<Utc>, DateTime<Utc>);
@@ -30,17 +28,17 @@ pub fn build_content_range(
     let mrt = format_datetime(max_time);
 
     let (start, end, size) = if last_n_origin.is_user_specified() {
-        let upper = match compiled.timerel {
-            Some(TimeRel::Before) => compiled.time_at.map_or_else(|| mrt.clone(), format_datetime),
-            Some(TimeRel::Between) => compiled.end_time_at.map_or_else(|| mrt.clone(), format_datetime),
+        let upper = match compiled.window.timerel {
+            Some(TimeRel::Before) => compiled.window.time_at.map_or_else(|| mrt.clone(), format_datetime),
+            Some(TimeRel::Between) => compiled.window.end_time_at.map_or_else(|| mrt.clone(), format_datetime),
             Some(TimeRel::After) => mrt,
             None => mrt,
         };
         let size = partition_total.map_or_else(|| "*".to_string(), |n| n.to_string());
         (upper, lrt, size)
     } else {
-        let lower = match compiled.timerel {
-            Some(_) => compiled.time_at.map(format_datetime).unwrap_or(lrt),
+        let lower = match compiled.window.timerel {
+            Some(_) => compiled.window.time_at.map(format_datetime).unwrap_or(lrt),
             None => lrt,
         };
         (lower, mrt, "*".to_string())

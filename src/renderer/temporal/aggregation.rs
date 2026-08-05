@@ -5,11 +5,11 @@
 
 use crate::{
     core::error::AndromedaError,
-    query::compiled::CompiledTemporalQuery,
     renderer::{Renderer, temporal::common::extract_typed_agg},
     service::temporal::format_datetime,
 };
 use andromeda_domain::temporal::{AggrMethod, ValueType};
+use andromeda_query::temporal::compiled::CompiledTemporalQuery;
 use chrono::{DateTime, Utc};
 use indexmap::IndexMap;
 use serde_json::{Value, json};
@@ -60,14 +60,14 @@ impl<'a> Renderer for TemporalAggregationRenderer<'a> {
             let value_type =
                 ValueType::from_str(&value_type_raw).map_err(|e| AndromedaError::internal(format!("Invalid value type '{}': {}", value_type_raw, e)))?;
 
-            let mut instance = serde_json::Map::with_capacity(2 + compiled.aggr_methods.len());
+            let mut instance = serde_json::Map::with_capacity(2 + compiled.representation.aggr_methods.len());
             instance.insert("type".to_string(), json!(attr_type_raw));
 
             if let Some(ds_id) = dataset_id {
                 instance.insert("datasetId".to_string(), json!(ds_id));
             }
 
-            for method in &compiled.aggr_methods {
+            for method in &compiled.representation.aggr_methods {
                 let key = match method {
                     AggrMethod::Avg => "avg",
                     AggrMethod::Min => "min",

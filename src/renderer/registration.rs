@@ -3,10 +3,8 @@
 //! Handles stripping of system attributes and runtime status fields from
 //! CSR payloads before they are sent as HTTP responses.
 
-use crate::{
-    core::error::AndromedaError,
-    renderer::{Renderer, SysAttrsInclusion},
-};
+use crate::{core::error::AndromedaError, renderer::Renderer};
+use andromeda_domain::sys_attrs::SysAttrsInclusion;
 use serde_json::Value;
 
 /// Renders a context source registration payload for HTTP response.

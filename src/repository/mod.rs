@@ -10,7 +10,8 @@ pub mod csource_registration;
 pub mod csource_subscription;
 pub mod entity;
 pub mod entity_map;
-pub mod geometry;
+/// Binding geometries into PostgreSQL statements.
+pub mod ewkb_binding;
 pub mod jsonld_context;
 pub mod outbox;
 pub mod pending_side_effects;
@@ -20,3 +21,5 @@ pub mod subscription_store;
 pub mod temporal;
 pub mod timescale_features;
 pub mod uow;
+/// Binding typed query values into PostgreSQL statements.
+pub mod value_binding;

@@ -1,4 +1,13 @@
 large-error-threshold = 256
+
+# `expect_used`, `unwrap_used` and `panic` are denied for production code, where
+# a failed assumption is a 500. A test asserts by panicking, so the same denial
+# there buys nothing and was being bought off with a per-module `#[allow]` —
+# which this project's CLAUDE.md forbids. Configuring the exemption once here is
+# what lets those attributes be deleted.
+allow-expect-in-tests = true
+allow-panic-in-tests = true
+allow-unwrap-in-tests = true
 # Axum handlers use one parameter per extractor; the default 7 is too low
 # for routes that legitimately need request body + query + path + several
 # typed headers + tenant state. Keeping warnings on but at a higher bar.

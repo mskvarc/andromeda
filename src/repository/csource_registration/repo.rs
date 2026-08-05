@@ -2,14 +2,14 @@
 
 use crate::{
     core::error::AndromedaError,
-    query::{compiled::CompiledCsrQuery, sql::csr as csr_sql},
     repository::{
         csource_registration::{mapper::row_to_csr, params::CreateCsrParams},
-        geometry::encode_optional,
+        ewkb_binding::geometry_bytes,
     },
     service::csource_merge::ResolvedCsrUpdate,
 };
 use andromeda_domain::{registration::ContextSourceRegistration, tenant::TenantName, uri::NGSI_LD_URN_NID};
+use andromeda_query::csr::{compiled::CompiledCsrQuery, sql as csr_sql};
 use sea_query::{Alias, Expr as SeaExpr, Order, PostgresQueryBuilder, Query, SelectStatement};
 use sea_query_binder::SqlxBinder;
 use sqlx::postgres::PgPool;
@@ -102,9 +102,9 @@ impl CsourceRegistrationRepository {
         .bind(params.tenant)
         .bind(params.observation_interval.cloned())
         .bind(params.management_interval.cloned())
-        .bind(encode_optional(params.location.as_ref())?)
-        .bind(encode_optional(params.observation_space.as_ref())?)
-        .bind(encode_optional(params.operation_space.as_ref())?)
+        .bind(geometry_bytes(params.location.as_ref())?)
+        .bind(geometry_bytes(params.observation_space.as_ref())?)
+        .bind(geometry_bytes(params.operation_space.as_ref())?)
         .bind(params.expires_at)
         .bind(params.endpoint)
         .bind(params.accept)
@@ -214,9 +214,9 @@ impl CsourceRegistrationRepository {
         .bind(values.tenant.as_ref().map(TenantName::as_str))
         .bind(&values.observation_interval)
         .bind(&values.management_interval)
-        .bind(encode_optional(values.location.as_ref())?)
-        .bind(encode_optional(values.observation_space.as_ref())?)
-        .bind(encode_optional(values.operation_space.as_ref())?)
+        .bind(geometry_bytes(values.location.as_ref())?)
+        .bind(geometry_bytes(values.observation_space.as_ref())?)
+        .bind(geometry_bytes(values.operation_space.as_ref())?)
         .bind(values.expires_at)
         .bind(values.endpoint.as_str())
         .bind(values.accept.as_deref())

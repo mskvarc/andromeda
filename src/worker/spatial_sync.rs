@@ -20,10 +20,10 @@ use crate::{
     tenancy::types::TenantRef,
 };
 use andromeda_domain::{
-    geometry::Geometry,
     notification::{ChangeEvent, TriggerReason},
     vocab,
 };
+use andromeda_geometry::geometry::Geometry;
 use iri_rs::IriBuf;
 use serde_json::Value;
 use sqlx::PgPool;
@@ -267,7 +267,8 @@ mod tests {
     #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::*;
     use crate::service::spatial::SpatialKey;
-    use andromeda_domain::{geo_rel::GeoRel, uri::Uri};
+    use andromeda_domain::uri::Uri;
+    use andromeda_geometry::geo_rel::GeoRel;
     use geo::{Coord, LineString, Polygon};
     use iri_rs::iri;
     use serde_json::json;

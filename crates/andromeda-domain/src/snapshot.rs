@@ -3,10 +3,9 @@
 use crate::{
     attribute::name::AttributeName,
     constant_string,
-    geo_rel::GeoRel,
-    geometry::GeometryType,
     ngsi_ld_urn::{SnapshotId, SnapshotNotificationId, SnapshotNotificationIdParseError},
 };
+use andromeda_geometry::{geo_rel::GeoRel, geometry::GeometryType};
 use chrono::{DateTime, Utc};
 use compact_str::CompactString;
 use derive_more::Display;
@@ -364,11 +363,10 @@ pub struct SnapshotPatch {
 mod tests {
     #![allow(clippy::expect_used, clippy::unwrap_used)]
     use crate::{
-        geo_rel::GeoRel,
-        geometry::GeometryType,
         ngsi_ld_urn::SnapshotId,
         snapshot::{SnapshotPriority, SnapshotStatus},
     };
+    use andromeda_geometry::{geo_rel::GeoRel, geometry::GeometryType};
     use iso8601_duration::Duration as Iso8601Duration;
     use strum::IntoEnumIterator;
 

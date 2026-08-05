@@ -1,7 +1,6 @@
 use crate::{
     core::error::AndromedaError,
     jsonld::{BatchContextHandle, ContextSpec, JsonLdEngine},
-    query::sql,
     repository::{
         entity::{PreparedEntityRow, decompose_rows, params::PreparedEntityColumns},
         uow::UnitOfWork,
@@ -30,10 +29,12 @@ use andromeda_domain::{
             selection::OverwritePolicy,
         },
     },
-    geometry::Geometry,
     notification::{ChangeEvent, SysAttrsSnapshot, TriggerReason},
+    scope::ScopeBuf,
     uri::Uri,
 };
+use andromeda_geometry::geometry::Geometry;
+use andromeda_query::scope::ltree::scope_to_ltree;
 use futures::{StreamExt, stream};
 use serde_json::Value;
 use std::{
@@ -69,7 +70,7 @@ struct PreparedEntity {
     /// Entity type names extracted from the expanded payload.
     types: Vec<EntityTypeName>,
     /// Scope values extracted from the expanded payload.
-    scopes: Vec<String>,
+    scopes: Vec<ScopeBuf>,
     /// Attribute names changed by this request payload.
     changed_attributes: Vec<AttributeName>,
     /// The `location` geometry, if present.
@@ -201,7 +202,7 @@ fn row_from_expanded(id: String, expanded: Value) -> (PreparedEntityRow, Vec<Ent
     let scope_paths_json = Value::Array(
         entity_member::extract_scopes(&expanded)
             .into_iter()
-            .map(|s| Value::String(sql::scope_to_ltree(&s)))
+            .map(|scope| Value::String(scope_to_ltree(&scope)))
             .collect(),
     );
     let location = extract_location_geometry(&expanded);
@@ -691,7 +692,7 @@ impl EntityService {
                         .push(Value::Array(types.iter().map(|entity_type| Value::String(entity_type.to_string())).collect()));
                     columns
                         .scope_paths_json
-                        .push(Value::Array(scopes.into_iter().map(|s| Value::String(sql::scope_to_ltree(&s))).collect()));
+                        .push(Value::Array(scopes.into_iter().map(|scope| Value::String(scope_to_ltree(&scope))).collect()));
                     columns.push_payload(expanded)?;
                     columns.push_geometries(location.as_ref(), observation_space.as_ref(), operation_space.as_ref())?;
                     columns.expires_ats.push(expires_at);
@@ -929,7 +930,7 @@ impl EntityService {
             columns.types_json.push(types_json);
             columns
                 .scope_paths_json
-                .push(Value::Array(scopes.into_iter().map(|s| Value::String(sql::scope_to_ltree(&s))).collect()));
+                .push(Value::Array(scopes.into_iter().map(|scope| Value::String(scope_to_ltree(&scope))).collect()));
             columns.push_payload(expanded)?;
             columns.push_geometries(location.as_ref(), observation_space.as_ref(), operation_space.as_ref())?;
             columns.expires_ats.push(expires_at);
@@ -1056,7 +1057,7 @@ impl EntityService {
                 created_columns.types_json.push(types_json);
                 created_columns
                     .scope_paths_json
-                    .push(Value::Array(scopes.into_iter().map(|s| Value::String(sql::scope_to_ltree(&s))).collect()));
+                    .push(Value::Array(scopes.into_iter().map(|scope| Value::String(scope_to_ltree(&scope))).collect()));
                 created_columns.push_payload(expanded)?;
                 created_columns.push_geometries(location.as_ref(), observation_space.as_ref(), operation_space.as_ref())?;
                 created_columns.expires_ats.push(expires_at);

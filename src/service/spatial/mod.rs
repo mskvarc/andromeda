@@ -11,15 +11,12 @@
 //! `geo::Contains`/`Intersects` predicates as [`crate::service::subscription_matching`],
 //! so semantics are identical to the non-accelerated path.
 
-pub mod distance;
 pub mod entity_index;
 pub mod subscription_index;
 pub mod warmup;
 
-use crate::{
-    query::compiled::{GeoQuery, TypeExpr},
-    tenancy::types::TenantRef,
-};
+use crate::tenancy::types::TenantRef;
+use andromeda_query::type_selection::grammar::TypeExpr;
 use iri_rs::IriBuf;
 
 /// Partition key for both spatial indexes.
@@ -56,7 +53,8 @@ impl SpatialKey {
 /// the tree partitioning). The caller falls back to SQL in that case.
 pub fn flatten_or_type_iris(expr: &TypeExpr) -> Option<Vec<IriBuf>> {
     match expr {
-        TypeExpr::Type(s) => IriBuf::new(s.clone()).ok().map(|iri| vec![iri]),
+        // clone: the spatial key owns its IRIs and the expression is borrowed
+        TypeExpr::Type(iri) => Some(vec![iri.clone()]),
         TypeExpr::Or(children) => {
             let mut out = Vec::with_capacity(children.len());
             for child in children {
@@ -65,24 +63,5 @@ pub fn flatten_or_type_iris(expr: &TypeExpr) -> Option<Vec<IriBuf>> {
             Some(out)
         }
         TypeExpr::And(_) => None,
-    }
-}
-
-/// Parse a compiled [`GeoQuery`]'s reference geometry into a usable
-/// [`geo::Geometry`].
-///
-/// Returns `None` if the GeoJSON round-trip fails (malformed coordinates,
-/// unsupported geometry type). The caller treats this as a signal to fall
-/// through to SQL, matching existing behaviour when PostGIS rejects the
-/// geometry at query time.
-pub fn build_ref_geometry(geo_q: &GeoQuery) -> Option<geo::Geometry<f64>> {
-    let geojson_value = serde_json::json!({
-        "type": geo_q.geometry,
-        "coordinates": geo_q.coordinates,
-    });
-    let parsed: geojson::GeoJson = geojson_value.to_string().parse().ok()?;
-    match parsed {
-        geojson::GeoJson::Geometry(g) => geo::Geometry::try_from(g).ok(),
-        geojson::GeoJson::Feature(_) | geojson::GeoJson::FeatureCollection(_) => None,
     }
 }
