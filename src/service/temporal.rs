@@ -2,10 +2,7 @@
 
 use crate::{
     core::error::AndromedaError,
-    http::{
-        parameter::query::{SharedQueryParams, temporal::TemporalQueryParameters},
-        response::content_range::build_content_range,
-    },
+    http::response::content_range::build_content_range,
     jsonld::{CompactOptions, ContextSpec, JsonLdEngine, term_expansion::ContextualExpander, term_resolver},
     renderer::{
         Renderer,
@@ -56,6 +53,7 @@ use andromeda_ngsi_ld_query::{
     type_selection::{expansion::expand_type_expression, parser as type_parser},
 };
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
+use andromeda_ngsi_ld_request::query::{SharedQueryParams, temporal::TemporalQueryParameters};
 use andromeda_ngsi_ld_vocabulary::expanded::classes as expanded_classes;
 use andromeda_postgresql_query::q_predicate::{attribute_names::ResolvedAttributeNames, projection::referenced_attribute_names};
 use andromeda_postgresql_temporal_query::{history::build_temporal_history_query, stage1::build_stage1_entity_ids};

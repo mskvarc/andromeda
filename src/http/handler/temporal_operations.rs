@@ -6,8 +6,6 @@ use crate::{
     http::{
         error::problem::NgsiLdError,
         extractor::{accept::AcceptFormat, context::ContextUrl, jsonld::JsonLd, prefer::PreferHeader, snapshot::SnapshotHeader, via::IncomingVia},
-        model::temporal_query_request::TemporalQueryRequest,
-        parameter::query::temporal::TemporalQueryParameters,
         response::collection::NgsiLdCollectionResponse,
     },
     renderer::{
@@ -19,6 +17,7 @@ use crate::{
         temporal::{TemporalQueryResult, TemporalService},
     },
 };
+use andromeda_ngsi_ld_request::{body::temporal_query::TemporalQueryRequest, query::temporal::TemporalQueryParameters};
 use axum::{
     extract::OriginalUri,
     response::{IntoResponse, Response},
@@ -55,7 +54,7 @@ pub async fn query(
             .query_snapshot_temporal_entities(&snapshot_id, entity_type, entity_ids.as_deref(), limit, offset)
             .await
             .with_instance(&uri)?;
-        let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default())
+        let rendered = ResponseRenderer::new(accept.media_type(), context, PreferHeader::default())
             .with_payload(ResponsePayload::Collection(entities))
             .render()?;
         return Ok(NgsiLdCollectionResponse::ok(rendered).into_response());
@@ -105,7 +104,7 @@ pub async fn query(
         (merged, warnings)
     };
 
-    let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default())
+    let rendered = ResponseRenderer::new(accept.media_type(), context, PreferHeader::default())
         .with_payload(ResponsePayload::Collection(entities))
         .render()?;
     let mut response = NgsiLdCollectionResponse::ok(rendered).with_warnings(forwarding_warnings);

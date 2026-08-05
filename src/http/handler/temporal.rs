@@ -13,8 +13,6 @@ use crate::{
             protocol::NgsiLdProtocolHeaders,
             query::ValidatedQuery,
         },
-        model::deferred_split_filters::DeferredSplitFilters,
-        parameter::{DeleteAttrParams, EmptyParams, protocol::apply_temporal_extension_headers, query::temporal::TemporalQueryParameters},
         response::{collection::NgsiLdCollectionResponse, single::NgsiLdResponse},
         validation::{parse_entity_id, validate_attr_name, validate_instance_id},
     },
@@ -38,6 +36,12 @@ use andromeda_ngsi_ld_model::registration::ForwardingMode;
 use andromeda_ngsi_ld_query::{
     filter::{eval::evaluate, expansion::expand_q_expression},
     scope::query::ScopeQuery,
+};
+use andromeda_ngsi_ld_request::{
+    attribute_deletion::DeleteAttrParams,
+    deferred_split_filters::DeferredSplitFilters,
+    empty::EmptyParams,
+    query::temporal::TemporalQueryParameters,
 };
 use axum::{
     extract::{OriginalUri, Path},
@@ -86,7 +90,10 @@ pub async fn get(
     let service = &state.temporal;
     let id = parse_entity_id(&id, &uri)?;
     let context: ContextSpec = context.into_inner();
-    apply_temporal_extension_headers(&mut params, &protocol, &uri)?;
+    protocol
+        .extensions()
+        .apply_to_temporal_query(&mut params)
+        .map_err(|error| AndromedaError::from(error).with_instance(&uri))?;
     let snapshot = protocol.snapshot;
     let incoming_via = protocol.incoming_via;
     let entity_map_header = protocol.entity_map;
@@ -114,7 +121,7 @@ pub async fn get(
         } else {
             entity_data
         };
-        let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default())
+        let rendered = ResponseRenderer::new(accept.media_type(), context, PreferHeader::default())
             .with_payload(ResponsePayload::Single(data))
             .render()?;
         return Ok(NgsiLdResponse::ok(rendered).with_snapshot_uri(snapshot_id).into_response());
@@ -189,7 +196,7 @@ pub async fn get(
         entity_value
     };
 
-    let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default())
+    let rendered = ResponseRenderer::new(accept.media_type(), context, PreferHeader::default())
         .with_payload(ResponsePayload::Single(data))
         .render()?;
     let mut builder = NgsiLdResponse::new(status, rendered).with_warnings(warnings);
@@ -216,7 +223,10 @@ pub async fn query(
 ) -> Result<Response, NgsiLdError> {
     let service = &state.temporal;
     let context: ContextSpec = context.into_inner();
-    apply_temporal_extension_headers(&mut params, &protocol, &uri)?;
+    protocol
+        .extensions()
+        .apply_to_temporal_query(&mut params)
+        .map_err(|error| AndromedaError::from(error).with_instance(&uri))?;
     let snapshot = protocol.snapshot;
     let incoming_via = protocol.incoming_via;
     let entity_map_header = protocol.entity_map;
@@ -247,7 +257,7 @@ pub async fn query(
         } else {
             entities
         };
-        let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default())
+        let rendered = ResponseRenderer::new(accept.media_type(), context, PreferHeader::default())
             .with_payload(ResponsePayload::Collection(values))
             .render()?;
         let response = NgsiLdCollectionResponse::ok(rendered)
@@ -446,7 +456,7 @@ pub async fn query(
         entities
     };
 
-    let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default())
+    let rendered = ResponseRenderer::new(accept.media_type(), context, PreferHeader::default())
         .with_payload(ResponsePayload::Collection(values))
         .render()?;
     let mut response = NgsiLdCollectionResponse::ok(rendered).with_status(status).with_warnings(forwarding_warnings);

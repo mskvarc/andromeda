@@ -5,10 +5,11 @@
 //! matches `application/json`).
 
 use crate::{
-    http::{extractor::error::ExtractorRejection, header::link::Link, model::version::NgsiLdVersion},
+    http::extractor::error::ExtractorRejection,
     jsonld::ContextSpec,
     renderer::{Renderer, version::VersionRenderer},
 };
+use andromeda_ngsi_ld_http_headers::{link::header::Link, version::NgsiLdVersion};
 use axum::{
     body::Bytes,
     extract::{FromRequest, Request},

@@ -5,7 +5,8 @@
 //! 1. The `lang` query parameter (spec-mandated, NGSI-LD clause 6.3.5)
 //! 2. The `NGSILD-Language` custom header (Andromeda-specific fallback)
 
-use crate::http::{extractor::error::ExtractorRejection, header::ngsild_language::NgsiLdLanguage, model::language::LanguageFilter};
+use crate::http::extractor::error::ExtractorRejection;
+use andromeda_ngsi_ld_http_headers::{language::LanguageFilter, ngsild_language::NgsiLdLanguage};
 use axum::{extract::FromRequestParts, http::request::Parts};
 use headers::HeaderMapExt;
 use url::form_urlencoded;
@@ -49,7 +50,7 @@ where
                 .headers
                 .typed_get::<NgsiLdLanguage>()
                 .ok_or_else(|| ExtractorRejection::bad_request_data("Invalid NGSILD-Language header value", uri))?;
-            return Ok(LanguageNegotiation(Some(LanguageFilter::from(header))));
+            return Ok(LanguageNegotiation(Some(header.into_filter())));
         }
 
         Ok(LanguageNegotiation(None))
@@ -106,7 +107,7 @@ mod tests {
         pretty_assertions::assert_eq!(ordered.len(), 1);
         assert!(matches!(
             ordered[0].value(),
-            crate::http::model::language::LanguageRange::Tag(tag) if tag == "fr"
+            andromeda_ngsi_ld_http_headers::language::LanguageRange::Tag(tag) if tag == "fr"
         ));
     }
 

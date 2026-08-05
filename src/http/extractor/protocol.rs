@@ -4,19 +4,18 @@
 //! extractor to reduce handler parameter counts (ETSI GS CIM 009 clauses
 //! 6.3.5, 6.3.6, 6.3.18, 6.3.22).
 
-use crate::http::{
-    extractor::{error::ExtractorRejection, language::LanguageNegotiation, prefer::PreferHeader, snapshot::SnapshotHeader, via::IncomingVia},
-    header::{
-        ngsild_dataset_id::NgsiLdDatasetId,
-        ngsild_entity_map::NgsiLdEntityMap,
-        ngsild_join::NgsiLdJoin,
-        ngsild_join_level::NgsiLdJoinLevel,
-        ngsild_response_format::NgsiLdResponseFormat,
-        ngsild_scope::NgsiLdScope,
-        via::Via,
-    },
-    model::language::LanguageFilter,
+use crate::http::extractor::{error::ExtractorRejection, language::LanguageNegotiation, prefer::PreferHeader, snapshot::SnapshotHeader, via::IncomingVia};
+use andromeda_ngsi_ld_http_headers::{
+    language::LanguageFilter,
+    ngsild_dataset_id::NgsiLdDatasetId,
+    ngsild_entity_map::NgsiLdEntityMap,
+    ngsild_join::NgsiLdJoin,
+    ngsild_join_level::NgsiLdJoinLevel,
+    ngsild_response_format::NgsiLdResponseFormat,
+    ngsild_scope::NgsiLdScope,
+    via::Via,
 };
+use andromeda_ngsi_ld_request::protocol::ProtocolExtensions;
 use axum::{extract::FromRequestParts, http::request::Parts};
 use headers::HeaderMapExt;
 
@@ -45,6 +44,27 @@ pub struct NgsiLdProtocolHeaders {
     pub join: Option<NgsiLdJoin>,
     /// Optional join depth from `NGSILD-Join-Level` extension header.
     pub join_level: Option<NgsiLdJoinLevel>,
+}
+
+impl NgsiLdProtocolHeaders {
+    /// The clause 6.3.x extension headers, reduced to the values a request
+    /// model can be merged with.
+    ///
+    /// The conversion lives here because it is where both sides are visible:
+    /// the typed headers on one, and the value shapes
+    /// `andromeda-ngsi-ld-request` merges on the other.
+    pub fn extensions(&self) -> ProtocolExtensions<'_> {
+        ProtocolExtensions {
+            scope: self.scope.as_ref().map(NgsiLdScope::as_str),
+            response_format: self.response_format.as_ref().map(NgsiLdResponseFormat::as_query_value),
+            dataset_ids: self
+                .dataset_id
+                .as_ref()
+                .map(|dataset| dataset.as_slice().iter().map(ToString::to_string).collect::<Vec<_>>().join(",")),
+            join: self.join.map(NgsiLdJoin::into_inner),
+            join_level: self.join_level.map(NgsiLdJoinLevel::into_inner),
+        }
+    }
 }
 
 impl<S> FromRequestParts<S> for NgsiLdProtocolHeaders

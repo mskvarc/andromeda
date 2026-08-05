@@ -3,7 +3,7 @@ use crate::{
     core::error::{AndromedaError, ResultInstanceExt},
     http::{
         error::{
-            batch::{BatchEntityError, BatchOperationResult},
+            batch::{entity_error, operation_result},
             problem::NgsiLdError,
         },
         extractor::{
@@ -14,13 +14,6 @@ use crate::{
             protocol::NgsiLdProtocolHeaders,
             query::ValidatedQuery,
             via::IncomingVia,
-        },
-        model::deferred_split_filters::DeferredSplitFilters,
-        parameter::{
-            DeleteAttrParams,
-            LocalOnlyParams,
-            entity::{AppendParams, GetEntityParams, PartialUpdateAttrParams, ReplaceAttrParams},
-            protocol::{apply_entity_get_extension_headers, apply_entity_query_extension_headers},
         },
         response::{collection::NgsiLdCollectionResponse, single::NgsiLdResponse},
         validation::{parse_entity_id, validate_attr_name},
@@ -59,12 +52,19 @@ use andromeda_ngsi_ld_model::{
     entity_type::EntityTypeValue,
     expanded::mutation::selection::{DatasetSelection, OverwritePolicy},
 };
+use andromeda_ngsi_ld_problem_details::batch_operation::BatchOperationResult;
 use andromeda_ngsi_ld_query::{
     filter::{eval::evaluate, expansion::expand_q_expression},
     projection::purge::{PurgeMode, parse_attribute_list},
     scope::query::ScopeQuery,
 };
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
+use andromeda_ngsi_ld_request::{
+    attribute_deletion::DeleteAttrParams,
+    deferred_split_filters::DeferredSplitFilters,
+    entity::{AppendParams, GetEntityParams, PartialUpdateAttrParams, ReplaceAttrParams},
+    local::LocalOnlyParams,
+};
 use axum::{
     Json,
     extract::{OriginalUri, Path},
@@ -176,7 +176,10 @@ pub async fn get(
     let service = &state.entity_query;
     let id = parse_entity_id(&id, &uri)?;
     let context: ContextSpec = context.into_inner();
-    apply_entity_get_extension_headers(&mut params, &protocol, &uri)?;
+    protocol
+        .extensions()
+        .apply_to_entity_get(&mut params)
+        .map_err(|error| AndromedaError::from(error).with_instance(&uri))?;
     let language_filter = protocol.language_filter;
     let prefer = protocol.prefer;
     let snapshot = protocol.snapshot;
@@ -220,7 +223,7 @@ pub async fn get(
             .with_mode(mode)
             .render()?;
 
-        let rendered = ResponseRenderer::new(accept.format(), context, prefer)
+        let rendered = ResponseRenderer::new(accept.media_type(), context, prefer)
             .with_geometry_property(params.geometry_property.clone())
             .with_payload(ResponsePayload::Single(result))
             .render()?;
@@ -344,7 +347,7 @@ pub async fn get(
                         .with_instance(&uri)?,
                 );
             }
-            let rendered = ResponseRenderer::new(accept.format(), context, prefer)
+            let rendered = ResponseRenderer::new(accept.media_type(), context, prefer)
                 .with_payload(ResponsePayload::Collection(all_entities))
                 .render()?;
             return Ok(NgsiLdCollectionResponse::ok(rendered).with_warnings(warnings).into_response());
@@ -356,7 +359,7 @@ pub async fn get(
                 .with_mode(mode)
                 .render()
                 .with_instance(&uri)?;
-            let rendered = ResponseRenderer::new(accept.format(), context, prefer)
+            let rendered = ResponseRenderer::new(accept.media_type(), context, prefer)
                 .with_geometry_property(params.geometry_property.clone())
                 .with_payload(ResponsePayload::Single(entity_value))
                 .render()?;
@@ -369,7 +372,7 @@ pub async fn get(
         .with_mode(mode)
         .render()
         .with_instance(&uri)?;
-    let rendered = ResponseRenderer::new(accept.format(), context, prefer)
+    let rendered = ResponseRenderer::new(accept.media_type(), context, prefer)
         .with_geometry_property(params.geometry_property.clone())
         .with_payload(ResponsePayload::Single(entity_value))
         .render()?;
@@ -468,7 +471,10 @@ pub async fn query(
     Box::pin(async move {
         let service = &state.entity_query;
         let context: ContextSpec = context.into_inner();
-        apply_entity_query_extension_headers(&mut query, &protocol, &uri)?;
+        protocol
+            .extensions()
+            .apply_to_entity_query(&mut query)
+            .map_err(|error| AndromedaError::from(error).with_instance(&uri))?;
         query.validate().with_instance(&uri).map_err(NgsiLdError::from)?;
         let language_filter = protocol.language_filter;
         let prefer = protocol.prefer;
@@ -504,7 +510,7 @@ pub async fn query(
                 })
                 .collect::<Result<Vec<_>, _>>()?;
 
-            let rendered = ResponseRenderer::new(accept.format(), context, prefer)
+            let rendered = ResponseRenderer::new(accept.media_type(), context, prefer)
                 .with_geometry_property(query.geometry_property.clone())
                 .with_payload(ResponsePayload::Collection(filtered))
                 .render()?;
@@ -730,7 +736,7 @@ pub async fn query(
                             .with_instance(&uri)?,
                     );
                 }
-                let rendered = ResponseRenderer::new(accept.format(), context, prefer)
+                let rendered = ResponseRenderer::new(accept.media_type(), context, prefer)
                     .with_geometry_property(query.geometry_property.clone())
                     .with_payload(ResponsePayload::Collection(all_values))
                     .render()?;
@@ -755,7 +761,7 @@ pub async fn query(
                             .with_instance(&uri)?,
                     );
                 }
-                let rendered = ResponseRenderer::new(accept.format(), context, prefer)
+                let rendered = ResponseRenderer::new(accept.media_type(), context, prefer)
                     .with_geometry_property(query.geometry_property.clone())
                     .with_payload(ResponsePayload::Collection(entity_values))
                     .render()?;
@@ -780,7 +786,7 @@ pub async fn query(
             })
             .collect::<Result<Vec<_>, _>>()
             .with_instance(&uri)?;
-        let rendered_output = ResponseRenderer::new(accept.format(), context, prefer)
+        let rendered_output = ResponseRenderer::new(accept.media_type(), context, prefer)
             .with_geometry_property(query.geometry_property.clone())
             .with_payload(ResponsePayload::Collection(rendered))
             .render()?;
@@ -1015,7 +1021,7 @@ pub async fn append_attrs(
     // 207 Multi-Status for mixed results
     let mut errors = Vec::new();
     if let Err(err) = local_result {
-        errors.push(serde_json::to_value(BatchEntityError::from_domain_error(&entity_id, &err)).unwrap_or_default());
+        errors.push(serde_json::to_value(entity_error(&entity_id, &err)).unwrap_or_default());
     }
     for r in &forwarded {
         if r.status >= 400 {
@@ -1376,7 +1382,7 @@ pub async fn delete_by_query(
         .batch_delete(&entity_ids, crate::service::entity::BatchSideEffectMode::Inline)
         .await
         .with_instance(&uri)?;
-    let result: BatchOperationResult = batch.into();
+    let result: BatchOperationResult = operation_result(batch);
 
     if result.errors.is_empty() {
         Ok(StatusCode::NO_CONTENT.into_response())

@@ -1,6 +1,6 @@
 use crate::{
     core::error::AndromedaError,
-    http::error::{batch::BatchEntityError, problem::NgsiLdErrorType},
+    http::error::batch::entity_error,
     repository::snapshot::repo::SnapshotRepository,
     service::{
         csource_forwarding::CsourceForwardingService,
@@ -19,6 +19,7 @@ use andromeda_ngsi_ld_model::{
     snapshot::{KeyValuePair, Snapshot, SnapshotInput, SnapshotPatch, SnapshotPriority, SnapshotStatus},
     snapshot_filter::SnapshotPurgeFilter,
 };
+use andromeda_ngsi_ld_problem_details::{batch_operation::BatchEntityError, error_type::NgsiLdErrorType};
 use chrono::Utc;
 use iso8601_duration::Duration as Iso8601Duration;
 use serde_json::Value;
@@ -198,12 +199,12 @@ impl SnapshotService {
         for id in matched {
             match self.repo.delete_one(&id).await {
                 Ok(n) if n > 0 => successes.push(id),
-                Ok(_) => failures.push(BatchEntityError::from_parse_error(
+                Ok(_) => failures.push(BatchEntityError::new(
                     id.as_str(),
                     NgsiLdErrorType::ResourceNotFound,
                     "Snapshot removed concurrently before purge",
                 )),
-                Err(error) => failures.push(BatchEntityError::from_domain_error(id.as_str(), &error)),
+                Err(error) => failures.push(entity_error(id.as_str(), &error)),
             }
         }
 

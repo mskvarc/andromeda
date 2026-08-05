@@ -7,7 +7,7 @@
 //! [`AndromedaError`] wraps an [`ErrorKind`] with an optional request URI
 //! (`instance`) that handlers attach for RFC 7807 Problem Details responses.
 
-use crate::{http::parameter::error::ParameterError, jsonld::Error as JsonLdError};
+use crate::jsonld::Error as JsonLdError;
 use andromeda_ngsi_ld_lexicon::ngsi_ld_urn::{
     AttributeListIdParseError,
     EntityMapIdParseError,
@@ -16,6 +16,7 @@ use andromeda_ngsi_ld_lexicon::ngsi_ld_urn::{
     SnapshotNotificationIdParseError,
 };
 use andromeda_ngsi_ld_query::error::QueryError;
+use andromeda_ngsi_ld_request::error::ParameterError;
 use andromeda_postgresql_query::error::RenderError;
 use axum::http::Uri;
 use confique::Error as ConfigError;

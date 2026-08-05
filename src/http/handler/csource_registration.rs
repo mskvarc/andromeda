@@ -6,7 +6,6 @@ use crate::{
     http::{
         error::problem::NgsiLdError,
         extractor::{accept::AcceptFormatNoGeo, context::ContextUrl, jsonld::JsonLd, prefer::PreferHeader, query::ValidatedQuery},
-        parameter::query::{SharedQueryParams, csr::CsrQueryParameters},
         response::{
             collection::NgsiLdCollectionResponse,
             pagination::{PaginationMediaType, PaginationStyle, append_pagination_links},
@@ -21,6 +20,7 @@ use crate::{
         response::{ResponsePayload, ResponseRenderer},
     },
 };
+use andromeda_ngsi_ld_request::query::{SharedQueryParams, csr::CsrQueryParameters};
 use axum::{
     extract::{OriginalUri, Path},
     http::StatusCode,
@@ -65,7 +65,7 @@ pub async fn get(
 
     let csr = RegistrationRenderer::new(csr).with_sys_attrs(options.sys_attrs).render()?;
 
-    let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default())
+    let rendered = ResponseRenderer::new(accept.media_type(), context, PreferHeader::default())
         .with_payload(ResponsePayload::Single(csr))
         .render()?;
     Ok(NgsiLdResponse::ok(rendered).into_response())
@@ -93,7 +93,7 @@ pub async fn query(
         .map(|csr| RegistrationRenderer::new(csr).with_sys_attrs(options.sys_attrs).render())
         .collect::<Result<Vec<_>, _>>()?;
 
-    let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default())
+    let rendered = ResponseRenderer::new(accept.media_type(), context, PreferHeader::default())
         .with_payload(ResponsePayload::Collection(csrs))
         .render()?;
     let response = NgsiLdCollectionResponse::ok(rendered).with_total_count(total as usize);

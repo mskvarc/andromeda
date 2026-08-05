@@ -12,6 +12,7 @@
 
 pub mod attribute;
 pub mod attribute_list;
+pub mod context_source_identity;
 pub mod entity;
 pub mod entity_map;
 pub mod entity_type;

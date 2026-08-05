@@ -1,15 +1,13 @@
 //! NGSI-LD response type for batch operation results with pre-rendered payload.
 
 use crate::{
-    http::{
-        header::{ngsild_warning::NgsiLdWarning, preference_applied::PreferenceApplied},
-        response::{
-            headers::{CommonHeadersOptions, apply_common_headers},
-            sonic_json::SonicJson,
-        },
+    http::response::{
+        headers::{CommonHeadersOptions, apply_common_headers},
+        sonic_json::SonicJson,
     },
     renderer::{VersionAdaptation, response::RenderedOutput},
 };
+use andromeda_ngsi_ld_http_headers::{ngsild_warning::NgsiLdWarning, preference_applied::PreferenceApplied};
 use andromeda_ngsi_ld_lexicon::ngsi_ld_urn::SnapshotId;
 use axum::{
     http::{HeaderMap, StatusCode, header::CONTENT_TYPE},

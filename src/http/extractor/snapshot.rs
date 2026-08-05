@@ -3,7 +3,8 @@
 //! Extracts the optional `NGSILD-Snapshot` header from the request, producing
 //! a [`SnapshotHeader`] that carries the snapshot URN (or `None` when absent).
 
-use crate::http::{extractor::error::ExtractorRejection, header::ngsild_snapshot::NgsiLdSnapshot};
+use crate::http::extractor::error::ExtractorRejection;
+use andromeda_ngsi_ld_http_headers::ngsild_snapshot::NgsiLdSnapshot;
 use andromeda_ngsi_ld_lexicon::ngsi_ld_urn::SnapshotId;
 use axum::{extract::FromRequestParts, http::request::Parts};
 use headers::HeaderMapExt;

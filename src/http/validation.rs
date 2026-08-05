@@ -10,6 +10,7 @@ use andromeda_ngsi_ld_lexicon::{
     ngsi_ld_urn::{EntityMapId, SnapshotId},
 };
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
+use andromeda_ngsi_ld_request::query::entity::EntityQueryParameters;
 use axum::http::Uri;
 use url::Url;
 use urn_rs::Urn;
@@ -155,6 +156,33 @@ pub fn parse_list_options(options: Option<&str>, uri: &Uri) -> Result<ListOption
         }
     }
     Ok(parsed)
+}
+
+/// Reject an entity-map creation that would match everything.
+///
+/// Clause 5.14.4.4 requires at least one of `type`, `attrs`, `q`, `georel`,
+/// `scopeQ` or `id`: an entity map is a stable page over a result set, and a
+/// result set with no filter is every entity the broker holds.
+///
+/// # Errors
+///
+/// Returns an `EntityMapValidation` problem when the query names no filter.
+pub fn validate_entity_map_has_filter(query: &EntityQueryParameters, uri: &Uri) -> Result<(), NgsiLdError> {
+    let has_filter = query.entity_type.is_some()
+        || query.id.is_some()
+        || query.id_pattern.is_some()
+        || query.attrs.is_some()
+        || query.georel.is_some()
+        || query.scope_q.is_some()
+        || query.q.as_ref().is_some_and(|expression| !expression.is_empty());
+
+    if has_filter {
+        return Ok(());
+    }
+
+    Err(NgsiLdError::from(
+        AndromedaError::entity_map_validation("At least one query filter must be provided (type, attrs, q, georel, scopeQ, or id)").with_instance(uri),
+    ))
 }
 
 #[cfg(test)]

@@ -6,16 +6,11 @@
 
 use crate::{
     core::error::AndromedaError,
-    http::{
-        error::{
-            batch::BatchEntityError,
-            problem::{NgsiLdError, NgsiLdErrorType},
-        },
-        extractor::context::ContextUrl,
-    },
+    http::{error::problem::NgsiLdError, extractor::context::ContextUrl},
     jsonld::ContextSpec,
 };
 use andromeda_ngsi_ld_model::entity::Entity;
+use andromeda_ngsi_ld_problem_details::{batch_operation::BatchEntityError, error_type::NgsiLdErrorType};
 use axum::{
     body::Bytes,
     extract::{FromRequest, Request},
@@ -198,7 +193,7 @@ pub fn parse_batch_entities(
         let has_context = item.as_object().is_some_and(|o| o.contains_key("@context"));
 
         if is_plain_json && has_context {
-            parse_errors.push(BatchEntityError::from_parse_error(
+            parse_errors.push(BatchEntityError::new(
                 &entity_id,
                 NgsiLdErrorType::BadRequestData,
                 "application/json body must not contain @context",
@@ -207,7 +202,7 @@ pub fn parse_batch_entities(
         }
 
         if is_ld_json && !has_context {
-            parse_errors.push(BatchEntityError::from_parse_error(
+            parse_errors.push(BatchEntityError::new(
                 &entity_id,
                 NgsiLdErrorType::BadRequestData,
                 "application/ld+json body must contain @context",
@@ -223,7 +218,7 @@ pub fn parse_batch_entities(
         match serde_json::from_value::<Entity>(item) {
             Ok(entity) => entities.push(entity),
             Err(e) => {
-                parse_errors.push(BatchEntityError::from_parse_error(
+                parse_errors.push(BatchEntityError::new(
                     &entity_id,
                     NgsiLdErrorType::BadRequestData,
                     &format!("Invalid entity: {}", e),

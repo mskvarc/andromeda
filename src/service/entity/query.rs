@@ -1,6 +1,5 @@
 use crate::{
     core::error::AndromedaError,
-    http::parameter::query::{SharedQueryParams, entity::EntityQueryParameters},
     jsonld::{CompactOptions, ContextSpec, JsonLdEngine, term_expansion::ContextualExpander},
     repository::{attribute_names::AttributeNameCache, entity::repo::EntityRepository},
     service::{
@@ -44,6 +43,7 @@ use andromeda_ngsi_ld_query::{
     type_selection::{expansion::expand_type_expression, parser as type_parser},
 };
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
+use andromeda_ngsi_ld_request::query::{SharedQueryParams, entity::EntityQueryParameters};
 use andromeda_postgresql_query::q_predicate::{attribute_names::ResolvedAttributeNames, projection::referenced_attribute_names};
 use iri_rs::IriBuf;
 use serde_json::Value;

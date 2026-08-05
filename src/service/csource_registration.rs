@@ -1,6 +1,5 @@
 use crate::{
     core::error::AndromedaError,
-    http::parameter::query::{SharedQueryParams, csr::CsrQueryParameters},
     jsonld::{ContextSpec, JsonLdEngine, term_expansion::ContextualExpander, term_resolver},
     repository::csource_registration::{
         params::{CreateCsrParams, CsrUpdateFragment},
@@ -24,6 +23,7 @@ use andromeda_ngsi_ld_query::{
     temporal::window::TimeInterval,
     term_expander::TermExpander,
 };
+use andromeda_ngsi_ld_request::query::{SharedQueryParams, csr::CsrQueryParameters};
 use chrono::{DateTime, Utc};
 use serde_json::Value;
 use sqlx::postgres::PgPool;

@@ -6,7 +6,6 @@ use crate::{
     http::{
         error::problem::NgsiLdError,
         extractor::{accept::AcceptFormat, context::ContextUrl, entity_query::EntityQuery, prefer::PreferHeader},
-        model::entity_map_query::{QueryRequestBody, UpdateEntityMapBody, query_body_to_params, validate_has_filter},
         response::single::NgsiLdResponse,
         validation::parse_entity_map_id,
     },
@@ -18,6 +17,7 @@ use crate::{
     service::entity_map::parse_iso8601_duration,
 };
 use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_request::body::entity_map::{QueryRequestBody, UpdateEntityMapBody, query_body_to_params};
 use axum::{
     Json,
     extract::{OriginalUri, Path},
@@ -41,7 +41,7 @@ pub async fn get(
     let map = state.entity_maps.retrieve(&entity_map_id).await.with_instance(&uri)?;
 
     let value = serde_json::to_value(&map).map_err(|e| AndromedaError::internal(format!("Failed to serialize entity map: {}", e)).with_instance(&uri))?;
-    let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default())
+    let rendered = ResponseRenderer::new(accept.media_type(), context, PreferHeader::default())
         .with_payload(ResponsePayload::Single(value))
         .render()?;
     Ok(NgsiLdResponse::ok(rendered).into_response())
@@ -92,7 +92,7 @@ pub async fn create_from_query(
     EntityQuery(query): EntityQuery,
 ) -> Result<Response, NgsiLdError> {
     // section 5.14.4.4: At least one filter must be provided for EntityMap creation
-    validate_has_filter(&query, &uri)?;
+    crate::http::validation::validate_entity_map_has_filter(&query, &uri)?;
 
     let context: ContextSpec = context.into_inner();
 
@@ -119,7 +119,7 @@ pub async fn create_from_query(
     let map_uri = map.id.to_string();
 
     let value = serde_json::to_value(&map).map_err(|e| AndromedaError::internal(format!("Failed to serialize entity map: {}", e)).with_instance(&uri))?;
-    let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default())
+    let rendered = ResponseRenderer::new(accept.media_type(), context, PreferHeader::default())
         .with_payload(ResponsePayload::Single(value))
         .render()?;
 
@@ -141,7 +141,7 @@ pub async fn create_from_query_post(
 
     let query = query_body_to_params(&body).map_err(|e| NgsiLdError::from(AndromedaError::entity_map_validation(e.to_string())))?;
     query.validate().map_err(|e| NgsiLdError::from(AndromedaError::from(e)))?;
-    validate_has_filter(&query, &uri)?;
+    crate::http::validation::validate_entity_map_has_filter(&query, &uri)?;
 
     let compiled = state.entity_query.compile_query_uncapped(&query, &context_spec).await.with_instance(&uri)?;
     let ids = state.entity_query.query_ids(&compiled).await.with_instance(&uri)?;
@@ -165,7 +165,7 @@ pub async fn create_from_query_post(
     let map_uri = map.id.to_string();
 
     let value = serde_json::to_value(&map).map_err(|e| AndromedaError::internal(format!("Failed to serialize entity map: {}", e)).with_instance(&uri))?;
-    let rendered = ResponseRenderer::new(accept.format(), context_spec, PreferHeader::default())
+    let rendered = ResponseRenderer::new(accept.media_type(), context_spec, PreferHeader::default())
         .with_payload(ResponsePayload::Single(value))
         .render()?;
 
@@ -183,7 +183,7 @@ pub async fn create_temporal_from_query(
     context: ContextUrl,
     EntityQuery(query): EntityQuery,
 ) -> Result<Response, NgsiLdError> {
-    validate_has_filter(&query, &uri)?;
+    crate::http::validation::validate_entity_map_has_filter(&query, &uri)?;
 
     let context: ContextSpec = context.into_inner();
 
@@ -209,7 +209,7 @@ pub async fn create_temporal_from_query(
     let map_uri = map.id.to_string();
 
     let value = serde_json::to_value(&map).map_err(|e| AndromedaError::internal(format!("Failed to serialize entity map: {}", e)).with_instance(&uri))?;
-    let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default())
+    let rendered = ResponseRenderer::new(accept.media_type(), context, PreferHeader::default())
         .with_payload(ResponsePayload::Single(value))
         .render()?;
 
@@ -231,7 +231,7 @@ pub async fn create_temporal_from_query_post(
 
     let query = query_body_to_params(&body).map_err(|e| NgsiLdError::from(AndromedaError::entity_map_validation(e.to_string())))?;
     query.validate().map_err(|e| NgsiLdError::from(AndromedaError::from(e)))?;
-    validate_has_filter(&query, &uri)?;
+    crate::http::validation::validate_entity_map_has_filter(&query, &uri)?;
 
     let compiled = state.entity_query.compile_query_uncapped(&query, &context_spec).await.with_instance(&uri)?;
     let ids = state.entity_query.query_ids(&compiled).await.with_instance(&uri)?;
@@ -255,7 +255,7 @@ pub async fn create_temporal_from_query_post(
     let map_uri = map.id.to_string();
 
     let value = serde_json::to_value(&map).map_err(|e| AndromedaError::internal(format!("Failed to serialize entity map: {}", e)).with_instance(&uri))?;
-    let rendered = ResponseRenderer::new(accept.format(), context_spec, PreferHeader::default())
+    let rendered = ResponseRenderer::new(accept.media_type(), context_spec, PreferHeader::default())
         .with_payload(ResponsePayload::Single(value))
         .render()?;
 

@@ -11,7 +11,6 @@
 //! `snapshot_entities` / `snapshot_temporal_entities`.
 
 use crate::{
-    http::parameter::query::{entity::EntityQueryParameters, temporal::TemporalQueryParameters},
     jsonld::ContextSpec,
     repository::snapshot::{params::SnapshotEntityInput, repo::SnapshotRepository},
     service::{
@@ -27,6 +26,7 @@ use andromeda_ngsi_ld_model::{
     snapshot_query::{SnapshotEntitySelector, SnapshotGeoQuery, SnapshotQuery, SnapshotTemporalQuery},
 };
 use andromeda_ngsi_ld_query::{pattern::Pattern, temporal::aggregation_period::AggregationPeriod};
+use andromeda_ngsi_ld_request::query::{entity::EntityQueryParameters, temporal::TemporalQueryParameters};
 use chrono::{DateTime, SecondsFormat, Utc};
 use compact_str::CompactString;
 use serde_json::Value;

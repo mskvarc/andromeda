@@ -6,7 +6,6 @@ use crate::{
     http::{
         error::problem::NgsiLdError,
         extractor::{accept::AcceptFormat, context::ContextUrl, prefer::PreferHeader},
-        model::info::ContextSourceIdentity,
         response::single::NgsiLdResponse,
     },
     renderer::{
@@ -14,6 +13,7 @@ use crate::{
         response::{ResponsePayload, ResponseRenderer},
     },
 };
+use andromeda_ngsi_ld_model::context_source_identity::ContextSourceIdentity;
 use axum::{
     extract::{OriginalUri, State},
     response::{IntoResponse, Response},
@@ -28,7 +28,7 @@ pub async fn get(State(state): State<AppState>, OriginalUri(uri): OriginalUri, a
     let context = context.into_inner();
     let value = serde_json::to_value(&identity)
         .map_err(|e| AndromedaError::internal(format!("Failed to serialize context source identity: {}", e)).with_instance(&uri))?;
-    let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default())
+    let rendered = ResponseRenderer::new(accept.media_type(), context, PreferHeader::default())
         .with_payload(ResponsePayload::Single(value))
         .render()?;
     Ok(NgsiLdResponse::ok(rendered).into_response())

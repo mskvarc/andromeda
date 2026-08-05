@@ -6,7 +6,7 @@
 //! `forward_provision`, then uses these helpers to classify the result modes
 //! and build multi-status responses.
 
-use crate::{core::error::AndromedaError, http::error::batch::BatchEntityError, service::csource_forwarding::ForwardedWriteResult};
+use crate::{core::error::AndromedaError, http::error::batch::entity_error, service::csource_forwarding::ForwardedWriteResult};
 use andromeda_ngsi_ld_model::registration::ForwardingMode;
 use serde_json::Value;
 
@@ -48,7 +48,7 @@ pub fn build_multi_status_body(entity_id: &str, local_ok: bool, local_error: Opt
     } else if let Some(err) = local_error {
         errors.push(serde_json::json!({
             "entityId": entity_id,
-            "error": serde_json::to_value(BatchEntityError::from_domain_error(entity_id, err).error).unwrap_or_default()
+            "error": serde_json::to_value(entity_error(entity_id, err).error).unwrap_or_default()
         }));
     }
 

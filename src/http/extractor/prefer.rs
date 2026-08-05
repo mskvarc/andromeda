@@ -3,20 +3,14 @@
 //! Extracts the typed `Prefer` header from axum requests and exposes
 //! a convenience `PreferHeader` struct for API handlers.
 
-use crate::http::{
-    header::prefer::Prefer,
-    model::{
-        preference::{GeoJsonBodyPreference, RespondMode},
-        version::NgsiLdVersion,
-    },
-};
+use andromeda_ngsi_ld_http_headers::{geo_json_body::GeoJsonBodyPreference, prefer::Prefer, preference::RespondMode, version::NgsiLdVersion};
 use axum::{extract::FromRequestParts, http::request::Parts};
 use headers::HeaderMapExt;
 
 /// Parsed Prefer request header per RFC 7240 and NGSI-LD clause 6.3.6.
 ///
-/// This is an HTTP-layer convenience type for axum extraction. The underlying
-/// domain types (`GeoJsonBodyPreference`, `NgsiLdVersion`) live in `crate::http::model`.
+/// An axum-shaped view of the typed [`Prefer`] header: the three tokens a
+/// handler acts on, already resolved, so no handler decodes the header itself.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct PreferHeader {
     /// GeoJSON body preference: whether @context goes in body or Link header.

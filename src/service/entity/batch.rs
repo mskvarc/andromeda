@@ -46,7 +46,7 @@ use tokio::{sync::Semaphore, task::JoinSet};
 ///
 /// Contains the IDs of successfully processed entities and the per-entity
 /// errors for those that failed. Converted to HTTP-layer
-/// [`BatchOperationResult`](crate::http::error::batch::BatchOperationResult)
+/// [`BatchOperationResult`](andromeda_ngsi_ld_problem_details::batch_operation::BatchOperationResult)
 /// at the handler boundary.
 pub struct BatchResult {
     /// Entity IDs that were successfully processed.

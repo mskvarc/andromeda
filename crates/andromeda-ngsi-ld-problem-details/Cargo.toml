@@ -1,0 +1,19 @@
+[package]
+name = "andromeda-ngsi-ld-problem-details"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+http = "1.4.0"
+iri-rs = { version = "3.4.0", features = ["serde", "static"] }
+serde = { version = "1.0.228", features = ["derive"] }
+strum = { version = "0.28.0", features = ["derive"] }
+
+[dev-dependencies]
+andromeda-layer-guard.workspace = true
+pretty_assertions = "1.4.1"
+serde_json = "1.0.149"

@@ -3,7 +3,7 @@
 //! Provides common logic for building pagination `Link` headers across
 //! subscription, CSR subscription, and CSR query endpoints.
 
-use crate::http::header::link::{Link, LinkValue};
+use andromeda_ngsi_ld_http_headers::link::{header::Link, value::LinkValue};
 use axum::{http::Uri, response::Response};
 use url::form_urlencoded;
 

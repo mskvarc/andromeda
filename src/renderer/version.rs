@@ -4,7 +4,8 @@
 //! a 203 Non-Authoritative Information and adapts the payload to remove or
 //! reformat fields that did not exist in the requested version.
 
-use crate::{core::error::AndromedaError, http::model::version::NgsiLdVersion, renderer::Renderer};
+use crate::{core::error::AndromedaError, renderer::Renderer};
+use andromeda_ngsi_ld_http_headers::version::NgsiLdVersion;
 use serde_json::Value;
 
 /// Adapt a serialized NGSI-LD entity payload to conform to an older spec version.

@@ -6,8 +6,9 @@
 
 use crate::{
     core::error::{AndromedaError, ErrorKind},
-    http::{extractor::error::ExtractorRejection, parameter::query::entity::EntityQueryParameters},
+    http::extractor::error::ExtractorRejection,
 };
+use andromeda_ngsi_ld_request::query::entity::EntityQueryParameters;
 use axum::{extract::FromRequestParts, http::request::Parts};
 
 /// Axum extractor for NGSI-LD entity query parameters.

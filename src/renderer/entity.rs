@@ -7,9 +7,9 @@
 
 use crate::{
     core::error::AndromedaError,
-    http::model::language::{LanguageFilter, LanguageRange},
     renderer::{Renderer, simplify::simplify_entity},
 };
+use andromeda_ngsi_ld_http_headers::language::{LanguageFilter, LanguageRange};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, rfc3339};
 use andromeda_ngsi_ld_model::{
     attribute::{
@@ -18,6 +18,7 @@ use andromeda_ngsi_ld_model::{
     },
     entity::Entity,
 };
+use andromeda_ngsi_ld_representation::response_format::ResponseFormat;
 use chrono::{DateTime, SecondsFormat, Utc};
 use indexmap::IndexMap;
 use langtag::LangTagBuf;
@@ -25,29 +26,6 @@ use serde::Serialize;
 use serde_json::{Map, Value};
 use std::{collections::HashMap, ops::Deref};
 use urn_rs::Urn;
-
-/// Output representation mode for entity rendering.
-///
-/// NGSI-LD defines three output representations beyond the internal expanded form
-/// (ETSI GS CIM 009 clause 4.5.1, 4.5.4):
-///
-/// - **Normalized** -- full NGSI-LD representation with explicit type annotations.
-/// - **Concise** -- lossless representation that omits redundant `"type"` members
-///   when they can be inferred from the value key (clause 4.5.1 concise rules).
-/// - **Simplified** -- lossy `keyValues` representation that collapses attributes
-///   to their bare values (clause 4.5.4).
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub enum RenderMode {
-    /// Full NGSI-LD normalized representation with all type annotations.
-    #[default]
-    Normalized,
-    /// Concise lossless representation: redundant type members omitted,
-    /// but sub-attributes and metadata preserved (clause 4.5.1 concise rules).
-    Concise,
-    /// Simplified (keyValues) lossy representation: only Property values
-    /// and Relationship objects, no metadata (clause 4.5.4).
-    Simplified,
-}
 
 /// Render an entity to a response value, applying the optional NGSI-LD `lang`
 /// filter, `join=inline`, and concise/simplified transformation at the
@@ -61,17 +39,17 @@ pub struct EntityRenderer<'a> {
     entity: &'a Entity,
     language_filter: Option<&'a LanguageFilter>,
     inline_linked_entities: Option<&'a HashMap<String, Entity>>,
-    mode: RenderMode,
+    mode: ResponseFormat,
 }
 
 impl<'a> EntityRenderer<'a> {
-    /// Create a new renderer for the given entity in [`RenderMode::Normalized`] mode.
+    /// Create a new renderer for the given entity in [`ResponseFormat::Normalized`] mode.
     pub const fn new(entity: &'a Entity) -> EntityRenderer<'a> {
         EntityRenderer {
             entity,
             language_filter: None,
             inline_linked_entities: None,
-            mode: RenderMode::Normalized,
+            mode: ResponseFormat::Normalized,
         }
     }
 
@@ -94,7 +72,7 @@ impl<'a> EntityRenderer<'a> {
     }
 
     /// Set the output representation mode.
-    pub const fn with_mode(mut self, mode: RenderMode) -> Self {
+    pub const fn with_mode(mut self, mode: ResponseFormat) -> Self {
         self.mode = mode;
         self
     }
@@ -112,7 +90,7 @@ impl<'a> Renderer for EntityRenderer<'a> {
     fn render(self) -> Result<Value, AndromedaError> {
         // Fast path: simplified without language filter or inline join can use
         // the domain-level simplify() directly, avoiding a full serialize round-trip.
-        if self.mode == RenderMode::Simplified && self.language_filter.is_none() && self.inline_linked_entities.is_none() {
+        if self.mode.is_simplified() && self.language_filter.is_none() && self.inline_linked_entities.is_none() {
             return Ok(simplify_entity(self.entity));
         }
 
@@ -163,11 +141,12 @@ impl<'a> Renderer for EntityRenderer<'a> {
 
         // Step 3: concise/simplified transformation
         match self.mode {
-            RenderMode::Normalized => {}
-            RenderMode::Concise => {
+            ResponseFormat::Normalized => {}
+            ResponseFormat::Concise => {
                 value = concise_value(value);
             }
-            RenderMode::Simplified => {
+            // Clause 4.5.4 gives `keyValues` and `simplified` one rendering.
+            ResponseFormat::KeyValues | ResponseFormat::Simplified => {
                 value = simplify_value(value);
             }
         }
@@ -592,11 +571,9 @@ pub(crate) fn decode_percent_encoded_uris(value: &mut Value) {
 
 #[cfg(test)]
 mod tests {
-    use super::{EntityRenderer, RenderMode, concise_value, decode_percent_encoded_uris};
-    use crate::{
-        http::model::language::LanguageFilter,
-        renderer::{Renderer, simplify::simplify_entity},
-    };
+    use super::{EntityRenderer, ResponseFormat, concise_value, decode_percent_encoded_uris};
+    use crate::renderer::{Renderer, simplify::simplify_entity};
+    use andromeda_ngsi_ld_http_headers::language::LanguageFilter;
     use andromeda_ngsi_ld_model::entity::Entity;
     use serde_json::{Value, json};
 
@@ -643,7 +620,7 @@ mod tests {
         }));
 
         let simplified = EntityRenderer::new(&entity)
-            .with_mode(RenderMode::Simplified)
+            .with_mode(ResponseFormat::Simplified)
             .render()
             .expect("simplified entity");
 
@@ -711,7 +688,7 @@ mod tests {
 
         let simplified = EntityRenderer::new(&entity)
             .with_language_filter(&filter)
-            .with_mode(RenderMode::Simplified)
+            .with_mode(ResponseFormat::Simplified)
             .render()
             .expect("rendered entity");
 
@@ -871,7 +848,7 @@ mod tests {
             "type": "Building",
             "name": {"type": "Property", "value": "Tower"}
         }));
-        let result = EntityRenderer::new(&entity).with_mode(RenderMode::Concise).render().expect("concise");
+        let result = EntityRenderer::new(&entity).with_mode(ResponseFormat::Concise).render().expect("concise");
         pretty_assertions::assert_eq!(result["name"], "Tower");
     }
 
@@ -882,7 +859,7 @@ mod tests {
             "type": "Building",
             "name": {"type": "Property", "value": "Tower"}
         }));
-        let result = EntityRenderer::new(&entity).with_mode(RenderMode::Simplified).render().expect("simplified");
+        let result = EntityRenderer::new(&entity).with_mode(ResponseFormat::Simplified).render().expect("simplified");
         pretty_assertions::assert_eq!(result["name"], "Tower");
     }
 
@@ -1013,7 +990,7 @@ mod tests {
             }
         }));
 
-        let rendered = EntityRenderer::new(&entity).with_mode(RenderMode::Concise).render().expect("concise");
+        let rendered = EntityRenderer::new(&entity).with_mode(ResponseFormat::Concise).render().expect("concise");
         pretty_assertions::assert_eq!(rendered["name"]["collate"]["value"], "tower");
     }
 

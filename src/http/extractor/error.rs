@@ -3,7 +3,8 @@
 //! Maps extractor-level failures to the appropriate NGSI-LD error types
 //! (`InvalidRequest`, `BadRequestData`) as required by the specification.
 
-use crate::http::error::problem::{NgsiLdError, NgsiLdErrorType};
+use crate::http::error::problem::NgsiLdError;
+use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
 use axum::{
     http::{StatusCode, Uri},
     response::{IntoResponse, Response},

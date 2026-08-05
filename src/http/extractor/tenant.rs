@@ -3,7 +3,8 @@
 //! Extracts the optional `NGSILD-Tenant` header from the request, producing
 //! a [`TenantHeader`] that carries the tenant name (or `None` for the default tenant).
 
-use crate::http::{extractor::error::ExtractorRejection, header::ngsild_tenant::NgsiLdTenant};
+use crate::http::extractor::error::ExtractorRejection;
+use andromeda_ngsi_ld_http_headers::ngsild_tenant::NgsiLdTenant;
 use andromeda_ngsi_ld_lexicon::tenant::TenantName;
 use axum::{extract::FromRequestParts, http::request::Parts};
 use headers::HeaderMapExt;

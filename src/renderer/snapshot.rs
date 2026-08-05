@@ -14,10 +14,11 @@ use crate::{
     core::error::AndromedaError,
     renderer::{
         Renderer,
-        entity::{RenderMode, apply_inline_join, concise_value, simplify_value},
+        entity::{apply_inline_join, concise_value, simplify_value},
     },
 };
 use andromeda_ngsi_ld_model::entity::Entity;
+use andromeda_ngsi_ld_representation::response_format::ResponseFormat;
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 
@@ -27,7 +28,7 @@ use std::collections::{HashMap, HashSet};
 pub struct SnapshotRenderer<'a> {
     payload: Value,
     attrs_filter: Option<&'a [&'a str]>,
-    mode: RenderMode,
+    mode: ResponseFormat,
     inline_linked_entities: Option<&'a HashMap<String, Entity>>,
 }
 
@@ -37,7 +38,7 @@ impl<'a> SnapshotRenderer<'a> {
         SnapshotRenderer {
             payload,
             attrs_filter: None,
-            mode: RenderMode::Normalized,
+            mode: ResponseFormat::Normalized,
             inline_linked_entities: None,
         }
     }
@@ -49,7 +50,7 @@ impl<'a> SnapshotRenderer<'a> {
     }
 
     /// Set the output representation mode.
-    pub const fn with_mode(mut self, mode: RenderMode) -> Self {
+    pub const fn with_mode(mut self, mode: ResponseFormat) -> Self {
         self.mode = mode;
         self
     }
@@ -84,9 +85,10 @@ impl<'a> Renderer for SnapshotRenderer<'a> {
         }
 
         let transformed = match mode {
-            RenderMode::Normalized => payload,
-            RenderMode::Concise => concise_value(payload),
-            RenderMode::Simplified => simplify_value(payload),
+            ResponseFormat::Normalized => payload,
+            ResponseFormat::Concise => concise_value(payload),
+            // Clause 4.5.4 gives `keyValues` and `simplified` one rendering.
+            ResponseFormat::KeyValues | ResponseFormat::Simplified => simplify_value(payload),
         };
 
         Ok(transformed)
@@ -98,7 +100,7 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    fn render(payload: Value, attrs: Option<&[&str]>, mode: RenderMode) -> Value {
+    fn render(payload: Value, attrs: Option<&[&str]>, mode: ResponseFormat) -> Value {
         SnapshotRenderer::new(payload)
             .with_attrs_filter(attrs)
             .with_mode(mode)
@@ -116,7 +118,7 @@ mod tests {
                 "collate": {"type": "Property", "value": "tower"}
             }
         });
-        let result = render(value, None, RenderMode::Normalized);
+        let result = render(value, None, ResponseFormat::Normalized);
         pretty_assertions::assert_eq!(result["name"]["collate"]["value"], "tower");
         pretty_assertions::assert_eq!(result["name"]["value"], "Tower");
     }
@@ -124,7 +126,7 @@ mod tests {
     #[test]
     fn filters_attrs() {
         let value = json!({"id": "urn:x", "type": "T", "name": {"type": "Property", "value": "x"}, "temp": {"type": "Property", "value": 25}});
-        let result = render(value, Some(&["name"]), RenderMode::Normalized);
+        let result = render(value, Some(&["name"]), ResponseFormat::Normalized);
         assert!(result.get("name").is_some());
         assert!(result.get("temp").is_none());
         assert!(result.get("id").is_some());
@@ -134,28 +136,28 @@ mod tests {
     #[test]
     fn applies_simplified_mode() {
         let value = json!({"id": "urn:x", "type": "T", "name": {"type": "Property", "value": "Tower"}});
-        let result = render(value, None, RenderMode::Simplified);
+        let result = render(value, None, ResponseFormat::Simplified);
         pretty_assertions::assert_eq!(result["name"], "Tower");
     }
 
     #[test]
     fn applies_concise_mode() {
         let value = json!({"id": "urn:x", "type": "T", "name": {"type": "Property", "value": "Tower"}});
-        let result = render(value, None, RenderMode::Concise);
+        let result = render(value, None, ResponseFormat::Concise);
         pretty_assertions::assert_eq!(result["name"], "Tower");
     }
 
     #[test]
     fn normalized_mode_is_identity() {
         let value = json!({"id": "urn:x", "type": "T", "name": {"type": "Property", "value": "Tower"}});
-        let result = render(value.clone(), None, RenderMode::Normalized);
+        let result = render(value.clone(), None, ResponseFormat::Normalized);
         pretty_assertions::assert_eq!(result, value);
     }
 
     #[test]
     fn filters_then_transforms() {
         let value = json!({"id": "urn:x", "type": "T", "name": {"type": "Property", "value": "Tower"}, "temp": {"type": "Property", "value": 25}});
-        let result = render(value, Some(&["name"]), RenderMode::Simplified);
+        let result = render(value, Some(&["name"]), ResponseFormat::Simplified);
         pretty_assertions::assert_eq!(result["name"], "Tower");
         assert!(result.get("temp").is_none());
     }

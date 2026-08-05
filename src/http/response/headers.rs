@@ -1,14 +1,11 @@
 //! Shared header logic for NGSI-LD responses.
 
-use crate::{
-    http::header::{
-        link::Link,
-        ngsild_entity_map::NgsiLdEntityMap,
-        ngsild_snapshot::NgsiLdSnapshot,
-        ngsild_warning::{NgsiLdWarning, NgsiLdWarningHeader},
-    },
-    jsonld::ContextSpec,
-    renderer::ContextLocation,
+use crate::{jsonld::ContextSpec, renderer::ContextLocation};
+use andromeda_ngsi_ld_http_headers::{
+    link::header::Link,
+    ngsild_entity_map::NgsiLdEntityMap,
+    ngsild_snapshot::NgsiLdSnapshot,
+    ngsild_warning::{NgsiLdWarning, NgsiLdWarningHeader},
 };
 use andromeda_ngsi_ld_lexicon::ngsi_ld_urn::SnapshotId;
 use axum::http::{HeaderMap, HeaderValue};

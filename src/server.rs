@@ -4,8 +4,8 @@ use crate::{
         config::{CorsMode, HttpFeatureMode, RuntimeConfig},
         error::AndromedaError,
     },
-    http::header::ngsild_tenant::NgsiLdTenant,
 };
+use andromeda_ngsi_ld_http_headers::ngsild_tenant::NgsiLdTenant;
 use axum::{
     ServiceExt,
     extract::MatchedPath,

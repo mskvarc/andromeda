@@ -84,10 +84,13 @@ name = "andromeda"
 version = "0.1.0"
 dependencies = [
  "andromeda-ngsi-ld-geometry",
+ "andromeda-ngsi-ld-http-headers",
  "andromeda-ngsi-ld-lexicon",
  "andromeda-ngsi-ld-model",
+ "andromeda-ngsi-ld-problem-details",
  "andromeda-ngsi-ld-query",
  "andromeda-ngsi-ld-representation",
+ "andromeda-ngsi-ld-request",
  "andromeda-ngsi-ld-vocabulary",
  "andromeda-postgresql-context-query",
  "andromeda-postgresql-encoding",
@@ -176,6 +179,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "andromeda-ngsi-ld-http-headers"
+version = "0.1.0"
+dependencies = [
+ "andromeda-layer-guard",
+ "andromeda-ngsi-ld-lexicon",
+ "andromeda-ngsi-ld-representation",
+ "derive_more",
+ "headers",
+ "http",
+ "langtag",
+ "mediatype",
+ "pretty_assertions",
+ "strum",
+ "thiserror 2.0.19",
+ "tracing",
+ "urn-rs",
+]
+
+[[package]]
 name = "andromeda-ngsi-ld-lexicon"
 version = "0.1.0"
 dependencies = [
@@ -233,6 +255,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "andromeda-ngsi-ld-problem-details"
+version = "0.1.0"
+dependencies = [
+ "andromeda-layer-guard",
+ "http",
+ "iri-rs",
+ "pretty_assertions",
+ "serde",
+ "serde_json",
+ "strum",
+]
+
+[[package]]
 name = "andromeda-ngsi-ld-query"
 version = "0.1.0"
 dependencies = [
@@ -265,6 +300,21 @@ dependencies = [
  "serde",
  "serde_json",
  "strum",
+]
+
+[[package]]
+name = "andromeda-ngsi-ld-request"
+version = "0.1.0"
+dependencies = [
+ "andromeda-layer-guard",
+ "andromeda-ngsi-ld-lexicon",
+ "andromeda-ngsi-ld-query",
+ "andromeda-ngsi-ld-representation",
+ "pretty_assertions",
+ "serde",
+ "serde_json",
+ "serde_urlencoded",
+ "thiserror 2.0.19",
 ]
 
 [[package]]

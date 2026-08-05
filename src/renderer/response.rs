@@ -14,10 +14,7 @@
 
 use crate::{
     core::error::AndromedaError,
-    http::{
-        extractor::prefer::PreferHeader,
-        model::{preference::GeoJsonBodyPreference, response_format::ResponseFormat},
-    },
+    http::extractor::prefer::PreferHeader,
     jsonld::ContextSpec,
     renderer::{
         ContextLocation,
@@ -28,6 +25,7 @@ use crate::{
         version::VersionRenderer,
     },
 };
+use andromeda_ngsi_ld_http_headers::{geo_json_body::GeoJsonBodyPreference, media_type::ResponseMediaType};
 use serde_json::Value;
 use std::{mem::replace, sync::Arc};
 
@@ -53,7 +51,7 @@ pub enum ResponsePayload {
 /// preferences, and optional geometry property for GeoJSON conversion.
 #[derive(Debug)]
 pub struct ResponseRenderer {
-    format: ResponseFormat,
+    format: ResponseMediaType,
     context: ContextSpec,
     prefer: PreferHeader,
     geometry_property: Option<String>,
@@ -80,7 +78,7 @@ impl ResponseRenderer {
     ///
     /// The payload defaults to [`ResponsePayload::Single`] with a JSON null;
     /// call [`ResponseRenderer::with_payload`] to supply the real payload.
-    pub const fn new(format: ResponseFormat, context: ContextSpec, prefer: PreferHeader) -> ResponseRenderer {
+    pub const fn new(format: ResponseMediaType, context: ContextSpec, prefer: PreferHeader) -> ResponseRenderer {
         ResponseRenderer {
             format,
             context,
@@ -130,14 +128,14 @@ impl ResponseRenderer {
         let context_value = self.context.for_presentation().to_context_value();
 
         let context_location = match self.format {
-            ResponseFormat::Json | ResponseFormat::JsonLd => {
+            ResponseMediaType::Json | ResponseMediaType::JsonLd => {
                 if self.format.include_context_in_body() {
                     ContextLocation::Body
                 } else {
                     ContextLocation::LinkHeader
                 }
             }
-            ResponseFormat::GeoJson => {
+            ResponseMediaType::GeoJson => {
                 if self.prefer.geo_json_body == GeoJsonBodyPreference::Json {
                     ContextLocation::LinkHeader
                 } else {
@@ -147,7 +145,7 @@ impl ResponseRenderer {
         };
 
         match self.format {
-            ResponseFormat::Json | ResponseFormat::JsonLd => {
+            ResponseMediaType::Json | ResponseMediaType::JsonLd => {
                 decode_percent_encoded_uris(&mut value);
                 if let Some(target) = self.prefer.requested_version {
                     value = VersionRenderer::new(target).with_payload(value).render()?;
@@ -158,7 +156,7 @@ impl ResponseRenderer {
                     obj.insert("@context".to_string(), format_context(cv));
                 }
             }
-            ResponseFormat::GeoJson => {
+            ResponseMediaType::GeoJson => {
                 if let Some(target) = self.prefer.requested_version {
                     value = VersionRenderer::new(target).with_payload(value).render()?;
                 }
@@ -178,7 +176,7 @@ impl ResponseRenderer {
         Ok(RenderedOutput {
             value,
             context: self.context,
-            content_type: self.format.content_type_str(),
+            content_type: self.format.as_str(),
             context_location,
             version_adaptation,
         })
@@ -197,14 +195,14 @@ impl ResponseRenderer {
         let context_value = self.context.for_presentation().to_context_value();
 
         let context_location = match self.format {
-            ResponseFormat::Json | ResponseFormat::JsonLd => {
+            ResponseMediaType::Json | ResponseMediaType::JsonLd => {
                 if self.format.include_context_in_body() {
                     ContextLocation::Body
                 } else {
                     ContextLocation::LinkHeader
                 }
             }
-            ResponseFormat::GeoJson => {
+            ResponseMediaType::GeoJson => {
                 if self.prefer.geo_json_body == GeoJsonBodyPreference::Json {
                     ContextLocation::LinkHeader
                 } else {
@@ -216,7 +214,7 @@ impl ResponseRenderer {
         let mut array_value = Value::Array(values);
 
         match self.format {
-            ResponseFormat::Json | ResponseFormat::JsonLd => {
+            ResponseMediaType::Json | ResponseMediaType::JsonLd => {
                 decode_percent_encoded_uris(&mut array_value);
                 if let Some(target) = self.prefer.requested_version {
                     array_value = VersionRenderer::new(target).with_payload(array_value).render()?;
@@ -238,7 +236,7 @@ impl ResponseRenderer {
                     }
                 }
             }
-            ResponseFormat::GeoJson => {
+            ResponseMediaType::GeoJson => {
                 if let Some(target) = self.prefer.requested_version {
                     array_value = VersionRenderer::new(target).with_payload(array_value).render()?;
                 }
@@ -258,7 +256,7 @@ impl ResponseRenderer {
         Ok(RenderedOutput {
             value: array_value,
             context: self.context,
-            content_type: self.format.content_type_str(),
+            content_type: self.format.as_str(),
             context_location,
             version_adaptation,
         })
@@ -294,7 +292,7 @@ impl ResponseRenderer {
         Ok(RenderedOutput {
             value,
             context: self.context,
-            content_type: self.format.content_type_str(),
+            content_type: self.format.as_str(),
             context_location,
             version_adaptation,
         })
@@ -316,6 +314,7 @@ fn format_context(ctx: Value) -> Value {
 mod tests {
     use super::*;
     use crate::http::extractor::prefer::PreferHeader;
+    use andromeda_ngsi_ld_http_headers::version::NgsiLdVersion;
     use serde_json::json;
 
     fn default_prefer() -> PreferHeader {
@@ -326,7 +325,7 @@ mod tests {
     fn render_single_json_does_not_inject_context() {
         let ctx = ContextSpec::from_links(vec!["https://example.org/ctx".to_string()]);
         let value = json!({"id": "urn:x", "type": "T", "name": {"type": "Property", "value": "test"}});
-        let rendered = ResponseRenderer::new(ResponseFormat::Json, ctx, default_prefer())
+        let rendered = ResponseRenderer::new(ResponseMediaType::Json, ctx, default_prefer())
             .with_payload(ResponsePayload::Single(value))
             .render()
             .expect("render");
@@ -339,7 +338,7 @@ mod tests {
     fn render_single_ld_json_injects_context() {
         let ctx = ContextSpec::from_links(vec!["https://example.org/ctx".to_string()]);
         let value = json!({"id": "urn:x", "type": "T"});
-        let rendered = ResponseRenderer::new(ResponseFormat::JsonLd, ctx, default_prefer())
+        let rendered = ResponseRenderer::new(ResponseMediaType::JsonLd, ctx, default_prefer())
             .with_payload(ResponsePayload::Single(value))
             .render()
             .expect("render");
@@ -352,7 +351,7 @@ mod tests {
     fn render_collection_ld_json_injects_context_per_item() {
         let ctx = ContextSpec::from_links(vec!["https://example.org/ctx".to_string()]);
         let values = vec![json!({"id": "urn:x", "type": "T"}), json!({"id": "urn:y", "type": "T"})];
-        let rendered = ResponseRenderer::new(ResponseFormat::JsonLd, ctx, default_prefer())
+        let rendered = ResponseRenderer::new(ResponseMediaType::JsonLd, ctx, default_prefer())
             .with_payload(ResponsePayload::Collection(values))
             .render()
             .expect("render");
@@ -366,7 +365,7 @@ mod tests {
     fn render_batch_injects_context_for_ld_json() {
         let ctx = ContextSpec::from_links(vec!["https://example.org/ctx".to_string()]);
         let value = json!({"success": ["urn:x"], "errors": []});
-        let rendered = ResponseRenderer::new(ResponseFormat::JsonLd, ctx, default_prefer())
+        let rendered = ResponseRenderer::new(ResponseMediaType::JsonLd, ctx, default_prefer())
             .with_payload(ResponsePayload::Batch(value))
             .render()
             .expect("render");
@@ -375,14 +374,13 @@ mod tests {
 
     #[test]
     fn render_single_version_adapted_flag() {
-        use crate::http::model::version::NgsiLdVersion;
         let ctx = ContextSpec::from_links(vec!["https://example.org/ctx".to_string()]);
         let prefer = PreferHeader {
             requested_version: Some(NgsiLdVersion::V1_4),
             ..PreferHeader::default()
         };
         let value = json!({"id": "urn:x", "type": "T"});
-        let rendered = ResponseRenderer::new(ResponseFormat::Json, ctx, prefer)
+        let rendered = ResponseRenderer::new(ResponseMediaType::Json, ctx, prefer)
             .with_payload(ResponsePayload::Single(value))
             .render()
             .expect("render");
@@ -393,7 +391,7 @@ mod tests {
     fn render_single_no_version_adaptation_by_default() {
         let ctx = ContextSpec::from_links(vec!["https://example.org/ctx".to_string()]);
         let value = json!({"id": "urn:x", "type": "T"});
-        let rendered = ResponseRenderer::new(ResponseFormat::Json, ctx, default_prefer())
+        let rendered = ResponseRenderer::new(ResponseMediaType::Json, ctx, default_prefer())
             .with_payload(ResponsePayload::Single(value))
             .render()
             .expect("render");

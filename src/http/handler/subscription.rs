@@ -6,7 +6,6 @@ use crate::{
     http::{
         error::problem::NgsiLdError,
         extractor::{accept::AcceptFormatNoGeo, context::ContextUrl, jsonld::JsonLd, prefer::PreferHeader, query::ValidatedQuery},
-        parameter::{EmptyParams, subscription::ListParams},
         response::{
             collection::NgsiLdCollectionResponse,
             pagination::{PaginationMediaType, PaginationStyle, append_pagination_links},
@@ -21,6 +20,7 @@ use crate::{
         subscription::{JsonldContextStripRenderer, SubscriptionFlavor, SubscriptionRenderer},
     },
 };
+use andromeda_ngsi_ld_request::{empty::EmptyParams, subscription::ListParams};
 use axum::{
     extract::{OriginalUri, Path},
     http::{HeaderMap, StatusCode},
@@ -76,7 +76,7 @@ pub async fn get(
     };
     let subscription = strip.payload;
 
-    let rendered = ResponseRenderer::new(accept.format(), response_context, PreferHeader::default())
+    let rendered = ResponseRenderer::new(accept.media_type(), response_context, PreferHeader::default())
         .with_payload(ResponsePayload::Single(subscription))
         .render()?;
     let response = NgsiLdResponse::ok(rendered).into_response();
@@ -121,7 +121,7 @@ pub async fn query(
         })
         .collect::<Result<Vec<_>, _>>()?;
 
-    let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default())
+    let rendered = ResponseRenderer::new(accept.media_type(), context, PreferHeader::default())
         .with_payload(ResponsePayload::Collection(subscriptions))
         .render()?;
     let mut response = NgsiLdCollectionResponse::ok(rendered);

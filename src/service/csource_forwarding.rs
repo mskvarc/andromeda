@@ -1,9 +1,9 @@
 use crate::{
     core::error::AndromedaError,
-    http::header::{link::Link, ngsild_tenant::NgsiLdTenant, ngsild_warning::NgsiLdWarning, via::Via},
     jsonld::{ContextSpec, JsonLdEngine},
     repository::csource_registration::repo::CsourceRegistrationRepository,
 };
+use andromeda_ngsi_ld_http_headers::{link::header::Link, ngsild_tenant::NgsiLdTenant, ngsild_warning::NgsiLdWarning, via::Via};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, tenant::TenantName};
 use andromeda_ngsi_ld_model::{
     entity::Entity,

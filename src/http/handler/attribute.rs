@@ -4,9 +4,8 @@ use crate::{
     api::tenant::TenantState,
     core::error::ResultInstanceExt,
     http::{
-        error::problem::{NgsiLdError, NgsiLdErrorType},
+        error::problem::NgsiLdError,
         extractor::{accept::AcceptFormat, context::ContextUrl, prefer::PreferHeader, query::ValidatedQuery, snapshot::SnapshotHeader, via::IncomingVia},
-        parameter::{DiscoveryListParams, LocalOnlyParams},
         response::single::NgsiLdResponse,
         validation::validate_name_or_iri,
     },
@@ -17,6 +16,8 @@ use crate::{
     },
     service::csource_forwarding::{collect_discovery_warnings, merge_attribute_info_results, merge_attributes_results},
 };
+use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
+use andromeda_ngsi_ld_request::{discovery::DiscoveryListParams, local::LocalOnlyParams};
 use axum::{
     extract::{OriginalUri, Path},
     response::{IntoResponse, Response},
@@ -45,7 +46,7 @@ pub async fn query(
             "type": "AttributeList",
             "attributeList": attributes,
         });
-        let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default())
+        let rendered = ResponseRenderer::new(accept.media_type(), context, PreferHeader::default())
             .with_payload(ResponsePayload::Single(body))
             .render()?;
         return Ok(NgsiLdResponse::ok(rendered).into_response());
@@ -69,7 +70,7 @@ pub async fn query(
         (merged, warnings)
     };
 
-    let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default())
+    let rendered = ResponseRenderer::new(accept.media_type(), context, PreferHeader::default())
         .with_payload(ResponsePayload::Single(result))
         .render()?;
     Ok(NgsiLdResponse::ok(rendered).with_warnings(warnings).into_response())
@@ -107,7 +108,7 @@ pub async fn get(
             "attributeCount": attribute_count,
             "typeNames": type_names,
         });
-        let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default())
+        let rendered = ResponseRenderer::new(accept.media_type(), context, PreferHeader::default())
             .with_payload(ResponsePayload::Single(body))
             .render()?;
         return Ok(NgsiLdResponse::ok(rendered).into_response());
@@ -132,7 +133,7 @@ pub async fn get(
         (merged, warnings)
     };
 
-    let rendered = ResponseRenderer::new(accept.format(), context, PreferHeader::default())
+    let rendered = ResponseRenderer::new(accept.media_type(), context, PreferHeader::default())
         .with_payload(ResponsePayload::Single(result))
         .render()?;
     Ok(NgsiLdResponse::ok(rendered).with_warnings(warnings).into_response())

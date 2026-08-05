@@ -14,10 +14,8 @@ use moka::future::Cache;
 use tracing::{debug, warn};
 use url::Url;
 
-use crate::{
-    http::header::{link::Link, ngsild_tenant::NgsiLdTenant},
-    transport::types::{DeliveryOutcome, DeliveryRequest, NotificationTransport, TransportError},
-};
+use crate::transport::types::{DeliveryOutcome, DeliveryRequest, NotificationTransport, TransportError};
+use andromeda_ngsi_ld_http_headers::{link::header::Link, ngsild_tenant::NgsiLdTenant};
 use headers::Header;
 
 /// TTL for the DNS private-IP check cache.
@@ -184,7 +182,7 @@ impl NotificationTransport for HttpTransport {
             .body(req.payload.clone());
 
         // Add Link header for application/json notifications (NGSI-LD spec requirement).
-        if req.content_type == crate::http::model::response_format::APPLICATION_JSON {
+        if req.content_type == andromeda_ngsi_ld_http_headers::media_type::APPLICATION_JSON {
             let ctx_url = req.context_url.as_deref().unwrap_or(crate::jsonld::core_context::NGSI_LD_CORE_CONTEXT_URL);
             let link = Link::jsonld_context(ctx_url);
             if let Some(value) = link.to_header_value() {

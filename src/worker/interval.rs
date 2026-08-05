@@ -1,5 +1,4 @@
 use crate::{
-    http::model::response_format::APPLICATION_LD_JSON,
     jsonld::{CompactOptions, ContextSpec, ContextStripping, JsonLdEngine},
     renderer::simplify::simplify_entity,
     repository::{entity::repo::EntityRepository, subscription::repo::SubscriptionRepository, subscription_store::repo::SubscriptionStore},
@@ -9,6 +8,7 @@ use crate::{
         endpoint::parse_endpoint_transport,
     },
 };
+use andromeda_ngsi_ld_http_headers::media_type::APPLICATION_LD_JSON;
 use andromeda_ngsi_ld_lexicon::uri::{NGSI_LD_URN_NID, Uri};
 use andromeda_ngsi_ld_model::{entity::Entity, notification::Notification, subscription::Subscription};
 use andromeda_ngsi_ld_query::filter::eval;

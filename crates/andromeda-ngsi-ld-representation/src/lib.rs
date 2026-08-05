@@ -11,6 +11,12 @@
 //!
 //! It sits below both: a representation option is expressible in terms of the
 //! lexical layer alone, so nothing here names a resource, a query or a store.
+//!
+//! How a client *asks* for one is not here. Media-type negotiation, version
+//! conformance and language ranges arrive as HTTP headers and are spelled by
+//! the header grammars that carry them, so they live in
+//! `andromeda-ngsi-ld-http-headers` beside those headers rather than being
+//! split from them.
 
 #![deny(missing_docs)]
 #![deny(clippy::missing_docs_in_private_items)]

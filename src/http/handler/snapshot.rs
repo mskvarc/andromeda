@@ -3,17 +3,11 @@
 use crate::{
     api::tenant::TenantState,
     core::error::{AndromedaError, ResultInstanceExt},
-    http::{
-        error::{
-            batch::BatchOperationResult,
-            problem::{NgsiLdError, NgsiLdErrorType},
-        },
-        extractor::snapshot_purge_q::SnapshotPurgeQ,
-        validation::parse_snapshot_id,
-    },
+    http::{error::problem::NgsiLdError, extractor::snapshot_purge_q::SnapshotPurgeQ, validation::parse_snapshot_id},
     service::snapshot::PurgeOutcome,
 };
 use andromeda_ngsi_ld_model::snapshot::{SnapshotInput, SnapshotPatch};
+use andromeda_ngsi_ld_problem_details::{batch_operation::BatchOperationResult, error_type::NgsiLdErrorType};
 use axum::{
     Json,
     extract::{OriginalUri, Path},

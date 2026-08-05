@@ -3,7 +3,7 @@
 
 use crate::{
     jsonld::{CompactOptions, ContextSpec, ContextStripping, JsonLdEngine},
-    renderer::{Renderer, entity::RenderMode, simplify::simplify_entity, snapshot::SnapshotRenderer},
+    renderer::{Renderer, simplify::simplify_entity, snapshot::SnapshotRenderer},
     service::{
         compiled_subscription::CompiledSubscription,
         entity::{expanded_entity_object_mut, inject_attr_sys_attrs, query::EntityQueryService},
@@ -11,7 +11,7 @@ use crate::{
 };
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType};
 use andromeda_ngsi_ld_model::{entity::Entity, notification::TriggerReason};
-use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
+use andromeda_ngsi_ld_representation::{response_format::ResponseFormat, sys_attrs::SysAttrsInclusion};
 use andromeda_ngsi_ld_vocabulary::{
     expanded::{classes as expanded_classes, properties as expanded_properties},
     prefix,
@@ -264,7 +264,7 @@ pub async fn build_notification_data(params: NotificationBuildParams<'_>) -> Vec
     for item in all_compacted {
         let formatted = if is_simplified {
             if has_inline_join {
-                match SnapshotRenderer::new(item.clone()).with_mode(RenderMode::Simplified).render() {
+                match SnapshotRenderer::new(item.clone()).with_mode(ResponseFormat::Simplified).render() {
                     Ok(simplified) => simplified,
                     Err(error) => {
                         debug!("Failed to simplify inline-joined notification payload: {}", error);

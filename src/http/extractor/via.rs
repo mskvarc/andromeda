@@ -4,7 +4,7 @@
 //! [`IncomingVia`] that carries the parsed Via chain (or `None` when absent).
 //! Used for loop detection in distributed NGSI-LD forwarding (clause 6.3.18).
 
-use crate::http::header::via::Via;
+use andromeda_ngsi_ld_http_headers::via::Via;
 use axum::{extract::FromRequestParts, http::request::Parts};
 
 /// Axum extractor for the `Via` request header.
