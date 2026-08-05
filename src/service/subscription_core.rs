@@ -1,11 +1,8 @@
 //! Shared subscription CRUD logic used by both entity subscriptions and
 //! context-source subscriptions.
 
-use crate::{
-    core::error::AndromedaError,
-    jsonld::{ContextSpec, JsonLdEngine, term_expansion::ContextualExpander},
-    repository::subscription_store::params::SubscriptionFields,
-};
+use crate::{core::error::AndromedaError, repository::subscription_store::params::SubscriptionFields};
+use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine, term_expansion::ContextualExpander};
 use andromeda_ngsi_ld_model::subscription::{EntitySelector, Subscription};
 use andromeda_ngsi_ld_query::{
     filter::{expansion::expand_q_expr, expression::Expr, parser, predicate::Predicate, serialize},
@@ -355,7 +352,7 @@ pub async fn compact_subscription_iris(engine: &JsonLdEngine, value: &mut Value,
     {
         for entity_sel in arr.iter_mut() {
             if let Some(type_iri) = entity_sel.get("type").and_then(|v| v.as_str()).map(String::from) {
-                let compacted = crate::jsonld::term_resolver::compact_type_iri(engine, &type_iri, context).await;
+                let compacted = andromeda_jsonld::compaction::compact_type_iri(engine, &type_iri, context).await;
                 if let Some(obj) = entity_sel.as_object_mut() {
                     obj.insert("type".to_string(), Value::String(compacted));
                 }
@@ -369,7 +366,7 @@ pub async fn compact_subscription_iris(engine: &JsonLdEngine, value: &mut Value,
     {
         for attr in arr.iter_mut() {
             if let Some(iri) = attr.as_str().map(String::from) {
-                let compacted = crate::jsonld::term_resolver::compact_attr_iri(engine, &iri, context).await;
+                let compacted = andromeda_jsonld::compaction::compact_attr_iri(engine, &iri, context).await;
                 *attr = Value::String(compacted);
             }
         }
@@ -382,7 +379,7 @@ pub async fn compact_subscription_iris(engine: &JsonLdEngine, value: &mut Value,
     {
         for attr in arr.iter_mut() {
             if let Some(iri) = attr.as_str().map(String::from) {
-                let compacted = crate::jsonld::term_resolver::compact_attr_iri(engine, &iri, context).await;
+                let compacted = andromeda_jsonld::compaction::compact_attr_iri(engine, &iri, context).await;
                 *attr = Value::String(compacted);
             }
         }

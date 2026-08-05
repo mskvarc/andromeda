@@ -1,6 +1,5 @@
 use crate::{
     core::error::AndromedaError,
-    jsonld::{BatchContextHandle, ContextSpec, JsonLdEngine},
     repository::{
         entity::{PreparedEntityRow, decompose_rows, params::PreparedEntityColumns},
         uow::UnitOfWork,
@@ -11,10 +10,13 @@ use crate::{
         EntityService,
         extract_attribute_keys,
         extract_scopes,
-        normalize_entity_attributes,
         unwrap_expanded_ref,
         validate_attribute_envelopes,
     },
+};
+use andromeda_jsonld::{
+    context_spec::ContextSpec,
+    engine::{batch_context::BatchContextHandle, processor::JsonLdEngine},
 };
 use andromeda_ngsi_ld_geometry::geometry::Geometry;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, scope::grammar::ScopeBuf, uri::Uri};
@@ -32,6 +34,7 @@ use andromeda_ngsi_ld_model::{
     },
     notification::{ChangeEvent, SysAttrsSnapshot, TriggerReason},
 };
+use andromeda_ngsi_ld_representation::normalization::normalize_entity_attributes;
 use andromeda_postgresql_query::ltree::scope_to_ltree;
 use futures::{StreamExt, stream};
 use serde_json::Value;
@@ -142,7 +145,7 @@ enum FastPoolOutput {
 fn classify_batch(entries: Vec<ClassifiedEntry>, handle: &BatchContextHandle, engine: &JsonLdEngine) -> ClassifiedBatch {
     let mut fast = Vec::new();
     let mut slow = Vec::new();
-    let handle_eligible = handle.has_core_term_map();
+    let handle_eligible = handle.fast_eligible();
     for entry in entries {
         if handle_eligible && engine.entity_context_matches_handle(&entry.value, handle) {
             fast.push(entry);
@@ -1362,7 +1365,7 @@ fn has_overlapping_attrs(entity: &Value, attrs: &Value) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::jsonld::JsonLdEngine;
+    use andromeda_jsonld::engine::processor::JsonLdEngine;
     use serde_json::json;
 
     fn test_engine() -> JsonLdEngine {

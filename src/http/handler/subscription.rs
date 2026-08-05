@@ -14,8 +14,8 @@ use crate::{
         },
         validation::parse_list_options,
     },
-    jsonld::ContextSpec,
 };
+use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_render::{
     response::ResponsePayload,
     subscription::{JsonldContextStripRenderer, SubscriptionFlavor, SubscriptionRenderer},

@@ -7,7 +7,8 @@
 //! `ContextSpec` for presentation, so the body value and the `Link` URLs cannot
 //! come from two different readings of it.
 
-use crate::{http::extractor::prefer::PreferHeader, jsonld::ContextSpec};
+use crate::http::extractor::prefer::PreferHeader;
+use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_http_headers::media_type::ResponseMediaType;
 use andromeda_ngsi_ld_render::{context::ResponseContext, response::ResponseRenderer};
 
@@ -30,10 +31,8 @@ pub fn response_context(context: &ContextSpec) -> ResponseContext {
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        http::response::render::response_context,
-        jsonld::{ContextSpec, core_context::NGSI_LD_CORE_CONTEXT_URL},
-    };
+    use crate::http::response::render::response_context;
+    use andromeda_jsonld::{context_spec::ContextSpec, core_context::NGSI_LD_CORE_CONTEXT_URL};
 
     #[test]
     fn the_body_value_and_the_link_urls_come_from_one_presentation_reading() {

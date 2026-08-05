@@ -4,9 +4,9 @@ use crate::{
     api::tenant::TenantState,
     core::error::{AndromedaError, ResultInstanceExt},
     http::{error::problem::NgsiLdError, extractor::query::ValidatedQuery},
-    jsonld::core_context::is_ngsi_ld_core_context_url,
     repository::jsonld_context::params::DetailLevel,
 };
+use andromeda_jsonld::core_context::is_ngsi_ld_core_context_url;
 use andromeda_ngsi_ld_model::jsonld_context::ContextKind;
 use andromeda_ngsi_ld_request::jsonld_context::{DeleteParams, ListParams, ServeParams};
 use axum::{

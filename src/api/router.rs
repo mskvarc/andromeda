@@ -263,7 +263,7 @@ pub async fn build_tenant_state(
     let mut worker_handles = Vec::new();
 
     let context_repo = Arc::new(JsonLdContextRepository::new(&pool));
-    let engine = crate::jsonld::build_engine(&config.jsonld, Arc::clone(&context_repo))?;
+    let engine = config.jsonld.build_engine(Arc::clone(&context_repo))?;
 
     if let Some(hit_counter) = engine.hit_counter() {
         let flush_repo = Arc::clone(&context_repo);

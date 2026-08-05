@@ -1,8 +1,8 @@
 use crate::core::error::AndromedaError;
+use andromeda_jsonld::config::JsonLdConfig;
 use confique::{Config, Layer};
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::HashMap,
     net::IpAddr,
     path::{Path, PathBuf},
 };
@@ -133,30 +133,6 @@ pub struct DatabaseConfig {
     /// commit throughput.
     #[config(env = "ANDROMEDA_DATABASE_SYNCHRONOUS_COMMIT", default = "off")]
     pub synchronous_commit: SynchronousCommit,
-}
-
-#[derive(Config, Debug, Clone, Serialize)]
-pub struct JsonLdConfig {
-    #[config(env = "ANDROMEDA_JSONLD_ALLOW_REMOTE_CONTEXTS", default = true)]
-    pub allow_remote_contexts: bool,
-
-    #[config(env = "ANDROMEDA_JSONLD_TIMEOUT_SECONDS", default = 30)]
-    pub timeout_seconds: u64,
-
-    #[config(env = "ANDROMEDA_JSONLD_MAX_REDIRECTS", default = 5)]
-    pub max_redirects: u32,
-
-    #[config(env = "ANDROMEDA_JSONLD_MAX_CONTEXT_BYTES", default = 2_000_000)]
-    pub max_context_bytes: u64,
-
-    #[config(env = "ANDROMEDA_JSONLD_CACHE_CAPACITY", default = 1024)]
-    pub cache_capacity: u64,
-
-    #[config(env = "ANDROMEDA_JSONLD_CACHE_TTL_SECONDS", default = 3600)]
-    pub cache_ttl_seconds: u64,
-
-    #[config(env = "ANDROMEDA_JSONLD_PRELOAD_CONTEXTS", parse_env = parse_string_map_json, default = {})]
-    pub preload_contexts: HashMap<String, String>,
 }
 
 #[derive(Config, Debug, Clone, Serialize)]
@@ -494,10 +470,6 @@ impl RuntimeConfig {
     }
 }
 
-fn parse_string_map_json(input: &str) -> Result<HashMap<String, String>, serde_json::Error> {
-    serde_json::from_str(input)
-}
-
 fn validate_config(config: &RuntimeConfig) -> Result<(), AndromedaError> {
     if config.server.port == 0 {
         return Err(AndromedaError::internal("server.port must be greater than 0"));
@@ -511,18 +483,7 @@ fn validate_config(config: &RuntimeConfig) -> Result<(), AndromedaError> {
     if config.database.max_connections == 0 {
         return Err(AndromedaError::internal("database.max_connections must be at least 1"));
     }
-    if config.jsonld.timeout_seconds == 0 {
-        return Err(AndromedaError::internal("jsonld.timeout_seconds must be at least 1"));
-    }
-    if config.jsonld.max_context_bytes == 0 {
-        return Err(AndromedaError::internal("jsonld.max_context_bytes must be at least 1"));
-    }
-    if config.jsonld.cache_capacity == 0 {
-        return Err(AndromedaError::internal("jsonld.cache_capacity must be at least 1"));
-    }
-    if config.jsonld.cache_ttl_seconds == 0 {
-        return Err(AndromedaError::internal("jsonld.cache_ttl_seconds must be at least 1"));
-    }
+    config.jsonld.validate().map_err(|error| AndromedaError::internal(error.to_string()))?;
     if config.temporal.default_last_n == 0 {
         return Err(AndromedaError::internal("temporal.default_last_n must be at least 1"));
     }
@@ -649,26 +610,15 @@ fn validate_config(config: &RuntimeConfig) -> Result<(), AndromedaError> {
 }
 
 fn normalize_preload_context_paths(config: &mut RuntimeConfig, config_file: &Path) {
-    if config.jsonld.preload_contexts.is_empty() {
-        return;
-    }
-
     let config_dir = config_file.parent().map_or_else(|| PathBuf::from("."), PathBuf::from);
-
-    for path in config.jsonld.preload_contexts.values_mut() {
-        let candidate = PathBuf::from(path.as_str());
-        if candidate.is_absolute() || candidate.exists() {
-            continue;
-        }
-
-        *path = config_dir.join(candidate).to_string_lossy().into_owned();
-    }
+    config.jsonld.resolve_preload_paths(&config_dir);
 }
 
 #[cfg(test)]
 mod tests {
     use serial_test::serial;
     use std::{
+        collections::HashMap,
         fs,
         time::{SystemTime, UNIX_EPOCH},
     };

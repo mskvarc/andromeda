@@ -16,7 +16,6 @@ use crate::{
         response::{collection::NgsiLdCollectionResponse, render::start_rendering, single::NgsiLdResponse},
         validation::{parse_entity_id, validate_attr_name, validate_instance_id},
     },
-    jsonld::{ContextSpec, term_expansion::ContextualExpander},
     repository::temporal::params::DeleteScope,
     service::{
         csource_forwarding::{CsrModeFilter, ForwardTemporalQueryRequest, ForwardingOperation, collect_temporal_warnings, merge_temporal_retrieve_results},
@@ -27,6 +26,7 @@ use crate::{
     },
     temporal_render::simplify::{TemporalSimplifyPayload, TemporalSimplifyRenderer},
 };
+use andromeda_jsonld::{context_spec::ContextSpec, term_expansion::ContextualExpander};
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::registration::ForwardingMode;
 use andromeda_ngsi_ld_query::{

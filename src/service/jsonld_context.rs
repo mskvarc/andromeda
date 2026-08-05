@@ -1,14 +1,14 @@
 use crate::{
     core::error::AndromedaError,
-    jsonld::{
-        JsonLdEngine,
-        core_context::{NGSI_LD_CORE_CONTEXT_URL, NGSI_LD_CORE_CONTEXT_V19, is_ngsi_ld_core_context_url},
-    },
     repository::jsonld_context::{
         mapper::row_to_metadata,
         params::{DetailLevel, ListContextsParams},
         repo::{FetchedContext, JsonLdContextRepository, ListedContexts},
     },
+};
+use andromeda_jsonld::{
+    core_context::{NGSI_LD_CORE_CONTEXT_URL, NGSI_LD_CORE_CONTEXT_V19, is_ngsi_ld_core_context_url},
+    engine::processor::JsonLdEngine,
 };
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::jsonld_context::{ContextGetResult, ContextKind, ContextListResult, ContextMetadata};

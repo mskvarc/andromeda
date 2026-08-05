@@ -2,12 +2,12 @@
 
 use crate::{
     core::error::AndromedaError,
-    jsonld::ContextCache,
     repository::jsonld_context::{
         params::{DetailLevel, ListContextsParams},
         rows::{ContextMetadataRow, ContextSummaryRow},
     },
 };
+use andromeda_jsonld::context_cache::ContextCache;
 use andromeda_ngsi_ld_lexicon::uri::NGSI_LD_URN_NID;
 use andromeda_ngsi_ld_model::jsonld_context::ContextKind;
 use async_trait::async_trait;

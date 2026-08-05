@@ -1,12 +1,12 @@
 use crate::{
     core::error::AndromedaError,
-    jsonld::{ContextSpec, JsonLdEngine},
     repository::{jsonld_context::repo::JsonLdContextRepository, subscription::repo::SubscriptionRepository},
     service::{
         subscription_base::{SubscriptionServiceCore, SubscriptionVariant},
         subscription_core,
     },
 };
+use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::{notification::SubscriptionChange, subscription::Subscription};
 use async_trait::async_trait;
@@ -109,7 +109,7 @@ impl EntitySubscriptionVariant {
         };
 
         for url in urls {
-            if crate::jsonld::core_context::is_ngsi_ld_core_context_url(url) {
+            if andromeda_jsonld::core_context::is_ngsi_ld_core_context_url(url) {
                 continue;
             }
             match self.engine.resolve_context(url).await {

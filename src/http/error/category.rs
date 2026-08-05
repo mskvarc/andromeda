@@ -28,6 +28,18 @@ pub const fn of(kind: &ErrorKind) -> NgsiLdErrorType {
         ErrorKind::Conflict(_) => NgsiLdErrorType::Conflict,
         ErrorKind::OperationNotSupported(_) => NgsiLdErrorType::OperationNotSupported,
         ErrorKind::ContextNotAvailable(_) => NgsiLdErrorType::LdContextNotAvailable,
+
+        // The one category this function does not decide alone. Whether a
+        // JSON-LD failure is a context the broker could not obtain or a
+        // document it could not reshape is the processor's own distinction,
+        // and asking it is what keeps the two readings from drifting.
+        ErrorKind::JsonLd(error) => {
+            if error.is_context_not_available() {
+                NgsiLdErrorType::LdContextNotAvailable
+            } else {
+                NgsiLdErrorType::BadRequestData
+            }
+        }
         ErrorKind::NonexistentTenant(_) => NgsiLdErrorType::NonexistentTenant,
         ErrorKind::MultiTenancyNotSupported => NgsiLdErrorType::NoMultiTenantSupport,
 
@@ -64,6 +76,7 @@ pub const fn of(kind: &ErrorKind) -> NgsiLdErrorType {
 #[cfg(test)]
 mod tests {
     use crate::{core::error::ErrorKind, http::error::category};
+    use andromeda_jsonld::error::JsonLdError;
     use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
     use andromeda_ngsi_ld_render::error::{RenderedShape, RepresentationError};
 
@@ -90,5 +103,16 @@ mod tests {
         ] {
             pretty_assertions::assert_eq!(category::of(&kind), expected, "wrong category for {kind:?}");
         }
+    }
+
+    #[test]
+    fn a_jsonld_failure_is_categorised_by_the_processor_rather_than_by_its_message() {
+        let unavailable = ErrorKind::JsonLd(JsonLdError::ContextFetchDisabled {
+            url: "https://example.com/context.jsonld".to_string(),
+        });
+        pretty_assertions::assert_eq!(category::of(&unavailable), NgsiLdErrorType::LdContextNotAvailable);
+
+        let malformed = ErrorKind::JsonLd(JsonLdError::invalid_document("not an object"));
+        pretty_assertions::assert_eq!(category::of(&malformed), NgsiLdErrorType::BadRequestData);
     }
 }

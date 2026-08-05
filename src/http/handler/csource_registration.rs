@@ -14,8 +14,8 @@ use crate::{
         },
         validation::parse_csr_id,
     },
-    jsonld::ContextSpec,
 };
+use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_render::{registration::RegistrationRenderer, response::ResponsePayload};
 use andromeda_ngsi_ld_request::query::{SharedQueryParams, csr::CsrQueryParameters};
 use axum::{

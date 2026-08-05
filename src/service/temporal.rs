@@ -3,7 +3,6 @@
 use crate::{
     core::error::AndromedaError,
     http::response::content_range::build_content_range,
-    jsonld::{CompactOptions, ContextSpec, JsonLdEngine, term_expansion::ContextualExpander, term_resolver},
     repository::{
         attribute_names::AttributeNameCache,
         entity::{params::EntityCreateParams, repo::EntityRepository},
@@ -12,7 +11,7 @@ use crate::{
     },
     service::{
         csource_forwarding::{ForwardedTemporalEntities, merge_temporal_query_results},
-        entity::{extract::extract_geo_geometries, normalize_entity_attributes},
+        entity::extract::extract_geo_geometries,
         temporal_recorder::TemporalRecorder,
     },
     temporal_render::{
@@ -22,6 +21,12 @@ use crate::{
         values::TemporalValuesRenderer,
     },
     worker::attribute_current_materializer::AttributeCurrentBarrier,
+};
+use andromeda_jsonld::{
+    compaction::compact_attr_iri,
+    context_spec::ContextSpec,
+    engine::{options::CompactOptions, processor::JsonLdEngine},
+    term_expansion::ContextualExpander,
 };
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, temporal_format::TemporalFormat, uri::Uri};
 use andromeda_ngsi_ld_model::expanded::entity_member::{extract_expires_at, extract_types};
@@ -49,7 +54,7 @@ use andromeda_ngsi_ld_query::{
     },
     type_selection::{expansion::expand_type_expression, parser as type_parser},
 };
-use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
+use andromeda_ngsi_ld_representation::{normalization::normalize_entity_attributes, sys_attrs::SysAttrsInclusion};
 use andromeda_ngsi_ld_request::query::{SharedQueryParams, temporal::TemporalQueryParameters};
 use andromeda_ngsi_ld_vocabulary::expanded::classes as expanded_classes;
 use andromeda_postgresql_query::q_predicate::{attribute_names::ResolvedAttributeNames, projection::referenced_attribute_names};
@@ -704,7 +709,7 @@ impl TemporalService {
                 }
             }
             if !iri_to_short.contains_key(attr_iri) {
-                let short = term_resolver::compact_attr_iri(&self.engine, attr_iri, context).await;
+                let short = compact_attr_iri(&self.engine, attr_iri, context).await;
                 if short != *attr_iri {
                     iri_to_short.insert(attr_iri.clone(), short);
                 } else if !has_explicit_context(context)

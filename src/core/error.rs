@@ -7,7 +7,7 @@
 //! [`AndromedaError`] wraps an [`ErrorKind`] with an optional request URI
 //! (`instance`) that handlers attach for RFC 7807 Problem Details responses.
 
-use crate::jsonld::Error as JsonLdError;
+use andromeda_jsonld::error::JsonLdError;
 use andromeda_ngsi_ld_lexicon::ngsi_ld_urn::{
     AttributeListIdParseError,
     EntityMapIdParseError,
@@ -105,7 +105,19 @@ pub enum ErrorKind {
     MultiTenancyNotSupported,
 
     // -- JSON-LD processing --------------------------------------------------
-    /// JSON-LD expansion, compaction, IRI validation, or document parsing failed.
+    /// Resolving a context, or expanding or compacting a document against one,
+    /// failed.
+    ///
+    /// Carried typed rather than flattened into a message: clause 5.5.2 reports
+    /// a context that could not be fetched as `LdContextNotAvailable` and a
+    /// document that could not be reshaped as `BadRequestData`, and which of
+    /// the two a failure is is a predicate on the error rather than a substring
+    /// of its rendering.
+    #[error(transparent)]
+    JsonLd(#[from] JsonLdError),
+
+    /// JSON-LD expansion, compaction, IRI validation, or document parsing
+    /// failed, as reported by the broker rather than by the processor.
     #[error("{0}")]
     JsonLdProcessing(String),
 
@@ -500,20 +512,7 @@ impl From<SqlxError> for AndromedaError {
 
 impl From<JsonLdError> for AndromedaError {
     fn from(error: JsonLdError) -> AndromedaError {
-        let kind = match error {
-            JsonLdError::ContextFetchDisabled { ref url } => ErrorKind::ContextNotAvailable(format!("Context fetch disabled for {}", url)),
-            JsonLdError::ContextHttp { ref url, status } => ErrorKind::ContextNotAvailable(format!("HTTP {} while loading context {}", status, url)),
-            JsonLdError::ContextLoad { ref url, ref message } => ErrorKind::ContextNotAvailable(format!("Failed to load context {}: {}", url, message)),
-            JsonLdError::ContextTooLarge { ref url, size, max } => {
-                ErrorKind::ContextNotAvailable(format!("Context {} too large ({} > {} bytes)", url, size, max))
-            }
-            JsonLdError::ContextInvalid { ref url, ref message } => ErrorKind::ContextNotAvailable(format!("Invalid context {}: {}", url, message)),
-            JsonLdError::EmbeddedContextInvalid(ref message) => ErrorKind::JsonLdProcessing(format!("Embedded context invalid: {}", message)),
-            JsonLdError::Expansion(_) | JsonLdError::Compaction(_) => ErrorKind::JsonLdProcessing(error.to_string()),
-            JsonLdError::InvalidIri(_) | JsonLdError::InvalidDocument(_) => ErrorKind::JsonLdProcessing(error.to_string()),
-            JsonLdError::Json(source) => ErrorKind::JsonParse(source),
-        };
-        kind.into()
+        ErrorKind::JsonLd(error).into()
     }
 }
 
@@ -779,67 +778,59 @@ mod tests {
     // -- From<JsonLdError> mapping --------------------------------------------
 
     #[test]
-    fn jsonld_http_error_maps_to_context_not_available() {
-        let err = JsonLdError::ContextHttp {
+    fn a_jsonld_failure_reaches_this_layer_typed_rather_than_as_a_message() {
+        // Each of these used to be flattened into a formatted string, which
+        // meant the clause 5.5.2 category had to be re-derived from the
+        // variant here instead of being asked of the error itself.
+        let failures = [
+            JsonLdError::ContextHttp {
+                url: "https://example.com/context.jsonld".to_string(),
+                status: reqwest::StatusCode::NOT_FOUND,
+            },
+            JsonLdError::ContextFetchDisabled {
+                url: "https://example.com/context.jsonld".to_string(),
+            },
+            JsonLdError::ContextLoad {
+                url: "https://example.com/context.jsonld".to_string(),
+                message: "connection refused".to_string(),
+            },
+            JsonLdError::ContextTooLarge {
+                url: "https://example.com/context.jsonld".to_string(),
+                size: 2_000_000,
+                max: 1_000_000,
+            },
+            JsonLdError::ContextInvalid {
+                url: "https://example.com/context.jsonld".to_string(),
+                message: "invalid JSON-LD".to_string(),
+            },
+            JsonLdError::EmbeddedContextInvalid("bad context".to_string()),
+            JsonLdError::invalid_iri("broken"),
+        ];
+
+        for failure in failures {
+            let rendered = failure.to_string();
+            let error = AndromedaError::from(failure);
+            match error.kind() {
+                ErrorKind::JsonLd(carried) => pretty_assertions::assert_eq!(carried.to_string(), rendered),
+                other => unreachable!("expected ErrorKind::JsonLd, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn a_context_loading_failure_stays_distinguishable_from_a_document_failure() {
+        let unavailable = AndromedaError::from(JsonLdError::ContextFetchDisabled {
             url: "https://example.com/context.jsonld".to_string(),
-            status: reqwest::StatusCode::NOT_FOUND,
-        };
-        let andromeda_err = AndromedaError::from(err);
-        assert!(matches!(andromeda_err.kind(), ErrorKind::ContextNotAvailable(_)));
-    }
+        });
+        let malformed = AndromedaError::from(JsonLdError::invalid_document("not an object"));
 
-    #[test]
-    fn jsonld_fetch_disabled_maps_to_context_not_available() {
-        let err = JsonLdError::ContextFetchDisabled {
-            url: "https://example.com/context.jsonld".to_string(),
-        };
-        let andromeda_err = AndromedaError::from(err);
-        assert!(matches!(andromeda_err.kind(), ErrorKind::ContextNotAvailable(_)));
-    }
-
-    #[test]
-    fn jsonld_context_load_maps_to_context_not_available() {
-        let err = JsonLdError::ContextLoad {
-            url: "https://example.com/context.jsonld".to_string(),
-            message: "connection refused".to_string(),
-        };
-        let andromeda_err = AndromedaError::from(err);
-        assert!(matches!(andromeda_err.kind(), ErrorKind::ContextNotAvailable(_)));
-    }
-
-    #[test]
-    fn jsonld_context_too_large_maps_to_context_not_available() {
-        let err = JsonLdError::ContextTooLarge {
-            url: "https://example.com/context.jsonld".to_string(),
-            size: 2_000_000,
-            max: 1_000_000,
-        };
-        let andromeda_err = AndromedaError::from(err);
-        assert!(matches!(andromeda_err.kind(), ErrorKind::ContextNotAvailable(_)));
-    }
-
-    #[test]
-    fn jsonld_context_invalid_maps_to_context_not_available() {
-        let err = JsonLdError::ContextInvalid {
-            url: "https://example.com/context.jsonld".to_string(),
-            message: "invalid JSON-LD".to_string(),
-        };
-        let andromeda_err = AndromedaError::from(err);
-        assert!(matches!(andromeda_err.kind(), ErrorKind::ContextNotAvailable(_)));
-    }
-
-    #[test]
-    fn jsonld_embedded_context_invalid_maps_to_jsonld_processing() {
-        let err = JsonLdError::EmbeddedContextInvalid("bad context".to_string());
-        let andromeda_err = AndromedaError::from(err);
-        assert!(matches!(andromeda_err.kind(), ErrorKind::JsonLdProcessing(_)));
-    }
-
-    #[test]
-    fn jsonld_invalid_iri_maps_to_jsonld_processing() {
-        let err = JsonLdError::invalid_iri("broken");
-        let andromeda_err = AndromedaError::from(err);
-        assert!(matches!(andromeda_err.kind(), ErrorKind::JsonLdProcessing(_)));
+        match (unavailable.kind(), malformed.kind()) {
+            (ErrorKind::JsonLd(unavailable), ErrorKind::JsonLd(malformed)) => {
+                assert!(unavailable.is_context_not_available());
+                assert!(!malformed.is_context_not_available());
+            }
+            (first, second) => unreachable!("expected two ErrorKind::JsonLd, got {first:?} and {second:?}"),
+        }
     }
 
     // -- From<QueryError> mapping ---------------------------------------------

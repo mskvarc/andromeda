@@ -9,9 +9,9 @@ use crate::{
         response::{render::start_rendering, single::NgsiLdResponse},
         validation::parse_entity_map_id,
     },
-    jsonld::ContextSpec,
     service::entity_map::parse_iso8601_duration,
 };
+use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_render::response::ResponsePayload;
 use andromeda_ngsi_ld_request::body::entity_map::{QueryRequestBody, UpdateEntityMapBody, query_body_to_params};

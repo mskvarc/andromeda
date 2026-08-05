@@ -1,0 +1,37 @@
+[package]
+name = "andromeda-jsonld"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+andromeda-ngsi-ld-lexicon.workspace = true
+andromeda-ngsi-ld-query.workspace = true
+andromeda-ngsi-ld-vocabulary.workspace = true
+async-trait = "0.1.89"
+confique = { version = "0.4.0", features = ["toml"] }
+contextual = "0.1.6"
+dashmap = { version = "6.1.0", features = ["inline"] }
+iri-rs = { version = "3.4.0", features = ["serde", "static"] }
+jsonld = { version = "0.22.0", features = ["expandable-serde-json", "expandable-chrono", "reqwest", "serde", "serde-json", "vocab"] }
+jsonld-core = "0.22.0"
+jsonld-syntax = { version = "0.22.0", features = ["serde-json"] }
+mediatype = "0.23.0"
+moka = { version = "0.12.15", features = ["future"] }
+rdfx = "0.24.0"
+reqwest = { version = "0.13.2", features = ["json"] }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.149"
+strum = { version = "0.28.0", features = ["derive"] }
+thiserror = "2.0.18"
+tracing = "0.1.44"
+url = { version = "2.5.8", features = ["serde"] }
+
+[dev-dependencies]
+andromeda-layer-guard.workspace = true
+andromeda-ngsi-ld-representation.workspace = true
+pretty_assertions = "1.4.1"
+tokio = { version = "1.52.1", features = ["macros", "rt-multi-thread"] }

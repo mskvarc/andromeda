@@ -12,6 +12,11 @@
 //! It sits below both: a representation option is expressible in terms of the
 //! lexical layer alone, so nothing here names a resource, a query or a store.
 //!
+//! [`normalization`] is the one transformation that belongs here rather than
+//! with a renderer: clause 4.5.3 lets a *request* abbreviate an attribute, and
+//! rewriting that into the normalized form of clause 4.5.1 happens before any
+//! resource type exists to hold it.
+//!
 //! How a client *asks* for one is not here. Media-type negotiation, version
 //! conformance and language ranges arrive as HTTP headers and are spelled by
 //! the header grammars that carry them, so they live in
@@ -22,6 +27,7 @@
 #![deny(clippy::missing_docs_in_private_items)]
 
 pub mod join_mode;
+pub mod normalization;
 pub mod response_format;
 pub mod sys_attrs;
 

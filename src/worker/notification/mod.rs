@@ -1,7 +1,6 @@
 pub(crate) mod payload;
 
 use crate::{
-    jsonld::JsonLdEngine,
     repository::{entity::repo::EntityRepository, subscription::repo::SubscriptionRepository, subscription_store::repo::SubscriptionStore},
     service::{
         compiled_subscription::CompiledSubscription,
@@ -14,6 +13,7 @@ use crate::{
         endpoint::EndpointTransport,
     },
 };
+use andromeda_jsonld::engine::processor::JsonLdEngine;
 use andromeda_ngsi_ld_lexicon::{
     entity_type_name::EntityTypeName,
     uri::{NGSI_LD_URN_NID, Uri},

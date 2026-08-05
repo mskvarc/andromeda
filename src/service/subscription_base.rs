@@ -6,11 +6,6 @@
 
 use crate::{
     core::error::AndromedaError,
-    jsonld::{
-        ContextSpec,
-        JsonLdEngine,
-        term_resolver::{is_valid_uri, validate_jsonld_context_value},
-    },
     repository::{
         subscription::repo::SubscriptionRepository,
         subscription_store::{params::StatusUpdateFields, repo::SubscriptionStore},
@@ -18,6 +13,7 @@ use crate::{
     service::{subscription_core, subscription_status::compute_updated_status},
     transport::endpoint::parse_endpoint_transport,
 };
+use andromeda_jsonld::{context_spec::ContextSpec, context_validation::validate_jsonld_context_value, engine::processor::JsonLdEngine};
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::subscription::{Subscription, SubscriptionStatus};
 use async_trait::async_trait;
@@ -106,7 +102,7 @@ where
 
         let id = match payload.get("id").and_then(|v| v.as_str()) {
             Some(provided_id) => {
-                if provided_id.trim().is_empty() || !is_valid_uri(provided_id) {
+                if provided_id.trim().is_empty() || provided_id.parse::<Uri>().is_err() {
                     return Err(AndromedaError::subscription_validation("Subscription id must be present and a valid URI"));
                 }
                 if self.repo.exists(provided_id).await? {
@@ -167,7 +163,7 @@ where
 
     /// Retrieve a subscription by its identifier.
     pub async fn get(&self, id: &str) -> Result<Subscription, AndromedaError> {
-        if id.is_empty() || !is_valid_uri(id) {
+        if id.is_empty() || id.parse::<Uri>().is_err() {
             return Err(AndromedaError::subscription_validation("Subscription id must be a valid URI"));
         }
         self.repo.get(id).await?.ok_or_else(|| AndromedaError::subscription_not_found(id))
@@ -191,7 +187,7 @@ where
 
     /// Update an existing subscription with the given fragment payload.
     pub async fn update(&self, id: &str, mut payload: Value, context: &ContextSpec, base_url: Option<&str>) -> Result<(), AndromedaError> {
-        if id.is_empty() || !is_valid_uri(id) {
+        if id.is_empty() || id.parse::<Uri>().is_err() {
             return Err(AndromedaError::subscription_validation("Subscription id must be present and a valid URI"));
         }
 
@@ -255,7 +251,7 @@ where
 
     /// Delete a subscription by its identifier.
     pub async fn delete(&self, id: &str) -> Result<(), AndromedaError> {
-        if id.is_empty() || !is_valid_uri(id) {
+        if id.is_empty() || id.parse::<Uri>().is_err() {
             return Err(AndromedaError::subscription_validation("Subscription id must be present and a valid URI"));
         }
 

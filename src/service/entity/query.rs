@@ -1,6 +1,5 @@
 use crate::{
     core::error::AndromedaError,
-    jsonld::{CompactOptions, ContextSpec, JsonLdEngine, term_expansion::ContextualExpander},
     repository::{attribute_names::AttributeNameCache, entity::repo::EntityRepository},
     service::{
         csource_forwarding::{ForwardedEntities, merge_query_results},
@@ -9,6 +8,11 @@ use crate::{
     },
     tenancy::types::TenantRef,
     worker::attribute_current_materializer::AttributeCurrentBarrier,
+};
+use andromeda_jsonld::{
+    context_spec::ContextSpec,
+    engine::{options::CompactOptions, processor::JsonLdEngine},
+    term_expansion::ContextualExpander,
 };
 use andromeda_ngsi_ld_geometry::geometry::Geometry;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};

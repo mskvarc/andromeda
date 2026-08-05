@@ -83,6 +83,7 @@ dependencies = [
 name = "andromeda"
 version = "0.1.0"
 dependencies = [
+ "andromeda-jsonld",
  "andromeda-ngsi-ld-geometry",
  "andromeda-ngsi-ld-http-headers",
  "andromeda-ngsi-ld-lexicon",
@@ -107,7 +108,6 @@ dependencies = [
  "clap-themes",
  "compact_str",
  "confique",
- "contextual",
  "dashmap",
  "derive_more",
  "futures",
@@ -118,8 +118,6 @@ dependencies = [
  "iri-rs",
  "iso8601-duration",
  "jsonld",
- "jsonld-core",
- "jsonld-syntax",
  "langtag",
  "mediatype",
  "mimalloc",
@@ -128,7 +126,6 @@ dependencies = [
  "percent-encoding",
  "pretty_assertions",
  "problem_details",
- "rdfx",
  "regex",
  "reqwest",
  "rstar 0.12.2",
@@ -158,6 +155,37 @@ dependencies = [
  "urlencoding",
  "urn-rs",
  "uuid",
+]
+
+[[package]]
+name = "andromeda-jsonld"
+version = "0.1.0"
+dependencies = [
+ "andromeda-layer-guard",
+ "andromeda-ngsi-ld-lexicon",
+ "andromeda-ngsi-ld-query",
+ "andromeda-ngsi-ld-representation",
+ "andromeda-ngsi-ld-vocabulary",
+ "async-trait",
+ "confique",
+ "contextual",
+ "dashmap",
+ "iri-rs",
+ "jsonld",
+ "jsonld-core",
+ "jsonld-syntax",
+ "mediatype",
+ "moka",
+ "pretty_assertions",
+ "rdfx",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "strum",
+ "thiserror 2.0.19",
+ "tokio",
+ "tracing",
+ "url",
 ]
 
 [[package]]
@@ -320,6 +348,7 @@ name = "andromeda-ngsi-ld-representation"
 version = "0.1.0"
 dependencies = [
  "andromeda-layer-guard",
+ "andromeda-ngsi-ld-lexicon",
  "pretty_assertions",
  "serde",
  "serde_json",

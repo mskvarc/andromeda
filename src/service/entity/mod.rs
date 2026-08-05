@@ -13,7 +13,6 @@ pub mod query;
 
 use crate::{
     core::{batch_activity::BatchActivityTracker, error::AndromedaError},
-    jsonld::{ContextSpec, JsonLdEngine},
     repository::{
         entity::{params::EntityCreateParams, repo::EntityRepository},
         outbox::entry::NewOutboxEntry,
@@ -28,18 +27,14 @@ use crate::{
         temporal_recorder::TemporalRecorder,
     },
 };
-use andromeda_ngsi_ld_lexicon::{
-    attribute_name::AttributeName,
-    attribute_type::AttributeType,
-    entity_type_name::EntityTypeName,
-    scope::grammar::ScopeBuf,
-    uri::Uri,
-};
+use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, scope::grammar::ScopeBuf, uri::Uri};
 use andromeda_ngsi_ld_model::{
     entity::{Entity, EntityPatch},
     expanded::{entity_member::extract_types, instance_key::removed_attribute_instances},
     notification::{ChangeEvent, TriggerReason},
 };
+use andromeda_ngsi_ld_representation::normalization::normalize_entity_attributes;
 use andromeda_postgresql_query::ltree::scope_to_ltree;
 use chrono::{DateTime, SecondsFormat, Utc};
 use dashmap::DashMap;
@@ -731,79 +726,6 @@ fn unwrap_expanded_ref(value: &Value) -> &Value {
     }
 }
 
-#[inline(always)]
-pub(crate) fn normalize_entity_attributes(payload: &mut Value) {
-    let Some(obj) = payload.as_object_mut() else {
-        return;
-    };
-
-    for (key, value) in obj.iter_mut() {
-        if matches!(
-            key.as_str(),
-            "id" | "type" | "scope" | "@context" | "@id" | "@type" | "expiresAt" | "createdAt" | "modifiedAt" | "deletedAt"
-        ) {
-            continue;
-        }
-        normalize_attribute_value(value);
-    }
-}
-
-#[inline(always)]
-fn normalize_attribute_value(value: &mut Value) {
-    match value {
-        Value::Object(obj) if is_explicit_attribute_object(obj) => {
-            normalize_explicit_attribute_object(obj);
-        }
-        Value::Array(items) if is_explicit_attribute_array(items) => {
-            for item in items {
-                if let Value::Object(obj) = item {
-                    normalize_explicit_attribute_object(obj);
-                }
-            }
-        }
-        ref _other => {
-            let raw = std::mem::take(value);
-            *value = wrap_raw_as_property(raw);
-        }
-    }
-}
-
-fn is_explicit_attribute_array(items: &[Value]) -> bool {
-    !items.is_empty() && items.iter().all(|item| item.as_object().is_some_and(is_explicit_attribute_object))
-}
-
-fn is_explicit_attribute_object(obj: &Map<String, Value>) -> bool {
-    obj.get("type").and_then(Value::as_str).is_some_and(is_known_attribute_type)
-}
-
-fn is_known_attribute_type(attr_type: &str) -> bool {
-    attr_type.parse::<AttributeType>().is_ok()
-}
-
-fn normalize_explicit_attribute_object(obj: &mut Map<String, Value>) {
-    let Some(attr_type_str) = obj.get("type").and_then(Value::as_str) else {
-        return;
-    };
-    let reserved = match attr_type_str.parse::<AttributeType>() {
-        Ok(t) => t.reserved_fields(),
-        Err(_) => return,
-    };
-
-    for (key, value) in obj.iter_mut() {
-        if key == "type" || reserved.contains(&key.as_str()) {
-            continue;
-        }
-        normalize_attribute_value(value);
-    }
-}
-
-fn wrap_raw_as_property(raw: Value) -> Value {
-    let mut property = Map::new();
-    property.insert("type".to_string(), Value::String("Property".to_string()));
-    property.insert("value".to_string(), raw);
-    Value::Object(property)
-}
-
 use andromeda_ngsi_ld_vocabulary::{
     expanded::{classes as expanded_classes, properties as expanded_properties},
     prefix,
@@ -941,7 +863,7 @@ pub(crate) fn inject_attr_sys_attrs(obj: &mut Map<String, Value>, created_at_val
 
 #[cfg(test)]
 mod tests {
-    use super::{BatchSideEffectMode, IdLockMap, acquire_id_locks_in, gc_id_locks, normalize_entity_attributes, resolve_side_effect_mode};
+    use super::{BatchSideEffectMode, IdLockMap, acquire_id_locks_in, gc_id_locks, resolve_side_effect_mode};
     use std::sync::Arc;
 
     #[test]
@@ -998,54 +920,5 @@ mod tests {
         let guards = acquire_id_locks_in(&map, &ids).await;
         pretty_assertions::assert_eq!(guards.len(), 3);
         pretty_assertions::assert_eq!(map.len(), 3);
-    }
-
-    #[test]
-    fn normalize_entity_attributes_wraps_concise_values_as_property() {
-        let mut payload = serde_json::json!({
-            "id": "urn:ngsi-ld:Testing:1",
-            "type": "Testing",
-            "A1": "value of A1",
-            "A2": { "nested": true }
-        });
-
-        normalize_entity_attributes(&mut payload);
-
-        pretty_assertions::assert_eq!(payload["A1"]["type"], "Property");
-        pretty_assertions::assert_eq!(payload["A1"]["value"], "value of A1");
-        pretty_assertions::assert_eq!(payload["A2"]["type"], "Property");
-        pretty_assertions::assert_eq!(payload["A2"]["value"], serde_json::json!({ "nested": true }));
-    }
-
-    #[test]
-    fn normalize_entity_attributes_keeps_typed_attributes() {
-        let mut payload = serde_json::json!({
-            "id": "urn:ngsi-ld:Testing:2",
-            "type": "Testing",
-            "name": {
-                "type": "Property",
-                "value": "Andromeda"
-            }
-        });
-
-        normalize_entity_attributes(&mut payload);
-
-        pretty_assertions::assert_eq!(payload["name"]["type"], "Property");
-        pretty_assertions::assert_eq!(payload["name"]["value"], "Andromeda");
-    }
-
-    #[test]
-    fn normalize_entity_attributes_wraps_concise_attr_entries() {
-        let mut payload = serde_json::json!({
-            "A1": 1,
-            "A2": false
-        });
-
-        normalize_entity_attributes(&mut payload);
-
-        pretty_assertions::assert_eq!(payload["A1"]["type"], "Property");
-        pretty_assertions::assert_eq!(payload["A1"]["value"], 1);
-        pretty_assertions::assert_eq!(payload["A2"]["type"], "Property");
-        pretty_assertions::assert_eq!(payload["A2"]["value"], false);
     }
 }

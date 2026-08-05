@@ -12,7 +12,7 @@
 //! which is already scoped to a single tenant, so tenant identity is implicit
 //! in the cache owner and does not need to be part of the key.
 
-use crate::jsonld::ContextSpec;
+use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_query::entity::compiled::CompiledEntityQuery;
 use andromeda_ngsi_ld_request::query::entity::EntityQueryParameters;
 use moka::future::Cache;

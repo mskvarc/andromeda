@@ -18,7 +18,6 @@ use crate::{
         response::{collection::NgsiLdCollectionResponse, render::start_rendering, single::NgsiLdResponse},
         validation::{parse_entity_id, validate_attr_name},
     },
-    jsonld::{ContextSpec, term_expansion::ContextualExpander},
     service::{
         csource_forwarding::{
             CsrModeFilter,
@@ -40,6 +39,7 @@ use crate::{
         subscription_matching::{matches_compiled_geo_query, matches_scope_query},
     },
 };
+use andromeda_jsonld::{context_spec::ContextSpec, term_expansion::ContextualExpander};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, uri::Uri};
 use andromeda_ngsi_ld_model::{
     entity::{Entity, EntityPatch},

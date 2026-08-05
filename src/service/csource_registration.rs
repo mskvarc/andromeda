@@ -1,11 +1,16 @@
 use crate::{
     core::error::AndromedaError,
-    jsonld::{ContextSpec, JsonLdEngine, term_expansion::ContextualExpander, term_resolver},
     repository::csource_registration::{
         params::{CreateCsrParams, CsrUpdateFragment},
         repo::CsourceRegistrationRepository,
     },
     service::{csource_extract::unwrap_geo_property_to_geometry, csource_merge::apply_fragment},
+};
+use andromeda_jsonld::{
+    compaction::{compact_attr_iri, compact_type_iri},
+    context_spec::ContextSpec,
+    engine::processor::JsonLdEngine,
+    term_expansion::ContextualExpander,
 };
 use andromeda_ngsi_ld_lexicon::{tenant::TenantName, time_prop::TimeProp, time_rel::TimeRel, uri::Uri};
 use andromeda_ngsi_ld_model::{
@@ -239,10 +244,6 @@ impl CsourceRegistrationService {
         }
     }
 
-    fn is_valid_uri(id: &str) -> bool {
-        term_resolver::is_valid_uri(id)
-    }
-
     /// Create a new context source registration from the given JSON payload.
     pub async fn create(&self, payload: Value, context: &ContextSpec) -> Result<String, AndromedaError> {
         // Validate type
@@ -282,7 +283,7 @@ impl CsourceRegistrationService {
 
         // Validate id is a valid URI if provided
         if let Some(id) = payload.get("id").and_then(|v| v.as_str())
-            && !Self::is_valid_uri(id)
+            && id.parse::<Uri>().is_err()
         {
             return Err(AndromedaError::csr_validation("id must be a valid URI"));
         }
@@ -452,7 +453,7 @@ impl CsourceRegistrationService {
 
     /// Update an existing context source registration with the given fragment.
     pub async fn update(&self, id: &str, payload: Value, context: &ContextSpec) -> Result<(), AndromedaError> {
-        if !Self::is_valid_uri(id) {
+        if id.parse::<Uri>().is_err() {
             return Err(AndromedaError::csr_validation("Context source registration id must be present and a valid URI"));
         }
 
@@ -524,7 +525,7 @@ impl CsourceRegistrationService {
 
     /// Delete a context source registration by its identifier.
     pub async fn delete(&self, id: &str) -> Result<(), AndromedaError> {
-        if !Self::is_valid_uri(id) {
+        if id.parse::<Uri>().is_err() {
             return Err(AndromedaError::csr_validation("Context source registration id must be present and a valid URI"));
         }
 
@@ -611,7 +612,7 @@ impl CsourceRegistrationService {
                 {
                     for entity in entities_arr.iter_mut() {
                         if let Some(type_val) = entity.get("type").and_then(|v| v.as_str()) {
-                            let compacted = term_resolver::compact_type_iri(&self.engine, type_val, context).await;
+                            let compacted = compact_type_iri(&self.engine, type_val, context).await;
                             if let Some(obj) = entity.as_object_mut() {
                                 obj.insert("type".to_string(), Value::String(compacted));
                             }
@@ -626,7 +627,7 @@ impl CsourceRegistrationService {
                     let mut compacted_names = Vec::new();
                     for name in names_arr {
                         if let Some(n) = name.as_str() {
-                            compacted_names.push(Value::String(term_resolver::compact_attr_iri(&self.engine, n, context).await));
+                            compacted_names.push(Value::String(compact_attr_iri(&self.engine, n, context).await));
                         }
                     }
                     if let Some(obj) = info.as_object_mut() {
@@ -641,7 +642,7 @@ impl CsourceRegistrationService {
                     let mut compacted_names = Vec::new();
                     for name in names_arr {
                         if let Some(n) = name.as_str() {
-                            compacted_names.push(Value::String(term_resolver::compact_attr_iri(&self.engine, n, context).await));
+                            compacted_names.push(Value::String(compact_attr_iri(&self.engine, n, context).await));
                         }
                     }
                     if let Some(obj) = info.as_object_mut() {

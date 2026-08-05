@@ -558,7 +558,7 @@ fn build_envelope(body: &[u8], content_type: &str, receiver_info: &[(String, Str
     metadata.insert("Content-Type".to_string(), Value::String(content_type.to_string()));
 
     if content_type == "application/json" {
-        let ctx_url = context_url.unwrap_or(crate::jsonld::core_context::NGSI_LD_CORE_CONTEXT_URL);
+        let ctx_url = context_url.unwrap_or(andromeda_jsonld::core_context::NGSI_LD_CORE_CONTEXT_URL);
         let link = Link::jsonld_context(ctx_url);
         if let Some(value) = link.to_header_string() {
             metadata.insert("Link".to_string(), Value::String(value));
@@ -617,7 +617,7 @@ impl NotificationTransport for MqttTransportHandle {
                 }
 
                 if req.content_type == andromeda_ngsi_ld_http_headers::media_type::APPLICATION_JSON {
-                    let ctx_url = req.context_url.as_deref().unwrap_or(crate::jsonld::core_context::NGSI_LD_CORE_CONTEXT_URL);
+                    let ctx_url = req.context_url.as_deref().unwrap_or(andromeda_jsonld::core_context::NGSI_LD_CORE_CONTEXT_URL);
                     let link = Link::jsonld_context(ctx_url);
                     if let Some(value) = link.to_header_string() {
                         properties.user_properties.push(("Link".to_string(), value));

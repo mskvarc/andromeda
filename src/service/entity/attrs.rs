@@ -1,15 +1,8 @@
 use crate::{
     core::error::AndromedaError,
-    jsonld::ContextSpec,
-    service::entity::{
-        EntityService,
-        extract::build_save_params,
-        extract_attribute_keys,
-        normalize_entity_attributes,
-        unwrap_expanded_ref,
-        validate_attribute_envelopes,
-    },
+    service::entity::{EntityService, extract::build_save_params, extract_attribute_keys, unwrap_expanded_ref, validate_attribute_envelopes},
 };
+use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
 use andromeda_ngsi_ld_model::{
     expanded::{
@@ -25,6 +18,7 @@ use andromeda_ngsi_ld_model::{
     notification::{ChangeEvent, TriggerReason},
 };
 use andromeda_ngsi_ld_query::projection::purge::PurgeMode;
+use andromeda_ngsi_ld_representation::normalization::normalize_entity_attributes;
 use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
 use serde_json::Value;
 use std::{collections::HashSet, sync::Arc};

@@ -1,12 +1,12 @@
 use crate::{
     core::error::AndromedaError,
-    jsonld::{ContextSpec, JsonLdEngine},
     repository::csource_subscription::repo::CsourceSubscriptionRepository,
     service::{
         subscription_base::{SubscriptionServiceCore, SubscriptionVariant},
         subscription_core,
     },
 };
+use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::{notification::CsourceSubscriptionChange, subscription::Subscription};
 use async_trait::async_trait;

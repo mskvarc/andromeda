@@ -1,6 +1,6 @@
 //! JSON-LD context URL extraction from Link headers.
 
-use crate::jsonld::ContextSpec;
+use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_http_headers::link::header::Link;
 use axum::{
     extract::FromRequestParts,

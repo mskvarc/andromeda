@@ -1,7 +1,13 @@
 use crate::{
     core::error::AndromedaError,
-    jsonld::{CompactOptions, ContextSpec, ContextStripping, JsonLdEngine},
     repository::entity::{repo::EntityRepository, rows::AttributeSummaryRow},
+};
+use andromeda_jsonld::{
+    context_spec::ContextSpec,
+    engine::{
+        options::{CompactOptions, ContextStripping},
+        processor::JsonLdEngine,
+    },
 };
 use andromeda_ngsi_ld_lexicon::{
     attribute_name::AttributeName,

@@ -1,11 +1,15 @@
 //! Notification payload building: showChanges, previous values, datasetId
 //! filtering, nullification, and format simplification.
 
-use crate::{
-    jsonld::{CompactOptions, ContextSpec, ContextStripping, JsonLdEngine},
-    service::{
-        compiled_subscription::CompiledSubscription,
-        entity::{expanded_entity_object_mut, inject_attr_sys_attrs, query::EntityQueryService},
+use crate::service::{
+    compiled_subscription::CompiledSubscription,
+    entity::{expanded_entity_object_mut, inject_attr_sys_attrs, query::EntityQueryService},
+};
+use andromeda_jsonld::{
+    context_spec::ContextSpec,
+    engine::{
+        options::{CompactOptions, ContextStripping},
+        processor::JsonLdEngine,
     },
 };
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType};
@@ -370,7 +374,7 @@ async fn compact_entity_with_cache(
     context: &ContextSpec,
     strip_context: ContextStripping,
     cache: Option<&NotificationCompactionCache>,
-) -> Result<Value, crate::jsonld::Error> {
+) -> Result<Value, andromeda_jsonld::error::JsonLdError> {
     let Some(cache) = cache else {
         return engine.compact(entity.clone(), context, CompactOptions { strip_context }).await;
     };
@@ -459,11 +463,11 @@ pub fn context_for_subscription_raw(jsonld_context: Option<&str>) -> ContextSpec
         {
             return ContextSpec::none()
                 .with_body_context(Some(value))
-                .with_core_policy(crate::jsonld::CoreContextPolicy::Append);
+                .with_core_policy(andromeda_jsonld::context_spec::CoreContextPolicy::Append);
         }
-        ContextSpec::from_links(vec![url.to_string()]).with_core_policy(crate::jsonld::CoreContextPolicy::Append)
+        ContextSpec::from_links(vec![url.to_string()]).with_core_policy(andromeda_jsonld::context_spec::CoreContextPolicy::Append)
     } else {
-        ContextSpec::none().with_core_policy(crate::jsonld::CoreContextPolicy::Append)
+        ContextSpec::none().with_core_policy(andromeda_jsonld::context_spec::CoreContextPolicy::Append)
     }
 }
 

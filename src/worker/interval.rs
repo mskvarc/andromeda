@@ -1,10 +1,16 @@
 use crate::{
-    jsonld::{CompactOptions, ContextSpec, ContextStripping, JsonLdEngine},
     repository::{entity::repo::EntityRepository, subscription::repo::SubscriptionRepository, subscription_store::repo::SubscriptionStore},
     service::entity::inject_sys_attrs,
     transport::{
         dispatch::{DeliveryResult, TransportDispatcher, build_delivery_request},
         endpoint::parse_endpoint_transport,
+    },
+};
+use andromeda_jsonld::{
+    context_spec::ContextSpec,
+    engine::{
+        options::{CompactOptions, ContextStripping},
+        processor::JsonLdEngine,
     },
 };
 use andromeda_ngsi_ld_http_headers::media_type::APPLICATION_LD_JSON;

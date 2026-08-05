@@ -7,8 +7,8 @@
 use crate::{
     core::error::AndromedaError,
     http::{error::problem::NgsiLdError, extractor::context::ContextUrl},
-    jsonld::ContextSpec,
 };
+use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_model::entity::Entity;
 use andromeda_ngsi_ld_problem_details::{batch_operation::BatchEntityError, error_type::NgsiLdErrorType};
 use axum::{
@@ -232,10 +232,8 @@ pub fn parse_batch_entities(
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        http::extractor::{batch::parse_batch_entities, context::ContextUrl},
-        jsonld::ContextSpec,
-    };
+    use crate::http::extractor::{batch::parse_batch_entities, context::ContextUrl};
+    use andromeda_jsonld::context_spec::ContextSpec;
     use axum::{
         body::Bytes,
         http::{HeaderMap, HeaderValue, Uri, header::CONTENT_TYPE},

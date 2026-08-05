@@ -9,9 +9,9 @@ use crate::{
         response::{render::start_rendering, single::NgsiLdResponse},
         validation::validate_name_or_iri,
     },
-    jsonld::ContextSpec,
     service::csource_forwarding::{collect_discovery_warnings, merge_attribute_info_results, merge_attributes_results},
 };
+use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
 use andromeda_ngsi_ld_render::response::ResponsePayload;
 use andromeda_ngsi_ld_request::{discovery::DiscoveryListParams, local::LocalOnlyParams};

@@ -11,7 +11,6 @@
 //! `snapshot_entities` / `snapshot_temporal_entities`.
 
 use crate::{
-    jsonld::ContextSpec,
     repository::snapshot::{params::SnapshotEntityInput, repo::SnapshotRepository},
     service::{
         csource_forwarding::{CsourceForwardingService, CsrModeFilter, ForwardQueryRequest, ForwardingOperation},
@@ -20,6 +19,7 @@ use crate::{
         temporal::TemporalService,
     },
 };
+use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::ngsi_ld_urn::SnapshotId;
 use andromeda_ngsi_ld_model::{
     snapshot::{ExecutionResultDetails, ExecutionResultStatus, Snapshot, SnapshotStatus},

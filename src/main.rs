@@ -2,7 +2,6 @@ mod api;
 mod core;
 mod health;
 mod http;
-mod jsonld;
 mod repository;
 mod server;
 mod service;
@@ -12,13 +11,16 @@ mod transport;
 mod version;
 mod worker;
 
+use andromeda_jsonld::{
+    context_spec::{default_core_context_url, set_default_core_context_url},
+    core_context::NGSI_LD_CORE_CONTEXT_V18_URL,
+};
 use clap::Parser;
 use core::{
     cli::{Cli, Command, ConfigCommand, OutputFormat},
     config::{RuntimeConfig, ServerOverrides},
     error::AndromedaError,
 };
-use jsonld::core_context::NGSI_LD_CORE_CONTEXT_V18_URL;
 use mimalloc::MiMalloc;
 use tracing::info;
 use tracing_subscriber::fmt;
@@ -44,8 +46,8 @@ async fn main() -> Result<(), AndromedaError> {
             tracing::subscriber::set_global_default(subscriber)?;
 
             // Set the default core context URL to v1.8 (ETSI test suite expectation)
-            jsonld::set_default_core_context_url(NGSI_LD_CORE_CONTEXT_V18_URL);
-            info!("JSON-LD core context URL: {}", jsonld::default_core_context_url());
+            set_default_core_context_url(NGSI_LD_CORE_CONTEXT_V18_URL);
+            info!("JSON-LD core context URL: {}", default_core_context_url());
             info!(
                 host = %config.server.host,
                 port = config.server.port,

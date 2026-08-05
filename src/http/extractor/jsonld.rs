@@ -4,7 +4,8 @@
 //! preventing false positives (e.g. `application/json-patch+json` no longer
 //! matches `application/json`).
 
-use crate::{http::extractor::error::ExtractorRejection, jsonld::ContextSpec};
+use crate::http::extractor::error::ExtractorRejection;
+use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_http_headers::{link::header::Link, version::NgsiLdVersion};
 use andromeda_ngsi_ld_render::version::VersionRenderer;
 use axum::{

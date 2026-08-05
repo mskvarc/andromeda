@@ -586,7 +586,7 @@ pub async fn batch_delete(
     }
 
     // Distributed forwarding per spec 5.6.10
-    let context: crate::jsonld::ContextSpec = context.into_inner();
+    let context: andromeda_jsonld::context_spec::ContextSpec = context.into_inner();
     let context_url = context.link_contexts().first().map(|s| s.as_str());
     let forwarded = state
         .forwarding
