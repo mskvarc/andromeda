@@ -1,7 +1,0 @@
-{
-    "@context": {
-        "jsonldContextRel": "http://www.w3.org/ns/json-ld#context",
-        "nullUri": "urn:ngsi-ld:null",
-        "xsdDatetime": "http://www.w3.org/2001/XMLSchema#dateTime"
-    }
-}
