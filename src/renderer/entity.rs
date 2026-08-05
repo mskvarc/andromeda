@@ -8,7 +8,7 @@
 use crate::{
     core::error::AndromedaError,
     http::model::language::{LanguageFilter, LanguageRange},
-    renderer::Renderer,
+    renderer::{Renderer, simplify::simplify_entity},
 };
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, rfc3339};
 use andromeda_ngsi_ld_model::{
@@ -113,7 +113,7 @@ impl<'a> Renderer for EntityRenderer<'a> {
         // Fast path: simplified without language filter or inline join can use
         // the domain-level simplify() directly, avoiding a full serialize round-trip.
         if self.mode == RenderMode::Simplified && self.language_filter.is_none() && self.inline_linked_entities.is_none() {
-            return Ok(self.entity.simplify());
+            return Ok(simplify_entity(self.entity));
         }
 
         // Step 1: serialize (with optional language negotiation)
@@ -593,7 +593,10 @@ pub(crate) fn decode_percent_encoded_uris(value: &mut Value) {
 #[cfg(test)]
 mod tests {
     use super::{EntityRenderer, RenderMode, concise_value, decode_percent_encoded_uris};
-    use crate::{http::model::language::LanguageFilter, renderer::Renderer};
+    use crate::{
+        http::model::language::LanguageFilter,
+        renderer::{Renderer, simplify::simplify_entity},
+    };
     use andromeda_ngsi_ld_model::entity::Entity;
     use serde_json::{Value, json};
 
@@ -644,7 +647,7 @@ mod tests {
             .render()
             .expect("simplified entity");
 
-        pretty_assertions::assert_eq!(simplified, entity.simplify());
+        pretty_assertions::assert_eq!(simplified, simplify_entity(&entity));
     }
 
     #[test]

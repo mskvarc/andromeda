@@ -1,6 +1,9 @@
 //! Query parameters for the NGSI-LD Temporal API.
 
-use crate::{http::model::temporal_query_request::TemporalQueryRequest, impl_shared_query_params};
+use crate::{
+    http::{model::temporal_query_request::TemporalQueryRequest, parameter::error::ParameterError},
+    impl_shared_query_params,
+};
 use andromeda_ngsi_ld_lexicon::{aggr_method::AggrMethod, temporal_format::TemporalFormat, time_prop::TimeProp, time_rel::TimeRel};
 use andromeda_ngsi_ld_query::error::QueryError;
 use serde::Deserialize;
@@ -104,10 +107,10 @@ impl TemporalQueryParameters {
     ///
     /// Returns `None` if `timerel` is absent, or `Some(Result)` with the parsed
     /// temporal relationship (`before`, `after`, `between`).
-    pub fn parse_timerel(&self) -> Option<Result<TimeRel, QueryError>> {
+    pub fn parse_timerel(&self) -> Option<Result<TimeRel, ParameterError>> {
         self.timerel
             .as_deref()
-            .map(|s| s.parse::<TimeRel>().map_err(|_| QueryError::ParamTimerelInvalid(s.to_string())))
+            .map(|s| s.parse::<TimeRel>().map_err(|_| ParameterError::TimerelInvalid(s.to_string())))
     }
 
     /// Parses the `timeproperty` parameter into a `TimeProp` enum value.
@@ -146,13 +149,13 @@ impl TemporalQueryParameters {
     ///
     /// Returns an empty vector when the parameter is absent.
     /// Returns an error if any method name is unrecognized.
-    pub fn parse_aggr_methods(&self) -> Result<Vec<AggrMethod>, QueryError> {
+    pub fn parse_aggr_methods(&self) -> Result<Vec<AggrMethod>, ParameterError> {
         match self.aggr_methods.as_deref() {
             Some(s) => s
                 .split(',')
                 .map(|m| {
                     let m = m.trim();
-                    m.parse::<AggrMethod>().map_err(|_| QueryError::ParamAggrMethodInvalid(m.to_string()))
+                    m.parse::<AggrMethod>().map_err(|_| ParameterError::AggrMethodInvalid(m.to_string()))
                 })
                 .collect(),
             None => Ok(Vec::new()),
@@ -175,12 +178,12 @@ impl TemporalQueryParameters {
     /// Validate parameters.
     /// - For query endpoint (require_temporal=true): timerel and timeAt are REQUIRED.
     /// - For single-entity GET (require_temporal=false): timerel and timeAt are optional (both or neither).
-    pub fn validate(&self, require_temporal: bool) -> Result<(), QueryError> {
+    pub fn validate(&self, require_temporal: bool) -> Result<(), ParameterError> {
         // Validate format parameter
         if let Some(f) = &self.format
             && !matches!(f.as_str(), "temporalValues" | "aggregatedValues")
         {
-            return Err(QueryError::ParamFormatInvalid(f.clone()));
+            return Err(ParameterError::FormatInvalid(f.clone()));
         }
 
         // Validate options parameter
@@ -188,29 +191,29 @@ impl TemporalQueryParameters {
             for opt in opts.split(',') {
                 let opt = opt.trim();
                 if !matches!(opt, "temporalValues" | "aggregatedValues" | "sysAttrs" | "keyValues" | "simplified" | "concise") {
-                    return Err(QueryError::ParamOptionsInvalid(opt.to_string()));
+                    return Err(ParameterError::OptionsInvalid(opt.to_string()));
                 }
             }
         }
 
         if require_temporal {
             if self.timerel.is_none() || self.time_at.is_none() {
-                return Err(QueryError::ParamTimerelTimeatRequired);
+                return Err(ParameterError::TimerelTimeatRequired);
             }
             // At least one entity selection criterion is required for temporal query
             if self.id.is_none() && self.entity_type.is_none() && self.id_pattern.is_none() && self.attrs.is_none() && self.q.is_none() {
-                return Err(QueryError::ParamOther(
-                    "At least one of id, type, idPattern, attrs, or q is required for temporal query".to_string(),
+                return Err(ParameterError::SelectorRequired(
+                    "At least one of id, type, idPattern, attrs, or q is required for temporal query",
                 ));
             }
         } else if self.timerel.is_some() != self.time_at.is_some() {
-            return Err(QueryError::ParamTimerelTimeatPair);
+            return Err(ParameterError::Query(QueryError::ParamTimerelTimeatPair));
         }
         if self.timerel.as_deref() == Some("between") && self.end_time_at.is_none() {
-            return Err(QueryError::ParamEndTimeAtRequired);
+            return Err(ParameterError::Query(QueryError::ParamEndTimeAtRequired));
         }
         if self.parse_format() == TemporalFormat::AggregatedValues && self.aggr_methods.is_none() {
-            return Err(QueryError::ParamOther("aggrMethods is required when format is 'aggregatedValues'".to_string()));
+            return Err(ParameterError::AggrMethodsRequired);
         }
         Ok(())
     }

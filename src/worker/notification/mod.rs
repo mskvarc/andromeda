@@ -18,10 +18,8 @@ use andromeda_ngsi_ld_lexicon::{
     entity_type_name::EntityTypeName,
     uri::{NGSI_LD_URN_NID, Uri},
 };
-use andromeda_ngsi_ld_model::{
-    notification::{ChangeEvent, Notification, NotificationType, SubscriptionChange, TriggerReason},
-    sys_attrs::SysAttrsInclusion,
-};
+use andromeda_ngsi_ld_model::notification::{ChangeEvent, Notification, NotificationType, SubscriptionChange, TriggerReason};
+use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 use andromeda_ngsi_ld_vocabulary::expanded::{classes as expanded_classes, properties as expanded_properties};
 use chrono::{SecondsFormat, Utc};
 use futures::{StreamExt, stream};
@@ -479,14 +477,13 @@ fn extract_entity_geometry(entity_data: &Value, geoproperty_iri: &str) -> Option
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        service::{compiled_subscription::CompiledSelector, subscription_matching::matches_subscription},
-        transport::endpoint::EndpointTransport,
+    use crate::{service::subscription_matching::matches_subscription, transport::endpoint::EndpointTransport};
+    use andromeda_ngsi_ld_model::{
+        notification::ChangeOrigin,
+        subscription::{EntitySelector, SubscriptionStatus},
     };
-    use andromeda_ngsi_ld_model::{notification::ChangeOrigin, subscription::SubscriptionStatus};
-    use andromeda_ngsi_ld_query::filter::parser;
+    use andromeda_ngsi_ld_query::{filter::parser, scope::query::ScopeQuery};
     use payload::filter_entity_attributes;
-    use regex::Regex;
 
     fn make_event(entity_id: &str, types: Vec<&str>, trigger: TriggerReason, attrs: Vec<&str>) -> ChangeEvent {
         ChangeEvent::builder()
@@ -499,7 +496,7 @@ mod tests {
             .build()
     }
 
-    fn make_sub(id: &str, selectors: Vec<CompiledSelector>, triggers: Vec<&str>, watched: Option<Vec<&str>>) -> CompiledSubscription {
+    fn make_sub(id: &str, selectors: Vec<EntitySelector>, triggers: Vec<&str>, watched: Option<Vec<&str>>) -> CompiledSubscription {
         CompiledSubscription {
             id: id.to_string(),
             status: SubscriptionStatus::Active,
@@ -533,11 +530,10 @@ mod tests {
     fn matches_by_type_and_trigger() {
         let sub = make_sub(
             "sub1",
-            vec![CompiledSelector {
+            vec![EntitySelector {
                 id: None,
                 id_pattern: None,
-                type_: "Vehicle".to_string(),
-                type_pattern: None,
+                type_: "Vehicle".parse().expect("valid type expression"),
             }],
             vec!["attributeUpdated"],
             None,
@@ -550,11 +546,10 @@ mod tests {
     fn no_match_wrong_type() {
         let sub = make_sub(
             "sub1",
-            vec![CompiledSelector {
+            vec![EntitySelector {
                 id: None,
                 id_pattern: None,
-                type_: "Parking".to_string(),
-                type_pattern: None,
+                type_: "Parking".parse().expect("valid type expression"),
             }],
             vec!["attributeUpdated"],
             None,
@@ -567,11 +562,10 @@ mod tests {
     fn no_match_wrong_trigger() {
         let sub = make_sub(
             "sub1",
-            vec![CompiledSelector {
+            vec![EntitySelector {
                 id: None,
                 id_pattern: None,
-                type_: "Vehicle".to_string(),
-                type_pattern: None,
+                type_: "Vehicle".parse().expect("valid type expression"),
             }],
             vec!["entityCreated"],
             None,
@@ -584,11 +578,10 @@ mod tests {
     fn matches_watched_attributes() {
         let sub = make_sub(
             "sub1",
-            vec![CompiledSelector {
+            vec![EntitySelector {
                 id: None,
                 id_pattern: None,
-                type_: "Vehicle".to_string(),
-                type_pattern: None,
+                type_: "Vehicle".parse().expect("valid type expression"),
             }],
             vec!["attributeUpdated"],
             Some(vec!["speed"]),
@@ -606,11 +599,10 @@ mod tests {
     fn no_match_unwatched_attribute() {
         let sub = make_sub(
             "sub1",
-            vec![CompiledSelector {
+            vec![EntitySelector {
                 id: None,
                 id_pattern: None,
-                type_: "Vehicle".to_string(),
-                type_pattern: None,
+                type_: "Vehicle".parse().expect("valid type expression"),
             }],
             vec!["attributeUpdated"],
             Some(vec!["speed"]),
@@ -623,11 +615,10 @@ mod tests {
     fn matches_with_id_pattern() {
         let sub = make_sub(
             "sub1",
-            vec![CompiledSelector {
+            vec![EntitySelector {
                 id: None,
-                id_pattern: Some(Regex::new("urn:ngsi-ld:Vehicle:.*").unwrap()),
-                type_: "Vehicle".to_string(),
-                type_pattern: None,
+                id_pattern: Some("urn:ngsi-ld:Vehicle:.*".parse().expect("valid pattern")),
+                type_: "Vehicle".parse().expect("valid type expression"),
             }],
             vec!["attributeUpdated"],
             None,
@@ -640,11 +631,10 @@ mod tests {
     fn no_match_id_pattern_mismatch() {
         let sub = make_sub(
             "sub1",
-            vec![CompiledSelector {
+            vec![EntitySelector {
                 id: None,
-                id_pattern: Some(Regex::new("urn:ngsi-ld:Parking:.*").unwrap()),
-                type_: "Vehicle".to_string(),
-                type_pattern: None,
+                id_pattern: Some("urn:ngsi-ld:Parking:.*".parse().expect("valid pattern")),
+                type_: "Vehicle".parse().expect("valid type expression"),
             }],
             vec!["attributeUpdated"],
             None,
@@ -657,11 +647,10 @@ mod tests {
     fn matches_specific_entity_id() {
         let sub = make_sub(
             "sub1",
-            vec![CompiledSelector {
-                id: Some("urn:ngsi-ld:Vehicle:A1".to_string()),
+            vec![EntitySelector {
+                id: Some("urn:ngsi-ld:Vehicle:A1".parse().expect("valid uri")),
                 id_pattern: None,
-                type_: "Vehicle".to_string(),
-                type_pattern: None,
+                type_: "Vehicle".parse().expect("valid type expression"),
             }],
             vec!["attributeUpdated"],
             None,
@@ -674,11 +663,10 @@ mod tests {
     fn no_match_different_entity_id() {
         let sub = make_sub(
             "sub1",
-            vec![CompiledSelector {
-                id: Some("urn:ngsi-ld:Vehicle:B2".to_string()),
+            vec![EntitySelector {
+                id: Some("urn:ngsi-ld:Vehicle:B2".parse().expect("valid uri")),
                 id_pattern: None,
-                type_: "Vehicle".to_string(),
-                type_pattern: None,
+                type_: "Vehicle".parse().expect("valid type expression"),
             }],
             vec!["attributeUpdated"],
             None,
@@ -691,11 +679,10 @@ mod tests {
     fn expired_subscription_does_not_match() {
         let mut sub = make_sub(
             "sub1",
-            vec![CompiledSelector {
+            vec![EntitySelector {
                 id: None,
                 id_pattern: None,
-                type_: "Vehicle".to_string(),
-                type_pattern: None,
+                type_: "Vehicle".parse().expect("valid type expression"),
             }],
             vec!["attributeUpdated"],
             None,
@@ -716,11 +703,10 @@ mod tests {
     fn paused_subscription_does_not_match() {
         let mut sub = make_sub(
             "sub1",
-            vec![CompiledSelector {
+            vec![EntitySelector {
                 id: None,
                 id_pattern: None,
-                type_: "Vehicle".to_string(),
-                type_pattern: None,
+                type_: "Vehicle".parse().expect("valid type expression"),
             }],
             vec!["attributeUpdated"],
             None,
@@ -772,35 +758,35 @@ mod tests {
     #[test]
     fn matches_entity_filters_scope_exact() {
         let mut sub = make_sub("sub1", vec![], vec!["attributeUpdated"], None);
-        sub.compiled_scope_q = Some(crate::service::subscription_cache::compile_scope_q("/Spain"));
+        sub.compiled_scope_q = Some(ScopeQuery::parse("/Spain").expect("valid scope query"));
         assert!(matches_entity_filters(&sub, &entity_with_geo_and_scope()));
     }
 
     #[test]
     fn matches_entity_filters_scope_no_match() {
         let mut sub = make_sub("sub1", vec![], vec!["attributeUpdated"], None);
-        sub.compiled_scope_q = Some(crate::service::subscription_cache::compile_scope_q("/France"));
+        sub.compiled_scope_q = Some(ScopeQuery::parse("/France").expect("valid scope query"));
         assert!(!matches_entity_filters(&sub, &entity_with_geo_and_scope()));
     }
 
     #[test]
     fn matches_entity_filters_scope_hash_wildcard() {
         let mut sub = make_sub("sub1", vec![], vec!["attributeUpdated"], None);
-        sub.compiled_scope_q = Some(crate::service::subscription_cache::compile_scope_q("/Madrid/#"));
+        sub.compiled_scope_q = Some(ScopeQuery::parse("/Madrid/#").expect("valid scope query"));
         assert!(matches_entity_filters(&sub, &entity_with_geo_and_scope()));
     }
 
     #[test]
     fn matches_entity_filters_scope_and() {
         let mut sub = make_sub("sub1", vec![], vec!["attributeUpdated"], None);
-        sub.compiled_scope_q = Some(crate::service::subscription_cache::compile_scope_q("/Spain;/Madrid/Gardens"));
+        sub.compiled_scope_q = Some(ScopeQuery::parse("/Spain;/Madrid/Gardens").expect("valid scope query"));
         assert!(matches_entity_filters(&sub, &entity_with_geo_and_scope()));
     }
 
     #[test]
     fn matches_entity_filters_scope_or() {
         let mut sub = make_sub("sub1", vec![], vec!["attributeUpdated"], None);
-        sub.compiled_scope_q = Some(crate::service::subscription_cache::compile_scope_q("/France,/Spain"));
+        sub.compiled_scope_q = Some(ScopeQuery::parse("/France,/Spain").expect("valid scope query"));
         assert!(matches_entity_filters(&sub, &entity_with_geo_and_scope()));
     }
 

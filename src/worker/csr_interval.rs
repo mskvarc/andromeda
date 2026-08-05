@@ -194,20 +194,18 @@ fn matches_csr_for_subscription(csr_data: &Value, sub: &Subscription) -> bool {
                 match entities {
                     Some(ents) => ents.iter().any(|ent| {
                         let ent_type = ent.get("type").and_then(|v| v.as_str()).unwrap_or("");
-                        if ent_type != sel.type_ {
+                        if !sel.type_.matches(&[ent_type]) {
                             return false;
                         }
                         if let Some(ref id) = sel.id {
                             let ent_id = ent.get("id").and_then(|v| v.as_str()).unwrap_or("");
-                            if ent_id != id {
+                            if ent_id != id.to_string() {
                                 return false;
                             }
                         }
-                        if let Some(ref pattern) = sel.id_pattern
-                            && let Ok(re) = regex::Regex::new(pattern)
-                        {
+                        if let Some(ref pattern) = sel.id_pattern {
                             let ent_id = ent.get("id").and_then(|v| v.as_str()).unwrap_or("");
-                            if !re.is_match(ent_id) {
+                            if !pattern.is_match(ent_id) {
                                 return false;
                             }
                         }

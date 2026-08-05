@@ -1,6 +1,7 @@
 //! SQL-only repository for snapshot records.
 
 use crate::{
+    bind_values,
     core::error::AndromedaError,
     repository::snapshot::{
         mapper::row_to_snapshot,
@@ -10,12 +11,13 @@ use crate::{
 use andromeda_ngsi_ld_lexicon::ngsi_ld_urn::SnapshotId;
 use andromeda_ngsi_ld_model::{
     snapshot::{ExecutionResultDetails, Snapshot, SnapshotPriority, SnapshotStatus},
-    snapshot_filter::{Conjunction, SnapshotPurgeFilter, SnapshotValue},
+    snapshot_filter::SnapshotPurgeFilter,
 };
+use andromeda_postgresql_context_query::snapshot_purge::build_match_query;
 use chrono::{DateTime, Utc};
 use iso8601_duration::Duration as Iso8601Duration;
 use serde_json::Value;
-use sqlx::{QueryBuilder, Row, postgres::PgPool};
+use sqlx::{Row, postgres::PgPool};
 use url::Url;
 
 /// Repository for persisting and querying snapshot records.
@@ -108,43 +110,9 @@ impl SnapshotRepository {
 
     /// Identifiers of all snapshots matching the given purge filter.
     pub async fn match_by_filter(&self, filter: &SnapshotPurgeFilter) -> Result<Vec<SnapshotId>, AndromedaError> {
-        let separator = match filter.conjunction {
-            Conjunction::And => " AND ",
-            Conjunction::Or => " OR ",
-        };
-
-        let mut qb: QueryBuilder<sqlx::Postgres> = QueryBuilder::new("SELECT id FROM snapshots WHERE ");
-        let mut first = true;
-        for term in &filter.terms {
-            if !first {
-                qb.push(separator);
-            }
-            first = false;
-            qb.push(term.field.sql_column());
-            qb.push(" ");
-            qb.push(term.op.sql());
-            qb.push(" ");
-            match &term.value {
-                SnapshotValue::Id(id) => {
-                    qb.push_bind(id.as_str().to_string());
-                }
-                SnapshotValue::Priority(priority) => {
-                    qb.push_bind(priority.as_i16());
-                }
-                SnapshotValue::Status(status) => {
-                    qb.push_bind(<&str>::from(*status));
-                    qb.push("::snapshot_status");
-                }
-                SnapshotValue::Endpoint(url) => {
-                    qb.push_bind(url.as_str().to_string());
-                }
-                SnapshotValue::DateTime(dt) => {
-                    qb.push_bind(*dt);
-                }
-            }
-        }
-
-        let rows = qb.build().fetch_all(&self.pool).await?;
+        let built = build_match_query(filter);
+        let query = bind_values!(sqlx::query(&built.sql), &built.bind_values);
+        let rows = query.fetch_all(&self.pool).await?;
         let mut ids = Vec::with_capacity(rows.len());
         for row in &rows {
             let raw: String = row.try_get("id")?;

@@ -33,14 +33,61 @@ impl AggregationPeriod {
         Ok(Some(AggregationPeriod(duration)))
     }
 
-    /// The ISO 8601 rendering PostgreSQL reads as an `interval`.
+    /// The ISO 8601 rendering of the bucket width.
     ///
-    /// PostgreSQL accepts the ISO 8601 duration form directly, so no
-    /// conversion into its own `'1 hour'` syntax is needed. The rendering is
-    /// only well formed because a zero duration cannot be constructed: the
-    /// upstream `Display` writes a bare `P` for one, which is not an interval.
-    pub fn as_interval_literal(&self) -> String {
+    /// This is the clause 4.5.19 form the client wrote, and it is also what a
+    /// backend binds: PostgreSQL reads an ISO 8601 duration as an `interval`
+    /// directly, so no conversion into its own `'1 hour'` syntax is needed. The
+    /// rendering is only well formed because a zero duration cannot be
+    /// constructed — the upstream `Display` writes a bare `P` for one, which is
+    /// neither a duration nor an interval.
+    pub fn as_iso8601(&self) -> String {
         self.0.to_string()
+    }
+}
+
+/// Serialize and deserialize an optional [`AggregationPeriod`] as an ISO 8601
+/// duration.
+///
+/// A dedicated adapter rather than a `#[serde(try_from)]` on the type itself,
+/// because clause 4.5.19 folds three distinct inputs — absent, empty and zero —
+/// into one meaning, and only the `Option` can express that a present value
+/// deserialized to no period at all.
+pub mod optional {
+    use crate::temporal::aggregation_period::AggregationPeriod;
+    use serde::{Deserialize, Deserializer, Serializer, de::Error};
+
+    /// Render the period when present, and JSON `null` when absent.
+    ///
+    /// # Errors
+    ///
+    /// Propagates whatever the underlying serializer reports.
+    pub fn serialize<S>(period: &Option<AggregationPeriod>, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match period {
+            Some(period) => serializer.serialize_some(&period.as_iso8601()),
+            None => serializer.serialize_none(),
+        }
+    }
+
+    /// Parse an optional ISO 8601 duration into a bucket width.
+    ///
+    /// # Errors
+    ///
+    /// Returns a deserializer error when a value is present and is not an
+    /// ISO 8601 duration. A zero duration is not an error: clause 4.5.19 reads
+    /// it as no bucketing, which is `None`.
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Option<AggregationPeriod>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let raw: Option<String> = Option::deserialize(deserializer)?;
+        match raw {
+            Some(raw) => AggregationPeriod::parse(&raw).map_err(Error::custom),
+            None => Ok(None),
+        }
     }
 }
 
@@ -62,7 +109,7 @@ mod tests {
     #[test]
     fn a_period_of_one_hour_renders_as_an_iso_8601_interval() {
         let period = AggregationPeriod::parse("PT1H").expect("parses").expect("non-zero");
-        assert_eq!(period.as_interval_literal(), "PT1H");
+        assert_eq!(period.as_iso8601(), "PT1H");
     }
 
     #[test]
@@ -83,6 +130,6 @@ mod tests {
     #[test]
     fn a_calendar_period_survives_parsing() {
         let period = AggregationPeriod::parse("P1M").expect("parses").expect("non-zero");
-        assert_eq!(period.as_interval_literal(), "P1M");
+        assert_eq!(period.as_iso8601(), "P1M");
     }
 }

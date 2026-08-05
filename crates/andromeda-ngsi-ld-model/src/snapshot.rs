@@ -307,45 +307,6 @@ mod tests {
     use andromeda_ngsi_ld_lexicon::{aggr_method::AggrMethod, ngsi_ld_urn::SnapshotId, time_prop::TimeProp, time_rel::TimeRel};
     use chrono::{DateTime, Utc};
     use iso8601_duration::Duration as Iso8601Duration;
-    use strum::IntoEnumIterator;
-
-    /// Labels of the PostgreSQL `snapshot_status` enum, verbatim from
-    /// `migrations/tenant/0003_types.sql`.
-    const SNAPSHOT_STATUS_LABELS: [(&str, SnapshotStatus); 5] = [
-        ("preparing", SnapshotStatus::Preparing),
-        ("success", SnapshotStatus::Success),
-        ("partial", SnapshotStatus::Partial),
-        ("empty", SnapshotStatus::Empty),
-        ("failure", SnapshotStatus::Failure),
-    ];
-
-    #[test]
-    fn snapshot_status_parses_from_its_postgres_label() {
-        for (label, expected) in SNAPSHOT_STATUS_LABELS {
-            pretty_assertions::assert_eq!(label.parse::<SnapshotStatus>().expect(label), expected);
-        }
-    }
-
-    #[test]
-    fn snapshot_status_renders_the_label_postgres_expects() {
-        for (label, variant) in SNAPSHOT_STATUS_LABELS {
-            pretty_assertions::assert_eq!(variant.to_string(), label);
-            pretty_assertions::assert_eq!(<&str>::from(variant), label);
-        }
-    }
-
-    #[test]
-    fn snapshot_status_round_trips_through_its_label_for_every_variant() {
-        // Exhaustive over `EnumIter`, replacing the type-level guarantee
-        // `sqlx::Type` used to give.
-        for variant in SnapshotStatus::iter() {
-            pretty_assertions::assert_eq!(variant.to_string().parse::<SnapshotStatus>().expect("round trip"), variant);
-            assert!(
-                SNAPSHOT_STATUS_LABELS.iter().any(|(_, known)| *known == variant),
-                "{variant:?} has no PostgreSQL label in snapshot_status"
-            );
-        }
-    }
 
     #[test]
     fn an_unknown_snapshot_status_label_is_a_parse_error_not_a_panic() {
@@ -413,7 +374,7 @@ mod tests {
         assert!(query.entities.is_some());
         let entities = query.entities.unwrap();
         pretty_assertions::assert_eq!(entities.len(), 1);
-        pretty_assertions::assert_eq!(entities[0].type_.as_deref(), Some("Vehicle"));
+        pretty_assertions::assert_eq!(entities[0].type_.as_ref().map(ToString::to_string).as_deref(), Some("Vehicle"));
         assert!(query.q.is_none());
         assert!(query.temporal_q.is_none());
     }
@@ -430,12 +391,12 @@ mod tests {
         }"#;
         let query: SnapshotQuery = serde_json::from_str(json).expect("parse");
         assert!(query.entities.is_some());
-        pretty_assertions::assert_eq!(query.q.as_deref(), Some("speed>50"));
+        pretty_assertions::assert_eq!(query.q.as_ref().map(ToString::to_string).as_deref(), Some("speed>50"));
         assert!(query.geo_q.is_some());
         let geo = query.geo_q.unwrap();
         pretty_assertions::assert_eq!(geo.georel, GeoRel::Within);
         pretty_assertions::assert_eq!(geo.geometry, GeometryType::Polygon);
-        pretty_assertions::assert_eq!(query.scope_q.as_deref(), Some("/Madrid"));
+        pretty_assertions::assert_eq!(query.scope_q.as_ref().map(ToString::to_string).as_deref(), Some("/Madrid"));
         pretty_assertions::assert_eq!(query.attrs.unwrap().len(), 2);
         pretty_assertions::assert_eq!(query.omit.unwrap().len(), 1);
     }

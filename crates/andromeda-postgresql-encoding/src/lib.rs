@@ -17,82 +17,42 @@
 pub mod ewkb;
 
 #[cfg(test)]
-mod tests {
-    /// The boundary the three extractions bought. If a forbidden dependency
-    /// reappears in one of these manifests, a storage, transport or runtime
-    /// concern has drifted below the line it was moved above, and this test is
-    /// the only thing that notices.
+mod boundary {
+    /// The layer rule this crate is on the inside of.
+    ///
+    /// A crate asserts its own manifest rather than a central test asserting
+    /// everyone's: the failure then names the crate that broke the rule, and a
+    /// crate added to the workspace cannot be forgotten by a table it was never
+    /// added to.
+    ///
+    /// `geozero` and `bytes` are this crate's whole reason to exist, so only the
+    /// driver, the transports and the runtime are forbidden.
     #[test]
-    fn each_crate_below_the_store_declares_only_what_its_layer_permits() {
-        /// A crate's manifest and the dependencies it must not declare.
-        struct Boundary {
-            /// Crate name, for the assertion message.
-            name: &'static str,
-            /// The manifest text, embedded at compile time.
-            manifest: &'static str,
-            /// Dependency names forbidden at this crate's layer.
-            forbidden: &'static [&'static str],
-        }
+    fn this_crate_declares_only_what_its_layer_permits() {
+        /// Third-party crates this layer must never declare.
+        const FORBIDDEN: &[&str] = &["sqlx", "axum", "reqwest", "confique", "clap", "tokio"];
+        /// In-workspace crates this one may name. Anything else is an upward or
+        /// sideways edge.
+        const ALLOWED_IN_WORKSPACE: &[&str] = &["andromeda-ngsi-ld-geometry"];
 
-        /// Storage drivers, transports and the runtime: forbidden everywhere below the store.
-        const INFRASTRUCTURE: &[&str] = &["sqlx", "axum", "reqwest", "confique", "clap", "tokio"];
-        /// The PostgreSQL wire-format codecs, forbidden in every specification crate.
-        const BACKEND_CODECS: &[&str] = &["sqlx", "geozero", "bytes", "axum", "reqwest", "confique", "clap", "tokio"];
+        let manifest = include_str!("../Cargo.toml");
+        let dependencies: Vec<&str> = manifest
+            .split("[dependencies]")
+            .nth(1)
+            .unwrap_or_else(|| unreachable!("manifest has a [dependencies] table"))
+            .split("\n[")
+            .next()
+            .unwrap_or_else(|| unreachable!("dependency table is terminated"))
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty() && !line.starts_with('#'))
+            .collect();
 
-        let boundaries = [
-            Boundary {
-                name: "andromeda-ngsi-ld-model",
-                manifest: include_str!("../../andromeda-ngsi-ld-model/Cargo.toml"),
-                forbidden: BACKEND_CODECS,
-            },
-            Boundary {
-                name: "andromeda-ngsi-ld-geometry",
-                manifest: include_str!("../../andromeda-ngsi-ld-geometry/Cargo.toml"),
-                forbidden: BACKEND_CODECS,
-            },
-            Boundary {
-                name: "andromeda-ngsi-ld-lexicon",
-                manifest: include_str!("../../andromeda-ngsi-ld-lexicon/Cargo.toml"),
-                forbidden: BACKEND_CODECS,
-            },
-            Boundary {
-                name: "andromeda-ngsi-ld-query",
-                manifest: include_str!("../../andromeda-ngsi-ld-query/Cargo.toml"),
-                // A query language that names sea-query is a query language with
-                // a backend in it; clause 4.9 has no dialect.
-                forbidden: &["sqlx", "sea-query", "geozero", "bytes", "axum", "reqwest", "confique", "clap", "tokio"],
-            },
-            Boundary {
-                // `geozero` and `bytes` are this crate's whole reason to exist,
-                // so only the driver, transport and runtime are forbidden.
-                name: "andromeda-postgresql-encoding",
-                manifest: include_str!("../Cargo.toml"),
-                forbidden: INFRASTRUCTURE,
-            },
-            Boundary {
-                name: "andromeda-postgresql-query",
-                manifest: include_str!("../../andromeda-postgresql-query/Cargo.toml"),
-                forbidden: INFRASTRUCTURE,
-            },
-        ];
-
-        for boundary in boundaries {
-            let dependencies: Vec<&str> = boundary
-                .manifest
-                .split("[dependencies]")
-                .nth(1)
-                .expect("manifest has a [dependencies] table")
-                .split("\n[")
-                .next()
-                .expect("dependency table is terminated")
-                .lines()
-                .collect();
-            for name in boundary.forbidden {
-                assert!(
-                    !dependencies.iter().any(|line| line.trim_start().starts_with(name)),
-                    "{} must not depend on {name}",
-                    boundary.name
-                );
+        for line in &dependencies {
+            let name = line.split(['=', '.', ' ']).next().unwrap_or_default();
+            assert!(!FORBIDDEN.contains(&name), "this crate must not depend on {name}");
+            if name.starts_with("andromeda-") {
+                assert!(ALLOWED_IN_WORKSPACE.contains(&name), "{name} is not an edge this crate's layer permits");
             }
         }
     }

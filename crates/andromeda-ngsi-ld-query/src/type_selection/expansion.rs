@@ -5,19 +5,7 @@ use crate::{
     term_expander::TermExpander,
     type_selection::grammar::{TypeExpr, TypeExprRaw},
 };
-use iri_rs::IriBuf;
 use std::{future::Future, pin::Pin};
-
-/// Expand a comma-separated list of entity type short names to IRIs.
-pub async fn expand_entity_types(raw_types: &str, expander: &impl TermExpander) -> Result<Vec<IriBuf>, QueryError> {
-    let mut expanded = Vec::new();
-    for name in raw_types.split(',').map(str::trim) {
-        if !name.is_empty() {
-            expanded.push(expander.expand_type(name).await?);
-        }
-    }
-    Ok(expanded)
-}
 
 /// Recursively expand a raw type expression, replacing compact type names
 /// with their fully expanded IRIs.
@@ -48,6 +36,7 @@ fn expand_children<'a, E: TermExpander>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use iri_rs::IriBuf;
 
     struct PrefixExpander;
 
@@ -63,15 +52,6 @@ mod tests {
 
     fn iri(value: &str) -> IriBuf {
         IriBuf::new(value.to_string()).expect("valid IRI")
-    }
-
-    #[tokio::test]
-    async fn a_comma_separated_list_expands_every_non_empty_name() {
-        let expanded = expand_entity_types("Vehicle, ,Building", &PrefixExpander).await.expect("expands");
-        assert_eq!(
-            expanded,
-            vec![iri("https://example.com/types/Vehicle"), iri("https://example.com/types/Building")]
-        );
     }
 
     #[tokio::test]

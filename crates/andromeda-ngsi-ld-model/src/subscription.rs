@@ -1,7 +1,8 @@
 //! NGSI-LD subscription types (ETSI GS CIM 009 clause 5.2.12).
 
-use crate::response_format::{JoinMode, ResponseFormat};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, constant_string, rfc3339, uri::Uri};
+use andromeda_ngsi_ld_query::{filter::expression::Expr, pattern::Pattern, scope::query::ScopeQuery, type_selection::grammar::TypeExprRaw};
+use andromeda_ngsi_ld_representation::{join_mode::JoinMode, response_format::ResponseFormat};
 use chrono::{DateTime, Utc};
 use langtag::LangTagBuf;
 use mediatype::MediaTypeBuf;
@@ -65,16 +66,18 @@ pub enum NotificationStatus {
 pub struct EntitySelector {
     /// Exact entity id to match.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub id: Option<String>,
-    /// Regex pattern to match entity ids (clause 4.5.6).
-    ///
-    /// Held as written: the validated pattern type lives in `andromeda-query`,
-    /// which depends on this crate. See `docs/query-language-layering.md`.
+    pub id: Option<Uri>,
+    /// Regular expression the entity id must match (clause 4.5.6).
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub id_pattern: Option<String>,
-    /// Entity type to match (required).
+    pub id_pattern: Option<Pattern>,
+    /// Type selection expression the entity's types must satisfy (required).
+    ///
+    /// A clause 4.17 expression rather than a single name: a selector may
+    /// alternate, as in `(Building|Tower)`, and matching used to rebuild that
+    /// into an unanchored regex under which `Building` also matched an entity
+    /// typed `MyBuilding`.
     #[serde(rename = "type")]
-    pub type_: String,
+    pub type_: TypeExprRaw,
 }
 
 /// Notification delivery endpoint configuration (ETSI GS CIM 009 clause 5.2.15).
@@ -168,23 +171,21 @@ pub struct SubscriptionSelection {
 pub struct SubscriptionFilters {
     /// NGSI-LD query expression to filter matching entities (clause 4.9).
     ///
-    /// Held as written rather than as a parsed AST: the `q` grammar's parser
-    /// lives above this crate, in the broker's query layer, so typing this
-    /// member means moving that parser below the domain first. See
-    /// `docs/query-language-layering.md`.
+    /// Parsed at deserialization, so a malformed filter is a rejected
+    /// subscription rather than one that silently matches nothing from its
+    /// first notification onward.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub q: Option<String>,
+    pub q: Option<Expr>,
     /// Geo-spatial query expression (clause 5.2.13).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub geo_q: Option<Value>,
-    /// Scope query expression (clause 4.18). Held as written, for the same
-    /// reason as `q`.
+    /// Scope query expression (clause 4.18).
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub scope_q: Option<String>,
-    /// Context source filter expression (clause 4.13). Held as written, for the
-    /// same reason as `q`.
+    pub scope_q: Option<ScopeQuery>,
+    /// Context source filter expression (clause 4.13), which is a `q` filter
+    /// over a registration's own properties.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub csf: Option<String>,
+    pub csf: Option<Expr>,
     /// Dataset ids to subscribe to.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub dataset_id: Option<Vec<Urn>>,
@@ -289,44 +290,6 @@ mod tests {
     use super::*;
     use chrono::TimeZone;
     use std::str::FromStr;
-    use strum::IntoEnumIterator;
-
-    /// Labels of the PostgreSQL `subscription_status` enum, verbatim from
-    /// `migrations/tenant/0003_types.sql`.
-    const SUBSCRIPTION_STATUS_LABELS: [(&str, SubscriptionStatus); 3] = [
-        ("active", SubscriptionStatus::Active),
-        ("paused", SubscriptionStatus::Paused),
-        ("expired", SubscriptionStatus::Expired),
-    ];
-
-    #[test]
-    fn subscription_status_parses_from_its_postgres_label() {
-        for (label, expected) in SUBSCRIPTION_STATUS_LABELS {
-            pretty_assertions::assert_eq!(label.parse::<SubscriptionStatus>().expect(label), expected);
-        }
-    }
-
-    #[test]
-    fn subscription_status_renders_the_label_postgres_expects() {
-        for (label, variant) in SUBSCRIPTION_STATUS_LABELS {
-            pretty_assertions::assert_eq!(variant.to_string(), label);
-            pretty_assertions::assert_eq!(<&str>::from(variant), label);
-        }
-    }
-
-    #[test]
-    fn subscription_status_round_trips_through_its_label_for_every_variant() {
-        // Exhaustive over `EnumIter`: this is what replaces the type-level
-        // guarantee `sqlx::Type` used to give. A variant added without a
-        // matching migration fails here rather than in a production query.
-        for variant in SubscriptionStatus::iter() {
-            pretty_assertions::assert_eq!(variant.to_string().parse::<SubscriptionStatus>().expect("round trip"), variant);
-            assert!(
-                SUBSCRIPTION_STATUS_LABELS.iter().any(|(_, known)| *known == variant),
-                "{variant:?} has no PostgreSQL label in subscription_status"
-            );
-        }
-    }
 
     #[test]
     fn an_unknown_subscription_status_label_is_a_parse_error_not_a_panic() {

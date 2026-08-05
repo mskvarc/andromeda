@@ -10,6 +10,11 @@
 //! and those belong to the backend that renders it, not here. See
 //! `andromeda_postgresql_query::error::RenderError`.
 //!
+//! Faults of a *request* rather than of a language — a `format` value naming no
+//! rendering, `drop` and `keep` sent together — belong to the parameter model
+//! that reads them, not here. This enum carries only what one of these grammars
+//! can itself reject.
+//!
 //! Mapping onto the ETSI CIM 009 clause 5.6.3 error types lives with the
 //! broker's transport-facing error type, not here: structurally malformed
 //! inputs become `MalformedRequest`, semantically invalid data becomes
@@ -203,7 +208,7 @@ pub enum QueryError {
     IcuCollation(#[from] IcuCollationError),
 
     // -----------------------------------------------------------------------
-    // HTTP parameter preflight (clause 5.6.3)
+    // Parameter values the languages above parse themselves (clause 5.6.3)
     // -----------------------------------------------------------------------
     /// An `id` value could not be parsed as a URI.
     #[error("Invalid id value: '{0}'")]
@@ -211,42 +216,6 @@ pub enum QueryError {
     /// An empty value appeared in a comma-separated id list.
     #[error("Invalid id: empty value in comma-separated list")]
     ParamIdListEmpty,
-    /// The `idPattern` parameter was present but empty.
-    #[error("Invalid idPattern: empty value")]
-    ParamIdPatternEmpty,
-    /// An unrecognised token appeared in the `options` parameter list.
-    #[error("Invalid options value: '{0}'")]
-    ParamOptionsInvalid(String),
-    /// The `format` parameter value was not a recognised output format.
-    #[error("Invalid format value: '{0}'")]
-    ParamFormatInvalid(String),
-    /// The `orderGeometry` parameter value was not a valid geometry kind.
-    #[error("Invalid orderGeometry value: '{0}'")]
-    ParamOrderGeometryInvalid(String),
-    /// `orderGeometry=GeometryCollection` is not supported.
-    #[error("orderGeometry does not support GeometryCollection")]
-    ParamOrderGeometryCollection,
-    /// The `orderFrom` JSON value could not be parsed.
-    #[error("Invalid orderFrom value: '{value}' is not valid JSON")]
-    ParamOrderFromInvalid {
-        /// The raw value from the request.
-        value: String,
-        /// The underlying JSON parse error.
-        #[source]
-        source: serde_json::Error,
-    },
-    /// `drop` and `keep` were both provided on an entity purge.
-    #[error("drop and keep parameters are mutually exclusive")]
-    ParamDropKeepExclusive,
-    /// The `timerel` value was not one of `before`, `after`, `between`.
-    #[error("Invalid timerel value: {0}")]
-    ParamTimerelInvalid(String),
-    /// The `aggrMethod` value was not a recognised aggregation method.
-    #[error("Invalid aggrMethod value: {0}")]
-    ParamAggrMethodInvalid(String),
-    /// A temporal query was issued without the required `timerel`/`timeAt` pair.
-    #[error("timerel and timeAt are required for temporal query")]
-    ParamTimerelTimeatRequired,
     /// `timerel` and `timeAt` must both be present or both absent.
     #[error("timerel and timeAt must both be present or both absent")]
     ParamTimerelTimeatPair,
@@ -259,7 +228,4 @@ pub enum QueryError {
     /// `timerel=between` was provided without an `endTimeAt`.
     #[error("endTimeAt is required when timerel is 'between'")]
     ParamEndTimeAtRequired,
-    /// A parameter failed validation for a reason not covered above.
-    #[error("{0}")]
-    ParamOther(String),
 }

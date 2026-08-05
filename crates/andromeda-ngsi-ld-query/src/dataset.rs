@@ -1,6 +1,9 @@
-//! The `datasetId` filter of a temporal query (clause 4.5.5).
+//! The `datasetId` that names one instance of a multi-instance attribute
+//! (clause 4.5.5).
 
 use crate::error::QueryError;
+use serde::{Deserialize, Serialize};
+use std::{fmt, str::FromStr};
 use urn_rs::Urn;
 
 /// The reserved `datasetId` value naming the default attribute instance.
@@ -10,8 +13,14 @@ use urn_rs::Urn;
 /// not a URI, so it cannot collide with a real identifier.
 pub const DEFAULT_INSTANCE_TOKEN: &str = "@none";
 
-/// One entry of a `datasetId` filter.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// One `datasetId`, naming either a specific dataset or the default instance.
+///
+/// Used both as a filter entry on a temporal query and as a member of an
+/// EntityMap (clause 5.2.39), which records which instances of an entity a
+/// distributed query resolved. Both are the same clause 4.5.5 value, and the
+/// EntityMap resource used to carry a second type spelling it differently.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(try_from = "String", into = "String")]
 pub enum DatasetSelector {
     /// The default instance, which carries no `datasetId` (clause 4.5.5).
     Default,
@@ -28,6 +37,44 @@ impl DatasetSelector {
         raw.parse::<Urn>()
             .map(DatasetSelector::Id)
             .map_err(|_| QueryError::ParamDatasetIdInvalid(raw.to_string()))
+    }
+}
+
+impl FromStr for DatasetSelector {
+    type Err = QueryError;
+
+    fn from_str(raw: &str) -> Result<DatasetSelector, QueryError> {
+        DatasetSelector::parse(raw)
+    }
+}
+
+// Parsing lives in `DatasetSelector::parse` so borrowed call sites do not
+// allocate; this adapter exists only because `#[serde(try_from = "String")]`
+// requires it.
+impl TryFrom<String> for DatasetSelector {
+    type Error = QueryError;
+
+    fn try_from(raw: String) -> Result<DatasetSelector, QueryError> {
+        DatasetSelector::parse(&raw)
+    }
+}
+
+// `derive_more::Display` would need a format string per variant and the
+// `Default` arm renders a constant that is defined above rather than a field.
+impl fmt::Display for DatasetSelector {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            DatasetSelector::Default => formatter.write_str(DEFAULT_INSTANCE_TOKEN),
+            DatasetSelector::Id(urn) => write!(formatter, "{urn}"),
+        }
+    }
+}
+
+// The wire form is produced by the `Display` above; this exists only because
+// `#[serde(into = "String")]` demands an `Into<String>` and cannot use it.
+impl From<DatasetSelector> for String {
+    fn from(selector: DatasetSelector) -> String {
+        selector.to_string()
     }
 }
 

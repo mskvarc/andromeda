@@ -149,7 +149,7 @@ fn build_entity_conditions(query: &CompiledEntityQuery, attribute_names: &Resolv
     }
 
     if let Some(q_expr) = &query.selection.q_expr {
-        condition = condition.add(q_filter::compile(q_expr, QFilterTarget::Entities, attribute_names)?);
+        condition = condition.add(q_filter::compile(q_expr, &QFilterTarget::entities(), attribute_names)?);
     }
 
     if let Some(geo) = &query.selection.geo {
@@ -240,7 +240,7 @@ mod tests {
     use andromeda_ngsi_ld_geometry::{geo_rel::GeoRel, geometry::Geometry};
     use andromeda_ngsi_ld_lexicon::uri::Uri;
     use andromeda_ngsi_ld_query::{
-        entity::selection::EntitySelection,
+        entity_selection::EntitySelection,
         filter::{
             expression::Expr,
             parser,

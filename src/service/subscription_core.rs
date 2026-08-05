@@ -546,18 +546,18 @@ pub fn merge_update_fields(
             .get("q")
             .and_then(|v| v.as_str())
             .map(String::from)
-            .or_else(|| existing.filters.q.clone()), // clone: fallback to existing owned value
+            .or_else(|| existing.filters.q.as_ref().map(ToString::to_string)),
         geo_q: payload.get("geoQ").cloned().or_else(|| existing.filters.geo_q.clone()).filter(|v| !v.is_null()), // clone: need owned Values from borrowed sources
         scope_q: payload
             .get("scopeQ")
             .and_then(|v| v.as_str())
             .map(String::from)
-            .or_else(|| existing.filters.scope_q.clone()), // clone: fallback to existing owned value
+            .or_else(|| existing.filters.scope_q.as_ref().map(ToString::to_string)),
         csf: payload
             .get("csf")
             .and_then(|v| v.as_str())
             .map(String::from)
-            .or_else(|| existing.filters.csf.clone()), // clone: fallback to existing owned value
+            .or_else(|| existing.filters.csf.as_ref().map(ToString::to_string)),
         dataset_id: if use_dataset_id {
             payload
                 .get("datasetId")

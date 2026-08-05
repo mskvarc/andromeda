@@ -4,10 +4,7 @@ use crate::{
         csource_subscription::repo::CsourceSubscriptionRepository,
         subscription_store::repo::SubscriptionStore,
     },
-    service::{
-        compiled_subscription::{CompiledCsrSubscription, CompiledSelector},
-        subscription_throttle::ceiling_for_throttle,
-    },
+    service::{compiled_subscription::CompiledCsrSubscription, subscription_throttle::ceiling_for_throttle},
     transport::{
         dispatch::{DeliveryResult, TransportDispatcher, build_delivery_request},
         endpoint::parse_endpoint_transport,
@@ -16,13 +13,12 @@ use crate::{
 use andromeda_ngsi_ld_lexicon::uri::{NGSI_LD_URN_NID, Uri};
 use andromeda_ngsi_ld_model::{
     notification::{CsourceNotification, CsourceNotificationType, CsourceSubscriptionChange, CsrChangeEvent, CsrTriggerReason},
-    subscription::{Subscription, SubscriptionStatus},
+    subscription::{EntitySelector, Subscription, SubscriptionStatus},
 };
-use andromeda_ngsi_ld_query::filter::{eval, parser};
+use andromeda_ngsi_ld_query::filter::eval;
 use chrono::Utc;
 use dashmap::DashMap;
 use futures::{StreamExt, stream};
-use regex::Regex;
 use serde_json::Value;
 use std::{collections::HashSet, sync::Arc};
 use tokio::sync::broadcast;
@@ -548,31 +544,9 @@ impl CsrNotificationWorker {
 }
 
 fn compile_csr_subscription(sub: &Subscription) -> Option<CompiledCsrSubscription> {
-    let selectors: Vec<CompiledSelector> = sub
-        .selection
-        .entities
-        .as_ref()
-        .map(|entities| {
-            entities
-                .iter()
-                .map(|e| {
-                    let id_pattern = e.id_pattern.as_ref().and_then(|p| match Regex::new(p) {
-                        Ok(r) => Some(r),
-                        Err(err) => {
-                            debug!("Invalid idPattern regex '{}': {}", p, err);
-                            None
-                        }
-                    });
-                    CompiledSelector {
-                        id: e.id.clone(),
-                        id_pattern,
-                        type_: e.type_.clone(),
-                        type_pattern: None,
-                    }
-                })
-                .collect()
-        })
-        .unwrap_or_default();
+    // clone: the compiled form outlives the borrowed subscription and every
+    // selector member is already parsed
+    let selectors: Vec<EntitySelector> = sub.selection.entities.clone().unwrap_or_default();
 
     let watched_attrs = sub
         .selection
@@ -588,14 +562,6 @@ fn compile_csr_subscription(sub: &Subscription) -> Option<CompiledCsrSubscriptio
         }
     };
 
-    let compiled_csf = sub.filters.csf.as_ref().and_then(|csf_str| match parser::parse(csf_str) {
-        Ok(expr) => Some(expr),
-        Err(e) => {
-            debug!("Failed to parse csf filter '{}' for CSR subscription {}: {}", csf_str, sub.id, e);
-            None
-        }
-    });
-
     Some(CompiledCsrSubscription {
         id: sub.id.to_string(),
         status: sub.lifecycle.status,
@@ -609,7 +575,8 @@ fn compile_csr_subscription(sub: &Subscription) -> Option<CompiledCsrSubscriptio
         time_interval_secs: sub.delivery.time_interval,
         jsonld_context: sub.delivery.jsonld_context.as_ref().map(ToString::to_string),
         expires_at: sub.lifecycle.expires_at,
-        compiled_csf,
+        // clone: the compiled form owns its filter
+        compiled_csf: sub.filters.csf.clone(),
     })
 }
 
@@ -655,12 +622,12 @@ fn matches_csr_subscription(sub: &CompiledCsrSubscription, csr_data: &Value) -> 
                 match entities {
                     Some(ents) => ents.iter().any(|ent| {
                         let ent_type = ent.get("type").and_then(|v| v.as_str()).unwrap_or("");
-                        if ent_type != sel.type_ {
+                        if !sel.type_.matches(&[ent_type]) {
                             return false;
                         }
                         if let Some(ref sel_id) = sel.id {
                             let ent_id = ent.get("id").and_then(|v| v.as_str()).unwrap_or("");
-                            if ent_id != sel_id {
+                            if ent_id != sel_id.to_string() {
                                 return false;
                             }
                         }
@@ -741,7 +708,7 @@ fn filter_csr_for_subscription(csr_data: &Value, sub: &CompiledCsrSubscription) 
                         Some(ents) => sub.selectors.iter().any(|sel| {
                             ents.iter().any(|ent| {
                                 let ent_type = ent.get("type").and_then(|v| v.as_str()).unwrap_or("");
-                                ent_type == sel.type_
+                                sel.type_.matches(&[ent_type])
                             })
                         }),
                         None => false,

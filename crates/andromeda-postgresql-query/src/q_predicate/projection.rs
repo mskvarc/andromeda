@@ -5,6 +5,7 @@ use crate::{
     attribute_name_id::AttributeNameId,
     bind::BindBuilder,
     error::RenderError,
+    operator::{comparison, pattern_match},
     q_predicate::{
         attribute_names::ResolvedAttributeNames,
         fallback::{fallback_compare, fallback_exists, fallback_pattern},
@@ -25,7 +26,7 @@ use andromeda_ngsi_ld_query::{
 use sea_query::{Condition, Expr as SeaExpr, Value as SeaValue};
 
 /// Compile a parsed `q` expression into a sea-query [`Condition`].
-pub fn compile(expr: &Expr, target: QFilterTarget, names: &ResolvedAttributeNames) -> Result<Condition, RenderError> {
+pub fn compile(expr: &Expr, target: &QFilterTarget<'_>, names: &ResolvedAttributeNames) -> Result<Condition, RenderError> {
     match expr {
         Expr::And(terms) => terms
             .iter()
@@ -62,7 +63,7 @@ pub fn referenced_attribute_names(expr: &Expr, out: &mut Vec<AttributeName>) {
 }
 
 /// Compile one leaf predicate, routing it to the projection or the fallback.
-fn compile_predicate(pred: &Predicate, target: QFilterTarget, names: &ResolvedAttributeNames) -> Result<Condition, RenderError> {
+fn compile_predicate(pred: &Predicate, target: &QFilterTarget<'_>, names: &ResolvedAttributeNames) -> Result<Condition, RenderError> {
     match pred {
         Predicate::Exists(path) => Ok(compile_exists(path, target, names)),
         Predicate::Compare { path, op, rhs } => {
@@ -148,7 +149,7 @@ fn unsatisfiable() -> Condition {
 /// describe — deleting an attribute writes a tombstone rather than dropping the
 /// catalogue row — so catalogue presence alone would report deleted attributes
 /// as present.
-fn compile_exists(path: &AttrPath, target: QFilterTarget, names: &ResolvedAttributeNames) -> Condition {
+fn compile_exists(path: &AttrPath, target: &QFilterTarget<'_>, names: &ResolvedAttributeNames) -> Condition {
     if !is_projection_eligible(path) {
         return fallback_exists(path, target);
     }
@@ -188,7 +189,7 @@ fn compile_exists(path: &AttrPath, target: QFilterTarget, names: &ResolvedAttrib
 const TOMBSTONE_GUARD: &str = "\"ac\".\"value_string\" IS DISTINCT FROM 'urn:ngsi-ld:null'";
 
 /// Compile a comparison against the typed columns of `attribute_current`.
-fn compile_compare_on_projection(id: AttributeNameId, op: CmpOp, rhs: &CompareValue, target: QFilterTarget) -> Result<Condition, RenderError> {
+fn compile_compare_on_projection(id: AttributeNameId, op: CmpOp, rhs: &CompareValue, target: &QFilterTarget<'_>) -> Result<Condition, RenderError> {
     // The markers are local to one `cust_with_values` fragment; sea-query
     // renumbers them when the enclosing statement is rendered.
     let mut binds: BindBuilder<SeaValue> = BindBuilder::default();
@@ -222,7 +223,7 @@ fn compile_compare_on_projection(id: AttributeNameId, op: CmpOp, rhs: &CompareVa
 }
 
 /// Wrap a value predicate in the correlated `attribute_current` probe.
-fn exists_on_projection(attr_placeholder: &str, value_sql: &str, target: QFilterTarget) -> String {
+fn exists_on_projection(attr_placeholder: &str, value_sql: &str, target: &QFilterTarget<'_>) -> String {
     format!(
         "EXISTS (SELECT 1 FROM \"attribute_current\" AS \"ac\" \
          WHERE \"ac\".\"attribute_name_id\" = {attr} AND ({value}) AND {guard} \
@@ -248,7 +249,7 @@ fn exists_on_projection(attr_placeholder: &str, value_sql: &str, target: QFilter
 /// * plain dates and times in `value_string`, because the recorder only
 ///   promotes full `DateTime`-typed values to `value_datetime`.
 fn scalar_condition(scalar: &Scalar, op: CmpOp, binds: &mut BindBuilder<SeaValue>) -> String {
-    let operator = op.sql_operator();
+    let operator = comparison(op);
     match scalar {
         Scalar::Number(number) => match number.as_f64() {
             Some(value) => {
@@ -294,7 +295,7 @@ fn scalar_condition(scalar: &Scalar, op: CmpOp, binds: &mut BindBuilder<SeaValue
 /// POSIX `~` is not accelerated by the trigram index (`docs/postgresql.md`),
 /// but the probe is still narrowed by the `attribute_name_id` prefix of
 /// `idx_ac_attr_str` before any regex is evaluated.
-fn compile_pattern(path: &AttrPath, pattern: &Pattern, polarity: PatternPolarity, target: QFilterTarget, names: &ResolvedAttributeNames) -> Condition {
+fn compile_pattern(path: &AttrPath, pattern: &Pattern, polarity: PatternPolarity, target: &QFilterTarget<'_>, names: &ResolvedAttributeNames) -> Condition {
     if !is_projection_eligible(path) {
         return fallback_pattern(path, pattern, polarity, target);
     }
@@ -307,7 +308,7 @@ fn compile_pattern(path: &AttrPath, pattern: &Pattern, polarity: PatternPolarity
     let mut binds: BindBuilder<SeaValue> = BindBuilder::default();
     let attr = binds.bind(id.get());
     let pattern_placeholder = binds.bind(pattern.as_str());
-    let value_sql = format!("\"ac\".\"value_string\" {} {}", polarity.operator(), pattern_placeholder);
+    let value_sql = format!("\"ac\".\"value_string\" {} {}", pattern_match(polarity), pattern_placeholder);
     Condition::all().add(SeaExpr::cust_with_values(exists_on_projection(&attr, &value_sql, target), binds.into_values()))
 }
 
@@ -346,10 +347,10 @@ mod tests {
     /// Render a compiled condition the way a real query would, so the assertions
     /// see the final placeholder numbering.
     fn render(q: &str) -> (String, Vec<BindValue<'static>>) {
-        render_with(q, &names(), QFilterTarget::Entities)
+        render_with(q, &names(), &QFilterTarget::entities())
     }
 
-    fn render_with(q: &str, names: &ResolvedAttributeNames, target: QFilterTarget) -> (String, Vec<BindValue<'static>>) {
+    fn render_with(q: &str, names: &ResolvedAttributeNames, target: &QFilterTarget<'_>) -> (String, Vec<BindValue<'static>>) {
         let expr = parser::parse(q).expect("parse q");
         let condition = compile(&expr, target, names).expect("compile q");
         let (sql, values) = Query::select()
@@ -479,7 +480,7 @@ mod tests {
 
     #[test]
     fn unknown_attribute_iri_compiles_to_a_constant_false() {
-        let (sql, _) = render_with(&format!("\"{}\">1", "https://example.com/never-written"), &names(), QFilterTarget::Entities);
+        let (sql, _) = render_with(&format!("\"{}\">1", "https://example.com/never-written"), &names(), &QFilterTarget::entities());
         assert!(sql.contains("FALSE"), "{sql}");
         assert!(!sql.contains("attribute_current"), "no probe is emitted when no row can exist: {sql}");
     }
@@ -519,7 +520,11 @@ mod tests {
 
     #[test]
     fn temporal_stage_one_correlates_on_the_catalogue_entity_id() {
-        let (sql, _) = render_with(&format!("{}>50", quoted(SPEED)), &names(), QFilterTarget::TemporalStage1);
+        let (sql, _) = render_with(
+            &format!("{}>50", quoted(SPEED)),
+            &names(),
+            &QFilterTarget::correlated("\"tea\".\"entity_id\"", "\"e\".\"payload\""),
+        );
         assert!(sql.contains("\"ac\".\"entity_id\" = \"tea\".\"entity_id\""), "{sql}");
     }
 

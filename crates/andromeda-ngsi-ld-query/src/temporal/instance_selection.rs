@@ -1,6 +1,6 @@
 //! Which attribute instances a temporal query returns for a qualifying entity.
 
-use crate::temporal::{dataset::DatasetSelector, last_n::LastNOrigin};
+use crate::{dataset::DatasetSelector, temporal::last_n::LastNOrigin};
 use iri_rs::IriBuf;
 use typed_builder::TypedBuilder;
 
@@ -8,7 +8,7 @@ use typed_builder::TypedBuilder;
 ///
 /// Stage 2 of the two-stage statement is built from this: which attributes,
 /// which `datasetId` partitions, and how many instances of each. All four apply
-/// per entity, after [`EntitySelection`](crate::temporal::entity_selection::EntitySelection)
+/// per entity, after [`EntitySelection`](crate::entity_selection::EntitySelection)
 /// has decided which entities qualify.
 #[derive(Debug, Clone, TypedBuilder)]
 #[builder(field_defaults(default))]

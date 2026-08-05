@@ -4,13 +4,14 @@
 //! a compiled subscription. Used by the notification worker (event-driven
 //! delivery) and the subscription cache (outbox entry generation).
 
-use crate::service::compiled_subscription::{CompiledGeoQuery, CompiledScopePattern, CompiledScopeTerm, CompiledSubscription};
+use crate::service::compiled_subscription::{CompiledGeoQuery, CompiledSubscription};
 use andromeda_ngsi_ld_geometry::{geometry::Geometry, relation::matches_geo};
+use andromeda_ngsi_ld_lexicon::entity_type_name::EntityTypeName;
 use andromeda_ngsi_ld_model::{
     notification::{ChangeEvent, ChangeOrigin},
     subscription::SubscriptionStatus,
 };
-use andromeda_ngsi_ld_query::filter::eval;
+use andromeda_ngsi_ld_query::{filter::eval, scope::query::ScopeQuery};
 use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
 use chrono::Utc;
 use serde_json::Value;
@@ -58,14 +59,10 @@ pub fn matches_subscription(sub: &CompiledSubscription, event: &ChangeEvent) -> 
     }
 
     if !sub.selectors.is_empty() {
-        let entity_id_str = event.entity_id.to_string(); // convert once for string-based comparisons below
+        let entity_id_str = event.entity_id.to_string(); // convert once for the pattern comparison below
         let any_selector_matches = sub.selectors.iter().any(|sel| {
-            let type_matches = if let Some(ref pattern) = sel.type_pattern {
-                event.entity_types.iter().any(|t| pattern.is_match(t.as_str()))
-            } else {
-                event.entity_types.iter().any(|t| t.as_str() == sel.type_)
-            };
-            if !type_matches {
+            let entity_types: Vec<&str> = event.entity_types.iter().map(EntityTypeName::as_str).collect();
+            if !sel.type_.matches(&entity_types) {
                 debug!(
                     "Subscription {} selector type mismatch: selector={} event_types={:?}",
                     sub.id, sel.type_, event.entity_types
@@ -74,7 +71,7 @@ pub fn matches_subscription(sub: &CompiledSubscription, event: &ChangeEvent) -> 
             }
 
             if let Some(ref id) = sel.id
-                && id.as_str() != entity_id_str.as_str()
+                && id != &event.entity_id
             {
                 debug!("Subscription {} selector id mismatch: selector={} event_id={}", sub.id, id, event.entity_id);
                 return false;
@@ -138,7 +135,7 @@ pub fn matches_entity_filters(sub: &CompiledSubscription, entity_data: &Value) -
     }
 
     if let Some(ref scope_q) = sub.compiled_scope_q
-        && !matches_compiled_scope_pattern(scope_q, entity_data)
+        && !matches_scope_query(scope_q, entity_data)
     {
         debug!("Subscription {} skipped: scopeQ filter did not match entity", sub.id);
         return false;
@@ -194,33 +191,14 @@ fn extract_geoproperty_geometry(entity: &Value, geoproperty_iri: &str) -> Option
     }
 }
 
-/// Evaluate a pre-compiled scope query against entity scopes.
+/// Evaluate a parsed `scopeQ` against the scopes an entity carries.
 ///
-/// Accepts the [`CompiledScopePattern`] built once at subscription compile
-/// time, so event matching does not re-split the pattern string or recompile
-/// `/+` regexes on every event.
-pub fn matches_compiled_scope_pattern(pattern: &CompiledScopePattern, entity_data: &Value) -> bool {
-    let entity_scopes = crate::service::entity::extract_scopes(entity_data);
-
-    pattern.or_terms.iter().any(|and_terms| {
-        and_terms
-            .iter()
-            .all(|term| entity_scopes.iter().any(|scope| compiled_scope_term_matches(term, scope)))
-    })
-}
-
-fn compiled_scope_term_matches(term: &CompiledScopeTerm, scope: &str) -> bool {
-    match term {
-        CompiledScopeTerm::Exact(p) => p == scope,
-        CompiledScopeTerm::HierarchicalWildcard { prefix } => {
-            if let Some(rest) = scope.strip_prefix(prefix.as_str()) {
-                rest.starts_with('/') && !rest[1..].contains('/')
-            } else {
-                false
-            }
-        }
-        CompiledScopeTerm::Regex(re) => re.is_match(scope),
-    }
+/// The clause 4.18 semantics live on [`ScopeQuery`]; this reads the scopes off
+/// the expanded payload and asks it. An earlier local reading here had `#`
+/// match exactly one further level, where the stored query and its `lquery`
+/// rendering match one or more.
+pub fn matches_scope_query(query: &ScopeQuery, entity_data: &Value) -> bool {
+    query.matches(&crate::service::entity::extract_scopes(entity_data))
 }
 
 #[cfg(test)]
@@ -230,8 +208,8 @@ mod tests {
     use andromeda_ngsi_ld_model::{
         notification::{ChangeEvent, ChangeOrigin, TriggerReason},
         subscription::SubscriptionStatus,
-        sys_attrs::SysAttrsInclusion,
     };
+    use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 
     fn make_sub() -> CompiledSubscription {
         CompiledSubscription {

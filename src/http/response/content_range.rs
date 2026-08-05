@@ -6,8 +6,7 @@
 //! headers from analogous pagination state.
 
 use crate::service::temporal::format_datetime;
-use andromeda_ngsi_ld_lexicon::time_rel::TimeRel;
-use andromeda_ngsi_ld_query::temporal::{compiled::CompiledTemporalQuery, last_n::LastNOrigin};
+use andromeda_ngsi_ld_query::temporal::{compiled::CompiledTemporalQuery, last_n::LastNOrigin, window::TimeInterval};
 use chrono::{DateTime, Utc};
 
 type TimeRange = (DateTime<Utc>, DateTime<Utc>);
@@ -28,19 +27,15 @@ pub fn build_content_range(
     let mrt = format_datetime(max_time);
 
     let (start, end, size) = if last_n_origin.is_user_specified() {
-        let upper = match compiled.window.timerel {
-            Some(TimeRel::Before) => compiled.window.time_at.map_or_else(|| mrt.clone(), format_datetime),
-            Some(TimeRel::Between) => compiled.window.end_time_at.map_or_else(|| mrt.clone(), format_datetime),
-            Some(TimeRel::After) => mrt,
-            None => mrt,
+        let upper = match compiled.window.interval {
+            TimeInterval::Before(instant) => format_datetime(instant),
+            TimeInterval::Between { to, .. } => format_datetime(to),
+            TimeInterval::After(_) | TimeInterval::Unbounded => mrt,
         };
         let size = partition_total.map_or_else(|| "*".to_string(), |n| n.to_string());
         (upper, lrt, size)
     } else {
-        let lower = match compiled.window.timerel {
-            Some(_) => compiled.window.time_at.map(format_datetime).unwrap_or(lrt),
-            None => lrt,
-        };
+        let lower = compiled.window.interval.reference().map_or(lrt, |instant| format_datetime(*instant));
         (lower, mrt, "*".to_string())
     };
 

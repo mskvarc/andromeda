@@ -34,11 +34,11 @@ pub fn build_aggregation_query_sql(
     let period = compiled.representation.aggr_period_duration;
 
     let (group_expr, order_expr) = if let Some(period) = period {
-        let period_marker = binds.bind(BindValue::String(Cow::Owned(period.as_interval_literal())));
+        let period_marker = binds.bind(BindValue::String(Cow::Owned(period.as_iso8601())));
 
         // Use time_at as bucket origin when provided; otherwise use the earliest
         // data point so buckets align to the actual data range (not epoch).
-        let bucket_expr = if let Some(time_at) = &compiled.window.time_at {
+        let bucket_expr = if let Some(time_at) = compiled.window.interval.reference() {
             let origin_marker = binds.bind(BindValue::String(Cow::Owned(time_at.to_rfc3339())));
             format!("time_bucket({}::interval, \"ah\".\"time\", {}::timestamptz)", period_marker, origin_marker)
         } else {
@@ -143,14 +143,11 @@ ORDER BY {}"#,
 mod tests {
     use super::*;
     use andromeda_ngsi_ld_lexicon::{temporal_format::TemporalFormat, time_prop::TimeProp};
-    use andromeda_ngsi_ld_model::sys_attrs::SysAttrsInclusion;
-    use andromeda_ngsi_ld_query::temporal::{
-        aggregation_period::AggregationPeriod,
+    use andromeda_ngsi_ld_query::{
         entity_selection::EntitySelection,
-        instance_selection::InstanceSelection,
-        representation::Representation,
-        window::TemporalWindow,
+        temporal::{aggregation_period::AggregationPeriod, instance_selection::InstanceSelection, representation::Representation, window::TemporalWindow},
     };
+    use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 
     fn aggregated(methods: Vec<AggrMethod>, period: Option<&str>) -> CompiledTemporalQuery {
         CompiledTemporalQuery::builder()

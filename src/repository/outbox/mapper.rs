@@ -3,12 +3,12 @@
 //! Converts a persistence-shaped [`OutboxEntryRow`] into the domain
 //! [`OutboxEntry`] by fallibly parsing URIs and the trigger reason.
 
-use crate::repository::outbox::rows::OutboxEntryRow;
-use andromeda_ngsi_ld_lexicon::{reference::NgsiLdReferenceError, uri::Uri};
-use andromeda_ngsi_ld_model::{
-    notification::TriggerReason,
-    outbox::{OutboxEntry, OutboxEntryId, WorkerInstanceId},
+use crate::repository::outbox::{
+    entry::{OutboxEntry, OutboxEntryId, WorkerInstanceId},
+    rows::OutboxEntryRow,
 };
+use andromeda_ngsi_ld_lexicon::{reference::NgsiLdReferenceError, uri::Uri};
+use andromeda_ngsi_ld_model::notification::TriggerReason;
 use std::str::FromStr;
 use thiserror::Error;
 

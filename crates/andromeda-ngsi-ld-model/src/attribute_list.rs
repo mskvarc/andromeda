@@ -7,6 +7,7 @@ use andromeda_ngsi_ld_lexicon::{
     entity_type_name::EntityTypeName,
     ngsi_ld_urn::AttributeListId,
 };
+use iri_rs::IriBuf;
 use jsonld::Expandable;
 use serde::{Deserialize, Serialize};
 use typed_builder::TypedBuilder;
@@ -50,7 +51,7 @@ pub struct AttributeList {
 pub struct AttributeInfo {
     /// Expanded IRI of the attribute.
     #[jsonld(id)]
-    pub id: String,
+    pub id: IriBuf,
     /// Fixed `Attribute` discriminator.
     #[serde(rename = "type")]
     #[jsonld(skip)]
@@ -83,7 +84,7 @@ pub struct AttributeInfo {
 pub struct AttributeDetail {
     /// Expanded IRI of the attribute.
     #[jsonld(id)]
-    pub id: String,
+    pub id: IriBuf,
     /// Fixed `Attribute` discriminator.
     #[serde(rename = "type")]
     #[jsonld(skip)]

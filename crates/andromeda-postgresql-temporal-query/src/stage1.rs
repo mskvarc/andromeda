@@ -1,11 +1,13 @@
 //! Stage 1 of a temporal query: select the entity ids that match every filter.
 
-use crate::time_column::history_column;
-use andromeda_ngsi_ld_lexicon::time_rel::TimeRel;
+use crate::{
+    schema::{Ah, An, AttributeHistory, AttributeNames, Tea, TemporalEntityAttributes},
+    time_column::history_column,
+};
 use andromeda_ngsi_ld_query::{
+    dataset::DatasetFilter,
     pagination::CountPolicy,
-    temporal::{compiled::CompiledTemporalQuery, dataset::DatasetFilter},
-    type_selection::grammar::TypeExpr,
+    temporal::{compiled::CompiledTemporalQuery, window::TimeInterval},
 };
 use andromeda_postgresql_query::{
     bind::sea_values_to_bind_values,
@@ -15,8 +17,8 @@ use andromeda_postgresql_query::{
     geo_predicate::{GeometrySource, NullGeometryPolicy},
     operator::regex_match,
     q_predicate::{attribute_names::ResolvedAttributeNames, projection as q_filter, target::QFilterTarget},
-    schema::{Ah, An, AttributeHistory, AttributeNames, E, Entities, Tea, TemporalEntityAttributes},
-    scope_predicate::{ScopeTarget, TimeWindow, condition as scope_condition},
+    schema::{E, Entities},
+    scope_predicate::{ScopeTarget, condition as scope_condition},
     type_predicate::{TypesColumn, condition as type_condition},
 };
 use iri_rs::IriBuf;
@@ -57,7 +59,7 @@ pub fn build_stage1_entity_ids(compiled: &CompiledTemporalQuery, attribute_names
         );
 
     // Conditional JOIN to attribute_history when timerel is present
-    let needs_ah_join = compiled.window.timerel.is_some() && compiled.window.time_at.is_some();
+    let needs_ah_join = compiled.window.interval.is_bounded();
     if needs_ah_join {
         select.join_as(
             JoinType::Join,
@@ -131,20 +133,18 @@ fn build_entity_conditions_for_temporal(compiled: &CompiledTemporalQuery, attrib
     }
 
     // Type expression filter
-    if !compiled.entities.types.is_empty() {
-        // clone: `TypeExpr` owns its IRIs and the compiled query is borrowed,
-        // on both the single-type and the disjunction branch
-        let type_expr = match compiled.entities.types.as_slice() {
-            [only] => TypeExpr::Type(only.clone()),
-            many => TypeExpr::Or(many.iter().map(|iri| TypeExpr::Type(iri.clone())).collect()),
-        };
-        condition = condition.add(type_condition(&type_expr, TypesColumn::AliasedEntities));
+    if let Some(type_expr) = &compiled.entities.type_expr {
+        condition = condition.add(type_condition(type_expr, TypesColumn::AliasedEntities));
     }
 
     // Q expression filter. Correlated on the TEA catalogue's entity_id, which
     // is the driving table for stage 1.
     if let Some(q_expr) = &compiled.entities.q_expr {
-        condition = condition.add(q_filter::compile(q_expr, QFilterTarget::TemporalStage1, attribute_names)?);
+        condition = condition.add(q_filter::compile(
+            q_expr,
+            &QFilterTarget::correlated("\"tea\".\"entity_id\"", "\"e\".\"payload\""),
+            attribute_names,
+        )?);
     }
 
     if let Some(geo) = &compiled.entities.geo {
@@ -183,33 +183,18 @@ fn build_temporal_stage1_conditions(compiled: &CompiledTemporalQuery) -> Result<
     };
 
     // Temporal filters (timerel + time_at)
-    if let (Some(timerel), Some(time_at)) = (&compiled.window.timerel, &compiled.window.time_at) {
-        let time_col = history_column(compiled.window.timeproperty);
-        match timerel {
-            TimeRel::Before => {
-                condition = condition.add(SeaExpr::cust_with_exprs(
-                    "$1 < $2::timestamptz",
-                    [SeaExpr::cust(time_col), SeaExpr::val(time_at.to_rfc3339()).into()],
-                ));
-            }
-            TimeRel::After => {
-                condition = condition.add(SeaExpr::cust_with_exprs(
-                    "$1 >= $2::timestamptz",
-                    [SeaExpr::cust(time_col), SeaExpr::val(time_at.to_rfc3339()).into()],
-                ));
-            }
-            TimeRel::Between => {
-                condition = condition.add(SeaExpr::cust_with_exprs(
-                    "$1 >= $2::timestamptz",
-                    [SeaExpr::cust(time_col), SeaExpr::val(time_at.to_rfc3339()).into()],
-                ));
-                if let Some(end_time) = &compiled.window.end_time_at {
-                    condition = condition.add(SeaExpr::cust_with_exprs(
-                        "$1 < $2::timestamptz",
-                        [SeaExpr::cust(time_col), SeaExpr::val(end_time.to_rfc3339()).into()],
-                    ));
-                }
-            }
+    let time_col = history_column(compiled.window.timeproperty);
+    let bound = |sql: &'static str, instant: &chrono::DateTime<chrono::Utc>| {
+        SeaExpr::cust_with_exprs(sql, [SeaExpr::cust(time_col), SeaExpr::val(instant.to_rfc3339()).into()])
+    };
+    match &compiled.window.interval {
+        TimeInterval::Unbounded => {}
+        TimeInterval::Before(instant) => condition = condition.add(bound("$1 < $2::timestamptz", instant)),
+        TimeInterval::After(instant) => condition = condition.add(bound("$1 >= $2::timestamptz", instant)),
+        TimeInterval::Between { from, to } => {
+            let lower = bound("$1 >= $2::timestamptz", from);
+            let upper = bound("$1 < $2::timestamptz", to);
+            condition = condition.add(lower).add(upper);
         }
     }
 
@@ -217,11 +202,7 @@ fn build_temporal_stage1_conditions(compiled: &CompiledTemporalQuery) -> Result<
     if let Some(scope_q) = &compiled.entities.scope_q {
         let target = ScopeTarget::History {
             entity_id_column: "\"tea\".\"entity_id\"",
-            window: TimeWindow::from_parts(
-                compiled.window.timerel.as_ref(),
-                compiled.window.time_at.as_ref(),
-                compiled.window.end_time_at.as_ref(),
-            ),
+            interval: compiled.window.interval,
         };
         condition = condition.add(scope_condition(scope_q, target)?);
     }
@@ -234,15 +215,21 @@ mod tests {
     use super::*;
     use andromeda_ngsi_ld_geometry::{geo_rel::GeoRel, geometry::Geometry};
     use andromeda_ngsi_ld_lexicon::{temporal_format::TemporalFormat, time_prop::TimeProp, uri::Uri};
-    use andromeda_ngsi_ld_model::sys_attrs::SysAttrsInclusion;
     use andromeda_ngsi_ld_query::{
+        entity_selection::EntitySelection,
         filter::parser,
         geo::query::GeoQuery,
         scope::query::ScopeQuery,
-        temporal::{entity_selection::EntitySelection, instance_selection::InstanceSelection, representation::Representation, window::TemporalWindow},
+        temporal::{instance_selection::InstanceSelection, representation::Representation, window::TemporalWindow},
+        type_selection::grammar::TypeExpr,
     };
+    use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
     use andromeda_postgresql_query::attribute_name_id::AttributeNameId;
     use chrono::{DateTime, Utc};
+
+    fn instant(raw: &str) -> DateTime<Utc> {
+        DateTime::parse_from_rfc3339(raw).expect("valid instant").with_timezone(&Utc)
+    }
 
     fn ids(raw: &[&str]) -> Vec<Uri> {
         raw.iter().map(|id| id.parse().expect("valid URI")).collect()
@@ -276,7 +263,7 @@ mod tests {
     #[test]
     fn build_entity_id_selection_with_type() {
         let mut compiled = minimal_compiled();
-        compiled.entities.types = vec![iri("https://uri.etsi.org/ngsi-ld/default-context/Vehicle")];
+        compiled.entities.type_expr = Some(TypeExpr::Type(iri("https://uri.etsi.org/ngsi-ld/default-context/Vehicle")));
         let result = build_stage1_entity_ids(&compiled, &ResolvedAttributeNames::default()).unwrap();
         assert!(result.sql.contains("SELECT DISTINCT"));
         assert!(result.sql.contains("\"e\".\"types\""));
@@ -287,8 +274,7 @@ mod tests {
     fn stage1_timerel_placeholder_is_offset_after_id_filters() {
         let mut compiled = minimal_compiled();
         compiled.entities.ids = ids(&["urn:ngsi-ld:Vehicle:1", "urn:ngsi-ld:Vehicle:2"]);
-        compiled.window.timerel = Some(TimeRel::Before);
-        compiled.window.time_at = Some(DateTime::parse_from_rfc3339("2030-01-01T00:00:00Z").unwrap().with_timezone(&Utc));
+        compiled.window.interval = TimeInterval::Before(instant("2030-01-01T00:00:00Z"));
 
         let result = build_stage1_entity_ids(&compiled, &ResolvedAttributeNames::default()).unwrap();
 
@@ -331,8 +317,7 @@ mod tests {
     fn temporal_scope_q_generates_scope_history_exists() {
         let mut compiled = minimal_compiled();
         compiled.entities.scope_q = Some(ScopeQuery::parse("/Madrid").expect("valid scope query"));
-        compiled.window.timerel = Some(TimeRel::Before);
-        compiled.window.time_at = Some(DateTime::parse_from_rfc3339("2024-06-01T00:00:00Z").unwrap().with_timezone(&Utc));
+        compiled.window.interval = TimeInterval::Before(instant("2024-06-01T00:00:00Z"));
         let result = build_stage1_entity_ids(&compiled, &ResolvedAttributeNames::default()).unwrap();
         assert!(result.sql.contains("scope_history"), "SQL should reference scope_history table");
     }
@@ -341,9 +326,10 @@ mod tests {
     fn temporal_scope_q_between() {
         let mut compiled = minimal_compiled();
         compiled.entities.scope_q = Some(ScopeQuery::parse("/A").expect("valid scope query"));
-        compiled.window.timerel = Some(TimeRel::Between);
-        compiled.window.time_at = Some(DateTime::parse_from_rfc3339("2024-01-01T00:00:00Z").unwrap().with_timezone(&Utc));
-        compiled.window.end_time_at = Some(DateTime::parse_from_rfc3339("2024-06-01T00:00:00Z").unwrap().with_timezone(&Utc));
+        compiled.window.interval = TimeInterval::Between {
+            from: instant("2024-01-01T00:00:00Z"),
+            to: instant("2024-06-01T00:00:00Z"),
+        };
         let result = build_stage1_entity_ids(&compiled, &ResolvedAttributeNames::default()).unwrap();
         assert!(result.sql.contains(">="), "Between should have >= on sh.time");
         assert!(result.sql.contains("<"), "Between should have < on sh.time");
@@ -353,8 +339,7 @@ mod tests {
     fn temporal_scope_q_compound() {
         let mut compiled = minimal_compiled();
         compiled.entities.scope_q = Some(ScopeQuery::parse("/A;/B,/C").expect("valid scope query"));
-        compiled.window.timerel = Some(TimeRel::Before);
-        compiled.window.time_at = Some(DateTime::parse_from_rfc3339("2024-06-01T00:00:00Z").unwrap().with_timezone(&Utc));
+        compiled.window.interval = TimeInterval::Before(instant("2024-06-01T00:00:00Z"));
         let result = build_stage1_entity_ids(&compiled, &ResolvedAttributeNames::default()).unwrap();
         // /A;/B -> AND, ,/C -> OR
         assert!(result.sql.contains("AND"), "Semicolon scopes produce AND");

@@ -14,14 +14,14 @@ use crate::{
             repo::EntityRepository,
             rows::{DeletedEntity, PurgedEntity},
         },
-        outbox::repo::OutboxRepository,
+        outbox::{entry::NewOutboxEntry, repo::OutboxRepository},
         pending_side_effects::{payload::PersistedBatchSideEffectJob, repo::PendingSideEffectsRepository},
         temporal::{params::HistoryBatchEntry, repo::TemporalRepository},
     },
     service::temporal_recorder::TemporalRecorder,
     worker::attribute_current_materializer::AttributeCurrentQueue,
 };
-use andromeda_ngsi_ld_model::{expanded::instance_key::AttributeInstanceKey, outbox::NewOutboxEntry};
+use andromeda_ngsi_ld_model::expanded::instance_key::AttributeInstanceKey;
 use iri_rs::IriBuf;
 use serde_json::Value;
 use sqlx::{Postgres, Transaction, postgres::PgPool};

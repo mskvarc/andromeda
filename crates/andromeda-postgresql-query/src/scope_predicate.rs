@@ -9,9 +9,10 @@ use crate::{
     error::RenderError,
     ltree::{ltree_matches, pattern_to_lquery},
 };
-use andromeda_ngsi_ld_lexicon::time_rel::TimeRel;
-use andromeda_ngsi_ld_query::scope::{pattern::ScopePattern, query::ScopeQuery};
-use chrono::{DateTime, Utc};
+use andromeda_ngsi_ld_query::{
+    scope::{pattern::ScopePattern, query::ScopeQuery},
+    temporal::window::TimeInterval,
+};
 use sea_query::{Condition, Expr as SeaExpr, SimpleExpr};
 
 /// Which relation a scope predicate is evaluated against.
@@ -30,38 +31,9 @@ pub enum ScopeTarget<'a> {
     History {
         /// SQL reference to the entity id the probe correlates against.
         entity_id_column: &'a str,
-        /// The temporal window, absent when the query bounded nothing.
-        window: Option<TimeWindow<'a>>,
+        /// The slice of the time axis the probe is bounded to.
+        interval: TimeInterval,
     },
-}
-
-/// The time window a scope-history probe is bounded by.
-#[derive(Debug, Clone, Copy)]
-pub struct TimeWindow<'a> {
-    /// How `time_at` bounds the window.
-    pub timerel: &'a TimeRel,
-    /// The reference instant.
-    pub time_at: &'a DateTime<Utc>,
-    /// The closing instant, required only by `between`.
-    pub end_time_at: Option<&'a DateTime<Utc>>,
-}
-
-impl<'a> TimeWindow<'a> {
-    /// Build a window from the three parts a compiled query carries, or `None`
-    /// when the query bounded nothing.
-    ///
-    /// `timerel` and `timeAt` are meaningless apart (clause 4.5.14), so a
-    /// half-specified pair yields no window rather than a partial one.
-    pub const fn from_parts(
-        timerel: Option<&'a TimeRel>,
-        time_at: Option<&'a DateTime<Utc>>,
-        end_time_at: Option<&'a DateTime<Utc>>,
-    ) -> Option<TimeWindow<'a>> {
-        match (timerel, time_at) {
-            (Some(timerel), Some(time_at)) => Some(TimeWindow { timerel, time_at, end_time_at }),
-            (None, _) | (Some(_), None) => None,
-        }
-    }
 }
 
 /// Render a scope query against the given target.
@@ -87,40 +59,37 @@ fn pattern_predicate(pattern: &ScopePattern, target: ScopeTarget<'_>) -> SimpleE
     let lquery = pattern_to_lquery(pattern);
     match target {
         ScopeTarget::CurrentPaths { column } => ltree_matches(SeaExpr::cust(format!("\"{column}\"")), SeaExpr::val(lquery).into()),
-        ScopeTarget::History { entity_id_column, window } => scope_history_exists(&lquery, entity_id_column, window),
+        ScopeTarget::History { entity_id_column, interval } => scope_history_exists(&lquery, entity_id_column, interval),
     }
 }
 
 /// Generate an `EXISTS` subquery for a single scope pattern against
 /// `scope_history`.
-fn scope_history_exists(lquery: &str, entity_id_column: &str, window: Option<TimeWindow<'_>>) -> SimpleExpr {
+fn scope_history_exists(lquery: &str, entity_id_column: &str, interval: TimeInterval) -> SimpleExpr {
     // The placeholders are local to this fragment; sea-query renumbers them
     // when the enclosing statement is rendered.
     let mut bind_values: Vec<String> = vec![lquery.to_string()];
     let mut time_conditions = Vec::new();
 
-    if let Some(window) = window {
-        let bind = |value: String, values: &mut Vec<String>| {
-            values.push(value);
-            format!("${}", values.len())
-        };
-        match window.timerel {
-            TimeRel::Before => {
-                let marker = bind(window.time_at.to_rfc3339(), &mut bind_values);
-                time_conditions.push(format!("\"sh\".\"time\" < {marker}::timestamptz"));
-            }
-            TimeRel::After => {
-                let marker = bind(window.time_at.to_rfc3339(), &mut bind_values);
-                time_conditions.push(format!("\"sh\".\"time\" >= {marker}::timestamptz"));
-            }
-            TimeRel::Between => {
-                let start = bind(window.time_at.to_rfc3339(), &mut bind_values);
-                time_conditions.push(format!("\"sh\".\"time\" >= {start}::timestamptz"));
-                if let Some(end_time) = window.end_time_at {
-                    let end = bind(end_time.to_rfc3339(), &mut bind_values);
-                    time_conditions.push(format!("\"sh\".\"time\" < {end}::timestamptz"));
-                }
-            }
+    let bind = |value: String, values: &mut Vec<String>| {
+        values.push(value);
+        format!("${}", values.len())
+    };
+    match interval {
+        TimeInterval::Unbounded => {}
+        TimeInterval::Before(instant) => {
+            let marker = bind(instant.to_rfc3339(), &mut bind_values);
+            time_conditions.push(format!("\"sh\".\"time\" < {marker}::timestamptz"));
+        }
+        TimeInterval::After(instant) => {
+            let marker = bind(instant.to_rfc3339(), &mut bind_values);
+            time_conditions.push(format!("\"sh\".\"time\" >= {marker}::timestamptz"));
+        }
+        TimeInterval::Between { from, to } => {
+            let start = bind(from.to_rfc3339(), &mut bind_values);
+            time_conditions.push(format!("\"sh\".\"time\" >= {start}::timestamptz"));
+            let end = bind(to.to_rfc3339(), &mut bind_values);
+            time_conditions.push(format!("\"sh\".\"time\" < {end}::timestamptz"));
         }
     }
 
@@ -154,11 +123,15 @@ mod tests {
         ScopeTarget::CurrentPaths { column }
     }
 
-    fn history(window: Option<TimeWindow<'_>>) -> ScopeTarget<'_> {
+    fn history(interval: TimeInterval) -> ScopeTarget<'static> {
         ScopeTarget::History {
             entity_id_column: TEA_ENTITY_ID,
-            window,
+            interval,
         }
+    }
+
+    fn instant(raw: &str) -> chrono::DateTime<chrono::Utc> {
+        chrono::DateTime::parse_from_rfc3339(raw).expect("valid instant").with_timezone(&chrono::Utc)
     }
 
     fn render(condition: Condition) -> String {
@@ -182,7 +155,7 @@ mod tests {
 
     #[test]
     fn a_single_scope_history_term_renders_without_nesting() {
-        let sql = render(condition(&scope("/A/B"), history(None)).unwrap());
+        let sql = render(condition(&scope("/A/B"), history(TimeInterval::Unbounded)).unwrap());
         assert_eq!(sql.matches("EXISTS").count(), 1, "{sql}");
         assert!(!sql.contains(" OR "), "{sql}");
     }
@@ -201,17 +174,18 @@ mod tests {
 
     #[test]
     fn scope_history_renders_one_exists_per_term() {
-        let sql = render(condition(&scope("/A;/B,/C"), history(None)).unwrap());
+        let sql = render(condition(&scope("/A;/B,/C"), history(TimeInterval::Unbounded)).unwrap());
         assert_eq!(sql.matches("EXISTS").count(), 3, "{sql}");
         assert!(sql.contains("scope_history"), "{sql}");
     }
 
     #[test]
     fn scope_history_bounds_the_probe_by_the_time_window() {
-        let time_at = DateTime::parse_from_rfc3339("2024-01-01T00:00:00Z").unwrap().with_timezone(&Utc);
-        let end_time_at = DateTime::parse_from_rfc3339("2024-06-01T00:00:00Z").unwrap().with_timezone(&Utc);
-        let window = TimeWindow::from_parts(Some(&TimeRel::Between), Some(&time_at), Some(&end_time_at));
-        let sql = render(condition(&scope("/A"), history(window)).unwrap());
+        let interval = TimeInterval::Between {
+            from: instant("2024-01-01T00:00:00Z"),
+            to: instant("2024-06-01T00:00:00Z"),
+        };
+        let sql = render(condition(&scope("/A"), history(interval)).unwrap());
         assert!(sql.contains("\"sh\".\"time\" >="), "{sql}");
         assert!(sql.contains("\"sh\".\"time\" <"), "{sql}");
     }
@@ -222,20 +196,12 @@ mod tests {
     fn both_targets_render_the_same_boolean_structure() {
         let scope_q = scope("/A;/B,/C");
         let current_sql = render(condition(&scope_q, current("scope_paths")).unwrap());
-        let history_sql = render(condition(&scope_q, history(None)).unwrap());
+        let history_sql = render(condition(&scope_q, history(TimeInterval::Unbounded)).unwrap());
         for sql in [&current_sql, &history_sql] {
             assert!(sql.contains(" AND "), "{sql}");
             assert!(sql.contains(" OR "), "{sql}");
         }
         assert_eq!(current_sql.matches("::lquery").count(), 3, "{current_sql}");
         assert_eq!(history_sql.matches("::lquery").count(), 3, "{history_sql}");
-    }
-
-    #[test]
-    fn a_window_needs_both_a_relation_and_an_instant() {
-        let time_at = DateTime::parse_from_rfc3339("2024-01-01T00:00:00Z").unwrap().with_timezone(&Utc);
-        assert!(TimeWindow::from_parts(None, Some(&time_at), None).is_none());
-        assert!(TimeWindow::from_parts(Some(&TimeRel::After), None, None).is_none());
-        assert!(TimeWindow::from_parts(Some(&TimeRel::After), Some(&time_at), None).is_some());
     }
 }

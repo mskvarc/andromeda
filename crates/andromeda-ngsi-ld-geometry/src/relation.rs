@@ -39,15 +39,36 @@ pub fn matches_geo(georel: &GeoRel, subject: &geo::Geometry<f64>, reference: &ge
         // `ST_Equals(subject, reference)`; mutual containment is `geo`'s
         // equivalent, as it has no topological equality predicate.
         GeoRel::Equals => subject.contains(reference) && reference.contains(subject),
-        // `ST_Overlaps(subject, reference)`
-        GeoRel::Overlaps => subject.intersects(reference),
+        // `ST_Overlaps(subject, reference)`: intersecting, of the same
+        // dimension, and neither one containing the other. This used to be
+        // plain `intersects`, under which an entity lying wholly inside the
+        // query polygon matched here and not in the PostGIS rendering of the
+        // same clause.
+        GeoRel::Overlaps => {
+            dimension(subject) == dimension(reference) && subject.intersects(reference) && !subject.contains(reference) && !reference.contains(subject)
+        }
         // `ST_DWithin` / `ST_Distance` over `geography`; here a Haversine
         // distance between centroids, which is what the `geography` type
         // approximates for non-point geometries.
-        GeoRel::Near { max_distance, min_distance } => {
-            let distance = haversine_distance_m(subject, reference);
-            max_distance.is_none_or(|max| distance <= max) && min_distance.is_none_or(|min| distance >= min)
-        }
+        GeoRel::Near { max_distance, min_distance } => match haversine_distance_m(subject, reference) {
+            Some(distance) => max_distance.is_none_or(|max| distance <= max) && min_distance.is_none_or(|min| distance >= min),
+            // A geometry with no centroid is nowhere, so it is near nothing.
+            None => false,
+        },
+    }
+}
+
+/// The topological dimension of a geometry, or `None` for a collection, whose
+/// members may differ.
+///
+/// `ST_Overlaps` is defined only between geometries of equal dimension: a point
+/// and a polygon intersect but never overlap.
+const fn dimension(geometry: &geo::Geometry<f64>) -> Option<u8> {
+    match geometry {
+        geo::Geometry::Point(_) | geo::Geometry::MultiPoint(_) => Some(0),
+        geo::Geometry::Line(_) | geo::Geometry::LineString(_) | geo::Geometry::MultiLineString(_) => Some(1),
+        geo::Geometry::Polygon(_) | geo::Geometry::MultiPolygon(_) | geo::Geometry::Rect(_) | geo::Geometry::Triangle(_) => Some(2),
+        geo::Geometry::GeometryCollection(_) => None,
     }
 }
 
@@ -97,6 +118,8 @@ mod tests {
         let outside = point(50.0, 50.0);
         let area = square(0.0, 0.0, 1.0);
         let same_area = square(0.0, 0.0, 1.0);
+        let shifted_area = square(1.0, 0.0, 1.0);
+        let inner_area = square(0.0, 0.0, 0.25);
         let far_area = square(50.0, 50.0, 1.0);
 
         let cases = vec![
@@ -171,10 +194,10 @@ mod tests {
                 expected: false,
             },
             Case {
-                description: "overlapping areas overlap",
+                description: "partially overlapping areas overlap",
                 georel: GeoRel::Overlaps,
                 subject: &area,
-                reference: &same_area,
+                reference: &shifted_area,
                 expected: true,
             },
             Case {
@@ -182,6 +205,31 @@ mod tests {
                 georel: GeoRel::Overlaps,
                 subject: &area,
                 reference: &far_area,
+                expected: false,
+            },
+            Case {
+                // `ST_Overlaps` excludes containment: an area wholly inside
+                // another intersects it but does not overlap it.
+                description: "an area contained by the reference does not overlap it",
+                georel: GeoRel::Overlaps,
+                subject: &inner_area,
+                reference: &area,
+                expected: false,
+            },
+            Case {
+                description: "identical areas do not overlap, they are equal",
+                georel: GeoRel::Overlaps,
+                subject: &area,
+                reference: &same_area,
+                expected: false,
+            },
+            Case {
+                // Dimensions differ, so the pair can intersect but never
+                // overlap.
+                description: "a point inside an area does not overlap it",
+                georel: GeoRel::Overlaps,
+                subject: &inside,
+                reference: &area,
                 expected: false,
             },
             Case {

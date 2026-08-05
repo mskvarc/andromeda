@@ -47,22 +47,6 @@ pub enum SnapshotField {
     LastUsedAt,
 }
 
-impl SnapshotField {
-    /// SQL column backing this field in the `snapshots` table.
-    pub const fn sql_column(self) -> &'static str {
-        match self {
-            Self::Id => "id",
-            Self::SnapshotPriority => "snapshot_priority",
-            Self::Status => "status",
-            Self::Endpoint => "endpoint",
-            Self::CreatedAt => "created_at",
-            Self::ModifiedAt => "modified_at",
-            Self::ExpiresAt => "expires_at",
-            Self::LastUsedAt => "last_used_at",
-        }
-    }
-}
-
 /// Comparison operator (NGSI-LD clause 4.9).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, StrumDisplay)]
 pub enum SnapshotOp {
@@ -84,20 +68,6 @@ pub enum SnapshotOp {
     /// Greater than or equal.
     #[strum(serialize = ">=")]
     Gte,
-}
-
-impl SnapshotOp {
-    /// SQL operator text for parameterised queries.
-    pub const fn sql(self) -> &'static str {
-        match self {
-            Self::Eq => "=",
-            Self::Neq => "<>",
-            Self::Lt => "<",
-            Self::Lte => "<=",
-            Self::Gt => ">",
-            Self::Gte => ">=",
-        }
-    }
 }
 
 /// Typed value of a filter term, constrained by its field.
@@ -423,14 +393,5 @@ mod tests {
             SnapshotValue::Id(id) => pretty_assertions::assert_eq!(id.as_str(), "urn:ngsi-ld:Snapshot:abc"),
             other => panic!("unexpected value: {:?}", other),
         }
-    }
-
-    #[test]
-    fn sql_column_mapping_matches_schema() {
-        pretty_assertions::assert_eq!(SnapshotField::Id.sql_column(), "id");
-        pretty_assertions::assert_eq!(SnapshotField::SnapshotPriority.sql_column(), "snapshot_priority");
-        pretty_assertions::assert_eq!(SnapshotField::Status.sql_column(), "status");
-        pretty_assertions::assert_eq!(SnapshotField::ExpiresAt.sql_column(), "expires_at");
-        pretty_assertions::assert_eq!(SnapshotField::LastUsedAt.sql_column(), "last_used_at");
     }
 }

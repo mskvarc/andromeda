@@ -49,8 +49,8 @@ use crate::{
             query::EntityQueryService,
         },
         entity_map::{parse_entity_map_urn, parse_iso8601_duration, parse_uri_csv},
-        subscription_cache::{compile_geo_q, compile_scope_q},
-        subscription_matching::{matches_compiled_geo_query, matches_compiled_scope_pattern},
+        subscription_cache::compile_geo_q,
+        subscription_matching::{matches_compiled_geo_query, matches_scope_query},
     },
 };
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, uri::Uri};
@@ -58,12 +58,13 @@ use andromeda_ngsi_ld_model::{
     entity::{Entity, EntityPatch},
     entity_type::EntityTypeValue,
     expanded::mutation::selection::{DatasetSelection, OverwritePolicy},
-    sys_attrs::SysAttrsInclusion,
 };
 use andromeda_ngsi_ld_query::{
     filter::{eval::evaluate, expansion::expand_q_expression},
     projection::purge::{PurgeMode, parse_attribute_list},
+    scope::query::ScopeQuery,
 };
+use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 use axum::{
     Json,
     extract::{OriginalUri, Path},
@@ -633,7 +634,13 @@ pub async fn query(
             } else {
                 None
             };
-            let compiled_scope = deferred.scope_q.as_deref().map(compile_scope_q);
+            let compiled_scope = deferred
+                .scope_q
+                .as_deref()
+                .map(ScopeQuery::parse)
+                .transpose()
+                .map_err(AndromedaError::from)
+                .with_instance(&uri)?;
             let compiled_geo = geo_val.as_ref().and_then(|v| compile_geo_q(v, "split-entities"));
 
             let mut filtered = Vec::with_capacity(entities.len());
@@ -649,7 +656,7 @@ pub async fn query(
 
                 let q_ok = q_expr.as_ref().is_none_or(|expr| evaluate(expr, &expanded));
                 let geo_ok = compiled_geo.as_ref().is_none_or(|geo| matches_compiled_geo_query(geo, &expanded));
-                let scope_ok = compiled_scope.as_ref().is_none_or(|scope| matches_compiled_scope_pattern(scope, &expanded));
+                let scope_ok = compiled_scope.as_ref().is_none_or(|scope| matches_scope_query(scope, &expanded));
 
                 if q_ok && geo_ok && scope_ok {
                     filtered.push(entity);

@@ -1,11 +1,13 @@
 //! Query parameters for the NGSI-LD Entity query API (5.7.2).
 
 use crate::{
-    http::{model::query_request::QueryRequest, parameter::query::is_valid_uri},
+    http::{
+        model::query_request::QueryRequest,
+        parameter::{error::ParameterError, query::is_valid_uri},
+    },
     impl_shared_query_params,
     renderer::entity::RenderMode,
 };
-use andromeda_ngsi_ld_model::sys_attrs::SysAttrsInclusion;
 use andromeda_ngsi_ld_query::{
     error::QueryError,
     ordering::{
@@ -13,6 +15,7 @@ use andromeda_ngsi_ld_query::{
         term::{OrderDirection, OrderTerm},
     },
 };
+use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 use serde::Deserialize;
 
 /// Raw HTTP query parameters for entity queries, deserialized from the request URL.
@@ -194,13 +197,13 @@ impl EntityQueryParameters {
     }
 
     /// Validate query parameters.
-    pub fn validate(&self) -> Result<(), QueryError> {
+    pub fn validate(&self) -> Result<(), ParameterError> {
         // Validate options parameter
         if let Some(opts) = &self.options {
             for opt in opts.split(',') {
                 let opt = opt.trim();
                 if !matches!(opt, "keyValues" | "simplified" | "sysAttrs" | "concise" | "normalized") {
-                    return Err(QueryError::ParamOptionsInvalid(opt.to_string()));
+                    return Err(ParameterError::OptionsInvalid(opt.to_string()));
                 }
             }
         }
@@ -208,16 +211,16 @@ impl EntityQueryParameters {
         if let Some(fmt) = &self.format
             && !matches!(fmt.as_str(), "normalized" | "keyValues" | "simplified" | "concise")
         {
-            return Err(QueryError::ParamFormatInvalid(fmt.clone()));
+            return Err(ParameterError::FormatInvalid(fmt.clone()));
         }
 
         if let Some(ids) = &self.id {
             for id in ids.split(',').map(str::trim) {
                 if id.is_empty() {
-                    return Err(QueryError::ParamIdListEmpty);
+                    return Err(ParameterError::Query(QueryError::ParamIdListEmpty));
                 }
                 if !is_valid_uri(id) {
-                    return Err(QueryError::ParamIdInvalid(id.to_string()));
+                    return Err(ParameterError::Query(QueryError::ParamIdInvalid(id.to_string())));
                 }
             }
         }
@@ -225,7 +228,7 @@ impl EntityQueryParameters {
         if let Some(pattern) = &self.id_pattern
             && pattern.trim().is_empty()
         {
-            return Err(QueryError::ParamIdPatternEmpty);
+            return Err(ParameterError::IdPatternEmpty);
         }
 
         // Validate orderGeometry: must be a valid GeoJSON geometry type, not GeometryCollection (S5.2.43)
@@ -233,29 +236,29 @@ impl EntityQueryParameters {
             match order_geometry.as_str() {
                 "Point" | "MultiPoint" | "LineString" | "MultiLineString" | "Polygon" | "MultiPolygon" => {}
                 "GeometryCollection" => {
-                    return Err(QueryError::ParamOrderGeometryCollection);
+                    return Err(ParameterError::OrderGeometryCollection);
                 }
                 other => {
-                    return Err(QueryError::ParamOrderGeometryInvalid(other.to_string()));
+                    return Err(ParameterError::OrderGeometryInvalid(other.to_string()));
                 }
             }
         }
 
         // Validate orderFrom: must be valid JSON coordinates (S5.2.43)
         if let Some(ref order_from) = self.order_from {
-            serde_json::from_str::<serde_json::Value>(order_from).map_err(|source| QueryError::ParamOrderFromInvalid {
+            serde_json::from_str::<serde_json::Value>(order_from).map_err(|source| ParameterError::OrderFromInvalid {
                 value: order_from.clone(),
                 source,
             })?;
         }
 
         if let Some(ref collation) = self.collation {
-            IcuCollation::parse(collation)?;
+            IcuCollation::parse(collation).map_err(|source| ParameterError::Query(QueryError::from(source)))?;
         }
 
         // drop and keep are mutually exclusive (S5.6.21)
         if self.drop.is_some() && self.keep.is_some() {
-            return Err(QueryError::ParamDropKeepExclusive);
+            return Err(ParameterError::DropKeepExclusive);
         }
 
         Ok(())
@@ -495,7 +498,7 @@ mod tests {
     fn validate_rejects_invalid_id() {
         let p = params_from_query("id=thisisaninvaliduri");
         let err = p.validate().expect_err("expected invalid id error");
-        assert!(matches!(err, QueryError::ParamIdInvalid(_)));
+        assert!(matches!(err, ParameterError::Query(QueryError::ParamIdInvalid(_))));
         assert!(err.to_string().contains("Invalid id value"));
     }
 
@@ -525,7 +528,7 @@ mod tests {
     fn validate_rejects_geometry_collection() {
         let p = params_from_query("orderFrom=%5B8%2C40%5D&orderGeometry=GeometryCollection");
         let err = p.validate().expect_err("expected GeometryCollection rejection");
-        assert!(matches!(err, QueryError::ParamOrderGeometryCollection));
+        assert!(matches!(err, ParameterError::OrderGeometryCollection));
         assert!(err.to_string().contains("GeometryCollection"));
     }
 
@@ -533,7 +536,7 @@ mod tests {
     fn validate_rejects_invalid_order_geometry() {
         let p = params_from_query("orderFrom=%5B8%2C40%5D&orderGeometry=Hexagon");
         let err = p.validate().expect_err("expected invalid geometry rejection");
-        assert!(matches!(err, QueryError::ParamOrderGeometryInvalid(_)));
+        assert!(matches!(err, ParameterError::OrderGeometryInvalid(_)));
         assert!(err.to_string().contains("Hexagon"));
     }
 
@@ -541,7 +544,7 @@ mod tests {
     fn validate_rejects_invalid_order_from_json() {
         let p = params_from_query("orderFrom=notjson");
         let err = p.validate().expect_err("expected invalid JSON rejection");
-        assert!(matches!(err, QueryError::ParamOrderFromInvalid { .. }));
+        assert!(matches!(err, ParameterError::OrderFromInvalid { .. }));
         assert!(err.to_string().contains("orderFrom"));
     }
 
@@ -703,7 +706,7 @@ mod tests {
     fn validate_rejects_drop_and_keep_together() {
         let p = params_from_query("type=Vehicle&drop=A&keep=B");
         let err = p.validate().expect_err("expected mutual exclusivity error");
-        assert!(matches!(err, QueryError::ParamDropKeepExclusive));
+        assert!(matches!(err, ParameterError::DropKeepExclusive));
         assert!(err.to_string().contains("mutually exclusive"));
     }
 

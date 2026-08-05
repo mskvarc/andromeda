@@ -12,6 +12,7 @@ andromeda-ngsi-ld-geometry = { path = "crates/andromeda-ngsi-ld-geometry" }
 andromeda-ngsi-ld-lexicon = { path = "crates/andromeda-ngsi-ld-lexicon" }
 andromeda-ngsi-ld-model = { path = "crates/andromeda-ngsi-ld-model" }
 andromeda-ngsi-ld-query = { path = "crates/andromeda-ngsi-ld-query" }
+andromeda-ngsi-ld-representation = { path = "crates/andromeda-ngsi-ld-representation" }
 andromeda-ngsi-ld-vocabulary = { path = "crates/andromeda-ngsi-ld-vocabulary" }
 andromeda-postgresql-context-query = { path = "crates/andromeda-postgresql-context-query" }
 andromeda-postgresql-encoding = { path = "crates/andromeda-postgresql-encoding" }
@@ -49,6 +50,7 @@ andromeda-ngsi-ld-geometry.workspace = true
 andromeda-ngsi-ld-lexicon.workspace = true
 andromeda-ngsi-ld-model.workspace = true
 andromeda-ngsi-ld-query.workspace = true
+andromeda-ngsi-ld-representation.workspace = true
 andromeda-ngsi-ld-vocabulary.workspace = true
 andromeda-postgresql-context-query.workspace = true
 andromeda-postgresql-encoding.workspace = true

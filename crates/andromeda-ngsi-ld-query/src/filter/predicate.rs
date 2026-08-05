@@ -54,27 +54,11 @@ pub enum CmpOp {
 }
 
 impl CmpOp {
-    /// SQL operator this comparison renders to.
-    ///
-    /// Shared by every SQL rendering of clause 4.9, so a predicate cannot
-    /// compile to one operator against `attribute_current`, another against the
-    /// payload and a third against a registration's properties.
-    pub const fn sql_operator(self) -> &'static str {
-        match self {
-            CmpOp::Equal => "=",
-            CmpOp::Unequal => "!=",
-            CmpOp::Greater => ">",
-            CmpOp::GreaterEq => ">=",
-            CmpOp::Less => "<",
-            CmpOp::LessEq => "<=",
-        }
-    }
-
     /// Clause 4.9 token this comparison was written as.
     ///
     /// The inverse of what the parser consumes, used to serialise a filter back
-    /// into query-string form. Distinct from [`CmpOp::sql_operator`] only at
-    /// `==`, which SQL spells `=`.
+    /// into query-string form. How a backend spells the same comparison is that
+    /// backend's business and is rendered there.
     pub const fn ngsi_token(self) -> &'static str {
         match self {
             CmpOp::Equal => "==",
@@ -122,31 +106,6 @@ pub enum PatternPolarity {
     NotMatch,
 }
 
-impl PatternPolarity {
-    /// POSIX regex operator this polarity renders to.
-    pub const fn operator(self) -> &'static str {
-        match self {
-            Self::Match => "~",
-            Self::NotMatch => "!~",
-        }
-    }
-}
-
-/// Combine a presence test with a value test, as clause 4.9 requires.
-///
-/// Presence is conjoined in both polarities. Clause 4.9 states that the entity
-/// "shall contain the target element" for a predicate to hold, and says so for
-/// `notPatternOp` explicitly: `name!~="^A.*"` selects entities whose `name` is
-/// present and does not match, not entities that have no `name` at all.
-///
-/// Every SQL rendering that tests a value builds its predicate here, which is
-/// what stops one of them disjoining presence instead. One of them did: a
-/// registration that simply lacked a property satisfied every negated `q`
-/// predicate over it.
-pub fn present_and(presence_sql: &str, value_sql: &str) -> String {
-    format!("({presence_sql} AND {value_sql})")
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -159,10 +118,5 @@ mod tests {
         for op in [CmpOp::Greater, CmpOp::GreaterEq, CmpOp::Less, CmpOp::LessEq] {
             assert_eq!(op.set_membership(), None, "{op:?}");
         }
-    }
-
-    #[test]
-    fn a_value_test_is_always_conjoined_with_presence() {
-        assert_eq!(present_and("x IS NOT NULL", "NOT (x ~ $1)"), "(x IS NOT NULL AND NOT (x ~ $1))");
     }
 }

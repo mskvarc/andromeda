@@ -20,6 +20,8 @@
 
 use crate::error::QueryError;
 use regex::Regex;
+use serde::{Deserialize, Serialize};
+use std::{fmt, str::FromStr};
 
 /// A regular expression from a query parameter or a `q` predicate, compiled at
 /// parse time.
@@ -27,7 +29,12 @@ use regex::Regex;
 /// Equality is over the source text, not over the compiled automaton: two
 /// patterns are the same predicate exactly when the client wrote the same
 /// thing.
-#[derive(Debug, Clone)]
+///
+/// The wire form is the pattern as written, so a resource that stores one — an
+/// `EntitySelector.idPattern` (clause 5.2.11), a Snapshot entity selector
+/// (5.2.23) — gives back exactly what the client sent.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(try_from = "String", into = "String")]
 pub struct Pattern(Regex);
 
 impl Pattern {
@@ -47,6 +54,40 @@ impl Pattern {
     /// Whether the pattern matches anywhere in `haystack`.
     pub fn is_match(&self, haystack: &str) -> bool {
         self.0.is_match(haystack)
+    }
+}
+
+impl FromStr for Pattern {
+    type Err = QueryError;
+
+    fn from_str(raw: &str) -> Result<Pattern, QueryError> {
+        Pattern::parse(raw)
+    }
+}
+
+// Parsing lives in `Pattern::parse` so borrowed call sites do not allocate;
+// this adapter exists only because `#[serde(try_from = "String")]` requires it.
+impl TryFrom<String> for Pattern {
+    type Error = QueryError;
+
+    fn try_from(raw: String) -> Result<Pattern, QueryError> {
+        Pattern::parse(&raw)
+    }
+}
+
+// `derive_more::Display` cannot reach through a foreign newtype's private
+// field, which is where the source text lives.
+impl fmt::Display for Pattern {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.0.as_str())
+    }
+}
+
+// The wire form is the pattern as written; this exists only because
+// `#[serde(into = "String")]` demands an `Into<String>`.
+impl From<Pattern> for String {
+    fn from(pattern: Pattern) -> String {
+        pattern.0.as_str().to_string()
     }
 }
 
@@ -85,6 +126,20 @@ mod tests {
     fn two_patterns_are_equal_exactly_when_their_text_is() {
         assert_eq!(Pattern::parse("^A.*").unwrap(), Pattern::parse("^A.*").unwrap());
         assert_ne!(Pattern::parse("^A.*").unwrap(), Pattern::parse("^B.*").unwrap());
+    }
+
+    #[test]
+    fn a_pattern_round_trips_through_the_text_the_client_wrote() {
+        let raw = "urn:ngsi-ld:Vehicle:.*";
+        let json = serde_json::to_string(&Pattern::parse(raw).expect("valid")).expect("serialises");
+        assert_eq!(json, format!("{raw:?}"));
+        let decoded: Pattern = serde_json::from_str(&json).expect("deserialises");
+        assert_eq!(decoded, Pattern::parse(raw).expect("valid"));
+    }
+
+    #[test]
+    fn an_invalid_pattern_is_rejected_when_the_resource_is_deserialized() {
+        assert!(serde_json::from_str::<Pattern>("\"[unclosed\"").is_err());
     }
 
     #[test]

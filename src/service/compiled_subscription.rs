@@ -10,21 +10,12 @@
 use crate::transport::endpoint::EndpointTransport;
 use andromeda_ngsi_ld_geometry::geo_rel::GeoRel;
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
-use andromeda_ngsi_ld_model::{subscription::SubscriptionStatus, sys_attrs::SysAttrsInclusion};
-use andromeda_ngsi_ld_query::filter::expression::Expr;
+use andromeda_ngsi_ld_model::subscription::{EntitySelector, SubscriptionStatus};
+use andromeda_ngsi_ld_query::{filter::expression::Expr, scope::query::ScopeQuery};
+use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 use chrono::{DateTime, Utc};
-use regex::Regex;
 use serde_json::Value;
 use std::collections::HashSet;
-
-/// Pre-compiled entity selector for fast matching.
-#[derive(Debug)]
-pub struct CompiledSelector {
-    pub id: Option<String>,
-    pub id_pattern: Option<Regex>,
-    pub type_: String,               // expanded IRI
-    pub type_pattern: Option<Regex>, // regex for alternation patterns like (Building|Tower)
-}
 
 /// Pre-compiled CSR subscription for in-memory matching against CSR changes.
 #[derive(Debug)]
@@ -35,7 +26,7 @@ pub struct CompiledCsrSubscription {
     pub endpoint_accept: Option<String>,
     pub endpoint_receiver_info: Option<Vec<Value>>,
     pub endpoint_transport: EndpointTransport,
-    pub selectors: Vec<CompiledSelector>,
+    pub selectors: Vec<EntitySelector>,
     pub watched_attrs: Option<HashSet<String>>,
     pub throttling_secs: Option<f64>,
     pub time_interval_secs: Option<f64>,
@@ -55,7 +46,7 @@ pub struct CompiledSubscription {
     pub endpoint_transport: EndpointTransport,
     pub triggers: Vec<String>,
     pub watched_attrs: Option<HashSet<String>>, // expanded IRIs; None = all
-    pub selectors: Vec<CompiledSelector>,
+    pub selectors: Vec<EntitySelector>,
     pub throttling_secs: Option<f64>,
     pub time_interval_secs: Option<f64>,
     pub notification_attributes: Option<Vec<AttributeName>>,
@@ -70,8 +61,8 @@ pub struct CompiledSubscription {
     /// filter could not be parsed at compile time (in which case the
     /// subscription never matches an entity through the geo path).
     pub compiled_geo_q: Option<CompiledGeoQuery>,
-    /// Pre-parsed `scopeQ` pattern tree, if set.
-    pub compiled_scope_q: Option<CompiledScopePattern>,
+    /// The subscription's parsed `scopeQ`, if set.
+    pub compiled_scope_q: Option<ScopeQuery>,
     pub dataset_id: Option<Vec<String>>,
     pub notification_join: Option<String>,
     pub notification_join_level: u32,
@@ -94,28 +85,4 @@ pub struct CompiledGeoQuery {
     pub georel: GeoRel,
     /// Expanded IRI of the entity geoproperty to read.
     pub geoproperty_iri: String,
-}
-
-/// Pre-parsed `scopeQ` pattern (ETSI GS CIM 009 clause 4.18).
-///
-/// The raw scopeQ string uses `,` for OR and `;` for AND between terms; each
-/// term may be an exact scope path, a hierarchical wildcard (`/#`), or a
-/// single-level wildcard (`/+`). Splitting and regex pre-compilation happen
-/// once at subscription load time.
-#[derive(Debug, Clone)]
-pub struct CompiledScopePattern {
-    /// Disjunction of conjunctions: the outer `Vec` is OR, the inner is AND.
-    pub or_terms: Vec<Vec<CompiledScopeTerm>>,
-}
-
-/// A single term in a compiled scope pattern.
-#[derive(Debug, Clone)]
-pub enum CompiledScopeTerm {
-    /// Exact match against a scope path.
-    Exact(String),
-    /// Hierarchical wildcard `<prefix>/#` — matches any path whose prefix
-    /// equals the stored prefix followed by a single additional segment.
-    HierarchicalWildcard { prefix: String },
-    /// `/+` wildcard expressed as a compiled regex.
-    Regex(Regex),
 }

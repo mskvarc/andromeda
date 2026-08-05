@@ -1,8 +1,9 @@
 //! The compiled, context-expanded form of a temporal query.
 
 use crate::{
+    entity_selection::EntitySelection,
     pagination::Pagination,
-    temporal::{entity_selection::EntitySelection, instance_selection::InstanceSelection, representation::Representation, window::TemporalWindow},
+    temporal::{instance_selection::InstanceSelection, representation::Representation, window::TemporalWindow},
 };
 use typed_builder::TypedBuilder;
 

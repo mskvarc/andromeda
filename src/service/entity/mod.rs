@@ -16,6 +16,7 @@ use crate::{
     jsonld::{ContextSpec, JsonLdEngine},
     repository::{
         entity::{params::EntityCreateParams, repo::EntityRepository},
+        outbox::entry::NewOutboxEntry,
         pending_side_effects::payload::PersistedBatchSideEffectJob,
         temporal::repo::TemporalRepository,
         uow::UnitOfWorkFactory,
@@ -38,7 +39,6 @@ use andromeda_ngsi_ld_model::{
     entity::{Entity, EntityPatch},
     expanded::{entity_member::extract_types, instance_key::removed_attribute_instances},
     notification::{ChangeEvent, TriggerReason},
-    outbox::NewOutboxEntry,
 };
 use andromeda_postgresql_query::ltree::scope_to_ltree;
 use chrono::{DateTime, SecondsFormat, Utc};

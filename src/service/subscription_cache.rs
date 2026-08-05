@@ -8,7 +8,7 @@
 use crate::{
     repository::subscription_store::repo::SubscriptionStore,
     service::{
-        compiled_subscription::{CompiledGeoQuery, CompiledScopePattern, CompiledScopeTerm, CompiledSelector, CompiledSubscription},
+        compiled_subscription::{CompiledGeoQuery, CompiledSubscription},
         spatial::{
             SpatialKey,
             subscription_index::{SpatialSubscriptionIndex, SubEntry},
@@ -21,13 +21,11 @@ use crate::{
 use andromeda_ngsi_ld_model::{
     notification::{ChangeEvent, SubscriptionChange, TriggerReason},
     subscription::{EntitySelector, Subscription, SubscriptionStatus},
-    sys_attrs::SysAttrsInclusion,
 };
-use andromeda_ngsi_ld_query::filter::parser;
+use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
 use dashmap::DashMap;
 use iri_rs::IriBuf;
-use regex::Regex;
 use std::{collections::HashSet, sync::Arc};
 use tracing::debug;
 
@@ -170,16 +168,18 @@ impl SubscriptionCache {
             self.untyped.insert(compiled.id.clone());
             return;
         }
-        // A subscription with a selector whose type field is an alternation
-        // (regex-backed) can match multiple expanded IRIs that the cache
-        // cannot enumerate ahead of time; fall back to the untyped bucket so
-        // `find_matching` still considers it.
+        // A selector whose type is a boolean expression can match several
+        // expanded IRIs that the cache cannot enumerate ahead of time; it falls
+        // back to the untyped bucket so `find_matching` still considers it.
         let mut indexed_any = false;
         for selector in &compiled.selectors {
-            if selector.type_pattern.is_some() {
-                self.untyped.insert(compiled.id.clone());
-            } else {
-                self.by_type.entry(selector.type_.clone()).or_default().insert(compiled.id.clone());
+            match selector.type_.as_single_type() {
+                Some(type_iri) => {
+                    self.by_type.entry(type_iri.to_owned()).or_default().insert(compiled.id.clone());
+                }
+                None => {
+                    self.untyped.insert(compiled.id.clone());
+                }
             }
             indexed_any = true;
         }
@@ -225,15 +225,15 @@ impl SubscriptionCache {
         // A subscription without selectors matches every type; index under a
         // synthetic wildcard key so find_matching can look it up regardless
         // of event type. Concretely-typed subscriptions index under every
-        // selector type they name. Pattern-typed selectors fall back to the
-        // wildcard bucket -- matches the `untyped` fallback used by the
-        // by_type index.
+        // selector type they name. A selector whose type is a boolean
+        // expression falls back to the wildcard bucket -- matching the
+        // `untyped` fallback used by the by_type index.
         let mut indexed_any_type = false;
         for selector in &compiled.selectors {
-            if selector.type_pattern.is_some() {
+            let Some(type_name) = selector.type_.as_single_type() else {
                 continue;
-            }
-            match IriBuf::new(selector.type_.clone()) {
+            };
+            match IriBuf::new(type_name.to_owned()) {
                 Ok(type_iri) => {
                     let key = SpatialKey::new(self.tenant.clone(), type_iri, geoproperty_iri.clone());
                     self.spatial.insert(key, entry.clone());
@@ -242,7 +242,7 @@ impl SubscriptionCache {
                 Err(_) => {
                     debug!(
                         "Subscription {} spatial index skipped selector type '{}': not a valid IRI",
-                        compiled.id, selector.type_
+                        compiled.id, type_name
                     );
                 }
             }
@@ -264,12 +264,9 @@ impl SubscriptionCache {
 /// Returns `None` if the subscription's endpoint transport cannot be parsed
 /// (logged at debug level).
 pub fn compile_subscription(sub: &Subscription) -> Option<CompiledSubscription> {
-    let selectors: Vec<CompiledSelector> = sub
-        .selection
-        .entities
-        .as_ref()
-        .map(|entities| entities.iter().filter_map(compile_selector).collect())
-        .unwrap_or_default();
+    // clone: the compiled form outlives the borrowed subscription and every
+    // selector member is already parsed, so there is nothing left to compile
+    let selectors: Vec<EntitySelector> = sub.selection.entities.clone().unwrap_or_default();
 
     let triggers: Vec<String> = sub.selection.notification_trigger.as_ref().map_or_else(
         || TriggerReason::defaults().iter().map(|s| String::from(*s)).collect(),
@@ -281,22 +278,6 @@ pub fn compile_subscription(sub: &Subscription) -> Option<CompiledSubscription> 
         .watched_attributes
         .as_ref()
         .map(|attrs| attrs.iter().map(ToString::to_string).collect::<HashSet<String>>());
-
-    let compiled_q = sub.filters.q.as_ref().and_then(|q_str| match parser::parse(q_str) {
-        Ok(expr) => Some(expr),
-        Err(e) => {
-            debug!("Failed to parse q filter '{}' for subscription {}: {}", q_str, sub.id, e);
-            None
-        }
-    });
-
-    let compiled_csf = sub.filters.csf.as_ref().and_then(|csf_str| match parser::parse(csf_str) {
-        Ok(expr) => Some(expr),
-        Err(e) => {
-            debug!("Failed to parse csf filter '{}' for subscription {}: {}", csf_str, sub.id, e);
-            None
-        }
-    });
 
     let endpoint_transport = match parse_endpoint_transport(sub.notification.endpoint.uri.as_str(), sub.notification.endpoint.notifier_info.as_deref()) {
         Ok(t) => t,
@@ -328,13 +309,15 @@ pub fn compile_subscription(sub: &Subscription) -> Option<CompiledSubscription> 
         notification_show_changes: sub.notification.show_changes.unwrap_or(false),
         jsonld_context: sub.delivery.jsonld_context.as_ref().map(ToString::to_string),
         expires_at: sub.lifecycle.expires_at,
-        compiled_q,
+        // clone: the compiled form owns its filters, and the subscription it was
+        // built from is borrowed and outlives it
+        compiled_q: sub.filters.q.clone(),
         compiled_geo_q: sub.filters.geo_q.as_ref().and_then(|v| compile_geo_q(v, sub.id.as_ref())),
-        compiled_scope_q: sub.filters.scope_q.as_deref().map(compile_scope_q),
+        compiled_scope_q: sub.filters.scope_q.clone(),
         dataset_id: sub.filters.dataset_id.as_ref().map(|ids| ids.iter().map(ToString::to_string).collect()),
         notification_join: sub.notification.join.map(|j| j.to_string()),
         notification_join_level: sub.notification.join_level.unwrap_or(1).min(5),
-        compiled_csf,
+        compiled_csf: sub.filters.csf.clone(),
         local_only: sub.delivery.local_only.unwrap_or(false),
     })
 }
@@ -390,67 +373,6 @@ pub fn compile_geo_q(geo_q: &serde_json::Value, sub_id: &str) -> Option<Compiled
     })
 }
 
-/// Pre-parse a `scopeQ` string into its disjunctive-normal-form term tree.
-///
-/// Terms that use `/+` are compiled to regex here so event matching can skip
-/// regex construction on every event. Unrecognized patterns fall through to
-/// exact-match semantics.
-pub fn compile_scope_q(raw: &str) -> CompiledScopePattern {
-    let or_terms = raw
-        .split(',')
-        .map(|or_term| or_term.split(';').map(|pattern| compile_scope_term(pattern.trim())).collect::<Vec<_>>())
-        .collect();
-    CompiledScopePattern { or_terms }
-}
-
-fn compile_scope_term(pattern: &str) -> CompiledScopeTerm {
-    if let Some(prefix) = pattern.strip_suffix("/#") {
-        return CompiledScopeTerm::HierarchicalWildcard { prefix: prefix.to_owned() };
-    }
-    if pattern.contains("/+") {
-        let regex_pattern = format!("^{}$", pattern.replace("/+", "/[^/]+"));
-        if let Ok(re) = Regex::new(&regex_pattern) {
-            return CompiledScopeTerm::Regex(re);
-        }
-    }
-    CompiledScopeTerm::Exact(pattern.to_owned())
-}
-
-/// Compile a single entity selector into a pre-compiled form.
-fn compile_selector(selector: &EntitySelector) -> Option<CompiledSelector> {
-    let id_pattern = selector.id_pattern.as_ref().and_then(|p| match Regex::new(p) {
-        Ok(r) => Some(r),
-        Err(e) => {
-            debug!("Invalid idPattern regex '{}': {}", p, e);
-            None
-        }
-    });
-
-    let type_pattern = if selector.type_.contains('|') || (selector.type_.contains('(') && selector.type_.contains(')')) {
-        let raw = selector.type_.trim();
-        let inner = raw.trim_start_matches('(').trim_end_matches(')');
-        let alternatives: Vec<&str> = inner.split('|').collect();
-        let pattern_parts: Vec<String> = alternatives.iter().map(|alt| regex::escape(alt.trim())).collect();
-        let regex_str = format!("({})", pattern_parts.join("|"));
-        match Regex::new(&regex_str) {
-            Ok(r) => Some(r),
-            Err(e) => {
-                debug!("Invalid type regex pattern '{}': {}", selector.type_, e);
-                None
-            }
-        }
-    } else {
-        None
-    };
-
-    Some(CompiledSelector {
-        id: selector.id.clone(),
-        id_pattern,
-        type_: selector.type_.clone(),
-        type_pattern,
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -467,17 +389,16 @@ mod tests {
             endpoint_transport: EndpointTransport::Http,
             triggers: triggers.into_iter().map(String::from).collect(),
             watched_attrs: None,
-            selectors: vec![CompiledSelector {
+            selectors: vec![EntitySelector {
                 id: None,
                 id_pattern: None,
-                type_: type_.to_string(),
-                type_pattern: None,
+                type_: type_.parse().expect("valid type selection expression"),
             }],
             throttling_secs: None,
             time_interval_secs: None,
             notification_attributes: None,
             notification_format: None,
-            notification_sys_attrs: andromeda_ngsi_ld_model::sys_attrs::SysAttrsInclusion::Strip,
+            notification_sys_attrs: andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion::Strip,
             notification_show_changes: false,
             jsonld_context: None,
             expires_at: None,

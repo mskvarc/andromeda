@@ -84,9 +84,9 @@ pub fn parse_time(raw: &str) -> Result<NaiveTime, QueryError> {
 impl Scalar {
     /// The operand's canonical text form.
     ///
-    /// One rendering serves both the clause 4.9 serialisation and every SQL
+    /// One rendering serves both the clause 4.9 serialisation and every backend
     /// binding, so a filter that round-trips through the query string and a
-    /// filter that reaches PostgreSQL carry the same literal by construction.
+    /// filter that reaches a store carry the same literal by construction.
     /// Temporal operands render in RFC 3339 UTC form.
     pub fn literal_text(&self) -> String {
         match self {
@@ -96,28 +96,8 @@ impl Scalar {
             Scalar::Str(value) => value.clone(),
             Scalar::DateTime(value) => value.to_rfc3339_opts(SecondsFormat::AutoSi, true),
             Scalar::Date(value) => value.to_string(),
-            Scalar::Time(value) => value.format(TIME_SQL_FORMAT).to_string(),
+            Scalar::Time(value) => value.format(TIME_FORMAT).to_string(),
         }
-    }
-
-    /// The operand's text form and the cast the comparison needs around it.
-    ///
-    /// Used by every SQL rendering that compares against JSONB, where the value
-    /// arrives as text from `#>>` and both sides have to be cast to the same
-    /// type before they are ordered. Without the cast a numeric comparison
-    /// would order lexicographically, so `9` would exceed `10`.
-    ///
-    /// Temporal operands cast to nothing: PostgreSQL orders canonical RFC 3339
-    /// UTC text identically to the instants it denotes, because a fixed-width,
-    /// fixed-offset representation sorts the same way lexicographically and
-    /// chronologically.
-    pub fn as_sql_text(&self) -> (&'static str, String) {
-        let cast = match self {
-            Scalar::Number(_) => "::numeric",
-            Scalar::Bool(_) => "::boolean",
-            Scalar::Str(_) | Scalar::DateTime(_) | Scalar::Date(_) | Scalar::Time(_) => "",
-        };
-        (cast, self.literal_text())
     }
 }
 
@@ -127,7 +107,7 @@ const TIME_ANCHOR_DATE: &str = "1970-01-01";
 
 /// Canonical rendering of a UTC time of day: seconds always, fractional
 /// seconds only when they are non-zero, and an explicit `Z`.
-const TIME_SQL_FORMAT: &str = "%H:%M:%S%.fZ";
+const TIME_FORMAT: &str = "%H:%M:%S%.fZ";
 
 #[cfg(test)]
 mod tests {
@@ -135,24 +115,6 @@ mod tests {
 
     fn date_time(raw: &str) -> Scalar {
         Scalar::DateTime(parse_date_time(raw).expect("valid date-time"))
-    }
-
-    #[test]
-    fn a_number_carries_a_numeric_cast_so_it_is_not_ordered_as_text() {
-        assert_eq!(Scalar::Number(9.into()).as_sql_text(), ("::numeric", "9".to_string()));
-    }
-
-    #[test]
-    fn a_boolean_carries_a_boolean_cast() {
-        assert_eq!(Scalar::Bool(true).as_sql_text(), ("::boolean", "true".to_string()));
-    }
-
-    #[test]
-    fn text_and_temporal_operands_need_no_cast() {
-        assert_eq!(Scalar::Str("red".to_string()).as_sql_text(), ("", "red".to_string()));
-        assert_eq!(date_time("2024-01-01T00:00:00Z").as_sql_text(), ("", "2024-01-01T00:00:00Z".to_string()));
-        assert_eq!(Scalar::Date(parse_date("2024-01-01").unwrap()).as_sql_text(), ("", "2024-01-01".to_string()));
-        assert_eq!(Scalar::Time(parse_time("12:00:00Z").unwrap()).as_sql_text(), ("", "12:00:00Z".to_string()));
     }
 
     #[test]
@@ -191,13 +153,7 @@ mod tests {
 
     #[test]
     fn fractional_seconds_survive_the_canonical_rendering() {
-        assert_eq!(
-            date_time("2024-01-01T00:00:00.250Z").as_sql_text(),
-            ("", "2024-01-01T00:00:00.250Z".to_string())
-        );
-        assert_eq!(
-            Scalar::Time(parse_time("12:00:00.250Z").unwrap()).as_sql_text(),
-            ("", "12:00:00.250Z".to_string())
-        );
+        assert_eq!(date_time("2024-01-01T00:00:00.250Z").literal_text(), "2024-01-01T00:00:00.250Z");
+        assert_eq!(Scalar::Time(parse_time("12:00:00.250Z").unwrap()).literal_text(), "12:00:00.250Z");
     }
 }

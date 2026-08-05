@@ -1,7 +1,10 @@
 //! Temporal simplify renderer: deserializes a compacted temporal entity value
 //! and produces its key-values simplified form.
 
-use crate::{core::error::AndromedaError, renderer::Renderer};
+use crate::{
+    core::error::AndromedaError,
+    renderer::{Renderer, simplify::simplify_entity},
+};
 use andromeda_ngsi_ld_model::entity::Entity;
 use serde_json::Value;
 
@@ -76,7 +79,7 @@ impl Renderer for TemporalSimplifyRenderer {
 fn simplify_value(entity_value: Value) -> Result<Value, AndromedaError> {
     let entity: Entity = serde_json::from_value(entity_value)
         .map_err(|e| AndromedaError::temporal_validation(format!("Failed to parse temporal entity for simplification: {}", e)))?;
-    Ok(entity.simplify())
+    Ok(simplify_entity(&entity))
 }
 
 #[cfg(test)]

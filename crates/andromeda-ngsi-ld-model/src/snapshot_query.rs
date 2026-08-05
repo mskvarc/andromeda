@@ -5,7 +5,22 @@
 //! `snapshotTemporalQueries` rather than members of the resource itself.
 
 use andromeda_ngsi_ld_geometry::{geo_rel::GeoRel, geometry::GeometryType};
-use andromeda_ngsi_ld_lexicon::{aggr_method::AggrMethod, attribute_name::AttributeName, rfc3339, time_prop::TimeProp, time_rel::TimeRel};
+use andromeda_ngsi_ld_lexicon::{
+    aggr_method::AggrMethod,
+    attribute_name::AttributeName,
+    reference::NgsiLdReference,
+    rfc3339,
+    time_prop::TimeProp,
+    time_rel::TimeRel,
+    uri::Uri,
+};
+use andromeda_ngsi_ld_query::{
+    filter::expression::Expr,
+    pattern::Pattern,
+    scope::query::ScopeQuery,
+    temporal::aggregation_period::{self, AggregationPeriod},
+    type_selection::grammar::TypeExprRaw,
+};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -23,19 +38,14 @@ pub struct SnapshotQuery {
     #[builder(default)]
     pub entities: Option<Vec<SnapshotEntitySelector>>,
     /// NGSI-LD query expression for property-level filtering (clause 4.9).
-    ///
-    /// Held as written: the `q` parser lives in `andromeda-query`, which depends
-    /// on this crate. See `docs/query-language-layering.md`.
     #[builder(default)]
-    pub q: Option<String>,
+    pub q: Option<Expr>,
     /// Geo-spatial query filter.
     #[builder(default)]
     pub geo_q: Option<SnapshotGeoQuery>,
-    /// Scope query string, comma for OR and semicolon for AND (clause 4.18).
-    ///
-    /// Held as written, for the same reason as `q`. See `docs/query-language-layering.md`.
+    /// Scope query, comma for OR and semicolon for AND (clause 4.18).
     #[builder(default)]
-    pub scope_q: Option<String>,
+    pub scope_q: Option<ScopeQuery>,
     /// Attribute names to include in the result.
     #[builder(default)]
     pub attrs: Option<Vec<AttributeName>>,
@@ -52,14 +62,12 @@ pub struct SnapshotQuery {
 #[serde(rename_all = "camelCase")]
 pub struct SnapshotEntitySelector {
     /// Specific entity IDs to match.
-    pub id: Option<Vec<String>>,
-    /// Regex pattern for matching entity IDs (clause 4.5.6).
-    ///
-    /// Held as written, for the same reason as `q`. See `docs/query-language-layering.md`.
-    pub id_pattern: Option<String>,
-    /// Entity type to match.
+    pub id: Option<Vec<Uri>>,
+    /// Regular expression the entity id must match (clause 4.5.6).
+    pub id_pattern: Option<Pattern>,
+    /// Type selection expression the entity's types must satisfy (clause 4.17).
     #[serde(rename = "type")]
-    pub type_: Option<String>,
+    pub type_: Option<TypeExprRaw>,
 }
 
 /// Geo-spatial query within a snapshot query (spec 5.2.23).
@@ -75,9 +83,10 @@ pub struct SnapshotGeoQuery {
     /// Name of the GeoProperty to query against (clause 4.10); `location` when
     /// absent.
     ///
-    /// Held as written: the term reaches this member before JSON-LD expansion,
-    /// and the expander lives above this crate. See `docs/query-language-layering.md`.
-    pub geoproperty: Option<String>,
+    /// A reference rather than an IRI: the term reaches this member before
+    /// JSON-LD expansion, so it may be a short name, a compact IRI or an
+    /// expanded one, which is exactly the range clause 4.6.2 admits.
+    pub geoproperty: Option<NgsiLdReference>,
 }
 
 /// Temporal query within a snapshot temporal query (spec 5.2.23).
@@ -108,8 +117,9 @@ pub struct SnapshotTemporalQuery {
     pub aggr_methods: Option<Vec<AggrMethod>>,
     /// ISO 8601 duration for the aggregation bucket size (clause 4.5.19).
     ///
-    /// Held as written: the `AggregationPeriod` type that parses it lives in
-    /// `andromeda-query`, which depends on this crate. See `docs/query-language-layering.md`.
+    /// Absent, empty and zero all mean one bucket over the whole range, so all
+    /// three deserialize to `None`.
+    #[serde(with = "aggregation_period::optional", default)]
     #[builder(default)]
-    pub aggr_period_duration: Option<String>,
+    pub aggr_period_duration: Option<AggregationPeriod>,
 }

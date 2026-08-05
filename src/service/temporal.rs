@@ -30,11 +30,10 @@ use crate::{
     worker::attribute_current_materializer::AttributeCurrentBarrier,
 };
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, temporal_format::TemporalFormat, uri::Uri};
-use andromeda_ngsi_ld_model::{
-    expanded::entity_member::{extract_expires_at, extract_types},
-    sys_attrs::SysAttrsInclusion,
-};
+use andromeda_ngsi_ld_model::expanded::entity_member::{extract_expires_at, extract_types};
 use andromeda_ngsi_ld_query::{
+    dataset::DatasetSelector,
+    entity_selection::EntitySelection,
     error::QueryError,
     filter::{
         expansion::{apply_expand_values, apply_json_keys, expand_q_expression},
@@ -49,15 +48,14 @@ use andromeda_ngsi_ld_query::{
     temporal::{
         aggregation_period::AggregationPeriod,
         compiled::CompiledTemporalQuery,
-        dataset::DatasetSelector,
-        entity_selection::EntitySelection,
         instance_selection::InstanceSelection,
         last_n::LastNOrigin,
         representation::Representation,
-        window::TemporalWindow,
+        window::{TemporalWindow, TimeInterval},
     },
-    type_selection::expansion::expand_entity_types,
+    type_selection::{expansion::expand_type_expression, parser as type_parser},
 };
+use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 use andromeda_ngsi_ld_vocabulary::expanded::classes as expanded_classes;
 use andromeda_postgresql_query::q_predicate::{attribute_names::ResolvedAttributeNames, projection::referenced_attribute_names};
 use andromeda_postgresql_temporal_query::{history::build_temporal_history_query, stage1::build_stage1_entity_ids};
@@ -881,9 +879,16 @@ impl TemporalService {
 
         let geo = self.compile_geo_query(params, context).await?;
 
-        let types = match params.entity_type.as_deref() {
-            Some(raw_types) => expand_entity_types(raw_types, &ContextualExpander::new(&self.engine, context)).await?,
-            None => Vec::new(),
+        // Clause 4.17: the `type` parameter is a boolean expression, read by
+        // the same parser the entity path uses. Splitting it on commas, which
+        // is what this did while the compiled form held a flat list, made a
+        // conjunction unexpressible on the temporal endpoints.
+        let type_expr = match params.entity_type.as_deref() {
+            Some(raw_types) => {
+                let raw = type_parser::parse(raw_types)?;
+                Some(expand_type_expression(&raw, &ContextualExpander::new(&self.engine, context)).await?)
+            }
+            None => None,
         };
 
         let format = params.parse_format();
@@ -922,7 +927,7 @@ impl TemporalService {
                 EntitySelection::builder()
                     .ids(parse_id_list(&params.parse_ids().unwrap_or_default())?)
                     .id_pattern(id_pattern)
-                    .types(types)
+                    .type_expr(type_expr)
                     .q_expr(q_expr)
                     .geo(geo)
                     .scope_q(params.scope_q.as_deref().map(ScopeQuery::parse).transpose()?)
@@ -930,9 +935,11 @@ impl TemporalService {
             )
             .window(
                 TemporalWindow::builder()
-                    .timerel(timerel)
-                    .time_at(parse_instant(params.time_at.as_deref(), "timeAt")?)
-                    .end_time_at(parse_instant(params.end_time_at.as_deref(), "endTimeAt")?)
+                    .interval(TimeInterval::from_parts(
+                        timerel,
+                        parse_instant(params.time_at.as_deref(), "timeAt")?,
+                        parse_instant(params.end_time_at.as_deref(), "endTimeAt")?,
+                    )?)
                     .timeproperty(params.parse_timeproperty())
                     .build(),
             )

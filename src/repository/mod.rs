@@ -10,6 +10,7 @@ pub mod csource_registration;
 pub mod csource_subscription;
 pub mod entity;
 pub mod entity_map;
+pub mod enum_labels;
 /// Binding geometries into PostgreSQL statements.
 pub mod ewkb_binding;
 pub mod jsonld_context;

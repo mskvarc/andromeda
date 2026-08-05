@@ -14,6 +14,7 @@ use andromeda_ngsi_ld_model::{
     attribute_list::{AttributeDetail, AttributeInfo, AttributeList, AttributeListType, AttributeResourceType},
     entity_type_list::{EntityType, EntityTypeInfo, EntityTypeInfoType, EntityTypeList, EntityTypeListType, EntityTypeType},
 };
+use iri_rs::IriBuf;
 use jsonld::Expandable;
 use serde_json::Value;
 use sqlx::postgres::PgPool;
@@ -105,7 +106,7 @@ impl EntityDiscoveryService {
             .map(|(type_iri, attrs)| {
                 Ok(EntityType {
                     type_name: parse_type_name(&type_iri)?,
-                    id: type_iri,
+                    id: parse_discovery_iri(type_iri)?,
                     type_: EntityTypeType,
                     attribute_names: attrs.iter().map(|attr| parse_attribute_name(attr)).collect::<Result<_, _>>()?,
                 })
@@ -168,7 +169,8 @@ impl EntityDiscoveryService {
         let mut attribute_details: Vec<AttributeDetail> = Vec::new();
         for (uri, types) in &attributes {
             attribute_details.push(AttributeDetail {
-                id: uri.clone(), // clone: the map key is borrowed and the record owns its id
+                // clone: the map key is borrowed and the record owns its id
+                id: parse_discovery_iri(uri.clone())?,
                 type_: AttributeResourceType,
                 attribute_name: parse_attribute_name(uri)?,
                 attribute_types: types.iter().copied().collect(),
@@ -180,7 +182,7 @@ impl EntityDiscoveryService {
 
         // Build typed response
         let type_info = EntityTypeInfo::builder()
-            .id(type_iri)
+            .id(parse_discovery_iri(type_iri)?)
             .type_(EntityTypeInfoType)
             .type_name(parse_type_name(type_name)?)
             .entity_count(count)
@@ -236,7 +238,7 @@ impl EntityDiscoveryService {
                 attributes.push(
                     AttributeInfo::builder()
                         .attribute_name(parse_attribute_name(&iri)?)
-                        .id(iri)
+                        .id(parse_discovery_iri(iri)?)
                         .type_(AttributeResourceType)
                         .attribute_types(Vec::new())
                         .attribute_count(None)
@@ -333,7 +335,7 @@ impl EntityDiscoveryService {
         // the store holds the expanded `@type` IRIs the payload carried.
         let attr = AttributeInfo::builder()
             .attribute_name(parse_attribute_name(&attr_iri)?)
-            .id(attr_iri)
+            .id(parse_discovery_iri(attr_iri)?)
             .attribute_types(row.attribute_types.iter().filter_map(|iri| AttributeType::from_iri_suffix(iri)).collect())
             .attribute_count(Some(row.entity_count))
             .type_names(Some(row.entity_types.iter().map(|name| parse_type_name(name)).collect::<Result<_, _>>()?))
@@ -428,6 +430,12 @@ fn parse_type_name(value: &str) -> Result<EntityTypeName, AndromedaError> {
 /// for the same reason as [`parse_type_name`].
 fn parse_attribute_name(value: &str) -> Result<AttributeName, AndromedaError> {
     AttributeName::from_str(value).map_err(|error| AndromedaError::internal(format!("stored attribute name is not a valid NGSI-LD name: {error}")))
+}
+
+/// Parse a stored expanded IRI, reporting a malformed one as an internal fault
+/// for the same reason as [`parse_type_name`]: the broker wrote it.
+fn parse_discovery_iri(value: String) -> Result<IriBuf, AndromedaError> {
+    IriBuf::new(value).map_err(|error| AndromedaError::internal(format!("stored discovery identifier is not a valid IRI: {error}")))
 }
 
 #[inline]

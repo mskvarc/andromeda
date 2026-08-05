@@ -1,8 +1,8 @@
 //! SQL generation for Context Source Registration queries using sea-query.
 
 use crate::csr::filter::csr_expr_to_condition;
-use andromeda_ngsi_ld_lexicon::{time_prop::TimeProp, time_rel::TimeRel};
-use andromeda_ngsi_ld_query::{csr::compiled::CompiledCsrQuery, error::QueryError};
+use andromeda_ngsi_ld_lexicon::time_prop::TimeProp;
+use andromeda_ngsi_ld_query::{csr::compiled::CompiledCsrQuery, temporal::window::TimeInterval};
 use andromeda_postgresql_query::{
     bind::sea_values_to_bind_values,
     built::BuiltQuery,
@@ -127,33 +127,35 @@ fn build_csr_conditions(query: &CompiledCsrQuery) -> Result<Condition, RenderErr
             TimeProp::Observed | TimeProp::Deleted => "observation_interval",
         };
 
-        match temporal.timerel {
-            TimeRel::Before => {
+        match temporal.interval {
+            // Clause 5.10.2: a registration that declares no interval may still
+            // serve the window, so a NULL column matches every relation.
+            TimeInterval::Unbounded => {}
+            TimeInterval::Before(instant) => {
                 condition = condition.add(SeaExpr::cust_with_values(
                     format!(
                         "(\"{col}\" IS NULL OR (\"{col}\"->>'startAt')::timestamptz < $1::timestamptz)",
                         col = interval_col
                     ),
-                    [temporal.time_at.to_rfc3339()],
+                    [instant.to_rfc3339()],
                 ));
             }
-            TimeRel::After => {
+            TimeInterval::After(instant) => {
                 condition = condition.add(SeaExpr::cust_with_values(
                     format!(
                         "(\"{col}\" IS NULL OR (\"{col}\"->>'endAt')::timestamptz > $1::timestamptz)",
                         col = interval_col
                     ),
-                    [temporal.time_at.to_rfc3339()],
+                    [instant.to_rfc3339()],
                 ));
             }
-            TimeRel::Between => {
-                let end_time = temporal.end_time_at.as_ref().ok_or(QueryError::ParamEndTimeAtRequired)?;
+            TimeInterval::Between { from, to } => {
                 condition = condition.add(SeaExpr::cust_with_values(
                     format!(
                         "(\"{col}\" IS NULL OR ((\"{col}\"->>'startAt')::timestamptz <= $2::timestamptz AND (\"{col}\"->>'endAt')::timestamptz >= $1::timestamptz))",
                         col = interval_col
                     ),
-                    [temporal.time_at.to_rfc3339(), end_time.to_rfc3339()],
+                    [from.to_rfc3339(), to.to_rfc3339()],
                 ));
             }
         }
@@ -256,9 +258,7 @@ mod tests {
         let mut q = empty_query();
         q.temporal = Some(
             CompiledCsrTemporalFilter::builder()
-                .timerel(TimeRel::Before)
-                .time_at(dt("2024-01-01T00:00:00Z"))
-                .end_time_at(None)
+                .interval(TimeInterval::Before(dt("2024-01-01T00:00:00Z")))
                 .timeproperty(None)
                 .build(),
         );
@@ -272,9 +272,7 @@ mod tests {
         let mut q = empty_query();
         q.temporal = Some(
             CompiledCsrTemporalFilter::builder()
-                .timerel(TimeRel::After)
-                .time_at(dt("2024-01-01T00:00:00Z"))
-                .end_time_at(None)
+                .interval(TimeInterval::After(dt("2024-01-01T00:00:00Z")))
                 .timeproperty(Some(TimeProp::Created))
                 .build(),
         );
@@ -288,9 +286,10 @@ mod tests {
         let mut q = empty_query();
         q.temporal = Some(
             CompiledCsrTemporalFilter::builder()
-                .timerel(TimeRel::Between)
-                .time_at(dt("2024-01-01T00:00:00Z"))
-                .end_time_at(Some(dt("2024-02-01T00:00:00Z")))
+                .interval(TimeInterval::Between {
+                    from: dt("2024-01-01T00:00:00Z"),
+                    to: dt("2024-02-01T00:00:00Z"),
+                })
                 .timeproperty(None)
                 .build(),
         );

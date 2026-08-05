@@ -6,17 +6,18 @@ use geo::{Geometry as GeoGeometry, Point, algorithm::Centroid};
 /// Mean Earth radius in metres (IUGG recommended value).
 const EARTH_RADIUS_M: f64 = 6_371_008.8;
 
-/// Compute the great-circle distance in metres between the centroids of two
-/// geometries using the Haversine formula.
+/// The great-circle distance in metres between the centroids of two
+/// geometries, or `None` when either has no centroid.
 ///
 /// Zero-dimensional geometries (`Point`) trivially return their own
 /// coordinates. For `LineString`/`Polygon`/collections the centroid is used,
 /// matching the semantics used elsewhere for `georel=near` on non-point
-/// geometries.
-pub fn haversine_distance_m(a: &GeoGeometry<f64>, b: &GeoGeometry<f64>) -> f64 {
-    let centroid_a = a.centroid().unwrap_or(Point::new(0.0, 0.0));
-    let centroid_b = b.centroid().unwrap_or(Point::new(0.0, 0.0));
-    haversine_point_distance_m(&centroid_a, &centroid_b)
+/// geometries. An empty geometry has no centroid at all, and there is no
+/// distance to anything from a geometry that is nowhere — this used to default
+/// to latitude 0, longitude 0, which put such a geometry in the Gulf of Guinea
+/// and let `near;maxDistance` match it.
+pub fn haversine_distance_m(a: &GeoGeometry<f64>, b: &GeoGeometry<f64>) -> Option<f64> {
+    Some(haversine_point_distance_m(&a.centroid()?, &b.centroid()?))
 }
 
 /// Compute the great-circle distance in metres between two points.
@@ -49,7 +50,7 @@ mod tests {
     #[test]
     fn haversine_zero_for_identical_points() {
         let p = GeoGeometry::Point(Point::new(2.3522, 48.8566));
-        let d = haversine_distance_m(&p, &p);
+        let d = haversine_distance_m(&p, &p).expect("a point is its own centroid");
         assert!(d.abs() < 1e-6, "expected ~0, got {}", d);
     }
 
@@ -57,9 +58,17 @@ mod tests {
     fn haversine_known_distance_paris_london() {
         let paris = GeoGeometry::Point(Point::new(2.3522, 48.8566));
         let london = GeoGeometry::Point(Point::new(-0.1276, 51.5074));
-        let d = haversine_distance_m(&paris, &london);
+        let d = haversine_distance_m(&paris, &london).expect("both points have centroids");
         // Known distance ~344 km; allow 1% tolerance.
         assert!((d - 344_000.0).abs() < 3_500.0, "expected ~344km, got {} m", d);
+    }
+
+    #[test]
+    fn a_geometry_with_no_centroid_is_at_no_distance_from_anything() {
+        let empty = GeoGeometry::GeometryCollection(geo::GeometryCollection(Vec::new()));
+        let paris = GeoGeometry::Point(Point::new(2.3522, 48.8566));
+        assert_eq!(haversine_distance_m(&empty, &paris), None);
+        assert_eq!(haversine_distance_m(&paris, &empty), None);
     }
 
     #[test]

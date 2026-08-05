@@ -1,8 +1,11 @@
 //! Query parameters for the NGSI-LD Context Source Registration discovery API.
 
-use crate::{http::parameter::query::is_valid_uri, impl_shared_query_params};
-use andromeda_ngsi_ld_model::sys_attrs::SysAttrsInclusion;
+use crate::{
+    http::parameter::{error::ParameterError, query::is_valid_uri},
+    impl_shared_query_params,
+};
 use andromeda_ngsi_ld_query::error::QueryError;
+use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 use serde::Deserialize;
 
 /// Raw HTTP query parameters for Context Source Registration discovery.
@@ -58,13 +61,13 @@ impl CsrQueryParameters {
     ///
     /// At least one filtering parameter must be present. Geo and temporal
     /// parameter groups must be complete when any member is specified.
-    pub fn validate(&self) -> Result<(), QueryError> {
+    pub fn validate(&self) -> Result<(), ParameterError> {
         // At least one filtering parameter is required
         let has_filter =
             self.entity_type.is_some() || self.id.is_some() || self.id_pattern.is_some() || self.attrs.is_some() || self.q.is_some() || self.georel.is_some();
         if !has_filter {
-            return Err(QueryError::ParamOther(
-                "At least one of type, id, idPattern, attrs, q, or georel must be provided".to_string(),
+            return Err(ParameterError::SelectorRequired(
+                "At least one of type, id, idPattern, attrs, q, or georel must be provided",
             ));
         }
 
@@ -72,7 +75,7 @@ impl CsrQueryParameters {
         if let Some(ref ids) = self.id {
             for id in ids.split(',').map(str::trim) {
                 if !id.is_empty() && !is_valid_uri(id) {
-                    return Err(QueryError::ParamIdInvalid(id.to_string()));
+                    return Err(ParameterError::Query(QueryError::ParamIdInvalid(id.to_string())));
                 }
             }
         }
@@ -81,17 +84,17 @@ impl CsrQueryParameters {
         if (self.georel.is_some() || self.geometry.is_some() || self.coordinates.is_some())
             && (self.georel.is_none() || self.geometry.is_none() || self.coordinates.is_none())
         {
-            return Err(QueryError::GeoIncomplete);
+            return Err(ParameterError::Query(QueryError::GeoIncomplete));
         }
 
         // Temporal query requires timeAt when timerel is present
         if self.timerel.is_some() && self.time_at.is_none() {
-            return Err(QueryError::ParamTimerelTimeatPair);
+            return Err(ParameterError::Query(QueryError::ParamTimerelTimeatPair));
         }
 
         // between requires endTimeAt
         if self.timerel.as_deref() == Some("between") && self.end_time_at.is_none() {
-            return Err(QueryError::ParamEndTimeAtRequired);
+            return Err(ParameterError::Query(QueryError::ParamEndTimeAtRequired));
         }
 
         Ok(())
@@ -131,21 +134,21 @@ mod tests {
     fn validate_rejects_invalid_id_uri() {
         let p = params_from_query("id=notavaliduri");
         let err = p.validate().expect_err("expected error");
-        assert!(matches!(err, QueryError::ParamIdInvalid(_)));
+        assert!(matches!(err, ParameterError::Query(QueryError::ParamIdInvalid(_))));
     }
 
     #[test]
     fn validate_rejects_incomplete_geo() {
         let p = params_from_query("type=Vehicle&georel=within&geometry=Point");
         let err = p.validate().expect_err("expected error");
-        assert!(matches!(err, QueryError::GeoIncomplete));
+        assert!(matches!(err, ParameterError::Query(QueryError::GeoIncomplete)));
     }
 
     #[test]
     fn validate_rejects_temporal_without_time_at() {
         let p = params_from_query("type=Vehicle&timerel=before");
         let err = p.validate().expect_err("expected error");
-        assert!(matches!(err, QueryError::ParamTimerelTimeatPair));
+        assert!(matches!(err, ParameterError::Query(QueryError::ParamTimerelTimeatPair)));
     }
 
     #[test]

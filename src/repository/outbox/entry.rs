@@ -1,11 +1,14 @@
-//! Outbox-based notification delivery domain types.
+//! The rows of the notification outbox, and the values written into one.
 //!
-//! Defines the data structures for the notification outbox pattern,
-//! enabling atomic persistence of notification intents alongside entity
-//! mutations (ETSI GS CIM 009 clause 5.3).
+//! The transactional outbox is a decision Andromeda made, not a resource ETSI
+//! GS CIM 009 defines: a row identifier from a sequence, a worker's lease over
+//! it, a retry counter and a next-attempt instant describe how the broker
+//! delivers a notification reliably, not what a notification is. It lives here
+//! rather than in the data model for the same reason `TeaEntry` does — a
+//! specification crate that holds a row shape is describing a schema.
 
-use crate::notification::TriggerReason;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
+use andromeda_ngsi_ld_model::notification::TriggerReason;
 use chrono::{DateTime, Utc};
 use derive_more::{Display, From};
 use serde_json::Value;

@@ -4,7 +4,7 @@
 //! produced by `sqlx::FromRow`. They do not leak past the service/worker
 //! layer: a mapper converts them into the domain [`OutboxEntry`].
 //!
-//! [`OutboxEntry`]: andromeda_ngsi_ld_model::outbox::OutboxEntry
+//! [`OutboxEntry`]: crate::repository::outbox::entry::OutboxEntry
 
 use chrono::{DateTime, Utc};
 use serde_json::Value;

@@ -2,6 +2,7 @@
 
 use crate::attribute_list::AttributeDetail;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, constant_string, entity_type_name::EntityTypeName, ngsi_ld_urn::EntityTypeListId};
+use iri_rs::IriBuf;
 use jsonld::Expandable;
 use serde::{Deserialize, Serialize};
 use typed_builder::TypedBuilder;
@@ -46,7 +47,7 @@ pub struct EntityTypeList {
 pub struct EntityType {
     /// Expanded IRI of the entity type.
     #[jsonld(id)]
-    pub id: String,
+    pub id: IriBuf,
     /// Fixed `EntityType` discriminator.
     #[serde(rename = "type")]
     #[jsonld(skip)]
@@ -72,7 +73,7 @@ pub struct EntityType {
 pub struct EntityTypeInfo {
     /// Expanded IRI of the entity type.
     #[jsonld(id)]
-    pub id: String,
+    pub id: IriBuf,
     /// Fixed `EntityTypeInfo` discriminator.
     #[serde(rename = "type")]
     #[jsonld(skip)]

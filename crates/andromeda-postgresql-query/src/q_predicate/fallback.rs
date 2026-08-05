@@ -8,14 +8,15 @@
 
 use crate::{
     error::RenderError,
-    jsonb::{escape_jsonpath, escape_jsonpath_key},
+    jsonb::{comparison_operand, escape_jsonpath, escape_jsonpath_key},
+    operator::{comparison, pattern_match, present_and},
     q_predicate::target::QFilterTarget,
 };
 use andromeda_ngsi_ld_query::{
     error::QueryError,
     filter::{
         path::AttrPath,
-        predicate::{CmpOp, PatternPolarity, SetMembership, present_and},
+        predicate::{CmpOp, PatternPolarity, SetMembership},
         scalar::CompareValue,
     },
     pattern::Pattern,
@@ -28,14 +29,14 @@ use sea_query::{Condition, Expr as SeaExpr, Value as SeaValue};
 /// A sub-path existence check asks whether a nested element is present, which
 /// only the payload can answer. An earlier compiler silently dropped the
 /// sub-path here and tested the top-level attribute instead.
-pub fn fallback_exists(path: &AttrPath, target: QFilterTarget) -> Condition {
+pub fn fallback_exists(path: &AttrPath, target: &QFilterTarget<'_>) -> Condition {
     let jsonpath = value_extraction_jsonpath(path, VALUE.as_str());
     let sql = format!("jsonb_path_exists({}, '{}')", target.payload_column(), escape_jsonpath(&jsonpath));
     Condition::all().add(SeaExpr::cust(sql))
 }
 
 /// Compile a comparison predicate against the payload.
-pub fn fallback_compare(path: &AttrPath, op: CmpOp, rhs: &CompareValue, target: QFilterTarget) -> Result<Condition, RenderError> {
+pub fn fallback_compare(path: &AttrPath, op: CmpOp, rhs: &CompareValue, target: &QFilterTarget<'_>) -> Result<Condition, RenderError> {
     let payload = target.payload_column();
     let value_path = value_extraction_jsonpath(path, VALUE.as_str());
     let object_path = value_extraction_jsonpath(path, OBJECT.as_str());
@@ -44,16 +45,16 @@ pub fn fallback_compare(path: &AttrPath, op: CmpOp, rhs: &CompareValue, target: 
 
     match rhs {
         CompareValue::Scalar(scalar) => {
-            let (cast, value) = scalar.as_sql_text();
+            let (cast, value) = comparison_operand(scalar);
             let sql = format!(
                 "(COALESCE(({extract_value} #>> '{{}}'), ({extract_object} #>> '{{}}')){cast} {op} $1{cast})",
-                op = op.sql_operator()
+                op = comparison(op)
             );
             Ok(Condition::all().add(SeaExpr::cust_with_values(sql, [value])))
         }
         CompareValue::Range { min, max } => {
-            let (cast, min_value) = min.as_sql_text();
-            let (_, max_value) = max.as_sql_text();
+            let (cast, min_value) = comparison_operand(min);
+            let (_, max_value) = comparison_operand(max);
             // A missing element makes the extraction NULL, and every comparison
             // against NULL is unknown, so presence is required structurally in
             // both polarities (clause 4.9).
@@ -67,7 +68,7 @@ pub fn fallback_compare(path: &AttrPath, op: CmpOp, rhs: &CompareValue, target: 
             let mut arms = Vec::with_capacity(values.len());
             let mut binds = Vec::with_capacity(values.len());
             for (index, value) in values.iter().enumerate() {
-                let (cast, bound) = value.as_sql_text();
+                let (cast, bound) = comparison_operand(value);
                 arms.push(format!("(({extract_value} #>> '{{}}')){cast} = ${}{cast}", index + 1));
                 binds.push(bound);
             }
@@ -85,10 +86,13 @@ pub fn fallback_compare(path: &AttrPath, op: CmpOp, rhs: &CompareValue, target: 
 ///
 /// Both polarities require the element to be present (clause 4.9), which is
 /// what [`present_and`] states once for every backend.
-pub fn fallback_pattern(path: &AttrPath, pattern: &Pattern, polarity: PatternPolarity, target: QFilterTarget) -> Condition {
+pub fn fallback_pattern(path: &AttrPath, pattern: &Pattern, polarity: PatternPolarity, target: &QFilterTarget<'_>) -> Condition {
     let payload = target.payload_column();
     let jsonpath = escape_jsonpath(&value_extraction_jsonpath(path, VALUE.as_str()));
-    let value_sql = format!("(jsonb_path_query_first({payload}, '{jsonpath}')#>>'{{}}')::text {} $1", polarity.operator());
+    let value_sql = format!(
+        "(jsonb_path_query_first({payload}, '{jsonpath}')#>>'{{}}')::text {} $1",
+        pattern_match(polarity)
+    );
     let sql = present_and(&format!("jsonb_path_exists({payload}, '{jsonpath}')"), &value_sql);
     Condition::all().add(SeaExpr::cust_with_values(sql, [SeaValue::from(pattern.as_str())]))
 }
@@ -144,7 +148,7 @@ mod tests {
 
     fn render(q: &str) -> String {
         let expr = parser::parse(q).expect("parse q");
-        render_condition(compile(&expr, QFilterTarget::Entities, &names()).expect("compile q"))
+        render_condition(compile(&expr, &QFilterTarget::entities(), &names()).expect("compile q"))
     }
 
     #[test]
@@ -198,7 +202,7 @@ mod tests {
             op: CmpOp::Equal,
             rhs: CompareValue::Scalar(Scalar::Str("x".to_string())),
         });
-        let condition = compile(&expr, QFilterTarget::Entities, &names()).expect("compile");
+        let condition = compile(&expr, &QFilterTarget::entities(), &names()).expect("compile");
         let sql = render_condition(condition);
         assert!(sql.contains("o''brien"), "apostrophe must be doubled inside the SQL literal: {sql}");
     }

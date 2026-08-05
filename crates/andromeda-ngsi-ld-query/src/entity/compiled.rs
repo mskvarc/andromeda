@@ -1,6 +1,6 @@
 //! The compiled, context-expanded form of an entity query.
 
-use crate::{entity::selection::EntitySelection, ordering::compiled::ResultOrdering, pagination::Pagination, projection::compiled::Projection};
+use crate::{entity_selection::EntitySelection, ordering::compiled::ResultOrdering, pagination::Pagination, projection::compiled::Projection};
 use typed_builder::TypedBuilder;
 
 /// A fully compiled entity query, ready for SQL generation.

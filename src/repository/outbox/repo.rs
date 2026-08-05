@@ -4,8 +4,13 @@
 //! structs. Parsing into domain types is the responsibility of
 //! [`super::mapper`].
 
-use crate::{core::error::AndromedaError, repository::outbox::rows::OutboxEntryRow};
-use andromeda_ngsi_ld_model::outbox::{NewOutboxEntry, OutboxEntryId, WorkerInstanceId};
+use crate::{
+    core::error::AndromedaError,
+    repository::outbox::{
+        entry::{NewOutboxEntry, OutboxEntryId, WorkerInstanceId},
+        rows::OutboxEntryRow,
+    },
+};
 use chrono::{DateTime, Utc};
 use sqlx::{QueryBuilder, postgres::PgPool};
 

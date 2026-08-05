@@ -78,6 +78,7 @@ pub mod entity;
 pub mod geojson;
 pub mod registration;
 pub mod response;
+pub mod simplify;
 pub mod snapshot;
 pub mod subscription;
 pub mod temporal;

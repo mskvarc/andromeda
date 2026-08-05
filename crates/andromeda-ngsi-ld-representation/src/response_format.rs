@@ -1,4 +1,4 @@
-//! NGSI-LD response format and join mode types.
+//! The rendering an NGSI-LD response uses for an entity (clause 4.5.1).
 
 use serde::{Deserialize, Serialize};
 use strum::{Display, EnumString};
@@ -24,24 +24,13 @@ pub enum ResponseFormat {
 impl ResponseFormat {
     /// Whether this format uses a simplified (flat) structure.
     pub const fn is_simplified(self) -> bool {
-        matches!(self, Self::KeyValues | Self::Simplified)
+        matches!(self, ResponseFormat::KeyValues | ResponseFormat::Simplified)
     }
-}
-
-/// Join mode for linked entities (ETSI GS CIM 009 clause 4.5.21).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Display, EnumString)]
-#[serde(rename_all = "camelCase")]
-#[strum(serialize_all = "camelCase")]
-pub enum JoinMode {
-    /// Linked entities are nested inside the referencing attribute.
-    Inline,
-    /// Linked entities are included as top-level objects in the notification.
-    Flat,
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::response_format::ResponseFormat;
     use std::str::FromStr;
 
     #[test]
@@ -57,8 +46,8 @@ mod tests {
             ResponseFormat::Simplified,
             ResponseFormat::Concise,
         ] {
-            let s = variant.to_string();
-            let parsed = ResponseFormat::from_str(&s).unwrap();
+            let rendered = variant.to_string();
+            let parsed = ResponseFormat::from_str(&rendered).expect("round trip");
             pretty_assertions::assert_eq!(variant, parsed, "round-trip failed for {variant}");
         }
     }
@@ -71,8 +60,8 @@ mod tests {
             ResponseFormat::Simplified,
             ResponseFormat::Concise,
         ] {
-            let json = serde_json::to_string(&variant).unwrap();
-            let parsed: ResponseFormat = serde_json::from_str(&json).unwrap();
+            let json = serde_json::to_string(&variant).expect("serialises");
+            let parsed: ResponseFormat = serde_json::from_str(&json).expect("deserialises");
             pretty_assertions::assert_eq!(variant, parsed);
         }
     }
@@ -83,14 +72,5 @@ mod tests {
         assert!(ResponseFormat::KeyValues.is_simplified());
         assert!(ResponseFormat::Simplified.is_simplified());
         assert!(!ResponseFormat::Concise.is_simplified());
-    }
-
-    #[test]
-    fn join_mode_display_and_parse_round_trip() {
-        for variant in [JoinMode::Inline, JoinMode::Flat] {
-            let s = variant.to_string();
-            let parsed = JoinMode::from_str(&s).unwrap();
-            pretty_assertions::assert_eq!(variant, parsed, "round-trip failed for {variant}");
-        }
     }
 }

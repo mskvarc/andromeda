@@ -67,44 +67,6 @@ pub enum ContextGetResult {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use strum::IntoEnumIterator;
-
-    /// Labels of the PostgreSQL `jsonld_context_kind` enum, verbatim from
-    /// `migrations/tenant/0003_types.sql`. Unlike the other broker enums this
-    /// one is PascalCase, matching clause 5.13's own casing.
-    const CONTEXT_KIND_LABELS: [(&str, ContextKind); 3] = [
-        ("Cached", ContextKind::Cached),
-        ("Hosted", ContextKind::Hosted),
-        ("ImplicitlyCreated", ContextKind::ImplicitlyCreated),
-    ];
-
-    #[test]
-    fn context_kind_parses_from_its_postgres_label() {
-        for (label, expected) in CONTEXT_KIND_LABELS {
-            pretty_assertions::assert_eq!(label.parse::<ContextKind>().expect(label), expected);
-        }
-    }
-
-    #[test]
-    fn context_kind_renders_the_label_postgres_expects() {
-        for (label, variant) in CONTEXT_KIND_LABELS {
-            pretty_assertions::assert_eq!(variant.to_string(), label);
-            pretty_assertions::assert_eq!(<&str>::from(&variant), label);
-        }
-    }
-
-    #[test]
-    fn context_kind_round_trips_through_its_label_for_every_variant() {
-        // Exhaustive over `EnumIter`, replacing the type-level guarantee
-        // `sqlx::Type` used to give.
-        for variant in ContextKind::iter() {
-            pretty_assertions::assert_eq!(variant.to_string().parse::<ContextKind>().expect("round trip"), variant);
-            assert!(
-                CONTEXT_KIND_LABELS.iter().any(|(_, known)| *known == variant),
-                "{variant:?} has no PostgreSQL label in jsonld_context_kind"
-            );
-        }
-    }
 
     #[test]
     fn an_unknown_context_kind_label_is_a_parse_error_not_a_panic() {

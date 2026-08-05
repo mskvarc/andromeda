@@ -21,6 +21,7 @@ use andromeda_ngsi_ld_query::{
     pagination::{CountPolicy, Pagination},
     pattern::Pattern,
     projection::expansion::expand_attrs,
+    temporal::window::TimeInterval,
     term_expander::TermExpander,
 };
 use chrono::{DateTime, Utc};
@@ -406,9 +407,7 @@ impl CsourceRegistrationService {
                 .map_err(|e| AndromedaError::csr_validation(format!("Invalid timeproperty: {}", e)))?;
             Some(
                 CompiledCsrTemporalFilter::builder()
-                    .timerel(parsed_timerel)
-                    .time_at(parsed_time_at)
-                    .end_time_at(parsed_end_time_at)
+                    .interval(TimeInterval::from_parts(Some(parsed_timerel), Some(parsed_time_at), parsed_end_time_at)?)
                     .timeproperty(parsed_timeprop)
                     .build(),
             )

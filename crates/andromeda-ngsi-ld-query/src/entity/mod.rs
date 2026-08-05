@@ -1,4 +1,3 @@
-//! Entity queries: the compiled form of `GET /entities` and its SQL.
+//! Entity queries: the compiled form of `GET /entities`.
 
 pub mod compiled;
-pub mod selection;

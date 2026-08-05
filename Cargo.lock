@@ -87,6 +87,7 @@ dependencies = [
  "andromeda-ngsi-ld-lexicon",
  "andromeda-ngsi-ld-model",
  "andromeda-ngsi-ld-query",
+ "andromeda-ngsi-ld-representation",
  "andromeda-ngsi-ld-vocabulary",
  "andromeda-postgresql-context-query",
  "andromeda-postgresql-encoding",
@@ -195,6 +196,8 @@ version = "0.1.0"
 dependencies = [
  "andromeda-ngsi-ld-geometry",
  "andromeda-ngsi-ld-lexicon",
+ "andromeda-ngsi-ld-query",
+ "andromeda-ngsi-ld-representation",
  "andromeda-ngsi-ld-vocabulary",
  "cefact-units",
  "chrono",
@@ -228,7 +231,7 @@ version = "0.1.0"
 dependencies = [
  "andromeda-ngsi-ld-geometry",
  "andromeda-ngsi-ld-lexicon",
- "andromeda-ngsi-ld-model",
+ "andromeda-ngsi-ld-representation",
  "andromeda-ngsi-ld-vocabulary",
  "chrono",
  "iri-rs",
@@ -237,11 +240,22 @@ dependencies = [
  "percent-encoding",
  "pretty_assertions",
  "regex",
+ "serde",
  "serde_json",
  "thiserror 2.0.19",
  "tokio",
  "typed-builder",
  "urn-rs",
+]
+
+[[package]]
+name = "andromeda-ngsi-ld-representation"
+version = "0.1.0"
+dependencies = [
+ "pretty_assertions",
+ "serde",
+ "serde_json",
+ "strum",
 ]
 
 [[package]]
@@ -259,6 +273,7 @@ version = "0.1.0"
 dependencies = [
  "andromeda-ngsi-ld-geometry",
  "andromeda-ngsi-ld-lexicon",
+ "andromeda-ngsi-ld-model",
  "andromeda-ngsi-ld-query",
  "andromeda-ngsi-ld-vocabulary",
  "andromeda-postgresql-encoding",
@@ -307,8 +322,8 @@ version = "0.1.0"
 dependencies = [
  "andromeda-ngsi-ld-geometry",
  "andromeda-ngsi-ld-lexicon",
- "andromeda-ngsi-ld-model",
  "andromeda-ngsi-ld-query",
+ "andromeda-ngsi-ld-representation",
  "andromeda-postgresql-query",
  "chrono",
  "iri-rs",

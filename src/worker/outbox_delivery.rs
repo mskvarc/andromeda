@@ -6,9 +6,8 @@
 
 use crate::{
     core::config::OutboxConfig,
-    repository::outbox::{mapper::row_to_domain, repo::OutboxRepository},
+    repository::outbox::{entry::WorkerInstanceId, mapper::row_to_domain, repo::OutboxRepository},
 };
-use andromeda_ngsi_ld_model::outbox::WorkerInstanceId;
 use chrono::{Duration, Utc};
 use std::time::Duration as StdDuration;
 use tracing::{debug, error, info};

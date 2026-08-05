@@ -26,6 +26,7 @@ use andromeda_ngsi_ld_model::{
     snapshot::{ExecutionResultDetails, ExecutionResultStatus, Snapshot, SnapshotStatus},
     snapshot_query::{SnapshotEntitySelector, SnapshotGeoQuery, SnapshotQuery, SnapshotTemporalQuery},
 };
+use andromeda_ngsi_ld_query::{pattern::Pattern, temporal::aggregation_period::AggregationPeriod};
 use chrono::{DateTime, SecondsFormat, Utc};
 use compact_str::CompactString;
 use serde_json::Value;
@@ -285,7 +286,7 @@ pub fn snapshot_query_to_entity_params(query: &SnapshotQuery) -> Result<EntityQu
             Some(georel.to_string()),
             Some(geometry.to_string()),
             Some(coordinates.to_string()),
-            geoproperty.clone(), // clone: the borrowed query keeps its own copy
+            geoproperty.as_ref().map(ToString::to_string),
         ),
         None => (None, None, None, None),
     };
@@ -293,12 +294,12 @@ pub fn snapshot_query_to_entity_params(query: &SnapshotQuery) -> Result<EntityQu
     Ok(EntityQueryParameters {
         id: if ids.is_empty() { None } else { Some(ids.join(",")) },
         entity_type: if types.is_empty() { None } else { Some(types.join(",")) },
-        id_pattern,
+        id_pattern: id_pattern.as_ref().map(ToString::to_string),
         attrs: query
             .attrs
             .as_ref()
             .map(|names| names.iter().map(ToString::to_string).collect::<Vec<_>>().join(",")),
-        q: query.q.clone(),
+        q: query.q.as_ref().map(ToString::to_string),
         georel,
         geometry,
         coordinates,
@@ -314,7 +315,7 @@ pub fn snapshot_query_to_entity_params(query: &SnapshotQuery) -> Result<EntityQu
             .as_ref()
             .map(|names| names.iter().map(ToString::to_string).collect::<Vec<_>>().join(",")),
         order_by: None,
-        scope_q: query.scope_q.clone(),
+        scope_q: query.scope_q.as_ref().map(ToString::to_string),
         lang: None,
         dataset_id: None,
         expand_values: None,
@@ -358,7 +359,7 @@ pub fn snapshot_query_to_temporal_params(query: &SnapshotQuery) -> Result<Tempor
             Some(georel.to_string()),
             Some(geometry.to_string()),
             Some(coordinates.to_string()),
-            geoproperty.clone(), // clone: the borrowed query keeps its own copy
+            geoproperty.as_ref().map(ToString::to_string),
         ),
         None => (None, None, None, None),
     };
@@ -366,12 +367,12 @@ pub fn snapshot_query_to_temporal_params(query: &SnapshotQuery) -> Result<Tempor
     Ok(TemporalQueryParameters {
         id: if ids.is_empty() { None } else { Some(ids.join(",")) },
         entity_type: if types.is_empty() { None } else { Some(types.join(",")) },
-        id_pattern,
+        id_pattern: id_pattern.as_ref().map(ToString::to_string),
         attrs: query
             .attrs
             .as_ref()
             .map(|names| names.iter().map(ToString::to_string).collect::<Vec<_>>().join(",")),
-        q: query.q.clone(),
+        q: query.q.as_ref().map(ToString::to_string),
         georel,
         geometry,
         coordinates,
@@ -387,7 +388,7 @@ pub fn snapshot_query_to_temporal_params(query: &SnapshotQuery) -> Result<Tempor
             .aggr_methods
             .as_ref()
             .map(|methods| methods.iter().map(ToString::to_string).collect::<Vec<_>>().join(",")),
-        aggr_period_duration: temporal_q.aggr_period_duration.clone(),
+        aggr_period_duration: temporal_q.aggr_period_duration.as_ref().map(AggregationPeriod::as_iso8601),
         limit: None,
         offset: None,
         count: None,
@@ -403,7 +404,7 @@ pub fn snapshot_query_to_temporal_params(query: &SnapshotQuery) -> Result<Tempor
         entity_map: None,
         entity_map_lifetime: None,
         split_entities: None,
-        scope_q: query.scope_q.clone(),
+        scope_q: query.scope_q.as_ref().map(ToString::to_string),
         expand_values: None,
         json_keys: None,
     })
@@ -412,12 +413,12 @@ pub fn snapshot_query_to_temporal_params(query: &SnapshotQuery) -> Result<Tempor
 /// Tuple of `(ids, types, id_pattern)` extracted from a set of snapshot
 /// entity selectors. A type alias keeps the `flatten_selectors` return type
 /// readable.
-type FlattenedSelectors = (Vec<String>, Vec<String>, Option<String>);
+type FlattenedSelectors = (Vec<String>, Vec<String>, Option<Pattern>);
 
 fn flatten_selectors(selectors: Option<&[SnapshotEntitySelector]>) -> Result<FlattenedSelectors, SnapshotQueryTranslationError> {
     let mut ids: Vec<String> = Vec::new();
     let mut types: Vec<String> = Vec::new();
-    let mut id_pattern: Option<String> = None;
+    let mut id_pattern: Option<Pattern> = None;
 
     let Some(selectors) = selectors else {
         return Ok((ids, types, id_pattern));
@@ -425,19 +426,21 @@ fn flatten_selectors(selectors: Option<&[SnapshotEntitySelector]>) -> Result<Fla
 
     for selector in selectors {
         if let Some(entity_ids) = &selector.id {
-            ids.extend(entity_ids.iter().cloned());
+            ids.extend(entity_ids.iter().map(ToString::to_string));
         }
         if let Some(entity_type) = &selector.type_ {
-            types.push(entity_type.clone());
+            types.push(entity_type.to_string());
         }
         if let Some(pattern) = &selector.id_pattern {
             match &id_pattern {
+                // clone: the flattened result owns the pattern and the
+                // selector list it came from is borrowed
                 None => id_pattern = Some(pattern.clone()),
                 Some(existing) if existing == pattern => {}
                 Some(existing) => {
                     return Err(SnapshotQueryTranslationError::ConflictingIdPattern(
-                        CompactString::from(existing.as_str()),
-                        CompactString::from(pattern.as_str()),
+                        CompactString::from(existing.to_string()),
+                        CompactString::from(pattern.to_string()),
                     ));
                 }
             }
@@ -471,6 +474,7 @@ mod tests {
     use andromeda_ngsi_ld_geometry::geometry::GeometryType;
     use andromeda_ngsi_ld_lexicon::{aggr_method::AggrMethod, attribute_name::AttributeName, time_prop::TimeProp, time_rel::TimeRel};
     use andromeda_ngsi_ld_model::snapshot_query::{SnapshotEntitySelector, SnapshotGeoQuery, SnapshotQuery, SnapshotTemporalQuery};
+    use andromeda_ngsi_ld_query::scope::query::ScopeQuery;
 
     fn attribute_name(raw: &str) -> AttributeName {
         raw.parse().expect("valid attribute name")
@@ -509,7 +513,7 @@ mod tests {
     fn translates_q_to_entity_params() {
         // Clause 5.7.2, 5.16.1.4
         let mut q = base_query();
-        q.q = Some("speed>50".to_string());
+        q.q = Some("speed>50".parse().expect("valid q filter"));
         let params = snapshot_query_to_entity_params(&q).expect("translate");
         pretty_assertions::assert_eq!(params.q.as_deref(), Some("speed>50"));
     }
@@ -522,7 +526,7 @@ mod tests {
             georel: "near;maxDistance==1000".parse().expect("valid georel"),
             geometry: GeometryType::Point,
             coordinates: serde_json::json!([13.4, 52.5]),
-            geoproperty: Some("location".to_string()),
+            geoproperty: Some("location".parse().expect("valid reference")),
         });
         let params = snapshot_query_to_entity_params(&q).expect("translate");
         pretty_assertions::assert_eq!(params.georel.as_deref(), Some("near;maxDistance==1000"));
@@ -535,7 +539,7 @@ mod tests {
     fn translates_scope_q_to_entity_params() {
         // Clause 5.5.14 (scopeQ)
         let mut q = base_query();
-        q.scope_q = Some("/Madrid".to_string());
+        q.scope_q = Some(ScopeQuery::parse("/Madrid").expect("valid scope query"));
         let params = snapshot_query_to_entity_params(&q).expect("translate");
         pretty_assertions::assert_eq!(params.scope_q.as_deref(), Some("/Madrid"));
     }
@@ -557,14 +561,14 @@ mod tests {
         let mut q = base_query();
         q.entities = Some(vec![
             SnapshotEntitySelector {
-                id: Some(vec!["urn:ngsi-ld:Vehicle:1".to_string()]),
+                id: Some(vec!["urn:ngsi-ld:Vehicle:1".parse().expect("valid uri")]),
                 id_pattern: None,
-                type_: Some("Vehicle".to_string()),
+                type_: Some("Vehicle".parse().expect("valid type expression")),
             },
             SnapshotEntitySelector {
-                id: Some(vec!["urn:ngsi-ld:Vehicle:2".to_string()]),
+                id: Some(vec!["urn:ngsi-ld:Vehicle:2".parse().expect("valid uri")]),
                 id_pattern: None,
-                type_: Some("Truck".to_string()),
+                type_: Some("Truck".parse().expect("valid type expression")),
             },
         ]);
         let params = snapshot_query_to_entity_params(&q).expect("translate");
@@ -581,7 +585,7 @@ mod tests {
         let mut q = base_query();
         q.entities = Some(vec![SnapshotEntitySelector {
             id: None,
-            id_pattern: Some("urn:ngsi-ld:Vehicle:.*".to_string()),
+            id_pattern: Some(Pattern::parse("urn:ngsi-ld:Vehicle:.*").expect("valid pattern")),
             type_: None,
         }]);
         let params = snapshot_query_to_entity_params(&q).expect("translate");
@@ -594,12 +598,12 @@ mod tests {
         q.entities = Some(vec![
             SnapshotEntitySelector {
                 id: None,
-                id_pattern: Some("urn:ngsi-ld:A:.*".to_string()),
+                id_pattern: Some(Pattern::parse("urn:ngsi-ld:A:.*").expect("valid pattern")),
                 type_: None,
             },
             SnapshotEntitySelector {
                 id: None,
-                id_pattern: Some("urn:ngsi-ld:B:.*".to_string()),
+                id_pattern: Some(Pattern::parse("urn:ngsi-ld:B:.*").expect("valid pattern")),
                 type_: None,
             },
         ]);
@@ -664,7 +668,7 @@ mod tests {
                 .last_n(None)
                 .timeproperty(None)
                 .aggr_methods(Some(vec![AggrMethod::Avg, AggrMethod::Min]))
-                .aggr_period_duration(Some("PT1H".to_string()))
+                .aggr_period_duration(AggregationPeriod::parse("PT1H").expect("valid period"))
                 .build(),
         );
         let params = snapshot_query_to_temporal_params(&q).expect("translate");

@@ -2,7 +2,7 @@
 //!
 //! Carries join mode equivalent to the `join` query parameter.
 
-use andromeda_ngsi_ld_model::response_format::JoinMode;
+use andromeda_ngsi_ld_representation::join_mode::JoinMode;
 use axum::http::{HeaderName, HeaderValue};
 use std::str::FromStr;
 

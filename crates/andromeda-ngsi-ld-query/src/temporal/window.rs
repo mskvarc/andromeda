@@ -1,26 +1,147 @@
-//! The interval of the time axis a temporal query reads.
+//! The interval of the time axis a query reads.
 
+use crate::error::QueryError;
 use andromeda_ngsi_ld_lexicon::{time_prop::TimeProp, time_rel::TimeRel};
 use chrono::{DateTime, Utc};
 use typed_builder::TypedBuilder;
 
-/// The interval of the time axis a temporal query reads (clause 4.5.19).
+/// The slice of the time axis a query is bounded to (clause 4.11).
 ///
-/// `timerel` and `time_at` travel together — clause 5.7.3 requires both or
-/// neither — and `end_time_at` is required exactly when `timerel` is
-/// [`TimeRel::Between`]. Grouping them here is what lets the SQL builders read
-/// the window once rather than reassembling it from four loose fields.
-#[derive(Debug, Clone, TypedBuilder)]
+/// `timerel` and `timeAt` are meaningless apart — clause 5.7.3 requires both or
+/// neither — and `endTimeAt` is required exactly when `timerel` is `between`.
+/// Stating that in the type is what removes the three runtime checks the SQL
+/// builders used to carry, one of which raised a *request* error from inside a
+/// statement builder because the compiled query could not rule the case out.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TimeInterval {
+    /// The query bounded nothing; every instant qualifies.
+    Unbounded,
+    /// Everything strictly before the instant.
+    Before(DateTime<Utc>),
+    /// Everything at or after the instant.
+    After(DateTime<Utc>),
+    /// Everything from `from` inclusive to `to` exclusive.
+    Between {
+        /// The opening instant, inclusive.
+        from: DateTime<Utc>,
+        /// The closing instant, exclusive.
+        to: DateTime<Utc>,
+    },
+}
+
+impl TimeInterval {
+    /// Build an interval from the three parameters a request carries.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`QueryError::ParamTimerelTimeatPair`] when exactly one of
+    /// `timerel` and `timeAt` is present, and
+    /// [`QueryError::ParamEndTimeAtRequired`] when `timerel` is `between` and
+    /// no `endTimeAt` came with it.
+    pub const fn from_parts(timerel: Option<TimeRel>, time_at: Option<DateTime<Utc>>, end_time_at: Option<DateTime<Utc>>) -> Result<TimeInterval, QueryError> {
+        match (timerel, time_at) {
+            (None, None) => Ok(TimeInterval::Unbounded),
+            (Some(TimeRel::Before), Some(instant)) => Ok(TimeInterval::Before(instant)),
+            (Some(TimeRel::After), Some(instant)) => Ok(TimeInterval::After(instant)),
+            (Some(TimeRel::Between), Some(from)) => match end_time_at {
+                Some(to) => Ok(TimeInterval::Between { from, to }),
+                None => Err(QueryError::ParamEndTimeAtRequired),
+            },
+            (None, Some(_)) | (Some(_), None) => Err(QueryError::ParamTimerelTimeatPair),
+        }
+    }
+
+    /// The clause 4.11 relation this interval was expressed with, if any.
+    pub const fn timerel(&self) -> Option<TimeRel> {
+        match self {
+            TimeInterval::Unbounded => None,
+            TimeInterval::Before(_) => Some(TimeRel::Before),
+            TimeInterval::After(_) => Some(TimeRel::After),
+            TimeInterval::Between { .. } => Some(TimeRel::Between),
+        }
+    }
+
+    /// The reference instant, which every bounded interval carries.
+    pub const fn reference(&self) -> Option<&DateTime<Utc>> {
+        match self {
+            TimeInterval::Unbounded => None,
+            TimeInterval::Before(instant) | TimeInterval::After(instant) | TimeInterval::Between { from: instant, .. } => Some(instant),
+        }
+    }
+
+    /// The closing instant, which only `between` carries.
+    pub const fn end(&self) -> Option<&DateTime<Utc>> {
+        match self {
+            TimeInterval::Unbounded | TimeInterval::Before(_) | TimeInterval::After(_) => None,
+            TimeInterval::Between { to, .. } => Some(to),
+        }
+    }
+
+    /// Whether the interval narrows the time axis at all.
+    pub const fn is_bounded(&self) -> bool {
+        !matches!(self, TimeInterval::Unbounded)
+    }
+}
+
+/// The interval of the time axis a temporal query reads, and the property it
+/// reads it on (clause 4.5.19).
+#[derive(Debug, Clone, Copy, TypedBuilder)]
 pub struct TemporalWindow {
-    /// Temporal relationship operator (`before`, `after`, `between`).
-    #[builder(default)]
-    pub timerel: Option<TimeRel>,
-    /// Reference time point for the temporal filter.
-    #[builder(default)]
-    pub time_at: Option<DateTime<Utc>>,
-    /// End time point, required for `between`.
-    #[builder(default)]
-    pub end_time_at: Option<DateTime<Utc>>,
+    /// The slice of the time axis the query is bounded to.
+    #[builder(default = TimeInterval::Unbounded)]
+    pub interval: TimeInterval,
     /// The time property the window applies to.
     pub timeproperty: TimeProp,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn instant(raw: &str) -> DateTime<Utc> {
+        DateTime::parse_from_rfc3339(raw).expect("valid instant").with_timezone(&Utc)
+    }
+
+    #[test]
+    fn no_parameters_at_all_is_an_unbounded_interval() {
+        assert_eq!(TimeInterval::from_parts(None, None, None).expect("valid"), TimeInterval::Unbounded);
+    }
+
+    #[test]
+    fn between_carries_both_instants_or_is_not_constructed() {
+        // Clause 5.7.3: `endTimeAt` is required exactly when `timerel` is
+        // `between`, which is why no later stage has to check for it.
+        let from = instant("2024-01-01T00:00:00Z");
+        let to = instant("2024-06-01T00:00:00Z");
+        assert_eq!(
+            TimeInterval::from_parts(Some(TimeRel::Between), Some(from), Some(to)).expect("valid"),
+            TimeInterval::Between { from, to }
+        );
+        assert!(matches!(
+            TimeInterval::from_parts(Some(TimeRel::Between), Some(from), None),
+            Err(QueryError::ParamEndTimeAtRequired)
+        ));
+    }
+
+    #[test]
+    fn a_half_specified_pair_is_rejected() {
+        let reference = instant("2024-01-01T00:00:00Z");
+        assert!(matches!(
+            TimeInterval::from_parts(Some(TimeRel::Before), None, None),
+            Err(QueryError::ParamTimerelTimeatPair)
+        ));
+        assert!(matches!(
+            TimeInterval::from_parts(None, Some(reference), None),
+            Err(QueryError::ParamTimerelTimeatPair)
+        ));
+    }
+
+    #[test]
+    fn an_end_instant_belongs_only_to_between() {
+        let reference = instant("2024-01-01T00:00:00Z");
+        assert_eq!(TimeInterval::Before(reference).end(), None);
+        assert_eq!(TimeInterval::After(reference).end(), None);
+        assert_eq!(TimeInterval::Unbounded.reference(), None);
+        assert_eq!(TimeInterval::Before(reference).reference(), Some(&reference));
+    }
 }

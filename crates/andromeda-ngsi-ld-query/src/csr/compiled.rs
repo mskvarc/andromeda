@@ -1,8 +1,7 @@
 //! The compiled form of a Context Source Registration discovery query.
 
-use crate::{filter::expression::Expr, geo::query::GeoQuery, pagination::Pagination, pattern::Pattern};
-use andromeda_ngsi_ld_lexicon::{time_prop::TimeProp, time_rel::TimeRel, uri::Uri};
-use chrono::{DateTime, Utc};
+use crate::{filter::expression::Expr, geo::query::GeoQuery, pagination::Pagination, pattern::Pattern, temporal::window::TimeInterval};
+use andromeda_ngsi_ld_lexicon::{time_prop::TimeProp, uri::Uri};
 use iri_rs::IriBuf;
 use typed_builder::TypedBuilder;
 
@@ -38,15 +37,10 @@ pub struct CompiledCsrQuery {
 ///
 /// Filters Context Source Registrations based on their temporal coverage,
 /// matching against the `observationInterval` or `managementInterval` fields.
-#[derive(Debug, Clone, PartialEq, Eq, TypedBuilder)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, TypedBuilder)]
 pub struct CompiledCsrTemporalFilter {
-    /// Temporal relationship operator.
-    pub timerel: TimeRel,
-    /// The reference time point.
-    pub time_at: DateTime<Utc>,
-    /// The end time point for `between` queries.
-    #[builder(default)]
-    pub end_time_at: Option<DateTime<Utc>>,
+    /// The slice of the time axis the registration must cover.
+    pub interval: TimeInterval,
     /// The time property to filter on.
     /// Determines whether the observation or management interval is checked.
     #[builder(default)]

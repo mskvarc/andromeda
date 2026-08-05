@@ -7,7 +7,7 @@
 //! [`AndromedaError`] wraps an [`ErrorKind`] with an optional request URI
 //! (`instance`) that handlers attach for RFC 7807 Problem Details responses.
 
-use crate::jsonld::Error as JsonLdError;
+use crate::{http::parameter::error::ParameterError, jsonld::Error as JsonLdError};
 use andromeda_ngsi_ld_lexicon::ngsi_ld_urn::{
     AttributeListIdParseError,
     EntityMapIdParseError,
@@ -552,6 +552,33 @@ impl From<AttributeListIdParseError> for AndromedaError {
     }
 }
 
+impl From<ParameterError> for AndromedaError {
+    fn from(err: ParameterError) -> AndromedaError {
+        // The language that owns a value already categorises its own rejection,
+        // so that arm delegates rather than restating the mapping.
+        let ParameterError::Query(query) = err else {
+            let kind = match &err {
+                // Structurally malformed: the value names nothing the broker has.
+                ParameterError::OptionsInvalid(_) | ParameterError::FormatInvalid(_) => ErrorKind::MalformedRequest(err.to_string()),
+                // Well-formed, but not a request the broker can answer.
+                ParameterError::IdPatternEmpty
+                | ParameterError::OrderGeometryInvalid(_)
+                | ParameterError::OrderGeometryCollection
+                | ParameterError::OrderFromInvalid { .. }
+                | ParameterError::DropKeepExclusive
+                | ParameterError::TimerelInvalid(_)
+                | ParameterError::TimerelTimeatRequired
+                | ParameterError::AggrMethodInvalid(_)
+                | ParameterError::SelectorRequired(_)
+                | ParameterError::AggrMethodsRequired => ErrorKind::QueryValidation(err.to_string()),
+                ParameterError::Query(_) => unreachable!("the Query arm is bound above"),
+            };
+            return kind.into();
+        };
+        AndromedaError::from(query)
+    }
+}
+
 impl From<QueryError> for AndromedaError {
     fn from(err: QueryError) -> AndromedaError {
         let kind = match &err {
@@ -565,9 +592,7 @@ impl From<QueryError> for AndromedaError {
             | QueryError::TypeExprUnbalanced(_)
             | QueryError::TypeExprUnexpected { .. }
             | QueryError::TypeExprEmptyName(_)
-            | QueryError::GeoIncomplete
-            | QueryError::ParamOptionsInvalid(_)
-            | QueryError::ParamFormatInvalid(_) => ErrorKind::MalformedRequest(err.to_string()),
+            | QueryError::GeoIncomplete => ErrorKind::MalformedRequest(err.to_string()),
             QueryError::QInvalidNumber(_)
             | QueryError::QInvalidDateTime { .. }
             | QueryError::QInvalidDate { .. }
@@ -579,15 +604,7 @@ impl From<QueryError> for AndromedaError {
             | QueryError::ParamIdListEmpty
             | QueryError::ParamDatasetIdInvalid(_)
             | QueryError::ScopePatternInvalid(_)
-            | QueryError::ParamIdPatternEmpty
-            | QueryError::ParamOrderGeometryInvalid(_)
-            | QueryError::ParamOrderGeometryCollection
-            | QueryError::ParamOrderFromInvalid { .. }
-            | QueryError::ParamDropKeepExclusive
-            | QueryError::ParamTimerelInvalid(_)
-            | QueryError::ParamTimerelTimeatRequired
             | QueryError::ParamTimerelTimeatPair
-            | QueryError::ParamAggrMethodInvalid(_)
             | QueryError::ParamAggrPeriodDurationInvalid(_)
             | QueryError::ParamEndTimeAtRequired
             | QueryError::GeoCoordinatesInvalid(_)
@@ -595,8 +612,7 @@ impl From<QueryError> for AndromedaError {
             | QueryError::NearWithoutDistance
             | QueryError::RangeOperatorUnsupported
             | QueryError::ValueListOperatorUnsupported
-            | QueryError::DistanceOrderWithoutReference
-            | QueryError::ParamOther(_) => ErrorKind::QueryValidation(err.to_string()),
+            | QueryError::DistanceOrderWithoutReference => ErrorKind::QueryValidation(err.to_string()),
             // Neither the client nor the request shape caused these: a term the
             // processor accepted failed to expand, or an expanded IRI turned
             // out not to name an attribute. They are broker faults.

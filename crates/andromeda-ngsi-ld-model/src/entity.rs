@@ -6,12 +6,11 @@ use crate::{
     notification::SysAttrsSnapshot,
 };
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, scope::grammar::ScopeBuf, uri::Uri};
-use chrono::{DateTime, SecondsFormat, Utc};
+use chrono::{DateTime, Utc};
 use indexmap::IndexMap;
 use jsonld::Expandable;
 use jsonld_expandable_core::JsonValue;
 use serde::{Deserialize, Serialize};
-use serde_json::{Map, Value};
 use serde_with::skip_serializing_none;
 use std::{
     iter::once,
@@ -168,102 +167,6 @@ impl Entity {
             }
             AttributeValue::Raw(_) => true,
         });
-    }
-
-    /// Convert the entity to a simplified key-value representation.
-    pub fn simplify(&self) -> Value {
-        let mut map = Map::new();
-        map.insert("id".to_string(), serde_json::json!(self.id));
-        map.insert("type".to_string(), serde_json::json!(self.type_));
-
-        if let Some(scope) = &self.scope {
-            map.insert("scope".to_string(), serde_json::json!(scope));
-        }
-
-        if let Some(ref expires_at) = self.expires_at {
-            map.insert(
-                "expiresAt".to_string(),
-                serde_json::json!(expires_at.to_rfc3339_opts(SecondsFormat::Secs, true)),
-            );
-        }
-
-        if let Some(ref location) = self.location {
-            map.insert("location".to_string(), simplify_attribute_value(location));
-        }
-
-        if let Some(ref observation_space) = self.observation_space {
-            map.insert("observationSpace".to_string(), simplify_attribute_value(observation_space));
-        }
-
-        if let Some(ref operation_space) = self.operation_space {
-            map.insert("operationSpace".to_string(), simplify_attribute_value(operation_space));
-        }
-
-        if let Some(ref created_at) = self.created_at {
-            map.insert(
-                "createdAt".to_string(),
-                serde_json::json!(created_at.to_rfc3339_opts(SecondsFormat::Secs, true)),
-            );
-        }
-
-        if let Some(ref modified_at) = self.modified_at {
-            map.insert(
-                "modifiedAt".to_string(),
-                serde_json::json!(modified_at.to_rfc3339_opts(SecondsFormat::Secs, true)),
-            );
-        }
-
-        if let Some(ref deleted_at) = self.deleted_at {
-            map.insert(
-                "deletedAt".to_string(),
-                serde_json::json!(deleted_at.to_rfc3339_opts(SecondsFormat::Secs, true)),
-            );
-        }
-
-        for (key, attr) in &self.attrs {
-            map.insert(key.to_string(), simplify_attribute_value(attr));
-        }
-
-        Value::Object(map)
-    }
-}
-
-/// Simplify a single `AttributeValue` to its key-value form.
-fn simplify_attribute_value(attr: &AttributeValue) -> Value {
-    match attr {
-        AttributeValue::Single(a) => a.value(),
-        AttributeValue::Multiple(list) => {
-            // Dataset map format: {"dataset": {"datasetId1": value1, "@none": value2}}
-            let mut dataset_map = Map::new();
-            for attr in list {
-                let ds_key = attr.dataset_id_string().unwrap_or_else(|| "@none".to_string());
-                dataset_map.insert(ds_key, attr.value());
-            }
-            serde_json::json!({"dataset": dataset_map})
-        }
-        AttributeValue::Raw(v) => {
-            // For language-negotiated or other raw values that still
-            // have an NGSI-LD attribute envelope, extract the value.
-            // clone: the simplified form is an owned `Value` and the attribute is
-            // only borrowed, so every arm below hands back a copy of either the
-            // payload member or the whole envelope.
-            if let Some(obj) = v.as_object() {
-                // The `type` member of a raw envelope is unvalidated JSON, so this
-                // match is over an open set of strings rather than over
-                // `AttributeType`; anything unrecognised keeps the envelope.
-                match obj.get("type").and_then(|t| t.as_str()) {
-                    Some("Property") | Some("GeoProperty") | Some("VocabProperty") => obj.get("value").cloned().unwrap_or_else(|| v.clone()),
-                    Some("Relationship") => obj.get("object").cloned().unwrap_or_else(|| v.clone()),
-                    Some("ListProperty") => obj.get("valueList").cloned().unwrap_or_else(|| v.clone()),
-                    Some("ListRelationship") => obj.get("objectList").cloned().unwrap_or_else(|| v.clone()),
-                    Some("LanguageProperty") | Some("JsonProperty") => v.clone(),
-                    _other => v.clone(),
-                }
-            } else {
-                // clone: a raw member that is not an envelope is handed back whole.
-                v.clone()
-            }
-        }
     }
 }
 
@@ -489,30 +392,6 @@ mod tests {
         assert!(!obj.contains_key("createdAt"));
         assert!(!obj.contains_key("modifiedAt"));
         assert!(!obj.contains_key("deletedAt"));
-    }
-
-    #[test]
-    fn entity_simplify_includes_new_fields() {
-        let payload = json!({
-            "id": "urn:ngsi-ld:Building:011",
-            "type": "Building",
-            "expiresAt": "2030-12-31T23:59:59Z",
-            "location": {
-                "type": "GeoProperty",
-                "value": { "type": "Point", "coordinates": [1.0, 2.0] }
-            },
-            "createdAt": "2024-01-01T00:00:00Z",
-            "modifiedAt": "2024-06-15T12:30:00Z"
-        });
-
-        let entity: Entity = serde_json::from_value(payload).expect("entity with fields");
-        let simplified = entity.simplify();
-        let obj = simplified.as_object().expect("is object");
-
-        assert!(obj.contains_key("expiresAt"));
-        assert!(obj.contains_key("location"));
-        assert!(obj.contains_key("createdAt"));
-        assert!(obj.contains_key("modifiedAt"));
     }
 
     #[test]

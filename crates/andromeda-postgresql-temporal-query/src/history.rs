@@ -5,10 +5,10 @@ use crate::{
     aggregation::build_aggregation_query_sql,
     time_column::{history_column, unprefixed_column},
 };
-use andromeda_ngsi_ld_lexicon::{temporal_format::TemporalFormat, time_prop::TimeProp, time_rel::TimeRel, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{temporal_format::TemporalFormat, time_prop::TimeProp, uri::Uri};
 use andromeda_ngsi_ld_query::{
-    error::QueryError,
-    temporal::{compiled::CompiledTemporalQuery, dataset::DatasetFilter},
+    dataset::DatasetFilter,
+    temporal::{compiled::CompiledTemporalQuery, window::TimeInterval},
 };
 use andromeda_postgresql_query::{
     bind::{BindBuilder, BindValue},
@@ -36,17 +36,21 @@ pub fn build_temporal_history_query(entity_id: &Uri, compiled: &CompiledTemporal
         conditions.push("\"ah\".\"value_string\" = 'urn:ngsi-ld:null'".to_string());
     }
 
-    if let (Some(timerel), Some(time_at)) = (&compiled.window.timerel, &compiled.window.time_at) {
-        let lower_bound = BindValue::String(Cow::Owned(time_at.to_rfc3339()));
-        match timerel {
-            TimeRel::Before => conditions.push(format!("{} < {}::timestamptz", time_col, binds.bind(lower_bound))),
-            TimeRel::After => conditions.push(format!("{} >= {}::timestamptz", time_col, binds.bind(lower_bound))),
-            TimeRel::Between => {
-                let end_time = compiled.window.end_time_at.as_ref().ok_or(QueryError::ParamEndTimeAtRequired)?;
-                conditions.push(format!("{} >= {}::timestamptz", time_col, binds.bind(lower_bound)));
-                let upper_bound = BindValue::String(Cow::Owned(end_time.to_rfc3339()));
-                conditions.push(format!("{} < {}::timestamptz", time_col, binds.bind(upper_bound)));
-            }
+    match compiled.window.interval {
+        TimeInterval::Unbounded => {}
+        TimeInterval::Before(instant) => {
+            let marker = binds.bind(BindValue::String(Cow::Owned(instant.to_rfc3339())));
+            conditions.push(format!("{time_col} < {marker}::timestamptz"));
+        }
+        TimeInterval::After(instant) => {
+            let marker = binds.bind(BindValue::String(Cow::Owned(instant.to_rfc3339())));
+            conditions.push(format!("{time_col} >= {marker}::timestamptz"));
+        }
+        TimeInterval::Between { from, to } => {
+            let start = binds.bind(BindValue::String(Cow::Owned(from.to_rfc3339())));
+            conditions.push(format!("{time_col} >= {start}::timestamptz"));
+            let end = binds.bind(BindValue::String(Cow::Owned(to.to_rfc3339())));
+            conditions.push(format!("{time_col} < {end}::timestamptz"));
         }
     }
 
@@ -139,15 +143,16 @@ ORDER BY "an"."name", {} ASC"#,
 mod tests {
     use super::*;
     use andromeda_ngsi_ld_lexicon::{aggr_method::AggrMethod, temporal_format::TemporalFormat, time_prop::TimeProp};
-    use andromeda_ngsi_ld_model::sys_attrs::SysAttrsInclusion;
-    use andromeda_ngsi_ld_query::temporal::{
-        aggregation_period::AggregationPeriod,
+    use andromeda_ngsi_ld_query::{
         dataset::DatasetSelector,
         entity_selection::EntitySelection,
-        instance_selection::InstanceSelection,
-        representation::Representation,
-        window::TemporalWindow,
+        temporal::{aggregation_period::AggregationPeriod, instance_selection::InstanceSelection, representation::Representation, window::TemporalWindow},
     };
+    use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
+
+    fn instant(raw: &str) -> DateTime<Utc> {
+        DateTime::parse_from_rfc3339(raw).expect("valid instant").with_timezone(&Utc)
+    }
 
     /// The one entity these tests build a history statement for.
     fn vehicle_id() -> Uri {
@@ -184,8 +189,7 @@ mod tests {
     #[test]
     fn build_temporal_history_before() {
         let mut compiled = minimal_compiled();
-        compiled.window.timerel = Some(TimeRel::Before);
-        compiled.window.time_at = Some(DateTime::parse_from_rfc3339("2024-01-15T10:00:00Z").unwrap().with_timezone(&Utc));
+        compiled.window.interval = TimeInterval::Before(instant("2024-01-15T10:00:00Z"));
         let result = build_temporal_history_query(&vehicle_id(), &compiled).unwrap();
         assert!(result.sql.contains("< $2::timestamptz"));
     }
@@ -193,8 +197,7 @@ mod tests {
     #[test]
     fn build_temporal_history_after() {
         let mut compiled = minimal_compiled();
-        compiled.window.timerel = Some(TimeRel::After);
-        compiled.window.time_at = Some(DateTime::parse_from_rfc3339("2024-01-15T10:00:00Z").unwrap().with_timezone(&Utc));
+        compiled.window.interval = TimeInterval::After(instant("2024-01-15T10:00:00Z"));
         let result = build_temporal_history_query(&vehicle_id(), &compiled).unwrap();
         assert!(result.sql.contains(">= $2::timestamptz"));
     }
@@ -202,9 +205,10 @@ mod tests {
     #[test]
     fn build_temporal_history_between() {
         let mut compiled = minimal_compiled();
-        compiled.window.timerel = Some(TimeRel::Between);
-        compiled.window.time_at = Some(DateTime::parse_from_rfc3339("2024-01-15T10:00:00Z").unwrap().with_timezone(&Utc));
-        compiled.window.end_time_at = Some(DateTime::parse_from_rfc3339("2024-01-15T12:00:00Z").unwrap().with_timezone(&Utc));
+        compiled.window.interval = TimeInterval::Between {
+            from: instant("2024-01-15T10:00:00Z"),
+            to: instant("2024-01-15T12:00:00Z"),
+        };
         let result = build_temporal_history_query(&vehicle_id(), &compiled).unwrap();
         assert!(result.sql.contains(">="));
         assert!(result.sql.contains("<"));
@@ -248,9 +252,10 @@ mod tests {
     #[test]
     fn stage_two_placeholders_are_contiguous_from_one() {
         let mut compiled = minimal_compiled();
-        compiled.window.timerel = Some(TimeRel::Between);
-        compiled.window.time_at = Some(DateTime::parse_from_rfc3339("2024-01-15T10:00:00Z").unwrap().with_timezone(&Utc));
-        compiled.window.end_time_at = Some(DateTime::parse_from_rfc3339("2024-01-15T12:00:00Z").unwrap().with_timezone(&Utc));
+        compiled.window.interval = TimeInterval::Between {
+            from: instant("2024-01-15T10:00:00Z"),
+            to: instant("2024-01-15T12:00:00Z"),
+        };
         compiled.instances.attr_filter = vec![IriBuf::new("https://example.com/speed".to_string()).expect("valid IRI")];
         compiled.instances.dataset_id_filter = vec![DatasetSelector::parse("urn:ngsi-ld:Dataset:one").expect("valid selector")];
         compiled.instances.last_n = Some(5);
@@ -295,8 +300,7 @@ mod tests {
         compiled.representation.format = TemporalFormat::AggregatedValues;
         compiled.representation.aggr_methods = vec![AggrMethod::Avg];
         compiled.representation.aggr_period_duration = AggregationPeriod::parse("PT1H").expect("valid period");
-        compiled.window.timerel = Some(TimeRel::After);
-        compiled.window.time_at = Some(DateTime::parse_from_rfc3339("2024-01-15T10:00:00Z").unwrap().with_timezone(&Utc));
+        compiled.window.interval = TimeInterval::After(instant("2024-01-15T10:00:00Z"));
         compiled.instances.attr_filter = vec![IriBuf::new("https://example.com/speed".to_string()).expect("valid IRI")];
 
         let built = build_temporal_history_query(&vehicle_id(), &compiled).unwrap();

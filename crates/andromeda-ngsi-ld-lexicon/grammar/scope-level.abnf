@@ -1,0 +1,8 @@
+; One level of an NGSI-LD scope path (ETSI GS CIM 009 v1.9.1, clause 4.18).
+;
+; Split out of `scope.abnf` so a scope *pattern*, whose wildcards are a query
+; construct rather than a lexical one, can validate its labels against the same
+; production the path itself is derived from instead of restating it by hand.
+
+ScopeLevel      = unicodeLetter *ScopeLevelChar
+ScopeLevelChar  = unicodeNumber / unicodeLetter / %x5F   ; _ (underscore)

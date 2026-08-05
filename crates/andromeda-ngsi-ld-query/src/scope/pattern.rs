@@ -1,6 +1,7 @@
 //! One scope path pattern of a `scopeQ` expression (clause 4.18).
 
 use crate::error::QueryError;
+use andromeda_ngsi_ld_lexicon::scope::level::{ScopeLevel, ScopeLevelBuf};
 use std::fmt::{self, Write};
 
 /// The `+` wildcard: exactly one level, whatever it is named.
@@ -21,28 +22,25 @@ pub enum ScopeSegment {
 
 /// A validated level name inside a scope path.
 ///
-/// The grammar is the one `andromeda_ngsi_ld_lexicon::scope::grammar::Scope` enforces per level:
-/// a Unicode letter, then Unicode letters, digits or underscores. Validating it
-/// here is what makes the `ltree` translation total — an unvalidated label
-/// reaches PostgreSQL as an `lquery` cast and fails there, which is a 500 for
-/// what is a malformed request.
+/// Validation is [`ScopeLevel`], the derived clause 4.18 production the scope
+/// path itself is built from, rather than a second reading of the character
+/// classes here. That is what makes the `ltree` translation total — an
+/// unvalidated label reaches PostgreSQL as an `lquery` cast and fails there,
+/// which is a 500 for what is a malformed request.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ScopeLabel(Box<str>);
+pub struct ScopeLabel(ScopeLevelBuf);
 
 impl ScopeLabel {
     /// Validate one level name.
     pub fn parse(raw: &str) -> Result<ScopeLabel, QueryError> {
-        let mut chars = raw.chars();
-        let starts_well = chars.next().is_some_and(char::is_alphabetic);
-        if !starts_well || !chars.all(|ch| ch.is_alphanumeric() || ch == '_') {
-            return Err(QueryError::ScopePatternInvalid(raw.to_string()));
-        }
-        Ok(ScopeLabel(Box::from(raw)))
+        ScopeLevel::new(raw)
+            .map(|level| ScopeLabel(level.to_owned()))
+            .map_err(|_| QueryError::ScopePatternInvalid(raw.to_string()))
     }
 
     /// The label as written.
     pub fn as_str(&self) -> &str {
-        &self.0
+        self.0.as_str()
     }
 }
 
@@ -89,6 +87,41 @@ impl ScopePattern {
     pub fn segments(&self) -> &[ScopeSegment] {
         &self.0
     }
+
+    /// Whether a scope path satisfies this pattern.
+    ///
+    /// The in-memory reading of clause 4.18, and the counterpart of the
+    /// `lquery` a backend renders: a label matches its own level, `+` matches
+    /// exactly one level of any name, and `#` matches one *or more* remaining
+    /// levels. A pattern with no `#` matches only a path of the same length.
+    ///
+    /// Subscription matching used to carry its own reading in which `#`
+    /// consumed exactly one further level, so `/A/#` matched `/A/B` and not
+    /// `/A/B/C` while the same subscription's stored query matched both.
+    pub fn matches(&self, scope_path: &str) -> bool {
+        let trimmed = scope_path.trim();
+        let trimmed = trimmed.strip_prefix('/').unwrap_or(trimmed);
+        let levels: Vec<&str> = trimmed.split('/').collect();
+
+        for (index, segment) in self.0.iter().enumerate() {
+            match segment {
+                // `#` is last by construction, so everything from here on is
+                // consumed provided there is at least one level left.
+                ScopeSegment::MultiLevel => return levels.len() > index,
+                ScopeSegment::SingleLevel => {
+                    if levels.get(index).is_none() {
+                        return false;
+                    }
+                }
+                ScopeSegment::Label(label) => {
+                    if levels.get(index) != Some(&label.as_str()) {
+                        return false;
+                    }
+                }
+            }
+        }
+        levels.len() == self.0.len()
+    }
 }
 
 // Hand-written because the rendering walks a variable-length segment list and
@@ -131,6 +164,44 @@ mod tests {
     #[test]
     fn a_leading_slash_is_optional() {
         pretty_assertions::assert_eq!(segments("Madrid"), segments("/Madrid"));
+    }
+
+    #[test]
+    fn a_literal_pattern_matches_only_the_path_it_names() {
+        let pattern = ScopePattern::parse("/A/B").expect("valid pattern");
+        assert!(pattern.matches("/A/B"));
+        assert!(!pattern.matches("/A"));
+        assert!(!pattern.matches("/A/B/C"));
+        assert!(!pattern.matches("/A/C"));
+    }
+
+    #[test]
+    fn the_single_level_wildcard_consumes_exactly_one_level() {
+        let pattern = ScopePattern::parse("/A/+/C").expect("valid pattern");
+        assert!(pattern.matches("/A/B/C"));
+        assert!(!pattern.matches("/A/C"));
+        assert!(!pattern.matches("/A/B/D/C"));
+    }
+
+    #[test]
+    fn the_multi_level_wildcard_matches_one_or_more_levels() {
+        // Clause 4.18: `#` renders as the `lquery` quantifier `*{1,}`. An
+        // earlier in-memory reading in subscription matching consumed exactly
+        // one further level, so `/A/#` matched `/A/B` and not `/A/B/C` while
+        // the same pattern in a stored query matched both.
+        let pattern = ScopePattern::parse("/A/#").expect("valid pattern");
+        assert!(pattern.matches("/A/B"));
+        assert!(pattern.matches("/A/B/C"));
+        assert!(pattern.matches("/A/B/C/D"));
+        assert!(!pattern.matches("/A"));
+        assert!(!pattern.matches("/B/C"));
+    }
+
+    #[test]
+    fn a_pattern_matches_a_path_written_without_its_leading_slash() {
+        let pattern = ScopePattern::parse("/Madrid").expect("valid pattern");
+        assert!(pattern.matches("Madrid"));
+        assert!(pattern.matches("/Madrid"));
     }
 
     #[test]

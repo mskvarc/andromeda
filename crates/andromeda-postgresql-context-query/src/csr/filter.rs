@@ -8,11 +8,16 @@ use andromeda_ngsi_ld_query::{
     filter::{
         expression::Expr,
         path::AttrPath,
-        predicate::{CmpOp, PatternPolarity, Predicate, SetMembership, present_and},
+        predicate::{CmpOp, PatternPolarity, Predicate, SetMembership},
         scalar::CompareValue,
     },
 };
-use andromeda_postgresql_query::{error::RenderError, literal::escape_single_quoted};
+use andromeda_postgresql_query::{
+    error::RenderError,
+    jsonb::comparison_operand,
+    literal::escape_single_quoted,
+    operator::{comparison, pattern_match, present_and},
+};
 use sea_query::{Condition, Expr as SeaExpr};
 
 /// Compile a parsed `q` expression against `additional_properties`.
@@ -40,7 +45,7 @@ fn csr_pred_to_condition(pred: &Predicate) -> Result<Condition, RenderError> {
 /// build through [`present_and`].
 fn csr_pattern_condition(path: &AttrPath, pattern: &str, polarity: PatternPolarity) -> Condition {
     let extract = csr_value_extract(path);
-    let value_sql = format!("({})::text {} $1", extract, polarity.operator());
+    let value_sql = format!("({})::text {} $1", extract, pattern_match(polarity));
     Condition::all().add(SeaExpr::cust_with_values(
         present_and(&format!("{extract} IS NOT NULL"), &value_sql),
         [pattern.to_string()],
@@ -69,18 +74,18 @@ fn csr_compare_to_condition(path: &AttrPath, op: CmpOp, rhs: &CompareValue) -> R
 
     match rhs {
         CompareValue::Scalar(scalar) => {
-            let (cast, value) = scalar.as_sql_text();
+            let (cast, value) = comparison_operand(scalar);
             let value_sql = format!(
                 "(({extract}) #>> '{{}}'){cast} {op_str} $1{cast}",
                 extract = extract,
                 cast = cast,
-                op_str = op.sql_operator(),
+                op_str = comparison(op),
             );
             Ok(Condition::all().add(SeaExpr::cust_with_values(present_and(&format!("({extract}) IS NOT NULL"), &value_sql), [value])))
         }
         CompareValue::Range { min, max } => {
-            let (cast, min_val) = min.as_sql_text();
-            let (_, max_val) = max.as_sql_text();
+            let (cast, min_val) = comparison_operand(min);
+            let (_, max_val) = comparison_operand(max);
             let value_sql = match op.set_membership().ok_or(QueryError::RangeOperatorUnsupported)? {
                 SetMembership::Within => format!(
                     "(({extract}) #>> '{{}}'){cast} >= $1{cast} AND (({extract}) #>> '{{}}'){cast} <= $2{cast}",
@@ -102,7 +107,7 @@ fn csr_compare_to_condition(path: &AttrPath, op: CmpOp, rhs: &CompareValue) -> R
             let mut parts = Vec::with_capacity(values.len());
             let mut bind_values = Vec::with_capacity(values.len());
             for (i, v) in values.iter().enumerate() {
-                let (cast, val) = v.as_sql_text();
+                let (cast, val) = comparison_operand(v);
                 parts.push(format!(
                     "(({extract}) #>> '{{}}'){cast} = ${idx}{cast}",
                     extract = extract,
@@ -324,8 +329,9 @@ mod tests {
             }
             assert!(!evaluate(&expr, &absent()), "{} must reject an entity without the attribute", case.expression);
 
-            let projection_sql =
-                render_entity_condition(compile(&expr, QFilterTarget::Entities, &names()).unwrap_or_else(|error| unreachable!("{}: {error}", case.expression)));
+            let projection_sql = render_entity_condition(
+                compile(&expr, &QFilterTarget::entities(), &names()).unwrap_or_else(|error| unreachable!("{}: {error}", case.expression)),
+            );
             assert!(
                 projection_sql.contains("EXISTS ("),
                 "{} must test presence structurally: {projection_sql}",

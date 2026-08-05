@@ -9,7 +9,7 @@ use andromeda_ngsi_ld_lexicon::{
     name::grammar::Name,
     ngsi_ld_urn::{EntityMapId, SnapshotId},
 };
-use andromeda_ngsi_ld_model::sys_attrs::SysAttrsInclusion;
+use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 use axum::http::Uri;
 use url::Url;
 use urn_rs::Urn;

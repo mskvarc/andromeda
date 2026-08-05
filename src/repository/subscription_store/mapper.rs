@@ -19,6 +19,7 @@ use andromeda_ngsi_ld_model::subscription::{
     SubscriptionLifecycle,
     SubscriptionSelection,
 };
+use andromeda_ngsi_ld_query::scope::query::ScopeQuery;
 use chrono::{DateTime, Utc};
 use langtag::LangTagBuf;
 use sqlx::Row;
@@ -119,6 +120,29 @@ pub fn row_to_subscription(row: SubscriptionRow) -> Result<Subscription, Androme
         .transpose()
         .map_err(|e| AndromedaError::internal(format!("Invalid subscription jsonldContext: {e}")))?;
 
+    // The three filter columns are text, and the resource holds them parsed. A
+    // row that will not parse was written by an older build or edited by hand;
+    // either way it cannot be matched against, so it is an error here rather
+    // than a subscription that silently never fires.
+    let q = row
+        .q
+        .as_deref()
+        .map(str::parse)
+        .transpose()
+        .map_err(|e| AndromedaError::internal(format!("Invalid stored subscription q filter: {e}")))?;
+    let scope_q = row
+        .scope_q
+        .as_deref()
+        .map(ScopeQuery::parse)
+        .transpose()
+        .map_err(|e| AndromedaError::internal(format!("Invalid stored subscription scopeQ: {e}")))?;
+    let csf = row
+        .csf
+        .as_deref()
+        .map(str::parse)
+        .transpose()
+        .map_err(|e| AndromedaError::internal(format!("Invalid stored subscription csf filter: {e}")))?;
+
     Ok(Subscription::builder()
         .id(id)
         .subscription_name(row.subscription_name)
@@ -132,10 +156,10 @@ pub fn row_to_subscription(row: SubscriptionRow) -> Result<Subscription, Androme
         )
         .filters(
             SubscriptionFilters::builder()
-                .q(row.q)
+                .q(q)
                 .geo_q(row.geo_q)
-                .scope_q(row.scope_q)
-                .csf(row.csf)
+                .scope_q(scope_q)
+                .csf(csf)
                 .dataset_id(dataset_id)
                 .temporal_q(row.temporal_q)
                 .build(),

@@ -2,7 +2,7 @@
 
 use crate::temporal::aggregation_period::AggregationPeriod;
 use andromeda_ngsi_ld_lexicon::{aggr_method::AggrMethod, temporal_format::TemporalFormat};
-use andromeda_ngsi_ld_model::sys_attrs::SysAttrsInclusion;
+use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 use typed_builder::TypedBuilder;
 
 /// The response shape of a temporal query.

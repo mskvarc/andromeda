@@ -1,6 +1,7 @@
 use crate::{
     http::model::response_format::APPLICATION_LD_JSON,
     jsonld::{CompactOptions, ContextSpec, ContextStripping, JsonLdEngine},
+    renderer::simplify::simplify_entity,
     repository::{entity::repo::EntityRepository, subscription::repo::SubscriptionRepository, subscription_store::repo::SubscriptionStore},
     service::entity::inject_sys_attrs,
     transport::{
@@ -10,7 +11,7 @@ use crate::{
 };
 use andromeda_ngsi_ld_lexicon::uri::{NGSI_LD_URN_NID, Uri};
 use andromeda_ngsi_ld_model::{entity::Entity, notification::Notification, subscription::Subscription};
-use andromeda_ngsi_ld_query::filter::{eval, parser};
+use andromeda_ngsi_ld_query::filter::eval;
 use chrono::Utc;
 use futures::{StreamExt, stream};
 use mediatype::MediaTypeBuf;
@@ -22,8 +23,8 @@ use uuid::Uuid;
 
 use super::notification::payload::{context_for_subscription_raw, filter_entity_attributes, normalize_compacted_entity};
 use crate::service::{
-    subscription_cache::{compile_geo_q, compile_scope_q},
-    subscription_matching::{matches_compiled_geo_query, matches_compiled_scope_pattern},
+    subscription_cache::compile_geo_q,
+    subscription_matching::{matches_compiled_geo_query, matches_scope_query},
 };
 
 const INTERVAL_NOTIFICATION_CONCURRENCY: usize = 20;
@@ -192,10 +193,21 @@ impl IntervalWorker {
 
         if let Some(ref selectors) = sub.selection.entities {
             for selector in selectors {
-                let type_ = &selector.type_;
-                let entities = self.entity_repo.get_entities_by_type(type_, None, None).await?;
+                // A by-type lookup takes one type, so only a leaf selector can
+                // be pushed down; a boolean expression reads the candidates and
+                // is applied in memory. Passing the expression text as a type
+                // name, which is what happened before it was parsed, matched
+                // nothing at all.
+                let entities = match selector.type_.as_single_type() {
+                    Some(type_iri) => self.entity_repo.get_entities_by_type(type_iri, None, None).await?,
+                    None => self.entity_repo.get_all_entities(None, None).await?,
+                };
 
                 for entity in entities {
+                    if selector.type_.as_single_type().is_none() && !selector.type_.matches(&entity_types(&entity)) {
+                        continue;
+                    }
+
                     // Apply id / idPattern filtering
                     let entity_id = entity
                         .as_array()
@@ -206,14 +218,13 @@ impl IntervalWorker {
                         .unwrap_or("");
 
                     if let Some(ref id) = selector.id
-                        && entity_id != id
+                        && entity_id != id.to_string()
                     {
                         continue;
                     }
 
                     if let Some(ref pattern) = selector.id_pattern
-                        && let Ok(re) = regex::Regex::new(pattern)
-                        && !re.is_match(entity_id)
+                        && !pattern.is_match(entity_id)
                     {
                         continue;
                     }
@@ -284,7 +295,7 @@ impl IntervalWorker {
             let formatted = if let Some(fmt) = sub.notification.format {
                 if fmt.is_simplified() {
                     match serde_json::from_value::<Entity>(compacted.clone()) {
-                        Ok(entity) => entity.simplify(),
+                        Ok(entity) => simplify_entity(&entity),
                         Err(_) => compacted,
                     }
                 } else {
@@ -301,6 +312,19 @@ impl IntervalWorker {
     }
 }
 
+/// The expanded type IRIs an entity payload declares.
+fn entity_types(entity: &Value) -> Vec<&str> {
+    let node = match entity {
+        Value::Array(arr) => arr.first(),
+        object @ Value::Object(_) => Some(object),
+        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => None,
+    };
+    node.and_then(|node| node.get("@type"))
+        .and_then(Value::as_array)
+        .map(|types| types.iter().filter_map(Value::as_str).collect())
+        .unwrap_or_default()
+}
+
 fn extract_entity_id(entity: &Value) -> Option<String> {
     match entity {
         Value::Array(arr) => arr.first().and_then(|v| v.get("@id").and_then(|v| v.as_str()).map(String::from)),
@@ -311,16 +335,10 @@ fn extract_entity_id(entity: &Value) -> Option<String> {
 
 /// Apply q, geoQ, and scopeQ filters from a subscription to a list of expanded entities.
 fn apply_subscription_filters(sub: &Subscription, entities: Vec<Value>) -> Vec<Value> {
-    let compiled_q = sub.filters.q.as_ref().and_then(|q_str| match parser::parse(q_str) {
-        Ok(expr) => Some(expr),
-        Err(e) => {
-            debug!("IntervalWorker: failed to parse q filter '{}' for subscription {}: {}", q_str, sub.id, e);
-            None
-        }
-    });
+    let compiled_q = sub.filters.q.as_ref();
 
     let compiled_geo = sub.filters.geo_q.as_ref().and_then(|v| compile_geo_q(v, sub.id.as_ref()));
-    let compiled_scope = sub.filters.scope_q.as_deref().map(compile_scope_q);
+    let compiled_scope = sub.filters.scope_q.as_ref();
 
     let has_filters = compiled_q.is_some() || compiled_geo.is_some() || compiled_scope.is_some();
     if !has_filters {
@@ -330,7 +348,7 @@ fn apply_subscription_filters(sub: &Subscription, entities: Vec<Value>) -> Vec<V
     entities
         .into_iter()
         .filter(|entity| {
-            if let Some(ref expr) = compiled_q
+            if let Some(expr) = compiled_q
                 && !eval::evaluate(expr, entity)
             {
                 return false;
@@ -340,8 +358,8 @@ fn apply_subscription_filters(sub: &Subscription, entities: Vec<Value>) -> Vec<V
             {
                 return false;
             }
-            if let Some(ref scope_q) = compiled_scope
-                && !matches_compiled_scope_pattern(scope_q, entity)
+            if let Some(scope_q) = compiled_scope
+                && !matches_scope_query(scope_q, entity)
             {
                 return false;
             }
