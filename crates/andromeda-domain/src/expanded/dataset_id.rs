@@ -17,7 +17,6 @@ pub fn get_instance_dataset_id(instance: &Value) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use crate::expanded::dataset_id::get_instance_dataset_id;
     use serde_json::json;
 

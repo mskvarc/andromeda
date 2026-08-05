@@ -6,7 +6,7 @@
 
 use crate::{core::error::AndromedaError, http::error::problem::NgsiLdError};
 use andromeda_domain::{
-    name::Name,
+    name::grammar::Name,
     ngsi_ld_urn::{EntityMapId, SnapshotId},
     sys_attrs::SysAttrsInclusion,
 };
@@ -159,7 +159,6 @@ pub fn parse_list_options(options: Option<&str>, uri: &Uri) -> Result<ListOption
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::*;
     use axum::http::Uri;
 

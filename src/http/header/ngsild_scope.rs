@@ -111,7 +111,6 @@ fn validate_scope_label(segment: &str) -> Result<(), ()> {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::*;
     use headers::Header;
 

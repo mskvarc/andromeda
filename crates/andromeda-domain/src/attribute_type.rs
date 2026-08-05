@@ -29,6 +29,15 @@ pub enum AttributeType {
     ListRelationship,
 }
 
+// `derive_more::AsRef` forwards to a struct field, and a fieldless enum has
+// none; this forwards to the `IntoStaticStr` derive instead, so the rendering
+// stays the one place `strum` already owns.
+impl AsRef<str> for AttributeType {
+    fn as_ref(&self) -> &str {
+        <&'static str>::from(*self)
+    }
+}
+
 impl AttributeType {
     /// Returns the expanded IRI for this attribute type as an [`Iri`].
     pub const fn iri(self) -> Iri<&'static str> {
@@ -66,20 +75,6 @@ impl AttributeType {
     /// Returns the expanded IRI of the value container as a static string slice.
     pub fn value_key_str(self) -> &'static str {
         self.value_key().into_inner()
-    }
-
-    /// Returns the compacted (short) value key for this attribute type.
-    #[allow(dead_code)]
-    pub const fn compacted_value_key(self) -> &'static str {
-        match self {
-            Self::Property | Self::GeoProperty => compact_properties::VALUE,
-            Self::Relationship => compact_properties::OBJECT,
-            Self::VocabProperty => compact_properties::VOCAB,
-            Self::LanguageProperty => compact_properties::LANGUAGE_MAP,
-            Self::JsonProperty => compact_properties::JSON,
-            Self::ListProperty => compact_properties::VALUE_LIST,
-            Self::ListRelationship => compact_properties::OBJECT_LIST,
-        }
     }
 
     /// Returns the compacted previous-value key for showChanges support.
@@ -257,7 +252,6 @@ impl AttributeType {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::*;
     use std::str::FromStr;
 

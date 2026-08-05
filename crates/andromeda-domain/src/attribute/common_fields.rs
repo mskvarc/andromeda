@@ -1,7 +1,7 @@
 //! The members every NGSI-LD attribute family carries (ETSI GS CIM 009 clause 5.2).
 
 use crate::{
-    attribute::{AttributeValue, name::AttributeName},
+    attribute::{instance::AttributeValue, name::AttributeName},
     uri::Uri,
 };
 use chrono::{DateTime, Utc};

@@ -256,7 +256,6 @@ pub fn update_entity_attrs(entity: &mut Value, attrs: &Value) -> Result<Vec<Stri
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use crate::expanded::mutation::{
         entity::{append_entity_attrs, merge_entity},
         error::ExpandedEntityError,

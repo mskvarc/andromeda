@@ -522,6 +522,7 @@ pub fn merge_update_fields(
             .transpose()?
             .or_else(|| {
                 existing
+                    .selection
                     .watched_attributes
                     .as_ref()
                     .map(|names| names.iter().map(ToString::to_string).collect())
@@ -533,26 +534,44 @@ pub fn merge_update_fields(
                     .map_err(|e| AndromedaError::subscription_validation(format!("Invalid 'notificationTrigger': {}", e))) // clone: serde_json::from_value consumes the Value
             })
             .transpose()?
-            .or_else(|| existing.notification_trigger.as_ref().map(|t| t.iter().map(|nt| nt.to_string()).collect())),
-        time_interval: payload.get("timeInterval").and_then(|v| v.as_f64()).or(existing.time_interval),
-        q: payload.get("q").and_then(|v| v.as_str()).map(String::from).or_else(|| existing.q.clone()), // clone: fallback to existing owned value
-        geo_q: payload.get("geoQ").cloned().or_else(|| existing.geo_q.clone()).filter(|v| !v.is_null()), // clone: need owned Values from borrowed sources
+            .or_else(|| {
+                existing
+                    .selection
+                    .notification_trigger
+                    .as_ref()
+                    .map(|t| t.iter().map(|nt| nt.to_string()).collect())
+            }),
+        time_interval: payload.get("timeInterval").and_then(|v| v.as_f64()).or(existing.delivery.time_interval),
+        q: payload
+            .get("q")
+            .and_then(|v| v.as_str())
+            .map(String::from)
+            .or_else(|| existing.filters.q.clone()), // clone: fallback to existing owned value
+        geo_q: payload.get("geoQ").cloned().or_else(|| existing.filters.geo_q.clone()).filter(|v| !v.is_null()), // clone: need owned Values from borrowed sources
         scope_q: payload
             .get("scopeQ")
             .and_then(|v| v.as_str())
             .map(String::from)
-            .or_else(|| existing.scope_q.clone()), // clone: fallback to existing owned value
-        csf: payload.get("csf").and_then(|v| v.as_str()).map(String::from).or_else(|| existing.csf.clone()), // clone: fallback to existing owned value
+            .or_else(|| existing.filters.scope_q.clone()), // clone: fallback to existing owned value
+        csf: payload
+            .get("csf")
+            .and_then(|v| v.as_str())
+            .map(String::from)
+            .or_else(|| existing.filters.csf.clone()), // clone: fallback to existing owned value
         dataset_id: if use_dataset_id {
             payload
                 .get("datasetId")
                 .map(|v| serde_json::from_value(v.clone()).map_err(|e| AndromedaError::subscription_validation(format!("Invalid 'datasetId': {}", e)))) // clone: serde_json::from_value consumes the Value
                 .transpose()?
-                .or_else(|| existing.dataset_id.as_ref().map(|ids| ids.iter().map(ToString::to_string).collect()))
+                .or_else(|| existing.filters.dataset_id.as_ref().map(|ids| ids.iter().map(ToString::to_string).collect()))
         } else {
             None
         },
-        is_active: payload.get("isActive").and_then(|v| v.as_bool()).or(existing.is_active).unwrap_or(true),
+        is_active: payload
+            .get("isActive")
+            .and_then(|v| v.as_bool())
+            .or(existing.lifecycle.is_active)
+            .unwrap_or(true),
         notification: payload
             .get("notification")
             .cloned() // clone: need owned Value from borrowed payload
@@ -571,23 +590,27 @@ pub fn merge_update_fields(
                     .map_err(|e| AndromedaError::subscription_validation(format!("Invalid 'expiresAt' value '{}': {}", s, e)))
             })
             .transpose()?
-            .or(existing.expires_at),
-        throttling: payload.get("throttling").and_then(|v| v.as_f64()).or(existing.throttling),
+            .or(existing.lifecycle.expires_at),
+        throttling: payload.get("throttling").and_then(|v| v.as_f64()).or(existing.delivery.throttling),
         temporal_q: payload
             .get("temporalQ")
             .cloned() // clone: need owned Value from borrowed payload
-            .or_else(|| existing.temporal_q.clone()) // clone: fallback to existing owned value
+            .or_else(|| existing.filters.temporal_q.clone()) // clone: fallback to existing owned value
             .filter(|v| !v.is_null()),
         lang: payload
             .get("lang")
             .and_then(|v| v.as_str())
             .map(String::from)
-            .or_else(|| existing.lang.as_ref().map(ToString::to_string)),
+            .or_else(|| existing.delivery.lang.as_ref().map(ToString::to_string)),
         jsonld_context: payload
             .get("jsonldContext")
             .and_then(|v| v.as_str())
             .map(String::from)
-            .or_else(|| existing.jsonld_context.as_ref().map(ToString::to_string)),
-        local_only: payload.get("localOnly").and_then(|v| v.as_bool()).or(existing.local_only).unwrap_or(false),
+            .or_else(|| existing.delivery.jsonld_context.as_ref().map(ToString::to_string)),
+        local_only: payload
+            .get("localOnly")
+            .and_then(|v| v.as_bool())
+            .or(existing.delivery.local_only)
+            .unwrap_or(false),
     })
 }

@@ -76,37 +76,37 @@ pub fn apply_fragment(existing: ContextSourceRegistration, fragment: &CsrUpdateF
     let description = fragment.description.clone().unwrap_or(existing.description); // clone: own fragment side; existing moves
     let information: Value = match fragment.information.as_ref() {
         Some(v) => v.clone(), // clone: own fragment Value; existing path serialises typed info
-        None => serde_json::to_value(&existing.information)?,
+        None => serde_json::to_value(&existing.coverage.information)?,
     };
     let tenant = fragment.tenant.clone().unwrap_or(existing.tenant); // clone: own fragment side; existing moves
-    let observation_interval = fragment.observation_interval.clone().unwrap_or(existing.observation_interval); // clone: own fragment side
-    let management_interval = fragment.management_interval.clone().unwrap_or(existing.management_interval); // clone: own fragment side
-    let expires_at = fragment.expires_at.unwrap_or(existing.expires_at);
-    let endpoint = fragment.endpoint.clone().unwrap_or_else(|| existing.endpoint.to_string()); // clone: own fragment side; existing renders to the persisted form
+    let observation_interval = fragment.observation_interval.clone().unwrap_or(existing.coverage.observation_interval); // clone: own fragment side
+    let management_interval = fragment.management_interval.clone().unwrap_or(existing.coverage.management_interval); // clone: own fragment side
+    let expires_at = fragment.expires_at.unwrap_or(existing.lifecycle.expires_at);
+    let endpoint = fragment.endpoint.clone().unwrap_or_else(|| existing.access.endpoint.to_string()); // clone: own fragment side; existing renders to the persisted form
     let accept = fragment
         .accept
         .clone() // clone: own fragment side; existing renders to the persisted form
-        .unwrap_or_else(|| existing.accept.map(|media_type| media_type.to_string()));
-    let mode = fragment.mode.unwrap_or_else(|| existing.mode.unwrap_or_default());
+        .unwrap_or_else(|| existing.access.accept.map(|media_type| media_type.to_string()));
+    let mode = fragment.mode.unwrap_or_else(|| existing.access.mode.unwrap_or_default());
     let operations = fragment
         .operations
         .clone() // clone: own fragment side; existing path constructs fresh Vec<String>
-        .unwrap_or_else(|| existing.operations.map(|ops| ops.into_iter().map(|op| op.to_string()).collect()));
+        .unwrap_or_else(|| existing.access.operations.map(|ops| ops.into_iter().map(|op| op.to_string()).collect()));
     let scope = fragment
         .scope
         .clone() // clone: own fragment side; existing path constructs fresh Vec<String>
-        .unwrap_or_else(|| existing.scope.map(|v| v.into_iter().map(|s| s.to_string()).collect()));
+        .unwrap_or_else(|| existing.coverage.scope.map(|v| v.into_iter().map(|s| s.to_string()).collect()));
     let refresh_rate = fragment
         .refresh_rate
         .clone() // clone: own fragment side; existing renders to the persisted form
-        .unwrap_or_else(|| existing.refresh_rate.map(|duration| duration.to_string()));
-    let management = fragment.management.clone().unwrap_or(existing.management); // clone: own fragment side
-    let context_source_info = fragment.context_source_info.clone().unwrap_or(existing.context_source_info); // clone: own fragment side
+        .unwrap_or_else(|| existing.access.refresh_rate.map(|duration| duration.to_string()));
+    let management = fragment.management.clone().unwrap_or(existing.access.management); // clone: own fragment side
+    let context_source_info = fragment.context_source_info.clone().unwrap_or(existing.access.context_source_info); // clone: own fragment side
     let jsonld_context = fragment
         .jsonld_context
         .clone() // clone: own fragment side; existing renders to the persisted form
-        .unwrap_or_else(|| existing.jsonld_context.map(|url| url.to_string()));
-    let context_source_alias = fragment.context_source_alias.clone().unwrap_or(existing.context_source_alias); // clone: own fragment side
+        .unwrap_or_else(|| existing.access.jsonld_context.map(|url| url.to_string()));
+    let context_source_alias = fragment.context_source_alias.clone().unwrap_or(existing.access.context_source_alias); // clone: own fragment side
 
     let additional_properties = match (existing.additional_properties, &fragment.additional_properties) {
         (Some(existing_val), Some(new_val)) => {
@@ -126,6 +126,7 @@ pub fn apply_fragment(existing: ContextSourceRegistration, fragment: &CsrUpdateF
     let location = match fragment.location.as_ref() {
         Some(frag) => frag.clone(), // clone: own fragment side; fragment is borrowed
         None => existing
+            .coverage
             .location
             .as_ref()
             .map(Geometry::from_geojson_value)
@@ -135,6 +136,7 @@ pub fn apply_fragment(existing: ContextSourceRegistration, fragment: &CsrUpdateF
     let observation_space = match fragment.observation_space.as_ref() {
         Some(frag) => frag.clone(), // clone: own fragment side; fragment is borrowed
         None => existing
+            .coverage
             .observation_space
             .as_ref()
             .map(Geometry::from_geojson_value)
@@ -144,6 +146,7 @@ pub fn apply_fragment(existing: ContextSourceRegistration, fragment: &CsrUpdateF
     let operation_space = match fragment.operation_space.as_ref() {
         Some(frag) => frag.clone(), // clone: own fragment side; fragment is borrowed
         None => existing
+            .coverage
             .operation_space
             .as_ref()
             .map(Geometry::from_geojson_value)

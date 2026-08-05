@@ -7,6 +7,7 @@
 //! every layer above it depends on these types rather than on each other's.
 
 #![deny(missing_docs)]
+#![deny(clippy::missing_docs_in_private_items)]
 
 pub mod attribute;
 pub mod attribute_list;
@@ -30,6 +31,7 @@ pub mod rfc3339;
 pub mod scope;
 pub mod snapshot;
 pub mod snapshot_filter;
+pub mod snapshot_query;
 pub mod subscription;
 pub mod sys_attrs;
 pub mod temporal;

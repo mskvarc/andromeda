@@ -33,9 +33,9 @@ pub struct JsonProperty {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::expect_used, clippy::unwrap_used)]
-    use crate::{attribute::Attribute, vocab::expanded::properties as expanded_properties};
+    use crate::{attribute::instance::Attribute, vocab::expanded::properties as expanded_properties};
     use jsonld::Expandable;
+    use serde_json::Value;
 
     #[test]
     fn json_property_round_trip_supports_previous_json() {
@@ -71,7 +71,7 @@ mod tests {
     fn the_json_property_default_matches_the_field_by_field_literal() {
         use crate::attribute::json_property::JsonProperty;
         let actual = JsonProperty::default();
-        pretty_assertions::assert_eq!(actual.json, serde_json::Value::Null);
+        pretty_assertions::assert_eq!(actual.json, Value::Null);
         assert!(actual.value_type.is_none() && actual.previous_json.is_none());
         assert!(actual.common.sub_attributes.is_empty());
         assert!(actual.common.dataset_id.is_none() && actual.common.observed_at.is_none() && actual.common.expires_at.is_none());

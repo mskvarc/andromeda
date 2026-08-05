@@ -24,7 +24,6 @@ pub fn unwrap_geo_property_to_geometry(v: &Value) -> Result<Geometry, AndromedaE
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::unwrap_geo_property_to_geometry;
     use andromeda_geometry::geometry::Geometry;
     use serde_json::json;

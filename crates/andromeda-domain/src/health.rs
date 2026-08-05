@@ -77,21 +77,21 @@ pub struct ComponentDetail {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::*;
+    use serde_json::Value;
     use urn_rs::UrnBuilder;
 
     fn sample_response() -> HealthCheckResponse {
         let id_urn = UrnBuilder::new("ngsi-ld", "HealthCheck:550e8400-e29b-41d4-a716-446655440000").build().unwrap();
 
         let mut pg_details = BTreeMap::new();
-        pg_details.insert("poolSize".to_owned(), serde_json::Value::from(5));
-        pg_details.insert("idleConnections".to_owned(), serde_json::Value::from(3));
-        pg_details.insert("pingLatencyMs".to_owned(), serde_json::Value::from(2));
+        pg_details.insert("poolSize".to_owned(), Value::from(5));
+        pg_details.insert("idleConnections".to_owned(), Value::from(3));
+        pg_details.insert("pingLatencyMs".to_owned(), Value::from(2));
 
         let mut mqtt_details = BTreeMap::new();
-        mqtt_details.insert("activeConnections".to_owned(), serde_json::Value::from(1));
-        mqtt_details.insert("unhealthyConnections".to_owned(), serde_json::Value::from(0));
+        mqtt_details.insert("activeConnections".to_owned(), Value::from(1));
+        mqtt_details.insert("unhealthyConnections".to_owned(), Value::from(0));
 
         let mut components = BTreeMap::new();
         components.insert(
@@ -178,13 +178,13 @@ mod tests {
     #[test]
     fn component_name_serializes_as_postgresql() {
         let json = serde_json::to_value(ComponentName::PostgreSql).unwrap();
-        pretty_assertions::assert_eq!(json, serde_json::Value::String("postgresql".to_owned()));
+        pretty_assertions::assert_eq!(json, Value::String("postgresql".to_owned()));
     }
 
     #[test]
     fn component_name_mqtt_serializes_correctly() {
         let json = serde_json::to_value(ComponentName::Mqtt).unwrap();
-        pretty_assertions::assert_eq!(json, serde_json::Value::String("mqtt".to_owned()));
+        pretty_assertions::assert_eq!(json, Value::String("mqtt".to_owned()));
     }
 
     #[test]
@@ -196,14 +196,14 @@ mod tests {
     fn health_status_serializes_lowercase() {
         let up = serde_json::to_value(HealthStatus::Up).unwrap();
         let down = serde_json::to_value(HealthStatus::Down).unwrap();
-        pretty_assertions::assert_eq!(up, serde_json::Value::String("up".to_owned()));
-        pretty_assertions::assert_eq!(down, serde_json::Value::String("down".to_owned()));
+        pretty_assertions::assert_eq!(up, Value::String("up".to_owned()));
+        pretty_assertions::assert_eq!(down, Value::String("down".to_owned()));
     }
 
     #[test]
     fn numeric_detail_value_serializes_as_number() {
         let mut details = BTreeMap::new();
-        details.insert("poolSize".to_owned(), serde_json::Value::from(5));
+        details.insert("poolSize".to_owned(), Value::from(5));
 
         let component = ComponentDetail {
             status: HealthStatus::Up,

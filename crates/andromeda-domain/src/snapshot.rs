@@ -1,20 +1,19 @@
 //! The Snapshot resource and its notification payload (ETSI GS CIM 009 clauses 5.2.41 to 5.3.4).
 
 use crate::{
-    attribute::name::AttributeName,
     constant_string,
     ngsi_ld_urn::{SnapshotId, SnapshotNotificationId, SnapshotNotificationIdParseError},
 };
-use andromeda_geometry::{geo_rel::GeoRel, geometry::GeometryType};
 use chrono::{DateTime, Utc};
 use compact_str::CompactString;
-use derive_more::Display;
+use derive_more::{Display, Into};
 use iso8601_duration::Duration as Iso8601Duration;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use serde_with::skip_serializing_none;
 use strum::{Display as StrumDisplay, EnumIter, EnumString, IntoStaticStr};
 use thiserror::Error;
+use typed_builder::TypedBuilder;
 use url::Url;
 use uuid::Uuid;
 
@@ -51,7 +50,7 @@ pub enum ExecutionResultStatus {
 }
 
 /// Snapshot priority (`1..=10`, default `5`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Display)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Display, Into)]
 #[serde(try_from = "u8", into = "u8")]
 pub struct SnapshotPriority(u8);
 
@@ -84,6 +83,10 @@ impl Default for SnapshotPriority {
     }
 }
 
+// `derive_more::TryFrom` reads an enum's discriminants; this is a newtype whose
+// validity is a range rather than a variant set, so the bound check is written
+// out. Both integer widths are accepted because clause 5.2.41 states the range
+// in decimal while the store column is `SMALLINT`.
 impl TryFrom<u8> for SnapshotPriority {
     type Error = SnapshotPriorityParseError;
 
@@ -96,6 +99,7 @@ impl TryFrom<u8> for SnapshotPriority {
     }
 }
 
+// See the note on the `u8` conversion above.
 impl TryFrom<i16> for SnapshotPriority {
     type Error = SnapshotPriorityParseError;
 
@@ -105,12 +109,6 @@ impl TryFrom<i16> for SnapshotPriority {
         } else {
             Err(SnapshotPriorityParseError::OutOfRange(value.into()))
         }
-    }
-}
-
-impl From<SnapshotPriority> for u8 {
-    fn from(value: SnapshotPriority) -> u8 {
-        value.0
     }
 }
 
@@ -134,28 +132,35 @@ pub struct KeyValuePair {
 
 /// NGSI-LD Snapshot representation (ETSI GS CIM 009 clause 5.2.41).
 #[skip_serializing_none]
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TypedBuilder)]
 #[serde(rename_all = "camelCase")]
 pub struct Snapshot {
     /// Generated identifier of this snapshot.
     pub id: SnapshotId,
     /// Entity queries the snapshot materialises.
+    #[builder(default)]
     pub snapshot_queries: Option<Vec<Value>>,
     /// Temporal queries the snapshot materialises.
+    #[builder(default)]
     pub snapshot_temporal_queries: Option<Vec<Value>>,
     /// How long the snapshot stays usable after its last use.
+    #[builder(default)]
     pub snapshot_lifetime: Option<Iso8601Duration>,
     /// Execution priority, `1..=10`.
     pub snapshot_priority: SnapshotPriority,
     /// Endpoint notified when the snapshot's status changes.
+    #[builder(default)]
     pub endpoint: Option<Url>,
     /// Headers to send with the status notification.
+    #[builder(default)]
     pub receiver_info: Option<Vec<KeyValuePair>>,
     /// Current status of the snapshot.
     pub status: SnapshotStatus,
     /// Per-entity-query execution details.
+    #[builder(default)]
     pub queries_details: Option<Vec<ExecutionResultDetails>>,
     /// Per-temporal-query execution details.
+    #[builder(default)]
     pub temporal_queries_details: Option<Vec<ExecutionResultDetails>>,
     /// When the snapshot was requested.
     pub created_at: DateTime<Utc>,
@@ -164,6 +169,7 @@ pub struct Snapshot {
     /// When it stops being usable.
     pub expires_at: DateTime<Utc>,
     /// When it was last read, if it ever was.
+    #[builder(default)]
     pub last_used_at: Option<DateTime<Utc>>,
 }
 
@@ -180,13 +186,14 @@ pub struct ExecutionResultDetails {
 
 /// Notification payload sent to a snapshot endpoint on status changes (clause 5.3.4).
 #[skip_serializing_none]
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, TypedBuilder)]
 #[serde(rename_all = "camelCase")]
 pub struct SnapshotNotification {
     /// Unique notification identifier (`urn:ngsi-ld:SnapshotNotification:{uuid}`).
     pub id: SnapshotNotificationId,
     /// Always `SnapshotNotification`.
     #[serde(rename = "type")]
+    #[builder(default)]
     pub type_: SnapshotNotificationType,
     /// Expiration time for the snapshot.
     pub expires_at: DateTime<Utc>,
@@ -197,10 +204,12 @@ pub struct SnapshotNotification {
     /// Priority of the snapshot (1..=10).
     pub snapshot_priority: SnapshotPriority,
     /// Per-query execution details, if available.
+    #[builder(default)]
     pub snapshot_queries_details: Option<Vec<ExecutionResultDetails>>,
     /// Current snapshot status (one of success, partial, failure, empty).
     pub snapshot_status: SnapshotStatus,
     /// Per-temporal-query execution details, if available.
+    #[builder(default)]
     pub temporal_snapshot_queries_details: Option<Vec<ExecutionResultDetails>>,
 }
 
@@ -228,76 +237,6 @@ impl SnapshotStatus {
     }
 }
 
-/// Parsed snapshot query (spec 5.2.23, Query type).
-///
-/// Used to deserialize elements of `snapshotQueries` and `snapshotTemporalQueries`.
-/// Non-temporal queries have `temporal_q: None`; temporal queries include it.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SnapshotQuery {
-    /// Entity selectors restricting the query by type, ID, or ID pattern.
-    pub entities: Option<Vec<SnapshotEntitySelector>>,
-    /// NGSI-LD query expression for property-level filtering.
-    pub q: Option<String>,
-    /// Geo-spatial query filter.
-    pub geo_q: Option<SnapshotGeoQuery>,
-    /// Scope query string (comma = OR, semicolon = AND).
-    pub scope_q: Option<String>,
-    /// Attribute names to include in the result.
-    pub attrs: Option<Vec<AttributeName>>,
-    /// Attribute names to exclude from the result.
-    pub omit: Option<Vec<AttributeName>>,
-    /// Temporal query parameters (present only in `snapshotTemporalQueries`).
-    pub temporal_q: Option<SnapshotTemporalQuery>,
-}
-
-/// Entity selector within a snapshot query (spec 5.2.23).
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SnapshotEntitySelector {
-    /// Specific entity IDs to match.
-    pub id: Option<Vec<String>>,
-    /// Regex pattern for matching entity IDs.
-    pub id_pattern: Option<String>,
-    /// Entity type to match.
-    #[serde(rename = "type")]
-    pub type_: Option<String>,
-}
-
-/// Geo-spatial query within a snapshot query (spec 5.2.23).
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SnapshotGeoQuery {
-    /// Spatial relationship (clause 4.10).
-    pub georel: GeoRel,
-    /// GeoJSON geometry type (RFC 7946 section 1.4).
-    pub geometry: GeometryType,
-    /// GeoJSON coordinates.
-    pub coordinates: Value,
-    /// IRI of the GeoProperty to query against.
-    pub geoproperty: Option<String>,
-}
-
-/// Temporal query within a snapshot temporal query (spec 5.2.23).
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SnapshotTemporalQuery {
-    /// Temporal relationship ("before", "after", "between").
-    pub timerel: String,
-    /// Reference time point (ISO 8601).
-    pub time_at: String,
-    /// End time point for "between" queries (ISO 8601).
-    pub end_time_at: Option<String>,
-    /// Maximum number of temporal instances per attribute.
-    pub last_n: Option<u32>,
-    /// Temporal property to filter on ("observedAt", "createdAt", etc.).
-    pub timeproperty: Option<String>,
-    /// Aggregation methods (comma-separated).
-    pub aggr_methods: Option<String>,
-    /// ISO 8601 duration for aggregation bucket size.
-    pub aggr_period_duration: Option<String>,
-}
-
 impl Snapshot {
     /// Build a [`SnapshotNotification`] from the snapshot state.
     pub fn build_notification(&self) -> Result<SnapshotNotification, SnapshotNotificationBuildError> {
@@ -306,17 +245,16 @@ impl Snapshot {
             .map_err(SnapshotNotificationBuildError::InvalidNotificationId)?;
         // clone: the notification owns its copy of the snapshot's id and
         // execution details, and the snapshot itself is only borrowed here.
-        Ok(SnapshotNotification {
-            id,
-            type_: SnapshotNotificationType,
-            expires_at: self.expires_at,
-            notified_at: Utc::now(),
-            snapshot_id: self.id.clone(),
-            snapshot_priority: self.snapshot_priority,
-            snapshot_queries_details: self.queries_details.clone(),
-            snapshot_status: self.status,
-            temporal_snapshot_queries_details: self.temporal_queries_details.clone(),
-        })
+        Ok(SnapshotNotification::builder()
+            .id(id)
+            .expires_at(self.expires_at)
+            .notified_at(Utc::now())
+            .snapshot_id(self.id.clone())
+            .snapshot_priority(self.snapshot_priority)
+            .snapshot_queries_details(self.queries_details.clone())
+            .snapshot_status(self.status)
+            .temporal_snapshot_queries_details(self.temporal_queries_details.clone())
+            .build())
     }
 }
 
@@ -361,12 +299,14 @@ pub struct SnapshotPatch {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use crate::{
         ngsi_ld_urn::SnapshotId,
-        snapshot::{SnapshotPriority, SnapshotStatus},
+        snapshot::{Snapshot, SnapshotPriority, SnapshotStatus},
+        snapshot_query::{SnapshotQuery, SnapshotTemporalQuery},
+        temporal::{AggrMethod, TimeProp, TimeRel},
     };
     use andromeda_geometry::{geo_rel::GeoRel, geometry::GeometryType};
+    use chrono::{DateTime, Utc};
     use iso8601_duration::Duration as Iso8601Duration;
     use strum::IntoEnumIterator;
 
@@ -469,7 +409,6 @@ mod tests {
 
     #[test]
     fn parse_snapshot_query_minimal() {
-        use crate::snapshot::SnapshotQuery;
         let json = r#"{"entities": [{"type": "Vehicle"}]}"#;
         let query: SnapshotQuery = serde_json::from_str(json).expect("parse");
         assert!(query.entities.is_some());
@@ -482,7 +421,6 @@ mod tests {
 
     #[test]
     fn parse_snapshot_query_full() {
-        use crate::snapshot::SnapshotQuery;
         let json = r#"{
             "entities": [{"type": "Vehicle", "id": ["urn:ngsi-ld:Vehicle:1"], "idPattern": "urn:.*"}],
             "q": "speed>50",
@@ -503,30 +441,73 @@ mod tests {
         pretty_assertions::assert_eq!(query.omit.unwrap().len(), 1);
     }
 
+    /// Build a `temporalQ` payload with the given members spliced in.
+    fn temporal_q(members: &str) -> Result<SnapshotTemporalQuery, serde_json::Error> {
+        serde_json::from_str::<SnapshotQuery>(&format!(r#"{{"entities": [{{"type": "Vehicle"}}], "temporalQ": {{{members}}}}}"#))
+            .map(|query| query.temporal_q.expect("temporalQ present"))
+    }
+
+    /// The instant `2024-01-01T00:00:00Z`, as a `DateTime<Utc>`.
+    fn january_first() -> DateTime<Utc> {
+        "2024-01-01T00:00:00Z".parse::<DateTime<Utc>>().expect("valid instant")
+    }
+
     #[test]
-    fn parse_temporal_query() {
-        use crate::snapshot::SnapshotQuery;
-        let json = r#"{
-            "entities": [{"type": "Vehicle"}],
-            "temporalQ": {
-                "timerel": "after",
-                "timeAt": "2024-01-01T00:00:00Z",
-                "lastN": 10,
-                "timeproperty": "observedAt"
-            }
-        }"#;
-        let query: SnapshotQuery = serde_json::from_str(json).expect("parse");
-        assert!(query.temporal_q.is_some());
-        let tq = query.temporal_q.unwrap();
-        pretty_assertions::assert_eq!(tq.timerel, "after");
-        pretty_assertions::assert_eq!(tq.time_at, "2024-01-01T00:00:00Z");
+    fn a_snapshot_builder_defaults_every_optional_field() {
+        let instant = "2024-01-01T00:00:00Z".parse::<DateTime<Utc>>().expect("valid instant");
+        let snapshot = Snapshot::builder()
+            .id("urn:ngsi-ld:Snapshot:1".parse::<SnapshotId>().expect("valid snapshot id"))
+            .snapshot_priority(SnapshotPriority::DEFAULT)
+            .status(SnapshotStatus::Preparing)
+            .created_at(instant)
+            .modified_at(instant)
+            .expires_at(instant)
+            .build();
+        assert!(snapshot.snapshot_queries.is_none() && snapshot.snapshot_temporal_queries.is_none());
+        assert!(snapshot.snapshot_lifetime.is_none() && snapshot.endpoint.is_none() && snapshot.receiver_info.is_none());
+        assert!(snapshot.queries_details.is_none() && snapshot.temporal_queries_details.is_none());
+        assert!(snapshot.last_used_at.is_none());
+    }
+
+    #[test]
+    fn a_snapshot_temporal_query_parses_its_temporal_relation() {
+        let tq = temporal_q(r#""timerel": "between", "timeAt": "2024-01-01T00:00:00Z", "endTimeAt": "2024-02-01T00:00:00Z""#).expect("parses");
+        pretty_assertions::assert_eq!(tq.timerel, TimeRel::Between);
+        pretty_assertions::assert_eq!(tq.time_at, january_first());
+        pretty_assertions::assert_eq!(tq.end_time_at, Some("2024-02-01T00:00:00Z".parse::<DateTime<Utc>>().expect("valid instant")));
+    }
+
+    #[test]
+    fn a_snapshot_temporal_query_rejects_an_unknown_temporal_relation() {
+        assert!(temporal_q(r#""timerel": "during", "timeAt": "2024-01-01T00:00:00Z""#).is_err());
+    }
+
+    #[test]
+    fn a_snapshot_temporal_query_normalises_an_offset_bearing_instant() {
+        let offset = temporal_q(r#""timerel": "after", "timeAt": "2024-01-01T01:00:00+01:00""#).expect("parses");
+        pretty_assertions::assert_eq!(offset.time_at, january_first());
+    }
+
+    #[test]
+    fn a_snapshot_temporal_query_parses_its_aggregation_methods() {
+        let tq = temporal_q(r#""timerel": "after", "timeAt": "2024-01-01T00:00:00Z", "aggrMethods": "avg,max""#).expect("parses");
+        pretty_assertions::assert_eq!(tq.aggr_methods, Some(vec![AggrMethod::Avg, AggrMethod::Max]));
+    }
+
+    #[test]
+    fn a_snapshot_temporal_query_rejects_an_unknown_aggregation_method() {
+        assert!(temporal_q(r#""timerel": "after", "timeAt": "2024-01-01T00:00:00Z", "aggrMethods": "median""#).is_err());
+    }
+
+    #[test]
+    fn a_snapshot_temporal_query_parses_its_time_property() {
+        let tq = temporal_q(r#""timerel": "after", "timeAt": "2024-01-01T00:00:00Z", "timeproperty": "createdAt", "lastN": 10"#).expect("parses");
+        pretty_assertions::assert_eq!(tq.timeproperty, Some(TimeProp::Created));
         pretty_assertions::assert_eq!(tq.last_n, Some(10));
-        pretty_assertions::assert_eq!(tq.timeproperty.as_deref(), Some("observedAt"));
     }
 
     #[test]
     fn parse_snapshot_query_rejects_invalid() {
-        use crate::snapshot::SnapshotQuery;
         let result = serde_json::from_str::<SnapshotQuery>("not valid json");
         assert!(result.is_err());
     }

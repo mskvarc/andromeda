@@ -4,10 +4,11 @@ use crate::{
     expanded::node::expanded_object_ref,
     vocab::{expanded::properties, prefix},
 };
-use andromeda_geometry::geometry::Geometry;
+use andromeda_geometry::geometry::{Geometry, GeometryType};
 use geo::{Coord, Geometry as GeoGeometry, LineString, MultiLineString, MultiPoint, MultiPolygon, Point, Polygon};
 use iri_rs::Iri;
 use serde_json::Value;
+use std::str::FromStr;
 
 /// Extract the entity's `location` GeoProperty decoded into a [`Geometry`].
 pub fn extract_location_geometry(expanded: &Value) -> Option<Geometry> {
@@ -24,6 +25,8 @@ pub fn extract_operation_space_geometry(expanded: &Value) -> Option<Geometry> {
     extract_geo_property_geometry(expanded, properties::OPERATION_SPACE)
 }
 
+/// Decodes the GeoProperty named by `iri` into a [`Geometry`], accepting both
+/// the GeoJSON literal form and the fully expanded node form.
 fn extract_geo_property_geometry(expanded: &Value, iri: Iri<&'static str>) -> Option<Geometry> {
     let geo_node = geo_node_for_property(expanded, iri)?;
     if let Some(literal) = geo_node.get("@value") {
@@ -70,29 +73,31 @@ pub fn expanded_geo_node_to_geometry(node: &Value) -> Option<Geometry> {
     walk_expanded_geo_node(node).map(Geometry::from)
 }
 
+/// Reads an expanded GeoJSON node, dispatching on its `@type` to the walker
+/// for that geometry kind.
 fn walk_expanded_geo_node(node: &Value) -> Option<GeoGeometry<f64>> {
     let obj = node.as_object()?;
-    let geom_type = obj.get("@type")?.as_array()?.first()?.as_str()?.strip_prefix(prefix::GEOJSON.as_str())?;
+    let token = obj.get("@type")?.as_array()?.first()?.as_str()?.strip_prefix(prefix::GEOJSON.as_str())?;
+    let geom_type = GeometryType::from_str(token).ok()?;
 
     let coords_outer = obj.get(properties::COORDINATES.as_str())?.as_array()?.first()?;
 
     match geom_type {
-        "Point" => Some(GeoGeometry::Point(Point::from(walk_position(coords_outer)?))),
-        "MultiPoint" => {
+        GeometryType::Point => Some(GeoGeometry::Point(Point::from(walk_position(coords_outer)?))),
+        GeometryType::MultiPoint => {
             let points: Vec<Point<f64>> = walk_position_list(coords_outer)?.into_iter().map(Point::from).collect();
             Some(GeoGeometry::MultiPoint(MultiPoint::new(points)))
         }
-        "LineString" => Some(GeoGeometry::LineString(LineString::from(walk_position_list(coords_outer)?))),
-        "MultiLineString" => {
+        GeometryType::LineString => Some(GeoGeometry::LineString(LineString::from(walk_position_list(coords_outer)?))),
+        GeometryType::MultiLineString => {
             let lines = walk_linestring_list(coords_outer)?;
             Some(GeoGeometry::MultiLineString(MultiLineString::new(lines)))
         }
-        "Polygon" => Some(GeoGeometry::Polygon(walk_polygon(coords_outer)?)),
-        "MultiPolygon" => {
+        GeometryType::Polygon => Some(GeoGeometry::Polygon(walk_polygon(coords_outer)?)),
+        GeometryType::MultiPolygon => {
             let polys = walk_polygon_list(coords_outer)?;
             Some(GeoGeometry::MultiPolygon(MultiPolygon::new(polys)))
         }
-        _other => None,
     }
 }
 
@@ -113,6 +118,8 @@ fn scalar_number(node: &Value) -> Option<f64> {
     node.as_object().and_then(|o| o.get("@value")).and_then(Value::as_f64)
 }
 
+/// Reads one expanded coordinate pair, discarding any third (altitude)
+/// ordinate, which the `geo` crate's 2D model cannot carry.
 fn walk_position(node: &Value) -> Option<Coord<f64>> {
     let items = list_items(node)?;
     if items.len() < 2 {
@@ -123,6 +130,8 @@ fn walk_position(node: &Value) -> Option<Coord<f64>> {
     Some(Coord { x, y })
 }
 
+/// Reads an expanded list of coordinate pairs, failing on the first pair that
+/// does not parse.
 fn walk_position_list(node: &Value) -> Option<Vec<Coord<f64>>> {
     let items = list_items(node)?;
     let mut out = Vec::with_capacity(items.len());
@@ -132,6 +141,7 @@ fn walk_position_list(node: &Value) -> Option<Vec<Coord<f64>>> {
     Some(out)
 }
 
+/// Reads an expanded list of coordinate-pair lists as line strings.
 fn walk_linestring_list(node: &Value) -> Option<Vec<LineString<f64>>> {
     let items = list_items(node)?;
     let mut out = Vec::with_capacity(items.len());
@@ -141,6 +151,8 @@ fn walk_linestring_list(node: &Value) -> Option<Vec<LineString<f64>>> {
     Some(out)
 }
 
+/// Reads an expanded ring list as a polygon: the first ring is the exterior,
+/// every subsequent ring an interior (RFC 7946 clause 3.1.6).
 fn walk_polygon(node: &Value) -> Option<Polygon<f64>> {
     let rings = list_items(node)?;
     if rings.is_empty() {
@@ -154,6 +166,7 @@ fn walk_polygon(node: &Value) -> Option<Polygon<f64>> {
     Some(Polygon::new(exterior, interiors))
 }
 
+/// Reads an expanded list of ring lists as polygons.
 fn walk_polygon_list(node: &Value) -> Option<Vec<Polygon<f64>>> {
     let items = list_items(node)?;
     let mut out = Vec::with_capacity(items.len());
@@ -165,7 +178,6 @@ fn walk_polygon_list(node: &Value) -> Option<Vec<Polygon<f64>>> {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use crate::expanded::geo_property::{expanded_geo_node_to_geometry, extract_location_geometry};
     use andromeda_geometry::geometry::Geometry;
     use serde_json::json;

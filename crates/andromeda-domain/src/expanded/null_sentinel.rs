@@ -28,7 +28,6 @@ pub fn instance_is_null_sentinel(instance: &Value) -> bool {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use crate::expanded::null_sentinel::instance_is_null_sentinel;
     use serde_json::json;
 

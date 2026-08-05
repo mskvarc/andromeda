@@ -8,6 +8,7 @@ use crate::{attribute::name::AttributeName, notification::TriggerReason, uri::Ur
 use chrono::{DateTime, Utc};
 use derive_more::{Display, From};
 use serde_json::Value;
+use typed_builder::TypedBuilder;
 
 /// Unique identifier for a notification outbox entry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, From, Display)]
@@ -33,7 +34,7 @@ impl WorkerInstanceId {
 
 /// A persisted notification outbox row, representing a pending or completed
 /// notification delivery attempt.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, TypedBuilder)]
 pub struct OutboxEntry {
     /// Auto-generated row identifier.
     pub id: OutboxEntryId,
@@ -44,20 +45,27 @@ pub struct OutboxEntry {
     /// Mutation trigger reason (e.g. entityCreated, entityUpdated).
     pub trigger: TriggerReason,
     /// Expanded entity snapshot at the time of the mutation.
+    #[builder(default)]
     pub entity_snapshot: Option<Value>,
     /// Entity state before the mutation (for showChanges support).
+    #[builder(default)]
     pub previous_snapshot: Option<Value>,
     /// Names of the attributes the mutation changed.
+    #[builder(default)]
     pub changed_attrs: Vec<AttributeName>,
     /// Timestamp when the outbox entry was created.
     pub created_at: DateTime<Utc>,
     /// Timestamp when a worker claimed this entry for delivery.
+    #[builder(default)]
     pub claimed_at: Option<DateTime<Utc>>,
     /// Identifier of the worker that claimed this entry.
+    #[builder(default)]
     pub claimed_by: Option<WorkerInstanceId>,
     /// Timestamp when the notification was successfully delivered.
+    #[builder(default)]
     pub delivered_at: Option<DateTime<Utc>>,
     /// Error message from the most recent failed delivery attempt.
+    #[builder(default)]
     pub delivery_error: Option<String>,
     /// Number of delivery attempts made so far.
     pub attempt_count: i32,
@@ -70,7 +78,7 @@ pub struct OutboxEntry {
 /// Contains only the fields known at insert time; delivery tracking fields
 /// (claimed_at, delivered_at, etc.) are populated by the database or the
 /// delivery worker.
-#[derive(Debug)]
+#[derive(Debug, TypedBuilder)]
 pub struct NewOutboxEntry {
     /// Subscription that matched the entity change.
     pub subscription_id: Uri,
@@ -79,10 +87,13 @@ pub struct NewOutboxEntry {
     /// Mutation trigger reason.
     pub trigger: TriggerReason,
     /// Expanded entity snapshot at the time of the mutation.
+    #[builder(default)]
     pub entity_snapshot: Option<Value>,
     /// Entity state before the mutation.
+    #[builder(default)]
     pub previous_snapshot: Option<Value>,
     /// Names of the attributes the mutation changed.
+    #[builder(default)]
     pub changed_attrs: Vec<AttributeName>,
 }
 

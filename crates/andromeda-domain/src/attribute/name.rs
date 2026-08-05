@@ -2,7 +2,7 @@
 
 use crate::attribute::reference::{NgsiLdReferenceError, validate_ngsi_ld_name};
 use compact_str::CompactString;
-use derive_more::{Deref, Display, Into};
+use derive_more::{AsRef, Deref, Display, Into};
 use serde::{Deserialize, Serialize};
 use std::{borrow::Borrow, str::FromStr};
 
@@ -16,8 +16,9 @@ use std::{borrow::Borrow, str::FromStr};
 /// [`validate_ngsi_ld_name`].
 ///
 /// [`NgsiLdReference`]: crate::attribute::reference::NgsiLdReference
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize, Display, Deref, Into)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize, AsRef, Display, Deref, Into)]
 #[serde(try_from = "String", into = "String")]
+#[as_ref(str)]
 #[display("{_0}")]
 #[into(String)]
 pub struct AttributeName(CompactString);
@@ -29,6 +30,8 @@ impl AttributeName {
     }
 }
 
+// Validating parser: the grammar check in `validate_ngsi_ld_name` is what makes
+// the newtype worth having, and no derive expresses a fallible parse.
 impl FromStr for AttributeName {
     type Err = NgsiLdReferenceError;
 
@@ -48,12 +51,6 @@ impl TryFrom<String> for AttributeName {
     }
 }
 
-impl AsRef<str> for AttributeName {
-    fn as_ref(&self) -> &str {
-        self.0.as_str()
-    }
-}
-
 // No derive produces `Borrow` for a target other than the field's own type,
 // and this one is what lets `IndexMap<AttributeName, _>` be looked up by `&str`
 // without allocating a name per lookup. Sound because the derived `Hash`
@@ -66,7 +63,6 @@ impl Borrow<str> for AttributeName {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use crate::attribute::name::AttributeName;
     use indexmap::IndexMap;
 

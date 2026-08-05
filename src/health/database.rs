@@ -64,7 +64,6 @@ impl HealthIndicator for DatabaseHealthIndicator {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::panic)]
     use super::*;
 
     #[tokio::test]

@@ -10,11 +10,12 @@ use crate::{
     },
 };
 use andromeda_domain::{
-    notification::{CsourceNotification, CsourceNotificationType},
+    notification::CsourceNotification,
     subscription::Subscription,
     uri::{NGSI_LD_URN_NID, Uri},
 };
 use chrono::Utc;
+use mediatype::MediaTypeBuf;
 use serde_json::Value;
 use std::{sync::Arc, time::Duration};
 use tracing::{debug, error, info};
@@ -97,15 +98,14 @@ impl CsrIntervalWorker {
                         continue;
                     }
                 };
-                let notification = CsourceNotification {
-                    id: notification_id,
-                    type_: CsourceNotificationType,
-                    // clone: the notification owns its subscription id and the subscription is still needed below
-                    subscription_id: sub.id.clone(),
-                    notified_at: Utc::now(),
-                    data: csrs,
-                    trigger_reason: None,
-                };
+                // clone: the notification owns its subscription id and the
+                // subscription is still needed below
+                let notification = CsourceNotification::builder()
+                    .id(notification_id)
+                    .subscription_id(sub.id.clone())
+                    .notified_at(Utc::now())
+                    .data(csrs)
+                    .build();
 
                 let payload = match serde_json::to_value(&notification) {
                     Ok(v) => v,
@@ -115,9 +115,9 @@ impl CsrIntervalWorker {
                     }
                 };
 
-                let endpoint_uri = &sub.notification.endpoint.uri;
-                let accept = sub.notification.endpoint.accept.as_deref();
-                let jsonld_context = sub.jsonld_context.as_ref().map(Url::as_str);
+                let endpoint_uri = sub.notification.endpoint.uri.as_str();
+                let accept = sub.notification.endpoint.accept.as_ref().map(MediaTypeBuf::as_str);
+                let jsonld_context = sub.delivery.jsonld_context.as_ref().map(Url::as_str);
 
                 let endpoint_transport = match parse_endpoint_transport(endpoint_uri, sub.notification.endpoint.notifier_info.as_deref()) {
                     Ok(t) => t,
@@ -189,7 +189,7 @@ impl CsrIntervalWorker {
 
 fn matches_csr_for_subscription(csr_data: &Value, sub: &Subscription) -> bool {
     // Entity selector matching
-    if let Some(ref selectors) = sub.entities {
+    if let Some(ref selectors) = sub.selection.entities {
         let information = csr_data.get("information").and_then(|v| v.as_array());
         let any_matches = selectors.iter().any(|sel| match information {
             Some(info_arr) => info_arr.iter().any(|info| {
@@ -228,7 +228,7 @@ fn matches_csr_for_subscription(csr_data: &Value, sub: &Subscription) -> bool {
     }
 
     // Watched attributes matching
-    if let Some(ref watched) = sub.watched_attributes {
+    if let Some(ref watched) = sub.selection.watched_attributes {
         let watched_set: std::collections::HashSet<&str> = watched.iter().map(|s| s.as_str()).collect();
         let information = csr_data.get("information").and_then(|v| v.as_array());
         let any_attr_matches = match information {

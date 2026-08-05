@@ -264,7 +264,6 @@ fn parse_geometry(raw: &str) -> Option<Geometry> {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::*;
     use crate::service::spatial::SpatialKey;
     use andromeda_domain::uri::Uri;

@@ -8,7 +8,7 @@
 /// Serialize and deserialize a required `DateTime<Utc>` as an RFC 3339 string.
 pub mod datetime {
     use chrono::{DateTime, SecondsFormat, Utc};
-    use serde::{Deserialize, Deserializer, Serializer, de::Error as _};
+    use serde::{Deserialize, Deserializer, Serializer, de::Error};
 
     /// Render the timestamp as an RFC 3339 string with whole-second precision.
     ///
@@ -33,14 +33,14 @@ pub mod datetime {
         D: Deserializer<'de>,
     {
         let s = String::deserialize(deserializer)?;
-        DateTime::parse_from_rfc3339(&s).map(|dt| dt.with_timezone(&Utc)).map_err(D::Error::custom)
+        DateTime::parse_from_rfc3339(&s).map(|dt| dt.with_timezone(&Utc)).map_err(Error::custom)
     }
 }
 
 /// Serialize and deserialize an optional `DateTime<Utc>` as an RFC 3339 string.
 pub mod optional_datetime {
     use chrono::{DateTime, SecondsFormat, Utc};
-    use serde::{Deserialize, Deserializer, Serializer, de::Error as _};
+    use serde::{Deserialize, Deserializer, Serializer, de::Error};
 
     /// Render the timestamp when present, and JSON `null` when absent.
     ///
@@ -69,9 +69,7 @@ pub mod optional_datetime {
     {
         let opt: Option<String> = Option::deserialize(deserializer)?;
         match opt {
-            Some(s) => DateTime::parse_from_rfc3339(&s)
-                .map(|dt| Some(dt.with_timezone(&Utc)))
-                .map_err(D::Error::custom),
+            Some(s) => DateTime::parse_from_rfc3339(&s).map(|dt| Some(dt.with_timezone(&Utc))).map_err(Error::custom),
             None => Ok(None),
         }
     }
@@ -79,7 +77,6 @@ pub mod optional_datetime {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use chrono::{DateTime, TimeZone, Utc};
     use serde::{Deserialize, Serialize};
 

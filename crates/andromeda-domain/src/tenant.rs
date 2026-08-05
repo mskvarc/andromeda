@@ -70,6 +70,8 @@ impl TenantName {
     }
 }
 
+// Validating parser: the ABNF grammar check and the length bound are what make
+// the newtype worth having, and no derive expresses a fallible parse.
 impl FromStr for TenantName {
     type Err = InvalidTenantName;
 
@@ -92,6 +94,8 @@ impl TryFrom<String> for TenantName {
     }
 }
 
+// `derive_more::Into` would yield `From<TenantName> for TenantLabelBuf`, one
+// step short of the `String` that `#[serde(into = "String")]` requires.
 impl From<TenantName> for String {
     fn from(value: TenantName) -> String {
         value.0.into_string()
@@ -100,8 +104,7 @@ impl From<TenantName> for String {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::expect_used, clippy::unwrap_used)]
-    use super::{MAX_TENANT_LEN, TenantName};
+    use crate::tenant::{MAX_TENANT_LEN, TenantName};
 
     #[test]
     fn tenant_name_valid_plain() {

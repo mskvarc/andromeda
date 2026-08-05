@@ -5,6 +5,7 @@
 
 use crate::{constant_string, uri::Uri};
 use serde::{Deserialize, Serialize};
+use typed_builder::TypedBuilder;
 
 constant_string!(VersionType, "VersionInfo");
 
@@ -39,7 +40,7 @@ pub struct VersionInfo {
 }
 
 /// Andromeda build-time version information populated from `shadow-rs`.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, TypedBuilder)]
 #[serde(rename_all = "camelCase")]
 pub struct AndromedaVersion {
     /// Semantic version prefixed with `"v"`.
@@ -82,8 +83,8 @@ pub struct TimescaleDbVersion {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::*;
+    use serde_json::Value;
     use urn_rs::UrnBuilder;
 
     fn sample_response() -> VersionResponse {
@@ -93,18 +94,18 @@ mod tests {
             id: Uri::Urn(id_urn),
             type_: VersionType,
             version_info: VersionInfo {
-                andromeda: AndromedaVersion {
-                    version: "v0.1.0".to_owned(),
-                    build_time: "2024-12-01T12:00:00+00:00".to_owned(),
-                    branch: "main".to_owned(),
-                    commit_hash: "abc123".to_owned(),
-                    git_clean: true,
-                    rust_version: "1.82.0".to_owned(),
-                    rust_channel: "nightly".to_owned(),
-                    cargo_version: "cargo 1.82.0".to_owned(),
-                    build_os: "linux".to_owned(),
-                    build_target: "x86_64".to_owned(),
-                },
+                andromeda: AndromedaVersion::builder()
+                    .version("v0.1.0".to_owned())
+                    .build_time("2024-12-01T12:00:00+00:00".to_owned())
+                    .branch("main".to_owned())
+                    .commit_hash("abc123".to_owned())
+                    .git_clean(true)
+                    .rust_version("1.82.0".to_owned())
+                    .rust_channel("nightly".to_owned())
+                    .cargo_version("cargo 1.82.0".to_owned())
+                    .build_os("linux".to_owned())
+                    .build_target("x86_64".to_owned())
+                    .build(),
                 postgresql: ExtensionVersion { version: "v16.2".to_owned() },
                 postgis: ExtensionVersion { version: "v3.4.1".to_owned() },
                 timescaledb: TimescaleDbVersion {
@@ -163,23 +164,23 @@ mod tests {
     #[test]
     fn version_type_serializes_as_version_info() {
         let json = serde_json::to_value(VersionType).unwrap();
-        pretty_assertions::assert_eq!(json, serde_json::Value::String("VersionInfo".to_owned()));
+        pretty_assertions::assert_eq!(json, Value::String("VersionInfo".to_owned()));
     }
 
     #[test]
     fn andromeda_version_fields_serialize_camel_case() {
-        let version = AndromedaVersion {
-            version: "v0.1.0".to_owned(),
-            build_time: "2024-12-01T12:00:00+00:00".to_owned(),
-            branch: "main".to_owned(),
-            commit_hash: "abc123".to_owned(),
-            git_clean: true,
-            rust_version: "1.82.0".to_owned(),
-            rust_channel: "nightly".to_owned(),
-            cargo_version: "cargo 1.82.0".to_owned(),
-            build_os: "linux".to_owned(),
-            build_target: "x86_64".to_owned(),
-        };
+        let version = AndromedaVersion::builder()
+            .version("v0.1.0".to_owned())
+            .build_time("2024-12-01T12:00:00+00:00".to_owned())
+            .branch("main".to_owned())
+            .commit_hash("abc123".to_owned())
+            .git_clean(true)
+            .rust_version("1.82.0".to_owned())
+            .rust_channel("nightly".to_owned())
+            .cargo_version("cargo 1.82.0".to_owned())
+            .build_os("linux".to_owned())
+            .build_target("x86_64".to_owned())
+            .build();
         let json = serde_json::to_value(&version).unwrap();
         let obj = json.as_object().unwrap();
 
@@ -214,26 +215,26 @@ mod tests {
 
     #[test]
     fn git_clean_serializes_as_boolean() {
-        let version_true = AndromedaVersion {
-            version: "v0.1.0".to_owned(),
-            build_time: "2024-12-01T12:00:00+00:00".to_owned(),
-            branch: "main".to_owned(),
-            commit_hash: "abc123".to_owned(),
-            git_clean: true,
-            rust_version: "1.82.0".to_owned(),
-            rust_channel: "nightly".to_owned(),
-            cargo_version: "cargo 1.82.0".to_owned(),
-            build_os: "linux".to_owned(),
-            build_target: "x86_64".to_owned(),
-        };
+        let version_true = AndromedaVersion::builder()
+            .version("v0.1.0".to_owned())
+            .build_time("2024-12-01T12:00:00+00:00".to_owned())
+            .branch("main".to_owned())
+            .commit_hash("abc123".to_owned())
+            .git_clean(true)
+            .rust_version("1.82.0".to_owned())
+            .rust_channel("nightly".to_owned())
+            .cargo_version("cargo 1.82.0".to_owned())
+            .build_os("linux".to_owned())
+            .build_target("x86_64".to_owned())
+            .build();
         let json = serde_json::to_value(&version_true).unwrap();
-        assert_eq!(json["gitClean"], serde_json::Value::Bool(true));
+        assert_eq!(json["gitClean"], Value::Bool(true));
 
         let version_false = AndromedaVersion {
             git_clean: false,
             ..version_true
         };
         let json = serde_json::to_value(&version_false).unwrap();
-        assert_eq!(json["gitClean"], serde_json::Value::Bool(false));
+        assert_eq!(json["gitClean"], Value::Bool(false));
     }
 }

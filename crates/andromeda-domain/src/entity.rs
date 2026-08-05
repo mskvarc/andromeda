@@ -1,22 +1,27 @@
 //! The NGSI-LD Entity and the partial form its patch operations accept (ETSI GS CIM 009 clause 5.2.4).
 
 use crate::{
-    attribute::{Attribute, AttributeValue, name::AttributeName},
+    attribute::{
+        instance::{Attribute, AttributeValue},
+        name::AttributeName,
+    },
     entity_type::EntityTypeValue,
     notification::SysAttrsSnapshot,
-    scope::ScopeBuf,
+    scope::grammar::ScopeBuf,
     uri::Uri,
 };
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, SecondsFormat, Utc};
 use indexmap::IndexMap;
 use jsonld::Expandable;
 use jsonld_expandable_core::JsonValue;
 use serde::{Deserialize, Serialize};
+use serde_json::{Map, Value};
 use serde_with::skip_serializing_none;
 use std::{
     iter::once,
     slice::{Iter, from_ref},
 };
+use typed_builder::TypedBuilder;
 
 /// Single or multiple scope values on an entity (ETSI GS CIM 009 clause 5.2.4).
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -53,7 +58,7 @@ impl Expandable for ScopeValue {
 /// All spec-defined entity members are explicit fields. `@context` is excluded
 /// as it is a transport concern handled by the JSON-LD engine.
 #[skip_serializing_none]
-#[derive(Debug, Clone, Serialize, Deserialize, Expandable)]
+#[derive(Debug, Clone, Serialize, Deserialize, Expandable, TypedBuilder)]
 #[serde(rename_all = "camelCase")]
 #[jsonld(prefix(ngsi = "https://uri.etsi.org/ngsi-ld/", xsd = "http://www.w3.org/2001/XMLSchema#"))]
 pub struct Entity {
@@ -66,43 +71,52 @@ pub struct Entity {
     pub type_: EntityTypeValue,
     /// Scopes the entity belongs to (clause 4.18).
     #[jsonld(property = "ngsi:scope", passthrough)]
+    #[builder(default)]
     pub scope: Option<ScopeValue>,
 
     /// Entity expiration timestamp (clause 4.22).
     #[serde(default)]
     #[jsonld(property = "ngsi:expiresAt", coerce = "https://uri.etsi.org/ngsi-ld/DateTime")]
+    #[builder(default)]
     pub expires_at: Option<DateTime<Utc>>,
 
     /// Default geospatial property (clause 4.7).
     #[jsonld(property = "ngsi:location", passthrough)]
+    #[builder(default)]
     pub location: Option<AttributeValue>,
 
     /// Observation space geometry (clause 5.2.4).
     #[jsonld(property = "ngsi:observationSpace", passthrough)]
+    #[builder(default)]
     pub observation_space: Option<AttributeValue>,
 
     /// Operation space geometry (clause 5.2.4).
     #[jsonld(property = "ngsi:operationSpace", passthrough)]
+    #[builder(default)]
     pub operation_space: Option<AttributeValue>,
 
     /// System-generated creation timestamp (clause 4.8, Table 5.2.2-1).
     #[serde(default)]
     #[jsonld(property = "ngsi:createdAt", coerce = "https://uri.etsi.org/ngsi-ld/DateTime")]
+    #[builder(default)]
     pub created_at: Option<DateTime<Utc>>,
 
     /// System-generated modification timestamp (clause 4.8, Table 5.2.2-1).
     #[serde(default)]
     #[jsonld(property = "ngsi:modifiedAt", coerce = "https://uri.etsi.org/ngsi-ld/DateTime")]
+    #[builder(default)]
     pub modified_at: Option<DateTime<Utc>>,
 
     /// Deletion timestamp, output-only in notifications/temporal (clause 4.8).
     #[serde(default)]
     #[jsonld(property = "ngsi:deletedAt", coerce = "https://uri.etsi.org/ngsi-ld/DateTime")]
+    #[builder(default)]
     pub deleted_at: Option<DateTime<Utc>>,
 
     /// Every other attribute the entity carries, keyed by attribute name.
     #[serde(flatten)]
     #[jsonld(flatten_map)]
+    #[builder(default)]
     pub attrs: IndexMap<AttributeName, AttributeValue>,
 }
 
@@ -161,8 +175,8 @@ impl Entity {
     }
 
     /// Convert the entity to a simplified key-value representation.
-    pub fn simplify(&self) -> serde_json::Value {
-        let mut map = serde_json::Map::new();
+    pub fn simplify(&self) -> Value {
+        let mut map = Map::new();
         map.insert("id".to_string(), serde_json::json!(self.id));
         map.insert("type".to_string(), serde_json::json!(self.type_));
 
@@ -173,7 +187,7 @@ impl Entity {
         if let Some(ref expires_at) = self.expires_at {
             map.insert(
                 "expiresAt".to_string(),
-                serde_json::json!(expires_at.to_rfc3339_opts(chrono::SecondsFormat::Secs, true)),
+                serde_json::json!(expires_at.to_rfc3339_opts(SecondsFormat::Secs, true)),
             );
         }
 
@@ -192,21 +206,21 @@ impl Entity {
         if let Some(ref created_at) = self.created_at {
             map.insert(
                 "createdAt".to_string(),
-                serde_json::json!(created_at.to_rfc3339_opts(chrono::SecondsFormat::Secs, true)),
+                serde_json::json!(created_at.to_rfc3339_opts(SecondsFormat::Secs, true)),
             );
         }
 
         if let Some(ref modified_at) = self.modified_at {
             map.insert(
                 "modifiedAt".to_string(),
-                serde_json::json!(modified_at.to_rfc3339_opts(chrono::SecondsFormat::Secs, true)),
+                serde_json::json!(modified_at.to_rfc3339_opts(SecondsFormat::Secs, true)),
             );
         }
 
         if let Some(ref deleted_at) = self.deleted_at {
             map.insert(
                 "deletedAt".to_string(),
-                serde_json::json!(deleted_at.to_rfc3339_opts(chrono::SecondsFormat::Secs, true)),
+                serde_json::json!(deleted_at.to_rfc3339_opts(SecondsFormat::Secs, true)),
             );
         }
 
@@ -214,17 +228,17 @@ impl Entity {
             map.insert(key.to_string(), simplify_attribute_value(attr));
         }
 
-        serde_json::Value::Object(map)
+        Value::Object(map)
     }
 }
 
 /// Simplify a single `AttributeValue` to its key-value form.
-fn simplify_attribute_value(attr: &AttributeValue) -> serde_json::Value {
+fn simplify_attribute_value(attr: &AttributeValue) -> Value {
     match attr {
         AttributeValue::Single(a) => a.value(),
         AttributeValue::Multiple(list) => {
             // Dataset map format: {"dataset": {"datasetId1": value1, "@none": value2}}
-            let mut dataset_map = serde_json::Map::new();
+            let mut dataset_map = Map::new();
             for attr in list {
                 let ds_key = attr.dataset_id_string().unwrap_or_else(|| "@none".to_string());
                 dataset_map.insert(ds_key, attr.value());
@@ -234,10 +248,13 @@ fn simplify_attribute_value(attr: &AttributeValue) -> serde_json::Value {
         AttributeValue::Raw(v) => {
             // For language-negotiated or other raw values that still
             // have an NGSI-LD attribute envelope, extract the value.
+            // clone: the simplified form is an owned `Value` and the attribute is
+            // only borrowed, so every arm below hands back a copy of either the
+            // payload member or the whole envelope.
             if let Some(obj) = v.as_object() {
-                // clone: the simplified form is an owned `Value` and the
-                // attribute is only borrowed, so each arm below hands back a
-                // copy of either the payload member or the whole envelope.
+                // The `type` member of a raw envelope is unvalidated JSON, so this
+                // match is over an open set of strings rather than over
+                // `AttributeType`; anything unrecognised keeps the envelope.
                 match obj.get("type").and_then(|t| t.as_str()) {
                     Some("Property") | Some("GeoProperty") | Some("VocabProperty") => obj.get("value").cloned().unwrap_or_else(|| v.clone()),
                     Some("Relationship") => obj.get("object").cloned().unwrap_or_else(|| v.clone()),
@@ -247,6 +264,7 @@ fn simplify_attribute_value(attr: &AttributeValue) -> serde_json::Value {
                     _other => v.clone(),
                 }
             } else {
+                // clone: a raw member that is not an envelope is handed back whole.
                 v.clone()
             }
         }
@@ -306,15 +324,14 @@ impl EntityPatch {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::expect_used, clippy::unwrap_used)]
-    use super::{Entity, EntityPatch};
     use crate::{
-        attribute::{AttributeValue, name::AttributeName},
+        attribute::{instance::AttributeValue, name::AttributeName},
+        entity::{Entity, EntityPatch},
         notification::SysAttrsSnapshot,
         vocab::expanded::{classes as expanded_classes, properties as expanded_properties},
     };
     use chrono::{Datelike, TimeZone, Utc};
-    use serde_json::json;
+    use serde_json::{Value, json};
 
     #[test]
     fn entity_deserializes_with_scope_string() {
@@ -374,8 +391,8 @@ mod tests {
         });
 
         let entity: Entity = serde_json::from_value(payload).expect("entity with concise attrs");
-        assert!(matches!(entity.attrs.get("A1"), Some(AttributeValue::Raw(serde_json::Value::String(_)))));
-        assert!(matches!(entity.attrs.get("A2"), Some(AttributeValue::Raw(serde_json::Value::Number(_)))));
+        assert!(matches!(entity.attrs.get("A1"), Some(AttributeValue::Raw(Value::String(_)))));
+        assert!(matches!(entity.attrs.get("A2"), Some(AttributeValue::Raw(Value::Number(_)))));
     }
 
     #[test]

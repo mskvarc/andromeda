@@ -107,7 +107,6 @@ pub struct CsrQueryParametersOptions {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::*;
     use crate::{http::parameter::query::SharedQueryParams, params_from_query};
 

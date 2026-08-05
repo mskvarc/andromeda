@@ -27,18 +27,18 @@ impl Version {
     /// Queries PostgreSQL for server version and installed extension versions.
     /// Extensions that are not installed report `"not installed"` as their version.
     pub async fn check(&self) -> Result<VersionInfo, AndromedaError> {
-        let andromeda = AndromedaVersion {
-            version: format!("v{}", build::PKG_VERSION),
-            build_time: build::BUILD_TIME_3339.to_owned(),
-            branch: build::BRANCH.to_owned(),
-            commit_hash: build::COMMIT_HASH.to_owned(),
-            git_clean: build::GIT_CLEAN,
-            rust_version: build::RUST_VERSION.to_owned(),
-            rust_channel: build::RUST_CHANNEL.to_owned(),
-            cargo_version: build::CARGO_VERSION.to_owned(),
-            build_os: build::BUILD_OS.to_owned(),
-            build_target: build::BUILD_TARGET.to_owned(),
-        };
+        let andromeda = AndromedaVersion::builder()
+            .version(format!("v{}", build::PKG_VERSION))
+            .build_time(build::BUILD_TIME_3339.to_owned())
+            .branch(build::BRANCH.to_owned())
+            .commit_hash(build::COMMIT_HASH.to_owned())
+            .git_clean(build::GIT_CLEAN)
+            .rust_version(build::RUST_VERSION.to_owned())
+            .rust_channel(build::RUST_CHANNEL.to_owned())
+            .cargo_version(build::CARGO_VERSION.to_owned())
+            .build_os(build::BUILD_OS.to_owned())
+            .build_target(build::BUILD_TARGET.to_owned())
+            .build();
 
         let row = sqlx::query(
             "SELECT \

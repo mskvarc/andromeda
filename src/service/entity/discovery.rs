@@ -4,15 +4,21 @@ use crate::{
     repository::entity::{repo::EntityRepository, rows::AttributeSummaryRow},
 };
 use andromeda_domain::{
-    attribute_list::{AttributeDetail, AttributeInfo, AttributeList},
-    entity_type_list::{EntityType, EntityTypeInfo, EntityTypeList},
+    attribute::name::AttributeName,
+    attribute_list::{AttributeDetail, AttributeInfo, AttributeList, AttributeListType, AttributeResourceType},
+    attribute_type::AttributeType,
+    entity_type::EntityTypeName,
+    entity_type_list::{EntityType, EntityTypeInfo, EntityTypeInfoType, EntityTypeList, EntityTypeListType, EntityTypeType},
     ngsi_ld_urn::{AttributeListId, EntityTypeListId},
     uri::NGSI_LD_URN_NID,
 };
 use jsonld::Expandable;
 use serde_json::Value;
 use sqlx::postgres::PgPool;
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{HashMap, HashSet},
+    str::FromStr,
+};
 use urn_rs::UrnBuilder;
 use uuid::Uuid;
 
@@ -45,7 +51,7 @@ impl EntityDiscoveryService {
                 "@id": "urn:ngsi-ld:_:dummy",
                 "@type": [iri]
             });
-            let name = match self
+            let compacted = self
                 .engine
                 .compact(
                     doc,
@@ -54,18 +60,18 @@ impl EntityDiscoveryService {
                         strip_context: ContextStripping::Strip,
                     },
                 )
-                .await
-            {
-                Ok(compacted) => compacted.get("type").and_then(|t| t.as_str()).map_or_else(|| iri.clone(), String::from), // clone: fallback owned copy when compaction lacks type
-                Err(_) => iri.clone(), // clone: fallback owned copy when compaction fails
+                .await;
+            let name = match &compacted {
+                Ok(document) => document.get("type").and_then(|t| t.as_str()).unwrap_or(iri.as_str()),
+                Err(_) => iri.as_str(),
             };
-            type_list.push(name);
+            type_list.push(parse_type_name(name)?);
         }
-        type_list.sort();
+        type_list.sort_by(|left, right| left.as_str().cmp(right.as_str()));
 
         let result = EntityTypeList {
             id,
-            type_: TYPE.to_owned(),
+            type_: EntityTypeListType,
             type_list,
         };
 
@@ -94,13 +100,15 @@ impl EntityDiscoveryService {
 
         let entity_types: Vec<EntityType> = summaries
             .into_iter()
-            .map(|(type_iri, attrs)| EntityType {
-                id: type_iri.clone(), // clone: value also needed for type_name field below
-                type_: "EntityType".to_string(),
-                type_name: type_iri,
-                attribute_names: attrs,
+            .map(|(type_iri, attrs)| {
+                Ok(EntityType {
+                    type_name: parse_type_name(&type_iri)?,
+                    id: type_iri,
+                    type_: EntityTypeType,
+                    attribute_names: attrs.iter().map(|attr| parse_attribute_name(attr)).collect::<Result<_, _>>()?,
+                })
             })
-            .collect();
+            .collect::<Result<_, AndromedaError>>()?;
 
         // Expand and compact
         let expanded = serde_json::json!(entity_types.iter().map(|et| et.expand::<serde_json::Value>()).collect::<Vec<_>>());
@@ -130,7 +138,7 @@ impl EntityDiscoveryService {
 
         // Extract unique attributes from all entities
         // Key: expanded IRI, Value: set of attribute types (Property, Relationship, etc.)
-        let mut attributes: HashMap<String, HashSet<String>> = HashMap::with_capacity(entities.len().saturating_mul(4));
+        let mut attributes: HashMap<String, HashSet<AttributeType>> = HashMap::with_capacity(entities.len().saturating_mul(4));
 
         for entity in &entities {
             // Handle array wrapper from expanded JSON-LD (expand always returns an array)
@@ -158,10 +166,10 @@ impl EntityDiscoveryService {
         let mut attribute_details: Vec<AttributeDetail> = Vec::new();
         for (uri, types) in &attributes {
             attribute_details.push(AttributeDetail {
-                id: uri.clone(), // clone: value also needed for attribute_name field
-                type_: "Attribute".to_string(),
-                attribute_name: uri.clone(),                      // clone: separate owned field from borrowed iterator
-                attribute_types: types.iter().cloned().collect(), // clone: owned strings from HashSet references
+                id: uri.clone(), // clone: the map key is borrowed and the record owns its id
+                type_: AttributeResourceType,
+                attribute_name: parse_attribute_name(uri)?,
+                attribute_types: types.iter().copied().collect(),
             });
         }
 
@@ -169,13 +177,13 @@ impl EntityDiscoveryService {
         attribute_details.sort_by(|a, b| a.id.cmp(&b.id));
 
         // Build typed response
-        let type_info = EntityTypeInfo {
-            id: type_iri,
-            type_: "EntityTypeInfo".to_string(),
-            type_name: type_name.to_string(),
-            entity_count: count,
-            attribute_details,
-        };
+        let type_info = EntityTypeInfo::builder()
+            .id(type_iri)
+            .type_(EntityTypeInfoType)
+            .type_name(parse_type_name(type_name)?)
+            .entity_count(count)
+            .attribute_details(attribute_details)
+            .build();
 
         // Convert to expanded JSON-LD using the trait, then compact
         let expanded = serde_json::json!([type_info.expand::<serde_json::Value>()]);
@@ -223,14 +231,16 @@ impl EntityDiscoveryService {
             let mut attributes = Vec::new();
             for (iri, meta) in attr_data {
                 let iri: String = iri;
-                attributes.push(AttributeInfo {
-                    id: iri.clone(), // clone: value also needed for attribute_name field
-                    type_: "Attribute".to_string(),
-                    attribute_name: iri.clone(), // clone: separate owned field, iri consumed by later field would not suffice
-                    attribute_types: Vec::new(),
-                    attribute_count: None,
-                    type_names: Some(meta.entity_types.into_iter().collect()),
-                });
+                attributes.push(
+                    AttributeInfo::builder()
+                        .attribute_name(parse_attribute_name(&iri)?)
+                        .id(iri)
+                        .type_(AttributeResourceType)
+                        .attribute_types(Vec::new())
+                        .attribute_count(None)
+                        .type_names(Some(meta.entity_types.iter().map(|name| parse_type_name(name)).collect::<Result<_, _>>()?))
+                        .build(),
+                );
             }
             attributes.sort_by(|a, b| a.id.cmp(&b.id));
 
@@ -261,7 +271,7 @@ impl EntityDiscoveryService {
             let attr_iris: Vec<String> = attr_data.into_keys().collect();
 
             // Compact each attribute IRI using a synthetic expanded doc
-            let mut compacted_names: Vec<String> = Vec::new();
+            let mut compacted_names: Vec<AttributeName> = Vec::new();
             for iri in &attr_iris {
                 let doc = serde_json::json!([{
                     "@id": "urn:ngsi-ld:_:dummy",
@@ -290,16 +300,16 @@ impl EntityDiscoveryService {
                     }
                     Err(_) => iri.clone(), // clone: fallback owned copy when compaction fails
                 };
-                compacted_names.push(name);
+                compacted_names.push(parse_attribute_name(&name)?);
             }
-            compacted_names.sort();
+            compacted_names.sort_by(|left, right| left.as_str().cmp(right.as_str()));
 
             let id = UrnBuilder::new(NGSI_LD_URN_NID, &format!("AttributeList:{}", Uuid::new_v4())).build()?;
             let id = AttributeListId::try_from(id)?;
 
             let list = AttributeList {
                 id,
-                type_: "AttributeList".to_string(),
+                type_: AttributeListType,
                 attribute_list: compacted_names,
             };
 
@@ -317,14 +327,15 @@ impl EntityDiscoveryService {
             .await?
             .ok_or_else(|| AndromedaError::entity_not_found(attr_id))?;
 
-        let attr = AttributeInfo {
-            id: attr_iri.clone(), // clone: value also needed for attribute_name field below
-            type_: "Attribute".to_string(),
-            attribute_name: attr_iri,
-            attribute_types: row.attribute_types,
-            attribute_count: Some(row.entity_count),
-            type_names: Some(row.entity_types),
-        };
+        // Clause 5.2.28 fixes `attributeTypes` to the attribute family names, while
+        // the store holds the expanded `@type` IRIs the payload carried.
+        let attr = AttributeInfo::builder()
+            .attribute_name(parse_attribute_name(&attr_iri)?)
+            .id(attr_iri)
+            .attribute_types(row.attribute_types.iter().filter_map(|iri| AttributeType::from_iri_suffix(iri)).collect())
+            .attribute_count(Some(row.entity_count))
+            .type_names(Some(row.entity_types.iter().map(|name| parse_type_name(name)).collect::<Result<_, _>>()?))
+            .build();
 
         let mut expanded_obj = attr.expand::<serde_json::Value>();
         if let Some(obj) = expanded_obj.as_object_mut() {
@@ -405,8 +416,20 @@ fn ensure_array_fields(value: &mut Value, fields: &[&str]) {
     }
 }
 
+/// Parse a stored entity-type name, reporting a malformed one as an internal
+/// fault: the value came out of the broker's own store or its own compactor.
+fn parse_type_name(value: &str) -> Result<EntityTypeName, AndromedaError> {
+    EntityTypeName::from_str(value).map_err(|error| AndromedaError::internal(format!("stored entity type name is not a valid NGSI-LD name: {error}")))
+}
+
+/// Parse a stored attribute name, reporting a malformed one as an internal fault
+/// for the same reason as [`parse_type_name`].
+fn parse_attribute_name(value: &str) -> Result<AttributeName, AndromedaError> {
+    AttributeName::from_str(value).map_err(|error| AndromedaError::internal(format!("stored attribute name is not a valid NGSI-LD name: {error}")))
+}
+
 #[inline]
-fn extract_attribute_types(value: &Value) -> Option<Vec<String>> {
+fn extract_attribute_types(value: &Value) -> Option<Vec<AttributeType>> {
     let obj = match value {
         Value::Array(arr) => arr.first()?.as_object()?,
         Value::Object(obj) => obj,
@@ -415,11 +438,7 @@ fn extract_attribute_types(value: &Value) -> Option<Vec<String>> {
 
     obj.get("@type").and_then(|t| match t {
         Value::Array(arr) => {
-            let types: Vec<String> = arr
-                .iter()
-                .filter_map(|v| v.as_str())
-                .filter_map(|s| andromeda_domain::attribute_type::AttributeType::from_iri_suffix(s).map(|t| t.to_string()))
-                .collect();
+            let types: Vec<AttributeType> = arr.iter().filter_map(|v| v.as_str()).filter_map(AttributeType::from_iri_suffix).collect();
             if types.is_empty() { None } else { Some(types) }
         }
         _other => None,

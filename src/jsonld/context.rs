@@ -343,7 +343,6 @@ fn dedupe_contexts(contexts: Vec<Value>) -> Vec<Value> {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::*;
     use serde_json::json;
 

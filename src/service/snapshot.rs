@@ -78,22 +78,22 @@ impl SnapshotService {
         let now = Utc::now();
         let expires_at = compute_snapshot_expires_at(now, input.snapshot_lifetime.as_ref())?;
 
-        let snapshot = Snapshot {
-            id,
-            snapshot_queries: input.snapshot_queries,
-            snapshot_temporal_queries: input.snapshot_temporal_queries,
-            snapshot_lifetime: input.snapshot_lifetime,
-            snapshot_priority: priority,
-            endpoint: input.endpoint,
-            receiver_info: input.receiver_info,
-            status: SnapshotStatus::Preparing,
-            queries_details: None,
-            temporal_queries_details: None,
-            created_at: now,
-            modified_at: now,
-            expires_at,
-            last_used_at: None,
-        };
+        let snapshot = Snapshot::builder()
+            .id(id)
+            .snapshot_queries(input.snapshot_queries)
+            .snapshot_temporal_queries(input.snapshot_temporal_queries)
+            .snapshot_lifetime(input.snapshot_lifetime)
+            .snapshot_priority(priority)
+            .endpoint(input.endpoint)
+            .receiver_info(input.receiver_info)
+            .status(SnapshotStatus::Preparing)
+            .queries_details(None)
+            .temporal_queries_details(None)
+            .created_at(now)
+            .modified_at(now)
+            .expires_at(expires_at)
+            .last_used_at(None)
+            .build();
 
         self.repo.create(to_insert_params(&snapshot)?).await?;
         self.send_notification_if_configured(&snapshot).await;

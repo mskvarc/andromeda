@@ -1,8 +1,9 @@
 //! The dotted attribute path used to address a sub-attribute (ETSI GS CIM 009 clause 4.5.3).
 
-// `RegularGrammar` emits an undocumented owned type and accessor alongside the
-// grammar type below, and an item-level allow does not reach macro-generated
-// siblings. This module defines exactly one grammar type and nothing else.
+// `RegularGrammar` emits an undocumented error type and an undocumented owned
+// accessor alongside the grammar type below, and an item-level allow does not
+// reach macro-generated siblings. Fencing them here keeps the crate-level deny
+// live for every hand-written item in the concept's other files.
 #![allow(missing_docs)]
 
 use static_regular_grammar::RegularGrammar;
@@ -10,7 +11,7 @@ use static_regular_grammar::RegularGrammar;
 /// A validated NGSI-LD attribute path (ETSI GS CIM 009 v1.9.1, clauses
 /// 4.5.24 and 4.9).
 ///
-/// A dotted sequence of [`crate::name::Name`] segments, optionally
+/// A dotted sequence of [`crate::name::grammar::Name`] segments, optionally
 /// followed by a bracketed modifier — a language tag (for
 /// `LanguageProperty`) or a `datasetId` URI. Used by the `attrs=` query
 /// parameter, the `q=` filter language, and merge-patch target paths.
@@ -26,8 +27,7 @@ pub struct AttributePath(str);
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::expect_used, clippy::unwrap_used)]
-    use super::AttributePath;
+    use crate::attribute_path::grammar::AttributePath;
 
     #[test]
     fn valid_single_segment() {

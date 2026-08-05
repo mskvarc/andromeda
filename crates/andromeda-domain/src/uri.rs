@@ -30,6 +30,8 @@ pub enum Uri {
 #[error("invalid URI: not a valid URN or URL")]
 pub struct UriParseError;
 
+// `#[as_ref(str)]` applies to a single field; this is a sum of two foreign
+// types that each spell the accessor differently.
 impl AsRef<str> for Uri {
     fn as_ref(&self) -> &str {
         match self {
@@ -39,6 +41,8 @@ impl AsRef<str> for Uri {
     }
 }
 
+// Validating parser: clause 4.6.2 admits either a URN or a URL, so the parse
+// tries them in that order. No derive expresses an ordered fallback.
 impl FromStr for Uri {
     type Err = UriParseError;
 
@@ -52,7 +56,6 @@ impl FromStr for Uri {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::*;
 
     #[test]

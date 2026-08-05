@@ -110,7 +110,6 @@ fn try_geometry(value: &Value) -> Option<Geometry> {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use crate::attribute::value::NgsiLdValue;
     use chrono::{TimeZone, Utc};
 

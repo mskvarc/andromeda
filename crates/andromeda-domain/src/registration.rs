@@ -1,12 +1,13 @@
 //! Context source registration types (ETSI GS CIM 009 clause 5.2.9).
 
-use crate::{attribute::name::AttributeName, constant_string, rfc3339, scope::ScopeBuf, subscription::EntitySelector, tenant::TenantName, uri::Uri};
+use crate::{attribute::name::AttributeName, constant_string, rfc3339, scope::grammar::ScopeBuf, subscription::EntitySelector, tenant::TenantName, uri::Uri};
 use chrono::{DateTime, Utc};
 use iso8601_duration::Duration as Iso8601Duration;
 use mediatype::MediaTypeBuf;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use strum::{Display, EnumIter, EnumString, IntoStaticStr};
+use typed_builder::TypedBuilder;
 use url::Url;
 
 constant_string!(ContextSourceRegistrationType, "ContextSourceRegistration");
@@ -128,105 +129,177 @@ pub struct RegistrationInfo {
     pub relationship_names: Option<Vec<AttributeName>>,
 }
 
-/// NGSI-LD Context Source Registration (ETSI GS CIM 009 clause 5.2.9).
-///
-/// Describes an external context source and the entity types, attributes,
-/// and operations it provides. Used by the broker for distributed/federated
-/// query routing.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// What a context source covers: the entity and attribute selectors it answers
+/// for, and the space and time its data spans (ETSI GS CIM 009 clauses 5.2.9
+/// and 5.2.10).
+#[derive(Debug, Clone, Serialize, Deserialize, TypedBuilder)]
 #[serde(rename_all = "camelCase")]
-pub struct ContextSourceRegistration {
-    /// Registration identifier (clause 5.2.9: a URI, not necessarily an NGSI-LD URN).
-    pub id: Uri,
-    /// JSON-LD type (always `ContextSourceRegistration`).
-    #[serde(rename = "type", default)]
-    pub type_: ContextSourceRegistrationType,
-    /// Human-readable name.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub registration_name: Option<String>,
-    /// Human-readable description.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub description: Option<String>,
+pub struct RegistrationCoverage {
     /// Information blocks describing what this source provides.
     pub information: Vec<RegistrationInfo>,
-    /// Tenant identifier.
+    /// Scope values.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub tenant: Option<TenantName>,
-    /// Observation interval.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub observation_interval: Option<Value>,
-    /// Management interval.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub management_interval: Option<Value>,
+    #[builder(default)]
+    pub scope: Option<Vec<ScopeBuf>>,
     /// Location geometry.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[builder(default)]
     pub location: Option<Value>,
     /// Observation space geometry.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[builder(default)]
     pub observation_space: Option<Value>,
     /// Operation space geometry.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[builder(default)]
     pub operation_space: Option<Value>,
-    /// Registration expiration timestamp.
-    #[serde(skip_serializing_if = "Option::is_none", with = "rfc3339::optional_datetime", default)]
-    pub expires_at: Option<DateTime<Utc>>,
+    /// Interval the source's observations span (clause 5.2.11).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[builder(default)]
+    pub observation_interval: Option<Value>,
+    /// Interval the source's management data spans (clause 5.2.11).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[builder(default)]
+    pub management_interval: Option<Value>,
+}
+
+/// How the broker reaches a context source and which operations it may send
+/// there (ETSI GS CIM 009 clauses 4.20, 5.2.9 and 5.2.43).
+#[derive(Debug, Clone, Serialize, Deserialize, TypedBuilder)]
+#[serde(rename_all = "camelCase")]
+pub struct ContextSourceAccess {
     /// The context source endpoint URL.
     pub endpoint: Url,
     /// Preferred accept media type.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[builder(default)]
     pub accept: Option<MediaTypeBuf>,
     /// Forwarding mode for distributed operations.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[builder(default)]
     pub mode: Option<ForwardingMode>,
     /// Operations this registration supports.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[builder(default)]
     pub operations: Option<Vec<CsrOperation>>,
-    /// Scope values.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub scope: Option<Vec<ScopeBuf>>,
     /// Refresh rate, as an ISO 8601 duration.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[builder(default)]
     pub refresh_rate: Option<Iso8601Duration>,
-    /// Management metadata.
+    /// Management metadata (clause 5.2.43).
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[builder(default)]
     pub management: Option<Value>,
     /// Context source info.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[builder(default)]
     pub context_source_info: Option<Value>,
     /// JSON-LD context for term expansion.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[builder(default)]
     pub jsonld_context: Option<Url>,
     /// Unique pseudonym for this context source, used for Via-based loop detection (clause 5.2.9).
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[builder(default)]
     pub context_source_alias: Option<String>,
+}
+
+/// What the broker has observed about a context source's availability
+/// (ETSI GS CIM 009 clause 5.2.9, `status` and the delivery counters).
+#[derive(Debug, Clone, Serialize, Deserialize, TypedBuilder)]
+#[serde(rename_all = "camelCase")]
+pub struct RegistrationHealth {
     /// Health status of the context source.
     pub status: CsrStatus,
     /// Number of successful notifications.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[builder(default)]
     pub times_sent: Option<i32>,
     /// Number of failed notifications.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[builder(default)]
     pub times_failed: Option<i32>,
     /// Timestamp of last successful notification.
     #[serde(skip_serializing_if = "Option::is_none", with = "rfc3339::optional_datetime", default)]
+    #[builder(default)]
     pub last_success: Option<DateTime<Utc>>,
     /// Timestamp of last failed notification.
     #[serde(skip_serializing_if = "Option::is_none", with = "rfc3339::optional_datetime", default)]
+    #[builder(default)]
     pub last_failure: Option<DateTime<Utc>>,
+}
+
+/// When a registration was written and when it stops applying
+/// (ETSI GS CIM 009 clauses 4.8 and 5.2.9).
+#[derive(Debug, Clone, Serialize, Deserialize, TypedBuilder)]
+#[serde(rename_all = "camelCase")]
+pub struct RegistrationLifecycle {
+    /// Registration expiration timestamp.
+    #[serde(skip_serializing_if = "Option::is_none", with = "rfc3339::optional_datetime", default)]
+    #[builder(default)]
+    pub expires_at: Option<DateTime<Utc>>,
     /// Timestamp when the registration was created.
     #[serde(with = "rfc3339::datetime")]
     pub created_at: DateTime<Utc>,
     /// Timestamp when the registration was last modified.
     #[serde(with = "rfc3339::datetime")]
     pub modified_at: DateTime<Utc>,
+}
+
+/// NGSI-LD Context Source Registration (ETSI GS CIM 009 clause 5.2.9).
+///
+/// Describes an external context source and the entity types, attributes,
+/// and operations it provides. Used by the broker for distributed/federated
+/// query routing. The members are grouped by what changes them:
+/// [`RegistrationCoverage`] follows what the source answers for,
+/// [`ContextSourceAccess`] how the broker talks to it, [`RegistrationHealth`]
+/// what the broker has observed, and [`RegistrationLifecycle`] when the
+/// registration applies. Every group is flattened, so the wire form stays the
+/// single flat object clause 5.2.9 defines.
+#[derive(Debug, Clone, Serialize, Deserialize, TypedBuilder)]
+#[serde(rename_all = "camelCase")]
+pub struct ContextSourceRegistration {
+    /// Registration identifier (clause 5.2.9: a URI, not necessarily an NGSI-LD URN).
+    pub id: Uri,
+    /// JSON-LD type (always `ContextSourceRegistration`).
+    #[serde(rename = "type", default)]
+    #[builder(default)]
+    pub type_: ContextSourceRegistrationType,
+    /// Human-readable name.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[builder(default)]
+    pub registration_name: Option<String>,
+    /// Human-readable description.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[builder(default)]
+    pub description: Option<String>,
+    /// Tenant identifier.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[builder(default)]
+    pub tenant: Option<TenantName>,
+    /// What the context source answers for.
+    #[serde(flatten)]
+    pub coverage: RegistrationCoverage,
+    /// How the broker reaches the context source.
+    #[serde(flatten)]
+    pub access: ContextSourceAccess,
+    /// What the broker has observed about the context source.
+    #[serde(flatten)]
+    pub health: RegistrationHealth,
+    /// When the registration applies.
+    #[serde(flatten)]
+    pub lifecycle: RegistrationLifecycle,
     /// Non-standard properties from the original CSR payload.
+    ///
+    /// Declared last: it is the catch-all flatten, and it collects whatever the
+    /// groups above did not claim.
     #[serde(flatten, skip_serializing_if = "Option::is_none")]
+    #[builder(default)]
     pub additional_properties: Option<Value>,
 }
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::*;
     use std::str::FromStr;
     use strum::IntoEnumIterator;
@@ -333,6 +406,81 @@ mod tests {
             let parsed = CsrStatus::from_str(&s).unwrap();
             pretty_assertions::assert_eq!(parsed, variant, "round-trip failed for {variant}");
         }
+    }
+
+    /// One registration carrying every member clause 5.2.9 defines plus a
+    /// non-standard one, so the flattened groups and the catch-all are proven
+    /// to leave the wire form flat.
+    fn fully_populated_registration() -> serde_json::Value {
+        serde_json::json!({
+            "id": "urn:ngsi-ld:ContextSourceRegistration:1",
+            "type": "ContextSourceRegistration",
+            "registrationName": "vehicles",
+            "description": "vehicle telemetry source",
+            "tenant": "acme",
+            "information": [{"entities": [{"type": "Vehicle"}], "propertyNames": ["speed"]}],
+            "scope": ["/Madrid"],
+            "location": {"type": "Point", "coordinates": [13.0, 52.0]},
+            "observationSpace": {"type": "Point", "coordinates": [13.0, 52.0]},
+            "operationSpace": {"type": "Point", "coordinates": [13.0, 52.0]},
+            "observationInterval": {"start": "2024-01-01T00:00:00Z"},
+            "managementInterval": {"start": "2024-01-01T00:00:00Z"},
+            "endpoint": "https://source.example.com/",
+            "accept": "application/ld+json",
+            "mode": "inclusive",
+            "operations": ["retrieveEntity", "customOp"],
+            "refreshRate": "PT1H",
+            "management": {"localOnly": false},
+            "contextSourceInfo": [{"key": "Authorization", "value": "Bearer x"}],
+            "jsonldContext": "https://example.com/context.jsonld",
+            "contextSourceAlias": "source-1",
+            "status": "ok",
+            "timesSent": 3,
+            "timesFailed": 1,
+            "lastSuccess": "2024-02-01T00:00:00Z",
+            "lastFailure": "2024-01-15T00:00:00Z",
+            "expiresAt": "2030-12-31T23:59:59Z",
+            "createdAt": "2024-01-01T00:00:00Z",
+            "modifiedAt": "2024-01-02T00:00:00Z",
+            "customThing": {"kept": true}
+        })
+    }
+
+    #[test]
+    fn a_registration_reserialises_to_the_flat_object_it_was_read_from() {
+        let original = fully_populated_registration();
+        // clone: the original is compared against the round-tripped value below
+        let registration: ContextSourceRegistration = serde_json::from_value(original.clone()).expect("registration parses");
+        pretty_assertions::assert_eq!(serde_json::to_value(&registration).expect("serialises"), original);
+    }
+
+    #[test]
+    fn a_registration_keeps_a_non_standard_member_in_its_catch_all() {
+        let registration: ContextSourceRegistration = serde_json::from_value(fully_populated_registration()).expect("registration parses");
+        let extras = registration.additional_properties.expect("catch-all present");
+        pretty_assertions::assert_eq!(extras["customThing"], serde_json::json!({"kept": true}));
+        assert!(extras.get("endpoint").is_none(), "a grouped member must not leak into the catch-all");
+        assert!(extras.get("status").is_none(), "a grouped member must not leak into the catch-all");
+    }
+
+    #[test]
+    fn a_registration_builder_produces_the_same_value_as_the_parsed_form() {
+        let parsed: ContextSourceRegistration = serde_json::from_value(fully_populated_registration()).expect("registration parses");
+        let built = ContextSourceRegistration::builder()
+            .id(parsed.id.clone()) // clone: the parsed value is compared against the built one below
+            .registration_name(parsed.registration_name.clone()) // clone: same reason
+            .description(parsed.description.clone()) // clone: same reason
+            .tenant(parsed.tenant.clone()) // clone: same reason
+            .coverage(parsed.coverage.clone()) // clone: same reason
+            .access(parsed.access.clone()) // clone: same reason
+            .health(parsed.health.clone()) // clone: same reason
+            .lifecycle(parsed.lifecycle.clone()) // clone: same reason
+            .additional_properties(parsed.additional_properties.clone()) // clone: same reason
+            .build();
+        pretty_assertions::assert_eq!(
+            serde_json::to_value(&built).expect("serialises"),
+            serde_json::to_value(&parsed).expect("serialises")
+        );
     }
 
     #[test]

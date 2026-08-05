@@ -31,7 +31,6 @@ pub fn compute_updated_status(current_status: SubscriptionStatus, fields: &Statu
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::{StatusUpdateFields, compute_updated_status};
     use andromeda_domain::subscription::SubscriptionStatus;
     use chrono::{Duration, Utc};

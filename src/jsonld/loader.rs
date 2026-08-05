@@ -629,7 +629,6 @@ async fn fetch_and_parse(client: &Client, url: &str, max_bytes: usize) -> Result
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::*;
 
     #[test]

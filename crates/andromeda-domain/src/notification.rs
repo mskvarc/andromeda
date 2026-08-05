@@ -7,6 +7,7 @@ use serde_json::Value;
 use serde_with::skip_serializing_none;
 use std::sync::Arc;
 use strum::{Display, EnumString};
+use typed_builder::TypedBuilder;
 
 constant_string!(NotificationType, "Notification");
 constant_string!(CsourceNotificationType, "CsourceNotification");
@@ -69,23 +70,28 @@ impl TriggerReason {
 }
 
 /// Represents an entity mutation that may trigger notifications.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, TypedBuilder)]
 pub struct ChangeEvent {
     /// Identifier of the mutated entity.
     pub entity_id: Uri,
     /// Types the mutated entity declares.
+    #[builder(default)]
     pub entity_types: Vec<EntityTypeName>,
     /// What kind of mutation this was.
     pub trigger_reason: TriggerReason,
     /// Names of the attributes the mutation touched.
+    #[builder(default)]
     pub changed_attributes: Vec<AttributeName>,
     /// When the mutation happened.
     pub occurred_at: DateTime<Utc>,
     /// For EntityDeleted events, a snapshot of the entity before deletion (expanded form).
+    #[builder(default)]
     pub entity_snapshot: Option<Arc<Value>>,
     /// Entity state before the mutation (expanded form), for showChanges support.
+    #[builder(default)]
     pub previous_attributes: Option<Arc<Value>>,
     /// For EntityDeleted events, a snapshot of (createdAt, modifiedAt, expiresAt) captured before deletion.
+    #[builder(default)]
     pub sys_attrs_snapshot: Option<SysAttrsSnapshot>,
     /// Whether this event originated locally or from a forwarded context source (clause 5.5.13).
     pub origin: ChangeOrigin,
@@ -95,24 +101,20 @@ pub struct ChangeEvent {
     /// this directly to avoid an extra query per event during batch ingest.
     /// `None` for events emitted by background workers that only know the
     /// entity id (e.g. expiration sweeps); consumers fall back to fetching.
+    #[builder(default)]
     pub current_payload: Option<Arc<Value>>,
 }
 
 impl ChangeEvent {
     /// Build an event for a mutation that has just happened locally.
     pub fn new(entity_id: Uri, entity_types: Vec<EntityTypeName>, trigger_reason: TriggerReason) -> ChangeEvent {
-        ChangeEvent {
-            entity_id,
-            entity_types,
-            trigger_reason,
-            changed_attributes: Vec::new(),
-            occurred_at: Utc::now(),
-            entity_snapshot: None,
-            previous_attributes: None,
-            sys_attrs_snapshot: None,
-            origin: ChangeOrigin::Local,
-            current_payload: None,
-        }
+        ChangeEvent::builder()
+            .entity_id(entity_id)
+            .entity_types(entity_types)
+            .trigger_reason(trigger_reason)
+            .occurred_at(Utc::now())
+            .origin(ChangeOrigin::Local)
+            .build()
     }
 
     /// Record which attributes the mutation touched.
@@ -159,19 +161,21 @@ impl ChangeEvent {
 /// Represents a notification sent to a subscriber when matching entity
 /// changes occur. Contains the subscription reference, timestamp, and
 /// the entity data that triggered the notification.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TypedBuilder)]
 #[serde(rename_all = "camelCase")]
 pub struct Notification {
     /// Generated notification identifier.
     pub id: Uri,
     /// Always `Notification`.
     #[serde(rename = "type")]
+    #[builder(default)]
     pub type_: NotificationType,
     /// Subscription this notification answers.
     pub subscription_id: Uri,
     /// When the notification was generated.
     pub notified_at: DateTime<Utc>,
     /// The entity representations that triggered it.
+    #[builder(default)]
     pub data: Vec<Value>,
 }
 
@@ -205,21 +209,24 @@ pub struct CsrChangeEvent {
 /// registration changes occur. Contains the subscription reference,
 /// timestamp, CSR data, and the trigger reason.
 #[skip_serializing_none]
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TypedBuilder)]
 #[serde(rename_all = "camelCase")]
 pub struct CsourceNotification {
     /// Generated notification identifier.
     pub id: Uri,
     /// Always `CsourceNotification`.
     #[serde(rename = "type")]
+    #[builder(default)]
     pub type_: CsourceNotificationType,
     /// Subscription this notification answers.
     pub subscription_id: Uri,
     /// When the notification was generated.
     pub notified_at: DateTime<Utc>,
     /// The registration representations that triggered it.
+    #[builder(default)]
     pub data: Vec<Value>,
     /// Why the notification fired.
+    #[builder(default)]
     pub trigger_reason: Option<CsrTriggerReason>,
 }
 
@@ -239,4 +246,135 @@ pub enum CsourceSubscriptionChange {
     Upserted(Uri),
     /// The CSR subscription with this id was deleted.
     Deleted(Uri),
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{
+        notification::{ChangeEvent, ChangeOrigin, CsourceNotification, CsrTriggerReason, Notification, SysAttrsSnapshot, TriggerReason},
+        uri::Uri,
+    };
+    use chrono::{TimeZone, Utc};
+    use serde_json::json;
+    use std::{str::FromStr, sync::Arc};
+
+    /// The instant every fixture in this module is stamped with.
+    fn instant() -> chrono::DateTime<Utc> {
+        Utc.with_ymd_and_hms(2024, 6, 15, 12, 30, 0).single().expect("valid instant")
+    }
+
+    /// A subscription identifier the notification fixtures answer for.
+    fn subscription_id() -> Uri {
+        "urn:ngsi-ld:Subscription:1".parse().expect("valid subscription id")
+    }
+
+    #[test]
+    fn a_notification_carries_its_fixed_type_token() {
+        let notification = Notification::builder()
+            .id("urn:ngsi-ld:Notification:1".parse::<Uri>().expect("valid notification id"))
+            .subscription_id(subscription_id())
+            .notified_at(instant())
+            .build();
+        let rendered = serde_json::to_value(&notification).expect("serialises");
+        pretty_assertions::assert_eq!(rendered["type"], json!("Notification"));
+        pretty_assertions::assert_eq!(rendered["data"], json!([]));
+    }
+
+    #[test]
+    fn a_csource_notification_carries_its_own_type_token() {
+        let notification = CsourceNotification::builder()
+            .id("urn:ngsi-ld:CsourceNotification:1".parse::<Uri>().expect("valid notification id"))
+            .subscription_id(subscription_id())
+            .notified_at(instant())
+            .trigger_reason(Some(CsrTriggerReason::NewlyMatching))
+            .build();
+        let rendered = serde_json::to_value(&notification).expect("serialises");
+        pretty_assertions::assert_eq!(rendered["type"], json!("CsourceNotification"));
+        pretty_assertions::assert_eq!(rendered["triggerReason"], json!("newlyMatching"));
+    }
+
+    #[test]
+    fn a_notification_rejects_any_other_type_token() {
+        let error = serde_json::from_value::<Notification>(json!({
+            "id": "urn:ngsi-ld:Notification:1",
+            "type": "CsourceNotification",
+            "subscriptionId": "urn:ngsi-ld:Subscription:1",
+            "notifiedAt": "2024-06-15T12:30:00Z",
+            "data": []
+        }))
+        .expect_err("a foreign discriminator is rejected");
+        assert!(error.to_string().contains("invalid value"), "{error}");
+    }
+
+    #[test]
+    fn a_change_event_records_its_trigger_reason() {
+        // `TriggerReason` reaches the wire through `Display`/`FromStr` rather than
+        // serde: it is a database label and a `notificationTrigger` token, never a
+        // serialised member of `ChangeEvent`, which is an in-process value.
+        for reason in [
+            TriggerReason::EntityCreated,
+            TriggerReason::EntityUpdated,
+            TriggerReason::EntityDeleted,
+            TriggerReason::AttributeCreated,
+            TriggerReason::AttributeUpdated,
+            TriggerReason::AttributeDeleted,
+        ] {
+            let event = ChangeEvent::new(
+                "urn:ngsi-ld:Building:1".parse().expect("valid entity id"),
+                vec!["Building".parse().expect("valid type name")],
+                reason,
+            );
+            pretty_assertions::assert_eq!(event.trigger_reason, reason);
+            pretty_assertions::assert_eq!(TriggerReason::from_str(&reason.to_string()).expect("round trip"), reason);
+            assert!(TriggerReason::defaults().contains(&reason.to_string().as_str()));
+        }
+    }
+
+    #[test]
+    fn a_change_event_builder_round_trips_its_fields() {
+        let snapshot = Arc::new(json!({"speed": 10}));
+        let previous = Arc::new(json!({"speed": 5}));
+        let current = Arc::new(json!({"speed": 15}));
+        let sys_attrs = SysAttrsSnapshot {
+            created_at: instant(),
+            modified_at: instant(),
+            expires_at: Some(instant()),
+        };
+        let event = ChangeEvent::builder()
+            .entity_id("urn:ngsi-ld:Vehicle:1".parse::<Uri>().expect("valid entity id"))
+            .entity_types(vec!["Vehicle".parse().expect("valid type name")])
+            .trigger_reason(TriggerReason::EntityUpdated)
+            .changed_attributes(vec!["speed".parse().expect("valid attribute name")])
+            .occurred_at(instant())
+            .entity_snapshot(Some(Arc::clone(&snapshot)))
+            .previous_attributes(Some(Arc::clone(&previous)))
+            .sys_attrs_snapshot(Some(sys_attrs))
+            .origin(ChangeOrigin::Forwarded)
+            .current_payload(Some(Arc::clone(&current)))
+            .build();
+
+        pretty_assertions::assert_eq!(event.entity_id.as_ref(), "urn:ngsi-ld:Vehicle:1");
+        pretty_assertions::assert_eq!(event.entity_types.len(), 1);
+        pretty_assertions::assert_eq!(event.trigger_reason, TriggerReason::EntityUpdated);
+        pretty_assertions::assert_eq!(event.changed_attributes.len(), 1);
+        pretty_assertions::assert_eq!(event.occurred_at, instant());
+        pretty_assertions::assert_eq!(event.entity_snapshot.as_deref(), Some(&*snapshot));
+        pretty_assertions::assert_eq!(event.previous_attributes.as_deref(), Some(&*previous));
+        pretty_assertions::assert_eq!(event.sys_attrs_snapshot.expect("sys attrs present").expires_at, Some(instant()));
+        pretty_assertions::assert_eq!(event.origin, ChangeOrigin::Forwarded);
+        pretty_assertions::assert_eq!(event.current_payload.as_deref(), Some(&*current));
+    }
+
+    #[test]
+    fn a_change_event_builder_leaves_every_optional_field_unset() {
+        let event = ChangeEvent::builder()
+            .entity_id("urn:ngsi-ld:Vehicle:1".parse::<Uri>().expect("valid entity id"))
+            .trigger_reason(TriggerReason::EntityCreated)
+            .occurred_at(instant())
+            .origin(ChangeOrigin::Local)
+            .build();
+        assert!(event.entity_types.is_empty() && event.changed_attributes.is_empty());
+        assert!(event.entity_snapshot.is_none() && event.previous_attributes.is_none());
+        assert!(event.sys_attrs_snapshot.is_none() && event.current_payload.is_none());
+    }
 }

@@ -2,7 +2,7 @@
 
 use crate::uri::{Uri, UriParseError};
 use derive_more::{AsRef, Deref, From};
-use serde::{Deserialize, Deserializer, Serialize, de::Error as _};
+use serde::{Deserialize, Deserializer, Serialize, de::Error as DeError};
 use serde_json::Value;
 use std::{slice::Iter, str::FromStr, vec::IntoIter};
 use thiserror::Error;
@@ -21,11 +21,11 @@ impl<'de> Deserialize<'de> for RelationshipObjectList {
         let value = Value::deserialize(deserializer)?;
         let items = value
             .as_array()
-            .ok_or_else(|| D::Error::custom("objectList must be an array"))?
+            .ok_or_else(|| DeError::custom("objectList must be an array"))?
             .iter()
             .map(parse_relationship_object_entry)
             .collect::<Result<Vec<_>, _>>()
-            .map_err(D::Error::custom)?;
+            .map_err(DeError::custom)?;
         Ok(RelationshipObjectList(items))
     }
 }
@@ -85,7 +85,6 @@ pub fn parse_relationship_object_entry(value: &Value) -> Result<Uri, Relationshi
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use crate::{attribute::object_list::RelationshipObjectList, uri::Uri};
     use std::str::FromStr;
 

@@ -125,7 +125,6 @@ const fn estimated_stream_bytes(rows: usize) -> usize {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::expect_used)]
     use super::*;
     use crate::repository::copy::COPY_HEADER_SIGNATURE;
     use chrono::{TimeZone, Utc};

@@ -29,7 +29,6 @@ pub fn geometry_bytes(geometry: Option<&Geometry>) -> Result<Option<Vec<u8>>, An
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::*;
 
     #[test]

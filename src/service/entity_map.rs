@@ -117,7 +117,6 @@ fn compute_entity_map_expires_at(created_at: DateTime<Utc>, lifetime: Option<&Is
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use crate::{
         repository::entity_map::EntityMapStore,
         service::entity_map::{parse_entity_map_urn, parse_iso8601_duration, parse_uri_csv},

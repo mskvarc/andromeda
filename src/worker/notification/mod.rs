@@ -332,13 +332,13 @@ impl NotificationWorker {
                             return;
                         }
                     };
-                    let notification = Notification {
-                        id: notification_id,
-                        type_: NotificationType,
-                        subscription_id: sub_uri,
-                        notified_at: Utc::now(),
-                        data,
-                    };
+                    let notification = Notification::builder()
+                        .id(notification_id)
+                        .type_(NotificationType)
+                        .subscription_id(sub_uri)
+                        .notified_at(Utc::now())
+                        .data(data)
+                        .build();
 
                     let notification_payload = match serde_json::to_value(&notification) {
                         Ok(v) => v,
@@ -476,7 +476,6 @@ fn extract_entity_geometry(entity_data: &Value, geoproperty_iri: &str) -> Option
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::*;
     use crate::{
         service::{compiled_subscription::CompiledSelector, subscription_matching::matches_subscription},
@@ -488,18 +487,14 @@ mod tests {
     use regex::Regex;
 
     fn make_event(entity_id: &str, types: Vec<&str>, trigger: TriggerReason, attrs: Vec<&str>) -> ChangeEvent {
-        ChangeEvent {
-            entity_id: entity_id.parse().expect("valid test URI"),
-            entity_types: types.into_iter().map(|t| t.parse().expect("valid test type name")).collect(),
-            trigger_reason: trigger,
-            changed_attributes: attrs.into_iter().map(|a| a.parse().expect("valid test attribute name")).collect(),
-            occurred_at: Utc::now(),
-            entity_snapshot: None,
-            previous_attributes: None,
-            sys_attrs_snapshot: None,
-            origin: ChangeOrigin::Local,
-            current_payload: None,
-        }
+        ChangeEvent::builder()
+            .entity_id(entity_id.parse().expect("valid test URI"))
+            .entity_types(types.into_iter().map(|t| t.parse().expect("valid test type name")).collect())
+            .trigger_reason(trigger)
+            .changed_attributes(attrs.into_iter().map(|a| a.parse().expect("valid test attribute name")).collect())
+            .occurred_at(Utc::now())
+            .origin(ChangeOrigin::Local)
+            .build()
     }
 
     fn make_sub(id: &str, selectors: Vec<CompiledSelector>, triggers: Vec<&str>, watched: Option<Vec<&str>>) -> CompiledSubscription {

@@ -9,7 +9,16 @@ use crate::{
     repository::subscription_store::{params::DatasetIdPresence, rows::SubscriptionRow},
 };
 use andromeda_domain::{
-    subscription::{NotificationParams, NotificationStatus, NotificationTrigger, Subscription, SubscriptionType},
+    subscription::{
+        NotificationParams,
+        NotificationStatus,
+        NotificationTrigger,
+        Subscription,
+        SubscriptionDelivery,
+        SubscriptionFilters,
+        SubscriptionLifecycle,
+        SubscriptionSelection,
+    },
     uri::Uri,
 };
 use chrono::{DateTime, Utc};
@@ -112,32 +121,47 @@ pub fn row_to_subscription(row: SubscriptionRow) -> Result<Subscription, Androme
         .transpose()
         .map_err(|e| AndromedaError::internal(format!("Invalid subscription jsonldContext: {e}")))?;
 
-    Ok(Subscription {
-        id,
-        type_: SubscriptionType,
-        subscription_name: row.subscription_name,
-        description: row.description,
-        entities,
-        watched_attributes,
-        notification_trigger,
-        time_interval: row.time_interval,
-        q: row.q,
-        geo_q: row.geo_q,
-        scope_q: row.scope_q,
-        csf: row.csf,
-        dataset_id,
-        is_active: Some(row.is_active),
-        notification,
-        expires_at: row.expires_at,
-        throttling: row.throttling,
-        status: row.status,
-        temporal_q: row.temporal_q,
-        lang,
-        jsonld_context,
-        local_only: if row.local_only { Some(true) } else { None },
-        created_at: row.created_at,
-        modified_at: row.modified_at,
-    })
+    Ok(Subscription::builder()
+        .id(id)
+        .subscription_name(row.subscription_name)
+        .description(row.description)
+        .selection(
+            SubscriptionSelection::builder()
+                .entities(entities)
+                .watched_attributes(watched_attributes)
+                .notification_trigger(notification_trigger)
+                .build(),
+        )
+        .filters(
+            SubscriptionFilters::builder()
+                .q(row.q)
+                .geo_q(row.geo_q)
+                .scope_q(row.scope_q)
+                .csf(row.csf)
+                .dataset_id(dataset_id)
+                .temporal_q(row.temporal_q)
+                .build(),
+        )
+        .notification(notification)
+        .delivery(
+            SubscriptionDelivery::builder()
+                .time_interval(row.time_interval)
+                .throttling(row.throttling)
+                .lang(lang)
+                .jsonld_context(jsonld_context)
+                .local_only(if row.local_only { Some(true) } else { None })
+                .build(),
+        )
+        .lifecycle(
+            SubscriptionLifecycle::builder()
+                .is_active(Some(row.is_active))
+                .status(row.status)
+                .expires_at(row.expires_at)
+                .created_at(row.created_at)
+                .modified_at(row.modified_at)
+                .build(),
+        )
+        .build())
 }
 
 /// Derive the notification delivery status from `last_success`/`last_failure`.

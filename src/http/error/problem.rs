@@ -265,7 +265,6 @@ impl IntoResponse for NgsiLdError {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::*;
     use axum::{body::to_bytes, response::IntoResponse};
     use serde_json::Value;

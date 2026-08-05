@@ -225,7 +225,6 @@ fn compiled_scope_term_matches(term: &CompiledScopeTerm, scope: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::*;
     use crate::transport::endpoint::EndpointTransport;
     use andromeda_domain::{

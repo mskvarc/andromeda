@@ -124,7 +124,6 @@ pub(crate) async fn migrate_single_tenant_db(
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use crate::tenancy::database::DatabaseUrl;
 
     #[test]

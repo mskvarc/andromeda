@@ -12,7 +12,10 @@ use crate::{
     worker::attribute_current_materializer::AttributeCurrentBarrier,
 };
 use andromeda_domain::{
-    attribute::{Attribute, AttributeValue, name::AttributeName},
+    attribute::{
+        instance::{Attribute, AttributeValue},
+        name::AttributeName,
+    },
     entity::Entity,
     sys_attrs::SysAttrsInclusion,
     uri::Uri,

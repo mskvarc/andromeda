@@ -95,7 +95,6 @@ impl<'a> Renderer for SnapshotRenderer<'a> {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::*;
     use serde_json::json;
 

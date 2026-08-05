@@ -2,8 +2,17 @@
 
 use crate::core::error::AndromedaError;
 use andromeda_domain::{
-    registration::{ContextSourceRegistration, ContextSourceRegistrationType, CsrOperation, CsrStatus, ForwardingMode},
-    scope::ScopeBuf,
+    registration::{
+        ContextSourceAccess,
+        ContextSourceRegistration,
+        CsrOperation,
+        CsrStatus,
+        ForwardingMode,
+        RegistrationCoverage,
+        RegistrationHealth,
+        RegistrationLifecycle,
+    },
+    scope::grammar::ScopeBuf,
     tenant::TenantName,
     uri::Uri,
 };
@@ -101,36 +110,51 @@ pub fn row_to_csr(row: &sqlx::postgres::PgRow) -> Result<ContextSourceRegistrati
 
     let information = serde_json::from_value(information_json).map_err(|e| AndromedaError::internal(format!("Failed to parse CSR information: {e}")))?;
 
-    Ok(ContextSourceRegistration {
-        id,
-        type_: ContextSourceRegistrationType,
-        registration_name,
-        description,
-        information,
-        tenant,
-        observation_interval,
-        management_interval,
-        location,
-        observation_space,
-        operation_space,
-        expires_at,
-        endpoint,
-        accept,
-        mode: Some(mode),
-        operations,
-        scope,
-        refresh_rate,
-        management,
-        context_source_info,
-        jsonld_context,
-        context_source_alias,
-        status,
-        times_sent: Some(times_sent),
-        times_failed: Some(times_failed),
-        last_success,
-        last_failure,
-        created_at,
-        modified_at,
-        additional_properties,
-    })
+    Ok(ContextSourceRegistration::builder()
+        .id(id)
+        .registration_name(registration_name)
+        .description(description)
+        .tenant(tenant)
+        .coverage(
+            RegistrationCoverage::builder()
+                .information(information)
+                .scope(scope)
+                .location(location)
+                .observation_space(observation_space)
+                .operation_space(operation_space)
+                .observation_interval(observation_interval)
+                .management_interval(management_interval)
+                .build(),
+        )
+        .access(
+            ContextSourceAccess::builder()
+                .endpoint(endpoint)
+                .accept(accept)
+                .mode(Some(mode))
+                .operations(operations)
+                .refresh_rate(refresh_rate)
+                .management(management)
+                .context_source_info(context_source_info)
+                .jsonld_context(jsonld_context)
+                .context_source_alias(context_source_alias)
+                .build(),
+        )
+        .health(
+            RegistrationHealth::builder()
+                .status(status)
+                .times_sent(Some(times_sent))
+                .times_failed(Some(times_failed))
+                .last_success(last_success)
+                .last_failure(last_failure)
+                .build(),
+        )
+        .lifecycle(
+            RegistrationLifecycle::builder()
+                .expires_at(expires_at)
+                .created_at(created_at)
+                .modified_at(modified_at)
+                .build(),
+        )
+        .additional_properties(additional_properties)
+        .build())
 }

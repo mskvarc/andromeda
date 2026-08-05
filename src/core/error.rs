@@ -618,7 +618,9 @@ impl From<ReqwestError> for AndromedaError {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::expect_used, clippy::unwrap_used, clippy::invalid_regex)]
+    // A test deliberately feeds a malformed pattern to the `Database` mapping;
+    // `invalid_regex` is a correctness lint that fires on the literal itself.
+    #![allow(clippy::invalid_regex)]
     use super::*;
     use sqlx::{
         Error as SqlxError,

@@ -1,4 +1,5 @@
 use crate::{
+    http::model::response_format::APPLICATION_LD_JSON,
     jsonld::{CompactOptions, ContextSpec, ContextStripping, JsonLdEngine},
     repository::{entity::repo::EntityRepository, subscription::repo::SubscriptionRepository, subscription_store::repo::SubscriptionStore},
     service::entity::inject_sys_attrs,
@@ -9,13 +10,14 @@ use crate::{
 };
 use andromeda_domain::{
     entity::Entity,
-    notification::{Notification, NotificationType},
+    notification::Notification,
     subscription::Subscription,
     uri::{NGSI_LD_URN_NID, Uri},
 };
 use andromeda_query::filter::{eval, parser};
 use chrono::Utc;
 use futures::{StreamExt, stream};
+use mediatype::MediaTypeBuf;
 use serde_json::Value;
 use std::{sync::Arc, time::Duration};
 use tracing::{debug, error, info};
@@ -128,14 +130,14 @@ impl IntervalWorker {
                             return;
                         }
                     };
-                    let notification = Notification {
-                        id: notification_id,
-                        type_: NotificationType,
-                        // clone: the notification owns its subscription id and the subscription is still needed below
-                        subscription_id: sub.id.clone(),
-                        notified_at: Utc::now(),
-                        data,
-                    };
+                    // clone: the notification owns its subscription id and the
+                    // subscription is still needed below
+                    let notification = Notification::builder()
+                        .id(notification_id)
+                        .subscription_id(sub.id.clone())
+                        .notified_at(Utc::now())
+                        .data(data)
+                        .build();
 
                     let payload = match serde_json::to_value(&notification) {
                         Ok(v) => v,
@@ -145,9 +147,9 @@ impl IntervalWorker {
                         }
                     };
 
-                    let endpoint_uri = &sub.notification.endpoint.uri;
-                    let accept = sub.notification.endpoint.accept.as_deref();
-                    let jsonld_context = sub.jsonld_context.as_ref().map(Url::as_str);
+                    let endpoint_uri = sub.notification.endpoint.uri.as_str();
+                    let accept = sub.notification.endpoint.accept.as_ref().map(MediaTypeBuf::as_str);
+                    let jsonld_context = sub.delivery.jsonld_context.as_ref().map(Url::as_str);
 
                     let endpoint_transport = match parse_endpoint_transport(endpoint_uri, sub.notification.endpoint.notifier_info.as_deref()) {
                         Ok(t) => t,
@@ -192,7 +194,7 @@ impl IntervalWorker {
     async fn fetch_matching_entities(&self, sub: &Subscription) -> Result<Vec<Value>, crate::core::error::AndromedaError> {
         let mut all_entities = Vec::new();
 
-        if let Some(ref selectors) = sub.entities {
+        if let Some(ref selectors) = sub.selection.entities {
             for selector in selectors {
                 let type_ = &selector.type_;
                 let entities = self.entity_repo.get_entities_by_type(type_, None, None).await?;
@@ -247,8 +249,13 @@ impl IntervalWorker {
                 entity
             };
 
-            let context = context_for_subscription_raw(sub.jsonld_context.as_ref().map(Url::as_str));
-            let include_context = sub.notification.endpoint.accept.as_deref().is_some_and(|v| v == "application/ld+json");
+            let context = context_for_subscription_raw(sub.delivery.jsonld_context.as_ref().map(Url::as_str));
+            let include_context = sub
+                .notification
+                .endpoint
+                .accept
+                .as_ref()
+                .is_some_and(|accept| accept.essence() == APPLICATION_LD_JSON);
             let compacted = match self
                 .engine
                 .compact(
@@ -308,7 +315,7 @@ fn extract_entity_id(entity: &Value) -> Option<String> {
 
 /// Apply q, geoQ, and scopeQ filters from a subscription to a list of expanded entities.
 fn apply_subscription_filters(sub: &Subscription, entities: Vec<Value>) -> Vec<Value> {
-    let compiled_q = sub.q.as_ref().and_then(|q_str| match parser::parse(q_str) {
+    let compiled_q = sub.filters.q.as_ref().and_then(|q_str| match parser::parse(q_str) {
         Ok(expr) => Some(expr),
         Err(e) => {
             debug!("IntervalWorker: failed to parse q filter '{}' for subscription {}: {}", q_str, sub.id, e);
@@ -316,8 +323,8 @@ fn apply_subscription_filters(sub: &Subscription, entities: Vec<Value>) -> Vec<V
         }
     });
 
-    let compiled_geo = sub.geo_q.as_ref().and_then(|v| compile_geo_q(v, sub.id.as_ref()));
-    let compiled_scope = sub.scope_q.as_deref().map(compile_scope_q);
+    let compiled_geo = sub.filters.geo_q.as_ref().and_then(|v| compile_geo_q(v, sub.id.as_ref()));
+    let compiled_scope = sub.filters.scope_q.as_deref().map(compile_scope_q);
 
     let has_filters = compiled_q.is_some() || compiled_geo.is_some() || compiled_scope.is_some();
     if !has_filters {

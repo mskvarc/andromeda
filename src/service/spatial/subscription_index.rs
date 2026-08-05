@@ -146,7 +146,6 @@ impl SpatialSubscriptionIndex {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::*;
     use crate::tenancy::types::TenantRef;
     use geo::{Coord, LineString, Point, Polygon};

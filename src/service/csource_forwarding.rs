@@ -74,12 +74,12 @@ impl ForwardingOperation {
     /// Returns the operation strings that match this forwarding operation.
     /// Per NGSI-LD spec 6.3.5: if `operations` is not specified on a CSR, it supports all operations.
     fn matches(&self, csr: &ContextSourceRegistration) -> bool {
-        let ops = match &csr.operations {
+        let ops = match &csr.access.operations {
             Some(ops) => ops,
             None => return true, // No operations specified = supports all
         };
 
-        let mode = csr.mode.unwrap_or_default();
+        let mode = csr.access.mode.unwrap_or_default();
 
         match self {
             ForwardingOperation::RetrieveEntity => ops.iter().any(|op| {
@@ -349,7 +349,7 @@ impl CsourceForwardingService {
         let matching_csrs: Vec<_> = csrs
             .into_iter()
             .filter(|csr| operation.matches(csr))
-            .filter(|csr| match (&csr.context_source_alias, incoming_via) {
+            .filter(|csr| match (&csr.access.context_source_alias, incoming_via) {
                 (Some(alias), Some(via)) => !via.contains_pseudonym(alias),
                 _ => true,
             })
@@ -366,8 +366,8 @@ impl CsourceForwardingService {
             // Per spec 4.3.6.2: auxiliary CSRs only supplement existing data
             .filter(|csr| match mode_filter {
                 CsrModeFilter::All => true,
-                CsrModeFilter::ExcludeAuxiliary => csr.mode != Some(ForwardingMode::Auxiliary),
-                CsrModeFilter::AuxiliaryOnly => csr.mode == Some(ForwardingMode::Auxiliary),
+                CsrModeFilter::ExcludeAuxiliary => csr.access.mode != Some(ForwardingMode::Auxiliary),
+                CsrModeFilter::AuxiliaryOnly => csr.access.mode == Some(ForwardingMode::Auxiliary),
             })
             .collect();
 
@@ -382,10 +382,10 @@ impl CsourceForwardingService {
         let forwarding_qs_ref = &forwarding_qs;
         let results: Vec<ForwardedEntities> = stream::iter(matching_csrs)
             .map(|csr| async move {
-                let url = build_query_url(&csr.endpoint, forwarding_qs_ref);
+                let url = build_query_url(&csr.access.endpoint, forwarding_qs_ref);
                 debug!("Forwarding entity query to context source {}: {}", csr.id, url);
 
-                let mode = csr.mode.unwrap_or_default();
+                let mode = csr.access.mode.unwrap_or_default();
                 match self.forward_get(&url, context_url, csr.tenant.as_ref(), incoming_via).await {
                     ForwardGetOutcome::Success(Value::Array(arr), cs_warnings) => {
                         let (entities, parse_warnings) = parse_forwarded_entities(csr.id.as_ref(), arr);
@@ -475,15 +475,15 @@ impl CsourceForwardingService {
         let matching_csrs: Vec<_> = csrs
             .into_iter()
             .filter(|csr| operation.matches(csr))
-            .filter(|csr| match (&csr.context_source_alias, incoming_via) {
+            .filter(|csr| match (&csr.access.context_source_alias, incoming_via) {
                 (Some(alias), Some(via)) => !via.contains_pseudonym(alias),
                 _ => true,
             })
             // Per spec 4.3.6.2: auxiliary CSRs only supplement existing data
             .filter(|csr| match mode_filter {
                 CsrModeFilter::All => true,
-                CsrModeFilter::ExcludeAuxiliary => csr.mode != Some(ForwardingMode::Auxiliary),
-                CsrModeFilter::AuxiliaryOnly => csr.mode == Some(ForwardingMode::Auxiliary),
+                CsrModeFilter::ExcludeAuxiliary => csr.access.mode != Some(ForwardingMode::Auxiliary),
+                CsrModeFilter::AuxiliaryOnly => csr.access.mode == Some(ForwardingMode::Auxiliary),
             })
             .collect();
 
@@ -493,10 +493,10 @@ impl CsourceForwardingService {
 
         let results: Vec<ForwardedEntities> = stream::iter(matching_csrs)
             .map(|csr| async move {
-                let url = build_retrieve_url(&csr.endpoint, entity_id, query_string);
+                let url = build_retrieve_url(&csr.access.endpoint, entity_id, query_string);
                 debug!("Forwarding entity retrieve to context source {}: {}", csr.id, url);
 
-                let mode = csr.mode.unwrap_or_default();
+                let mode = csr.access.mode.unwrap_or_default();
                 match self.forward_get(&url, context_url, csr.tenant.as_ref(), incoming_via).await {
                     ForwardGetOutcome::Success(obj @ Value::Object(_), cs_warnings) => {
                         let (entities, parse_warnings) = parse_forwarded_entities(csr.id.as_ref(), vec![obj]);
@@ -591,10 +591,10 @@ impl CsourceForwardingService {
         let mut unforwardable = Vec::new();
         for csr in csrs {
             // Skip auxiliary CSRs for provision operations (auxiliary is retrieval-only)
-            if csr.mode == Some(ForwardingMode::Auxiliary) {
+            if csr.access.mode == Some(ForwardingMode::Auxiliary) {
                 continue;
             }
-            let filtered = match (&csr.context_source_alias, request.incoming_via) {
+            let filtered = match (&csr.access.context_source_alias, request.incoming_via) {
                 (Some(alias), Some(via)) => via.contains_pseudonym(alias),
                 _ => false,
             };
@@ -603,7 +603,7 @@ impl CsourceForwardingService {
             }
             if request.operation.matches(&csr) {
                 matching_csrs.push(csr);
-            } else if csr.mode == Some(ForwardingMode::Exclusive) {
+            } else if csr.access.mode == Some(ForwardingMode::Exclusive) {
                 // Per spec 4.3.6.3: exclusive CSR exists but doesn't support this operation
                 unforwardable.push(UnforwardableExclusiveCsr);
             }
@@ -617,11 +617,11 @@ impl CsourceForwardingService {
         let results: Vec<ForwardedWriteResult> = stream::iter(matching_csrs)
             .map(|csr| async move {
                 let url = if request_ref.method == reqwest::Method::POST && request_ref.path_suffix.is_none() {
-                    build_create_url(&csr.endpoint)
+                    build_create_url(&csr.access.endpoint)
                 } else {
                     let id = request_ref.entity_id.unwrap_or("");
                     let encoded_id = percent_encoding::utf8_percent_encode(id, PATH_ENCODE_SET).to_string();
-                    let base = csr.endpoint.as_str().trim_end_matches('/');
+                    let base = csr.access.endpoint.as_str().trim_end_matches('/');
                     let suffix = request_ref.path_suffix.unwrap_or("");
                     match request_ref.query_string {
                         Some(qs) if !qs.is_empty() => format!("{base}/ngsi-ld/v1/entities/{encoded_id}{suffix}?{qs}"),
@@ -630,7 +630,7 @@ impl CsourceForwardingService {
                 };
                 debug!("Forwarding {} to context source {}: {}", request_ref.method, csr.id, url);
 
-                let exclusive_attrs = if csr.mode == Some(ForwardingMode::Exclusive) {
+                let exclusive_attrs = if csr.access.mode == Some(ForwardingMode::Exclusive) {
                     collect_exclusive_attrs(&csr)
                 } else {
                     Vec::new()
@@ -648,7 +648,7 @@ impl CsourceForwardingService {
                     .await
                 {
                     Ok((status, response_body)) => {
-                        let mode = csr.mode.unwrap_or_default();
+                        let mode = csr.access.mode.unwrap_or_default();
                         Some(ForwardedWriteResult {
                             mode,
                             status,
@@ -691,9 +691,9 @@ impl CsourceForwardingService {
         // Per spec 4.3.6.2: auxiliary CSRs only supplement retrieval, never receive writes.
         let matching_csrs: Vec<_> = csrs
             .into_iter()
-            .filter(|csr| csr.mode != Some(ForwardingMode::Auxiliary))
+            .filter(|csr| csr.access.mode != Some(ForwardingMode::Auxiliary))
             .filter(|csr| request.operation.matches(csr))
-            .filter(|csr| match (&csr.context_source_alias, request.incoming_via) {
+            .filter(|csr| match (&csr.access.context_source_alias, request.incoming_via) {
                 (Some(alias), Some(via)) => !via.contains_pseudonym(alias),
                 _ => true,
             })
@@ -706,14 +706,14 @@ impl CsourceForwardingService {
         let request_ref = &request;
         let results: Vec<ForwardedWriteResult> = stream::iter(matching_csrs)
             .map(|csr| async move {
-                let base = csr.endpoint.as_str().trim_end_matches('/');
+                let base = csr.access.endpoint.as_str().trim_end_matches('/');
                 let url = match request_ref.query_string {
                     Some(qs) if !qs.is_empty() => format!("{base}/ngsi-ld/v1{}?{qs}", request_ref.batch_path),
                     _ => format!("{base}/ngsi-ld/v1{}", request_ref.batch_path),
                 };
                 debug!("Forwarding batch {} to context source {}: {}", request_ref.batch_path, csr.id, url);
 
-                let exclusive_attrs = if csr.mode == Some(ForwardingMode::Exclusive) {
+                let exclusive_attrs = if csr.access.mode == Some(ForwardingMode::Exclusive) {
                     collect_exclusive_attrs(&csr)
                 } else {
                     Vec::new()
@@ -731,7 +731,7 @@ impl CsourceForwardingService {
                     .await
                 {
                     Ok((status, response_body)) => {
-                        let mode = csr.mode.unwrap_or_default();
+                        let mode = csr.access.mode.unwrap_or_default();
                         Some(ForwardedWriteResult {
                             mode,
                             status,
@@ -905,14 +905,14 @@ impl CsourceForwardingService {
 
         let mut results = Vec::new();
         for csr in csrs {
-            let filtered = match (&csr.context_source_alias, incoming_via) {
+            let filtered = match (&csr.access.context_source_alias, incoming_via) {
                 (Some(alias), Some(via)) => via.contains_pseudonym(alias),
                 _ => false,
             };
             if filtered {
                 continue;
             }
-            let url = build_discovery_url(&csr.endpoint, path, query_string);
+            let url = build_discovery_url(&csr.access.endpoint, path, query_string);
             debug!("Forwarding discovery query to context source {}: {}", csr.id, url);
 
             match self.forward_get(&url, context_url, csr.tenant.as_ref(), incoming_via).await {
@@ -993,15 +993,15 @@ impl CsourceForwardingService {
         let matching_csrs: Vec<_> = csrs
             .into_iter()
             .filter(|csr| operation.matches(csr))
-            .filter(|csr| match (&csr.context_source_alias, incoming_via) {
+            .filter(|csr| match (&csr.access.context_source_alias, incoming_via) {
                 (Some(alias), Some(via)) => !via.contains_pseudonym(alias),
                 _ => true,
             })
             // Per spec 4.3.6.2: auxiliary CSRs only supplement existing data
             .filter(|csr| match mode_filter {
                 CsrModeFilter::All => true,
-                CsrModeFilter::ExcludeAuxiliary => csr.mode != Some(ForwardingMode::Auxiliary),
-                CsrModeFilter::AuxiliaryOnly => csr.mode == Some(ForwardingMode::Auxiliary),
+                CsrModeFilter::ExcludeAuxiliary => csr.access.mode != Some(ForwardingMode::Auxiliary),
+                CsrModeFilter::AuxiliaryOnly => csr.access.mode == Some(ForwardingMode::Auxiliary),
             })
             .collect();
 
@@ -1011,10 +1011,10 @@ impl CsourceForwardingService {
 
         let results: Vec<ForwardedTemporalEntities> = stream::iter(matching_csrs)
             .map(|csr| async move {
-                let url = build_temporal_query_url(&csr.endpoint, query_string);
+                let url = build_temporal_query_url(&csr.access.endpoint, query_string);
                 debug!("Forwarding temporal query to context source {}: {}", csr.id, url);
 
-                let mode = csr.mode.unwrap_or_default();
+                let mode = csr.access.mode.unwrap_or_default();
                 match self.forward_get(&url, context_url, csr.tenant.as_ref(), incoming_via).await {
                     ForwardGetOutcome::Success(Value::Array(arr), cs_warnings) => Some(ForwardedTemporalEntities {
                         mode,
@@ -1102,15 +1102,15 @@ impl CsourceForwardingService {
         let matching_csrs: Vec<_> = csrs
             .into_iter()
             .filter(|csr| operation.matches(csr))
-            .filter(|csr| match (&csr.context_source_alias, incoming_via) {
+            .filter(|csr| match (&csr.access.context_source_alias, incoming_via) {
                 (Some(alias), Some(via)) => !via.contains_pseudonym(alias),
                 _ => true,
             })
             // Per spec 4.3.6.2: auxiliary CSRs only supplement existing data
             .filter(|csr| match mode_filter {
                 CsrModeFilter::All => true,
-                CsrModeFilter::ExcludeAuxiliary => csr.mode != Some(ForwardingMode::Auxiliary),
-                CsrModeFilter::AuxiliaryOnly => csr.mode == Some(ForwardingMode::Auxiliary),
+                CsrModeFilter::ExcludeAuxiliary => csr.access.mode != Some(ForwardingMode::Auxiliary),
+                CsrModeFilter::AuxiliaryOnly => csr.access.mode == Some(ForwardingMode::Auxiliary),
             })
             .collect();
 
@@ -1120,10 +1120,10 @@ impl CsourceForwardingService {
 
         let results: Vec<ForwardedTemporalEntities> = stream::iter(matching_csrs)
             .map(|csr| async move {
-                let url = build_temporal_retrieve_url(&csr.endpoint, entity_id, query_string);
+                let url = build_temporal_retrieve_url(&csr.access.endpoint, entity_id, query_string);
                 debug!("Forwarding temporal retrieve to context source {}: {}", csr.id, url);
 
-                let mode = csr.mode.unwrap_or_default();
+                let mode = csr.access.mode.unwrap_or_default();
                 match self.forward_get(&url, context_url, csr.tenant.as_ref(), incoming_via).await {
                     ForwardGetOutcome::Success(obj @ Value::Object(_), cs_warnings) => Some(ForwardedTemporalEntities {
                         mode,
@@ -1300,7 +1300,7 @@ pub(crate) fn build_temporal_retrieve_url(endpoint: &Url, entity_id: &str, query
 /// so callers can match against either form.
 fn collect_exclusive_attrs(csr: &ContextSourceRegistration) -> Vec<String> {
     let mut attrs = Vec::new();
-    for info in &csr.information {
+    for info in &csr.coverage.information {
         for name in info.property_names.iter().chain(info.relationship_names.iter()).flatten() {
             attrs.push(name.to_string());
             // Also add the compacted form (last path/fragment segment) for
@@ -1848,7 +1848,6 @@ pub fn merge_temporal_retrieve_results(local_entity: Option<Value>, remote_resul
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use crate::service::csource_forwarding::{
         ForwardedEntities,
         ForwardedTemporalEntities,

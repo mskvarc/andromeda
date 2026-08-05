@@ -59,8 +59,9 @@ pub fn attribute_instance_keys(expanded: &Value) -> HashSet<AttributeInstanceKey
         let Some(instances) = attr_value.as_array() else {
             continue;
         };
+        // clone: `IriBuf::new` takes ownership of the buffer it validates, and the
+        // map key behind `attr_name` is borrowed from the caller's payload.
         let Ok(attr) = IriBuf::new(attr_name.clone()) else {
-            // clone: IriBuf::new takes ownership of the buffer it validates
             continue;
         };
         for instance in instances {
@@ -89,7 +90,6 @@ pub fn removed_attribute_instances(previous: &Value, replacement: &Value) -> Vec
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use crate::expanded::instance_key::{attribute_instance_keys, removed_attribute_instances};
     use iri_rs::IriBuf;
     use serde_json::{Value, json};

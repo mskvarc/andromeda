@@ -21,7 +21,7 @@ pub enum ScopeSegment {
 
 /// A validated level name inside a scope path.
 ///
-/// The grammar is the one `andromeda_domain::scope::Scope` enforces per level:
+/// The grammar is the one `andromeda_domain::scope::grammar::Scope` enforces per level:
 /// a Unicode letter, then Unicode letters, digits or underscores. Validating it
 /// here is what makes the `ltree` translation total — an unvalidated label
 /// reaches PostgreSQL as an `lquery` cast and fails there, which is a 500 for

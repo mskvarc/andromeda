@@ -30,7 +30,7 @@ use andromeda_domain::{
         },
     },
     notification::{ChangeEvent, SysAttrsSnapshot, TriggerReason},
-    scope::ScopeBuf,
+    scope::grammar::ScopeBuf,
     uri::Uri,
 };
 use andromeda_geometry::geometry::Geometry;
@@ -1363,7 +1363,6 @@ fn has_overlapping_attrs(entity: &Value, attrs: &Value) -> bool {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::expect_used, clippy::unwrap_used, clippy::panic)]
     use super::*;
     use crate::jsonld::JsonLdEngine;
     use serde_json::json;

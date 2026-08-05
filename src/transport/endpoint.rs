@@ -173,7 +173,6 @@ pub fn parse_endpoint_transport(uri: &str, notifier_info: Option<&[Value]>) -> R
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::*;
 
     #[test]

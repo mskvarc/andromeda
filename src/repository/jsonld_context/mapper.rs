@@ -53,14 +53,14 @@ pub fn row_to_metadata(row: ContextMetadataRow) -> Result<ContextMetadata, Conte
 
     let kind: ContextKind = row.kind.parse().map_err(|_| ContextMapperError::Kind { value: row.kind.clone() })?;
 
-    Ok(ContextMetadata {
-        url,
-        local_id,
-        kind,
-        created_at: row.created_at,
-        expires_at: row.expires_at,
-        last_usage: row.last_usage,
-        number_of_hits,
-        extra_info: row.extra_info,
-    })
+    Ok(ContextMetadata::builder()
+        .url(url)
+        .local_id(local_id)
+        .kind(kind)
+        .created_at(row.created_at)
+        .expires_at(row.expires_at)
+        .last_usage(row.last_usage)
+        .number_of_hits(number_of_hits)
+        .extra_info(row.extra_info)
+        .build())
 }

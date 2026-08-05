@@ -544,7 +544,6 @@ WHERE attribute_current.modified_at <= EXCLUDED.modified_at
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::expect_used)]
     use super::*;
     use chrono::{TimeZone, Utc};
 

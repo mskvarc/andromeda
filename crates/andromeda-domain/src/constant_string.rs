@@ -67,7 +67,6 @@ macro_rules! constant_string {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use serde_json::Value;
 
     constant_string!(SampleType, "Sample");

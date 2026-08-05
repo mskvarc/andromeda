@@ -91,7 +91,6 @@ pub fn first_forwarded_status(forwarded: &[ForwardedWriteResult], fallback: u16)
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::*;
 
     fn make_result(mode: ForwardingMode, status: u16) -> ForwardedWriteResult {

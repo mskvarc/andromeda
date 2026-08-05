@@ -53,20 +53,20 @@ pub fn row_to_snapshot(row: &sqlx::postgres::PgRow) -> Result<Snapshot, Andromed
     let snapshot_temporal_queries: Option<Vec<Value>> = deserialize_json_column(row, "snapshot_temporal_queries")?;
     let receiver_info: Option<Vec<KeyValuePair>> = deserialize_json_column(row, "receiver_info")?;
 
-    Ok(Snapshot {
-        id,
-        snapshot_queries,
-        snapshot_temporal_queries,
-        snapshot_lifetime,
-        snapshot_priority,
-        endpoint,
-        receiver_info,
-        status,
-        queries_details,
-        temporal_queries_details,
-        created_at: row.try_get("created_at")?,
-        modified_at: row.try_get("modified_at")?,
-        expires_at: row.try_get("expires_at")?,
-        last_used_at: row.try_get("last_used_at")?,
-    })
+    Ok(Snapshot::builder()
+        .id(id)
+        .snapshot_queries(snapshot_queries)
+        .snapshot_temporal_queries(snapshot_temporal_queries)
+        .snapshot_lifetime(snapshot_lifetime)
+        .snapshot_priority(snapshot_priority)
+        .endpoint(endpoint)
+        .receiver_info(receiver_info)
+        .status(status)
+        .queries_details(queries_details)
+        .temporal_queries_details(temporal_queries_details)
+        .created_at(row.try_get("created_at")?)
+        .modified_at(row.try_get("modified_at")?)
+        .expires_at(row.try_get("expires_at")?)
+        .last_used_at(row.try_get("last_used_at")?)
+        .build())
 }

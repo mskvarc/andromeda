@@ -249,7 +249,6 @@ pub fn replace_attr(entity: &mut Value, attr_iri: &str, dataset_id: Option<&str>
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use crate::expanded::mutation::{
         attribute::{delete_attr, partial_update_attr, replace_attr},
         error::ExpandedEntityError,

@@ -13,7 +13,7 @@ use crate::{
 use andromeda_domain::{
     attribute_type::AttributeType,
     expanded::{geo_property::expanded_geo_node_to_geometry, instance_key::is_system_attribute},
-    scope::Scope,
+    scope::grammar::Scope,
     temporal::ValueType,
     vocab,
 };
@@ -695,7 +695,6 @@ fn collect_metadata(instance: &Value) -> Option<Value> {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::*;
 
     #[test]

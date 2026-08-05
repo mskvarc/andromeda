@@ -154,7 +154,6 @@ fn extract_geometry(obj: &Map<String, Value>, geometry_property: Option<&str>) -
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::*;
     use serde_json::json;
 

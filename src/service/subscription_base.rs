@@ -232,7 +232,7 @@ where
         let fields = merged.to_fields();
 
         let status = compute_updated_status(
-            existing.status,
+            existing.lifecycle.status,
             &StatusUpdateFields {
                 is_active: if payload.get("isActive").is_some() { Some(fields.is_active) } else { None },
                 expires_at: if payload.get("expiresAt").is_some() { Some(fields.expires_at) } else { None },

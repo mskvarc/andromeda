@@ -8,6 +8,7 @@ use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;
 use thiserror::Error;
+use typed_builder::TypedBuilder;
 use urn_rs::Urn;
 
 constant_string!(EntityMapType, "EntityMap");
@@ -32,6 +33,8 @@ impl From<EntityMapDatasetId> for String {
     }
 }
 
+// Validating parser: `@none` is a token clause 4.5.5 fixes, everything else
+// must be a URN. No derive expresses a parse that branches on a sentinel.
 impl FromStr for EntityMapDatasetId {
     type Err = EntityMapDatasetIdParseError;
 
@@ -64,22 +67,26 @@ pub enum EntityMapDatasetIdParseError {
 }
 
 /// NGSI-LD EntityMap representation (ETSI GS CIM 009 clause 5.2.39).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TypedBuilder)]
 #[serde(rename_all = "camelCase")]
 pub struct EntityMap {
     /// Generated identifier of this map.
     pub id: EntityMapId,
     /// Always `EntityMap`.
     #[serde(rename = "type")]
+    #[builder(default)]
     pub type_: EntityMapType,
     /// When the map stops being usable for follow-up pages.
     pub expires_at: DateTime<Utc>,
     /// Identifiers of every entity the originating query matched, in order.
     #[serde(rename = "ids")]
+    #[builder(default)]
     pub entity_ids: Vec<Uri>,
     /// Datasets held for each matched entity.
+    #[builder(default)]
     pub entity_map: IndexMap<Uri, Vec<EntityMapDatasetId>>,
     /// Maps held by context sources that contributed to the same query.
+    #[builder(default)]
     pub linked_maps: IndexMap<CompactString, EntityMapId>,
 }
 
@@ -91,14 +98,12 @@ impl EntityMap {
             // clone: the map owns its keys and `entity_ids` keeps the originals
             entity_map.insert(entity_id.clone(), vec![EntityMapDatasetId::None]);
         }
-        EntityMap {
-            id,
-            type_: EntityMapType,
-            expires_at,
-            entity_ids,
-            entity_map,
-            linked_maps: IndexMap::new(),
-        }
+        EntityMap::builder()
+            .id(id)
+            .expires_at(expires_at)
+            .entity_ids(entity_ids)
+            .entity_map(entity_map)
+            .build()
     }
 
     /// Returns whether this map has already expired.
@@ -109,7 +114,6 @@ impl EntityMap {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::*;
 
     #[test]

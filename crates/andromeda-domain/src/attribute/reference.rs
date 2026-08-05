@@ -1,6 +1,6 @@
 //! The NGSI-LD compacted-name grammar and the reference type built on it.
 
-use crate::{name::NameBuf, uri::Uri};
+use crate::{name::grammar::NameBuf, uri::Uri};
 use compact_str::CompactString;
 use derive_more::{AsRef, Deref, Display, From, Into};
 use iri_rs::IriBuf;
@@ -52,10 +52,13 @@ pub fn validate_ngsi_ld_name(value: &str) -> Result<(), NgsiLdReferenceError> {
 /// The compact wire form can be a short name, a compact IRI, or an expanded IRI/URI.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Display, AsRef, Deref, From, Into)]
 #[serde(try_from = "String", into = "String")]
+#[as_ref(str, CompactString)]
 #[display("{_0}")]
 #[into(String)]
 pub struct NgsiLdReference(CompactString);
 
+// Validating parser: the grammar check in `validate_ngsi_ld_name` is what makes
+// the newtype worth having, and no derive expresses a fallible parse.
 impl FromStr for NgsiLdReference {
     type Err = NgsiLdReferenceError;
 
@@ -75,17 +78,8 @@ impl TryFrom<String> for NgsiLdReference {
     }
 }
 
-// `#[derive(AsRef)]` yields `AsRef<CompactString>`; the expander and every
-// string-comparison call site want `&str`, which no derive can add alongside it.
-impl AsRef<str> for NgsiLdReference {
-    fn as_ref(&self) -> &str {
-        self.0.as_str()
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use crate::attribute::reference::NgsiLdReference;
 
     #[test]

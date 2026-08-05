@@ -43,6 +43,8 @@ impl<T> OneOrMany<T> {
     }
 }
 
+// `derive_more::Display` renders each variant with one format string; the
+// `Many` arm has to join its elements, which a format string cannot express.
 impl<T> fmt::Display for OneOrMany<T>
 where
     T: fmt::Display,
@@ -96,7 +98,6 @@ impl<V: JsonValue> ToJsonValue<V> for OneOrMany<CompactString> {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use crate::attribute::one_or_many::OneOrMany;
 
     #[test]

@@ -124,7 +124,7 @@ impl CsrNotificationWorker {
                 let id_str = id.to_string();
                 match self.sub_repo.get(&id_str).await {
                     Ok(Some(sub)) => {
-                        let compiled = if sub.status == SubscriptionStatus::Active {
+                        let compiled = if sub.lifecycle.status == SubscriptionStatus::Active {
                             compile_csr_subscription(&sub).map(Arc::new)
                         } else {
                             None
@@ -231,14 +231,14 @@ impl CsrNotificationWorker {
                 return;
             }
         };
-        let notification = CsourceNotification {
-            id: notification_id,
-            type_: CsourceNotificationType,
-            subscription_id: sub_uri,
-            notified_at: Utc::now(),
-            data: matching_csrs,
-            trigger_reason: Some(CsrTriggerReason::NewlyMatching),
-        };
+        let notification = CsourceNotification::builder()
+            .id(notification_id)
+            .type_(CsourceNotificationType)
+            .subscription_id(sub_uri)
+            .notified_at(Utc::now())
+            .data(matching_csrs)
+            .trigger_reason(Some(CsrTriggerReason::NewlyMatching))
+            .build();
 
         let payload = match serde_json::to_value(&notification) {
             Ok(v) => v,
@@ -353,14 +353,14 @@ impl CsrNotificationWorker {
                             return;
                         }
                     };
-                    let notification = CsourceNotification {
-                        id: notification_id,
-                        type_: CsourceNotificationType,
-                        subscription_id: sub_uri,
-                        notified_at: Utc::now(),
-                        data: vec![filtered_csr],
-                        trigger_reason: Some(trigger_reason),
-                    };
+                    let notification = CsourceNotification::builder()
+                        .id(notification_id)
+                        .type_(CsourceNotificationType)
+                        .subscription_id(sub_uri)
+                        .notified_at(Utc::now())
+                        .data(vec![filtered_csr])
+                        .trigger_reason(Some(trigger_reason))
+                        .build();
 
                     let payload = match serde_json::to_value(&notification) {
                         Ok(v) => v,
@@ -498,14 +498,14 @@ impl CsrNotificationWorker {
                 return;
             }
         };
-        let notification = CsourceNotification {
-            id: notification_id,
-            type_: CsourceNotificationType,
-            subscription_id: sub_uri,
-            notified_at: Utc::now(),
-            data: vec![filtered_csr],
-            trigger_reason: Some(trigger_reason),
-        };
+        let notification = CsourceNotification::builder()
+            .id(notification_id)
+            .type_(CsourceNotificationType)
+            .subscription_id(sub_uri)
+            .notified_at(Utc::now())
+            .data(vec![filtered_csr])
+            .trigger_reason(Some(trigger_reason))
+            .build();
 
         let payload = match serde_json::to_value(&notification) {
             Ok(v) => v,
@@ -549,6 +549,7 @@ impl CsrNotificationWorker {
 
 fn compile_csr_subscription(sub: &Subscription) -> Option<CompiledCsrSubscription> {
     let selectors: Vec<CompiledSelector> = sub
+        .selection
         .entities
         .as_ref()
         .map(|entities| {
@@ -574,11 +575,12 @@ fn compile_csr_subscription(sub: &Subscription) -> Option<CompiledCsrSubscriptio
         .unwrap_or_default();
 
     let watched_attrs = sub
+        .selection
         .watched_attributes
         .as_ref()
         .map(|attrs| attrs.iter().map(ToString::to_string).collect::<HashSet<String>>());
 
-    let endpoint_transport = match parse_endpoint_transport(&sub.notification.endpoint.uri, sub.notification.endpoint.notifier_info.as_deref()) {
+    let endpoint_transport = match parse_endpoint_transport(sub.notification.endpoint.uri.as_str(), sub.notification.endpoint.notifier_info.as_deref()) {
         Ok(t) => t,
         Err(e) => {
             debug!("Failed to parse endpoint transport for CSR subscription {}: {}", sub.id, e);
@@ -586,7 +588,7 @@ fn compile_csr_subscription(sub: &Subscription) -> Option<CompiledCsrSubscriptio
         }
     };
 
-    let compiled_csf = sub.csf.as_ref().and_then(|csf_str| match parser::parse(csf_str) {
+    let compiled_csf = sub.filters.csf.as_ref().and_then(|csf_str| match parser::parse(csf_str) {
         Ok(expr) => Some(expr),
         Err(e) => {
             debug!("Failed to parse csf filter '{}' for CSR subscription {}: {}", csf_str, sub.id, e);
@@ -596,17 +598,17 @@ fn compile_csr_subscription(sub: &Subscription) -> Option<CompiledCsrSubscriptio
 
     Some(CompiledCsrSubscription {
         id: sub.id.to_string(),
-        status: sub.status,
-        endpoint_uri: sub.notification.endpoint.uri.clone(),
-        endpoint_accept: sub.notification.endpoint.accept.clone(),
+        status: sub.lifecycle.status,
+        endpoint_uri: sub.notification.endpoint.uri.to_string(),
+        endpoint_accept: sub.notification.endpoint.accept.as_ref().map(ToString::to_string),
         endpoint_receiver_info: sub.notification.endpoint.receiver_info.clone(),
         endpoint_transport,
         selectors,
         watched_attrs,
-        throttling_secs: sub.throttling,
-        time_interval_secs: sub.time_interval,
-        jsonld_context: sub.jsonld_context.as_ref().map(ToString::to_string),
-        expires_at: sub.expires_at,
+        throttling_secs: sub.delivery.throttling,
+        time_interval_secs: sub.delivery.time_interval,
+        jsonld_context: sub.delivery.jsonld_context.as_ref().map(ToString::to_string),
+        expires_at: sub.lifecycle.expires_at,
         compiled_csf,
     })
 }

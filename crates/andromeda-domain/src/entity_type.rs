@@ -2,7 +2,7 @@
 
 use crate::attribute::reference::{NgsiLdReferenceError, validate_ngsi_ld_name};
 use compact_str::CompactString;
-use derive_more::{Deref, Display, Into};
+use derive_more::{AsRef, Deref, Display, Into};
 use jsonld::ExpandableTypeValue;
 use jsonld_expandable_core::JsonValue;
 use serde::{Deserialize, Serialize};
@@ -19,8 +19,9 @@ use std::{
 /// them by full IRI. Both are accepted, because both reach this type depending
 /// on which side of JSON-LD expansion the payload sits on. The grammar is the
 /// one every named NGSI-LD member shares — see [`validate_ngsi_ld_name`].
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize, Display, Deref, Into)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize, AsRef, Display, Deref, Into)]
 #[serde(try_from = "String", into = "String")]
+#[as_ref(str)]
 #[display("{_0}")]
 #[into(String)]
 pub struct EntityTypeName(CompactString);
@@ -32,6 +33,8 @@ impl EntityTypeName {
     }
 }
 
+// Validating parser: the grammar check in `validate_ngsi_ld_name` is what makes
+// the newtype worth having, and no derive expresses a fallible parse.
 impl FromStr for EntityTypeName {
     type Err = NgsiLdReferenceError;
 
@@ -48,12 +51,6 @@ impl TryFrom<String> for EntityTypeName {
 
     fn try_from(value: String) -> Result<EntityTypeName, NgsiLdReferenceError> {
         value.parse()
-    }
-}
-
-impl AsRef<str> for EntityTypeName {
-    fn as_ref(&self) -> &str {
-        self.0.as_str()
     }
 }
 
@@ -98,7 +95,6 @@ impl ExpandableTypeValue for EntityTypeValue {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use crate::entity_type::{EntityTypeName, EntityTypeValue};
 
     #[test]

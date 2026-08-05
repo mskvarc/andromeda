@@ -98,7 +98,7 @@ impl SubscriptionCache {
                 let id_str = id.to_string();
                 match repo.get(&id_str).await {
                     Ok(Some(sub)) => {
-                        if sub.status == SubscriptionStatus::Active {
+                        if sub.lifecycle.status == SubscriptionStatus::Active {
                             if let Some(compiled) = compile_subscription(&sub) {
                                 self.index_remove(&id_str);
                                 self.index_insert(&compiled);
@@ -265,22 +265,24 @@ impl SubscriptionCache {
 /// (logged at debug level).
 pub fn compile_subscription(sub: &Subscription) -> Option<CompiledSubscription> {
     let selectors: Vec<CompiledSelector> = sub
+        .selection
         .entities
         .as_ref()
         .map(|entities| entities.iter().filter_map(compile_selector).collect())
         .unwrap_or_default();
 
-    let triggers: Vec<String> = sub.notification_trigger.as_ref().map_or_else(
+    let triggers: Vec<String> = sub.selection.notification_trigger.as_ref().map_or_else(
         || TriggerReason::defaults().iter().map(|s| String::from(*s)).collect(),
         |t| t.iter().map(|nt| nt.to_string()).collect(),
     );
 
     let watched_attrs = sub
+        .selection
         .watched_attributes
         .as_ref()
         .map(|attrs| attrs.iter().map(ToString::to_string).collect::<HashSet<String>>());
 
-    let compiled_q = sub.q.as_ref().and_then(|q_str| match parser::parse(q_str) {
+    let compiled_q = sub.filters.q.as_ref().and_then(|q_str| match parser::parse(q_str) {
         Ok(expr) => Some(expr),
         Err(e) => {
             debug!("Failed to parse q filter '{}' for subscription {}: {}", q_str, sub.id, e);
@@ -288,7 +290,7 @@ pub fn compile_subscription(sub: &Subscription) -> Option<CompiledSubscription> 
         }
     });
 
-    let compiled_csf = sub.csf.as_ref().and_then(|csf_str| match parser::parse(csf_str) {
+    let compiled_csf = sub.filters.csf.as_ref().and_then(|csf_str| match parser::parse(csf_str) {
         Ok(expr) => Some(expr),
         Err(e) => {
             debug!("Failed to parse csf filter '{}' for subscription {}: {}", csf_str, sub.id, e);
@@ -296,7 +298,7 @@ pub fn compile_subscription(sub: &Subscription) -> Option<CompiledSubscription> 
         }
     });
 
-    let endpoint_transport = match parse_endpoint_transport(&sub.notification.endpoint.uri, sub.notification.endpoint.notifier_info.as_deref()) {
+    let endpoint_transport = match parse_endpoint_transport(sub.notification.endpoint.uri.as_str(), sub.notification.endpoint.notifier_info.as_deref()) {
         Ok(t) => t,
         Err(e) => {
             debug!("Failed to parse endpoint transport for subscription {}: {}", sub.id, e);
@@ -306,16 +308,16 @@ pub fn compile_subscription(sub: &Subscription) -> Option<CompiledSubscription> 
 
     Some(CompiledSubscription {
         id: sub.id.to_string(),
-        status: sub.status,
-        endpoint_uri: sub.notification.endpoint.uri.clone(),
-        endpoint_accept: sub.notification.endpoint.accept.clone(),
+        status: sub.lifecycle.status,
+        endpoint_uri: sub.notification.endpoint.uri.to_string(),
+        endpoint_accept: sub.notification.endpoint.accept.as_ref().map(ToString::to_string),
         endpoint_receiver_info: sub.notification.endpoint.receiver_info.clone(),
         endpoint_transport,
         triggers,
         watched_attrs,
         selectors,
-        throttling_secs: sub.throttling,
-        time_interval_secs: sub.time_interval,
+        throttling_secs: sub.delivery.throttling,
+        time_interval_secs: sub.delivery.time_interval,
         notification_attributes: sub.notification.attributes.clone(),
         notification_format: sub.notification.format.map(|f| f.to_string()),
         notification_sys_attrs: if sub.notification.sys_attrs.unwrap_or(false) {
@@ -324,16 +326,16 @@ pub fn compile_subscription(sub: &Subscription) -> Option<CompiledSubscription> 
             SysAttrsInclusion::Strip
         },
         notification_show_changes: sub.notification.show_changes.unwrap_or(false),
-        jsonld_context: sub.jsonld_context.as_ref().map(ToString::to_string),
-        expires_at: sub.expires_at,
+        jsonld_context: sub.delivery.jsonld_context.as_ref().map(ToString::to_string),
+        expires_at: sub.lifecycle.expires_at,
         compiled_q,
-        compiled_geo_q: sub.geo_q.as_ref().and_then(|v| compile_geo_q(v, sub.id.as_ref())),
-        compiled_scope_q: sub.scope_q.as_deref().map(compile_scope_q),
-        dataset_id: sub.dataset_id.as_ref().map(|ids| ids.iter().map(ToString::to_string).collect()),
+        compiled_geo_q: sub.filters.geo_q.as_ref().and_then(|v| compile_geo_q(v, sub.id.as_ref())),
+        compiled_scope_q: sub.filters.scope_q.as_deref().map(compile_scope_q),
+        dataset_id: sub.filters.dataset_id.as_ref().map(|ids| ids.iter().map(ToString::to_string).collect()),
         notification_join: sub.notification.join.map(|j| j.to_string()),
         notification_join_level: sub.notification.join_level.unwrap_or(1).min(5),
         compiled_csf,
-        local_only: sub.local_only.unwrap_or(false),
+        local_only: sub.delivery.local_only.unwrap_or(false),
     })
 }
 
@@ -451,7 +453,6 @@ fn compile_selector(selector: &EntitySelector) -> Option<CompiledSelector> {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::*;
     use crate::transport::endpoint::EndpointTransport;
     use andromeda_domain::subscription::SubscriptionStatus;

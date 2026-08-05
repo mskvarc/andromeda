@@ -34,7 +34,7 @@ use andromeda_domain::{
     expanded::{entity_member::extract_types, instance_key::removed_attribute_instances},
     notification::{ChangeEvent, TriggerReason},
     outbox::NewOutboxEntry,
-    scope::ScopeBuf,
+    scope::grammar::ScopeBuf,
     uri::Uri,
 };
 use andromeda_query::scope::ltree::scope_to_ltree;
@@ -595,14 +595,18 @@ impl EntityService {
                         return None;
                     }
                 };
-                Some(NewOutboxEntry {
-                    subscription_id,
-                    entity_id: entity_id.clone(),                  // clone: owned Uri per entry
-                    trigger,                                       // Copy
-                    entity_snapshot: entity_snapshot.cloned(),     // clone: owned Value per entry
-                    previous_snapshot: previous_snapshot.cloned(), // clone: owned Value per entry
-                    changed_attrs: changed_attrs.to_vec(),
-                })
+                // clone: every entry owns its own copy of the entity id, the
+                // snapshots and the attribute names, all of which are borrowed here.
+                Some(
+                    NewOutboxEntry::builder()
+                        .subscription_id(subscription_id)
+                        .entity_id(entity_id.clone())
+                        .trigger(trigger)
+                        .entity_snapshot(entity_snapshot.cloned())
+                        .previous_snapshot(previous_snapshot.cloned())
+                        .changed_attrs(changed_attrs.to_vec())
+                        .build(),
+                )
             })
             .collect()
     }
@@ -932,7 +936,6 @@ pub(crate) fn inject_attr_sys_attrs(obj: &mut Map<String, Value>, created_at_val
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::{BatchSideEffectMode, IdLockMap, acquire_id_locks_in, gc_id_locks, normalize_entity_attributes, resolve_side_effect_mode};
     use std::sync::Arc;
 

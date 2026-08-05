@@ -9,9 +9,11 @@ use crate::{
 };
 use chrono::{DateTime, Utc};
 use langtag::LangTagBuf;
+use mediatype::MediaTypeBuf;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use strum::{Display, EnumIter, EnumString, IntoStaticStr};
+use typed_builder::TypedBuilder;
 use url::Url;
 use urn_rs::Urn;
 
@@ -69,7 +71,10 @@ pub struct EntitySelector {
     /// Exact entity id to match.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub id: Option<String>,
-    /// Regex pattern to match entity ids.
+    /// Regex pattern to match entity ids (clause 4.5.6).
+    ///
+    /// Held as written: the validated pattern type lives in `andromeda-query`,
+    /// which depends on this crate. See `docs/query-language-layering.md`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub id_pattern: Option<String>,
     /// Entity type to match (required).
@@ -81,11 +86,12 @@ pub struct EntitySelector {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Endpoint {
-    /// The notification target URI (HTTP or MQTT).
-    pub uri: String,
+    /// The notification target URI, absolute and carrying the scheme the
+    /// transport is chosen from (`http`, `https` or `mqtt`).
+    pub uri: Url,
     /// Preferred content type for the notification payload.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub accept: Option<String>,
+    pub accept: Option<MediaTypeBuf>,
     /// Additional headers to include in HTTP notifications.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub receiver_info: Option<Vec<Value>>,
@@ -141,43 +147,36 @@ pub struct NotificationParams {
     pub status: Option<NotificationStatus>,
 }
 
-/// NGSI-LD Subscription (ETSI GS CIM 009 clause 5.2.12).
-///
-/// A Subscription defines the conditions under which notifications are sent
-/// and the delivery parameters for those notifications. Supports entity
-/// filtering by type, id pattern, attribute watches, geo-queries, and
-/// temporal queries.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// The entities and attributes whose changes a subscription reacts to
+/// (ETSI GS CIM 009 clause 5.2.12, `entities` / `watchedAttributes` /
+/// `notificationTrigger`).
+#[derive(Debug, Clone, Default, Serialize, Deserialize, TypedBuilder)]
 #[serde(rename_all = "camelCase")]
-pub struct Subscription {
-    /// Subscription identifier (clause 5.2.12: a URI, not necessarily an NGSI-LD URN).
-    pub id: Uri,
-    /// JSON-LD type (always `Subscription`).
-    #[serde(rename = "type", default)]
-    pub type_: SubscriptionType,
-    /// Human-readable subscription name.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub subscription_name: Option<String>,
-    /// Human-readable description of the subscription purpose.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub description: Option<String>,
+#[builder(field_defaults(default))]
+pub struct SubscriptionSelection {
     /// Entity selectors defining which entities trigger notifications.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub entities: Option<Vec<EntitySelector>>,
     /// Attribute names to watch for changes.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub watched_attributes: Option<Vec<AttributeName>>,
-    /// Conditions that trigger a notification.
+    /// Conditions that trigger a notification (clause 5.3.3).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub notification_trigger: Option<Vec<NotificationTrigger>>,
-    /// Periodic notification interval in seconds (alternative to watched attributes).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub time_interval: Option<f64>,
+}
+
+/// The query expressions that narrow a subscription's matches further
+/// (ETSI GS CIM 009 clauses 4.9, 4.10, 4.13, 4.18 and 5.2.21).
+#[derive(Debug, Clone, Default, Serialize, Deserialize, TypedBuilder)]
+#[serde(rename_all = "camelCase")]
+#[builder(field_defaults(default))]
+pub struct SubscriptionFilters {
     /// NGSI-LD query expression to filter matching entities (clause 4.9).
     ///
     /// Held as written rather than as a parsed AST: the `q` grammar's parser
     /// lives above this crate, in the broker's query layer, so typing this
-    /// member means moving that parser below the domain first.
+    /// member means moving that parser below the domain first. See
+    /// `docs/query-language-layering.md`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub q: Option<String>,
     /// Geo-spatial query expression (clause 5.2.13).
@@ -194,20 +193,23 @@ pub struct Subscription {
     /// Dataset ids to subscribe to.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub dataset_id: Option<Vec<Urn>>,
-    /// Whether the subscription is currently active.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub is_active: Option<bool>,
-    /// Notification delivery configuration.
-    pub notification: NotificationParams,
-    /// Expiration timestamp after which the subscription becomes inactive.
-    #[serde(skip_serializing_if = "Option::is_none", with = "rfc3339::optional_datetime", default)]
-    pub expires_at: Option<DateTime<Utc>>,
-    /// Minimum interval in seconds between consecutive notifications (clause 5.2.12).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub throttling: Option<f64>,
     /// Temporal query expression (clause 5.2.21).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub temporal_q: Option<Value>,
+}
+
+/// How and how often a matching change is turned into a notification
+/// (ETSI GS CIM 009 clauses 5.2.12 and 5.5.13).
+#[derive(Debug, Clone, Default, Serialize, Deserialize, TypedBuilder)]
+#[serde(rename_all = "camelCase")]
+#[builder(field_defaults(default))]
+pub struct SubscriptionDelivery {
+    /// Periodic notification interval in seconds (alternative to watched attributes).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub time_interval: Option<f64>,
+    /// Minimum interval in seconds between consecutive notifications (clause 5.2.12).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub throttling: Option<f64>,
     /// Preferred language for multi-language properties.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub lang: Option<LangTagBuf>,
@@ -217,8 +219,23 @@ pub struct Subscription {
     /// Whether to restrict matching to local entities only (clause 5.5.13).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub local_only: Option<bool>,
+}
+
+/// Whether a subscription is running, and since when
+/// (ETSI GS CIM 009 clause 5.2.12, `isActive` / `status` / `expiresAt`).
+#[derive(Debug, Clone, Serialize, Deserialize, TypedBuilder)]
+#[serde(rename_all = "camelCase")]
+pub struct SubscriptionLifecycle {
+    /// Whether the subscription is currently active.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[builder(default)]
+    pub is_active: Option<bool>,
     /// Current lifecycle status of the subscription.
     pub status: SubscriptionStatus,
+    /// Expiration timestamp after which the subscription becomes inactive.
+    #[serde(skip_serializing_if = "Option::is_none", with = "rfc3339::optional_datetime", default)]
+    #[builder(default)]
+    pub expires_at: Option<DateTime<Utc>>,
     /// Timestamp when the subscription was created.
     #[serde(with = "rfc3339::datetime")]
     pub created_at: DateTime<Utc>,
@@ -227,10 +244,55 @@ pub struct Subscription {
     pub modified_at: DateTime<Utc>,
 }
 
+/// NGSI-LD Subscription (ETSI GS CIM 009 clause 5.2.12).
+///
+/// A Subscription defines the conditions under which notifications are sent
+/// and the delivery parameters for those notifications. The members are grouped
+/// by what changes them: [`SubscriptionSelection`] follows the entity-selection
+/// rules, [`SubscriptionFilters`] the query languages, [`NotificationParams`]
+/// the delivery format, [`SubscriptionDelivery`] the pacing, and
+/// [`SubscriptionLifecycle`] the state machine. Every group is flattened, so the
+/// wire form stays the single flat object clause 5.2.12 defines.
+#[derive(Debug, Clone, Serialize, Deserialize, TypedBuilder)]
+#[serde(rename_all = "camelCase")]
+pub struct Subscription {
+    /// Subscription identifier (clause 5.2.12: a URI, not necessarily an NGSI-LD URN).
+    pub id: Uri,
+    /// JSON-LD type (always `Subscription`).
+    #[serde(rename = "type", default)]
+    #[builder(default)]
+    pub type_: SubscriptionType,
+    /// Human-readable subscription name.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[builder(default)]
+    pub subscription_name: Option<String>,
+    /// Human-readable description of the subscription purpose.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[builder(default)]
+    pub description: Option<String>,
+    /// What the subscription watches.
+    #[serde(flatten)]
+    #[builder(default)]
+    pub selection: SubscriptionSelection,
+    /// What narrows the matches further.
+    #[serde(flatten)]
+    #[builder(default)]
+    pub filters: SubscriptionFilters,
+    /// Notification delivery configuration.
+    pub notification: NotificationParams,
+    /// How and how often notifications are produced.
+    #[serde(flatten)]
+    #[builder(default)]
+    pub delivery: SubscriptionDelivery,
+    /// Whether the subscription is running, and since when.
+    #[serde(flatten)]
+    pub lifecycle: SubscriptionLifecycle,
+}
+
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::*;
+    use chrono::TimeZone;
     use std::str::FromStr;
     use strum::IntoEnumIterator;
 
@@ -299,6 +361,124 @@ mod tests {
             let parsed = SubscriptionStatus::from_str(&s).unwrap();
             pretty_assertions::assert_eq!(parsed, status, "round-trip failed for {status}");
         }
+    }
+
+    /// One subscription carrying every member clause 5.2.12 defines, so the
+    /// flattened groups are proven to leave the wire form flat.
+    fn fully_populated_subscription() -> serde_json::Value {
+        serde_json::json!({
+            "id": "urn:ngsi-ld:Subscription:1",
+            "type": "Subscription",
+            "subscriptionName": "speeding",
+            "description": "vehicles over the limit",
+            "entities": [{"type": "Vehicle", "idPattern": "urn:ngsi-ld:Vehicle:.*"}],
+            "watchedAttributes": ["speed"],
+            "notificationTrigger": ["entityUpdated"],
+            "timeInterval": 30.0,
+            "q": "speed>50",
+            "geoQ": {"georel": "near;maxDistance==2000"},
+            "scopeQ": "/Madrid",
+            "csf": "type==\"ContextSourceRegistration\"",
+            "datasetId": ["urn:ngsi-ld:Dataset:1"],
+            "isActive": true,
+            "notification": {
+                "attributes": ["speed"],
+                "format": "normalized",
+                "endpoint": {"uri": "https://receiver.example.com/notify", "accept": "application/ld+json"},
+                "timesSent": 4,
+                "status": "ok"
+            },
+            "expiresAt": "2030-12-31T23:59:59Z",
+            "throttling": 5.0,
+            "temporalQ": {"timerel": "after"},
+            "lang": "en",
+            "jsonldContext": "https://example.com/context.jsonld",
+            "localOnly": true,
+            "status": "active",
+            "createdAt": "2024-01-01T00:00:00Z",
+            "modifiedAt": "2024-01-02T00:00:00Z"
+        })
+    }
+
+    #[test]
+    fn a_subscription_reserialises_to_the_flat_object_it_was_read_from() {
+        let original = fully_populated_subscription();
+        // clone: the original is compared against the round-tripped value below
+        let subscription: Subscription = serde_json::from_value(original.clone()).expect("subscription parses");
+        pretty_assertions::assert_eq!(serde_json::to_value(&subscription).expect("serialises"), original);
+    }
+
+    #[test]
+    fn a_subscription_builder_produces_the_same_value_as_the_parsed_form() {
+        let parsed: Subscription = serde_json::from_value(fully_populated_subscription()).expect("subscription parses");
+        let built = Subscription::builder()
+            .id(parsed.id.clone()) // clone: the parsed value is compared against the built one below
+            .subscription_name(parsed.subscription_name.clone()) // clone: same reason
+            .description(parsed.description.clone()) // clone: same reason
+            .selection(parsed.selection.clone()) // clone: same reason
+            .filters(parsed.filters.clone()) // clone: same reason
+            .notification(parsed.notification.clone()) // clone: same reason
+            .delivery(parsed.delivery.clone()) // clone: same reason
+            .lifecycle(parsed.lifecycle.clone()) // clone: same reason
+            .build();
+        pretty_assertions::assert_eq!(
+            serde_json::to_value(&built).expect("serialises"),
+            serde_json::to_value(&parsed).expect("serialises")
+        );
+    }
+
+    #[test]
+    fn a_subscription_builder_defaults_every_group_that_carries_no_required_member() {
+        let built = Subscription::builder()
+            .id("urn:ngsi-ld:Subscription:2".parse::<Uri>().expect("valid id"))
+            .notification(serde_json::from_value(serde_json::json!({"endpoint": {"uri": "https://receiver.example.com/notify"}})).expect("endpoint"))
+            .lifecycle(
+                SubscriptionLifecycle::builder()
+                    .status(SubscriptionStatus::Active)
+                    .created_at(Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).single().expect("valid instant"))
+                    .modified_at(Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).single().expect("valid instant"))
+                    .build(),
+            )
+            .build();
+        assert!(built.selection.entities.is_none() && built.selection.watched_attributes.is_none());
+        assert!(built.filters.q.is_none() && built.filters.geo_q.is_none());
+        assert!(built.delivery.throttling.is_none() && built.delivery.local_only.is_none());
+        pretty_assertions::assert_eq!(built.type_, SubscriptionType);
+    }
+
+    #[test]
+    fn a_subscription_endpoint_uri_is_an_absolute_url() {
+        let endpoint: Endpoint =
+            serde_json::from_value(serde_json::json!({"uri": "https://receiver.example.com/notify", "accept": "application/json"})).expect("parses");
+        pretty_assertions::assert_eq!(endpoint.uri.scheme(), "https");
+        pretty_assertions::assert_eq!(endpoint.uri.host_str(), Some("receiver.example.com"));
+    }
+
+    #[test]
+    fn a_subscription_endpoint_rejects_a_relative_uri() {
+        assert!(serde_json::from_value::<Endpoint>(serde_json::json!({"uri": "/notify"})).is_err());
+    }
+
+    #[test]
+    fn a_subscription_endpoint_accepts_an_mqtt_target() {
+        let endpoint: Endpoint = serde_json::from_value(serde_json::json!({"uri": "mqtt://broker.example.com:1883/topic"})).expect("parses");
+        pretty_assertions::assert_eq!(endpoint.uri.scheme(), "mqtt");
+        assert!(endpoint.accept.is_none());
+    }
+
+    #[test]
+    fn a_subscription_endpoint_accept_is_a_media_type() {
+        let endpoint: Endpoint =
+            serde_json::from_value(serde_json::json!({"uri": "https://receiver.example.com/notify", "accept": "application/ld+json"})).expect("parses");
+        let accept = endpoint.accept.expect("accept present");
+        pretty_assertions::assert_eq!(accept.ty().as_str(), "application");
+        pretty_assertions::assert_eq!(accept.subty().as_str(), "ld");
+        pretty_assertions::assert_eq!(accept.suffix().map(|name| name.as_str().to_owned()), Some("json".to_owned()));
+    }
+
+    #[test]
+    fn a_subscription_endpoint_rejects_a_malformed_accept() {
+        assert!(serde_json::from_value::<Endpoint>(serde_json::json!({"uri": "https://receiver.example.com/notify", "accept": "not a media type"})).is_err());
     }
 
     #[test]

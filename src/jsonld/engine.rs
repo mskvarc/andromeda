@@ -1872,7 +1872,6 @@ fn normalize_context_urls_for_logging(urls: &[String]) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::*;
     use crate::jsonld::core_context::NGSI_LD_CORE_CONTEXT_V16_URL;
     use serde_json::json;

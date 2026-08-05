@@ -3,9 +3,16 @@
 use crate::uri::Uri;
 use derive_more::{AsRef, Deref, Display};
 use serde::{Deserialize, Serialize};
+use std::str::FromStr;
 use thiserror::Error;
 use urn_rs::Urn;
 
+/// Declares one `urn:ngsi-ld:<Kind>:<id>` newtype over [`Urn`] together with its
+/// parse-error enum.
+///
+/// Expands to a struct that serialises as its URN string and rejects, at
+/// deserialisation, any value that is not a URN, does not use the `ngsi-ld`
+/// namespace, or does not carry the given kind as its first NSS segment.
 macro_rules! ngsi_ld_urn_id {
     ($name:ident, $error:ident, $constant:literal) => {
         #[doc = concat!("A `urn:ngsi-ld:", $constant, ":<id>` identifier.")]
@@ -89,7 +96,7 @@ macro_rules! ngsi_ld_urn_id {
             }
         }
 
-        impl std::str::FromStr for $name {
+        impl FromStr for $name {
             type Err = $error;
 
             fn from_str(s: &str) -> Result<Self, Self::Err> {
@@ -131,7 +138,6 @@ ngsi_ld_urn_id!(AttributeListId, AttributeListIdParseError, "AttributeList");
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use crate::ngsi_ld_urn::{AttributeListId, EntityMapId, EntityTypeListId, SnapshotId, SnapshotNotificationId};
     use urn_rs::Urn;
 

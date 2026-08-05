@@ -3,7 +3,7 @@
 use crate::attribute::{common_fields::CommonAttributeFields, value::NgsiLdValue};
 use cefact_units::UnitCode;
 use compact_str::CompactString;
-use derive_more::{Deref, From};
+use derive_more::{Deref, From, Into};
 use jsonld::Expandable;
 use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
@@ -11,19 +11,16 @@ use serde_with::skip_serializing_none;
 /// Newtype wrapping [`UnitCode`] to provide an [`AsRef<str>`] implementation
 /// (orphan rules forbid implementing the foreign trait for the foreign type
 /// directly). Used as a field value where the JSON-LD derive needs `&str` access.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, From, Deref)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, From, Into, Deref)]
 #[serde(transparent)]
 pub struct UnitCodeRef(pub UnitCode);
 
+// `#[as_ref(str)]` needs the field type to implement `AsRef<str>`, and
+// `cefact_units::UnitCode` exposes `as_str` without it, so the forwarding
+// cannot be derived.
 impl AsRef<str> for UnitCodeRef {
     fn as_ref(&self) -> &str {
         self.0.as_str()
-    }
-}
-
-impl From<UnitCodeRef> for UnitCode {
-    fn from(value: UnitCodeRef) -> UnitCode {
-        value.0
     }
 }
 
@@ -56,12 +53,12 @@ pub struct Property {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use crate::{
-        attribute::{Attribute, value::NgsiLdValue},
+        attribute::{instance::Attribute, value::NgsiLdValue},
         vocab::expanded::properties as expanded_properties,
     };
     use jsonld::Expandable;
+    use serde_json::Value;
 
     #[test]
     fn property_round_trip_supports_value_type_and_previous_value() {
@@ -107,7 +104,7 @@ mod tests {
     fn the_property_default_matches_the_field_by_field_literal() {
         use crate::attribute::property::Property;
         let actual = Property::default();
-        pretty_assertions::assert_eq!(actual.value, NgsiLdValue::Json(serde_json::Value::Null));
+        pretty_assertions::assert_eq!(actual.value, NgsiLdValue::Json(Value::Null));
         assert!(actual.unit_code.is_none() && actual.value_type.is_none() && actual.previous_value.is_none());
         assert!(actual.common.sub_attributes.is_empty());
         assert!(actual.common.dataset_id.is_none() && actual.common.observed_at.is_none() && actual.common.expires_at.is_none());

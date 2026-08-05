@@ -2,12 +2,12 @@
 
 use crate::attribute::common_fields::CommonAttributeFields;
 use compact_str::CompactString;
-use derive_more::{Deref, From};
+use derive_more::{Deref, DerefMut, From};
 use indexmap::IndexMap;
 use jsonld::{Expandable, ExpandableLanguageMap};
 use jsonld_expandable_core::JsonValue;
 use langtag::LangTagBuf;
-use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error as _};
+use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error};
 use serde_with::skip_serializing_none;
 use std::fmt;
 
@@ -46,7 +46,7 @@ impl<'de> Deserialize<'de> for LanguageMapKey {
         }
         LangTagBuf::new(raw)
             .map(LanguageMapKey::Tag)
-            .map_err(|error| D::Error::custom(format!("invalid BCP47 language tag: {error}")))
+            .map_err(|error| Error::custom(format!("invalid BCP47 language tag: {error}")))
     }
 }
 
@@ -63,22 +63,22 @@ pub enum LanguageMapValue {
 /// Local newtype around [`IndexMap`] of language-tagged strings, required so
 /// the foreign [`ExpandableLanguageMap`] trait can be implemented (orphan
 /// rules forbid implementing a foreign trait for the foreign [`IndexMap`]).
-#[derive(Debug, Clone, Default, Serialize, Deserialize, From, Deref)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, From, Deref, DerefMut)]
 #[serde(transparent)]
 pub struct LanguageMap(pub IndexMap<LanguageMapKey, LanguageMapValue>);
 
-impl std::ops::DerefMut for LanguageMap {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.0
-    }
-}
-
+// `#[derive(PartialEq)]` would forward to `IndexMap`, whose equality is
+// insertion-order sensitive. Two language maps carrying the same tags with the
+// same values are the same map under clause 4.5.16 however they were built, so
+// the comparison is by content, and `Eq` follows it rather than the derive.
 impl PartialEq for LanguageMap {
     fn eq(&self, other: &Self) -> bool {
         self.0.len() == other.0.len() && self.0.iter().all(|(k, v)| other.0.get(k).is_some_and(|other_v| other_v == v))
     }
 }
 
+// Follows the hand-written `PartialEq` above rather than the derive, which
+// would demand `IndexMap: Eq` with insertion-order semantics.
 impl Eq for LanguageMap {}
 
 impl ExpandableLanguageMap for LanguageMap {
@@ -119,6 +119,8 @@ pub struct LanguageProperty {
     pub common: CommonAttributeFields,
 }
 
+/// Builds one expanded language-map entry: an `@value` node carrying an
+/// `@language` tag unless the key is the `@none` default (clause 4.5.16).
 fn language_entry<V: JsonValue>(key: &LanguageMapKey, value: &str) -> V {
     let mut entries: Vec<(String, V)> = Vec::with_capacity(2);
     entries.push(("@value".to_string(), V::string(value)));
@@ -130,14 +132,14 @@ fn language_entry<V: JsonValue>(key: &LanguageMapKey, value: &str) -> V {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use crate::{
         attribute::{
-            Attribute,
+            instance::Attribute,
             language_property::{LanguageMapKey, LanguageMapValue, LanguageProperty},
         },
         vocab::expanded::properties as expanded_properties,
     };
+    use indexmap::IndexMap;
     use jsonld::Expandable;
 
     #[test]
@@ -158,7 +160,7 @@ mod tests {
 
     #[test]
     fn language_map_expands_as_language_tagged_values() {
-        let mut map = indexmap::IndexMap::new();
+        let mut map = IndexMap::new();
         map.insert(LanguageMapKey::None, LanguageMapValue::Single("default".to_string()));
         let property = LanguageProperty {
             language_map: map.into(),

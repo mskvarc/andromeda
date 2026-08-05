@@ -25,6 +25,8 @@ pub enum NgsiLdValueError {
 #[into(String)]
 pub struct NgsiLdDate(CompactString);
 
+// Validating parser: the value is kept in its lexical form but only after
+// `chrono` accepts it as a `YYYY-MM-DD` date, which no derive expresses.
 impl FromStr for NgsiLdDate {
     type Err = NgsiLdValueError;
 
@@ -51,6 +53,8 @@ impl TryFrom<String> for NgsiLdDate {
 #[into(String)]
 pub struct NgsiLdTime(CompactString);
 
+// Validating parser: the value is kept in its lexical form but only after
+// `chrono` accepts it as an `HH:MM:SS` time, which no derive expresses.
 impl FromStr for NgsiLdTime {
     type Err = NgsiLdValueError;
 
@@ -86,7 +90,6 @@ pub fn parse_ngsi_ld_time(value: &str) -> Result<(), NgsiLdValueError> {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use crate::attribute::date_time::{NgsiLdDate, NgsiLdTime};
 
     #[test]

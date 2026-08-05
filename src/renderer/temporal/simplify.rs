@@ -81,7 +81,6 @@ fn simplify_value(entity_value: Value) -> Result<Value, AndromedaError> {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::expect_used, clippy::unwrap_used, clippy::panic)]
     use super::*;
     use serde_json::json;
 

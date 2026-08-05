@@ -32,8 +32,7 @@ pub struct ListProperty {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::expect_used, clippy::unwrap_used)]
-    use crate::attribute::Attribute;
+    use crate::attribute::instance::Attribute;
     use jsonld::Expandable;
 
     #[test]

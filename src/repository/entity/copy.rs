@@ -105,7 +105,6 @@ const fn estimated_stream_bytes(columns: &PreparedEntityColumns) -> usize {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::expect_used)]
     use super::*;
     use crate::repository::copy::COPY_HEADER_SIGNATURE;
     use andromeda_geometry::geometry::Geometry;

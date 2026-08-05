@@ -1,8 +1,9 @@
 //! The NGSI-LD scope path grammar (ETSI GS CIM 009 clause 4.18).
 
-// `RegularGrammar` emits an undocumented owned type and accessor alongside the
-// grammar type below, and an item-level allow does not reach macro-generated
-// siblings. This module defines exactly one grammar type and nothing else.
+// `RegularGrammar` emits an undocumented error type and an undocumented owned
+// accessor alongside the grammar type below, and an item-level allow does not
+// reach macro-generated siblings. Fencing them here keeps the crate-level deny
+// live for every hand-written item in the concept's other files.
 #![allow(missing_docs)]
 
 use static_regular_grammar::RegularGrammar;
@@ -24,8 +25,7 @@ pub struct Scope(str);
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::expect_used, clippy::unwrap_used)]
-    use super::{Scope, ScopeBuf};
+    use crate::scope::grammar::{Scope, ScopeBuf};
 
     #[test]
     fn valid_single_level_with_slash() {

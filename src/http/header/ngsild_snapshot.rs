@@ -62,7 +62,6 @@ impl headers::Header for NgsiLdSnapshot {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::*;
     use andromeda_domain::ngsi_ld_urn::SnapshotId;
     use headers::Header;

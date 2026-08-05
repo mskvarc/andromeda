@@ -170,21 +170,20 @@ fn build_core_context_metadata(identifier: &str) -> Result<ContextMetadata, Andr
         .parse()
         .map_err(|e| AndromedaError::internal(format!("Core context URL is invalid: {}", e)))?;
     let local_id = Uri::Url(url.clone()); // clone: need url for both fields
-    Ok(ContextMetadata {
-        url: Some(url),
-        local_id,
-        kind: ContextKind::ImplicitlyCreated,
-        created_at: now,
-        expires_at: None,
-        last_usage: now,
-        number_of_hits: 0,
-        extra_info: None,
-    })
+    Ok(ContextMetadata::builder()
+        .url(Some(url))
+        .local_id(local_id)
+        .kind(ContextKind::ImplicitlyCreated)
+        .created_at(now)
+        .expires_at(None)
+        .last_usage(now)
+        .number_of_hits(0)
+        .extra_info(None)
+        .build())
 }
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::{build_core_context_metadata, core_context_payload, is_core_context_url};
     use andromeda_domain::{jsonld_context::ContextKind, uri::Uri};
     use url::Url;

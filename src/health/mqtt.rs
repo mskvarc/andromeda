@@ -81,7 +81,6 @@ impl HealthIndicator for MqttHealthIndicator {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::*;
     use crate::transport::mqtt::MqttPoolConfig;
 

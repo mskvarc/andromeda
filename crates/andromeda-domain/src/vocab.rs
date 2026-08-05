@@ -22,11 +22,15 @@ jsonld::vocab! {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::expect_used, clippy::unwrap_used)]
-    use super::{COMPACT_TO_EXPANDED, EXPANDED_TO_COMPACT, TERM_COUNT, compact_to_expanded, expanded_to_compact, prefix};
     use crate::vocab::{
+        COMPACT_TO_EXPANDED,
+        EXPANDED_TO_COMPACT,
+        TERM_COUNT,
         compact::{classes as compact_classes, properties as compact_properties},
+        compact_to_expanded,
         expanded::{classes as expanded_classes, properties as expanded_properties},
+        expanded_to_compact,
+        prefix,
     };
     use iri_rs::Iri;
 

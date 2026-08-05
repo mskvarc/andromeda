@@ -667,7 +667,6 @@ fn normalize_preload_context_paths(config: &mut RuntimeConfig, config_file: &Pat
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use serial_test::serial;
     use std::{
         fs,

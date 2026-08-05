@@ -62,25 +62,27 @@ pub fn row_to_domain(row: OutboxEntryRow) -> Result<OutboxEntry, OutboxMapperErr
         .parse()
         .map_err(|_| OutboxMapperError::EntityUri { value: row.entity_id.clone() })?;
 
-    Ok(OutboxEntry {
-        id: OutboxEntryId::from(row.id),
-        subscription_id,
-        entity_id,
-        trigger,
-        entity_snapshot: row.entity_snapshot,
-        previous_snapshot: row.previous_snapshot,
-        changed_attrs: row
-            .changed_attrs
-            .iter()
-            .map(|raw| raw.parse())
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|source| OutboxMapperError::AttributeName { source })?,
-        created_at: row.created_at,
-        claimed_at: row.claimed_at,
-        claimed_by: row.claimed_by.map(WorkerInstanceId::from),
-        delivered_at: row.delivered_at,
-        delivery_error: row.delivery_error,
-        attempt_count: row.attempt_count,
-        next_attempt_at: row.next_attempt_at,
-    })
+    let changed_attrs = row
+        .changed_attrs
+        .iter()
+        .map(|raw| raw.parse())
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|source| OutboxMapperError::AttributeName { source })?;
+
+    Ok(OutboxEntry::builder()
+        .id(OutboxEntryId::from(row.id))
+        .subscription_id(subscription_id)
+        .entity_id(entity_id)
+        .trigger(trigger)
+        .entity_snapshot(row.entity_snapshot)
+        .previous_snapshot(row.previous_snapshot)
+        .changed_attrs(changed_attrs)
+        .created_at(row.created_at)
+        .claimed_at(row.claimed_at)
+        .claimed_by(row.claimed_by.map(WorkerInstanceId::from))
+        .delivered_at(row.delivered_at)
+        .delivery_error(row.delivery_error)
+        .attempt_count(row.attempt_count)
+        .next_attempt_at(row.next_attempt_at)
+        .build())
 }

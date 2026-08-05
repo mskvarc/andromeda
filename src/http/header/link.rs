@@ -487,7 +487,6 @@ fn verify_and_trim(s: &str, open: u8, close: u8) -> Result<&str, LinkParseError>
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use std::fmt::Write;
 
     use super::*;

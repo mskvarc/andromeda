@@ -181,6 +181,9 @@ pub enum SnapshotQParseError {
     MixedConjunctions,
 }
 
+// `#[from]` would need its own variant and would drop the field the parse was
+// attempted for; both conversions instead fold into `InvalidValue`, which
+// names that field so the client is told which term it got wrong.
 impl From<SnapshotIdParseError> for SnapshotQParseError {
     fn from(err: SnapshotIdParseError) -> SnapshotQParseError {
         SnapshotQParseError::InvalidValue {
@@ -190,6 +193,7 @@ impl From<SnapshotIdParseError> for SnapshotQParseError {
     }
 }
 
+// See the note on the `SnapshotId` conversion above.
 impl From<SnapshotPriorityParseError> for SnapshotQParseError {
     fn from(err: SnapshotPriorityParseError) -> SnapshotQParseError {
         SnapshotQParseError::InvalidValue {
@@ -214,6 +218,8 @@ pub fn parse_snapshot_q(input: &str) -> Result<SnapshotPurgeFilter, SnapshotQPar
     Ok(SnapshotPurgeFilter { terms, conjunction })
 }
 
+/// Splits a purge filter into its terms and reports which conjunction joins
+/// them. Mixing `;` and `|` in one filter is ambiguous and rejected.
 fn split_top_level(input: &str) -> Result<(Vec<&str>, Conjunction), SnapshotQParseError> {
     let has_semi = input.contains(';');
     let has_pipe = input.contains('|');
@@ -230,6 +236,7 @@ fn split_top_level(input: &str) -> Result<(Vec<&str>, Conjunction), SnapshotQPar
     Ok((segments, conjunction))
 }
 
+/// Parses one `<field><op><value>` term.
 fn parse_term(input: &str) -> Result<SnapshotPurgeTerm, SnapshotQParseError> {
     // Longest operators first so `<=` matches before `<`.
     let ops: [(&str, SnapshotOp); 6] = [
@@ -254,6 +261,8 @@ fn parse_term(input: &str) -> Result<SnapshotPurgeTerm, SnapshotQParseError> {
     Ok(SnapshotPurgeTerm { field, op, value })
 }
 
+/// Parses a term's right-hand side into the value type its field carries, and
+/// rejects an operator the field does not admit.
 fn parse_value(field: SnapshotField, op: SnapshotOp, raw: &str) -> Result<SnapshotValue, SnapshotQParseError> {
     let unquoted = strip_quotes(raw);
     match field {
@@ -298,6 +307,7 @@ fn parse_value(field: SnapshotField, op: SnapshotOp, raw: &str) -> Result<Snapsh
     }
 }
 
+/// Rejects an ordering operator on a field whose values are not ordered.
 const fn require_eq_or_neq(field: SnapshotField, op: SnapshotOp) -> Result<(), SnapshotQParseError> {
     match op {
         SnapshotOp::Eq | SnapshotOp::Neq => Ok(()),
@@ -305,6 +315,7 @@ const fn require_eq_or_neq(field: SnapshotField, op: SnapshotOp) -> Result<(), S
     }
 }
 
+/// Removes one matched pair of surrounding double quotes, if present.
 fn strip_quotes(s: &str) -> &str {
     if s.len() >= 2 && s.starts_with('"') && s.ends_with('"') {
         &s[1..s.len() - 1]
@@ -315,7 +326,6 @@ fn strip_quotes(s: &str) -> &str {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::expect_used, clippy::unwrap_used, clippy::panic)]
     use super::*;
 
     #[test]

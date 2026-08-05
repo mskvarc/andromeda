@@ -104,7 +104,6 @@ fn substitute(raw: &str, bindings: Bindings<'_>) -> String {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used)]
 mod tests {
     use super::{load_with, substitute};
 

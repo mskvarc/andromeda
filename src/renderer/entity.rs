@@ -12,8 +12,7 @@ use crate::{
 };
 use andromeda_domain::{
     attribute::{
-        Attribute,
-        AttributeValue,
+        instance::{Attribute, AttributeValue},
         language_property::{LanguageMapKey, LanguageMapValue, LanguageProperty},
         name::AttributeName,
     },
@@ -594,7 +593,6 @@ pub(crate) fn decode_percent_encoded_uris(value: &mut Value) {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::{EntityRenderer, RenderMode, concise_value, decode_percent_encoded_uris};
     use crate::{http::model::language::LanguageFilter, renderer::Renderer};
     use andromeda_domain::entity::Entity;

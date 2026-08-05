@@ -237,7 +237,6 @@ pub fn parse_batch_entities(
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use crate::{
         http::extractor::{batch::parse_batch_entities, context::ContextUrl},
         jsonld::ContextSpec,

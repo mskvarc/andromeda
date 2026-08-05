@@ -91,7 +91,7 @@ pub async fn stream(TenantState(state): TenantState, OriginalUri(uri): OriginalU
     // Validate subscription uses SSE transport via the canonical parser
     // (handles case-insensitive URI schemes like SSE://).
     let is_sse = parse_endpoint_transport(
-        &subscription.notification.endpoint.uri,
+        subscription.notification.endpoint.uri.as_str(),
         subscription.notification.endpoint.notifier_info.as_deref(),
     )
     .is_ok_and(|t| matches!(t, EndpointTransport::Sse));

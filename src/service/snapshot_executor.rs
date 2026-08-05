@@ -23,17 +23,10 @@ use crate::{
 };
 use andromeda_domain::{
     ngsi_ld_urn::SnapshotId,
-    snapshot::{
-        ExecutionResultDetails,
-        ExecutionResultStatus,
-        Snapshot,
-        SnapshotEntitySelector,
-        SnapshotGeoQuery,
-        SnapshotQuery,
-        SnapshotStatus,
-        SnapshotTemporalQuery,
-    },
+    snapshot::{ExecutionResultDetails, ExecutionResultStatus, Snapshot, SnapshotStatus},
+    snapshot_query::{SnapshotEntitySelector, SnapshotGeoQuery, SnapshotQuery, SnapshotTemporalQuery},
 };
+use chrono::{DateTime, SecondsFormat, Utc};
 use compact_str::CompactString;
 use serde_json::Value;
 use sqlx::postgres::PgPool;
@@ -343,6 +336,12 @@ pub fn snapshot_query_to_entity_params(query: &SnapshotQuery) -> Result<EntityQu
     })
 }
 
+/// Render an instant the way the temporal query parameters carry it: RFC 3339
+/// at whole-second precision with a `Z` suffix.
+fn render_instant(instant: DateTime<Utc>) -> String {
+    instant.to_rfc3339_opts(SecondsFormat::Secs, true)
+}
+
 /// Translate a temporal [`SnapshotQuery`] into service-layer
 /// [`TemporalQueryParameters`].
 pub fn snapshot_query_to_temporal_params(query: &SnapshotQuery) -> Result<TemporalQueryParameters, SnapshotQueryTranslationError> {
@@ -377,14 +376,17 @@ pub fn snapshot_query_to_temporal_params(query: &SnapshotQuery) -> Result<Tempor
         geometry,
         coordinates,
         geoproperty,
-        timerel: Some(temporal_q.timerel.clone()),
-        time_at: Some(temporal_q.time_at.clone()),
-        end_time_at: temporal_q.end_time_at.clone(),
-        timeproperty: temporal_q.timeproperty.clone(),
+        timerel: Some(temporal_q.timerel.to_string()),
+        time_at: Some(render_instant(temporal_q.time_at)),
+        end_time_at: temporal_q.end_time_at.map(render_instant),
+        timeproperty: temporal_q.timeproperty.map(|property| property.to_string()),
         last_n: temporal_q.last_n,
         format: None,
         options: None,
-        aggr_methods: temporal_q.aggr_methods.clone(),
+        aggr_methods: temporal_q
+            .aggr_methods
+            .as_ref()
+            .map(|methods| methods.iter().map(ToString::to_string).collect::<Vec<_>>().join(",")),
         aggr_period_duration: temporal_q.aggr_period_duration.clone(),
         limit: None,
         offset: None,
@@ -465,11 +467,11 @@ const fn compute_final_status(any_success_with_results: bool, any_failure: bool,
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::*;
     use andromeda_domain::{
         attribute::name::AttributeName,
-        snapshot::{SnapshotEntitySelector, SnapshotGeoQuery, SnapshotQuery, SnapshotTemporalQuery},
+        snapshot_query::{SnapshotEntitySelector, SnapshotGeoQuery, SnapshotQuery, SnapshotTemporalQuery},
+        temporal::{AggrMethod, TimeProp, TimeRel},
     };
     use andromeda_geometry::geometry::GeometryType;
 
@@ -478,15 +480,7 @@ mod tests {
     }
 
     fn base_query() -> SnapshotQuery {
-        SnapshotQuery {
-            entities: None,
-            q: None,
-            geo_q: None,
-            scope_q: None,
-            attrs: None,
-            omit: None,
-            temporal_q: None,
-        }
+        SnapshotQuery::builder().build()
     }
 
     #[test]
@@ -616,19 +610,26 @@ mod tests {
         assert!(matches!(err, SnapshotQueryTranslationError::ConflictingIdPattern(..)));
     }
 
+    /// Parse an RFC 3339 literal into the instant a `temporalQ` carries.
+    fn instant(literal: &str) -> DateTime<Utc> {
+        literal.parse::<DateTime<Utc>>().expect("valid instant")
+    }
+
     #[test]
     fn temporal_translates_timerel_time_at() {
         // Clause 5.7.3, 5.2.23 temporalQ
         let mut q = base_query();
-        q.temporal_q = Some(SnapshotTemporalQuery {
-            timerel: "after".to_string(),
-            time_at: "2024-01-01T00:00:00Z".to_string(),
-            end_time_at: None,
-            last_n: None,
-            timeproperty: Some("observedAt".to_string()),
-            aggr_methods: None,
-            aggr_period_duration: None,
-        });
+        q.temporal_q = Some(
+            SnapshotTemporalQuery::builder()
+                .timerel(TimeRel::After)
+                .time_at(instant("2024-01-01T00:00:00Z"))
+                .end_time_at(None)
+                .last_n(None)
+                .timeproperty(Some(TimeProp::Observed))
+                .aggr_methods(None)
+                .aggr_period_duration(None)
+                .build(),
+        );
         let params = snapshot_query_to_temporal_params(&q).expect("translate");
         pretty_assertions::assert_eq!(params.timerel.as_deref(), Some("after"));
         pretty_assertions::assert_eq!(params.time_at.as_deref(), Some("2024-01-01T00:00:00Z"));
@@ -639,15 +640,17 @@ mod tests {
     fn temporal_translates_last_n() {
         // Clause 5.7.3
         let mut q = base_query();
-        q.temporal_q = Some(SnapshotTemporalQuery {
-            timerel: "before".to_string(),
-            time_at: "2024-12-31T23:59:59Z".to_string(),
-            end_time_at: None,
-            last_n: Some(42),
-            timeproperty: None,
-            aggr_methods: None,
-            aggr_period_duration: None,
-        });
+        q.temporal_q = Some(
+            SnapshotTemporalQuery::builder()
+                .timerel(TimeRel::Before)
+                .time_at(instant("2024-12-31T23:59:59Z"))
+                .end_time_at(None)
+                .last_n(Some(42))
+                .timeproperty(None)
+                .aggr_methods(None)
+                .aggr_period_duration(None)
+                .build(),
+        );
         let params = snapshot_query_to_temporal_params(&q).expect("translate");
         pretty_assertions::assert_eq!(params.last_n, Some(42));
     }
@@ -656,15 +659,17 @@ mod tests {
     fn temporal_translates_aggr_methods_and_period() {
         // Clause 5.7.3
         let mut q = base_query();
-        q.temporal_q = Some(SnapshotTemporalQuery {
-            timerel: "between".to_string(),
-            time_at: "2024-01-01T00:00:00Z".to_string(),
-            end_time_at: Some("2024-06-01T00:00:00Z".to_string()),
-            last_n: None,
-            timeproperty: None,
-            aggr_methods: Some("avg,min".to_string()),
-            aggr_period_duration: Some("PT1H".to_string()),
-        });
+        q.temporal_q = Some(
+            SnapshotTemporalQuery::builder()
+                .timerel(TimeRel::Between)
+                .time_at(instant("2024-01-01T00:00:00Z"))
+                .end_time_at(Some(instant("2024-06-01T00:00:00Z")))
+                .last_n(None)
+                .timeproperty(None)
+                .aggr_methods(Some(vec![AggrMethod::Avg, AggrMethod::Min]))
+                .aggr_period_duration(Some("PT1H".to_string()))
+                .build(),
+        );
         let params = snapshot_query_to_temporal_params(&q).expect("translate");
         pretty_assertions::assert_eq!(params.aggr_methods.as_deref(), Some("avg,min"));
         pretty_assertions::assert_eq!(params.aggr_period_duration.as_deref(), Some("PT1H"));

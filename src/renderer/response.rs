@@ -314,7 +314,6 @@ fn format_context(ctx: Value) -> Value {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::*;
     use crate::http::extractor::prefer::PreferHeader;
     use serde_json::json;

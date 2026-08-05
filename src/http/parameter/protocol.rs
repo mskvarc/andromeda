@@ -135,7 +135,6 @@ pub fn apply_temporal_extension_headers(params: &mut TemporalQueryParameters, pr
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::*;
     use crate::http::extractor::{prefer::PreferHeader, snapshot::SnapshotHeader};
 

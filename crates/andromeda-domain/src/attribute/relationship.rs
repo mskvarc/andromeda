@@ -38,9 +38,8 @@ pub struct Relationship {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use crate::{
-        attribute::{Attribute, one_or_many::OneOrMany},
+        attribute::{instance::Attribute, one_or_many::OneOrMany},
         vocab::expanded::properties as expanded_properties,
     };
     use jsonld::Expandable;

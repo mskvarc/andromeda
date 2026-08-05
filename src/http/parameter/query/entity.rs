@@ -342,7 +342,6 @@ impl From<QueryRequest> for EntityQueryParameters {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::*;
     use crate::{http::parameter::query::SharedQueryParams, params_from_query};
     use andromeda_query::ordering::term::OrderDirection;

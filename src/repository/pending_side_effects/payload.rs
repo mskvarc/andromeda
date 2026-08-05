@@ -153,22 +153,21 @@ impl TryFrom<PersistedChangeEvent> for ChangeEvent {
             .collect::<Result<Vec<_>, _>>()
             .map_err(|err| AndromedaError::internal(format!("invalid attribute name in queued change event: {err}")))?;
 
-        Ok(ChangeEvent {
-            entity_id,
-            entity_types,
-            trigger_reason,
-            changed_attributes,
-            occurred_at: persisted.occurred_at,
-            entity_snapshot: persisted.entity_snapshot.map(Arc::new),
-            previous_attributes: persisted.previous_attributes.map(Arc::new),
-            sys_attrs_snapshot: persisted.sys_attrs_snapshot.map(SysAttrsSnapshot::from),
-            origin,
-            // current_payload is intentionally not persisted: the durable queue
-            // path is opt-in/async, and consumers (spatial sync) fall back to
-            // fetching when this is absent. Persisting it would double-store
-            // the expanded entity (already in `temporal_entities`).
-            current_payload: None,
-        })
+        // `current_payload` is intentionally not persisted: the durable queue path
+        // is opt-in/async and consumers (spatial sync) fall back to fetching when
+        // it is absent. Persisting it would double-store the expanded entity,
+        // which `temporal_entities` already holds.
+        Ok(ChangeEvent::builder()
+            .entity_id(entity_id)
+            .entity_types(entity_types)
+            .trigger_reason(trigger_reason)
+            .changed_attributes(changed_attributes)
+            .occurred_at(persisted.occurred_at)
+            .entity_snapshot(persisted.entity_snapshot.map(Arc::new))
+            .previous_attributes(persisted.previous_attributes.map(Arc::new))
+            .sys_attrs_snapshot(persisted.sys_attrs_snapshot.map(SysAttrsSnapshot::from))
+            .origin(origin)
+            .build())
     }
 }
 

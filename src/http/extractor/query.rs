@@ -55,7 +55,6 @@ fn classify_query_parse_error(error_str: &str, error_msg: String, uri: axum::htt
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use super::*;
     use axum::{extract::FromRequestParts, http::Request};
     use serde::Deserialize;

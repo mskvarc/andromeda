@@ -1,7 +1,7 @@
 //! Readers for the entity-level members of an expanded payload: `@type`,
 //! `scope` and `expiresAt`.
 
-use crate::{entity_type::EntityTypeName, expanded::node::expanded_object_ref, scope::ScopeBuf, vocab::expanded::properties};
+use crate::{entity_type::EntityTypeName, expanded::node::expanded_object_ref, scope::grammar::ScopeBuf, vocab::expanded::properties};
 use chrono::{DateTime, Utc};
 use serde_json::Value;
 
@@ -52,7 +52,6 @@ pub fn extract_expires_at(expanded: &Value) -> Option<DateTime<Utc>> {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::expect_used, clippy::unwrap_used)]
     use crate::expanded::entity_member::{extract_expires_at, extract_scopes};
     use chrono::Datelike;
     use serde_json::json;
