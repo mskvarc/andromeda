@@ -4,7 +4,7 @@
 //! a [`TenantHeader`] that carries the tenant name (or `None` for the default tenant).
 
 use crate::http::{extractor::error::ExtractorRejection, header::ngsild_tenant::NgsiLdTenant};
-use andromeda_domain::tenant::TenantName;
+use andromeda_ngsi_ld_lexicon::tenant::TenantName;
 use axum::{extract::FromRequestParts, http::request::Parts};
 use headers::HeaderMapExt;
 

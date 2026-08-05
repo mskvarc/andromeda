@@ -1,10 +1,8 @@
 //! The compiled form of a Context Source Registration discovery query.
 
 use crate::{filter::expression::Expr, geo::query::GeoQuery, pagination::Pagination, pattern::Pattern};
-use andromeda_domain::{
-    temporal::{TimeProp, TimeRel},
-    uri::Uri,
-};
+use andromeda_domain::temporal::{TimeProp, TimeRel};
+use andromeda_ngsi_ld_lexicon::uri::Uri;
 use chrono::{DateTime, Utc};
 use iri_rs::IriBuf;
 use typed_builder::TypedBuilder;

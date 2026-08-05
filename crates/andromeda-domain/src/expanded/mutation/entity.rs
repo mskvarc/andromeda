@@ -1,15 +1,13 @@
 //! Entity-wide writes: merge patch, append, and update (clauses 5.6.1 to 5.6.3).
 
-use crate::{
-    expanded::{
-        dataset_id::get_instance_dataset_id,
-        merge::{deep_merge_attribute, remove_instances_by_dataset},
-        mutation::{error::ExpandedEntityError, selection::OverwritePolicy},
-        node::{expanded_object_mut, expanded_object_ref},
-        null_sentinel::instance_is_null_sentinel,
-    },
-    vocab::expanded::properties,
+use crate::expanded::{
+    dataset_id::get_instance_dataset_id,
+    merge::{deep_merge_attribute, remove_instances_by_dataset},
+    mutation::{error::ExpandedEntityError, selection::OverwritePolicy},
+    node::{expanded_object_mut, expanded_object_ref},
+    null_sentinel::instance_is_null_sentinel,
 };
+use andromeda_ngsi_ld_vocabulary::expanded::properties;
 use serde_json::Value;
 use std::slice::from_ref;
 

@@ -1,7 +1,8 @@
 //! Repository input parameters for context source registrations.
 
-use andromeda_domain::{registration::ForwardingMode, tenant::TenantName};
+use andromeda_domain::registration::ForwardingMode;
 use andromeda_geometry::geometry::Geometry;
+use andromeda_ngsi_ld_lexicon::tenant::TenantName;
 use chrono::{DateTime, Utc};
 use serde_json::Value;
 

@@ -1,6 +1,6 @@
 //! Recognition of the NGSI-LD null sentinel used to delete members in a patch.
 
-use crate::vocab::expanded::properties;
+use andromeda_ngsi_ld_vocabulary::expanded::properties;
 use serde_json::Value;
 
 /// Returns `true` if the expanded attribute instance is a deletion sentinel

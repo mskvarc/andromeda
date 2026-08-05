@@ -16,7 +16,7 @@ use crate::jsonld::{
     },
     loader::{ContextCache, ContextRegistry, HitCounter, HttpContextLoader},
 };
-use andromeda_domain::vocab;
+use andromeda_ngsi_ld_vocabulary::{COMPACT_TO_EXPANDED, compact_to_expanded, expanded::classes as expanded_classes};
 use contextual::WithContext;
 use dashmap::DashMap;
 use jsonld::{
@@ -35,7 +35,6 @@ use std::{
     hash::Hash,
     sync::{
         Arc,
-        LazyLock,
         atomic::{AtomicU64, Ordering},
     },
     time::Duration,
@@ -48,23 +47,24 @@ use tracing::info;
 /// `.as_str().to_owned()` on a `&'static iref::Iri` which dereferences the IRI
 /// pointer and recomputes the UTF-8 length on every entity.
 mod static_keys {
-    use super::{LazyLock, vocab};
+    use andromeda_ngsi_ld_vocabulary::expanded::{classes as expanded_classes, properties as expanded_properties};
+    use std::sync::LazyLock;
 
-    pub(super) static PROPERTY: LazyLock<String> = LazyLock::new(|| vocab::expanded::classes::PROPERTY.as_str().to_owned());
-    pub(super) static RELATIONSHIP: LazyLock<String> = LazyLock::new(|| vocab::expanded::classes::RELATIONSHIP.as_str().to_owned());
-    pub(super) static GEO_PROPERTY: LazyLock<String> = LazyLock::new(|| vocab::expanded::classes::GEO_PROPERTY.as_str().to_owned());
-    pub(super) static LANGUAGE_PROPERTY: LazyLock<String> = LazyLock::new(|| vocab::expanded::classes::LANGUAGE_PROPERTY.as_str().to_owned());
-    pub(super) static VOCAB_PROPERTY: LazyLock<String> = LazyLock::new(|| vocab::expanded::classes::VOCAB_PROPERTY.as_str().to_owned());
-    pub(super) static JSON_PROPERTY: LazyLock<String> = LazyLock::new(|| vocab::expanded::classes::JSON_PROPERTY.as_str().to_owned());
-    pub(super) static VALUE: LazyLock<String> = LazyLock::new(|| vocab::expanded::properties::VALUE.as_str().to_owned());
-    pub(super) static OBJECT: LazyLock<String> = LazyLock::new(|| vocab::expanded::properties::OBJECT.as_str().to_owned());
-    pub(super) static LANGUAGE_MAP: LazyLock<String> = LazyLock::new(|| vocab::expanded::properties::LANGUAGE_MAP.as_str().to_owned());
-    pub(super) static VOCAB: LazyLock<String> = LazyLock::new(|| vocab::expanded::properties::VOCAB.as_str().to_owned());
-    pub(super) static JSON: LazyLock<String> = LazyLock::new(|| vocab::expanded::properties::JSON.as_str().to_owned());
-    pub(super) static SCOPE: LazyLock<String> = LazyLock::new(|| vocab::expanded::properties::SCOPE.as_str().to_owned());
-    pub(super) static DATE_TIME: LazyLock<String> = LazyLock::new(|| vocab::expanded::classes::DATE_TIME.as_str().to_owned());
-    pub(super) static COORDINATES: LazyLock<String> = LazyLock::new(|| vocab::expanded::properties::COORDINATES.as_str().to_owned());
-    pub(super) static BBOX: LazyLock<String> = LazyLock::new(|| vocab::expanded::properties::BBOX.as_str().to_owned());
+    pub(super) static PROPERTY: LazyLock<String> = LazyLock::new(|| expanded_classes::PROPERTY.as_str().to_owned());
+    pub(super) static RELATIONSHIP: LazyLock<String> = LazyLock::new(|| expanded_classes::RELATIONSHIP.as_str().to_owned());
+    pub(super) static GEO_PROPERTY: LazyLock<String> = LazyLock::new(|| expanded_classes::GEO_PROPERTY.as_str().to_owned());
+    pub(super) static LANGUAGE_PROPERTY: LazyLock<String> = LazyLock::new(|| expanded_classes::LANGUAGE_PROPERTY.as_str().to_owned());
+    pub(super) static VOCAB_PROPERTY: LazyLock<String> = LazyLock::new(|| expanded_classes::VOCAB_PROPERTY.as_str().to_owned());
+    pub(super) static JSON_PROPERTY: LazyLock<String> = LazyLock::new(|| expanded_classes::JSON_PROPERTY.as_str().to_owned());
+    pub(super) static VALUE: LazyLock<String> = LazyLock::new(|| expanded_properties::VALUE.as_str().to_owned());
+    pub(super) static OBJECT: LazyLock<String> = LazyLock::new(|| expanded_properties::OBJECT.as_str().to_owned());
+    pub(super) static LANGUAGE_MAP: LazyLock<String> = LazyLock::new(|| expanded_properties::LANGUAGE_MAP.as_str().to_owned());
+    pub(super) static VOCAB: LazyLock<String> = LazyLock::new(|| expanded_properties::VOCAB.as_str().to_owned());
+    pub(super) static JSON: LazyLock<String> = LazyLock::new(|| expanded_properties::JSON.as_str().to_owned());
+    pub(super) static SCOPE: LazyLock<String> = LazyLock::new(|| expanded_properties::SCOPE.as_str().to_owned());
+    pub(super) static DATE_TIME: LazyLock<String> = LazyLock::new(|| expanded_classes::DATE_TIME.as_str().to_owned());
+    pub(super) static COORDINATES: LazyLock<String> = LazyLock::new(|| expanded_properties::COORDINATES.as_str().to_owned());
+    pub(super) static BBOX: LazyLock<String> = LazyLock::new(|| expanded_properties::BBOX.as_str().to_owned());
 }
 
 // ---------------------------------------------------------------------------
@@ -413,7 +413,7 @@ impl JsonLdEngine {
     async fn build_batch_term_map(&self, spec: &ContextSpec) -> BatchTermMap {
         // Seed terms from the compile-time NGSI-LD core lookup.
         let mut terms: HashMap<Box<str>, ResolvedTerm> = HashMap::new();
-        for (compact, expanded) in vocab::COMPACT_TO_EXPANDED {
+        for (compact, expanded) in COMPACT_TO_EXPANDED {
             terms.insert(
                 Box::<str>::from(*compact),
                 ResolvedTerm {
@@ -1279,7 +1279,7 @@ fn parse_user_context_into(value: &serde_json::Value, table: &mut UserTermTable)
                             if let Some(id_iri) = id {
                                 let coercion = match type_str {
                                     Some("@id") => Some(TermCoercion::Id),
-                                    Some(t) if t == vocab::expanded::classes::DATE_TIME.as_str() => Some(TermCoercion::DateTime),
+                                    Some(t) if t == expanded_classes::DATE_TIME.as_str() => Some(TermCoercion::DateTime),
                                     Some("DateTime") => Some(TermCoercion::DateTime),
                                     Some(other) => Some(TermCoercion::TypeIri(Box::<str>::from(other))),
                                     None => None,
@@ -1690,7 +1690,7 @@ fn fast_wrap_property_value(value: &serde_json::Value) -> Option<serde_json::Val
 /// expanded JSON-LD form using the core context's geojson vocab prefix.
 fn fast_expand_geojson_node(obj: &serde_json::Map<String, serde_json::Value>) -> Option<serde_json::Value> {
     let geom_type = obj.get("type")?.as_str()?;
-    let type_iri = vocab::compact_to_expanded(geom_type)?;
+    let type_iri = compact_to_expanded(geom_type)?;
 
     let mut out = serde_json::Map::with_capacity(obj.len());
     out.insert(

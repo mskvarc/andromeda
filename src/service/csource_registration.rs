@@ -12,9 +12,8 @@ use andromeda_domain::{
     notification::{CsrChangeEvent, CsrTriggerReason},
     registration::ForwardingMode,
     temporal::{TimeProp, TimeRel},
-    tenant::TenantName,
-    uri::Uri,
 };
+use andromeda_ngsi_ld_lexicon::{tenant::TenantName, uri::Uri};
 use andromeda_query::{
     csr::compiled::{CompiledCsrQuery, CompiledCsrTemporalFilter},
     filter::parser,

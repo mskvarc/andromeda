@@ -19,11 +19,9 @@ use crate::{
     service::spatial::{SpatialKey, entity_index::SpatialEntityIndex},
     tenancy::types::TenantRef,
 };
-use andromeda_domain::{
-    notification::{ChangeEvent, TriggerReason},
-    vocab,
-};
+use andromeda_domain::notification::{ChangeEvent, TriggerReason};
 use andromeda_geometry::geometry::Geometry;
+use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
 use iri_rs::IriBuf;
 use serde_json::Value;
 use sqlx::PgPool;
@@ -165,7 +163,7 @@ impl SpatialSyncWorker {
         let candidate_iris: Vec<String> = {
             // clone: the index keys by owned IRI strings and the event is borrowed
             let mut v: Vec<String> = event.changed_attributes.iter().map(ToString::to_string).collect();
-            let location = vocab::expanded::properties::LOCATION.as_str().to_string();
+            let location = expanded_properties::LOCATION.as_str().to_string();
             if !v.contains(&location) {
                 v.push(location);
             }
@@ -245,7 +243,7 @@ fn extract_geoproperty_geojson(obj: &serde_json::Map<String, Value>, iri: &str) 
     let geojson_value = prop_value
         .as_array()
         .and_then(|arr| arr.first())
-        .and_then(|inst| inst.get(vocab::expanded::properties::VALUE.as_str()))
+        .and_then(|inst| inst.get(expanded_properties::VALUE.as_str()))
         .and_then(|v| v.as_array())
         .and_then(|arr| arr.first())
         .and_then(|v| v.get("@value"));
@@ -266,8 +264,8 @@ fn parse_geometry(raw: &str) -> Option<Geometry> {
 mod tests {
     use super::*;
     use crate::service::spatial::SpatialKey;
-    use andromeda_domain::uri::Uri;
     use andromeda_geometry::geo_rel::GeoRel;
+    use andromeda_ngsi_ld_lexicon::uri::Uri;
     use geo::{Coord, LineString, Polygon};
     use iri_rs::iri;
     use serde_json::json;

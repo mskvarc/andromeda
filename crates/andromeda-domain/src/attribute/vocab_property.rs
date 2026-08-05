@@ -32,10 +32,8 @@ pub struct VocabProperty {
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        attribute::{instance::Attribute, one_or_many::OneOrMany},
-        vocab::expanded::properties as expanded_properties,
-    };
+    use crate::attribute::{instance::Attribute, one_or_many::OneOrMany};
+    use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
     use jsonld::Expandable;
 
     #[test]

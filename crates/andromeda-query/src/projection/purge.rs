@@ -1,7 +1,7 @@
 //! Purge modes of the delete-entities-by-query operation (clause 5.6.21).
 
 use crate::error::QueryError;
-use andromeda_domain::attribute::name::AttributeName;
+use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 
 /// Purge mode for the DELETE entities-by-query operation (S5.6.21).
 ///

@@ -1,7 +1,7 @@
 //! Attribute paths addressed by a `q` predicate (clause 4.9).
 
 use crate::error::QueryError;
-use andromeda_domain::attribute::name::AttributeName;
+use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use iri_rs::IriBuf;
 
 /// An attribute path within a `q` expression, potentially including sub-attributes

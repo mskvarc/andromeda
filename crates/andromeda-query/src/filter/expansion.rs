@@ -21,7 +21,7 @@ use crate::{
     },
     term_expander::TermExpander,
 };
-use andromeda_domain::attribute::name::AttributeName;
+use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use std::{collections::HashSet, future::Future, pin::Pin};
 
 /// Parse and expand a `q` filter expression.

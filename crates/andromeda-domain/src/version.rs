@@ -3,7 +3,7 @@
 //! Returns a custom JSON shape (not an NGSI-LD entity) with build-time
 //! metadata and runtime database extension versions.
 
-use crate::{constant_string, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{constant_string, uri::Uri};
 use serde::{Deserialize, Serialize};
 use typed_builder::TypedBuilder;
 

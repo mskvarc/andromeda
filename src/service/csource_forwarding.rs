@@ -5,11 +5,10 @@ use crate::{
     repository::csource_registration::repo::CsourceRegistrationRepository,
 };
 use andromeda_domain::{
-    attribute::name::AttributeName,
     entity::Entity,
     registration::{ContextSourceRegistration, CsrOperation, ForwardingMode},
-    tenant::TenantName,
 };
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, tenant::TenantName};
 use andromeda_query::filter::{eval::evaluate as eval_q_expr, expression::Expr};
 use futures::{StreamExt, stream};
 use headers::Header;
@@ -1858,7 +1857,8 @@ mod tests {
         merge_query_results,
         strip_exclusive_attrs_from_value,
     };
-    use andromeda_domain::{attribute::name::AttributeName, registration::ForwardingMode};
+    use andromeda_domain::registration::ForwardingMode;
+    use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
     use url::Url;
 
     fn attribute_name(raw: &str) -> AttributeName {

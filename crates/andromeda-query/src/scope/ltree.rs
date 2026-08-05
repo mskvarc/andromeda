@@ -1,6 +1,6 @@
 //! Translation between NGSI-LD scope paths and PostgreSQL `ltree` / `lquery`.
 
-use andromeda_domain::scope::grammar::Scope;
+use andromeda_ngsi_ld_lexicon::scope::grammar::Scope;
 use sea_query::{Expr, SimpleExpr};
 
 /// Convert an NGSI-LD scope path to PostgreSQL ltree format for storage.

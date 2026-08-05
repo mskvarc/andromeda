@@ -12,15 +12,12 @@ use crate::{
     worker::attribute_current_materializer::AttributeCurrentBarrier,
 };
 use andromeda_domain::{
-    attribute::{
-        instance::{Attribute, AttributeValue},
-        name::AttributeName,
-    },
+    attribute::instance::{Attribute, AttributeValue},
     entity::Entity,
     sys_attrs::SysAttrsInclusion,
-    uri::Uri,
 };
 use andromeda_geometry::geometry::Geometry;
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
 use andromeda_query::{
     entity::{compiled::CompiledEntityQuery, selection::EntitySelection},
     error::QueryError,

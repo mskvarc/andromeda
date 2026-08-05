@@ -16,8 +16,8 @@ use crate::{
 use andromeda_domain::{
     notification::{CsourceNotification, CsourceNotificationType, CsourceSubscriptionChange, CsrChangeEvent, CsrTriggerReason},
     subscription::{Subscription, SubscriptionStatus},
-    uri::{NGSI_LD_URN_NID, Uri},
 };
+use andromeda_ngsi_ld_lexicon::uri::{NGSI_LD_URN_NID, Uri};
 use andromeda_query::filter::{eval, parser};
 use chrono::Utc;
 use dashmap::DashMap;

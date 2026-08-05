@@ -4,11 +4,13 @@ use crate::{
     repository::entity::{repo::EntityRepository, rows::AttributeSummaryRow},
 };
 use andromeda_domain::{
-    attribute::name::AttributeName,
     attribute_list::{AttributeDetail, AttributeInfo, AttributeList, AttributeListType, AttributeResourceType},
-    attribute_type::AttributeType,
-    entity_type::EntityTypeName,
     entity_type_list::{EntityType, EntityTypeInfo, EntityTypeInfoType, EntityTypeList, EntityTypeListType, EntityTypeType},
+};
+use andromeda_ngsi_ld_lexicon::{
+    attribute_name::AttributeName,
+    attribute_type::AttributeType,
+    entity_type_name::EntityTypeName,
     ngsi_ld_urn::{AttributeListId, EntityTypeListId},
     uri::NGSI_LD_URN_NID,
 };

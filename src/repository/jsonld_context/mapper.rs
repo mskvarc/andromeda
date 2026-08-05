@@ -1,10 +1,8 @@
 //! Row-to-domain mapping for the JSON-LD context store.
 
 use crate::repository::jsonld_context::rows::ContextMetadataRow;
-use andromeda_domain::{
-    jsonld_context::{ContextKind, ContextMetadata},
-    uri::Uri,
-};
+use andromeda_domain::jsonld_context::{ContextKind, ContextMetadata};
+use andromeda_ngsi_ld_lexicon::uri::Uri;
 use thiserror::Error;
 use url::Url;
 

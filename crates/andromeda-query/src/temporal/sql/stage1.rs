@@ -241,9 +241,9 @@ mod tests {
     use andromeda_domain::{
         sys_attrs::SysAttrsInclusion,
         temporal::{AttributeNameId, TemporalFormat, TimeProp},
-        uri::Uri,
     };
     use andromeda_geometry::{geo_rel::GeoRel, geometry::Geometry};
+    use andromeda_ngsi_ld_lexicon::uri::Uri;
     use chrono::{DateTime, Utc};
 
     fn ids(raw: &[&str]) -> Vec<Uri> {

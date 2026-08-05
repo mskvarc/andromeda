@@ -1,6 +1,6 @@
 //! Change events and the notification payloads they produce (ETSI GS CIM 009 clause 5.3).
 
-use crate::{attribute::name::AttributeName, constant_string, entity_type::EntityTypeName, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, constant_string, entity_type_name::EntityTypeName, uri::Uri};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -250,10 +250,8 @@ pub enum CsourceSubscriptionChange {
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        notification::{ChangeEvent, ChangeOrigin, CsourceNotification, CsrTriggerReason, Notification, SysAttrsSnapshot, TriggerReason},
-        uri::Uri,
-    };
+    use crate::notification::{ChangeEvent, ChangeOrigin, CsourceNotification, CsrTriggerReason, Notification, SysAttrsSnapshot, TriggerReason};
+    use andromeda_ngsi_ld_lexicon::uri::Uri;
     use chrono::{TimeZone, Utc};
     use serde_json::json;
     use std::{str::FromStr, sync::Arc};

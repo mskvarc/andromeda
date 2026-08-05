@@ -17,7 +17,7 @@ use crate::{
     },
     service::entity_map::parse_iso8601_duration,
 };
-use andromeda_domain::uri::Uri;
+use andromeda_ngsi_ld_lexicon::uri::Uri;
 use axum::{
     Json,
     extract::{OriginalUri, Path},

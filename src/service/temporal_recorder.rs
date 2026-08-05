@@ -11,13 +11,12 @@ use crate::{
     },
 };
 use andromeda_domain::{
-    attribute_type::AttributeType,
     expanded::{geo_property::expanded_geo_node_to_geometry, instance_key::is_system_attribute},
-    scope::grammar::Scope,
     temporal::ValueType,
-    vocab,
 };
 use andromeda_geometry::geometry::Geometry;
+use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, scope::grammar::Scope};
+use andromeda_ngsi_ld_vocabulary::expanded::{classes as expanded_classes, properties as expanded_properties};
 use andromeda_query::scope::ltree::scope_to_ltree;
 use chrono::{DateTime, Utc};
 use iri_rs::IriBuf;
@@ -170,7 +169,7 @@ impl TemporalRecorder {
                     continue;
                 }
 
-                if attr_name == vocab::expanded::properties::SCOPE.as_str() {
+                if attr_name == expanded_properties::SCOPE.as_str() {
                     if let Some(scope_arr) = attr_value.as_array() {
                         for scope_entry in scope_arr {
                             // A value outside the clause 4.18 grammar cannot name a
@@ -360,7 +359,7 @@ impl TemporalRecorder {
             time: now,
             tea_id: uuid::Uuid::nil(),
             value_number: None,
-            value_string: Some(vocab::expanded::properties::NULL_URI.as_str().to_owned()),
+            value_string: Some(expanded_properties::NULL_URI.as_str().to_owned()),
             value_bool: None,
             value_geo: None,
             value_object: None,
@@ -510,7 +509,7 @@ fn extract_typed_value(instance: &Value, attribute_type: AttributeType) -> Resul
     match attribute_type {
         AttributeType::Relationship => {
             let uri = instance
-                .get(vocab::expanded::properties::OBJECT.as_str())
+                .get(expanded_properties::OBJECT.as_str())
                 .and_then(|v| v.as_array())
                 .and_then(|arr| arr.first())
                 .and_then(|obj| obj.get("@id"))
@@ -520,7 +519,7 @@ fn extract_typed_value(instance: &Value, attribute_type: AttributeType) -> Resul
         }
         AttributeType::GeoProperty => {
             let geo_node = instance
-                .get(vocab::expanded::properties::VALUE.as_str())
+                .get(expanded_properties::VALUE.as_str())
                 .and_then(|v| v.as_array())
                 .and_then(|arr| arr.first())
                 .ok_or_else(|| AndromedaError::temporal_validation("GeoProperty missing value"))?;
@@ -544,7 +543,7 @@ fn extract_typed_value(instance: &Value, attribute_type: AttributeType) -> Resul
         }
         AttributeType::VocabProperty => {
             let arr = instance
-                .get(vocab::expanded::properties::VOCAB.as_str())
+                .get(expanded_properties::VOCAB.as_str())
                 .and_then(|v| v.as_array())
                 .ok_or_else(|| AndromedaError::temporal_validation("VocabProperty missing vocab value"))?;
             if arr.len() > 1 {
@@ -561,13 +560,13 @@ fn extract_typed_value(instance: &Value, attribute_type: AttributeType) -> Resul
         }
         AttributeType::LanguageProperty => {
             let lang_map = instance
-                .get(vocab::expanded::properties::LANGUAGE_MAP.as_str())
+                .get(expanded_properties::LANGUAGE_MAP.as_str())
                 .ok_or_else(|| AndromedaError::temporal_validation("LanguageProperty missing languageMap"))?;
             Ok(TypedValue::Object(lang_map.clone())) // clone: need owned Value for TypedValue enum; lang_map is borrowed from instance
         }
         AttributeType::JsonProperty => {
             let json_val = instance
-                .get(vocab::expanded::properties::JSON.as_str())
+                .get(expanded_properties::JSON.as_str())
                 .and_then(|v| v.as_array())
                 .and_then(|arr| arr.first())
                 .and_then(|obj| obj.get("@value"))
@@ -576,7 +575,7 @@ fn extract_typed_value(instance: &Value, attribute_type: AttributeType) -> Resul
         }
         AttributeType::ListProperty => {
             let list = instance
-                .get(vocab::expanded::properties::VALUE_LIST.as_str())
+                .get(expanded_properties::VALUE_LIST.as_str())
                 .and_then(|v| v.as_array())
                 .and_then(|arr| arr.first())
                 .and_then(|obj| obj.get("@list"))
@@ -585,7 +584,7 @@ fn extract_typed_value(instance: &Value, attribute_type: AttributeType) -> Resul
         }
         AttributeType::ListRelationship => {
             let list = instance
-                .get(vocab::expanded::properties::OBJECT_LIST.as_str())
+                .get(expanded_properties::OBJECT_LIST.as_str())
                 .and_then(|v| v.as_array())
                 .and_then(|arr| arr.first())
                 .and_then(|obj| obj.get("@list"))
@@ -599,7 +598,7 @@ fn extract_typed_value(instance: &Value, attribute_type: AttributeType) -> Resul
         AttributeType::Property => {
             // Property -- uses hasValue
             let has_value = instance
-                .get(vocab::expanded::properties::VALUE.as_str())
+                .get(expanded_properties::VALUE.as_str())
                 .and_then(|v| v.as_array())
                 .and_then(|arr| arr.first())
                 .ok_or_else(|| AndromedaError::temporal_validation("Property missing value"))?;
@@ -607,7 +606,7 @@ fn extract_typed_value(instance: &Value, attribute_type: AttributeType) -> Resul
             if let Some(value) = has_value.get("@value") {
                 let type_hint = has_value.get("@type").and_then(|t| t.as_str());
 
-                if (type_hint == Some(vocab::expanded::classes::DATE_TIME.as_str()) || type_hint == Some(vocab::expanded::properties::XSD_DATETIME.as_str()))
+                if (type_hint == Some(expanded_classes::DATE_TIME.as_str()) || type_hint == Some(expanded_properties::XSD_DATETIME.as_str()))
                     && let Some(s) = value.as_str()
                 {
                     return Ok(TypedValue::DateTime(s.to_string()));
@@ -630,7 +629,7 @@ fn extract_typed_value(instance: &Value, attribute_type: AttributeType) -> Resul
 
 fn extract_observed_at(instance: &Value) -> Option<String> {
     instance
-        .get(vocab::expanded::properties::OBSERVED_AT.as_str())
+        .get(expanded_properties::OBSERVED_AT.as_str())
         .and_then(|v| v.as_array())
         .and_then(|arr| arr.first())
         .and_then(|obj| obj.get("@value"))
@@ -646,7 +645,7 @@ fn extract_observed_at(instance: &Value) -> Option<String> {
 /// a wrong `attribute_current` grain.
 fn extract_dataset_id(instance: &Value) -> Option<IriBuf> {
     instance
-        .get(vocab::expanded::properties::DATASET_ID.as_str())
+        .get(expanded_properties::DATASET_ID.as_str())
         .and_then(|v| v.as_array())
         .and_then(|arr| arr.first())
         .and_then(|obj| obj.get("@id"))
@@ -656,7 +655,7 @@ fn extract_dataset_id(instance: &Value) -> Option<IriBuf> {
 
 fn extract_or_generate_instance_id(instance: &Value) -> (String, bool) {
     instance
-        .get(vocab::expanded::properties::INSTANCE_ID.as_str())
+        .get(expanded_properties::INSTANCE_ID.as_str())
         .and_then(|v| v.as_array())
         .and_then(|arr| arr.first())
         .and_then(|obj| obj.get("@id"))
@@ -671,14 +670,14 @@ fn extract_or_generate_instance_id(instance: &Value) -> (String, bool) {
 fn is_metadata_skip_key(key: &str) -> bool {
     key == "@id"
         || key == "@type"
-        || key == vocab::expanded::properties::DATASET_ID.as_str()
-        || key == vocab::expanded::properties::JSON.as_str()
-        || key == vocab::expanded::properties::LANGUAGE_MAP.as_str()
-        || key == vocab::expanded::properties::OBJECT.as_str()
-        || key == vocab::expanded::properties::VALUE.as_str()
-        || key == vocab::expanded::properties::VOCAB.as_str()
-        || key == vocab::expanded::properties::INSTANCE_ID.as_str()
-        || key == vocab::expanded::properties::OBSERVED_AT.as_str()
+        || key == expanded_properties::DATASET_ID.as_str()
+        || key == expanded_properties::JSON.as_str()
+        || key == expanded_properties::LANGUAGE_MAP.as_str()
+        || key == expanded_properties::OBJECT.as_str()
+        || key == expanded_properties::VALUE.as_str()
+        || key == expanded_properties::VOCAB.as_str()
+        || key == expanded_properties::INSTANCE_ID.as_str()
+        || key == expanded_properties::OBSERVED_AT.as_str()
 }
 
 fn collect_metadata(instance: &Value) -> Option<Value> {
@@ -700,22 +699,22 @@ mod tests {
     #[test]
     fn metadata_skip_key_matches_known_values() {
         assert!(is_metadata_skip_key("@id"));
-        assert!(is_metadata_skip_key(vocab::expanded::properties::DATASET_ID.as_str()));
-        assert!(is_metadata_skip_key(vocab::expanded::properties::VALUE.as_str()));
+        assert!(is_metadata_skip_key(expanded_properties::DATASET_ID.as_str()));
+        assert!(is_metadata_skip_key(expanded_properties::VALUE.as_str()));
         assert!(!is_metadata_skip_key("https://example.com/custom"));
     }
 
     #[test]
     fn system_attribute_matches_known_values() {
-        assert!(is_system_attribute(vocab::expanded::properties::CREATED_AT.as_str()));
-        assert!(is_system_attribute(vocab::expanded::properties::UNIT_CODE.as_str()));
+        assert!(is_system_attribute(expanded_properties::CREATED_AT.as_str()));
+        assert!(is_system_attribute(expanded_properties::UNIT_CODE.as_str()));
         assert!(!is_system_attribute("https://example.com/custom"));
     }
 
     #[test]
     fn extract_instance_id_flags_client_supplied_when_present() {
         let instance = serde_json::json!({
-            vocab::expanded::properties::INSTANCE_ID.as_str(): [
+            expanded_properties::INSTANCE_ID.as_str(): [
                 {"@id": "urn:ngsi-ld:attribute:instance:provided"}
             ]
         });
@@ -734,7 +733,7 @@ mod tests {
 
     #[test]
     fn prepare_batch_refs_propagates_client_supplied_flag() {
-        let attr = vocab::expanded::properties::VALUE.as_str();
+        let attr = expanded_properties::VALUE.as_str();
         let property_type = AttributeType::Property.iri_str();
         let entity = serde_json::json!({
             "@id": "urn:ngsi-ld:Entity:e1",
@@ -742,7 +741,7 @@ mod tests {
             "https://example.com/withId": [{
                 "@type": [property_type],
                 attr: [{"@value": 1}],
-                vocab::expanded::properties::INSTANCE_ID.as_str(): [
+                expanded_properties::INSTANCE_ID.as_str(): [
                     {"@id": "urn:ngsi-ld:attribute:instance:client"}
                 ]
             }],
@@ -770,7 +769,7 @@ mod tests {
 
     #[test]
     fn build_history_entries_carries_flag_to_history_batch_entry() {
-        let attr = vocab::expanded::properties::VALUE.as_str();
+        let attr = expanded_properties::VALUE.as_str();
         let property_type = AttributeType::Property.iri_str();
         let entity = serde_json::json!({
             "@id": "urn:ngsi-ld:Entity:e1",
@@ -778,7 +777,7 @@ mod tests {
             "https://example.com/withId": [{
                 "@type": [property_type],
                 attr: [{"@value": 1}],
-                vocab::expanded::properties::INSTANCE_ID.as_str(): [
+                expanded_properties::INSTANCE_ID.as_str(): [
                     {"@id": "urn:ngsi-ld:attribute:instance:client"}
                 ]
             }],
@@ -807,7 +806,7 @@ mod tests {
         // every non-URN identifier, merging distinct instances onto the default
         // one and giving attribute_current the wrong grain.
         let instance = serde_json::json!({
-            vocab::expanded::properties::DATASET_ID.as_str(): [{"@id": "http://example.org/d1"}]
+            expanded_properties::DATASET_ID.as_str(): [{"@id": "http://example.org/d1"}]
         });
         pretty_assertions::assert_eq!(extract_dataset_id(&instance).as_ref().map(IriBuf::as_str), Some("http://example.org/d1"));
     }
@@ -815,7 +814,7 @@ mod tests {
     #[test]
     fn dataset_id_still_accepts_a_urn() {
         let instance = serde_json::json!({
-            vocab::expanded::properties::DATASET_ID.as_str(): [{"@id": "urn:ngsi-ld:Dataset:d1"}]
+            expanded_properties::DATASET_ID.as_str(): [{"@id": "urn:ngsi-ld:Dataset:d1"}]
         });
         pretty_assertions::assert_eq!(extract_dataset_id(&instance).as_ref().map(IriBuf::as_str), Some("urn:ngsi-ld:Dataset:d1"));
     }
@@ -832,9 +831,9 @@ mod tests {
         // instance that happens to share a timestamp. 4.5.7 makes instanceId the
         // instance identity, so collapsing two client-supplied instances would
         // destroy one and leave it unaddressable.
-        let attr = vocab::expanded::properties::VALUE.as_str();
-        let observed_at = vocab::expanded::properties::OBSERVED_AT.as_str();
-        let instance_id = vocab::expanded::properties::INSTANCE_ID.as_str();
+        let attr = expanded_properties::VALUE.as_str();
+        let observed_at = expanded_properties::OBSERVED_AT.as_str();
+        let instance_id = expanded_properties::INSTANCE_ID.as_str();
         let property_type = AttributeType::Property.iri_str();
         let entity = serde_json::json!({
             "@id": "urn:ngsi-ld:Entity:e1",
@@ -870,7 +869,7 @@ mod tests {
         // Every row in a unit of work is written by the same commit, so they
         // share a write-order position; a per-row clock read would impose an
         // arbitrary ordering on simultaneous rows.
-        let attr = vocab::expanded::properties::VALUE.as_str();
+        let attr = expanded_properties::VALUE.as_str();
         let property_type = AttributeType::Property.iri_str();
         let entity = serde_json::json!({
             "@id": "urn:ngsi-ld:Entity:e1",

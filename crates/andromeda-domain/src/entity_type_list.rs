@@ -1,6 +1,7 @@
 //! The entity-type discovery resources (ETSI GS CIM 009 clauses 5.2.24 to 5.2.26).
 
-use crate::{attribute::name::AttributeName, attribute_list::AttributeDetail, constant_string, entity_type::EntityTypeName, ngsi_ld_urn::EntityTypeListId};
+use crate::attribute_list::AttributeDetail;
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, constant_string, entity_type_name::EntityTypeName, ngsi_ld_urn::EntityTypeListId};
 use jsonld::Expandable;
 use serde::{Deserialize, Serialize};
 use typed_builder::TypedBuilder;
@@ -91,12 +92,8 @@ pub struct EntityTypeInfo {
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        attribute::name::AttributeName,
-        entity_type::EntityTypeName,
-        entity_type_list::{EntityType, EntityTypeInfo, EntityTypeInfoType, EntityTypeList, EntityTypeListType},
-        ngsi_ld_urn::EntityTypeListId,
-    };
+    use crate::entity_type_list::{EntityType, EntityTypeInfo, EntityTypeInfoType, EntityTypeList, EntityTypeListType};
+    use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, ngsi_ld_urn::EntityTypeListId};
     use serde_json::json;
 
     #[test]

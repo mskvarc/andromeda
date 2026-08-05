@@ -9,11 +9,8 @@ use crate::{
         endpoint::parse_endpoint_transport,
     },
 };
-use andromeda_domain::{
-    notification::CsourceNotification,
-    subscription::Subscription,
-    uri::{NGSI_LD_URN_NID, Uri},
-};
+use andromeda_domain::{notification::CsourceNotification, subscription::Subscription};
+use andromeda_ngsi_ld_lexicon::uri::{NGSI_LD_URN_NID, Uri};
 use chrono::Utc;
 use mediatype::MediaTypeBuf;
 use serde_json::Value;

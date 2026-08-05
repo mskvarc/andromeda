@@ -15,12 +15,14 @@ use crate::{
     },
 };
 use andromeda_domain::{
-    entity_type::EntityTypeName,
     notification::{ChangeEvent, Notification, NotificationType, SubscriptionChange, TriggerReason},
     sys_attrs::SysAttrsInclusion,
-    uri::{NGSI_LD_URN_NID, Uri},
-    vocab,
 };
+use andromeda_ngsi_ld_lexicon::{
+    entity_type_name::EntityTypeName,
+    uri::{NGSI_LD_URN_NID, Uri},
+};
+use andromeda_ngsi_ld_vocabulary::expanded::{classes as expanded_classes, properties as expanded_properties};
 use chrono::{SecondsFormat, Utc};
 use futures::{StreamExt, stream};
 use serde_json::Value;
@@ -194,9 +196,9 @@ impl NotificationWorker {
                         );
                         if let Some(obj) = bare.as_object_mut() {
                             obj.insert(
-                                vocab::expanded::properties::DELETED_AT.as_str().to_string(),
+                                expanded_properties::DELETED_AT.as_str().to_string(),
                                 serde_json::json!([{
-                                    "@type": vocab::expanded::classes::DATE_TIME.as_str(),
+                                    "@type": expanded_classes::DATE_TIME.as_str(),
                                     "@value": event.occurred_at.to_rfc3339_opts(SecondsFormat::Millis, true)
                                 }]),
                             );
@@ -209,7 +211,7 @@ impl NotificationWorker {
             }
         } else if let Some(snapshot) = event.entity_snapshot.as_deref() {
             let deleted_at_value = serde_json::json!([{
-                "@type": vocab::expanded::classes::DATE_TIME.as_str(),
+                "@type": expanded_classes::DATE_TIME.as_str(),
                 "@value": event.occurred_at.to_rfc3339_opts(SecondsFormat::Millis, true)
             }]);
             let mut data = match snapshot {
@@ -217,15 +219,15 @@ impl NotificationWorker {
                 other => other.clone(),
             };
             if let Some(obj) = data.as_object_mut() {
-                obj.insert(vocab::expanded::properties::DELETED_AT.as_str().to_string(), deleted_at_value);
+                obj.insert(expanded_properties::DELETED_AT.as_str().to_string(), deleted_at_value);
             }
             Some(serde_json::json!([data]))
         } else {
             Some(serde_json::json!([{
                 "@id": event.entity_id,
                 "@type": event.entity_types,
-                (vocab::expanded::properties::DELETED_AT.as_str()): [{
-                    "@type": vocab::expanded::classes::DATE_TIME.as_str(),
+                (expanded_properties::DELETED_AT.as_str()): [{
+                    "@type": expanded_classes::DATE_TIME.as_str(),
                     "@value": event.occurred_at.to_rfc3339_opts(SecondsFormat::Millis, true)
                 }]
             }]))
@@ -458,7 +460,7 @@ fn extract_entity_geometry(entity_data: &Value, geoproperty_iri: &str) -> Option
     let geojson_value = prop_value
         .as_array()
         .and_then(|arr| arr.first())
-        .and_then(|inst| inst.get(vocab::expanded::properties::VALUE.as_str()))
+        .and_then(|inst| inst.get(expanded_properties::VALUE.as_str()))
         .and_then(|v| v.as_array())
         .and_then(|arr| arr.first())
         .and_then(|v| v.get("@value"))?;

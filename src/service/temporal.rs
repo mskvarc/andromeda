@@ -30,14 +30,12 @@ use crate::{
     worker::attribute_current_materializer::AttributeCurrentBarrier,
 };
 use andromeda_domain::{
-    attribute::name::AttributeName,
-    entity_type::EntityTypeName,
     expanded::entity_member::{extract_expires_at, extract_types},
     sys_attrs::SysAttrsInclusion,
     temporal::TemporalFormat,
-    uri::Uri,
-    vocab,
 };
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, uri::Uri};
+use andromeda_ngsi_ld_vocabulary::expanded::classes as expanded_classes;
 use andromeda_query::{
     error::QueryError,
     filter::{
@@ -725,7 +723,7 @@ impl TemporalService {
         for attr_iri in aggr_data.keys() {
             let mut skeleton = serde_json::Map::new();
             skeleton.insert("@id".to_string(), json!(entity_id));
-            skeleton.insert(attr_iri.clone(), json!([{"@type": [vocab::expanded::classes::PROPERTY]}])); // clone: owned key for JSON map insertion
+            skeleton.insert(attr_iri.clone(), json!([{"@type": [expanded_classes::PROPERTY]}])); // clone: owned key for JSON map insertion
             if let Ok(compacted) = self.engine.compact(Value::Object(skeleton), context, CompactOptions::default()).await
                 && let Some(obj) = compacted.as_object()
             {

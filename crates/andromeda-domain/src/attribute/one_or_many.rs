@@ -1,9 +1,7 @@
 //! The single-or-array shape NGSI-LD uses for `String` / `String[]` members.
 
-use crate::{
-    attribute::{expansion::id_object, reference::NgsiLdReference},
-    uri::Uri,
-};
+use crate::attribute::expansion::id_object;
+use andromeda_ngsi_ld_lexicon::{reference::NgsiLdReference, uri::Uri};
 use compact_str::CompactString;
 use jsonld::Expandable;
 use jsonld_expandable_core::{JsonValue, ToJsonValue};

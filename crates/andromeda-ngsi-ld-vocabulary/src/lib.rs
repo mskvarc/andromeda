@@ -6,15 +6,21 @@
 //! every resolved term, partitioned into `classes` and `properties` submodules
 //! by JSON-LD casing convention (TitleCase classes, lowerCase properties).
 //!
+//! This is the leaf of the workspace. It exists as its own crate so that the
+//! `jsonld` proc-macro, which nothing else in the tree needs at compile time, is
+//! built once here rather than by every crate that reads an NGSI-LD IRI.
+//!
 //! # Usage
 //!
 //! ```ignore
-//! use crate::vocab;
+//! use andromeda_ngsi_ld_vocabulary::{expanded::properties as expanded_properties, prefix, compact_to_expanded};
 //! let iri: iri_rs::Iri<&'static str> = expanded_properties::CREATED_AT;
-//! let compact_name: &'static str = compact_properties::CREATED_AT;
-//! let prefix: iri_rs::Iri<&'static str> = vocab::prefix::NGSI_LD;
-//! let expanded: Option<&str> = vocab::compact_to_expanded("createdAt");
+//! let ngsi_ld: iri_rs::Iri<&'static str> = prefix::NGSI_LD;
+//! let expanded: Option<&str> = compact_to_expanded("createdAt");
 //! ```
+
+#![deny(missing_docs)]
+#![deny(clippy::missing_docs_in_private_items)]
 
 jsonld::vocab! {
     contexts: ["context/ngsi-ld-core-context-v1.9.jsonld", "context/andromeda-core-context.jsonld"]
@@ -22,7 +28,7 @@ jsonld::vocab! {
 
 #[cfg(test)]
 mod tests {
-    use crate::vocab::{
+    use crate::{
         COMPACT_TO_EXPANDED,
         EXPANDED_TO_COMPACT,
         TERM_COUNT,

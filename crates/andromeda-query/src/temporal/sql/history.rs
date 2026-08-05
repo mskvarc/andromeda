@@ -14,10 +14,8 @@ use crate::{
         window::{history_column, unprefixed_column},
     },
 };
-use andromeda_domain::{
-    temporal::{TemporalFormat, TimeProp, TimeRel},
-    uri::Uri,
-};
+use andromeda_domain::temporal::{TemporalFormat, TimeProp, TimeRel};
+use andromeda_ngsi_ld_lexicon::uri::Uri;
 use std::borrow::Cow;
 use urn_rs::Urn;
 

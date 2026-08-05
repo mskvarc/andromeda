@@ -24,8 +24,8 @@ use crate::{
     },
     type_selection::sql::{TypesColumn, condition as type_condition},
 };
-use andromeda_domain::vocab::expanded::properties::VALUE;
 use andromeda_geometry::ewkb::encode;
+use andromeda_ngsi_ld_vocabulary::expanded::properties::VALUE;
 use sea_query::{Alias, Asterisk, Condition, Expr as SeaExpr, Func, Order, PostgresQueryBuilder, Query, SelectStatement, SimpleExpr};
 
 /// Builds a parameterized SQL query to retrieve entity payloads from the `entities` table.
@@ -251,8 +251,10 @@ mod tests {
         sql::bind::BindValue,
         type_selection::grammar::TypeExpr,
     };
-    use andromeda_domain::{temporal::AttributeNameId, uri::Uri, vocab::expanded::properties::LOCATION};
+    use andromeda_domain::temporal::AttributeNameId;
     use andromeda_geometry::{geo_rel::GeoRel, geometry::Geometry};
+    use andromeda_ngsi_ld_lexicon::uri::Uri;
+    use andromeda_ngsi_ld_vocabulary::expanded::properties::LOCATION;
     use iri_rs::IriBuf;
 
     fn ids(raw: &[&str]) -> Vec<Uri> {

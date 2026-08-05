@@ -10,7 +10,7 @@ use crate::{
     },
     transport::{dispatch::TransportDispatcher, mqtt::MqttTransportPool},
 };
-use andromeda_domain::tenant::TenantName;
+use andromeda_ngsi_ld_lexicon::tenant::TenantName;
 use dashmap::DashMap;
 use sqlx::Row;
 use std::{

@@ -1,6 +1,6 @@
 //! The `objectList` / `previousObjectList` member (ETSI GS CIM 009 clause 5.2.37).
 
-use crate::uri::{Uri, UriParseError};
+use andromeda_ngsi_ld_lexicon::uri::{Uri, UriParseError};
 use derive_more::{AsRef, Deref, From};
 use serde::{Deserialize, Deserializer, Serialize, de::Error as DeError};
 use serde_json::Value;
@@ -85,7 +85,8 @@ pub fn parse_relationship_object_entry(value: &Value) -> Result<Uri, Relationshi
 
 #[cfg(test)]
 mod tests {
-    use crate::{attribute::object_list::RelationshipObjectList, uri::Uri};
+    use crate::attribute::object_list::RelationshipObjectList;
+    use andromeda_ngsi_ld_lexicon::uri::Uri;
     use std::str::FromStr;
 
     #[test]

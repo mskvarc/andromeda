@@ -1,9 +1,7 @@
 //! Identity of a single attribute instance inside an expanded entity payload.
 
-use crate::{
-    expanded::{dataset_id::get_instance_dataset_id, node::expanded_object_ref},
-    vocab::expanded::properties,
-};
+use crate::expanded::{dataset_id::get_instance_dataset_id, node::expanded_object_ref};
+use andromeda_ngsi_ld_vocabulary::expanded::properties;
 use iri_rs::IriBuf;
 use serde_json::Value;
 use std::collections::HashSet;

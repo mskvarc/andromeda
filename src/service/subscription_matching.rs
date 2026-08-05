@@ -8,9 +8,9 @@ use crate::service::compiled_subscription::{CompiledGeoQuery, CompiledScopePatte
 use andromeda_domain::{
     notification::{ChangeEvent, ChangeOrigin},
     subscription::SubscriptionStatus,
-    vocab,
 };
 use andromeda_geometry::{geometry::Geometry, relation::matches_geo};
+use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
 use andromeda_query::filter::eval;
 use chrono::Utc;
 use serde_json::Value;
@@ -177,7 +177,7 @@ fn extract_geoproperty_geometry(entity: &Value, geoproperty_iri: &str) -> Option
     let geojson_value = prop_value
         .as_array()
         .and_then(|arr| arr.first())
-        .and_then(|inst| inst.get(vocab::expanded::properties::VALUE.as_str()))
+        .and_then(|inst| inst.get(expanded_properties::VALUE.as_str()))
         .and_then(|v| v.as_array())
         .and_then(|arr| arr.first())
         .and_then(|v| v.get("@value"))?;

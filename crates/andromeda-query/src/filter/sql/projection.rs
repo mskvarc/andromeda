@@ -17,7 +17,8 @@ use crate::{
     pattern::Pattern,
     sql::bind::BindBuilder,
 };
-use andromeda_domain::{attribute::name::AttributeName, temporal::AttributeNameId};
+use andromeda_domain::temporal::AttributeNameId;
+use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use sea_query::{Condition, Expr as SeaExpr, Value as SeaValue};
 
 /// Compile a parsed `q` expression into a sea-query [`Condition`].

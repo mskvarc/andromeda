@@ -1,10 +1,8 @@
 //! Decoding GeoProperty values out of an expanded payload (ETSI GS CIM 009 clause 4.7).
 
-use crate::{
-    expanded::node::expanded_object_ref,
-    vocab::{expanded::properties, prefix},
-};
+use crate::expanded::node::expanded_object_ref;
 use andromeda_geometry::geometry::{Geometry, GeometryType};
+use andromeda_ngsi_ld_vocabulary::{expanded::properties, prefix};
 use geo::{Coord, Geometry as GeoGeometry, LineString, MultiLineString, MultiPoint, MultiPolygon, Point, Polygon};
 use iri_rs::Iri;
 use serde_json::Value;

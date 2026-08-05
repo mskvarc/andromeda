@@ -1,6 +1,6 @@
 //! The `@context` resources the broker caches, hosts, and serves (ETSI GS CIM 009 clause 5.13).
 
-use crate::uri::Uri;
+use andromeda_ngsi_ld_lexicon::uri::Uri;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;

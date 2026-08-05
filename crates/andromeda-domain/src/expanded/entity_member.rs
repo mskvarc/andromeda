@@ -1,7 +1,9 @@
 //! Readers for the entity-level members of an expanded payload: `@type`,
 //! `scope` and `expiresAt`.
 
-use crate::{entity_type::EntityTypeName, expanded::node::expanded_object_ref, scope::grammar::ScopeBuf, vocab::expanded::properties};
+use crate::expanded::node::expanded_object_ref;
+use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, scope::grammar::ScopeBuf};
+use andromeda_ngsi_ld_vocabulary::expanded::properties;
 use chrono::{DateTime, Utc};
 use serde_json::Value;
 

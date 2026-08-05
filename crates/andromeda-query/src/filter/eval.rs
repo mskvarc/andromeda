@@ -6,7 +6,7 @@ use crate::filter::{
     predicate::{CmpOp, Predicate, SetMembership},
     scalar::{CompareValue, Scalar, parse_date, parse_date_time, parse_time},
 };
-use andromeda_domain::vocab::expanded::properties::{OBJECT, VALUE};
+use andromeda_ngsi_ld_vocabulary::expanded::properties::{OBJECT, VALUE};
 use serde_json::{Map, Value};
 use std::cmp::Ordering;
 

@@ -1,9 +1,7 @@
 //! The members every NGSI-LD attribute family carries (ETSI GS CIM 009 clause 5.2).
 
-use crate::{
-    attribute::{instance::AttributeValue, name::AttributeName},
-    uri::Uri,
-};
+use crate::attribute::instance::AttributeValue;
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
 use chrono::{DateTime, Utc};
 use indexmap::IndexMap;
 use jsonld::Expandable;

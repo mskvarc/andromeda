@@ -1,7 +1,7 @@
 //! Which entities a temporal query reads history for.
 
 use crate::{filter::expression::Expr, geo::query::GeoQuery, pattern::Pattern, scope::query::ScopeQuery};
-use andromeda_domain::uri::Uri;
+use andromeda_ngsi_ld_lexicon::uri::Uri;
 use iri_rs::IriBuf;
 use typed_builder::TypedBuilder;
 

@@ -28,8 +28,8 @@ use crate::{
     },
     sql::jsonb::{escape_jsonpath, escape_jsonpath_key},
 };
-use andromeda_domain::vocab::expanded::properties::{EXPIRES_AT, LOCATION, VALUE};
 use andromeda_geometry::{ewkb::encode, geo_rel::GeoRel};
+use andromeda_ngsi_ld_vocabulary::expanded::properties::{EXPIRES_AT, LOCATION, VALUE};
 use sea_query::{Condition, Expr as SeaExpr, SimpleExpr};
 
 /// Where a geo predicate reads the subject geometry from.

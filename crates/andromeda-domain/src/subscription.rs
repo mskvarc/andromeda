@@ -1,12 +1,7 @@
 //! NGSI-LD subscription types (ETSI GS CIM 009 clause 5.2.12).
 
-use crate::{
-    attribute::name::AttributeName,
-    constant_string,
-    response_format::{JoinMode, ResponseFormat},
-    rfc3339,
-    uri::Uri,
-};
+use crate::response_format::{JoinMode, ResponseFormat};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, constant_string, rfc3339, uri::Uri};
 use chrono::{DateTime, Utc};
 use langtag::LangTagBuf;
 use mediatype::MediaTypeBuf;

@@ -1,5 +1,5 @@
 use crate::core::{config::SynchronousCommit, error::AndromedaError};
-use andromeda_domain::tenant::TenantName;
+use andromeda_ngsi_ld_lexicon::tenant::TenantName;
 use sqlx::{Connection, Executor, PgConnection, postgres::PgPoolOptions};
 use std::hash::{Hash, Hasher};
 use url::Url;

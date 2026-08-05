@@ -1,6 +1,6 @@
 //! NGSI-LD Attribute type enum (ETSI GS CIM 009 clause 5.2.4).
 
-use crate::vocab::{
+use andromeda_ngsi_ld_vocabulary::{
     compact::properties as compact_properties,
     expanded::{classes as expanded_classes, properties as expanded_properties},
 };

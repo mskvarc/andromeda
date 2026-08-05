@@ -85,6 +85,8 @@ version = "0.1.0"
 dependencies = [
  "andromeda-domain",
  "andromeda-geometry",
+ "andromeda-ngsi-ld-lexicon",
+ "andromeda-ngsi-ld-vocabulary",
  "andromeda-query",
  "andromeda-test-common",
  "async-trait",
@@ -153,6 +155,8 @@ name = "andromeda-domain"
 version = "0.1.0"
 dependencies = [
  "andromeda-geometry",
+ "andromeda-ngsi-ld-lexicon",
+ "andromeda-ngsi-ld-vocabulary",
  "cefact-units",
  "chrono",
  "compact_str",
@@ -171,7 +175,6 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_with",
- "static-regular-grammar",
  "strum",
  "thiserror 2.0.19",
  "typed-builder",
@@ -197,11 +200,42 @@ dependencies = [
 ]
 
 [[package]]
+name = "andromeda-ngsi-ld-lexicon"
+version = "0.1.0"
+dependencies = [
+ "andromeda-ngsi-ld-vocabulary",
+ "chrono",
+ "compact_str",
+ "derive_more",
+ "indexmap 2.14.0",
+ "iri-rs",
+ "pretty_assertions",
+ "serde",
+ "serde_json",
+ "static-regular-grammar",
+ "strum",
+ "thiserror 2.0.19",
+ "url",
+ "urn-rs",
+]
+
+[[package]]
+name = "andromeda-ngsi-ld-vocabulary"
+version = "0.1.0"
+dependencies = [
+ "iri-rs",
+ "jsonld",
+ "pretty_assertions",
+]
+
+[[package]]
 name = "andromeda-query"
 version = "0.1.0"
 dependencies = [
  "andromeda-domain",
  "andromeda-geometry",
+ "andromeda-ngsi-ld-lexicon",
+ "andromeda-ngsi-ld-vocabulary",
  "chrono",
  "iri-rs",
  "iso8601-duration",

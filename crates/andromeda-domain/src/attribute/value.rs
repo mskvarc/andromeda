@@ -1,13 +1,11 @@
 //! The NGSI-LD value family (ETSI GS CIM 009 clause 4.6.3).
 
-use crate::{
-    attribute::{
-        date_time::{NgsiLdDate, NgsiLdTime},
-        expansion::serde_json_value_to_json_value,
-    },
+use crate::attribute::expansion::serde_json_value_to_json_value;
+use andromeda_geometry::geometry::Geometry;
+use andromeda_ngsi_ld_lexicon::{
+    date_time::{NgsiLdDate, NgsiLdTime},
     uri::Uri,
 };
-use andromeda_geometry::geometry::Geometry;
 use chrono::{DateTime, SecondsFormat, Utc};
 use jsonld_expandable_core::{JsonValue, ToJsonValue};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};

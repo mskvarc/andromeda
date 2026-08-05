@@ -1,4 +1,10 @@
 //! Recursive-descent parser for the NGSI-LD Query Language (clause 4.9).
+//!
+//! The grammar this parser implements is reproduced verbatim in
+//! `grammar/query.abnf` at the root of this crate. Nothing derives from that
+//! file — the language needs operator precedence and value typing that a pure
+//! ABNF recogniser does not express — so it is the reference this parser is
+//! checked against, and the two are kept in step by hand.
 
 use crate::{
     error::QueryError,
@@ -11,7 +17,7 @@ use crate::{
     },
     pattern::Pattern,
 };
-use andromeda_domain::attribute::name::AttributeName;
+use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use serde_json::Number;
 
 /// Parses an NGSI-LD `q` filter expression string into an AST.

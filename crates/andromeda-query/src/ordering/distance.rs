@@ -5,8 +5,8 @@ use crate::{
     ordering::term::OrderTarget,
     sql::jsonb::{escape_jsonpath, escape_jsonpath_key},
 };
-use andromeda_domain::vocab::expanded::properties::{LOCATION, VALUE};
 use andromeda_geometry::geometry::Geometry;
+use andromeda_ngsi_ld_vocabulary::expanded::properties::{LOCATION, VALUE};
 
 /// A reference geometry for distance-based ordering (NGSI-LD S4.23, S5.2.43).
 ///

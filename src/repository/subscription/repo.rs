@@ -6,7 +6,8 @@ use crate::{
     core::error::AndromedaError,
     repository::subscription_store::params::{DatasetIdPresence, SubscriptionFields},
 };
-use andromeda_domain::{subscription::SubscriptionStatus, uri::NGSI_LD_URN_NID};
+use andromeda_domain::subscription::SubscriptionStatus;
+use andromeda_ngsi_ld_lexicon::uri::NGSI_LD_URN_NID;
 use sqlx::postgres::PgPool;
 use tracing::info;
 use urn_rs::UrnBuilder;

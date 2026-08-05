@@ -80,7 +80,7 @@ impl TryFrom<String> for NgsiLdReference {
 
 #[cfg(test)]
 mod tests {
-    use crate::attribute::reference::NgsiLdReference;
+    use crate::reference::NgsiLdReference;
 
     #[test]
     fn ngsi_ld_reference_accepts_short_name() {

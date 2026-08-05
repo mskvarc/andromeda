@@ -163,8 +163,8 @@ fn build_csr_conditions(query: &CompiledCsrQuery) -> Result<Condition, QueryErro
 mod tests {
     use super::*;
     use crate::{csr::compiled::CompiledCsrTemporalFilter, filter::parser, geo::query::GeoQuery, pattern::Pattern};
-    use andromeda_domain::uri::Uri;
     use andromeda_geometry::{geo_rel::GeoRel, geometry::Geometry};
+    use andromeda_ngsi_ld_lexicon::uri::Uri;
     use chrono::{DateTime, Utc};
     use iri_rs::IriBuf;
 

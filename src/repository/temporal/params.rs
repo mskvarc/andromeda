@@ -1,7 +1,8 @@
 //! Repository input parameter types for temporal data.
 
-use andromeda_domain::{attribute_type::AttributeType, temporal::ValueType};
+use andromeda_domain::temporal::ValueType;
 use andromeda_geometry::geometry::Geometry;
+use andromeda_ngsi_ld_lexicon::attribute_type::AttributeType;
 use chrono::{DateTime, Utc};
 use serde_json::Value;
 

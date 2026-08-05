@@ -3,7 +3,7 @@
 //! Types supporting the temporal entity API, which provides access to the
 //! history of attribute values over time.
 
-use crate::attribute_type::AttributeType;
+use andromeda_ngsi_ld_lexicon::attribute_type::AttributeType;
 use derive_more::From;
 use iri_rs::IriBuf;
 use strum::{Display, EnumString};

@@ -5,11 +5,9 @@
 //! produced [`ResolvedCsrUpdate`] as an unconditional UPDATE.
 
 use crate::{core::error::AndromedaError, repository::csource_registration::params::CsrUpdateFragment};
-use andromeda_domain::{
-    registration::{ContextSourceRegistration, ForwardingMode},
-    tenant::TenantName,
-};
+use andromeda_domain::registration::{ContextSourceRegistration, ForwardingMode};
 use andromeda_geometry::geometry::Geometry;
+use andromeda_ngsi_ld_lexicon::tenant::TenantName;
 use chrono::{DateTime, Utc};
 use serde_json::Value;
 

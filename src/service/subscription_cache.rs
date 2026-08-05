@@ -22,8 +22,8 @@ use andromeda_domain::{
     notification::{ChangeEvent, SubscriptionChange, TriggerReason},
     subscription::{EntitySelector, Subscription, SubscriptionStatus},
     sys_attrs::SysAttrsInclusion,
-    vocab,
 };
+use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
 use andromeda_query::filter::parser;
 use dashmap::DashMap;
 use iri_rs::IriBuf;
@@ -356,7 +356,7 @@ pub fn compile_geo_q(geo_q: &serde_json::Value, sub_id: &str) -> Option<Compiled
     let geoproperty_iri = geo_obj
         .get("geoproperty")
         .and_then(|v| v.as_str())
-        .map_or_else(|| vocab::expanded::properties::LOCATION.as_str().to_owned(), ToOwned::to_owned);
+        .map_or_else(|| expanded_properties::LOCATION.as_str().to_owned(), ToOwned::to_owned);
 
     let geojson_value = serde_json::json!({
         "type": geometry_str,

@@ -10,10 +10,8 @@ use crate::{
         repo::{FetchedContext, JsonLdContextRepository, ListedContexts},
     },
 };
-use andromeda_domain::{
-    jsonld_context::{ContextGetResult, ContextKind, ContextListResult, ContextMetadata},
-    uri::Uri,
-};
+use andromeda_domain::jsonld_context::{ContextGetResult, ContextKind, ContextListResult, ContextMetadata};
+use andromeda_ngsi_ld_lexicon::uri::Uri;
 use chrono::Utc;
 use serde_json::Value;
 use sqlx::postgres::PgPool;
@@ -185,7 +183,8 @@ fn build_core_context_metadata(identifier: &str) -> Result<ContextMetadata, Andr
 #[cfg(test)]
 mod tests {
     use super::{build_core_context_metadata, core_context_payload, is_core_context_url};
-    use andromeda_domain::{jsonld_context::ContextKind, uri::Uri};
+    use andromeda_domain::jsonld_context::ContextKind;
+    use andromeda_ngsi_ld_lexicon::uri::Uri;
     use url::Url;
 
     #[test]

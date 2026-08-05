@@ -1,6 +1,6 @@
 //! The EntityMap resource that pins a distributed query's result set (ETSI GS CIM 009 clause 5.2.39).
 
-use crate::{constant_string, ngsi_ld_urn::EntityMapId, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{constant_string, ngsi_ld_urn::EntityMapId, uri::Uri};
 use chrono::{DateTime, Utc};
 use compact_str::CompactString;
 use derive_more::Display;

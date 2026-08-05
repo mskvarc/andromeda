@@ -90,7 +90,7 @@ pub fn parse_ngsi_ld_time(value: &str) -> Result<(), NgsiLdValueError> {
 
 #[cfg(test)]
 mod tests {
-    use crate::attribute::date_time::{NgsiLdDate, NgsiLdTime};
+    use crate::date_time::{NgsiLdDate, NgsiLdTime};
 
     #[test]
     fn ngsi_ld_date_validates_iso_date() {

@@ -8,7 +8,8 @@ use crate::{
         rows::{ContextMetadataRow, ContextSummaryRow},
     },
 };
-use andromeda_domain::{jsonld_context::ContextKind, uri::NGSI_LD_URN_NID};
+use andromeda_domain::jsonld_context::ContextKind;
+use andromeda_ngsi_ld_lexicon::uri::NGSI_LD_URN_NID;
 use async_trait::async_trait;
 use serde_json::Value;
 use sqlx::{postgres::PgPool, types::Json};

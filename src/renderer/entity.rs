@@ -14,11 +14,10 @@ use andromeda_domain::{
     attribute::{
         instance::{Attribute, AttributeValue},
         language_property::{LanguageMapKey, LanguageMapValue, LanguageProperty},
-        name::AttributeName,
     },
     entity::Entity,
-    rfc3339,
 };
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, rfc3339};
 use chrono::{DateTime, SecondsFormat, Utc};
 use indexmap::IndexMap;
 use langtag::LangTagBuf;

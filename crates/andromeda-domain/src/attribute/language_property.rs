@@ -132,13 +132,11 @@ fn language_entry<V: JsonValue>(key: &LanguageMapKey, value: &str) -> V {
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        attribute::{
-            instance::Attribute,
-            language_property::{LanguageMapKey, LanguageMapValue, LanguageProperty},
-        },
-        vocab::expanded::properties as expanded_properties,
+    use crate::attribute::{
+        instance::Attribute,
+        language_property::{LanguageMapKey, LanguageMapValue, LanguageProperty},
     };
+    use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
     use indexmap::IndexMap;
     use jsonld::Expandable;
 

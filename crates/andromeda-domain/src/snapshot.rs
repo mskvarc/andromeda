@@ -1,6 +1,6 @@
 //! The Snapshot resource and its notification payload (ETSI GS CIM 009 clauses 5.2.41 to 5.3.4).
 
-use crate::{
+use andromeda_ngsi_ld_lexicon::{
     constant_string,
     ngsi_ld_urn::{SnapshotId, SnapshotNotificationId, SnapshotNotificationIdParseError},
 };
@@ -300,12 +300,12 @@ pub struct SnapshotPatch {
 #[cfg(test)]
 mod tests {
     use crate::{
-        ngsi_ld_urn::SnapshotId,
         snapshot::{Snapshot, SnapshotPriority, SnapshotStatus},
         snapshot_query::{SnapshotQuery, SnapshotTemporalQuery},
         temporal::{AggrMethod, TimeProp, TimeRel},
     };
     use andromeda_geometry::{geo_rel::GeoRel, geometry::GeometryType};
+    use andromeda_ngsi_ld_lexicon::ngsi_ld_urn::SnapshotId;
     use chrono::{DateTime, Utc};
     use iso8601_duration::Duration as Iso8601Duration;
     use strum::IntoEnumIterator;

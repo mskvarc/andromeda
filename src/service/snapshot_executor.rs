@@ -22,10 +22,10 @@ use crate::{
     },
 };
 use andromeda_domain::{
-    ngsi_ld_urn::SnapshotId,
     snapshot::{ExecutionResultDetails, ExecutionResultStatus, Snapshot, SnapshotStatus},
     snapshot_query::{SnapshotEntitySelector, SnapshotGeoQuery, SnapshotQuery, SnapshotTemporalQuery},
 };
+use andromeda_ngsi_ld_lexicon::ngsi_ld_urn::SnapshotId;
 use chrono::{DateTime, SecondsFormat, Utc};
 use compact_str::CompactString;
 use serde_json::Value;
@@ -469,11 +469,11 @@ const fn compute_final_status(any_success_with_results: bool, any_failure: bool,
 mod tests {
     use super::*;
     use andromeda_domain::{
-        attribute::name::AttributeName,
         snapshot_query::{SnapshotEntitySelector, SnapshotGeoQuery, SnapshotQuery, SnapshotTemporalQuery},
         temporal::{AggrMethod, TimeProp, TimeRel},
     };
     use andromeda_geometry::geometry::GeometryType;
+    use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 
     fn attribute_name(raw: &str) -> AttributeName {
         raw.parse().expect("valid attribute name")

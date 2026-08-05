@@ -3,7 +3,7 @@
 //! Carries the snapshot identifier for snapshot-scoped requests and responses.
 //! The value must be a valid snapshot URN (`urn:ngsi-ld:Snapshot:<id>`).
 
-use andromeda_domain::ngsi_ld_urn::SnapshotId;
+use andromeda_ngsi_ld_lexicon::ngsi_ld_urn::SnapshotId;
 use axum::http::{HeaderName, HeaderValue};
 
 static NGSILD_SNAPSHOT: HeaderName = HeaderName::from_static("ngsild-snapshot");
@@ -63,7 +63,7 @@ impl headers::Header for NgsiLdSnapshot {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use andromeda_domain::ngsi_ld_urn::SnapshotId;
+    use andromeda_ngsi_ld_lexicon::ngsi_ld_urn::SnapshotId;
     use headers::Header;
 
     fn decode_from(raw: &str) -> Result<NgsiLdSnapshot, headers::Error> {

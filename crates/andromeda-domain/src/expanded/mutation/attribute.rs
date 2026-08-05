@@ -1,16 +1,14 @@
 //! Single-attribute writes: partial update, delete, and replace
 //! (clauses 5.6.4, 5.6.5 and 5.6.19).
 
-use crate::{
-    expanded::{
-        dataset_id::get_instance_dataset_id,
-        merge::{merge_json, remove_instances_by_dataset},
-        mutation::{error::ExpandedEntityError, selection::DatasetSelection},
-        node::expanded_object_mut,
-        null_sentinel::instance_is_null_sentinel,
-    },
-    vocab::expanded::properties,
+use crate::expanded::{
+    dataset_id::get_instance_dataset_id,
+    merge::{merge_json, remove_instances_by_dataset},
+    mutation::{error::ExpandedEntityError, selection::DatasetSelection},
+    node::expanded_object_mut,
+    null_sentinel::instance_is_null_sentinel,
 };
+use andromeda_ngsi_ld_vocabulary::expanded::properties;
 use serde_json::Value;
 
 /// Partial update of a single attribute (clause 5.6.4): merge `fragment` into the

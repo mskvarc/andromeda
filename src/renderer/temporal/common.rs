@@ -2,12 +2,15 @@
 
 use crate::{core::error::AndromedaError, service::temporal::format_datetime};
 use andromeda_domain::{
-    attribute_type::AttributeType,
     sys_attrs::SysAttrsInclusion,
     temporal::{TeaEntry, ValueType},
-    vocab,
 };
 use andromeda_geometry::{ewkb::Ewkb, geometry::Geometry};
+use andromeda_ngsi_ld_lexicon::attribute_type::AttributeType;
+use andromeda_ngsi_ld_vocabulary::{
+    expanded::{classes as expanded_classes, properties as expanded_properties},
+    prefix,
+};
 use chrono::{DateTime, Utc};
 use iri_rs::IriBuf;
 use serde_json::{Value, json};
@@ -89,33 +92,33 @@ pub(crate) fn history_row_to_expanded_instance(row: &PgRow, tea: &TeaEntry, sys_
 
     let value_key = tea.attribute_type.value_key_str();
 
-    let is_tombstone = row.try_get::<Option<String>, _>("value_string").ok().flatten().as_deref() == Some(vocab::expanded::properties::NULL_URI.as_str());
+    let is_tombstone = row.try_get::<Option<String>, _>("value_string").ok().flatten().as_deref() == Some(expanded_properties::NULL_URI.as_str());
 
     if is_tombstone {
-        if tea.attribute_name == vocab::expanded::properties::SCOPE.as_str() {
+        if tea.attribute_name == expanded_properties::SCOPE.as_str() {
             instance.insert(value_key.to_string(), json!([]));
         } else if tea.attribute_type == AttributeType::Relationship {
-            instance.insert(value_key.to_string(), json!([{"@id": vocab::expanded::properties::NULL_URI.as_str()}]));
+            instance.insert(value_key.to_string(), json!([{"@id": expanded_properties::NULL_URI.as_str()}]));
         } else if tea.attribute_type == AttributeType::LanguageProperty {
             instance.insert(
                 value_key.to_string(),
-                json!([{"@value": vocab::expanded::properties::NULL_URI.as_str(), "@language": "@none"}]),
+                json!([{"@value": expanded_properties::NULL_URI.as_str(), "@language": "@none"}]),
             );
         } else {
-            instance.insert(value_key.to_string(), json!([{"@value": vocab::expanded::properties::NULL_URI.as_str()}]));
+            instance.insert(value_key.to_string(), json!([{"@value": expanded_properties::NULL_URI.as_str()}]));
         }
         if let Ok(time) = row.try_get::<DateTime<Utc>, _>("time") {
             instance.insert(
-                vocab::expanded::properties::DELETED_AT.as_str().to_string(),
-                json!([{"@value": format_datetime(time), "@type": vocab::expanded::classes::DATE_TIME.as_str()}]),
+                expanded_properties::DELETED_AT.as_str().to_string(),
+                json!([{"@value": format_datetime(time), "@type": expanded_classes::DATE_TIME.as_str()}]),
             );
         }
-        if tea.attribute_name != vocab::expanded::properties::SCOPE.as_str() {
+        if tea.attribute_name != expanded_properties::SCOPE.as_str() {
             let instance_id: String = row.try_get("instance_id")?;
-            instance.insert(vocab::expanded::properties::INSTANCE_ID.as_str().to_string(), json!([{"@id": instance_id}]));
+            instance.insert(expanded_properties::INSTANCE_ID.as_str().to_string(), json!([{"@id": instance_id}]));
         }
         if let Some(ds_id) = &tea.dataset_id {
-            instance.insert(vocab::expanded::properties::DATASET_ID.as_str().to_string(), json!([{"@id": ds_id.as_str()}]));
+            instance.insert(expanded_properties::DATASET_ID.as_str().to_string(), json!([{"@id": ds_id.as_str()}]));
         }
         return Ok(Value::Object(instance));
     }
@@ -180,7 +183,7 @@ pub(crate) fn history_row_to_expanded_instance(row: &PgRow, tea: &TeaEntry, sys_
             if let Ok(v) = row.try_get::<DateTime<Utc>, _>("value_datetime") {
                 instance.insert(
                     value_key.to_string(),
-                    json!([{"@value": format_datetime(v), "@type": vocab::expanded::classes::DATE_TIME.as_str()}]),
+                    json!([{"@value": format_datetime(v), "@type": expanded_classes::DATE_TIME.as_str()}]),
                 );
             }
         }
@@ -193,8 +196,8 @@ pub(crate) fn history_row_to_expanded_instance(row: &PgRow, tea: &TeaEntry, sys_
 
     if let Ok(Some(observed_at)) = row.try_get::<Option<DateTime<Utc>>, _>("observed_at") {
         instance.insert(
-            vocab::expanded::properties::OBSERVED_AT.as_str().to_string(),
-            json!([{"@value": format_datetime(observed_at), "@type": vocab::expanded::classes::DATE_TIME.as_str()}]),
+            expanded_properties::OBSERVED_AT.as_str().to_string(),
+            json!([{"@value": format_datetime(observed_at), "@type": expanded_classes::DATE_TIME.as_str()}]),
         );
     }
 
@@ -202,16 +205,16 @@ pub(crate) fn history_row_to_expanded_instance(row: &PgRow, tea: &TeaEntry, sys_
         && let Ok(time) = row.try_get::<DateTime<Utc>, _>("time")
     {
         instance.insert(
-            vocab::expanded::properties::CREATED_AT.as_str().to_string(),
-            json!([{"@value": format_datetime(time), "@type": vocab::expanded::classes::DATE_TIME.as_str()}]),
+            expanded_properties::CREATED_AT.as_str().to_string(),
+            json!([{"@value": format_datetime(time), "@type": expanded_classes::DATE_TIME.as_str()}]),
         );
     }
 
     let instance_id: String = row.try_get("instance_id")?;
-    instance.insert(vocab::expanded::properties::INSTANCE_ID.as_str().to_string(), json!([{"@id": instance_id}]));
+    instance.insert(expanded_properties::INSTANCE_ID.as_str().to_string(), json!([{"@id": instance_id}]));
 
     if let Some(ds_id) = &tea.dataset_id {
-        instance.insert(vocab::expanded::properties::DATASET_ID.as_str().to_string(), json!([{"@id": ds_id.as_str()}]));
+        instance.insert(expanded_properties::DATASET_ID.as_str().to_string(), json!([{"@id": ds_id.as_str()}]));
     }
 
     if let Ok(Some(meta)) = row.try_get::<Option<Value>, _>("metadata")
@@ -250,8 +253,8 @@ fn expand_geojson(geojson: &Value) -> Value {
     let expanded_coords = expand_coordinates(&coordinates);
 
     json!({
-        "@type": [format!("{}{}", vocab::prefix::GEOJSON.as_str(), geo_type)],
-        format!("{}coordinates", vocab::prefix::GEOJSON.as_str()): [{"@list": expanded_coords}]
+        "@type": [format!("{}{}", prefix::GEOJSON.as_str(), geo_type)],
+        format!("{}coordinates", prefix::GEOJSON.as_str()): [{"@list": expanded_coords}]
     })
 }
 

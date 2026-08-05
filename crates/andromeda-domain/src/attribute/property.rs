@@ -53,10 +53,8 @@ pub struct Property {
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        attribute::{instance::Attribute, value::NgsiLdValue},
-        vocab::expanded::properties as expanded_properties,
-    };
+    use crate::attribute::{instance::Attribute, value::NgsiLdValue};
+    use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
     use jsonld::Expandable;
     use serde_json::Value;
 

@@ -54,13 +54,12 @@ use crate::{
     },
 };
 use andromeda_domain::{
-    attribute::name::AttributeName,
     entity::{Entity, EntityPatch},
-    entity_type::{EntityTypeName, EntityTypeValue},
+    entity_type::EntityTypeValue,
     expanded::mutation::selection::{DatasetSelection, OverwritePolicy},
     sys_attrs::SysAttrsInclusion,
-    uri::Uri,
 };
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, uri::Uri};
 use andromeda_query::{
     filter::{eval::evaluate, expansion::expand_q_expression},
     projection::purge::{PurgeMode, parse_attribute_list},

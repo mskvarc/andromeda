@@ -1,6 +1,6 @@
 //! Repository input parameters for the JSON-LD context store.
 
-use andromeda_domain::uri::Uri;
+use andromeda_ngsi_ld_lexicon::uri::Uri;
 
 /// SQL projection shape selector — whether to fetch full metadata columns or
 /// just identifier/url for listing and retrieval.

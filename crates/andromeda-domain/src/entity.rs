@@ -1,15 +1,11 @@
 //! The NGSI-LD Entity and the partial form its patch operations accept (ETSI GS CIM 009 clause 5.2.4).
 
 use crate::{
-    attribute::{
-        instance::{Attribute, AttributeValue},
-        name::AttributeName,
-    },
+    attribute::instance::{Attribute, AttributeValue},
     entity_type::EntityTypeValue,
     notification::SysAttrsSnapshot,
-    scope::grammar::ScopeBuf,
-    uri::Uri,
 };
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, scope::grammar::ScopeBuf, uri::Uri};
 use chrono::{DateTime, SecondsFormat, Utc};
 use indexmap::IndexMap;
 use jsonld::Expandable;
@@ -325,11 +321,12 @@ impl EntityPatch {
 #[cfg(test)]
 mod tests {
     use crate::{
-        attribute::{instance::AttributeValue, name::AttributeName},
+        attribute::instance::AttributeValue,
         entity::{Entity, EntityPatch},
         notification::SysAttrsSnapshot,
-        vocab::expanded::{classes as expanded_classes, properties as expanded_properties},
     };
+    use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
+    use andromeda_ngsi_ld_vocabulary::expanded::{classes as expanded_classes, properties as expanded_properties};
     use chrono::{Datelike, TimeZone, Utc};
     use serde_json::{Value, json};
 

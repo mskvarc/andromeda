@@ -14,7 +14,7 @@ use bytes::Bytes;
 use mediatype::MediaTypeBuf;
 
 use crate::http::model::response_format::{APPLICATION_GEO_JSON, APPLICATION_JSON, APPLICATION_LD_JSON};
-use andromeda_domain::tenant::TenantName;
+use andromeda_ngsi_ld_lexicon::tenant::TenantName;
 
 /// Unique identifier for a single streaming client connection (SSE or WebSocket).
 ///

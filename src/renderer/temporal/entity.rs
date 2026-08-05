@@ -8,7 +8,7 @@ use crate::{
         temporal::common::{TimeRange, history_row_to_expanded_instance, parse_tea_entry},
     },
 };
-use andromeda_domain::entity_type::EntityTypeName;
+use andromeda_ngsi_ld_lexicon::entity_type_name::EntityTypeName;
 use andromeda_query::temporal::compiled::CompiledTemporalQuery;
 use chrono::{DateTime, Utc};
 use indexmap::IndexMap;

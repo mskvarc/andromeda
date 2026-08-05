@@ -10,6 +10,8 @@ authors = ["Matej Škvarč <matej.skvarc@senlab.io>"]
 [workspace.dependencies]
 andromeda-domain = { path = "crates/andromeda-domain" }
 andromeda-geometry = { path = "crates/andromeda-geometry" }
+andromeda-ngsi-ld-lexicon = { path = "crates/andromeda-ngsi-ld-lexicon" }
+andromeda-ngsi-ld-vocabulary = { path = "crates/andromeda-ngsi-ld-vocabulary" }
 andromeda-query = { path = "crates/andromeda-query" }
 andromeda-test-common = { path = "lib/andromeda-test-common" }
 
@@ -41,6 +43,8 @@ workspace = true
 [dependencies]
 andromeda-domain.workspace = true
 andromeda-geometry.workspace = true
+andromeda-ngsi-ld-lexicon.workspace = true
+andromeda-ngsi-ld-vocabulary.workspace = true
 andromeda-query.workspace = true
 async-trait = "0.1.89"
 axum = { version = "0.8.9", features = ["ws"] }

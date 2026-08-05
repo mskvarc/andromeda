@@ -17,7 +17,7 @@ use crate::{
     pattern::Pattern,
     sql::jsonb::{escape_jsonpath, escape_jsonpath_key},
 };
-use andromeda_domain::vocab::expanded::properties::{OBJECT, VALUE};
+use andromeda_ngsi_ld_vocabulary::expanded::properties::{OBJECT, VALUE};
 use sea_query::{Condition, Expr as SeaExpr, Value as SeaValue};
 
 /// Compile an existence predicate that carries a sub-path.

@@ -5,8 +5,8 @@ use crate::{
 use andromeda_domain::{
     expanded::instance_key::removed_attribute_instances,
     notification::{ChangeEvent, TriggerReason},
-    uri::Uri,
 };
+use andromeda_ngsi_ld_lexicon::uri::Uri;
 use std::{sync::Arc, time::Duration};
 use tokio::sync::broadcast;
 use tracing::{debug, error, info};

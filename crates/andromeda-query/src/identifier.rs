@@ -2,7 +2,7 @@
 //! (clause 4.5.5).
 
 use crate::error::QueryError;
-use andromeda_domain::uri::Uri;
+use andromeda_ngsi_ld_lexicon::uri::Uri;
 
 /// Parse the comma-separated `id` parameter into the URIs it names.
 ///

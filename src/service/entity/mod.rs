@@ -28,12 +28,15 @@ use crate::{
     },
 };
 use andromeda_domain::{
-    attribute::name::AttributeName,
     entity::{Entity, EntityPatch},
-    entity_type::EntityTypeName,
     expanded::{entity_member::extract_types, instance_key::removed_attribute_instances},
     notification::{ChangeEvent, TriggerReason},
     outbox::NewOutboxEntry,
+};
+use andromeda_ngsi_ld_lexicon::{
+    attribute_name::AttributeName,
+    attribute_type::AttributeType,
+    entity_type_name::EntityTypeName,
     scope::grammar::ScopeBuf,
     uri::Uri,
 };
@@ -691,7 +694,7 @@ pub(crate) fn extract_scopes(expanded: &Value) -> Vec<ScopeBuf> {
         return Vec::new();
     };
 
-    let Some(scope_value) = obj.get(vocab::expanded::properties::SCOPE.as_str()) else {
+    let Some(scope_value) = obj.get(expanded_properties::SCOPE.as_str()) else {
         return Vec::new();
     };
 
@@ -774,14 +777,14 @@ fn is_explicit_attribute_object(obj: &Map<String, Value>) -> bool {
 }
 
 fn is_known_attribute_type(attr_type: &str) -> bool {
-    attr_type.parse::<andromeda_domain::attribute_type::AttributeType>().is_ok()
+    attr_type.parse::<AttributeType>().is_ok()
 }
 
 fn normalize_explicit_attribute_object(obj: &mut Map<String, Value>) {
     let Some(attr_type_str) = obj.get("type").and_then(Value::as_str) else {
         return;
     };
-    let reserved = match attr_type_str.parse::<andromeda_domain::attribute_type::AttributeType>() {
+    let reserved = match attr_type_str.parse::<AttributeType>() {
         Ok(t) => t.reserved_fields(),
         Err(_) => return,
     };
@@ -801,7 +804,10 @@ fn wrap_raw_as_property(raw: Value) -> Value {
     Value::Object(property)
 }
 
-use andromeda_domain::vocab;
+use andromeda_ngsi_ld_vocabulary::{
+    expanded::{classes as expanded_classes, properties as expanded_properties},
+    prefix,
+};
 
 fn validate_attribute_envelopes(expanded: &Value) -> Result<(), AndromedaError> {
     let entities = match expanded {
@@ -840,11 +846,11 @@ fn validate_attr_instances(attr_name: &str, value: &Value) -> Result<(), Androme
             .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect())
             .unwrap_or_default();
 
-        let is_property = types.iter().any(|t| *t == vocab::expanded::classes::PROPERTY.as_str());
-        let is_geo_property = types.iter().any(|t| *t == vocab::expanded::classes::GEO_PROPERTY.as_str());
-        let is_relationship = types.iter().any(|t| *t == vocab::expanded::classes::RELATIONSHIP.as_str());
+        let is_property = types.iter().any(|t| *t == expanded_classes::PROPERTY.as_str());
+        let is_geo_property = types.iter().any(|t| *t == expanded_classes::GEO_PROPERTY.as_str());
+        let is_relationship = types.iter().any(|t| *t == expanded_classes::RELATIONSHIP.as_str());
 
-        if (is_property || is_geo_property) && !obj.contains_key(vocab::expanded::properties::VALUE.as_str()) {
+        if (is_property || is_geo_property) && !obj.contains_key(expanded_properties::VALUE.as_str()) {
             let short_type = if is_geo_property { "GeoProperty" } else { "Property" };
             return Err(AndromedaError::entity_validation(format!(
                 "{} '{}' is missing required field 'value'",
@@ -852,7 +858,7 @@ fn validate_attr_instances(attr_name: &str, value: &Value) -> Result<(), Androme
             )));
         }
 
-        if is_relationship && !obj.contains_key(vocab::expanded::properties::OBJECT.as_str()) {
+        if is_relationship && !obj.contains_key(expanded_properties::OBJECT.as_str()) {
             return Err(AndromedaError::entity_validation(format!(
                 "Relationship '{}' is missing required field 'object'",
                 attr_name
@@ -880,29 +886,28 @@ pub(crate) fn inject_sys_attrs(entity: &mut Value, created_at: DateTime<Utc>, mo
     let Some(obj) = expanded_entity_object_mut(entity) else {
         return;
     };
-    let default_context_prefix = format!("{}default-context/", vocab::prefix::NGSI_LD.as_str());
+    let default_context_prefix = format!("{}default-context/", prefix::NGSI_LD.as_str());
 
     let created_at_value = serde_json::json!([{
-        "@type": vocab::expanded::classes::DATE_TIME.as_str(),
+        "@type": expanded_classes::DATE_TIME.as_str(),
         "@value": created_at.to_rfc3339_opts(SecondsFormat::Millis, true)
     }]);
     let modified_at_value = serde_json::json!([{
-        "@type": vocab::expanded::classes::DATE_TIME.as_str(),
+        "@type": expanded_classes::DATE_TIME.as_str(),
         "@value": modified_at.to_rfc3339_opts(SecondsFormat::Millis, true)
     }]);
 
-    obj.entry(vocab::expanded::properties::CREATED_AT.as_str().to_string())
+    obj.entry(expanded_properties::CREATED_AT.as_str().to_string())
         .or_insert(created_at_value.clone()); // clone: value also passed to inject_attr_sys_attrs below
-    obj.entry(vocab::expanded::properties::MODIFIED_AT.as_str().to_string())
+    obj.entry(expanded_properties::MODIFIED_AT.as_str().to_string())
         .or_insert(modified_at_value.clone()); // clone: value also passed to inject_attr_sys_attrs below
 
     if let Some(expires_at) = expires_at.into() {
         let expires_at_value = serde_json::json!([{
-            "@type": vocab::expanded::classes::DATE_TIME.as_str(),
+            "@type": expanded_classes::DATE_TIME.as_str(),
             "@value": expires_at.to_rfc3339_opts(SecondsFormat::Millis, true)
         }]);
-        obj.entry(vocab::expanded::properties::EXPIRES_AT.as_str().to_string())
-            .or_insert(expires_at_value);
+        obj.entry(expanded_properties::EXPIRES_AT.as_str().to_string()).or_insert(expires_at_value);
     }
 
     inject_attr_sys_attrs(obj, &created_at_value, &modified_at_value, &default_context_prefix);
@@ -912,7 +917,7 @@ pub(crate) fn inject_sys_attrs(entity: &mut Value, created_at: DateTime<Utc>, mo
 pub(crate) fn inject_attr_sys_attrs(obj: &mut Map<String, Value>, created_at_value: &Value, modified_at_value: &Value, default_context_prefix: &str) {
     let attr_keys: Vec<String> = obj
         .keys()
-        .filter(|k| !k.starts_with('@') && (!k.starts_with(vocab::prefix::NGSI_LD.as_str()) || k.starts_with(default_context_prefix)))
+        .filter(|k| !k.starts_with('@') && (!k.starts_with(prefix::NGSI_LD.as_str()) || k.starts_with(default_context_prefix)))
         .cloned() // clone: owned keys needed to avoid borrowing obj during mutation below
         .collect();
 
@@ -925,10 +930,10 @@ pub(crate) fn inject_attr_sys_attrs(obj: &mut Map<String, Value>, created_at_val
                 continue;
             };
             inst_obj
-                .entry(vocab::expanded::properties::CREATED_AT.as_str().to_string())
+                .entry(expanded_properties::CREATED_AT.as_str().to_string())
                 .or_insert(created_at_value.clone()); // clone: or_insert requires owned value, reused across loop iterations
             inst_obj
-                .entry(vocab::expanded::properties::MODIFIED_AT.as_str().to_string())
+                .entry(expanded_properties::MODIFIED_AT.as_str().to_string())
                 .or_insert(modified_at_value.clone()); // clone: or_insert requires owned value, reused across loop iterations
         }
     }

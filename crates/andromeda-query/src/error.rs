@@ -13,8 +13,8 @@
 //! internal errors.
 
 use crate::ordering::collation::IcuCollationError;
-use andromeda_domain::attribute::reference::NgsiLdReferenceError;
 use andromeda_geometry::{ewkb::EwkbError, geo_rel::GeoRelParseError, geometry::GeometryError};
+use andromeda_ngsi_ld_lexicon::reference::NgsiLdReferenceError;
 
 /// Errors raised while validating, parsing, compiling or planning a query.
 #[derive(Debug, thiserror::Error)]

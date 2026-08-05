@@ -1,6 +1,6 @@
 //! The name under which an attribute is keyed inside an entity.
 
-use crate::attribute::reference::{NgsiLdReferenceError, validate_ngsi_ld_name};
+use crate::reference::{NgsiLdReferenceError, validate_ngsi_ld_name};
 use compact_str::CompactString;
 use derive_more::{AsRef, Deref, Display, Into};
 use serde::{Deserialize, Serialize};
@@ -15,7 +15,7 @@ use std::{borrow::Borrow, str::FromStr};
 /// grammar is exactly the one [`NgsiLdReference`] uses — see
 /// [`validate_ngsi_ld_name`].
 ///
-/// [`NgsiLdReference`]: crate::attribute::reference::NgsiLdReference
+/// [`NgsiLdReference`]: crate::reference::NgsiLdReference
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize, AsRef, Display, Deref, Into)]
 #[serde(try_from = "String", into = "String")]
 #[as_ref(str)]
@@ -63,7 +63,7 @@ impl Borrow<str> for AttributeName {
 
 #[cfg(test)]
 mod tests {
-    use crate::attribute::name::AttributeName;
+    use crate::attribute_name::AttributeName;
     use indexmap::IndexMap;
 
     #[test]

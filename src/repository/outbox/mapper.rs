@@ -5,11 +5,10 @@
 
 use crate::repository::outbox::rows::OutboxEntryRow;
 use andromeda_domain::{
-    attribute::reference::NgsiLdReferenceError,
     notification::TriggerReason,
     outbox::{OutboxEntry, OutboxEntryId, WorkerInstanceId},
-    uri::Uri,
 };
+use andromeda_ngsi_ld_lexicon::{reference::NgsiLdReferenceError, uri::Uri};
 use std::str::FromStr;
 use thiserror::Error;
 

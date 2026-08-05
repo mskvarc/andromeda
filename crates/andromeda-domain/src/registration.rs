@@ -1,6 +1,7 @@
 //! Context source registration types (ETSI GS CIM 009 clause 5.2.9).
 
-use crate::{attribute::name::AttributeName, constant_string, rfc3339, scope::grammar::ScopeBuf, subscription::EntitySelector, tenant::TenantName, uri::Uri};
+use crate::subscription::EntitySelector;
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, constant_string, rfc3339, scope::grammar::ScopeBuf, tenant::TenantName, uri::Uri};
 use chrono::{DateTime, Utc};
 use iso8601_duration::Duration as Iso8601Duration;
 use mediatype::MediaTypeBuf;

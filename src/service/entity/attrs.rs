@@ -11,7 +11,6 @@ use crate::{
     },
 };
 use andromeda_domain::{
-    attribute::name::AttributeName,
     expanded::{
         entity_member::extract_types,
         instance_key::removed_attribute_instances,
@@ -23,9 +22,9 @@ use andromeda_domain::{
         },
     },
     notification::{ChangeEvent, TriggerReason},
-    uri::Uri,
-    vocab,
 };
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
+use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
 use andromeda_query::projection::purge::PurgeMode;
 use serde_json::Value;
 use std::{collections::HashSet, sync::Arc};
@@ -293,7 +292,7 @@ impl EntityService {
 
         let attr_iri = self.engine.expand_term(attr_name, context).await?;
 
-        if attr_iri == vocab::expanded::properties::SCOPE.as_str() {
+        if attr_iri == expanded_properties::SCOPE.as_str() {
             return Err(AndromedaError::entity_validation("Scope is not a replaceable attribute"));
         }
 

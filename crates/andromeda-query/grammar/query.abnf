@@ -5,20 +5,19 @@
 ; reproduced exactly as the specification states it; only layout, section
 ; headers and these comments are local additions.
 ;
-; DOCUMENTATION ONLY. Unlike the other files in `grammar/`, nothing derives a
-; parser from this one: no `#[grammar(file = ...)]` attribute references
-; `grammar/.generated/query.abnf`. `build.rs` composes every `*.abnf` in this
-; directory with `_unicode.abnf` into `grammar/.generated/` indiscriminately, so
-; a composed copy does get written -- it is simply never consumed.
+; DOCUMENTATION ONLY. Nothing derives a parser from this file: no
+; `#[grammar(file = ...)]` attribute references it, and this crate has no build
+; script composing it.
 ;
-; The `q` parser lives in `src/query/q/parser.rs` and is hand-written, because
+; The `q` parser lives in `src/filter/parser.rs` and is hand-written, because
 ; the language needs operator precedence and value typing that a pure ABNF
 ; recogniser does not express. This file is the reference that parser is checked
 ; against; keep the two in step when the specification changes.
 ;
-; `unicodeLetter` and `unicodeNumber` come from `_unicode.abnf`. `String`,
-; `Number`, `URI`, `dateTime`, `date`, `time`, `true`, `false` and `RegExp` are
-; the external productions the specification imports.
+; `unicodeLetter` and `unicodeNumber` are defined in `grammar/_unicode.abnf` of
+; `andromeda-ngsi-ld-lexicon`, which is where the grammars that are derived from
+; live. `String`, `Number`, `URI`, `dateTime`, `date`, `time`, `true`, `false`
+; and `RegExp` are the external productions the specification imports.
 ; ============================================================================
 
 ; ----------------------------------------------------------------------------

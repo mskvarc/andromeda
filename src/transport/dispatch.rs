@@ -18,7 +18,7 @@ use crate::transport::{
     types::{DeliveryOutcome, DeliveryRequest, NotificationTransport, TenantHeaderValue, TransportError, content_type_for_accept},
     ws::{WsConnectionRegistry, WsNotificationMessage},
 };
-use andromeda_domain::tenant::TenantName;
+use andromeda_ngsi_ld_lexicon::tenant::TenantName;
 
 /// Unified transport dispatcher routing to HTTP, MQTT, SSE, or WebSocket.
 pub struct TransportDispatcher {

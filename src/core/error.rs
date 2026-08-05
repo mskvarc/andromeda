@@ -8,7 +8,7 @@
 //! (`instance`) that handlers attach for RFC 7807 Problem Details responses.
 
 use crate::jsonld::Error as JsonLdError;
-use andromeda_domain::ngsi_ld_urn::{
+use andromeda_ngsi_ld_lexicon::ngsi_ld_urn::{
     AttributeListIdParseError,
     EntityMapIdParseError,
     EntityTypeListIdParseError,

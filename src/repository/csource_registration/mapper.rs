@@ -1,21 +1,17 @@
 //! Row-to-domain mapping for context source registrations.
 
 use crate::core::error::AndromedaError;
-use andromeda_domain::{
-    registration::{
-        ContextSourceAccess,
-        ContextSourceRegistration,
-        CsrOperation,
-        CsrStatus,
-        ForwardingMode,
-        RegistrationCoverage,
-        RegistrationHealth,
-        RegistrationLifecycle,
-    },
-    scope::grammar::ScopeBuf,
-    tenant::TenantName,
-    uri::Uri,
+use andromeda_domain::registration::{
+    ContextSourceAccess,
+    ContextSourceRegistration,
+    CsrOperation,
+    CsrStatus,
+    ForwardingMode,
+    RegistrationCoverage,
+    RegistrationHealth,
+    RegistrationLifecycle,
 };
+use andromeda_ngsi_ld_lexicon::{scope::grammar::ScopeBuf, tenant::TenantName, uri::Uri};
 use chrono::{DateTime, Utc};
 use iso8601_duration::Duration as Iso8601Duration;
 use mediatype::MediaTypeBuf;

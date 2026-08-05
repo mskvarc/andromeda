@@ -17,11 +17,10 @@ use crate::{
     },
 };
 use andromeda_domain::{
-    attribute::name::AttributeName,
     entity::Entity,
-    entity_type::EntityTypeName,
     expanded::{
-        entity_member::{self, extract_expires_at, extract_types},
+        entity_member,
+        entity_member::{extract_expires_at, extract_types},
         geo_property::{extract_location_geometry, extract_observation_space_geometry, extract_operation_space_geometry},
         instance_key::{AttributeInstanceKey, removed_attribute_instances},
         mutation::{
@@ -30,10 +29,9 @@ use andromeda_domain::{
         },
     },
     notification::{ChangeEvent, SysAttrsSnapshot, TriggerReason},
-    scope::grammar::ScopeBuf,
-    uri::Uri,
 };
 use andromeda_geometry::geometry::Geometry;
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, scope::grammar::ScopeBuf, uri::Uri};
 use andromeda_query::scope::ltree::scope_to_ltree;
 use futures::{StreamExt, stream};
 use serde_json::Value;

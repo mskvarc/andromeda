@@ -4,7 +4,8 @@
 //! enabling atomic persistence of notification intents alongside entity
 //! mutations (ETSI GS CIM 009 clause 5.3).
 
-use crate::{attribute::name::AttributeName, notification::TriggerReason, uri::Uri};
+use crate::notification::TriggerReason;
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
 use chrono::{DateTime, Utc};
 use derive_more::{Display, From};
 use serde_json::Value;

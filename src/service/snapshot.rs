@@ -15,10 +15,10 @@ use crate::{
     },
 };
 use andromeda_domain::{
-    ngsi_ld_urn::SnapshotId,
     snapshot::{KeyValuePair, Snapshot, SnapshotInput, SnapshotPatch, SnapshotPriority, SnapshotStatus},
     snapshot_filter::SnapshotPurgeFilter,
 };
+use andromeda_ngsi_ld_lexicon::ngsi_ld_urn::SnapshotId;
 use chrono::Utc;
 use iso8601_duration::Duration as Iso8601Duration;
 use serde_json::Value;

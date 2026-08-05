@@ -33,7 +33,8 @@ pub struct GeoProperty {
 
 #[cfg(test)]
 mod tests {
-    use crate::{attribute::instance::Attribute, vocab::expanded::properties as expanded_properties};
+    use crate::attribute::instance::Attribute;
+    use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
     use jsonld::Expandable;
 
     #[test]

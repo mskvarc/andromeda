@@ -1,4 +1,4 @@
-use andromeda_domain::tenant::TenantName;
+use andromeda_ngsi_ld_lexicon::tenant::TenantName;
 
 /// Controls whether unknown tenants are created on first access or rejected.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -50,7 +50,7 @@ impl TenantRef {
 #[cfg(test)]
 mod tests {
     use super::{TenantRef, TenantStatus};
-    use andromeda_domain::tenant::TenantName;
+    use andromeda_ngsi_ld_lexicon::tenant::TenantName;
     use std::str::FromStr;
 
     #[test]

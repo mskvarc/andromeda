@@ -13,8 +13,8 @@ use crate::{
     },
     tenancy::types::TenantRef,
 };
-use andromeda_domain::vocab;
 use andromeda_geometry::{ewkb::Ewkb, geometry::Geometry};
+use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
 use iri_rs::IriBuf;
 use sqlx::PgPool;
 use std::{collections::HashMap, sync::Arc, time::Instant};
@@ -31,7 +31,7 @@ pub async fn warmup_location(index: &Arc<SpatialEntityIndex>, pool: &PgPool, ten
         .await
         .map_err(|e| AndromedaError::internal(format!("spatial warmup query failed: {}", e)))?;
 
-    let Ok(location_iri) = IriBuf::new(vocab::expanded::properties::LOCATION.as_str().to_string()) else {
+    let Ok(location_iri) = IriBuf::new(expanded_properties::LOCATION.as_str().to_string()) else {
         return Err(AndromedaError::internal("spatial warmup: LOCATION IRI invalid"));
     };
 

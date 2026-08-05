@@ -4,7 +4,7 @@
 //! `temporalValues` simplified representation.
 
 use crate::{core::error::AndromedaError, renderer::Renderer};
-use andromeda_domain::attribute_type::AttributeType;
+use andromeda_ngsi_ld_lexicon::attribute_type::AttributeType;
 use indexmap::IndexMap;
 use serde_json::{Value, json};
 

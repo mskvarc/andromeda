@@ -3,7 +3,7 @@
 //! Returns a custom JSON shape (not an NGSI-LD entity) with component-level
 //! health information including database pool statistics and ping latency.
 
-use crate::{constant_string, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{constant_string, uri::Uri};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 

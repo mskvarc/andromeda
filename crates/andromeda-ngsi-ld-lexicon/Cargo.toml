@@ -1,0 +1,27 @@
+[package]
+name = "andromeda-ngsi-ld-lexicon"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+build = "build.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+andromeda-ngsi-ld-vocabulary.workspace = true
+chrono = { version = "0.4.44", features = ["serde"] }
+compact_str = { version = "0.9.0", features = ["serde"] }
+derive_more = { version = "2.1.1", features = ["as_ref", "deref", "display", "from", "into"] }
+iri-rs = { version = "3.4.0", features = ["serde", "static"] }
+serde = { version = "1.0.228", features = ["derive"] }
+static-regular-grammar = "2.0.2"
+strum = { version = "0.28.0", features = ["derive"] }
+thiserror = "2.0.18"
+url = { version = "2.5.8", features = ["serde"] }
+urn-rs = { version = "0.9.2", features = ["serde"] }
+
+[dev-dependencies]
+indexmap = { version = "2.14.0", features = ["serde"] }
+pretty_assertions = "1.4.1"
+serde_json = "1.0.149"

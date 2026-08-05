@@ -1,0 +1,15 @@
+[package]
+name = "andromeda-ngsi-ld-vocabulary"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+iri-rs = { version = "3.4.0", features = ["serde", "static"] }
+jsonld = { version = "0.22.0", features = ["vocab"] }
+
+[dev-dependencies]
+pretty_assertions = "1.4.1"

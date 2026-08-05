@@ -9,10 +9,8 @@
 //! The opaque `snapshotQueries` / `snapshotTemporalQueries` payloads are
 //! intentionally not filterable.
 
-use crate::{
-    ngsi_ld_urn::{SnapshotId, SnapshotIdParseError},
-    snapshot::{SnapshotPriority, SnapshotPriorityParseError, SnapshotStatus},
-};
+use crate::snapshot::{SnapshotPriority, SnapshotPriorityParseError, SnapshotStatus};
+use andromeda_ngsi_ld_lexicon::ngsi_ld_urn::{SnapshotId, SnapshotIdParseError};
 use chrono::{DateTime, Utc};
 use compact_str::CompactString;
 use std::str::FromStr;

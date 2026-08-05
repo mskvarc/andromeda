@@ -10,7 +10,7 @@ use crate::{
     },
     renderer::{VersionAdaptation, response::RenderedOutput},
 };
-use andromeda_domain::ngsi_ld_urn::SnapshotId;
+use andromeda_ngsi_ld_lexicon::ngsi_ld_urn::SnapshotId;
 use axum::{
     http::{HeaderMap, StatusCode, header::CONTENT_TYPE},
     response::{IntoResponse, Response},

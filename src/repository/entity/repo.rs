@@ -10,7 +10,8 @@ use crate::{
         ewkb_binding::geometry_bytes,
     },
 };
-use andromeda_domain::{notification::SysAttrsSnapshot, vocab::expanded::properties};
+use andromeda_domain::notification::SysAttrsSnapshot;
+use andromeda_ngsi_ld_vocabulary::expanded::properties;
 use andromeda_query::{
     entity::{compiled::CompiledEntityQuery, sql as entity_sql},
     filter::sql::attribute_names::ResolvedAttributeNames,

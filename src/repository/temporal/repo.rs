@@ -734,7 +734,8 @@ async fn insert_history_batch_unnest_in_tx(tx: &mut Transaction<'_, Postgres>, e
 #[cfg(test)]
 mod tests {
     use super::*;
-    use andromeda_domain::{attribute_type::AttributeType, temporal::ValueType};
+    use andromeda_domain::temporal::ValueType;
+    use andromeda_ngsi_ld_lexicon::attribute_type::AttributeType;
 
     const ENTITY: &str = "urn:ngsi-ld:Vehicle:A100";
     const SPEED: &str = "https://uri.etsi.org/ngsi-ld/default-context/speed";

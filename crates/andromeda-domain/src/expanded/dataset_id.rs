@@ -1,6 +1,6 @@
 //! Reading the `datasetId` that separates the instances of a multi-attribute.
 
-use crate::vocab::expanded::properties;
+use andromeda_ngsi_ld_vocabulary::expanded::properties;
 use serde_json::Value;
 
 /// Extract the `datasetId` (`@id` value) from an expanded attribute instance.

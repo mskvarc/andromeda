@@ -1,6 +1,12 @@
 //! The attribute discovery resources (ETSI GS CIM 009 clauses 5.2.27 and 5.2.28).
 
-use crate::{attribute::name::AttributeName, attribute_type::AttributeType, constant_string, entity_type::EntityTypeName, ngsi_ld_urn::AttributeListId};
+use andromeda_ngsi_ld_lexicon::{
+    attribute_name::AttributeName,
+    attribute_type::AttributeType,
+    constant_string,
+    entity_type_name::EntityTypeName,
+    ngsi_ld_urn::AttributeListId,
+};
 use jsonld::Expandable;
 use serde::{Deserialize, Serialize};
 use typed_builder::TypedBuilder;
@@ -92,11 +98,11 @@ pub struct AttributeDetail {
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        attribute::name::AttributeName,
-        attribute_list::{AttributeDetail, AttributeInfo, AttributeList, AttributeListType, AttributeResourceType},
+    use crate::attribute_list::{AttributeDetail, AttributeInfo, AttributeList, AttributeListType, AttributeResourceType};
+    use andromeda_ngsi_ld_lexicon::{
+        attribute_name::AttributeName,
         attribute_type::AttributeType,
-        entity_type::EntityTypeName,
+        entity_type_name::EntityTypeName,
         ngsi_ld_urn::AttributeListId,
     };
     use serde_json::json;

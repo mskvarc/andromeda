@@ -1,6 +1,7 @@
 //! Attribute-name dictionary resolution for a compiled `q` filter.
 
-use andromeda_domain::{attribute::name::AttributeName, temporal::AttributeNameId};
+use andromeda_domain::temporal::AttributeNameId;
+use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use std::collections::HashMap;
 
 /// Attribute-name dictionary ids for the IRIs a compiled `q` filter mentions.

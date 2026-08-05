@@ -1,28 +1,9 @@
-//! Tenant identifiers and the tenant listing the broker exposes (ETSI GS CIM 009 clause 6.3.14).
+//! The tenant identifier the broker keys every request by (ETSI GS CIM 009 clause 6.3.14).
 
-use crate::{constant_string, uri::Uri};
 use derive_more::Display;
 use serde::{Deserialize, Serialize};
 use static_regular_grammar::RegularGrammar;
 use std::str::FromStr;
-
-constant_string!(TenantListType, "TenantList");
-
-/// Tenant list response for `GET /ngsi-ld/v1/tenants`.
-///
-/// This endpoint is a broker extension and always returns JSON in this fixed
-/// shape (no JSON-LD expansion/compaction variants).
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct TenantList {
-    /// Unique identifier of this tenant list response.
-    pub id: Uri,
-    /// Response type discriminator (`TenantList`).
-    #[serde(rename = "type")]
-    pub type_: TenantListType,
-    /// Named tenants known to the broker, sorted ascending.
-    pub tenant_list: Vec<TenantName>,
-}
 
 /// Maximum tenant identifier length. NGSI-LD v1.9.1 clause 6.3.14 does not
 /// constrain the length of the `NGSILD-Tenant` header value; this bound is
