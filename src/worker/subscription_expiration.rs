@@ -1,7 +1,6 @@
-use crate::repository::{
-    csource_subscription::repo::CsourceSubscriptionRepository,
-    subscription::repo::SubscriptionRepository,
-    subscription_store::repo::SubscriptionStore,
+use crate::{
+    repository::{csource_subscription::repo::CsourceSubscriptionRepository, subscription::repo::SubscriptionRepository},
+    service::subscription::store::SubscriptionStore,
 };
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::notification::{CsourceSubscriptionChange, SubscriptionChange};

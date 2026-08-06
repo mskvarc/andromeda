@@ -6,10 +6,10 @@
 
 use crate::{
     core::config::OutboxConfig,
-    repository::outbox::{entry::WorkerInstanceId, mapper::row_to_domain, repo::OutboxRepository},
+    service::outbox::{entry::WorkerInstanceId, store::OutboxStore},
 };
 use chrono::{Duration, Utc};
-use std::time::Duration as StdDuration;
+use std::{sync::Arc, time::Duration as StdDuration};
 use tracing::{debug, error, info};
 
 /// Calculate exponential backoff duration for retry attempts.
@@ -23,7 +23,7 @@ fn calculate_backoff_secs(base_backoff_secs: i64, attempt_count: i32, max_attemp
 
 /// Background worker that polls the notification outbox and delivers pending entries.
 pub struct OutboxDeliveryWorker {
-    repo: OutboxRepository,
+    repo: Arc<dyn OutboxStore>,
     worker_id: WorkerInstanceId,
     poll_interval: StdDuration,
     batch_size: i32,
@@ -34,7 +34,7 @@ pub struct OutboxDeliveryWorker {
 
 impl OutboxDeliveryWorker {
     /// Create a new outbox delivery worker from the given configuration.
-    pub fn new(repo: OutboxRepository, config: &OutboxConfig) -> OutboxDeliveryWorker {
+    pub fn new(repo: Arc<dyn OutboxStore>, config: &OutboxConfig) -> OutboxDeliveryWorker {
         let worker_id = WorkerInstanceId::from(format!("outbox-worker-{}", uuid::Uuid::new_v4()));
         let cleanup_secs = i64::try_from(config.cleanup_after_secs).unwrap_or(i64::MAX);
         let base_backoff = i64::try_from(config.base_backoff_secs).unwrap_or(5);
@@ -74,24 +74,13 @@ impl OutboxDeliveryWorker {
     }
 
     async fn poll_and_deliver(&self) {
-        let rows = match self.repo.claim_pending(&self.worker_id, self.batch_size, self.max_attempts).await {
-            Ok(rows) => rows,
+        let entries = match self.repo.claim_pending(&self.worker_id, self.batch_size, self.max_attempts).await {
+            Ok(entries) => entries,
             Err(e) => {
                 error!(error = %e, "Failed to claim outbox entries");
                 return;
             }
         };
-
-        let entries: Vec<_> = rows
-            .into_iter()
-            .filter_map(|row| match row_to_domain(row) {
-                Ok(entry) => Some(entry),
-                Err(e) => {
-                    error!(error = %e, "Failed to map outbox row to domain entry");
-                    None
-                }
-            })
-            .collect();
 
         if entries.is_empty() {
             return;

@@ -4,19 +4,19 @@
 //! `snapshotLifetime`. This worker cleans up expired snapshots to prevent
 //! unbounded storage growth.
 
-use crate::repository::snapshot::repo::SnapshotRepository;
-use std::time::Duration;
+use crate::service::snapshot::store::SnapshotStore;
+use std::{sync::Arc, time::Duration};
 use tracing::{debug, error, info};
 
 /// Periodic worker that removes expired snapshots from the database.
 pub struct SnapshotExpirationWorker {
-    repo: SnapshotRepository,
+    repo: Arc<dyn SnapshotStore>,
     interval: Duration,
 }
 
 impl SnapshotExpirationWorker {
     /// Create a new worker with the given interval between expiration sweeps.
-    pub const fn new(repo: SnapshotRepository, interval_secs: u64) -> SnapshotExpirationWorker {
+    pub const fn new(repo: Arc<dyn SnapshotStore>, interval_secs: u64) -> SnapshotExpirationWorker {
         SnapshotExpirationWorker {
             repo,
             interval: Duration::from_secs(interval_secs),

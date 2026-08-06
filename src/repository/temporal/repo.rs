@@ -313,9 +313,9 @@ impl TemporalRepository {
     /// transaction without committing.
     ///
     /// The `attribute_current` projection is **not** maintained here
-    /// any more: callers queue the entries on the unit-of-work and the
-    /// materializer worker applies them after commit (see
-    /// [`crate::worker::attribute_current_materializer`]).
+    /// any more: callers queue the entries on commit and the materializer
+    /// worker applies them afterwards (see
+    /// [`crate::repository::attribute_current`]).
     pub async fn insert_history_batch_in_tx(&self, tx: &mut Transaction<'_, Postgres>, entries: &[HistoryBatchEntry]) -> Result<(), AndromedaError> {
         if entries.is_empty() {
             return Ok(());

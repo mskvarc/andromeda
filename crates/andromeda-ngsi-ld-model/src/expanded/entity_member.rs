@@ -1,11 +1,17 @@
-//! Readers for the entity-level members of an expanded payload: `@type`,
-//! `scope` and `expiresAt`.
+//! Readers for the entity-level members of an expanded payload: `@id`,
+//! `@type`, `scope`, `expiresAt` and a named GeoProperty's geometry.
 
 use crate::expanded::node::expanded_object_ref;
+use andromeda_ngsi_ld_geometry::geometry::Geometry;
 use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, scope::grammar::ScopeBuf};
 use andromeda_ngsi_ld_vocabulary::expanded::properties;
 use chrono::{DateTime, Utc};
 use serde_json::Value;
+
+/// Extract the `@id` of an expanded entity payload.
+pub fn extract_id(expanded: &Value) -> Option<&str> {
+    expanded_object_ref(expanded).and_then(|obj| obj.get("@id")).and_then(Value::as_str)
+}
 
 /// Extract `@type` IRIs from an expanded entity payload.
 ///
@@ -52,11 +58,86 @@ pub fn extract_expires_at(expanded: &Value) -> Option<DateTime<Utc>> {
     DateTime::parse_from_rfc3339(dt_str).ok().map(|dt| dt.with_timezone(&Utc))
 }
 
+/// Extract the geometry of one named GeoProperty from an expanded entity
+/// payload (clause 4.7).
+///
+/// Returns the first instance's value. Clause 4.10 evaluates a geo-query
+/// against one geospatial property, and an entity that carries several
+/// instances of it under different `datasetId`s has no defined precedence
+/// among them, so the first is taken rather than a chosen one.
+///
+/// The value is accepted in both forms clause 4.7 permits: a GeoJSON object,
+/// and a JSON string carrying the GeoJSON document verbatim.
+pub fn extract_geoproperty_geometry(expanded: &Value, geoproperty_iri: &str) -> Option<Geometry> {
+    let geojson_value = expanded_object_ref(expanded)?
+        .get(geoproperty_iri)?
+        .as_array()
+        .and_then(|instances| instances.first())
+        .and_then(|instance| instance.get(properties::VALUE.as_str()))
+        .and_then(Value::as_array)
+        .and_then(|values| values.first())
+        .and_then(|value| value.get("@value"))?;
+
+    match geojson_value {
+        Value::String(document) => {
+            let parsed: Value = serde_json::from_str(document).ok()?;
+            Geometry::from_geojson_value(&parsed).ok()
+        }
+        object @ Value::Object(_) => Geometry::from_geojson_value(object).ok(),
+        Value::Null | Value::Bool(_) | Value::Number(_) | Value::Array(_) => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use crate::expanded::entity_member::{extract_expires_at, extract_scopes};
+    use crate::expanded::entity_member::{extract_expires_at, extract_geoproperty_geometry, extract_id, extract_scopes};
     use chrono::Datelike;
     use serde_json::json;
+
+    const LOCATION: &str = "https://uri.etsi.org/ngsi-ld/location";
+
+    fn located(value: serde_json::Value) -> serde_json::Value {
+        json!([{
+            "@id": "urn:ngsi-ld:Building:001",
+            LOCATION: [{ "https://uri.etsi.org/ngsi-ld/hasValue": [{ "@value": value }] }]
+        }])
+    }
+
+    #[test]
+    fn the_identifier_is_read_off_the_expanded_node() {
+        let entity = json!([{"@id": "urn:ngsi-ld:Building:001"}]);
+        pretty_assertions::assert_eq!(extract_id(&entity), Some("urn:ngsi-ld:Building:001"));
+    }
+
+    #[test]
+    fn an_expanded_payload_without_an_identifier_yields_none() {
+        assert!(extract_id(&json!([{"@type": ["https://example.com/Building"]}])).is_none());
+    }
+
+    #[test]
+    fn a_geoproperty_written_as_an_object_is_read_as_a_geometry() {
+        let entity = located(json!({"type": "Point", "coordinates": [13.4, 52.5]}));
+        assert!(extract_geoproperty_geometry(&entity, LOCATION).is_some());
+    }
+
+    #[test]
+    fn a_geoproperty_written_as_a_json_string_is_read_as_a_geometry() {
+        // Clause 4.7 permits the GeoJSON document to arrive as a string.
+        let entity = located(json!("{\"type\":\"Point\",\"coordinates\":[13.4,52.5]}"));
+        assert!(extract_geoproperty_geometry(&entity, LOCATION).is_some());
+    }
+
+    #[test]
+    fn an_entity_that_carries_no_such_geoproperty_yields_no_geometry() {
+        let entity = json!([{"@id": "urn:ngsi-ld:Building:001"}]);
+        assert!(extract_geoproperty_geometry(&entity, LOCATION).is_none());
+    }
+
+    #[test]
+    fn a_geoproperty_whose_value_is_not_geojson_yields_no_geometry() {
+        let entity = located(json!("not geojson"));
+        assert!(extract_geoproperty_geometry(&entity, LOCATION).is_none());
+    }
 
     #[test]
     fn extract_scopes_from_entity() {

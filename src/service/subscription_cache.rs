@@ -5,18 +5,14 @@
 //! backed by `DashMap`. Used by both the notification worker (event
 //! matching) and the entity service (outbox entry generation).
 
-use crate::{
-    repository::subscription_store::repo::SubscriptionStore,
-    service::{
-        compiled_subscription::{CompiledGeoQuery, CompiledSubscription},
-        subscription_matching::find_matching,
-    },
-};
+use crate::service::{compiled_subscription::CompiledSubscription, subscription::store::SubscriptionStore, subscription_matching::find_matching};
 use andromeda_delivery::endpoint::transport::parse_endpoint_transport;
+use andromeda_ngsi_ld_geometry::geometry::Geometry;
 use andromeda_ngsi_ld_model::{
     notification::{ChangeEvent, SubscriptionChange, TriggerReason},
     subscription::{EntitySelector, Subscription, SubscriptionStatus},
 };
+use andromeda_ngsi_ld_query::geo::query::GeoQuery;
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
 use andromeda_spatial_index::{
@@ -209,16 +205,11 @@ impl SubscriptionCache {
         let Some(geo_q) = compiled.compiled_geo_q.as_ref() else {
             return;
         };
-        let Ok(geoproperty_iri) = IriBuf::new(geo_q.geoproperty_iri.clone()) else {
-            debug!(
-                "Subscription {} spatial index skipped: invalid geoproperty IRI '{}'",
-                compiled.id, geo_q.geoproperty_iri
-            );
-            return;
-        };
+        // clone: the key owns its IRI, which the compiled subscription keeps
+        let geoproperty_iri = geo_q.geoproperty_iri.clone();
 
-        // clone: the entry owns its identifier and geometry, both borrowed here
-        let Some(entry) = SubEntry::new(compiled.id.clone(), geo_q.ref_geometry.clone(), geo_q.georel.clone()) else {
+        // clone: the entry owns its identifier, geometry and relation, all borrowed here
+        let Some(entry) = SubEntry::new(compiled.id.clone(), geo_q.geometry.as_ref().clone(), geo_q.georel.clone()) else {
             debug!("Subscription {} spatial index skipped: geometry has no bounding rect", compiled.id);
             return;
         };
@@ -324,53 +315,44 @@ pub fn compile_subscription(sub: &Subscription) -> Option<CompiledSubscription> 
     })
 }
 
-/// Pre-parse a `geoQ` JSON value into [`CompiledGeoQuery`].
+/// Pre-parse a subscription's stored `geoQ` into the same [`GeoQuery`] a
+/// request-borne geo filter compiles to (clause 4.10).
 ///
-/// Returns `None` when any required field is missing or malformed — logged at
-/// debug level. The subscription then skips the geo path entirely (it never
-/// matches events through geoQ) rather than re-parsing on every event.
-pub fn compile_geo_q(geo_q: &serde_json::Value, sub_id: &str) -> Option<CompiledGeoQuery> {
+/// Returns `None` when any member is missing or malformed, logged at debug
+/// level. The subscription then never matches through `geoQ` at all, which is
+/// the same answer re-parsing on every event would give and costs nothing per
+/// event to reach.
+pub fn compile_geo_q(geo_q: &serde_json::Value, sub_id: &str) -> Option<GeoQuery> {
     let geo_obj = geo_q.as_object()?;
-    let georel_str = geo_obj.get("georel").and_then(|v| v.as_str())?;
-    let geometry_str = geo_obj.get("geometry").and_then(|v| v.as_str())?;
-    let coordinates_value = geo_obj.get("coordinates")?;
-    let coordinates = match coordinates_value {
-        serde_json::Value::String(s) => serde_json::from_str::<serde_json::Value>(s).ok()?,
+    let georel_str = geo_obj.get("georel").and_then(serde_json::Value::as_str)?;
+    let geometry_str = geo_obj.get("geometry").and_then(serde_json::Value::as_str)?;
+    let coordinates = match geo_obj.get("coordinates")? {
+        serde_json::Value::String(raw) => serde_json::from_str::<serde_json::Value>(raw).ok()?,
+        // clone: the compiled query owns its reference geometry
         other => other.clone(),
     };
-    let geoproperty_iri = geo_obj
-        .get("geoproperty")
-        .and_then(|v| v.as_str())
-        .map_or_else(|| expanded_properties::LOCATION.as_str().to_owned(), ToOwned::to_owned);
-
-    let geojson_value = serde_json::json!({
-        "type": geometry_str,
-        "coordinates": coordinates,
-    });
-    let geojson_str = geojson_value.to_string();
-    let ref_geometry = match geojson_str.parse::<geojson::GeoJson>() {
-        Ok(geojson::GeoJson::Geometry(g)) => match geo::Geometry::try_from(g) {
-            Ok(geom) => geom,
-            Err(e) => {
-                debug!("Failed to convert geoQ geometry for subscription {}: {}", sub_id, e);
+    let geoproperty_iri = match geo_obj.get("geoproperty").and_then(serde_json::Value::as_str) {
+        Some(raw) => match IriBuf::new(raw.to_owned()) {
+            Ok(iri) => iri,
+            Err(_) => {
+                debug!("geoQ for subscription {} names a geoproperty that is not an IRI: '{}'", sub_id, raw);
                 return None;
             }
         },
-        Ok(_) => {
-            debug!("geoQ for subscription {} is not a geometry object", sub_id);
-            return None;
-        }
-        Err(e) => {
-            debug!("Failed to parse geoQ GeoJSON for subscription {}: {}", sub_id, e);
+        None => expanded_properties::LOCATION.into(),
+    };
+
+    let geometry = match Geometry::from_geojson_value(&serde_json::json!({ "type": geometry_str, "coordinates": coordinates })) {
+        Ok(geometry) => geometry,
+        Err(error) => {
+            debug!("Failed to parse geoQ geometry for subscription {}: {}", sub_id, error);
             return None;
         }
     };
 
-    let georel = georel_str.parse().ok()?;
-
-    Some(CompiledGeoQuery {
-        ref_geometry,
-        georel,
+    Some(GeoQuery {
+        georel: georel_str.parse().ok()?,
+        geometry,
         geoproperty_iri,
     })
 }

@@ -14,7 +14,7 @@
 //! itself. Events without a payload (background expiration sweeps) still
 //! fall back to fetching from the entity store.
 
-use crate::repository::entity::repo::EntityRepository;
+use crate::service::entity::store::EntityStore;
 use andromeda_ngsi_ld_geometry::geometry::Geometry;
 use andromeda_ngsi_ld_model::notification::{ChangeEvent, TriggerReason};
 use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
@@ -22,7 +22,6 @@ use andromeda_spatial_index::{entity::index::SpatialEntityIndex, key::SpatialKey
 use andromeda_tenancy::tenant_ref::TenantRef;
 use iri_rs::IriBuf;
 use serde_json::Value;
-use sqlx::PgPool;
 use std::{
     sync::Arc,
     time::{Duration, Instant},
@@ -35,7 +34,7 @@ use urn_rs::Urn;
 pub struct SpatialSyncWorker {
     rx: broadcast::Receiver<ChangeEvent>,
     index: Arc<SpatialEntityIndex>,
-    repo: EntityRepository,
+    repo: Arc<dyn EntityStore>,
     tenant: TenantRef,
     lag_log_interval: Duration,
 }
@@ -50,14 +49,14 @@ impl SpatialSyncWorker {
     pub fn new(
         rx: broadcast::Receiver<ChangeEvent>,
         index: Arc<SpatialEntityIndex>,
-        pool: &PgPool,
+        repo: Arc<dyn EntityStore>,
         tenant: TenantRef,
         lag_log_interval: Duration,
     ) -> SpatialSyncWorker {
         SpatialSyncWorker {
             rx,
             index,
-            repo: EntityRepository::new(pool),
+            repo,
             tenant,
             lag_log_interval,
         }
@@ -261,6 +260,11 @@ fn parse_geometry(raw: &str) -> Option<Geometry> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::repository::{
+        attribute_current::materializer::AttributeCurrentMaterializer,
+        attribute_names::AttributeNameCache,
+        entity::repo::EntityRepository,
+    };
     use andromeda_ngsi_ld_geometry::geo_rel::GeoRel;
     use andromeda_ngsi_ld_lexicon::uri::Uri;
     use geo::{Coord, LineString, Polygon};
@@ -272,10 +276,15 @@ mod tests {
     const TYPE_IRI: &str = "https://example.org/Sensor";
     const VALUE_IRI: &str = "https://uri.etsi.org/ngsi-ld/hasValue";
 
-    fn lazy_pool() -> PgPool {
-        // connect_lazy never opens a connection; the test exercises only the
-        // payload-aware path, which never reaches the repository.
-        PgPool::connect_lazy("postgres://localhost/nonexistent").expect("connect_lazy should not fail")
+    /// A store over a pool that never opens a connection.
+    ///
+    /// The test exercises only the payload-aware path, which never reaches the
+    /// store; a pool that cannot connect is what turns a regression there into
+    /// a failure instead of a silent round trip.
+    fn unreachable_store() -> Arc<dyn EntityStore> {
+        let pool = PgPool::connect_lazy("postgres://localhost/nonexistent").expect("connect_lazy should not fail");
+        let (_materializer, _queue, barrier) = AttributeCurrentMaterializer::new(Arc::new(pool.clone()), Duration::from_secs(60));
+        Arc::new(EntityRepository::new(&pool, Arc::new(AttributeNameCache::new(&pool)), barrier))
     }
 
     fn entity_payload(id: &str, lon: f64, lat: f64) -> Value {
@@ -321,7 +330,7 @@ mod tests {
         let index = Arc::new(SpatialEntityIndex::new());
         let (tx, rx) = broadcast::channel::<ChangeEvent>(16);
 
-        let worker = SpatialSyncWorker::new(rx, Arc::clone(&index), &lazy_pool(), TenantRef::UnnamedDefault, Duration::from_secs(60));
+        let worker = SpatialSyncWorker::new(rx, Arc::clone(&index), unreachable_store(), TenantRef::UnnamedDefault, Duration::from_secs(60));
         let driver = tokio::spawn(worker.run());
 
         for i in 0..10 {

@@ -1,7 +1,7 @@
 //! Shared subscription CRUD logic used by both entity subscriptions and
 //! context-source subscriptions.
 
-use crate::{core::error::AndromedaError, repository::subscription_store::params::SubscriptionFields};
+use crate::{core::error::AndromedaError, service::subscription::store::SubscriptionFields};
 use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine, term_expansion::ContextualExpander};
 use andromeda_ngsi_ld_model::subscription::{EntitySelector, Subscription};
 use andromeda_ngsi_ld_query::{

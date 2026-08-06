@@ -2,21 +2,20 @@
 
 use crate::{
     core::error::AndromedaError,
-    repository::{
-        csource_registration::{mapper::row_to_csr, params::CreateCsrParams},
-        ewkb_binding::geometry_bytes,
+    repository::{csource_registration::mapper::row_to_csr, ewkb_binding::geometry_bytes},
+    service::{
+        csource_merge::ResolvedCsrUpdate,
+        csource_registration::store::{CreateCsrParams, RegistrationStore},
     },
-    service::csource_merge::ResolvedCsrUpdate,
 };
-use andromeda_ngsi_ld_lexicon::{tenant::TenantName, uri::NGSI_LD_URN_NID};
+use andromeda_ngsi_ld_lexicon::tenant::TenantName;
 use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
 use andromeda_ngsi_ld_query::csr::compiled::CompiledCsrQuery;
 use andromeda_postgresql_context_query::csr::statement as csr_sql;
+use async_trait::async_trait;
 use sea_query::{Alias, Expr as SeaExpr, Order, PostgresQueryBuilder, Query, SelectStatement};
 use sea_query_binder::SqlxBinder;
 use sqlx::postgres::PgPool;
-use urn_rs::UrnBuilder;
-use uuid::Uuid;
 
 /// Projection for a full CSR row. Static, identifier-only expression — no user
 /// values — applied to every read path so `ST_AsGeoJSON` geometry casts stay
@@ -54,15 +53,11 @@ impl CsourceRegistrationRepository {
     pub fn new(pool: &PgPool) -> CsourceRegistrationRepository {
         CsourceRegistrationRepository { pool: pool.clone() } // clone: Arc ref-count bump
     }
+}
 
-    /// Generates a new unique URN identifier for a context source registration.
-    pub fn generate_id() -> Result<String, AndromedaError> {
-        let urn = UrnBuilder::new(NGSI_LD_URN_NID, &format!("ContextSourceRegistration:{}", Uuid::new_v4())).build()?;
-        Ok(urn.to_string())
-    }
-
-    /// Checks whether a context source registration with the given ID exists.
-    pub async fn exists(&self, id: &str) -> Result<bool, AndromedaError> {
+#[async_trait]
+impl RegistrationStore for CsourceRegistrationRepository {
+    async fn exists(&self, id: &str) -> Result<bool, AndromedaError> {
         let row: (bool,) = sqlx::query_as("SELECT EXISTS(SELECT 1 FROM context_source_registrations WHERE id = $1)")
             .bind(id)
             .fetch_one(&self.pool)
@@ -71,7 +66,7 @@ impl CsourceRegistrationRepository {
     }
 
     /// Persists a new context source registration with the given ID and parameters.
-    pub async fn create(&self, id: &str, params: &CreateCsrParams<'_>) -> Result<(), AndromedaError> {
+    async fn create(&self, id: &str, params: &CreateCsrParams<'_>) -> Result<(), AndromedaError> {
         sqlx::query(
             r#"
             INSERT INTO context_source_registrations (
@@ -126,7 +121,7 @@ impl CsourceRegistrationRepository {
     }
 
     /// Retrieves a context source registration by ID.
-    pub async fn get(&self, id: &str) -> Result<Option<ContextSourceRegistration>, AndromedaError> {
+    async fn get(&self, id: &str) -> Result<Option<ContextSourceRegistration>, AndromedaError> {
         let mut select = csr_base_select();
         select.and_where(SeaExpr::col(Alias::new("id")).eq(id));
         let (sql, values) = select.build_sqlx(PostgresQueryBuilder);
@@ -139,7 +134,7 @@ impl CsourceRegistrationRepository {
     }
 
     /// Lists context source registrations with pagination. Returns entries and total count.
-    pub async fn list(&self, limit: Option<i64>, offset: Option<i64>) -> Result<(Vec<ContextSourceRegistration>, i64), AndromedaError> {
+    async fn list(&self, limit: Option<i64>, offset: Option<i64>) -> Result<(Vec<ContextSourceRegistration>, i64), AndromedaError> {
         let limit = u64::try_from(limit.unwrap_or(100)).unwrap_or(100);
         let offset = u64::try_from(offset.unwrap_or(0)).unwrap_or(0);
 
@@ -158,7 +153,7 @@ impl CsourceRegistrationRepository {
     }
 
     /// Executes a pre-compiled CSR query and returns matching registrations with total count.
-    pub async fn query_compiled(&self, compiled: &CompiledCsrQuery) -> Result<(Vec<ContextSourceRegistration>, i64), AndromedaError> {
+    async fn query_compiled(&self, compiled: &CompiledCsrQuery) -> Result<(Vec<ContextSourceRegistration>, i64), AndromedaError> {
         let built = csr_sql::build_csr_query(compiled)?;
 
         let total = if let Some(ref count_sql) = built.count_sql {
@@ -180,7 +175,7 @@ impl CsourceRegistrationRepository {
     /// Unconditional UPDATE of an existing CSR with a fully-resolved set of
     /// column values. The service layer performs the three-way merge of the
     /// existing row + partial fragment before calling this method.
-    pub async fn update(&self, id: &str, values: &ResolvedCsrUpdate) -> Result<u64, AndromedaError> {
+    async fn update(&self, id: &str, values: &ResolvedCsrUpdate) -> Result<u64, AndromedaError> {
         let result = sqlx::query(
             r#"
             UPDATE context_source_registrations SET
@@ -238,7 +233,7 @@ impl CsourceRegistrationRepository {
     }
 
     /// Find CSRs matching an entity query.
-    pub async fn find_matching(&self, entity_type: Option<&str>, entity_id: Option<&str>) -> Result<Vec<ContextSourceRegistration>, AndromedaError> {
+    async fn find_matching(&self, entity_type: Option<&str>, entity_id: Option<&str>) -> Result<Vec<ContextSourceRegistration>, AndromedaError> {
         use sea_query::Cond;
 
         let expires_at_col = Alias::new("expires_at");
@@ -283,7 +278,7 @@ impl CsourceRegistrationRepository {
     /// Callers pass the last seen id as `after` for subsequent pages; the
     /// first page passes `None`. The keyset ordering matches
     /// `jsonld_context::list` for consistency across discovery endpoints.
-    pub async fn find_all_active(&self, after: Option<&str>, limit: u32) -> Result<Vec<ContextSourceRegistration>, AndromedaError> {
+    async fn find_all_active(&self, after: Option<&str>, limit: u32) -> Result<Vec<ContextSourceRegistration>, AndromedaError> {
         use sea_query::Cond;
 
         let expires_at_col = Alias::new("expires_at");
@@ -301,7 +296,7 @@ impl CsourceRegistrationRepository {
     }
 
     /// Deletes a context source registration by ID. Returns rows affected.
-    pub async fn delete(&self, id: &str) -> Result<u64, AndromedaError> {
+    async fn delete(&self, id: &str) -> Result<u64, AndromedaError> {
         let result = sqlx::query("DELETE FROM context_source_registrations WHERE id = $1")
             .bind(id)
             .execute(&self.pool)

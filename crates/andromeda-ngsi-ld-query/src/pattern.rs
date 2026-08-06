@@ -17,6 +17,13 @@
 //! to each. What it removes is the failure mode where an unvalidated pattern
 //! reaches evaluation and is treated as matching nothing, which is
 //! indistinguishable from a filter that legitimately excluded every entity.
+//!
+//! The specification bounds how far that can matter. Table 5.2.8-1 defines an
+//! `idPattern` as a "Regular expression as per IEEE 1003.2", which is POSIX
+//! extended regular expressions — a strict subset of both engines, on which they
+//! agree. A pattern that means two things is therefore one that reaches outside
+//! what the specification permits a client to write, and the broker answers it
+//! consistently within one execution path rather than across all of them.
 
 use crate::error::QueryError;
 use regex::Regex;

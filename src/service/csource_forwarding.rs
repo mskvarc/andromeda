@@ -1,4 +1,4 @@
-use crate::{core::error::AndromedaError, repository::csource_registration::repo::CsourceRegistrationRepository};
+use crate::{core::error::AndromedaError, service::csource_registration::store::RegistrationStore};
 use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
 use andromeda_ngsi_ld_http_headers::{link::header::Link, ngsild_tenant::NgsiLdTenant, ngsild_warning::NgsiLdWarning, via::Via};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, tenant::TenantName};
@@ -10,14 +10,14 @@ use andromeda_ngsi_ld_query::filter::{eval::evaluate as eval_q_expr, expression:
 use futures::{StreamExt, stream};
 use headers::Header;
 use serde_json::Value;
-use sqlx::postgres::PgPool;
+use std::sync::Arc;
 use tracing::{debug, warn};
 use url::Url;
 
 /// Service for forwarding NGSI-LD operations to registered context sources.
 pub struct CsourceForwardingService {
     http_client: reqwest::Client,
-    csr_repo: CsourceRegistrationRepository,
+    csr_repo: Arc<dyn RegistrationStore>,
     engine: JsonLdEngine,
     /// Context Source Identity (hostAlias) for Via header (§6.3.18).
     source_identity: String,
@@ -288,7 +288,12 @@ pub struct UnforwardableExclusiveCsr;
 
 impl CsourceForwardingService {
     /// Create a new context source forwarding service with the given source identity for Via headers.
-    pub fn new(pool: &PgPool, engine: JsonLdEngine, source_identity: String, csr_concurrency: usize) -> Result<CsourceForwardingService, AndromedaError> {
+    pub fn new(
+        csr_repo: Arc<dyn RegistrationStore>,
+        engine: JsonLdEngine,
+        source_identity: String,
+        csr_concurrency: usize,
+    ) -> Result<CsourceForwardingService, AndromedaError> {
         let http_client = reqwest::ClientBuilder::new()
             .http1_title_case_headers()
             .no_gzip()
@@ -299,7 +304,6 @@ impl CsourceForwardingService {
             .timeout(std::time::Duration::from_secs(5))
             .build()
             .map_err(|e| AndromedaError::internal(format!("Failed to create HTTP client for context source forwarding: {}", e)))?;
-        let csr_repo = CsourceRegistrationRepository::new(pool);
         Ok(CsourceForwardingService {
             http_client,
             csr_repo,

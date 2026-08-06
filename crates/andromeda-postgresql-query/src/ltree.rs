@@ -68,6 +68,32 @@ mod tests {
     }
 
     #[test]
+    fn the_in_memory_matcher_and_the_lquery_rendering_agree_on_every_wildcard() {
+        // Clause 4.18 has two readings in this workspace: `ScopePattern::matches`
+        // answers it in memory for subscription matching and for a residual
+        // filter, and this module answers it by handing PostgreSQL an `lquery`.
+        // They are the same clause, so they must give the same verdict; an
+        // earlier in-memory reading had `#` consume exactly one further level
+        // while `*{1,}` consumed one or more, and nothing held the two together.
+        let paths = ["/A/B", "/A/B/C", "/A/B/C/D", "/A"];
+        let cases = [
+            // pattern, rendered lquery, verdict per path above
+            ("/A/B", "A.B", [true, false, false, false]),
+            ("/A/+/C", "A.*{1}.C", [false, true, false, false]),
+            ("/A/#", "A.*{1,}", [true, true, true, false]),
+            ("/#", "*{1,}", [true, true, true, true]),
+        ];
+
+        for (raw, rendered, verdicts) in cases {
+            let pattern = ScopePattern::parse(raw).expect("valid pattern");
+            assert_eq!(pattern_to_lquery(&pattern), rendered, "{raw} renders the quantifier its verdicts assume");
+            for (path, expected) in paths.iter().zip(verdicts) {
+                assert_eq!(pattern.matches(path), expected, "{raw} against {path}");
+            }
+        }
+    }
+
+    #[test]
     fn unicode_level_names_survive_the_lquery_translation() {
         assert_eq!(lquery("/M\u{00fc}nchen/Stra\u{00df}e"), "M\u{00fc}nchen.Stra\u{00df}e");
     }

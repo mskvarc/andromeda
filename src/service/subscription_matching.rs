@@ -4,15 +4,14 @@
 //! a compiled subscription. Used by the notification worker (event-driven
 //! delivery) and the subscription cache (outbox entry generation).
 
-use crate::service::compiled_subscription::{CompiledGeoQuery, CompiledSubscription};
-use andromeda_ngsi_ld_geometry::{geometry::Geometry, relation::matches_geo};
+use crate::service::{compiled_subscription::CompiledSubscription, geo_filter::matches_geo_query};
 use andromeda_ngsi_ld_lexicon::entity_type_name::EntityTypeName;
 use andromeda_ngsi_ld_model::{
+    expanded::entity_member::extract_scopes,
     notification::{ChangeEvent, ChangeOrigin},
     subscription::SubscriptionStatus,
 };
 use andromeda_ngsi_ld_query::{filter::eval, scope::query::ScopeQuery};
-use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
 use chrono::Utc;
 use serde_json::Value;
 use std::sync::Arc;
@@ -128,7 +127,7 @@ pub fn matches_entity_filters(sub: &CompiledSubscription, entity_data: &Value) -
     }
 
     if let Some(ref geo_q) = sub.compiled_geo_q
-        && !matches_compiled_geo_query(geo_q, entity_data)
+        && !matches_geo_query(geo_q, entity_data)
     {
         debug!("Subscription {} skipped: geoQ filter did not match entity", sub.id);
         return false;
@@ -151,46 +150,6 @@ pub fn matches_entity_filters(sub: &CompiledSubscription, entity_data: &Value) -
     true
 }
 
-/// Evaluate a pre-compiled geo-spatial filter against entity data.
-///
-/// Accepts the [`CompiledGeoQuery`] produced once at subscription compile
-/// time so event matching does not re-parse the GeoJSON reference geometry
-/// or georel operator.
-pub fn matches_compiled_geo_query(geo_q: &CompiledGeoQuery, entity_data: &Value) -> bool {
-    let Some(entity_geometry) = extract_geoproperty_geometry(entity_data, &geo_q.geoproperty_iri) else {
-        return false;
-    };
-    matches_geo(&geo_q.georel, entity_geometry.as_ref(), &geo_q.ref_geometry)
-}
-
-fn extract_geoproperty_geometry(entity: &Value, geoproperty_iri: &str) -> Option<Geometry> {
-    let obj = match entity {
-        Value::Array(arr) => arr.first().and_then(Value::as_object),
-        Value::Object(obj) => Some(obj),
-        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => None,
-    }?;
-
-    let prop_value = obj.get(geoproperty_iri)?;
-    let geojson_value = prop_value
-        .as_array()
-        .and_then(|arr| arr.first())
-        .and_then(|inst| inst.get(expanded_properties::VALUE.as_str()))
-        .and_then(|v| v.as_array())
-        .and_then(|arr| arr.first())
-        .and_then(|v| v.get("@value"))?;
-
-    match geojson_value {
-        // A GeoProperty written as a JSON string carries the GeoJSON document
-        // verbatim, which clause 4.7 permits alongside the object form.
-        Value::String(s) => {
-            let parsed: Value = serde_json::from_str(s).ok()?;
-            Geometry::from_geojson_value(&parsed).ok()
-        }
-        object @ Value::Object(_) => Geometry::from_geojson_value(object).ok(),
-        Value::Null | Value::Bool(_) | Value::Number(_) | Value::Array(_) => None,
-    }
-}
-
 /// Evaluate a parsed `scopeQ` against the scopes an entity carries.
 ///
 /// The clause 4.18 semantics live on [`ScopeQuery`]; this reads the scopes off
@@ -198,7 +157,7 @@ fn extract_geoproperty_geometry(entity: &Value, geoproperty_iri: &str) -> Option
 /// match exactly one further level, where the stored query and its `lquery`
 /// rendering match one or more.
 pub fn matches_scope_query(query: &ScopeQuery, entity_data: &Value) -> bool {
-    query.matches(&crate::service::entity::extract_scopes(entity_data))
+    query.matches(&extract_scopes(entity_data))
 }
 
 #[cfg(test)]
@@ -248,6 +207,94 @@ mod tests {
             TriggerReason::EntityCreated,
         )
         .with_changed_attributes(vec!["temperature".parse().expect("valid test attribute name")])
+    }
+
+    /// Resolves every term to the NGSI-LD `location` GeoProperty, which is what
+    /// the core context does for the default `geoproperty`.
+    struct LocationExpander;
+
+    impl andromeda_ngsi_ld_query::term_expander::TermExpander for LocationExpander {
+        async fn expand_term(&self, _term: &str) -> Result<iri_rs::IriBuf, andromeda_ngsi_ld_query::error::QueryError> {
+            Ok(iri_rs::IriBuf::new(LOCATION.to_string()).expect("valid IRI"))
+        }
+
+        async fn expand_type(&self, term: &str) -> Result<iri_rs::IriBuf, andromeda_ngsi_ld_query::error::QueryError> {
+            Ok(iri_rs::IriBuf::new(format!("https://example.com/{term}")).expect("valid IRI"))
+        }
+    }
+
+    const LOCATION: &str = "https://uri.etsi.org/ngsi-ld/location";
+
+    fn located(longitude: f64, latitude: f64) -> Value {
+        serde_json::json!([{
+            "@id": "urn:ngsi-ld:Building:001",
+            LOCATION: [{"https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": {"type": "Point", "coordinates": [longitude, latitude]}}]}]
+        }])
+    }
+
+    #[tokio::test]
+    async fn a_subscription_geo_filter_is_the_same_compiled_type_a_query_uses() {
+        // Clause 4.10 is one relation, so a subscription's stored `geoQ` and a
+        // request's `georel`/`geometry`/`coordinates` must compile to the same
+        // value. They used to be two types, one of them stringly-typed, and
+        // only one of them had an in-memory evaluator.
+        let from_subscription = crate::service::subscription_cache::compile_geo_q(
+            &serde_json::json!({
+                "georel": "near;maxDistance==1000",
+                "geometry": "Point",
+                "coordinates": [13.4, 52.5],
+                "geoproperty": LOCATION
+            }),
+            "urn:ngsi-ld:Subscription:test",
+        )
+        .expect("the subscription geoQ compiles");
+
+        let from_request = andromeda_ngsi_ld_query::geo::compile::compile_geo_query(
+            Some("near;maxDistance==1000"),
+            Some("Point"),
+            Some("[13.4,52.5]"),
+            Some("location"),
+            &LocationExpander,
+        )
+        .await
+        .expect("the request geo query compiles")
+        .expect("all three parameters were present");
+
+        pretty_assertions::assert_eq!(from_subscription, from_request);
+    }
+
+    #[test]
+    fn a_subscription_geo_filter_and_a_residual_geo_filter_give_the_same_verdict() {
+        // The subscription path and the residual path share one reading of
+        // clause 4.10, so a geometry either satisfies both or neither.
+        let geo_query = crate::service::subscription_cache::compile_geo_q(
+            &serde_json::json!({
+                "georel": "near;maxDistance==1000",
+                "geometry": "Point",
+                "coordinates": [13.4, 52.5],
+                "geoproperty": LOCATION
+            }),
+            "urn:ngsi-ld:Subscription:test",
+        )
+        .expect("the subscription geoQ compiles");
+
+        let residual = crate::service::entity::residual_filter::ResidualFilter::over(
+            andromeda_ngsi_ld_query::entity_selection::EntitySelection::builder()
+                .geo(Some(geo_query.clone())) // clone: the residual owns its predicate and the direct evaluator borrows this one
+                .build(),
+        );
+
+        for entity in [
+            located(13.4, 52.5),
+            located(13.4, 53.5),
+            serde_json::json!([{"@id": "urn:ngsi-ld:Building:002"}]),
+        ] {
+            pretty_assertions::assert_eq!(
+                matches_geo_query(&geo_query, &entity),
+                residual.matches(&entity),
+                "the two readings disagreed on {entity}"
+            );
+        }
     }
 
     #[test]

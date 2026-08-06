@@ -47,7 +47,8 @@ impl TemporalSimplifyOutput {
 }
 
 /// Simplifies temporal entity values to key-values form by round-tripping
-/// through the [`Entity`] domain type and calling [`Entity::simplify`].
+/// through the [`Entity`] domain type
+/// and calling its `simplify` method.
 #[derive(Debug)]
 pub struct TemporalSimplifyRenderer {
     payload: TemporalSimplifyPayload,

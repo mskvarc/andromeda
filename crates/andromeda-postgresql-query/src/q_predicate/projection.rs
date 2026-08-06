@@ -237,7 +237,7 @@ fn exists_on_projection(attr_placeholder: &str, value_sql: &str, target: &QFilte
 
 /// Compare one scalar against the typed column that holds values of its kind.
 ///
-/// The mapping mirrors what `TemporalRecorder::extract_typed_value` writes:
+/// The mapping mirrors what the temporal write path's `extract_attribute_value` writes:
 ///
 /// * numbers land in `value_number` (`double precision`),
 /// * booleans in `value_bool`,

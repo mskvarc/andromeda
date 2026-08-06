@@ -1,18 +1,22 @@
-//! SQL-only repository for the notification outbox.
+//! The PostgreSQL notification outbox.
 //!
-//! Executes parameterised queries and returns persistence-shaped row
-//! structs. Parsing into domain types is the responsibility of
-//! [`super::mapper`].
+//! Rows are parsed into the policy's entry type by [`super::mapper`] before
+//! they leave: a row that cannot be read back is dropped with a log line
+//! rather than failing the claim, so one unreadable entry cannot stall every
+//! other pending notification.
 
 use crate::{
     core::error::AndromedaError,
-    repository::outbox::{
-        entry::{NewOutboxEntry, OutboxEntryId, WorkerInstanceId},
-        rows::OutboxEntryRow,
+    repository::outbox::{mapper::row_to_domain, rows::OutboxEntryRow},
+    service::outbox::{
+        entry::{NewOutboxEntry, OutboxEntry, OutboxEntryId, WorkerInstanceId},
+        store::OutboxStore,
     },
 };
+use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use sqlx::{QueryBuilder, postgres::PgPool};
+use tracing::error;
 
 /// Repository for notification outbox persistence operations.
 #[derive(Debug)]
@@ -30,7 +34,7 @@ impl OutboxRepository {
     ///
     /// Builds a single multi-row `INSERT ... VALUES (...), (...), ...` via
     /// [`sqlx::QueryBuilder::push_values`], collapsing N round-trips into one.
-    pub async fn insert_batch_in_tx(tx: &mut sqlx::Transaction<'_, sqlx::Postgres>, entries: &[NewOutboxEntry]) -> Result<(), AndromedaError> {
+    pub async fn insert_batch_in_tx(tx: &mut sqlx::Transaction<'_, sqlx::Postgres>, entries: &[&NewOutboxEntry]) -> Result<(), AndromedaError> {
         if entries.is_empty() {
             return Ok(());
         }
@@ -52,13 +56,12 @@ impl OutboxRepository {
 
         Ok(())
     }
+}
 
-    /// Claim a batch of pending outbox entries for delivery.
-    ///
-    /// Uses `FOR UPDATE SKIP LOCKED` for safe concurrent worker access.
-    /// Returns persistence-shaped rows; callers invoke
-    /// [`super::mapper::row_to_domain`] to obtain the domain type.
-    pub async fn claim_pending(&self, worker_id: &WorkerInstanceId, batch_size: i32, max_attempts: i32) -> Result<Vec<OutboxEntryRow>, AndromedaError> {
+#[async_trait]
+impl OutboxStore for OutboxRepository {
+    /// Uses `FOR UPDATE SKIP LOCKED` so several workers can share one outbox.
+    async fn claim_pending(&self, worker_id: &WorkerInstanceId, batch_size: i32, max_attempts: i32) -> Result<Vec<OutboxEntry>, AndromedaError> {
         let rows = sqlx::query_as::<_, OutboxEntryRow>(
             r#"
             WITH claimable AS (
@@ -88,11 +91,11 @@ impl OutboxRepository {
         .fetch_all(&self.pool)
         .await?;
 
-        Ok(rows)
+        Ok(rows.into_iter().filter_map(into_entry).collect())
     }
 
     /// Mark an outbox entry as successfully delivered. Returns rows affected.
-    pub async fn mark_delivered(&self, id: OutboxEntryId) -> Result<u64, AndromedaError> {
+    async fn mark_delivered(&self, id: OutboxEntryId) -> Result<u64, AndromedaError> {
         let id_val = id.into_inner();
         let result = sqlx::query("UPDATE notification_outbox SET delivered_at = NOW() WHERE id = $1")
             .bind(id_val)
@@ -104,7 +107,7 @@ impl OutboxRepository {
     /// Mark an outbox entry as failed, incrementing the attempt counter and
     /// scheduling a retry at `next_attempt_at`. Clears the claim so another
     /// worker can pick it up. Returns rows affected.
-    pub async fn mark_failed(&self, id: OutboxEntryId, error: &str, next_attempt_at: DateTime<Utc>) -> Result<u64, AndromedaError> {
+    async fn mark_failed(&self, id: OutboxEntryId, error: &str, next_attempt_at: DateTime<Utc>) -> Result<u64, AndromedaError> {
         let id_val = id.into_inner();
         let result = sqlx::query(
             r#"
@@ -127,11 +130,24 @@ impl OutboxRepository {
 
     /// Delete delivered outbox entries older than the given cutoff timestamp.
     /// Returns the number of rows removed.
-    pub async fn delete_delivered_before(&self, cutoff: DateTime<Utc>) -> Result<u64, AndromedaError> {
+    async fn delete_delivered_before(&self, cutoff: DateTime<Utc>) -> Result<u64, AndromedaError> {
         let result = sqlx::query("DELETE FROM notification_outbox WHERE delivered_at IS NOT NULL AND delivered_at < $1")
             .bind(cutoff)
             .execute(&self.pool)
             .await?;
         Ok(result.rows_affected())
+    }
+}
+
+/// Parse one claimed row, logging and dropping it if its stored shape is
+/// unreadable. Dropping is deliberate: the entry stays claimed and will be
+/// reaped, and one bad row does not stall the rest of the batch.
+fn into_entry(row: OutboxEntryRow) -> Option<OutboxEntry> {
+    match row_to_domain(row) {
+        Ok(entry) => Some(entry),
+        Err(error) => {
+            error!(error = %error, event = "outbox_row_unreadable");
+            None
+        }
     }
 }

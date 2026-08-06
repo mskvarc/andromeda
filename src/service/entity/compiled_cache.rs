@@ -1,16 +1,14 @@
 //! Compiled-query cache.
 //!
 //! Entity-query compilation expands terms through the JSON-LD engine and
-//! parses `q`, `type`, `geo`, and projection clauses into a
-//! [`CompiledEntityQuery`]. For repeated queries (dashboards, polling
-//! clients) these results can be cached behind a capacity-limited,
-//! time-limited [`moka::future::Cache`] keyed on the context fingerprint and
-//! every parameter that can influence the compiled output.
+//! parses `q`, `type`, `geo`, and projection clauses into a compiled query.
+//! For repeated queries (dashboards, polling clients) these results can be
+//! cached behind a capacity-limited, time-limited cache keyed on the context
+//! fingerprint and every parameter that can influence the compiled output.
 //!
-//! Each cache instance is owned by an
-//! [`EntityQueryService`](crate::service::entity::query::EntityQueryService),
-//! which is already scoped to a single tenant, so tenant identity is implicit
-//! in the cache owner and does not need to be part of the key.
+//! Each cache instance is owned by an entity query service, which is already
+//! scoped to a single tenant, so tenant identity is implicit in the cache owner
+//! and does not need to be part of the key.
 
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_query::entity::compiled::CompiledEntityQuery;

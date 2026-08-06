@@ -8,13 +8,12 @@
 //! notification will go out over -- all concerns above the data model.
 
 use andromeda_delivery::endpoint::transport::EndpointTransport;
-use andromeda_ngsi_ld_geometry::geo_rel::GeoRel;
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_model::{
     key_value_pair::KeyValuePair,
     subscription::{EntitySelector, SubscriptionStatus},
 };
-use andromeda_ngsi_ld_query::{filter::expression::Expr, scope::query::ScopeQuery};
+use andromeda_ngsi_ld_query::{filter::expression::Expr, geo::query::GeoQuery, scope::query::ScopeQuery};
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 use chrono::{DateTime, Utc};
 use mediatype::MediaTypeBuf;
@@ -59,11 +58,13 @@ pub struct CompiledSubscription {
     pub jsonld_context: Option<String>,
     pub expires_at: Option<DateTime<Utc>>,
     pub compiled_q: Option<Expr>,
-    /// Pre-parsed geometry + georel from the `geoQ` parameter, if set.
-    /// `None` when the subscription does not carry a `geoQ` filter or the
-    /// filter could not be parsed at compile time (in which case the
-    /// subscription never matches an entity through the geo path).
-    pub compiled_geo_q: Option<CompiledGeoQuery>,
+    /// The subscription's `geoQ`, compiled to the same [`GeoQuery`] a
+    /// request-borne geo filter produces (clause 4.10).
+    ///
+    /// `None` when the subscription carries no `geoQ`, or when the one it
+    /// carries could not be parsed — in which case it never matches an entity
+    /// through the geo path at all.
+    pub compiled_geo_q: Option<GeoQuery>,
     /// The subscription's parsed `scopeQ`, if set.
     pub compiled_scope_q: Option<ScopeQuery>,
     pub dataset_id: Option<Vec<String>>,
@@ -72,20 +73,4 @@ pub struct CompiledSubscription {
     pub compiled_csf: Option<Expr>,
     /// When true, this subscription only matches locally-stored entities (clause 5.5.13).
     pub local_only: bool,
-}
-
-/// Pre-compiled `geoQ` query (ETSI GS CIM 009 clause 4.10).
-///
-/// Stores the reference geometry parsed into `geo::Geometry`, the georel
-/// operator pre-parsed with its modifier distances, and the expanded IRI of
-/// the geoproperty to evaluate against. Built once in `compile_subscription`
-/// so event matching does not re-parse GeoJSON on every event.
-#[derive(Debug, Clone)]
-pub struct CompiledGeoQuery {
-    /// Reference geometry the entity geometry is compared against. Authoritative decoded form.
-    pub ref_geometry: geo::Geometry,
-    /// Parsed georel operator + distance modifiers.
-    pub georel: GeoRel,
-    /// Expanded IRI of the entity geoproperty to read.
-    pub geoproperty_iri: String,
 }

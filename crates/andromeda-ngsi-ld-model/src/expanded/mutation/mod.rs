@@ -3,6 +3,7 @@
 pub mod attribute;
 pub mod entity;
 pub mod error;
+pub mod expiry;
 pub mod selection;
 #[cfg(test)]
 pub(crate) mod speed_entity;

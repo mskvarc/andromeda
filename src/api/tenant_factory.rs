@@ -8,30 +8,42 @@ use crate::{
     api::state::AndromedaState,
     core::{batch_activity::BatchActivityTracker, config::RuntimeConfig, error::AndromedaError},
     repository::{
+        atomic_write::anchor::PostgresAnchorStore,
+        attribute_current::materializer::AttributeCurrentMaterializer,
         attribute_names::AttributeNameCache,
         csource_registration::repo::CsourceRegistrationRepository,
         csource_subscription::repo::CsourceSubscriptionRepository,
         entity::repo::EntityRepository,
+        entity_map::InMemoryEntityMapStore,
         jsonld_context::repo::JsonLdContextRepository,
         outbox::repo::OutboxRepository,
+        pending_side_effects::repo::PendingSideEffectsRepository,
         snapshot::repo::SnapshotRepository,
         spatial_warmup::warmup_location,
         subscription::repo::SubscriptionRepository,
-        temporal::repo::TemporalRepository,
+        temporal::{recorder::TemporalRecorder, repo::TemporalRepository},
         tenant_database::{DatabaseUrl, configure_pool_options, migrate_tenant_db},
-        uow::UnitOfWorkFactory,
     },
     service::{
-        csource_registration::CsourceRegistrationService,
+        csource_registration::{CsourceRegistrationService, store::RegistrationStore},
         csource_subscription::CsourceSubscriptionService,
-        entity::{BatchExecutionConfig, EntityService, OutboxWriteConfig, discovery::EntityDiscoveryService, query::EntityQueryService},
+        entity::{
+            EntityService,
+            OutboxWriteConfig,
+            batch::execution::BatchExecutionConfig,
+            discovery::EntityDiscoveryService,
+            query::EntityQueryService,
+            store::EntityStore,
+            write_coordinator::{AnchoredWriteCoordinator, WriteCoordinator},
+        },
+        entity_map::EntityMapService,
         jsonld_context::JsonLdContextService,
+        snapshot::store::SnapshotStore,
         subscription::SubscriptionService,
         subscription_cache::SubscriptionCache,
         temporal::TemporalService,
     },
     worker::{
-        attribute_current_materializer::AttributeCurrentMaterializer,
         csr_interval::CsrIntervalWorker,
         csr_notification::CsrNotificationWorker,
         data_expiration::DataExpirationWorker,
@@ -248,6 +260,18 @@ async fn build_tenant_state(
     }
     worker_handles.push(tokio::spawn(materializer.run()));
 
+    // One entity store per tenant. It owns the attribute-name dictionary and
+    // the projection barrier because both describe how *this* store pushes a
+    // `q` predicate down; nothing above the port sees either.
+    let entity_store: Arc<dyn EntityStore> = Arc::new(EntityRepository::new(
+        &pool,
+        Arc::clone(&attribute_name_cache),
+        attribute_current_barrier.clone(), // clone: the temporal service still waits on the same watermark until the temporal read path moves behind its port
+    ));
+
+    let registration_store: Arc<dyn RegistrationStore> = Arc::new(CsourceRegistrationRepository::new(&pool));
+    let snapshot_store: Arc<dyn SnapshotStore> = Arc::new(SnapshotRepository::new(&pool));
+
     let subscription_cache = Arc::new(SubscriptionCache::new(tenant.clone()));
     if let Err(e) = subscription_cache.reload(&SubscriptionRepository::new(&pool)).await {
         tracing::error!("Failed to load subscription cache: {}", e);
@@ -258,20 +282,23 @@ async fn build_tenant_state(
         tracing::warn!("spatial warmup failed: {}", e);
     }
 
+    let temporal_recorder = Arc::new(TemporalRecorder::new(Arc::clone(&temporal_repo)));
+
     // Sole owner of the materializer producer handle: every write path reaches
-    // the projection through a unit of work, so no other service needs one.
-    let uow_factory = Arc::new(UnitOfWorkFactory::new(
+    // the projection through an atomic write, so no other service needs one.
+    // The anchor also owns the bulk-write mode, which is a statement shape
+    // rather than a caller's choice.
+    let writes: Arc<dyn WriteCoordinator> = Arc::new(AnchoredWriteCoordinator::new(PostgresAnchorStore::new(
         &pool,
-        Arc::clone(&temporal_repo),
+        Arc::clone(&temporal_recorder),
         config.performance.bulk_write_mode,
         attribute_current_queue,
-    ));
+    )));
 
     if config.performance.batch_async_side_effect_threshold.is_some() {
-        let pending_repo = crate::repository::pending_side_effects::repo::PendingSideEffectsRepository::new(&pool);
         let worker = PendingSideEffectsWorker::new(
-            pending_repo,
-            Arc::clone(&uow_factory),
+            Arc::new(PendingSideEffectsRepository::new(&pool)),
+            Arc::clone(&writes),
             Some(change_tx.clone()),
             crate::worker::pending_side_effects::WorkerConfig {
                 poll_interval: std::time::Duration::from_secs(config.performance.pending_side_effects_poll_secs.max(1)),
@@ -286,9 +313,9 @@ async fn build_tenant_state(
     }
 
     let entity_service = Arc::new(EntityService::new(
-        &pool,
-        Arc::clone(&temporal_repo),
-        Arc::clone(&uow_factory),
+        Arc::clone(&entity_store),
+        Arc::clone(&temporal_recorder),
+        Arc::clone(&writes),
         engine.clone(),
         Some(change_tx.clone()),
         BatchExecutionConfig {
@@ -310,9 +337,10 @@ async fn build_tenant_state(
         },
     ));
     let temporal_service = Arc::new(TemporalService::new(
-        &pool,
+        Arc::clone(&entity_store),
         Arc::clone(&temporal_repo),
-        Arc::clone(&uow_factory),
+        Arc::clone(&temporal_recorder),
+        Arc::clone(&writes),
         engine.clone(),
         config.temporal.default_last_n,
         attribute_current_barrier.clone(),
@@ -320,7 +348,11 @@ async fn build_tenant_state(
     ));
     let context_service = Arc::new(JsonLdContextService::new(&pool, engine.clone()));
     let subscription_service = Arc::new(SubscriptionService::new(&pool, engine.clone(), Some(sub_change_tx.clone())));
-    let csr_service = Arc::new(CsourceRegistrationService::new(&pool, engine.clone(), Some(csr_change_tx.clone())));
+    let csr_service = Arc::new(CsourceRegistrationService::new(
+        Arc::clone(&registration_store),
+        engine.clone(),
+        Some(csr_change_tx.clone()),
+    ));
     let csr_subscription_service = Arc::new(CsourceSubscriptionService::new(&pool, engine.clone(), Some(csr_sub_change_tx.clone())));
 
     let sse_registry: Arc<ConnectionRegistry<SseNotificationEvent>> = Arc::new(ConnectionRegistry::new());
@@ -346,20 +378,13 @@ async fn build_tenant_state(
     let _shutdown_tx = shutdown_tx;
 
     let spatial_change_rx = change_tx.subscribe();
-    let notification_entity_query = EntityQueryService::new(
-        &pool,
-        engine.clone(),
-        Arc::clone(&spatial_index),
-        tenant.clone(),
-        attribute_current_barrier.clone(),
-        Arc::clone(&attribute_name_cache),
-    );
+    let notification_entity_query = EntityQueryService::new(Arc::clone(&entity_store), engine.clone(), Arc::clone(&spatial_index), tenant.clone());
     let notification_worker = NotificationWorker::new(
         change_tx.subscribe(),
         sub_change_tx.subscribe(),
         crate::worker::notification::NotificationWorkerDeps {
             sub_repo: SubscriptionRepository::new(&pool),
-            entity_repo: EntityRepository::new(&pool),
+            entity_repo: Arc::clone(&entity_store),
             entity_query: notification_entity_query,
             engine: engine.clone(),
             transport: transport.clone(),
@@ -370,7 +395,7 @@ async fn build_tenant_state(
     worker_handles.push(tokio::spawn(notification_worker.run()));
 
     if config.outbox.enabled {
-        let outbox_worker = OutboxDeliveryWorker::new(OutboxRepository::new(&pool), &config.outbox);
+        let outbox_worker = OutboxDeliveryWorker::new(Arc::new(OutboxRepository::new(&pool)), &config.outbox);
         worker_handles.push(tokio::spawn(outbox_worker.run()));
     }
 
@@ -386,7 +411,7 @@ async fn build_tenant_state(
 
     let interval_worker = IntervalWorker::new(
         SubscriptionRepository::new(&pool),
-        EntityRepository::new(&pool),
+        Arc::clone(&entity_store),
         engine.clone(),
         transport.clone(),
         tenant.clone(),
@@ -397,7 +422,7 @@ async fn build_tenant_state(
         csr_change_tx.subscribe(),
         csr_sub_change_tx.subscribe(),
         CsourceSubscriptionRepository::new(&pool),
-        CsourceRegistrationRepository::new(&pool),
+        Arc::clone(&registration_store),
         transport.clone(),
         tenant.clone(),
     );
@@ -405,8 +430,8 @@ async fn build_tenant_state(
 
     // Combined entity and attribute expiration worker (§4.22).
     let data_expiration_worker = DataExpirationWorker::new(
-        EntityRepository::new(&pool),
-        Arc::clone(&uow_factory),
+        Arc::clone(&entity_store),
+        Arc::clone(&writes),
         Some(change_tx),
         expiration_interval,
         batch_activity,
@@ -414,14 +439,14 @@ async fn build_tenant_state(
     worker_handles.push(tokio::spawn(data_expiration_worker.run()));
 
     // Snapshot expiration worker (NGSI-LD 5.16 -- clean up expired snapshots)
-    let snapshot_expiration_worker = SnapshotExpirationWorker::new(SnapshotRepository::new(&pool), expiration_interval);
+    let snapshot_expiration_worker = SnapshotExpirationWorker::new(Arc::clone(&snapshot_store), expiration_interval);
     worker_handles.push(tokio::spawn(snapshot_expiration_worker.run()));
 
     // Spatial index: event-driven incremental sync + periodic bulk rebuild.
     let spatial_sync_worker = SpatialSyncWorker::new(
         spatial_change_rx,
         Arc::clone(&spatial_index),
-        &pool,
+        Arc::clone(&entity_store),
         tenant.clone(),
         std::time::Duration::from_secs(config.spatial.lag_log_interval_secs.max(1)),
     );
@@ -444,34 +469,31 @@ async fn build_tenant_state(
     let transport_handle = transport.clone();
     let csr_interval_worker = CsrIntervalWorker::new(
         CsourceSubscriptionRepository::new(&pool),
-        CsourceRegistrationRepository::new(&pool),
+        Arc::clone(&registration_store),
         transport,
         tenant.clone(),
     );
     worker_handles.push(tokio::spawn(csr_interval_worker.run()));
 
     let entity_query_service = Arc::new(EntityQueryService::new(
-        &pool,
+        Arc::clone(&entity_store),
         engine.clone(),
         Arc::clone(&spatial_index),
         tenant,
-        attribute_current_barrier,
-        attribute_name_cache,
     ));
-    let entity_discovery_service = Arc::new(EntityDiscoveryService::new(&pool, engine.clone()));
+    let entity_discovery_service = Arc::new(EntityDiscoveryService::new(entity_store, engine.clone()));
 
     let forwarding_service = Arc::new(crate::service::csource_forwarding::CsourceForwardingService::new(
-        &pool,
+        registration_store,
         engine,
         config.info.source_identity.clone(),
         config.performance.forward_csr_concurrency,
     )?);
 
-    let entity_map_store = crate::repository::entity_map::EntityMapStore::new();
-    let entity_map_service = Arc::new(crate::service::entity_map::EntityMapService::new(entity_map_store));
+    let entity_map_service = Arc::new(EntityMapService::new(Arc::new(InMemoryEntityMapStore::new())));
 
     let snapshot_service = Arc::new(crate::service::snapshot::SnapshotService::new(
-        &pool,
+        snapshot_store,
         Some(snapshot_transport),
         Arc::clone(&entity_query_service),
         Arc::clone(&temporal_service),

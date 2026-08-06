@@ -1,6 +1,9 @@
 use crate::{
-    repository::{entity::repo::EntityRepository, subscription::repo::SubscriptionRepository, subscription_store::repo::SubscriptionStore},
-    service::entity::inject_sys_attrs,
+    repository::subscription::repo::SubscriptionRepository,
+    service::{
+        entity::{store::EntityStore, sys_attrs::inject_sys_attrs},
+        subscription::store::SubscriptionStore,
+    },
 };
 use andromeda_delivery::{
     dispatch::{DeliveryResult, TransportDispatcher},
@@ -29,10 +32,7 @@ use url::Url;
 use uuid::Uuid;
 
 use super::notification::payload::{context_for_subscription_raw, filter_entity_attributes, normalize_compacted_entity};
-use crate::service::{
-    subscription_cache::compile_geo_q,
-    subscription_matching::{matches_compiled_geo_query, matches_scope_query},
-};
+use crate::service::{geo_filter::matches_geo_query, subscription_cache::compile_geo_q, subscription_matching::matches_scope_query};
 
 const INTERVAL_NOTIFICATION_CONCURRENCY: usize = 20;
 
@@ -47,7 +47,7 @@ const INTERVAL_ENTITY_PAGE: u16 = 500;
 
 pub struct IntervalWorker {
     sub_repo: SubscriptionRepository,
-    entity_repo: EntityRepository,
+    entity_repo: Arc<dyn EntityStore>,
     transport: Arc<TransportDispatcher>,
     poll_interval: Duration,
     engine: JsonLdEngine,
@@ -57,7 +57,7 @@ pub struct IntervalWorker {
 impl IntervalWorker {
     pub const fn new(
         sub_repo: SubscriptionRepository,
-        entity_repo: EntityRepository,
+        entity_repo: Arc<dyn EntityStore>,
         engine: JsonLdEngine,
         transport: Arc<TransportDispatcher>,
         tenant: TenantRef,
@@ -387,7 +387,7 @@ fn apply_subscription_filters(sub: &Subscription, entities: Vec<Value>) -> Vec<V
                 return false;
             }
             if let Some(ref geo_q) = compiled_geo
-                && !matches_compiled_geo_query(geo_q, entity)
+                && !matches_geo_query(geo_q, entity)
             {
                 return false;
             }

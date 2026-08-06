@@ -1,7 +1,7 @@
 //! Axum extractors for HTTP concerns shared across NGSI-LD API handlers.
 //!
-//! Each extractor composes typed header parsing (from [`crate::http::header`]) and/or
-//! model-level parsing (from [`crate::http::model`]) into a single
+//! Each extractor composes typed header parsing (from
+//! [`andromeda_ngsi_ld_http_headers`]) and/or model-level parsing into a single
 //! [`FromRequestParts`](axum::extract::FromRequestParts) implementation.
 
 pub mod accept;

@@ -1,7 +1,7 @@
 //! Background worker that periodically deletes entities whose expiresAt has passed (§4.22).
 
 use crate::{
-    repository::entity::repo::EntityRepository,
+    service::entity::store::EntityStore,
 };
 use andromeda_ngsi_ld_model::notification::ChangeEvent;
 use andromeda_ngsi_ld_model::notification::TriggerReason;
@@ -11,7 +11,7 @@ use tokio::sync::broadcast;
 use tracing::{error, info};
 
 pub struct EntityExpirationWorker {
-    entity_repo: EntityRepository,
+    entity_repo: Arc<dyn EntityStore>,
     change_tx: Option<broadcast::Sender<ChangeEvent>>,
     interval: Duration,
 }
@@ -24,7 +24,7 @@ impl super::Worker for EntityExpirationWorker {
 }
 
 impl EntityExpirationWorker {
-    pub const fn new(entity_repo: EntityRepository, change_tx: Option<broadcast::Sender<ChangeEvent>>, interval_secs: u64) -> Self {
+    pub const fn new(entity_repo: Arc<dyn EntityStore>, change_tx: Option<broadcast::Sender<ChangeEvent>>, interval_secs: u64) -> Self {
         Self {
             entity_repo,
             change_tx,

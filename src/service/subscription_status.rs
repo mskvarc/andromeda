@@ -4,7 +4,7 @@
 //! current state plus a [`StatusUpdateFields`] patch. Belongs to the service
 //! layer because it is pure business logic (no I/O, no SQL).
 
-use crate::repository::subscription_store::params::StatusUpdateFields;
+use crate::service::subscription::store::StatusUpdateFields;
 use andromeda_ngsi_ld_model::subscription::SubscriptionStatus;
 use chrono::Utc;
 

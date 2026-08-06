@@ -1,38 +1,39 @@
 //! In-memory store for NGSI-LD entity maps (ETSI GS CIM 009 clause 5.2.39).
 //!
-//! Backed by a concurrent `DashMap` with automatic expiry cleanup on insert.
+//! Backed by a concurrent `DashMap` with opportunistic expiry cleanup on insert.
 
+use crate::service::entity_map::store::EntityMapStore;
 use andromeda_ngsi_ld_lexicon::ngsi_ld_urn::EntityMapId;
 use andromeda_ngsi_ld_model::entity_map::EntityMap;
+use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use dashmap::DashMap;
 
-/// In-memory store for entity maps with automatic expiry cleanup.
-#[derive(Debug)]
-pub struct EntityMapStore {
+/// In-memory entity map store with opportunistic expiry cleanup.
+#[derive(Debug, Default)]
+pub struct InMemoryEntityMapStore {
     maps: DashMap<EntityMapId, EntityMap>,
 }
 
-impl EntityMapStore {
+impl InMemoryEntityMapStore {
     /// Creates an empty entity map store.
-    pub fn new() -> EntityMapStore {
-        EntityMapStore { maps: DashMap::new() }
+    pub fn new() -> InMemoryEntityMapStore {
+        InMemoryEntityMapStore { maps: DashMap::new() }
     }
+}
 
-    /// Inserts an entity map, removing any expired entries opportunistically.
-    pub async fn insert(&self, map: EntityMap) {
-        // Opportunistic cleanup of expired maps
+#[async_trait]
+impl EntityMapStore for InMemoryEntityMapStore {
+    async fn insert(&self, map: EntityMap) {
         self.maps.retain(|_, m| !m.is_expired());
-        self.maps.insert(map.id.clone(), map); // clone: owned key for map entry (map moves into value)
+        self.maps.insert(map.id.clone(), map); // clone: owned key for the entry, since the map moves into the value
     }
 
-    /// Retrieves an entity map by ID, returning `None` if not found or expired.
-    pub async fn get(&self, id: &EntityMapId) -> Option<EntityMap> {
-        self.maps.get(id).filter(|m| !m.is_expired()).map(|r| r.clone()) // clone: owned copy to return from DashMap ref
+    async fn get(&self, id: &EntityMapId) -> Option<EntityMap> {
+        self.maps.get(id).filter(|m| !m.is_expired()).map(|r| r.clone()) // clone: owned copy to return from the DashMap ref
     }
 
-    /// Updates the expiry time of an entity map. Returns `false` if not found or already expired.
-    pub async fn update(&self, id: &EntityMapId, expires_at: DateTime<Utc>) -> bool {
+    async fn update(&self, id: &EntityMapId, expires_at: DateTime<Utc>) -> bool {
         if let Some(mut entry) = self.maps.get_mut(id) {
             if entry.is_expired() {
                 drop(entry);
@@ -46,8 +47,7 @@ impl EntityMapStore {
         }
     }
 
-    /// Deletes an entity map by ID. Returns `true` if the entry existed.
-    pub async fn delete(&self, id: &EntityMapId) -> bool {
+    async fn delete(&self, id: &EntityMapId) -> bool {
         self.maps.remove(id).is_some()
     }
 }

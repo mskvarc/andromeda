@@ -414,6 +414,12 @@ impl AndromedaError {
         ErrorKind::MalformedRequest(message.into()).into()
     }
 
+    /// The request is well formed but this broker's configuration cannot serve
+    /// it (clause 5.5.2 `OperationNotSupported`).
+    pub fn operation_not_supported(message: impl Into<String>) -> AndromedaError {
+        ErrorKind::OperationNotSupported(message.into()).into()
+    }
+
     // -- Infrastructure ------------------------------------------------------
 
     /// An internal error that does not fit another category.

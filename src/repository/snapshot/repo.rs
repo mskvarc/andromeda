@@ -3,10 +3,8 @@
 use crate::{
     bind_values,
     core::error::AndromedaError,
-    repository::snapshot::{
-        mapper::row_to_snapshot,
-        params::{InsertSnapshotParams, SnapshotEntityInput, SnapshotQueryParams},
-    },
+    repository::snapshot::{mapper::row_to_snapshot, params::SnapshotQueryParams},
+    service::snapshot::store::{InsertSnapshotParams, SnapshotEntityInput, SnapshotStore},
 };
 use andromeda_ngsi_ld_lexicon::ngsi_ld_urn::SnapshotId;
 use andromeda_ngsi_ld_model::{
@@ -14,6 +12,7 @@ use andromeda_ngsi_ld_model::{
     snapshot_filter::SnapshotPurgeFilter,
 };
 use andromeda_postgresql_context_query::snapshot_purge::build_match_query;
+use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use iso8601_duration::Duration as Iso8601Duration;
 use serde_json::Value;
@@ -31,10 +30,13 @@ impl SnapshotRepository {
     pub fn new(pool: &PgPool) -> SnapshotRepository {
         SnapshotRepository { pool: pool.clone() } // clone: Arc ref-count bump
     }
+}
 
+#[async_trait]
+impl SnapshotStore for SnapshotRepository {
     /// Insert a new snapshot. The service layer pre-serialises JSON columns
     /// into [`InsertSnapshotParams`] so no `to_value` is needed here.
-    pub async fn create(&self, params: InsertSnapshotParams<'_>) -> Result<(), AndromedaError> {
+    async fn create(&self, params: InsertSnapshotParams<'_>) -> Result<(), AndromedaError> {
         sqlx::query(
             "INSERT INTO snapshots (id, snapshot_queries, snapshot_temporal_queries, snapshot_lifetime, snapshot_priority, endpoint, receiver_info, status, queries_details, temporal_queries_details, created_at, modified_at, expires_at, last_used_at)
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8::snapshot_status, $9, $10, $11, $12, $13, $14)",
@@ -59,7 +61,7 @@ impl SnapshotRepository {
     }
 
     /// Retrieve a snapshot by its identifier.
-    pub async fn get(&self, id: &SnapshotId) -> Result<Option<Snapshot>, AndromedaError> {
+    async fn get(&self, id: &SnapshotId) -> Result<Option<Snapshot>, AndromedaError> {
         let row = sqlx::query(
             "SELECT id, snapshot_queries, snapshot_temporal_queries, snapshot_lifetime, snapshot_priority, endpoint, receiver_info, status::text AS status, queries_details, temporal_queries_details, created_at, modified_at, expires_at, last_used_at FROM snapshots WHERE id = $1",
         )
@@ -74,7 +76,7 @@ impl SnapshotRepository {
     }
 
     /// Check whether a snapshot with the given identifier exists.
-    pub async fn exists(&self, id: &SnapshotId) -> Result<bool, AndromedaError> {
+    async fn exists(&self, id: &SnapshotId) -> Result<bool, AndromedaError> {
         let row = sqlx::query("SELECT 1 FROM snapshots WHERE id = $1")
             .bind(id.as_str())
             .fetch_optional(&self.pool)
@@ -83,7 +85,7 @@ impl SnapshotRepository {
     }
 
     /// Update the lifetime, priority, and expiration of an existing snapshot. Returns rows affected.
-    pub async fn update_lifetime_priority(
+    async fn update_lifetime_priority(
         &self,
         id: &SnapshotId,
         lifetime: Option<&Iso8601Duration>,
@@ -103,13 +105,13 @@ impl SnapshotRepository {
     }
 
     /// Delete a snapshot by its identifier. Returns rows affected.
-    pub async fn delete(&self, id: &SnapshotId) -> Result<u64, AndromedaError> {
+    async fn delete(&self, id: &SnapshotId) -> Result<u64, AndromedaError> {
         let result = sqlx::query("DELETE FROM snapshots WHERE id = $1").bind(id.as_str()).execute(&self.pool).await?;
         Ok(result.rows_affected())
     }
 
     /// Identifiers of all snapshots matching the given purge filter.
-    pub async fn match_by_filter(&self, filter: &SnapshotPurgeFilter) -> Result<Vec<SnapshotId>, AndromedaError> {
+    async fn match_by_filter(&self, filter: &SnapshotPurgeFilter) -> Result<Vec<SnapshotId>, AndromedaError> {
         let built = build_match_query(filter);
         let query = bind_values!(sqlx::query(&built.sql), &built.bind_values);
         let rows = query.fetch_all(&self.pool).await?;
@@ -125,13 +127,13 @@ impl SnapshotRepository {
     }
 
     /// Delete a single snapshot by identifier. Returns rows affected.
-    pub async fn delete_one(&self, id: &SnapshotId) -> Result<u64, AndromedaError> {
+    async fn delete_one(&self, id: &SnapshotId) -> Result<u64, AndromedaError> {
         let result = sqlx::query("DELETE FROM snapshots WHERE id = $1").bind(id.as_str()).execute(&self.pool).await?;
         Ok(result.rows_affected())
     }
 
     /// Duplicate a snapshot under a new identifier and expiration.
-    pub async fn clone_snapshot(&self, source_id: &SnapshotId, new_id: &SnapshotId, new_expires_at: DateTime<Utc>) -> Result<Snapshot, AndromedaError> {
+    async fn clone_snapshot(&self, source_id: &SnapshotId, new_id: &SnapshotId, new_expires_at: DateTime<Utc>) -> Result<Snapshot, AndromedaError> {
         let mut tx = self.pool.begin().await?;
 
         sqlx::query(
@@ -176,7 +178,7 @@ impl SnapshotRepository {
     /// (see `service::snapshot::status::validate_preparing_transition`); this
     /// method issues an unconditional UPDATE guarded only by the current DB
     /// status being `preparing`.
-    pub async fn update_status(
+    async fn update_status(
         &self,
         id: &SnapshotId,
         status: SnapshotStatus,
@@ -198,24 +200,24 @@ impl SnapshotRepository {
 
     /// Batch insert entities into `snapshot_entities` in a single UNNEST-based
     /// INSERT (one round-trip per batch, vs one per entity previously).
-    pub async fn insert_entities(&self, snapshot_id: &SnapshotId, entities: &[SnapshotEntityInput<'_>]) -> Result<(), AndromedaError> {
+    async fn insert_entities(&self, snapshot_id: &SnapshotId, entities: &[SnapshotEntityInput<'_>]) -> Result<(), AndromedaError> {
         batch_insert_snapshot_rows(&self.pool, "snapshot_entities", "entity_data", snapshot_id, entities).await
     }
 
     /// Batch insert temporal entities into `snapshot_temporal_entities` via
     /// UNNEST.
-    pub async fn insert_temporal_entities(&self, snapshot_id: &SnapshotId, entities: &[SnapshotEntityInput<'_>]) -> Result<(), AndromedaError> {
+    async fn insert_temporal_entities(&self, snapshot_id: &SnapshotId, entities: &[SnapshotEntityInput<'_>]) -> Result<(), AndromedaError> {
         batch_insert_snapshot_rows(&self.pool, "snapshot_temporal_entities", "temporal_data", snapshot_id, entities).await
     }
 
     /// Delete all expired snapshots and return the count removed.
-    pub async fn delete_expired(&self) -> Result<u64, AndromedaError> {
+    async fn delete_expired(&self) -> Result<u64, AndromedaError> {
         let result = sqlx::query("DELETE FROM snapshots WHERE expires_at < NOW()").execute(&self.pool).await?;
         Ok(result.rows_affected())
     }
 
     /// Update the `last_used_at` timestamp to the current time.
-    pub async fn touch_last_used(&self, id: &SnapshotId) -> Result<(), AndromedaError> {
+    async fn touch_last_used(&self, id: &SnapshotId) -> Result<(), AndromedaError> {
         sqlx::query("UPDATE snapshots SET last_used_at = NOW() WHERE id = $1")
             .bind(id.as_str())
             .execute(&self.pool)
@@ -224,12 +226,12 @@ impl SnapshotRepository {
     }
 
     /// Retrieve a single entity from `snapshot_entities`.
-    pub async fn get_entity(&self, snapshot_id: &SnapshotId, entity_id: &str) -> Result<Option<Value>, AndromedaError> {
+    async fn get_entity(&self, snapshot_id: &SnapshotId, entity_id: &str) -> Result<Option<Value>, AndromedaError> {
         get_snapshot_row(&self.pool, "snapshot_entities", "entity_data", snapshot_id, entity_id).await
     }
 
     /// Query entities with optional type and ID filtering.
-    pub async fn query_entities(
+    async fn query_entities(
         &self,
         snapshot_id: &SnapshotId,
         entity_type: Option<&str>,
@@ -251,12 +253,12 @@ impl SnapshotRepository {
     }
 
     /// Retrieve a single temporal entity.
-    pub async fn get_temporal_entity(&self, snapshot_id: &SnapshotId, entity_id: &str) -> Result<Option<Value>, AndromedaError> {
+    async fn get_temporal_entity(&self, snapshot_id: &SnapshotId, entity_id: &str) -> Result<Option<Value>, AndromedaError> {
         get_snapshot_row(&self.pool, "snapshot_temporal_entities", "temporal_data", snapshot_id, entity_id).await
     }
 
     /// Distinct `type` values in a snapshot.
-    pub async fn snapshot_distinct_types(&self, snapshot_id: &SnapshotId) -> Result<Vec<String>, AndromedaError> {
+    async fn snapshot_distinct_types(&self, snapshot_id: &SnapshotId) -> Result<Vec<String>, AndromedaError> {
         let rows = sqlx::query("SELECT DISTINCT entity_data->>'type' AS t FROM snapshot_entities WHERE snapshot_id = $1 AND entity_data ? 'type' ORDER BY t")
             .bind(snapshot_id.as_str())
             .fetch_all(&self.pool)
@@ -271,7 +273,7 @@ impl SnapshotRepository {
     }
 
     /// Type info: entity count and attribute names for a given type.
-    pub async fn snapshot_type_info(&self, snapshot_id: &SnapshotId, type_name: &str) -> Result<Option<(i64, Vec<String>)>, AndromedaError> {
+    async fn snapshot_type_info(&self, snapshot_id: &SnapshotId, type_name: &str) -> Result<Option<(i64, Vec<String>)>, AndromedaError> {
         let count_row = sqlx::query("SELECT COUNT(*) AS cnt FROM snapshot_entities WHERE snapshot_id = $1 AND entity_data->>'type' = $2")
             .bind(snapshot_id.as_str())
             .bind(type_name)
@@ -300,7 +302,7 @@ impl SnapshotRepository {
     }
 
     /// Distinct attribute names observed in a snapshot.
-    pub async fn snapshot_distinct_attributes(&self, snapshot_id: &SnapshotId) -> Result<Vec<String>, AndromedaError> {
+    async fn snapshot_distinct_attributes(&self, snapshot_id: &SnapshotId) -> Result<Vec<String>, AndromedaError> {
         let rows = sqlx::query(
             "SELECT DISTINCT key FROM snapshot_entities, jsonb_object_keys(entity_data) AS key \
              WHERE snapshot_id = $1 AND key NOT IN ('id', 'type', '@context') ORDER BY key",
@@ -317,7 +319,7 @@ impl SnapshotRepository {
     }
 
     /// Attribute info: entity count and types for a given attribute.
-    pub async fn snapshot_attribute_info(&self, snapshot_id: &SnapshotId, attr_name: &str) -> Result<Option<(i64, Vec<String>)>, AndromedaError> {
+    async fn snapshot_attribute_info(&self, snapshot_id: &SnapshotId, attr_name: &str) -> Result<Option<(i64, Vec<String>)>, AndromedaError> {
         let count_row = sqlx::query("SELECT COUNT(*) AS cnt FROM snapshot_entities WHERE snapshot_id = $1 AND entity_data ? $2")
             .bind(snapshot_id.as_str())
             .bind(attr_name)
@@ -346,7 +348,7 @@ impl SnapshotRepository {
     }
 
     /// Query temporal entities with optional filtering.
-    pub async fn query_temporal_entities(
+    async fn query_temporal_entities(
         &self,
         snapshot_id: &SnapshotId,
         entity_type: Option<&str>,

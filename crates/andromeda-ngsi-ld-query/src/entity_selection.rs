@@ -17,7 +17,10 @@ use typed_builder::TypedBuilder;
 /// whose seven members were identical, and the temporal one held a flat list of
 /// type IRIs that its renderer rebuilt into a [`TypeExpr`] — so a temporal
 /// query could not express the clause 4.17 conjunction an entity query could.
-#[derive(Debug, Clone, TypedBuilder)]
+/// A selection with no member set matches every entity, which is what makes
+/// `Default` meaningful here: it is the empty filter, and a caller describing
+/// the predicates a store *declined* starts from it.
+#[derive(Debug, Clone, Default, TypedBuilder)]
 #[builder(field_defaults(default))]
 pub struct EntitySelection {
     /// Resource identifiers to filter by. Empty means no identifier filter.

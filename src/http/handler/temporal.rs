@@ -20,8 +20,9 @@ use crate::{
     service::{
         csource_forwarding::{CsrModeFilter, ForwardTemporalQueryRequest, ForwardingOperation, collect_temporal_warnings, merge_temporal_retrieve_results},
         entity_map::{parse_entity_map_urn, parse_iso8601_duration, parse_uri_csv},
+        geo_filter::matches_geo_query,
         subscription_cache::compile_geo_q,
-        subscription_matching::{matches_compiled_geo_query, matches_scope_query},
+        subscription_matching::matches_scope_query,
         temporal::{CreateOrUpdateResult, TemporalQueryResult, TemporalService},
     },
     temporal_render::simplify::{TemporalSimplifyPayload, TemporalSimplifyRenderer},
@@ -403,7 +404,7 @@ pub async fn query(
             };
 
             let q_ok = q_expr.as_ref().is_none_or(|expr| evaluate(expr, &expanded));
-            let geo_ok = compiled_geo.as_ref().is_none_or(|geo| matches_compiled_geo_query(geo, &expanded));
+            let geo_ok = compiled_geo.as_ref().is_none_or(|geo| matches_geo_query(geo, &expanded));
             let scope_ok = compiled_scope.as_ref().is_none_or(|scope| matches_scope_query(scope, &expanded));
 
             if q_ok && geo_ok && scope_ok {

@@ -4,7 +4,7 @@
 //! Pure service-layer logic: no I/O, no SQL. The repository applies the
 //! produced [`ResolvedCsrUpdate`] as an unconditional UPDATE.
 
-use crate::{core::error::AndromedaError, repository::csource_registration::params::CsrUpdateFragment};
+use crate::{core::error::AndromedaError, service::csource_registration::store::CsrUpdateFragment};
 use andromeda_ngsi_ld_geometry::geometry::Geometry;
 use andromeda_ngsi_ld_lexicon::tenant::TenantName;
 use andromeda_ngsi_ld_model::registration::{ContextSourceRegistration, ForwardingMode};

@@ -9,10 +9,17 @@
 
 use crate::{
     core::error::AndromedaError,
-    repository::pending_side_effects::{payload::PersistedBatchSideEffectJob, rows::LeasedSideEffect},
+    repository::pending_side_effects::payload::PersistedBatchSideEffectJob,
+    service::entity::{
+        side_effect::BatchSideEffectJob,
+        side_effect_queue::{LeasedSideEffect, SideEffectQueue},
+    },
 };
+use async_trait::async_trait;
 use chrono::{DateTime, Utc};
+use serde_json::Value;
 use sqlx::{Postgres, Row, Transaction, postgres::PgPool};
+use tracing::error;
 use uuid::Uuid;
 
 /// Postgres-backed queue for deferred batch side-effects.
@@ -40,13 +47,15 @@ impl PendingSideEffectsRepository {
         let id: Uuid = row.get("id");
         Ok(id)
     }
+}
 
-    /// Claim up to `batch_size` ready jobs for the given `worker_id`,
-    /// stamping each claimed row with `locked_until = NOW() + lease_seconds`.
-    /// Rows already leased by live workers are skipped; rows whose lease
-    /// has expired are reclaimable, which is how stale leases from a
-    /// crashed worker are recovered without explicit cleanup.
-    pub async fn lease_batch(&self, worker_id: &str, batch_size: i32, lease_seconds: i32) -> Result<Vec<LeasedSideEffect>, AndromedaError> {
+#[async_trait]
+impl SideEffectQueue for PendingSideEffectsRepository {
+    /// Claims are stamped with `locked_until = NOW() + lease_seconds`. Rows
+    /// already leased by live workers are skipped; rows whose lease has expired
+    /// are reclaimable, which is how stale leases from a crashed worker are
+    /// recovered without explicit cleanup.
+    async fn lease_batch(&self, worker_id: &str, batch_size: i32, lease_seconds: i32) -> Result<Vec<LeasedSideEffect>, AndromedaError> {
         let rows = sqlx::query(
             r#"
             WITH claimable AS (
@@ -73,20 +82,33 @@ impl PendingSideEffectsRepository {
         .fetch_all(&self.pool)
         .await?;
 
-        let leased = rows
-            .into_iter()
-            .map(|row| LeasedSideEffect {
-                id: row.get("id"),
-                attempts: row.get("attempts"),
-                payload: row.get("payload"),
-            })
-            .collect();
+        let mut leased = Vec::with_capacity(rows.len());
+        for row in rows {
+            let id: Uuid = row.get("id");
+            match decode_job(row.get("payload")) {
+                Ok(job) => leased.push(LeasedSideEffect {
+                    id,
+                    attempts: row.get("attempts"),
+                    job,
+                }),
+                Err(error) => {
+                    // A payload this process cannot read will never become
+                    // readable, so retrying it would block the queue behind it
+                    // for the whole retry budget.
+                    let detail = error.to_string();
+                    error!(error = %detail, job_id = %id, event = "pending_side_effect_payload_unreadable");
+                    if let Err(mark_error) = self.mark_dead(id, &detail).await {
+                        error!(error = %mark_error, job_id = %id, event = "pending_side_effect_mark_dead_failed");
+                    }
+                }
+            }
+        }
         Ok(leased)
     }
 
     /// Delete a successfully processed job. Returns `true` if a row was
     /// removed.
-    pub async fn ack(&self, id: Uuid) -> Result<bool, AndromedaError> {
+    async fn ack(&self, id: Uuid) -> Result<bool, AndromedaError> {
         let result = sqlx::query("DELETE FROM pending_side_effects WHERE id = $1")
             .bind(id)
             .execute(&self.pool)
@@ -97,7 +119,7 @@ impl PendingSideEffectsRepository {
     /// Record a failed attempt, schedule a retry at `next_attempt_at`, and
     /// release the lease so another worker can reclaim the row. Returns
     /// `true` if a row was updated.
-    pub async fn nack(&self, id: Uuid, error: &str, next_attempt_at: DateTime<Utc>) -> Result<bool, AndromedaError> {
+    async fn nack(&self, id: Uuid, error: &str, next_attempt_at: DateTime<Utc>) -> Result<bool, AndromedaError> {
         let result = sqlx::query(
             r#"
             UPDATE pending_side_effects
@@ -120,7 +142,7 @@ impl PendingSideEffectsRepository {
     /// Dead-letter a row whose attempts exceeded the maximum. Keeps the
     /// row in the table with `dead = TRUE` so operators can inspect the
     /// payload and error history.
-    pub async fn mark_dead(&self, id: Uuid, error: &str) -> Result<bool, AndromedaError> {
+    async fn mark_dead(&self, id: Uuid, error: &str) -> Result<bool, AndromedaError> {
         let result = sqlx::query(
             r#"
             UPDATE pending_side_effects
@@ -138,4 +160,11 @@ impl PendingSideEffectsRepository {
         .await?;
         Ok(result.rows_affected() == 1)
     }
+}
+
+/// Read one stored payload back into the job it describes.
+fn decode_job(payload: Value) -> Result<BatchSideEffectJob, AndromedaError> {
+    let persisted: PersistedBatchSideEffectJob =
+        serde_json::from_value(payload).map_err(|err| AndromedaError::internal(format!("invalid pending_side_effect payload: {err}")))?;
+    persisted.try_into()
 }

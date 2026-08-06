@@ -5,7 +5,7 @@
 //! themselves, so this module defines a parallel shape using plain field
 //! types and converts to/from the domain form at the repository boundary.
 
-use crate::{core::error::AndromedaError, service::entity::BatchSideEffectJob};
+use crate::{core::error::AndromedaError, service::entity::side_effect::BatchSideEffectJob};
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::notification::{ChangeEvent, ChangeOrigin, SysAttrsSnapshot, TriggerReason};
 use chrono::{DateTime, Utc};

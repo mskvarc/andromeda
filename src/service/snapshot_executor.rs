@@ -10,14 +10,12 @@
 //! (clause 5.13), and the resulting entities are persisted into
 //! `snapshot_entities` / `snapshot_temporal_entities`.
 
-use crate::{
-    repository::snapshot::{params::SnapshotEntityInput, repo::SnapshotRepository},
-    service::{
-        csource_forwarding::{CsourceForwardingService, CsrModeFilter, ForwardQueryRequest, ForwardingOperation},
-        entity::query::EntityQueryService,
-        snapshot_status::validate_preparing_transition,
-        temporal::TemporalService,
-    },
+use crate::service::{
+    csource_forwarding::{CsourceForwardingService, CsrModeFilter, ForwardQueryRequest, ForwardingOperation},
+    entity::query::EntityQueryService,
+    snapshot::store::{SnapshotEntityInput, SnapshotStore},
+    snapshot_status::validate_preparing_transition,
+    temporal::TemporalService,
 };
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::ngsi_ld_urn::SnapshotId;
@@ -30,7 +28,6 @@ use andromeda_ngsi_ld_request::query::{entity::EntityQueryParameters, temporal::
 use chrono::{DateTime, SecondsFormat, Utc};
 use compact_str::CompactString;
 use serde_json::Value;
-use sqlx::postgres::PgPool;
 use std::sync::Arc;
 use thiserror::Error;
 use tracing::{debug, error, info, warn};
@@ -38,7 +35,7 @@ use tracing::{debug, error, info, warn};
 /// Translates NGSI-LD snapshot queries into the service-level query pipeline
 /// and persists results.
 pub struct SnapshotExecutor {
-    snapshot_repo: SnapshotRepository,
+    snapshot_repo: Arc<dyn SnapshotStore>,
     entity_query: Arc<EntityQueryService>,
     temporal: Arc<TemporalService>,
     forwarding: Arc<CsourceForwardingService>,
@@ -60,13 +57,13 @@ pub enum SnapshotQueryTranslationError {
 impl SnapshotExecutor {
     /// Create a new snapshot executor wired to the query services.
     pub fn new(
-        pool: &PgPool,
+        snapshot_repo: Arc<dyn SnapshotStore>,
         entity_query: Arc<EntityQueryService>,
         temporal: Arc<TemporalService>,
         forwarding: Arc<CsourceForwardingService>,
     ) -> SnapshotExecutor {
         SnapshotExecutor {
-            snapshot_repo: SnapshotRepository::new(pool),
+            snapshot_repo,
             entity_query,
             temporal,
             forwarding,

@@ -3,6 +3,10 @@
 //! Each submodule provides a repository struct backed by PostgreSQL (via `sqlx`)
 //! or an in-memory store, encapsulating all SQL queries and data mapping logic.
 
+/// Committing atomic writes against PostgreSQL.
+pub mod atomic_write;
+/// The `attribute_current` projection and the worker that maintains it.
+pub mod attribute_current;
 /// Shared `attribute_names` dictionary cache.
 pub mod attribute_names;
 pub mod copy;
@@ -29,6 +33,5 @@ pub mod tenant_database;
 /// The `tenants` table, behind the tenancy crate's registry port.
 pub mod tenant_registry;
 pub mod timescale_features;
-pub mod uow;
 /// Binding typed query values into PostgreSQL statements.
 pub mod value_binding;

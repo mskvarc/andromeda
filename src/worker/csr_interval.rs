@@ -1,7 +1,6 @@
-use crate::repository::{
-    csource_registration::repo::CsourceRegistrationRepository,
-    csource_subscription::repo::CsourceSubscriptionRepository,
-    subscription_store::repo::SubscriptionStore,
+use crate::{
+    repository::csource_subscription::repo::CsourceSubscriptionRepository,
+    service::{csource_registration::store::RegistrationStore, subscription::store::SubscriptionStore},
 };
 use andromeda_delivery::{
     dispatch::{DeliveryResult, TransportDispatcher},
@@ -20,7 +19,7 @@ use uuid::Uuid;
 
 pub struct CsrIntervalWorker {
     sub_repo: CsourceSubscriptionRepository,
-    csr_repo: CsourceRegistrationRepository,
+    csr_repo: Arc<dyn RegistrationStore>,
     transport: Arc<TransportDispatcher>,
     poll_interval: Duration,
     tenant: TenantRef,
@@ -29,7 +28,7 @@ pub struct CsrIntervalWorker {
 impl CsrIntervalWorker {
     pub const fn new(
         sub_repo: CsourceSubscriptionRepository,
-        csr_repo: CsourceRegistrationRepository,
+        csr_repo: Arc<dyn RegistrationStore>,
         transport: Arc<TransportDispatcher>,
         tenant: TenantRef,
     ) -> Self {

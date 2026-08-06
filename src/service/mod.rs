@@ -13,7 +13,11 @@ pub mod csource_registration;
 pub mod csource_subscription;
 pub mod entity;
 pub mod entity_map;
+/// Evaluating a clause 4.10 geo-query against an expanded entity payload.
+pub mod geo_filter;
 pub mod jsonld_context;
+/// The transactional notification outbox.
+pub mod outbox;
 pub mod snapshot;
 pub mod snapshot_executor;
 pub mod snapshot_prepare;
@@ -28,4 +32,3 @@ pub mod subscription_matching;
 pub mod subscription_status;
 pub mod subscription_throttle;
 pub mod temporal;
-pub mod temporal_recorder;

@@ -1,10 +1,11 @@
 use crate::{
-    repository::{
-        csource_registration::repo::CsourceRegistrationRepository,
-        csource_subscription::repo::CsourceSubscriptionRepository,
-        subscription_store::repo::SubscriptionStore,
+    repository::csource_subscription::repo::CsourceSubscriptionRepository,
+    service::{
+        compiled_subscription::CompiledCsrSubscription,
+        csource_registration::store::RegistrationStore,
+        subscription::store::SubscriptionStore,
+        subscription_throttle::ceiling_for_throttle,
     },
-    service::{compiled_subscription::CompiledCsrSubscription, subscription_throttle::ceiling_for_throttle},
 };
 use andromeda_delivery::{
     dispatch::{DeliveryResult, TransportDispatcher},
@@ -33,7 +34,7 @@ pub struct CsrNotificationWorker {
     csr_change_rx: broadcast::Receiver<CsrChangeEvent>,
     sub_change_rx: broadcast::Receiver<CsourceSubscriptionChange>,
     sub_repo: CsourceSubscriptionRepository,
-    csr_repo: CsourceRegistrationRepository,
+    csr_repo: Arc<dyn RegistrationStore>,
     cache: DashMap<String, Arc<CompiledCsrSubscription>>,
     transport: Arc<TransportDispatcher>,
     tenant: TenantRef,
@@ -44,7 +45,7 @@ impl CsrNotificationWorker {
         csr_change_rx: broadcast::Receiver<CsrChangeEvent>,
         sub_change_rx: broadcast::Receiver<CsourceSubscriptionChange>,
         sub_repo: CsourceSubscriptionRepository,
-        csr_repo: CsourceRegistrationRepository,
+        csr_repo: Arc<dyn RegistrationStore>,
         transport: Arc<TransportDispatcher>,
         tenant: TenantRef,
     ) -> Self {

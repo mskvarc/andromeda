@@ -8,4 +8,3 @@
 
 pub mod payload;
 pub mod repo;
-pub mod rows;

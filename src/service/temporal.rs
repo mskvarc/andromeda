@@ -4,15 +4,19 @@ use crate::{
     core::error::AndromedaError,
     http::response::content_range::build_content_range,
     repository::{
+        attribute_current::queue::AttributeCurrentBarrier,
         attribute_names::AttributeNameCache,
-        entity::{params::EntityCreateParams, repo::EntityRepository},
-        temporal::{params::DeleteScope, repo::TemporalRepository},
-        uow::UnitOfWorkFactory,
+        temporal::{params::DeleteScope, recorder::TemporalRecorder, repo::TemporalRepository},
     },
     service::{
         csource_forwarding::{ForwardedTemporalEntities, merge_temporal_query_results},
-        entity::extract::extract_geo_geometries,
-        temporal_recorder::TemporalRecorder,
+        entity::{
+            atomic_write::AtomicWrite,
+            entity_mutation::{EntityMutation, EntityRecord},
+            history_record::HistoryRecord,
+            store::EntityStore,
+            write_coordinator::WriteCoordinator,
+        },
     },
     temporal_render::{
         aggregation::TemporalAggregationRenderer,
@@ -20,7 +24,6 @@ use crate::{
         entity::TemporalEntityRenderer,
         values::TemporalValuesRenderer,
     },
-    worker::attribute_current_materializer::AttributeCurrentBarrier,
 };
 use andromeda_jsonld::{
     compaction::compact_attr_iri,
@@ -29,7 +32,7 @@ use andromeda_jsonld::{
     term_expansion::ContextualExpander,
 };
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, temporal_format::TemporalFormat, uri::Uri};
-use andromeda_ngsi_ld_model::expanded::entity_member::{extract_expires_at, extract_types};
+use andromeda_ngsi_ld_model::expanded::entity_member::extract_types;
 use andromeda_ngsi_ld_query::{
     dataset::DatasetSelector,
     entity_selection::EntitySelection,
@@ -134,9 +137,9 @@ fn normalize_temporal_payload_without_context(value: &mut Value) {
 /// Service layer for NGSI-LD Temporal Entity operations (read and write).
 pub struct TemporalService {
     repo: Arc<TemporalRepository>,
-    recorder: TemporalRecorder,
-    uow: Arc<UnitOfWorkFactory>,
-    entity_repo: EntityRepository,
+    recorder: Arc<TemporalRecorder>,
+    writes: Arc<dyn WriteCoordinator>,
+    entity_repo: Arc<dyn EntityStore>,
     engine: JsonLdEngine,
     default_last_n: u32,
     attribute_current: AttributeCurrentBarrier,
@@ -186,21 +189,19 @@ pub struct TemporalQueryResult {
 impl TemporalService {
     /// Create a new temporal service with the given connection pool, shared temporal repository, unit-of-work factory, JSON-LD engine, and default lastN cap.
     pub fn new(
-        pool: &sqlx::postgres::PgPool,
+        entity_repo: Arc<dyn EntityStore>,
         temporal_repo: Arc<TemporalRepository>,
-        uow: Arc<UnitOfWorkFactory>,
+        recorder: Arc<TemporalRecorder>,
+        writes: Arc<dyn WriteCoordinator>,
         engine: JsonLdEngine,
         default_last_n: u32,
         attribute_current: AttributeCurrentBarrier,
         attribute_names: Arc<AttributeNameCache>,
     ) -> TemporalService {
-        let recorder = TemporalRecorder::new(temporal_repo.clone()); // clone: Arc ref-count bump; repo is shared between service and recorder
-        let entity_repo = EntityRepository::new(pool);
-
         TemporalService {
             repo: temporal_repo,
             recorder,
-            uow,
+            writes,
             entity_repo,
             engine,
             default_last_n,
@@ -247,67 +248,54 @@ impl TemporalService {
     /// history.
     pub async fn create_or_update(&self, mut payload: Value, context: &ContextSpec) -> Result<CreateOrUpdateResult, AndromedaError> {
         normalize_entity_attributes(&mut payload);
-        let expanded = self.engine.expand(payload.clone(), context).await?; // clone: expand() consumes the Value; payload is still used below for type extraction
-        let entity_obj = expanded
-            .as_array()
-            .and_then(|arr| arr.first())
-            .and_then(|v| v.as_object())
-            .ok_or_else(|| AndromedaError::temporal_validation("Entity must be a JSON object"))?;
+        let expanded = self.engine.expand(payload, context).await?;
+        let entity_id = {
+            let entity_obj = expanded
+                .as_array()
+                .and_then(|arr| arr.first())
+                .and_then(|v| v.as_object())
+                .ok_or_else(|| AndromedaError::temporal_validation("Entity must be a JSON object"))?;
 
-        let entity_id = entity_obj
-            .get("@id")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| AndromedaError::temporal_validation("Entity missing @id"))?;
+            let entity_id = entity_obj
+                .get("@id")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| AndromedaError::temporal_validation("Entity missing @id"))?;
 
-        if entity_id.is_empty() || url::Url::parse(entity_id).is_err() {
-            return Err(AndromedaError::temporal_validation("Invalid entity id"));
-        }
-        if entity_obj.get("@type").and_then(|v| v.as_array()).is_none_or(|types| types.is_empty()) {
-            return Err(AndromedaError::temporal_validation("Entity missing @type"));
-        }
+            if entity_id.is_empty() || url::Url::parse(entity_id).is_err() {
+                return Err(AndromedaError::temporal_validation("Invalid entity id"));
+            }
+            if entity_obj.get("@type").and_then(|v| v.as_array()).is_none_or(|types| types.is_empty()) {
+                return Err(AndromedaError::temporal_validation("Entity missing @type"));
+            }
+            entity_id.to_string()
+        };
 
-        // Note: Per NGSI-LD spec, temporal entities can be created independently
-        // of the main entity table. We do NOT require the entity to exist first.
+        // Per the specification, temporal entities can be created independently
+        // of the entity table, so the entity is not required to exist first.
+        let exists = self.repo.tea_exists_for_entity(&entity_id).await?;
 
-        let exists = self.repo.tea_exists_for_entity(entity_id).await?;
+        let payload = Arc::new(expanded);
 
         if exists {
-            self.add_attrs_internal(entity_id, &expanded).await?;
+            self.add_attrs_internal(&entity_id, payload).await?;
             Ok(CreateOrUpdateResult::Updated)
         } else {
-            let mut types = Vec::new();
-            if let Some(type_arr) = entity_obj.get("@type").and_then(|v| v.as_array()) {
-                for t in type_arr {
-                    if let Some(t_str) = t.as_str() {
-                        types.push(t_str);
-                    }
-                }
-            }
+            // The base entity row is a placeholder carrying the expanded
+            // payload, so the stored JSON has the `@type` every entity read
+            // expects. No pre-flight existence check: the statement's conflict
+            // clause is the check, and it does not lose a race to a concurrent
+            // temporal write for the same new identifier.
+            let write = AtomicWrite::builder()
+                .entity_id(Arc::from(entity_id.as_str()))
+                // Unconditional: two concurrent temporal writes for one new
+                // identifier are both legitimate, and neither should fail
+                // because the other materialised the row first.
+                .entity(EntityMutation::Insert(EntityRecord::from_expanded(Arc::clone(&payload)))) // clone: Arc ref-count bump
+                .history(vec![HistoryRecord::Observations(payload)])
+                .build();
+            self.writes.commit(vec![write]).await?;
 
-            // The base entity row is a placeholder using the expanded payload so
-            // that extract_types() can find @type in the stored JSON. No
-            // pre-flight existence check: the statement's conflict clause is the
-            // check, and it does not lose a race to a concurrent temporal write
-            // for the same new identifier.
-            let expires_at = extract_expires_at(&expanded);
-            let (location, observation_space, operation_space) = extract_geo_geometries(&expanded);
-
-            let mut uow = self.uow.begin().await?;
-            uow.ensure_entity_placeholder(EntityCreateParams {
-                id: entity_id,
-                types: &types,
-                scope_paths: Vec::new(),
-                payload: &expanded,
-                location,
-                observation_space,
-                operation_space,
-                expires_at,
-            })
-            .await?;
-            uow.record_entity_attributes(entity_id, &expanded).await?;
-            uow.commit().await?;
-
-            Ok(CreateOrUpdateResult::Created(entity_id.to_string()))
+            Ok(CreateOrUpdateResult::Created(entity_id))
         }
     }
 
@@ -319,7 +307,7 @@ impl TemporalService {
 
         normalize_entity_attributes(&mut payload);
         let expanded = self.engine.expand(payload, context).await?;
-        self.add_attrs_internal(entity_id, &expanded).await?;
+        self.add_attrs_internal(entity_id, Arc::new(expanded)).await?;
         Ok(())
     }
 
@@ -335,10 +323,14 @@ impl TemporalService {
     /// 204/400/404 for `POST /temporal/entities/{id}/attrs`, and 204 means "all
     /// the Attributes were added successfully" -- there is no response code that
     /// can report a subset having been stored.
-    async fn add_attrs_internal(&self, entity_id: &str, expanded: &Value) -> Result<(), AndromedaError> {
-        let mut uow = self.uow.begin().await?;
-        uow.record_entity_attributes(entity_id, expanded).await?;
-        uow.commit().await
+    async fn add_attrs_internal(&self, entity_id: &str, expanded: Arc<Value>) -> Result<(), AndromedaError> {
+        let write = AtomicWrite::builder()
+            .entity_id(Arc::from(entity_id))
+            .entity(EntityMutation::None)
+            .history(vec![HistoryRecord::Observations(expanded)])
+            .build();
+        self.writes.commit(vec![write]).await?;
+        Ok(())
     }
 
     async fn resolve_attr_iri_for_entity(&self, entity_id: &str, attr_id: &str, context: &ContextSpec) -> Result<String, AndromedaError> {

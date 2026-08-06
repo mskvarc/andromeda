@@ -1,7 +1,7 @@
 //! Reporting a broker failure inside a clause 6.17 batch result.
 //!
 //! The wire shapes live in `andromeda-ngsi-ld-problem-details`; what is here is
-//! the same decision [`category`](crate::http::error::category) makes for a
+//! the same decision [`crate::http::error::category`] makes for a
 //! single response, applied per entity.
 
 use crate::{core::error::AndromedaError, http::error::category, service::entity::batch::BatchResult};

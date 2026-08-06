@@ -1,6 +1,6 @@
 use crate::{
     core::error::AndromedaError,
-    repository::entity::{repo::EntityRepository, rows::AttributeSummaryRow},
+    service::entity::store::{AttributeSummary, EntityStore},
 };
 use andromeda_jsonld::{
     context_spec::ContextSpec,
@@ -23,24 +23,23 @@ use andromeda_ngsi_ld_model::{
 use iri_rs::IriBuf;
 use jsonld::Expandable;
 use serde_json::Value;
-use sqlx::postgres::PgPool;
 use std::{
     collections::{HashMap, HashSet},
     str::FromStr,
+    sync::Arc,
 };
 use urn_rs::UrnBuilder;
 use uuid::Uuid;
 
 /// Service for NGSI-LD entity type and attribute discovery operations.
 pub struct EntityDiscoveryService {
-    repo: EntityRepository,
+    repo: Arc<dyn EntityStore>,
     engine: JsonLdEngine,
 }
 
 impl EntityDiscoveryService {
-    /// Create a new entity discovery service backed by the given connection pool.
-    pub fn new(pool: &PgPool, engine: JsonLdEngine) -> EntityDiscoveryService {
-        let repo = EntityRepository::new(pool);
+    /// Create a new entity discovery service backed by the given store.
+    pub fn new(repo: Arc<dyn EntityStore>, engine: JsonLdEngine) -> EntityDiscoveryService {
         EntityDiscoveryService { repo, engine }
     }
 
@@ -209,7 +208,7 @@ impl EntityDiscoveryService {
     pub async fn attributes(&self, details: bool, context: &ContextSpec) -> Result<Value, AndromedaError> {
         // Keyset-paginate attribute summary aggregation.
         const PAGE: u32 = 500;
-        let mut summary_rows: Vec<AttributeSummaryRow> = Vec::new();
+        let mut summary_rows: Vec<AttributeSummary> = Vec::new();
         let mut cursor: Option<String> = None;
         loop {
             let page = self.repo.get_attribute_summary(cursor.as_deref(), PAGE).await?;

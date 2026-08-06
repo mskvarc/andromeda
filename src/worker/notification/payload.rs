@@ -3,7 +3,10 @@
 
 use crate::service::{
     compiled_subscription::CompiledSubscription,
-    entity::{expanded_entity_object_mut, inject_attr_sys_attrs, query::EntityQueryService},
+    entity::{
+        query::EntityQueryService,
+        sys_attrs::{expanded_entity_object_mut, inject_attr_sys_attrs},
+    },
 };
 use andromeda_delivery::request::notification_media_type;
 use andromeda_jsonld::{

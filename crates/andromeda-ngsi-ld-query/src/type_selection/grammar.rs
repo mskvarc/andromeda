@@ -157,9 +157,27 @@ pub enum TypeExpr {
     Or(Vec<TypeExpr>),
 }
 
+impl TypeExpr {
+    /// Whether a set of expanded entity type IRIs satisfies this expression.
+    ///
+    /// The counterpart of [`TypeExprRaw::matches`] on the other side of
+    /// expansion: the same clause 4.17 boolean structure, with leaves compared
+    /// as IRIs rather than as compact names. A caller that has the expanded
+    /// payload — a store that declined the type predicate, a notification
+    /// matcher working on expanded JSON-LD — has IRIs and nothing to compact
+    /// them against.
+    pub fn matches<S: AsRef<str>>(&self, type_iris: &[S]) -> bool {
+        match self {
+            TypeExpr::Type(iri) => type_iris.iter().any(|candidate| candidate.as_ref() == iri.as_str()),
+            TypeExpr::And(children) => children.iter().all(|child| child.matches(type_iris)),
+            TypeExpr::Or(children) => children.iter().any(|child| child.matches(type_iris)),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use crate::type_selection::grammar::TypeExprRaw;
+    use crate::type_selection::grammar::{TypeExpr, TypeExprRaw};
 
     #[test]
     fn a_type_expression_round_trips_through_its_clause_4_17_text() {
@@ -222,5 +240,39 @@ mod tests {
     #[test]
     fn a_malformed_type_expression_is_rejected_when_the_resource_is_deserialized() {
         assert!(serde_json::from_str::<TypeExprRaw>("\"(Building\"").is_err());
+    }
+
+    fn iri(raw: &str) -> TypeExpr {
+        TypeExpr::Type(raw.parse().unwrap_or_else(|error| unreachable!("{raw} must be an IRI: {error}")))
+    }
+
+    #[test]
+    fn an_expanded_alternation_matches_whole_iris_only() {
+        // Clause 4.17 over the expanded form: the leaves are IRIs, and a
+        // longer IRI that merely ends with one of them is a different type.
+        let expr = TypeExpr::Or(vec![iri("https://example.com/Building"), iri("https://example.com/Tower")]);
+        assert!(expr.matches(&["https://example.com/Building"]));
+        assert!(expr.matches(&["https://example.com/Tower"]));
+        assert!(!expr.matches(&["https://example.com/MyBuilding"]));
+        assert!(!expr.matches(&["https://example.com/Vehicle"]));
+    }
+
+    #[test]
+    fn an_expanded_conjunction_needs_every_type_present() {
+        let expr = TypeExpr::And(vec![iri("https://example.com/Home"), iri("https://example.com/Vehicle")]);
+        assert!(expr.matches(&["https://example.com/Home", "https://example.com/Vehicle"]));
+        assert!(!expr.matches(&["https://example.com/Home"]));
+    }
+
+    #[test]
+    fn the_expanded_and_compact_readings_of_one_expression_agree_in_structure() {
+        // The two ASTs are the same clause 4.17 tree either side of expansion,
+        // so a shape that matches compactly must match once expanded.
+        let compact: TypeExprRaw = "Building,Tower".parse().expect("valid type expression");
+        let expanded = TypeExpr::Or(vec![iri("https://example.com/Building"), iri("https://example.com/Tower")]);
+        assert!(compact.matches(&["Tower"]));
+        assert!(expanded.matches(&["https://example.com/Tower"]));
+        assert!(!compact.matches(&["Vehicle"]));
+        assert!(!expanded.matches(&["https://example.com/Vehicle"]));
     }
 }

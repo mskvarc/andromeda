@@ -11,11 +11,14 @@
 
 use crate::{
     core::error::AndromedaError,
-    repository::{
-        pending_side_effects::{payload::PersistedBatchSideEffectJob, repo::PendingSideEffectsRepository, rows::LeasedSideEffect},
-        uow::UnitOfWorkFactory,
+    service::entity::{
+        atomic_write::AtomicWrite,
+        entity_mutation::EntityMutation,
+        history_record::HistoryRecord,
+        side_effect::BatchSideEffectJob,
+        side_effect_queue::{LeasedSideEffect, SideEffectQueue},
+        write_coordinator::WriteCoordinator,
     },
-    service::entity::BatchSideEffectJob,
 };
 use andromeda_ngsi_ld_model::notification::ChangeEvent;
 use chrono::Utc;
@@ -45,21 +48,26 @@ pub struct WorkerConfig {
 
 /// Background worker that drains the durable side-effect queue.
 pub struct PendingSideEffectsWorker {
-    repo: PendingSideEffectsRepository,
-    uow: Arc<UnitOfWorkFactory>,
+    repo: Arc<dyn SideEffectQueue>,
+    writes: Arc<dyn WriteCoordinator>,
     change_tx: Option<broadcast::Sender<ChangeEvent>>,
     config: WorkerConfig,
 }
 
 impl PendingSideEffectsWorker {
-    /// Create a new worker bound to the tenant's unit-of-work factory.
+    /// Create a new worker bound to the tenant's write coordinator.
     pub const fn new(
-        repo: PendingSideEffectsRepository,
-        uow: Arc<UnitOfWorkFactory>,
+        repo: Arc<dyn SideEffectQueue>,
+        writes: Arc<dyn WriteCoordinator>,
         change_tx: Option<broadcast::Sender<ChangeEvent>>,
         config: WorkerConfig,
     ) -> PendingSideEffectsWorker {
-        PendingSideEffectsWorker { repo, uow, change_tx, config }
+        PendingSideEffectsWorker {
+            repo,
+            writes,
+            change_tx,
+            config,
+        }
     }
 
     /// Run the poll loop until the task is aborted.
@@ -86,9 +94,12 @@ impl PendingSideEffectsWorker {
     }
 
     async fn process_lease(&self, lease: LeasedSideEffect) {
-        let id = lease.id;
-        let attempts_before = lease.attempts;
-        match self.execute(&lease).await {
+        let LeasedSideEffect {
+            id,
+            attempts: attempts_before,
+            job,
+        } = lease;
+        match self.execute(job).await {
             Ok(()) => {
                 if let Err(error) = self.repo.ack(id).await {
                     tracing::warn!(error = %error, job_id = %id, event = "pending_side_effect_ack_failed");
@@ -122,21 +133,28 @@ impl PendingSideEffectsWorker {
         self.config.base_backoff.saturating_mul(multiplier.min(u32::MAX as u64) as u32)
     }
 
-    async fn execute(&self, lease: &LeasedSideEffect) -> Result<(), AndromedaError> {
-        let persisted: PersistedBatchSideEffectJob =
-            serde_json::from_value(lease.payload.clone()).map_err(|err| AndromedaError::internal(format!("invalid pending_side_effect payload: {err}")))?;
-        let job: BatchSideEffectJob = persisted.try_into()?;
+    async fn execute(&self, job: BatchSideEffectJob) -> Result<(), AndromedaError> {
         let BatchSideEffectJob {
             temporal_entities,
             change_events,
         } = job;
 
-        // One unit of work for the whole replayed job: the TEA upsert, the
+        // One commit for the whole replayed job: the catalogue upsert, the
         // history insert and the scope insert either all land or none do, so a
-        // retry after a mid-job failure has nothing partial to heal.
-        let mut uow = self.uow.begin().await?;
-        uow.record_entities_batch(&temporal_entities).await?;
-        uow.commit().await?;
+        // retry after a mid-job failure has nothing partial to heal. Each entry
+        // is its own atomic write touching no entity row -- the row was written
+        // by the request that enqueued this job.
+        let writes: Vec<AtomicWrite> = temporal_entities
+            .into_iter()
+            .map(|(id, expanded)| {
+                AtomicWrite::builder()
+                    .entity_id(id)
+                    .entity(EntityMutation::None)
+                    .history(vec![HistoryRecord::Observations(expanded)])
+                    .build()
+            })
+            .collect();
+        self.writes.commit(writes).await?;
 
         if let Some(tx) = &self.change_tx {
             for event in change_events {

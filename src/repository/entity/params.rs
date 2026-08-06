@@ -1,87 +1,27 @@
-//! Repository input parameter types for entity persistence.
+//! The parallel bind vectors every entity statement is driven from.
+//!
+//! One entity or a thousand, the statements bind the same nine arrays, so this
+//! is the only shape the write path builds. Everything that turns a
+//! specification value into a column — the `ltree` rendering of a scope, the
+//! `sonic_rs` pre-serialisation of a payload, the EWKB encoding of a geometry —
+//! happens on the way in here.
 
 use crate::{core::error::AndromedaError, repository::ewkb_binding::geometry_bytes};
 use andromeda_ngsi_ld_geometry::geometry::Geometry;
-use andromeda_ngsi_ld_lexicon::entity_type_name::EntityTypeName;
 use chrono::{DateTime, Utc};
 use serde_json::Value;
 
-/// Pre-extracted columns for an entity `save` request. The service layer
-/// performs all `Value` inspection and hands typed columns to the repository.
-#[derive(Debug)]
-pub struct EntitySaveParams<'a> {
-    /// Entity identifier (URN).
-    pub id: &'a str,
-    /// Full expanded JSON-LD payload (persisted as JSONB).
-    pub payload: &'a Value,
-    /// Extracted type names.
-    pub types: Vec<EntityTypeName>,
-    /// Extracted scope paths in ltree dot notation.
-    pub scope_paths: Vec<String>,
-    /// Hoisted `location` GeoProperty geometry, if present.
-    pub location: Option<Geometry>,
-    /// Hoisted `observationSpace` GeoProperty geometry, if present.
-    pub observation_space: Option<Geometry>,
-    /// Hoisted `operationSpace` GeoProperty geometry, if present.
-    pub operation_space: Option<Geometry>,
-    /// Extracted `expiresAt` timestamp, if present.
-    pub expires_at: Option<DateTime<Utc>>,
-}
-
-/// Pre-extracted columns for an entity `create` request.
-#[derive(Debug)]
-pub struct EntityCreateParams<'a> {
-    /// Entity identifier (URN).
-    pub id: &'a str,
-    /// Type IRI list (borrowed from the caller).
-    pub types: &'a [&'a str],
-    /// Scope paths in ltree dot notation (pre-converted).
-    pub scope_paths: Vec<String>,
-    /// Full expanded JSON-LD payload.
-    pub payload: &'a Value,
-    /// Hoisted `location` geometry.
-    pub location: Option<Geometry>,
-    /// Hoisted `observationSpace` geometry.
-    pub observation_space: Option<Geometry>,
-    /// Hoisted `operationSpace` geometry.
-    pub operation_space: Option<Geometry>,
-    /// Explicit expiry, if any.
-    pub expires_at: Option<DateTime<Utc>>,
-}
-
-/// Row data prepared for bulk entity SQL operations.
-#[derive(Debug)]
-pub(crate) struct PreparedEntityRow {
-    /// Entity identifier (URN).
-    pub id: String,
-    /// JSON array of type IRIs.
-    pub types_json: Value,
-    /// JSON array of ltree-formatted scope paths.
-    pub scope_paths_json: Value,
-    /// Full expanded JSON-LD payload.
-    pub payload: Value,
-    /// The `location` GeoProperty geometry, if present.
-    pub location: Option<Geometry>,
-    /// The `observationSpace` GeoProperty geometry, if present.
-    pub observation_space: Option<Geometry>,
-    /// The `operationSpace` GeoProperty geometry, if present.
-    pub operation_space: Option<Geometry>,
-    /// Entity expiration timestamp.
-    pub expires_at: Option<DateTime<Utc>>,
-}
-
-/// Parallel column vectors extracted from [`PreparedEntityRow`] slices for
-/// sqlx `UNNEST` binding.
+/// Parallel column vectors for one fused entity statement.
 #[derive(Debug)]
 pub struct PreparedEntityColumns {
     /// Entity identifiers.
     pub ids: Vec<String>,
     /// Type arrays as JSON.
     pub types_json: Vec<Value>,
-    /// Scope arrays as JSON.
+    /// Scope arrays as JSON, already in `ltree` dot notation.
     pub scope_paths_json: Vec<Value>,
-    /// Expanded payloads retained for in-process side-effect consumers
-    /// (temporal recorder, change events) that still require a DOM view.
+    /// Expanded payloads retained for the in-process side-effect consumers
+    /// that still require a DOM view.
     pub payloads: Vec<Value>,
     /// Pre-serialised JSON text for each payload, produced once via
     /// `sonic_rs::to_string` so that the SQL bind path can pass the wire
@@ -147,20 +87,4 @@ impl PreparedEntityColumns {
         self.op_spaces.push(geometry_bytes(operation_space)?);
         Ok(())
     }
-}
-
-pub(crate) fn decompose_rows(entities: Vec<PreparedEntityRow>) -> Result<PreparedEntityColumns, AndromedaError> {
-    let len = entities.len();
-    let mut columns = PreparedEntityColumns::with_capacity(len);
-
-    for e in entities {
-        columns.ids.push(e.id);
-        columns.types_json.push(e.types_json);
-        columns.scope_paths_json.push(e.scope_paths_json);
-        columns.push_payload(e.payload)?;
-        columns.push_geometries(e.location.as_ref(), e.observation_space.as_ref(), e.operation_space.as_ref())?;
-        columns.expires_ats.push(e.expires_at);
-    }
-
-    Ok(columns)
 }

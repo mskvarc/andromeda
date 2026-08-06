@@ -1,10 +1,11 @@
 pub(crate) mod payload;
 
 use crate::{
-    repository::{entity::repo::EntityRepository, subscription::repo::SubscriptionRepository, subscription_store::repo::SubscriptionStore},
+    repository::subscription::repo::SubscriptionRepository,
     service::{
         compiled_subscription::CompiledSubscription,
-        entity::{inject_sys_attrs, query::EntityQueryService},
+        entity::{query::EntityQueryService, store::EntityStore, sys_attrs::inject_sys_attrs},
+        subscription::store::SubscriptionStore,
         subscription_cache::SubscriptionCache,
         subscription_throttle::ceiling_for_throttle,
     },
@@ -15,11 +16,15 @@ use andromeda_delivery::{
     request::NotificationDelivery,
 };
 use andromeda_jsonld::engine::processor::JsonLdEngine;
+use andromeda_ngsi_ld_geometry::geometry::Geometry;
 use andromeda_ngsi_ld_lexicon::{
     entity_type_name::EntityTypeName,
     uri::{NGSI_LD_URN_NID, Uri},
 };
-use andromeda_ngsi_ld_model::notification::{ChangeEvent, Notification, NotificationType, SubscriptionChange, TriggerReason};
+use andromeda_ngsi_ld_model::{
+    expanded::entity_member::extract_geoproperty_geometry,
+    notification::{ChangeEvent, Notification, NotificationType, SubscriptionChange, TriggerReason},
+};
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 use andromeda_ngsi_ld_vocabulary::expanded::{classes as expanded_classes, properties as expanded_properties};
 use andromeda_tenancy::tenant_ref::TenantRef;
@@ -35,7 +40,7 @@ use crate::service::subscription_matching::matches_entity_filters;
 use andromeda_spatial_index::key::SpatialKey;
 use iri_rs::IriBuf;
 use payload::{NotificationBuildParams, NotificationCompactionCache, build_notification_data};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 const NOTIFICATION_CONCURRENCY: usize = 20;
 
@@ -43,7 +48,7 @@ pub struct NotificationWorker {
     change_rx: broadcast::Receiver<ChangeEvent>,
     sub_change_rx: broadcast::Receiver<SubscriptionChange>,
     sub_repo: SubscriptionRepository,
-    entity_repo: EntityRepository,
+    entity_repo: Arc<dyn EntityStore>,
     entity_query: EntityQueryService,
     cache: Arc<SubscriptionCache>,
     transport: Arc<TransportDispatcher>,
@@ -53,7 +58,7 @@ pub struct NotificationWorker {
 
 pub struct NotificationWorkerDeps {
     pub sub_repo: SubscriptionRepository,
-    pub entity_repo: EntityRepository,
+    pub entity_repo: Arc<dyn EntityStore>,
     pub entity_query: EntityQueryService,
     pub engine: JsonLdEngine,
     pub transport: Arc<TransportDispatcher>,
@@ -399,9 +404,10 @@ impl NotificationWorker {
         let spatial = self.cache.spatial();
         let tenant = self.cache.tenant().clone();
 
-        // Cache geoproperty IRI -> entity geometry to avoid re-parsing per
-        // subscription that targets the same property.
-        let mut geom_cache: std::collections::HashMap<String, geo::Geometry<f64>> = std::collections::HashMap::new();
+        // One read of each distinct geoproperty, cached across the
+        // subscriptions that target it. A property the entity does not carry is
+        // cached as absent too, so a miss is not re-read either.
+        let mut geometries: HashMap<IriBuf, Option<Geometry>> = HashMap::new();
         let mut survivors: HashSet<String> = HashSet::new();
         let mut non_geo: Vec<Arc<CompiledSubscription>> = Vec::new();
 
@@ -411,24 +417,15 @@ impl NotificationWorker {
                 continue;
             };
 
-            let entity_geom = if let Some(g) = geom_cache.get(&geo_q.geoproperty_iri) {
-                Some(g.clone())
-            } else {
-                let parsed = extract_entity_geometry(entity_data, &geo_q.geoproperty_iri);
-                if let Some(ref g) = parsed {
-                    geom_cache.insert(geo_q.geoproperty_iri.clone(), g.clone());
-                }
-                parsed
-            };
-
-            let Some(entity_geom) = entity_geom else {
-                // Entity has no value for this geoproperty -> sub cannot match.
-                continue;
-            };
-
-            let Ok(geoproperty_iri) = IriBuf::new(geo_q.geoproperty_iri.clone()) else {
-                survivors.insert(sub.id.clone());
-                non_geo.push(sub);
+            let geoproperty_iri = &geo_q.geoproperty_iri;
+            if !geometries.contains_key(geoproperty_iri) {
+                // clone: the cache owns its key, which the subscription keeps
+                let geometry = extract_geoproperty_geometry(entity_data, geoproperty_iri.as_str());
+                geometries.insert(geoproperty_iri.clone(), geometry);
+            }
+            // The entity carries no instance of this geoproperty, so no
+            // subscription filtering on it can match (clause 4.10).
+            let Some(Some(entity_geometry)) = geometries.get(geoproperty_iri) else {
                 continue;
             };
 
@@ -438,8 +435,8 @@ impl NotificationWorker {
                     continue;
                 };
                 let key = SpatialKey::new(tenant.clone(), type_iri, geoproperty_iri.clone());
-                let cands = spatial.candidates(&key, &entity_geom);
-                if cands.iter().any(|c| c == &sub.id) {
+                let candidates = spatial.candidates(&key, entity_geometry.as_ref());
+                if candidates.iter().any(|candidate| candidate == &sub.id) {
                     matched_any = true;
                     break;
                 }
@@ -450,32 +447,6 @@ impl NotificationWorker {
         }
 
         non_geo
-    }
-}
-
-fn extract_entity_geometry(entity_data: &Value, geoproperty_iri: &str) -> Option<geo::Geometry<f64>> {
-    let obj = match entity_data {
-        Value::Array(arr) => arr.first().and_then(Value::as_object),
-        Value::Object(obj) => Some(obj),
-        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => None,
-    }?;
-    let prop_value = obj.get(geoproperty_iri)?;
-    let geojson_value = prop_value
-        .as_array()
-        .and_then(|arr| arr.first())
-        .and_then(|inst| inst.get(expanded_properties::VALUE.as_str()))
-        .and_then(|v| v.as_array())
-        .and_then(|arr| arr.first())
-        .and_then(|v| v.get("@value"))?;
-    let geojson_str = match geojson_value {
-        Value::String(s) => s.clone(),
-        Value::Object(_) => geojson_value.to_string(),
-        Value::Array(_) | Value::Bool(_) | Value::Null | Value::Number(_) => return None,
-    };
-    let parsed: geojson::GeoJson = geojson_str.parse().ok()?;
-    match parsed {
-        geojson::GeoJson::Geometry(g) => geo::Geometry::try_from(g).ok(),
-        geojson::GeoJson::Feature(_) | geojson::GeoJson::FeatureCollection(_) => None,
     }
 }
 

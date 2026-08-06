@@ -6,11 +6,12 @@
 
 use crate::{
     core::error::AndromedaError,
-    repository::{
-        subscription::repo::SubscriptionRepository,
-        subscription_store::{params::StatusUpdateFields, repo::SubscriptionStore},
+    repository::subscription::repo::SubscriptionRepository,
+    service::{
+        subscription::store::{StatusUpdateFields, SubscriptionStore},
+        subscription_core,
+        subscription_status::compute_updated_status,
     },
-    service::{subscription_core, subscription_status::compute_updated_status},
 };
 use andromeda_delivery::endpoint::transport::parse_endpoint_transport;
 use andromeda_jsonld::{context_spec::ContextSpec, context_validation::validate_jsonld_context_value, engine::processor::JsonLdEngine};

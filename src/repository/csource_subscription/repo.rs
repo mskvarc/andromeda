@@ -1,9 +1,6 @@
 //! Repository for NGSI-LD context source subscriptions (SQL only).
 
-use crate::{
-    core::error::AndromedaError,
-    repository::subscription_store::params::{DatasetIdPresence, SubscriptionFields},
-};
+use crate::{core::error::AndromedaError, repository::subscription_store::params::DatasetIdPresence, service::subscription::store::SubscriptionFields};
 use andromeda_ngsi_ld_model::subscription::SubscriptionStatus;
 use sqlx::postgres::PgPool;
 use tracing::info;

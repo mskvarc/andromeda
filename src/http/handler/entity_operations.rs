@@ -18,7 +18,7 @@ use crate::{
     },
     service::{
         csource_forwarding::{CsrModeFilter, ForwardBatchProvisionRequest, ForwardQueryRequest, ForwardingOperation, collect_warnings},
-        entity::{BatchSideEffectMode, provision_forwarding::ForwardingModes, query::EntityQueryService},
+        entity::{provision_forwarding::ForwardingModes, query::EntityQueryService, side_effect::BatchSideEffectMode},
     },
 };
 use andromeda_ngsi_ld_http_headers::{preference::RespondMode, preference_applied::PreferenceApplied};
