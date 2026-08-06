@@ -180,7 +180,7 @@ impl EntityQueryService {
             .map_err(|error| AndromedaError::entity_validation(error.to_string()))?;
 
         let mut compiled = Vec::new();
-        for term in &params.parse_order_by() {
+        for term in &params.parse_order_by()? {
             let target = match RawOrderTarget::classify(&term.attr) {
                 RawOrderTarget::Id => OrderTarget::Id,
                 RawOrderTarget::Type => OrderTarget::Type,

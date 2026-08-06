@@ -1,6 +1,10 @@
 //! Query parameter types for entity API endpoints.
 
-use crate::case_insensitive_bool::deserialize_option_bool_case_insensitive;
+use crate::{
+    case_insensitive_bool::deserialize_option_bool_case_insensitive,
+    error::ParameterError,
+    representation_params::{resolve_response_format, validate_representation_params},
+};
 use andromeda_ngsi_ld_representation::response_format::ResponseFormat;
 use serde::Deserialize;
 
@@ -76,17 +80,20 @@ pub struct GetEntityParams {
 impl GetEntityParams {
     /// Determine the [`ResponseFormat`] from the `format` and `options` query parameters.
     ///
-    /// `format` parameter takes precedence per NGSI-LD spec.
+    /// `format` takes precedence over the legacy `options` (clause 4.5.1). The
+    /// resolution is shared with the GET-query parameter set so the two paths
+    /// cannot disagree; see [`resolve_response_format`].
     pub fn resolve_render_mode(&self) -> ResponseFormat {
-        let fmt = self.format.as_deref().unwrap_or("");
-        let opts = self.options.as_deref().unwrap_or("");
-        if fmt == "keyValues" || fmt == "simplified" || opts.contains("keyValues") || opts.contains("simplified") {
-            ResponseFormat::Simplified
-        } else if fmt == "concise" || opts.contains("concise") {
-            ResponseFormat::Concise
-        } else {
-            ResponseFormat::Normalized
-        }
+        resolve_response_format(self.format.as_deref(), self.options.as_deref())
+    }
+
+    /// Reject a `format` or `options` value outside the clause 4.5.1 grammar.
+    ///
+    /// A single-entity GET carries the same representation parameters as a
+    /// query, so an unknown `format` (`?format=bananas`) is a client error here
+    /// too and must return 400 rather than being silently ignored.
+    pub fn validate(&self) -> Result<(), ParameterError> {
+        validate_representation_params(self.format.as_deref(), self.options.as_deref())
     }
 }
 
@@ -155,9 +162,41 @@ mod tests {
 
     #[test]
     fn resolve_render_mode_format_takes_precedence_over_options() {
+        // Clause 4.5.1: `format` is the current representation selector and
+        // `options` its legacy predecessor, so an explicit `format` wins over a
+        // conflicting `options`. The revealing case is one where the two
+        // disagree: `format=normalized` with `options=keyValues` must render
+        // normalized, not simplified.
         let mut params = default_params();
-        params.format = Some("keyValues".to_string());
-        params.options = Some("concise".to_string());
-        pretty_assertions::assert_eq!(params.resolve_render_mode(), ResponseFormat::Simplified);
+        params.format = Some("normalized".to_string());
+        params.options = Some("keyValues".to_string());
+        pretty_assertions::assert_eq!(params.resolve_render_mode(), ResponseFormat::Normalized);
+
+        let mut params = default_params();
+        params.format = Some("concise".to_string());
+        params.options = Some("keyValues".to_string());
+        pretty_assertions::assert_eq!(params.resolve_render_mode(), ResponseFormat::Concise);
+    }
+
+    #[test]
+    fn validate_rejects_unknown_format() {
+        let mut params = default_params();
+        params.format = Some("bananas".to_string());
+        assert!(matches!(params.validate(), Err(ParameterError::FormatInvalid(_))));
+    }
+
+    #[test]
+    fn validate_rejects_unknown_options_token() {
+        let mut params = default_params();
+        params.options = Some("keyValues,bogus".to_string());
+        assert!(matches!(params.validate(), Err(ParameterError::OptionsInvalid(_))));
+    }
+
+    #[test]
+    fn validate_accepts_defined_values() {
+        let mut params = default_params();
+        params.format = Some("concise".to_string());
+        params.options = Some("sysAttrs".to_string());
+        assert!(params.validate().is_ok());
     }
 }

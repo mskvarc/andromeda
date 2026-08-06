@@ -33,6 +33,7 @@ pub mod jsonld_context;
 pub mod local;
 pub mod protocol;
 pub mod query;
+pub mod representation_params;
 pub mod subscription;
 
 #[cfg(test)]

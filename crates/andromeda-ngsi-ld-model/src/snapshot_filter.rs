@@ -188,9 +188,14 @@ pub fn parse_snapshot_q(input: &str) -> Result<SnapshotPurgeFilter, SnapshotQPar
 
 /// Splits a purge filter into its terms and reports which conjunction joins
 /// them. Mixing `;` and `|` in one filter is ambiguous and rejected.
+///
+/// The scan is quote-aware: a `;` or `|` inside a double-quoted value (e.g.
+/// `endpoint=="https://sink/a;b"`) is a literal character, not a conjunction,
+/// so both the detection and the split ignore separators inside quotes.
+/// Without this a quoted URL carrying either character was severed mid-value.
 fn split_top_level(input: &str) -> Result<(Vec<&str>, Conjunction), SnapshotQParseError> {
-    let has_semi = input.contains(';');
-    let has_pipe = input.contains('|');
+    let has_semi = contains_unquoted(input, ';');
+    let has_pipe = contains_unquoted(input, '|');
     let conjunction = match (has_semi, has_pipe) {
         (true, true) => return Err(SnapshotQParseError::MixedConjunctions),
         (false, true) => Conjunction::Or,
@@ -200,8 +205,39 @@ fn split_top_level(input: &str) -> Result<(Vec<&str>, Conjunction), SnapshotQPar
         Conjunction::And => ';',
         Conjunction::Or => '|',
     };
-    let segments: Vec<&str> = input.split(sep).map(str::trim).filter(|s| !s.is_empty()).collect();
+    let segments: Vec<&str> = split_unquoted(input, sep).into_iter().map(str::trim).filter(|s| !s.is_empty()).collect();
     Ok((segments, conjunction))
+}
+
+/// Whether `needle` occurs outside any double-quoted span of `input`.
+fn contains_unquoted(input: &str, needle: char) -> bool {
+    let mut in_quotes = false;
+    for c in input.chars() {
+        if c == '"' {
+            in_quotes = !in_quotes;
+        } else if c == needle && !in_quotes {
+            return true;
+        }
+    }
+    false
+}
+
+/// Splits `input` on `sep` wherever `sep` falls outside a double-quoted span,
+/// leaving separators inside a quoted value as part of that value.
+fn split_unquoted(input: &str, sep: char) -> Vec<&str> {
+    let mut segments = Vec::new();
+    let mut in_quotes = false;
+    let mut start = 0;
+    for (index, c) in input.char_indices() {
+        if c == '"' {
+            in_quotes = !in_quotes;
+        } else if c == sep && !in_quotes {
+            segments.push(&input[start..index]);
+            start = index + c.len_utf8();
+        }
+    }
+    segments.push(&input[start..]);
+    segments
 }
 
 /// Parses one `<field><op><value>` term.
@@ -295,6 +331,25 @@ fn strip_quotes(s: &str) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Clause 5.16.7: a purge `q` may compare `endpoint` against a quoted URL
+    /// that itself contains `;` or `|`. The top-level split must treat those as
+    /// literal characters inside the quotes, not as conjunctions -- otherwise
+    /// one term is severed into two malformed ones, and a value carrying both is
+    /// wrongly rejected as mixing conjunctions.
+    #[test]
+    fn a_conjunction_character_inside_a_quoted_value_does_not_split_the_term() {
+        let (segments, conjunction) = split_top_level(r#"endpoint=="https://sink/a;b""#).expect("a quoted semicolon parses");
+        pretty_assertions::assert_eq!(segments.len(), 1);
+        pretty_assertions::assert_eq!(conjunction, Conjunction::And);
+
+        let (segments, _) = split_top_level(r#"endpoint=="https://sink/a|b""#).expect("a quoted pipe parses");
+        pretty_assertions::assert_eq!(segments.len(), 1);
+
+        // The whole parse must succeed too, not just the split.
+        let filter = parse_snapshot_q(r#"endpoint=="https://sink/a;b""#).expect("a quoted semicolon parses end to end");
+        pretty_assertions::assert_eq!(filter.terms.len(), 1);
+    }
 
     #[test]
     fn parse_q_status_eq_success() {

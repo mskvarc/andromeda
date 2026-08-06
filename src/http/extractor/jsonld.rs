@@ -218,7 +218,7 @@ where
         // conformance fallbacks (clause 4.3.6.8) to the incoming payload so
         // that features from a newer spec version are adapted before validation.
         if has_version_profile(&link_header_strings) {
-            value = VersionRenderer::new(NgsiLdVersion::CONFORMANT).with_payload(value).render();
+            value = VersionRenderer::new(NgsiLdVersion::CONFORMANT).with_payload(value).render().0;
         }
 
         // Per NGSI-LD 6.3.5: application/json MUST NOT contain @context in body

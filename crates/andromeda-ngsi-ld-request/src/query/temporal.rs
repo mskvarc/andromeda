@@ -145,10 +145,17 @@ impl TemporalQueryParameters {
 
     /// Parses the `timeproperty` parameter into a `TimeProp` enum value.
     ///
-    /// Defaults to `TimeProp::Observed` (`observedAt`) when the parameter is absent
-    /// or contains an unrecognized value.
-    pub fn parse_timeproperty(&self) -> TimeProp {
-        self.timeproperty.as_deref().and_then(|s| s.parse::<TimeProp>().ok()).unwrap_or_default()
+    /// Defaults to `TimeProp::Observed` (`observedAt`) when the parameter is
+    /// absent. An unrecognised value is rejected rather than silently defaulted:
+    /// clause 4.8 names the temporal properties, and quietly falling back to
+    /// `observedAt` would query a different axis than the client asked for and
+    /// return wrong data. `parse_timerel` rejects an unknown `timerel` the same
+    /// way, so the two are consistent.
+    pub fn parse_timeproperty(&self) -> Result<TimeProp, ParameterError> {
+        match self.timeproperty.as_deref() {
+            None => Ok(TimeProp::default()),
+            Some(s) => s.parse::<TimeProp>().map_err(|_| ParameterError::TimePropertyInvalid(s.to_string())),
+        }
     }
 
     /// Parses the temporal response format from `format` and `options` parameters.
@@ -225,6 +232,10 @@ impl TemporalQueryParameters {
                 }
             }
         }
+
+        // Reject an unrecognised timeproperty rather than silently querying the
+        // observedAt axis (clause 4.8).
+        self.parse_timeproperty()?;
 
         if require_temporal {
             if self.timerel.is_none() || self.time_at.is_none() {
@@ -357,13 +368,28 @@ mod tests {
     #[test]
     fn parse_timeproperty_default_is_observed_at() {
         let p = params_from_query("");
-        pretty_assertions::assert_eq!(p.parse_timeproperty(), TimeProp::Observed);
+        pretty_assertions::assert_eq!(p.parse_timeproperty().unwrap(), TimeProp::Observed);
     }
 
     #[test]
     fn parse_timeproperty_created_at() {
         let p = params_from_query("timeproperty=createdAt");
-        pretty_assertions::assert_eq!(p.parse_timeproperty(), TimeProp::Created);
+        pretty_assertions::assert_eq!(p.parse_timeproperty().unwrap(), TimeProp::Created);
+    }
+
+    #[test]
+    fn parse_timeproperty_rejects_unrecognized_value() {
+        // Clause 4.8: `timeproperty` names the temporal axis. An unrecognised
+        // value is a malformed request, not a silent fallback to observedAt --
+        // a client's typo must not quietly query a different axis.
+        let p = params_from_query("timeproperty=bogus");
+        assert!(matches!(p.parse_timeproperty(), Err(ParameterError::TimePropertyInvalid(_))));
+    }
+
+    #[test]
+    fn validate_rejects_unrecognized_timeproperty() {
+        let p = params_from_query("type=Vehicle&timerel=before&timeAt=2024-01-01T00:00:00Z&timeproperty=bogus");
+        assert!(matches!(p.validate(true), Err(ParameterError::TimePropertyInvalid(_))));
     }
 
     #[test]

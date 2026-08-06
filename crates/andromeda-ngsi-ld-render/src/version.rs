@@ -49,14 +49,20 @@ impl VersionRenderer {
         self
     }
 
-    /// Apply the clause 4.3.6.8 fallback tables and return the payload.
+    /// Apply the clause 4.3.6.8 fallback tables and return the adapted payload
+    /// together with whether adaptation was performed.
     ///
-    /// Removing members cannot fail, so this answers with the value rather
+    /// The [`VersionAdaptation`] the caller receives drives the status code: a
+    /// requested version that is the current one or newer needs no adaptation,
+    /// so the payload is returned unchanged with [`VersionAdaptation::None`] and
+    /// the response stays 200. Only a target below the conformant version runs
+    /// the fallback tables, which makes the representation non-authoritative
+    /// (203). Removing members cannot fail, so this answers with a value rather
     /// than a `Result` no caller could act on.
-    pub fn render(self) -> Value {
+    pub fn render(self) -> (Value, VersionAdaptation) {
         let VersionRenderer { target, mut payload } = self;
         if target >= NgsiLdVersion::CONFORMANT {
-            return payload;
+            return (payload, VersionAdaptation::None);
         }
 
         match &mut payload {
@@ -68,7 +74,7 @@ impl VersionRenderer {
             }
             Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => {}
         }
-        payload
+        (payload, VersionAdaptation::Applied)
     }
 }
 
@@ -229,7 +235,24 @@ mod tests {
     use serde_json::json;
 
     fn adapt(target: NgsiLdVersion, value: Value) -> Value {
-        VersionRenderer::new(target).with_payload(value).render()
+        VersionRenderer::new(target).with_payload(value).render().0
+    }
+
+    #[test]
+    fn a_conformant_or_newer_target_reports_no_adaptation() {
+        // Clause 4.3.6.8: the payload is already authoritative for the current
+        // version or newer, so no adaptation is performed and the response is
+        // 200, not 203. This is what the short-circuit must report.
+        let payload = json!({"id": "urn:x", "type": "T", "expiresAt": "2025-01-01T00:00:00Z"});
+        let (_, adaptation) = VersionRenderer::new(NgsiLdVersion::CONFORMANT).with_payload(payload.clone()).render();
+        pretty_assertions::assert_eq!(adaptation, VersionAdaptation::None);
+    }
+
+    #[test]
+    fn a_target_below_the_conformant_version_reports_adaptation() {
+        let payload = json!({"id": "urn:x", "type": "T", "expiresAt": "2025-01-01T00:00:00Z"});
+        let (_, adaptation) = VersionRenderer::new(NgsiLdVersion::V1_4).with_payload(payload).render();
+        pretty_assertions::assert_eq!(adaptation, VersionAdaptation::Applied);
     }
 
     #[test]

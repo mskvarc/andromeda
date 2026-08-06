@@ -76,8 +76,12 @@ impl<'a> SnapshotRenderer<'a> {
         if let Some(requested) = attrs_filter
             && let Some(obj) = payload.as_object_mut()
         {
+            // `attrs` is a synonym for `pick`: the entity is reduced to the
+            // named members plus the mandatory id/type (and the JSON-LD
+            // `@context`). Match keys exactly -- a suffix match kept `surname`
+            // for `attrs=name` and kept any key ending in `id`/`type`.
             let keys_to_keep: HashSet<&str> = ["id", "type", "@context"].iter().copied().chain(requested.iter().copied()).collect();
-            obj.retain(|k, _| keys_to_keep.iter().any(|keep| k.ends_with(keep)));
+            obj.retain(|k, _| keys_to_keep.contains(k.as_str()));
         }
 
         if let Some(linked) = inline_linked_entities {
@@ -131,6 +135,28 @@ mod tests {
         assert!(result.get("temp").is_none());
         assert!(result.get("id").is_some());
         assert!(result.get("type").is_some());
+    }
+
+    #[test]
+    fn attrs_filter_matches_exact_keys_not_suffixes() {
+        // `attrs` is a synonym for `pick` (spec Table 6.3.x): the entity is
+        // reduced to the named members plus the mandatory id/type. A suffix
+        // match kept `surname` for `attrs=name` and kept any key ending in
+        // `id`/`type`; only the exact key survives. `scope` is a filterable
+        // member (attrs=pick reduces to the list), so it is dropped when the
+        // list does not name it.
+        let value = json!({
+            "id": "urn:x", "type": "T",
+            "name": {"type": "Property", "value": "Ada"},
+            "surname": {"type": "Property", "value": "Lovelace"},
+            "scope": "/Madrid"
+        });
+        let result = render(value, Some(&["name"]), ResponseFormat::Normalized);
+        assert!(result.get("name").is_some());
+        assert!(result.get("surname").is_none(), "a suffix match must not keep surname for attrs=name");
+        assert!(result.get("id").is_some());
+        assert!(result.get("type").is_some());
+        assert!(result.get("scope").is_none(), "scope is a filterable member and is dropped when attrs does not name it");
     }
 
     #[test]

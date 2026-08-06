@@ -1,31 +1,48 @@
-//! Percent-decoding of the URIs a Relationship points at.
+//! Percent-decoding of the URIs a Relationship (and ListRelationship) points at.
 //!
 //! An entity identifier is a URI, and a client is free to percent-encode
-//! characters in one when it writes a Relationship. The store keeps what it
-//! was given, so the decoding happens at the presentation boundary — on the
-//! JSON and JSON-LD renderings, and not on the GeoJSON one, where the
-//! Relationship sits inside a Feature envelope this never walks into.
+//! characters in one when it writes a Relationship. The store keeps what it was
+//! given, so the decoding happens at the presentation boundary. It runs before
+//! any GeoJSON wrapping, over the plain entity, so the policy does not depend on
+//! the negotiated media type — a GeoJSON Feature carries the same decoded URIs
+//! its JSON counterpart does.
 
+use andromeda_ngsi_ld_vocabulary::compact::{classes as compact_classes, properties as compact_properties};
 use serde_json::Value;
 
-/// Decode percent-encoded URIs in Relationship `object` fields.
+/// Decode percent-encoded URIs in Relationship `object` and ListRelationship
+/// `objectList` fields.
 ///
 /// Postgres stores URIs as-is, but some clients percent-encode characters in
 /// entity IDs (e.g. colons). This function decodes them for human-readable
-/// response output. Applied to JSON/LD+JSON responses but not GeoJSON (which
-/// wraps the entity in a Feature envelope).
+/// response output, walking a Relationship's single `object` and a
+/// ListRelationship's ordered `objectList`.
 ///
-/// A pipeline stage of [`crate::response::ResponseRenderer`], which decides
-/// whether it runs from the media type and the payload shape.
+/// A pipeline stage of [`crate::response::ResponseRenderer`], run over the plain
+/// entity before any GeoJSON envelope is built.
 pub(crate) fn decode_percent_encoded_uris(value: &mut Value) {
     match value {
         Value::Object(obj) => {
-            if obj.get("type").and_then(|t| t.as_str()) == Some("Relationship")
-                && let Some(Value::String(uri)) = obj.get_mut("object")
-                && uri.contains('%')
-                && let Ok(decoded) = percent_encoding::percent_decode_str(uri).decode_utf8()
+            // Read the discriminant out as booleans before taking a mutable
+            // borrow of the value member, so the immutable borrow of `type` does
+            // not outlive into the `get_mut` below.
+            let attr_type = obj.get("type").and_then(Value::as_str);
+            let is_relationship = attr_type == Some(compact_classes::RELATIONSHIP);
+            let is_list_relationship = attr_type == Some(compact_classes::LIST_RELATIONSHIP);
+
+            if is_relationship
+                && let Some(Value::String(uri)) = obj.get_mut(compact_properties::OBJECT)
             {
-                *uri = decoded.into_owned();
+                decode_uri_in_place(uri);
+            }
+            if is_list_relationship
+                && let Some(Value::Array(objects)) = obj.get_mut(compact_properties::OBJECT_LIST)
+            {
+                for object in objects {
+                    if let Value::String(uri) = object {
+                        decode_uri_in_place(uri);
+                    }
+                }
             }
             for v in obj.values_mut() {
                 decode_percent_encoded_uris(v);
@@ -38,6 +55,16 @@ pub(crate) fn decode_percent_encoded_uris(value: &mut Value) {
         }
         // Scalars have no URIs to decode
         Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => {}
+    }
+}
+
+/// Decode a single percent-encoded URI in place, leaving it unchanged when it
+/// carries no `%` or does not decode as UTF-8.
+fn decode_uri_in_place(uri: &mut String) {
+    if uri.contains('%')
+        && let Ok(decoded) = percent_encoding::percent_decode_str(uri).decode_utf8()
+    {
+        *uri = decoded.into_owned();
     }
 }
 

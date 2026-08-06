@@ -7,7 +7,11 @@ use crate::error::QueryError;
 pub enum Token {
     /// A bare identifier: attribute name, IRI, or an unquoted temporal literal.
     Ident(String),
-    /// A double-quoted string literal, percent-decoded.
+    /// A double-quoted string literal, taken verbatim after backslash-escape
+    /// processing. The contents are not percent-decoded: percent-encoding is an
+    /// HTTP-URI transport concern (clause 4.9), decoded once by the HTTP binding
+    /// before the filter reaches this tokeniser, and a `q` carried in a JSON
+    /// body (a subscription) is not percent-encoded at all.
     QuotedStr(String),
     /// A numeric literal, kept as text until the parser types it.
     NumberLit(String),
@@ -153,7 +157,6 @@ pub fn tokenize(input: &str) -> Result<Vec<Token>, QueryError> {
                     return Err(QueryError::QUnterminatedString);
                 }
                 i += 1;
-                let s = percent_encoding::percent_decode_str(&s).decode_utf8_lossy().into_owned();
                 tokens.push(Token::QuotedStr(s));
             }
             c if c == '-' && i + 1 < chars.len() && chars[i + 1].is_ascii_digit() => {
@@ -380,11 +383,19 @@ mod tests {
     }
 
     #[test]
-    fn a_quoted_literal_is_percent_decoded() {
-        // Clause 4.9 values travel in a query string, so a literal space or `;`
-        // arrives percent-encoded and must be decoded before comparison.
-        assert_eq!(lex("\"a%20b\""), vec![Token::QuotedStr("a b".to_string())]);
-        assert_eq!(lex("\"a%3Bb\""), vec![Token::QuotedStr("a;b".to_string())]);
+    fn a_quoted_literal_is_taken_verbatim_without_a_second_percent_decode() {
+        // Clause 4.9: a quoted operand is a JSON String (RFC 8259 String
+        // production), not percent-encoded data. Percent-encoding is purely an
+        // HTTP-URI transport concern -- the spec requires it "whenever the
+        // string acting as a filter is part of the HTTP binding's URI", and the
+        // HTTP binding decodes the whole `q` once before it reaches this
+        // tokeniser. A `q` carried in a JSON subscription body is not
+        // percent-encoded at all. A second decode here would rewrite `a%2Fb`
+        // into `a/b`, corrupting a URN like `urn:x:a%2Fb` and breaking
+        // parse->serialize idempotency.
+        assert_eq!(lex("\"a%20b\""), vec![Token::QuotedStr("a%20b".to_string())]);
+        assert_eq!(lex("\"a%3Bb\""), vec![Token::QuotedStr("a%3Bb".to_string())]);
+        assert_eq!(lex("\"urn:x:a%2Fb\""), vec![Token::QuotedStr("urn:x:a%2Fb".to_string())]);
     }
 
     #[test]

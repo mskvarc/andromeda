@@ -256,6 +256,20 @@ mod tests {
         }
     }
 
+    /// A percent sequence inside a quoted operand is neither decoded on parse
+    /// nor re-encoded on serialise, so a stored filter round-trips byte for
+    /// byte. A quoted operand is a JSON String (clause 4.9), not percent-encoded
+    /// data; decoding it would rewrite `a%2Fb` into `a/b` and silently change a
+    /// stored subscription's meaning when it is read back and re-serialised.
+    #[test]
+    fn a_percent_sequence_in_a_quoted_operand_round_trips_unchanged() {
+        let expr = parse("ref==\"urn:x:a%2Fb\"").expect("parses");
+        let rendered = serialize(&expr);
+        pretty_assertions::assert_eq!(rendered, "ref==\"urn:x:a%2Fb\"");
+        let reparsed = parse(&rendered).expect("reparses");
+        pretty_assertions::assert_eq!(reparsed, expr);
+    }
+
     #[test]
     fn serialize_expanded_iri() {
         // After expansion, attrs become full IRIs with dots

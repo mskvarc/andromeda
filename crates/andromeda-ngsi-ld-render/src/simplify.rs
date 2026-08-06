@@ -391,6 +391,21 @@ mod tests {
     }
 
     #[test]
+    fn a_serialised_vocab_property_simplifies_to_its_vocab_member_only() {
+        // Clause 4.5.4: a VocabProperty carries its value in `vocab`, not
+        // `value`. Simplifying reads `vocab` and keeps only that family member;
+        // the whole envelope (with its `type` and any metadata) must not leak
+        // through, which is what looking for a `value` it never carries did.
+        let simplified = simplify_value(json!({
+            "id": "urn:ngsi-ld:Vehicle:11",
+            "type": "Vehicle",
+            "kind": {"type": "VocabProperty", "vocab": "commercial", "observedAt": "2025-01-01T00:00:00Z"}
+        }));
+        pretty_assertions::assert_eq!(simplified["kind"], json!({"vocab": "commercial"}));
+        assert!(simplified["kind"].get("type").is_none(), "the VocabProperty envelope must not leak its type");
+    }
+
+    #[test]
     fn an_attribute_with_an_unrecognised_type_keeps_its_envelope() {
         let simplified = simplify_value(json!({
             "id": "urn:ngsi-ld:Vehicle:8",

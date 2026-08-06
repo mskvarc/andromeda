@@ -575,11 +575,13 @@ impl From<ParameterError> for AndromedaError {
             ParameterError::OptionsInvalid(_) | ParameterError::FormatInvalid(_) => ErrorKind::MalformedRequest(message),
             // Well-formed, but not a request the broker can answer.
             ParameterError::IdPatternEmpty
+            | ParameterError::OrderByDirectionInvalid(_)
             | ParameterError::OrderGeometryInvalid(_)
             | ParameterError::OrderGeometryCollection
             | ParameterError::OrderFromInvalid { .. }
             | ParameterError::DropKeepExclusive
             | ParameterError::TimerelInvalid(_)
+            | ParameterError::TimePropertyInvalid(_)
             | ParameterError::TimerelTimeatRequired
             | ParameterError::AggrMethodInvalid(_)
             | ParameterError::SelectorRequired(_)

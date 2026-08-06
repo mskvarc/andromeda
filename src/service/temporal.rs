@@ -909,7 +909,7 @@ impl TemporalService {
                         parse_instant(params.time_at.as_deref(), "timeAt")?,
                         parse_instant(params.end_time_at.as_deref(), "endTimeAt")?,
                     )?)
-                    .timeproperty(params.parse_timeproperty())
+                    .timeproperty(params.parse_timeproperty()?)
                     .build(),
             )
             .instances(

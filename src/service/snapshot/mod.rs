@@ -1,3 +1,5 @@
+/// Ingest-time validation of a snapshot's stored query shapes.
+pub mod query_validation;
 /// The snapshot store port, and the parameter shapes it takes.
 pub mod store;
 
@@ -7,7 +9,7 @@ use crate::{
     service::{
         csource_forwarding::CsourceForwardingService,
         entity::query::EntityQueryService,
-        snapshot::store::SnapshotStore,
+        snapshot::{query_validation::validate_snapshot_query_shapes, store::SnapshotStore},
         snapshot_executor::SnapshotExecutor,
         snapshot_prepare::to_insert_params,
         temporal::TemporalService,
@@ -65,6 +67,11 @@ impl SnapshotService {
 
     /// Create a new snapshot from the given input parameters.
     pub async fn create(&self, input: SnapshotInput) -> Result<Snapshot, AndromedaError> {
+        // Reject a malformed query shape before persistence (clause 5.16.1), so
+        // an unparseable `q`, geometry or `timerel` is a 400 rather than a
+        // snapshot created 201 that only fails when its queries execute.
+        validate_snapshot_query_shapes(input.snapshot_queries.as_deref(), input.snapshot_temporal_queries.as_deref())?;
+
         let id = match input.id {
             Some(snapshot_id) => snapshot_id,
             None => build_snapshot_id()?,

@@ -181,24 +181,10 @@ pub async fn get(
     let snapshot = protocol.snapshot;
     let incoming_via = protocol.incoming_via;
 
-    // Validate options before entity lookup so invalid options return 400, not 404
+    // Validate the representation parameters before entity lookup so an invalid
+    // `format` or `options` returns 400, not 404 (clause 4.5.1).
+    params.validate().with_instance(&uri).map_err(NgsiLdError::from)?;
     let options = params.options.as_deref().unwrap_or("");
-    for opt in options.split(',').map(str::trim) {
-        if !opt.is_empty() && !matches!(opt, "keyValues" | "simplified" | "sysAttrs" | "concise" | "normalized") {
-            return Err(NgsiLdError::from(
-                AndromedaError::malformed_request(format!("Invalid options value: '{}'", opt)).with_instance(&uri),
-            ));
-        }
-    }
-
-    // Validate format parameter
-    if let Some(ref fmt) = params.format
-        && !matches!(fmt.as_str(), "normalized" | "keyValues" | "simplified" | "concise")
-    {
-        return Err(NgsiLdError::from(
-            AndromedaError::malformed_request(format!("Invalid format value: '{}'", fmt)).with_instance(&uri),
-        ));
-    }
 
     // Snapshot scoping (ETSI GS CIM 009 clause 5.5.15, 6.3.22): if NGSILD-Snapshot header
     // is present, retrieve entity from the snapshot's frozen data and return early.

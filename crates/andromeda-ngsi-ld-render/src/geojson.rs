@@ -140,24 +140,44 @@ fn extract_geometry(obj: &Map<String, Value>, geometry_property: Option<&str>) -
         &[geom_key]
     };
 
-    let geojson_value = keys.iter().find_map(|key| obj.get(*key)).and_then(|loc| {
-        // Normalized: {"type": "GeoProperty", "value": {<geojson>}}
-        if let Some(val) = loc.get("value") {
-            return Some(val.clone());
-        }
-        // Simplified/keyValues: location is the GeoJSON directly
-        if loc.get("type").and_then(Value::as_str).is_some_and(|t| {
-            matches!(
-                t,
-                "Point" | "MultiPoint" | "LineString" | "MultiLineString" | "Polygon" | "MultiPolygon" | "GeometryCollection"
-            )
-        }) {
-            return Some(loc.clone());
-        }
-        None
-    })?;
-
+    let located = keys.iter().find_map(|key| obj.get(*key))?;
+    let geojson_value = geojson_from_instance(default_geo_instance(located))?;
     serde_json::from_value(geojson_value).ok()
+}
+
+/// Select the instance a GeoJSON geometry is taken from.
+///
+/// A GeoProperty may carry several datasetId-separated instances as a JSON
+/// array; clause 4.5.16 takes the geometry from the default instance (the one
+/// with no `datasetId`), falling back to the first when every instance is
+/// dataset-scoped. A single-object value is itself the instance.
+fn default_geo_instance(located: &Value) -> &Value {
+    match located {
+        Value::Array(instances) => instances
+            .iter()
+            .find(|instance| instance.as_object().is_some_and(|object| !object.contains_key("datasetId")))
+            .or_else(|| instances.first())
+            .unwrap_or(located),
+        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) | Value::Object(_) => located,
+    }
+}
+
+/// Read the GeoJSON geometry value out of one GeoProperty instance.
+fn geojson_from_instance(instance: &Value) -> Option<Value> {
+    // Normalized: {"type": "GeoProperty", "value": {<geojson>}}
+    if let Some(value) = instance.get("value") {
+        return Some(value.clone());
+    }
+    // Simplified/keyValues: the instance is the GeoJSON geometry directly.
+    if instance.get("type").and_then(Value::as_str).is_some_and(|kind| {
+        matches!(
+            kind,
+            "Point" | "MultiPoint" | "LineString" | "MultiLineString" | "Polygon" | "MultiPolygon" | "GeometryCollection"
+        )
+    }) {
+        return Some(instance.clone());
+    }
+    None
 }
 
 #[cfg(test)]
@@ -220,6 +240,24 @@ mod tests {
             .render()
             .expect("GeoJSON entity");
         pretty_assertions::assert_eq!(geo["geometry"]["type"], "Polygon");
+    }
+
+    #[test]
+    fn multi_instance_location_renders_the_default_instances_geometry() {
+        // Clause 4.5.16: a GeoProperty may carry several datasetId-separated
+        // instances; the GeoJSON geometry is taken from the default instance
+        // (the one with no datasetId), not left null because the value was an
+        // array rather than a single object.
+        let entity = json!({
+            "id": "urn:x", "type": "T",
+            "location": [
+                {"type": "GeoProperty", "value": {"type": "Point", "coordinates": [1.0, 2.0]}, "datasetId": "urn:ngsi-ld:Dataset:1"},
+                {"type": "GeoProperty", "value": {"type": "Point", "coordinates": [10.0, 20.0]}}
+            ]
+        });
+        let geo = GeoJsonRenderer::new(entity).render().expect("GeoJSON entity");
+        pretty_assertions::assert_eq!(geo["geometry"]["type"], "Point");
+        pretty_assertions::assert_eq!(geo["geometry"]["coordinates"], json!([10.0, 20.0]));
     }
 
     #[test]

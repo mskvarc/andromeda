@@ -353,7 +353,6 @@ dependencies = [
  "iri-rs",
  "iso8601-duration",
  "langtag",
- "percent-encoding",
  "pretty_assertions",
  "regex",
  "serde",

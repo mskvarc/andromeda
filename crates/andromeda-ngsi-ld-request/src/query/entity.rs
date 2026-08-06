@@ -1,6 +1,12 @@
 //! Query parameters for the NGSI-LD Entity query API (5.7.2).
 
-use crate::{body::query::QueryRequest, error::ParameterError, impl_shared_query_params, query::is_valid_uri};
+use crate::{
+    body::query::QueryRequest,
+    error::ParameterError,
+    impl_shared_query_params,
+    query::is_valid_uri,
+    representation_params::{resolve_response_format, validate_representation_params},
+};
 use andromeda_ngsi_ld_query::{
     error::QueryError,
     ordering::{
@@ -131,9 +137,12 @@ impl EntityQueryParameters {
     /// - Semicolon-delimited: `"attrName;desc"`, `"location;dist-asc"`
     /// - Legacy bang prefix: `"!attrName"` (equivalent to desc)
     ///
-    /// Terms with unrecognized direction values are silently skipped.
-    /// Defaults to ascending when no direction is specified.
-    pub fn parse_order_by(&self) -> Vec<OrderTerm> {
+    /// An unrecognised direction is rejected rather than silently dropped:
+    /// clause 4.23 defines exactly `asc`, `desc`, `dist-asc` and `dist-desc`, so
+    /// a direction outside that set is a malformed request, and quietly ignoring
+    /// the term would discard the client's ordering without notice. Defaults to
+    /// ascending when no direction is specified.
+    pub fn parse_order_by(&self) -> Result<Vec<OrderTerm>, ParameterError> {
         self.order_by
             .as_deref()
             .map(|s| {
@@ -152,48 +161,42 @@ impl EntityQueryParameters {
                                 "desc" => OrderDirection::Desc,
                                 "dist-asc" => OrderDirection::DistAsc,
                                 "dist-desc" => OrderDirection::DistDesc,
-                                _ => return None,
+                                other => return Some(Err(ParameterError::OrderByDirectionInvalid(other.to_string()))),
                             };
-                            Some(OrderTerm {
+                            Some(Ok(OrderTerm {
                                 attr: attr.to_string(),
                                 direction,
-                            })
+                            }))
                         } else if let Some(attr) = term.strip_prefix('!') {
                             // Legacy shorthand: !attr means desc
-                            Some(OrderTerm {
+                            Some(Ok(OrderTerm {
                                 attr: attr.to_string(),
                                 direction: OrderDirection::Desc,
-                            })
+                            }))
                         } else {
-                            Some(OrderTerm {
+                            Some(Ok(OrderTerm {
                                 attr: term.to_string(),
                                 direction: OrderDirection::Asc,
-                            })
+                            }))
                         }
                     })
                     .collect()
             })
-            .unwrap_or_default()
+            .unwrap_or_else(|| Ok(Vec::new()))
     }
 
     /// Parses the `options` and `format` parameters into structured flags.
     ///
     /// Handles both the legacy `options` parameter (e.g. `"keyValues,sysAttrs"`)
     /// and the newer `format` parameter, with `format` taking precedence where
-    /// both are provided.
+    /// both are provided (clause 4.5.1). The representation is resolved by the
+    /// shared [`resolve_response_format`] so this and the single-entity GET path
+    /// cannot drift apart.
     pub fn parse_options(&self) -> EntityQueryParametersOptions {
         let opts = self.options.as_deref().unwrap_or("");
-        let fmt = self.format.as_deref().unwrap_or("");
-        let render_mode = if fmt == "keyValues" || fmt == "simplified" || opts.contains("keyValues") || opts.contains("simplified") {
-            ResponseFormat::Simplified
-        } else if fmt == "concise" || opts.contains("concise") {
-            ResponseFormat::Concise
-        } else {
-            ResponseFormat::Normalized
-        };
         EntityQueryParametersOptions {
-            render_mode,
-            sys_attrs: if opts.contains("sysAttrs") {
+            render_mode: resolve_response_format(self.format.as_deref(), self.options.as_deref()),
+            sys_attrs: if opts.split(',').map(str::trim).any(|token| token == "sysAttrs") {
                 SysAttrsInclusion::Include
             } else {
                 SysAttrsInclusion::Strip
@@ -220,21 +223,12 @@ impl EntityQueryParameters {
 
     /// Validate query parameters.
     pub fn validate(&self) -> Result<(), ParameterError> {
-        // Validate options parameter
-        if let Some(opts) = &self.options {
-            for opt in opts.split(',') {
-                let opt = opt.trim();
-                if !matches!(opt, "keyValues" | "simplified" | "sysAttrs" | "concise" | "normalized") {
-                    return Err(ParameterError::OptionsInvalid(opt.to_string()));
-                }
-            }
-        }
+        // Representation parameters (`format`/`options`), clause 4.5.1.
+        validate_representation_params(self.format.as_deref(), self.options.as_deref())?;
 
-        if let Some(fmt) = &self.format
-            && !matches!(fmt.as_str(), "normalized" | "keyValues" | "simplified" | "concise")
-        {
-            return Err(ParameterError::FormatInvalid(fmt.clone()));
-        }
+        // Reject an unrecognised `orderBy` direction rather than silently
+        // dropping the term (clause 4.23).
+        self.parse_order_by()?;
 
         if let Some(ids) = &self.id {
             for id in ids.split(',').map(str::trim) {
@@ -412,7 +406,7 @@ mod tests {
     #[test]
     fn parse_order_by_asc_default() {
         let p = params_from_query("orderBy=temperature");
-        let order = p.parse_order_by();
+        let order = p.parse_order_by().unwrap();
         pretty_assertions::assert_eq!(order.len(), 1);
         pretty_assertions::assert_eq!(order[0].attr, "temperature");
         pretty_assertions::assert_eq!(order[0].direction, OrderDirection::Asc);
@@ -421,7 +415,7 @@ mod tests {
     #[test]
     fn parse_order_by_desc_with_bang() {
         let p = params_from_query("orderBy=!temperature");
-        let order = p.parse_order_by();
+        let order = p.parse_order_by().unwrap();
         pretty_assertions::assert_eq!(order.len(), 1);
         pretty_assertions::assert_eq!(order[0].attr, "temperature");
         pretty_assertions::assert_eq!(order[0].direction, OrderDirection::Desc);
@@ -430,7 +424,7 @@ mod tests {
     #[test]
     fn parse_order_by_multiple() {
         let p = params_from_query("orderBy=speed,!temperature");
-        let order = p.parse_order_by();
+        let order = p.parse_order_by().unwrap();
         pretty_assertions::assert_eq!(order.len(), 2);
         pretty_assertions::assert_eq!(order[0].direction, OrderDirection::Asc);
         pretty_assertions::assert_eq!(order[1].direction, OrderDirection::Desc);
@@ -439,7 +433,7 @@ mod tests {
     #[test]
     fn parse_order_by_semicolon_asc() {
         let p = params_from_query("orderBy=temperature;asc");
-        let order = p.parse_order_by();
+        let order = p.parse_order_by().unwrap();
         pretty_assertions::assert_eq!(order.len(), 1);
         pretty_assertions::assert_eq!(order[0].attr, "temperature");
         pretty_assertions::assert_eq!(order[0].direction, OrderDirection::Asc);
@@ -448,7 +442,7 @@ mod tests {
     #[test]
     fn parse_order_by_semicolon_desc() {
         let p = params_from_query("orderBy=temperature;desc");
-        let order = p.parse_order_by();
+        let order = p.parse_order_by().unwrap();
         pretty_assertions::assert_eq!(order.len(), 1);
         pretty_assertions::assert_eq!(order[0].attr, "temperature");
         pretty_assertions::assert_eq!(order[0].direction, OrderDirection::Desc);
@@ -457,7 +451,7 @@ mod tests {
     #[test]
     fn parse_order_by_dist_asc() {
         let p = params_from_query("orderBy=location;dist-asc");
-        let order = p.parse_order_by();
+        let order = p.parse_order_by().unwrap();
         pretty_assertions::assert_eq!(order.len(), 1);
         pretty_assertions::assert_eq!(order[0].attr, "location");
         pretty_assertions::assert_eq!(order[0].direction, OrderDirection::DistAsc);
@@ -467,7 +461,7 @@ mod tests {
     #[test]
     fn parse_order_by_dist_desc() {
         let p = params_from_query("orderBy=location;dist-desc");
-        let order = p.parse_order_by();
+        let order = p.parse_order_by().unwrap();
         pretty_assertions::assert_eq!(order.len(), 1);
         pretty_assertions::assert_eq!(order[0].attr, "location");
         pretty_assertions::assert_eq!(order[0].direction, OrderDirection::DistDesc);
@@ -477,7 +471,7 @@ mod tests {
     #[test]
     fn parse_order_by_mixed_directions() {
         let p = params_from_query("orderBy=name,age;desc,location;dist-asc");
-        let order = p.parse_order_by();
+        let order = p.parse_order_by().unwrap();
         pretty_assertions::assert_eq!(order.len(), 3);
         pretty_assertions::assert_eq!(order[0].direction, OrderDirection::Asc);
         pretty_assertions::assert_eq!(order[1].direction, OrderDirection::Desc);
@@ -485,10 +479,32 @@ mod tests {
     }
 
     #[test]
-    fn parse_order_by_invalid_direction_skipped() {
+    fn parse_order_by_rejects_unrecognized_direction() {
+        // Clause 4.23 defines exactly asc/desc/dist-asc/dist-desc. An
+        // unrecognised direction is a malformed request, not a term to silently
+        // drop -- dropping it would quietly discard the client's ordering.
         let p = params_from_query("orderBy=name;invalid");
-        let order = p.parse_order_by();
-        assert!(order.is_empty());
+        assert!(matches!(p.parse_order_by(), Err(ParameterError::OrderByDirectionInvalid(_))));
+    }
+
+    #[test]
+    fn parse_options_format_takes_precedence_over_options_for_render_mode() {
+        // Clause 4.5.1: `format` is the current representation selector and
+        // `options` its legacy predecessor, so an explicit `format` wins over a
+        // conflicting `options`. `format=normalized&options=keyValues` must
+        // render normalized, not simplified.
+        let p = params_from_query("format=normalized&options=keyValues");
+        pretty_assertions::assert_eq!(p.parse_options().render_mode, ResponseFormat::Normalized);
+        let p = params_from_query("format=concise&options=keyValues");
+        pretty_assertions::assert_eq!(p.parse_options().render_mode, ResponseFormat::Concise);
+    }
+
+    #[test]
+    fn parse_options_matches_whole_tokens_not_substrings() {
+        // `options` carries whole comma-separated tokens; a value that merely
+        // contains `keyValues` as a substring is not the keyValues option.
+        let p = params_from_query("options=mykeyValues");
+        pretty_assertions::assert_eq!(p.parse_options().render_mode, ResponseFormat::Normalized);
     }
 
     #[test]

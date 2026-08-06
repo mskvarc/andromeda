@@ -5,9 +5,25 @@
 //! detection in distributed NGSI-LD forwarding.
 
 use http::{HeaderName, HeaderValue};
+use thiserror::Error;
 
 /// The header name, as a `HeaderName` the `headers` trait can hand back.
 static VIA: HeaderName = HeaderName::from_static("via");
+
+/// Why a single `Via` element could not be read.
+///
+/// Loop detection depends on every hop's pseudonym reaching
+/// [`Via::contains_pseudonym`], so a parse that cannot recover a pseudonym is a
+/// hard failure the header decode refuses rather than silently drops.
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum ViaParseError {
+    /// The element was empty.
+    #[error("Via element is empty")]
+    Empty,
+    /// The element carried no token that could name an intermediary.
+    #[error("Via element names no intermediary")]
+    MissingPseudonym,
+}
 
 /// A single entry in a Via header chain.
 ///
@@ -59,43 +75,46 @@ impl Via {
     }
 }
 
-/// Parse a single Via entry from a trimmed string like `"1.1 broker-a"` or
-/// `"HTTP/1.1 proxy (Apache)"`.
-fn parse_via_entry(s: &str) -> Option<ViaEntry> {
+/// Parse a single Via element like `"1.1 broker-a"` or `"HTTP/1.1 proxy (Apache)"`.
+///
+/// Recovers the pseudonym as robustly as the loop-detection purpose demands: an
+/// unterminated comment does not discard the element (the pseudonym before `(`
+/// is still read), and a lone token with no protocol version is kept as the
+/// pseudonym rather than dropped. An element that yields no pseudonym at all is
+/// the only hard failure, so a hop naming this broker can never be silently
+/// lost the way `Option`-dropping an unparseable element allowed.
+fn parse_via_entry(s: &str) -> Result<ViaEntry, ViaParseError> {
     let trimmed = s.trim();
     if trimmed.is_empty() {
-        return None;
+        return Err(ViaParseError::Empty);
     }
 
-    // Split on first whitespace to get protocol_version and the rest
-    let (version, rest) = trimmed.split_once(char::is_whitespace)?;
-    let rest = rest.trim();
+    // Separate an optional trailing comment. A missing `)` is tolerated: the
+    // pseudonym sits before the `(`, so a malformed comment must not cost the hop.
+    let (head, comment) = match trimmed.split_once('(') {
+        Some((head, tail)) => {
+            let comment = tail.strip_suffix(')').unwrap_or(tail).trim();
+            (head.trim(), (!comment.is_empty()).then(|| comment.to_string()))
+        }
+        None => (trimmed, None),
+    };
 
-    // Check for comment in parentheses
-    if let Some(paren_start) = rest.find('(') {
-        let pseudonym = rest[..paren_start].trim();
-        if pseudonym.is_empty() {
-            return None;
-        }
-        let comment_end = rest.rfind(')')?;
-        let comment = rest[paren_start + 1..comment_end].trim().to_string();
-        Some(ViaEntry {
-            protocol_version: version.to_string(),
-            pseudonym: pseudonym.to_string(),
-            comment: Some(comment),
-        })
-    } else {
-        // No comment -- pseudonym may be followed by whitespace
-        let pseudonym = rest.split_once(char::is_whitespace).map_or(rest, |(p, _)| p);
-        if pseudonym.is_empty() {
-            return None;
-        }
-        Some(ViaEntry {
-            protocol_version: version.to_string(),
-            pseudonym: pseudonym.to_string(),
-            comment: None,
-        })
-    }
+    // received-protocol RWS received-by: the pseudonym is the second
+    // whitespace-separated token. A single token has no protocol version, which
+    // is non-conformant but still names an intermediary, so it is taken as the
+    // pseudonym rather than discarded (fail closed for loop detection).
+    let mut tokens = head.split_whitespace();
+    let first = tokens.next().ok_or(ViaParseError::MissingPseudonym)?;
+    let (protocol_version, pseudonym) = match tokens.next() {
+        Some(second) => (first.to_string(), second.to_string()),
+        None => (String::new(), first.to_string()),
+    };
+
+    Ok(ViaEntry {
+        protocol_version,
+        pseudonym,
+        comment,
+    })
 }
 
 impl headers::Header for Via {
@@ -111,9 +130,14 @@ impl headers::Header for Via {
         for value in values {
             let s = value.to_str().map_err(|_| headers::Error::invalid())?;
             for part in s.split(',') {
-                if let Some(entry) = parse_via_entry(part) {
-                    entries.push(entry);
+                // An empty element between commas is a benign artefact of the
+                // RFC 9110 `#`-list production and is skipped; every other
+                // element must parse, so a malformed hop fails the decode rather
+                // than being silently dropped.
+                if part.trim().is_empty() {
+                    continue;
                 }
+                entries.push(parse_via_entry(part).map_err(|_| headers::Error::invalid())?);
             }
         }
         if entries.is_empty() {
@@ -191,6 +215,33 @@ mod tests {
     #[test]
     fn decode_empty_rejects() {
         assert!(decode_from("").is_err());
+    }
+
+    #[test]
+    fn a_hop_with_a_malformed_comment_is_preserved_not_silently_dropped() {
+        // Loop detection reads every hop's pseudonym; an element this parser
+        // cannot fully read (here, an unterminated comment) must still
+        // contribute its pseudonym, or a cycle back through this broker could
+        // slip past `contains_pseudonym`.
+        let via = decode_from("1.1 broker-a, 1.1 broker-b (unterminated").expect("should decode");
+        assert!(via.contains_pseudonym("broker-a"));
+        assert!(via.contains_pseudonym("broker-b"), "a hop with a malformed comment must not be lost");
+    }
+
+    #[test]
+    fn a_version_less_token_is_kept_as_a_pseudonym() {
+        // A non-conformant element with no protocol version still names an
+        // intermediary, so it is kept rather than dropped -- fail closed, so
+        // loop detection can still match it.
+        let via = decode_from("brokerX").expect("should decode");
+        assert!(via.contains_pseudonym("brokerX"));
+    }
+
+    #[test]
+    fn an_empty_element_between_commas_is_skipped_but_the_rest_survive() {
+        let via = decode_from("1.1 broker-a, , 1.1 broker-b").expect("should decode");
+        assert!(via.contains_pseudonym("broker-a"));
+        assert!(via.contains_pseudonym("broker-b"));
     }
 
     #[test]

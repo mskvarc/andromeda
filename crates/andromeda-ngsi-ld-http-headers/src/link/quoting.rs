@@ -38,10 +38,20 @@ impl<'a> Iterator for SplitAsciiUnquoted<'a> {
         let start = self.position;
         let mut end = self.position;
         let mut in_quotes = false;
+        let mut escaped = false;
 
         for byte in self.source.as_bytes()[start..].iter() {
-            in_quotes ^= *byte == b'"';
-            if !in_quotes && self.delimiters.as_bytes().contains(byte) {
+            if escaped {
+                // The target of an RFC 8288 quoted-pair (`\`-escaped): data,
+                // never a quote toggle or a delimiter.
+                escaped = false;
+            } else if in_quotes && *byte == b'\\' {
+                // A backslash inside a quoted string opens a quoted-pair, so the
+                // next byte -- including `\"` -- does not end the quote.
+                escaped = true;
+            } else if *byte == b'"' {
+                in_quotes = !in_quotes;
+            } else if !in_quotes && self.delimiters.as_bytes().contains(byte) {
                 break;
             }
             end += 1;
@@ -61,7 +71,12 @@ impl<'a> Iterator for SplitAsciiUnquoted<'a> {
 pub fn verify_and_trim(raw: &str, open: u8, close: u8) -> Result<&str, LinkParseError> {
     let bytes = raw.as_bytes();
     if bytes.len() > 1 && bytes[0] == open && bytes[bytes.len() - 1] == close {
-        Ok(raw.trim_matches(|character: char| character == open as char || character == close as char || character.is_whitespace()))
+        // Strip exactly the one matched open/close pair, then trim whitespace
+        // inside it. `trim_matches` stripped *every* leading and trailing
+        // delimiter, so `<<url>>` lost both brackets on each side instead of
+        // the single outer pair. `open`/`close` are single ASCII bytes, so
+        // slicing off byte 0 and the last byte lands on char boundaries.
+        Ok(raw[1..raw.len() - 1].trim())
     } else {
         Err(LinkParseError)
     }
@@ -85,5 +100,23 @@ mod tests {
     #[test]
     fn a_leading_character_before_the_opening_delimiter_is_rejected() {
         assert!(verify_and_trim(" >  some string   <", b'>', b'<').is_err());
+    }
+
+    #[test]
+    fn an_escaped_quote_inside_a_quoted_value_does_not_end_the_quote() {
+        // RFC 8288 quoted-pair: `\"` is an escaped quote -- data inside the
+        // value -- so it must not toggle quote state and let a following `;`
+        // split the segment.
+        let raw = r#"rel="next"; title="a\"b; c""#;
+        let segments: Vec<&str> = SplitAsciiUnquoted::new(raw, ";,").collect();
+        pretty_assertions::assert_eq!(segments, vec![r#"rel="next""#, r#" title="a\"b; c""#]);
+    }
+
+    #[test]
+    fn only_the_single_outer_delimiter_pair_is_stripped() {
+        // `trim_matches` stripped every leading and trailing delimiter, so a
+        // value that legitimately begins or ends with the delimiter character
+        // lost it. Only the one outer pair is removed.
+        pretty_assertions::assert_eq!(verify_and_trim("<<url>>", b'<', b'>').ok(), Some("<url>"));
     }
 }

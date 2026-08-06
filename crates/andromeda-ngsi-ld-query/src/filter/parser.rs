@@ -5,6 +5,14 @@
 //! file — the language needs operator precedence and value typing that a pure
 //! ABNF recogniser does not express — so it is the reference this parser is
 //! checked against, and the two are kept in step by hand.
+//!
+//! One production is deliberately not implemented: the `{}` linked-entity
+//! traversal (`LinkedEntityRelation`). The tokeniser has no `{`/`}` token, so a
+//! filter that uses that axis is rejected with `QUnexpectedChar`. Clause 4.9
+//! makes the rejection spec-compliant — "If the filter conditions specified by
+//! the query includes Linked Entity attributes then an error of type
+//! BadRequestData shall be raised". Only the `.` (sub-attribute) and `[]`
+//! (compound value) axes reach an [`AttrPath`].
 
 use crate::{
     error::QueryError,
@@ -704,5 +712,20 @@ mod tests {
     fn error_on_unexpected_token() {
         let result = parse("==");
         assert!(result.is_err());
+    }
+
+    /// Clause 4.9's grammar defines a `{}` linked-entity traversal
+    /// (`LinkedEntityRelation = AttrName %x7B LinkedEntityPath %x7D`), but this
+    /// hand-written parser does not implement it: the tokeniser has no `{`/`}`
+    /// token, so a filter using that axis is rejected. The spec makes that
+    /// rejection compliant -- "If the filter conditions specified by the query
+    /// includes Linked Entity attributes then an error of type BadRequestData
+    /// shall be raised". This guard pins the rejection so the grammar file,
+    /// this parser's documentation and the actual behaviour cannot drift apart
+    /// silently.
+    #[test]
+    fn a_linked_entity_traversal_filter_is_rejected_as_unsupported() {
+        let error = parse("sensor{humidity}==40").expect_err("must reject");
+        assert!(matches!(error, QueryError::QUnexpectedChar { ch: '{', .. }), "got {error:?}");
     }
 }

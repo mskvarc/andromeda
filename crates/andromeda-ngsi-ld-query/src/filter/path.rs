@@ -14,6 +14,13 @@ use iri_rs::IriBuf;
 /// name, a prefixed name or an expanded IRI. That is exactly the range this AST
 /// spans: a freshly parsed filter carries whatever the client wrote, and an
 /// expanded one carries IRIs.
+///
+/// This type models only the two supported traversal axes: `.` sub-attributes
+/// and `[]` compound-value navigation. The clause 4.9 grammar also defines a
+/// `{}` linked-entity traversal (`LinkedEntityRelation`), but the parser does
+/// not implement it and no field here represents it — a filter using that axis
+/// is rejected at tokenisation, which clause 4.9 permits ("an error of type
+/// BadRequestData shall be raised").
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AttrPath {
     /// The top-level attribute name (compact or expanded IRI).

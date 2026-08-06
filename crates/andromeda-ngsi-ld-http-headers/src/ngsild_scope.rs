@@ -4,6 +4,7 @@
 //! (clause 4.18): `,` for OR, `;` for AND, and `/`-separated scope path terms.
 //! Wildcards `+` (single level) and `#` (multi-level, terminal) are supported.
 
+use andromeda_ngsi_ld_lexicon::scope::level::ScopeLevel;
 use http::{HeaderName, HeaderValue};
 use thiserror::Error;
 
@@ -101,16 +102,15 @@ fn validate_term(term: &str) -> Result<(), ScopeSyntaxError> {
 }
 
 /// Validate one path segment that is not a wildcard.
+///
+/// Delegated to the lexicon's [`ScopeLevel`] production -- the same one the
+/// `scopeQ` query parameter validates against -- so the header path accepts
+/// exactly what the query path does. A hand-rolled `is_ascii_digit` reading made
+/// this stricter, rejecting the Unicode digits clause 4.18's grammar admits.
 fn validate_label(segment: &str) -> Result<(), ScopeSyntaxError> {
-    let mut characters = segment.chars();
-    let starts_with_letter = characters.next().is_some_and(char::is_alphabetic);
-    let rest_is_label = characters.all(|character| character.is_alphabetic() || character.is_ascii_digit() || character == '_');
-
-    if starts_with_letter && rest_is_label {
-        Ok(())
-    } else {
-        Err(ScopeSyntaxError::InvalidLabel(segment.to_string()))
-    }
+    ScopeLevel::new(segment)
+        .map(|_| ())
+        .map_err(|_| ScopeSyntaxError::InvalidLabel(segment.to_string()))
 }
 
 impl headers::Header for NgsiLdScope {
@@ -188,5 +188,18 @@ mod tests {
         assert!(decode_from("/A//B").is_err());
         assert!(decode_from("/A/#/B").is_err());
         assert!(decode_from("/1A/B").is_err());
+    }
+
+    #[test]
+    fn a_scope_label_with_a_unicode_digit_is_accepted_like_the_scope_query_path() {
+        // Clause 4.18: a scope level is a Unicode letter followed by Unicode
+        // letters, digits or underscores -- the same production `scopeQ`
+        // validates against. A non-ASCII digit (Devanagari five) must satisfy
+        // the scope grammar here too, not be rejected by an ASCII-only reading
+        // that made the header's validation stricter than the query path's.
+        // (The HTTP header transport itself is ASCII-only, so such a label
+        // reaches this validator through the shared grammar, not raw on the
+        // wire; the point is that the two paths validate the same language.)
+        assert!(NgsiLdScope::parse("/A\u{096B}").is_ok(), "a Unicode-digit label must be accepted");
     }
 }

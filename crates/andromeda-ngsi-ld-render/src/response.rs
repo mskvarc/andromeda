@@ -163,23 +163,29 @@ impl<'a> ResponseRenderer<'a> {
             ResponseMediaType::GeoJson => payload.geo_json_shape(),
         };
         let context_location = self.context_location(geo_json_shape);
-        let version_adaptation = match self.requested_version {
-            Some(_) => VersionAdaptation::Applied,
-            None => VersionAdaptation::None,
-        };
 
         let carries_relationships = payload.carries_relationships();
         let mut value = payload.into_value();
 
-        // GeoJSON wraps the entity in a Feature envelope, so the Relationship
-        // objects this walks are no longer where it would look for them.
-        if geo_json_shape.is_none() && carries_relationships {
+        // Decode percent-encoded Relationship/ListRelationship URIs before any
+        // GeoJSON wrapping, so the policy is media-type-independent: the walk
+        // runs while the payload is still a plain entity object, and the Feature
+        // envelope is built afterwards from the already-decoded value.
+        if carries_relationships {
             decode_percent_encoded_uris(&mut value);
         }
 
-        if let Some(target) = self.requested_version {
-            value = VersionRenderer::new(target).with_payload(value).render();
-        }
+        // Version adaptation drives the 203 status, so the flag comes from
+        // whether the renderer actually adapted -- a conformant-or-newer target
+        // short-circuits and leaves the payload authoritative (200).
+        let version_adaptation = match self.requested_version {
+            Some(target) => {
+                let (adapted, adaptation) = VersionRenderer::new(target).with_payload(value).render();
+                value = adapted;
+                adaptation
+            }
+            None => VersionAdaptation::None,
+        };
 
         let context_value = match context_location {
             ContextLocation::Body => self.context.take_body_value(),
@@ -367,20 +373,45 @@ mod tests {
     }
 
     #[test]
-    fn relationship_uris_are_decoded_for_json_but_not_inside_a_geojson_envelope() {
-        let payload = || json!({"id": "urn:x", "type": "T", "ref": {"type": "Relationship", "object": "urn%3Ay"}});
+    fn relationship_and_list_relationship_uris_are_decoded_under_every_media_type() {
+        // The decode runs over the plain entity before any GeoJSON wrapping, so
+        // it is media-type-independent: a Feature carries the same decoded URIs
+        // its JSON counterpart does. Both a Relationship's `object` and a
+        // ListRelationship's `objectList` entries are decoded.
+        let payload = || {
+            json!({
+                "id": "urn:x", "type": "T",
+                "ref": {"type": "Relationship", "object": "urn%3Ay"},
+                "refs": {"type": "ListRelationship", "objectList": ["urn%3Aa", "urn%3Ab"]}
+            })
+        };
 
         let json_rendered = ResponseRenderer::new(ResponseMediaType::Json, a_context())
             .with_payload(ResponsePayload::Single(payload()))
             .render()
             .expect("render");
         pretty_assertions::assert_eq!(json_rendered.value["ref"]["object"], "urn:y");
+        pretty_assertions::assert_eq!(json_rendered.value["refs"]["objectList"], json!(["urn:a", "urn:b"]));
 
         let geo_rendered = ResponseRenderer::new(ResponseMediaType::GeoJson, a_context())
             .with_payload(ResponsePayload::Single(payload()))
             .render()
             .expect("render");
-        pretty_assertions::assert_eq!(geo_rendered.value["properties"]["ref"]["object"], "urn%3Ay");
+        pretty_assertions::assert_eq!(geo_rendered.value["properties"]["ref"]["object"], "urn:y");
+        pretty_assertions::assert_eq!(geo_rendered.value["properties"]["refs"]["objectList"], json!(["urn:a", "urn:b"]));
+    }
+
+    #[test]
+    fn a_conformant_target_version_yields_no_adaptation() {
+        // Clause 4.3.6.8: `Prefer: ngsi-ld=1.9` names the current version, so
+        // nothing is adapted and the response stays 200. Setting the flag from
+        // the mere presence of a requested version made this a spurious 203.
+        let rendered = ResponseRenderer::new(ResponseMediaType::Json, a_context())
+            .with_requested_version(Some(NgsiLdVersion::CONFORMANT))
+            .with_payload(ResponsePayload::Single(json!({"id": "urn:x", "type": "T", "expiresAt": "2025-01-01T00:00:00Z"})))
+            .render()
+            .expect("render");
+        pretty_assertions::assert_eq!(rendered.version_adaptation, VersionAdaptation::None);
     }
 
     #[test]

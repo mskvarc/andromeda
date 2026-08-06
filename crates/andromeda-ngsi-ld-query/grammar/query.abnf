@@ -14,6 +14,15 @@
 ; recogniser does not express. This file is the reference that parser is checked
 ; against; keep the two in step when the specification changes.
 ;
+; NOT SUPPORTED: the `{}` linked-entity traversal (`LinkedEntityRelation` and
+; `LinkedEntityPath` below) is reproduced from the specification for
+; completeness, but the parser does not implement it -- the tokeniser has no
+; `{`/`}` token, so a filter that uses that axis is rejected. The specification
+; makes the rejection compliant: "If the filter conditions specified by the
+; query includes Linked Entity attributes then an error of type BadRequestData
+; shall be raised." Only the `.` (sub-attribute) and `[]` (compound value) axes
+; are supported.
+;
 ; `unicodeLetter` and `unicodeNumber` are defined in `grammar/_unicode.abnf` of
 ; `andromeda-ngsi-ld-lexicon`, which is where the grammars that are derived from
 ; live. `String`, `Number`, `URI`, `dateTime`, `date`, `time`, `true`, `false`

@@ -136,7 +136,7 @@ pub async fn create_from_query_post(
 ) -> Result<Response, NgsiLdError> {
     let context_spec: ContextSpec = context.into_inner();
 
-    let query = query_body_to_params(&body).map_err(|e| NgsiLdError::from(AndromedaError::entity_map_validation(e.to_string())))?;
+    let query = query_body_to_params(&body);
     query.validate().map_err(|e| NgsiLdError::from(AndromedaError::from(e)))?;
     crate::http::validation::validate_entity_map_has_filter(&query, &uri)?;
 
@@ -226,7 +226,7 @@ pub async fn create_temporal_from_query_post(
 ) -> Result<Response, NgsiLdError> {
     let context_spec: ContextSpec = context.into_inner();
 
-    let query = query_body_to_params(&body).map_err(|e| NgsiLdError::from(AndromedaError::entity_map_validation(e.to_string())))?;
+    let query = query_body_to_params(&body);
     query.validate().map_err(|e| NgsiLdError::from(AndromedaError::from(e)))?;
     crate::http::validation::validate_entity_map_has_filter(&query, &uri)?;
 

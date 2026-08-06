@@ -29,6 +29,9 @@ pub enum ParameterError {
     /// The `idPattern` parameter was present but empty.
     #[error("Invalid idPattern: empty value")]
     IdPatternEmpty,
+    /// An `orderBy` term carried a direction outside the clause 4.23 grammar.
+    #[error("Invalid orderBy direction: '{0}'")]
+    OrderByDirectionInvalid(String),
     /// The `orderGeometry` parameter value was not a valid geometry kind.
     #[error("Invalid orderGeometry value: '{0}'")]
     OrderGeometryInvalid(String),
@@ -50,6 +53,9 @@ pub enum ParameterError {
     /// The `timerel` value was not one of `before`, `after`, `between`.
     #[error("Invalid timerel value: {0}")]
     TimerelInvalid(String),
+    /// The `timeproperty` value did not name a temporal property (clause 4.8).
+    #[error("Invalid timeproperty value: {0}")]
+    TimePropertyInvalid(String),
     /// The `aggrMethod` value was not a recognised aggregation method.
     #[error("Invalid aggrMethod value: {0}")]
     AggrMethodInvalid(String),
