@@ -25,6 +25,7 @@
 pub mod attribute_name_id;
 pub mod bind;
 pub mod built;
+pub(crate) mod column_reference;
 pub mod error;
 pub mod geo_predicate;
 pub mod jsonb;

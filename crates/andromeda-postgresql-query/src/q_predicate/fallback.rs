@@ -8,7 +8,7 @@
 
 use crate::{
     error::RenderError,
-    jsonb::{comparison_operand, escape_jsonpath, escape_jsonpath_key},
+    jsonb::{attribute_value_jsonpath, comparison_operand, escape_jsonpath},
     operator::{comparison, pattern_match, present_and},
     q_predicate::target::QFilterTarget,
 };
@@ -101,20 +101,14 @@ pub fn fallback_pattern(path: &AttrPath, pattern: &Pattern, polarity: PatternPol
     Condition::all().add(SeaExpr::cust_with_values(sql, [SeaValue::from(pattern.as_str())]))
 }
 
-/// Build the jsonpath that reaches an attribute's value inside the expanded
-/// payload: `$[0]."<attr>"[0]."<sub>"…[0]."<terminal>"[0]."@value"."<key>"…`.
+/// The jsonpath reaching this attribute's `terminal_iri` value in the payload,
+/// adapting the parsed [`AttrPath`] onto the shared [`attribute_value_jsonpath`]
+/// so the sub-attribute and compound-value cases this fallback needs share the
+/// one construction the geo and ordering builders use.
 fn value_extraction_jsonpath(path: &AttrPath, terminal_iri: &str) -> String {
-    let mut jsonpath = format!("$[0].\"{}\"", escape_jsonpath_key(path.attr.as_str()));
-    for sub in &path.sub_attrs {
-        jsonpath.push_str(&format!("[0].\"{}\"", escape_jsonpath_key(sub.as_str())));
-    }
-    jsonpath.push_str(&format!("[0].\"{}\"[0]", escape_jsonpath_key(terminal_iri)));
-    let value_key = if terminal_iri == OBJECT.as_str() { "@id" } else { "@value" };
-    jsonpath.push_str(&format!(".\"{value_key}\""));
-    for key in &path.value_path {
-        jsonpath.push_str(&format!(".\"{}\"", escape_jsonpath_key(key)));
-    }
-    jsonpath
+    let sub_attrs: Vec<&str> = path.sub_attrs.iter().map(|sub| sub.as_str()).collect();
+    let value_path: Vec<&str> = path.value_path.iter().map(String::as_str).collect();
+    attribute_value_jsonpath(path.attr.as_str(), &sub_attrs, &value_path, terminal_iri)
 }
 
 #[cfg(test)]

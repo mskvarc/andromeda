@@ -1,6 +1,9 @@
 //! The two column references a compiled `q` predicate is attached through.
 
-use crate::schema::Entities;
+use crate::{
+    column_reference::{qualified, quoted},
+    schema::Entities,
+};
 use sea_query::Iden;
 use std::borrow::Cow;
 
@@ -27,8 +30,8 @@ impl QFilterTarget<'_> {
     /// the relation or the column moves this with it.
     pub fn entities() -> QFilterTarget<'static> {
         QFilterTarget {
-            entity_id_column: Cow::Owned(qualified(&Entities::Table.to_string(), &Entities::Id.to_string())),
-            payload_column: Cow::Owned(quoted(&Entities::Payload.to_string())),
+            entity_id_column: Cow::Owned(qualified(Entities::Table, Entities::Id)),
+            payload_column: Cow::Owned(quoted(Entities::Payload)),
         }
     }
 
@@ -43,32 +46,24 @@ impl QFilterTarget<'_> {
     }
 }
 
-impl<'a> QFilterTarget<'a> {
+impl QFilterTarget<'static> {
     /// The target of a statement that reaches the entity through an alias.
     ///
-    /// Both arguments are complete, already-quoted SQL references, because the
-    /// caller knows which of its aliases carries them.
-    pub const fn correlated(entity_id_column: &'a str, payload_column: &'a str) -> QFilterTarget<'a> {
+    /// Each column is named by the `(alias, column)` [`Iden`]s the caller's
+    /// statement already declares, so renaming a relation or a column moves this
+    /// reference with it rather than leaving a hand-quoted string behind.
+    pub fn correlated(entity_id_column: (impl Iden, impl Iden), payload_column: (impl Iden, impl Iden)) -> QFilterTarget<'static> {
         QFilterTarget {
-            entity_id_column: Cow::Borrowed(entity_id_column),
-            payload_column: Cow::Borrowed(payload_column),
+            entity_id_column: Cow::Owned(qualified(entity_id_column.0, entity_id_column.1)),
+            payload_column: Cow::Owned(qualified(payload_column.0, payload_column.1)),
         }
     }
-}
-
-/// Quote one identifier.
-fn quoted(identifier: &str) -> String {
-    format!("\"{identifier}\"")
-}
-
-/// Quote a `relation.column` reference.
-fn qualified(relation: &str, column: &str) -> String {
-    format!("\"{relation}\".\"{column}\"")
 }
 
 #[cfg(test)]
 mod tests {
     use crate::q_predicate::target::QFilterTarget;
+    use sea_query::Alias;
 
     #[test]
     fn the_entities_target_is_derived_from_the_schema_identifiers() {
@@ -78,8 +73,10 @@ mod tests {
     }
 
     #[test]
-    fn a_correlated_target_carries_the_references_its_caller_supplied() {
-        let target = QFilterTarget::correlated("\"tea\".\"entity_id\"", "\"e\".\"payload\"");
+    fn a_correlated_target_renders_the_quoted_reference_from_its_idens() {
+        // The caller passes the `(alias, column)` idens its statement declares;
+        // the quoted SQL reference is derived here rather than hand-written.
+        let target = QFilterTarget::correlated((Alias::new("tea"), Alias::new("entity_id")), (Alias::new("e"), Alias::new("payload")));
         assert_eq!(target.entity_id_column(), "\"tea\".\"entity_id\"");
         assert_eq!(target.payload_column(), "\"e\".\"payload\"");
     }

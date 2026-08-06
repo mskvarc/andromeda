@@ -223,17 +223,31 @@ impl TryFrom<String> for ScopeQuery {
 
 // The rendering walks two levels of variable-length list and re-inserts both
 // separators, which `derive_more::Display`'s format string cannot express.
+//
+// Clause 4.19's grammar is `OrScopeQ = "(" ScopeQ *(andOp ScopeQ) ")" / ScopeQ`:
+// a conjunction is legal *only* parenthesised, with no unparenthesised form. So
+// an alternative of two or more requirements is wrapped — a bare `/A;/B` is text
+// outside the grammar that a conforming peer broker rejects — while a
+// single-requirement alternative, and the top-level `,` between alternatives,
+// stand unparenthesised.
 impl fmt::Display for ScopeQuery {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         for (index, alternative) in self.alternatives.iter().enumerate() {
             if index > 0 {
                 formatter.write_char(ALTERNATIVE_SEPARATOR)?;
             }
+            let conjunction = alternative.len() > 1;
+            if conjunction {
+                formatter.write_char('(')?;
+            }
             for (position, pattern) in alternative.iter().enumerate() {
                 if position > 0 {
                     formatter.write_char(REQUIREMENT_SEPARATOR)?;
                 }
                 write!(formatter, "{pattern}")?;
+            }
+            if conjunction {
+                formatter.write_char(')')?;
             }
         }
         Ok(())
@@ -347,12 +361,36 @@ mod tests {
     }
 
     #[test]
-    fn a_scope_query_round_trips_through_its_clause_4_18_text() {
+    fn a_conjunction_always_renders_parenthesised_per_clause_4_19() {
+        // `OrScopeQ = "(" ScopeQ *(andOp ScopeQ) ")" / ScopeQ`: a conjunction is
+        // legal only parenthesised, a single requirement stands alone, and the
+        // conjunction distributes over a grouped disjunction into DNF.
+        let cases = [
+            ("/A", "/A"),
+            ("/A,/B", "/A,/B"),
+            ("/A;/B", "(/A;/B)"),
+            ("(/A;/B)", "(/A;/B)"),
+            ("(/A;/B),/C", "(/A;/B),/C"),
+            ("(/A,/B);/C", "(/A;/C),(/B;/C)"),
+        ];
+        for (input, expected) in cases {
+            let rendered = ScopeQuery::parse(input).expect("valid scope query").to_string();
+            pretty_assertions::assert_eq!(rendered, expected, "rendering of {input}");
+            let reparsed = ScopeQuery::parse(&rendered).expect("re-parses");
+            pretty_assertions::assert_eq!(reparsed, ScopeQuery::parse(input).expect("valid scope query"), "round trip of {input}");
+        }
+    }
+
+    #[test]
+    fn a_scope_query_round_trips_through_its_clause_4_19_text() {
+        // Clause 4.19 admits a conjunction only parenthesised, so the canonical
+        // rendering of `/A;/B,/C/#` wraps its conjunction: `(/A;/B),/C/#`.
         let raw = "/A;/B,/C/#";
-        let json = serde_json::to_string(&ScopeQuery::parse(raw).expect("valid scope query")).expect("serialises");
-        pretty_assertions::assert_eq!(json, format!("{raw:?}"));
+        let query = ScopeQuery::parse(raw).expect("valid scope query");
+        let json = serde_json::to_string(&query).expect("serialises");
+        pretty_assertions::assert_eq!(json, "\"(/A;/B),/C/#\"");
         let decoded: ScopeQuery = serde_json::from_str(&json).expect("deserialises");
-        pretty_assertions::assert_eq!(decoded, ScopeQuery::parse(raw).expect("valid scope query"));
+        pretty_assertions::assert_eq!(decoded, query);
     }
 
     #[test]

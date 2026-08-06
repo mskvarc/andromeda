@@ -12,7 +12,7 @@
 
 use crate::{
     error::RenderError,
-    jsonb::{escape_jsonpath, escape_jsonpath_key},
+    jsonb::{attribute_value_jsonpath, escape_jsonpath},
     postgis::{
         st_contains,
         st_disjoint,
@@ -156,11 +156,7 @@ fn subject_geometry(geo: &GeoQuery, source: GeometrySource<'_>) -> SubjectGeomet
 
 /// Decode a custom GeoProperty's GeoJSON out of the payload.
 fn custom_geoproperty_sql(quoted_payload_col: &str, geoproperty_iri: &str) -> String {
-    let jsonpath = format!(
-        "$[0].\"{}\"[0].\"{}\"[0].\"@value\"",
-        escape_jsonpath_key(geoproperty_iri),
-        escape_jsonpath_key(VALUE.as_str())
-    );
+    let jsonpath = attribute_value_jsonpath(geoproperty_iri, &[], &[], VALUE.as_str());
     validated_geom_from_geojson_sql(&format!(
         "jsonb_path_query_first({}, '{}')::text",
         quoted_payload_col,

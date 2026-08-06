@@ -19,6 +19,8 @@ pub enum Entities {
     Types,
     /// Full expanded JSON-LD payload
     Payload,
+    /// Array of `ltree` scope paths an entity currently belongs to (clause 4.18).
+    ScopePaths,
 }
 
 /// Alias `e` for entities table.

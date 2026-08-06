@@ -2,7 +2,10 @@
 
 use andromeda_ngsi_ld_query::ordering::term::OrderTarget;
 use andromeda_ngsi_ld_vocabulary::expanded::properties::{LOCATION, VALUE};
-use andromeda_postgresql_query::jsonb::{escape_jsonpath, escape_jsonpath_key};
+use andromeda_postgresql_query::{
+    jsonb::{attribute_value_jsonpath, escape_jsonpath},
+    postgis::validated_geom_from_geojson_sql,
+};
 
 /// SQL expression yielding the geography a distance ordering measures to.
 ///
@@ -18,15 +21,13 @@ pub fn geo_extract_geography(target: &OrderTarget) -> String {
     if geoproperty_iri.as_str() == LOCATION.as_str() {
         return "\"location_geo\"".to_string();
     }
-    let jsonpath = format!(
-        "$[0].\"{}\"[0].\"{}\"[0].\"@value\"",
-        escape_jsonpath_key(geoproperty_iri.as_str()),
-        escape_jsonpath_key(VALUE.as_str())
-    );
-    format!(
-        "ST_MakeValid(ST_SetSRID(ST_GeomFromGeoJSON((jsonb_path_query_first(\"payload\", '{}')::text)), 4326))::geography",
-        escape_jsonpath(&jsonpath)
-    )
+    // The value jsonpath and the validated-geometry construction are both shared:
+    // `validated_geom_from_geojson_sql` owns the
+    // `ST_MakeValid(ST_SetSRID(ST_GeomFromGeoJSON(…), 4326))` shape, and this adds
+    // the `::geography` cast a distance measure needs.
+    let jsonpath = attribute_value_jsonpath(geoproperty_iri.as_str(), &[], &[], VALUE.as_str());
+    let geojson_sql = format!("(jsonb_path_query_first(\"payload\", '{}')::text)", escape_jsonpath(&jsonpath));
+    format!("{}::geography", validated_geom_from_geojson_sql(&geojson_sql))
 }
 
 #[cfg(test)]

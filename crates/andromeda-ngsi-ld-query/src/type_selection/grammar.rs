@@ -77,61 +77,67 @@ impl TryFrom<String> for TypeExprRaw {
     }
 }
 
-// The rendering walks a recursive tree and parenthesises the children the
-// grammar would re-associate, which `derive_more::Display`'s per-variant format
-// string cannot express.
-//
+/// Where a node sits while it is rendered.
+///
+/// Clause 4.17 admits a conjunction only in parentheses and a top-level
+/// disjunction without them, so a disjunction needs enclosing precisely when it
+/// is nested inside another group.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Nesting {
+    /// The whole expression, where a disjunction stands unparenthesised.
+    Top,
+    /// A child of a `;` or `,` group, where a nested disjunction is enclosed.
+    InGroup,
+}
+
 // `|` and `,` are one operator in clause 4.17, and the tree does not record
 // which of the two a client wrote, so a disjunction always renders as `,`. That
-// is a normalisation of equivalent spellings, not a change of meaning; the
-// structure is preserved exactly.
+// is a normalisation of equivalent spellings, not a change of meaning.
+//
+// Clause 4.17's grammar is `OrEntityType = "(" EntityType *(";" EntityType) ")"
+// / EntityType`: a conjunction is legal *only* parenthesised, with no
+// unparenthesised form and no precedence that would let one be inferred. So an
+// `And` group is always wrapped — a bare `Home;Vehicle` is text outside the
+// grammar that a conforming peer broker rejects, where `(Home;Vehicle)` is not.
 impl fmt::Display for TypeExprRaw {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            TypeExprRaw::Type(name) => formatter.write_str(name),
-            TypeExprRaw::And(children) => write_children(formatter, children, ';'),
-            TypeExprRaw::Or(children) => write_children(formatter, children, ','),
+        render(self, formatter, Nesting::Top)
+    }
+}
+
+/// Render `node`, enclosing a conjunction always and a disjunction only when it
+/// is nested inside another group (clause 4.17).
+fn render(node: &TypeExprRaw, formatter: &mut fmt::Formatter<'_>, nesting: Nesting) -> fmt::Result {
+    match node {
+        TypeExprRaw::Type(name) => formatter.write_str(name),
+        TypeExprRaw::And(children) => {
+            formatter.write_char('(')?;
+            write_separated(formatter, children, ';')?;
+            formatter.write_char(')')
+        }
+        TypeExprRaw::Or(children) => {
+            let enclose = nesting == Nesting::InGroup;
+            if enclose {
+                formatter.write_char('(')?;
+            }
+            write_separated(formatter, children, ',')?;
+            if enclose {
+                formatter.write_char(')')?;
+            }
+            Ok(())
         }
     }
 }
 
-/// Write a boolean node's children, parenthesising any child the grammar would
-/// otherwise re-associate.
-///
-/// Clause 4.17 makes `;` bind tighter than `,` and `|`, so a conjunction
-/// directly inside a disjunction reads back unchanged and needs no parentheses.
-/// Every other pairing does, including one operator nested inside itself, which
-/// would otherwise flatten. Parenthesising every non-leaf child instead — which
-/// is what this did — turned `A|B;C` into `A,(B;C)`, so a stored selector came
-/// back carrying groups its client never wrote.
-///
-/// The rule matches the one in [`crate::filter::serialize`]; the two are not
-/// shared because they render two independent specification grammars that
-/// happen to agree on precedence today.
-fn write_children(formatter: &mut fmt::Formatter<'_>, children: &[TypeExprRaw], separator: char) -> fmt::Result {
+/// Write a group's children separated by `separator`, each rendered as nested.
+fn write_separated(formatter: &mut fmt::Formatter<'_>, children: &[TypeExprRaw], separator: char) -> fmt::Result {
     for (index, child) in children.iter().enumerate() {
         if index > 0 {
             formatter.write_char(separator)?;
         }
-        if needs_parentheses(child, separator) {
-            write!(formatter, "({child})")?;
-        } else {
-            write!(formatter, "{child}")?;
-        }
+        render(child, formatter, Nesting::InGroup)?;
     }
     Ok(())
-}
-
-/// Whether a child of a node written with `separator` has to be parenthesised.
-const fn needs_parentheses(child: &TypeExprRaw, separator: char) -> bool {
-    match child {
-        // A type name binds tighter than every operator.
-        TypeExprRaw::Type(_) => false,
-        // `;` binds tighter than `,`, so a conjunction inside a disjunction
-        // reads back unchanged; a conjunction inside a conjunction would flatten.
-        TypeExprRaw::And(_) => separator == ';',
-        TypeExprRaw::Or(_) => true,
-    }
 }
 
 // The wire form is produced by the `Display` above; this exists only because
@@ -200,20 +206,22 @@ mod tests {
     }
 
     /// A stored selector is re-serialised whenever the resource carrying it is
-    /// read back, so the rendering may not add structure the client did not
-    /// write. It used to parenthesise every non-leaf child, turning `A|B;C`
-    /// into `A,(B;C)`.
+    /// read back, and clause 4.17 admits a conjunction only in parentheses:
+    /// `OrEntityType = "(" EntityType *(";" EntityType) ")" / EntityType`. So a
+    /// conjunction always renders parenthesised — a bare `Home;Vehicle` is
+    /// outside the grammar a conforming peer broker accepts — while a top-level
+    /// disjunction, which the grammar admits unparenthesised, stays bare.
     #[test]
-    fn the_rendering_adds_no_group_the_grammar_does_not_need() {
+    fn a_conjunction_always_renders_parenthesised_per_clause_4_17() {
         let shapes = [
             ("Building", "Building"),
+            ("Building,Tower", "Building,Tower"),
             ("Building|Tower", "Building,Tower"),
             ("(Building|Tower)", "Building,Tower"),
-            ("A|B;C", "A,B;C"),
-            ("(Home;Vehicle),Motorhome", "Home;Vehicle,Motorhome"),
-            ("(A,B);C", "(A,B);C"),
-            ("(A;B);C", "(A;B);C"),
-            ("(A,B),C", "(A,B),C"),
+            ("Home;Vehicle", "(Home;Vehicle)"),
+            ("(Home;Vehicle)", "(Home;Vehicle)"),
+            ("(Home;Vehicle),Motorhome", "(Home;Vehicle),Motorhome"),
+            ("Motorhome,(Home;Vehicle)", "Motorhome,(Home;Vehicle)"),
         ];
         for (input, expected) in shapes {
             let parsed: TypeExprRaw = input.parse().unwrap_or_else(|error| unreachable!("{input} must parse: {error}"));

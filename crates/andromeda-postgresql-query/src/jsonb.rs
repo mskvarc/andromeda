@@ -1,8 +1,9 @@
-//! JSONB access: key existence, and the two escapes a jsonpath needs on its way
-//! into a statement.
+//! JSONB access: key existence, jsonpath construction, and the two escapes a
+//! jsonpath needs on its way into a statement.
 
 use crate::literal::escape_single_quoted;
 use andromeda_ngsi_ld_query::filter::scalar::Scalar;
+use andromeda_ngsi_ld_vocabulary::expanded::properties::OBJECT;
 use sea_query::{Expr, SimpleExpr};
 
 /// A comparison operand and the cast the comparison needs around it.
@@ -42,6 +43,31 @@ pub fn escape_jsonpath_key(key: &str) -> String {
 /// IRIs, and an absolute IRI passes JSON-LD expansion unchanged.
 pub fn escape_jsonpath(jsonpath: &str) -> String {
     escape_single_quoted(jsonpath)
+}
+
+/// Build the jsonpath that reaches an attribute's value inside the expanded
+/// payload: `$[0]."<attr>"[0]."<sub>"…[0]."<terminal>"[0]."@value"."<key>"…`.
+///
+/// `terminal_iri` names the value carrier — `hasValue` for a Property's value,
+/// `hasObject` for a Relationship's object — and switches the final key between
+/// `@value` and `@id` accordingly. `sub_attrs` walks nested attributes and
+/// `value_path` addresses keys inside a compound value; both are empty for the
+/// common top-level `hasValue` read a geo-query or an `orderBy` term makes.
+/// Every builder that reaches a stored attribute value shares this one
+/// construction, so the payload's expanded shape is described in a single place.
+pub fn attribute_value_jsonpath(attr_iri: &str, sub_attrs: &[&str], value_path: &[&str], terminal_iri: &str) -> String {
+    let mut jsonpath = format!("$[0].\"{}\"", escape_jsonpath_key(attr_iri));
+    for sub in sub_attrs {
+        jsonpath.push_str(&format!("[0].\"{}\"", escape_jsonpath_key(sub)));
+    }
+    jsonpath.push_str(&format!("[0].\"{}\"[0]", escape_jsonpath_key(terminal_iri)));
+    // A Relationship's object is keyed by `@id`, a Property's value by `@value`.
+    let value_key = if terminal_iri == OBJECT.as_str() { "@id" } else { "@value" };
+    jsonpath.push_str(&format!(".\"{value_key}\""));
+    for key in value_path {
+        jsonpath.push_str(&format!(".\"{}\"", escape_jsonpath_key(key)));
+    }
+    jsonpath
 }
 
 #[cfg(test)]

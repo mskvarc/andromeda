@@ -32,7 +32,7 @@ impl EntitySelector {
     ///
     /// An unconstrained selector — no id, no pattern, no type — admits every
     /// entity, so a union that contains one is unconstrained on these axes.
-    pub fn constrains(&self) -> bool {
+    pub const fn constrains(&self) -> bool {
         !self.ids.is_empty() || self.id_pattern.is_some() || self.type_expr.is_some()
     }
 }

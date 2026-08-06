@@ -6,6 +6,7 @@
 //! two is identical.
 
 use crate::{
+    column_reference::{qualified, quoted},
     error::RenderError,
     ltree::{ltree_matches, pattern_to_lquery},
 };
@@ -13,15 +14,15 @@ use andromeda_ngsi_ld_query::{
     scope::{pattern::ScopePattern, query::ScopeQuery},
     temporal::window::TimeInterval,
 };
-use sea_query::{Condition, Expr as SeaExpr, SimpleExpr};
+use sea_query::{Condition, Expr as SeaExpr, Iden, SimpleExpr};
 
 /// Which relation a scope predicate is evaluated against.
-#[derive(Debug, Clone, Copy)]
-pub enum ScopeTarget<'a> {
+#[derive(Debug, Clone)]
+pub enum ScopeTarget {
     /// The `ltree[]` column carrying an entity's current scope paths.
     CurrentPaths {
-        /// Unqualified column name.
-        column: &'a str,
+        /// Quoted SQL reference to the column, derived from its iden.
+        column: String,
     },
     /// `scope_history`, narrowed to the query's time window.
     ///
@@ -29,11 +30,31 @@ pub enum ScopeTarget<'a> {
     /// window, not which are in it now, so a row that has since left the scope
     /// still matches (clause 4.18).
     History {
-        /// SQL reference to the entity id the probe correlates against.
-        entity_id_column: &'a str,
+        /// Quoted SQL reference to the entity id the probe correlates against.
+        entity_id_column: String,
         /// The slice of the time axis the probe is bounded to.
         interval: TimeInterval,
     },
+}
+
+impl ScopeTarget {
+    /// The current-scope target reading an entity's scope paths from `column`.
+    ///
+    /// The column is named by the iden the driving statement declares, so a
+    /// rename moves this reference with it rather than leaving a hand-quoted
+    /// string behind.
+    pub fn current_paths(column: impl Iden) -> ScopeTarget {
+        ScopeTarget::CurrentPaths { column: quoted(column) }
+    }
+
+    /// The scope-history target correlating on the `(alias, column)` entity id,
+    /// bounded to `interval`.
+    pub fn history(entity_id_column: (impl Iden, impl Iden), interval: TimeInterval) -> ScopeTarget {
+        ScopeTarget::History {
+            entity_id_column: qualified(entity_id_column.0, entity_id_column.1),
+            interval,
+        }
+    }
 }
 
 /// Render a scope query against the given target.
@@ -42,7 +63,7 @@ pub enum ScopeTarget<'a> {
 /// one-alternative, one-requirement query renders as a single predicate:
 /// sea-query's `Condition::any` of one term adds no nesting of its own, which
 /// is why the hand-written special case both renderers used to carry is gone.
-pub fn condition(scope_q: &ScopeQuery, target: ScopeTarget<'_>) -> Result<Condition, RenderError> {
+pub fn condition(scope_q: &ScopeQuery, target: &ScopeTarget) -> Result<Condition, RenderError> {
     let mut disjunction = Condition::any();
     for alternative in scope_q.alternatives() {
         let mut conjunction = Condition::all();
@@ -55,11 +76,12 @@ pub fn condition(scope_q: &ScopeQuery, target: ScopeTarget<'_>) -> Result<Condit
 }
 
 /// Render one scope pattern against the target.
-fn pattern_predicate(pattern: &ScopePattern, target: ScopeTarget<'_>) -> SimpleExpr {
+fn pattern_predicate(pattern: &ScopePattern, target: &ScopeTarget) -> SimpleExpr {
     let lquery = pattern_to_lquery(pattern);
     match target {
-        ScopeTarget::CurrentPaths { column } => ltree_matches(SeaExpr::cust(format!("\"{column}\"")), SeaExpr::val(lquery).into()),
-        ScopeTarget::History { entity_id_column, interval } => scope_history_exists(&lquery, entity_id_column, interval),
+        // The column reference is already quoted by the constructor.
+        ScopeTarget::CurrentPaths { column } => ltree_matches(SeaExpr::cust(column.as_str()), SeaExpr::val(lquery).into()),
+        ScopeTarget::History { entity_id_column, interval } => scope_history_exists(&lquery, entity_id_column, *interval),
     }
 }
 
@@ -111,23 +133,18 @@ fn scope_history_exists(lquery: &str, entity_id_column: &str, interval: TimeInte
 mod tests {
     use super::*;
     use crate::schema::Entities;
-    use sea_query::{PostgresQueryBuilder, Query};
-
-    const TEA_ENTITY_ID: &str = "\"tea\".\"entity_id\"";
+    use sea_query::{Alias, PostgresQueryBuilder, Query};
 
     fn scope(raw: &str) -> ScopeQuery {
         ScopeQuery::parse(raw).expect("valid scope query")
     }
 
-    fn current(column: &str) -> ScopeTarget<'_> {
-        ScopeTarget::CurrentPaths { column }
+    fn current() -> ScopeTarget {
+        ScopeTarget::current_paths(Entities::ScopePaths)
     }
 
-    fn history(interval: TimeInterval) -> ScopeTarget<'static> {
-        ScopeTarget::History {
-            entity_id_column: TEA_ENTITY_ID,
-            interval,
-        }
+    fn history(interval: TimeInterval) -> ScopeTarget {
+        ScopeTarget::history((Alias::new("tea"), Alias::new("entity_id")), interval)
     }
 
     fn instant(raw: &str) -> chrono::DateTime<chrono::Utc> {
@@ -147,7 +164,7 @@ mod tests {
     /// carried was redundant.
     #[test]
     fn a_single_scope_term_renders_without_nesting() {
-        let sql = render(condition(&scope("/A/B"), current("scope_paths")).unwrap());
+        let sql = render(condition(&scope("/A/B"), &current()).unwrap());
         assert!(sql.contains("::lquery"), "{sql}");
         assert!(!sql.contains(" OR "), "{sql}");
         assert_eq!(sql.matches("::lquery").count(), 1, "{sql}");
@@ -155,26 +172,26 @@ mod tests {
 
     #[test]
     fn a_single_scope_history_term_renders_without_nesting() {
-        let sql = render(condition(&scope("/A/B"), history(TimeInterval::Unbounded)).unwrap());
+        let sql = render(condition(&scope("/A/B"), &history(TimeInterval::Unbounded)).unwrap());
         assert_eq!(sql.matches("EXISTS").count(), 1, "{sql}");
         assert!(!sql.contains(" OR "), "{sql}");
     }
 
     #[test]
     fn comma_separated_scopes_render_a_disjunction() {
-        let sql = render(condition(&scope("/A,/B"), current("scope_paths")).unwrap());
+        let sql = render(condition(&scope("/A,/B"), &current()).unwrap());
         assert!(sql.contains(" OR "), "{sql}");
     }
 
     #[test]
     fn semicolon_separated_scopes_render_a_conjunction() {
-        let sql = render(condition(&scope("/A;/B"), current("scope_paths")).unwrap());
+        let sql = render(condition(&scope("/A;/B"), &current()).unwrap());
         assert!(sql.contains(" AND "), "{sql}");
     }
 
     #[test]
     fn scope_history_renders_one_exists_per_term() {
-        let sql = render(condition(&scope("/A;/B,/C"), history(TimeInterval::Unbounded)).unwrap());
+        let sql = render(condition(&scope("/A;/B,/C"), &history(TimeInterval::Unbounded)).unwrap());
         assert_eq!(sql.matches("EXISTS").count(), 3, "{sql}");
         assert!(sql.contains("scope_history"), "{sql}");
     }
@@ -185,7 +202,7 @@ mod tests {
             from: instant("2024-01-01T00:00:00Z"),
             to: instant("2024-06-01T00:00:00Z"),
         };
-        let sql = render(condition(&scope("/A"), history(interval)).unwrap());
+        let sql = render(condition(&scope("/A"), &history(interval)).unwrap());
         assert!(sql.contains("\"sh\".\"time\" >="), "{sql}");
         assert!(sql.contains("\"sh\".\"time\" <"), "{sql}");
     }
@@ -195,8 +212,8 @@ mod tests {
     #[test]
     fn both_targets_render_the_same_boolean_structure() {
         let scope_q = scope("/A;/B,/C");
-        let current_sql = render(condition(&scope_q, current("scope_paths")).unwrap());
-        let history_sql = render(condition(&scope_q, history(TimeInterval::Unbounded)).unwrap());
+        let current_sql = render(condition(&scope_q, &current()).unwrap());
+        let history_sql = render(condition(&scope_q, &history(TimeInterval::Unbounded)).unwrap());
         for sql in [&current_sql, &history_sql] {
             assert!(sql.contains(" AND "), "{sql}");
             assert!(sql.contains(" OR "), "{sql}");

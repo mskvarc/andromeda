@@ -327,7 +327,7 @@ mod tests {
         schema::Entities,
     };
     use andromeda_ngsi_ld_query::filter::parser;
-    use sea_query::{PostgresQueryBuilder, Query};
+    use sea_query::{Alias, PostgresQueryBuilder, Query};
 
     const SPEED: &str = "https://example.com/speed";
 
@@ -539,7 +539,7 @@ mod tests {
         let (sql, _) = render_with(
             &format!("{}>50", quoted(SPEED)),
             &names(),
-            &QFilterTarget::correlated("\"tea\".\"entity_id\"", "\"e\".\"payload\""),
+            &QFilterTarget::correlated((Alias::new("tea"), Alias::new("entity_id")), (Alias::new("e"), Alias::new("payload"))),
         );
         assert!(sql.contains("\"ac\".\"entity_id\" = \"tea\".\"entity_id\""), "{sql}");
     }

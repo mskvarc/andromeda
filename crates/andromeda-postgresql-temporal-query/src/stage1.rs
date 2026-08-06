@@ -142,7 +142,7 @@ fn build_entity_conditions_for_temporal(compiled: &CompiledTemporalQuery, attrib
     if let Some(q_expr) = &compiled.entities.q_expr {
         condition = condition.add(q_filter::compile(
             q_expr,
-            &QFilterTarget::correlated("\"tea\".\"entity_id\"", "\"e\".\"payload\""),
+            &QFilterTarget::correlated((Tea, TemporalEntityAttributes::EntityId), (E, Entities::Payload)),
             attribute_names,
         )?);
     }
@@ -221,11 +221,8 @@ fn build_temporal_stage1_conditions(compiled: &CompiledTemporalQuery) -> Result<
 
     // Historical scope filtering via EXISTS subquery against scope_history
     if let Some(scope_q) = &compiled.entities.scope_q {
-        let target = ScopeTarget::History {
-            entity_id_column: "\"tea\".\"entity_id\"",
-            interval: compiled.window.interval,
-        };
-        condition = condition.add(scope_condition(scope_q, target)?);
+        let target = ScopeTarget::history((Tea, TemporalEntityAttributes::EntityId), compiled.window.interval);
+        condition = condition.add(scope_condition(scope_q, &target)?);
     }
 
     Ok(condition)

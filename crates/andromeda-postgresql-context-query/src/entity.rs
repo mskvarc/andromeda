@@ -21,7 +21,7 @@ use andromeda_postgresql_query::{
     error::RenderError,
     geo_predicate as geo_sql,
     geo_predicate::{GeometrySource, NullGeometryPolicy},
-    jsonb::{escape_jsonpath, escape_jsonpath_key, jsonb_key_exists},
+    jsonb::{attribute_value_jsonpath, escape_jsonpath, jsonb_key_exists},
     operator::regex_match,
     q_predicate::{attribute_names::ResolvedAttributeNames, projection as q_filter, target::QFilterTarget},
     schema::Entities,
@@ -155,7 +155,7 @@ fn build_entity_conditions(query: &CompiledEntityQuery, attribute_names: &Resolv
     }
 
     if let Some(scope_q) = &query.selection.scope_q {
-        condition = condition.add(scope_condition(scope_q, ScopeTarget::CurrentPaths { column: "scope_paths" })?);
+        condition = condition.add(scope_condition(scope_q, &ScopeTarget::current_paths(Entities::ScopePaths))?);
     }
 
     Ok(condition)
@@ -195,11 +195,7 @@ fn order_value_expr(target: &OrderTarget, collation: Option<&IcuCollation>) -> S
         OrderTarget::Id => format!("\"id\"{collate}"),
         OrderTarget::Type => format!("\"types\"{collate}"),
         OrderTarget::Attribute(iri) => {
-            let json_path = format!(
-                "$[0].\"{}\"[0].\"{}\"[0].\"@value\"",
-                escape_jsonpath_key(iri.as_str()),
-                escape_jsonpath_key(VALUE.as_str())
-            );
+            let json_path = attribute_value_jsonpath(iri.as_str(), &[], &[], VALUE.as_str());
             format!("jsonb_path_query_first(\"payload\", '{}'){collate}", escape_jsonpath(&json_path))
         }
     }
