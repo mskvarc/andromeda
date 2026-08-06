@@ -126,28 +126,44 @@ impl ConnectionState {
 
 /// A pooled connection to one broker.
 ///
-/// Field order is the drop order. It does not by itself close the session
-/// gracefully: dropping an `AsyncClient` sends no DISCONNECT and dropping a
-/// `JoinHandle` detaches its task unconditionally, so a graceful shutdown is
-/// performed explicitly through `disconnect()` before this value is dropped.
+/// [`close`](MqttConnection::close) performs the graceful teardown — a broker
+/// DISCONNECT, aborting the event loop, and failing every unacknowledged publish
+/// — and the pool calls it wherever a connection is removed or replaced.
+/// [`Drop`] aborts the event loop as a backstop, so a connection dropped without
+/// `close` still cannot leave its spawned task polling an orphaned session.
 pub struct MqttConnection {
     /// The client publishes go out on.
     pub client: MqttClientVariant,
     /// State shared with the event loop.
     pub state: Arc<ConnectionState>,
-    /// When another connection attempt is allowed, once this one has failed.
-    pub reconnect_state: Mutex<ReconnectState>,
     /// The identity this connection is pooled under.
     pub key: MqttConnectionKey,
-    /// The event loop driving the client. Held so it lives as long as the
-    /// connection does.
+    /// The event loop driving the client, aborted by [`close`](MqttConnection::close)
+    /// and by [`Drop`] so it never outlives the connection.
     pub event_loop: JoinHandle<()>,
 }
 
 impl MqttConnection {
-    /// Whether another connection attempt to this broker is allowed yet.
-    pub async fn should_reconnect_now(&self) -> bool {
-        let state = self.reconnect_state.lock().await;
-        Instant::now() >= state.next_attempt_at
+    /// Tear the connection down: ask the broker to end the session, stop the
+    /// event loop, and fail every publish still awaiting acknowledgement.
+    ///
+    /// The disconnect is best-effort — a broker that has already gone answers
+    /// nothing — and the abort is what guarantees the spawned event loop does
+    /// not outlive the connection. Failing the pending acknowledgements resolves
+    /// their waiters to a retryable outcome so the outbox retransmits.
+    pub async fn close(&self) {
+        self.client.disconnect().await;
+        self.event_loop.abort();
+        self.state.acks().fail_all();
+    }
+}
+
+impl Drop for MqttConnection {
+    /// Stop the event loop if a connection is dropped without an explicit
+    /// [`close`](MqttConnection::close). Aborting is synchronous and safe here;
+    /// the graceful DISCONNECT and the ack failing that `close` performs are
+    /// async and are not attempted from `Drop`.
+    fn drop(&mut self) {
+        self.event_loop.abort();
     }
 }

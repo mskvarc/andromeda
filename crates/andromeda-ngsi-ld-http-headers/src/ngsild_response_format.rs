@@ -4,13 +4,17 @@
 
 use http::{HeaderName, HeaderValue};
 use std::str::FromStr;
-use strum::{Display, EnumString};
+use strum::{Display, EnumString, IntoStaticStr};
 
 /// The header name, as a `HeaderName` the `headers` trait can hand back.
 static NGSILD_RESPONSE_FORMAT: HeaderName = HeaderName::from_static("ngsild-response-format");
 
 /// Supported extension values for `NGSILD-Response-Format`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Display, EnumString)]
+///
+/// The wire spelling of every token comes from the one `#[strum]` casing here —
+/// `Display` for an owned string, `Into<&'static str>` for a borrowed one — so a
+/// renamed or added token cannot drift from a hand-written second copy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Display, EnumString, IntoStaticStr)]
 #[strum(serialize_all = "camelCase")]
 pub enum NgsiLdResponseFormat {
     /// Normalized representation.
@@ -26,20 +30,6 @@ pub enum NgsiLdResponseFormat {
     TemporalValues,
     /// Aggregated values representation.
     AggregatedValues,
-}
-
-impl NgsiLdResponseFormat {
-    /// Return this format token as the query-parameter wire value.
-    pub const fn as_query_value(&self) -> &'static str {
-        match self {
-            NgsiLdResponseFormat::Normalized => "normalized",
-            NgsiLdResponseFormat::KeyValues => "keyValues",
-            NgsiLdResponseFormat::Simplified => "simplified",
-            NgsiLdResponseFormat::Concise => "concise",
-            NgsiLdResponseFormat::TemporalValues => "temporalValues",
-            NgsiLdResponseFormat::AggregatedValues => "aggregatedValues",
-        }
-    }
 }
 
 impl headers::Header for NgsiLdResponseFormat {
@@ -61,7 +51,7 @@ impl headers::Header for NgsiLdResponseFormat {
     }
 
     fn encode<E: Extend<HeaderValue>>(&self, values: &mut E) {
-        match HeaderValue::from_str(self.as_query_value()) {
+        match HeaderValue::from_str(<&'static str>::from(*self)) {
             Ok(val) => values.extend(std::iter::once(val)),
             Err(err) => tracing::warn!(error = %err, "failed to encode NGSILD-Response-Format header"),
         }

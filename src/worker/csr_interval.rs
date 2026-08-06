@@ -2,11 +2,7 @@ use crate::{
     repository::csource_subscription::repo::CsourceSubscriptionRepository,
     service::{csource_registration::store::RegistrationStore, subscription::store::SubscriptionStore},
 };
-use andromeda_delivery::{
-    dispatch::{DeliveryResult, TransportDispatcher},
-    endpoint::transport::parse_endpoint_transport,
-    request::NotificationDelivery,
-};
+use andromeda_delivery::{dispatch::TransportDispatcher, endpoint::transport::parse_endpoint_transport, request::NotificationDelivery};
 use andromeda_ngsi_ld_lexicon::uri::{NGSI_LD_URN_NID, Uri};
 use andromeda_ngsi_ld_model::{notification::CsourceNotification, subscription::Subscription};
 use andromeda_tenancy::tenant_ref::TenantRef;
@@ -14,7 +10,6 @@ use chrono::Utc;
 use serde_json::Value;
 use std::{sync::Arc, time::Duration};
 use tracing::{debug, error, info};
-use url::Url;
 use uuid::Uuid;
 
 pub struct CsrIntervalWorker {
@@ -122,12 +117,12 @@ impl CsrIntervalWorker {
 
                 let request = match (NotificationDelivery {
                     payload: &payload,
-                    endpoint_uri,
+                    endpoint_uri: &sub.notification.endpoint.uri,
                     accept: sub.notification.endpoint.accept.as_ref(),
                     receiver_info: sub.notification.endpoint.receiver_info.as_deref(),
-                    jsonld_context: sub.delivery.jsonld_context.as_ref().map(Url::as_str),
+                    jsonld_context: sub.delivery.jsonld_context.as_ref(),
                     tenant: self.tenant.tenant_name(),
-                    subscription_id: sub.id.as_ref(),
+                    subscription_id: &sub.id,
                 })
                 .assemble()
                 {
@@ -138,7 +133,7 @@ impl CsrIntervalWorker {
                     }
                 };
 
-                let success = matches!(self.transport.deliver(&endpoint_transport, &request).await, DeliveryResult::Delivered);
+                let success = self.transport.deliver(&endpoint_transport, &request).await.is_delivered();
 
                 if success {
                     if let Err(e) = self.sub_repo.mark_success(sub.id.as_ref()).await {

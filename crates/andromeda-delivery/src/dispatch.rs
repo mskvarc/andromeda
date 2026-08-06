@@ -29,13 +29,48 @@ pub struct TransportDispatcher {
 
 /// Result of a notification delivery attempt.
 ///
-/// Deliberately coarser than [`DeliveryOutcome`]: the dispatcher has already
-/// logged why, and every caller does the same two things with the answer.
+/// Coarser than [`DeliveryOutcome`] — the dispatcher has already logged why —
+/// but it keeps the one distinction a retrying caller needs: whether a failure
+/// is worth another attempt. Collapsing every failure to one variant is what let
+/// a permanently-rejecting `400` be retried through its whole budget exactly like
+/// a transient `503`.
 pub enum DeliveryResult {
-    /// Delivery succeeded.
+    /// The endpoint accepted the notification.
     Delivered,
-    /// Delivery failed, whether by transport error or endpoint rejection.
-    Failed,
+    /// Delivery failed but a later attempt could succeed: a `5xx` or `429`
+    /// rejection, a timeout, a lost connection, a DNS failure, or an
+    /// unacknowledged MQTT publish.
+    RetryableFailure,
+    /// Delivery failed in a way a retry cannot fix: a `4xx` rejection (other than
+    /// `429`), a payload over the limit, a blocked endpoint, or a serialisation
+    /// failure.
+    TerminalFailure,
+}
+
+impl DeliveryResult {
+    /// Whether the endpoint accepted the notification.
+    pub const fn is_delivered(&self) -> bool {
+        matches!(self, DeliveryResult::Delivered)
+    }
+
+    /// Whether a failed delivery should be retried. A terminal failure must not
+    /// be, or the outbox burns its whole attempt budget on a delivery that can
+    /// never succeed.
+    pub const fn should_retry(&self) -> bool {
+        matches!(self, DeliveryResult::RetryableFailure)
+    }
+}
+
+/// Classify a transport's answer into the result the workers act on, preserving
+/// whether a failure is worth retrying.
+fn classify(outcome: Result<DeliveryOutcome, TransportError>) -> DeliveryResult {
+    match outcome {
+        Ok(DeliveryOutcome::Success { .. }) => DeliveryResult::Delivered,
+        Ok(DeliveryOutcome::Rejected { retryable: true, .. }) => DeliveryResult::RetryableFailure,
+        Ok(DeliveryOutcome::Rejected { retryable: false, .. }) => DeliveryResult::TerminalFailure,
+        Err(error) if error.is_retryable() => DeliveryResult::RetryableFailure,
+        Err(_terminal) => DeliveryResult::TerminalFailure,
+    }
 }
 
 impl TransportDispatcher {
@@ -54,13 +89,13 @@ impl TransportDispatcher {
         })
     }
 
-    /// Deliver a notification, enforcing the payload limit and logging the
-    /// outcome.
+    /// Deliver a notification, logging the outcome and classifying a failure by
+    /// whether it is worth retrying.
     ///
-    /// The streaming transports are handled before the size check on purpose:
-    /// the limit exists because an endpoint has to accept a POST body, and a
-    /// client that opened its own stream has already accepted whatever comes
-    /// down it.
+    /// The payload limit is left to each transport: the HTTP transport enforces
+    /// its configured maximum (and answers `PayloadTooLarge`), while an MQTT
+    /// publish is bounded by the broker's packet size. The dispatcher applying
+    /// the HTTP knob to an MQTT publish governed one transport by another's.
     pub async fn deliver(&self, endpoint: &EndpointTransport, request: &DeliveryRequest) -> DeliveryResult {
         let handle = match endpoint {
             EndpointTransport::Sse => return self.deliver_sse(request),
@@ -69,51 +104,33 @@ impl TransportDispatcher {
             EndpointTransport::Mqtt(config) => TransportHandle::Mqtt(self.mqtt_pool.transport_for(config)),
         };
 
-        let max_payload = self.http.max_payload_size();
-        if request.payload.len() > max_payload {
-            warn!(
+        let outcome = handle.deliver(request).await;
+        match &outcome {
+            Ok(DeliveryOutcome::Success { status_code, duration }) => debug!(
                 subscription_id = %request.subscription_id,
-                size = request.payload.len(),
-                limit = max_payload,
-                "notification payload exceeds size limit, skipping delivery"
-            );
-            return DeliveryResult::Failed;
+                endpoint = %request.endpoint_uri,
+                attempt = request.attempt,
+                ?status_code,
+                ?duration,
+                "notification delivered"
+            ),
+            Ok(DeliveryOutcome::Rejected { reason, retryable }) => warn!(
+                subscription_id = %request.subscription_id,
+                endpoint = %request.endpoint_uri,
+                attempt = request.attempt,
+                reason,
+                retryable,
+                "notification rejected by endpoint"
+            ),
+            Err(error) => warn!(
+                subscription_id = %request.subscription_id,
+                endpoint = %request.endpoint_uri,
+                attempt = request.attempt,
+                error = %error,
+                "notification delivery failed"
+            ),
         }
-
-        match handle.deliver(request).await {
-            Ok(DeliveryOutcome::Success { status_code, duration }) => {
-                debug!(
-                    subscription_id = %request.subscription_id,
-                    endpoint = %request.endpoint_uri,
-                    attempt = request.attempt,
-                    ?status_code,
-                    ?duration,
-                    "notification delivered"
-                );
-                DeliveryResult::Delivered
-            }
-            Ok(DeliveryOutcome::Rejected { reason, retryable }) => {
-                warn!(
-                    subscription_id = %request.subscription_id,
-                    endpoint = %request.endpoint_uri,
-                    attempt = request.attempt,
-                    reason,
-                    retryable,
-                    "notification rejected by endpoint"
-                );
-                DeliveryResult::Failed
-            }
-            Err(error) => {
-                warn!(
-                    subscription_id = %request.subscription_id,
-                    endpoint = %request.endpoint_uri,
-                    attempt = request.attempt,
-                    error = %error,
-                    "notification delivery failed"
-                );
-                DeliveryResult::Failed
-            }
-        }
+        classify(outcome)
     }
 
     /// Push a notification to whichever SSE clients are streaming it.
@@ -126,10 +143,11 @@ impl TransportDispatcher {
         let event_id = serde_json::from_slice::<Value>(&request.payload)
             .ok()
             .and_then(|payload| payload.get("id")?.as_str().map(String::from))
-            .unwrap_or_else(|| request.subscription_id.clone()); // clone: the fallback is owned by the event
+            .unwrap_or_else(|| request.subscription_id.to_string()); // the fallback is owned by the event
         report_stream(
-            &request.subscription_id,
-            self.sse_registry.try_send(&request.subscription_id, SseNotificationEvent { event_id, data }),
+            request.subscription_id.as_ref(),
+            self.sse_registry
+                .try_send(request.subscription_id.as_ref(), SseNotificationEvent { event_id, data }),
         )
     }
 
@@ -137,8 +155,8 @@ impl TransportDispatcher {
     fn deliver_ws(&self, request: &DeliveryRequest) -> DeliveryResult {
         let data = String::from_utf8_lossy(&request.payload).into_owned();
         report_stream(
-            &request.subscription_id,
-            self.ws_registry.try_send(&request.subscription_id, WsNotificationMessage { data }),
+            request.subscription_id.as_ref(),
+            self.ws_registry.try_send(request.subscription_id.as_ref(), WsNotificationMessage { data }),
         )
     }
 
@@ -173,7 +191,9 @@ fn report_stream<E: Error>(subscription_id: &str, outcome: Result<(), E>) -> Del
         }
         Err(error) => {
             debug!(subscription_id, error = %error, "streaming notification delivery failed");
-            DeliveryResult::Failed
+            // A stream push has no outbox to retry through — the client must
+            // reconnect — so a failed push is terminal, not retryable.
+            DeliveryResult::TerminalFailure
         }
     }
 }
@@ -200,5 +220,59 @@ impl NotificationTransport for TransportHandle<'_> {
             TransportHandle::Http(transport) => transport.shutdown().await,
             TransportHandle::Mqtt(transport) => transport.shutdown().await,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{dispatch::classify, error::TransportError, outcome::DeliveryOutcome};
+    use std::time::Duration;
+
+    #[test]
+    fn a_success_is_delivered_and_not_retried() {
+        let result = classify(Ok(DeliveryOutcome::Success {
+            status_code: Some(204),
+            duration: Duration::from_millis(1),
+        }));
+        assert!(result.is_delivered());
+        assert!(!result.should_retry());
+    }
+
+    #[test]
+    fn a_4xx_rejection_is_terminal_so_it_is_attempted_once_not_through_the_whole_budget() {
+        let result = classify(Ok(DeliveryOutcome::Rejected {
+            reason: "HTTP 400".to_string(),
+            retryable: false,
+        }));
+        assert!(!result.is_delivered());
+        assert!(!result.should_retry());
+    }
+
+    #[test]
+    fn a_5xx_or_429_rejection_is_retryable() {
+        let result = classify(Ok(DeliveryOutcome::Rejected {
+            reason: "HTTP 503".to_string(),
+            retryable: true,
+        }));
+        assert!(result.should_retry());
+    }
+
+    #[test]
+    fn a_timeout_is_retryable_but_a_blocked_endpoint_and_an_oversized_payload_are_terminal() {
+        // An MQTT ack timeout and a slow endpoint both surface as Timeout.
+        let timeout = classify(Err(TransportError::Timeout {
+            endpoint: "e".to_string(),
+            duration: Duration::from_secs(1),
+        }));
+        assert!(timeout.should_retry());
+
+        let blocked = classify(Err(TransportError::PrivateIpBlocked {
+            endpoint: "e".to_string(),
+            ip: "127.0.0.1".to_string(),
+        }));
+        assert!(!blocked.should_retry());
+
+        let too_large = classify(Err(TransportError::PayloadTooLarge { size: 100, limit: 10 }));
+        assert!(!too_large.should_retry());
     }
 }

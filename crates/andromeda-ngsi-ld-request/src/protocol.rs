@@ -15,7 +15,9 @@ use crate::{
     error::ParameterError,
     query::{entity::EntityQueryParameters, temporal::TemporalQueryParameters},
 };
-use andromeda_ngsi_ld_representation::join_mode::JoinMode;
+use andromeda_ngsi_ld_lexicon::temporal_format::TemporalFormat;
+use andromeda_ngsi_ld_representation::{join_mode::JoinMode, response_format::ResponseFormat};
+use std::str::FromStr;
 
 /// The extension headers a request carried, as the values they spell.
 ///
@@ -36,11 +38,21 @@ pub struct ProtocolExtensions<'a> {
     pub join_level: Option<u32>,
 }
 
-/// The `format` tokens that name an entity representation (clause 4.5.1).
-const ENTITY_FORMATS: [&str; 4] = ["normalized", "keyValues", "simplified", "concise"];
+/// Whether a token names an entity representation (clause 4.5.1), decided by
+/// the owner enum rather than a hand-kept string array.
+fn is_entity_format(token: &str) -> bool {
+    ResponseFormat::from_str(token).is_ok()
+}
 
-/// The `format` tokens that name a temporal representation (clause 4.5.19).
-const TEMPORAL_FORMATS: [&str; 2] = ["temporalValues", "aggregatedValues"];
+/// Whether a token names a temporal representation (clause 4.5.19). The plain
+/// `normalized` is the default, not a temporal override, so only the two
+/// value-oriented tokens count here.
+fn is_temporal_format(token: &str) -> bool {
+    matches!(
+        TemporalFormat::from_str(token),
+        Ok(TemporalFormat::TemporalValues | TemporalFormat::AggregatedValues)
+    )
+}
 
 impl<'a> ProtocolExtensions<'a> {
     /// Fill in a single-entity GET from the headers it arrived with.
@@ -50,7 +62,7 @@ impl<'a> ProtocolExtensions<'a> {
     /// Returns [`ParameterError::FormatInvalid`] when the header names a
     /// rendering that is not one an entity has.
     pub fn apply_to_entity_get(&self, params: &mut GetEntityParams) -> Result<(), ParameterError> {
-        self.apply_format(&mut params.format, params.options.as_deref(), &ENTITY_FORMATS)?;
+        self.apply_format(&mut params.format, params.options.as_deref())?;
         self.apply_dataset_ids(&mut params.dataset_id);
         self.apply_join(&mut params.join, &mut params.join_level);
         Ok(())
@@ -68,7 +80,7 @@ impl<'a> ProtocolExtensions<'a> {
         {
             params.scope_q = Some(scope.to_string());
         }
-        self.apply_format(&mut params.format, params.options.as_deref(), &ENTITY_FORMATS)?;
+        self.apply_format(&mut params.format, params.options.as_deref())?;
         self.apply_dataset_ids(&mut params.dataset_id);
         self.apply_join(&mut params.join, &mut params.join_level);
         Ok(())
@@ -84,7 +96,7 @@ impl<'a> ProtocolExtensions<'a> {
         if params.format.is_none()
             && let Some(response_format) = self.response_format
         {
-            if !TEMPORAL_FORMATS.contains(&response_format) {
+            if !is_temporal_format(response_format) {
                 return Err(ParameterError::FormatInvalid(response_format.to_string()));
             }
             params.format = Some(response_format.to_string());
@@ -97,9 +109,9 @@ impl<'a> ProtocolExtensions<'a> {
     ///
     /// `format` and the legacy `options` are two spellings of the same choice,
     /// so a rendering named in either one silences the header.
-    fn apply_format(&self, format: &mut Option<String>, options: Option<&str>, permitted: &[&str]) -> Result<(), ParameterError> {
-        let query_chose_a_format = format.as_deref().is_some_and(|format| permitted.contains(&format))
-            || options.is_some_and(|options| permitted.iter().any(|permitted| options.contains(permitted)));
+    fn apply_format(&self, format: &mut Option<String>, options: Option<&str>) -> Result<(), ParameterError> {
+        let query_chose_a_format =
+            format.as_deref().is_some_and(is_entity_format) || options.is_some_and(|options| options.split(',').any(|token| is_entity_format(token.trim())));
         if query_chose_a_format {
             return Ok(());
         }
@@ -107,7 +119,7 @@ impl<'a> ProtocolExtensions<'a> {
         let Some(response_format) = self.response_format else {
             return Ok(());
         };
-        if !permitted.contains(&response_format) {
+        if !is_entity_format(response_format) {
             return Err(ParameterError::FormatInvalid(response_format.to_string()));
         }
         *format = Some(response_format.to_string());

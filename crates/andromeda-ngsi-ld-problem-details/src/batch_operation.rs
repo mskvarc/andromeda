@@ -41,34 +41,61 @@ impl BatchEntityError {
         BatchEntityError {
             entity_id: entity_id.to_string(),
             error: BatchProblemDetail {
-                error_type,
+                error_type: BatchErrorKind::Known(error_type),
                 detail: detail.to_string(),
             },
         }
     }
 }
 
+/// The `type` of a batch problem detail.
+///
+/// A known NGSI-LD category carries its title and status; RFC 7807 clause 3
+/// also permits any other type URI — which a peer broker (Scorpio, Orion-LD)
+/// may report on a forwarded batch — so an unrecognised one is kept verbatim
+/// rather than rejected.
+#[derive(Debug, Clone, PartialEq)]
+pub enum BatchErrorKind {
+    /// One of the twelve ETSI error categories (clause 5.5.2).
+    Known(NgsiLdErrorType),
+    /// Any other RFC 7807 type URI.
+    Other(String),
+}
+
 /// An RFC 7807 problem detail inside a batch error.
 ///
-/// Stores the category and the detail message only. The `type`, `title` and
-/// `status` members are derived from the category when it is serialised, so a
-/// batch error cannot report a status that disagrees with its own type IRI.
+/// A known category derives its `title` and `status` from itself on the way
+/// out, so a batch error we produce cannot report a status that disagrees with
+/// its own type IRI; a foreign type is carried verbatim.
 #[derive(Debug, Clone, PartialEq)]
 pub struct BatchProblemDetail {
-    /// The clause 5.5.2 category this failure falls into.
-    pub error_type: NgsiLdErrorType,
+    /// The problem's type: a known NGSI-LD category, or any other RFC 7807 URI.
+    pub error_type: BatchErrorKind,
     /// The human-readable explanation.
     pub detail: String,
 }
 
 impl Serialize for BatchProblemDetail {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        let mut state = serializer.serialize_struct("BatchProblemDetail", 4)?;
-        state.serialize_field("type", self.error_type.type_uri())?;
-        state.serialize_field("title", self.error_type.title())?;
-        state.serialize_field("status", &self.error_type.status_code().as_u16())?;
-        state.serialize_field("detail", &self.detail)?;
-        state.end()
+        match &self.error_type {
+            BatchErrorKind::Known(category) => {
+                let mut state = serializer.serialize_struct("BatchProblemDetail", 4)?;
+                state.serialize_field("type", category.type_uri())?;
+                state.serialize_field("title", category.title())?;
+                state.serialize_field("status", &category.status_code().as_u16())?;
+                state.serialize_field("detail", &self.detail)?;
+                state.end()
+            }
+            BatchErrorKind::Other(type_uri) => {
+                // An unknown type has no category to derive a title or status
+                // from; RFC 7807 makes both optional, so only type and detail
+                // are written.
+                let mut state = serializer.serialize_struct("BatchProblemDetail", 2)?;
+                state.serialize_field("type", type_uri)?;
+                state.serialize_field("detail", &self.detail)?;
+                state.end()
+            }
+        }
     }
 }
 
@@ -99,18 +126,24 @@ impl<'de> Visitor<'de> for BatchProblemDetailVisitor {
             match key {
                 "type" => type_uri = Some(map.next_value()?),
                 "detail" => detail = Some(map.next_value()?),
-                // Derived from the category on the way out, so ignored on the
-                // way in rather than trusted.
-                "title" | "status" => {
+                // `title` and `status` are derived from a known category on the
+                // way out; every other member is an RFC 7807 clause 3 extension,
+                // which a consumer must ignore rather than reject — so an
+                // extension a peer broker adds cannot poison the batch result.
+                _other => {
                     let _ = map.next_value::<de::IgnoredAny>()?;
                 }
-                other => return Err(de::Error::unknown_field(other, FIELDS)),
             }
         }
 
         let type_uri = type_uri.ok_or_else(|| de::Error::missing_field("type"))?;
         let detail = detail.ok_or_else(|| de::Error::missing_field("detail"))?;
-        let error_type = NgsiLdErrorType::from_type_uri(&type_uri).ok_or_else(|| de::Error::custom(format!("unknown NGSI-LD error type URI: {type_uri}")))?;
+        // A recognised category keeps its typed convenience; any other URI is
+        // accepted verbatim, since RFC 7807 clause 3 permits arbitrary type URIs.
+        let error_type = match NgsiLdErrorType::from_type_uri(&type_uri) {
+            Some(category) => BatchErrorKind::Known(category),
+            None => BatchErrorKind::Other(type_uri),
+        };
 
         Ok(BatchProblemDetail { error_type, detail })
     }
@@ -119,7 +152,7 @@ impl<'de> Visitor<'de> for BatchProblemDetailVisitor {
 #[cfg(test)]
 mod tests {
     use crate::{
-        batch_operation::{BatchEntityError, BatchOperationResult, BatchProblemDetail},
+        batch_operation::{BatchEntityError, BatchErrorKind, BatchOperationResult, BatchProblemDetail},
         error_type::NgsiLdErrorType,
     };
     use serde_json::json;
@@ -156,7 +189,7 @@ mod tests {
     #[test]
     fn a_problem_detail_derives_its_rfc_7807_members_from_its_category() {
         let rendered = serde_json::to_value(BatchProblemDetail {
-            error_type: NgsiLdErrorType::BadRequestData,
+            error_type: BatchErrorKind::Known(NgsiLdErrorType::BadRequestData),
             detail: "Invalid payload".to_string(),
         })
         .expect("serialises");
@@ -172,7 +205,7 @@ mod tests {
     fn every_category_survives_a_problem_detail_round_trip() {
         for category in NgsiLdErrorType::iter() {
             let original = BatchProblemDetail {
-                error_type: category,
+                error_type: BatchErrorKind::Known(category),
                 detail: "test".to_string(),
             };
             let rendered = serde_json::to_string(&original).expect("serialises");
@@ -195,9 +228,33 @@ mod tests {
     }
 
     #[test]
-    fn a_problem_detail_naming_a_category_this_build_does_not_know_is_rejected() {
+    fn a_problem_detail_naming_a_type_uri_this_build_does_not_know_is_kept_verbatim() {
+        // RFC 7807 clause 3 permits arbitrary `type` URIs, so a foreign one from
+        // a peer broker is accepted as `Other` rather than rejected.
         let rendered = json!({"type": "https://uri.etsi.org/ngsi-ld/errors/Invented", "detail": "x"}).to_string();
-        assert!(serde_json::from_str::<BatchProblemDetail>(&rendered).is_err());
+        let parsed = serde_json::from_str::<BatchProblemDetail>(&rendered).expect("a foreign type URI is accepted");
+        pretty_assertions::assert_eq!(
+            parsed.error_type,
+            BatchErrorKind::Other("https://uri.etsi.org/ngsi-ld/errors/Invented".to_string())
+        );
+    }
+
+    #[test]
+    fn an_extension_member_and_a_non_etsi_type_deserialise_rather_than_poisoning_the_batch() {
+        // RFC 7807 clause 3: consumers ignore extension members and accept any
+        // type URI, so a Scorpio/Orion-LD response cannot fail the whole batch.
+        let rendered = json!({
+            "type": "https://scorpio.example/errors/Custom",
+            "title": "Something",
+            "status": 418,
+            "detail": "brewing",
+            "instance": "urn:ngsi-ld:Entity:9",
+            "vendorField": {"nested": true}
+        })
+        .to_string();
+        let parsed = serde_json::from_str::<BatchProblemDetail>(&rendered).expect("a foreign problem detail deserialises");
+        pretty_assertions::assert_eq!(parsed.error_type, BatchErrorKind::Other("https://scorpio.example/errors/Custom".to_string()));
+        pretty_assertions::assert_eq!(parsed.detail, "brewing");
     }
 
     #[test]

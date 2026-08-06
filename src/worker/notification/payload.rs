@@ -33,6 +33,7 @@ use std::{
 };
 use tokio::sync::Mutex;
 use tracing::debug;
+use url::Url;
 
 /// Cached output of `resolve_linked_entities` + per-entity JSON
 /// serialization. Shared across subscriptions that issue the same
@@ -176,7 +177,7 @@ pub async fn build_notification_data(params: NotificationBuildParams<'_>) -> Vec
         if let Some(ref ctx_url) = sub.jsonld_context {
             let mut c = compacted;
             if let Some(obj) = c.as_object_mut() {
-                obj.insert("@context".to_string(), Value::String(ctx_url.clone()));
+                obj.insert("@context".to_string(), Value::String(ctx_url.as_str().to_owned()));
             }
             c
         } else {
@@ -456,7 +457,7 @@ fn hash_json_value(value: &Value, hasher: &mut impl Hasher) {
 }
 
 pub fn context_for_subscription(sub: &CompiledSubscription) -> ContextSpec {
-    context_for_subscription_raw(sub.jsonld_context.as_deref())
+    context_for_subscription_raw(sub.jsonld_context.as_ref().map(Url::as_str))
 }
 
 /// Build a ContextSpec from an optional jsonldContext string.

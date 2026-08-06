@@ -7,11 +7,7 @@ use crate::{
         subscription_throttle::ceiling_for_throttle,
     },
 };
-use andromeda_delivery::{
-    dispatch::{DeliveryResult, TransportDispatcher},
-    endpoint::transport::parse_endpoint_transport,
-    request::NotificationDelivery,
-};
+use andromeda_delivery::{dispatch::TransportDispatcher, endpoint::transport::parse_endpoint_transport, request::NotificationDelivery};
 use andromeda_ngsi_ld_lexicon::uri::{NGSI_LD_URN_NID, Uri};
 use andromeda_ngsi_ld_model::{
     notification::{CsourceNotification, CsourceNotificationType, CsourceSubscriptionChange, CsrChangeEvent, CsrTriggerReason},
@@ -35,7 +31,7 @@ pub struct CsrNotificationWorker {
     sub_change_rx: broadcast::Receiver<CsourceSubscriptionChange>,
     sub_repo: CsourceSubscriptionRepository,
     csr_repo: Arc<dyn RegistrationStore>,
-    cache: DashMap<String, Arc<CompiledCsrSubscription>>,
+    cache: DashMap<Uri, Arc<CompiledCsrSubscription>>,
     transport: Arc<TransportDispatcher>,
     tenant: TenantRef,
 }
@@ -66,13 +62,13 @@ impl CsrNotificationWorker {
     /// reasons -- a subscription that just started matching, a registration
     /// that changed, and a registration that stopped matching -- and every one
     /// of them addresses the endpoint identically.
-    fn delivery_for<'a>(&'a self, compiled_sub: &'a CompiledCsrSubscription, payload: &'a Value, sub_id: &'a str) -> NotificationDelivery<'a> {
+    fn delivery_for<'a>(&'a self, compiled_sub: &'a CompiledCsrSubscription, payload: &'a Value, sub_id: &'a Uri) -> NotificationDelivery<'a> {
         NotificationDelivery {
             payload,
-            endpoint_uri: compiled_sub.endpoint_uri.as_str(),
+            endpoint_uri: &compiled_sub.endpoint_uri,
             accept: compiled_sub.endpoint_accept.as_ref(),
             receiver_info: compiled_sub.endpoint_receiver_info.as_deref(),
-            jsonld_context: compiled_sub.jsonld_context.as_deref(),
+            jsonld_context: compiled_sub.jsonld_context.as_ref(),
             tenant: self.tenant.tenant_name(),
             subscription_id: sub_id,
         }
@@ -129,7 +125,7 @@ impl CsrNotificationWorker {
         self.cache.clear();
         for sub in subscriptions {
             if let Some(compiled) = compile_csr_subscription(&sub) {
-                self.cache.insert(sub.id.to_string(), Arc::new(compiled));
+                self.cache.insert(sub.id.clone(), Arc::new(compiled)); // clone: the map owns its key
             }
         }
         Ok(())
@@ -148,9 +144,9 @@ impl CsrNotificationWorker {
                         };
 
                         if let Some(ref c) = compiled {
-                            self.cache.insert(id_str, Arc::clone(c));
+                            self.cache.insert(id.clone(), Arc::clone(c)); // clone: the map owns its key
                         } else {
-                            self.cache.remove(&id_str);
+                            self.cache.remove(&id);
                         }
 
                         // Per spec 5.11.3: after updating a subscription, send a notification
@@ -160,7 +156,7 @@ impl CsrNotificationWorker {
                         }
                     }
                     Ok(None) => {
-                        self.cache.remove(&id_str);
+                        self.cache.remove(&id);
                     }
                     Err(e) => {
                         debug!("Failed to load CSR subscription {} for cache update: {}", id_str, e);
@@ -168,7 +164,7 @@ impl CsrNotificationWorker {
                 }
             }
             CsourceSubscriptionChange::Deleted(id) => {
-                self.cache.remove(&id.to_string());
+                self.cache.remove(&id);
             }
         }
     }
@@ -223,7 +219,7 @@ impl CsrNotificationWorker {
 
         match self
             .sub_repo
-            .claim_notification_slot(sub_id, ceiling_for_throttle(Utc::now(), compiled_sub.throttling_secs))
+            .claim_notification_slot(sub_id.as_ref(), ceiling_for_throttle(Utc::now(), compiled_sub.throttling_secs))
             .await
         {
             Ok(true) => {}
@@ -241,13 +237,8 @@ impl CsrNotificationWorker {
                 return;
             }
         };
-        let sub_uri = match sub_id.parse::<Uri>() {
-            Ok(u) => u,
-            Err(_) => {
-                error!("Invalid subscription URI: {}", sub_id);
-                return;
-            }
-        };
+        // clone: the builder takes the id by value and `sub_id` is still needed for delivery
+        let sub_uri = sub_id.clone();
         let notification = CsourceNotification::builder()
             .id(notification_id)
             .type_(CsourceNotificationType)
@@ -272,17 +263,14 @@ impl CsrNotificationWorker {
                 return;
             }
         };
-        let success = matches!(
-            self.transport.deliver(&compiled_sub.endpoint_transport, &request).await,
-            DeliveryResult::Delivered
-        );
+        let success = self.transport.deliver(&compiled_sub.endpoint_transport, &request).await.is_delivered();
 
         if success {
-            if let Err(e) = self.sub_repo.mark_success(sub_id).await {
+            if let Err(e) = self.sub_repo.mark_success(sub_id.as_ref()).await {
                 debug!("Failed to mark CSR notification success for {}: {}", sub_id, e);
             }
         } else {
-            if let Err(e) = self.sub_repo.mark_failure(sub_id).await {
+            if let Err(e) = self.sub_repo.mark_failure(sub_id.as_ref()).await {
                 debug!("Failed to mark CSR notification failure for {}: {}", sub_id, e);
             }
         }
@@ -334,7 +322,7 @@ impl CsrNotificationWorker {
 
                     match self
                         .sub_repo
-                        .claim_notification_slot(&sub_id, ceiling_for_throttle(Utc::now(), compiled_sub.throttling_secs))
+                        .claim_notification_slot(sub_id.as_ref(), ceiling_for_throttle(Utc::now(), compiled_sub.throttling_secs))
                         .await
                     {
                         Ok(true) => {}
@@ -355,13 +343,8 @@ impl CsrNotificationWorker {
                             return;
                         }
                     };
-                    let sub_uri = match sub_id.parse::<Uri>() {
-                        Ok(u) => u,
-                        Err(_) => {
-                            error!("Invalid subscription URI: {}", sub_id);
-                            return;
-                        }
-                    };
+                    // clone: the builder takes the id by value and `sub_id` is still needed for delivery
+                    let sub_uri = sub_id.clone();
                     let notification = CsourceNotification::builder()
                         .id(notification_id)
                         .type_(CsourceNotificationType)
@@ -386,16 +369,13 @@ impl CsrNotificationWorker {
                             return;
                         }
                     };
-                    let success = matches!(
-                        self.transport.deliver(&compiled_sub.endpoint_transport, &request).await,
-                        DeliveryResult::Delivered
-                    );
+                    let success = self.transport.deliver(&compiled_sub.endpoint_transport, &request).await.is_delivered();
 
                     if success {
-                        if let Err(e) = self.sub_repo.mark_success(&sub_id).await {
+                        if let Err(e) = self.sub_repo.mark_success(sub_id.as_ref()).await {
                             debug!("Failed to mark CSR notification success for {}: {}", sub_id, e);
                         }
-                    } else if let Err(e) = self.sub_repo.mark_failure(&sub_id).await {
+                    } else if let Err(e) = self.sub_repo.mark_failure(sub_id.as_ref()).await {
                         debug!("Failed to mark CSR notification failure for {}: {}", sub_id, e);
                     }
                 }
@@ -472,7 +452,7 @@ impl CsrNotificationWorker {
 
         match self
             .sub_repo
-            .claim_notification_slot(sub_id, ceiling_for_throttle(Utc::now(), compiled_sub.throttling_secs))
+            .claim_notification_slot(sub_id.as_ref(), ceiling_for_throttle(Utc::now(), compiled_sub.throttling_secs))
             .await
         {
             Ok(true) => {}
@@ -492,13 +472,8 @@ impl CsrNotificationWorker {
                 return;
             }
         };
-        let sub_uri = match sub_id.parse::<Uri>() {
-            Ok(u) => u,
-            Err(_) => {
-                error!("Invalid subscription URI: {}", sub_id);
-                return;
-            }
-        };
+        // clone: the builder takes the id by value and `sub_id` is still needed for delivery
+        let sub_uri = sub_id.clone();
         let notification = CsourceNotification::builder()
             .id(notification_id)
             .type_(CsourceNotificationType)
@@ -523,17 +498,14 @@ impl CsrNotificationWorker {
                 return;
             }
         };
-        let success = matches!(
-            self.transport.deliver(&compiled_sub.endpoint_transport, &request).await,
-            DeliveryResult::Delivered
-        );
+        let success = self.transport.deliver(&compiled_sub.endpoint_transport, &request).await.is_delivered();
 
         if success {
-            if let Err(e) = self.sub_repo.mark_success(sub_id).await {
+            if let Err(e) = self.sub_repo.mark_success(sub_id.as_ref()).await {
                 debug!("Failed to mark CSR notification success for {}: {}", sub_id, e);
             }
         } else {
-            if let Err(e) = self.sub_repo.mark_failure(sub_id).await {
+            if let Err(e) = self.sub_repo.mark_failure(sub_id.as_ref()).await {
                 debug!("Failed to mark CSR notification failure for {}: {}", sub_id, e);
             }
         }
@@ -560,9 +532,10 @@ fn compile_csr_subscription(sub: &Subscription) -> Option<CompiledCsrSubscriptio
     };
 
     Some(CompiledCsrSubscription {
-        id: sub.id.to_string(),
+        // clone: the compiled form outlives the borrowed subscription
+        id: sub.id.clone(),
         status: sub.lifecycle.status,
-        endpoint_uri: sub.notification.endpoint.uri.to_string(),
+        endpoint_uri: sub.notification.endpoint.uri.clone(),
         // clone: the compiled form outlives the subscription it was built from
         endpoint_accept: sub.notification.endpoint.accept.clone(),
         endpoint_receiver_info: sub.notification.endpoint.receiver_info.clone(),
@@ -571,14 +544,14 @@ fn compile_csr_subscription(sub: &Subscription) -> Option<CompiledCsrSubscriptio
         watched_attrs,
         throttling_secs: sub.delivery.throttling,
         time_interval_secs: sub.delivery.time_interval,
-        jsonld_context: sub.delivery.jsonld_context.as_ref().map(ToString::to_string),
+        jsonld_context: sub.delivery.jsonld_context.clone(),
         expires_at: sub.lifecycle.expires_at,
         // clone: the compiled form owns its filter
         compiled_csf: sub.filters.csf.clone(),
     })
 }
 
-fn find_matching_csr_subscriptions(cache: &DashMap<String, Arc<CompiledCsrSubscription>>, csr_data: &Value) -> Vec<Arc<CompiledCsrSubscription>> {
+fn find_matching_csr_subscriptions(cache: &DashMap<Uri, Arc<CompiledCsrSubscription>>, csr_data: &Value) -> Vec<Arc<CompiledCsrSubscription>> {
     cache
         .iter()
         .filter_map(|entry| {

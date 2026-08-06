@@ -8,8 +8,38 @@ use std::collections::HashSet;
 const HOSTED_CONTEXT_PATH: &str = "/ngsi-ld/v1/jsonldContexts/";
 
 /// Whether a term is already an absolute IRI and needs no expansion.
+///
+/// A conservative short-circuit for the common schemes; a term this rejects is
+/// not necessarily a plain term (see [`is_absolute_iri`]), so callers that must
+/// distinguish an absolute IRI from a compact one only after ruling out a
+/// defined prefix use that function instead.
 pub(crate) fn is_full_iri(term: &str) -> bool {
     term.starts_with("http://") || term.starts_with("https://") || term.starts_with("urn:")
+}
+
+/// Whether a term has the form of an absolute IRI: a scheme (RFC 3987
+/// `scheme = ALPHA *( ALPHA / DIGIT / "+" / "-" / "." )`) followed by `:`.
+///
+/// Unlike [`is_full_iri`] this admits every scheme — `did:`, `mailto:`, `tel:` —
+/// so the fastpath keeps such a value verbatim rather than vocab-expanding it,
+/// matching JSON-LD 1.1 clause 4.6.2 once the prefix table has ruled out a
+/// compact-IRI reading. `did:example:1` is the case the three-scheme allowlist
+/// mis-expanded.
+pub(crate) fn is_absolute_iri(term: &str) -> bool {
+    let mut chars = term.char_indices();
+    match chars.next() {
+        Some((_, first)) if first.is_ascii_alphabetic() => {}
+        _ => return false,
+    }
+    for (index, ch) in chars {
+        if ch == ':' {
+            return index > 0;
+        }
+        if !(ch.is_ascii_alphanumeric() || ch == '+' || ch == '-' || ch == '.') {
+            return false;
+        }
+    }
+    false
 }
 
 /// Collect every context URL a `@context` node names.
@@ -123,7 +153,7 @@ pub(crate) fn strip_context(value: &mut Value) {
 mod tests {
     use crate::{
         core_context::{NGSI_LD_CORE_CONTEXT_URL, NGSI_LD_CORE_CONTEXT_V16_URL},
-        engine::context_url::{canonical_context_urls, context_urls_of, is_full_iri, resolve_relative_context_urls, strip_context},
+        engine::context_url::{canonical_context_urls, context_urls_of, is_absolute_iri, is_full_iri, resolve_relative_context_urls, strip_context},
     };
     use serde_json::json;
 
@@ -134,6 +164,22 @@ mod tests {
         assert!(is_full_iri("urn:ngsi-ld:Type"));
         assert!(!is_full_iri("Vehicle"));
         assert!(!is_full_iri("ex:Vehicle"));
+    }
+
+    #[test]
+    fn a_string_with_any_scheme_has_the_form_of_an_absolute_iri() {
+        // Clause 4.6.2: any scheme, not just the three the fast short-circuit lists.
+        assert!(is_absolute_iri("https://example.com/Type"));
+        assert!(is_absolute_iri("urn:ngsi-ld:Type"));
+        assert!(is_absolute_iri("did:example:123"));
+        assert!(is_absolute_iri("mailto:x@example.com"));
+        // `ex:Vehicle` has IRI form; whether it expands as a compact IRI is
+        // decided by the prefix table before this is consulted.
+        assert!(is_absolute_iri("ex:Vehicle"));
+        // A plain term has no scheme.
+        assert!(!is_absolute_iri("Vehicle"));
+        // A leading digit is not a valid scheme start.
+        assert!(!is_absolute_iri("1did:x"));
     }
 
     #[test]

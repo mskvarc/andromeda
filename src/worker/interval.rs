@@ -5,11 +5,7 @@ use crate::{
         subscription::store::SubscriptionStore,
     },
 };
-use andromeda_delivery::{
-    dispatch::{DeliveryResult, TransportDispatcher},
-    endpoint::transport::parse_endpoint_transport,
-    request::NotificationDelivery,
-};
+use andromeda_delivery::{dispatch::TransportDispatcher, endpoint::transport::parse_endpoint_transport, request::NotificationDelivery};
 use andromeda_jsonld::{
     context_spec::ContextSpec,
     engine::{
@@ -172,12 +168,12 @@ impl IntervalWorker {
 
                     let request = match (NotificationDelivery {
                         payload: &payload,
-                        endpoint_uri,
+                        endpoint_uri: &sub.notification.endpoint.uri,
                         accept: sub.notification.endpoint.accept.as_ref(),
                         receiver_info: sub.notification.endpoint.receiver_info.as_deref(),
-                        jsonld_context: sub.delivery.jsonld_context.as_ref().map(Url::as_str),
+                        jsonld_context: sub.delivery.jsonld_context.as_ref(),
                         tenant: this.tenant.tenant_name(),
-                        subscription_id: sub.id.as_ref(),
+                        subscription_id: &sub.id,
                     })
                     .assemble()
                     {
@@ -188,7 +184,7 @@ impl IntervalWorker {
                         }
                     };
 
-                    let success = matches!(this.transport.deliver(&endpoint_transport, &request).await, DeliveryResult::Delivered);
+                    let success = this.transport.deliver(&endpoint_transport, &request).await.is_delivered();
 
                     if success {
                         if let Err(e) = this.sub_repo.mark_success(sub.id.as_ref()).await {

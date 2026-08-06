@@ -15,7 +15,11 @@ use crate::{
 use backon::BackoffBuilder;
 use dashmap::DashMap;
 use std::{sync::Arc, time::Duration};
-use tokio::{sync::watch, task::JoinHandle, time::Instant};
+use tokio::{
+    sync::{Mutex, watch},
+    task::JoinHandle,
+    time::Instant,
+};
 use tracing::{debug, info};
 
 /// The delay used when the backoff sequence has nothing left to give.
@@ -28,6 +32,14 @@ const DEGRADED_AFTER_KEEPALIVES: u64 = 2;
 pub struct MqttTransportPool {
     /// Live connections, keyed by broker identity.
     connections: DashMap<MqttConnectionKey, Arc<MqttConnection>>,
+    /// Reconnect backoff per broker identity, held independently of whether a
+    /// live connection exists so a failed first dial still arms the backoff and
+    /// a broker that is refusing connections is not dialled on every delivery.
+    reconnect: DashMap<MqttConnectionKey, ReconnectState>,
+    /// One dial guard per broker identity, so concurrent first-misses to the
+    /// same broker cannot each open a connection and silently detach the loser's
+    /// event-loop task.
+    dial_locks: DashMap<MqttConnectionKey, Arc<Mutex<()>>>,
     /// Limits and timings.
     config: MqttPoolConfig,
 }
@@ -37,6 +49,8 @@ impl MqttTransportPool {
     pub fn new(config: MqttPoolConfig) -> MqttTransportPool {
         MqttTransportPool {
             connections: DashMap::new(),
+            reconnect: DashMap::new(),
+            dial_locks: DashMap::new(),
             config,
         }
     }
@@ -91,27 +105,40 @@ impl MqttTransportPool {
     pub async fn get_or_create_connection(&self, config: &MqttEndpointConfig) -> Result<Arc<MqttConnection>, TransportError> {
         let key = MqttConnectionKey::from_config(config);
 
+        // A live, answering connection needs no dial.
         if let Some(entry) = self.connections.get(&key)
             && entry.value().state.is_healthy()
         {
             return Ok(Arc::clone(entry.value()));
         }
 
-        // A connection that is present but not answering is either past its
-        // backoff, in which case it is replaced, or inside it, in which case
-        // the delivery fails without touching the broker.
-        if let Some(entry) = self.connections.get(&key) {
-            let connection = entry.value();
-            if !connection.state.is_healthy() {
-                if !connection.should_reconnect_now().await {
-                    return Err(TransportError::ConnectionFailed {
-                        endpoint: format!("{}:{}", config.host, config.port),
-                        detail: "connection unhealthy, backoff active".to_string(),
-                    });
-                }
-                drop(entry);
-                self.connections.remove(&key);
-            }
+        // Serialise dials to one broker: two concurrent first-misses must not
+        // each open a connection and detach the loser's event loop.
+        let dial_lock = self.dial_lock_for(&key);
+        let _dialling = dial_lock.lock().await;
+
+        // Another dial may have won the race while this one waited for the lock.
+        if let Some(entry) = self.connections.get(&key)
+            && entry.value().state.is_healthy()
+        {
+            return Ok(Arc::clone(entry.value()));
+        }
+
+        // A broker still inside its reconnect backoff is not dialled; the
+        // delivery fails without touching it. The backoff is keyed by broker
+        // identity, not by a live connection, so it holds even after the failed
+        // connection was removed and on a broker that was never reached at all.
+        if !self.may_dial(&key) {
+            return Err(TransportError::ConnectionFailed {
+                endpoint: format!("{}:{}", config.host, config.port),
+                detail: "connection unhealthy, backoff active".to_string(),
+            });
+        }
+
+        // Tear down any stale connection under this key before replacing it, so
+        // its event loop stops and its unacknowledged publishes fail retryably.
+        if let Some((_, stale)) = self.connections.remove(&key) {
+            stale.close().await;
         }
 
         if self.connections.len() >= self.config.max_connections {
@@ -120,27 +147,52 @@ impl MqttTransportPool {
 
         match self.create_connection(&key, config).await {
             Ok(connection) => {
+                self.clear_backoff(&key);
                 let connection = Arc::new(connection);
                 self.connections.insert(key, Arc::clone(&connection));
                 Ok(connection)
             }
             Err(error) => {
-                // Advance the backoff on whatever placeholder is there, so a
-                // broker that is refusing connections is not hammered.
-                if let Some(entry) = self.connections.get(&key) {
-                    let mut state = entry.value().reconnect_state.lock().await;
-                    let delay = state.backoff.next().unwrap_or(BACKOFF_EXHAUSTED_DELAY);
-                    state.next_attempt_at = Instant::now() + delay;
-                }
+                self.advance_backoff(&key);
                 Err(error)
             }
         }
     }
 
+    /// The dial guard for a broker, created on first need.
+    fn dial_lock_for(&self, key: &MqttConnectionKey) -> Arc<Mutex<()>> {
+        // clone: the guard outlives the map entry, and the key is owned by the map
+        Arc::clone(self.dial_locks.entry(key.clone()).or_default().value())
+    }
+
+    /// Whether a broker's reconnect backoff has elapsed. A broker with no
+    /// recorded backoff has never failed, or was cleared on a successful dial,
+    /// and may be dialled at once.
+    fn may_dial(&self, key: &MqttConnectionKey) -> bool {
+        self.reconnect.get(key).is_none_or(|state| Instant::now() >= state.next_attempt_at)
+    }
+
+    /// Advance the reconnect backoff for a broker whose dial just failed, arming
+    /// the entry on the first failure.
+    fn advance_backoff(&self, key: &MqttConnectionKey) {
+        // clone: the map owns the key; the backoff outlives this call
+        let mut state = self.reconnect.entry(key.clone()).or_insert_with(|| ReconnectState {
+            backoff: self.config.reconnect_backoff.build(),
+            next_attempt_at: Instant::now(),
+        });
+        let delay = state.backoff.next().unwrap_or(BACKOFF_EXHAUSTED_DELAY);
+        state.next_attempt_at = Instant::now() + delay;
+    }
+
+    /// Forget a broker's backoff once a dial to it has succeeded.
+    fn clear_backoff(&self, key: &MqttConnectionKey) {
+        self.reconnect.remove(key);
+    }
+
     /// Close the connection an endpoint was using, if the pool still has it.
     pub async fn disconnect(&self, key: &MqttConnectionKey) {
         if let Some((_, connection)) = self.connections.remove(key) {
-            connection.client.disconnect().await;
+            connection.close().await;
         }
     }
 
@@ -165,7 +217,7 @@ impl MqttTransportPool {
                 port = key.port,
                 "evicted stalest MQTT connection to make room in pool"
             );
-            connection.client.disconnect().await;
+            connection.close().await;
         }
     }
 
@@ -177,10 +229,6 @@ impl MqttTransportPool {
         Ok(MqttConnection {
             client,
             state,
-            reconnect_state: tokio::sync::Mutex::new(ReconnectState {
-                backoff: self.config.reconnect_backoff.build(),
-                next_attempt_at: Instant::now(),
-            }),
             key: key.clone(), // clone: the connection outlives the lookup that created it
             event_loop,
         })
@@ -216,7 +264,7 @@ impl MqttTransportPool {
     /// Disconnect every pooled connection.
     pub async fn shutdown_all(&self) {
         for entry in self.connections.iter() {
-            entry.value().client.disconnect().await;
+            entry.value().close().await;
         }
         self.connections.clear();
     }
@@ -224,7 +272,45 @@ impl MqttTransportPool {
 
 #[cfg(test)]
 mod tests {
-    use crate::mqtt::{config::MqttPoolConfig, pool::MqttTransportPool};
+    use crate::{
+        endpoint::mqtt::{MqttEndpointConfig, MqttQoS, MqttVersion},
+        mqtt::{
+            ack::AckKind,
+            config::MqttPoolConfig,
+            connection::{ConnectionState, MqttClientVariant, MqttConnection},
+            connection_key::MqttConnectionKey,
+            pool::MqttTransportPool,
+        },
+    };
+    use backon::ExponentialBuilder;
+    use std::{sync::Arc, time::Duration};
+
+    /// An endpoint whose broker refuses connections: port 1 on the loopback is
+    /// never listening, so a dial fails fast rather than timing out.
+    fn refused_endpoint() -> MqttEndpointConfig {
+        MqttEndpointConfig {
+            host: "127.0.0.1".to_string(),
+            port: 1,
+            topic: "andromeda/test".to_string(),
+            use_tls: false,
+            version: MqttVersion::V311,
+            qos: MqttQoS::AtMost,
+            username: None,
+            password: None,
+        }
+    }
+
+    /// A key for a hand-built connection that never dials.
+    fn test_key() -> MqttConnectionKey {
+        MqttConnectionKey {
+            host: "127.0.0.1".to_string(),
+            port: 1883,
+            use_tls: false,
+            version: MqttVersion::V311,
+            username: None,
+            password_hash: None,
+        }
+    }
 
     #[tokio::test]
     async fn a_pool_that_has_opened_nothing_reports_no_connections() {
@@ -236,5 +322,67 @@ mod tests {
     fn a_pool_that_has_opened_nothing_is_healthy() {
         let pool = MqttTransportPool::new(MqttPoolConfig::default());
         assert!(pool.all_healthy());
+    }
+
+    #[tokio::test]
+    async fn a_failed_dial_arms_the_backoff_so_the_next_attempt_is_refused_until_it_lifts() {
+        // A short, jitter-free backoff so the test's timing is deterministic.
+        let config = MqttPoolConfig {
+            connect_timeout: Duration::from_secs(2),
+            reconnect_backoff: ExponentialBuilder::default()
+                .with_min_delay(Duration::from_millis(200))
+                .with_max_delay(Duration::from_millis(400))
+                .without_max_times(),
+            ..MqttPoolConfig::default()
+        };
+        let pool = MqttTransportPool::new(config);
+        let endpoint = refused_endpoint();
+
+        // First dial: the broker refuses, so the connection fails and the backoff
+        // arms — even though no connection was ever inserted under the key.
+        assert!(pool.get_or_create_connection(&endpoint).await.is_err());
+
+        // Second dial, immediately: inside the backoff window, refused without a
+        // dial. This is the case the pre-fix code let through, because the backoff
+        // state lived on a connection that never existed.
+        let refused = pool.get_or_create_connection(&endpoint).await.map(drop).expect_err("the backoff refuses");
+        assert!(refused.to_string().contains("backoff active"), "{refused}");
+
+        // Once the backoff elapses, a dial is permitted again (and fails on its
+        // own terms — the broker is still not there).
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        let permitted = pool.get_or_create_connection(&endpoint).await.map(drop).expect_err("the broker is still down");
+        assert!(!permitted.to_string().contains("backoff active"), "{permitted}");
+    }
+
+    #[tokio::test]
+    async fn closing_a_connection_fails_pending_publishes_and_aborts_the_event_loop() {
+        // A client with no live session; its event loop is never polled here.
+        let (client, _eventloop) = rumqttc::AsyncClient::new(rumqttc::MqttOptions::new("test", "127.0.0.1", 1883), 8);
+        let state = Arc::new(ConnectionState::connected());
+        // A publish waiting on its PUBACK.
+        let mut ack = state.acks().register(AckKind::PubAck);
+        // A stand-in event loop that never ends on its own, so only the abort can stop it.
+        let event_loop = tokio::spawn(std::future::pending::<()>());
+        let connection = MqttConnection {
+            client: MqttClientVariant::V311 { client },
+            state: Arc::clone(&state),
+            key: test_key(),
+            event_loop,
+        };
+
+        connection.close().await;
+
+        // `fail_all` resolved the waiter to a cancellation the delivery path retries.
+        assert!(ack.try_recv().is_err(), "the pending publish is failed when the connection closes");
+
+        // The spawned event loop was aborted rather than left polling an orphaned session.
+        for _ in 0..20 {
+            if connection.event_loop.is_finished() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        assert!(connection.event_loop.is_finished(), "the event loop task is aborted");
     }
 }

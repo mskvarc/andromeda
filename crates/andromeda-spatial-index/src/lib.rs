@@ -46,6 +46,7 @@ mod boundary {
         const ALLOWED_IN_WORKSPACE: &[&str] = &[
             "andromeda-layer-guard",
             "andromeda-ngsi-ld-geometry",
+            "andromeda-ngsi-ld-lexicon",
             "andromeda-ngsi-ld-query",
             "andromeda-tenancy",
         ];

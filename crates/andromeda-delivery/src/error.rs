@@ -75,3 +75,21 @@ pub enum TransportError {
         source: serde_json::Error,
     },
 }
+
+impl TransportError {
+    /// Whether reattempting the delivery could succeed.
+    ///
+    /// Reaching the endpoint failed transiently for connection, timeout, TLS and
+    /// DNS errors, so a later attempt may connect. A payload over the limit, a
+    /// blocked endpoint, or a payload that cannot be serialised will fail the
+    /// same way on every attempt, so retrying only wastes the budget.
+    pub const fn is_retryable(&self) -> bool {
+        match self {
+            TransportError::ConnectionFailed { .. }
+            | TransportError::Timeout { .. }
+            | TransportError::TlsError { .. }
+            | TransportError::DnsResolutionFailed { .. } => true,
+            TransportError::PayloadTooLarge { .. } | TransportError::PrivateIpBlocked { .. } | TransportError::PayloadSerialization { .. } => false,
+        }
+    }
+}

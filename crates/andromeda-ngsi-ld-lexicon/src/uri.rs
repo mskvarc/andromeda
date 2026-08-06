@@ -30,14 +30,21 @@ pub enum Uri {
 #[error("invalid URI: not a valid URN or URL")]
 pub struct UriParseError;
 
-// `#[as_ref(str)]` applies to a single field; this is a sum of two foreign
-// types that each spell the accessor differently.
-impl AsRef<str> for Uri {
-    fn as_ref(&self) -> &str {
+impl Uri {
+    /// The identifier as a string slice, in whichever form it was parsed.
+    pub fn as_str(&self) -> &str {
         match self {
             Uri::Urn(urn) => urn.as_str(),
             Uri::Url(url) => url.as_str(),
         }
+    }
+}
+
+// `#[as_ref(str)]` applies to a single field; this is a sum of two foreign
+// types that each spell the accessor differently.
+impl AsRef<str> for Uri {
+    fn as_ref(&self) -> &str {
+        self.as_str()
     }
 }
 

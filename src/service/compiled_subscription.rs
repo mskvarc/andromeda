@@ -8,7 +8,7 @@
 //! notification will go out over -- all concerns above the data model.
 
 use andromeda_delivery::endpoint::transport::EndpointTransport;
-use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
 use andromeda_ngsi_ld_model::{
     key_value_pair::KeyValuePair,
     subscription::{EntitySelector, SubscriptionStatus},
@@ -18,13 +18,14 @@ use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 use chrono::{DateTime, Utc};
 use mediatype::MediaTypeBuf;
 use std::collections::HashSet;
+use url::Url;
 
 /// Pre-compiled CSR subscription for in-memory matching against CSR changes.
 #[derive(Debug)]
 pub struct CompiledCsrSubscription {
-    pub id: String,
+    pub id: Uri,
     pub status: SubscriptionStatus,
-    pub endpoint_uri: String,
+    pub endpoint_uri: Url,
     pub endpoint_accept: Option<MediaTypeBuf>,
     pub endpoint_receiver_info: Option<Vec<KeyValuePair>>,
     pub endpoint_transport: EndpointTransport,
@@ -32,7 +33,7 @@ pub struct CompiledCsrSubscription {
     pub watched_attrs: Option<HashSet<String>>,
     pub throttling_secs: Option<f64>,
     pub time_interval_secs: Option<f64>,
-    pub jsonld_context: Option<String>,
+    pub jsonld_context: Option<Url>,
     pub expires_at: Option<DateTime<Utc>>,
     pub compiled_csf: Option<Expr>,
 }
@@ -40,9 +41,9 @@ pub struct CompiledCsrSubscription {
 /// Pre-compiled subscription for in-memory matching.
 #[derive(Debug)]
 pub struct CompiledSubscription {
-    pub id: String,
+    pub id: Uri,
     pub status: SubscriptionStatus,
-    pub endpoint_uri: String,
+    pub endpoint_uri: Url,
     pub endpoint_accept: Option<MediaTypeBuf>,
     pub endpoint_receiver_info: Option<Vec<KeyValuePair>>,
     pub endpoint_transport: EndpointTransport,
@@ -55,7 +56,7 @@ pub struct CompiledSubscription {
     pub notification_format: Option<String>,
     pub notification_sys_attrs: SysAttrsInclusion,
     pub notification_show_changes: bool,
-    pub jsonld_context: Option<String>,
+    pub jsonld_context: Option<Url>,
     pub expires_at: Option<DateTime<Utc>>,
     pub compiled_q: Option<Expr>,
     /// The subscription's `geoQ`, compiled to the same [`GeoQuery`] a

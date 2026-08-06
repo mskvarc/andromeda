@@ -1,9 +1,12 @@
 //! Turning a [`ContextSpec`] into the `@context` a document carries.
 //!
-//! Clause 5.5.7 makes the request's own contexts win over the broker's, and
-//! puts the core context last so nothing it defines shadows a user term.
-//! Both functions here implement that order: [`resolve_context_value`] builds
-//! the value, [`apply_context`] writes it onto a document.
+//! Clause 5.5.7 gives the core context absolute precedence: it is appended
+//! *last* so that, under JSON-LD 1.1's rule of later entries overriding earlier
+//! ones, its definitions shadow any user context that redefines a core term (a
+//! user `@vocab`, a redeclared `observedAt`). A user context still contributes
+//! its own new terms; it just cannot override the core's. Both functions here
+//! implement that order: [`resolve_context_value`] builds the value,
+//! [`apply_context`] writes it onto a document.
 
 use crate::{
     context_spec::{ContextSpec, CoreContextPolicy},

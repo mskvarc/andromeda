@@ -3,11 +3,12 @@
 use crate::error::TransportError;
 use andromeda_jsonld::core_context::NGSI_LD_CORE_CONTEXT_URL;
 use andromeda_ngsi_ld_http_headers::{link::header::Link, media_type::ResponseMediaType, ngsild_tenant::NgsiLdTenant};
-use andromeda_ngsi_ld_lexicon::tenant::TenantName;
+use andromeda_ngsi_ld_lexicon::{tenant::TenantName, uri::Uri};
 use andromeda_ngsi_ld_model::key_value_pair::KeyValuePair;
 use bytes::Bytes;
 use mediatype::MediaTypeBuf;
 use serde_json::Value;
+use url::Url;
 
 /// Everything a transport needs to deliver a single notification.
 ///
@@ -19,20 +20,21 @@ use serde_json::Value;
 pub struct DeliveryRequest {
     /// Serialised notification payload.
     pub payload: Bytes,
-    /// Target endpoint URL.
-    pub endpoint_uri: String,
+    /// Target endpoint URL, carried as a [`Url`] so no transport re-parses the
+    /// string the model already validated.
+    pub endpoint_uri: Url,
     /// The media type the body is serialised as.
     pub content_type: ResponseMediaType,
     /// The `@context` this notification advertises, when the subscription
     /// named one. [`context_link`](DeliveryRequest::context_link) supplies the
     /// core context when it did not.
-    pub context_url: Option<String>,
+    pub context_url: Option<Url>,
     /// Tenant the notification originates from (clause 6.3.14).
     pub tenant: Option<NgsiLdTenant>,
     /// Additional key-value pairs from the subscription's `receiverInfo`.
     pub receiver_info: Vec<KeyValuePair>,
-    /// Subscription identifier, for logging and tracking.
-    pub subscription_id: String,
+    /// Subscription identifier, for logging and stream routing.
+    pub subscription_id: Uri,
     /// Delivery attempt number.
     pub attempt: u32,
 }
@@ -49,7 +51,7 @@ impl DeliveryRequest {
         if self.content_type.include_context_in_body() {
             return None;
         }
-        Some(Link::jsonld_context(self.context_url.as_deref().unwrap_or(NGSI_LD_CORE_CONTEXT_URL)))
+        Some(Link::jsonld_context(self.context_url.as_ref().map_or(NGSI_LD_CORE_CONTEXT_URL, Url::as_str)))
     }
 }
 
@@ -62,18 +64,18 @@ impl DeliveryRequest {
 pub struct NotificationDelivery<'a> {
     /// The notification document.
     pub payload: &'a Value,
-    /// The endpoint URI the subscription named.
-    pub endpoint_uri: &'a str,
+    /// The endpoint URI the subscription named, already parsed by the model.
+    pub endpoint_uri: &'a Url,
     /// The subscription's `notification.endpoint.accept`, if it set one.
     pub accept: Option<&'a MediaTypeBuf>,
     /// The subscription's `notification.endpoint.receiverInfo`, if it set any.
     pub receiver_info: Option<&'a [KeyValuePair]>,
     /// The subscription's `jsonldContext`, if it set one.
-    pub jsonld_context: Option<&'a str>,
+    pub jsonld_context: Option<&'a Url>,
     /// The tenant the subscription belongs to.
     pub tenant: Option<&'a TenantName>,
     /// The subscription's identifier.
-    pub subscription_id: &'a str,
+    pub subscription_id: &'a Uri,
 }
 
 impl NotificationDelivery<'_> {
@@ -86,13 +88,13 @@ impl NotificationDelivery<'_> {
 
         Ok(DeliveryRequest {
             payload: Bytes::from(payload),
-            endpoint_uri: self.endpoint_uri.to_string(),
+            endpoint_uri: self.endpoint_uri.clone(), // clone: the request outlives this borrow of the subscription
             content_type: notification_media_type(self.accept),
-            context_url: self.jsonld_context.map(String::from),
+            context_url: self.jsonld_context.cloned(), // clone: same
             // clone: `NgsiLdTenant` owns its name and the request outlives this borrow
             tenant: self.tenant.map(|name| NgsiLdTenant::new(name.clone())),
             receiver_info: self.receiver_info.unwrap_or_default().to_vec(),
-            subscription_id: self.subscription_id.to_string(),
+            subscription_id: self.subscription_id.clone(), // clone: the request outlives this borrow of the subscription
             attempt: 0,
         })
     }
@@ -121,25 +123,37 @@ mod tests {
     use crate::request::{DeliveryRequest, NotificationDelivery, notification_media_type};
     use andromeda_jsonld::core_context::NGSI_LD_CORE_CONTEXT_URL;
     use andromeda_ngsi_ld_http_headers::{media_type::ResponseMediaType, ngsild_tenant::NgsiLdTenant};
-    use andromeda_ngsi_ld_lexicon::tenant::TenantName;
+    use andromeda_ngsi_ld_lexicon::{tenant::TenantName, uri::Uri};
     use andromeda_ngsi_ld_model::key_value_pair::KeyValuePair;
     use mediatype::MediaTypeBuf;
     use serde_json::json;
     use std::str::FromStr;
+    use url::Url;
 
     fn media(raw: &str) -> MediaTypeBuf {
         MediaTypeBuf::from_str(raw).expect("a well-formed media type")
     }
 
+    fn endpoint() -> Url {
+        Url::parse("https://receiver.example.com/notify").expect("a well-formed endpoint URI")
+    }
+
+    fn subscription() -> Uri {
+        Uri::from_str("urn:ngsi-ld:Subscription:1").expect("a well-formed subscription id")
+    }
+
     fn assemble(accept: Option<&MediaTypeBuf>, jsonld_context: Option<&str>) -> DeliveryRequest {
+        let endpoint = endpoint();
+        let context = jsonld_context.map(|value| Url::parse(value).expect("a well-formed context URI"));
+        let subscription = subscription();
         NotificationDelivery {
             payload: &json!({"id": "urn:ngsi-ld:Notification:1"}),
-            endpoint_uri: "https://receiver.example.com/notify",
+            endpoint_uri: &endpoint,
             accept,
             receiver_info: None,
-            jsonld_context,
+            jsonld_context: context.as_ref(),
             tenant: None,
-            subscription_id: "urn:ngsi-ld:Subscription:1",
+            subscription_id: &subscription,
         }
         .assemble()
         .expect("the notification serialises")
@@ -207,14 +221,16 @@ mod tests {
             key: "Authorization".into(),
             value: "Bearer token".into(),
         }];
+        let endpoint = endpoint();
+        let subscription = subscription();
         let request = NotificationDelivery {
             payload: &json!({}),
-            endpoint_uri: "https://receiver.example.com/notify",
+            endpoint_uri: &endpoint,
             accept: None,
             receiver_info: Some(&pairs),
             jsonld_context: None,
             tenant: None,
-            subscription_id: "urn:ngsi-ld:Subscription:1",
+            subscription_id: &subscription,
         }
         .assemble()
         .expect("the notification serialises");
@@ -224,14 +240,16 @@ mod tests {
     #[test]
     fn the_tenant_reaches_the_request_as_the_header_that_carries_it() {
         let name = TenantName::try_from("acme".to_string()).expect("a valid tenant name");
+        let endpoint = endpoint();
+        let subscription = subscription();
         let request = NotificationDelivery {
             payload: &json!({}),
-            endpoint_uri: "https://receiver.example.com/notify",
+            endpoint_uri: &endpoint,
             accept: None,
             receiver_info: None,
             jsonld_context: None,
             tenant: Some(&name),
-            subscription_id: "urn:ngsi-ld:Subscription:1",
+            subscription_id: &subscription,
         }
         .assemble()
         .expect("the notification serialises");

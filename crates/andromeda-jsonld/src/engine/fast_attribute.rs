@@ -191,7 +191,12 @@ fn expand_language_map(map: &Map<String, Value>) -> Option<Value> {
     let mut expanded = Vec::with_capacity(map.len());
     for (language, text) in map {
         let mut node = Map::with_capacity(2);
-        node.insert("@language".to_owned(), Value::String(language.clone())); // clone: the source document is borrowed and stays valid
+        // A language map's `@none` key means "no language tag": the processor
+        // emits a bare `@value` node, so tagging it `@language: @none` here would
+        // diverge from the fallback path (JSON-LD 1.1 clause 9.5).
+        if language != "@none" {
+            node.insert("@language".to_owned(), Value::String(language.clone())); // clone: the source document is borrowed and stays valid
+        }
         node.insert("@value".to_owned(), Value::String(text.as_str()?.to_owned()));
         expanded.push(Value::Object(node));
     }

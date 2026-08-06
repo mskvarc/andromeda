@@ -15,12 +15,8 @@ use crate::{
         temporal::TemporalService,
     },
 };
-use andromeda_delivery::{
-    dispatch::{DeliveryResult, TransportDispatcher},
-    endpoint::transport::EndpointTransport,
-    request::NotificationDelivery,
-};
-use andromeda_ngsi_ld_lexicon::ngsi_ld_urn::SnapshotId;
+use andromeda_delivery::{dispatch::TransportDispatcher, endpoint::transport::EndpointTransport, request::NotificationDelivery};
+use andromeda_ngsi_ld_lexicon::{ngsi_ld_urn::SnapshotId, uri::Uri};
 use andromeda_ngsi_ld_model::{
     snapshot::{Snapshot, SnapshotInput, SnapshotPatch, SnapshotPriority, SnapshotStatus},
     snapshot_filter::SnapshotPurgeFilter,
@@ -342,7 +338,7 @@ impl SnapshotService {
     /// logged but never propagated.
     async fn send_notification_if_configured(&self, snapshot: &Snapshot) {
         let endpoint = match snapshot.endpoint.as_ref() {
-            Some(uri) => uri.as_str(),
+            Some(uri) => uri,
             None => return,
         };
 
@@ -375,6 +371,10 @@ impl SnapshotService {
             }
         };
 
+        // The snapshot notification has no subscription; its own id is the
+        // routing and logging label the delivery carries. clone: the conversion
+        // consumes the id and the snapshot is borrowed here.
+        let subscription_id = Uri::from(snapshot.id.clone());
         let request = match (NotificationDelivery {
             payload: &payload,
             endpoint_uri: endpoint,
@@ -382,7 +382,7 @@ impl SnapshotService {
             receiver_info: snapshot.receiver_info.as_deref(),
             jsonld_context: None,
             tenant: None,
-            subscription_id: snapshot.id.as_str(),
+            subscription_id: &subscription_id,
         })
         .assemble()
         {
@@ -397,13 +397,10 @@ impl SnapshotService {
             }
         };
 
-        match transport.deliver(&EndpointTransport::Http, &request).await {
-            DeliveryResult::Delivered => {
-                tracing::debug!(snapshot_id = %snapshot.id, "Snapshot notification delivered");
-            }
-            DeliveryResult::Failed => {
-                tracing::warn!(snapshot_id = %snapshot.id, "Snapshot notification delivery failed");
-            }
+        if transport.deliver(&EndpointTransport::Http, &request).await.is_delivered() {
+            tracing::debug!(snapshot_id = %snapshot.id, "Snapshot notification delivered");
+        } else {
+            tracing::warn!(snapshot_id = %snapshot.id, "Snapshot notification delivery failed");
         }
     }
 }

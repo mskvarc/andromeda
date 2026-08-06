@@ -5,6 +5,7 @@ use crate::{
     http::{
         config::{HttpTransportConfig, PrivateIpBlocking},
         private_ip::{PrivateIpCheck, resolve_private_ip_outcome},
+        resolver::PrivateIpResolver,
     },
     outcome::DeliveryOutcome,
     request::DeliveryRequest,
@@ -53,9 +54,18 @@ impl HttpTransport {
         let client = reqwest::ClientBuilder::new()
             .http1_title_case_headers()
             .timeout(config.timeout)
+            // A notification POST has no business following redirects: a public
+            // endpoint answering `302 Location: http://169.254.169.254/…` would
+            // otherwise walk the delivery straight past the SSRF guard, which
+            // only vets the original URI.
+            .redirect(reqwest::redirect::Policy::none())
+            // Vet the addresses the client actually connects to, closing the
+            // DNS-rebinding window between the pre-send guard's resolution and
+            // reqwest's own.
+            .dns_resolver(PrivateIpResolver::new(config.private_ip_blocking))
             .build()
             .map_err(|error| {
-                if error.is_builder() && error.to_string().contains("tls") {
+                if chain_indicates_tls(&error) {
                     TransportError::TlsError {
                         endpoint: "http-client-init".to_string(),
                         detail: error.to_string(),
@@ -71,28 +81,18 @@ impl HttpTransport {
         Ok(HttpTransport { client, config, dns_cache })
     }
 
-    /// Maximum payload size this transport will accept for delivery.
-    pub const fn max_payload_size(&self) -> usize {
-        self.config.max_payload_size
-    }
-
     /// Refuse delivery when the endpoint host resolves into address space the
     /// broker will not reach on a client's behalf.
     ///
     /// Results are cached for [`DNS_CHECK_TTL`] per `host:port` so a fan-out to
     /// the same endpoint skips the DNS round trip.
-    async fn check_private_ip(&self, endpoint_uri: &str) -> Result<(), TransportError> {
-        let url = Url::parse(endpoint_uri).map_err(|error| TransportError::ConnectionFailed {
-            endpoint: endpoint_uri.to_string(),
-            detail: format!("invalid URL: {error}"),
-        })?;
-
-        let host = url.host_str().ok_or_else(|| TransportError::ConnectionFailed {
+    async fn check_private_ip(&self, endpoint_uri: &Url) -> Result<(), TransportError> {
+        let host = endpoint_uri.host_str().ok_or_else(|| TransportError::ConnectionFailed {
             endpoint: endpoint_uri.to_string(),
             detail: "URL has no host".to_string(),
         })?;
 
-        let port = url.port_or_known_default().unwrap_or(DEFAULT_HTTP_PORT);
+        let port = endpoint_uri.port_or_known_default().unwrap_or(DEFAULT_HTTP_PORT);
         let addr = format!("{host}:{port}");
 
         let outcome = match self.dns_cache.get(&addr).await {
@@ -125,13 +125,55 @@ impl HttpTransport {
                 duration: self.config.timeout,
             };
         }
-        let detail = error.to_string();
-        if detail.contains("tls") || detail.contains("certificate") {
-            TransportError::TlsError { endpoint, detail }
+        if chain_indicates_tls(error) {
+            TransportError::TlsError {
+                endpoint,
+                detail: error.to_string(),
+            }
         } else {
-            TransportError::ConnectionFailed { endpoint, detail }
+            TransportError::ConnectionFailed {
+                endpoint,
+                detail: error.to_string(),
+            }
         }
     }
+}
+
+/// Whether a send failure is a TLS handshake or certificate failure.
+///
+/// `reqwest` exposes no `is_tls()` and abstracts the TLS backend away, so the
+/// classification walks the typed error source chain — the same idiom
+/// `reqwest::Error::is_connect` uses internally to find a `hyper` error. This
+/// build links `reqwest` against `rustls` (see the crate's Cargo.lock), so a
+/// handshake or certificate failure surfaces as a [`rustls::Error`] somewhere
+/// below `reqwest`'s own error; downcasting to it is immune to the spelling and
+/// capitalisation changes that broke the previous `Display`-substring check. The
+/// text pass is only a backstop for a future wrapping that erases the type
+/// before it reaches the chain, and the unit tests pin both paths.
+fn chain_indicates_tls(error: &(dyn std::error::Error + 'static)) -> bool {
+    let mut current = Some(error);
+    while let Some(source) = current {
+        if source.downcast_ref::<rustls::Error>().is_some() {
+            return true;
+        }
+        current = source.source();
+    }
+    chain_mentions_tls_terms(error)
+}
+
+/// Backstop for [`chain_indicates_tls`]: a case-insensitive scan of the source
+/// chain for the vocabulary `rustls` uses, for the case where the typed error is
+/// wrapped into an opaque form before it reaches the chain.
+fn chain_mentions_tls_terms(error: &(dyn std::error::Error + 'static)) -> bool {
+    let mut current = Some(error);
+    while let Some(source) = current {
+        let text = source.to_string().to_ascii_lowercase();
+        if text.contains("tls") || text.contains("certificate") || text.contains("handshake") || text.contains("rustls") {
+            return true;
+        }
+        current = source.source();
+    }
+    false
 }
 
 #[async_trait]
@@ -158,7 +200,8 @@ impl NotificationTransport for HttpTransport {
 
         let mut request = self
             .client
-            .post(&req.endpoint_uri)
+            // clone: `reqwest` takes the `Url` by value, and cloning a parsed URL is cheaper than reparsing the string
+            .post(req.endpoint_uri.clone())
             .header(CONTENT_TYPE, req.content_type.as_str())
             .body(req.payload.clone()); // clone: `Bytes` is refcounted, and the body takes ownership
 
@@ -192,7 +235,7 @@ impl NotificationTransport for HttpTransport {
         }
 
         let start = Instant::now();
-        let response = request.send().await.map_err(|error| self.send_failure(req.endpoint_uri.clone(), &error))?; // clone: the error path owns the endpoint it names
+        let response = request.send().await.map_err(|error| self.send_failure(req.endpoint_uri.to_string(), &error))?; // the error path owns the endpoint label it names
         let status = response.status().as_u16();
         let duration = start.elapsed();
 
@@ -222,5 +265,37 @@ impl NotificationTransport for HttpTransport {
 
     async fn shutdown(&self) {
         // `reqwest::Client` cleans its connection pool up on drop.
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::http::transport::chain_indicates_tls;
+    use std::io::{Error, ErrorKind};
+
+    #[test]
+    fn a_rustls_error_anywhere_in_the_chain_is_classified_as_tls_by_type() {
+        // The typed path: a rustls error nested below an io::Error, found by
+        // downcast rather than by reading its message.
+        let rustls_error = rustls::Error::General("peer sent no certificates".to_string());
+        let wrapped = Error::other(rustls_error);
+        assert!(chain_indicates_tls(&wrapped), "a rustls::Error in the chain is a TLS error");
+    }
+
+    #[test]
+    fn a_type_erased_tls_failure_is_still_caught_by_the_text_backstop() {
+        // rustls capitalises these; if the type is erased before reaching the
+        // chain, the case-insensitive backstop still recognises the vocabulary.
+        let handshake = Error::other("received fatal alert: HandshakeFailure");
+        assert!(chain_indicates_tls(&handshake), "a rustls HandshakeFailure is a TLS error");
+
+        let certificate = Error::other("invalid peer certificate: Expired");
+        assert!(chain_indicates_tls(&certificate), "a certificate rejection is a TLS error");
+    }
+
+    #[test]
+    fn a_plain_connection_refusal_is_not_classified_as_tls() {
+        let refused = Error::new(ErrorKind::ConnectionRefused, "Connection refused (os error 61)");
+        assert!(!chain_indicates_tls(&refused), "a connection refusal is not a TLS error");
     }
 }

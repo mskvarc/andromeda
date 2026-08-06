@@ -8,6 +8,7 @@
 use crate::service::{compiled_subscription::CompiledSubscription, subscription::store::SubscriptionStore, subscription_matching::find_matching};
 use andromeda_delivery::endpoint::transport::parse_endpoint_transport;
 use andromeda_ngsi_ld_geometry::geometry::Geometry;
+use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::{
     notification::{ChangeEvent, SubscriptionChange, TriggerReason},
     subscription::{EntitySelector, Subscription, SubscriptionStatus},
@@ -42,9 +43,9 @@ use tracing::debug;
 ///   These are always candidates regardless of event type.
 #[derive(Debug)]
 pub struct SubscriptionCache {
-    inner: DashMap<String, Arc<CompiledSubscription>>,
-    by_type: DashMap<String, HashSet<String>>,
-    untyped: dashmap::DashSet<String>,
+    inner: DashMap<Uri, Arc<CompiledSubscription>>,
+    by_type: DashMap<String, HashSet<Uri>>,
+    untyped: dashmap::DashSet<Uri>,
     spatial: Arc<SpatialSubscriptionIndex>,
     tenant: TenantRef,
 }
@@ -79,7 +80,7 @@ impl SubscriptionCache {
         for sub in subscriptions {
             if let Some(compiled) = compile_subscription(&sub) {
                 self.index_insert(&compiled);
-                self.inner.insert(sub.id.to_string(), Arc::new(compiled));
+                self.inner.insert(sub.id.clone(), Arc::new(compiled)); // clone: the map owns its key
             }
         }
         Ok(())
@@ -89,33 +90,31 @@ impl SubscriptionCache {
     pub async fn handle_change(&self, change: &SubscriptionChange, repo: &impl SubscriptionStore) {
         match change {
             SubscriptionChange::Upserted(id) => {
-                let id_str = id.to_string();
-                match repo.get(&id_str).await {
+                match repo.get(id.as_str()).await {
                     Ok(Some(sub)) => {
                         if sub.lifecycle.status == SubscriptionStatus::Active {
                             if let Some(compiled) = compile_subscription(&sub) {
-                                self.index_remove(&id_str);
+                                self.index_remove(id);
                                 self.index_insert(&compiled);
-                                self.inner.insert(id_str, Arc::new(compiled));
+                                self.inner.insert(id.clone(), Arc::new(compiled)); // clone: the map owns its key
                             }
                         } else {
-                            self.index_remove(&id_str);
-                            self.inner.remove(&id_str);
+                            self.index_remove(id);
+                            self.inner.remove(id);
                         }
                     }
                     Ok(None) => {
-                        self.index_remove(&id_str);
-                        self.inner.remove(&id_str);
+                        self.index_remove(id);
+                        self.inner.remove(id);
                     }
                     Err(e) => {
-                        debug!("Failed to load subscription {} for cache update: {}", id_str, e);
+                        debug!("Failed to load subscription {} for cache update: {}", id, e);
                     }
                 }
             }
             SubscriptionChange::Deleted(id) => {
-                let id_str = id.to_string();
-                self.index_remove(&id_str);
-                self.inner.remove(&id_str);
+                self.index_remove(id);
+                self.inner.remove(id);
             }
         }
     }
@@ -127,7 +126,7 @@ impl SubscriptionCache {
     /// full matching predicate only on those candidates. Uses lock-free
     /// `DashMap`/`DashSet` reads throughout.
     pub fn find_matching(&self, event: &ChangeEvent) -> Vec<Arc<CompiledSubscription>> {
-        let mut candidate_ids: HashSet<String> = self.untyped.iter().map(|entry| entry.key().clone()).collect();
+        let mut candidate_ids: HashSet<Uri> = self.untyped.iter().map(|entry| entry.key().clone()).collect();
         for event_type in &event.entity_types {
             if let Some(entry) = self.by_type.get(event_type.as_str()) {
                 for id in entry.value() {
@@ -143,7 +142,7 @@ impl SubscriptionCache {
     }
 
     /// Look up a single compiled subscription by ID.
-    pub fn get(&self, id: &str) -> Option<Arc<CompiledSubscription>> {
+    pub fn get(&self, id: &Uri) -> Option<Arc<CompiledSubscription>> {
         self.inner.get(id).map(|entry| Arc::clone(entry.value()))
     }
 
@@ -184,11 +183,11 @@ impl SubscriptionCache {
         }
     }
 
-    fn index_remove(&self, id: &str) {
+    fn index_remove(&self, id: &Uri) {
         self.spatial.remove(id);
         self.untyped.remove(id);
         // Drop the id from every type bucket it appears in. `retain` scans
-        // the map once; the keys per bucket are short (one `HashSet<String>`
+        // the map once; the keys per bucket are short (one `HashSet<Uri>`
         // per indexed entity type) so removal stays cheap.
         self.by_type.iter_mut().for_each(|mut entry| {
             entry.value_mut().remove(id);
@@ -278,9 +277,10 @@ pub fn compile_subscription(sub: &Subscription) -> Option<CompiledSubscription> 
     };
 
     Some(CompiledSubscription {
-        id: sub.id.to_string(),
+        // clone: the compiled form outlives the borrowed subscription
+        id: sub.id.clone(),
         status: sub.lifecycle.status,
-        endpoint_uri: sub.notification.endpoint.uri.to_string(),
+        endpoint_uri: sub.notification.endpoint.uri.clone(),
         // clone: the compiled form outlives the subscription it was built from
         endpoint_accept: sub.notification.endpoint.accept.clone(),
         endpoint_receiver_info: sub.notification.endpoint.receiver_info.clone(),
@@ -298,7 +298,7 @@ pub fn compile_subscription(sub: &Subscription) -> Option<CompiledSubscription> 
             SysAttrsInclusion::Strip
         },
         notification_show_changes: sub.notification.show_changes.unwrap_or(false),
-        jsonld_context: sub.delivery.jsonld_context.as_ref().map(ToString::to_string),
+        jsonld_context: sub.delivery.jsonld_context.clone(),
         expires_at: sub.lifecycle.expires_at,
         // clone: the compiled form owns its filters, and the subscription it was
         // built from is borrowed and outlives it
@@ -360,12 +360,13 @@ mod tests {
     use super::*;
     use andromeda_delivery::endpoint::transport::EndpointTransport;
     use andromeda_ngsi_ld_model::subscription::SubscriptionStatus;
+    use url::Url;
 
     fn make_compiled_sub(id: &str, type_: &str, triggers: Vec<&str>) -> CompiledSubscription {
         CompiledSubscription {
-            id: id.to_string(),
+            id: format!("urn:ngsi-ld:Subscription:{id}").parse().expect("a valid subscription URI"),
             status: SubscriptionStatus::Active,
-            endpoint_uri: "http://example.com/notify".to_string(),
+            endpoint_uri: Url::parse("http://example.com/notify").expect("a valid endpoint URI"),
             endpoint_accept: None,
             endpoint_receiver_info: None,
             endpoint_transport: EndpointTransport::Http,
@@ -400,14 +401,12 @@ mod tests {
         let cache = SubscriptionCache::new(TenantRef::UnnamedDefault);
         assert_eq!(cache.len(), 0);
 
-        cache
-            .inner
-            .insert("sub1".to_string(), Arc::new(make_compiled_sub("sub1", "Vehicle", vec!["entityCreated"])));
+        let sub1 = make_compiled_sub("sub1", "Vehicle", vec!["entityCreated"]);
+        cache.inner.insert(sub1.id.clone(), Arc::new(sub1)); // clone: the map owns its key
         assert_eq!(cache.len(), 1);
 
-        cache
-            .inner
-            .insert("sub2".to_string(), Arc::new(make_compiled_sub("sub2", "Building", vec!["entityCreated"])));
+        let sub2 = make_compiled_sub("sub2", "Building", vec!["entityCreated"]);
+        cache.inner.insert(sub2.id.clone(), Arc::new(sub2)); // clone: the map owns its key
         assert_eq!(cache.len(), 2);
     }
 }

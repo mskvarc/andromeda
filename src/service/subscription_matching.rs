@@ -169,12 +169,13 @@ mod tests {
         subscription::SubscriptionStatus,
     };
     use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
+    use url::Url;
 
     fn make_sub() -> CompiledSubscription {
         CompiledSubscription {
-            id: "urn:ngsi-ld:Subscription:test".to_string(),
+            id: "urn:ngsi-ld:Subscription:test".parse().expect("a valid subscription URI"),
             status: SubscriptionStatus::Active,
-            endpoint_uri: "http://example.com/notify".to_string(),
+            endpoint_uri: Url::parse("http://example.com/notify").expect("a valid endpoint URI"),
             endpoint_accept: None,
             endpoint_receiver_info: None,
             endpoint_transport: EndpointTransport::Http,

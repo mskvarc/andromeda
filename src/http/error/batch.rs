@@ -40,7 +40,7 @@ pub fn operation_result(result: BatchResult) -> BatchOperationResult {
 #[cfg(test)]
 mod tests {
     use crate::{core::error::AndromedaError, http::error::batch::entity_error};
-    use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
+    use andromeda_ngsi_ld_problem_details::{batch_operation::BatchErrorKind, error_type::NgsiLdErrorType};
 
     #[test]
     fn each_failure_is_reported_under_the_category_its_kind_maps_to() {
@@ -55,7 +55,7 @@ mod tests {
             ),
         ] {
             let reported = entity_error("urn:ngsi-ld:Entity:X", &error);
-            pretty_assertions::assert_eq!(reported.error.error_type, expected);
+            pretty_assertions::assert_eq!(reported.error.error_type, BatchErrorKind::Known(expected));
             pretty_assertions::assert_eq!(reported.entity_id, "urn:ngsi-ld:Entity:X");
         }
     }
@@ -69,7 +69,7 @@ mod tests {
     #[test]
     fn an_internal_failure_never_reaches_the_client_in_detail() {
         let reported = entity_error("urn:ngsi-ld:Entity:4", &AndromedaError::internal("something broke"));
-        pretty_assertions::assert_eq!(reported.error.error_type, NgsiLdErrorType::InternalError);
+        pretty_assertions::assert_eq!(reported.error.error_type, BatchErrorKind::Known(NgsiLdErrorType::InternalError));
         pretty_assertions::assert_eq!(reported.error.detail, "Internal error");
     }
 }

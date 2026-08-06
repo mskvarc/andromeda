@@ -16,7 +16,7 @@ use crate::{
     context_spec::{ContextSpec, CoreContextPolicy},
     core_context::{ANDROMEDA_CORE_CONTEXT_URL, is_ngsi_ld_core_context_url},
     engine::{
-        context_url::is_full_iri,
+        context_url::{is_absolute_iri, is_full_iri},
         core_term_semantics::{coercion_of, container_of, core_term_semantics},
     },
     error::JsonLdError,
@@ -66,13 +66,18 @@ enum FastpathEligibility {
 /// Why a batch is not eligible for the fastpath.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum IneligibilityReason {
-    /// A request context redefined a core term to a different IRI.
+    /// A request context redefined a core term to a different IRI, coercion or
+    /// container — which the processor may even raise a protected-term error for.
     UserOverridesCoreTerm,
     /// A term carries a scoped `@context`, which the fastpath does not unfold.
     HasScopedContexts,
     /// A request context could not be resolved, or the core context was
     /// omitted entirely.
     ContextUnavailable,
+    /// A request context uses a keyword or term-definition key the fastpath does
+    /// not model but the processor honours (`@language`, `@base`, `@import`,
+    /// `@reverse`, `@prefix`, …).
+    UnsupportedContextFeature,
 }
 
 /// One term's resolution.
@@ -86,20 +91,29 @@ struct ResolvedTerm {
     container: Option<TermContainer>,
     /// Whether it carries a scoped `@context`.
     has_scoped_context: bool,
+    /// Whether it came from a *simple* `term: "iri"` definition, which JSON-LD
+    /// 1.1 clause 4.4 makes usable as a prefix — an expanded (object) definition
+    /// is one only with `@prefix: true`, which the fastpath does not model.
+    simple: bool,
 }
 
 /// A request context, parsed down to what the fastpath can honour.
 ///
-/// Only IRI expansions, `@vocab` and the scoped-context flag survive:
-/// anything else makes the batch ineligible rather than being approximated.
+/// Only IRI expansions and the two refusal flags survive: any context keyword
+/// or term-definition key the walker does not model sets
+/// [`has_unsupported_feature`](UserTermTable::has_unsupported_feature) and the
+/// whole batch falls back to the processor rather than being approximated. A
+/// user `@vocab` is deliberately not carried — the core `@vocab` has absolute
+/// precedence (clause 5.5.7), so a user one never changes the fallback IRI.
 #[derive(Debug, Clone)]
 struct UserTermTable {
     /// The terms the context defines.
     terms: HashMap<Box<str>, ResolvedTerm>,
-    /// The `@vocab` it declares, if it declares one.
-    vocab: Option<Box<str>>,
     /// Whether any of its terms carries a scoped `@context`.
     has_scoped_contexts: bool,
+    /// Whether it uses a context keyword or term-definition key the fastpath
+    /// does not model but the processor honours.
+    has_unsupported_feature: bool,
 }
 
 /// The `@type` coercion a term declares.
@@ -108,7 +122,7 @@ struct UserTermTable {
 /// resolution; a user-declared datatype is kept as written and resolved
 /// through [`BatchTermMap::expand_iri`] at emit time, so a prefix the same
 /// context declared applies to it too.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum TermCoercion {
     /// `@type: DateTime`: emitted as `{"@type": "<NGSI-LD DateTime IRI>", "@value": "<ISO>"}`.
     DateTime,
@@ -166,6 +180,12 @@ impl BatchTermMap {
             }
             if let Some(expansion) = builtin_prefix(prefix) {
                 return Cow::Owned(format!("{expansion}{suffix}"));
+            }
+            // No context maps this prefix, but the term carries a scheme, so it
+            // is already an absolute IRI (clause 4.6.2) — kept as written rather
+            // than vocab-expanded, the way the processor treats `did:example:1`.
+            if is_absolute_iri(term) {
+                return Cow::Borrowed(term);
             }
         }
         Cow::Owned(format!("{}{}", self.vocab, term))
@@ -272,12 +292,17 @@ pub(crate) async fn build_batch_term_map(spec: &ContextSpec, loader: &HttpContex
                     coercion: declared.and_then(|term| term.coercion.clone()),
                     container: declared.and_then(|term| term.container),
                     has_scoped_context: declared.is_some_and(|term| term.has_scoped_context),
+                    // A core term is never a user prefix candidate.
+                    simple: false,
                 },
             )
         })
         .collect();
 
-    let mut vocab = Box::<str>::from(NGSI_LD_DEFAULT_CONTEXT_PREFIX);
+    // The `@vocab` any undefined member falls back to. Seeded from the core
+    // context and never overwritten: clause 5.5.7 gives the core `@vocab`
+    // absolute precedence, so a user `@vocab` does not change it.
+    let vocab = Box::<str>::from(NGSI_LD_DEFAULT_CONTEXT_PREFIX);
     let mut prefix_table: Vec<(Box<str>, Box<str>)> = Vec::new();
     let mut eligibility = FastpathEligibility::Eligible;
 
@@ -293,14 +318,14 @@ pub(crate) async fn build_batch_term_map(spec: &ContextSpec, loader: &HttpContex
             continue;
         }
         match cache.get_or_load(loader, url).await {
-            Ok(table) => merge_user_table(&mut terms, &mut vocab, &mut prefix_table, &table, &mut eligibility),
+            Ok(table) => merge_user_table(&mut terms, &mut prefix_table, &table, &mut eligibility),
             Err(_unresolved) => eligibility = FastpathEligibility::Ineligible(IneligibilityReason::ContextUnavailable),
         }
     }
 
     if let Some(body) = spec.body_context() {
         let table = parse_user_context(body);
-        merge_user_table(&mut terms, &mut vocab, &mut prefix_table, &table, &mut eligibility);
+        merge_user_table(&mut terms, &mut prefix_table, &table, &mut eligibility);
     }
 
     // Longest first, then alphabetically, so the order is total and the
@@ -320,8 +345,8 @@ pub(crate) async fn build_batch_term_map(spec: &ContextSpec, loader: &HttpContex
 fn parse_user_context(value: &Value) -> UserTermTable {
     let mut table = UserTermTable {
         terms: HashMap::new(),
-        vocab: None,
         has_scoped_contexts: false,
+        has_unsupported_feature: false,
     };
     parse_user_context_into(value, &mut table);
     table
@@ -342,15 +367,18 @@ fn parse_user_context_into(value: &Value, table: &mut UserTermTable) {
                 return;
             }
             for (key, declaration) in map {
-                if key == "@vocab" {
-                    if let Some(vocab) = declaration.as_str() {
-                        table.vocab = Some(Box::<str>::from(vocab));
-                    }
-                } else if !key.starts_with('@') {
-                    // Every other JSON-LD keyword is ignored: the fastpath
-                    // does not model it, and a term it defines resolves
-                    // through the processor instead.
-                    parse_term_declaration(key, declaration, table);
+                match key.as_str() {
+                    // The core `@vocab` has absolute precedence (clause 5.5.7), so
+                    // a user `@vocab` is recognised and deliberately ignored — it
+                    // never overrides the seeded default-context `@vocab` the
+                    // undefined-member fallback uses.
+                    "@vocab" => {}
+                    // Every other JSON-LD keyword — `@language`, `@direction`,
+                    // `@base`, `@import`, `@propagate`, `@version` — is one the
+                    // processor honours and the walker does not model, so the
+                    // batch falls back rather than expanding differently.
+                    other if other.starts_with('@') => table.has_unsupported_feature = true,
+                    _term => parse_term_declaration(key, declaration, table),
                 }
             }
         }
@@ -369,10 +397,19 @@ fn parse_term_declaration(term: &str, declaration: &Value, table: &mut UserTermT
                     coercion: None,
                     container: None,
                     has_scoped_context: false,
+                    simple: true,
                 },
             );
         }
         Value::Object(definition) => {
+            // Any key beyond the three the walker models — a `@reverse`,
+            // `@language`, `@prefix`, `@protected`, `@nest` — is a feature the
+            // processor honours, so the batch falls back. A scoped `@context` is
+            // one of the modelled keys here but is refused separately below.
+            const MODELED: &[&str] = &["@id", "@type", "@container", "@context"];
+            if definition.keys().any(|key| !MODELED.contains(&key.as_str())) {
+                table.has_unsupported_feature = true;
+            }
             let has_scoped_context = definition.contains_key("@context");
             if has_scoped_context {
                 table.has_scoped_contexts = true;
@@ -387,6 +424,7 @@ fn parse_term_declaration(term: &str, declaration: &Value, table: &mut UserTermT
                     coercion: declared_coercion(definition.get("@type").and_then(Value::as_str)),
                     container: container_of(definition.get("@container").and_then(Value::as_str)),
                     has_scoped_context,
+                    simple: false,
                 },
             );
         }
@@ -407,12 +445,13 @@ fn declared_coercion(declared_type: Option<&str>) -> Option<TermCoercion> {
 
 /// Merge one request context into the accumulating batch table.
 ///
-/// Stops at the first thing the fastpath cannot honour: a scoped `@context`,
-/// or a term whose IRI disagrees with the one already recorded. Redefining a
-/// term to the *same* IRI is not a conflict and does not disable anything.
+/// Stops at the first thing the fastpath cannot honour: a scoped `@context`, a
+/// context feature it does not model, or a term that redefines one already
+/// recorded in a way the merge cannot honour. Redefining a term to the exact
+/// same IRI, coercion and container is not a conflict and does not disable
+/// anything. The `@vocab` is never touched — the core one wins (clause 5.5.7).
 fn merge_user_table(
     terms: &mut HashMap<Box<str>, ResolvedTerm>,
-    vocab: &mut Box<str>,
     prefix_table: &mut Vec<(Box<str>, Box<str>)>,
     table: &UserTermTable,
     eligibility: &mut FastpathEligibility,
@@ -424,19 +463,26 @@ fn merge_user_table(
         *eligibility = FastpathEligibility::Ineligible(IneligibilityReason::HasScopedContexts);
         return;
     }
-    if let Some(declared) = &table.vocab {
-        *vocab = declared.clone(); // clone: the parsed table is cached and stays valid
+    if table.has_unsupported_feature {
+        *eligibility = FastpathEligibility::Ineligible(IneligibilityReason::UnsupportedContextFeature);
+        return;
     }
     for (term, resolved) in &table.terms {
+        // A redefinition that changes the IRI, the coercion or the container is
+        // a conflict: comparing IRIs alone let a user context drop the coercion
+        // off a protected core term (e.g. redeclaring `observedAt` to the same
+        // IRI without its `@type`), which the processor raises an error for.
         if let Some(existing) = terms.get(term.as_ref())
-            && existing.iri != resolved.iri
+            && (existing.iri != resolved.iri || existing.coercion != resolved.coercion || existing.container != resolved.container)
         {
             *eligibility = FastpathEligibility::Ineligible(IneligibilityReason::UserOverridesCoreTerm);
             return;
         }
-        // A term whose IRI ends in `/` or `#` is a namespace prefix by the
-        // JSON-LD clause 4.4 convention, and is usable as one.
-        if resolved.iri.ends_with('/') || resolved.iri.ends_with('#') {
+        // Only a *simple* `term: "iri"` definition whose IRI ends in `/` or `#`
+        // is a prefix by the JSON-LD 1.1 clause 4.4 convention; an expanded
+        // (object) definition would need `@prefix: true`, which the walker does
+        // not model, so it is never treated as one here.
+        if resolved.simple && (resolved.iri.ends_with('/') || resolved.iri.ends_with('#')) {
             prefix_table.push((term.clone(), resolved.iri.clone())); // clone: the parsed table is cached and stays valid
         }
         terms.insert(term.clone(), resolved.clone()); // clone: the parsed table is cached and stays valid
@@ -679,5 +725,77 @@ mod tests {
         pretty_assertions::assert_eq!(engine.user_term_tables().len(), 0, "invalidation drops the parsed table");
 
         let _ = fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn a_user_vocab_does_not_override_the_core_vocab_for_an_undefined_member() {
+        // Clause 5.5.7: the core `@vocab` has absolute precedence, so an
+        // undefined member expands against the core default-context prefix on
+        // both paths regardless of any user `@vocab`.
+        let engine = offline_engine();
+        let spec = body_spec(json!({ "@vocab": "http://user.example/vocab/" }));
+        let handle = engine.batch_context_handle(&spec).await;
+        assert!(handle.fast_eligible(), "a user @vocab is recognised and ignored, not a refusal");
+
+        let document = json!({ "id": "urn:ngsi-ld:Device:vocab1", "type": "X", "undefinedMember": { "type": "Property", "value": 1 } });
+        let fast = engine
+            .expand_with_handle(document.clone(), &handle) // clone: expanded again below
+            .await
+            .expect("the fastpath expands");
+        let slow = engine.expand(document, &spec).await.expect("the processor expands");
+
+        let keys: Vec<&String> = fast[0].as_object().expect("an entity object").keys().collect();
+        assert!(
+            keys.iter().any(|key| key.contains("uri.etsi.org/ngsi-ld/default-context/undefinedMember")),
+            "the core @vocab must win: {keys:?}"
+        );
+        assert!(!keys.iter().any(|key| key.contains("user.example")), "the user @vocab must not win: {keys:?}");
+        assert_canonically_equal(&fast, &slow);
+    }
+
+    #[tokio::test]
+    async fn a_context_language_keyword_the_fastpath_does_not_model_falls_back_and_agrees() {
+        // `@language` sets a default language the processor applies to string
+        // values; the walker does not model it, so the batch must fall back —
+        // and the fallback must match the processor exactly.
+        let engine = offline_engine();
+        let spec = body_spec(json!({ "@language": "en", "label": "http://ex.com/label" }));
+        let handle = engine.batch_context_handle(&spec).await;
+        assert!(!handle.fast_eligible(), "an unmodelled context keyword disables the fastpath");
+
+        let document = json!({ "id": "urn:ngsi-ld:Device:lang1", "type": "X", "label": { "type": "Property", "value": "hi" } });
+        let fast = engine
+            .expand_with_handle(document.clone(), &handle) // clone: expanded again below
+            .await
+            .expect("the fallback expands");
+        let slow = engine.expand(document, &spec).await.expect("the processor expands");
+        assert_canonically_equal(&fast, &slow);
+    }
+
+    #[tokio::test]
+    async fn redeclaring_a_core_term_without_its_coercion_disables_the_fastpath() {
+        // `observedAt` is a core DateTime term. Redeclaring it to the same IRI
+        // but no `@type` drops the coercion; comparing IRIs alone would have kept
+        // the batch eligible and expanded the value into a different shape.
+        let spec = body_spec(json!({ "observedAt": { "@id": "https://uri.etsi.org/ngsi-ld/observedAt" } }));
+        let handle = offline_engine().batch_context_handle(&spec).await;
+        assert!(!handle.fast_eligible(), "dropping a core term's coercion is a conflict even at the same IRI");
+    }
+
+    #[tokio::test]
+    async fn a_term_definition_key_the_fastpath_does_not_model_disables_it() {
+        // `@reverse` is a term-definition key the walker does not model.
+        let spec = body_spec(json!({ "parentOf": { "@reverse": "http://ex.com/childOf" } }));
+        let handle = offline_engine().batch_context_handle(&spec).await;
+        assert!(!handle.fast_eligible(), "@reverse in a term definition disables the fastpath");
+    }
+
+    #[tokio::test]
+    async fn an_absolute_iri_under_an_unlisted_scheme_is_kept_verbatim_not_vocab_expanded() {
+        // Clause 4.6.2: `did:example:123` has a scheme and no context maps `did`
+        // as a prefix, so it is already an absolute IRI — kept as written rather
+        // than expanded against the default-context @vocab.
+        let handle = offline_engine().batch_context_handle(&ContextSpec::none()).await;
+        pretty_assertions::assert_eq!(handle.term_map().expand_iri("did:example:123").as_ref(), "did:example:123");
     }
 }

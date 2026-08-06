@@ -44,26 +44,18 @@ impl EntityService {
 
         matching
             .into_iter()
-            .filter_map(|sub| {
-                let subscription_id: Uri = match sub.id.parse() {
-                    Ok(uri) => uri,
-                    Err(e) => {
-                        tracing::warn!(subscription_id = %sub.id, error = %e, "Skipping outbox entry: invalid subscription URI");
-                        return None;
-                    }
-                };
-                // clone: every entry owns its own copy of the entity id, the
-                // snapshots and the attribute names, all of which are borrowed here.
-                Some(
-                    NewOutboxEntry::builder()
-                        .subscription_id(subscription_id)
-                        .entity_id(entity_id.clone())
-                        .trigger(trigger)
-                        .entity_snapshot(entity_snapshot.cloned())
-                        .previous_snapshot(previous_snapshot.cloned())
-                        .changed_attrs(changed_attrs.to_vec())
-                        .build(),
-                )
+            .map(|sub| {
+                // clone: every entry owns its own copy of the subscription and
+                // entity ids, the snapshots and the attribute names, all of which
+                // are borrowed here.
+                NewOutboxEntry::builder()
+                    .subscription_id(sub.id.clone())
+                    .entity_id(entity_id.clone())
+                    .trigger(trigger)
+                    .entity_snapshot(entity_snapshot.cloned())
+                    .previous_snapshot(previous_snapshot.cloned())
+                    .changed_attrs(changed_attrs.to_vec())
+                    .build()
             })
             .collect()
     }

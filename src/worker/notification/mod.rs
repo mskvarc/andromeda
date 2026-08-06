@@ -10,11 +10,7 @@ use crate::{
         subscription_throttle::ceiling_for_throttle,
     },
 };
-use andromeda_delivery::{
-    dispatch::{DeliveryResult, TransportDispatcher},
-    endpoint::transport::EndpointTransport,
-    request::NotificationDelivery,
-};
+use andromeda_delivery::{dispatch::TransportDispatcher, endpoint::transport::EndpointTransport, request::NotificationDelivery};
 use andromeda_jsonld::engine::processor::JsonLdEngine;
 use andromeda_ngsi_ld_geometry::geometry::Geometry;
 use andromeda_ngsi_ld_lexicon::{
@@ -149,7 +145,7 @@ impl NotificationWorker {
         // transport was changed away from the streaming type.
         if let SubscriptionChange::Upserted(ref id) = change {
             let id_str = id.to_string();
-            if let Some(compiled) = self.cache.get(&id_str) {
+            if let Some(compiled) = self.cache.get(id) {
                 if !matches!(compiled.endpoint_transport, EndpointTransport::Sse) {
                     self.transport.sse_registry().close(&id_str);
                 }
@@ -287,7 +283,7 @@ impl NotificationWorker {
 
                     match self
                         .sub_repo
-                        .claim_notification_slot(&sub_id, ceiling_for_throttle(Utc::now(), compiled_sub.throttling_secs))
+                        .claim_notification_slot(sub_id.as_ref(), ceiling_for_throttle(Utc::now(), compiled_sub.throttling_secs))
                         .await
                     {
                         Ok(true) => {}
@@ -333,13 +329,8 @@ impl NotificationWorker {
                             return;
                         }
                     };
-                    let sub_uri = match sub_id.parse::<Uri>() {
-                        Ok(u) => u,
-                        Err(_) => {
-                            error!("Invalid subscription URI: {}", sub_id);
-                            return;
-                        }
-                    };
+                    // clone: the builder takes the id by value and `sub_id` is still needed for delivery
+                    let sub_uri = sub_id.clone();
                     let notification = Notification::builder()
                         .id(notification_id)
                         .type_(NotificationType)
@@ -358,10 +349,10 @@ impl NotificationWorker {
 
                     let request = match (NotificationDelivery {
                         payload: &notification_payload,
-                        endpoint_uri: compiled_sub.endpoint_uri.as_str(),
+                        endpoint_uri: &compiled_sub.endpoint_uri,
                         accept: compiled_sub.endpoint_accept.as_ref(),
                         receiver_info: compiled_sub.endpoint_receiver_info.as_deref(),
-                        jsonld_context: compiled_sub.jsonld_context.as_deref(),
+                        jsonld_context: compiled_sub.jsonld_context.as_ref(),
                         tenant: self.tenant.tenant_name(),
                         subscription_id: &sub_id,
                     })
@@ -373,16 +364,13 @@ impl NotificationWorker {
                             return;
                         }
                     };
-                    let success = matches!(
-                        self.transport.deliver(&compiled_sub.endpoint_transport, &request).await,
-                        DeliveryResult::Delivered
-                    );
+                    let success = self.transport.deliver(&compiled_sub.endpoint_transport, &request).await.is_delivered();
 
                     if success {
-                        if let Err(e) = self.sub_repo.mark_success(&sub_id).await {
+                        if let Err(e) = self.sub_repo.mark_success(sub_id.as_ref()).await {
                             debug!("Failed to mark notification success for {}: {}", sub_id, e);
                         }
-                    } else if let Err(e) = self.sub_repo.mark_failure(&sub_id).await {
+                    } else if let Err(e) = self.sub_repo.mark_failure(sub_id.as_ref()).await {
                         debug!("Failed to mark notification failure for {}: {}", sub_id, e);
                     }
                 }
@@ -408,7 +396,7 @@ impl NotificationWorker {
         // subscriptions that target it. A property the entity does not carry is
         // cached as absent too, so a miss is not re-read either.
         let mut geometries: HashMap<IriBuf, Option<Geometry>> = HashMap::new();
-        let mut survivors: HashSet<String> = HashSet::new();
+        let mut survivors: HashSet<Uri> = HashSet::new();
         let mut non_geo: Vec<Arc<CompiledSubscription>> = Vec::new();
 
         for sub in matching {
@@ -471,6 +459,7 @@ mod tests {
     };
     use andromeda_ngsi_ld_query::{filter::parser, scope::query::ScopeQuery};
     use payload::filter_entity_attributes;
+    use url::Url;
 
     fn make_event(entity_id: &str, types: Vec<&str>, trigger: TriggerReason, attrs: Vec<&str>) -> ChangeEvent {
         ChangeEvent::builder()
@@ -485,9 +474,9 @@ mod tests {
 
     fn make_sub(id: &str, selectors: Vec<EntitySelector>, triggers: Vec<&str>, watched: Option<Vec<&str>>) -> CompiledSubscription {
         CompiledSubscription {
-            id: id.to_string(),
+            id: format!("urn:ngsi-ld:Subscription:{id}").parse().expect("a valid subscription URI"),
             status: SubscriptionStatus::Active,
-            endpoint_uri: "http://example.com/notify".to_string(),
+            endpoint_uri: Url::parse("http://example.com/notify").expect("a valid endpoint URI"),
             endpoint_accept: None,
             endpoint_receiver_info: None,
             endpoint_transport: EndpointTransport::Http,

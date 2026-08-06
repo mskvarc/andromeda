@@ -9,6 +9,7 @@ workspace = true
 
 [dependencies]
 andromeda-ngsi-ld-geometry.workspace = true
+andromeda-ngsi-ld-lexicon.workspace = true
 andromeda-ngsi-ld-query.workspace = true
 andromeda-tenancy.workspace = true
 dashmap = { version = "6.1.0", features = ["inline"] }

@@ -56,7 +56,7 @@ impl NgsiLdProtocolHeaders {
     pub fn extensions(&self) -> ProtocolExtensions<'_> {
         ProtocolExtensions {
             scope: self.scope.as_ref().map(NgsiLdScope::as_str),
-            response_format: self.response_format.as_ref().map(NgsiLdResponseFormat::as_query_value),
+            response_format: self.response_format.as_ref().map(|format| <&'static str>::from(*format)),
             dataset_ids: self
                 .dataset_id
                 .as_ref()

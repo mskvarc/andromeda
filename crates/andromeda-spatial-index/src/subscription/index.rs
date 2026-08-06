@@ -2,6 +2,7 @@
 
 use crate::{key::SpatialKey, subscription::entry::SubEntry};
 use andromeda_ngsi_ld_geometry::{geo_rel::GeoRel, relation::matches_geo};
+use andromeda_ngsi_ld_lexicon::uri::Uri;
 use dashmap::DashMap;
 use geo::algorithm::BoundingRect;
 use parking_lot::RwLock;
@@ -18,7 +19,7 @@ pub struct SpatialSubscriptionIndex {
     /// One tree per partition.
     buckets: DashMap<SpatialKey, Arc<RwLock<RTree<SubEntry>>>>,
     /// Which partitions each subscription appears in.
-    by_sub: DashMap<String, Vec<SpatialKey>>,
+    by_sub: DashMap<Uri, Vec<SpatialKey>>,
 }
 
 impl SpatialSubscriptionIndex {
@@ -33,7 +34,7 @@ impl SpatialSubscriptionIndex {
     /// Already exact: each candidate the tree admits is put through the clause
     /// 4.10 predicate before it is returned, so the caller needs no second
     /// pass.
-    pub fn candidates(&self, key: &SpatialKey, entity_geometry: &geo::Geometry<f64>) -> Vec<String> {
+    pub fn candidates(&self, key: &SpatialKey, entity_geometry: &geo::Geometry<f64>) -> Vec<Uri> {
         let Some(bucket) = self.buckets.get(key) else {
             return Vec::new();
         };
@@ -89,7 +90,7 @@ impl SpatialSubscriptionIndex {
     }
 
     /// Remove every entry belonging to a subscription, across every partition.
-    pub fn remove(&self, subscription_id: &str) {
+    pub fn remove(&self, subscription_id: &Uri) {
         let Some((_, keys)) = self.by_sub.remove(subscription_id) else {
             return;
         };
@@ -99,7 +100,7 @@ impl SpatialSubscriptionIndex {
     }
 
     /// Drop a subscription from one partition, and forget that it was there.
-    fn remove_from_key(&self, subscription_id: &str, key: &SpatialKey) {
+    fn remove_from_key(&self, subscription_id: &Uri, key: &SpatialKey) {
         self.remove_from_bucket(subscription_id, key);
         if let Some(mut owned) = self.by_sub.get_mut(subscription_id) {
             owned.value_mut().retain(|held| held != key);
@@ -107,14 +108,14 @@ impl SpatialSubscriptionIndex {
     }
 
     /// Drop a subscription's entries from one partition's tree.
-    fn remove_from_bucket(&self, subscription_id: &str, key: &SpatialKey) {
+    fn remove_from_bucket(&self, subscription_id: &Uri, key: &SpatialKey) {
         let Some(bucket) = self.buckets.get(key) else {
             return;
         };
         let mut tree = bucket.value().write();
         // clone: `RTree::remove` takes the entry by reference and the borrow of
         // the tree it came from cannot outlive the removal
-        let to_remove: Vec<SubEntry> = tree.iter().filter(|entry| entry.subscription_id == subscription_id).cloned().collect();
+        let to_remove: Vec<SubEntry> = tree.iter().filter(|entry| &entry.subscription_id == subscription_id).cloned().collect();
         for entry in to_remove {
             tree.remove(&entry);
         }
@@ -128,9 +129,14 @@ mod tests {
         subscription::{entry::SubEntry, index::SpatialSubscriptionIndex},
     };
     use andromeda_ngsi_ld_geometry::geo_rel::GeoRel;
+    use andromeda_ngsi_ld_lexicon::uri::Uri;
     use andromeda_tenancy::tenant_ref::TenantRef;
     use geo::{Coord, LineString, Point, Polygon};
     use iri_rs::{IriBuf, iri};
+
+    fn uri(id: &str) -> Uri {
+        format!("urn:ngsi-ld:Subscription:{id}").parse().expect("a valid subscription URI")
+    }
 
     fn key() -> SpatialKey {
         SpatialKey::new(
@@ -164,14 +170,14 @@ mod tests {
     }
 
     fn entry(id: &str, reference: geo::Geometry<f64>, georel: GeoRel) -> SubEntry {
-        SubEntry::new(id.to_string(), reference, georel).expect("the reference geometry has a bounding rectangle")
+        SubEntry::new(uri(id), reference, georel).expect("the reference geometry has a bounding rectangle")
     }
 
     #[test]
     fn an_entity_inside_a_subscriptions_area_makes_it_a_candidate() {
         let index = SpatialSubscriptionIndex::new();
         index.insert(key(), entry("sub-1", square(0.0, 0.0, 1.0), GeoRel::Within));
-        pretty_assertions::assert_eq!(index.candidates(&key(), &point(0.5, 0.5)), vec!["sub-1".to_string()]);
+        pretty_assertions::assert_eq!(index.candidates(&key(), &point(0.5, 0.5)), vec![uri("sub-1")]);
     }
 
     #[test]
@@ -207,7 +213,7 @@ mod tests {
         );
 
         // ~4 km east is 0.036 degrees at the equator; ~6 km east is 0.054.
-        pretty_assertions::assert_eq!(index.candidates(&key(), &point(0.036, 0.0)), vec!["sub-5km".to_string()]);
+        pretty_assertions::assert_eq!(index.candidates(&key(), &point(0.036, 0.0)), vec![uri("sub-5km")]);
         assert!(index.candidates(&key(), &point(0.054, 0.0)).is_empty());
     }
 
@@ -215,7 +221,7 @@ mod tests {
     fn a_removed_subscription_stops_being_a_candidate() {
         let index = SpatialSubscriptionIndex::new();
         index.insert(key(), entry("sub-1", square(0.0, 0.0, 1.0), GeoRel::Within));
-        index.remove("sub-1");
+        index.remove(&uri("sub-1"));
         assert!(index.candidates(&key(), &point(0.0, 0.0)).is_empty());
     }
 
@@ -232,7 +238,7 @@ mod tests {
         index.insert(key(), entry("sub-disjoint", square(0.0, 0.0, 1.0), GeoRel::Disjoint));
         // Far outside the subscription's envelope, which is exactly when a
         // `disjoint` filter matches.
-        pretty_assertions::assert_eq!(index.candidates(&key(), &point(50.0, 50.0)), vec!["sub-disjoint".to_string()]);
+        pretty_assertions::assert_eq!(index.candidates(&key(), &point(50.0, 50.0)), vec![uri("sub-disjoint")]);
     }
 
     #[test]
@@ -243,8 +249,8 @@ mod tests {
         index.insert(key(), entry("sub-multi", square(0.0, 0.0, 1.0), GeoRel::Within));
         index.insert(observation_space_key(), entry("sub-multi", square(0.0, 0.0, 1.0), GeoRel::Within));
 
-        pretty_assertions::assert_eq!(index.candidates(&key(), &point(0.0, 0.0)), vec!["sub-multi".to_string()]);
-        pretty_assertions::assert_eq!(index.candidates(&observation_space_key(), &point(0.0, 0.0)), vec!["sub-multi".to_string()]);
+        pretty_assertions::assert_eq!(index.candidates(&key(), &point(0.0, 0.0)), vec![uri("sub-multi")]);
+        pretty_assertions::assert_eq!(index.candidates(&observation_space_key(), &point(0.0, 0.0)), vec![uri("sub-multi")]);
     }
 
     #[test]
@@ -266,7 +272,7 @@ mod tests {
             ),
         );
         // ~2 km east at the equator, well beyond the 300 m minimum.
-        pretty_assertions::assert_eq!(index.candidates(&key(), &point(0.018, 0.0)), vec!["sub-min".to_string()]);
+        pretty_assertions::assert_eq!(index.candidates(&key(), &point(0.018, 0.0)), vec![uri("sub-min")]);
     }
 
     #[test]

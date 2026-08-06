@@ -1,6 +1,7 @@
 //! One subscription's geo filter, as the tree holds it.
 
 use andromeda_ngsi_ld_geometry::{distance::grow_lonlat_bounds_metres, geo_rel::GeoRel};
+use andromeda_ngsi_ld_lexicon::uri::Uri;
 use geo::algorithm::BoundingRect;
 use rstar::{AABB, RTreeObject};
 
@@ -19,7 +20,7 @@ use rstar::{AABB, RTreeObject};
 #[derive(Debug, Clone, PartialEq)]
 pub struct SubEntry {
     /// Subscription identifier.
-    pub subscription_id: String,
+    pub subscription_id: Uri,
     /// The reference geometry the subscription filters against.
     pub ref_geometry: geo::Geometry<f64>,
     /// The relation the subscription asked for.
@@ -35,7 +36,7 @@ impl SubEntry {
     /// Takes the geometry and the relation rather than a compiled subscription:
     /// this crate indexes geo filters, and knowing what else a subscription
     /// carries would make an R-tree a subscription cache.
-    pub fn new(subscription_id: String, ref_geometry: geo::Geometry<f64>, georel: GeoRel) -> Option<SubEntry> {
+    pub fn new(subscription_id: Uri, ref_geometry: geo::Geometry<f64>, georel: GeoRel) -> Option<SubEntry> {
         let rect = ref_geometry.bounding_rect()?;
         let mut min = [rect.min().x, rect.min().y];
         let mut max = [rect.max().x, rect.max().y];
