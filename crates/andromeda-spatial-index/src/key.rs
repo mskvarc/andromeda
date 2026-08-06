@@ -2,7 +2,7 @@
 
 use andromeda_ngsi_ld_query::type_selection::grammar::TypeExpr;
 use andromeda_tenancy::tenant_ref::TenantRef;
-use iri_rs::IriBuf;
+use iri_rs::{IriBuf, iri};
 
 /// Partition key for both spatial indexes.
 ///
@@ -29,6 +29,19 @@ impl SpatialKey {
             geoproperty_iri,
         }
     }
+
+    /// The wildcard partition for a geo subscription that names no concrete
+    /// type — an empty selector list, or a boolean type expression the per-type
+    /// partitioning cannot enumerate.
+    ///
+    /// The subscription cache indexes such subscriptions here, and the
+    /// notification worker queries this same partition, so an untyped or
+    /// boolean-typed geo subscription is still reached for any entity change;
+    /// the residual filter then re-checks the real selector. Both sides mint the
+    /// key through this one constructor so the synthetic type IRI cannot drift.
+    pub fn any_type(tenant: TenantRef, geoproperty_iri: IriBuf) -> SpatialKey {
+        SpatialKey::new(tenant, IriBuf::from(iri!("urn:andromeda:spatial:any-type")), geoproperty_iri)
+    }
 }
 
 /// The concrete type IRIs a clause 4.17 type selection reaches.
@@ -54,12 +67,23 @@ pub fn flatten_or_type_iris(expr: &TypeExpr) -> Option<Vec<IriBuf>> {
 
 #[cfg(test)]
 mod tests {
-    use crate::key::flatten_or_type_iris;
+    use crate::key::{SpatialKey, flatten_or_type_iris};
     use andromeda_ngsi_ld_query::type_selection::grammar::TypeExpr;
-    use iri_rs::IriBuf;
+    use andromeda_tenancy::tenant_ref::TenantRef;
+    use iri_rs::{IriBuf, iri};
 
     fn type_expr(raw: &str) -> TypeExpr {
         TypeExpr::Type(IriBuf::new(raw.to_owned()).expect("a well-formed IRI"))
+    }
+
+    #[test]
+    fn the_wildcard_partition_key_is_the_same_for_writer_and_reader() {
+        // The cache writes under this key and the worker reads it; minting it
+        // through one constructor is what guarantees they cannot drift.
+        let geoproperty = IriBuf::from(iri!("https://uri.etsi.org/ngsi-ld/location"));
+        let written = SpatialKey::any_type(TenantRef::UnnamedDefault, geoproperty.clone());
+        let read = SpatialKey::any_type(TenantRef::UnnamedDefault, geoproperty);
+        pretty_assertions::assert_eq!(written, read);
     }
 
     #[test]

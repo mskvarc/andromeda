@@ -9,7 +9,7 @@ use crate::expanded::{
     null_sentinel::instance_is_null_sentinel,
 };
 use andromeda_ngsi_ld_vocabulary::expanded::properties;
-use serde_json::Value;
+use serde_json::{Map, Value};
 use std::slice::from_ref;
 
 /// NGSI-LD Merge Patch (clause 5.6.17, behaviour in 5.5.4): deep-merge `patch`
@@ -50,25 +50,35 @@ pub fn merge_entity(entity: &mut Value, patch: &Value) -> Result<(), ExpandedEnt
             }
         };
 
-        if !patch_instances.iter().any(instance_is_null_sentinel) {
-            deep_merge_attribute(entity_obj, key, patch_instances);
-            continue;
-        }
-
-        for patch_instance in patch_instances {
-            if instance_is_null_sentinel(patch_instance) {
-                let dataset_id = get_instance_dataset_id(patch_instance);
-                if dataset_id.is_none() {
-                    // A null sentinel without a datasetId deletes every instance.
-                    entity_obj.remove(key);
-                    break;
-                }
-                remove_instances_by_dataset(entity_obj, key, dataset_id.as_deref());
-            }
-        }
+        apply_instance_patch(entity_obj, key, patch_instances);
     }
 
     Ok(())
+}
+
+/// Apply one attribute's patch instances, which may mix live updates and null
+/// sentinels in a single array (clause 5.6.17 merge, clause 5.6.2 update).
+///
+/// Each instance is applied in turn: a null sentinel deletes instances by
+/// `datasetId` — the default instance when it carries none, per the instance
+/// semantics of clause 4.5.5 — and every other instance is deep-merged.
+/// Applying them one at a time is what keeps an update that shares the array
+/// with a sentinel from being dropped, and stops a datasetId-less sentinel from
+/// skipping the instances that follow it.
+fn apply_instance_patch(entity_obj: &mut Map<String, Value>, key: &str, patch_instances: &[Value]) {
+    if !patch_instances.iter().any(instance_is_null_sentinel) {
+        deep_merge_attribute(entity_obj, key, patch_instances);
+        return;
+    }
+
+    for patch_instance in patch_instances {
+        if instance_is_null_sentinel(patch_instance) {
+            let dataset_id = get_instance_dataset_id(patch_instance);
+            remove_instances_by_dataset(entity_obj, key, dataset_id.as_deref());
+        } else {
+            deep_merge_attribute(entity_obj, key, from_ref(patch_instance));
+        }
+    }
 }
 
 /// Append attributes (clause 5.6.3): add attributes from `attrs` to `entity`.
@@ -235,19 +245,7 @@ pub fn update_entity_attrs(entity: &mut Value, attrs: &Value) -> Result<Vec<Stri
             }
         };
 
-        if patch_instances.iter().any(instance_is_null_sentinel) {
-            for patch_instance in patch_instances {
-                if instance_is_null_sentinel(patch_instance) {
-                    let dataset_id = get_instance_dataset_id(patch_instance);
-                    remove_instances_by_dataset(entity_obj, key, dataset_id.as_deref());
-                } else {
-                    deep_merge_attribute(entity_obj, key, from_ref(patch_instance));
-                }
-            }
-        } else {
-            // Update by datasetId: replace matching instances, preserve others
-            deep_merge_attribute(entity_obj, key, patch_instances);
-        }
+        apply_instance_patch(entity_obj, key, patch_instances);
     }
 
     Ok(not_updated)
@@ -261,7 +259,87 @@ mod tests {
         selection::OverwritePolicy,
         speed_entity,
     };
-    use serde_json::json;
+    use serde_json::{Value, json};
+
+    /// One expanded Property instance carrying `value`, optionally tagged with a
+    /// `datasetId`. A `value` of `urn:ngsi-ld:null` is a deletion sentinel.
+    fn property_instance(value: Value, dataset: Option<&str>) -> Value {
+        let mut node = json!({
+            "@type": ["https://uri.etsi.org/ngsi-ld/Property"],
+            "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": value}]
+        });
+        if let Some(dataset) = dataset {
+            node["https://uri.etsi.org/ngsi-ld/datasetId"] = json!([{"@id": dataset}]);
+        }
+        node
+    }
+
+    /// An entity carrying `speed` with the given instances.
+    fn entity_with_speed(instances: Vec<Value>) -> Value {
+        json!([{ "@id": "urn:ngsi-ld:Device:1", "https://example.com/speed": instances }])
+    }
+
+    /// The `speed` instances of a merged entity.
+    fn speed_instances(entity: &Value) -> Vec<Value> {
+        entity[0]["https://example.com/speed"].as_array().cloned().unwrap_or_default()
+    }
+
+    #[test]
+    fn a_mixed_merge_array_deletes_one_dataset_and_applies_another() {
+        // Clause 5.6.17: a merge array that carries a null sentinel for
+        // datasetId A alongside a live update for datasetId B must delete A and
+        // apply B. The update must not be dropped for sharing the array with a
+        // sentinel.
+        let mut entity = entity_with_speed(vec![
+            property_instance(json!(10), Some("urn:ngsi-ld:Dataset:A")),
+            property_instance(json!(15), Some("urn:ngsi-ld:Dataset:B")),
+        ]);
+        let patch = entity_with_speed(vec![
+            property_instance(json!("urn:ngsi-ld:null"), Some("urn:ngsi-ld:Dataset:A")),
+            property_instance(json!(20), Some("urn:ngsi-ld:Dataset:B")),
+        ]);
+
+        merge_entity(&mut entity, &patch).expect("merge succeeds");
+
+        let instances = speed_instances(&entity);
+        pretty_assertions::assert_eq!(instances.len(), 1, "A deleted, B kept");
+        pretty_assertions::assert_eq!(instances[0]["https://uri.etsi.org/ngsi-ld/datasetId"][0]["@id"], json!("urn:ngsi-ld:Dataset:B"));
+        pretty_assertions::assert_eq!(instances[0]["https://uri.etsi.org/ngsi-ld/hasValue"][0]["@value"], json!(20));
+    }
+
+    #[test]
+    fn a_datasetless_null_sentinel_deletes_only_the_default_and_keeps_a_later_update() {
+        // The old code removed the whole attribute on a datasetId-less sentinel
+        // and broke out of the loop, dropping the datasetId B update that
+        // followed. The default instance must go while B survives and updates.
+        let mut entity = entity_with_speed(vec![
+            property_instance(json!(10), None),
+            property_instance(json!(15), Some("urn:ngsi-ld:Dataset:B")),
+        ]);
+        let patch = entity_with_speed(vec![
+            property_instance(json!("urn:ngsi-ld:null"), None),
+            property_instance(json!(20), Some("urn:ngsi-ld:Dataset:B")),
+        ]);
+
+        merge_entity(&mut entity, &patch).expect("merge succeeds");
+
+        let instances = speed_instances(&entity);
+        pretty_assertions::assert_eq!(instances.len(), 1, "the default instance is gone, B is kept");
+        pretty_assertions::assert_eq!(instances[0]["https://uri.etsi.org/ngsi-ld/datasetId"][0]["@id"], json!("urn:ngsi-ld:Dataset:B"));
+        pretty_assertions::assert_eq!(instances[0]["https://uri.etsi.org/ngsi-ld/hasValue"][0]["@value"], json!(20));
+    }
+
+    #[test]
+    fn a_datasetless_null_on_a_lone_default_instance_deletes_the_whole_attribute() {
+        // With only a default instance present, deleting it empties the array,
+        // so the attribute member itself is dropped — the common bare-null case.
+        let mut entity = entity_with_speed(vec![property_instance(json!(10), None)]);
+        let patch = entity_with_speed(vec![property_instance(json!("urn:ngsi-ld:null"), None)]);
+
+        merge_entity(&mut entity, &patch).expect("merge succeeds");
+
+        assert!(entity[0].get("https://example.com/speed").is_none(), "the attribute is gone");
+    }
 
     #[test]
     fn merge_entity_adds_new_attr() {

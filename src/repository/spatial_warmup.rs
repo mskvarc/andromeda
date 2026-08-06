@@ -33,6 +33,9 @@ pub struct WarmupStats {
 /// one partition per entity type.
 pub async fn warmup_location(index: &Arc<SpatialEntityIndex>, pool: &PgPool, tenant: &TenantRef) -> Result<WarmupStats, AndromedaError> {
     let started = Instant::now();
+    // Captured before the read so any live insert landing during the query is
+    // stamped with a later generation and cannot be clobbered by this rebuild.
+    let snapshot_generation = index.current_generation();
     // PostGIS hands the column back binary-encoded, so reading it as `bytea`
     // skips a GeoJSON round-trip per row.
     let rows = sqlx::query_as::<_, (String, Vec<String>, Vec<u8>)>("SELECT id, types, location::bytea FROM entities WHERE location IS NOT NULL")
@@ -72,7 +75,7 @@ pub async fn warmup_location(index: &Arc<SpatialEntityIndex>, pool: &PgPool, ten
     for (type_iri, entries) in per_type {
         total_entries += entries.len();
         // clone: one key per partition, all derived from the same tenant and geoproperty
-        index.bulk_load(SpatialKey::new(tenant.clone(), type_iri, location_iri.clone()), entries);
+        index.bulk_load(SpatialKey::new(tenant.clone(), type_iri, location_iri.clone()), entries, snapshot_generation);
     }
 
     let elapsed = started.elapsed();

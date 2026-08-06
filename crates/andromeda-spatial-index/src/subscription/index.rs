@@ -50,12 +50,15 @@ impl SpatialSubscriptionIndex {
             }
         }
 
-        // A `disjoint` subscription matches precisely the entries the envelope
-        // test discards, so it has to be looked for outside the envelope too.
-        // Rare enough to be worth a full scan: most `geoQ` filters are
-        // positive.
+        // `disjoint` and every `near` variant match entries the envelope test
+        // discards: `disjoint` matches away from the reference, and a `near`
+        // with only a `minDistance` (or one whose grown envelope still falls
+        // short) matches arbitrarily far from it. Both need the whole
+        // partition, mirroring the entity index's `candidates_for`. The scan
+        // only touches entries the envelope pass missed, so no entry is
+        // considered twice.
         for entry in tree.iter() {
-            if matches!(entry.georel, GeoRel::Disjoint)
+            if matches!(entry.georel, GeoRel::Disjoint | GeoRel::Near { .. })
                 && !entry.envelope.intersects(&envelope)
                 && matches_geo(&entry.georel, entity_geometry, &entry.ref_geometry)
             {
@@ -67,14 +70,22 @@ impl SpatialSubscriptionIndex {
     }
 
     /// Insert or replace one subscription's entry under one partition.
+    ///
+    /// Only this partition's copy of the subscription is replaced, not every
+    /// partition it appears in: a subscription with several `entities`
+    /// selectors is indexed once per selector, so a global removal here would
+    /// leave only the last selector's partition standing.
     pub fn insert(&self, key: SpatialKey, entry: SubEntry) {
-        self.remove(&entry.subscription_id);
+        self.remove_from_key(&entry.subscription_id, &key);
 
         let subscription_id = entry.subscription_id.clone(); // clone: the ownership record outlives the entry
         let bucket = self.buckets.entry(key.clone()).or_insert_with(|| Arc::new(RwLock::new(RTree::new()))); // clone: bucket key and ownership record are separate
         bucket.value().write().insert(entry);
 
-        self.by_sub.entry(subscription_id).or_default().push(key);
+        let mut owned_keys = self.by_sub.entry(subscription_id).or_default();
+        if !owned_keys.value().contains(&key) {
+            owned_keys.value_mut().push(key);
+        }
     }
 
     /// Remove every entry belonging to a subscription, across every partition.
@@ -83,16 +94,29 @@ impl SpatialSubscriptionIndex {
             return;
         };
         for key in keys {
-            let Some(bucket) = self.buckets.get(&key) else {
-                continue;
-            };
-            let mut tree = bucket.value().write();
-            // clone: `RTree::remove` takes the entry by reference and the borrow
-            // of the tree it came from cannot outlive the removal
-            let to_remove: Vec<SubEntry> = tree.iter().filter(|entry| entry.subscription_id == subscription_id).cloned().collect();
-            for entry in to_remove {
-                tree.remove(&entry);
-            }
+            self.remove_from_bucket(subscription_id, &key);
+        }
+    }
+
+    /// Drop a subscription from one partition, and forget that it was there.
+    fn remove_from_key(&self, subscription_id: &str, key: &SpatialKey) {
+        self.remove_from_bucket(subscription_id, key);
+        if let Some(mut owned) = self.by_sub.get_mut(subscription_id) {
+            owned.value_mut().retain(|held| held != key);
+        }
+    }
+
+    /// Drop a subscription's entries from one partition's tree.
+    fn remove_from_bucket(&self, subscription_id: &str, key: &SpatialKey) {
+        let Some(bucket) = self.buckets.get(key) else {
+            return;
+        };
+        let mut tree = bucket.value().write();
+        // clone: `RTree::remove` takes the entry by reference and the borrow of
+        // the tree it came from cannot outlive the removal
+        let to_remove: Vec<SubEntry> = tree.iter().filter(|entry| entry.subscription_id == subscription_id).cloned().collect();
+        for entry in to_remove {
+            tree.remove(&entry);
         }
     }
 }
@@ -209,5 +233,57 @@ mod tests {
         // Far outside the subscription's envelope, which is exactly when a
         // `disjoint` filter matches.
         pretty_assertions::assert_eq!(index.candidates(&key(), &point(50.0, 50.0)), vec!["sub-disjoint".to_string()]);
+    }
+
+    #[test]
+    fn a_two_selector_subscription_is_found_under_both_of_its_partitions() {
+        // One subscription indexed once per `entities` selector; the second
+        // insert must not wipe the first partition's entry (per-key removal).
+        let index = SpatialSubscriptionIndex::new();
+        index.insert(key(), entry("sub-multi", square(0.0, 0.0, 1.0), GeoRel::Within));
+        index.insert(observation_space_key(), entry("sub-multi", square(0.0, 0.0, 1.0), GeoRel::Within));
+
+        pretty_assertions::assert_eq!(index.candidates(&key(), &point(0.0, 0.0)), vec!["sub-multi".to_string()]);
+        pretty_assertions::assert_eq!(index.candidates(&observation_space_key(), &point(0.0, 0.0)), vec!["sub-multi".to_string()]);
+    }
+
+    #[test]
+    fn a_min_distance_only_near_subscription_is_found_for_a_far_entity() {
+        // Clause 4.10: a `near` with only a `minDistance` matches entities at
+        // least that far away, which no envelope can bound, so the partition is
+        // scanned whole. The bare reference envelope (a point) would otherwise
+        // miss the far entity entirely.
+        let index = SpatialSubscriptionIndex::new();
+        index.insert(
+            key(),
+            entry(
+                "sub-min",
+                point(0.0, 0.0),
+                GeoRel::Near {
+                    max_distance: None,
+                    min_distance: Some(300.0),
+                },
+            ),
+        );
+        // ~2 km east at the equator, well beyond the 300 m minimum.
+        pretty_assertions::assert_eq!(index.candidates(&key(), &point(0.018, 0.0)), vec!["sub-min".to_string()]);
+    }
+
+    #[test]
+    fn the_near_envelope_grows_the_longitude_axis_wider_at_high_latitude() {
+        // At 60N a metre spans ~twice the longitude it does at the equator, so
+        // the east-west grow must be ~2x the north-south grow rather than equal
+        // to it, or the reference falls outside a too-narrow envelope.
+        let entry = entry(
+            "sub-north",
+            point(0.0, 60.0),
+            GeoRel::Near {
+                max_distance: Some(5_000.0),
+                min_distance: None,
+            },
+        );
+        let width = entry.envelope.upper()[0] - entry.envelope.lower()[0];
+        let height = entry.envelope.upper()[1] - entry.envelope.lower()[1];
+        assert!(width > height * 1.9, "longitude grow {width} should be ~2x latitude grow {height} at 60N");
     }
 }

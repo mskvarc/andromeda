@@ -1,31 +1,36 @@
 //! Decoding GeoProperty values out of an expanded payload (ETSI GS CIM 009 clause 4.7).
 
+use crate::expanded::dataset_id::instance_has_dataset_id;
 use crate::expanded::node::expanded_object_ref;
 use andromeda_ngsi_ld_geometry::geometry::{Geometry, GeometryType};
 use andromeda_ngsi_ld_vocabulary::{expanded::properties, prefix};
 use geo::{Coord, Geometry as GeoGeometry, LineString, MultiLineString, MultiPoint, MultiPolygon, Point, Polygon};
-use iri_rs::Iri;
 use serde_json::Value;
 use std::str::FromStr;
 
 /// Extract the entity's `location` GeoProperty decoded into a [`Geometry`].
 pub fn extract_location_geometry(expanded: &Value) -> Option<Geometry> {
-    extract_geo_property_geometry(expanded, properties::LOCATION)
+    extract_geo_property_geometry(expanded, properties::LOCATION.as_str())
 }
 
 /// Extract the entity's `observationSpace` GeoProperty decoded into a [`Geometry`].
 pub fn extract_observation_space_geometry(expanded: &Value) -> Option<Geometry> {
-    extract_geo_property_geometry(expanded, properties::OBSERVATION_SPACE)
+    extract_geo_property_geometry(expanded, properties::OBSERVATION_SPACE.as_str())
 }
 
 /// Extract the entity's `operationSpace` GeoProperty decoded into a [`Geometry`].
 pub fn extract_operation_space_geometry(expanded: &Value) -> Option<Geometry> {
-    extract_geo_property_geometry(expanded, properties::OPERATION_SPACE)
+    extract_geo_property_geometry(expanded, properties::OPERATION_SPACE.as_str())
 }
 
-/// Decodes the GeoProperty named by `iri` into a [`Geometry`], accepting both
+/// Decode the GeoProperty named by `iri` into a [`Geometry`], accepting both
 /// the GeoJSON literal form and the fully expanded node form.
-fn extract_geo_property_geometry(expanded: &Value, iri: Iri<&'static str>) -> Option<Geometry> {
+///
+/// This is the single reader every geo path shares — the write/index side and
+/// the read/match side — so an entity is indexed against exactly the geometry
+/// it is later matched against. Which instance of a multi-instance GeoProperty
+/// it reads is fixed by [`geo_node_for_property`], not by array order.
+pub fn extract_geo_property_geometry(expanded: &Value, iri: &str) -> Option<Geometry> {
     let geo_node = geo_node_for_property(expanded, iri)?;
     if let Some(literal) = geo_node.get("@value") {
         return literal_geojson_to_geometry(literal);
@@ -36,17 +41,28 @@ fn extract_geo_property_geometry(expanded: &Value, iri: Iri<&'static str>) -> Op
 /// Look up the inner GeoJSON node for an expanded GeoProperty attribute.
 ///
 /// Returns the "{@type, ...coordinates}" object that lives at
-/// `expanded[iri][..].hasValue[0]`, ignoring whether the value was inlined
-/// as a literal `@value` or expanded as a nested JSON-LD GeoJSON node —
-/// callers branch on the presence of `@value` to pick the decoding path.
-fn geo_node_for_property<'a>(expanded: &'a Value, iri: Iri<&'static str>) -> Option<&'a Value> {
+/// `expanded[iri][<default instance>].hasValue[0]`, ignoring whether the value
+/// was inlined as a literal `@value` or expanded as a nested JSON-LD GeoJSON
+/// node — callers branch on the presence of `@value` to pick the decoding path.
+///
+/// The instance is chosen by clause 4.5.16.1: the default instance is the one
+/// carrying no `datasetId`. When several instances exist, the default is taken;
+/// when every instance is tagged, the spec defines no precedence, so the first
+/// is used. Selection is deliberate rather than an accident of `first()` versus
+/// `last()`, so the index and the matcher can never disagree.
+fn geo_node_for_property<'a>(expanded: &'a Value, iri: &str) -> Option<&'a Value> {
     let obj = expanded_object_ref(expanded)?;
-    let prop = obj.get(iri.as_str())?;
-    prop.as_array()
-        .and_then(|arr| arr.last())
-        .and_then(|inst| inst.get(properties::VALUE.as_str()))
+    let instances = obj.get(iri)?.as_array()?;
+    default_instance(instances)?
+        .get(properties::VALUE.as_str())
         .and_then(|v| v.as_array())
         .and_then(|arr| arr.first())
+}
+
+/// Select the default instance of a multi-attribute (clause 4.5.16.1): the one
+/// carrying no `datasetId`, falling back to the first when all are tagged.
+fn default_instance(instances: &[Value]) -> Option<&Value> {
+    instances.iter().find(|instance| !instance_has_dataset_id(instance)).or_else(|| instances.first())
 }
 
 /// Decode a literal-GeoJSON `@value` (string or already-compact object) into a [`Geometry`].
@@ -176,9 +192,20 @@ fn walk_polygon_list(node: &Value) -> Option<Vec<Polygon<f64>>> {
 
 #[cfg(test)]
 mod tests {
-    use crate::expanded::geo_property::{expanded_geo_node_to_geometry, extract_location_geometry};
+    use crate::expanded::geo_property::{expanded_geo_node_to_geometry, extract_geo_property_geometry, extract_location_geometry};
     use andromeda_ngsi_ld_geometry::geometry::Geometry;
     use serde_json::json;
+
+    const LOCATION: &str = "https://uri.etsi.org/ngsi-ld/location";
+
+    /// Wrap a `location` GeoProperty carrying `value` in one instance, without a
+    /// `datasetId`.
+    fn located(value: serde_json::Value) -> serde_json::Value {
+        json!([{
+            "@id": "urn:ngsi-ld:Building:001",
+            LOCATION: [{ "https://uri.etsi.org/ngsi-ld/hasValue": [{ "@value": value }] }]
+        }])
+    }
 
     /// Build the expected [`Geometry`] for a known compact-GeoJSON object by
     /// routing through the `from_geojson_value` path; the direct walker must
@@ -328,5 +355,96 @@ mod tests {
         }]);
         let compact = json!({"type": "Point", "coordinates": [16.37_f64, 48.20_f64]});
         pretty_assertions::assert_eq!(extract_location_geometry(&entity).expect("location WKB"), geometry_from_compact(&compact));
+    }
+
+    #[test]
+    fn a_geoproperty_written_as_a_literal_object_is_read_as_a_geometry() {
+        // Clause 4.7 permits the GeoJSON literal to arrive as an inline object.
+        let entity = located(json!({"type": "Point", "coordinates": [13.4, 52.5]}));
+        assert!(extract_location_geometry(&entity).is_some());
+    }
+
+    #[test]
+    fn a_geoproperty_written_as_a_json_string_is_read_as_a_geometry() {
+        // Clause 4.7 permits the GeoJSON document to arrive as a string.
+        let entity = located(json!("{\"type\":\"Point\",\"coordinates\":[13.4,52.5]}"));
+        assert!(extract_location_geometry(&entity).is_some());
+    }
+
+    #[test]
+    fn an_entity_that_carries_no_such_geoproperty_yields_no_geometry() {
+        let entity = json!([{"@id": "urn:ngsi-ld:Building:001"}]);
+        assert!(extract_geo_property_geometry(&entity, LOCATION).is_none());
+    }
+
+    #[test]
+    fn a_geoproperty_whose_value_is_not_geojson_yields_no_geometry() {
+        let entity = located(json!("not geojson"));
+        assert!(extract_location_geometry(&entity).is_none());
+    }
+
+    #[test]
+    fn the_default_instance_is_read_regardless_of_array_order() {
+        // Clause 4.5.16.1: the default instance is the one without a datasetId.
+        // The tagged instance is placed first to prove selection is by datasetId
+        // absence, not by array position: the write/index and read/match paths
+        // must pick the same instance so an index hit and a store re-check agree.
+        let entity = json!([{
+            "@id": "urn:ngsi-ld:Building:001",
+            LOCATION: [
+                {
+                    "https://uri.etsi.org/ngsi-ld/hasValue": [{ "@value": {"type": "Point", "coordinates": [0.0, 0.0]} }],
+                    "https://uri.etsi.org/ngsi-ld/datasetId": [{"@id": "urn:ngsi-ld:Dataset:tagged"}]
+                },
+                {
+                    "https://uri.etsi.org/ngsi-ld/hasValue": [{ "@value": {"type": "Point", "coordinates": [13.4, 52.5]} }]
+                }
+            ]
+        }]);
+        let compact = json!({"type": "Point", "coordinates": [13.4, 52.5]});
+        pretty_assertions::assert_eq!(extract_location_geometry(&entity).expect("default instance geometry"), geometry_from_compact(&compact));
+    }
+
+    #[test]
+    fn when_every_instance_is_tagged_the_first_is_read() {
+        // No datasetId-less instance exists, so no default is defined; the first
+        // is taken deterministically rather than the last.
+        let entity = json!([{
+            "@id": "urn:ngsi-ld:Building:001",
+            LOCATION: [
+                {
+                    "https://uri.etsi.org/ngsi-ld/hasValue": [{ "@value": {"type": "Point", "coordinates": [13.4, 52.5]} }],
+                    "https://uri.etsi.org/ngsi-ld/datasetId": [{"@id": "urn:ngsi-ld:Dataset:A"}]
+                },
+                {
+                    "https://uri.etsi.org/ngsi-ld/hasValue": [{ "@value": {"type": "Point", "coordinates": [0.0, 0.0]} }],
+                    "https://uri.etsi.org/ngsi-ld/datasetId": [{"@id": "urn:ngsi-ld:Dataset:B"}]
+                }
+            ]
+        }]);
+        let compact = json!({"type": "Point", "coordinates": [13.4, 52.5]});
+        pretty_assertions::assert_eq!(extract_location_geometry(&entity).expect("first tagged geometry"), geometry_from_compact(&compact));
+    }
+
+    #[test]
+    fn the_expanded_node_form_is_read_for_an_arbitrary_geoproperty_iri() {
+        // The single reader answers for any GeoProperty IRI, not only the three
+        // well-known ones, and handles the fully expanded node form.
+        let entity = json!([{
+            "@id": "urn:ngsi-ld:Entity:001",
+            "https://example.com/site": [{
+                "https://uri.etsi.org/ngsi-ld/hasValue": [{
+                    "@type": ["https://purl.org/geojson/vocab#Point"],
+                    "https://purl.org/geojson/vocab#coordinates": [
+                        {"@list": [{"@value": 16.37_f64}, {"@value": 48.20_f64}]}
+                    ]
+                }]
+            }]
+        }]);
+        let compact = json!({"type": "Point", "coordinates": [16.37_f64, 48.20_f64]});
+        pretty_assertions::assert_eq!(
+            extract_geo_property_geometry(&entity, "https://example.com/site").expect("arbitrary geoproperty"),
+            geometry_from_compact(&compact)
+        );
     }
 }

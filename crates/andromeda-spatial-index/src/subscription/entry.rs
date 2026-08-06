@@ -1,17 +1,21 @@
 //! One subscription's geo filter, as the tree holds it.
 
-use andromeda_ngsi_ld_geometry::{distance::metres_to_degrees_coarse, geo_rel::GeoRel};
+use andromeda_ngsi_ld_geometry::{distance::grow_lonlat_bounds_metres, geo_rel::GeoRel};
 use geo::algorithm::BoundingRect;
 use rstar::{AABB, RTreeObject};
 
 /// A single subscription's geo filter.
 ///
-/// For a `near` filter the envelope is the reference geometry's bounding
-/// rectangle grown by a coarse metres-to-degrees conversion of `maxDistance`.
-/// The expansion is deliberately over-selective — roughly 1.1% larger than
-/// needed at the equator and more at higher latitudes — because the exact
-/// Haversine check in [`SpatialSubscriptionIndex::candidates`](crate::subscription::index::SpatialSubscriptionIndex::candidates)
-/// rejects the false positives and no check can recover a false negative.
+/// For a `near` filter with a `maxDistance` the envelope is the reference
+/// geometry's bounding rectangle grown by a metres-to-degrees conversion of
+/// that distance: the latitude axis by the near-constant degrees-per-metre, the
+/// longitude axis by the wider `1 / cos(latitude)` amount an east-west metre
+/// spans away from the equator. The expansion is deliberately over-selective —
+/// it never under-covers — because the exact Haversine check in
+/// [`SpatialSubscriptionIndex::candidates`](crate::subscription::index::SpatialSubscriptionIndex::candidates)
+/// rejects the false positives, and a `near` with only a `minDistance` (or one
+/// whose grown envelope still falls short) is caught by that method's
+/// whole-partition rescue, so no check ever has to recover a false negative.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SubEntry {
     /// Subscription identifier.
@@ -40,11 +44,10 @@ impl SubEntry {
             max_distance: Some(metres), ..
         } = &georel
         {
-            let degrees = metres_to_degrees_coarse(*metres);
-            min[0] -= degrees;
-            min[1] -= degrees;
-            max[0] += degrees;
-            max[1] += degrees;
+            // Grow the reference box outward by `maxDistance`, widening the
+            // east-west axis correctly with latitude via a great-circle
+            // destination rather than a flat degrees-per-metre factor.
+            (min, max) = grow_lonlat_bounds_metres(min, max, *metres);
         }
 
         Some(SubEntry {

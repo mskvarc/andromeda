@@ -3,14 +3,14 @@
 //! The reference reading of `georel` is
 //! [`andromeda_ngsi_ld_geometry::relation::matches_geo`], and reading a named
 //! GeoProperty off an expanded payload is
-//! [`extract_geoproperty_geometry`]. This is the one place the two are joined,
+//! [`extract_geo_property_geometry`]. This is the one place the two are joined,
 //! so subscription matching, interval notification and residual filtering all
 //! answer a geo-query the same way.
 //!
-//! [`extract_geoproperty_geometry`]: andromeda_ngsi_ld_model::expanded::entity_member::extract_geoproperty_geometry
+//! [`extract_geo_property_geometry`]: andromeda_ngsi_ld_model::expanded::geo_property::extract_geo_property_geometry
 
 use andromeda_ngsi_ld_geometry::relation::matches_geo;
-use andromeda_ngsi_ld_model::expanded::entity_member::extract_geoproperty_geometry;
+use andromeda_ngsi_ld_model::expanded::geo_property::extract_geo_property_geometry;
 use andromeda_ngsi_ld_query::geo::query::GeoQuery;
 use serde_json::Value;
 
@@ -20,7 +20,7 @@ use serde_json::Value;
 /// satisfy any `georel`: clause 4.10 evaluates a spatial relationship between
 /// two geometries, and an absent one has no relationship to evaluate.
 pub fn matches_geo_query(geo_query: &GeoQuery, expanded: &Value) -> bool {
-    let Some(subject) = extract_geoproperty_geometry(expanded, geo_query.geoproperty_iri.as_str()) else {
+    let Some(subject) = extract_geo_property_geometry(expanded, geo_query.geoproperty_iri.as_str()) else {
         return false;
     };
     matches_geo(&geo_query.georel, subject.as_ref(), geo_query.geometry.as_ref())

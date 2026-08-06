@@ -214,39 +214,37 @@ impl SubscriptionCache {
             return;
         };
 
-        // A subscription without selectors matches every type; index under a
-        // synthetic wildcard key so find_matching can look it up regardless
-        // of event type. Concretely-typed subscriptions index under every
-        // selector type they name. A selector whose type is a boolean
-        // expression falls back to the wildcard bucket -- matching the
-        // `untyped` fallback used by the by_type index.
-        let mut indexed_any_type = false;
+        // A concretely-typed selector indexes under every type it names. A
+        // subscription with no selectors matches every type, and a selector
+        // whose type is a boolean expression matches types the per-type
+        // partitioning cannot enumerate; both are indexed under the wildcard
+        // partition (shared with the notification worker) so the subscription
+        // is still reached and the residual filter re-checks the real selector.
+        // A selector mixing a concrete and a boolean type therefore gets both a
+        // concrete entry and a wildcard one, rather than losing the boolean arm.
+        let mut needs_wildcard = compiled.selectors.is_empty();
         for selector in &compiled.selectors {
             let Some(type_name) = selector.type_.as_single_type() else {
+                needs_wildcard = true;
                 continue;
             };
             match IriBuf::new(type_name.to_owned()) {
                 Ok(type_iri) => {
                     let key = SpatialKey::new(self.tenant.clone(), type_iri, geoproperty_iri.clone());
                     self.spatial.insert(key, entry.clone());
-                    indexed_any_type = true;
                 }
                 Err(_) => {
                     debug!(
-                        "Subscription {} spatial index skipped selector type '{}': not a valid IRI",
+                        "Subscription {} spatial index selector type '{}' is not a valid IRI; indexing under the wildcard partition",
                         compiled.id, type_name
                     );
+                    needs_wildcard = true;
                 }
             }
         }
-        if !indexed_any_type {
-            // No concrete type selector -> index under a wildcard type IRI so
-            // the cache can still reach the subscription when the caller
-            // enumerates keys for cross-type matching.
-            if let Ok(wildcard) = IriBuf::new("urn:andromeda:spatial:any-type".to_string()) {
-                let key = SpatialKey::new(self.tenant.clone(), wildcard, geoproperty_iri);
-                self.spatial.insert(key, entry);
-            }
+        if needs_wildcard {
+            let key = SpatialKey::any_type(self.tenant.clone(), geoproperty_iri);
+            self.spatial.insert(key, entry);
         }
     }
 }

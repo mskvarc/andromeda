@@ -15,11 +15,14 @@
 use crate::{
     context_spec::{ContextSpec, CoreContextPolicy},
     core_context::{ANDROMEDA_CORE_CONTEXT_URL, is_ngsi_ld_core_context_url},
-    engine::context_url::is_full_iri,
+    engine::{
+        context_url::is_full_iri,
+        core_term_semantics::{container_of, coercion_of, core_term_semantics},
+    },
     error::JsonLdError,
     loader::http::HttpContextLoader,
 };
-use andromeda_ngsi_ld_vocabulary::{COMPACT_TO_EXPANDED, expanded::classes};
+use andromeda_ngsi_ld_vocabulary::COMPACT_TO_EXPANDED;
 use dashmap::DashMap;
 use serde_json::Value;
 use std::{borrow::Cow, collections::HashMap, sync::Arc};
@@ -37,13 +40,16 @@ const GEOJSON_PREFIX: &str = "https://purl.org/geojson/vocab#";
 /// request's own.
 #[derive(Debug, Clone)]
 pub struct BatchTermMap {
-    /// Term name to resolved IRI, coercion and scoped-context flag.
+    /// Term name to resolved IRI, coercion, container and scoped-context flag.
     terms: HashMap<Box<str>, ResolvedTerm>,
     /// The active `@vocab`, which any term not otherwise defined falls back to.
     vocab: Box<str>,
     /// Prefix definitions, longest first so `exFoo:bar` beats `ex:` per
     /// JSON-LD 1.1 clause 4.4.
     prefix_table: Vec<(Box<str>, Box<str>)>,
+    /// The core context URL this batch resolves versionless references to, so
+    /// an entity's inline core context can be checked against it.
+    core_url: Box<str>,
     /// Whether the fastpath may run against this table.
     eligibility: FastpathEligibility,
 }
@@ -76,6 +82,8 @@ struct ResolvedTerm {
     iri: Box<str>,
     /// The `@type` coercion declared for it, if any.
     coercion: Option<TermCoercion>,
+    /// The `@container` declared for it, if any.
+    container: Option<TermContainer>,
     /// Whether it carries a scoped `@context`.
     has_scoped_context: bool,
 }
@@ -96,18 +104,42 @@ struct UserTermTable {
 
 /// The `@type` coercion a term declares.
 ///
-/// The core context's two hard-coded shapes are separate variants because
-/// they need no resolution; a user-declared type is kept as written and
-/// resolved through [`BatchTermMap::expand_iri`] at emit time, so a prefix
-/// the same context declared applies to it too.
+/// The core context's fixed shapes are their own variants because they need no
+/// resolution; a user-declared datatype is kept as written and resolved
+/// through [`BatchTermMap::expand_iri`] at emit time, so a prefix the same
+/// context declared applies to it too.
 #[derive(Debug, Clone)]
 pub(crate) enum TermCoercion {
-    /// Emitted as `{"@type": "<NGSI-LD DateTime IRI>", "@value": "<ISO>"}`.
+    /// `@type: DateTime`: emitted as `{"@type": "<NGSI-LD DateTime IRI>", "@value": "<ISO>"}`.
     DateTime,
-    /// Emitted as `{"@id": "<value>"}`.
+    /// `@type: @id`: emitted as `{"@id": "<value>"}`.
     Id,
-    /// Emitted as `{"@type": "<the expanded user IRI>", "@value": "<s>"}`.
+    /// `@type: @vocab`: the value is a term, expanded against the active
+    /// `@vocab` and emitted as `{"@id": "<expanded>"}`.
+    Vocab,
+    /// `@type: @json`: the value is kept verbatim as a JSON literal, emitted as
+    /// `{"@type": "@json", "@value": <value>}`.
+    Json,
+    /// A user datatype: emitted as `{"@type": "<the expanded user IRI>", "@value": "<s>"}`.
     TypeIri(Box<str>),
+}
+
+/// The `@container` a term declares.
+///
+/// The fastpath models none of these on a metadata member — each reshapes the
+/// value in a way the flat walker does not unfold — so a term carrying one is
+/// refused rather than mis-expanded. The variants are named after the JSON-LD
+/// keywords so the derivation reads exactly what the context wrote.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TermContainer {
+    /// `@container: @list`.
+    List,
+    /// `@container: @language`.
+    Language,
+    /// `@container: @index`.
+    Index,
+    /// `@container: @set`.
+    Set,
 }
 
 impl BatchTermMap {
@@ -147,6 +179,20 @@ impl BatchTermMap {
     /// Whether a term carries a scoped `@context`.
     pub(crate) fn term_has_scoped_context(&self, term: &str) -> bool {
         self.terms.get(term).is_some_and(|resolved| resolved.has_scoped_context)
+    }
+
+    /// Whether a term declares a `@container` the fastpath does not model.
+    ///
+    /// A `@list`, `@language`, `@index` or `@set` container reshapes the value
+    /// in a way the flat walker cannot unfold, so a metadata member carrying
+    /// one is refused rather than mis-expanded.
+    pub(crate) fn term_has_container(&self, term: &str) -> bool {
+        self.terms.get(term).is_some_and(|resolved| resolved.container.is_some())
+    }
+
+    /// The core context URL this batch resolves versionless references to.
+    pub(crate) fn effective_core_url(&self) -> &str {
+        &self.core_url
     }
 }
 
@@ -198,15 +244,25 @@ impl UserTermTableCache {
 
 /// Build the term table for one [`ContextSpec`].
 pub(crate) async fn build_batch_term_map(spec: &ContextSpec, loader: &HttpContextLoader, cache: &UserTermTableCache) -> BatchTermMap {
+    // The IRI of every core term comes from the compile-time table the vocab
+    // macro derived from the core context; its coercion, container and
+    // scoped-context flag come from the same context document, parsed for the
+    // version this deployment pinned (clause 4.3.6.8). Both halves are read
+    // from the context rather than restated, so the fastpath cannot drift from
+    // what the processor does.
+    let core_url = spec.effective_core_url();
+    let semantics = core_term_semantics(core_url);
     let mut terms: HashMap<Box<str>, ResolvedTerm> = COMPACT_TO_EXPANDED
         .iter()
         .map(|(compact, expanded)| {
+            let declared = semantics.get(*compact);
             (
                 Box::<str>::from(*compact),
                 ResolvedTerm {
                     iri: Box::<str>::from(*expanded),
-                    coercion: core_term_coercion(compact),
-                    has_scoped_context: false,
+                    coercion: declared.and_then(|term| term.coercion.clone()),
+                    container: declared.and_then(|term| term.container),
+                    has_scoped_context: declared.is_some_and(|term| term.has_scoped_context),
                 },
             )
         })
@@ -246,20 +302,8 @@ pub(crate) async fn build_batch_term_map(spec: &ContextSpec, loader: &HttpContex
         terms,
         vocab,
         prefix_table,
+        core_url: Box::<str>::from(core_url),
         eligibility,
-    }
-}
-
-/// The `@type` coercions the NGSI-LD core context declares.
-///
-/// Mirrors the embedded core context's own declarations for the term names
-/// listed in ETSI GS CIM 009 v1.9.1 annex B.
-fn core_term_coercion(term: &str) -> Option<TermCoercion> {
-    match term {
-        "observedAt" | "createdAt" | "modifiedAt" | "expiresAt" | "deletedAt" | "startAt" | "endAt" | "timeAt" | "instanceTimeAt" | "previousTime"
-        | "timestamp" | "notifiedAt" | "lastNotification" | "lastSuccess" | "lastFailure" => Some(TermCoercion::DateTime),
-        "datasetId" | "instanceId" => Some(TermCoercion::Id),
-        _other => None,
     }
 }
 
@@ -314,6 +358,7 @@ fn parse_term_declaration(term: &str, declaration: &Value, table: &mut UserTermT
                 ResolvedTerm {
                     iri: Box::<str>::from(iri.as_str()),
                     coercion: None,
+                    container: None,
                     has_scoped_context: false,
                 },
             );
@@ -331,6 +376,7 @@ fn parse_term_declaration(term: &str, declaration: &Value, table: &mut UserTermT
                 ResolvedTerm {
                     iri: Box::<str>::from(iri),
                     coercion: declared_coercion(definition.get("@type").and_then(Value::as_str)),
+                    container: container_of(definition.get("@container").and_then(Value::as_str)),
                     has_scoped_context,
                 },
             );
@@ -342,14 +388,12 @@ fn parse_term_declaration(term: &str, declaration: &Value, table: &mut UserTermT
 }
 
 /// The coercion a term's `@type` declaration asks for.
+///
+/// The four JSON-LD coercions the core context also uses are read by
+/// [`coercion_of`]; anything else a request context names is an arbitrary
+/// datatype IRI, kept as a [`TermCoercion::TypeIri`] and resolved at emit time.
 fn declared_coercion(declared_type: Option<&str>) -> Option<TermCoercion> {
-    match declared_type {
-        Some("@id") => Some(TermCoercion::Id),
-        Some("DateTime") => Some(TermCoercion::DateTime),
-        Some(declared) if declared == classes::DATE_TIME.as_str() => Some(TermCoercion::DateTime),
-        Some(declared) => Some(TermCoercion::TypeIri(Box::<str>::from(declared))),
-        None => None,
-    }
+    coercion_of(declared_type).or_else(|| declared_type.map(|declared| TermCoercion::TypeIri(Box::<str>::from(declared))))
 }
 
 /// Merge one request context into the accumulating batch table.

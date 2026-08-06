@@ -22,7 +22,7 @@ use andromeda_ngsi_ld_lexicon::{
     uri::{NGSI_LD_URN_NID, Uri},
 };
 use andromeda_ngsi_ld_model::{
-    expanded::entity_member::extract_geoproperty_geometry,
+    expanded::geo_property::extract_geo_property_geometry,
     notification::{ChangeEvent, Notification, NotificationType, SubscriptionChange, TriggerReason},
 };
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
@@ -420,7 +420,7 @@ impl NotificationWorker {
             let geoproperty_iri = &geo_q.geoproperty_iri;
             if !geometries.contains_key(geoproperty_iri) {
                 // clone: the cache owns its key, which the subscription keeps
-                let geometry = extract_geoproperty_geometry(entity_data, geoproperty_iri.as_str());
+                let geometry = extract_geo_property_geometry(entity_data, geoproperty_iri.as_str());
                 geometries.insert(geoproperty_iri.clone(), geometry);
             }
             // The entity carries no instance of this geoproperty, so no
@@ -439,6 +439,16 @@ impl NotificationWorker {
                 if candidates.iter().any(|candidate| candidate == &sub.id) {
                     matched_any = true;
                     break;
+                }
+            }
+            // An untyped or boolean-typed geo subscription is indexed under the
+            // wildcard partition, which no concrete-type key reaches; query it
+            // too, or such a subscription is never evaluated and silently
+            // dropped (clause 4.10 still applies to it).
+            if !matched_any {
+                let key = SpatialKey::any_type(tenant.clone(), geoproperty_iri.clone());
+                if spatial.candidates(&key, entity_geometry.as_ref()).iter().any(|candidate| candidate == &sub.id) {
+                    matched_any = true;
                 }
             }
             if matched_any && survivors.insert(sub.id.clone()) {

@@ -10,7 +10,7 @@ mod worker;
 
 use andromeda_jsonld::{
     context_spec::{default_core_context_url, set_default_core_context_url},
-    core_context::NGSI_LD_CORE_CONTEXT_V18_URL,
+    core_context::NGSI_LD_CORE_CONTEXT_V19_URL,
 };
 use clap::Parser;
 use core::{
@@ -42,8 +42,10 @@ async fn main() -> Result<(), AndromedaError> {
             let subscriber = fmt().compact().with_max_level(config.observability.log_level.as_tracing_level()).finish();
             tracing::subscriber::set_global_default(subscriber)?;
 
-            // Set the default core context URL to v1.8 (ETSI test suite expectation)
-            set_default_core_context_url(NGSI_LD_CORE_CONTEXT_V18_URL);
+            // Pin the deployment to the latest released core context (v1.9), the
+            // version the compile-time vocabulary table is derived from, so the
+            // fastpath term table and the deployment agree (clause 4.3.6.8).
+            set_default_core_context_url(NGSI_LD_CORE_CONTEXT_V19_URL);
             info!("JSON-LD core context URL: {}", default_core_context_url());
             info!(
                 host = %config.server.host,

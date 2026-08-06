@@ -31,7 +31,10 @@ mod tests {
     use andromeda_jsonld::engine::processor::JsonLdEngine;
     use andromeda_ngsi_ld_geometry::{geo_rel::GeoRel, geometry::Geometry, relation::matches_geo};
     use andromeda_ngsi_ld_model::{
-        expanded::entity_member::{extract_geoproperty_geometry, extract_id, extract_scopes, extract_types},
+        expanded::{
+            entity_member::{extract_id, extract_scopes, extract_types},
+            geo_property::extract_geo_property_geometry,
+        },
         notification::SysAttrsSnapshot,
     };
     use andromeda_ngsi_ld_query::{
@@ -61,7 +64,7 @@ mod tests {
     fn reference_matches(selection: &EntitySelection, entity: &Value) -> bool {
         let q_holds = selection.q_expr.as_ref().is_none_or(|expr| eval::evaluate(expr, entity));
         let geo_holds = selection.geo.as_ref().is_none_or(|geo| {
-            extract_geoproperty_geometry(entity, geo.geoproperty_iri.as_str())
+            extract_geo_property_geometry(entity, geo.geoproperty_iri.as_str())
                 .is_some_and(|subject| matches_geo(&geo.georel, subject.as_ref(), geo.geometry.as_ref()))
         });
         let scope_holds = selection.scope_q.as_ref().is_none_or(|scope_q| scope_q.matches(&extract_scopes(entity)));

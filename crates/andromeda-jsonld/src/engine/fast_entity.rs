@@ -8,7 +8,7 @@
 //! not certain of answers `None` and the caller falls back.
 
 use crate::{
-    core_context::{ANDROMEDA_CORE_CONTEXT_URL, is_ngsi_ld_core_context_url},
+    core_context::{ANDROMEDA_CORE_CONTEXT_URL, same_core_context_document},
     engine::{expanded_key, fast_attribute::expand_attribute, term_map::BatchTermMap},
 };
 use serde_json::{Map, Value};
@@ -36,7 +36,7 @@ fn expand_entity(entity: &Map<String, Value>, term_map: &BatchTermMap) -> Option
     // A per-entity `@context` overriding the batch's is clause 5.5.7 working
     // as specified, and it is exactly what this walker cannot honour.
     if let Some(context) = entity.get("@context")
-        && !names_core_contexts_only(context)
+        && !names_core_contexts_only(context, term_map.effective_core_url())
     {
         return None;
     }
@@ -93,21 +93,26 @@ fn expand_entity_types(value: &Value, term_map: &BatchTermMap) -> Option<Value> 
     Some(Value::Array(iris))
 }
 
-/// Whether a per-entity `@context` names nothing but core contexts.
+/// Whether a per-entity `@context` names nothing but the core context the
+/// batch already resolved against.
 ///
-/// Those the batch handle already accounts for; anything else redefines
-/// terms this walker resolved from the batch table.
-fn names_core_contexts_only(context: &Value) -> bool {
+/// Only a core reference that resolves to the *same released version* the
+/// deployment pinned may pass: the batch term table is that one version's, so
+/// an inline reference to a different release (v1.6 under a v1.9 deployment)
+/// would be expanded against the wrong table. Anything else redefines terms
+/// this walker resolved from the batch table, so it falls to the processor.
+fn names_core_contexts_only(context: &Value, effective_core_url: &str) -> bool {
     match context {
-        Value::String(url) => is_core_context(url),
-        Value::Array(items) => items.iter().all(|item| item.as_str().is_some_and(is_core_context)),
+        Value::String(url) => is_effective_core_context(url, effective_core_url),
+        Value::Array(items) => items.iter().all(|item| item.as_str().is_some_and(|url| is_effective_core_context(url, effective_core_url))),
         Value::Null | Value::Bool(_) | Value::Number(_) | Value::Object(_) => false,
     }
 }
 
-/// Whether a URL names the NGSI-LD core context or Andromeda's own.
-fn is_core_context(url: &str) -> bool {
-    is_ngsi_ld_core_context_url(url) || url == ANDROMEDA_CORE_CONTEXT_URL
+/// Whether a URL names Andromeda's own context, or a core context that resolves
+/// to the same document the deployment pinned.
+fn is_effective_core_context(url: &str, effective_core_url: &str) -> bool {
+    url == ANDROMEDA_CORE_CONTEXT_URL || same_core_context_document(url, effective_core_url)
 }
 
 /// Expand `scope`, which clause 4.18 allows to be one path or several.
@@ -179,6 +184,17 @@ mod tests {
         let engine = offline_engine();
         let handle = core_handle(&engine).await;
         engine.try_fast_expand(&document, &handle)
+    }
+
+    /// The fastpath must expand `document` itself — not refuse and fall back —
+    /// and the result must equal the processor's. Used where the point is that
+    /// the fastpath *models* a shape, so a fallback would hide the defect.
+    async fn assert_fastpath_expands_and_agrees(document: Value) {
+        let engine = offline_engine();
+        let handle = core_handle(&engine).await;
+        let fast = engine.try_fast_expand(&document, &handle).expect("the fastpath must expand this document, not refuse it");
+        let slow = engine.expand(document, handle.spec()).await.expect("the processor expands");
+        pretty_assertions::assert_eq!(fast, slow);
     }
 
     #[tokio::test]
@@ -442,5 +458,95 @@ mod tests {
             }
         }))
         .await;
+    }
+
+    #[tokio::test]
+    async fn an_object_type_metadata_member_is_expanded_via_vocab_by_the_fastpath() {
+        // ETSI GS CIM 009 v1.9.1: the core context declares `objectType` as
+        // `@type: @vocab`, so its string value is a term expanded against the
+        // active `@vocab`, not a plain literal. The old hand-written table had
+        // no `@vocab` variant and stored `{"@value": "Building"}`, corrupting
+        // the row. The fastpath must now emit the IRI the processor does.
+        let document = json!({
+            "id": "urn:ngsi-ld:Device:ot1",
+            "type": "Device",
+            "category": { "type": "Property", "value": "x", "objectType": "Building" }
+        });
+        let engine = offline_engine();
+        let handle = core_handle(&engine).await;
+        let fast = engine.try_fast_expand(&document, &handle).expect("the fastpath expands objectType via vocab");
+
+        // `category` is not a core term, so it expands against `@vocab`; the
+        // `objectType` sub-member lives on that attribute's Property instance.
+        let category = &fast[0]["https://uri.etsi.org/ngsi-ld/default-context/category"][0];
+        let object_type = category["https://uri.etsi.org/ngsi-ld/hasObjectType"][0].clone();
+        pretty_assertions::assert_eq!(
+            object_type,
+            json!({ "@id": "https://uri.etsi.org/ngsi-ld/default-context/Building" }),
+            "a @vocab term expands its value against @vocab as an @id, never a bare @value"
+        );
+
+        let slow = engine.expand(document, handle.spec()).await.expect("the processor expands");
+        pretty_assertions::assert_eq!(fast, slow);
+    }
+
+    #[tokio::test]
+    async fn an_end_time_at_metadata_member_is_coerced_to_datetime_by_the_fastpath() {
+        // `endTimeAt` is one of the DateTime terms the old hand-written table
+        // had forgotten; the derived table now carries it.
+        assert_fastpath_expands_and_agrees(json!({
+            "id": "urn:ngsi-ld:Device:et1",
+            "type": "Device",
+            "temperature": { "type": "Property", "value": 21, "endTimeAt": "2030-01-01T00:00:00Z" }
+        }))
+        .await;
+    }
+
+    #[tokio::test]
+    async fn a_core_term_carrying_a_scoped_context_is_refused_and_agrees_via_fallback() {
+        // `ngsildproof` is the one core term with a scoped `@context`; the
+        // fastpath cannot unfold it, so it must refuse rather than expand the
+        // sub-members against the batch table.
+        let document = json!({
+            "id": "urn:ngsi-ld:Device:np1",
+            "type": "Device",
+            "ngsildproof": { "type": "Property", "value": "z" }
+        });
+        assert!(fastpath_only(document.clone()).await.is_none(), "a scoped-context term must refuse the fastpath");
+        assert_both_paths_agree(document).await;
+    }
+
+    #[tokio::test]
+    async fn a_typeless_concise_object_is_refused_so_the_normalizer_infers_its_type() {
+        // A concise attribute whose type clause 4.5 infers from a
+        // distinguishing member (`object`) carries no `type` for the fastpath's
+        // fused walk, which refuses it. The batch path then demotes it to the
+        // slow path, where `normalize_entity_attributes` infers Relationship —
+        // so the fastpath never mis-expands an inferable shape as a Property.
+        let documents = [
+            json!({ "id": "urn:x:r1", "type": "X", "rel": { "object": "urn:ngsi-ld:Site:1" } }),
+            json!({ "id": "urn:x:l1", "type": "X", "label": { "languageMap": { "en": "hi" } } }),
+            json!({ "id": "urn:x:g1", "type": "X", "loc": { "type": "Point", "coordinates": [1.0, 2.0] } }),
+        ];
+        for document in documents {
+            assert!(fastpath_only(document.clone()).await.is_none(), "the fastpath must refuse the typeless concise shape {document}");
+        }
+    }
+
+    #[tokio::test]
+    async fn an_inline_core_context_of_the_wrong_version_refuses_the_fastpath() {
+        // The deployment resolves versionless references to v1.9, so an entity
+        // that inlines the v1.6 core context must not be expanded against the
+        // v1.9 table; it falls to the processor.
+        let document = json!({
+            "@context": "https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.6.jsonld",
+            "id": "urn:ngsi-ld:Device:v16",
+            "type": "Device",
+            "temperature": { "type": "Property", "value": 21 }
+        });
+        assert!(
+            fastpath_only(document).await.is_none(),
+            "an inline core context of a different release than the deployment pinned must refuse the fastpath"
+        );
     }
 }

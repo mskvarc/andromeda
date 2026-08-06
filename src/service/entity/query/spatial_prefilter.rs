@@ -25,12 +25,15 @@ pub(super) enum SpatialNarrowing {
 
 impl EntityQueryService {
     /// Consult the spatial index to narrow `selection.ids` before the store
-    /// runs, and drop `selection.geo` when the index produced an authoritative
-    /// candidate set.
+    /// runs, keeping `selection.geo` so the store still re-verifies each
+    /// candidate's geometry.
     ///
-    /// This is not a residual filter in reverse: the index *applies* the
-    /// clause 4.10 relation, it does not decline it, so the query the store
-    /// receives is equivalent to the one the client wrote.
+    /// The index is only ever an optimisation (its own crate contract): it
+    /// narrows the identifier set the store scans, but the store re-applies the
+    /// clause 4.10 relation, so a candidate the index admits that no longer
+    /// matches — a window where the tree is momentarily stale — is dropped by
+    /// the store rather than wrongly returned. The cost is one `georel` check
+    /// over a small candidate set instead of the whole table.
     ///
     /// Falls through to [`SpatialNarrowing::Query`] with the query unchanged when
     /// it is not geo-accelerated: no geo filter, a conjunctive type expression,
@@ -86,7 +89,9 @@ impl EntityQueryService {
 
         let mut narrowed = (**compiled).clone(); // clone: the cached query is shared and must not be mutated in place
         narrowed.selection.ids = final_ids;
-        narrowed.selection.geo = None;
+        // `selection.geo` is deliberately left in place: the store re-verifies
+        // the candidates so a momentarily stale index can only slow the query,
+        // never widen or narrow its answer.
         tracing::debug!(
             "spatial prefilter hit: {} candidate(s) for geoQ={:?}",
             narrowed.selection.ids.len(),

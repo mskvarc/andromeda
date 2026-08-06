@@ -104,15 +104,21 @@ fn expand_value(instance: &Map<String, Value>, kind: AttributeType, term_map: &B
         AttributeType::GeoProperty => Some(Value::Array(vec![expand_geometry(value.as_object()?)?])),
         AttributeType::LanguageProperty => expand_language_map(value.as_object()?),
         AttributeType::VocabProperty => expand_vocab(value, term_map),
-        AttributeType::JsonProperty => {
-            let mut node = Map::with_capacity(2);
-            node.insert("@type".to_owned(), Value::String("@json".to_owned()));
-            node.insert("@value".to_owned(), value.clone()); // clone: the source document is borrowed and stays valid
-            Some(Value::Array(vec![Value::Object(node)]))
-        }
+        AttributeType::JsonProperty => Some(json_literal(value)),
         // Refused by `supported_kind` before this function is reached.
         AttributeType::ListProperty | AttributeType::ListRelationship => None,
     }
+}
+
+/// A `@json` literal node: the value kept verbatim, tagged `@type: @json`.
+///
+/// The shape a `JsonProperty` value and a `@type: @json` coerced metadata
+/// member both expand to (clause 4.5.5 / 5.2.4).
+fn json_literal(value: &Value) -> Value {
+    let mut node = Map::with_capacity(2);
+    node.insert("@type".to_owned(), Value::String("@json".to_owned()));
+    node.insert("@value".to_owned(), value.clone()); // clone: the source document is borrowed and stays valid
+    Value::Array(vec![Value::Object(node)])
 }
 
 /// The expanded form of a `Property` value, which must be a JSON scalar here.
@@ -215,8 +221,19 @@ fn expand_metadata(key: &str, value: &Value, term_map: &BatchTermMap) -> Option<
     if term_map.term_has_scoped_context(key) {
         return None;
     }
+    // A `@container` reshapes the value in a way the flat walker cannot model,
+    // so a metadata member carrying one is refused rather than mis-expanded.
+    if term_map.term_has_container(key) {
+        return None;
+    }
     let iri = term_map.expand_iri(key).into_owned();
     let coercion = term_map.coercion(key);
+
+    // A `@type: @json` term keeps its value verbatim, whatever its JSON shape,
+    // so it is handled before the per-shape dispatch below.
+    if matches!(coercion, Some(TermCoercion::Json)) {
+        return Some((iri, json_literal(value)));
+    }
 
     match value {
         Value::String(text) => Some((iri, coerced_scalar(text, coercion, term_map))),
@@ -255,6 +272,13 @@ fn coerced_scalar(text: &str, coercion: Option<&TermCoercion>, term_map: &BatchT
     let node = match coercion {
         Some(TermCoercion::DateTime) => typed_value(&expanded_key::DATE_TIME, text),
         Some(TermCoercion::Id) => return Value::Array(vec![id_node(text)]),
+        // A `@type: @vocab` value is a term, expanded against the active
+        // `@vocab` exactly as a VocabProperty value is (clause 4.5.5).
+        Some(TermCoercion::Vocab) => return Value::Array(vec![id_node(&term_map.expand_iri(text))]),
+        // A `@type: @json` string is kept verbatim as a JSON literal; also
+        // caught in `expand_metadata` before dispatch, so this arm is a
+        // completeness guard rather than the live path.
+        Some(TermCoercion::Json) => return json_literal(&Value::String(text.to_owned())),
         Some(TermCoercion::TypeIri(declared)) => typed_value(&term_map.expand_iri(declared), text),
         None => {
             let mut node = Map::with_capacity(1);
