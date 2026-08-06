@@ -1,4 +1,4 @@
-//! One scope path pattern of a `scopeQ` expression (clause 4.18).
+//! One scope path pattern of a `scopeQ` expression (clause 4.19).
 
 use crate::error::QueryError;
 use andromeda_ngsi_ld_lexicon::scope::level::{ScopeLevel, ScopeLevelBuf};
@@ -44,7 +44,7 @@ impl ScopeLabel {
     }
 }
 
-/// A scope path pattern, such as `/Madrid`, `/A/+/C` or `/A/#` (clause 4.18).
+/// A scope path pattern, such as `/Madrid`, `/A/+/C` or `/A/#` (clause 4.19).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ScopePattern(Vec<ScopeSegment>);
 
@@ -90,7 +90,7 @@ impl ScopePattern {
 
     /// Whether a scope path satisfies this pattern.
     ///
-    /// The in-memory reading of clause 4.18, and the counterpart of the
+    /// The in-memory reading of clause 4.19, and the counterpart of the
     /// `lquery` a backend renders: a label matches its own level, `+` matches
     /// exactly one level of any name, and `#` matches one *or more* remaining
     /// levels. A pattern with no `#` matches only a path of the same length.
@@ -185,7 +185,7 @@ mod tests {
 
     #[test]
     fn the_multi_level_wildcard_matches_one_or_more_levels() {
-        // Clause 4.18: `#` renders as the `lquery` quantifier `*{1,}`. An
+        // Clause 4.19: `#` renders as the `lquery` quantifier `*{1,}`. An
         // earlier in-memory reading in subscription matching consumed exactly
         // one further level, so `/A/#` matched `/A/B` and not `/A/B/C` while
         // the same pattern in a stored query matched both.

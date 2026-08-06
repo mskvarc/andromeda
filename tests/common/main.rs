@@ -580,12 +580,12 @@ async fn merge_patch_update_subscription_returns_204() {
 }
 
 // ---------------------------------------------------------------------------
-// LD context not available: unretrievable @context must yield 503
-// NGSI-LD 6.3.2
+// LD context not available: unretrievable @context must yield 504
+// NGSI-LD 6.3.2 Table 6.3.2-1
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-async fn ld_context_not_available_create_entity_returns_503() {
+async fn ld_context_not_available_create_entity_returns_504() {
     let c = client();
     let id = unique_id("urn:ngsi-ld:Building:ctx-unavail-entity");
     let entity = json!({
@@ -603,12 +603,12 @@ async fn ld_context_not_available_create_entity_returns_503() {
         None,
     )
     .await;
-    pretty_assertions::assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    pretty_assertions::assert_eq!(status, StatusCode::GATEWAY_TIMEOUT);
     pretty_assertions::assert_eq!(body["type"], LD_CONTEXT_NOT_AVAILABLE_TYPE);
 }
 
 #[tokio::test]
-async fn ld_context_not_available_create_subscription_returns_503() {
+async fn ld_context_not_available_create_subscription_returns_504() {
     let c = client();
     let sub_id = unique_id("urn:ngsi-ld:Subscription:ctx-unavail-sub");
     let sub = json!({
@@ -631,12 +631,12 @@ async fn ld_context_not_available_create_subscription_returns_503() {
         None,
     )
     .await;
-    pretty_assertions::assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    pretty_assertions::assert_eq!(status, StatusCode::GATEWAY_TIMEOUT);
     pretty_assertions::assert_eq!(body["type"], LD_CONTEXT_NOT_AVAILABLE_TYPE);
 }
 
 #[tokio::test]
-async fn ld_context_not_available_create_temporal_entity_returns_503() {
+async fn ld_context_not_available_create_temporal_entity_returns_504() {
     let c = client();
     let id = unique_id("urn:ngsi-ld:Bus:ctx-unavail-temporal");
     let entity = json!({
@@ -664,12 +664,12 @@ async fn ld_context_not_available_create_temporal_entity_returns_503() {
         None,
     )
     .await;
-    pretty_assertions::assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    pretty_assertions::assert_eq!(status, StatusCode::GATEWAY_TIMEOUT);
     pretty_assertions::assert_eq!(body["type"], LD_CONTEXT_NOT_AVAILABLE_TYPE);
 }
 
 #[tokio::test]
-async fn ld_context_not_available_batch_create_returns_207_or_503() {
+async fn ld_context_not_available_batch_create_returns_207_or_504() {
     let c = client();
     let id1 = unique_id("urn:ngsi-ld:Building:ctx-unavail-batch-a");
     let id2 = unique_id("urn:ngsi-ld:Building:ctx-unavail-batch-b");
@@ -680,13 +680,13 @@ async fn ld_context_not_available_batch_create_returns_207_or_503() {
 
     let (status, _body) = batch_create(&c, &entities).await;
     assert!(
-        status == StatusCode::MULTI_STATUS || status == StatusCode::SERVICE_UNAVAILABLE,
-        "expected 207 or 503, got {status}"
+        status == StatusCode::MULTI_STATUS || status == StatusCode::GATEWAY_TIMEOUT,
+        "expected 207 or 504, got {status}"
     );
 }
 
 #[tokio::test]
-async fn ld_context_not_available_create_registration_returns_503() {
+async fn ld_context_not_available_create_registration_returns_504() {
     let c = client();
     let id = unique_id("urn:ngsi-ld:ContextSourceRegistration:ctx-unavail-reg");
     let reg = json!({
@@ -706,7 +706,7 @@ async fn ld_context_not_available_create_registration_returns_503() {
         None,
     )
     .await;
-    pretty_assertions::assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    pretty_assertions::assert_eq!(status, StatusCode::GATEWAY_TIMEOUT);
     pretty_assertions::assert_eq!(body["type"], LD_CONTEXT_NOT_AVAILABLE_TYPE);
 }
 

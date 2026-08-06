@@ -177,7 +177,12 @@ fn near_expression(geo_col: SimpleExpr, ref_geom: SimpleExpr, max_distance: Opti
         parts.push(st_dwithin(geo_col.clone(), ref_geom.clone(), max)); // clone: both halves read the same two operands
     }
     if let Some(min) = min_distance {
-        parts.push(SeaExpr::cust_with_exprs(format!("ST_Distance($1, $2) >= {}", min), [geo_col, ref_geom]));
+        // The minimum distance is request-supplied, so it binds as a parameter
+        // rather than being interpolated into the statement text.
+        parts.push(SeaExpr::cust_with_exprs(
+            "ST_Distance($1, $2) >= $3",
+            [geo_col, ref_geom, SeaExpr::val(min).into()],
+        ));
     }
     // `usize` is unbounded, so a catch-all is the only way to close this match;
     // clause 4.10 admits at most the two halves, so it is reached with two.

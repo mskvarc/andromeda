@@ -3,7 +3,7 @@
 use crate::{entity_selection::EntitySelection, ordering::compiled::ResultOrdering, pagination::Pagination, projection::compiled::Projection};
 use typed_builder::TypedBuilder;
 
-/// A fully compiled entity query, ready for SQL generation.
+/// A fully compiled entity query, ready to be lowered to a store query.
 ///
 /// Produced by expanding and validating `EntityQueryParameters` against the
 /// active JSON-LD context. All identifiers are expanded IRIs.

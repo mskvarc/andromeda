@@ -13,7 +13,7 @@ pub enum DeliveryOutcome {
     Success {
         /// The protocol status, where the protocol has one. MQTT does not.
         status_code: Option<u16>,
-        /// How long the exchange took.
+        /// How long the send took. For MQTT this is the local enqueue latency, not a broker round-trip.
         duration: Duration,
     },
     /// The endpoint explicitly rejected the notification.

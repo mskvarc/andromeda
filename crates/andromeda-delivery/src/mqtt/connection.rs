@@ -107,10 +107,10 @@ impl ConnectionState {
 
 /// A pooled connection to one broker.
 ///
-/// Field order is the drop order: the client goes first so the broker sees a
-/// disconnect while the event loop is still polling, and the join handle goes
-/// last so the task it names is detached only after the socket it reads has
-/// closed.
+/// Field order is the drop order. It does not by itself close the session
+/// gracefully: dropping an `AsyncClient` sends no DISCONNECT and dropping a
+/// `JoinHandle` detaches its task unconditionally, so a graceful shutdown is
+/// performed explicitly through `disconnect()` before this value is dropped.
 pub struct MqttConnection {
     /// The client publishes go out on.
     pub client: MqttClientVariant,

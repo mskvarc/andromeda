@@ -34,7 +34,7 @@ impl RegistrationRenderer {
         self
     }
 
-    /// Strip the members clause 4.5.8 withholds and return the payload.
+    /// Strip the members clause 4.8 withholds and return the payload.
     ///
     /// Removing members cannot fail, so this answers with the value rather
     /// than a `Result` no caller could act on.

@@ -1,6 +1,6 @@
 //! Concise input, rewritten as the normalized representation.
 //!
-//! ETSI GS CIM 009 v1.9.1 clause 4.5.3 lets a request write an attribute
+//! ETSI GS CIM 009 v1.9.1 clause 4.5.2.3 lets a request write an attribute
 //! concisely — a bare value where a `{"type": "Property", "value": …}`
 //! envelope would go, and the same abbreviation for any sub-attribute. Clause
 //! 4.5.1 defines the normalized form the broker stores and reasons about. This
@@ -56,7 +56,7 @@ fn normalize_attribute(value: &mut Value) {
                 }
             }
         }
-        // Anything else is the clause 4.5.3 concise form: the value of an
+        // Anything else is the clause 4.5.2.3 concise form: the value of an
         // implicit Property.
         ref _concise => {
             let concise = std::mem::take(value);
@@ -98,7 +98,7 @@ fn normalize_instance(instance: &mut Map<String, Value>) {
     }
 }
 
-/// Wrap a concise value as the Property clause 4.5.3 says it abbreviates.
+/// Wrap a concise value as the Property clause 4.5.2.3 says it abbreviates.
 fn as_property(value: Value) -> Value {
     let mut property = Map::with_capacity(2);
     property.insert("type".to_string(), Value::String(AttributeType::Property.to_string()));

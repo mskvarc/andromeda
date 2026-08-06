@@ -23,6 +23,18 @@ pub const fn unprefixed_column(timeproperty: TimeProp) -> &'static str {
     }
 }
 
+/// Time column expression for `attribute_history` under an arbitrary alias.
+///
+/// Used where a correlated subquery reads the same axis under a second alias
+/// (e.g. `ah2`), so an aggregation bucket origin measures the same time
+/// property the outer query filters and buckets on.
+pub fn history_column_for_alias(timeproperty: TimeProp, alias: &str) -> String {
+    match timeproperty {
+        TimeProp::Observed => format!("COALESCE(\"{alias}\".\"observed_at\", \"{alias}\".\"time\")"),
+        TimeProp::Created | TimeProp::Modified | TimeProp::Deleted => format!("\"{alias}\".\"time\""),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::time_column::{history_column, unprefixed_column};
@@ -40,5 +52,15 @@ mod tests {
             pretty_assertions::assert_eq!(history_column(prop), "\"ah\".\"time\"");
             pretty_assertions::assert_eq!(unprefixed_column(prop), "\"time\"");
         }
+    }
+
+    #[test]
+    fn the_aliased_column_mirrors_the_default_axis_under_a_second_alias() {
+        use crate::time_column::history_column_for_alias;
+        pretty_assertions::assert_eq!(
+            history_column_for_alias(TimeProp::Observed, "ah2"),
+            "COALESCE(\"ah2\".\"observed_at\", \"ah2\".\"time\")"
+        );
+        pretty_assertions::assert_eq!(history_column_for_alias(TimeProp::Created, "ah2"), "\"ah2\".\"time\"");
     }
 }

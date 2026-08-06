@@ -5,12 +5,18 @@ use crate::{
     service::entity::{
         compiled_cache::LimitCap,
         expanded_member::unwrap_expanded_ref,
-        query::{EntityQueryService, dataset_filter::filter_entity_by_dataset_id, pushdown_refusal::refuse_unnarrowable, residual::finish_page},
+        query::{
+            EntityQueryService,
+            dataset_filter::filter_entity_by_dataset_id,
+            pushdown_refusal::refuse_unnarrowable,
+            residual::finish_page,
+            spatial_prefilter::SpatialNarrowing,
+        },
     },
 };
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_model::entity::Entity;
-use andromeda_ngsi_ld_query::entity::compiled::CompiledEntityQuery;
+use andromeda_ngsi_ld_query::{entity::compiled::CompiledEntityQuery, pagination::CountPolicy};
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 use andromeda_ngsi_ld_request::query::{SharedQueryParams, entity::EntityQueryParameters};
 use serde_json::Value;
@@ -68,7 +74,19 @@ impl EntityQueryService {
         // spatial index *applies* a geo relation rather than declining it, so a
         // store that cannot narrow `georel` is never asked to when the index
         // already answered it.
-        let narrowed = self.spatial_prefilter(&compiled);
+        let narrowed = match self.spatial_prefilter(&compiled) {
+            SpatialNarrowing::Query(query) => query,
+            SpatialNarrowing::EmptyResult => {
+                // A warm index that matched nothing is an empty page: returning
+                // it directly stops an empty candidate set from widening into an
+                // unconstrained store query (clause 4.10).
+                let total_count = match compiled.pagination.count {
+                    CountPolicy::Emit => Some(0),
+                    CountPolicy::Omit => None,
+                };
+                return Ok((Vec::new(), total_count));
+            }
+        };
         refuse_unnarrowable(self.repo.profile(), &narrowed.selection)?;
         let outcome = self.repo.query_compiled(&narrowed).await?;
         let page = finish_page(outcome, compiled.pagination)?;

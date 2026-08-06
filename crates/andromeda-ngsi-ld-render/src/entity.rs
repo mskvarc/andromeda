@@ -63,7 +63,7 @@ impl<'a> EntityRenderer<'a> {
         self
     }
 
-    /// Set linked entities for `join=inline` expansion (NGSI-LD clause 4.11).
+    /// Set linked entities for `join=inline` expansion (NGSI-LD clause 4.5.23).
     pub const fn with_inline_linked_entities(mut self, linked: &'a HashMap<String, Entity>) -> Self {
         self.inline_linked_entities = Some(linked);
         self

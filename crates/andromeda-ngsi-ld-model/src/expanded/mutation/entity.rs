@@ -1,4 +1,5 @@
-//! Entity-wide writes: merge patch, append, and update (clauses 5.6.1 to 5.6.3).
+//! Entity-wide writes: update (clause 5.6.2), append (5.6.3) and merge patch
+//! (5.6.17, behaviour in 5.5.4).
 
 use crate::expanded::{
     dataset_id::get_instance_dataset_id,
@@ -11,8 +12,8 @@ use andromeda_ngsi_ld_vocabulary::expanded::properties;
 use serde_json::Value;
 use std::slice::from_ref;
 
-/// NGSI-LD Merge Patch (clause 5.6.1): deep-merge `patch` into `entity`, handling
-/// null sentinels for attribute deletion.
+/// NGSI-LD Merge Patch (clause 5.6.17, behaviour in 5.5.4): deep-merge `patch`
+/// into `entity`, handling null sentinels for attribute deletion.
 ///
 /// # Errors
 ///

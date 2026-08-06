@@ -1,4 +1,4 @@
-//! The clause 4.5.5 simplified (`keyValues`) rendering of an entity.
+//! The clause 4.5.4 simplified (`keyValues`) rendering of an entity.
 //!
 //! Two readings of one transformation, kept in one module because they must
 //! agree: [`simplify_entity`] walks the typed [`Entity`] and
@@ -15,7 +15,7 @@ use std::str::FromStr;
 /// Entity members that are not attributes and pass through untouched.
 const ENTITY_MEMBERS: &[&str] = &["id", "type", "scope", "@context"];
 
-/// Render an entity in the clause 4.5.5 simplified (`keyValues`) form.
+/// Render an entity in the clause 4.5.4 simplified (`keyValues`) form.
 ///
 /// Walks the typed [`Entity`] directly, which is what lets the simplified path
 /// skip a full serialise round-trip. It lived on `Entity` itself until this
@@ -132,7 +132,7 @@ pub fn simplify_value(val: Value) -> Value {
 /// Simplify one attribute value of an already-serialised entity.
 ///
 /// A Relationship that `join=inline` has already expanded answers with the
-/// nested entity rather than the URI it was resolved from — clause 4.11 is
+/// nested entity rather than the URI it was resolved from — clause 4.5.23 is
 /// applied before clause 4.5.4, so by the time this runs the expansion is a
 /// member of the attribute and outranks the plain object reference.
 fn simplify_attr_value(value: Value) -> Value {
@@ -272,7 +272,7 @@ mod tests {
 
     #[test]
     fn an_inline_joined_relationship_answers_with_the_nested_entity() {
-        // Clause 4.11 runs before clause 4.5.4, so by the time this sees the
+        // Clause 4.5.23 runs before clause 4.5.4, so by the time this sees the
         // attribute the expansion is already a member and outranks the URI.
         let joined = json!({
             "id": "urn:ngsi-ld:Vehicle:7",

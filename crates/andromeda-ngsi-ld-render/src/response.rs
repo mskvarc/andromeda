@@ -8,7 +8,7 @@
 //! 2. version adaptation for a client that asked for an older spec version
 //!    (`Prefer: ngsi-ld=<version>`, clause 4.3.6.8),
 //! 3. `@context` injection for a body that carries it (clause 5.5.7), and
-//! 4. the GeoJSON Feature or FeatureCollection envelope (clause 6.3.8).
+//! 4. the GeoJSON Feature or FeatureCollection envelope (clause 4.5.16).
 //!
 //! Which of them run is a function of the media type and the payload shape,
 //! and of nothing else — which is why there is one pipeline here rather than
@@ -53,7 +53,7 @@ impl ResponsePayload {
 
     /// The GeoJSON envelope this shape takes, if it takes one.
     ///
-    /// Clause 6.3.8 wraps entities. A batch result is not an entity and is
+    /// Clause 4.5.16 wraps entities. A batch result is not an entity and is
     /// answered as `application/json` whatever the request asked for, which is
     /// what `None` says here.
     const fn geo_json_shape(&self) -> Option<GeoJsonShape> {
@@ -126,7 +126,7 @@ impl<'a> ResponseRenderer<'a> {
     }
 
     /// Set the `Prefer: body=` token, which decides where a GeoJSON response
-    /// carries its `@context` (clause 6.3.8).
+    /// carries its `@context` (clause 4.5.16).
     pub const fn with_geo_json_body(mut self, geo_json_body: GeoJsonBodyPreference) -> Self {
         self.geo_json_body = geo_json_body;
         self
@@ -138,7 +138,7 @@ impl<'a> ResponseRenderer<'a> {
         self
     }
 
-    /// Set the attribute a GeoJSON geometry is taken from (clause 6.3.8).
+    /// Set the attribute a GeoJSON geometry is taken from (clause 4.5.16).
     pub const fn with_geometry_property(mut self, geometry_property: Option<&'a str>) -> Self {
         self.geometry_property = geometry_property;
         self
@@ -211,7 +211,7 @@ impl<'a> ResponseRenderer<'a> {
     ///
     /// `application/ld+json` carries it in the body and `application/json`
     /// cannot, so it goes in the `Link` header. GeoJSON is the exception: the
-    /// envelope can hold an `@context` member, and clause 6.3.8 lets the client
+    /// envelope can hold an `@context` member, and clause 4.5.16 lets the client
     /// ask for it not to with `Prefer: body=json`.
     const fn context_location(&self, geo_json_shape: Option<GeoJsonShape>) -> ContextLocation {
         match geo_json_shape {
@@ -321,7 +321,7 @@ mod tests {
 
     #[test]
     fn a_batch_result_is_never_wrapped_in_a_geojson_envelope() {
-        // Clause 6.3.8 wraps entities; a BatchOperationResult is not one, and
+        // Clause 4.5.16 wraps entities; a BatchOperationResult is not one, and
         // wrapping it would put `success` and `errors` inside a Feature's
         // properties where no client looks for them.
         let rendered = ResponseRenderer::new(ResponseMediaType::GeoJson, a_context())

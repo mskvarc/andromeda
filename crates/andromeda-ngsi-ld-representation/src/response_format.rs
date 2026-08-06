@@ -1,9 +1,9 @@
-//! The rendering an NGSI-LD response uses for an entity (clause 4.5.1).
+//! The rendering an NGSI-LD response uses for an entity (clauses 4.5.1 and 4.5.4).
 
 use serde::{Deserialize, Serialize};
 use strum::{Display, EnumString};
 
-/// Response format for entity queries (ETSI GS CIM 009 clause 4.5.1).
+/// Response format for entity queries (ETSI GS CIM 009 clauses 4.5.1 and 4.5.4).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize, Display, EnumString)]
 #[serde(rename_all = "camelCase")]
 #[strum(serialize_all = "camelCase")]

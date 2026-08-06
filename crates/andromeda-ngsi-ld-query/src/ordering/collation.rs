@@ -32,7 +32,7 @@ impl IcuCollation {
         Ok(IcuCollation(tag))
     }
 
-    /// The identifier as PostgreSQL names the collation.
+    /// The collation identifier (a BCP47 language tag).
     pub fn as_str(&self) -> &str {
         self.0.as_str()
     }

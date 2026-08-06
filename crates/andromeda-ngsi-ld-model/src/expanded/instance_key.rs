@@ -25,11 +25,11 @@ pub fn is_system_attribute(attr_name: &str) -> bool {
 /// attribute IRI together with its multi-attribute discriminator
 /// (NGSI-LD 5.2.5).
 ///
-/// This is the same grain as a `temporal_entity_attributes` row, which is what
+/// This is the grain at which each attribute instance is tracked, which is what
 /// makes it the right key for diffing a replacement payload against the one it
-/// supersedes: every key that disappears needs a deletion recorded so the
-/// temporal history and the `attribute_current` projection stay in step with
-/// `entities.payload`.
+/// supersedes: every key that disappears needs a deletion recorded so an
+/// entity's temporal history and its current-value view stay in step with the
+/// stored entity.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct AttributeInstanceKey {
     /// Expanded attribute IRI.
@@ -77,10 +77,9 @@ pub fn attribute_instance_keys(expanded: &Value) -> HashSet<AttributeInstanceKey
 /// Attribute instances present in `previous` but absent from `replacement`.
 ///
 /// These are the instances a full replacement (`PUT`, replace-mode upsert,
-/// attribute purge) silently drops from `entities.payload`. Each one needs a
-/// tombstone so the temporal history records the deletion and the
-/// `attribute_current` projection stops reporting a value that no longer
-/// exists.
+/// attribute purge) silently drops from the stored entity. Each one needs a
+/// tombstone so the entity's temporal history records the deletion and its
+/// current-value view stops reporting a value that no longer exists.
 pub fn removed_attribute_instances(previous: &Value, replacement: &Value) -> Vec<AttributeInstanceKey> {
     let retained = attribute_instance_keys(replacement);
     attribute_instance_keys(previous).into_iter().filter(|key| !retained.contains(key)).collect()

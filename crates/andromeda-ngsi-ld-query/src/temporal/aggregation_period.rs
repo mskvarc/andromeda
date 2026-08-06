@@ -35,12 +35,9 @@ impl AggregationPeriod {
 
     /// The ISO 8601 rendering of the bucket width.
     ///
-    /// This is the clause 4.5.19 form the client wrote, and it is also what a
-    /// backend binds: PostgreSQL reads an ISO 8601 duration as an `interval`
-    /// directly, so no conversion into its own `'1 hour'` syntax is needed. The
-    /// rendering is only well formed because a zero duration cannot be
-    /// constructed — the upstream `Display` writes a bare `P` for one, which is
-    /// neither a duration nor an interval.
+    /// This is the clause 4.5.19 form the client wrote. The rendering is only
+    /// well formed because a zero duration cannot be constructed — the upstream
+    /// `Display` writes a bare `P` for one, which is not a valid duration.
     pub fn as_iso8601(&self) -> String {
         self.0.to_string()
     }

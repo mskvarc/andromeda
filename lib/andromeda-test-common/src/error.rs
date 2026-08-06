@@ -17,7 +17,7 @@ pub const INVALID_REQUEST: &str = "https://uri.etsi.org/ngsi-ld/errors/InvalidRe
 /// `ResourceNotFound` (404).
 pub const RESOURCE_NOT_FOUND: &str = "https://uri.etsi.org/ngsi-ld/errors/ResourceNotFound";
 
-/// `LdContextNotAvailable` (503) — a referenced `@context` could not be fetched.
+/// `LdContextNotAvailable` (504) — a referenced `@context` could not be fetched.
 pub const LD_CONTEXT_NOT_AVAILABLE: &str = "https://uri.etsi.org/ngsi-ld/errors/LdContextNotAvailable";
 
 /// `InternalError` (500).

@@ -1,16 +1,16 @@
-//! How a linked entity reaches the response (clause 4.5.21).
+//! How a linked entity reaches the response (clause 4.5.23).
 
 use serde::{Deserialize, Serialize};
 use strum::{Display, EnumString};
 
-/// Join mode for linked entities (ETSI GS CIM 009 clause 4.5.21).
+/// Join mode for linked entities (ETSI GS CIM 009 clause 4.5.23).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Display, EnumString)]
 #[serde(rename_all = "camelCase")]
 #[strum(serialize_all = "camelCase")]
 pub enum JoinMode {
     /// Linked entities are nested inside the referencing attribute.
     Inline,
-    /// Linked entities are included as top-level objects in the notification.
+    /// Linked entities are included as top-level objects in the response.
     Flat,
 }
 

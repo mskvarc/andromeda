@@ -78,12 +78,13 @@ impl From<DatasetSelector> for String {
     }
 }
 
-/// A `datasetId` filter reduced to the shape its SQL takes.
+/// A `datasetId` filter reduced to the three cases a store has to tell apart.
 ///
-/// The default instance is stored as a NULL `dataset_id`, so it cannot be
-/// tested by the same `= ANY` predicate as a named one. Splitting the selector
-/// list into the three cases that follow from that is done here rather than in
-/// each backend, which is where it used to live twice.
+/// The default instance has no `datasetId`, so it cannot be selected the same
+/// way a named one is (clause 4.5.5). Splitting the selector list into the three
+/// cases that follow from that — unfiltered, the default only, or a set of named
+/// ids — is done here, once, rather than in each store backend where it used to
+/// live twice.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DatasetFilter {
     /// No filter: every instance qualifies.

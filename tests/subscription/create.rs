@@ -157,7 +157,7 @@ async fn subscription_create_invalid_jsonld_context_returns_bad_request_data() {
 
 #[serial_test::serial]
 #[tokio::test]
-async fn subscription_create_unavailable_jsonld_context_returns_service_unavailable() {
+async fn subscription_create_unavailable_jsonld_context_returns_gateway_timeout() {
     let http_client = client();
     crate::helpers::reset_broker_state().await;
     let subscription_id = unique_subscription_id("create-unavailable-jsonld-context");
@@ -165,6 +165,6 @@ async fn subscription_create_unavailable_jsonld_context_returns_service_unavaila
 
     let (status, _, body) = create_subscription(&http_client, &payload).await;
 
-    pretty_assertions::assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    pretty_assertions::assert_eq!(status, StatusCode::GATEWAY_TIMEOUT);
     pretty_assertions::assert_eq!(body["type"], LD_CONTEXT_NOT_AVAILABLE_TYPE);
 }

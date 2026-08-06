@@ -40,7 +40,11 @@ pub fn build_csr_query(query: &CompiledCsrQuery) -> Result<BuiltQuery<'static>, 
         .from(Alias::new("context_source_registrations"))
         // clone: the count statement filters on the same condition
         .cond_where(condition.clone())
+        // `id` breaks ties on `created_at`: two registrations minted in the same
+        // microsecond would otherwise straddle a page boundary inconsistently
+        // across executions (clause 5.5.9 requires a stable order).
         .order_by(Alias::new("created_at"), Order::Asc)
+        .order_by(Alias::new("id"), Order::Asc)
         .limit(query.pagination.limit as u64)
         .offset(query.pagination.offset as u64);
 
@@ -209,6 +213,16 @@ mod tests {
         assert!(built.sql.contains("context_source_registrations"));
         assert!(built.sql.contains("LIMIT"));
         assert!(built.sql.contains("OFFSET"));
+    }
+
+    #[test]
+    fn build_orders_by_created_at_then_id_for_stable_pagination() {
+        // Clause 5.5.9: two registrations minted in the same microsecond must
+        // not straddle a page boundary inconsistently across executions, so the
+        // `created_at` order is broken by the `id` tiebreaker.
+        let q = empty_query();
+        let built = build_csr_query(&q).unwrap();
+        assert!(built.sql.contains("ORDER BY \"created_at\" ASC, \"id\" ASC"), "{}", built.sql);
     }
 
     #[test]

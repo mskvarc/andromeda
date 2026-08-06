@@ -22,7 +22,7 @@ use andromeda_postgresql_query::{
     type_predicate::{TypesColumn, condition as type_condition},
 };
 use iri_rs::IriBuf;
-use sea_query::{Alias, Condition, Expr as SeaExpr, Func, JoinType, PostgresQueryBuilder, Query};
+use sea_query::{Alias, Condition, Expr as SeaExpr, Func, JoinType, Order, PostgresQueryBuilder, Query};
 use urn_rs::Urn;
 
 /// Build Stage 1 query: find entity IDs matching entity-level filters.
@@ -72,6 +72,9 @@ pub fn build_stage1_entity_ids(compiled: &CompiledTemporalQuery, attribute_names
     select
         // clone: the count statement filters on the same condition
         .cond_where(all_conditions.clone())
+        // Stable page order (clause 5.5.9): a `DISTINCT entity_id` projection
+        // with no ORDER BY lets LIMIT/OFFSET repeat and skip ids across pages.
+        .order_by((Tea, TemporalEntityAttributes::EntityId), Order::Asc)
         .limit(compiled.pagination.limit as u64)
         .offset(compiled.pagination.offset as u64);
 
@@ -268,6 +271,15 @@ mod tests {
         assert!(result.sql.contains("SELECT DISTINCT"));
         assert!(result.sql.contains("\"e\".\"types\""));
         assert!(result.sql.contains("JOIN \"attribute_names\""));
+    }
+
+    #[test]
+    fn entity_id_selection_orders_by_id_for_stable_pagination() {
+        // Clause 5.5.9: a `SELECT DISTINCT entity_id` with no ORDER BY lets
+        // LIMIT/OFFSET repeat and skip ids across pages.
+        let compiled = minimal_compiled();
+        let result = build_stage1_entity_ids(&compiled, &ResolvedAttributeNames::default()).unwrap();
+        assert!(result.sql.contains("ORDER BY \"tea\".\"entity_id\""), "{}", result.sql);
     }
 
     #[test]

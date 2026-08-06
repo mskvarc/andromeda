@@ -7,6 +7,7 @@
 //! Parses the `Prefer` request header to extract NGSI-LD-specific preferences:
 //! - `body=json` / `body=ld+json` for GeoJSON @context placement
 //! - `ngsi-ld=<version>` for version conformance negotiation (clause 4.3.6.8)
+//! - `respond-async` / `respond-sync` for asynchronous vs synchronous processing
 //!
 //! The `Prefer` header field can be used by a client to request that certain
 //! behaviors be employed by a server while processing a request.
@@ -24,6 +25,7 @@
 //! * `body=json` -- @context in Link header, omitted from GeoJSON body
 //! * `body=ld+json` -- @context included in GeoJSON response body
 //! * `ngsi-ld=1.9` -- request version conformance (clause 4.3.6.8)
+//! * `respond-async` / `respond-sync` -- asynchronous vs synchronous processing
 
 use crate::{
     geo_json_body::GeoJsonBodyPreference,
@@ -35,7 +37,7 @@ use http::{HeaderName, HeaderValue};
 /// Typed `Prefer` request header for NGSI-LD (RFC 7240, clause 6.3.6).
 ///
 /// Contains only NGSI-LD-relevant preference tokens; unrecognized RFC 7240
-/// tokens (e.g. `respond-async`, `return=minimal`) are silently discarded.
+/// tokens (e.g. `return=minimal`, `wait=10`) are silently discarded.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Prefer(Vec<Preference>);
 

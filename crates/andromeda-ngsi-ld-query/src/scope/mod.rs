@@ -1,4 +1,4 @@
-//! Scope filtering: the `scopeQ` query parameter (clause 4.18).
+//! Scope filtering: the `scopeQ` query parameter (clause 4.19).
 //!
 //! Scopes form a hierarchy, and a `scopeQ` is a disjunction of conjunctions of
 //! patterns over it. This module owns that syntax and the one in-memory reading

@@ -19,6 +19,15 @@ pub enum GeoRelParseError {
         #[source]
         source: ParseFloatError,
     },
+    /// A `maxDistance` / `minDistance` modifier parsed to a non-finite number
+    /// (`NaN` or an infinity). Clause 4.10 gives these no meaning, and left
+    /// unchecked they reach PostGIS as bare identifiers rather than a distance,
+    /// turning a malformed request into a statement that errors at execution.
+    #[error("non-finite georel distance: {value}")]
+    NonFiniteDistance {
+        /// The offending modifier value.
+        value: String,
+    },
 }
 
 /// Geo-spatial relationship operators per NGSI-LD clause 4.10.
@@ -128,11 +137,18 @@ impl From<GeoRel> for String {
 }
 
 /// Parse one `maxDistance` / `minDistance` modifier value, in metres.
+///
+/// Rust's `f64` parser accepts `NaN`, `inf` and `infinity`; those are rejected
+/// here so a non-finite distance never reaches the statement builder.
 fn parse_distance(raw: &str) -> Result<f64, GeoRelParseError> {
-    raw.parse::<f64>().map_err(|source| GeoRelParseError::InvalidDistance {
+    let parsed = raw.parse::<f64>().map_err(|source| GeoRelParseError::InvalidDistance {
         value: raw.to_string(),
         source,
-    })
+    })?;
+    if !parsed.is_finite() {
+        return Err(GeoRelParseError::NonFiniteDistance { value: raw.to_string() });
+    }
+    Ok(parsed)
 }
 
 #[cfg(test)]
@@ -181,6 +197,21 @@ mod tests {
             "near;maxDistance==far".parse::<GeoRel>().expect_err("must fail"),
             GeoRelParseError::InvalidDistance { .. }
         ));
+    }
+
+    #[test]
+    fn a_non_finite_distance_is_rejected() {
+        // Rust's f64 parser accepts these spellings; clause 4.10 gives them no
+        // meaning, so they are rejected before reaching the statement builder.
+        for raw in ["NaN", "inf", "infinity", "-inf"] {
+            assert!(
+                matches!(
+                    format!("near;maxDistance=={raw}").parse::<GeoRel>().expect_err("must fail"),
+                    GeoRelParseError::NonFiniteDistance { .. }
+                ),
+                "{raw} should be rejected as non-finite"
+            );
+        }
     }
 
     #[test]

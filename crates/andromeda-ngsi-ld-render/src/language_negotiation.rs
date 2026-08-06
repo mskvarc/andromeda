@@ -1,7 +1,7 @@
-//! Clause 4.5.6 language negotiation over a `LanguageProperty`.
+//! Clause 4.15 language negotiation over a `LanguageProperty`.
 //!
 //! When a request carries a `lang` filter, a `LanguageProperty` is not
-//! rendered as itself: clause 4.5.6 says the broker picks one entry from the
+//! rendered as itself: clause 4.15 says the broker picks one entry from the
 //! language map by RFC 4647 basic filtering and answers with a `Property`
 //! carrying that entry plus a `lang` member naming the tag it chose. Every
 //! other attribute type is unaffected, which is why the dispatch below
@@ -49,7 +49,7 @@ fn render_attribute(attribute: &Attribute, language_filter: Option<&LanguageFilt
     }
 }
 
-/// Render a `LanguageProperty` as the `Property` clause 4.5.6 asks for.
+/// Render a `LanguageProperty` as the `Property` clause 4.15 asks for.
 fn render_language_property(language_property: &LanguageProperty, language_filter: Option<&LanguageFilter>) -> Result<Value, RepresentationError> {
     if let Some(filter) = language_filter
         && let Some(negotiated) = negotiate_language_property(language_property, filter)
@@ -150,7 +150,7 @@ enum AvailableLanguageRange {
 #[serde(rename_all = "camelCase")]
 /// The `Property` a negotiated `LanguageProperty` is answered as.
 ///
-/// Clause 4.5.6: the selected entry becomes the value, the tag it came from
+/// Clause 4.15: the selected entry becomes the value, the tag it came from
 /// becomes a `lang` member, and everything else about the attribute survives.
 struct NegotiatedProperty<'a> {
     #[serde(rename = "type")]

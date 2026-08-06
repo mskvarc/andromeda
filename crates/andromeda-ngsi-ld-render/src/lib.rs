@@ -2,10 +2,10 @@
 //!
 //! ETSI GS CIM 009 v1.9.1 defines what a client receives in two halves: what
 //! the resource is, which is clause 5.2, and how it appears, which is clauses
-//! 4.5.1 (normalized, `keyValues`, simplified and concise), 4.5.4 (the
-//! simplified rendering), 4.5.6 (language negotiation), 4.5.8 (whether the
-//! system-generated attributes appear), 4.11 (`join=inline`), 4.3.6.8 (version
-//! conformance) and 6.3.8 (the GeoJSON envelope). This crate is the second
+//! 4.5.1 (the normalized rendering), 4.5.4 (`keyValues` and simplified), the
+//! per-type `.3` subclauses (concise), 4.15 (language negotiation), 4.8 (whether
+//! the system-generated attributes appear), 4.5.23 (`join=inline`), 4.3.6.8
+//! (version conformance) and 4.5.16 (the GeoJSON envelope). This crate is the second
 //! half, and only the second half: nothing here decides *what* to answer, only
 //! how the answer is spelled.
 //!

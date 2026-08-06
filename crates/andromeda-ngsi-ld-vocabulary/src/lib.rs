@@ -41,7 +41,7 @@ mod tests {
     use iri_rs::Iri;
 
     #[test]
-    fn term_count_exceeds_150() {
+    fn term_count_exceeds_170() {
         const { assert!(TERM_COUNT > 170, "expected >170 terms") };
     }
 

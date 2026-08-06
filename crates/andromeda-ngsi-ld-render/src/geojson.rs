@@ -1,7 +1,7 @@
 //! GeoJSON Feature and FeatureCollection mapping for NGSI-LD entities.
 //!
 //! Handles the conversion of NGSI-LD entity JSON objects into GeoJSON Features
-//! and FeatureCollections per NGSI-LD spec clause 6.3.8.  Uses the `geojson`
+//! and FeatureCollections per NGSI-LD spec clause 4.5.16.  Uses the `geojson`
 //! crate for type-safe construction; `@context` is injected post-serialization
 //! because it is an NGSI-LD extension absent from the GeoJSON spec.
 
@@ -64,7 +64,7 @@ impl<'a> GeoJsonRenderer<'a> {
 }
 
 impl<'a> GeoJsonRenderer<'a> {
-    /// Wrap the payload in the clause 6.3.8 GeoJSON envelope.
+    /// Wrap the payload in the clause 4.5.16 GeoJSON envelope.
     ///
     /// # Errors
     ///
@@ -115,7 +115,7 @@ fn entity_to_feature(entity: &Value, geometry_property: Option<&str>) -> Feature
     let geometry = extract_geometry(obj, geometry_property);
 
     // Properties: keep all attributes including the geometry source.
-    // Remove `id` (promoted to Feature.id); keep `type` per NGSI-LD clause 6.3.8.
+    // Remove `id` (promoted to Feature.id); keep `type` per NGSI-LD clause 4.5.16.
     let mut props = obj.clone();
     props.remove("id");
 
@@ -194,7 +194,7 @@ mod tests {
         pretty_assertions::assert_eq!(features[0]["properties"]["type"], "Building");
         // id is NOT in properties (promoted to Feature.id)
         assert!(features[0]["properties"].get("id").is_none());
-        // location IS in properties per NGSI-LD spec clause 6.3.8
+        // location IS in properties per NGSI-LD spec clause 4.5.16
         assert!(features[0]["properties"]["location"].is_object());
     }
 

@@ -1,4 +1,4 @@
-//! The clause 4.11 `join=inline` expansion of a rendered entity.
+//! The clause 4.5.23 `join=inline` expansion of a rendered entity.
 //!
 //! A request with `join=inline` asks for the entities a Relationship points at
 //! to appear nested under the Relationship rather than being named by URI
@@ -10,28 +10,65 @@ use crate::{entity::EntityRenderer, error::RepresentationError};
 use andromeda_ngsi_ld_http_headers::language::LanguageFilter;
 use andromeda_ngsi_ld_model::entity::Entity;
 use serde_json::{Map, Value};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// Apply `join=inline` expansion to an already-rendered entity response.
 ///
 /// Public because it applies to a `Value` as readily as to an [`Entity`]:
 /// [`crate::snapshot::SnapshotRenderer`] runs it over a payload that arrived
 /// already compacted, and [`EntityRenderer`] runs it over one it just built.
+///
+/// The `linked` map legitimately contains entities that reference one another,
+/// so the recursion is bounded by the set of ids already open on the current
+/// path: a linked entity that references itself, or forms a cycle with another,
+/// is rendered once and not descended into again. Without that guard a cyclic
+/// linked entity recurses without end and overflows the stack from a request.
 pub(crate) fn apply_inline_join(
     entity: &mut Value,
     linked: &HashMap<String, Entity>,
     language_filter: Option<&LanguageFilter>,
 ) -> Result<(), RepresentationError> {
+    let mut ancestors = HashSet::new();
+    apply_inline_join_guarded(entity, linked, language_filter, &mut ancestors)
+}
+
+/// Expand one entity, tracking the ids already open on the current path so a
+/// reference cycle terminates.
+fn apply_inline_join_guarded(
+    entity: &mut Value,
+    linked: &HashMap<String, Entity>,
+    language_filter: Option<&LanguageFilter>,
+    ancestors: &mut HashSet<String>,
+) -> Result<(), RepresentationError> {
+    let self_id = entity.get("id").and_then(Value::as_str).map(ToOwned::to_owned);
+    // Track this entity's id on the current path so a self-reference is caught.
+    let seeded = self_id.as_ref().is_some_and(|id| ancestors.insert(id.clone()));
+
+    let result = inline_join_object(entity, linked, language_filter, ancestors);
+
+    if seeded && let Some(id) = &self_id {
+        ancestors.remove(id);
+    }
+    result
+}
+
+/// Walk every attribute instance of one rendered entity object.
+fn inline_join_object(
+    entity: &mut Value,
+    linked: &HashMap<String, Entity>,
+    language_filter: Option<&LanguageFilter>,
+    ancestors: &mut HashSet<String>,
+) -> Result<(), RepresentationError> {
     let Some(obj) = entity.as_object_mut() else { return Ok(()) };
     for attr_val in obj.values_mut() {
         match attr_val {
             Value::Object(attr_obj) => {
-                inline_join_attribute_instance(attr_obj, linked, language_filter)?;
+                inline_join_attribute_instance(attr_obj, linked, language_filter, ancestors)?;
             }
             Value::Array(items) => {
                 for item in items.iter_mut() {
                     if let Value::Object(attr_obj) = item {
-                        inline_join_attribute_instance(attr_obj, linked, language_filter)?;
+                        inline_join_attribute_instance(attr_obj, linked, language_filter, ancestors)?;
                     }
                 }
             }
@@ -51,42 +88,54 @@ fn inline_join_attribute_instance(
     attr_obj: &mut Map<String, Value>,
     linked: &HashMap<String, Entity>,
     language_filter: Option<&LanguageFilter>,
+    ancestors: &mut HashSet<String>,
 ) -> Result<(), RepresentationError> {
     let attr_type = attr_obj.get("type").and_then(Value::as_str).map(ToOwned::to_owned);
     if attr_type.as_deref() == Some("Relationship") {
         if let Some(object_uri) = attr_obj.get("object").and_then(Value::as_str).map(ToOwned::to_owned)
             && let Some(linked_entity) = linked.get(&object_uri)
         {
-            let mut rendered = EntityRenderer::new(linked_entity);
-            if let Some(filter) = language_filter {
-                rendered = rendered.with_language_filter(filter);
-            }
-            let mut linked_val = rendered.render()?;
-            apply_inline_join(&mut linked_val, linked, language_filter)?;
+            let linked_val = render_linked(linked_entity, &object_uri, linked, language_filter, ancestors)?;
             attr_obj.insert("entity".to_string(), linked_val);
         }
     } else if attr_type.as_deref() == Some("ListRelationship")
         && let Some(object_list) = attr_obj.get("objectList").and_then(Value::as_array)
     {
-        let entity_list = object_list
-            .iter()
-            .filter_map(Value::as_str)
-            .filter_map(|uri| linked.get(uri))
-            .map(|linked_entity| {
-                let mut rendered = EntityRenderer::new(linked_entity);
-                if let Some(filter) = language_filter {
-                    rendered = rendered.with_language_filter(filter);
-                }
-                let mut linked_val = rendered.render()?;
-                apply_inline_join(&mut linked_val, linked, language_filter)?;
-                Ok(linked_val)
-            })
-            .collect::<Result<Vec<_>, RepresentationError>>()?;
+        // Collect the URIs first so the borrow of `attr_obj` is released before
+        // the recursive expansion, which needs the mutable ancestor set.
+        let uris: Vec<String> = object_list.iter().filter_map(Value::as_str).map(ToOwned::to_owned).collect();
+        let mut entity_list = Vec::new();
+        for uri in &uris {
+            if let Some(linked_entity) = linked.get(uri) {
+                entity_list.push(render_linked(linked_entity, uri, linked, language_filter, ancestors)?);
+            }
+        }
         if !entity_list.is_empty() {
             attr_obj.insert("entityList".to_string(), Value::Array(entity_list));
         }
     }
     Ok(())
+}
+
+/// Render one linked entity and expand it in turn, unless its id is already open
+/// on the current path — in which case the back-reference is left unexpanded so
+/// the cycle terminates.
+fn render_linked(
+    linked_entity: &Entity,
+    object_uri: &str,
+    linked: &HashMap<String, Entity>,
+    language_filter: Option<&LanguageFilter>,
+    ancestors: &mut HashSet<String>,
+) -> Result<Value, RepresentationError> {
+    let mut rendered = EntityRenderer::new(linked_entity);
+    if let Some(filter) = language_filter {
+        rendered = rendered.with_language_filter(filter);
+    }
+    let mut linked_val = rendered.render()?;
+    if !ancestors.contains(object_uri) {
+        apply_inline_join_guarded(&mut linked_val, linked, language_filter, ancestors)?;
+    }
+    Ok(linked_val)
 }
 
 #[cfg(test)]
@@ -193,5 +242,55 @@ mod tests {
         apply_inline_join(&mut entity, &linked_map, None).expect("inline join");
         pretty_assertions::assert_eq!(entity["ref"]["entity"]["id"], "urn:b");
         pretty_assertions::assert_eq!(entity["ref"]["entity"]["ref"]["entity"]["id"], "urn:c");
+    }
+
+    #[test]
+    fn inline_join_breaks_a_self_reference() {
+        // An entity that links to itself must render once and terminate, not
+        // recurse until the stack overflows.
+        let self_ref = parse_entity(json!({
+            "id": "urn:a", "type": "T",
+            "ref": {"type": "Relationship", "object": "urn:a"}
+        }));
+        let mut linked_map = HashMap::new();
+        linked_map.insert("urn:a".to_string(), self_ref);
+
+        let mut entity = json!({
+            "id": "urn:a", "type": "T",
+            "ref": {"type": "Relationship", "object": "urn:a"}
+        });
+
+        apply_inline_join(&mut entity, &linked_map, None).expect("inline join terminates");
+        pretty_assertions::assert_eq!(entity["ref"]["entity"]["id"], "urn:a");
+        // The self-reference inside the nested entity is left unexpanded.
+        assert!(entity["ref"]["entity"]["ref"].get("entity").is_none());
+    }
+
+    #[test]
+    fn inline_join_breaks_a_two_entity_cycle() {
+        // A -> B -> A. Rendering must terminate; the back-reference from B to A
+        // is left as a plain Relationship rather than expanded a second time.
+        let entity_a = parse_entity(json!({
+            "id": "urn:a", "type": "T",
+            "ref": {"type": "Relationship", "object": "urn:b"}
+        }));
+        let entity_b = parse_entity(json!({
+            "id": "urn:b", "type": "T",
+            "ref": {"type": "Relationship", "object": "urn:a"}
+        }));
+        let mut linked_map = HashMap::new();
+        linked_map.insert("urn:a".to_string(), entity_a);
+        linked_map.insert("urn:b".to_string(), entity_b);
+
+        let mut entity = json!({
+            "id": "urn:a", "type": "T",
+            "ref": {"type": "Relationship", "object": "urn:b"}
+        });
+
+        apply_inline_join(&mut entity, &linked_map, None).expect("inline join terminates");
+        pretty_assertions::assert_eq!(entity["ref"]["entity"]["id"], "urn:b");
+        pretty_assertions::assert_eq!(entity["ref"]["entity"]["ref"]["entity"]["id"], "urn:a");
+        // The cycle is broken: A reached through B is not expanded again.
+        assert!(entity["ref"]["entity"]["ref"]["entity"]["ref"].get("entity").is_none());
     }
 }

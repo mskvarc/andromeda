@@ -292,9 +292,10 @@ fn scalar_condition(scalar: &Scalar, op: CmpOp, binds: &mut BindBuilder<SeaValue
 /// existence test in `NOT (...)`, which matched entities that simply lacked the
 /// attribute.
 ///
-/// POSIX `~` is not accelerated by the trigram index (`docs/postgresql.md`),
-/// but the probe is still narrowed by the `attribute_name_id` prefix of
-/// `idx_ac_attr_str` before any regex is evaluated.
+/// A `gin_trgm_ops` trigram index can accelerate POSIX `~` (since PostgreSQL
+/// 9.3) whenever the pattern yields extractable trigrams — `urn:ngsi-ld:.*`
+/// does, an anchored `^A.*` does not. Either way the probe is narrowed by the
+/// `attribute_name_id` prefix of `idx_ac_attr_str` before any regex is evaluated.
 fn compile_pattern(path: &AttrPath, pattern: &Pattern, polarity: PatternPolarity, target: &QFilterTarget<'_>, names: &ResolvedAttributeNames) -> Condition {
     if !is_projection_eligible(path) {
         return fallback_pattern(path, pattern, polarity, target);

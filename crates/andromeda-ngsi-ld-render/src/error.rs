@@ -19,10 +19,10 @@ pub enum RenderedShape {
     /// A clause 4.5.1 entity rendering.
     #[strum(serialize = "entity")]
     Entity,
-    /// A clause 6.3.8 GeoJSON Feature.
+    /// A clause 4.5.16 GeoJSON Feature.
     #[strum(serialize = "GeoJSON Feature")]
     GeoJsonFeature,
-    /// A clause 6.3.8 GeoJSON FeatureCollection.
+    /// A clause 4.5.16 GeoJSON FeatureCollection.
     #[strum(serialize = "GeoJSON FeatureCollection")]
     GeoJsonFeatureCollection,
 }

@@ -12,8 +12,11 @@ pub fn st_within(geo_col: SimpleExpr, ref_geom: SimpleExpr) -> SimpleExpr {
 }
 
 /// PostGIS: `ST_DWithin(geo_col, ref_geom, distance)` - tests if geometries are within distance.
+///
+/// The distance is a request-supplied value, so it binds as a parameter rather
+/// than being interpolated into the statement text.
 pub fn st_dwithin(geo_col: SimpleExpr, ref_geom: SimpleExpr, distance: f64) -> SimpleExpr {
-    Expr::cust_with_exprs(format!("ST_DWithin($1, $2, {})", distance), [geo_col, ref_geom])
+    Expr::cust_with_exprs("ST_DWithin($1, $2, $3)", [geo_col, ref_geom, Expr::val(distance).into()])
 }
 
 /// PostGIS: `ST_Contains(geo_col, ref_geom)` - tests if geometry A contains geometry B.
@@ -92,10 +95,15 @@ mod tests {
     }
 
     #[test]
-    fn st_dwithin_includes_distance() {
-        let sql = render(st_dwithin(Expr::col(("e", "location")).into(), Expr::val("geojson").into(), 1000.0));
+    fn st_dwithin_binds_the_distance_rather_than_interpolating_it() {
+        let (sql, _values) = Query::select()
+            .expr(st_dwithin(Expr::col(("e", "location")).into(), Expr::val("geojson").into(), 1000.0))
+            .to_owned()
+            .build(PostgresQueryBuilder);
         assert!(sql.contains("ST_DWithin"), "{sql}");
-        assert!(sql.contains("1000"), "{sql}");
+        // The request-supplied distance must be a bound parameter, never text in
+        // the statement, so it cannot appear inline.
+        assert!(!sql.contains("1000"), "distance was interpolated, not bound: {sql}");
     }
 
     #[test]

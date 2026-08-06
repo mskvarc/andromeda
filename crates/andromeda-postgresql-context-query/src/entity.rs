@@ -96,17 +96,12 @@ pub fn build_ids_query(query: &CompiledEntityQuery, attribute_names: &ResolvedAt
     let mut select = Query::select();
     select.column(Entities::Id).from(Entities::Table).cond_where(condition);
 
-    // Add ORDER BY clause (default to id ASC if none specified)
-    if query.ordering.terms.is_empty() {
-        select.order_by(Entities::Id, Order::Asc);
-    } else {
-        add_order_clause(
-            &mut select,
-            &query.ordering.terms,
-            query.selection.geo.as_ref(),
-            query.ordering.geometry.as_ref(),
-        )?;
-    }
+    add_order_clause(
+        &mut select,
+        &query.ordering.terms,
+        query.selection.geo.as_ref(),
+        query.ordering.geometry.as_ref(),
+    )?;
 
     select.limit(query.pagination.limit as u64).offset(query.pagination.offset as u64);
 
@@ -189,17 +184,18 @@ fn order_value_expr(target: &OrderTarget, collation: Option<&IcuCollation>) -> S
     }
 }
 
-/// Adds ORDER BY clause to select statement.
+/// Adds an ORDER BY clause to the select statement.
+///
+/// Always terminates the ordering with `id ASC`, even when no `orderBy` terms
+/// were supplied, so pagination is stable: clause 5.5.9 requires a consistent
+/// order across pages, and `LIMIT`/`OFFSET` over an otherwise unordered result
+/// can repeat and skip rows between pages.
 fn add_order_clause(
     select: &mut SelectStatement,
     order_by: &[CompiledOrderTerm],
     geo: Option<&GeoQuery>,
     ordering_geometry: Option<&OrderingGeometry>,
 ) -> Result<(), RenderError> {
-    if order_by.is_empty() {
-        return Ok(());
-    }
-
     for term in order_by {
         let order = match term.direction {
             OrderDirection::Asc | OrderDirection::DistAsc => Order::Asc,
@@ -286,6 +282,17 @@ mod tests {
         assert!(built.sql.contains("LIMIT"));
         assert!(built.sql.contains("OFFSET"));
         assert!(built.count_sql.is_none());
+    }
+
+    #[test]
+    fn build_empty_query_orders_by_id_for_stable_pagination() {
+        // Clause 5.5.9: a paginated result needs a consistent order across
+        // pages. A query with no `orderBy` must still emit the `id` tiebreaker
+        // rather than leaving `LIMIT`/`OFFSET` over the plan's arbitrary order,
+        // which can repeat and skip rows between pages.
+        let q = empty_query();
+        let built = build_query(&q, &ResolvedAttributeNames::default()).unwrap();
+        assert!(built.sql.contains("ORDER BY \"id\""));
     }
 
     #[test]

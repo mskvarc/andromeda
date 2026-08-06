@@ -106,7 +106,7 @@ fn build_history_query_sql(
         format!(
             r#"WITH ranked AS (
     SELECT {},
-           ROW_NUMBER() OVER (PARTITION BY "ah"."tea_id" ORDER BY {} DESC) as rn,
+           ROW_NUMBER() OVER (PARTITION BY "ah"."tea_id" ORDER BY {} DESC, "ah"."instance_id" DESC) as rn,
            COUNT(*) OVER (PARTITION BY "ah"."tea_id") as partition_total
     FROM "attribute_history" AS "ah"
     JOIN "temporal_entity_attributes" AS "tea" ON "tea"."id" = "ah"."tea_id"
@@ -117,7 +117,7 @@ SELECT "time", "tea_id", "value_number", "value_string", "value_bool", "value_ge
        "value_object", "value_datetime", "value_uri", "instance_id", "observed_at", "metadata",
        "attribute_name", "attribute_type", "dataset_id", "value_type", "partition_total"
 FROM ranked WHERE "rn" <= {}
-ORDER BY "attribute_name", {} ASC"#,
+ORDER BY "attribute_name", {} ASC, "instance_id" ASC"#,
             BASE_COLUMNS, time_col, where_clause, rn_marker, time_col_unprefixed
         )
     } else {
@@ -184,6 +184,18 @@ mod tests {
         assert!(result.sql.contains("attribute_history"));
         assert!(result.sql.contains("JOIN \"attribute_names\""));
         assert!(result.sql.contains("ORDER BY"));
+    }
+
+    #[test]
+    fn last_n_ranks_with_an_instance_id_tiebreaker() {
+        // Two instances sharing a timestamp must be kept or dropped consistently
+        // across executions, so the ROW_NUMBER window that picks the last N
+        // breaks ties on instance_id rather than leaving it to the plan.
+        let mut compiled = minimal_compiled();
+        compiled.instances.last_n = Some(5);
+        let result = build_temporal_history_query(&vehicle_id(), &compiled).unwrap();
+        assert!(result.sql.contains("ROW_NUMBER()"), "{}", result.sql);
+        assert!(result.sql.contains("\"ah\".\"instance_id\" DESC"), "{}", result.sql);
     }
 
     #[test]

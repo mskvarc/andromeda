@@ -43,17 +43,25 @@ impl Accept {
     /// Return the highest-quality supported format.
     ///
     /// Filters out GeoJSON when `geo_json` is [`GeoJsonSupport::Disallowed`].
-    /// Returns `None` when no supported format is found (caller maps this to 406).
+    /// Returns `None` when no supported format is found (caller maps this to 406),
+    /// which includes the case where every supported format was offered at
+    /// `q=0`.
     pub fn best_format(&self, geo_json: GeoJsonSupport) -> Option<ResponseMediaType> {
         let mut best: Option<&QualityValue<ResponseMediaType>> = None;
         for qv in &self.0 {
+            // RFC 9110 clause 12.4.2: a weight of 0 means "not acceptable", so a
+            // q=0 entry is never a candidate and must not be selected merely
+            // because it is present.
+            if qv.quality().value() == 0 {
+                continue;
+            }
             if geo_json == GeoJsonSupport::Disallowed && *qv.value() == ResponseMediaType::GeoJson {
                 continue;
             }
             match best {
                 None => best = Some(qv),
                 Some(current) if qv.quality() > current.quality() => best = Some(qv),
-                _ => {}
+                Some(_) => {}
             }
         }
         best.map(|qv| *qv.value())
@@ -167,6 +175,20 @@ mod tests {
     fn decode_merge_patch_not_matched() {
         let result = decode_accept("application/merge-patch+json");
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn a_zero_quality_format_is_not_acceptable() {
+        // RFC 9110 clause 12.4.2: `q=0` means "not acceptable", so an Accept
+        // that offers only JSON at q=0 negotiates to nothing (a 406), not JSON.
+        let accept = decode_accept("application/json;q=0").expect("valid");
+        pretty_assertions::assert_eq!(accept.best_format(GeoJsonSupport::Allowed), None);
+    }
+
+    #[test]
+    fn a_zero_quality_entry_does_not_shadow_an_acceptable_one() {
+        let accept = decode_accept("application/json;q=0, application/ld+json").expect("valid");
+        pretty_assertions::assert_eq!(accept.best_format(GeoJsonSupport::Allowed), Some(ResponseMediaType::JsonLd));
     }
 
     #[test]

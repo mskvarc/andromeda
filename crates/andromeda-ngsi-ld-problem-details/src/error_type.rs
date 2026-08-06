@@ -91,7 +91,13 @@ impl NgsiLdErrorType {
         NgsiLdErrorType::iter().find(|category| category.type_uri() == uri)
     }
 
-    /// The HTTP status code clause 5.5.2 assigns to this category.
+    /// The HTTP status code Table 6.3.2-1 assigns to this category.
+    ///
+    /// Clause 5.5.2 defines the error *types*; the HTTP binding's Table 6.3.2-1
+    /// is what maps each type to a status code, so that table is the authority
+    /// here — notably `LdContextNotAvailable`, which it assigns 504 rather than
+    /// 503 because the broker is a gateway that failed to dereference an
+    /// upstream `@context`, not a service that is itself unavailable.
     pub const fn status_code(self) -> StatusCode {
         match self {
             NgsiLdErrorType::InvalidRequest | NgsiLdErrorType::BadRequestData => StatusCode::BAD_REQUEST,
@@ -100,7 +106,7 @@ impl NgsiLdErrorType {
             NgsiLdErrorType::ResourceNotFound | NgsiLdErrorType::NonexistentTenant => StatusCode::NOT_FOUND,
             NgsiLdErrorType::InternalError => StatusCode::INTERNAL_SERVER_ERROR,
             NgsiLdErrorType::TooComplexQuery | NgsiLdErrorType::TooManyResults => StatusCode::FORBIDDEN,
-            NgsiLdErrorType::LdContextNotAvailable => StatusCode::SERVICE_UNAVAILABLE,
+            NgsiLdErrorType::LdContextNotAvailable => StatusCode::GATEWAY_TIMEOUT,
             NgsiLdErrorType::NoMultiTenantSupport => StatusCode::NOT_IMPLEMENTED,
         }
     }
@@ -138,7 +144,7 @@ mod tests {
     }
 
     #[test]
-    fn each_category_carries_the_status_clause_5_5_2_assigns_it() {
+    fn each_category_carries_the_status_table_6_3_2_assigns_it() {
         pretty_assertions::assert_eq!(NgsiLdErrorType::InvalidRequest.status_code(), StatusCode::BAD_REQUEST);
         pretty_assertions::assert_eq!(NgsiLdErrorType::BadRequestData.status_code(), StatusCode::BAD_REQUEST);
         pretty_assertions::assert_eq!(NgsiLdErrorType::AlreadyExists.status_code(), StatusCode::CONFLICT);
@@ -149,7 +155,7 @@ mod tests {
         pretty_assertions::assert_eq!(NgsiLdErrorType::InternalError.status_code(), StatusCode::INTERNAL_SERVER_ERROR);
         pretty_assertions::assert_eq!(NgsiLdErrorType::TooComplexQuery.status_code(), StatusCode::FORBIDDEN);
         pretty_assertions::assert_eq!(NgsiLdErrorType::TooManyResults.status_code(), StatusCode::FORBIDDEN);
-        pretty_assertions::assert_eq!(NgsiLdErrorType::LdContextNotAvailable.status_code(), StatusCode::SERVICE_UNAVAILABLE);
+        pretty_assertions::assert_eq!(NgsiLdErrorType::LdContextNotAvailable.status_code(), StatusCode::GATEWAY_TIMEOUT);
         pretty_assertions::assert_eq!(NgsiLdErrorType::NoMultiTenantSupport.status_code(), StatusCode::NOT_IMPLEMENTED);
     }
 }

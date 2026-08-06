@@ -1,4 +1,4 @@
-//! Typed `Via` header per RFC 7230 (ETSI GS CIM 009 clause 6.3.18).
+//! Typed `Via` header per RFC 9110 clause 7.6.3 (ETSI GS CIM 009 clause 6.3.18).
 //!
 //! The Via header field indicates the presence of intermediate protocols
 //! and recipients between the user agent and the server. Used for loop

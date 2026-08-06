@@ -45,7 +45,11 @@ fn csr_pred_to_condition(pred: &Predicate) -> Result<Condition, RenderError> {
 /// build through [`present_and`].
 fn csr_pattern_condition(path: &AttrPath, pattern: &str, polarity: PatternPolarity) -> Condition {
     let extract = csr_value_extract(path);
-    let value_sql = format!("({})::text {} $1", extract, pattern_match(polarity));
+    // `#>> '{}'` unwraps the jsonb value to its text form without the surrounding
+    // quotes a `::text` cast would keep, so a stored `"Alpha"` is matched as
+    // `Alpha` (clause 4.9). Every comparison arm in this file extracts the same
+    // way; the pattern arm must agree.
+    let value_sql = format!("(({}) #>> '{{}}') {} $1", extract, pattern_match(polarity));
     Condition::all().add(SeaExpr::cust_with_values(
         present_and(&format!("{extract} IS NOT NULL"), &value_sql),
         [pattern.to_string()],
@@ -202,6 +206,18 @@ mod tests {
         assert!(sql.contains("IS NOT NULL AND"), "{sql}");
         assert!(!sql.contains("IS NULL OR"), "{sql}");
         assert!(sql.contains("!~"), "{sql}");
+    }
+
+    /// Clause 4.9: a pattern compares against the value's text, not its quoted
+    /// JSON. A `::text` cast keeps the surrounding quotes, so a stored `"Alpha"`
+    /// would only match a pattern that itself included the quotes. The pattern
+    /// arm must unwrap with `#>> '{}'` like every comparison arm does.
+    #[test]
+    fn a_csr_pattern_matches_the_unwrapped_value_not_its_quoted_json() {
+        let sql = render("name~=\"^A.*\"");
+        assert!(sql.contains("#>> '{}'"), "{sql}");
+        assert!(!sql.contains(")::text "), "{sql}");
+        assert!(sql.contains(" ~ "), "{sql}");
     }
 
     /// The same rule for `!=` over a range and over a value list, which had the

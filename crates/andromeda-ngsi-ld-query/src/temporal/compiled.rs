@@ -7,7 +7,7 @@ use crate::{
 };
 use typed_builder::TypedBuilder;
 
-/// Compiled temporal query ready for SQL building.
+/// Compiled temporal query ready to be lowered to a store query.
 ///
 /// Produced by expanding and validating `TemporalQueryParameters` against the
 /// active JSON-LD context.

@@ -214,7 +214,7 @@ async fn serve_cached_context_after_server_down() {
 
     // Attempt delete with reload (should fail)
     let (status, _) = crate::delete_context(&c, &cached_id, "reload=true").await;
-    pretty_assertions::assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    pretty_assertions::assert_eq!(status, StatusCode::GATEWAY_TIMEOUT);
 
     // But GET should still work from cache
     let (status, body) = get_context(&c, &cached_id, "details=true").await;

@@ -1,4 +1,4 @@
-//! The clause 4.5.1 concise rendering of an entity.
+//! The clause 4.5.2.3 concise rendering of an entity.
 //!
 //! Concise drops the `type` member of every attribute whose kind the value
 //! member already implies, and collapses an attribute that carries nothing but
@@ -15,7 +15,7 @@ const ENTITY_MEMBERS: &[&str] = &["id", "type", "scope", "@context", "createdAt"
 
 /// Attribute members that are metadata rather than sub-attributes.
 ///
-/// Clause 4.5.1 conciseness applies to sub-attributes; these members are part
+/// Clause 4.5.2.3 conciseness applies to sub-attributes; these members are part
 /// of the attribute itself, so they survive unchanged rather than being walked
 /// into.
 const ATTRIBUTE_METADATA: &[&str] = &[
@@ -29,7 +29,7 @@ const ATTRIBUTE_METADATA: &[&str] = &[
     "instanceId",
 ];
 
-/// Convert a normalized rendered entity value into concise form (NGSI-LD clause 4.5.1).
+/// Convert a normalized rendered entity value into concise form (NGSI-LD clause 4.5.2.3).
 ///
 /// Concise representation removes redundant `"type"` keys from attributes when the
 /// attribute kind can be inferred from its value key. Sub-attributes and metadata
@@ -71,7 +71,7 @@ fn concise_attr_value(value: Value) -> Value {
 
 /// Concise a single attribute instance object.
 ///
-/// Rules per NGSI-LD clause 4.5.1:
+/// Rules per NGSI-LD clause 4.5.2.3:
 /// - If no sub-attributes exist: collapse to just the value
 ///   (Property -> value, Relationship -> `{"object": ...}`, etc.)
 /// - If sub-attributes exist: keep as object but remove the `"type"` key,

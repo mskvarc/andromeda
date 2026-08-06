@@ -165,10 +165,10 @@ async fn delete_cached_context_returns_204() {
     assert!(bytes.is_empty());
 }
 
-/// 051_05_01: Delete cached @context with reload=true when server is unavailable -> 503.
+/// 051_05_01: Delete cached @context with reload=true when server is unavailable -> 504.
 #[tokio::test]
 #[serial]
-async fn delete_cached_reload_server_unavailable_returns_503() {
+async fn delete_cached_reload_server_unavailable_returns_504() {
     clean_database().await;
     let c = client();
     let (mut server, ctx_url) = setup_cached_context(&c).await;
@@ -181,6 +181,6 @@ async fn delete_cached_reload_server_unavailable_returns_503() {
 
     // Attempt delete with reload -- should fail since server is down
     let (status, body) = delete_context(&c, &cached_id, "reload=true").await;
-    pretty_assertions::assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    pretty_assertions::assert_eq!(status, StatusCode::GATEWAY_TIMEOUT);
     pretty_assertions::assert_eq!(body["type"], LD_CONTEXT_NOT_AVAILABLE_TYPE);
 }

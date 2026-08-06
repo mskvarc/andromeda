@@ -175,7 +175,7 @@ pub enum QueryError {
         /// Human-readable rendering of the expander's own failure.
         message: String,
     },
-    /// A `scopeQ` pattern was outside the clause 4.18 grammar.
+    /// A `scopeQ` pattern was outside the clause 4.19 grammar.
     #[error("Invalid scopeQ pattern: '{0}'")]
     ScopePatternInvalid(String),
     /// An expanded IRI was not usable as an attribute name (clause 5.2.4).

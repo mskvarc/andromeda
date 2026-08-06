@@ -1,6 +1,7 @@
 //! Aggregated temporal values: `time_bucket` windows and the aggregate
 //! expressions of clause 4.5.19.
 
+use crate::time_column::{history_column, history_column_for_alias};
 use andromeda_ngsi_ld_lexicon::aggr_method::AggrMethod;
 use andromeda_ngsi_ld_query::temporal::compiled::CompiledTemporalQuery;
 use andromeda_postgresql_query::{
@@ -32,6 +33,12 @@ pub fn build_aggregation_query_sql(
     // bucket rather than bucketing at all. A zero period is absent by
     // construction, so there is nothing to test for here.
     let period = compiled.representation.aggr_period_duration;
+    // Bucket on the same time axis the WHERE clause filters on: for `observedAt`
+    // that is COALESCE(observed_at, time), not the write time. Bucketing on write
+    // time would assign a backfilled observation to a different period than the
+    // one its window filter selected, so aggregates land in the wrong periods
+    // (clause 4.5.19).
+    let time_col = history_column(compiled.window.timeproperty);
 
     let (group_expr, order_expr) = if let Some(period) = period {
         let period_marker = binds.bind(BindValue::String(Cow::Owned(period.as_iso8601())));
@@ -40,12 +47,12 @@ pub fn build_aggregation_query_sql(
         // data point so buckets align to the actual data range (not epoch).
         let bucket_expr = if let Some(time_at) = compiled.window.interval.reference() {
             let origin_marker = binds.bind(BindValue::String(Cow::Owned(time_at.to_rfc3339())));
-            format!("time_bucket({}::interval, \"ah\".\"time\", {}::timestamptz)", period_marker, origin_marker)
+            format!("time_bucket({period_marker}::interval, {time_col}, {origin_marker}::timestamptz)")
         } else {
-            // Subquery origin: earliest ah.time in this entity's data set
+            // Subquery origin: earliest value of the same axis in this entity's data set
+            let origin_axis = history_column_for_alias(compiled.window.timeproperty, "ah2");
             format!(
-                "time_bucket({}::interval, \"ah\".\"time\", (SELECT MIN(ah2.time) FROM attribute_history ah2 JOIN temporal_entity_attributes tea2 ON tea2.id = ah2.tea_id WHERE tea2.entity_id = \"tea\".\"entity_id\"))",
-                period_marker
+                "time_bucket({period_marker}::interval, {time_col}, (SELECT MIN({origin_axis}) FROM attribute_history ah2 JOIN temporal_entity_attributes tea2 ON tea2.id = ah2.tea_id WHERE tea2.entity_id = \"tea\".\"entity_id\"))"
             )
         };
 
@@ -171,6 +178,19 @@ mod tests {
         let built = build_aggregation_query_sql(&compiled, "\"tea\".\"entity_id\" = $1", BindBuilder::default()).unwrap();
         assert!(built.sql.contains("time_bucket"), "{}", built.sql);
         assert!(built.sql.contains("bucket_start"), "{}", built.sql);
+    }
+
+    #[test]
+    fn observed_at_buckets_on_the_observation_axis_not_write_time() {
+        // Clause 4.5.19: the bucket is computed on the same axis the window
+        // filters on. For `observedAt` that is COALESCE(observed_at, time), so a
+        // backfilled observation lands in the period its filter selected rather
+        // than the one its write time would place it in. The correlated origin
+        // subquery measures the same axis under its own alias.
+        let compiled = aggregated(vec![AggrMethod::Avg], Some("PT1H"));
+        let built = build_aggregation_query_sql(&compiled, "\"tea\".\"entity_id\" = $1", BindBuilder::default()).unwrap();
+        assert!(built.sql.contains("COALESCE(\"ah\".\"observed_at\", \"ah\".\"time\")"), "{}", built.sql);
+        assert!(built.sql.contains("COALESCE(\"ah2\".\"observed_at\", \"ah2\".\"time\")"), "{}", built.sql);
     }
 
     /// Clause 4.5.19: an empty or zero period aggregates the whole range into

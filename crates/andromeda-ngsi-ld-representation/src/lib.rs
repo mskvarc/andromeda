@@ -1,9 +1,10 @@
 //! How an NGSI-LD resource is rendered, as opposed to what it is.
 //!
 //! ETSI GS CIM 009 v1.9.1 separates a resource from its representation: clause
-//! 4.5.1 names the normalized, `keyValues`, simplified and concise renderings,
-//! clause 4.5.8 says when the system-generated attributes of clause 4.8 appear
-//! in one, and clause 4.5.21 says whether a linked entity is nested or flat.
+//! 4.5.1 names the normalized rendering, 4.5.4 the `keyValues`/simplified one
+//! and the per-type `.3` subclauses the concise one; clause 4.8 says when the
+//! system-generated attributes appear in one, and clause 4.5.23 says whether a
+//! linked entity is nested or flat.
 //! None of those decisions changes what an entity *is*, which is why they are
 //! not members of the data model, and every one of them is read on both sides
 //! of it — by the query languages that compile a request and by the renderers
@@ -13,7 +14,7 @@
 //! lexical layer alone, so nothing here names a resource, a query or a store.
 //!
 //! [`normalization`] is the one transformation that belongs here rather than
-//! with a renderer: clause 4.5.3 lets a *request* abbreviate an attribute, and
+//! with a renderer: clause 4.5.2.3 lets a *request* abbreviate an attribute, and
 //! rewriting that into the normalized form of clause 4.5.1 happens before any
 //! resource type exists to hold it.
 //!

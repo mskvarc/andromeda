@@ -1,4 +1,4 @@
-//! The `scopeQ` query parameter value (clause 4.18).
+//! The `scopeQ` query parameter value (clause 4.19).
 
 use crate::{error::QueryError, scope::pattern::ScopePattern};
 use serde::{Deserialize, Serialize};
@@ -15,12 +15,12 @@ const REQUIREMENT_SEPARATOR: char = ';';
 /// NGSI-LD scope query expression, parsed.
 ///
 /// The grammar is a disjunction of conjunctions: comma is OR, semicolon is AND,
-/// and AND binds tighter (clause 4.18). Parsing it once means every rendering
+/// and AND binds tighter (clause 4.19). Parsing it once means every rendering
 /// walks the same tree rather than re-splitting the raw text, and a malformed
 /// pattern is a rejected request rather than an `lquery` cast that fails inside
 /// PostgreSQL.
 ///
-/// The wire form is the clause 4.18 expression, so a Subscription or Snapshot
+/// The wire form is the clause 4.19 expression, so a Subscription or Snapshot
 /// query that stores one gives back an equivalent expression.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
@@ -51,7 +51,7 @@ impl ScopeQuery {
 
     /// Whether a set of entity scopes satisfies this query.
     ///
-    /// Clause 4.18: an alternative holds when every one of its requirements is
+    /// Clause 4.19: an alternative holds when every one of its requirements is
     /// satisfied by at least one of the entity's scopes, and the query holds
     /// when any alternative does. This is the in-memory reading used by
     /// subscription matching and by the post-merge filtering of a distributed
@@ -137,7 +137,7 @@ mod tests {
 
     #[test]
     fn and_binds_tighter_than_or() {
-        // Clause 4.18: `/A;/B,/C` is `(/A AND /B) OR /C`.
+        // Clause 4.19: `/A;/B,/C` is `(/A AND /B) OR /C`.
         assert_eq!(shape("/A;/B,/C"), vec![vec!["/A".to_string(), "/B".to_string()], vec!["/C".to_string()]]);
     }
 
@@ -160,7 +160,7 @@ mod tests {
 
     #[test]
     fn a_conjunction_needs_every_requirement_met_by_some_scope() {
-        // Clause 4.18: `;` is AND across the entity's whole scope set, not
+        // Clause 4.19: `;` is AND across the entity's whole scope set, not
         // within one scope.
         let query = ScopeQuery::parse("/Spain;/Madrid/Gardens").expect("valid scope query");
         assert!(query.matches(&["/Spain", "/Madrid/Gardens"]));
@@ -186,7 +186,7 @@ mod tests {
 
     #[test]
     fn a_malformed_scope_query_is_rejected_when_the_resource_is_deserialized() {
-        // Clause 4.18 admits `#` only as the last segment.
+        // Clause 4.19 admits `#` only as the last segment.
         assert!(serde_json::from_str::<ScopeQuery>("\"/A/#/C\"").is_err());
     }
 }
