@@ -4,6 +4,7 @@ use crate::{
     endpoint::mqtt::{MqttEndpointConfig, MqttQoS},
     error::TransportError,
     mqtt::{
+        ack::AckKind,
         connection::MqttClientVariant,
         connection_key::MqttConnectionKey,
         envelope::build_envelope,
@@ -20,6 +21,7 @@ use rumqttc::{
     v5::mqttbytes::{QoS as QoSV5, v5::PublishProperties},
 };
 use std::{sync::Arc, time::Instant};
+use tokio::{sync::oneshot::Receiver, time::timeout};
 use tracing::info;
 
 impl MqttQoS {
@@ -63,6 +65,31 @@ impl MqttTransportHandle {
     fn endpoint_label(&self) -> String {
         format!("{}:{}/{}", self.config.host, self.config.port, self.config.topic)
     }
+
+    /// The acknowledgement a publish at this endpoint's QoS is completed by, or
+    /// `None` for QoS 0, which is fire-and-forget and never acknowledged.
+    const fn completing_ack(&self) -> Option<AckKind> {
+        match self.config.qos {
+            MqttQoS::AtMost => None,
+            MqttQoS::AtLeast => Some(AckKind::PubAck),
+            MqttQoS::Exactly => Some(AckKind::PubComp),
+        }
+    }
+
+    /// A successful delivery outcome, logged.
+    fn succeeded(&self, start: Instant) -> DeliveryOutcome {
+        info!(
+            version = %self.config.version,
+            host = %self.config.host,
+            port = self.config.port,
+            topic = %self.config.topic,
+            "MQTT publish succeeded"
+        );
+        DeliveryOutcome::Success {
+            status_code: None,
+            duration: start.elapsed(),
+        }
+    }
 }
 
 #[async_trait]
@@ -71,6 +98,11 @@ impl NotificationTransport for MqttTransportHandle {
         let connection = self.pool.get_or_create_connection(&self.config).await?;
         let start = Instant::now();
         let envelope = build_envelope(request);
+
+        // Register the ack waiter and enqueue the publish under one lock, so the
+        // event loop assigns packet ids to waiters in the order it sends them.
+        let publish_guard = connection.state.publish_lock.lock().await;
+        let ack_receiver: Option<Receiver<()>> = self.completing_ack().map(|kind| connection.state.acks().register(kind));
 
         let published = match &connection.client {
             MqttClientVariant::V5 { client } => {
@@ -92,8 +124,14 @@ impl NotificationTransport for MqttTransportHandle {
                 .await
                 .map_err(|error| error.to_string()),
         };
+        drop(publish_guard);
 
         if let Err(detail) = published {
+            // The packet never reached the wire, so its waiter never will be
+            // assigned an id; drop it before it desynchronises the tracker.
+            if ack_receiver.is_some() {
+                connection.state.acks().cancel_last_registered();
+            }
             connection.state.mark_unhealthy();
             return Err(TransportError::ConnectionFailed {
                 endpoint: self.endpoint_label(),
@@ -101,20 +139,31 @@ impl NotificationTransport for MqttTransportHandle {
             });
         }
 
-        connection.state.mark_healthy();
+        // QoS 0 is fire-and-forget: the packet is on its way and there is no
+        // acknowledgement to await. Enqueue is deliberately not a health signal
+        // — the event loop reports health from real broker traffic — so a queued
+        // publish no longer masks a degraded connection.
+        let Some(ack_receiver) = ack_receiver else {
+            return Ok(self.succeeded(start));
+        };
 
-        info!(
-            version = %self.config.version,
-            host = %self.config.host,
-            port = self.config.port,
-            topic = %self.config.topic,
-            "MQTT publish succeeded"
-        );
-
-        Ok(DeliveryOutcome::Success {
-            status_code: None,
-            duration: start.elapsed(),
-        })
+        // QoS 1/2: the delivery is confirmed only once the broker acknowledges
+        // it (PUBACK / PUBCOMP). Until then it must not be reported delivered, or
+        // an unacked packet the event loop later drops would never retransmit.
+        match timeout(self.pool.publish_ack_timeout(), ack_receiver).await {
+            Ok(Ok(())) => Ok(self.succeeded(start)),
+            // The connection failed before the acknowledgement arrived.
+            Ok(Err(_cancelled)) => Err(TransportError::ConnectionFailed {
+                endpoint: self.endpoint_label(),
+                detail: "connection lost before the broker acknowledged the publish".to_string(),
+            }),
+            // The broker did not acknowledge within the allowed time; the outbox
+            // retransmits rather than assuming it arrived.
+            Err(_elapsed) => Err(TransportError::Timeout {
+                endpoint: self.endpoint_label(),
+                duration: self.pool.publish_ack_timeout(),
+            }),
+        }
     }
 
     async fn shutdown(&self) {

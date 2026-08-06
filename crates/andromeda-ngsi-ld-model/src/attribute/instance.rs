@@ -12,6 +12,7 @@ use crate::attribute::{
     relationship::Relationship,
     vocab_property::VocabProperty,
 };
+use andromeda_ngsi_ld_lexicon::attribute_type::AttributeType;
 use chrono::{DateTime, Utc};
 use jsonld::Expandable;
 use jsonld_expandable_core::{JsonValue, ToJsonValue};
@@ -60,6 +61,24 @@ impl Attribute {
             Attribute::JsonProperty(j) => j.json.clone(),
             Attribute::ListProperty(lp) => serde_json::to_value(&lp.value_list).unwrap_or_default(),
             Attribute::ListRelationship(lr) => serde_json::to_value(&lr.object_list).unwrap_or_default(),
+        }
+    }
+
+    /// The attribute family this instance belongs to.
+    ///
+    /// The discriminant of the enum, exposed so a renderer can decide the shape
+    /// a family takes (for example whether clause 4.5.4 keeps its value member)
+    /// without re-parsing a `type` string.
+    pub const fn attribute_type(&self) -> AttributeType {
+        match self {
+            Attribute::Property(_) => AttributeType::Property,
+            Attribute::Relationship(_) => AttributeType::Relationship,
+            Attribute::VocabProperty(_) => AttributeType::VocabProperty,
+            Attribute::GeoProperty(_) => AttributeType::GeoProperty,
+            Attribute::LanguageProperty(_) => AttributeType::LanguageProperty,
+            Attribute::JsonProperty(_) => AttributeType::JsonProperty,
+            Attribute::ListProperty(_) => AttributeType::ListProperty,
+            Attribute::ListRelationship(_) => AttributeType::ListRelationship,
         }
     }
 

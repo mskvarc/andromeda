@@ -26,6 +26,10 @@ pub struct AttrPath {
     /// which the NGSI-LD data model does not constrain at all. They are
     /// genuinely free-form JSON keys, not names of anything the broker models.
     pub value_path: Vec<String>,
+    /// Whether the path carried the `[*]` language-suppression marker, which
+    /// matches a LanguageProperty against every language's value rather than
+    /// against the one the `lang` parameter would otherwise pick (clause 4.9).
+    pub match_all_languages: bool,
 }
 
 impl AttrPath {
@@ -36,6 +40,7 @@ impl AttrPath {
             attr,
             sub_attrs: Vec::new(),
             value_path: Vec::new(),
+            match_all_languages: false,
         }
     }
 }

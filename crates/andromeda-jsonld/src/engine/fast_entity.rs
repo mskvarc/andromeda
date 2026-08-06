@@ -104,7 +104,9 @@ fn expand_entity_types(value: &Value, term_map: &BatchTermMap) -> Option<Value> 
 fn names_core_contexts_only(context: &Value, effective_core_url: &str) -> bool {
     match context {
         Value::String(url) => is_effective_core_context(url, effective_core_url),
-        Value::Array(items) => items.iter().all(|item| item.as_str().is_some_and(|url| is_effective_core_context(url, effective_core_url))),
+        Value::Array(items) => items
+            .iter()
+            .all(|item| item.as_str().is_some_and(|url| is_effective_core_context(url, effective_core_url))),
         Value::Null | Value::Bool(_) | Value::Number(_) | Value::Object(_) => false,
     }
 }
@@ -192,7 +194,9 @@ mod tests {
     async fn assert_fastpath_expands_and_agrees(document: Value) {
         let engine = offline_engine();
         let handle = core_handle(&engine).await;
-        let fast = engine.try_fast_expand(&document, &handle).expect("the fastpath must expand this document, not refuse it");
+        let fast = engine
+            .try_fast_expand(&document, &handle)
+            .expect("the fastpath must expand this document, not refuse it");
         let slow = engine.expand(document, handle.spec()).await.expect("the processor expands");
         pretty_assertions::assert_eq!(fast, slow);
     }
@@ -512,7 +516,10 @@ mod tests {
             "type": "Device",
             "ngsildproof": { "type": "Property", "value": "z" }
         });
-        assert!(fastpath_only(document.clone()).await.is_none(), "a scoped-context term must refuse the fastpath");
+        assert!(
+            fastpath_only(document.clone()).await.is_none(),
+            "a scoped-context term must refuse the fastpath"
+        );
         assert_both_paths_agree(document).await;
     }
 
@@ -529,7 +536,10 @@ mod tests {
             json!({ "id": "urn:x:g1", "type": "X", "loc": { "type": "Point", "coordinates": [1.0, 2.0] } }),
         ];
         for document in documents {
-            assert!(fastpath_only(document.clone()).await.is_none(), "the fastpath must refuse the typeless concise shape {document}");
+            assert!(
+                fastpath_only(document.clone()).await.is_none(),
+                "the fastpath must refuse the typeless concise shape {document}"
+            );
         }
     }
 

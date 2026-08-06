@@ -45,6 +45,8 @@ pub enum Token {
     LBracket,
     /// `]`, closing a compound value path.
     RBracket,
+    /// `*`, the language-suppression marker inside `[*]`.
+    Star,
     /// `.`, the sub-attribute separator.
     Dot,
     /// `,`, the value-list separator.
@@ -85,6 +87,10 @@ pub fn tokenize(input: &str) -> Result<Vec<Token>, QueryError> {
             }
             ']' => {
                 tokens.push(Token::RBracket);
+                i += 1;
+            }
+            '*' => {
+                tokens.push(Token::Star);
                 i += 1;
             }
             ',' => {

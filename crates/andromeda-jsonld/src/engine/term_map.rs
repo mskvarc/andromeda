@@ -17,7 +17,7 @@ use crate::{
     core_context::{ANDROMEDA_CORE_CONTEXT_URL, is_ngsi_ld_core_context_url},
     engine::{
         context_url::is_full_iri,
-        core_term_semantics::{container_of, coercion_of, core_term_semantics},
+        core_term_semantics::{coercion_of, container_of, core_term_semantics},
     },
     error::JsonLdError,
     loader::http::HttpContextLoader,

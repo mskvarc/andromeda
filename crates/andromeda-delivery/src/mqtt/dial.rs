@@ -21,6 +21,7 @@ use rumqttc::{
     AsyncClient,
     Event,
     MqttOptions,
+    Outgoing,
     Packet,
     QoS,
     Transport,
@@ -129,7 +130,16 @@ async fn dial_v5(
             match eventloop.poll().await {
                 Ok(event) => {
                     loop_state.mark_healthy();
-                    if let EventV5::Incoming(PacketV5::Publish(publish)) = &event
+                    // Correlate publishes with their acknowledgements, and read
+                    // `$SYS`. Every other packet is background traffic the
+                    // connection handles itself.
+                    if let EventV5::Outgoing(Outgoing::Publish(pkid)) = &event {
+                        loop_state.acks().on_outgoing_publish(*pkid);
+                    } else if let EventV5::Incoming(PacketV5::PubAck(puback)) = &event {
+                        loop_state.acks().on_puback(puback.pkid);
+                    } else if let EventV5::Incoming(PacketV5::PubComp(pubcomp)) = &event {
+                        loop_state.acks().on_pubcomp(pubcomp.pkid);
+                    } else if let EventV5::Incoming(PacketV5::Publish(publish)) = &event
                         && let Ok(topic) = str::from_utf8(&publish.topic)
                         && topic.starts_with("$SYS/")
                     {
@@ -146,6 +156,9 @@ async fn dial_v5(
                         "MQTT event loop error — marking unhealthy"
                     );
                     loop_state.mark_unhealthy();
+                    // The connection is gone; every publish awaiting an
+                    // acknowledgement on it is now unconfirmed and retryable.
+                    loop_state.acks().fail_all();
                     return;
                 }
             }
@@ -194,7 +207,16 @@ async fn dial_v311(
             match eventloop.poll().await {
                 Ok(event) => {
                     loop_state.mark_healthy();
-                    if let Event::Incoming(Packet::Publish(publish)) = &event
+                    // Correlate publishes with their acknowledgements, and read
+                    // `$SYS`. Every other packet is background traffic the
+                    // connection handles itself.
+                    if let Event::Outgoing(Outgoing::Publish(pkid)) = &event {
+                        loop_state.acks().on_outgoing_publish(*pkid);
+                    } else if let Event::Incoming(Packet::PubAck(puback)) = &event {
+                        loop_state.acks().on_puback(puback.pkid);
+                    } else if let Event::Incoming(Packet::PubComp(pubcomp)) = &event {
+                        loop_state.acks().on_pubcomp(pubcomp.pkid);
+                    } else if let Event::Incoming(Packet::Publish(publish)) = &event
                         && publish.topic.starts_with("$SYS/")
                     {
                         let payload = String::from_utf8_lossy(&publish.payload).into_owned();
@@ -210,6 +232,9 @@ async fn dial_v311(
                         "MQTT event loop error — marking unhealthy"
                     );
                     loop_state.mark_unhealthy();
+                    // The connection is gone; every publish awaiting an
+                    // acknowledgement on it is now unconfirmed and retryable.
+                    loop_state.acks().fail_all();
                     return;
                 }
             }

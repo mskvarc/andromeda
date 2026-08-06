@@ -105,9 +105,14 @@ impl ScopePattern {
 
         for (index, segment) in self.0.iter().enumerate() {
             match segment {
-                // `#` is last by construction, so everything from here on is
-                // consumed provided there is at least one level left.
-                ScopeSegment::MultiLevel => return levels.len() > index,
+                // `#` is last by construction, so it consumes the remainder.
+                // A prefix `#` (something precedes it) matches the anchor
+                // levels[0..index] — already verified above — *or* any
+                // descendant of it, so `/Madrid/Gardens/#` matches
+                // `/Madrid/Gardens` itself (clause 4.19 Example 2). A bare `/#`
+                // (nothing precedes it) is the separate `ScopesQ =/ "/" "#"`
+                // production: any non-empty scope, so it needs a level present.
+                ScopeSegment::MultiLevel => return if index == 0 { levels.len() > index } else { levels.len() >= index },
                 ScopeSegment::SingleLevel => {
                     if levels.get(index).is_none() {
                         return false;
@@ -184,17 +189,25 @@ mod tests {
     }
 
     #[test]
-    fn the_multi_level_wildcard_matches_one_or_more_levels() {
-        // Clause 4.19: `#` renders as the `lquery` quantifier `*{1,}`. An
-        // earlier in-memory reading in subscription matching consumed exactly
-        // one further level, so `/A/#` matched `/A/B` and not `/A/B/C` while
-        // the same pattern in a stored query matched both.
+    fn a_prefix_multi_level_wildcard_matches_its_anchor_or_any_descendant() {
+        // Clause 4.19 Example 2: `/A/#` matches the anchor `/A` itself as well
+        // as every path below it. An earlier reading required at least one
+        // further level, so it wrongly rejected `/A`.
         let pattern = ScopePattern::parse("/A/#").expect("valid pattern");
+        assert!(pattern.matches("/A"));
         assert!(pattern.matches("/A/B"));
         assert!(pattern.matches("/A/B/C"));
         assert!(pattern.matches("/A/B/C/D"));
-        assert!(!pattern.matches("/A"));
         assert!(!pattern.matches("/B/C"));
+    }
+
+    #[test]
+    fn a_bare_multi_level_wildcard_matches_any_non_empty_scope() {
+        // The `ScopesQ =/ "/" "#"` production: `/#` matches any scope with at
+        // least one level.
+        let pattern = ScopePattern::parse("/#").expect("valid pattern");
+        assert!(pattern.matches("/A"));
+        assert!(pattern.matches("/A/B/C"));
     }
 
     #[test]

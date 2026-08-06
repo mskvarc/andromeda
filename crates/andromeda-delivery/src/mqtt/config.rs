@@ -14,6 +14,10 @@ const DEFAULT_KEEPALIVE: Duration = Duration::from_secs(30);
 /// Default interval between sweeps for connections that have gone quiet.
 const DEFAULT_HEALTH_PROBE_INTERVAL: Duration = Duration::from_secs(30);
 
+/// Default time a QoS 1/2 publish waits for the broker's acknowledgement before
+/// it is treated as an unconfirmed, retryable delivery.
+const DEFAULT_PUBLISH_ACK_TIMEOUT: Duration = Duration::from_secs(30);
+
 /// Shortest wait before retrying a broker that refused a connection.
 const RECONNECT_MIN_DELAY: Duration = Duration::from_secs(1);
 
@@ -36,6 +40,9 @@ pub struct MqttPoolConfig {
     pub reconnect_backoff: backon::ExponentialBuilder,
     /// How often connections are swept for having gone quiet.
     pub health_probe_interval: Duration,
+    /// How long a QoS 1/2 publish waits for the broker's acknowledgement before
+    /// it is treated as unconfirmed and retryable.
+    pub publish_ack_timeout: Duration,
 }
 
 impl Default for MqttPoolConfig {
@@ -51,6 +58,7 @@ impl Default for MqttPoolConfig {
                 .with_jitter()
                 .without_max_times(),
             health_probe_interval: DEFAULT_HEALTH_PROBE_INTERVAL,
+            publish_ack_timeout: DEFAULT_PUBLISH_ACK_TIMEOUT,
         }
     }
 }

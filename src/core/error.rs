@@ -597,6 +597,7 @@ impl From<QueryError> for AndromedaError {
             | QueryError::QUnexpectedToken { .. }
             | QueryError::QExpected { .. }
             | QueryError::QUnexpectedChar { .. }
+            | QueryError::QAttributePathTooDeep { .. }
             | QueryError::TypeExprEmpty
             | QueryError::TypeExprUnexpectedEnd
             | QueryError::TypeExprUnbalanced(_)

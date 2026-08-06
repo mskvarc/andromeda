@@ -6,6 +6,7 @@
 //! is why this module is a pool, a per-endpoint handle onto it, and a health
 //! indicator, rather than a single transport.
 
+pub mod ack;
 pub mod config;
 pub mod connection;
 pub mod connection_key;

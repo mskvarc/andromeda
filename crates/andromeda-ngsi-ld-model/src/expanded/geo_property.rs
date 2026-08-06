@@ -1,7 +1,6 @@
 //! Decoding GeoProperty values out of an expanded payload (ETSI GS CIM 009 clause 4.7).
 
-use crate::expanded::dataset_id::instance_has_dataset_id;
-use crate::expanded::node::expanded_object_ref;
+use crate::expanded::{dataset_id::instance_has_dataset_id, node::expanded_object_ref};
 use andromeda_ngsi_ld_geometry::geometry::{Geometry, GeometryType};
 use andromeda_ngsi_ld_vocabulary::{expanded::properties, prefix};
 use geo::{Coord, Geometry as GeoGeometry, LineString, MultiLineString, MultiPoint, MultiPolygon, Point, Polygon};
@@ -62,7 +61,10 @@ fn geo_node_for_property<'a>(expanded: &'a Value, iri: &str) -> Option<&'a Value
 /// Select the default instance of a multi-attribute (clause 4.5.16.1): the one
 /// carrying no `datasetId`, falling back to the first when all are tagged.
 fn default_instance(instances: &[Value]) -> Option<&Value> {
-    instances.iter().find(|instance| !instance_has_dataset_id(instance)).or_else(|| instances.first())
+    instances
+        .iter()
+        .find(|instance| !instance_has_dataset_id(instance))
+        .or_else(|| instances.first())
 }
 
 /// Decode a literal-GeoJSON `@value` (string or already-compact object) into a [`Geometry`].
@@ -402,7 +404,10 @@ mod tests {
             ]
         }]);
         let compact = json!({"type": "Point", "coordinates": [13.4, 52.5]});
-        pretty_assertions::assert_eq!(extract_location_geometry(&entity).expect("default instance geometry"), geometry_from_compact(&compact));
+        pretty_assertions::assert_eq!(
+            extract_location_geometry(&entity).expect("default instance geometry"),
+            geometry_from_compact(&compact)
+        );
     }
 
     #[test]
@@ -423,7 +428,10 @@ mod tests {
             ]
         }]);
         let compact = json!({"type": "Point", "coordinates": [13.4, 52.5]});
-        pretty_assertions::assert_eq!(extract_location_geometry(&entity).expect("first tagged geometry"), geometry_from_compact(&compact));
+        pretty_assertions::assert_eq!(
+            extract_location_geometry(&entity).expect("first tagged geometry"),
+            geometry_from_compact(&compact)
+        );
     }
 
     #[test]

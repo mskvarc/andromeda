@@ -46,6 +46,11 @@ impl MqttTransportPool {
         MqttTransportHandle::new(Arc::clone(self), config.clone()) // clone: the handle outlives the subscription it was read from
     }
 
+    /// How long a QoS 1/2 publish waits for its broker acknowledgement.
+    pub const fn publish_ack_timeout(&self) -> Duration {
+        self.config.publish_ack_timeout
+    }
+
     /// Spawn a background task that marks connections degraded once they have
     /// gone quiet for longer than the protocol allows.
     ///

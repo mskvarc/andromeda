@@ -146,8 +146,14 @@ mod tests {
     fn the_table_reflects_the_v1_9_context_declarations() {
         let semantics = core_term_semantics(NGSI_LD_CORE_CONTEXT_V19_URL);
 
-        assert!(matches!(semantics.get("objectType").and_then(|s| s.coercion.as_ref()), Some(TermCoercion::Vocab)));
-        assert!(matches!(semantics.get("endTimeAt").and_then(|s| s.coercion.as_ref()), Some(TermCoercion::DateTime)));
+        assert!(matches!(
+            semantics.get("objectType").and_then(|s| s.coercion.as_ref()),
+            Some(TermCoercion::Vocab)
+        ));
+        assert!(matches!(
+            semantics.get("endTimeAt").and_then(|s| s.coercion.as_ref()),
+            Some(TermCoercion::DateTime)
+        ));
         assert!(matches!(semantics.get("entityId").and_then(|s| s.coercion.as_ref()), Some(TermCoercion::Id)));
         assert!(semantics.get("ngsildproof").is_some_and(|s| s.has_scoped_context));
         assert!(matches!(semantics.get("valueList").and_then(|s| s.container), Some(TermContainer::List)));
@@ -170,8 +176,7 @@ mod tests {
     /// annotation — the table cannot silently drop a declaration.
     #[test]
     fn every_annotated_v1_9_term_is_derived() {
-        let document: serde_json::Value =
-            serde_json::from_str(crate::core_context::NGSI_LD_CORE_CONTEXT_V19).expect("embedded v1.9 context parses");
+        let document: serde_json::Value = serde_json::from_str(crate::core_context::NGSI_LD_CORE_CONTEXT_V19).expect("embedded v1.9 context parses");
         let context = document.get("@context").and_then(serde_json::Value::as_object).expect("a context object");
         let semantics = core_term_semantics(NGSI_LD_CORE_CONTEXT_V19_URL);
 
@@ -182,10 +187,12 @@ mod tests {
             let Some(definition) = declaration.as_object() else {
                 continue;
             };
-            let annotates =
-                definition.contains_key("@type") || definition.contains_key("@container") || definition.contains_key("@context");
+            let annotates = definition.contains_key("@type") || definition.contains_key("@container") || definition.contains_key("@context");
             if annotates {
-                assert!(semantics.get(term.as_str()).is_some(), "{term} is annotated in the context but missing from the table");
+                assert!(
+                    semantics.get(term.as_str()).is_some(),
+                    "{term} is annotated in the context but missing from the table"
+                );
             }
         }
     }

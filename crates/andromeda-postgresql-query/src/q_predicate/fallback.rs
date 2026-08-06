@@ -88,12 +88,16 @@ pub fn fallback_compare(path: &AttrPath, op: CmpOp, rhs: &CompareValue, target: 
 /// what [`present_and`] states once for every backend.
 pub fn fallback_pattern(path: &AttrPath, pattern: &Pattern, polarity: PatternPolarity, target: &QFilterTarget<'_>) -> Condition {
     let payload = target.payload_column();
-    let jsonpath = escape_jsonpath(&value_extraction_jsonpath(path, VALUE.as_str()));
-    let value_sql = format!(
-        "(jsonb_path_query_first({payload}, '{jsonpath}')#>>'{{}}')::text {} $1",
-        pattern_match(polarity)
-    );
-    let sql = present_and(&format!("jsonb_path_exists({payload}, '{jsonpath}')"), &value_sql);
+    let value_path = escape_jsonpath(&value_extraction_jsonpath(path, VALUE.as_str()));
+    let object_path = escape_jsonpath(&value_extraction_jsonpath(path, OBJECT.as_str()));
+    // The target is a Property's value (`hasValue`) or a Relationship's object
+    // (`hasObject`); COALESCE both so a `~=`/`!~=` over a Relationship's object
+    // URI matches, mirroring `fallback_compare` (clause 4.9).
+    let extract =
+        format!("COALESCE((jsonb_path_query_first({payload}, '{value_path}')#>>'{{}}'), (jsonb_path_query_first({payload}, '{object_path}')#>>'{{}}'))");
+    let value_sql = format!("({extract})::text {} $1", pattern_match(polarity));
+    let present = format!("(jsonb_path_exists({payload}, '{value_path}') OR jsonb_path_exists({payload}, '{object_path}'))");
+    let sql = present_and(&present, &value_sql);
     Condition::all().add(SeaExpr::cust_with_values(sql, [SeaValue::from(pattern.as_str())]))
 }
 
@@ -196,6 +200,7 @@ mod tests {
             attr: "https://example.com/o'brien".parse().expect("valid attribute name"),
             sub_attrs: vec!["https://example.com/sub".parse().expect("valid attribute name")],
             value_path: Vec::new(),
+            match_all_languages: false,
         };
         let expr = Expr::Pred(Predicate::Compare {
             path,

@@ -557,18 +557,18 @@ mod tests {
                 true,
             ),
             (
-                "clause 4.18 scopeQ: a multi-level wildcard consumes the one remaining level",
+                "clause 4.19 scopeQ: a prefix multi-level wildcard matches a descendant of its anchor",
                 EntitySelection::builder()
                     .scope_q(Some(ScopeQuery::parse("/Berlin/#").expect("valid scopeQ")))
                     .build(),
                 true,
             ),
             (
-                "clause 4.18 scopeQ: a multi-level wildcard needs at least one level to consume",
+                "clause 4.19 scopeQ Example 2: a prefix multi-level wildcard also matches its anchor itself",
                 EntitySelection::builder()
                     .scope_q(Some(ScopeQuery::parse("/Berlin/Mitte/#").expect("valid scopeQ")))
                     .build(),
-                false,
+                true,
             ),
             (
                 "clause 4.18 scopeQ: a literal path matches exactly",

@@ -71,11 +71,14 @@ fn concise_attr_value(value: Value) -> Value {
 
 /// Concise a single attribute instance object.
 ///
-/// Rules per NGSI-LD clause 4.5.2.3:
-/// - If no sub-attributes exist: collapse to just the value
-///   (Property -> value, Relationship -> `{"object": ...}`, etc.)
-/// - If sub-attributes exist: keep as object but remove the `"type"` key,
-///   recursively concise sub-attributes
+/// Only a Property or GeoProperty collapses to its bare value: clause 4.5.2.3
+/// licenses the bare form for those two, so `{"type": "Property", "value": 25}`
+/// becomes `25`. Every other family keeps its mandatory distinguishing member
+/// (clause 4.5.3.3 and the five list/language/vocab/json clauses): the `type`
+/// is dropped but a Relationship stays `{"object": …}`, a LanguageProperty
+/// `{"languageMap": …}`, and so on — collapsing them to a bare value would read
+/// back as a different attribute type. An instance carrying sub-attributes or
+/// metadata always keeps its object shape, whatever its family.
 fn concise_single_instance(mut attr_obj: Map<String, Value>) -> Value {
     // The `type` member of a rendered attribute is unvalidated JSON, so it is
     // read through `AttributeType`'s own parser; anything it rejects is not an
@@ -84,25 +87,28 @@ fn concise_single_instance(mut attr_obj: Map<String, Value>) -> Value {
     let Some(attr_type) = attr_type else { return Value::Object(attr_obj) };
     let value_key = attr_type.compact_value_key();
 
-    // Check if the attribute has only `type` + value key (bare minimum for collapse)
+    let collapses_to_bare_value = matches!(attr_type, AttributeType::Property | AttributeType::GeoProperty);
     let is_bare = attr_obj.len() == 2 && attr_obj.contains_key("type") && attr_obj.contains_key(value_key);
 
-    if is_bare {
-        attr_obj.remove(value_key).unwrap_or(Value::Object(attr_obj))
-    } else {
-        // Has metadata and/or sub-attributes: remove "type", recursively concise sub-attrs.
-        attr_obj.remove("type");
-        let mut result = Map::with_capacity(attr_obj.len());
-        for (k, v) in attr_obj {
-            if k == value_key || ATTRIBUTE_METADATA.contains(&k.as_str()) {
-                result.insert(k, v);
-            } else {
-                // Sub-attribute: recursively concise
-                result.insert(k, concise_attr_value(v));
-            }
+    if is_bare && collapses_to_bare_value {
+        if let Some(value) = attr_obj.remove(value_key) {
+            return value;
         }
-        Value::Object(result)
+        return Value::Object(attr_obj);
     }
+
+    // Drop `type` and keep the value member; recursively concise sub-attributes.
+    attr_obj.remove("type");
+    let mut result = Map::with_capacity(attr_obj.len());
+    for (k, v) in attr_obj {
+        if k == value_key || ATTRIBUTE_METADATA.contains(&k.as_str()) {
+            result.insert(k, v);
+        } else {
+            // Sub-attribute: recursively concise.
+            result.insert(k, concise_attr_value(v));
+        }
+    }
+    Value::Object(result)
 }
 
 #[cfg(test)]
@@ -146,10 +152,12 @@ mod tests {
     }
 
     #[test]
-    fn concise_relationship_without_sub_attrs() {
+    fn concise_relationship_keeps_its_object_member() {
+        // Clause 4.5.3.3: `object` is Mandatory; the concise form drops `type`
+        // but keeps `{"object": …}`, or it would read back as a string Property.
         let input = json!({"id": "urn:x", "type": "T", "ref": {"type": "Relationship", "object": "urn:y"}});
         let result = concise_value(input);
-        pretty_assertions::assert_eq!(result["ref"], json!("urn:y"));
+        pretty_assertions::assert_eq!(result["ref"], json!({"object": "urn:y"}));
     }
 
     #[test]
@@ -176,53 +184,58 @@ mod tests {
     }
 
     #[test]
-    fn concise_language_property() {
+    fn concise_language_property_keeps_its_language_map_member() {
+        // Clause 4.5.18.3: `languageMap` is Mandatory and survives the collapse.
         let input = json!({
             "id": "urn:x", "type": "T",
             "name": {"type": "LanguageProperty", "languageMap": {"en": "Tower"}}
         });
         let result = concise_value(input);
-        pretty_assertions::assert_eq!(result["name"], json!({"en": "Tower"}));
+        pretty_assertions::assert_eq!(result["name"], json!({"languageMap": {"en": "Tower"}}));
     }
 
     #[test]
-    fn concise_json_property() {
+    fn concise_json_property_keeps_its_json_member() {
+        // Clause 4.5.24.3: `json` is Mandatory and survives the collapse.
         let input = json!({
             "id": "urn:x", "type": "T",
             "config": {"type": "JsonProperty", "json": {"key": "val"}}
         });
         let result = concise_value(input);
-        pretty_assertions::assert_eq!(result["config"], json!({"key": "val"}));
+        pretty_assertions::assert_eq!(result["config"], json!({"json": {"key": "val"}}));
     }
 
     #[test]
-    fn concise_vocab_property() {
+    fn concise_vocab_property_keeps_its_vocab_member() {
+        // Clause 4.5.20.3: `vocab` is Mandatory and survives the collapse.
         let input = json!({
             "id": "urn:x", "type": "T",
             "category": {"type": "VocabProperty", "vocab": "commercial"}
         });
         let result = concise_value(input);
-        pretty_assertions::assert_eq!(result["category"], json!("commercial"));
+        pretty_assertions::assert_eq!(result["category"], json!({"vocab": "commercial"}));
     }
 
     #[test]
-    fn concise_list_property() {
+    fn concise_list_property_keeps_its_value_list_member() {
+        // Clause 4.5.21.3: `valueList` is Mandatory and survives the collapse.
         let input = json!({
             "id": "urn:x", "type": "T",
             "tags": {"type": "ListProperty", "valueList": ["a", "b"]}
         });
         let result = concise_value(input);
-        pretty_assertions::assert_eq!(result["tags"], json!(["a", "b"]));
+        pretty_assertions::assert_eq!(result["tags"], json!({"valueList": ["a", "b"]}));
     }
 
     #[test]
-    fn concise_list_relationship() {
+    fn concise_list_relationship_keeps_its_object_list_member() {
+        // Clause 4.5.22.3: `objectList` is Mandatory and survives the collapse.
         let input = json!({
             "id": "urn:x", "type": "T",
             "refs": {"type": "ListRelationship", "objectList": ["urn:a", "urn:b"]}
         });
         let result = concise_value(input);
-        pretty_assertions::assert_eq!(result["refs"], json!(["urn:a", "urn:b"]));
+        pretty_assertions::assert_eq!(result["refs"], json!({"objectList": ["urn:a", "urn:b"]}));
     }
 
     #[test]

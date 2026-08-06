@@ -110,9 +110,11 @@ fn normalize_concise_instance(instance: &mut Map<String, Value>) {
 /// what preserves it verbatim.
 fn all_are_instances(instances: &[Value]) -> bool {
     !instances.is_empty()
-        && instances
-            .iter()
-            .all(|instance| instance.as_object().is_some_and(|instance| declares_an_attribute_type(instance) || distinguishing_member_type(instance).is_some()))
+        && instances.iter().all(|instance| {
+            instance
+                .as_object()
+                .is_some_and(|instance| declares_an_attribute_type(instance) || distinguishing_member_type(instance).is_some())
+        })
 }
 
 /// Whether an object declares one of the clause 5.2.4 attribute types.
@@ -159,7 +161,15 @@ fn distinguishing_member_type(instance: &Map<String, Value>) -> Option<Attribute
 /// Kept as a local token set rather than pulling in the geometry crate: this
 /// crate is a low-layer leaf, and inference needs only to recognise the shape,
 /// not decode it.
-const GEOJSON_GEOMETRY_TYPES: &[&str] = &["Point", "MultiPoint", "LineString", "MultiLineString", "Polygon", "MultiPolygon", "GeometryCollection"];
+const GEOJSON_GEOMETRY_TYPES: &[&str] = &[
+    "Point",
+    "MultiPoint",
+    "LineString",
+    "MultiLineString",
+    "Polygon",
+    "MultiPolygon",
+    "GeometryCollection",
+];
 
 /// Whether an object is a GeoJSON geometry: a known geometry `type` alongside
 /// its coordinate member (`coordinates`, or `geometries` for a
@@ -323,7 +333,10 @@ mod tests {
 
         normalize_entity_attributes(&mut payload);
 
-        pretty_assertions::assert_eq!(payload["label"], json!({ "type": "LanguageProperty", "languageMap": { "en": "Door", "de": "Tuer" } }));
+        pretty_assertions::assert_eq!(
+            payload["label"],
+            json!({ "type": "LanguageProperty", "languageMap": { "en": "Door", "de": "Tuer" } })
+        );
     }
 
     #[test]
@@ -374,7 +387,10 @@ mod tests {
 
         normalize_entity_attributes(&mut payload);
 
-        pretty_assertions::assert_eq!(payload["location"], json!({ "type": "GeoProperty", "value": { "type": "Point", "coordinates": [13.4, 52.5] } }));
+        pretty_assertions::assert_eq!(
+            payload["location"],
+            json!({ "type": "GeoProperty", "value": { "type": "Point", "coordinates": [13.4, 52.5] } })
+        );
     }
 
     #[test]

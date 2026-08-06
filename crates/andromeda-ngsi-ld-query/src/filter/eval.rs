@@ -6,7 +6,7 @@ use crate::filter::{
     predicate::{CmpOp, Predicate, SetMembership},
     scalar::{CompareValue, Scalar, parse_date, parse_date_time, parse_time},
 };
-use andromeda_ngsi_ld_vocabulary::expanded::properties::{OBJECT, VALUE};
+use andromeda_ngsi_ld_vocabulary::expanded::properties::{JSON, LANGUAGE_MAP, OBJECT, OBJECT_LIST, VALUE, VALUE_LIST, VOCAB};
 use serde_json::{Map, Value};
 use std::cmp::Ordering;
 
@@ -32,68 +32,163 @@ fn eval_expr(expr: &Expr, obj: &Map<String, Value>) -> bool {
     }
 }
 
+/// One resolved comparison target: the value the predicate compares, and
+/// whether it is a Relationship's object.
+///
+/// Clause 4.9 forbids the ordering operators against a Relationship, so the
+/// evaluator has to know a value's origin, not only its JSON shape — a
+/// Relationship object and a string Property value are both JSON strings.
+struct ResolvedTarget {
+    /// The value to compare against the operand.
+    value: Value,
+    /// Whether it came from `hasObject`/`hasObjectList` (a Relationship object).
+    is_relationship: bool,
+}
+
 /// Evaluate one leaf predicate.
 fn eval_predicate(pred: &Predicate, obj: &Map<String, Value>) -> bool {
     match pred {
+        // Clause 4.9: existence holds when the entity contains the target
+        // element, whatever attribute family it belongs to.
         Predicate::Exists(path) => !resolve_values(obj, path).is_empty(),
-        Predicate::Compare { path, op, rhs } => resolve_values(obj, path).iter().any(|value| eval_compare(value, *op, rhs)),
+        Predicate::Compare { path, op, rhs } => resolve_values(obj, path).iter().any(|target| {
+            // Clause 4.9: an ordering comparison against a Relationship shall
+            // not match — a URI has no `<`/`>` order the query can mean.
+            if target.is_relationship && is_ordering(*op) {
+                return false;
+            }
+            eval_compare(&target.value, *op, rhs)
+        }),
+        // Clause 4.9: a pattern operator applies only to a String target; a
+        // non-String value is considered as not matching, so a number or
+        // boolean is never stringified into a match.
         Predicate::MatchPattern { path, pattern } => resolve_values(obj, path)
             .iter()
-            .filter_map(entity_value_to_string)
-            .any(|value| pattern.is_match(&value)),
-        // Clause 4.9 requires the entity to *contain* the target element for
-        // `notPatternOp`; an entity that simply lacks the attribute does not
-        // match.
+            .filter_map(|target| target.value.as_str())
+            .any(|value| pattern.is_match(value)),
+        // `notPatternOp` also requires the entity to *contain* the target
+        // element (clause 4.9); an entity that lacks the attribute, or carries
+        // only non-String values, does not match.
         Predicate::NotMatchPattern { path, pattern } => resolve_values(obj, path)
             .iter()
-            .filter_map(entity_value_to_string)
-            .any(|value| !pattern.is_match(&value)),
+            .filter_map(|target| target.value.as_str())
+            .any(|value| !pattern.is_match(value)),
     }
+}
+
+/// Whether an operator is one of the four ordering comparisons.
+const fn is_ordering(op: CmpOp) -> bool {
+    matches!(op, CmpOp::Greater | CmpOp::GreaterEq | CmpOp::Less | CmpOp::LessEq)
+}
+
+/// The expanded value members a `q` target can terminate at: the member IRI,
+/// the leaf key that carries the value inside it, and whether the member
+/// denotes a Relationship object.
+///
+/// Covers all eight attribute families of clause 5.2.4, not only Property and
+/// Relationship, so a `q` over a LanguageProperty, VocabProperty, JsonProperty
+/// or a list attribute resolves rather than silently missing.
+fn value_members() -> [(&'static str, &'static str, bool); 7] {
+    [
+        (VALUE.as_str(), "@value", false),
+        (OBJECT.as_str(), "@id", true),
+        (VOCAB.as_str(), "@id", false),
+        (LANGUAGE_MAP.as_str(), "@value", false),
+        (JSON.as_str(), "@value", false),
+        (VALUE_LIST.as_str(), "@value", false),
+        (OBJECT_LIST.as_str(), "@id", true),
+    ]
 }
 
 /// Resolve every value an attribute path addresses in an expanded JSON-LD
 /// entity object.
 ///
-/// Navigates `obj[attr][*]` -> sub-attrs -> `hasValue[0].@value` or
-/// `hasObject[0].@id`, then the optional value path for compound values.
+/// Navigates `obj[attr]` -> each instance -> sub-attrs -> the family's value
+/// member, then the optional value path for compound values.
 ///
 /// All instances are returned, not just the first. Clause 4.9 (p. 86) defines
 /// the comparison target for a multi-instance attribute as "any Value of such
 /// instances", so a predicate holds when it holds for at least one of them.
 /// Restricting this to the first instance made a `datasetId`-partitioned
 /// attribute match on whichever instance happened to serialise first.
-fn resolve_values(obj: &Map<String, Value>, path: &AttrPath) -> Vec<Value> {
+fn resolve_values(obj: &Map<String, Value>, path: &AttrPath) -> Vec<ResolvedTarget> {
     let Some(instances) = obj.get(path.attr.as_str()).and_then(Value::as_array) else {
         return Vec::new();
     };
+    if path.match_all_languages {
+        return instances.iter().flat_map(|instance| resolve_all_languages(instance, path)).collect();
+    }
     instances.iter().filter_map(|instance| resolve_instance_value(instance, path)).collect()
 }
 
-/// Resolve one attribute instance down to the value the predicate compares.
-fn resolve_instance_value(instance: &Value, path: &AttrPath) -> Option<Value> {
-    let has_value = VALUE.as_str();
-    let has_object = OBJECT.as_str();
+/// Resolve the `[*]` language-suppression form: every language's value of a
+/// LanguageProperty instance (clause 4.9), so a predicate holds when it holds
+/// for any language rather than only the one negotiation would select.
+///
+/// Falls back to the ordinary single-value resolution when the instance is not
+/// a LanguageProperty, so `attr[*]` on another family still addresses its value.
+fn resolve_all_languages(instance: &Value, path: &AttrPath) -> Vec<ResolvedTarget> {
+    let mut current = instance;
+    for sub in &path.sub_attrs {
+        let Some(next) = current.get(sub.as_str()).and_then(Value::as_array).and_then(|values| values.first()) else {
+            return Vec::new();
+        };
+        current = next;
+    }
+    if let Some(entries) = current.get(LANGUAGE_MAP.as_str()).and_then(Value::as_array) {
+        return entries
+            .iter()
+            .filter_map(|entry| entry.get("@value"))
+            // clone: the caller owns each resolved value beyond the instance borrow
+            .map(|value| ResolvedTarget {
+                value: value.clone(),
+                is_relationship: false,
+            })
+            .collect();
+    }
+    resolve_instance_value(instance, path).into_iter().collect()
+}
 
+/// Resolve one attribute instance down to the value the predicate compares.
+fn resolve_instance_value(instance: &Value, path: &AttrPath) -> Option<ResolvedTarget> {
     // Navigate sub-attributes (e.g. temperature.observedAt).
     let mut current = instance;
     for sub in &path.sub_attrs {
         current = current.get(sub.as_str())?.as_array()?.first()?;
     }
 
-    // Try hasValue first, then hasObject.
-    let (terminal_value, terminal_key) = match current.get(has_value).and_then(|v| v.as_array()?.first()) {
-        Some(value) => (value, "@value"),
-        None => (current.get(has_object).and_then(|v| v.as_array()?.first())?, "@id"),
-    };
-
-    let raw = terminal_value.get(terminal_key)?;
+    let (raw, is_relationship) = terminal_value(current)?;
 
     // Navigate compound value path (e.g. address[city]).
     let mut value = raw;
     for key in &path.value_path {
         value = value.get(key)?;
     }
-    Some(value.clone()) // clone: the caller owns the resolved value, which outlives the borrow of `instance`
+    // clone: the caller owns the resolved value, which outlives the borrow of `instance`
+    Some(ResolvedTarget {
+        value: value.clone(),
+        is_relationship,
+    })
+}
+
+/// Read an instance node down to the value its attribute family carries, and
+/// whether that value is a Relationship object.
+///
+/// Tries each family's value member in turn, then a direct `@value`/`@id`
+/// terminal — the shape a system sub-attribute such as `observedAt` or
+/// `datasetId` takes, which carries neither `hasValue` nor `hasObject`.
+fn terminal_value(node: &Value) -> Option<(&Value, bool)> {
+    for (member, terminal_key, is_relationship) in value_members() {
+        if let Some(first) = node.get(member).and_then(Value::as_array).and_then(|values| values.first())
+            && let Some(raw) = first.get(terminal_key)
+        {
+            return Some((raw, is_relationship));
+        }
+    }
+    if let Some(raw) = node.get("@value") {
+        return Some((raw, false));
+    }
+    node.get("@id").map(|raw| (raw, false))
 }
 
 /// Evaluate a comparison against a scalar, a range, or a value list.
@@ -102,12 +197,17 @@ fn eval_compare(entity_val: &Value, op: CmpOp, rhs: &CompareValue) -> bool {
         CompareValue::Scalar(scalar) => eval_cmp_scalar(entity_val, op, scalar),
         // Clause 4.9 admits a compound operand only after `==` and `!=`, which
         // `set_membership` states once for every backend; an ineligible
-        // operator simply cannot hold here.
-        CompareValue::Range { min, max } => match op.set_membership() {
-            Some(SetMembership::Within) => eval_cmp_scalar(entity_val, CmpOp::GreaterEq, min) && eval_cmp_scalar(entity_val, CmpOp::LessEq, max),
-            Some(SetMembership::Outside) => eval_cmp_scalar(entity_val, CmpOp::Less, min) || eval_cmp_scalar(entity_val, CmpOp::Greater, max),
-            None => false,
-        },
+        // operator simply cannot hold here. "Outside" is the exact complement
+        // of "within" — as it is for a value list — so a target incomparable
+        // with the bounds is outside the range, not neither in nor out.
+        CompareValue::Range { min, max } => {
+            let within = eval_cmp_scalar(entity_val, CmpOp::GreaterEq, min) && eval_cmp_scalar(entity_val, CmpOp::LessEq, max);
+            match op.set_membership() {
+                Some(SetMembership::Within) => within,
+                Some(SetMembership::Outside) => !within,
+                None => false,
+            }
+        }
         CompareValue::ValueList(values) => {
             let any_match = values.iter().any(|v| eval_cmp_scalar(entity_val, CmpOp::Equal, v));
             match op.set_membership() {
@@ -121,8 +221,25 @@ fn eval_compare(entity_val: &Value, op: CmpOp, rhs: &CompareValue) -> bool {
 
 /// Compare one entity value against one scalar, treating an unusable pairing as
 /// a non-match.
+///
+/// An array target is compared by membership (clause 4.9): `==` holds when the
+/// operand is one of its elements, `!=` when it is not, and an ordering
+/// comparison against an array does not hold. Two values of different types are
+/// considered unequal, so an incomparable pairing satisfies `!=` and fails `==`
+/// and every ordering comparison.
 fn eval_cmp_scalar(entity_val: &Value, op: CmpOp, scalar: &Scalar) -> bool {
-    eval_cmp_scalar_inner(entity_val, op, scalar).unwrap_or(false)
+    if let Value::Array(elements) = entity_val {
+        let contains = elements.iter().any(|element| eval_cmp_scalar(element, CmpOp::Equal, scalar));
+        return match op {
+            CmpOp::Equal => contains,
+            CmpOp::Unequal => !contains,
+            CmpOp::Greater | CmpOp::GreaterEq | CmpOp::Less | CmpOp::LessEq => false,
+        };
+    }
+    match eval_cmp_scalar_inner(entity_val, op, scalar) {
+        Some(result) => result,
+        None => matches!(op, CmpOp::Unequal),
+    }
 }
 
 /// Compare one entity value against one scalar, or `None` when the two are not
@@ -423,5 +540,97 @@ mod tests {
     fn eval_not_match_pattern_still_matches_a_present_non_matching_value() {
         let expr = parse("\"https://example.com/brandName\"!~=\"BMW.*\"").unwrap();
         assert!(evaluate(&expr, &vehicle_entity()));
+    }
+
+    /// An entity exercising the attribute families and the sub-attribute shape a
+    /// `q` has to reach beyond Property/Relationship.
+    fn rich_entity() -> Value {
+        serde_json::json!([{
+            "@id": "urn:ngsi-ld:Device:1",
+            "@type": ["https://example.com/Device"],
+            "https://example.com/temperature": [{
+                "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": 21}],
+                "https://uri.etsi.org/ngsi-ld/observedAt": [{"@value": "2024-06-01T00:00:00Z"}]
+            }],
+            "https://example.com/description": [{
+                "https://uri.etsi.org/ngsi-ld/hasLanguageMap": [
+                    {"@language": "en", "@value": "Door"},
+                    {"@language": "de", "@value": "Tuer"}
+                ]
+            }],
+            "https://example.com/tags": [{
+                "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": [1, 2, 3]}]
+            }],
+            "https://example.com/owner": [{
+                "https://uri.etsi.org/ngsi-ld/hasObject": [{"@id": "urn:ngsi-ld:Person:42"}]
+            }]
+        }])
+    }
+
+    #[test]
+    fn a_temporal_sub_attribute_resolves_to_its_direct_value() {
+        // Clause 4.9: `temperature.observedAt` terminates at a bare `@value`
+        // node, carrying neither `hasValue` nor `hasObject`; the evaluator must
+        // still reach it rather than resolving nothing.
+        let expr = parse("\"https://example.com/temperature\".\"https://uri.etsi.org/ngsi-ld/observedAt\">\"2024-01-01T00:00:00Z\"").unwrap();
+        assert!(evaluate(&expr, &rich_entity()));
+    }
+
+    #[test]
+    fn a_language_property_satisfies_a_bare_existence_check() {
+        // Clause 4.9: existence holds for any attribute family, including a
+        // LanguageProperty, which the hasValue/hasObject-only reader missed.
+        let expr = parse("\"https://example.com/description\"").unwrap();
+        assert!(evaluate(&expr, &rich_entity()));
+    }
+
+    #[test]
+    fn values_of_different_types_are_considered_unequal() {
+        // Clause 4.9: `!=` holds and `==` fails when the operand's type differs
+        // from the target's — here a boolean attribute against a number.
+        assert!(evaluate(&parse("\"https://example.com/active\"!=5").unwrap(), &vehicle_entity()));
+        assert!(!evaluate(&parse("\"https://example.com/active\"==5").unwrap(), &vehicle_entity()));
+    }
+
+    #[test]
+    fn an_array_target_is_matched_by_membership() {
+        // Clause 4.9: `==` holds when the operand is included in an array value.
+        assert!(evaluate(&parse("\"https://example.com/tags\"==2").unwrap(), &rich_entity()));
+        assert!(!evaluate(&parse("\"https://example.com/tags\"==9").unwrap(), &rich_entity()));
+        assert!(evaluate(&parse("\"https://example.com/tags\"!=9").unwrap(), &rich_entity()));
+    }
+
+    #[test]
+    fn a_pattern_operator_does_not_match_a_non_string_target() {
+        // Clause 4.9: a non-String target is considered not matching, so the
+        // number 80 is not stringified to "80" and matched against "8.*".
+        assert!(!evaluate(&parse("\"https://example.com/speed\"~=\"8.*\"").unwrap(), &vehicle_entity()));
+    }
+
+    #[test]
+    fn an_ordering_comparison_against_a_relationship_does_not_match() {
+        // Clause 4.9: `>`/`<`/`>=`/`<=` against a Relationship shall not match,
+        // but equality against its object still does.
+        assert!(!evaluate(&parse("\"https://example.com/owner\">\"a\"").unwrap(), &rich_entity()));
+        assert!(evaluate(
+            &parse("\"https://example.com/owner\"==\"urn:ngsi-ld:Person:42\"").unwrap(),
+            &rich_entity()
+        ));
+    }
+
+    #[test]
+    fn a_target_incomparable_with_a_range_is_outside_it() {
+        // "Outside" is the exact complement of "within", so `!=` a numeric range
+        // holds for a string target that cannot be inside it.
+        assert!(evaluate(&parse("\"https://example.com/brandName\"!=70..90").unwrap(), &vehicle_entity()));
+    }
+
+    #[test]
+    fn the_language_suppression_form_matches_any_language_value() {
+        // Clause 4.9: `[*]` matches a LanguageProperty against every language's
+        // value, so a match on a non-default language still holds — the default
+        // single-value reading would only ever see the first language.
+        assert!(evaluate(&parse("\"https://example.com/description\"[*]==\"Tuer\"").unwrap(), &rich_entity()));
+        assert!(!evaluate(&parse("\"https://example.com/description\"==\"Tuer\"").unwrap(), &rich_entity()));
     }
 }

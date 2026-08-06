@@ -1,11 +1,12 @@
 //! One live broker connection and the state its event loop shares.
 
 use crate::mqtt::{
+    ack::AckTracker,
     connection_key::MqttConnectionKey,
     health::{ConnectionHealth, HealthCell},
     sys_topics::SysTopicData,
 };
-use std::sync::Arc;
+use std::sync::{Arc, Mutex as StdMutex, MutexGuard as StdMutexGuard, PoisonError as StdPoisonError};
 use tokio::{
     sync::{Mutex, RwLock},
     task::JoinHandle,
@@ -64,6 +65,16 @@ pub struct ConnectionState {
     pub last_healthy: RwLock<Instant>,
     /// Broker metadata collected from `$SYS`.
     pub sys_data: RwLock<SysTopicData>,
+    /// Correlates each outgoing QoS 1/2 publish with its broker acknowledgement.
+    ///
+    /// Written by the delivery path (register) and the event loop (assign,
+    /// resolve, fail). A synchronous lock because every critical section is a
+    /// few map operations with no `await` inside.
+    pub ack_tracker: StdMutex<AckTracker>,
+    /// Serialises the register-then-publish pair so a publish's registration
+    /// order matches the order the event loop puts packets on the wire, which
+    /// is what lets [`AckTracker`] assign packet ids to the right waiter.
+    pub publish_lock: Mutex<()>,
 }
 
 impl ConnectionState {
@@ -73,7 +84,15 @@ impl ConnectionState {
             health: HealthCell::new(ConnectionHealth::Healthy),
             last_healthy: RwLock::new(Instant::now()),
             sys_data: RwLock::new(SysTopicData::default()),
+            ack_tracker: StdMutex::new(AckTracker::default()),
+            publish_lock: Mutex::new(()),
         }
+    }
+
+    /// The acknowledgement tracker, recovering a poisoned lock rather than
+    /// propagating a panic that the tracker's brief map operations cannot cause.
+    pub fn acks(&self) -> StdMutexGuard<'_, AckTracker> {
+        self.ack_tracker.lock().unwrap_or_else(StdPoisonError::into_inner)
     }
 
     /// Record that the broker is answering.

@@ -92,7 +92,12 @@ impl SpatialEntityIndex {
             let bucket = self
                 .buckets
                 .entry(key.clone()) // clone: the bucket key and the ownership record are separate
-                .or_insert_with(|| Arc::new(RwLock::new(Partition { generation, tree: RTree::new() })));
+                .or_insert_with(|| {
+                    Arc::new(RwLock::new(Partition {
+                        generation,
+                        tree: RTree::new(),
+                    }))
+                });
             let mut partition = bucket.value().write();
             partition.tree.insert(entry);
             partition.generation = generation;
@@ -134,7 +139,12 @@ impl SpatialEntityIndex {
         let tree = RTree::bulk_load(entries);
 
         let departed: Vec<Urn> = {
-            let bucket = self.buckets.entry(key.clone()).or_insert_with(|| Arc::new(RwLock::new(Partition { generation: 0, tree: RTree::new() })));
+            let bucket = self.buckets.entry(key.clone()).or_insert_with(|| {
+                Arc::new(RwLock::new(Partition {
+                    generation: 0,
+                    tree: RTree::new(),
+                }))
+            });
             let mut partition = bucket.value().write();
             if partition.generation > snapshot_generation {
                 // A write newer than the snapshot already changed this
@@ -143,7 +153,12 @@ impl SpatialEntityIndex {
                 return;
             }
             // clone: the departed set outlives the tree borrow it is read from
-            let departed = partition.tree.iter().map(|entry| entry.entity_id.clone()).filter(|id| !incoming.contains(id)).collect();
+            let departed = partition
+                .tree
+                .iter()
+                .map(|entry| entry.entity_id.clone())
+                .filter(|id| !incoming.contains(id))
+                .collect();
             partition.tree = tree;
             partition.generation = snapshot_generation;
             departed

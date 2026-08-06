@@ -64,6 +64,17 @@ pub enum QueryError {
     /// A numeric literal was lexed but failed to parse.
     #[error("Q expression: invalid number literal {0}")]
     QInvalidNumber(String),
+    /// An attribute path nested more sub-attributes than the parser admits.
+    ///
+    /// A guard against a pathological path whose backend rendering grows with
+    /// its depth; the limit is far above any legitimate NGSI-LD nesting.
+    #[error("Q expression: attribute path too deep ({depth} sub-attributes, limit {limit})")]
+    QAttributePathTooDeep {
+        /// The number of sub-attributes the path carried.
+        depth: usize,
+        /// The maximum the parser accepts.
+        limit: usize,
+    },
     /// A literal shaped like an RFC 3339 date-time was not one.
     #[error("Q expression: invalid date-time literal '{value}'")]
     QInvalidDateTime {

@@ -50,16 +50,43 @@ fn render_attribute(attribute: &Attribute, language_filter: Option<&LanguageFilt
 }
 
 /// Render a `LanguageProperty` as the `Property` clause 4.15 asks for.
+///
+/// With a `lang` filter present the answer is always a `Property`: the entry the
+/// filter selects, or — when nothing matches — any supported language, because
+/// clause 4.15 states the broker *shall* default to a supported language rather
+/// than return the raw language map. Only the empty language map, or the absence
+/// of a filter, leaves the property as itself.
 fn render_language_property(language_property: &LanguageProperty, language_filter: Option<&LanguageFilter>) -> Result<Value, RepresentationError> {
-    if let Some(filter) = language_filter
-        && let Some(negotiated) = negotiate_language_property(language_property, filter)
-    {
-        return serialize_value(&negotiated);
+    if let Some(filter) = language_filter {
+        let selected = negotiate_language_property(language_property, filter).or_else(|| default_language_property(language_property));
+        if let Some(negotiated) = selected {
+            return serialize_value(&negotiated);
+        }
     }
 
     // Clone required: Attribute's #[serde(tag = "type")] adds the "type" discriminant during serialization.
     // Serializing LanguageProperty directly would omit the type tag.
     serialize_value(&Attribute::LanguageProperty(language_property.clone()))
+}
+
+/// The `Property` clause 4.15 defaults to when no requested language matches:
+/// any supported language — the first tagged entry, else the `@none` default.
+///
+/// `None` only when the language map is empty, which has nothing to serve.
+fn default_language_property(language_property: &LanguageProperty) -> Option<NegotiatedProperty<'_>> {
+    let available = language_entries(&language_property.language_map);
+    let selected = default_supported_entry(&available)?;
+    Some(NegotiatedProperty::from_language_property(language_property, selected))
+}
+
+/// Any supported entry of a language map: a tagged one by preference, else the
+/// `@none` default. The clause 4.15 fallback target, shared by the wildcard
+/// range and the no-match default so the two cannot diverge.
+fn default_supported_entry<'a, 'b>(available: &'b [AvailableLanguage<'a>]) -> Option<&'b AvailableLanguage<'a>> {
+    available
+        .iter()
+        .find(|entry| matches!(entry.range, AvailableLanguageRange::Tag(_)))
+        .or_else(|| available.iter().find(|entry| matches!(entry.range, AvailableLanguageRange::Default)))
 }
 
 /// Pick the language-map entry the filter selects, by RFC 4647 basic filtering.
@@ -70,22 +97,19 @@ fn negotiate_language_property<'a>(language_property: &'a LanguageProperty, filt
         let range = preference.value();
         match range {
             LanguageRange::Wildcard => {
-                if let Some(entry) = available.iter().find(|entry| matches!(entry.range, AvailableLanguageRange::Tag(_))) {
-                    return Some(NegotiatedProperty::from_language_property(language_property, entry));
-                }
-                if let Some(entry) = available.iter().find(|entry| matches!(entry.range, AvailableLanguageRange::Default)) {
+                if let Some(entry) = default_supported_entry(&available) {
                     return Some(NegotiatedProperty::from_language_property(language_property, entry));
                 }
             }
             LanguageRange::Tag(_) => {
-                // Exact match
+                // Exact match.
                 if let Some(entry) = available.iter().find(|entry| entry.matches_exact(range)) {
                     return Some(NegotiatedProperty::from_language_property(language_property, entry));
                 }
-                // Prefix match (only for basic ranges like "fr", not "fr-CA")
-                if range.is_basic_range()
-                    && let Some(entry) = available.iter().find(|entry| entry.matches_prefix(range))
-                {
+                // Prefix match. RFC 4647 basic filtering places no restriction to
+                // basic ranges, so an extended range like `fr-CA` still matches a
+                // longer tag such as `fr-CA-1994`.
+                if let Some(entry) = available.iter().find(|entry| entry.matches_prefix(range)) {
                     return Some(NegotiatedProperty::from_language_property(language_property, entry));
                 }
             }
@@ -185,5 +209,62 @@ impl<'a> NegotiatedProperty<'a> {
             dataset_id: &language_property.common.dataset_id,
             sub_attributes: &language_property.common.sub_attributes,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::language_negotiation::render_attribute_value;
+    use andromeda_ngsi_ld_http_headers::language::LanguageFilter;
+    use andromeda_ngsi_ld_model::attribute::instance::AttributeValue;
+    use serde_json::{Value, json};
+
+    /// A `LanguageProperty` attribute value carrying `map` as its language map.
+    fn language_attr(map: Value) -> AttributeValue {
+        serde_json::from_value(json!({"type": "LanguageProperty", "languageMap": map})).expect("a language property")
+    }
+
+    /// A language filter parsed from a `lang` value.
+    fn filter(raw: &str) -> LanguageFilter {
+        LanguageFilter::parse(raw).expect("a valid language filter")
+    }
+
+    #[test]
+    fn a_matching_language_is_served_directly() {
+        let attr = language_attr(json!({"fr": "Grand Place", "en": "Great Square"}));
+        let rendered = render_attribute_value(&attr, Some(&filter("en"))).expect("render");
+        pretty_assertions::assert_eq!(rendered["type"], "Property");
+        pretty_assertions::assert_eq!(rendered["value"], "Great Square");
+        pretty_assertions::assert_eq!(rendered["lang"], "en");
+    }
+
+    #[test]
+    fn no_matching_language_defaults_to_a_supported_one() {
+        // Clause 4.15: the broker shall default to any supported language rather
+        // than return the raw language map. The first tagged entry is served.
+        let attr = language_attr(json!({"fr": "Grand Place", "nl": "Grote Markt"}));
+        let rendered = render_attribute_value(&attr, Some(&filter("de"))).expect("render");
+        pretty_assertions::assert_eq!(rendered["type"], "Property");
+        pretty_assertions::assert_eq!(rendered["value"], "Grand Place");
+        pretty_assertions::assert_eq!(rendered["lang"], "fr");
+    }
+
+    #[test]
+    fn an_extended_range_prefix_matches_a_longer_tag() {
+        // RFC 4647 basic filtering places no basic-range restriction, so `fr-CA`
+        // matches the longer tag `fr-CA-1994`.
+        let attr = language_attr(json!({"fr-CA-1994": "quebecois"}));
+        let rendered = render_attribute_value(&attr, Some(&filter("fr-CA"))).expect("render");
+        pretty_assertions::assert_eq!(rendered["value"], "quebecois");
+        pretty_assertions::assert_eq!(rendered["lang"], "fr-CA-1994");
+    }
+
+    #[test]
+    fn no_match_defaults_to_the_none_entry_when_only_it_is_present() {
+        // With no tagged entry, the `@none` default is the supported fallback.
+        let attr = language_attr(json!({"@none": "untagged"}));
+        let rendered = render_attribute_value(&attr, Some(&filter("de"))).expect("render");
+        pretty_assertions::assert_eq!(rendered["value"], "untagged");
+        pretty_assertions::assert_eq!(rendered["lang"], "@none");
     }
 }

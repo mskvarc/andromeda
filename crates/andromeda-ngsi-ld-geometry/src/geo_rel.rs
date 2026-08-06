@@ -28,6 +28,24 @@ pub enum GeoRelParseError {
         /// The offending modifier value.
         value: String,
     },
+    /// A `maxDistance` / `minDistance` modifier was zero or negative. Clause
+    /// 4.10's grammar is `distance equal PositiveNumber`, so a non-positive
+    /// distance is not a `near` query at all.
+    #[error("non-positive georel distance: {value}")]
+    NonPositiveDistance {
+        /// The offending modifier value.
+        value: String,
+    },
+    /// A `near` relationship carried no `maxDistance` or `minDistance`. Clause
+    /// 4.10 requires exactly one mandatory positive distance, so an unbounded
+    /// `near` has no meaning and is not representable.
+    #[error("georel 'near' requires a maxDistance or minDistance")]
+    NearMissingDistance,
+    /// A `near` relationship carried a modifier that is neither `maxDistance`
+    /// nor `minDistance`. Silently dropping it (as an earlier reading did) let
+    /// a typo such as `maxDistanc==500` parse as an unbounded `near`.
+    #[error("unknown georel modifier: {0}")]
+    UnknownModifier(String),
 }
 
 /// Geo-spatial relationship operators per NGSI-LD clause 4.10.
@@ -105,11 +123,21 @@ impl FromStr for GeoRel {
                 let mut min_distance = None;
                 for part in parts {
                     let part = part.trim();
+                    if part.is_empty() {
+                        continue;
+                    }
                     if let Some(raw) = part.strip_prefix("maxDistance==") {
                         max_distance = Some(parse_distance(raw)?);
                     } else if let Some(raw) = part.strip_prefix("minDistance==") {
                         min_distance = Some(parse_distance(raw)?);
+                    } else {
+                        // A malformed modifier is a rejected request, never a
+                        // silently unbounded `near`.
+                        return Err(GeoRelParseError::UnknownModifier(part.to_string()));
                     }
+                }
+                if max_distance.is_none() && min_distance.is_none() {
+                    return Err(GeoRelParseError::NearMissingDistance);
                 }
                 Ok(GeoRel::Near { max_distance, min_distance })
             }
@@ -139,7 +167,9 @@ impl From<GeoRel> for String {
 /// Parse one `maxDistance` / `minDistance` modifier value, in metres.
 ///
 /// Rust's `f64` parser accepts `NaN`, `inf` and `infinity`; those are rejected
-/// here so a non-finite distance never reaches the statement builder.
+/// here so a non-finite distance never reaches the statement builder. Clause
+/// 4.10's grammar requires a `PositiveNumber`, so zero and negatives are
+/// rejected too.
 fn parse_distance(raw: &str) -> Result<f64, GeoRelParseError> {
     let parsed = raw.parse::<f64>().map_err(|source| GeoRelParseError::InvalidDistance {
         value: raw.to_string(),
@@ -147,6 +177,9 @@ fn parse_distance(raw: &str) -> Result<f64, GeoRelParseError> {
     })?;
     if !parsed.is_finite() {
         return Err(GeoRelParseError::NonFiniteDistance { value: raw.to_string() });
+    }
+    if parsed <= 0.0 {
+        return Err(GeoRelParseError::NonPositiveDistance { value: raw.to_string() });
     }
     Ok(parsed)
 }
@@ -212,6 +245,37 @@ mod tests {
                 "{raw} should be rejected as non-finite"
             );
         }
+    }
+
+    #[test]
+    fn near_without_either_distance_is_rejected() {
+        // Clause 4.10: `nearRel` requires one mandatory positive distance, so a
+        // bare `near` is not a valid relationship.
+        pretty_assertions::assert_eq!("near".parse::<GeoRel>().expect_err("must fail"), GeoRelParseError::NearMissingDistance);
+    }
+
+    #[test]
+    fn a_non_positive_near_distance_is_rejected() {
+        // Clause 4.10's grammar is `distance equal PositiveNumber`.
+        for raw in ["0", "-5", "0.0"] {
+            assert!(
+                matches!(
+                    format!("near;maxDistance=={raw}").parse::<GeoRel>().expect_err("must fail"),
+                    GeoRelParseError::NonPositiveDistance { .. }
+                ),
+                "{raw} should be rejected as non-positive"
+            );
+        }
+    }
+
+    #[test]
+    fn a_malformed_near_modifier_is_rejected_rather_than_dropped() {
+        // A typo in the modifier key must fail, not silently parse as an
+        // unbounded `near`.
+        assert!(matches!(
+            "near;maxDistanc==500".parse::<GeoRel>().expect_err("must fail"),
+            GeoRelParseError::UnknownModifier(_)
+        ));
     }
 
     #[test]

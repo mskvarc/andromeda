@@ -308,8 +308,14 @@ fn compile_pattern(path: &AttrPath, pattern: &Pattern, polarity: PatternPolarity
     // renumbers them when the enclosing statement is rendered.
     let mut binds: BindBuilder<SeaValue> = BindBuilder::default();
     let attr = binds.bind(id.get());
-    let pattern_placeholder = binds.bind(pattern.as_str());
-    let value_sql = format!("\"ac\".\"value_string\" {} {}", pattern_match(polarity), pattern_placeholder);
+    let operator = pattern_match(polarity);
+    let string_placeholder = binds.bind(pattern.as_str());
+    let uri_placeholder = binds.bind(pattern.as_str());
+    // A pattern must also test a Relationship's object, held in `value_uri`,
+    // exactly as the comparison path does (clause 4.9): a URI is a string, so
+    // `owner~="urn:Person:.*"` matches. Only one column is non-null per
+    // instance, so the OR holds for `~=` and `!~=` alike.
+    let value_sql = format!("(\"ac\".\"value_string\" {operator} {string_placeholder} OR \"ac\".\"value_uri\" {operator} {uri_placeholder})");
     Condition::all().add(SeaExpr::cust_with_values(exists_on_projection(&attr, &value_sql, target), binds.into_values()))
 }
 
@@ -379,6 +385,15 @@ mod tests {
             matches!(binds[1], BindValue::F64(value) if (value - 50.0).abs() < f64::EPSILON),
             "numeric literal binds as float8: {binds:?}"
         );
+    }
+
+    #[test]
+    fn a_pattern_covers_property_values_and_relationship_objects() {
+        // Clause 4.9: a URI is a String, so `~=` over a Relationship's object
+        // matches; the pattern must test `value_uri` as the comparison does.
+        let (sql, _) = render("\"https://example.com/brandName\"~=\"Merc.*\"");
+        assert!(sql.contains("\"ac\".\"value_string\" ~"), "{sql}");
+        assert!(sql.contains("\"ac\".\"value_uri\" ~"), "a pattern must also test relationship objects: {sql}");
     }
 
     #[test]

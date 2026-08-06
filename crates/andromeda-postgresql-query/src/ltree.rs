@@ -22,9 +22,12 @@ pub fn scope_to_ltree(scope: &Scope) -> String {
 
 /// The PostgreSQL `lquery` a clause 4.18 scope pattern matches with.
 ///
-/// Levels are dot-separated labels; `+` becomes `*{1}` and `#` becomes
-/// `*{1,}`. Total by construction, because [`ScopePattern`] validated every
-/// label against the same grammar `ltree` itself accepts.
+/// Levels are dot-separated labels; `+` becomes `*{1}`. A `#` renders per
+/// clause 4.19: a prefix `#` (something precedes it) is `*` — zero or more
+/// further labels — so `/A/#` becomes `A.*` and matches the anchor `A` itself
+/// as well as its descendants; a bare `/#` is `*{1,}`, any non-empty scope.
+/// Total by construction, because [`ScopePattern`] validated every label
+/// against the same grammar `ltree` itself accepts.
 pub fn pattern_to_lquery(pattern: &ScopePattern) -> String {
     let mut lquery = String::new();
     for (index, segment) in pattern.segments().iter().enumerate() {
@@ -34,7 +37,10 @@ pub fn pattern_to_lquery(pattern: &ScopePattern) -> String {
         match segment {
             ScopeSegment::Label(label) => lquery.push_str(label.as_str()),
             ScopeSegment::SingleLevel => lquery.push_str("*{1}"),
-            ScopeSegment::MultiLevel => lquery.push_str("*{1,}"),
+            // A prefix `#` matches the anchor or below (`*`, zero-or-more); a
+            // bare `#` matches any non-empty scope (`*{1,}`, one-or-more).
+            ScopeSegment::MultiLevel if index == 0 => lquery.push_str("*{1,}"),
+            ScopeSegment::MultiLevel => lquery.push('*'),
         }
     }
     lquery
@@ -57,7 +63,8 @@ mod tests {
     #[test]
     fn scope_wildcards_become_lquery_quantifiers() {
         assert_eq!(lquery("/A/B/C"), "A.B.C");
-        assert_eq!(lquery("/A/#"), "A.*{1,}");
+        // A prefix `#` is `*` so `A.*` matches the anchor `A` and its descendants.
+        assert_eq!(lquery("/A/#"), "A.*");
         assert_eq!(lquery("/A/+/C"), "A.*{1}.C");
         assert_eq!(lquery("/#"), "*{1,}");
     }
@@ -80,7 +87,8 @@ mod tests {
             // pattern, rendered lquery, verdict per path above
             ("/A/B", "A.B", [true, false, false, false]),
             ("/A/+/C", "A.*{1}.C", [false, true, false, false]),
-            ("/A/#", "A.*{1,}", [true, true, true, false]),
+            // Clause 4.19 Example 2: `/A/#` matches `/A` itself as well as below.
+            ("/A/#", "A.*", [true, true, true, true]),
             ("/#", "*{1,}", [true, true, true, true]),
         ];
 

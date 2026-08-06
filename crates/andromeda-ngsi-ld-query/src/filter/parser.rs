@@ -20,6 +20,13 @@ use crate::{
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use serde_json::Number;
 
+/// The most sub-attributes an attribute path may nest.
+///
+/// Far above any legitimate NGSI-LD nesting (an attribute's sub-attributes are
+/// rarely more than one deep), this only rejects a pathological path whose
+/// backend rendering would otherwise grow with its depth.
+const MAX_SUB_ATTRIBUTE_DEPTH: usize = 16;
+
 /// Parses an NGSI-LD `q` filter expression string into an AST.
 ///
 /// The grammar follows NGSI-LD 4.9, supporting boolean combinators (`;` for AND,
@@ -198,6 +205,7 @@ impl<'a> Parser<'a> {
                 | Token::RParen
                 | Token::LBracket
                 | Token::RBracket
+                | Token::Star
                 | Token::Dot
                 | Token::Comma,
             )
@@ -210,23 +218,42 @@ impl<'a> Parser<'a> {
         let attr = self.parse_attribute_name()?;
         let mut sub_attrs = Vec::new();
         let mut value_path = Vec::new();
+        let mut match_all_languages = false;
 
         while self.peek() == Some(&Token::Dot) {
             self.advance();
             sub_attrs.push(self.parse_attribute_name()?);
+            if sub_attrs.len() > MAX_SUB_ATTRIBUTE_DEPTH {
+                return Err(QueryError::QAttributePathTooDeep {
+                    depth: sub_attrs.len(),
+                    limit: MAX_SUB_ATTRIBUTE_DEPTH,
+                });
+            }
         }
 
         if self.peek() == Some(&Token::LBracket) {
             self.advance();
-            value_path.push(self.parse_ident()?.to_string());
-            while self.peek() == Some(&Token::Dot) {
+            if self.peek() == Some(&Token::Star) {
+                // `[*]` is the language-suppression marker, not a value-path
+                // key: it matches every language of a LanguageProperty.
                 self.advance();
+                match_all_languages = true;
+            } else {
                 value_path.push(self.parse_ident()?.to_string());
+                while self.peek() == Some(&Token::Dot) {
+                    self.advance();
+                    value_path.push(self.parse_ident()?.to_string());
+                }
             }
             self.expect(&Token::RBracket)?;
         }
 
-        Ok(AttrPath { attr, sub_attrs, value_path })
+        Ok(AttrPath {
+            attr,
+            sub_attrs,
+            value_path,
+            match_all_languages,
+        })
     }
 
     /// Consume an identifier naming an attribute, quoted or bare.
@@ -366,6 +393,23 @@ mod tests {
             }
             other => unreachable!("expected Compare, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn an_attribute_path_within_the_depth_limit_parses() {
+        let at_limit = format!("a{}", ".s".repeat(MAX_SUB_ATTRIBUTE_DEPTH));
+        assert!(parse(&at_limit).is_ok(), "a path at the limit must parse");
+    }
+
+    #[test]
+    fn an_attribute_path_deeper_than_the_limit_is_rejected() {
+        // A defence against a pathological path whose backend rendering grows
+        // with its depth; the limit is far above any legitimate nesting.
+        let too_deep = format!("a{}", ".s".repeat(MAX_SUB_ATTRIBUTE_DEPTH + 1));
+        assert!(
+            matches!(parse(&too_deep), Err(QueryError::QAttributePathTooDeep { .. })),
+            "an over-deep path must be rejected"
+        );
     }
 
     #[test]

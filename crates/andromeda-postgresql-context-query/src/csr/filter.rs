@@ -56,20 +56,34 @@ fn csr_pattern_condition(path: &AttrPath, pattern: &str, polarity: PatternPolari
     ))
 }
 
-/// Build a SQL expression that extracts the value of a CSR property from additional_properties.
+/// Build a SQL expression that extracts the value of a CSR property from
+/// `additional_properties`, unwrapping the `Property` value wrapper at each
+/// level.
+///
+/// Each level references the prior expression exactly once, aliased inside a
+/// scalar subquery. Inlining the `CASE` directly embedded the prior expression
+/// three times per level, so the SQL grew as `~3^depth` — a handful of
+/// sub-attributes produced a statement megabytes wide. The subquery makes the
+/// growth linear in the sub-attribute depth (which [`parse_attr_path`] also
+/// bounds).
 fn csr_value_extract(path: &AttrPath) -> String {
-    let mut json_path = format!("\"additional_properties\"->'{}'", escape_single_quoted(path.attr.as_str()));
-
-    // Unwrap Property wrapper: use ->'value' if it's a Property
-    json_path = format!("CASE WHEN ({jp}->>'type') = 'Property' THEN {jp}->'value' ELSE {jp} END", jp = json_path);
+    let mut json_path = unwrap_property(&format!("\"additional_properties\"->'{}'", escape_single_quoted(path.attr.as_str())));
 
     for sub in &path.sub_attrs {
-        let prev = json_path;
-        json_path = format!("({prev})->'{}'", escape_single_quoted(sub.as_str()));
-        json_path = format!("CASE WHEN ({jp}->>'type') = 'Property' THEN {jp}->'value' ELSE {jp} END", jp = json_path);
+        let stepped = format!("({json_path})->'{}'", escape_single_quoted(sub.as_str()));
+        json_path = unwrap_property(&stepped);
     }
 
     json_path
+}
+
+/// Unwrap one NGSI-LD `Property` wrapper, using `expr` exactly once.
+///
+/// The expression is aliased as `j` in a scalar subquery so the `CASE` reads a
+/// column three times rather than re-embedding the whole prior expression,
+/// which is what keeps [`csr_value_extract`] linear rather than exponential.
+fn unwrap_property(expr: &str) -> String {
+    format!("(SELECT CASE WHEN (j->>'type') = 'Property' THEN j->'value' ELSE j END FROM (SELECT {expr} AS j) s)")
 }
 
 /// Compile a comparison predicate against `additional_properties`.
@@ -165,6 +179,20 @@ mod tests {
         let sql = render("temperature>10");
         assert!(sql.contains("'Property'"), "{sql}");
         assert!(sql.contains(" > "), "{sql}");
+    }
+
+    #[test]
+    fn a_deep_sub_attribute_path_extracts_through_nested_subqueries_not_exponentially() {
+        // Each level references the prior expression once, via an aliased
+        // scalar subquery, so the SQL grows linearly with depth. Inlining the
+        // CASE embedded the prior expression three times per level, so a handful
+        // of sub-attributes produced a statement megabytes wide (~3^depth).
+        let shallow = render("a.b>1");
+        let deeper = render("a.b.c.d.e>1");
+        assert!(deeper.contains("AS j"), "uses the aliased subquery form: {deeper}");
+        // Three more levels under linear growth stay within a small multiple;
+        // under ~3^depth they would be orders of magnitude larger.
+        assert!(deeper.len() < shallow.len() * 6, "growth must be linear: {} vs {}", deeper.len(), shallow.len());
     }
 
     /// An apostrophe cannot appear in a short attribute name — the clause 5.2.4
