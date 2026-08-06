@@ -11,13 +11,44 @@ use crate::{
         subscription_store::{params::StatusUpdateFields, repo::SubscriptionStore},
     },
     service::{subscription_core, subscription_status::compute_updated_status},
-    transport::endpoint::parse_endpoint_transport,
 };
+use andromeda_delivery::endpoint::transport::parse_endpoint_transport;
 use andromeda_jsonld::{context_spec::ContextSpec, context_validation::validate_jsonld_context_value, engine::processor::JsonLdEngine};
 use andromeda_ngsi_ld_lexicon::uri::Uri;
-use andromeda_ngsi_ld_model::subscription::{Subscription, SubscriptionStatus};
+use andromeda_ngsi_ld_model::{
+    key_value_pair::KeyValuePair,
+    subscription::{Subscription, SubscriptionStatus},
+};
 use async_trait::async_trait;
+use serde::Deserialize;
 use serde_json::Value;
+
+/// Reject a subscription whose endpoint names a transport this broker cannot
+/// deliver over, or a `notifierInfo` it cannot read.
+///
+/// Runs against the raw payload rather than a parsed [`Subscription`] because
+/// an update carries a fragment, and the same check has to hold for a create
+/// and for a patch that touches only the endpoint.
+fn validate_endpoint(payload: &Value) -> Result<(), AndromedaError> {
+    let Some(endpoint) = payload.get("notification").and_then(|notification| notification.get("endpoint")) else {
+        return Ok(());
+    };
+    let Some(endpoint_uri) = endpoint.get("uri").and_then(Value::as_str) else {
+        return Ok(());
+    };
+
+    let notifier_info = match endpoint.get("notifierInfo") {
+        Some(value) => Some(
+            Vec::<KeyValuePair>::deserialize(value)
+                .map_err(|error| AndromedaError::subscription_validation(format!("notifierInfo must be an array of key-value pairs: {error}")))?,
+        ),
+        None => None,
+    };
+
+    parse_endpoint_transport(endpoint_uri, notifier_info.as_deref())
+        .map(|_transport| ())
+        .map_err(|error| AndromedaError::subscription_validation(error.to_string()))
+}
 
 // ---------------------------------------------------------------------------
 // Variant trait
@@ -82,23 +113,7 @@ where
     pub async fn create(&self, mut payload: Value, context: &ContextSpec, base_url: Option<&str>) -> Result<String, AndromedaError> {
         subscription_core::validate_create_payload(&payload)?;
 
-        // Validate endpoint URI scheme and MQTT notifierInfo
-        if let Some(endpoint_uri) = payload
-            .get("notification")
-            .and_then(|n| n.get("endpoint"))
-            .and_then(|e| e.get("uri"))
-            .and_then(|v| v.as_str())
-        {
-            let notifier_info = payload
-                .get("notification")
-                .and_then(|n| n.get("endpoint"))
-                .and_then(|e| e.get("notifierInfo"))
-                .and_then(|v| v.as_array());
-            let notifier_info_slice: Option<Vec<Value>> = notifier_info.cloned(); // clone: serde_json::Value has no Copy; need owned Vec for slice conversion
-            if let Err(e) = parse_endpoint_transport(endpoint_uri, notifier_info_slice.as_deref()) {
-                return Err(AndromedaError::subscription_validation(e.to_string()));
-            }
-        }
+        validate_endpoint(&payload)?;
 
         let id = match payload.get("id").and_then(|v| v.as_str()) {
             Some(provided_id) => {
@@ -191,23 +206,7 @@ where
             return Err(AndromedaError::subscription_validation("Subscription id must be present and a valid URI"));
         }
 
-        // Validate endpoint URI scheme and MQTT notifierInfo if being updated
-        if let Some(endpoint_uri) = payload
-            .get("notification")
-            .and_then(|n| n.get("endpoint"))
-            .and_then(|e| e.get("uri"))
-            .and_then(|v| v.as_str())
-        {
-            let notifier_info = payload
-                .get("notification")
-                .and_then(|n| n.get("endpoint"))
-                .and_then(|e| e.get("notifierInfo"))
-                .and_then(|v| v.as_array());
-            let notifier_info_slice: Option<Vec<Value>> = notifier_info.cloned(); // clone: serde_json::Value has no Copy; need owned Vec for slice conversion
-            if let Err(e) = parse_endpoint_transport(endpoint_uri, notifier_info_slice.as_deref()) {
-                return Err(AndromedaError::subscription_validation(e.to_string()));
-            }
-        }
+        validate_endpoint(&payload)?;
 
         subscription_core::validate_common_fields(&payload)?;
         self.variant.validate_update_extra(&payload)?;

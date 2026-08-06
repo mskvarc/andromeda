@@ -2,7 +2,10 @@
 
 use crate::core::error::AndromedaError;
 use andromeda_ngsi_ld_lexicon::ngsi_ld_urn::SnapshotId;
-use andromeda_ngsi_ld_model::snapshot::{ExecutionResultDetails, KeyValuePair, Snapshot, SnapshotPriority, SnapshotStatus};
+use andromeda_ngsi_ld_model::{
+    key_value_pair::KeyValuePair,
+    snapshot::{ExecutionResultDetails, Snapshot, SnapshotPriority, SnapshotStatus},
+};
 use iso8601_duration::Duration as Iso8601Duration;
 use serde_json::Value;
 use sqlx::Row;

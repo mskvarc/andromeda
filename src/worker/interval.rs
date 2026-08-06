@@ -1,10 +1,11 @@
 use crate::{
     repository::{entity::repo::EntityRepository, subscription::repo::SubscriptionRepository, subscription_store::repo::SubscriptionStore},
     service::entity::inject_sys_attrs,
-    transport::{
-        dispatch::{DeliveryResult, TransportDispatcher, build_delivery_request},
-        endpoint::parse_endpoint_transport,
-    },
+};
+use andromeda_delivery::{
+    dispatch::{DeliveryResult, TransportDispatcher},
+    endpoint::transport::parse_endpoint_transport,
+    request::NotificationDelivery,
 };
 use andromeda_jsonld::{
     context_spec::ContextSpec,
@@ -18,9 +19,9 @@ use andromeda_ngsi_ld_lexicon::uri::{NGSI_LD_URN_NID, Uri};
 use andromeda_ngsi_ld_model::{entity::Entity, notification::Notification, subscription::Subscription};
 use andromeda_ngsi_ld_query::filter::eval;
 use andromeda_ngsi_ld_render::simplify::simplify_entity;
+use andromeda_tenancy::tenant_ref::TenantRef;
 use chrono::Utc;
 use futures::{StreamExt, stream};
-use mediatype::MediaTypeBuf;
 use serde_json::Value;
 use std::{sync::Arc, time::Duration};
 use tracing::{debug, error, info};
@@ -50,7 +51,7 @@ pub struct IntervalWorker {
     transport: Arc<TransportDispatcher>,
     poll_interval: Duration,
     engine: JsonLdEngine,
-    tenant: crate::tenancy::types::TenantRef,
+    tenant: TenantRef,
 }
 
 impl IntervalWorker {
@@ -59,7 +60,7 @@ impl IntervalWorker {
         entity_repo: EntityRepository,
         engine: JsonLdEngine,
         transport: Arc<TransportDispatcher>,
-        tenant: crate::tenancy::types::TenantRef,
+        tenant: TenantRef,
     ) -> Self {
         Self {
             sub_repo,
@@ -160,8 +161,6 @@ impl IntervalWorker {
                     };
 
                     let endpoint_uri = sub.notification.endpoint.uri.as_str();
-                    let accept = sub.notification.endpoint.accept.as_ref().map(MediaTypeBuf::as_str);
-                    let jsonld_context = sub.delivery.jsonld_context.as_ref().map(Url::as_str);
 
                     let endpoint_transport = match parse_endpoint_transport(endpoint_uri, sub.notification.endpoint.notifier_info.as_deref()) {
                         Ok(t) => t,
@@ -171,15 +170,17 @@ impl IntervalWorker {
                         }
                     };
 
-                    let request = match build_delivery_request(
-                        &payload,
+                    let request = match (NotificationDelivery {
+                        payload: &payload,
                         endpoint_uri,
-                        accept,
-                        sub.notification.endpoint.receiver_info.as_deref(),
-                        jsonld_context,
-                        this.tenant.tenant_name(),
-                        sub.id.as_ref(),
-                    ) {
+                        accept: sub.notification.endpoint.accept.as_ref(),
+                        receiver_info: sub.notification.endpoint.receiver_info.as_deref(),
+                        jsonld_context: sub.delivery.jsonld_context.as_ref().map(Url::as_str),
+                        tenant: this.tenant.tenant_name(),
+                        subscription_id: sub.id.as_ref(),
+                    })
+                    .assemble()
+                    {
                         Ok(r) => r,
                         Err(e) => {
                             debug!("IntervalWorker: failed to build delivery request for {}: {}", sub.id, e);

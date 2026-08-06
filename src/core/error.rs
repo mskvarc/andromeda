@@ -19,6 +19,7 @@ use andromeda_ngsi_ld_query::error::QueryError;
 use andromeda_ngsi_ld_render::error::RepresentationError;
 use andromeda_ngsi_ld_request::error::ParameterError;
 use andromeda_postgresql_query::error::RenderError;
+use andromeda_tenancy::error::TenancyError;
 use axum::http::Uri;
 use confique::Error as ConfigError;
 use reqwest::Error as ReqwestError;
@@ -96,13 +97,15 @@ pub enum ErrorKind {
     ContextNotAvailable(String),
 
     // -- Tenancy -------------------------------------------------------------
-    /// The requested tenant does not exist.
-    #[error("Tenant '{0}' does not exist")]
-    NonexistentTenant(String),
-
-    /// Multi-tenant support is not enabled in this deployment.
-    #[error("Multi-tenant support is not enabled")]
-    MultiTenancyNotSupported,
+    /// Reaching or building a tenant's runtime failed.
+    ///
+    /// Carried typed rather than flattened into a message, for the same reason
+    /// as the JSON-LD variant below: clause 5.5.2 reports an unknown tenant as
+    /// `NonexistentTenant` and a single-tenant deployment as
+    /// `NoMultiTenantSupport`, and which of those a failure is is a variant
+    /// rather than a substring.
+    #[error(transparent)]
+    Tenancy(#[from] TenancyError),
 
     // -- JSON-LD processing --------------------------------------------------
     /// Resolving a context, or expanding or compacting a document against one,
@@ -360,18 +363,6 @@ impl AndromedaError {
         ErrorKind::ContextNotAvailable(message.into()).into()
     }
 
-    // -- Tenancy -------------------------------------------------------------
-
-    /// The requested tenant does not exist.
-    pub fn nonexistent_tenant(name: impl Into<String>) -> AndromedaError {
-        ErrorKind::NonexistentTenant(name.into()).into()
-    }
-
-    /// Multi-tenant support is not enabled.
-    pub fn multi_tenancy_not_supported() -> AndromedaError {
-        ErrorKind::MultiTenancyNotSupported.into()
-    }
-
     // -- JSON-LD processing --------------------------------------------------
 
     /// JSON-LD processing (expansion, compaction, IRI validation) failed.
@@ -513,6 +504,12 @@ impl From<SqlxError> for AndromedaError {
 impl From<JsonLdError> for AndromedaError {
     fn from(error: JsonLdError) -> AndromedaError {
         ErrorKind::JsonLd(error).into()
+    }
+}
+
+impl From<TenancyError> for AndromedaError {
+    fn from(error: TenancyError) -> AndromedaError {
+        ErrorKind::Tenancy(error).into()
     }
 }
 
@@ -665,6 +662,7 @@ mod tests {
     // `invalid_regex` is a correctness lint that fires on the literal itself.
     #![allow(clippy::invalid_regex)]
     use super::*;
+    use andromeda_ngsi_ld_lexicon::tenant::TenantName;
     use sqlx::{
         Error as SqlxError,
         error::{DatabaseError, ErrorKind as SqlxErrorKind},
@@ -695,16 +693,18 @@ mod tests {
     }
 
     #[test]
-    fn nonexistent_tenant_display() {
-        let kind = ErrorKind::NonexistentTenant("t1".into());
-        pretty_assertions::assert_eq!(kind.to_string(), "Tenant 't1' does not exist");
+    fn a_tenancy_failure_reaches_this_layer_typed_rather_than_as_a_message() {
+        let kind = ErrorKind::Tenancy(TenancyError::UnknownTenant {
+            name: TenantName::try_from("t1".to_string()).expect("a valid tenant name"),
+        });
+        pretty_assertions::assert_eq!(kind.to_string(), "tenant 't1' does not exist");
         assert!(!kind.is_internal());
     }
 
     #[test]
-    fn multi_tenancy_not_supported_display() {
-        let kind = ErrorKind::MultiTenancyNotSupported;
-        pretty_assertions::assert_eq!(kind.to_string(), "Multi-tenant support is not enabled");
+    fn a_single_tenant_deployment_reports_the_refusal_as_its_own_variant() {
+        let kind = ErrorKind::Tenancy(TenancyError::MultiTenancyDisabled);
+        pretty_assertions::assert_eq!(kind.to_string(), "multi-tenant support is not enabled");
         assert!(!kind.is_internal());
     }
 

@@ -1,18 +1,17 @@
-use crate::{
-    repository::{
-        csource_registration::repo::CsourceRegistrationRepository,
-        csource_subscription::repo::CsourceSubscriptionRepository,
-        subscription_store::repo::SubscriptionStore,
-    },
-    transport::{
-        dispatch::{DeliveryResult, TransportDispatcher, build_delivery_request},
-        endpoint::parse_endpoint_transport,
-    },
+use crate::repository::{
+    csource_registration::repo::CsourceRegistrationRepository,
+    csource_subscription::repo::CsourceSubscriptionRepository,
+    subscription_store::repo::SubscriptionStore,
+};
+use andromeda_delivery::{
+    dispatch::{DeliveryResult, TransportDispatcher},
+    endpoint::transport::parse_endpoint_transport,
+    request::NotificationDelivery,
 };
 use andromeda_ngsi_ld_lexicon::uri::{NGSI_LD_URN_NID, Uri};
 use andromeda_ngsi_ld_model::{notification::CsourceNotification, subscription::Subscription};
+use andromeda_tenancy::tenant_ref::TenantRef;
 use chrono::Utc;
-use mediatype::MediaTypeBuf;
 use serde_json::Value;
 use std::{sync::Arc, time::Duration};
 use tracing::{debug, error, info};
@@ -24,7 +23,7 @@ pub struct CsrIntervalWorker {
     csr_repo: CsourceRegistrationRepository,
     transport: Arc<TransportDispatcher>,
     poll_interval: Duration,
-    tenant: crate::tenancy::types::TenantRef,
+    tenant: TenantRef,
 }
 
 impl CsrIntervalWorker {
@@ -32,7 +31,7 @@ impl CsrIntervalWorker {
         sub_repo: CsourceSubscriptionRepository,
         csr_repo: CsourceRegistrationRepository,
         transport: Arc<TransportDispatcher>,
-        tenant: crate::tenancy::types::TenantRef,
+        tenant: TenantRef,
     ) -> Self {
         Self {
             sub_repo,
@@ -113,8 +112,6 @@ impl CsrIntervalWorker {
                 };
 
                 let endpoint_uri = sub.notification.endpoint.uri.as_str();
-                let accept = sub.notification.endpoint.accept.as_ref().map(MediaTypeBuf::as_str);
-                let jsonld_context = sub.delivery.jsonld_context.as_ref().map(Url::as_str);
 
                 let endpoint_transport = match parse_endpoint_transport(endpoint_uri, sub.notification.endpoint.notifier_info.as_deref()) {
                     Ok(t) => t,
@@ -124,15 +121,17 @@ impl CsrIntervalWorker {
                     }
                 };
 
-                let request = match build_delivery_request(
-                    &payload,
+                let request = match (NotificationDelivery {
+                    payload: &payload,
                     endpoint_uri,
-                    accept,
-                    sub.notification.endpoint.receiver_info.as_deref(),
-                    jsonld_context,
-                    self.tenant.tenant_name(),
-                    sub.id.as_ref(),
-                ) {
+                    accept: sub.notification.endpoint.accept.as_ref(),
+                    receiver_info: sub.notification.endpoint.receiver_info.as_deref(),
+                    jsonld_context: sub.delivery.jsonld_context.as_ref().map(Url::as_str),
+                    tenant: self.tenant.tenant_name(),
+                    subscription_id: sub.id.as_ref(),
+                })
+                .assemble()
+                {
                     Ok(r) => r,
                     Err(e) => {
                         debug!("CsrIntervalWorker: failed to build delivery request for {}: {}", sub.id, e);

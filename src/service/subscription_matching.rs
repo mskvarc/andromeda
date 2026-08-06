@@ -204,7 +204,7 @@ pub fn matches_scope_query(query: &ScopeQuery, entity_data: &Value) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::transport::endpoint::EndpointTransport;
+    use andromeda_delivery::endpoint::transport::EndpointTransport;
     use andromeda_ngsi_ld_model::{
         notification::{ChangeEvent, ChangeOrigin, TriggerReason},
         subscription::SubscriptionStatus,

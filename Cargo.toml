@@ -8,6 +8,8 @@ edition = "2024"
 authors = ["Matej Škvarč <matej.skvarc@senlab.io>"]
 
 [workspace.dependencies]
+andromeda-delivery = { path = "crates/andromeda-delivery" }
+andromeda-health = { path = "crates/andromeda-health" }
 andromeda-jsonld = { path = "crates/andromeda-jsonld" }
 andromeda-layer-guard = { path = "lib/andromeda-layer-guard" }
 andromeda-ngsi-ld-geometry = { path = "crates/andromeda-ngsi-ld-geometry" }
@@ -24,6 +26,8 @@ andromeda-postgresql-context-query = { path = "crates/andromeda-postgresql-conte
 andromeda-postgresql-encoding = { path = "crates/andromeda-postgresql-encoding" }
 andromeda-postgresql-query = { path = "crates/andromeda-postgresql-query" }
 andromeda-postgresql-temporal-query = { path = "crates/andromeda-postgresql-temporal-query" }
+andromeda-spatial-index = { path = "crates/andromeda-spatial-index" }
+andromeda-tenancy = { path = "crates/andromeda-tenancy" }
 andromeda-test-common = { path = "lib/andromeda-test-common" }
 
 [workspace.lints.clippy]
@@ -52,6 +56,8 @@ build = "build.rs"
 workspace = true
 
 [dependencies]
+andromeda-delivery.workspace = true
+andromeda-health.workspace = true
 andromeda-jsonld.workspace = true
 andromeda-ngsi-ld-geometry.workspace = true
 andromeda-ngsi-ld-http-headers.workspace = true
@@ -67,10 +73,10 @@ andromeda-postgresql-context-query.workspace = true
 andromeda-postgresql-encoding.workspace = true
 andromeda-postgresql-query.workspace = true
 andromeda-postgresql-temporal-query.workspace = true
+andromeda-spatial-index.workspace = true
+andromeda-tenancy.workspace = true
 async-trait = "0.1.89"
 axum = { version = "0.8.9", features = ["ws"] }
-backon = "1.6.0"
-bytes = "1.11.1"
 chrono = { version = "0.4.44", features = ["serde"] }
 clap = { version = "4.6.1", features = ["derive", "wrap_help"] }
 clap-themes = "0.1.3"
@@ -90,13 +96,10 @@ langtag = { version = "1.1.0", features = ["serde"] }
 mediatype = "0.23.0"
 mimalloc = "0.1.50"
 moka = { version = "0.12.15", features = ["future"] }
-parking_lot = "0.12.5"
 percent-encoding = "2.3.2"
 problem_details = { version = "0.9.0", features = ["axum"] }
 regex = "1.12.3"
 reqwest = { version = "0.13.2", features = ["json"] }
-rstar = "0.12.2"
-rumqttc = { version = "0.25.1", features = ["use-rustls"] }
 sea-query = { version = "0.32.7", features = ["backend-postgres", "with-chrono"] }
 sea-query-binder = { version = "0.7.0", features = ["runtime-tokio", "sqlx-postgres", "with-chrono"] }
 serde = { version = "1.0.228", features = ["derive"] }
@@ -128,6 +131,7 @@ shadow-rs = "2.0.0"
 andromeda-test-common.workspace = true
 futures = "0.3.32"
 pretty_assertions = "1.4.1"
+rumqttc = { version = "0.25.1", features = ["use-rustls"] }
 serial_test = "3.4.0"
 urlencoding = "2.1.3"
 

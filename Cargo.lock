@@ -83,6 +83,8 @@ dependencies = [
 name = "andromeda"
 version = "0.1.0"
 dependencies = [
+ "andromeda-delivery",
+ "andromeda-health",
  "andromeda-jsonld",
  "andromeda-ngsi-ld-geometry",
  "andromeda-ngsi-ld-http-headers",
@@ -98,11 +100,11 @@ dependencies = [
  "andromeda-postgresql-encoding",
  "andromeda-postgresql-query",
  "andromeda-postgresql-temporal-query",
+ "andromeda-spatial-index",
+ "andromeda-tenancy",
  "andromeda-test-common",
  "async-trait",
  "axum",
- "backon",
- "bytes",
  "chrono",
  "clap",
  "clap-themes",
@@ -122,13 +124,11 @@ dependencies = [
  "mediatype",
  "mimalloc",
  "moka",
- "parking_lot",
  "percent-encoding",
  "pretty_assertions",
  "problem_details",
  "regex",
  "reqwest",
- "rstar 0.12.2",
  "rumqttc",
  "sea-query",
  "sea-query-binder",
@@ -155,6 +155,52 @@ dependencies = [
  "urlencoding",
  "urn-rs",
  "uuid",
+]
+
+[[package]]
+name = "andromeda-delivery"
+version = "0.1.0"
+dependencies = [
+ "andromeda-health",
+ "andromeda-jsonld",
+ "andromeda-layer-guard",
+ "andromeda-ngsi-ld-http-headers",
+ "andromeda-ngsi-ld-lexicon",
+ "andromeda-ngsi-ld-model",
+ "async-trait",
+ "backon",
+ "bytes",
+ "dashmap",
+ "headers",
+ "mediatype",
+ "moka",
+ "pretty_assertions",
+ "reqwest",
+ "rumqttc",
+ "secrecy",
+ "serde_json",
+ "strum",
+ "thiserror 2.0.19",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "url",
+ "uuid",
+]
+
+[[package]]
+name = "andromeda-health"
+version = "0.1.0"
+dependencies = [
+ "andromeda-layer-guard",
+ "andromeda-ngsi-ld-lexicon",
+ "async-trait",
+ "pretty_assertions",
+ "serde",
+ "serde_json",
+ "strum",
+ "tokio",
+ "urn-rs",
 ]
 
 [[package]]
@@ -448,6 +494,41 @@ dependencies = [
  "sea-query",
  "serde_json",
  "urn-rs",
+]
+
+[[package]]
+name = "andromeda-spatial-index"
+version = "0.1.0"
+dependencies = [
+ "andromeda-layer-guard",
+ "andromeda-ngsi-ld-geometry",
+ "andromeda-ngsi-ld-query",
+ "andromeda-tenancy",
+ "dashmap",
+ "geo",
+ "iri-rs",
+ "parking_lot",
+ "pretty_assertions",
+ "rstar 0.12.2",
+ "urn-rs",
+]
+
+[[package]]
+name = "andromeda-tenancy"
+version = "0.1.0"
+dependencies = [
+ "andromeda-layer-guard",
+ "andromeda-ngsi-ld-lexicon",
+ "async-trait",
+ "confique",
+ "dashmap",
+ "derive_more",
+ "pretty_assertions",
+ "serde",
+ "strum",
+ "thiserror 2.0.19",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -4479,6 +4560,15 @@ dependencies = [
  "quote",
  "syn 2.0.117",
  "thiserror 2.0.19",
+]
+
+[[package]]
+name = "secrecy"
+version = "0.10.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e891af845473308773346dc847b2c23ee78fe442e0472ac50e22a18a93d3ae5a"
+dependencies = [
+ "zeroize",
 ]
 
 [[package]]

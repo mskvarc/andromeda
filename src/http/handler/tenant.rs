@@ -27,7 +27,7 @@ pub async fn query(
     let id = UrnBuilder::new(NGSI_LD_URN_NID, &format!("TenantList:{}", Uuid::new_v4()))
         .build()
         .map_err(AndromedaError::from)?;
-    let tenant_list = app.tenants.list_named_tenants().await.with_instance(&uri)?;
+    let tenant_list = app.tenants.registered_tenants().await.map_err(AndromedaError::from).with_instance(&uri)?;
 
     let response = TenantList {
         id: Uri::Urn(id),

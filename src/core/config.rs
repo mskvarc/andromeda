@@ -1,5 +1,6 @@
 use crate::core::error::AndromedaError;
 use andromeda_jsonld::config::JsonLdConfig;
+use andromeda_tenancy::config::TenancyConfig;
 use confique::{Config, Layer};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -144,32 +145,6 @@ pub struct TemporalConfig {
     /// Interval in seconds between expiration checks.
     #[config(env = "ANDROMEDA_TEMPORAL_EXPIRATION_CHECK_INTERVAL_SECS", default = 30)]
     pub expiration_check_interval_secs: u64,
-}
-
-#[derive(Config, Debug, Clone, Serialize)]
-pub struct TenancyConfig {
-    #[config(env = "ANDROMEDA_TENANCY_ENABLED", default = true)]
-    pub enabled: bool,
-
-    #[config(env = "ANDROMEDA_TENANCY_TENANT_DB_PREFIX", default = "andromeda_tenant")]
-    pub tenant_db_prefix: String,
-
-    /// Maximum number of connections in per-tenant database pools.
-    ///
-    /// Each tenant gets its own connection pool capped at this value,
-    /// preventing a single tenant from exhausting system-wide connection
-    /// limits.
-    #[config(env = "ANDROMEDA_TENANCY_TENANT_MAX_CONNECTIONS", default = 16)]
-    pub tenant_max_connections: u32,
-
-    #[config(env = "ANDROMEDA_TENANCY_RUNTIME_IDLE_TTL_SECONDS", default = 900)]
-    pub runtime_idle_ttl_seconds: u64,
-
-    #[config(env = "ANDROMEDA_TENANCY_RUNTIME_MAX_CACHED", default = 64)]
-    pub runtime_max_cached: usize,
-
-    #[config(env = "ANDROMEDA_TENANCY_JANITOR_INTERVAL_SECONDS", default = 30)]
-    pub janitor_interval_seconds: u64,
 }
 
 #[derive(Config, Debug, Clone, Serialize)]

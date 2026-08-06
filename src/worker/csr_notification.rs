@@ -5,10 +5,11 @@ use crate::{
         subscription_store::repo::SubscriptionStore,
     },
     service::{compiled_subscription::CompiledCsrSubscription, subscription_throttle::ceiling_for_throttle},
-    transport::{
-        dispatch::{DeliveryResult, TransportDispatcher, build_delivery_request},
-        endpoint::parse_endpoint_transport,
-    },
+};
+use andromeda_delivery::{
+    dispatch::{DeliveryResult, TransportDispatcher},
+    endpoint::transport::parse_endpoint_transport,
+    request::NotificationDelivery,
 };
 use andromeda_ngsi_ld_lexicon::uri::{NGSI_LD_URN_NID, Uri};
 use andromeda_ngsi_ld_model::{
@@ -16,6 +17,7 @@ use andromeda_ngsi_ld_model::{
     subscription::{EntitySelector, Subscription, SubscriptionStatus},
 };
 use andromeda_ngsi_ld_query::filter::eval;
+use andromeda_tenancy::tenant_ref::TenantRef;
 use chrono::Utc;
 use dashmap::DashMap;
 use futures::{StreamExt, stream};
@@ -34,7 +36,7 @@ pub struct CsrNotificationWorker {
     csr_repo: CsourceRegistrationRepository,
     cache: DashMap<String, Arc<CompiledCsrSubscription>>,
     transport: Arc<TransportDispatcher>,
-    tenant: crate::tenancy::types::TenantRef,
+    tenant: TenantRef,
 }
 
 impl CsrNotificationWorker {
@@ -44,7 +46,7 @@ impl CsrNotificationWorker {
         sub_repo: CsourceSubscriptionRepository,
         csr_repo: CsourceRegistrationRepository,
         transport: Arc<TransportDispatcher>,
-        tenant: crate::tenancy::types::TenantRef,
+        tenant: TenantRef,
     ) -> Self {
         Self {
             csr_change_rx,
@@ -54,6 +56,24 @@ impl CsrNotificationWorker {
             cache: DashMap::new(),
             transport,
             tenant,
+        }
+    }
+
+    /// The delivery one CSR notification becomes.
+    ///
+    /// Three call sites send the same notification for three different
+    /// reasons -- a subscription that just started matching, a registration
+    /// that changed, and a registration that stopped matching -- and every one
+    /// of them addresses the endpoint identically.
+    fn delivery_for<'a>(&'a self, compiled_sub: &'a CompiledCsrSubscription, payload: &'a Value, sub_id: &'a str) -> NotificationDelivery<'a> {
+        NotificationDelivery {
+            payload,
+            endpoint_uri: compiled_sub.endpoint_uri.as_str(),
+            accept: compiled_sub.endpoint_accept.as_ref(),
+            receiver_info: compiled_sub.endpoint_receiver_info.as_deref(),
+            jsonld_context: compiled_sub.jsonld_context.as_deref(),
+            tenant: self.tenant.tenant_name(),
+            subscription_id: sub_id,
         }
     }
 
@@ -244,15 +264,7 @@ impl CsrNotificationWorker {
             }
         };
 
-        let request = match build_delivery_request(
-            &payload,
-            &compiled_sub.endpoint_uri,
-            compiled_sub.endpoint_accept.as_deref(),
-            compiled_sub.endpoint_receiver_info.as_deref(),
-            compiled_sub.jsonld_context.as_deref(),
-            self.tenant.tenant_name(),
-            sub_id,
-        ) {
+        let request = match self.delivery_for(compiled_sub, &payload, sub_id).assemble() {
             Ok(r) => r,
             Err(e) => {
                 debug!("Failed to build delivery request for CSR sub {}: {}", sub_id, e);
@@ -366,15 +378,7 @@ impl CsrNotificationWorker {
                         }
                     };
 
-                    let request = match build_delivery_request(
-                        &payload,
-                        &compiled_sub.endpoint_uri,
-                        compiled_sub.endpoint_accept.as_deref(),
-                        compiled_sub.endpoint_receiver_info.as_deref(),
-                        compiled_sub.jsonld_context.as_deref(),
-                        self.tenant.tenant_name(),
-                        &sub_id,
-                    ) {
+                    let request = match self.delivery_for(&compiled_sub, &payload, &sub_id).assemble() {
                         Ok(r) => r,
                         Err(e) => {
                             debug!("Failed to build delivery request for CSR sub {}: {}", sub_id, e);
@@ -511,15 +515,7 @@ impl CsrNotificationWorker {
             }
         };
 
-        let request = match build_delivery_request(
-            &payload,
-            &compiled_sub.endpoint_uri,
-            compiled_sub.endpoint_accept.as_deref(),
-            compiled_sub.endpoint_receiver_info.as_deref(),
-            compiled_sub.jsonld_context.as_deref(),
-            self.tenant.tenant_name(),
-            sub_id,
-        ) {
+        let request = match self.delivery_for(compiled_sub, &payload, sub_id).assemble() {
             Ok(r) => r,
             Err(e) => {
                 debug!("Failed to build delivery request for CSR sub {}: {}", sub_id, e);
@@ -566,7 +562,8 @@ fn compile_csr_subscription(sub: &Subscription) -> Option<CompiledCsrSubscriptio
         id: sub.id.to_string(),
         status: sub.lifecycle.status,
         endpoint_uri: sub.notification.endpoint.uri.to_string(),
-        endpoint_accept: sub.notification.endpoint.accept.as_ref().map(ToString::to_string),
+        // clone: the compiled form outlives the subscription it was built from
+        endpoint_accept: sub.notification.endpoint.accept.clone(),
         endpoint_receiver_info: sub.notification.endpoint.receiver_info.clone(),
         endpoint_transport,
         selectors,

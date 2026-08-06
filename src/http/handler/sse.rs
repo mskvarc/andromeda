@@ -28,10 +28,12 @@ use crate::{
     api::tenant::TenantState,
     core::error::{AndromedaError, ResultInstanceExt},
     http::error::problem::NgsiLdError,
-    transport::{
-        endpoint::{EndpointTransport, parse_endpoint_transport},
-        sse::SseConnectionRegistry,
-        types::ConnectionId,
+};
+use andromeda_delivery::{
+    endpoint::transport::{EndpointTransport, parse_endpoint_transport},
+    stream::{
+        registry::{ConnectionId, ConnectionRegistry},
+        sse::SseNotificationEvent,
     },
 };
 
@@ -39,7 +41,7 @@ use crate::{
 struct SseConnectionGuard {
     subscription_id: String,
     connection_id: ConnectionId,
-    registry: Arc<SseConnectionRegistry>,
+    registry: Arc<ConnectionRegistry<SseNotificationEvent>>,
 }
 
 impl Drop for SseConnectionGuard {
@@ -54,7 +56,7 @@ impl Drop for SseConnectionGuard {
 /// or the cancellation token fires. Holds the connection guard to ensure
 /// cleanup when the stream is dropped.
 struct SseEventStream {
-    rx: mpsc::Receiver<crate::transport::sse::SseNotificationEvent>,
+    rx: mpsc::Receiver<SseNotificationEvent>,
     cancellation_token: CancellationToken,
     _guard: SseConnectionGuard,
 }

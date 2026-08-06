@@ -1,12 +1,10 @@
 //! Handler for the `/health` endpoint.
 
-use crate::{
-    core::error::AndromedaError,
-    health::{
-        Health,
-        report::{HealthCheckDetails, HealthCheckResponse, HealthCheckType, HealthStatus},
-    },
-    http::error::problem::NgsiLdError,
+use crate::{core::error::AndromedaError, http::error::problem::NgsiLdError};
+use andromeda_health::{
+    aggregate::Health,
+    report::{HealthCheckDetails, HealthCheckResponse, HealthCheckType},
+    status::HealthStatus,
 };
 use andromeda_ngsi_ld_lexicon::uri::{NGSI_LD_URN_NID, Uri};
 use axum::{Extension, Json, http::StatusCode, response::IntoResponse};

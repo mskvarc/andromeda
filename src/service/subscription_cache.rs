@@ -9,21 +9,21 @@ use crate::{
     repository::subscription_store::repo::SubscriptionStore,
     service::{
         compiled_subscription::{CompiledGeoQuery, CompiledSubscription},
-        spatial::{
-            SpatialKey,
-            subscription_index::{SpatialSubscriptionIndex, SubEntry},
-        },
         subscription_matching::find_matching,
     },
-    tenancy::types::TenantRef,
-    transport::endpoint::parse_endpoint_transport,
 };
+use andromeda_delivery::endpoint::transport::parse_endpoint_transport;
 use andromeda_ngsi_ld_model::{
     notification::{ChangeEvent, SubscriptionChange, TriggerReason},
     subscription::{EntitySelector, Subscription, SubscriptionStatus},
 };
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
+use andromeda_spatial_index::{
+    key::SpatialKey,
+    subscription::{entry::SubEntry, index::SpatialSubscriptionIndex},
+};
+use andromeda_tenancy::tenant_ref::TenantRef;
 use dashmap::DashMap;
 use iri_rs::IriBuf;
 use std::{collections::HashSet, sync::Arc};
@@ -217,7 +217,8 @@ impl SubscriptionCache {
             return;
         };
 
-        let Some(entry) = SubEntry::from_compiled(compiled.id.clone(), geo_q) else {
+        // clone: the entry owns its identifier and geometry, both borrowed here
+        let Some(entry) = SubEntry::new(compiled.id.clone(), geo_q.ref_geometry.clone(), geo_q.georel.clone()) else {
             debug!("Subscription {} spatial index skipped: geometry has no bounding rect", compiled.id);
             return;
         };
@@ -291,7 +292,8 @@ pub fn compile_subscription(sub: &Subscription) -> Option<CompiledSubscription> 
         id: sub.id.to_string(),
         status: sub.lifecycle.status,
         endpoint_uri: sub.notification.endpoint.uri.to_string(),
-        endpoint_accept: sub.notification.endpoint.accept.as_ref().map(ToString::to_string),
+        // clone: the compiled form outlives the subscription it was built from
+        endpoint_accept: sub.notification.endpoint.accept.clone(),
         endpoint_receiver_info: sub.notification.endpoint.receiver_info.clone(),
         endpoint_transport,
         triggers,
@@ -376,7 +378,7 @@ pub fn compile_geo_q(geo_q: &serde_json::Value, sub_id: &str) -> Option<Compiled
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::transport::endpoint::EndpointTransport;
+    use andromeda_delivery::endpoint::transport::EndpointTransport;
     use andromeda_ngsi_ld_model::subscription::SubscriptionStatus;
 
     fn make_compiled_sub(id: &str, type_: &str, triggers: Vec<&str>) -> CompiledSubscription {

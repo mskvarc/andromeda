@@ -1,13 +1,10 @@
 mod api;
 mod core;
-mod health;
 mod http;
 mod repository;
 mod server;
 mod service;
 mod temporal_render;
-mod tenancy;
-mod transport;
 mod version;
 mod worker;
 

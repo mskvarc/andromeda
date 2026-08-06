@@ -7,14 +7,17 @@
 //! the query AST, the renderer's system-attribute policy and the transport a
 //! notification will go out over -- all concerns above the data model.
 
-use crate::transport::endpoint::EndpointTransport;
+use andromeda_delivery::endpoint::transport::EndpointTransport;
 use andromeda_ngsi_ld_geometry::geo_rel::GeoRel;
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
-use andromeda_ngsi_ld_model::subscription::{EntitySelector, SubscriptionStatus};
+use andromeda_ngsi_ld_model::{
+    key_value_pair::KeyValuePair,
+    subscription::{EntitySelector, SubscriptionStatus},
+};
 use andromeda_ngsi_ld_query::{filter::expression::Expr, scope::query::ScopeQuery};
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 use chrono::{DateTime, Utc};
-use serde_json::Value;
+use mediatype::MediaTypeBuf;
 use std::collections::HashSet;
 
 /// Pre-compiled CSR subscription for in-memory matching against CSR changes.
@@ -23,8 +26,8 @@ pub struct CompiledCsrSubscription {
     pub id: String,
     pub status: SubscriptionStatus,
     pub endpoint_uri: String,
-    pub endpoint_accept: Option<String>,
-    pub endpoint_receiver_info: Option<Vec<Value>>,
+    pub endpoint_accept: Option<MediaTypeBuf>,
+    pub endpoint_receiver_info: Option<Vec<KeyValuePair>>,
     pub endpoint_transport: EndpointTransport,
     pub selectors: Vec<EntitySelector>,
     pub watched_attrs: Option<HashSet<String>>,
@@ -41,8 +44,8 @@ pub struct CompiledSubscription {
     pub id: String,
     pub status: SubscriptionStatus,
     pub endpoint_uri: String,
-    pub endpoint_accept: Option<String>,
-    pub endpoint_receiver_info: Option<Vec<Value>>,
+    pub endpoint_accept: Option<MediaTypeBuf>,
+    pub endpoint_receiver_info: Option<Vec<KeyValuePair>>,
     pub endpoint_transport: EndpointTransport,
     pub triggers: Vec<String>,
     pub watched_attrs: Option<HashSet<String>>, // expanded IRIs; None = all

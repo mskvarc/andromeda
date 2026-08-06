@@ -9,14 +9,15 @@ use crate::{
         snapshot_prepare::to_insert_params,
         temporal::TemporalService,
     },
-    transport::{
-        dispatch::{DeliveryResult, TransportDispatcher, build_delivery_request},
-        endpoint::EndpointTransport,
-    },
+};
+use andromeda_delivery::{
+    dispatch::{DeliveryResult, TransportDispatcher},
+    endpoint::transport::EndpointTransport,
+    request::NotificationDelivery,
 };
 use andromeda_ngsi_ld_lexicon::ngsi_ld_urn::SnapshotId;
 use andromeda_ngsi_ld_model::{
-    snapshot::{KeyValuePair, Snapshot, SnapshotInput, SnapshotPatch, SnapshotPriority, SnapshotStatus},
+    snapshot::{Snapshot, SnapshotInput, SnapshotPatch, SnapshotPriority, SnapshotStatus},
     snapshot_filter::SnapshotPurgeFilter,
 };
 use andromeda_ngsi_ld_problem_details::{batch_operation::BatchEntityError, error_type::NgsiLdErrorType};
@@ -365,8 +366,17 @@ impl SnapshotService {
             }
         };
 
-        let receiver_info_values = receiver_info_to_values(snapshot.receiver_info.as_deref());
-        let request = match build_delivery_request(&payload, endpoint, None, receiver_info_values.as_deref(), None, None, snapshot.id.as_str()) {
+        let request = match (NotificationDelivery {
+            payload: &payload,
+            endpoint_uri: endpoint,
+            accept: None,
+            receiver_info: snapshot.receiver_info.as_deref(),
+            jsonld_context: None,
+            tenant: None,
+            subscription_id: snapshot.id.as_str(),
+        })
+        .assemble()
+        {
             Ok(r) => r,
             Err(e) => {
                 tracing::error!(
@@ -424,8 +434,4 @@ fn compute_snapshot_expires_at(created_at: chrono::DateTime<Utc>, lifetime: Opti
             .map_err(|e| AndromedaError::internal(format!("Invalid default snapshotLifetime: {:?}", e)))?,
     };
     Ok(created_at + parsed)
-}
-
-fn receiver_info_to_values(receiver_info: Option<&[KeyValuePair]>) -> Option<Vec<Value>> {
-    receiver_info.map(|values| values.iter().map(|item| serde_json::json!({ "key": item.key, "value": item.value })).collect())
 }

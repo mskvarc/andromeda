@@ -19,6 +19,7 @@ pub mod entity_type;
 pub mod entity_type_list;
 pub mod expanded;
 pub mod jsonld_context;
+pub mod key_value_pair;
 pub mod notification;
 pub mod registration;
 pub mod snapshot;

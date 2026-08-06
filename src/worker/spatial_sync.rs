@@ -14,14 +14,12 @@
 //! itself. Events without a payload (background expiration sweeps) still
 //! fall back to fetching from the entity store.
 
-use crate::{
-    repository::entity::repo::EntityRepository,
-    service::spatial::{SpatialKey, entity_index::SpatialEntityIndex},
-    tenancy::types::TenantRef,
-};
+use crate::repository::entity::repo::EntityRepository;
 use andromeda_ngsi_ld_geometry::geometry::Geometry;
 use andromeda_ngsi_ld_model::notification::{ChangeEvent, TriggerReason};
 use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
+use andromeda_spatial_index::{entity::index::SpatialEntityIndex, key::SpatialKey};
+use andromeda_tenancy::tenant_ref::TenantRef;
 use iri_rs::IriBuf;
 use serde_json::Value;
 use sqlx::PgPool;
@@ -263,7 +261,6 @@ fn parse_geometry(raw: &str) -> Option<Geometry> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::service::spatial::SpatialKey;
     use andromeda_ngsi_ld_geometry::geo_rel::GeoRel;
     use andromeda_ngsi_ld_lexicon::uri::Uri;
     use geo::{Coord, LineString, Polygon};

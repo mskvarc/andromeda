@@ -1,5 +1,6 @@
 //! NGSI-LD subscription types (ETSI GS CIM 009 clause 5.2.12).
 
+use crate::key_value_pair::KeyValuePair;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, constant_string, rfc3339, uri::Uri};
 use andromeda_ngsi_ld_query::{filter::expression::Expr, pattern::Pattern, scope::query::ScopeQuery, type_selection::grammar::TypeExprRaw};
 use andromeda_ngsi_ld_representation::{join_mode::JoinMode, response_format::ResponseFormat};
@@ -90,12 +91,17 @@ pub struct Endpoint {
     /// Preferred content type for the notification payload.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub accept: Option<MediaTypeBuf>,
-    /// Additional headers to include in HTTP notifications.
+    /// Additional key-value pairs the delivery carries alongside the payload.
+    ///
+    /// Rendered as HTTP headers, as MQTT v5 user properties and as the MQTT
+    /// envelope's metadata members, which is why clause 5.2.15 types them as
+    /// [`KeyValuePair`] rather than as free-form JSON.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub receiver_info: Option<Vec<Value>>,
-    /// MQTT-specific configuration (version, QoS).
+    pub receiver_info: Option<Vec<KeyValuePair>>,
+    /// Transport configuration the notifier reads, such as `MQTT-Version` and
+    /// `MQTT-QoS`.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub notifier_info: Option<Vec<Value>>,
+    pub notifier_info: Option<Vec<KeyValuePair>>,
 }
 
 /// Notification delivery parameters for a subscription (ETSI GS CIM 009 clause 5.2.14).

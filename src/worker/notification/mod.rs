@@ -8,10 +8,11 @@ use crate::{
         subscription_cache::SubscriptionCache,
         subscription_throttle::ceiling_for_throttle,
     },
-    transport::{
-        dispatch::{DeliveryResult, TransportDispatcher, build_delivery_request},
-        endpoint::EndpointTransport,
-    },
+};
+use andromeda_delivery::{
+    dispatch::{DeliveryResult, TransportDispatcher},
+    endpoint::transport::EndpointTransport,
+    request::NotificationDelivery,
 };
 use andromeda_jsonld::engine::processor::JsonLdEngine;
 use andromeda_ngsi_ld_lexicon::{
@@ -21,6 +22,7 @@ use andromeda_ngsi_ld_lexicon::{
 use andromeda_ngsi_ld_model::notification::{ChangeEvent, Notification, NotificationType, SubscriptionChange, TriggerReason};
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 use andromeda_ngsi_ld_vocabulary::expanded::{classes as expanded_classes, properties as expanded_properties};
+use andromeda_tenancy::tenant_ref::TenantRef;
 use chrono::{SecondsFormat, Utc};
 use futures::{StreamExt, stream};
 use serde_json::Value;
@@ -29,7 +31,8 @@ use tokio::sync::broadcast;
 use tracing::{debug, error, info};
 use uuid::Uuid;
 
-use crate::service::{spatial::SpatialKey, subscription_matching::matches_entity_filters};
+use crate::service::subscription_matching::matches_entity_filters;
+use andromeda_spatial_index::key::SpatialKey;
 use iri_rs::IriBuf;
 use payload::{NotificationBuildParams, NotificationCompactionCache, build_notification_data};
 use std::collections::HashSet;
@@ -45,7 +48,7 @@ pub struct NotificationWorker {
     cache: Arc<SubscriptionCache>,
     transport: Arc<TransportDispatcher>,
     engine: JsonLdEngine,
-    tenant: crate::tenancy::types::TenantRef,
+    tenant: TenantRef,
 }
 
 pub struct NotificationWorkerDeps {
@@ -54,7 +57,7 @@ pub struct NotificationWorkerDeps {
     pub entity_query: EntityQueryService,
     pub engine: JsonLdEngine,
     pub transport: Arc<TransportDispatcher>,
-    pub tenant: crate::tenancy::types::TenantRef,
+    pub tenant: TenantRef,
     pub subscription_cache: Arc<SubscriptionCache>,
 }
 
@@ -348,15 +351,17 @@ impl NotificationWorker {
                         }
                     };
 
-                    let request = match build_delivery_request(
-                        &notification_payload,
-                        &compiled_sub.endpoint_uri,
-                        compiled_sub.endpoint_accept.as_deref(),
-                        compiled_sub.endpoint_receiver_info.as_deref(),
-                        compiled_sub.jsonld_context.as_deref(),
-                        self.tenant.tenant_name(),
-                        &sub_id,
-                    ) {
+                    let request = match (NotificationDelivery {
+                        payload: &notification_payload,
+                        endpoint_uri: compiled_sub.endpoint_uri.as_str(),
+                        accept: compiled_sub.endpoint_accept.as_ref(),
+                        receiver_info: compiled_sub.endpoint_receiver_info.as_deref(),
+                        jsonld_context: compiled_sub.jsonld_context.as_deref(),
+                        tenant: self.tenant.tenant_name(),
+                        subscription_id: &sub_id,
+                    })
+                    .assemble()
+                    {
                         Ok(r) => r,
                         Err(e) => {
                             debug!("Failed to build delivery request for {}: {}", sub_id, e);
@@ -477,7 +482,8 @@ fn extract_entity_geometry(entity_data: &Value, geoproperty_iri: &str) -> Option
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{service::subscription_matching::matches_subscription, transport::endpoint::EndpointTransport};
+    use crate::service::subscription_matching::matches_subscription;
+    use andromeda_delivery::endpoint::transport::EndpointTransport;
     use andromeda_ngsi_ld_model::{
         notification::ChangeOrigin,
         subscription::{EntitySelector, SubscriptionStatus},

@@ -1,5 +1,6 @@
 use crate::http::extractor::tenant::TenantHeader;
 use andromeda_ngsi_ld_http_headers::ngsild_tenant::NgsiLdTenant;
+use andromeda_tenancy::{creation_policy::TenantCreationPolicy, tenant_ref::TenantRef};
 use axum::{
     body::Body,
     extract::FromRequestParts,
@@ -12,7 +13,6 @@ use crate::{
     api::state::{AndromedaState, AppState},
     core::error::{AndromedaError, ResultInstanceExt},
     http::error::problem::NgsiLdError,
-    tenancy::types::{TenantCreationPolicy, TenantRef},
 };
 
 /// Extracts tenant state for requests that require the tenant to already exist.
@@ -26,7 +26,12 @@ async fn resolve(parts: &mut Parts, app: &AppState, policy: TenantCreationPolicy
         .await
         .map_err(|_| NgsiLdError::from(AndromedaError::entity_validation("Invalid NGSILD-Tenant header").with_instance(&parts.uri)))?;
     let tenant_ref = TenantRef::from_header(tenant.into_inner());
-    let runtime = app.tenants.resolve_state(&tenant_ref, policy).await.with_instance(&parts.uri)?;
+    let runtime = app
+        .tenants
+        .resolve_state(&tenant_ref, policy)
+        .await
+        .map_err(AndromedaError::from)
+        .with_instance(&parts.uri)?;
     Ok((*runtime).clone())
 }
 

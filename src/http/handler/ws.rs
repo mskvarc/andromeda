@@ -23,10 +23,12 @@ use crate::{
     api::tenant::TenantState,
     core::error::{AndromedaError, ResultInstanceExt},
     http::error::problem::NgsiLdError,
-    transport::{
-        endpoint::{EndpointTransport, parse_endpoint_transport},
-        types::ConnectionId,
-        ws::WsConnectionRegistry,
+};
+use andromeda_delivery::{
+    endpoint::transport::{EndpointTransport, parse_endpoint_transport},
+    stream::{
+        registry::{ConnectionId, ConnectionRegistry},
+        ws::WsNotificationMessage,
     },
 };
 
@@ -34,7 +36,7 @@ use crate::{
 struct WsConnectionGuard {
     subscription_id: String,
     connection_id: ConnectionId,
-    registry: Arc<WsConnectionRegistry>,
+    registry: Arc<ConnectionRegistry<WsNotificationMessage>>,
 }
 
 impl Drop for WsConnectionGuard {
@@ -101,7 +103,7 @@ pub async fn stream(
 ///   and pong are logged at trace level and ignored.
 async fn handle_ws(
     socket: WebSocket,
-    mut rx: mpsc::Receiver<crate::transport::ws::WsNotificationMessage>,
+    mut rx: mpsc::Receiver<WsNotificationMessage>,
     cancellation_token: CancellationToken,
     guard: WsConnectionGuard,
     ping_interval_secs: u64,

@@ -34,6 +34,40 @@ pub enum ResponseMediaType {
 }
 
 impl ResponseMediaType {
+    /// Which of the three NGSI-LD media types a client spelled, if any.
+    ///
+    /// The same question is asked in two places and must be answered the same
+    /// way: negotiating a response from an `Accept` header, and deciding what
+    /// a notification is serialised as from a subscription's
+    /// `notification.endpoint.accept` (clause 5.2.15). Parameters are ignored,
+    /// so a `;q=` or a `;charset=` does not stop a media type being
+    /// recognised.
+    ///
+    /// `application/json` is matched with no suffix on purpose:
+    /// `application/merge-patch+json` and `application/json-patch+json` are
+    /// request body types, not response types, and must not negotiate as JSON.
+    pub fn from_media_type(media_type: &MediaType<'_>) -> Option<ResponseMediaType> {
+        if media_type.ty == names::_STAR && media_type.subty == names::_STAR {
+            // A client that will take anything gets the clause 6.3.3 default.
+            return Some(ResponseMediaType::Json);
+        }
+        if media_type.ty != names::APPLICATION {
+            return None;
+        }
+        // `Name` is not usable in a pattern, so this is an if-chain rather
+        // than the match its shape wants.
+        if media_type.subty == names::LD && media_type.suffix == Some(names::JSON) {
+            return Some(ResponseMediaType::JsonLd);
+        }
+        if media_type.subty == names::GEO && media_type.suffix == Some(names::JSON) {
+            return Some(ResponseMediaType::GeoJson);
+        }
+        if media_type.subty == names::JSON && media_type.suffix.is_none() {
+            return Some(ResponseMediaType::Json);
+        }
+        None
+    }
+
     /// The structured [`MediaType`] this response carries.
     pub const fn media_type(&self) -> MediaType<'static> {
         match self {

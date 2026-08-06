@@ -7,6 +7,7 @@
 
 use crate::core::error::ErrorKind;
 use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
+use andromeda_tenancy::error::TenancyError;
 
 /// The category a failure of this kind is reported to a client as.
 pub const fn of(kind: &ErrorKind) -> NgsiLdErrorType {
@@ -40,8 +41,15 @@ pub const fn of(kind: &ErrorKind) -> NgsiLdErrorType {
                 NgsiLdErrorType::BadRequestData
             }
         }
-        ErrorKind::NonexistentTenant(_) => NgsiLdErrorType::NonexistentTenant,
-        ErrorKind::MultiTenancyNotSupported => NgsiLdErrorType::NoMultiTenantSupport,
+        // Which clause 5.5.2 category a tenancy failure falls into is this
+        // broker's decision, not the tenancy crate's, so it is read here.
+        ErrorKind::Tenancy(error) => match error {
+            TenancyError::MultiTenancyDisabled => NgsiLdErrorType::NoMultiTenantSupport,
+            TenancyError::UnknownTenant { .. } => NgsiLdErrorType::NonexistentTenant,
+            TenancyError::RegistryUnavailable { .. } | TenancyError::ProvisioningFailed { .. } | TenancyError::RuntimeUnavailable { .. } => {
+                NgsiLdErrorType::InternalError
+            }
+        },
 
         ErrorKind::JsonLdProcessing(_)
         | ErrorKind::SubscriptionValidation(_)
@@ -77,8 +85,10 @@ pub const fn of(kind: &ErrorKind) -> NgsiLdErrorType {
 mod tests {
     use crate::{core::error::ErrorKind, http::error::category};
     use andromeda_jsonld::error::JsonLdError;
+    use andromeda_ngsi_ld_lexicon::tenant::TenantName;
     use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
     use andromeda_ngsi_ld_render::error::{RenderedShape, RepresentationError};
+    use andromeda_tenancy::error::TenancyError;
 
     #[test]
     fn each_family_of_failures_reports_the_category_clause_5_5_2_gives_it() {
@@ -90,8 +100,17 @@ mod tests {
             (ErrorKind::Conflict("x".into()), NgsiLdErrorType::Conflict),
             (ErrorKind::OperationNotSupported("x".into()), NgsiLdErrorType::OperationNotSupported),
             (ErrorKind::ContextNotAvailable("x".into()), NgsiLdErrorType::LdContextNotAvailable),
-            (ErrorKind::MultiTenancyNotSupported, NgsiLdErrorType::NoMultiTenantSupport),
-            (ErrorKind::NonexistentTenant("x".into()), NgsiLdErrorType::NonexistentTenant),
+            (ErrorKind::Tenancy(TenancyError::MultiTenancyDisabled), NgsiLdErrorType::NoMultiTenantSupport),
+            (
+                ErrorKind::Tenancy(TenancyError::UnknownTenant {
+                    name: TenantName::try_from("x".to_string()).expect("a valid tenant name"),
+                }),
+                NgsiLdErrorType::NonexistentTenant,
+            ),
+            (
+                ErrorKind::Tenancy(TenancyError::RegistryUnavailable { detail: "gone".into() }),
+                NgsiLdErrorType::InternalError,
+            ),
             (ErrorKind::Internal("x".into()), NgsiLdErrorType::InternalError),
             (
                 ErrorKind::Rendering(RepresentationError::serialization(

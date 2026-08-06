@@ -18,8 +18,6 @@ pub mod snapshot;
 pub mod snapshot_executor;
 pub mod snapshot_prepare;
 pub mod snapshot_status;
-/// In-memory R-tree spatial indexes for geo-query and subscription matching.
-pub mod spatial;
 pub mod subscription;
 pub mod subscription_base;
 /// Shared subscription cache for fast in-memory event matching.

@@ -5,6 +5,7 @@ use crate::service::{
     compiled_subscription::CompiledSubscription,
     entity::{expanded_entity_object_mut, inject_attr_sys_attrs, query::EntityQueryService},
 };
+use andromeda_delivery::request::notification_media_type;
 use andromeda_jsonld::{
     context_spec::ContextSpec,
     engine::{
@@ -134,7 +135,9 @@ pub async fn build_notification_data(params: NotificationBuildParams<'_>) -> Vec
     };
 
     let context = context_for_subscription(sub);
-    let include_context = sub.endpoint_accept.as_deref().is_some_and(|v| v == "application/ld+json");
+    // The same reading the transport makes: a body carries its own `@context`
+    // only when the notification goes out as `application/ld+json`.
+    let include_context = notification_media_type(sub.endpoint_accept.as_ref()).include_context_in_body();
 
     let compacted = match compact_entity_with_cache(
         engine,

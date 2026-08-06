@@ -1,11 +1,11 @@
 //! The Snapshot resource and its notification payload (ETSI GS CIM 009 clauses 5.2.41 to 5.3.4).
 
+use crate::key_value_pair::KeyValuePair;
 use andromeda_ngsi_ld_lexicon::{
     constant_string,
     ngsi_ld_urn::{SnapshotId, SnapshotNotificationId, SnapshotNotificationIdParseError},
 };
 use chrono::{DateTime, Utc};
-use compact_str::CompactString;
 use derive_more::{Display, Into};
 use iso8601_duration::Duration as Iso8601Duration;
 use serde::{Deserialize, Serialize};
@@ -118,16 +118,6 @@ pub enum SnapshotPriorityParseError {
     /// The value sits outside the `1..=10` range clause 5.2.41 allows.
     #[error("snapshotPriority must be between 1 and 10, got {0}")]
     OutOfRange(i64),
-}
-
-/// NGSI-LD KeyValuePair (clause 5.2.22) used by `receiverInfo`.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct KeyValuePair {
-    /// The entry's key.
-    pub key: CompactString,
-    /// The entry's value.
-    pub value: CompactString,
 }
 
 /// NGSI-LD Snapshot representation (ETSI GS CIM 009 clause 5.2.41).

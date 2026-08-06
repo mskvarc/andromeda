@@ -20,41 +20,6 @@ use crate::{
 use http::{HeaderName, HeaderValue};
 use mediatype::{MediaType, MediaTypeList, ReadParams, names};
 
-/// Parse a single media type into a supported [`ResponseMediaType`], if recognised.
-///
-/// Matches:
-/// - `application/ld+json` -> `JsonLd`
-/// - `application/geo+json` -> `GeoJson`
-/// - `application/json` (exact, no suffix) -> `Json`
-/// - `*/*` -> `Json` (wildcard defaults to JSON per NGSI-LD convention)
-fn match_media_type(media_type: &MediaType) -> Option<ResponseMediaType> {
-    // */* wildcard
-    if media_type.ty == names::_STAR && media_type.subty == names::_STAR {
-        return Some(ResponseMediaType::Json);
-    }
-
-    if media_type.ty != names::APPLICATION {
-        return None;
-    }
-
-    // application/ld+json -- subtype=ld, suffix=json
-    if media_type.subty == names::LD && media_type.suffix == Some(names::JSON) {
-        return Some(ResponseMediaType::JsonLd);
-    }
-
-    // application/geo+json -- subtype=geo, suffix=json
-    if media_type.subty == names::GEO && media_type.suffix == Some(names::JSON) {
-        return Some(ResponseMediaType::GeoJson);
-    }
-
-    // application/json -- exact match, no suffix (prevents application/merge-patch+json)
-    if media_type.subty == names::JSON && media_type.suffix.is_none() {
-        return Some(ResponseMediaType::Json);
-    }
-
-    None
-}
-
 /// Extract the `q` quality parameter from a media type (defaults to 1.0 per RFC 7231).
 fn extract_quality(media_type: &MediaType) -> Quality {
     media_type
@@ -112,7 +77,7 @@ impl headers::Header for Accept {
             let s = value.to_str().map_err(|_| headers::Error::invalid())?;
             for result in MediaTypeList::new(s) {
                 let Ok(mt) = result else { continue };
-                if let Some(format) = match_media_type(&mt) {
+                if let Some(format) = ResponseMediaType::from_media_type(&mt) {
                     let quality = extract_quality(&mt);
                     formats.push(QualityValue::new(format, quality));
                 }

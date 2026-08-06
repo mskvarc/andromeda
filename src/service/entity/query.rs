@@ -4,9 +4,7 @@ use crate::{
     service::{
         csource_forwarding::{ForwardedEntities, merge_query_results},
         entity::compiled_cache::{CompiledQueryCache, CompiledQueryKey, LimitCap},
-        spatial::{SpatialKey, entity_index::SpatialEntityIndex, flatten_or_type_iris},
     },
-    tenancy::types::TenantRef,
     worker::attribute_current_materializer::AttributeCurrentBarrier,
 };
 use andromeda_jsonld::{
@@ -49,6 +47,11 @@ use andromeda_ngsi_ld_query::{
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 use andromeda_ngsi_ld_request::query::{SharedQueryParams, entity::EntityQueryParameters};
 use andromeda_postgresql_query::q_predicate::{attribute_names::ResolvedAttributeNames, projection::referenced_attribute_names};
+use andromeda_spatial_index::{
+    entity::index::SpatialEntityIndex,
+    key::{SpatialKey, flatten_or_type_iris},
+};
+use andromeda_tenancy::tenant_ref::TenantRef;
 use iri_rs::IriBuf;
 use serde_json::Value;
 use sqlx::postgres::PgPool;
