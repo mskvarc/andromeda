@@ -51,9 +51,11 @@ pub fn matches_subscription(sub: &CompiledSubscription, event: &ChangeEvent) -> 
         return false;
     }
 
-    let trigger_str = event.trigger_reason.to_string();
-    if !sub.triggers.iter().any(|t| t == &trigger_str) {
-        debug!("Subscription {} skipped: trigger '{}' not in {:?}", sub.id, trigger_str, sub.triggers);
+    // The compiled triggers and the event carry the same typed vocabulary, so
+    // membership is an enum comparison rather than the per-event string
+    // allocation this used to make (clause 5.3.3).
+    if !sub.triggers.contains(&event.trigger_reason) {
+        debug!("Subscription {} skipped: trigger '{}' not in {:?}", sub.id, event.trigger_reason, sub.triggers);
         return false;
     }
 
@@ -109,7 +111,7 @@ pub fn matches_subscription(sub: &CompiledSubscription, event: &ChangeEvent) -> 
 
     debug!(
         "Subscription {} matched event {} (trigger={}, types={:?}, attrs={:?})",
-        sub.id, event.entity_id, trigger_str, event.entity_types, event.changed_attributes
+        sub.id, event.entity_id, event.trigger_reason, event.entity_types, event.changed_attributes
     );
     true
 }
@@ -165,7 +167,7 @@ mod tests {
     use super::*;
     use andromeda_delivery::endpoint::transport::EndpointTransport;
     use andromeda_ngsi_ld_model::{
-        notification::{ChangeEvent, ChangeOrigin, TriggerReason},
+        notification::{ChangeEvent, ChangeOrigin, NotificationTrigger},
         subscription::SubscriptionStatus,
     };
     use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
@@ -179,7 +181,7 @@ mod tests {
             endpoint_accept: None,
             endpoint_receiver_info: None,
             endpoint_transport: EndpointTransport::Http,
-            triggers: vec!["entityCreated".to_string(), "entityUpdated".to_string()],
+            triggers: vec![NotificationTrigger::EntityCreated, NotificationTrigger::EntityUpdated],
             watched_attrs: None,
             selectors: Vec::new(),
             throttling_secs: None,
@@ -205,7 +207,7 @@ mod tests {
         ChangeEvent::new(
             "urn:ngsi-ld:Entity:001".parse().expect("valid test URI"),
             vec!["Building".parse().expect("valid test type name")],
-            TriggerReason::EntityCreated,
+            NotificationTrigger::EntityCreated,
         )
         .with_changed_attributes(vec!["temperature".parse().expect("valid test attribute name")])
     }
@@ -326,7 +328,7 @@ mod tests {
         let event = ChangeEvent::new(
             "urn:ngsi-ld:Entity:001".parse().expect("valid test URI"),
             vec!["Building".parse().expect("valid test type name")],
-            TriggerReason::EntityDeleted,
+            NotificationTrigger::EntityDeleted,
         );
         assert!(!matches_subscription(&sub, &event));
     }

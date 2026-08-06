@@ -17,7 +17,7 @@ use andromeda_ngsi_ld_model::{
         entity_member::extract_types,
         mutation::{entity::append_entity_attrs, selection::OverwritePolicy},
     },
-    notification::{ChangeEvent, TriggerReason},
+    notification::{ChangeEvent, NotificationTrigger},
 };
 use andromeda_ngsi_ld_representation::normalization::normalize_entity_attributes;
 use serde_json::Value;
@@ -62,7 +62,7 @@ impl EntityService {
         let entity_types = extract_types(&merged);
         let attr_keys = extract_attribute_keys(&merged);
         self.emit_change(
-            ChangeEvent::new(entity_uri, entity_types, TriggerReason::AttributeCreated)
+            ChangeEvent::new(entity_uri, entity_types, NotificationTrigger::AttributeCreated)
                 .with_changed_attributes(attr_keys.clone()) // clone: the same names are also this operation's return value
                 .with_current_payload(merged),
         );

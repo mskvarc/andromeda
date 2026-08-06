@@ -9,15 +9,17 @@ use crate::{
     repository::subscription_store::{params::DatasetIdPresence, rows::SubscriptionRow},
 };
 use andromeda_ngsi_ld_lexicon::uri::Uri;
-use andromeda_ngsi_ld_model::subscription::{
-    NotificationParams,
-    NotificationStatus,
-    NotificationTrigger,
-    Subscription,
-    SubscriptionDelivery,
-    SubscriptionFilters,
-    SubscriptionLifecycle,
-    SubscriptionSelection,
+use andromeda_ngsi_ld_model::{
+    notification::NotificationTrigger,
+    subscription::{
+        NotificationParams,
+        NotificationStatus,
+        Subscription,
+        SubscriptionDelivery,
+        SubscriptionFilters,
+        SubscriptionLifecycle,
+        SubscriptionSelection,
+    },
 };
 use andromeda_ngsi_ld_query::scope::query::ScopeQuery;
 use chrono::{DateTime, Utc};

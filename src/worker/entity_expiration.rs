@@ -4,7 +4,7 @@ use crate::{
     service::entity::store::EntityStore,
 };
 use andromeda_ngsi_ld_model::notification::ChangeEvent;
-use andromeda_ngsi_ld_model::notification::TriggerReason;
+use andromeda_ngsi_ld_model::notification::NotificationTrigger;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use std::time::Duration;
 use tokio::sync::broadcast;
@@ -48,7 +48,7 @@ impl EntityExpirationWorker {
                             for id in expired_ids {
                                 match id.parse::<Uri>() {
                                     Ok(entity_uri) => {
-                                        let _ = tx.send(ChangeEvent::new(entity_uri, Vec::new(), TriggerReason::EntityDeleted));
+                                        let _ = tx.send(ChangeEvent::new(entity_uri, Vec::new(), NotificationTrigger::EntityDeleted));
                                     }
                                     Err(_) => {
                                         error!(entity_id = %id, event = "entity_uri_parse_failed");

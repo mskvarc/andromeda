@@ -11,6 +11,7 @@ use andromeda_delivery::endpoint::transport::EndpointTransport;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
 use andromeda_ngsi_ld_model::{
     key_value_pair::KeyValuePair,
+    notification::NotificationTrigger,
     subscription::{EntitySelector, SubscriptionStatus},
 };
 use andromeda_ngsi_ld_query::{filter::expression::Expr, geo::query::GeoQuery, scope::query::ScopeQuery};
@@ -47,7 +48,7 @@ pub struct CompiledSubscription {
     pub endpoint_accept: Option<MediaTypeBuf>,
     pub endpoint_receiver_info: Option<Vec<KeyValuePair>>,
     pub endpoint_transport: EndpointTransport,
-    pub triggers: Vec<String>,
+    pub triggers: Vec<NotificationTrigger>,
     pub watched_attrs: Option<HashSet<String>>, // expanded IRIs; None = all
     pub selectors: Vec<EntitySelector>,
     pub throttling_secs: Option<f64>,

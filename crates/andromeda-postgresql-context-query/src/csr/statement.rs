@@ -1,6 +1,6 @@
 //! SQL generation for Context Source Registration queries using sea-query.
 
-use crate::csr::filter::csr_expr_to_condition;
+use crate::csr::{coverage::entity_type_coverage, filter::csr_expr_to_condition};
 use andromeda_ngsi_ld_lexicon::time_prop::TimeProp;
 use andromeda_ngsi_ld_query::{csr::compiled::CompiledCsrQuery, temporal::window::TimeInterval};
 use andromeda_postgresql_query::{
@@ -70,15 +70,11 @@ pub fn build_csr_query(query: &CompiledCsrQuery) -> Result<BuiltQuery<'static>, 
 fn build_csr_conditions(query: &CompiledCsrQuery) -> Result<Condition, RenderError> {
     let mut condition = Condition::all();
 
-    // Entity type filter: match against information[].entities[].type
+    // Entity type filter: match against information[].entities[].type. Shared
+    // with the clause-5.10.2 forwarding match so the two read a type
+    // registration the same way.
     if let Some(entity_type) = &query.entity_type {
-        condition = condition.add(SeaExpr::cust_with_values(
-            "EXISTS (SELECT 1 FROM jsonb_array_elements(\"information\") AS info \
-             WHERE NOT jsonb_exists(info, 'entities') \
-                OR info->'entities' = '[]'::jsonb \
-                OR EXISTS (SELECT 1 FROM jsonb_array_elements(info->'entities') AS ent WHERE ent->>'type' = $1))",
-            [entity_type.as_str().to_string()],
-        ));
+        condition = condition.add(entity_type_coverage(entity_type.as_str()));
     }
 
     // ID filter

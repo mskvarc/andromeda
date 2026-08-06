@@ -1,6 +1,6 @@
 //! NGSI-LD subscription types (ETSI GS CIM 009 clause 5.2.12).
 
-use crate::key_value_pair::KeyValuePair;
+use crate::{key_value_pair::KeyValuePair, notification::NotificationTrigger};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, constant_string, rfc3339, uri::Uri};
 use andromeda_ngsi_ld_query::{filter::expression::Expr, pattern::Pattern, scope::query::ScopeQuery, type_selection::grammar::TypeExprRaw};
 use andromeda_ngsi_ld_representation::{join_mode::JoinMode, response_format::ResponseFormat};
@@ -15,25 +15,6 @@ use url::Url;
 use urn_rs::Urn;
 
 constant_string!(SubscriptionType, "Subscription");
-
-/// Trigger conditions that cause a notification to be sent (ETSI GS CIM 009 clause 5.3.3).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Display, EnumString)]
-#[serde(rename_all = "camelCase")]
-#[strum(serialize_all = "camelCase")]
-pub enum NotificationTrigger {
-    /// An entity matching the subscription was created.
-    EntityCreated,
-    /// An entity matching the subscription was updated.
-    EntityUpdated,
-    /// An entity matching the subscription was deleted.
-    EntityDeleted,
-    /// A watched attribute was created on a matching entity.
-    AttributeCreated,
-    /// A watched attribute was updated on a matching entity.
-    AttributeUpdated,
-    /// A watched attribute was deleted from a matching entity.
-    AttributeDeleted,
-}
 
 /// Lifecycle status of a subscription (ETSI GS CIM 009 clause 5.2.12, status member).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Display, EnumString, EnumIter, IntoStaticStr)]

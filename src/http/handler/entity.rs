@@ -53,8 +53,12 @@ use andromeda_ngsi_ld_query::{
     projection::purge::{PurgeMode, parse_attribute_list},
     scope::query::ScopeQuery,
 };
-use andromeda_ngsi_ld_render::{entity::EntityRenderer, response::ResponsePayload, snapshot::SnapshotRenderer};
-use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
+use andromeda_ngsi_ld_render::{
+    entity::{EntityRenderer, render_flat_join},
+    response::ResponsePayload,
+    snapshot::SnapshotRenderer,
+};
+use andromeda_ngsi_ld_representation::{join_mode::JoinMode, sys_attrs::SysAttrsInclusion};
 use andromeda_ngsi_ld_request::{
     attribute_deletion::DeleteAttrParams,
     deferred_split_filters::DeferredSplitFilters,
@@ -294,8 +298,8 @@ pub async fn get(
 
     let mode = params.resolve_render_mode();
 
-    // Handle join parameter
-    let join_mode = params.join.as_deref();
+    // Handle join parameter (clause 4.5.23), typed rather than string-matched.
+    let join_mode = params.join.as_deref().and_then(|join| JoinMode::from_str(join).ok());
     let join_level = params.join_level.unwrap_or(1);
 
     let contained_by: HashSet<String> = params
@@ -304,48 +308,35 @@ pub async fn get(
         .map(|s| s.split(',').map(|id| id.trim().to_string()).collect())
         .unwrap_or_default();
 
-    if matches!(join_mode, Some("inline") | Some("flat")) {
+    if let Some(join) = join_mode {
         let linked = service
             .resolve_linked_entities(std::slice::from_ref(&entity), join_level, sys_attrs, &context, &contained_by)
             .await
             .with_instance(&uri)?;
 
-        if join_mode == Some("flat") {
-            // Flat: always return array of [root, ...linked] per NGSI-LD spec
-            let mut all_entities: Vec<Value> = Vec::new();
-            all_entities.push(
-                EntityRenderer::new(&entity)
+        match join {
+            JoinMode::Flat => {
+                // Flat: the root and its linked entities side by side (clause 4.5.23).
+                let all_entities = render_flat_join(std::iter::once(&entity).chain(linked.values()), language_filter.as_ref(), mode).with_instance(&uri)?;
+                let rendered = start_rendering(accept.media_type(), &context, prefer)
+                    .with_payload(ResponsePayload::Collection(all_entities))
+                    .render()?;
+                return Ok(NgsiLdCollectionResponse::ok(rendered).with_warnings(warnings).into_response());
+            }
+            JoinMode::Inline => {
+                // Inline: the renderer nests the linked entities into the root.
+                let entity_value = EntityRenderer::new(&entity)
                     .with_optional_language_filter(language_filter.as_ref())
+                    .with_inline_linked_entities(&linked)
                     .with_mode(mode)
                     .render()
-                    .with_instance(&uri)?,
-            );
-            for linked_entity in linked.values() {
-                all_entities.push(
-                    EntityRenderer::new(linked_entity)
-                        .with_optional_language_filter(language_filter.as_ref())
-                        .with_mode(mode)
-                        .render()
-                        .with_instance(&uri)?,
-                );
+                    .with_instance(&uri)?;
+                let rendered = start_rendering(accept.media_type(), &context, prefer)
+                    .with_geometry_property(params.geometry_property.as_deref())
+                    .with_payload(ResponsePayload::Single(entity_value))
+                    .render()?;
+                return Ok(NgsiLdResponse::ok(rendered).with_warnings(warnings).into_response());
             }
-            let rendered = start_rendering(accept.media_type(), &context, prefer)
-                .with_payload(ResponsePayload::Collection(all_entities))
-                .render()?;
-            return Ok(NgsiLdCollectionResponse::ok(rendered).with_warnings(warnings).into_response());
-        } else {
-            // Inline: renderer handles join + mode transformation
-            let entity_value = EntityRenderer::new(&entity)
-                .with_optional_language_filter(language_filter.as_ref())
-                .with_inline_linked_entities(&linked)
-                .with_mode(mode)
-                .render()
-                .with_instance(&uri)?;
-            let rendered = start_rendering(accept.media_type(), &context, prefer)
-                .with_geometry_property(params.geometry_property.as_deref())
-                .with_payload(ResponsePayload::Single(entity_value))
-                .render()?;
-            return Ok(NgsiLdResponse::ok(rendered).with_warnings(warnings).into_response());
         }
     }
 
@@ -683,8 +674,8 @@ pub async fn query(
 
         let status = if entity_map_requested { StatusCode::CREATED } else { StatusCode::OK };
 
-        // Handle join
-        let join_mode = query.join.as_deref();
+        // Handle join (clause 4.5.23), typed rather than string-matched.
+        let join_mode = query.join.as_deref().and_then(|join| JoinMode::from_str(join).ok());
         let join_level = query.join_level.unwrap_or(1);
         let contained_by: HashSet<String> = query
             .contained_by
@@ -692,82 +683,61 @@ pub async fn query(
             .map(|s| s.split(',').map(|id| id.trim().to_string()).collect())
             .unwrap_or_default();
 
-        if matches!(join_mode, Some("inline") | Some("flat")) {
+        if let Some(join) = join_mode {
             let linked = service
                 .resolve_linked_entities(&entities, join_level, opts.sys_attrs, &context, &contained_by)
                 .await
                 .with_instance(&uri)?;
 
-            if join_mode == Some("flat") {
-                let mut all_values: Vec<Value> = Vec::new();
-                for entity in &entities {
-                    all_values.push(
-                        EntityRenderer::new(entity)
-                            .with_optional_language_filter(language_filter.as_ref())
-                            .with_mode(opts.render_mode)
-                            .render()
-                            .with_instance(&uri)?,
-                    );
+            match join {
+                JoinMode::Flat => {
+                    // Flat: the root entities and their linked entities side by
+                    // side, the roots ahead of the linked (clause 4.5.23).
+                    let all_values =
+                        render_flat_join(entities.iter().chain(linked.values()), language_filter.as_ref(), opts.render_mode).with_instance(&uri)?;
+                    let rendered = start_rendering(accept.media_type(), &context, prefer)
+                        .with_geometry_property(query.geometry_property.as_deref())
+                        .with_payload(ResponsePayload::Collection(all_values))
+                        .render()?;
+                    let mut response = NgsiLdCollectionResponse::ok(rendered).with_status(status).with_warnings(warnings);
+                    if let Some(count) = total_count {
+                        response = response.with_total_count(count as usize);
+                    }
+                    if let Some(ref map_uri) = entity_map_uri {
+                        response = response.with_entity_map_uri(map_uri.clone());
+                    }
+                    return Ok(response.into_response());
                 }
-                for linked_entity in linked.values() {
-                    all_values.push(
-                        EntityRenderer::new(linked_entity)
-                            .with_optional_language_filter(language_filter.as_ref())
-                            .with_mode(opts.render_mode)
-                            .render()
-                            .with_instance(&uri)?,
-                    );
+                JoinMode::Inline => {
+                    // Inline: the renderer nests the linked entities into each root.
+                    let mut entity_values: Vec<Value> = Vec::new();
+                    for entity in &entities {
+                        entity_values.push(
+                            EntityRenderer::new(entity)
+                                .with_optional_language_filter(language_filter.as_ref())
+                                .with_inline_linked_entities(&linked)
+                                .with_mode(opts.render_mode)
+                                .render()
+                                .with_instance(&uri)?,
+                        );
+                    }
+                    let rendered = start_rendering(accept.media_type(), &context, prefer)
+                        .with_geometry_property(query.geometry_property.as_deref())
+                        .with_payload(ResponsePayload::Collection(entity_values))
+                        .render()?;
+                    let mut response = NgsiLdCollectionResponse::ok(rendered).with_status(status).with_warnings(warnings);
+                    if let Some(count) = total_count {
+                        response = response.with_total_count(count as usize);
+                    }
+                    if let Some(ref map_uri) = entity_map_uri {
+                        response = response.with_entity_map_uri(map_uri.clone());
+                    }
+                    return Ok(response.into_response());
                 }
-                let rendered = start_rendering(accept.media_type(), &context, prefer)
-                    .with_geometry_property(query.geometry_property.as_deref())
-                    .with_payload(ResponsePayload::Collection(all_values))
-                    .render()?;
-                let mut response = NgsiLdCollectionResponse::ok(rendered).with_status(status).with_warnings(warnings);
-                if let Some(count) = total_count {
-                    response = response.with_total_count(count as usize);
-                }
-                if let Some(ref map_uri) = entity_map_uri {
-                    response = response.with_entity_map_uri(map_uri.clone());
-                }
-                return Ok(response.into_response());
-            } else {
-                // Inline: renderer handles join + mode transformation
-                let mut entity_values: Vec<Value> = Vec::new();
-                for entity in &entities {
-                    entity_values.push(
-                        EntityRenderer::new(entity)
-                            .with_optional_language_filter(language_filter.as_ref())
-                            .with_inline_linked_entities(&linked)
-                            .with_mode(opts.render_mode)
-                            .render()
-                            .with_instance(&uri)?,
-                    );
-                }
-                let rendered = start_rendering(accept.media_type(), &context, prefer)
-                    .with_geometry_property(query.geometry_property.as_deref())
-                    .with_payload(ResponsePayload::Collection(entity_values))
-                    .render()?;
-                let mut response = NgsiLdCollectionResponse::ok(rendered).with_status(status).with_warnings(warnings);
-                if let Some(count) = total_count {
-                    response = response.with_total_count(count as usize);
-                }
-                if let Some(ref map_uri) = entity_map_uri {
-                    response = response.with_entity_map_uri(map_uri.clone());
-                }
-                return Ok(response.into_response());
             }
         }
 
-        let rendered = entities
-            .iter()
-            .map(|entity| {
-                EntityRenderer::new(entity)
-                    .with_optional_language_filter(language_filter.as_ref())
-                    .with_mode(opts.render_mode)
-                    .render()
-            })
-            .collect::<Result<Vec<_>, _>>()
-            .with_instance(&uri)?;
+        let rendered = render_flat_join(entities.iter(), language_filter.as_ref(), opts.render_mode).with_instance(&uri)?;
         let rendered_output = start_rendering(accept.media_type(), &context, prefer)
             .with_geometry_property(query.geometry_property.as_deref())
             .with_payload(ResponsePayload::Collection(rendered))

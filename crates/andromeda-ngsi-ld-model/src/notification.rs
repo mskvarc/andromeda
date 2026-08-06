@@ -6,11 +6,35 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use serde_with::skip_serializing_none;
 use std::sync::Arc;
-use strum::{Display, EnumString};
+use strum::{Display, EnumIter, EnumString};
 use typed_builder::TypedBuilder;
 
 constant_string!(NotificationType, "Notification");
 constant_string!(CsourceNotificationType, "CsourceNotification");
+
+/// Trigger conditions that cause a notification to be sent (ETSI GS CIM 009 clause 5.3.3).
+///
+/// One vocabulary serves both sides of clause 5.3.3: a subscription lists the
+/// triggers it listens for (`Subscription::notification_trigger`), and a
+/// [`ChangeEvent`] carries the one that fired. [`EnumIter`] yields the default
+/// set — every trigger — without a hand-written token copy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Display, EnumString, EnumIter)]
+#[serde(rename_all = "camelCase")]
+#[strum(serialize_all = "camelCase")]
+pub enum NotificationTrigger {
+    /// An entity matching the subscription was created.
+    EntityCreated,
+    /// An entity matching the subscription was updated.
+    EntityUpdated,
+    /// An entity matching the subscription was deleted.
+    EntityDeleted,
+    /// A watched attribute was created on a matching entity.
+    AttributeCreated,
+    /// A watched attribute was updated on a matching entity.
+    AttributeUpdated,
+    /// A watched attribute was deleted from a matching entity.
+    AttributeDeleted,
+}
 
 /// Origin of an entity change event (ETSI GS CIM 009 v1.9.1, clause 5.5.13).
 ///
@@ -37,38 +61,6 @@ pub struct SysAttrsSnapshot {
 
 /// Trigger reason for entity notifications (ETSI GS CIM 009 clause 5.3.3).
 ///
-/// Maps NGSI-LD entity mutation operations to spec trigger reasons.
-#[derive(Clone, Copy, Debug, Display, EnumString, PartialEq, Eq)]
-#[strum(serialize_all = "camelCase")]
-pub enum TriggerReason {
-    /// An entity was created.
-    EntityCreated,
-    /// An entity was updated.
-    EntityUpdated,
-    /// An entity was deleted.
-    EntityDeleted,
-    /// An attribute was created on an entity.
-    AttributeCreated,
-    /// An attribute was updated on an entity.
-    AttributeUpdated,
-    /// An attribute was deleted from an entity.
-    AttributeDeleted,
-}
-
-impl TriggerReason {
-    /// Default triggers per NGSI-LD spec.
-    pub const fn defaults() -> &'static [&'static str] {
-        &[
-            "entityCreated",
-            "entityUpdated",
-            "entityDeleted",
-            "attributeCreated",
-            "attributeUpdated",
-            "attributeDeleted",
-        ]
-    }
-}
-
 /// Represents an entity mutation that may trigger notifications.
 #[derive(Clone, Debug, TypedBuilder)]
 pub struct ChangeEvent {
@@ -77,8 +69,8 @@ pub struct ChangeEvent {
     /// Types the mutated entity declares.
     #[builder(default)]
     pub entity_types: Vec<EntityTypeName>,
-    /// What kind of mutation this was.
-    pub trigger_reason: TriggerReason,
+    /// What kind of mutation this was (clause 5.3.3).
+    pub trigger_reason: NotificationTrigger,
     /// Names of the attributes the mutation touched.
     #[builder(default)]
     pub changed_attributes: Vec<AttributeName>,
@@ -107,7 +99,7 @@ pub struct ChangeEvent {
 
 impl ChangeEvent {
     /// Build an event for a mutation that has just happened locally.
-    pub fn new(entity_id: Uri, entity_types: Vec<EntityTypeName>, trigger_reason: TriggerReason) -> ChangeEvent {
+    pub fn new(entity_id: Uri, entity_types: Vec<EntityTypeName>, trigger_reason: NotificationTrigger) -> ChangeEvent {
         ChangeEvent::builder()
             .entity_id(entity_id)
             .entity_types(entity_types)
@@ -250,11 +242,12 @@ pub enum CsourceSubscriptionChange {
 
 #[cfg(test)]
 mod tests {
-    use crate::notification::{ChangeEvent, ChangeOrigin, CsourceNotification, CsrTriggerReason, Notification, SysAttrsSnapshot, TriggerReason};
+    use crate::notification::{ChangeEvent, ChangeOrigin, CsourceNotification, CsrTriggerReason, Notification, NotificationTrigger, SysAttrsSnapshot};
     use andromeda_ngsi_ld_lexicon::uri::Uri;
     use chrono::{TimeZone, Utc};
     use serde_json::json;
     use std::{str::FromStr, sync::Arc};
+    use strum::IntoEnumIterator;
 
     /// The instant every fixture in this module is stamped with.
     fn instant() -> chrono::DateTime<Utc> {
@@ -306,16 +299,16 @@ mod tests {
 
     #[test]
     fn a_change_event_records_its_trigger_reason() {
-        // `TriggerReason` reaches the wire through `Display`/`FromStr` rather than
+        // `NotificationTrigger` reaches the wire through `Display`/`FromStr` rather than
         // serde: it is a database label and a `notificationTrigger` token, never a
         // serialised member of `ChangeEvent`, which is an in-process value.
         for reason in [
-            TriggerReason::EntityCreated,
-            TriggerReason::EntityUpdated,
-            TriggerReason::EntityDeleted,
-            TriggerReason::AttributeCreated,
-            TriggerReason::AttributeUpdated,
-            TriggerReason::AttributeDeleted,
+            NotificationTrigger::EntityCreated,
+            NotificationTrigger::EntityUpdated,
+            NotificationTrigger::EntityDeleted,
+            NotificationTrigger::AttributeCreated,
+            NotificationTrigger::AttributeUpdated,
+            NotificationTrigger::AttributeDeleted,
         ] {
             let event = ChangeEvent::new(
                 "urn:ngsi-ld:Building:1".parse().expect("valid entity id"),
@@ -323,8 +316,10 @@ mod tests {
                 reason,
             );
             pretty_assertions::assert_eq!(event.trigger_reason, reason);
-            pretty_assertions::assert_eq!(TriggerReason::from_str(&reason.to_string()).expect("round trip"), reason);
-            assert!(TriggerReason::defaults().contains(&reason.to_string().as_str()));
+            pretty_assertions::assert_eq!(NotificationTrigger::from_str(&reason.to_string()).expect("round trip"), reason);
+            // The default trigger set is every trigger (clause 5.3.3), derived
+            // from the enum rather than a hand-written token list.
+            assert!(NotificationTrigger::iter().any(|trigger| trigger == reason));
         }
     }
 
@@ -341,7 +336,7 @@ mod tests {
         let event = ChangeEvent::builder()
             .entity_id("urn:ngsi-ld:Vehicle:1".parse::<Uri>().expect("valid entity id"))
             .entity_types(vec!["Vehicle".parse().expect("valid type name")])
-            .trigger_reason(TriggerReason::EntityUpdated)
+            .trigger_reason(NotificationTrigger::EntityUpdated)
             .changed_attributes(vec!["speed".parse().expect("valid attribute name")])
             .occurred_at(instant())
             .entity_snapshot(Some(Arc::clone(&snapshot)))
@@ -353,7 +348,7 @@ mod tests {
 
         pretty_assertions::assert_eq!(event.entity_id.as_ref(), "urn:ngsi-ld:Vehicle:1");
         pretty_assertions::assert_eq!(event.entity_types.len(), 1);
-        pretty_assertions::assert_eq!(event.trigger_reason, TriggerReason::EntityUpdated);
+        pretty_assertions::assert_eq!(event.trigger_reason, NotificationTrigger::EntityUpdated);
         pretty_assertions::assert_eq!(event.changed_attributes.len(), 1);
         pretty_assertions::assert_eq!(event.occurred_at, instant());
         pretty_assertions::assert_eq!(event.entity_snapshot.as_deref(), Some(&*snapshot));
@@ -367,7 +362,7 @@ mod tests {
     fn a_change_event_builder_leaves_every_optional_field_unset() {
         let event = ChangeEvent::builder()
             .entity_id("urn:ngsi-ld:Vehicle:1".parse::<Uri>().expect("valid entity id"))
-            .trigger_reason(TriggerReason::EntityCreated)
+            .trigger_reason(NotificationTrigger::EntityCreated)
             .occurred_at(instant())
             .origin(ChangeOrigin::Local)
             .build();

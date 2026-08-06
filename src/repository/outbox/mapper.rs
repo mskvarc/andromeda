@@ -8,7 +8,7 @@ use crate::{
     service::outbox::entry::{OutboxEntry, OutboxEntryId, WorkerInstanceId},
 };
 use andromeda_ngsi_ld_lexicon::{reference::NgsiLdReferenceError, uri::Uri};
-use andromeda_ngsi_ld_model::notification::TriggerReason;
+use andromeda_ngsi_ld_model::notification::NotificationTrigger;
 use std::str::FromStr;
 use thiserror::Error;
 
@@ -47,7 +47,7 @@ pub enum OutboxMapperError {
 
 /// Convert a persistence-shaped row into the domain [`OutboxEntry`].
 pub fn row_to_domain(row: OutboxEntryRow) -> Result<OutboxEntry, OutboxMapperError> {
-    let trigger = TriggerReason::from_str(&row.trigger).map_err(|source| OutboxMapperError::Trigger {
+    let trigger = NotificationTrigger::from_str(&row.trigger).map_err(|source| OutboxMapperError::Trigger {
         value: row.trigger.clone(),
         source,
     })?;

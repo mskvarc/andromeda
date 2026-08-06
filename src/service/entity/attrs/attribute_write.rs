@@ -11,7 +11,7 @@ use crate::service::entity::{
     history_record::HistoryRecord,
 };
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
-use andromeda_ngsi_ld_model::notification::TriggerReason;
+use andromeda_ngsi_ld_model::notification::NotificationTrigger;
 use serde_json::Value;
 use std::sync::Arc;
 
@@ -61,5 +61,5 @@ pub(super) struct MutatedEntity {
     ///
     /// Only clause 5.6.4 varies: a null sentinel in the fragment deletes the
     /// attribute rather than updating it, and the diff is the only way to tell.
-    pub trigger: TriggerReason,
+    pub trigger: NotificationTrigger,
 }

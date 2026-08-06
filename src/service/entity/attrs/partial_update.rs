@@ -14,7 +14,7 @@ use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
 use andromeda_ngsi_ld_model::{
     expanded::{entity_member::extract_types, mutation::attribute::partial_update_attr},
-    notification::TriggerReason,
+    notification::NotificationTrigger,
 };
 use serde_json::Value;
 use std::{collections::HashSet, sync::Arc};
@@ -60,11 +60,11 @@ impl EntityService {
                 let was_deleted = attrs_before.contains(attr_iri.as_str()) && !attrs_after.contains(attr_iri.as_str());
 
                 let (history, trigger) = if was_deleted {
-                    (vec![tombstone(&attr_iri, dataset_id)?], TriggerReason::AttributeDeleted)
+                    (vec![tombstone(&attr_iri, dataset_id)?], NotificationTrigger::AttributeDeleted)
                 } else {
                     (
                         vec![HistoryRecord::Observations(Arc::clone(&expanded))], // clone: Arc ref-count bump
-                        TriggerReason::AttributeUpdated,
+                        NotificationTrigger::AttributeUpdated,
                     )
                 };
 

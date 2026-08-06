@@ -14,7 +14,7 @@ use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::{
     expanded::{entity_member::extract_types, mutation::attribute::replace_attr},
-    notification::TriggerReason,
+    notification::NotificationTrigger,
 };
 use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
 use serde_json::Value;
@@ -69,7 +69,7 @@ impl EntityService {
                     MutatedEntity {
                         merged,
                         previous: previous_attributes,
-                        trigger: TriggerReason::AttributeUpdated,
+                        trigger: NotificationTrigger::AttributeUpdated,
                     },
                 ))
             })

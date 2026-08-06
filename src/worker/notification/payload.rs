@@ -17,7 +17,7 @@ use andromeda_jsonld::{
     },
 };
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType};
-use andromeda_ngsi_ld_model::{entity::Entity, notification::TriggerReason};
+use andromeda_ngsi_ld_model::{entity::Entity, notification::NotificationTrigger};
 use andromeda_ngsi_ld_render::{simplify::simplify_entity, snapshot::SnapshotRenderer};
 use andromeda_ngsi_ld_representation::{response_format::ResponseFormat, sys_attrs::SysAttrsInclusion};
 use andromeda_ngsi_ld_vocabulary::{
@@ -55,7 +55,7 @@ pub struct NotificationBuildParams<'a> {
     pub entity_data: &'a Value,
     pub previous_attributes: Option<&'a Value>,
     pub sub: &'a CompiledSubscription,
-    pub trigger_reason: &'a TriggerReason,
+    pub trigger_reason: &'a NotificationTrigger,
     pub changed_attributes: &'a [AttributeName],
     pub occurred_at: DateTime<Utc>,
     pub entity_query: &'a EntityQueryService,
@@ -90,8 +90,8 @@ pub async fn build_notification_data(params: NotificationBuildParams<'_>) -> Vec
         return vec![];
     }
 
-    let is_entity_deleted = matches!(trigger_reason, TriggerReason::EntityDeleted);
-    let is_attr_deleted = matches!(trigger_reason, TriggerReason::AttributeDeleted);
+    let is_entity_deleted = matches!(trigger_reason, NotificationTrigger::EntityDeleted);
+    let is_attr_deleted = matches!(trigger_reason, NotificationTrigger::AttributeDeleted);
 
     if is_entity_deleted && !sub.notification_show_changes {
         entity = strip_to_structural_keys(&entity, sub.notification_sys_attrs);

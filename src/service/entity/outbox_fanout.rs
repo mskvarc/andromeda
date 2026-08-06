@@ -11,7 +11,7 @@ use crate::service::{
     subscription_matching::matches_entity_filters,
 };
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, uri::Uri};
-use andromeda_ngsi_ld_model::notification::{ChangeEvent, TriggerReason};
+use andromeda_ngsi_ld_model::notification::{ChangeEvent, NotificationTrigger};
 use serde_json::Value;
 
 impl EntityService {
@@ -22,7 +22,7 @@ impl EntityService {
         &self,
         entity_id: &Uri,
         entity_types: &[EntityTypeName],
-        trigger: TriggerReason,
+        trigger: NotificationTrigger,
         changed_attrs: &[AttributeName],
         entity_snapshot: Option<&Value>,
         previous_snapshot: Option<&Value>,

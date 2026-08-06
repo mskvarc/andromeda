@@ -73,7 +73,7 @@ use crate::{
 };
 use andromeda_jsonld::engine::processor::JsonLdEngine;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, uri::Uri};
-use andromeda_ngsi_ld_model::notification::{ChangeEvent, TriggerReason};
+use andromeda_ngsi_ld_model::notification::{ChangeEvent, NotificationTrigger};
 use dashmap::DashMap;
 use serde_json::Value;
 use std::sync::Arc;
@@ -179,7 +179,7 @@ impl EntityService {
         &self,
         entity_id: Uri,
         entity_types: Vec<EntityTypeName>,
-        trigger: TriggerReason,
+        trigger: NotificationTrigger,
         changed_attributes: Vec<AttributeName>,
         previous: Option<Value>,
         current_payload: Option<Arc<Value>>,

@@ -16,7 +16,7 @@
 
 use crate::service::entity::store::EntityStore;
 use andromeda_ngsi_ld_geometry::geometry::Geometry;
-use andromeda_ngsi_ld_model::notification::{ChangeEvent, TriggerReason};
+use andromeda_ngsi_ld_model::notification::{ChangeEvent, NotificationTrigger};
 use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
 use andromeda_spatial_index::{entity::index::SpatialEntityIndex, key::SpatialKey};
 use andromeda_tenancy::tenant_ref::TenantRef;
@@ -105,13 +105,16 @@ impl SpatialSyncWorker {
         };
 
         match event.trigger_reason {
-            TriggerReason::EntityDeleted => {
+            NotificationTrigger::EntityDeleted => {
                 self.index.remove(&urn);
             }
-            TriggerReason::EntityCreated | TriggerReason::EntityUpdated | TriggerReason::AttributeCreated | TriggerReason::AttributeUpdated => {
+            NotificationTrigger::EntityCreated
+            | NotificationTrigger::EntityUpdated
+            | NotificationTrigger::AttributeCreated
+            | NotificationTrigger::AttributeUpdated => {
                 self.sync_entity(&urn, &event).await;
             }
-            TriggerReason::AttributeDeleted => {
+            NotificationTrigger::AttributeDeleted => {
                 // An attribute delete may remove the geoproperty entirely. The
                 // simplest sound response is to remove all partitions the
                 // entity participated in; a subsequent fetch during sync_entity
@@ -304,14 +307,14 @@ mod tests {
     fn create_event(id: &str, lon: f64, lat: f64) -> ChangeEvent {
         let uri: Uri = id.parse().expect("valid URI");
         let payload = entity_payload(id, lon, lat);
-        ChangeEvent::new(uri, vec![TYPE_IRI.parse().expect("valid test type name")], TriggerReason::EntityCreated)
+        ChangeEvent::new(uri, vec![TYPE_IRI.parse().expect("valid test type name")], NotificationTrigger::EntityCreated)
             .with_changed_attributes(vec![LOCATION_IRI.parse().expect("valid test attribute name")])
             .with_current_payload(Arc::new(payload))
     }
 
     fn delete_event(id: &str) -> ChangeEvent {
         let uri: Uri = id.parse().expect("valid URI");
-        ChangeEvent::new(uri, vec![TYPE_IRI.parse().expect("valid test type name")], TriggerReason::EntityDeleted)
+        ChangeEvent::new(uri, vec![TYPE_IRI.parse().expect("valid test type name")], NotificationTrigger::EntityDeleted)
     }
 
     fn world_bbox() -> geo::Geometry<f64> {

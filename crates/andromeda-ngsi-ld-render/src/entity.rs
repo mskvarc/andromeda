@@ -76,6 +76,36 @@ impl<'a> EntityRenderer<'a> {
     }
 }
 
+/// Render a sequence of entities to the flat clause-4.5.23 collection, each
+/// entity rendered independently under the same language filter and mode.
+///
+/// `join=flat` returns the root entities and their resolved linked entities side
+/// by side in one array — unlike `join=inline`, which nests the linked entities
+/// inside each root. Both read paths (single-entity retrieval and query) share
+/// this, so the flat shape is assembled in one place rather than hand-rolled at
+/// each endpoint; the caller supplies the order by chaining the roots ahead of
+/// the linked entities.
+///
+/// # Errors
+///
+/// Returns [`RepresentationError::Serialization`] when any entity cannot be
+/// turned into a JSON value.
+pub fn render_flat_join<'a>(
+    entities: impl IntoIterator<Item = &'a Entity>,
+    language_filter: Option<&'a LanguageFilter>,
+    mode: ResponseFormat,
+) -> Result<Vec<Value>, RepresentationError> {
+    entities
+        .into_iter()
+        .map(|entity| {
+            EntityRenderer::new(entity)
+                .with_optional_language_filter(language_filter)
+                .with_mode(mode)
+                .render()
+        })
+        .collect()
+}
+
 impl<'a> EntityRenderer<'a> {
     /// Execute the full rendering pipeline and return the JSON value.
     ///
@@ -170,14 +200,31 @@ where
 
 #[cfg(test)]
 mod tests {
-    use crate::{entity::EntityRenderer, simplify::simplify_entity};
+    use crate::{
+        entity::{EntityRenderer, render_flat_join},
+        simplify::simplify_entity,
+    };
     use andromeda_ngsi_ld_http_headers::language::LanguageFilter;
     use andromeda_ngsi_ld_model::entity::Entity;
     use andromeda_ngsi_ld_representation::response_format::ResponseFormat;
     use serde_json::{Value, json};
+    use std::collections::HashMap;
 
     fn parse_entity(value: Value) -> Entity {
         serde_json::from_value(value).expect("entity")
+    }
+
+    #[test]
+    fn render_flat_join_renders_the_roots_ahead_of_the_linked_entities() {
+        // Clause 4.5.23 `join=flat`: the caller chains roots then linked, and
+        // each entity is rendered independently in that order.
+        let root = parse_entity(json!({"id": "urn:ngsi-ld:A:1", "type": "A"}));
+        let mut linked = HashMap::new();
+        linked.insert("urn:ngsi-ld:B:1".to_string(), parse_entity(json!({"id": "urn:ngsi-ld:B:1", "type": "B"})));
+        let rendered = render_flat_join(std::iter::once(&root).chain(linked.values()), None, ResponseFormat::Normalized).expect("renders");
+        pretty_assertions::assert_eq!(rendered.len(), 2);
+        pretty_assertions::assert_eq!(rendered[0]["id"], "urn:ngsi-ld:A:1");
+        pretty_assertions::assert_eq!(rendered[1]["id"], "urn:ngsi-ld:B:1");
     }
 
     #[test]

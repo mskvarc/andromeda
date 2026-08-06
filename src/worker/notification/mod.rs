@@ -19,7 +19,7 @@ use andromeda_ngsi_ld_lexicon::{
 };
 use andromeda_ngsi_ld_model::{
     expanded::geo_property::extract_geo_property_geometry,
-    notification::{ChangeEvent, Notification, NotificationType, SubscriptionChange, TriggerReason},
+    notification::{ChangeEvent, Notification, NotificationTrigger, NotificationType, SubscriptionChange},
 };
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 use andromeda_ngsi_ld_vocabulary::expanded::{classes as expanded_classes, properties as expanded_properties};
@@ -172,7 +172,7 @@ impl NotificationWorker {
         let entity_id_str = event.entity_id.to_string(); // convert once: repository methods take &str
 
         // Fetch entity data once for all matching subscriptions
-        let entity_data = if !matches!(event.trigger_reason, TriggerReason::EntityDeleted | TriggerReason::AttributeDeleted) {
+        let entity_data = if !matches!(event.trigger_reason, NotificationTrigger::EntityDeleted | NotificationTrigger::AttributeDeleted) {
             match self.entity_repo.get(&entity_id_str).await {
                 Ok(Some(data)) => Some(data),
                 Ok(None) => {
@@ -184,7 +184,7 @@ impl NotificationWorker {
                     None
                 }
             }
-        } else if matches!(event.trigger_reason, TriggerReason::AttributeDeleted) {
+        } else if matches!(event.trigger_reason, NotificationTrigger::AttributeDeleted) {
             match self.entity_repo.get(&entity_id_str).await {
                 Ok(Some(data)) => Some(data),
                 _ => {
@@ -235,7 +235,7 @@ impl NotificationWorker {
             }]))
         };
 
-        let matching: Vec<Arc<CompiledSubscription>> = if !matches!(event.trigger_reason, TriggerReason::EntityDeleted) {
+        let matching: Vec<Arc<CompiledSubscription>> = if !matches!(event.trigger_reason, NotificationTrigger::EntityDeleted) {
             if let Some(ref data) = entity_data {
                 let geo_filtered = self.spatial_narrow(matching, data, &event.entity_types);
                 geo_filtered.into_iter().filter(|sub| matches_entity_filters(sub, data)).collect()
@@ -254,7 +254,7 @@ impl NotificationWorker {
 
         let sys_attrs = if need_sys_attrs {
             let fallback_sys_attrs = event.sys_attrs_snapshot.clone();
-            if matches!(event.trigger_reason, TriggerReason::EntityDeleted) {
+            if matches!(event.trigger_reason, NotificationTrigger::EntityDeleted) {
                 fallback_sys_attrs
             } else {
                 match self.entity_repo.get_sys_attrs(&entity_id_str).await {
@@ -461,7 +461,7 @@ mod tests {
     use payload::filter_entity_attributes;
     use url::Url;
 
-    fn make_event(entity_id: &str, types: Vec<&str>, trigger: TriggerReason, attrs: Vec<&str>) -> ChangeEvent {
+    fn make_event(entity_id: &str, types: Vec<&str>, trigger: NotificationTrigger, attrs: Vec<&str>) -> ChangeEvent {
         ChangeEvent::builder()
             .entity_id(entity_id.parse().expect("valid test URI"))
             .entity_types(types.into_iter().map(|t| t.parse().expect("valid test type name")).collect())
@@ -480,7 +480,7 @@ mod tests {
             endpoint_accept: None,
             endpoint_receiver_info: None,
             endpoint_transport: EndpointTransport::Http,
-            triggers: triggers.into_iter().map(String::from).collect(),
+            triggers: triggers.into_iter().map(|t| t.parse().expect("valid trigger")).collect(),
             watched_attrs: watched.map(|w| w.into_iter().map(String::from).collect()),
             selectors,
             throttling_secs: None,
@@ -514,7 +514,7 @@ mod tests {
             vec!["attributeUpdated"],
             None,
         );
-        let event = make_event("urn:ngsi-ld:Vehicle:A1", vec!["Vehicle"], TriggerReason::AttributeUpdated, vec!["speed"]);
+        let event = make_event("urn:ngsi-ld:Vehicle:A1", vec!["Vehicle"], NotificationTrigger::AttributeUpdated, vec!["speed"]);
         assert!(matches_subscription(&sub, &event));
     }
 
@@ -530,7 +530,7 @@ mod tests {
             vec!["attributeUpdated"],
             None,
         );
-        let event = make_event("urn:ngsi-ld:Vehicle:A1", vec!["Vehicle"], TriggerReason::AttributeUpdated, vec!["speed"]);
+        let event = make_event("urn:ngsi-ld:Vehicle:A1", vec!["Vehicle"], NotificationTrigger::AttributeUpdated, vec!["speed"]);
         assert!(!matches_subscription(&sub, &event));
     }
 
@@ -546,7 +546,7 @@ mod tests {
             vec!["entityCreated"],
             None,
         );
-        let event = make_event("urn:ngsi-ld:Vehicle:A1", vec!["Vehicle"], TriggerReason::AttributeUpdated, vec!["speed"]);
+        let event = make_event("urn:ngsi-ld:Vehicle:A1", vec!["Vehicle"], NotificationTrigger::AttributeUpdated, vec!["speed"]);
         assert!(!matches_subscription(&sub, &event));
     }
 
@@ -565,7 +565,7 @@ mod tests {
         let event = make_event(
             "urn:ngsi-ld:Vehicle:A1",
             vec!["Vehicle"],
-            TriggerReason::AttributeUpdated,
+            NotificationTrigger::AttributeUpdated,
             vec!["speed", "location"],
         );
         assert!(matches_subscription(&sub, &event));
@@ -583,7 +583,12 @@ mod tests {
             vec!["attributeUpdated"],
             Some(vec!["speed"]),
         );
-        let event = make_event("urn:ngsi-ld:Vehicle:A1", vec!["Vehicle"], TriggerReason::AttributeUpdated, vec!["location"]);
+        let event = make_event(
+            "urn:ngsi-ld:Vehicle:A1",
+            vec!["Vehicle"],
+            NotificationTrigger::AttributeUpdated,
+            vec!["location"],
+        );
         assert!(!matches_subscription(&sub, &event));
     }
 
@@ -599,7 +604,7 @@ mod tests {
             vec!["attributeUpdated"],
             None,
         );
-        let event = make_event("urn:ngsi-ld:Vehicle:A1", vec!["Vehicle"], TriggerReason::AttributeUpdated, vec!["speed"]);
+        let event = make_event("urn:ngsi-ld:Vehicle:A1", vec!["Vehicle"], NotificationTrigger::AttributeUpdated, vec!["speed"]);
         assert!(matches_subscription(&sub, &event));
     }
 
@@ -615,7 +620,7 @@ mod tests {
             vec!["attributeUpdated"],
             None,
         );
-        let event = make_event("urn:ngsi-ld:Vehicle:A1", vec!["Vehicle"], TriggerReason::AttributeUpdated, vec!["speed"]);
+        let event = make_event("urn:ngsi-ld:Vehicle:A1", vec!["Vehicle"], NotificationTrigger::AttributeUpdated, vec!["speed"]);
         assert!(!matches_subscription(&sub, &event));
     }
 
@@ -631,7 +636,7 @@ mod tests {
             vec!["attributeUpdated"],
             None,
         );
-        let event = make_event("urn:ngsi-ld:Vehicle:A1", vec!["Vehicle"], TriggerReason::AttributeUpdated, vec!["speed"]);
+        let event = make_event("urn:ngsi-ld:Vehicle:A1", vec!["Vehicle"], NotificationTrigger::AttributeUpdated, vec!["speed"]);
         assert!(matches_subscription(&sub, &event));
     }
 
@@ -647,7 +652,7 @@ mod tests {
             vec!["attributeUpdated"],
             None,
         );
-        let event = make_event("urn:ngsi-ld:Vehicle:A1", vec!["Vehicle"], TriggerReason::AttributeUpdated, vec!["speed"]);
+        let event = make_event("urn:ngsi-ld:Vehicle:A1", vec!["Vehicle"], NotificationTrigger::AttributeUpdated, vec!["speed"]);
         assert!(!matches_subscription(&sub, &event));
     }
 
@@ -664,14 +669,14 @@ mod tests {
             None,
         );
         sub.expires_at = Some(Utc::now() - chrono::Duration::hours(1));
-        let event = make_event("urn:ngsi-ld:Vehicle:A1", vec!["Vehicle"], TriggerReason::AttributeUpdated, vec!["speed"]);
+        let event = make_event("urn:ngsi-ld:Vehicle:A1", vec!["Vehicle"], NotificationTrigger::AttributeUpdated, vec!["speed"]);
         assert!(!matches_subscription(&sub, &event));
     }
 
     #[test]
     fn no_selectors_matches_all_entities() {
         let sub = make_sub("sub1", vec![], vec!["attributeUpdated"], None);
-        let event = make_event("urn:ngsi-ld:Vehicle:A1", vec!["Vehicle"], TriggerReason::AttributeUpdated, vec!["speed"]);
+        let event = make_event("urn:ngsi-ld:Vehicle:A1", vec!["Vehicle"], NotificationTrigger::AttributeUpdated, vec!["speed"]);
         assert!(matches_subscription(&sub, &event));
     }
 
@@ -688,7 +693,7 @@ mod tests {
             None,
         );
         sub.status = SubscriptionStatus::Paused;
-        let event = make_event("urn:ngsi-ld:Vehicle:A1", vec!["Vehicle"], TriggerReason::AttributeUpdated, vec!["speed"]);
+        let event = make_event("urn:ngsi-ld:Vehicle:A1", vec!["Vehicle"], NotificationTrigger::AttributeUpdated, vec!["speed"]);
         assert!(!matches_subscription(&sub, &event));
     }
 

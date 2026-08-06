@@ -10,7 +10,7 @@ use andromeda_delivery::endpoint::transport::parse_endpoint_transport;
 use andromeda_ngsi_ld_geometry::geometry::Geometry;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::{
-    notification::{ChangeEvent, SubscriptionChange, TriggerReason},
+    notification::{ChangeEvent, NotificationTrigger, SubscriptionChange},
     subscription::{EntitySelector, Subscription, SubscriptionStatus},
 };
 use andromeda_ngsi_ld_query::geo::query::GeoQuery;
@@ -24,6 +24,7 @@ use andromeda_tenancy::tenant_ref::TenantRef;
 use dashmap::DashMap;
 use iri_rs::IriBuf;
 use std::{collections::HashSet, sync::Arc};
+use strum::IntoEnumIterator;
 use tracing::debug;
 
 /// Thread-safe, lock-free subscription cache for fast event matching.
@@ -257,10 +258,13 @@ pub fn compile_subscription(sub: &Subscription) -> Option<CompiledSubscription> 
     // selector member is already parsed, so there is nothing left to compile
     let selectors: Vec<EntitySelector> = sub.selection.entities.clone().unwrap_or_default();
 
-    let triggers: Vec<String> = sub.selection.notification_trigger.as_ref().map_or_else(
-        || TriggerReason::defaults().iter().map(|s| String::from(*s)).collect(),
-        |t| t.iter().map(|nt| nt.to_string()).collect(),
-    );
+    // Clause 5.3.3: an absent `notificationTrigger` defaults to every trigger,
+    // derived from the enum rather than a hand-written token list.
+    let triggers: Vec<NotificationTrigger> = sub
+        .selection
+        .notification_trigger
+        .as_deref()
+        .map_or_else(|| NotificationTrigger::iter().collect(), <[NotificationTrigger]>::to_vec);
 
     let watched_attrs = sub
         .selection
@@ -370,7 +374,7 @@ mod tests {
             endpoint_accept: None,
             endpoint_receiver_info: None,
             endpoint_transport: EndpointTransport::Http,
-            triggers: triggers.into_iter().map(String::from).collect(),
+            triggers: triggers.into_iter().map(|t| t.parse().expect("valid trigger")).collect(),
             watched_attrs: None,
             selectors: vec![EntitySelector {
                 id: None,

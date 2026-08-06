@@ -8,7 +8,7 @@
 //! specification crate that holds a row shape is describing a schema.
 
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
-use andromeda_ngsi_ld_model::notification::TriggerReason;
+use andromeda_ngsi_ld_model::notification::NotificationTrigger;
 use chrono::{DateTime, Utc};
 use derive_more::{Display, From};
 use serde_json::Value;
@@ -47,7 +47,7 @@ pub struct OutboxEntry {
     /// Entity that triggered the notification.
     pub entity_id: Uri,
     /// Mutation trigger reason (e.g. entityCreated, entityUpdated).
-    pub trigger: TriggerReason,
+    pub trigger: NotificationTrigger,
     /// Expanded entity snapshot at the time of the mutation.
     #[builder(default)]
     pub entity_snapshot: Option<Value>,
@@ -89,7 +89,7 @@ pub struct NewOutboxEntry {
     /// Entity that triggered the notification.
     pub entity_id: Uri,
     /// Mutation trigger reason.
-    pub trigger: TriggerReason,
+    pub trigger: NotificationTrigger,
     /// Expanded entity snapshot at the time of the mutation.
     #[builder(default)]
     pub entity_snapshot: Option<Value>,

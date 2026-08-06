@@ -16,7 +16,7 @@ use andromeda_ngsi_ld_model::{
         entity_member::extract_types,
         mutation::{attribute::delete_attr, selection::DatasetSelection},
     },
-    notification::TriggerReason,
+    notification::NotificationTrigger,
 };
 use std::sync::Arc;
 use urn_rs::Urn;
@@ -72,7 +72,7 @@ impl EntityService {
                     MutatedEntity {
                         merged,
                         previous: previous_attributes,
-                        trigger: TriggerReason::AttributeDeleted,
+                        trigger: NotificationTrigger::AttributeDeleted,
                     },
                 ))
             })

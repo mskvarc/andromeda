@@ -14,7 +14,7 @@ use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
 use andromeda_ngsi_ld_model::{
     expanded::{entity_member::extract_types, mutation::entity::update_entity_attrs},
-    notification::TriggerReason,
+    notification::NotificationTrigger,
 };
 use andromeda_ngsi_ld_representation::normalization::normalize_entity_attributes;
 use serde_json::Value;
@@ -86,7 +86,7 @@ impl EntityService {
             self.emit_attr_change(
                 entity_uri.clone(),   // clone: value needed by subsequent loop iterations and final emit
                 entity_types.clone(), // clone: value needed by subsequent loop iterations and final emit
-                TriggerReason::AttributeDeleted,
+                NotificationTrigger::AttributeDeleted,
                 vec![deleted_attr.clone()],  // clone: owned copy from borrowed iterator
                 previous_attributes.clone(), // clone: value needed by subsequent loop iterations and final emit
                 Some(Arc::clone(&merged)),   // clone: Arc ref-count bump
@@ -97,7 +97,7 @@ impl EntityService {
             self.emit_attr_change(
                 entity_uri.clone(),   // clone: value also needed by subsequent AttributeUpdated emit
                 entity_types.clone(), // clone: value also needed by subsequent AttributeUpdated emit
-                TriggerReason::AttributeCreated,
+                NotificationTrigger::AttributeCreated,
                 created_attrs,
                 previous_attributes.clone(), // clone: value also needed by subsequent AttributeUpdated emit
                 Some(Arc::clone(&merged)),   // clone: Arc ref-count bump
@@ -108,7 +108,7 @@ impl EntityService {
             self.emit_attr_change(
                 entity_uri,
                 entity_types,
-                TriggerReason::AttributeUpdated,
+                NotificationTrigger::AttributeUpdated,
                 updated_attrs,
                 previous_attributes,
                 Some(merged),

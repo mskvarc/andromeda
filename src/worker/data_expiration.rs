@@ -16,7 +16,7 @@ use crate::{
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::{
     expanded::{instance_key::removed_attribute_instances, mutation::expiry::remove_expired_attribute_instances},
-    notification::{ChangeEvent, TriggerReason},
+    notification::{ChangeEvent, NotificationTrigger},
 };
 use chrono::Utc;
 use std::{sync::Arc, time::Duration};
@@ -71,7 +71,7 @@ impl DataExpirationWorker {
                             for id in expired_ids {
                                 match id.parse::<Uri>() {
                                     Ok(entity_uri) => {
-                                        let _ = tx.send(ChangeEvent::new(entity_uri, Vec::new(), TriggerReason::EntityDeleted));
+                                        let _ = tx.send(ChangeEvent::new(entity_uri, Vec::new(), NotificationTrigger::EntityDeleted));
                                     }
                                     Err(_) => {
                                         error!(entity_id = %id, event = "entity_uri_parse_failed");
@@ -137,7 +137,7 @@ impl DataExpirationWorker {
             for id in purged {
                 match id.parse::<Uri>() {
                     Ok(entity_uri) => {
-                        let _ = tx.send(ChangeEvent::new(entity_uri, Vec::new(), TriggerReason::EntityUpdated));
+                        let _ = tx.send(ChangeEvent::new(entity_uri, Vec::new(), NotificationTrigger::EntityUpdated));
                     }
                     Err(_) => {
                         error!(entity_id = %id, event = "entity_uri_parse_failed");

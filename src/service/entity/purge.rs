@@ -20,7 +20,7 @@ use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
 use andromeda_ngsi_ld_model::{
     expanded::{entity_member::extract_types, instance_key::removed_attribute_instances},
-    notification::TriggerReason,
+    notification::NotificationTrigger,
 };
 use andromeda_ngsi_ld_query::projection::purge::PurgeMode;
 use serde_json::Value;
@@ -83,7 +83,7 @@ impl EntityService {
                 Ok(entity_uri) => self.emit_attr_change(
                     entity_uri,
                     extract_types(&merged),
-                    TriggerReason::AttributeDeleted,
+                    NotificationTrigger::AttributeDeleted,
                     removed_names,
                     previous,
                     Some(merged),

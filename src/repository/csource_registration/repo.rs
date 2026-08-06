@@ -11,7 +11,10 @@ use crate::{
 use andromeda_ngsi_ld_lexicon::tenant::TenantName;
 use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
 use andromeda_ngsi_ld_query::csr::compiled::CompiledCsrQuery;
-use andromeda_postgresql_context_query::csr::statement as csr_sql;
+use andromeda_postgresql_context_query::csr::{
+    coverage::{entity_id_coverage, entity_type_coverage},
+    statement as csr_sql,
+};
 use async_trait::async_trait;
 use sea_query::{Alias, Expr as SeaExpr, Order, PostgresQueryBuilder, Query, SelectStatement};
 use sea_query_binder::SqlxBinder;
@@ -232,39 +235,29 @@ impl RegistrationStore for CsourceRegistrationRepository {
         Ok(result.rows_affected())
     }
 
-    /// Find CSRs matching an entity query.
+    /// Find the registrations that cover a concrete entity for forwarding
+    /// (clause 5.10.2).
+    ///
+    /// The type and identifier predicates are the crate's shared coverage
+    /// builders: the type predicate is the same one clause-5.9 discovery uses,
+    /// and the identifier predicate covers a type-only entry, an exact `id`, and
+    /// an `idPattern` whose regular expression matches — the last of which the
+    /// hand-written fragment this replaced omitted, so a registration declared
+    /// by `idPattern` was never forwarded to.
     async fn find_matching(&self, entity_type: Option<&str>, entity_id: Option<&str>) -> Result<Vec<ContextSourceRegistration>, AndromedaError> {
         use sea_query::Cond;
 
         let expires_at_col = Alias::new("expires_at");
         let not_expired = Cond::any().add(SeaExpr::col(expires_at_col).is_null()).add(SeaExpr::cust("expires_at > NOW()"));
 
-        let type_frag = "EXISTS (SELECT 1 FROM jsonb_array_elements(information) AS info \
-             WHERE NOT jsonb_exists(info, 'entities') \
-                OR info->'entities' = '[]'::jsonb \
-                OR EXISTS (SELECT 1 FROM jsonb_array_elements(info->'entities') AS ent \
-                   WHERE ent->>'type' = $1))";
-        let id_frag = "EXISTS (SELECT 1 FROM jsonb_array_elements(information) AS info \
-             WHERE NOT jsonb_exists(info, 'entities') \
-                OR info->'entities' = '[]'::jsonb \
-                OR EXISTS (SELECT 1 FROM jsonb_array_elements(info->'entities') AS ent \
-                   WHERE (NOT jsonb_exists(ent, 'id') OR ent->>'id' = $1)))";
-
         let mut select = csr_base_select();
         select.cond_where(not_expired);
 
-        match (entity_type, entity_id) {
-            (Some(t), Some(id)) => {
-                select.and_where(SeaExpr::cust_with_values(type_frag, [t.to_string()]));
-                select.and_where(SeaExpr::cust_with_values(id_frag, [id.to_string()]));
-            }
-            (Some(t), None) => {
-                select.and_where(SeaExpr::cust_with_values(type_frag, [t.to_string()]));
-            }
-            (None, Some(id)) => {
-                select.and_where(SeaExpr::cust_with_values(id_frag, [id.to_string()]));
-            }
-            (None, None) => {}
+        if let Some(entity_type) = entity_type {
+            select.and_where(entity_type_coverage(entity_type));
+        }
+        if let Some(entity_id) = entity_id {
+            select.and_where(entity_id_coverage(entity_id));
         }
 
         select.order_by(Alias::new("created_at"), Order::Asc);

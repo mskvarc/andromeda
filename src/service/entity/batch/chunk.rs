@@ -19,7 +19,7 @@ use crate::{
     },
 };
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, uri::Uri};
-use andromeda_ngsi_ld_model::notification::{ChangeEvent, TriggerReason};
+use andromeda_ngsi_ld_model::notification::{ChangeEvent, NotificationTrigger};
 use serde_json::Value;
 use std::sync::Arc;
 
@@ -140,11 +140,11 @@ impl ChunkWrite {
 }
 
 /// The change a mutation describes to a subscriber.
-const fn trigger_of(entity: &EntityMutation) -> TriggerReason {
+const fn trigger_of(entity: &EntityMutation) -> NotificationTrigger {
     match entity {
-        EntityMutation::Insert(_) => TriggerReason::EntityCreated,
-        EntityMutation::Update(_) | EntityMutation::None => TriggerReason::EntityUpdated,
-        EntityMutation::Delete => TriggerReason::EntityDeleted,
+        EntityMutation::Insert(_) => NotificationTrigger::EntityCreated,
+        EntityMutation::Update(_) | EntityMutation::None => NotificationTrigger::EntityUpdated,
+        EntityMutation::Delete => NotificationTrigger::EntityDeleted,
     }
 }
 
@@ -163,7 +163,7 @@ fn error_of(id: &str, outcome: &WriteOutcome) -> Option<AndromedaError> {
 }
 
 /// The change event this entity raises, if its identifier is a URI.
-fn change_event(id: &str, types: Vec<EntityTypeName>, changed: Vec<AttributeName>, payload: Arc<Value>, trigger: TriggerReason) -> Option<ChangeEvent> {
+fn change_event(id: &str, types: Vec<EntityTypeName>, changed: Vec<AttributeName>, payload: Arc<Value>, trigger: NotificationTrigger) -> Option<ChangeEvent> {
     match id.parse::<Uri>() {
         Ok(entity_uri) => Some(
             ChangeEvent::new(entity_uri, types, trigger)
@@ -283,7 +283,7 @@ mod tests {
         entity_mutation::{EntityMutation, EntityRecord},
         write_outcome::WriteOutcome,
     };
-    use andromeda_ngsi_ld_model::notification::TriggerReason;
+    use andromeda_ngsi_ld_model::notification::NotificationTrigger;
     use serde_json::json;
     use std::sync::Arc;
 
@@ -293,9 +293,9 @@ mod tests {
 
     #[test]
     fn each_mutation_describes_one_trigger() {
-        pretty_assertions::assert_eq!(trigger_of(&EntityMutation::Insert(record())), TriggerReason::EntityCreated);
-        pretty_assertions::assert_eq!(trigger_of(&EntityMutation::Update(record())), TriggerReason::EntityUpdated);
-        pretty_assertions::assert_eq!(trigger_of(&EntityMutation::Delete), TriggerReason::EntityDeleted);
+        pretty_assertions::assert_eq!(trigger_of(&EntityMutation::Insert(record())), NotificationTrigger::EntityCreated);
+        pretty_assertions::assert_eq!(trigger_of(&EntityMutation::Update(record())), NotificationTrigger::EntityUpdated);
+        pretty_assertions::assert_eq!(trigger_of(&EntityMutation::Delete), NotificationTrigger::EntityDeleted);
     }
 
     #[test]

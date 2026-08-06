@@ -7,7 +7,7 @@
 
 use crate::{core::error::AndromedaError, service::entity::side_effect::BatchSideEffectJob};
 use andromeda_ngsi_ld_lexicon::uri::Uri;
-use andromeda_ngsi_ld_model::notification::{ChangeEvent, ChangeOrigin, SysAttrsSnapshot, TriggerReason};
+use andromeda_ngsi_ld_model::notification::{ChangeEvent, ChangeOrigin, NotificationTrigger, SysAttrsSnapshot};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -127,7 +127,7 @@ impl TryFrom<PersistedChangeEvent> for ChangeEvent {
             .entity_id
             .parse()
             .map_err(|err| AndromedaError::internal(format!("invalid entity_id in queued change event: {err}")))?;
-        let trigger_reason = TriggerReason::from_str(&persisted.trigger_reason)
+        let trigger_reason = NotificationTrigger::from_str(&persisted.trigger_reason)
             .map_err(|err| AndromedaError::internal(format!("invalid trigger_reason in queued change event: {err}")))?;
         let origin = match persisted.origin.as_str() {
             "local" => ChangeOrigin::Local,

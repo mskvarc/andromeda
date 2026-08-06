@@ -21,7 +21,7 @@ use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name:
 use andromeda_ngsi_ld_model::{
     entity::{Entity, EntityPatch},
     expanded::{entity_member::extract_types, mutation::entity::merge_entity},
-    notification::{ChangeEvent, TriggerReason},
+    notification::{ChangeEvent, NotificationTrigger},
 };
 use andromeda_ngsi_ld_representation::normalization::normalize_entity_attributes;
 use serde_json::Value;
@@ -61,7 +61,7 @@ impl EntityService {
         let payload = Arc::new(expanded);
         let types = extract_types(&payload);
         let changed_attrs = extract_attribute_keys(&payload);
-        let outbox = self.build_outbox_entries(&entity.id, &types, TriggerReason::EntityCreated, &changed_attrs, Some(&payload), None);
+        let outbox = self.build_outbox_entries(&entity.id, &types, NotificationTrigger::EntityCreated, &changed_attrs, Some(&payload), None);
 
         let write = AtomicWrite::builder()
             .entity_id(Arc::from(id.as_str()))
@@ -79,7 +79,7 @@ impl EntityService {
         }
 
         self.emit_change(
-            ChangeEvent::new(entity.id.clone(), types, TriggerReason::EntityCreated) // clone: owned Uri for event
+            ChangeEvent::new(entity.id.clone(), types, NotificationTrigger::EntityCreated) // clone: owned Uri for event
                 .with_changed_attributes(changed_attrs)
                 .with_current_payload(payload),
         );
@@ -126,7 +126,7 @@ impl EntityService {
                     outbox.extend(self.build_outbox_entries(
                         &entity_uri,
                         &types,
-                        TriggerReason::AttributeDeleted,
+                        NotificationTrigger::AttributeDeleted,
                         std::slice::from_ref(deleted_attr),
                         Some(&merged),
                         previous_attributes.as_ref(),
@@ -135,7 +135,7 @@ impl EntityService {
                 outbox.extend(self.build_outbox_entries(
                     &entity_uri,
                     &types,
-                    TriggerReason::EntityUpdated,
+                    NotificationTrigger::EntityUpdated,
                     &changed_attrs,
                     Some(&merged),
                     previous_attributes.as_ref(),
@@ -170,7 +170,7 @@ impl EntityService {
             self.emit_attr_change(
                 entity_uri.clone(), // clone: value needed by subsequent loop iterations and final emit
                 types.clone(),      // clone: value needed by subsequent loop iterations and final emit
-                TriggerReason::AttributeDeleted,
+                NotificationTrigger::AttributeDeleted,
                 vec![deleted_attr.clone()],  // clone: owned copy from borrowed iterator
                 previous_attributes.clone(), // clone: value needed by subsequent loop iterations and final emit
                 Some(Arc::clone(&merged)),   // clone: Arc ref-count bump
@@ -180,7 +180,7 @@ impl EntityService {
         self.emit_attr_change(
             entity_uri,
             types,
-            TriggerReason::EntityUpdated,
+            NotificationTrigger::EntityUpdated,
             changed_attrs,
             previous_attributes,
             Some(merged),
@@ -222,7 +222,7 @@ impl EntityService {
             .commit_computed_write(&id, |previous| {
                 let types = extract_types(previous);
                 let history = replacement_history(&payload, previous, &payload);
-                let outbox = self.build_outbox_entries(&entity_uri, &types, TriggerReason::EntityUpdated, &changed_attrs, Some(&payload), None);
+                let outbox = self.build_outbox_entries(&entity_uri, &types, NotificationTrigger::EntityUpdated, &changed_attrs, Some(&payload), None);
                 let write = AtomicWrite::builder()
                     .entity_id(Arc::clone(&entity_id)) // clone: Arc ref-count bump; the identifier outlives the attempt
                     .entity(EntityMutation::Update(EntityRecord::from_expanded(Arc::clone(&payload)))) // clone: Arc ref-count bump
@@ -234,7 +234,7 @@ impl EntityService {
             .await?;
 
         self.emit_change(
-            ChangeEvent::new(entity_uri, types, TriggerReason::EntityUpdated)
+            ChangeEvent::new(entity_uri, types, NotificationTrigger::EntityUpdated)
                 .with_changed_attributes(changed_attrs)
                 .with_current_payload(payload),
         );
@@ -266,7 +266,7 @@ impl EntityService {
             outbox.extend(self.build_outbox_entries(
                 &entity_uri,
                 &entity_types,
-                TriggerReason::AttributeDeleted,
+                NotificationTrigger::AttributeDeleted,
                 &attr_keys,
                 Some(&entity_snapshot),
                 Some(&entity_snapshot),
@@ -275,7 +275,7 @@ impl EntityService {
         outbox.extend(self.build_outbox_entries(
             &entity_uri,
             &entity_types,
-            TriggerReason::EntityDeleted,
+            NotificationTrigger::EntityDeleted,
             &[],
             Some(&entity_snapshot),
             Some(&entity_snapshot),
@@ -295,7 +295,7 @@ impl EntityService {
         // One event per deleted attribute so `attributeDeleted` subscriptions fire.
         if !attr_keys.is_empty() {
             self.emit_change(
-                ChangeEvent::new(entity_uri.clone(), entity_types.clone(), TriggerReason::AttributeDeleted) // clone: value also needed by subsequent EntityDeleted emit
+                ChangeEvent::new(entity_uri.clone(), entity_types.clone(), NotificationTrigger::AttributeDeleted) // clone: value also needed by subsequent EntityDeleted emit
                     .with_changed_attributes(attr_keys)
                     .with_snapshot(entity_snapshot.clone()) // clone: value also needed by subsequent EntityDeleted emit
                     .with_previous(entity_snapshot.clone()) // clone: value also needed by subsequent EntityDeleted emit
@@ -304,7 +304,7 @@ impl EntityService {
         }
 
         self.emit_change(
-            ChangeEvent::new(entity_uri, entity_types, TriggerReason::EntityDeleted)
+            ChangeEvent::new(entity_uri, entity_types, NotificationTrigger::EntityDeleted)
                 .with_snapshot(entity_snapshot.clone()) // clone: separate ownership for snapshot and previous fields
                 .with_previous(entity_snapshot)
                 .with_sys_attrs(sys_attrs_snapshot),

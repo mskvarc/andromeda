@@ -23,7 +23,7 @@ use crate::{
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::{
     expanded::entity_member::extract_types,
-    notification::{ChangeEvent, SysAttrsSnapshot, TriggerReason},
+    notification::{ChangeEvent, NotificationTrigger, SysAttrsSnapshot},
 };
 use serde_json::Value;
 use std::sync::Arc;
@@ -121,7 +121,7 @@ fn deletion_events(id: &str, payload: &Value, sys_attrs: Option<&SysAttrsSnapsho
     let mut events = Vec::with_capacity(2);
     if !attr_keys.is_empty() {
         events.push(
-            ChangeEvent::new(entity_uri.clone(), entity_types.clone(), TriggerReason::AttributeDeleted) // clone: value also needed by the EntityDeleted event
+            ChangeEvent::new(entity_uri.clone(), entity_types.clone(), NotificationTrigger::AttributeDeleted) // clone: value also needed by the EntityDeleted event
                 .with_changed_attributes(attr_keys)
                 .with_snapshot(payload.clone()) // clone: the event owns its snapshot
                 .with_previous(payload.clone()) // clone: the event owns its previous payload
@@ -129,7 +129,7 @@ fn deletion_events(id: &str, payload: &Value, sys_attrs: Option<&SysAttrsSnapsho
         );
     }
     events.push(
-        ChangeEvent::new(entity_uri, entity_types, TriggerReason::EntityDeleted)
+        ChangeEvent::new(entity_uri, entity_types, NotificationTrigger::EntityDeleted)
             .with_snapshot(payload.clone()) // clone: the event owns its snapshot
             .with_previous(payload.clone()) // clone: the event owns its previous payload
             .with_sys_attrs(sys_attrs.cloned()),
