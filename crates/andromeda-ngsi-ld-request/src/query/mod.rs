@@ -8,6 +8,7 @@
 
 pub mod csr;
 pub mod entity;
+pub mod entity_selector;
 pub mod temporal;
 
 use andromeda_ngsi_ld_lexicon::uri::Uri;

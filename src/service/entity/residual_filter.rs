@@ -14,7 +14,7 @@ use andromeda_ngsi_ld_model::expanded::{
     node::expanded_object_ref,
 };
 use andromeda_ngsi_ld_query::{
-    entity_selection::EntitySelection,
+    entity_selection::{EntitySelection, EntitySelector},
     filter::{eval, expression::Expr},
     geo::query::GeoQuery,
     pattern::Pattern,
@@ -92,22 +92,24 @@ impl ResidualFilter {
     /// silently render something weaker.
     pub fn strip_from(&self, selection: &mut EntitySelection) {
         let EntitySelection {
-            ids,
-            id_pattern,
-            type_expr,
+            selectors,
             attrs,
             q_expr,
             geo,
             scope_q,
         } = &self.0;
-        if !ids.is_empty() {
-            selection.ids.clear();
+        // The selector axes are the same across every selector, so a residual
+        // that carries one clears that axis from every selector of the target.
+        // In production every store pushes id/idPattern/type down, so these
+        // branches are exercised only by the conformance harness.
+        if selectors.iter().any(|selector| !selector.ids.is_empty()) {
+            selection.selectors.iter_mut().for_each(|selector| selector.ids.clear());
         }
-        if id_pattern.is_some() {
-            selection.id_pattern = None;
+        if selectors.iter().any(|selector| selector.id_pattern.is_some()) {
+            selection.selectors.iter_mut().for_each(|selector| selector.id_pattern = None);
         }
-        if type_expr.is_some() {
-            selection.type_expr = None;
+        if selectors.iter().any(|selector| selector.type_expr.is_some()) {
+            selection.selectors.iter_mut().for_each(|selector| selector.type_expr = None);
         }
         if !attrs.is_empty() {
             selection.attrs.clear();
@@ -127,22 +129,20 @@ impl ResidualFilter {
     /// evaluated.
     pub fn kinds(&self) -> Vec<ResidualPredicate> {
         let EntitySelection {
-            ids,
-            id_pattern,
-            type_expr,
+            selectors,
             attrs,
             q_expr,
             geo,
             scope_q,
         } = &self.0;
         let mut kinds = Vec::new();
-        if !ids.is_empty() {
+        if selectors.iter().any(|selector| !selector.ids.is_empty()) {
             kinds.push(ResidualPredicate::Identifier);
         }
-        if id_pattern.is_some() {
+        if selectors.iter().any(|selector| selector.id_pattern.is_some()) {
             kinds.push(ResidualPredicate::IdentifierPattern);
         }
-        if type_expr.is_some() {
+        if selectors.iter().any(|selector| selector.type_expr.is_some()) {
             kinds.push(ResidualPredicate::EntityType);
         }
         if !attrs.is_empty() {
@@ -166,21 +166,36 @@ impl ResidualFilter {
     /// the store would have rendered as `AND`.
     pub fn matches(&self, expanded: &Value) -> bool {
         let EntitySelection {
-            ids,
-            id_pattern,
-            type_expr,
+            selectors,
             attrs,
             q_expr,
             geo,
             scope_q,
         } = &self.0;
-        identifier_matches(ids, id_pattern.as_ref(), expanded)
-            && type_matches(type_expr.as_ref(), expanded)
+        selectors_match(selectors, expanded)
             && attributes_present(attrs, expanded)
             && value_filter_matches(q_expr.as_ref(), expanded)
             && geo_matches(geo.as_ref(), expanded)
             && scope_matches(scope_q.as_ref(), expanded)
     }
+}
+
+/// Clause 5.2.11 union of selectors: an entity matches when any selector admits
+/// it, or when no selector constrains the identifier/pattern/type axes.
+///
+/// Mirrors [`EntitySelection::selectors_constrain`] and the SQL renderer, so a
+/// store that pushes the union down and one that finishes it in memory return
+/// the same entities.
+fn selectors_match(selectors: &[EntitySelector], expanded: &Value) -> bool {
+    if selectors.is_empty() || selectors.iter().any(|selector| !selector.constrains()) {
+        return true;
+    }
+    selectors.iter().any(|selector| selector_matches(selector, expanded))
+}
+
+/// Whether one selector's identifier list, pattern and type all hold at once.
+fn selector_matches(selector: &EntitySelector, expanded: &Value) -> bool {
+    identifier_matches(&selector.ids, selector.id_pattern.as_ref(), expanded) && type_matches(selector.type_expr.as_ref(), expanded)
 }
 
 /// Clause 5.7.2 `id` and `idPattern`.
@@ -246,7 +261,7 @@ mod tests {
     use crate::service::entity::residual_filter::{ResidualFilter, ResidualPredicate};
     use andromeda_ngsi_ld_geometry::{geo_rel::GeoRel, geometry::Geometry};
     use andromeda_ngsi_ld_query::{
-        entity_selection::EntitySelection,
+        entity_selection::{EntitySelection, EntitySelector},
         filter::{eval, expression::Expr, parser},
         geo::query::GeoQuery,
         pattern::Pattern,
@@ -369,7 +384,11 @@ mod tests {
         // Clause 4.17 type selection over expanded type IRIs.
         let residual = ResidualFilter::over(
             EntitySelection::builder()
-                .type_expr(Some(TypeExpr::Type(BUILDING.parse().expect("valid IRI"))))
+                .selectors(vec![
+                    EntitySelector::builder()
+                        .type_expr(Some(TypeExpr::Type(BUILDING.parse().expect("valid IRI"))))
+                        .build(),
+                ])
                 .build(),
         );
         assert!(residual.matches(&entity(20.0)));
@@ -410,7 +429,11 @@ mod tests {
     fn a_residual_id_pattern_excludes_an_identifier_it_does_not_match() {
         let residual = ResidualFilter::over(
             EntitySelection::builder()
-                .id_pattern(Some(Pattern::parse("^urn:ngsi-ld:Vehicle:").expect("valid pattern")))
+                .selectors(vec![
+                    EntitySelector::builder()
+                        .id_pattern(Some(Pattern::parse("^urn:ngsi-ld:Vehicle:").expect("valid pattern")))
+                        .build(),
+                ])
                 .build(),
         );
         assert!(!residual.matches(&entity(20.0)));
@@ -420,7 +443,11 @@ mod tests {
     fn a_residual_identifier_list_excludes_an_identifier_outside_it() {
         let residual = ResidualFilter::over(
             EntitySelection::builder()
-                .ids(vec!["urn:ngsi-ld:Building:002".parse().expect("valid URI")])
+                .selectors(vec![
+                    EntitySelector::builder()
+                        .ids(vec!["urn:ngsi-ld:Building:002".parse().expect("valid URI")])
+                        .build(),
+                ])
                 .build(),
         );
         assert!(!residual.matches(&entity(20.0)));
@@ -436,6 +463,31 @@ mod tests {
         );
         // The `q` half holds and the `scopeQ` half does not.
         assert!(!residual.matches(&entity(20.0)));
+    }
+
+    #[test]
+    fn a_union_of_selectors_admits_only_the_pairings_a_selector_named() {
+        // Clause 5.2.11: `{id:A,type:T1}` OR `{id:B,type:T2}` admits A-as-T1 and
+        // B-as-T2, but not the cross pairing A-as-T2 that neither selector named.
+        let entity = |id: &str, type_iri: &str| json!([{"@id": id, "@type": [type_iri]}]);
+        let residual = ResidualFilter::over(
+            EntitySelection::builder()
+                .selectors(vec![
+                    EntitySelector::builder()
+                        .ids(vec!["urn:ngsi-ld:Building:001".parse().expect("valid URI")])
+                        .type_expr(Some(TypeExpr::Type("https://example.com/Office".parse().expect("valid IRI"))))
+                        .build(),
+                    EntitySelector::builder()
+                        .ids(vec!["urn:ngsi-ld:Building:002".parse().expect("valid URI")])
+                        .type_expr(Some(TypeExpr::Type("https://example.com/Warehouse".parse().expect("valid IRI"))))
+                        .build(),
+                ])
+                .build(),
+        );
+        assert!(residual.matches(&entity("urn:ngsi-ld:Building:001", "https://example.com/Office")));
+        assert!(residual.matches(&entity("urn:ngsi-ld:Building:002", "https://example.com/Warehouse")));
+        assert!(!residual.matches(&entity("urn:ngsi-ld:Building:001", "https://example.com/Warehouse")));
+        assert!(!residual.matches(&entity("urn:ngsi-ld:Building:002", "https://example.com/Office")));
     }
 
     #[test]
@@ -482,45 +534,69 @@ mod tests {
             (
                 "clause 5.7.2 id: the list names this entity",
                 EntitySelection::builder()
-                    .ids(vec!["urn:ngsi-ld:Building:001".parse().expect("valid URI")])
+                    .selectors(vec![
+                        EntitySelector::builder()
+                            .ids(vec!["urn:ngsi-ld:Building:001".parse().expect("valid URI")])
+                            .build(),
+                    ])
                     .build(),
                 true,
             ),
             (
                 "clause 5.7.2 id: the list names another entity",
                 EntitySelection::builder()
-                    .ids(vec!["urn:ngsi-ld:Building:002".parse().expect("valid URI")])
+                    .selectors(vec![
+                        EntitySelector::builder()
+                            .ids(vec!["urn:ngsi-ld:Building:002".parse().expect("valid URI")])
+                            .build(),
+                    ])
                     .build(),
                 false,
             ),
             (
                 "clause 5.2.8 idPattern: the expression matches the identifier",
                 EntitySelection::builder()
-                    .id_pattern(Some(Pattern::parse("^urn:ngsi-ld:Building:").expect("valid pattern")))
+                    .selectors(vec![
+                        EntitySelector::builder()
+                            .id_pattern(Some(Pattern::parse("^urn:ngsi-ld:Building:").expect("valid pattern")))
+                            .build(),
+                    ])
                     .build(),
                 true,
             ),
             (
                 "clause 5.2.8 idPattern: the expression does not match",
                 EntitySelection::builder()
-                    .id_pattern(Some(Pattern::parse("^urn:ngsi-ld:Vehicle:").expect("valid pattern")))
+                    .selectors(vec![
+                        EntitySelector::builder()
+                            .id_pattern(Some(Pattern::parse("^urn:ngsi-ld:Vehicle:").expect("valid pattern")))
+                            .build(),
+                    ])
                     .build(),
                 false,
             ),
             (
                 "clause 4.17 type: the entity carries the named type",
                 EntitySelection::builder()
-                    .type_expr(Some(TypeExpr::Type(BUILDING.parse().expect("valid IRI"))))
+                    .selectors(vec![
+                        EntitySelector::builder()
+                            .type_expr(Some(TypeExpr::Type(BUILDING.parse().expect("valid IRI"))))
+                            .build(),
+                    ])
                     .build(),
                 true,
             ),
             (
                 "clause 4.17 type: a conjunction the entity only half satisfies",
                 EntitySelection::builder()
-                    .type_expr(Some(TypeExpr::And(vec![
-                        TypeExpr::Type(BUILDING.parse().expect("valid IRI")),
-                        TypeExpr::Type("https://example.com/Vehicle".parse().expect("valid IRI")),
-                    ])))
+                    .selectors(vec![
+                        EntitySelector::builder()
+                            .type_expr(Some(TypeExpr::And(vec![
+                                TypeExpr::Type(BUILDING.parse().expect("valid IRI")),
+                                TypeExpr::Type("https://example.com/Vehicle".parse().expect("valid IRI")),
+                            ])))
+                            .build(),
+                    ])
                     .build(),
                 false,
             ),

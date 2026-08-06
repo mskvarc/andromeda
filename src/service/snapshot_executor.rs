@@ -24,7 +24,7 @@ use andromeda_ngsi_ld_model::{
     snapshot_query::{SnapshotEntitySelector, SnapshotGeoQuery, SnapshotQuery, SnapshotTemporalQuery},
 };
 use andromeda_ngsi_ld_query::{pattern::Pattern, temporal::aggregation_period::AggregationPeriod};
-use andromeda_ngsi_ld_request::query::{entity::EntityQueryParameters, temporal::TemporalQueryParameters};
+use andromeda_ngsi_ld_request::query::{entity::EntityQueryParameters, entity_selector::EntitySelectorParams, temporal::TemporalQueryParameters};
 use chrono::{DateTime, SecondsFormat, Utc};
 use compact_str::CompactString;
 use serde_json::Value;
@@ -292,6 +292,7 @@ pub fn snapshot_query_to_entity_params(query: &SnapshotQuery) -> Result<EntityQu
         id: if ids.is_empty() { None } else { Some(ids.join(",")) },
         entity_type: if types.is_empty() { None } else { Some(types.join(",")) },
         id_pattern: id_pattern.as_ref().map(ToString::to_string),
+        entity_selectors: snapshot_entity_selectors(query.entities.as_deref()),
         attrs: query
             .attrs
             .as_ref()
@@ -365,6 +366,7 @@ pub fn snapshot_query_to_temporal_params(query: &SnapshotQuery) -> Result<Tempor
         id: if ids.is_empty() { None } else { Some(ids.join(",")) },
         entity_type: if types.is_empty() { None } else { Some(types.join(",")) },
         id_pattern: id_pattern.as_ref().map(ToString::to_string),
+        entity_selectors: snapshot_entity_selectors(query.entities.as_deref()),
         attrs: query
             .attrs
             .as_ref()
@@ -410,6 +412,24 @@ pub fn snapshot_query_to_temporal_params(query: &SnapshotQuery) -> Result<Tempor
 /// Tuple of `(ids, types, id_pattern)` extracted from a set of snapshot
 /// entity selectors. A type alias keeps the `flatten_selectors` return type
 /// readable.
+/// The per-selector grouping (clause 5.2.11) a snapshot's `entities[]` carries,
+/// preserved alongside the flattened summary [`flatten_selectors`] produces so
+/// a union of selectors is not compiled into a cross product.
+fn snapshot_entity_selectors(selectors: Option<&[SnapshotEntitySelector]>) -> Vec<EntitySelectorParams> {
+    selectors
+        .unwrap_or_default()
+        .iter()
+        .map(|selector| EntitySelectorParams {
+            id: selector
+                .id
+                .as_ref()
+                .map(|ids| ids.iter().map(ToString::to_string).collect::<Vec<_>>().join(",")),
+            id_pattern: selector.id_pattern.as_ref().map(ToString::to_string),
+            type_: selector.type_.as_ref().map(ToString::to_string),
+        })
+        .collect()
+}
+
 type FlattenedSelectors = (Vec<String>, Vec<String>, Option<Pattern>);
 
 fn flatten_selectors(selectors: Option<&[SnapshotEntitySelector]>) -> Result<FlattenedSelectors, SnapshotQueryTranslationError> {

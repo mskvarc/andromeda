@@ -6,7 +6,7 @@ use crate::{
     core::error::AndromedaError,
     service::entity::{
         compiled_cache::{CompiledQueryKey, LimitCap},
-        query::EntityQueryService,
+        query::{EntityQueryService, selector_compilation::compile_entity_selectors},
     },
 };
 use andromeda_jsonld::{context_spec::ContextSpec, term_expansion::ContextualExpander};
@@ -22,7 +22,6 @@ use andromeda_ngsi_ld_query::{
         path::expanded_attribute_name,
     },
     geo::{compile as geo_compile, query::GeoQuery},
-    identifier::parse_id_list,
     ordering::{
         collation::IcuCollation,
         compiled::ResultOrdering,
@@ -30,13 +29,11 @@ use andromeda_ngsi_ld_query::{
         term::{CompiledOrderTerm, OrderTarget, RawOrderTarget},
     },
     pagination::{CountPolicy, Pagination},
-    pattern::Pattern,
     projection::{
         compiled::Projection,
         expansion::{expand_attrs, expand_projection_terms},
     },
     scope::query::ScopeQuery,
-    type_selection::{expansion::expand_type_expression, parser as type_parser},
 };
 use andromeda_ngsi_ld_request::query::{SharedQueryParams, entity::EntityQueryParameters};
 use iri_rs::IriBuf;
@@ -70,20 +67,15 @@ impl EntityQueryService {
     }
 
     async fn compile_query(&self, params: &EntityQueryParameters, context: &ContextSpec, limit_cap: LimitCap) -> Result<CompiledEntityQuery, AndromedaError> {
-        let ids = parse_id_list(&params.parse_ids().unwrap_or_default())?;
-        let id_pattern = params
-            .id_pattern
-            .as_deref()
-            .map(Pattern::parse)
-            .transpose()
-            .map_err(|error| AndromedaError::entity_validation(error.to_string()))?;
-
-        let type_expr = if let Some(raw_types) = params.entity_type.as_deref() {
-            let raw = type_parser::parse(raw_types)?;
-            Some(expand_type_expression(&raw, &ContextualExpander::new(self.engine(), context)).await?)
-        } else {
-            None
-        };
+        let selectors = compile_entity_selectors(
+            self.engine(),
+            context,
+            &params.entity_selectors,
+            params.parse_ids().unwrap_or_default(),
+            params.id_pattern.as_deref(),
+            params.entity_type.as_deref(),
+        )
+        .await?;
 
         let attrs = expand_attrs(&params.parse_attrs(), &ContextualExpander::new(self.engine(), context)).await?;
         let q_expr = self.compile_q_expression(params, context).await?;
@@ -117,9 +109,7 @@ impl EntityQueryService {
         let compiled = CompiledEntityQuery::builder()
             .selection(
                 EntitySelection::builder()
-                    .ids(ids)
-                    .id_pattern(id_pattern)
-                    .type_expr(type_expr)
+                    .selectors(selectors)
                     .attrs(attrs)
                     .q_expr(q_expr)
                     .geo(geo)

@@ -4,7 +4,7 @@ use crate::{
     body::query::QueryRequest,
     error::ParameterError,
     impl_shared_query_params,
-    query::is_valid_uri,
+    query::{entity_selector::EntitySelectorParams, is_valid_uri},
     representation_params::{resolve_response_format, validate_representation_params},
 };
 use andromeda_ngsi_ld_query::{
@@ -33,6 +33,17 @@ pub struct EntityQueryParameters {
     /// A regular expression the selected identifiers must match (`idPattern`).
     #[serde(rename = "idPattern")]
     pub id_pattern: Option<String>,
+    /// Per-selector entity constraints from a POST query body's `entities[]`
+    /// (clause 5.2.11), each still raw.
+    ///
+    /// Empty for a GET request, whose flat `id`/`type`/`idPattern` describe one
+    /// implicit selector. When non-empty it is authoritative for compilation:
+    /// the flat fields above are then a flattened summary that only the coarse
+    /// `has_any_filter`/`validate` checks read, never the matcher. Never a query
+    /// string parameter, so it is skipped by serde and populated by the POST
+    /// body conversions.
+    #[serde(skip)]
+    pub entity_selectors: Vec<EntitySelectorParams>,
     /// Attributes the response is narrowed to, comma-separated (`attrs`).
     pub attrs: Option<String>,
     /// The `q` filter expression (clause 4.9), in compacted form.
@@ -295,8 +306,9 @@ impl From<QueryRequest> for EntityQueryParameters {
         let mut ids = Vec::new();
         let mut types = Vec::new();
         let mut id_pattern = None;
+        let mut entity_selectors = Vec::new();
 
-        if let Some(entities) = request.entities {
+        if let Some(entities) = &request.entities {
             for selection in entities {
                 if let Some(id) = selection.id() {
                     ids.push(id.to_string());
@@ -307,6 +319,13 @@ impl From<QueryRequest> for EntityQueryParameters {
                 if let Some(p) = selection.id_pattern() {
                     id_pattern = Some(p.to_string());
                 }
+                // The precise per-selector grouping (clause 5.2.11), kept
+                // alongside the flattened summary the fields above form.
+                entity_selectors.push(EntitySelectorParams {
+                    id: selection.id().map(str::to_string),
+                    id_pattern: selection.id_pattern().map(str::to_string),
+                    type_: selection.type_().map(str::to_string),
+                });
             }
         }
 
@@ -320,6 +339,7 @@ impl From<QueryRequest> for EntityQueryParameters {
             id: if ids.is_empty() { None } else { Some(ids.join(",")) },
             entity_type: if types.is_empty() { None } else { Some(types.join(",")) },
             id_pattern,
+            entity_selectors,
             attrs: request.attrs.map(|a| a.join(",")),
             q: request.q,
             georel,
@@ -688,6 +708,45 @@ mod tests {
         let ids = params.id.expect("ids present");
         assert!(ids.contains("urn:ngsi-ld:Vehicle:1"));
         assert!(ids.contains("urn:ngsi-ld:Vehicle:2"));
+        pretty_assertions::assert_eq!(params.entity_selectors.len(), 2, "each selector is preserved, not flattened");
+        pretty_assertions::assert_eq!(params.entity_selectors[0].id.as_deref(), Some("urn:ngsi-ld:Vehicle:1"));
+        pretty_assertions::assert_eq!(params.entity_selectors[1].id.as_deref(), Some("urn:ngsi-ld:Vehicle:2"));
+    }
+
+    #[test]
+    fn from_query_request_keeps_each_selectors_id_and_type_paired() {
+        // Clause 5.2.11: `{id:A,type:T1}` and `{id:B,type:T2}` are a union, so
+        // the per-selector pairing must survive into `entity_selectors` rather
+        // than flatten into an `id=A,B`/`type=T1,T2` cross product.
+        use crate::body::query::EntitySelection;
+
+        let request = QueryRequest {
+            type_: None,
+            entities: Some(vec![
+                EntitySelection::Object {
+                    id: Some("urn:ngsi-ld:A".to_string()),
+                    id_pattern: None,
+                    type_: Some("T1".to_string()),
+                },
+                EntitySelection::Object {
+                    id: Some("urn:ngsi-ld:B".to_string()),
+                    id_pattern: None,
+                    type_: Some("T2".to_string()),
+                },
+            ]),
+            attrs: None,
+            q: None,
+            geo_q: None,
+            limit: None,
+            offset: None,
+            count: None,
+        };
+        let params: EntityQueryParameters = request.into();
+        pretty_assertions::assert_eq!(params.entity_selectors.len(), 2);
+        pretty_assertions::assert_eq!(params.entity_selectors[0].id.as_deref(), Some("urn:ngsi-ld:A"));
+        pretty_assertions::assert_eq!(params.entity_selectors[0].type_.as_deref(), Some("T1"));
+        pretty_assertions::assert_eq!(params.entity_selectors[1].id.as_deref(), Some("urn:ngsi-ld:B"));
+        pretty_assertions::assert_eq!(params.entity_selectors[1].type_.as_deref(), Some("T2"));
     }
 
     #[test]

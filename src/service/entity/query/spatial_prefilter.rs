@@ -44,7 +44,13 @@ impl EntityQueryService {
         let Some(ref geo_query) = compiled.selection.geo else {
             return SpatialNarrowing::Query(Arc::clone(compiled));
         };
-        let Some(ref type_expr) = compiled.selection.type_expr else {
+        // The index is keyed by a single (type, geoproperty) pair, so it can
+        // accelerate a query with exactly one selector. A union of selectors
+        // (clause 5.2.11) is handed to the store to evaluate in full.
+        let [selector] = compiled.selection.selectors.as_slice() else {
+            return SpatialNarrowing::Query(Arc::clone(compiled));
+        };
+        let Some(ref type_expr) = selector.type_expr else {
             return SpatialNarrowing::Query(Arc::clone(compiled));
         };
         let Some(type_iris) = flatten_or_type_iris(type_expr) else {
@@ -73,10 +79,10 @@ impl EntityQueryService {
 
         let candidate_ids: Vec<Uri> = union.into_iter().map(Uri::Urn).collect();
 
-        let final_ids: Vec<Uri> = if compiled.selection.ids.is_empty() {
+        let final_ids: Vec<Uri> = if selector.ids.is_empty() {
             candidate_ids
         } else {
-            let requested: HashSet<&str> = compiled.selection.ids.iter().map(AsRef::as_ref).collect();
+            let requested: HashSet<&str> = selector.ids.iter().map(AsRef::as_ref).collect();
             candidate_ids.into_iter().filter(|id| requested.contains(AsRef::<str>::as_ref(id))).collect()
         };
 
@@ -88,13 +94,14 @@ impl EntityQueryService {
         }
 
         let mut narrowed = (**compiled).clone(); // clone: the cached query is shared and must not be mutated in place
-        narrowed.selection.ids = final_ids;
+        // The single selector's own id list is narrowed to the index candidates.
+        narrowed.selection.selectors[0].ids = final_ids;
         // `selection.geo` is deliberately left in place: the store re-verifies
         // the candidates so a momentarily stale index can only slow the query,
         // never widen or narrow its answer.
         tracing::debug!(
             "spatial prefilter hit: {} candidate(s) for geoQ={:?}",
-            narrowed.selection.ids.len(),
+            narrowed.selection.selectors[0].ids.len(),
             geo_query.georel
         );
         SpatialNarrowing::Query(Arc::new(narrowed))

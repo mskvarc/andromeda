@@ -6,6 +6,7 @@ use crate::{
 };
 use andromeda_ngsi_ld_query::{
     dataset::DatasetFilter,
+    entity_selection::EntitySelector,
     pagination::CountPolicy,
     temporal::{compiled::CompiledTemporalQuery, window::TimeInterval},
 };
@@ -124,20 +125,16 @@ pub fn build_stage1_entity_ids(compiled: &CompiledTemporalQuery, attribute_names
 fn build_entity_conditions_for_temporal(compiled: &CompiledTemporalQuery, attribute_names: &ResolvedAttributeNames) -> Result<Condition, RenderError> {
     let mut condition = Condition::all();
 
-    // ID filter: e.id = ANY($N)
-    if !compiled.entities.ids.is_empty() {
-        let ids: Vec<&str> = compiled.entities.ids.iter().map(AsRef::as_ref).collect();
-        condition = condition.add(SeaExpr::col((E, Entities::Id)).is_in(ids));
-    }
-
-    // ID pattern filter: e.id ~ $N
-    if let Some(pattern) = &compiled.entities.id_pattern {
-        condition = condition.add(regex_match(SeaExpr::col((E, Entities::Id)).into(), SeaExpr::val(pattern.as_str()).into()));
-    }
-
-    // Type expression filter
-    if let Some(type_expr) = &compiled.entities.type_expr {
-        condition = condition.add(type_condition(type_expr, TypesColumn::AliasedEntities));
+    // Entity selectors, unioned (clause 5.2.11): `(sel1) OR (sel2) OR ...`,
+    // each reached through the `e` alias stage 1 joins the entities table under.
+    // Rendered only when every selector constrains — the reading
+    // `EntitySelection::selectors_constrain` shares with the entity path.
+    if compiled.entities.selectors_constrain() {
+        let mut union = Condition::any();
+        for selector in &compiled.entities.selectors {
+            union = union.add(temporal_selector_condition(selector));
+        }
+        condition = condition.add(union);
     }
 
     // Q expression filter. Correlated on the TEA catalogue's entity_id, which
@@ -159,6 +156,27 @@ fn build_entity_conditions_for_temporal(compiled: &CompiledTemporalQuery, attrib
     }
 
     Ok(condition)
+}
+
+/// Render one selector's identifier, pattern and type predicates against the
+/// `e` alias stage 1 joins `entities` under, ANDed (clause 5.2.11).
+///
+/// The entity path renders the same three axes against the unaliased table; the
+/// only difference is the alias, so the two cannot drift on what a selector
+/// means.
+fn temporal_selector_condition(selector: &EntitySelector) -> Condition {
+    let mut condition = Condition::all();
+    if !selector.ids.is_empty() {
+        let ids: Vec<&str> = selector.ids.iter().map(AsRef::as_ref).collect();
+        condition = condition.add(SeaExpr::col((E, Entities::Id)).is_in(ids));
+    }
+    if let Some(pattern) = &selector.id_pattern {
+        condition = condition.add(regex_match(SeaExpr::col((E, Entities::Id)).into(), SeaExpr::val(pattern.as_str()).into()));
+    }
+    if let Some(type_expr) = &selector.type_expr {
+        condition = condition.add(type_condition(type_expr, TypesColumn::AliasedEntities));
+    }
+    condition
 }
 
 /// Build temporal-specific conditions for Stage 1 (attribute filters, datasetId, timerel, scopeQ).
@@ -219,7 +237,7 @@ mod tests {
     use andromeda_ngsi_ld_geometry::{geo_rel::GeoRel, geometry::Geometry};
     use andromeda_ngsi_ld_lexicon::{temporal_format::TemporalFormat, time_prop::TimeProp, uri::Uri};
     use andromeda_ngsi_ld_query::{
-        entity_selection::EntitySelection,
+        entity_selection::{EntitySelection, EntitySelector},
         filter::parser,
         geo::query::GeoQuery,
         scope::query::ScopeQuery,
@@ -266,7 +284,11 @@ mod tests {
     #[test]
     fn build_entity_id_selection_with_type() {
         let mut compiled = minimal_compiled();
-        compiled.entities.type_expr = Some(TypeExpr::Type(iri("https://uri.etsi.org/ngsi-ld/default-context/Vehicle")));
+        compiled.entities.selectors = vec![
+            EntitySelector::builder()
+                .type_expr(Some(TypeExpr::Type(iri("https://uri.etsi.org/ngsi-ld/default-context/Vehicle"))))
+                .build(),
+        ];
         let result = build_stage1_entity_ids(&compiled, &ResolvedAttributeNames::default()).unwrap();
         assert!(result.sql.contains("SELECT DISTINCT"));
         assert!(result.sql.contains("\"e\".\"types\""));
@@ -285,7 +307,7 @@ mod tests {
     #[test]
     fn stage1_timerel_placeholder_is_offset_after_id_filters() {
         let mut compiled = minimal_compiled();
-        compiled.entities.ids = ids(&["urn:ngsi-ld:Vehicle:1", "urn:ngsi-ld:Vehicle:2"]);
+        compiled.entities.selectors = vec![EntitySelector::builder().ids(ids(&["urn:ngsi-ld:Vehicle:1", "urn:ngsi-ld:Vehicle:2"])).build()];
         compiled.window.interval = TimeInterval::Before(instant("2030-01-01T00:00:00Z"));
 
         let result = build_stage1_entity_ids(&compiled, &ResolvedAttributeNames::default()).unwrap();

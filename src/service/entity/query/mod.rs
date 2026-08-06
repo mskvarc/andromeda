@@ -21,6 +21,8 @@ pub mod residual;
 pub mod residual_conformance;
 /// The read operations themselves.
 pub mod retrieval;
+/// Compiling a query's entity selectors (clause 5.2.11) against the context.
+pub mod selector_compilation;
 /// Narrowing a geo-query to an identifier set through the spatial index.
 pub mod spatial_prefilter;
 

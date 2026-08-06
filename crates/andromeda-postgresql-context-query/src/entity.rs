@@ -3,6 +3,7 @@
 use crate::order_geography::geo_extract_geography;
 use andromeda_ngsi_ld_query::{
     entity::compiled::CompiledEntityQuery,
+    entity_selection::EntitySelector,
     error::QueryError,
     geo::query::GeoQuery,
     ordering::{
@@ -119,19 +120,17 @@ pub fn build_ids_query(query: &CompiledEntityQuery, attribute_names: &ResolvedAt
 fn build_entity_conditions(query: &CompiledEntityQuery, attribute_names: &ResolvedAttributeNames) -> Result<Condition, RenderError> {
     let mut condition = Condition::all();
 
-    // ID filter: id = ANY($N)
-    if !query.selection.ids.is_empty() {
-        let ids: Vec<&str> = query.selection.ids.iter().map(AsRef::as_ref).collect();
-        condition = condition.add(SeaExpr::col(Entities::Id).is_in(ids));
-    }
-
-    // ID pattern filter: id ~ $N
-    if let Some(pattern) = &query.selection.id_pattern {
-        condition = condition.add(regex_match(SeaExpr::col(Entities::Id).into(), SeaExpr::val(pattern.as_str()).into()));
-    }
-
-    if let Some(type_expr) = &query.selection.type_expr {
-        condition = condition.add(type_condition(type_expr, TypesColumn::Entities));
+    // Entity selectors, unioned (clause 5.2.11): `(sel1) OR (sel2) OR ...`,
+    // where each selector ANDs its own id / idPattern / type. A union that
+    // contains an unconstrained selector places no constraint, so it is
+    // rendered only when every selector constrains — the reading
+    // `EntitySelection::selectors_constrain` shares with the in-memory residual.
+    if query.selection.selectors_constrain() {
+        let mut union = Condition::any();
+        for selector in &query.selection.selectors {
+            union = union.add(selector_condition(selector));
+        }
+        condition = condition.add(union);
     }
 
     // Attribute existence filter
@@ -160,6 +159,28 @@ fn build_entity_conditions(query: &CompiledEntityQuery, attribute_names: &Resolv
     }
 
     Ok(condition)
+}
+
+/// Render one selector's identifier, pattern and type predicates, ANDed.
+///
+/// The three axes of a single [`EntitySelector`] hold together (clause 5.2.11):
+/// `{id:A,type:T}` selects entity `A` *and only if* it is a `T`. A selector
+/// with no axis set contributes an empty conjunction, which sea-query renders
+/// as always-true — the unconstrained case the caller filters out before it
+/// gets here.
+fn selector_condition(selector: &EntitySelector) -> Condition {
+    let mut condition = Condition::all();
+    if !selector.ids.is_empty() {
+        let ids: Vec<&str> = selector.ids.iter().map(AsRef::as_ref).collect();
+        condition = condition.add(SeaExpr::col(Entities::Id).is_in(ids));
+    }
+    if let Some(pattern) = &selector.id_pattern {
+        condition = condition.add(regex_match(SeaExpr::col(Entities::Id).into(), SeaExpr::val(pattern.as_str()).into()));
+    }
+    if let Some(type_expr) = &selector.type_expr {
+        condition = condition.add(type_condition(type_expr, TypesColumn::Entities));
+    }
+    condition
 }
 
 /// The SQL expression an `orderBy` term sorts on.
@@ -236,7 +257,7 @@ mod tests {
     use andromeda_ngsi_ld_geometry::{geo_rel::GeoRel, geometry::Geometry};
     use andromeda_ngsi_ld_lexicon::uri::Uri;
     use andromeda_ngsi_ld_query::{
-        entity_selection::EntitySelection,
+        entity_selection::{EntitySelection, EntitySelector},
         filter::{
             expression::Expr,
             parser,
@@ -298,7 +319,7 @@ mod tests {
     #[test]
     fn build_with_ids() {
         let mut q = empty_query();
-        q.selection.ids = ids(&["urn:a", "urn:b"]);
+        q.selection.selectors = vec![EntitySelector::builder().ids(ids(&["urn:a", "urn:b"])).build()];
         let built = build_query(&q, &ResolvedAttributeNames::default()).unwrap();
         assert!(built.sql.contains("\"id\" IN"));
     }
@@ -306,7 +327,11 @@ mod tests {
     #[test]
     fn build_with_id_pattern() {
         let mut q = empty_query();
-        q.selection.id_pattern = Some(Pattern::parse("urn:ngsi-ld:Vehicle:.*").unwrap());
+        q.selection.selectors = vec![
+            EntitySelector::builder()
+                .id_pattern(Some(Pattern::parse("urn:ngsi-ld:Vehicle:.*").unwrap()))
+                .build(),
+        ];
         let built = build_query(&q, &ResolvedAttributeNames::default()).unwrap();
         assert!(built.sql.contains("\"id\" ~"));
     }
@@ -314,7 +339,11 @@ mod tests {
     #[test]
     fn build_with_single_type() {
         let mut q = empty_query();
-        q.selection.type_expr = Some(TypeExpr::Type(iri("https://example.com/Vehicle")));
+        q.selection.selectors = vec![
+            EntitySelector::builder()
+                .type_expr(Some(TypeExpr::Type(iri("https://example.com/Vehicle"))))
+                .build(),
+        ];
         let built = build_query(&q, &ResolvedAttributeNames::default()).unwrap();
         assert!(built.sql.contains("= ANY"));
         assert!(built.sql.contains("\"types\""));
@@ -324,13 +353,17 @@ mod tests {
     fn build_with_mixed_type_expr() {
         let mut q = empty_query();
         // (Home AND Vehicle) OR Motorhome
-        q.selection.type_expr = Some(TypeExpr::Or(vec![
-            TypeExpr::And(vec![
-                TypeExpr::Type(iri("https://example.com/Home")),
-                TypeExpr::Type(iri("https://example.com/Vehicle")),
-            ]),
-            TypeExpr::Type(iri("https://example.com/Motorhome")),
-        ]));
+        q.selection.selectors = vec![
+            EntitySelector::builder()
+                .type_expr(Some(TypeExpr::Or(vec![
+                    TypeExpr::And(vec![
+                        TypeExpr::Type(iri("https://example.com/Home")),
+                        TypeExpr::Type(iri("https://example.com/Vehicle")),
+                    ]),
+                    TypeExpr::Type(iri("https://example.com/Motorhome")),
+                ])))
+                .build(),
+        ];
         let built = build_query(&q, &ResolvedAttributeNames::default()).unwrap();
         assert!(built.sql.contains("= ANY"));
         assert!(built.sql.contains("AND"));
@@ -341,10 +374,56 @@ mod tests {
     fn build_with_count() {
         let mut q = empty_query();
         q.pagination.count = CountPolicy::Emit;
-        q.selection.type_expr = Some(TypeExpr::Type(iri("https://example.com/Vehicle")));
+        q.selection.selectors = vec![
+            EntitySelector::builder()
+                .type_expr(Some(TypeExpr::Type(iri("https://example.com/Vehicle"))))
+                .build(),
+        ];
         let built = build_query(&q, &ResolvedAttributeNames::default()).unwrap();
         assert!(built.count_sql.is_some());
         assert!(built.count_sql.unwrap().contains("COUNT(*)"));
+    }
+
+    #[test]
+    fn a_union_of_selectors_ors_them_rather_than_cross_producting() {
+        // Clause 5.2.11: a POST `entities[]` body is a union of independent
+        // selectors, so `{id:A,type:T1}` and `{id:B,type:T2}` render
+        // `(A AND T1) OR (B AND T2)` and never the cross product that would also
+        // match `(A,T2)`.
+        let mut q = empty_query();
+        q.selection.selectors = vec![
+            EntitySelector::builder()
+                .ids(ids(&["urn:ngsi-ld:Entity:A"]))
+                .type_expr(Some(TypeExpr::Type(iri("https://example.com/T1"))))
+                .build(),
+            EntitySelector::builder()
+                .ids(ids(&["urn:ngsi-ld:Entity:B"]))
+                .type_expr(Some(TypeExpr::Type(iri("https://example.com/T2"))))
+                .build(),
+        ];
+        let built = build_query(&q, &ResolvedAttributeNames::default()).unwrap();
+        // Two parenthesised groups ORed together: `(A AND T1) OR (B AND T2)`,
+        // each pairing one selector's id with its own type. The type IRIs are
+        // bound as parameters, so the union shows in the structure, not the text.
+        assert!(built.sql.contains(") OR ("), "the two selectors must be ORed as groups: {}", built.sql);
+        assert_eq!(
+            built.sql.matches("\"id\" IN").count(),
+            2,
+            "each selector keeps its own id filter: {}",
+            built.sql
+        );
+        assert_eq!(
+            built.sql.matches("= ANY(\"types\")").count(),
+            2,
+            "each selector keeps its own type filter: {}",
+            built.sql
+        );
+        let type_binds = built
+            .bind_values
+            .iter()
+            .filter(|bind| matches!(bind, BindValue::String(value) if value.starts_with("https://example.com/T")))
+            .count();
+        assert_eq!(type_binds, 2, "both selector types survive as distinct binds: {:?}", built.bind_values);
     }
 
     fn temperature_is_known() -> ResolvedAttributeNames {

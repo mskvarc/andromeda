@@ -1,6 +1,6 @@
 //! Query parameters for the NGSI-LD Temporal API.
 
-use crate::{body::temporal_query::TemporalQueryRequest, error::ParameterError, impl_shared_query_params};
+use crate::{body::temporal_query::TemporalQueryRequest, error::ParameterError, impl_shared_query_params, query::entity_selector::EntitySelectorParams};
 use andromeda_ngsi_ld_lexicon::{aggr_method::AggrMethod, temporal_format::TemporalFormat, time_prop::TimeProp, time_rel::TimeRel};
 use andromeda_ngsi_ld_query::error::QueryError;
 use serde::Deserialize;
@@ -22,6 +22,13 @@ pub struct TemporalQueryParameters {
     /// A regular expression the selected identifiers must match (`idPattern`).
     #[serde(rename = "idPattern")]
     pub id_pattern: Option<String>,
+    /// Per-selector entity constraints from a POST temporal query body's
+    /// `entities[]` (clause 5.2.11), each still raw. Empty for a GET request;
+    /// when non-empty it is authoritative for compilation, and the flat fields
+    /// above are a flattened summary of it. Never a query string parameter, so
+    /// serde skips it and the POST body conversion populates it.
+    #[serde(skip)]
+    pub entity_selectors: Vec<EntitySelectorParams>,
     /// Attributes the response is narrowed to, comma-separated (`attrs`).
     pub attrs: Option<String>,
     /// The `q` filter expression (clause 4.9), in compacted form.
@@ -265,8 +272,9 @@ impl From<TemporalQueryRequest> for TemporalQueryParameters {
         let mut ids = Vec::new();
         let mut types = Vec::new();
         let mut id_pattern = None;
+        let mut entity_selectors = Vec::new();
 
-        if let Some(entities) = request.entities {
+        if let Some(entities) = &request.entities {
             for sel in entities {
                 if let Some(id) = sel.id() {
                     ids.push(id.to_string());
@@ -277,6 +285,13 @@ impl From<TemporalQueryRequest> for TemporalQueryParameters {
                 if let Some(p) = sel.id_pattern() {
                     id_pattern = Some(p.to_string());
                 }
+                // The precise per-selector grouping (clause 5.2.11), kept
+                // alongside the flattened summary the fields above form.
+                entity_selectors.push(EntitySelectorParams {
+                    id: sel.id().map(str::to_string),
+                    id_pattern: sel.id_pattern().map(str::to_string),
+                    type_: sel.type_().map(str::to_string),
+                });
             }
         }
 
@@ -297,6 +312,7 @@ impl From<TemporalQueryRequest> for TemporalQueryParameters {
             id: if ids.is_empty() { None } else { Some(ids.join(",")) },
             entity_type: if types.is_empty() { None } else { Some(types.join(",")) },
             id_pattern,
+            entity_selectors,
             attrs: request.attrs.map(|a: Vec<String>| a.join(",")),
             q: request.q,
             georel: request.geo_q.as_ref().map(|g| g.georel.clone()), // clone: owned String from borrowed optional struct

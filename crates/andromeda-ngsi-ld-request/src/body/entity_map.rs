@@ -1,6 +1,6 @@
 //! HTTP request model types for entity map query endpoints.
 
-use crate::query::entity::EntityQueryParameters;
+use crate::query::{entity::EntityQueryParameters, entity_selector::EntitySelectorParams};
 use serde::Deserialize;
 use serde_json::Value;
 
@@ -89,10 +89,29 @@ pub fn query_body_to_params(body: &QueryRequestBody) -> EntityQueryParameters {
         (None, None, None)
     };
 
+    // The precise per-selector grouping (clause 5.2.11), kept alongside the
+    // flattened summary above so `{id:A,type:T1}` and `{id:B,type:T2}` are a
+    // union rather than the cross product the summary would express.
+    let entity_selectors = body
+        .entities
+        .as_ref()
+        .map(|entities| {
+            entities
+                .iter()
+                .map(|selector| EntitySelectorParams {
+                    id: selector.id.as_ref().map(|ids| ids.join(",")),
+                    id_pattern: selector.id_pattern.clone(),
+                    type_: selector.type_.clone(),
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
     EntityQueryParameters {
         id,
         entity_type,
         id_pattern,
+        entity_selectors,
         attrs: body.attrs.as_ref().map(|a| a.join(",")),
         q: body.q.clone(),
         georel: body.georel.clone(),

@@ -68,11 +68,19 @@ mod tests {
                 .is_some_and(|subject| matches_geo(&geo.georel, subject.as_ref(), geo.geometry.as_ref()))
         });
         let scope_holds = selection.scope_q.as_ref().is_none_or(|scope_q| scope_q.matches(&extract_scopes(entity)));
-        let type_holds = selection.type_expr.as_ref().is_none_or(|type_expr| {
-            let types = extract_types(entity);
-            type_expr.matches(&types.iter().map(|name| name.as_str()).collect::<Vec<&str>>())
-        });
-        q_holds && geo_holds && scope_holds && type_holds
+        // Clause 5.2.11 union of selectors: an unconstrained union admits every
+        // entity, otherwise any one selector's id and type must both hold.
+        let selectors_hold = !selection.selectors_constrain()
+            || selection.selectors.iter().any(|selector| {
+                let type_ok = selector.type_expr.as_ref().is_none_or(|type_expr| {
+                    let types = extract_types(entity);
+                    type_expr.matches(&types.iter().map(|name| name.as_str()).collect::<Vec<&str>>())
+                });
+                let id_ok =
+                    selector.ids.is_empty() || extract_id(entity).is_some_and(|id| selector.ids.iter().any(|wanted| AsRef::<str>::as_ref(wanted) == id));
+                type_ok && id_ok
+            });
+        q_holds && geo_holds && scope_holds && selectors_hold
     }
 
     /// An entity store that holds its rows in memory and answers exactly as much

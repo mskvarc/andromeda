@@ -14,6 +14,7 @@ use crate::{
             atomic_write::AtomicWrite,
             entity_mutation::{EntityMutation, EntityRecord},
             history_record::HistoryRecord,
+            query::selector_compilation::compile_entity_selectors,
             store::EntityStore,
             write_coordinator::WriteCoordinator,
         },
@@ -42,9 +43,7 @@ use andromeda_ngsi_ld_query::{
         path::expanded_attribute_name,
     },
     geo::{compile as geo_compile, query::GeoQuery},
-    identifier::parse_id_list,
     pagination::{CountPolicy, Pagination},
-    pattern::Pattern,
     projection::expansion::expand_attrs,
     scope::query::ScopeQuery,
     temporal::{
@@ -55,7 +54,6 @@ use andromeda_ngsi_ld_query::{
         representation::Representation,
         window::{TemporalWindow, TimeInterval},
     },
-    type_selection::{expansion::expand_type_expression, parser as type_parser},
 };
 use andromeda_ngsi_ld_representation::{normalization::normalize_entity_attributes, sys_attrs::SysAttrsInclusion};
 use andromeda_ngsi_ld_request::query::{SharedQueryParams, temporal::TemporalQueryParameters};
@@ -797,12 +795,18 @@ impl TemporalService {
     /// Expands terms, resolves IRIs, parses temporal/geo/q filters, and computes
     /// effective lastN and pagination values.
     pub async fn compile_temporal_query(&self, params: &TemporalQueryParameters, context: &ContextSpec) -> Result<CompiledTemporalQuery, AndromedaError> {
-        let id_pattern = params
-            .id_pattern
-            .as_deref()
-            .map(Pattern::parse)
-            .transpose()
-            .map_err(|e| AndromedaError::temporal_validation(e.to_string()))?;
+        // Clause 5.2.11: a POST temporal query body's `entities[]` is a union of
+        // selectors, compiled by the same helper the entity path uses so the two
+        // cannot disagree on what a selection means.
+        let selectors = compile_entity_selectors(
+            &self.engine,
+            context,
+            &params.entity_selectors,
+            params.parse_ids().unwrap_or_default(),
+            params.id_pattern.as_deref(),
+            params.entity_type.as_deref(),
+        )
+        .await?;
 
         let attr_filter = expand_attrs(&params.parse_attrs(), &ContextualExpander::new(&self.engine, context)).await?;
 
@@ -848,18 +852,6 @@ impl TemporalService {
 
         let geo = self.compile_geo_query(params, context).await?;
 
-        // Clause 4.17: the `type` parameter is a boolean expression, read by
-        // the same parser the entity path uses. Splitting it on commas, which
-        // is what this did while the compiled form held a flat list, made a
-        // conjunction unexpressible on the temporal endpoints.
-        let type_expr = match params.entity_type.as_deref() {
-            Some(raw_types) => {
-                let raw = type_parser::parse(raw_types)?;
-                Some(expand_type_expression(&raw, &ContextualExpander::new(&self.engine, context)).await?)
-            }
-            None => None,
-        };
-
         let format = params.parse_format();
         let last_n_cap = self.default_last_n;
         let is_aggregated = format == TemporalFormat::AggregatedValues;
@@ -894,9 +886,7 @@ impl TemporalService {
         Ok(CompiledTemporalQuery::builder()
             .entities(
                 EntitySelection::builder()
-                    .ids(parse_id_list(&params.parse_ids().unwrap_or_default())?)
-                    .id_pattern(id_pattern)
-                    .type_expr(type_expr)
+                    .selectors(selectors)
                     .q_expr(q_expr)
                     .geo(geo)
                     .scope_q(params.scope_q.as_deref().map(ScopeQuery::parse).transpose()?)

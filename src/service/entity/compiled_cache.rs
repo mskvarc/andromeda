@@ -94,6 +94,18 @@ impl CompiledQueryKey {
         }
         push_field(&mut parameters, params.count.map(|value| value.to_string()).as_deref());
 
+        // The structured POST selectors (clause 5.2.11) are part of the key: two
+        // bodies that flatten to the same `id`/`type` summary but group their
+        // selectors differently compile to different queries. The count is
+        // length-prefixed like every field, so a selector value cannot
+        // impersonate the boundary between two selectors.
+        push_field(&mut parameters, Some(&params.entity_selectors.len().to_string()));
+        for selector in &params.entity_selectors {
+            push_field(&mut parameters, selector.id.as_deref());
+            push_field(&mut parameters, selector.id_pattern.as_deref());
+            push_field(&mut parameters, selector.type_.as_deref());
+        }
+
         CompiledQueryKey {
             context_digest: context_digest(context),
             limit_cap,
