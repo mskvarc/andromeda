@@ -72,12 +72,13 @@ pub struct TenantRuntimeManager<D: TenantDatabase, F: TenantStateFactory> {
     factory: Arc<F>,
     /// The runtimes currently held open.
     runtimes: DashMap<TenantRef, CachedRuntime<F::State, F::Runtime>>,
-    /// Tenants whose cold start is already under way.
+    /// Per-tenant build locks that single-flight a cold start.
     ///
     /// Without this, N concurrent first requests for one tenant would each
-    /// build a whole runtime and N-1 would be thrown away — after opening
-    /// their connection pools.
-    in_flight: Mutex<HashSet<TenantRef>>,
+    /// build a whole runtime and N-1 would be thrown away — after opening their
+    /// connection pools. Concurrent requests share one lock; the first builds,
+    /// the rest re-check `runtimes` under the lock and reuse what it inserted.
+    build_locks: DashMap<TenantRef, Arc<Mutex<()>>>,
 }
 
 impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
@@ -88,7 +89,7 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
             database,
             factory,
             runtimes: DashMap::new(),
-            in_flight: Mutex::new(HashSet::new()),
+            build_locks: DashMap::new(),
         })
     }
 
@@ -120,18 +121,35 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
             return Ok(Arc::clone(&runtime.state));
         }
 
-        {
-            let mut in_flight = self.in_flight.lock().await;
-            if let Some(runtime) = self.runtimes.get(tenant) {
-                runtime.touch();
-                return Ok(Arc::clone(&runtime.state));
-            }
-            in_flight.insert(tenant.clone()); // clone: the in-flight set outlives this borrow
+        // Single-flight the cold build: concurrent first requests for one tenant
+        // share its build lock, so exactly one opens a runtime. The rest wait,
+        // then re-check `runtimes` under the lock and reuse the one it inserted
+        // instead of each opening a pool that would be thrown away.
+        let build_lock = self.build_lock_for(tenant);
+        let _guard = build_lock.lock().await;
+
+        if let Some(runtime) = self.runtimes.get(tenant) {
+            runtime.touch();
+            return Ok(Arc::clone(&runtime.state));
         }
 
         let result = self.resolve_state_cold(tenant, policy).await;
-        self.in_flight.lock().await.remove(tenant);
+
+        // Drop our build lock now the build is over. The pointer check removes
+        // only this lock, never one a later request created after we released
+        // it, so the map stays bounded without detaching a lock two requests
+        // still share.
+        self.build_locks.remove_if(tenant, |_, existing| Arc::ptr_eq(existing, &build_lock));
+
         result
+    }
+
+    /// The build lock for a tenant, creating it on the first request.
+    fn build_lock_for(&self, tenant: &TenantRef) -> Arc<Mutex<()>> {
+        // clone: hand back an owned Arc so the DashMap shard guard is released
+        // before the caller awaits on the lock -- holding a shard guard across
+        // an await deadlocks.
+        Arc::clone(self.build_locks.entry(tenant.clone()).or_insert_with(|| Arc::new(Mutex::new(()))).value())
     }
 
     /// Build a runtime for a tenant that has none open.
@@ -209,21 +227,25 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
         };
         let registered: HashSet<&str> = registered.iter().map(TenantName::as_str).collect();
 
-        let orphans: Vec<TenantRef> = self
+        let orphans: Vec<(TenantRef, Instant)> = self
             .runtimes
             .iter()
             .filter_map(|entry| match entry.key() {
                 TenantRef::UnnamedDefault => None,
                 TenantRef::Named(name) if registered.contains(name.as_str()) => None,
-                named => Some(named.clone()), // clone: the eviction list outlives the iteration
+                // clone: the eviction list outlives the iteration. The last-used
+                // stamp is captured so a request that touches this runtime after
+                // it is judged an orphan spares it from removal.
+                named => Some((named.clone(), entry.value().last_used_instant())),
             })
             .collect();
 
         self.evict_all(orphans).await
     }
 
-    /// Tenants to drop so the cache fits inside `runtime_max_cached`.
-    fn excess_runtimes(&self) -> Vec<TenantRef> {
+    /// Tenants to drop so the cache fits inside `runtime_max_cached`, each with
+    /// the last-used instant it was chosen at.
+    fn excess_runtimes(&self) -> Vec<(TenantRef, Instant)> {
         if self.runtimes.len() <= self.config.runtime_max_cached {
             return Vec::new();
         }
@@ -239,25 +261,33 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
         candidates
             .into_iter()
             .take(self.runtimes.len().saturating_sub(self.config.runtime_max_cached))
-            .map(|(tenant, _)| tenant)
             .collect()
     }
 
-    /// Tenants whose runtime has not been used within `ttl`.
-    fn idle_runtimes(&self, ttl: Duration) -> Vec<TenantRef> {
+    /// Tenants whose runtime has not been used within `ttl`, each with the
+    /// last-used instant it was chosen at.
+    fn idle_runtimes(&self, ttl: Duration) -> Vec<(TenantRef, Instant)> {
         let now = Instant::now();
         self.runtimes
             .iter()
             .filter(|entry| !entry.key().is_unnamed_default() && now.duration_since(entry.value().last_used_instant()) > ttl)
-            .map(|entry| entry.key().clone()) // clone: the eviction list outlives the iteration
+            .map(|entry| (entry.key().clone(), entry.value().last_used_instant())) // clone: the eviction list outlives the iteration
             .collect()
     }
 
-    /// Remove and release each named runtime, returning how many were found.
-    async fn evict_all(&self, tenants: Vec<TenantRef>) -> usize {
+    /// Remove and release each named runtime that has not been used since it was
+    /// chosen for eviction, returning how many were released.
+    ///
+    /// Each candidate carries the `last_used` instant it was picked at. Removal
+    /// is conditional on that instant still matching, so a runtime a request
+    /// touched between the sweep's snapshot and this removal keeps its
+    /// `last_used` bumped and is spared -- a request holding its `Arc` is never
+    /// handed a torn-down runtime.
+    async fn evict_all(&self, candidates: Vec<(TenantRef, Instant)>) -> usize {
         let mut evicted = 0;
-        for tenant in tenants {
-            if let Some((_, cached)) = self.runtimes.remove(&tenant) {
+        for (tenant, chosen_at) in candidates {
+            let removed = self.runtimes.remove_if(&tenant, |_, cached| cached.last_used_instant() == chosen_at);
+            if let Some((_, cached)) = removed {
                 cached.runtime.shutdown().await;
                 evicted += 1;
             }
@@ -280,11 +310,15 @@ mod tests {
     };
     use andromeda_ngsi_ld_lexicon::tenant::TenantName;
     use async_trait::async_trait;
-    use std::sync::{
-        Arc,
-        Mutex as StdMutex,
-        atomic::{AtomicUsize, Ordering},
+    use std::{
+        sync::{
+            Arc,
+            Mutex as StdMutex,
+            atomic::{AtomicUsize, Ordering},
+        },
+        time::{Duration, Instant},
     };
+    use tokio::sync::Notify;
 
     fn named(raw: &str) -> TenantName {
         TenantName::try_from(raw.to_string()).expect("a valid tenant name")
@@ -446,6 +480,99 @@ mod tests {
         pretty_assertions::assert_eq!(factory.built.load(Ordering::Relaxed), 1);
     }
 
+    /// A factory whose every build blocks on a gate until the test opens it, so
+    /// concurrent builds overlap and single-flight is observable.
+    struct GatedFactory {
+        /// How many builds were entered.
+        built: AtomicUsize,
+        /// Shared shutdown counter handed to every runtime it builds.
+        shutdowns: Arc<AtomicUsize>,
+        /// The gate every build waits on before completing.
+        gate: Arc<Notify>,
+    }
+
+    #[async_trait]
+    impl TenantStateFactory for GatedFactory {
+        type State = String;
+        type Runtime = FakeRuntime;
+
+        async fn build(&self, _tenant: &TenantRef, database: &TenantDatabaseName) -> Result<(Arc<String>, FakeRuntime), TenancyError> {
+            self.built.fetch_add(1, Ordering::Relaxed);
+            self.gate.notified().await;
+            Ok((
+                Arc::new(database.as_str().to_owned()),
+                FakeRuntime {
+                    shutdowns: Arc::clone(&self.shutdowns),
+                },
+            ))
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn concurrent_first_requests_for_one_tenant_trigger_a_single_build() {
+        // Without single-flight, N concurrent first requests each open a whole
+        // runtime and N-1 are thrown away. A gated factory holds every build
+        // open so the requests overlap; single-flight lets exactly one through.
+        let registry = Arc::new(FakeRegistry::new(&["acme"]));
+        let shutdowns = Arc::new(AtomicUsize::new(0));
+        let gate = Arc::new(Notify::new());
+        let factory = Arc::new(GatedFactory {
+            built: AtomicUsize::new(0),
+            shutdowns: Arc::clone(&shutdowns),
+            gate: Arc::clone(&gate),
+        });
+        let manager = TenantRuntimeManager::new(config(true, 64), Arc::clone(&registry), Arc::clone(&factory));
+        let tenant = TenantRef::Named(named("acme"));
+
+        let mut handles = Vec::new();
+        for _ in 0..8 {
+            let manager = Arc::clone(&manager);
+            let tenant = tenant.clone(); // clone: each task owns its reference
+            handles.push(tokio::spawn(async move {
+                manager.resolve_state(&tenant, TenantCreationPolicy::MustExist).await.expect("resolves")
+            }));
+        }
+
+        // Let every task reach the build or the single-flight lock.
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        pretty_assertions::assert_eq!(factory.built.load(Ordering::Relaxed), 1, "single-flight must build exactly once");
+
+        gate.notify_waiters();
+        let mut states = Vec::new();
+        for handle in handles {
+            states.push(handle.await.expect("task joins"));
+        }
+        for state in &states {
+            assert!(Arc::ptr_eq(state, &states[0]), "every request resolves to the one built runtime");
+        }
+        pretty_assertions::assert_eq!(factory.built.load(Ordering::Relaxed), 1);
+        // No runtime was built only to be discarded.
+        pretty_assertions::assert_eq!(shutdowns.load(Ordering::Relaxed), 0);
+    }
+
+    #[tokio::test]
+    async fn eviction_spares_a_runtime_used_since_it_was_chosen() {
+        // Eviction snapshots last_used, then removes. A request that touches the
+        // runtime in that window bumps last_used, and the conditional removal
+        // must spare it -- otherwise a request holding its Arc is handed a
+        // torn-down runtime.
+        let Harness { manager, shutdowns, .. } = harness(&["acme"], true, 64);
+        let tenant = TenantRef::Named(named("acme"));
+        let _state = manager.resolve_state(&tenant, TenantCreationPolicy::MustExist).await.expect("resolves");
+
+        // A snapshot that no longer matches the runtime's last_used stands in for
+        // a request that touched it after the sweep chose it: it must not evict.
+        let evicted = manager.evict_all(vec![(tenant.clone(), Instant::now())]).await;
+        pretty_assertions::assert_eq!(evicted, 0, "a runtime used since the snapshot must be spared");
+        pretty_assertions::assert_eq!(shutdowns.load(Ordering::Relaxed), 0);
+        assert!(manager.runtimes.contains_key(&tenant), "the runtime is still held open");
+
+        // With the matching snapshot (nothing touched it since), it is evicted.
+        let candidates = manager.idle_runtimes(Duration::ZERO);
+        pretty_assertions::assert_eq!(manager.evict_all(candidates).await, 1, "an untouched idle runtime is evicted");
+        pretty_assertions::assert_eq!(shutdowns.load(Ordering::Relaxed), 1);
+    }
+
     #[tokio::test]
     async fn an_unknown_tenant_is_rejected_under_must_exist_and_created_on_demand() {
         let Harness { manager, registry, .. } = harness(&[], true, 64);
@@ -583,7 +710,8 @@ mod tests {
 
         // A zero TTL makes every runtime idle the instant it is inspected.
         let idle = manager.idle_runtimes(std::time::Duration::ZERO);
-        pretty_assertions::assert_eq!(idle, vec![TenantRef::Named(named("acme"))]);
+        let idle_tenants: Vec<TenantRef> = idle.iter().map(|(tenant, _)| tenant.clone()).collect();
+        pretty_assertions::assert_eq!(idle_tenants, vec![TenantRef::Named(named("acme"))]);
         pretty_assertions::assert_eq!(manager.evict_all(idle).await, 1);
         pretty_assertions::assert_eq!(shutdowns.load(Ordering::Relaxed), 1);
     }

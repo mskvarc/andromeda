@@ -30,14 +30,10 @@ pub(crate) fn decode_percent_encoded_uris(value: &mut Value) {
             let is_relationship = attr_type == Some(compact_classes::RELATIONSHIP);
             let is_list_relationship = attr_type == Some(compact_classes::LIST_RELATIONSHIP);
 
-            if is_relationship
-                && let Some(Value::String(uri)) = obj.get_mut(compact_properties::OBJECT)
-            {
+            if is_relationship && let Some(Value::String(uri)) = obj.get_mut(compact_properties::OBJECT) {
                 decode_uri_in_place(uri);
             }
-            if is_list_relationship
-                && let Some(Value::Array(objects)) = obj.get_mut(compact_properties::OBJECT_LIST)
-            {
+            if is_list_relationship && let Some(Value::Array(objects)) = obj.get_mut(compact_properties::OBJECT_LIST) {
                 for object in objects {
                     if let Value::String(uri) = object {
                         decode_uri_in_place(uri);

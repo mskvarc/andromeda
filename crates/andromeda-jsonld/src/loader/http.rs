@@ -113,6 +113,18 @@ impl HttpContextLoader {
         self
     }
 
+    /// Drop the in-process cache entry for a context URL.
+    ///
+    /// The durable L2 cache is the repository's lifecycle to manage (a delete or
+    /// a reload writes it directly), so this invalidates only the moka layer the
+    /// loader owns. The URL is normalised the same way the load path keys it, so
+    /// a self-referencing hosted URL is matched whichever prefix form it arrives
+    /// in.
+    pub async fn invalidate(&self, url: &str) {
+        let url_string = normalize_local_hosted_context_url(url);
+        self.cache.invalidate(&url_string).await;
+    }
+
     /// Resolve a context URL through the full pipeline.
     ///
     /// # Errors
@@ -150,17 +162,13 @@ impl HttpContextLoader {
                     && let Some(payload) = cache.get(&url_string).await
                 {
                     trace!("L2 cache hit for context: {}", url_string);
-                    let json_str = match serde_json::to_string(&payload) {
-                        Ok(rendered) => rendered,
-                        Err(error) => {
-                            tracing::warn!("L2 cache entry for {} could not be serialized: {}", url_string, error);
-                            String::new()
-                        }
-                    };
-                    let (parsed, _) = jsonld_syntax::Value::parse_str(&json_str).map_err(|error| LoaderError {
-                        url: url_string.clone(),
-                        kind: LoaderErrorKind::Invalid(error.to_string()),
-                    })?;
+                    // Convert the stored payload straight into the syntax value.
+                    // The old `to_string` then `parse_str` round trip papered a
+                    // serialisation failure over with an empty string, which then
+                    // failed to parse with an unrelated "invalid context" error;
+                    // `from_serde_json` is the direct, infallible inverse of the
+                    // `into_serde_json` the write path used.
+                    let parsed = jsonld_syntax::Value::from_serde_json(payload);
                     return Ok(Arc::new(normalize_loaded_context_document(&url_string, parsed)));
                 }
 
@@ -358,6 +366,33 @@ mod tests {
 
     fn offline_loader(registry: Arc<ContextRegistry>) -> HttpContextLoader {
         HttpContextLoader::new(registry, RemoteContextFetch::Deny, 30, 5, 1024, 3600, 2_000_000).expect("loader builds")
+    }
+
+    /// An L2 cache that always hands back one stored payload.
+    #[derive(Debug)]
+    struct FixedL2(serde_json::Value);
+
+    #[async_trait::async_trait]
+    impl crate::context_cache::ContextCache for FixedL2 {
+        async fn get(&self, _url: &str) -> Option<serde_json::Value> {
+            Some(self.0.clone())
+        }
+        async fn put(&self, _url: &str, _payload: serde_json::Value) {}
+    }
+
+    #[tokio::test]
+    async fn an_l2_cache_hit_loads_without_a_spurious_invalid_context_error() {
+        // A stored payload is converted straight through `from_serde_json`; the
+        // old `to_string`/`parse_str` round trip fell back to an empty string on
+        // a (serde-impossible) failure and then reported an unrelated "invalid
+        // context" error. Even with remote fetching denied, an L2 hit resolves.
+        let l2 = Arc::new(FixedL2(json!({ "@context": { "name": "https://example.com/name" } })));
+        let loader = offline_loader(Arc::new(ContextRegistry::new())).with_l2_cache(l2);
+
+        let value = loader.load_value("https://example.com/from-l2.jsonld").await.expect("an L2 hit resolves");
+
+        let json = jsonld_syntax::Value::into_serde_json((*value).clone());
+        assert!(json.is_object() || json.is_array(), "expected a parsed context document, got {json:?}");
     }
 
     #[tokio::test]

@@ -28,7 +28,8 @@ pub fn validate_snapshot_query_shapes(snapshot_queries: Option<&[Value]>, snapsh
     }
     if let Some(queries) = snapshot_temporal_queries {
         for (index, raw) in queries.iter().enumerate() {
-            SnapshotQuery::deserialize(raw).map_err(|error| AndromedaError::snapshot_validation(format!("Invalid snapshotTemporalQueries[{index}]: {error}")))?;
+            SnapshotQuery::deserialize(raw)
+                .map_err(|error| AndromedaError::snapshot_validation(format!("Invalid snapshotTemporalQueries[{index}]: {error}")))?;
         }
     }
     Ok(())

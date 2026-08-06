@@ -14,6 +14,7 @@ use andromeda_ngsi_ld_http_headers::ngsild_tenant::NgsiLdTenant;
 use async_trait::async_trait;
 use headers::Header;
 use moka::future::Cache;
+use reqwest::header::{CONTENT_TYPE, HeaderName, HeaderValue, LINK};
 use std::time::{Duration, Instant};
 use tracing::{debug, warn};
 use url::Url;
@@ -158,24 +159,35 @@ impl NotificationTransport for HttpTransport {
         let mut request = self
             .client
             .post(&req.endpoint_uri)
-            .header("Content-Type", req.content_type.as_str())
+            .header(CONTENT_TYPE, req.content_type.as_str())
             .body(req.payload.clone()); // clone: `Bytes` is refcounted, and the body takes ownership
 
         if let Some(link) = req.context_link()
             && let Some(value) = link.to_header_value()
         {
-            request = request.header("Link", value);
+            request = request.header(LINK, value);
         }
 
         if let Some(tenant) = req.tenant.as_ref() {
-            request = request.header(NgsiLdTenant::name().as_str(), tenant.as_str());
+            request = request.header(NgsiLdTenant::name(), tenant.as_str());
         }
 
         for pair in &req.receiver_info {
-            if let Ok(name) = reqwest::header::HeaderName::from_bytes(pair.key.as_bytes())
-                && let Ok(value) = reqwest::header::HeaderValue::from_str(&pair.value)
-            {
-                request = request.header(name, value);
+            match (HeaderName::from_bytes(pair.key.as_bytes()), HeaderValue::from_str(&pair.value)) {
+                (Ok(name), Ok(value)) => request = request.header(name, value),
+                // A receiverInfo entry that cannot become an HTTP header is not
+                // dropped in silence: a discarded `Authorization` header would
+                // deliver the notification unauthenticated, which the receiver
+                // would refuse or, worse, accept as anonymous. Surface it so the
+                // misconfiguration is visible rather than a quiet auth failure.
+                (Err(_), _) | (_, Err(_)) => {
+                    warn!(
+                        subscription_id = %req.subscription_id,
+                        endpoint = %req.endpoint_uri,
+                        header_key = %pair.key,
+                        "dropping receiverInfo entry that is not a valid HTTP header name/value"
+                    );
+                }
             }
         }
 

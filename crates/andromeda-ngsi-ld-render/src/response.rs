@@ -408,7 +408,9 @@ mod tests {
         // the mere presence of a requested version made this a spurious 203.
         let rendered = ResponseRenderer::new(ResponseMediaType::Json, a_context())
             .with_requested_version(Some(NgsiLdVersion::CONFORMANT))
-            .with_payload(ResponsePayload::Single(json!({"id": "urn:x", "type": "T", "expiresAt": "2025-01-01T00:00:00Z"})))
+            .with_payload(ResponsePayload::Single(
+                json!({"id": "urn:x", "type": "T", "expiresAt": "2025-01-01T00:00:00Z"}),
+            ))
             .render()
             .expect("render");
         pretty_assertions::assert_eq!(rendered.version_adaptation, VersionAdaptation::None);

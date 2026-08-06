@@ -141,12 +141,28 @@ impl JsonLdContextService {
 
             self.repo.replace_payload(&id, new_payload).await?;
 
+            // Drop the in-process copies parsed from the old document so the
+            // reloaded payload is what gets served next (clause 5.13.3).
+            self.engine.invalidate_context(&source_url).await;
+
             return Ok(());
         }
+
+        // Capture the source URL before deletion: the moka document cache and
+        // the parsed term tables are keyed by it, and a delete that leaves them
+        // in place keeps serving a context that no longer exists until its TTL.
+        let source_url = self.repo.get_kind_and_url(identifier).await?.and_then(|(_, _, url)| url);
 
         if self.repo.delete(identifier).await? == 0 {
             return Err(AndromedaError::context_not_found(identifier.to_string()));
         }
+
+        if let Some(source_url) = source_url {
+            self.engine.invalidate_context(&source_url).await;
+        }
+        // Also invalidate by identifier, which is the URL a locally hosted
+        // context is referenced by.
+        self.engine.invalidate_context(identifier).await;
         Ok(())
     }
 }

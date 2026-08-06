@@ -16,7 +16,7 @@ use crate::{
     },
     error::JsonLdError,
     hit_counter::HitCounter,
-    loader::http::HttpContextLoader,
+    loader::{http::HttpContextLoader, url_normalization::normalize_local_hosted_context_url},
 };
 use contextual::WithContext;
 use jsonld::{
@@ -75,6 +75,23 @@ impl JsonLdEngine {
     /// The parsed request contexts kept on this engine.
     pub(crate) fn user_term_tables(&self) -> &UserTermTableCache {
         &self.user_term_tables
+    }
+
+    /// Invalidate every in-process cache entry for a context URL.
+    ///
+    /// Drops the URL from the moka document cache and from the parsed term
+    /// tables, so a context that was just deleted or reloaded is re-resolved on
+    /// next use rather than served from memory. The durable L2 cache is the
+    /// caller's to update (a delete removes its row, a reload replaces its
+    /// payload). Both the URL as written and its normalised form are cleared,
+    /// since the term tables key on whichever form the request carried.
+    pub async fn invalidate_context(&self, url: &str) {
+        self.loader.invalidate(url).await;
+        self.user_term_tables.remove(url);
+        let normalized = normalize_local_hosted_context_url(url);
+        if normalized != url {
+            self.user_term_tables.remove(&normalized);
+        }
     }
 
     /// The single-term expansion cache.

@@ -143,46 +143,44 @@ impl EntityQueryParameters {
     /// the term would discard the client's ordering without notice. Defaults to
     /// ascending when no direction is specified.
     pub fn parse_order_by(&self) -> Result<Vec<OrderTerm>, ParameterError> {
-        self.order_by
-            .as_deref()
-            .map(|s| {
-                s.split(',')
-                    .filter_map(|term| {
-                        let term = term.trim();
-                        if term.is_empty() {
-                            return None;
-                        }
-                        // Spec S4.23.3: AttrName *1(;directionOp)
-                        // directionOp ::= asc | desc | dist-asc | dist-desc
-                        if let Some((attr, dir_str)) = term.split_once(';') {
-                            let attr = attr.trim();
-                            let direction = match dir_str.trim() {
-                                "asc" => OrderDirection::Asc,
-                                "desc" => OrderDirection::Desc,
-                                "dist-asc" => OrderDirection::DistAsc,
-                                "dist-desc" => OrderDirection::DistDesc,
-                                other => return Some(Err(ParameterError::OrderByDirectionInvalid(other.to_string()))),
-                            };
-                            Some(Ok(OrderTerm {
-                                attr: attr.to_string(),
-                                direction,
-                            }))
-                        } else if let Some(attr) = term.strip_prefix('!') {
-                            // Legacy shorthand: !attr means desc
-                            Some(Ok(OrderTerm {
-                                attr: attr.to_string(),
-                                direction: OrderDirection::Desc,
-                            }))
-                        } else {
-                            Some(Ok(OrderTerm {
-                                attr: term.to_string(),
-                                direction: OrderDirection::Asc,
-                            }))
-                        }
-                    })
-                    .collect()
+        let Some(raw) = self.order_by.as_deref() else {
+            return Ok(Vec::new());
+        };
+        raw.split(',')
+            .filter_map(|term| {
+                let term = term.trim();
+                if term.is_empty() {
+                    return None;
+                }
+                // Spec S4.23.3: AttrName *1(;directionOp)
+                // directionOp ::= asc | desc | dist-asc | dist-desc
+                if let Some((attr, dir_str)) = term.split_once(';') {
+                    let attr = attr.trim();
+                    let direction = match dir_str.trim() {
+                        "asc" => OrderDirection::Asc,
+                        "desc" => OrderDirection::Desc,
+                        "dist-asc" => OrderDirection::DistAsc,
+                        "dist-desc" => OrderDirection::DistDesc,
+                        other => return Some(Err(ParameterError::OrderByDirectionInvalid(other.to_string()))),
+                    };
+                    Some(Ok(OrderTerm {
+                        attr: attr.to_string(),
+                        direction,
+                    }))
+                } else if let Some(attr) = term.strip_prefix('!') {
+                    // Legacy shorthand: !attr means desc
+                    Some(Ok(OrderTerm {
+                        attr: attr.to_string(),
+                        direction: OrderDirection::Desc,
+                    }))
+                } else {
+                    Some(Ok(OrderTerm {
+                        attr: term.to_string(),
+                        direction: OrderDirection::Asc,
+                    }))
+                }
             })
-            .unwrap_or_else(|| Ok(Vec::new()))
+            .collect()
     }
 
     /// Parses the `options` and `format` parameters into structured flags.

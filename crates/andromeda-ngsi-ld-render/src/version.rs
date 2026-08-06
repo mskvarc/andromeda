@@ -244,7 +244,7 @@ mod tests {
         // version or newer, so no adaptation is performed and the response is
         // 200, not 203. This is what the short-circuit must report.
         let payload = json!({"id": "urn:x", "type": "T", "expiresAt": "2025-01-01T00:00:00Z"});
-        let (_, adaptation) = VersionRenderer::new(NgsiLdVersion::CONFORMANT).with_payload(payload.clone()).render();
+        let (_, adaptation) = VersionRenderer::new(NgsiLdVersion::CONFORMANT).with_payload(payload).render();
         pretty_assertions::assert_eq!(adaptation, VersionAdaptation::None);
     }
 

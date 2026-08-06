@@ -156,7 +156,10 @@ mod tests {
         assert!(result.get("surname").is_none(), "a suffix match must not keep surname for attrs=name");
         assert!(result.get("id").is_some());
         assert!(result.get("type").is_some());
-        assert!(result.get("scope").is_none(), "scope is a filterable member and is dropped when attrs does not name it");
+        assert!(
+            result.get("scope").is_none(),
+            "scope is a filterable member and is dropped when attrs does not name it"
+        );
     }
 
     #[test]

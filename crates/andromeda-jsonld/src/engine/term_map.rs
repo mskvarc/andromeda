@@ -234,6 +234,15 @@ impl UserTermTableCache {
         Ok(table)
     }
 
+    /// Drop the parsed table for a context URL.
+    ///
+    /// Called when the context behind that URL is deleted or reloaded, so the
+    /// next batch that names it re-resolves it instead of serving a table parsed
+    /// from a document that no longer exists (clause 5.13.3).
+    pub(crate) fn remove(&self, url: &str) {
+        self.tables.remove(url);
+    }
+
     /// How many context URLs have been parsed, for the test that asserts a
     /// second batch over the same URL parses nothing.
     #[cfg(test)]
@@ -644,6 +653,30 @@ mod tests {
         pretty_assertions::assert_eq!(engine.user_term_tables().len(), 1, "the first batch parses the context");
         let _second = engine.batch_context_handle(&spec).await;
         pretty_assertions::assert_eq!(engine.user_term_tables().len(), 1, "the second batch reuses it");
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn invalidating_a_context_drops_its_parsed_term_table() {
+        // A deleted or reloaded context must not keep being served from the
+        // parsed term-table cache: invalidation drops the entry so the next
+        // batch re-resolves it (clause 5.13.3).
+        let (path, url) = preloaded_context("user-invalidate", r#"{"@context":{"foo":"http://ex.com/foo"}}"#);
+        let mut preloads = HashMap::new();
+        preloads.insert(url.clone(), path.to_string_lossy().to_string()); // clone: the URL also builds the spec
+        let engine = JsonLdEngine::builder()
+            .allow_remote(false)
+            .preload_contexts(preloads)
+            .build()
+            .expect("engine builds");
+        let spec = ContextSpec::from_links(vec![url.clone()]); // clone: also passed to invalidate below
+
+        let _handle = engine.batch_context_handle(&spec).await;
+        pretty_assertions::assert_eq!(engine.user_term_tables().len(), 1, "the batch parses the context");
+
+        engine.invalidate_context(&url).await;
+        pretty_assertions::assert_eq!(engine.user_term_tables().len(), 0, "invalidation drops the parsed table");
 
         let _ = fs::remove_file(path);
     }
