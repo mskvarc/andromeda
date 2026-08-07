@@ -189,16 +189,6 @@ impl<P: StreamPayload> ConnectionRegistry<P> {
             }
         }
     }
-
-    /// Whether any client is currently connected for a subscription.
-    pub fn is_connected(&self, subscription_id: &str) -> bool {
-        self.connections.get(subscription_id).is_some_and(|inner| !inner.is_empty())
-    }
-
-    /// How many clients are currently connected for a subscription.
-    pub fn connection_count(&self, subscription_id: &str) -> usize {
-        self.connections.get(subscription_id).map_or(0, |inner| inner.len())
-    }
 }
 
 /// Generate the registry conformance suite for one payload type.
@@ -245,7 +235,6 @@ macro_rules! registry_conformance_tests {
                 let (_, mut rx_b, _token_b) = registry.register("sub1", 8);
 
                 registry.unregister("sub1", first);
-                pretty_assertions::assert_eq!(registry.connection_count("sub1"), 1);
 
                 registry.try_send("sub1", sample()).expect("the surviving client took it");
                 pretty_assertions::assert_eq!(rx_b.recv().await.expect("a payload"), sample());
@@ -263,7 +252,6 @@ macro_rules! registry_conformance_tests {
                 assert!(token_b.is_cancelled());
                 assert!(rx_a.recv().await.is_none());
                 assert!(rx_b.recv().await.is_none());
-                assert!(!registry.is_connected("sub1"));
             }
 
             #[tokio::test]
@@ -278,10 +266,8 @@ macro_rules! registry_conformance_tests {
             async fn a_subscription_whose_last_client_left_reports_no_client() {
                 let registry: ConnectionRegistry<$payload> = ConnectionRegistry::new();
                 let (only, _rx, _token) = registry.register("sub1", 8);
-                assert!(registry.is_connected("sub1"));
 
                 registry.unregister("sub1", only);
-                assert!(!registry.is_connected("sub1"));
                 assert!(matches!(registry.try_send("sub1", sample()), Err(StreamSendError::NoClient { .. })));
             }
 

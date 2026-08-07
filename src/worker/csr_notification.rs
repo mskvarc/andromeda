@@ -1,4 +1,5 @@
 use crate::{
+    event::{csr_change_event::CsrChangeEvent, subscription_change::CsourceSubscriptionChange},
     repository::csource_subscription::repo::CsourceSubscriptionRepository,
     service::{
         compiled_subscription::CompiledCsrSubscription,
@@ -10,7 +11,7 @@ use crate::{
 use andromeda_delivery::{dispatch::TransportDispatcher, endpoint::transport::parse_endpoint_transport, request::NotificationDelivery};
 use andromeda_ngsi_ld_lexicon::uri::{NGSI_LD_URN_NID, Uri};
 use andromeda_ngsi_ld_model::{
-    notification::{CsourceNotification, CsourceNotificationType, CsourceSubscriptionChange, CsrChangeEvent, CsrTriggerReason},
+    notification::{CsourceNotification, CsourceNotificationType, CsrTriggerReason},
     subscription::{EntitySelector, Subscription, SubscriptionStatus},
 };
 use andromeda_ngsi_ld_query::filter::eval;

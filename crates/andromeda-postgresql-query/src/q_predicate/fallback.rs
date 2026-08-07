@@ -7,17 +7,15 @@
 //! read the payload directly. This path is unindexed by construction.
 
 use crate::{
-    error::RenderError,
     jsonb::{attribute_value_jsonpath, comparison_operand, escape_jsonpath},
     operator::{comparison, pattern_match, present_and},
     q_predicate::target::QFilterTarget,
 };
 use andromeda_ngsi_ld_query::{
-    error::QueryError,
     filter::{
         path::AttrPath,
-        predicate::{CmpOp, PatternPolarity, SetMembership},
-        scalar::CompareValue,
+        predicate::{CmpOp, OrderingOp, PatternPolarity, SetMembership},
+        scalar::{CompareValue, Scalar},
     },
     pattern::Pattern,
 };
@@ -35,22 +33,33 @@ pub fn fallback_exists(path: &AttrPath, target: &QFilterTarget<'_>) -> Condition
     Condition::all().add(SeaExpr::cust(sql))
 }
 
-/// Compile a comparison predicate against the payload.
-pub fn fallback_compare(path: &AttrPath, op: CmpOp, rhs: &CompareValue, target: &QFilterTarget<'_>) -> Result<Condition, RenderError> {
-    let payload = target.payload_column();
-    let value_path = value_extraction_jsonpath(path, VALUE.as_str());
-    let object_path = value_extraction_jsonpath(path, OBJECT.as_str());
-    let extract_value = format!("jsonb_path_query_first({}, '{}')", payload, escape_jsonpath(&value_path));
-    let extract_object = format!("jsonb_path_query_first({}, '{}')", payload, escape_jsonpath(&object_path));
+/// The `jsonb_path_query_first` extraction reaching one payload member of this
+/// attribute.
+fn payload_extraction(path: &AttrPath, terminal_iri: &str, target: &QFilterTarget<'_>) -> String {
+    let jsonpath = value_extraction_jsonpath(path, terminal_iri);
+    format!("jsonb_path_query_first({}, '{}')", target.payload_column(), escape_jsonpath(&jsonpath))
+}
+
+/// Build the SQL for a single-scalar comparison, COALESCing a Property's value
+/// with a Relationship's object so a comparison over either matches (clause 4.9).
+fn scalar_comparison(extract_value: &str, extract_object: &str, scalar: &Scalar, op: CmpOp) -> (String, String) {
+    let (cast, value) = comparison_operand(scalar);
+    let sql = format!(
+        "(COALESCE(({extract_value} #>> '{{}}'), ({extract_object} #>> '{{}}')){cast} {op} $1{cast})",
+        op = comparison(op)
+    );
+    (sql, value)
+}
+
+/// Compile an equality predicate (`==`/`!=`) against the payload.
+pub fn fallback_equality(path: &AttrPath, membership: SetMembership, rhs: &CompareValue, target: &QFilterTarget<'_>) -> Condition {
+    let extract_value = payload_extraction(path, VALUE.as_str(), target);
 
     match rhs {
         CompareValue::Scalar(scalar) => {
-            let (cast, value) = comparison_operand(scalar);
-            let sql = format!(
-                "(COALESCE(({extract_value} #>> '{{}}'), ({extract_object} #>> '{{}}')){cast} {op} $1{cast})",
-                op = comparison(op)
-            );
-            Ok(Condition::all().add(SeaExpr::cust_with_values(sql, [value])))
+            let extract_object = payload_extraction(path, OBJECT.as_str(), target);
+            let (sql, value) = scalar_comparison(&extract_value, &extract_object, scalar, membership.as_cmp_op());
+            Condition::all().add(SeaExpr::cust_with_values(sql, [value]))
         }
         CompareValue::Range { min, max } => {
             let (cast, min_value) = comparison_operand(min);
@@ -58,11 +67,11 @@ pub fn fallback_compare(path: &AttrPath, op: CmpOp, rhs: &CompareValue, target: 
             // A missing element makes the extraction NULL, and every comparison
             // against NULL is unknown, so presence is required structurally in
             // both polarities (clause 4.9).
-            let sql = match op.set_membership().ok_or(QueryError::RangeOperatorUnsupported)? {
+            let sql = match membership {
                 SetMembership::Within => format!("(({extract_value} #>> '{{}}')){cast} >= $1{cast} AND (({extract_value} #>> '{{}}')){cast} <= $2{cast}"),
                 SetMembership::Outside => format!("(({extract_value} #>> '{{}}')){cast} < $1{cast} OR (({extract_value} #>> '{{}}')){cast} > $2{cast}"),
             };
-            Ok(Condition::all().add(SeaExpr::cust_with_values(sql, [min_value, max_value])))
+            Condition::all().add(SeaExpr::cust_with_values(sql, [min_value, max_value]))
         }
         CompareValue::ValueList(values) => {
             let mut arms = Vec::with_capacity(values.len());
@@ -73,13 +82,21 @@ pub fn fallback_compare(path: &AttrPath, op: CmpOp, rhs: &CompareValue, target: 
                 binds.push(bound);
             }
             let joined = arms.join(" OR ");
-            let sql = match op.set_membership().ok_or(QueryError::ValueListOperatorUnsupported)? {
+            let sql = match membership {
                 SetMembership::Within => format!("({joined})"),
                 SetMembership::Outside => format!("NOT ({joined})"),
             };
-            Ok(Condition::all().add(SeaExpr::cust_with_values(sql, binds)))
+            Condition::all().add(SeaExpr::cust_with_values(sql, binds))
         }
     }
+}
+
+/// Compile an ordering predicate (`>`/`>=`/`<`/`<=`) against the payload.
+pub fn fallback_ordering(path: &AttrPath, op: OrderingOp, rhs: &Scalar, target: &QFilterTarget<'_>) -> Condition {
+    let extract_value = payload_extraction(path, VALUE.as_str(), target);
+    let extract_object = payload_extraction(path, OBJECT.as_str(), target);
+    let (sql, value) = scalar_comparison(&extract_value, &extract_object, rhs, op.as_cmp_op());
+    Condition::all().add(SeaExpr::cust_with_values(sql, [value]))
 }
 
 /// Compile a pattern predicate against the payload.
@@ -92,7 +109,7 @@ pub fn fallback_pattern(path: &AttrPath, pattern: &Pattern, polarity: PatternPol
     let object_path = escape_jsonpath(&value_extraction_jsonpath(path, OBJECT.as_str()));
     // The target is a Property's value (`hasValue`) or a Relationship's object
     // (`hasObject`); COALESCE both so a `~=`/`!~=` over a Relationship's object
-    // URI matches, mirroring `fallback_compare` (clause 4.9).
+    // URI matches, mirroring `scalar_comparison` (clause 4.9).
     let extract =
         format!("COALESCE((jsonb_path_query_first({payload}, '{value_path}')#>>'{{}}'), (jsonb_path_query_first({payload}, '{object_path}')#>>'{{}}'))");
     let value_sql = format!("({extract})::text {} $1", pattern_match(polarity));
@@ -196,9 +213,9 @@ mod tests {
             value_path: Vec::new(),
             match_all_languages: false,
         };
-        let expr = Expr::Pred(Predicate::Compare {
+        let expr = Expr::Pred(Predicate::Equality {
             path,
-            op: CmpOp::Equal,
+            membership: SetMembership::Within,
             rhs: CompareValue::Scalar(Scalar::Str("x".to_string())),
         });
         let condition = compile(&expr, &QFilterTarget::entities(), &names()).expect("compile");

@@ -8,6 +8,7 @@ authors.workspace = true
 workspace = true
 
 [dependencies]
+andromeda-ngsi-ld-http-headers.workspace = true
 andromeda-ngsi-ld-lexicon.workspace = true
 andromeda-ngsi-ld-query.workspace = true
 andromeda-ngsi-ld-representation.workspace = true
@@ -18,4 +19,6 @@ thiserror = "2.0.18"
 
 [dev-dependencies]
 andromeda-layer-guard.workspace = true
+headers = "0.4.1"
+http = "1.4.0"
 pretty_assertions = "1.4.1"

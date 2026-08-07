@@ -39,8 +39,11 @@ pub fn row_to_snapshot(row: &sqlx::postgres::PgRow) -> Result<Snapshot, Andromed
         .map(str::parse::<Iso8601Duration>)
         .transpose()
         .map_err(|e| AndromedaError::internal(format!("Invalid snapshot lifetime: {e:?}")))?;
+    // The `snapshot_priority` column is `SMALLINT`; narrow it back to the byte
+    // the domain type validates. A value outside `u8` cannot be a valid
+    // priority, so it maps to `0`, which the range check then rejects.
     let snapshot_priority_raw: i16 = row.try_get("snapshot_priority")?;
-    let snapshot_priority = SnapshotPriority::try_from(snapshot_priority_raw)
+    let snapshot_priority = SnapshotPriority::try_from(u8::try_from(snapshot_priority_raw).unwrap_or(0))
         .map_err(|e| AndromedaError::internal(format!("Invalid snapshot priority '{snapshot_priority_raw}': {e}")))?;
     let endpoint = row
         .try_get::<Option<String>, _>("endpoint")?

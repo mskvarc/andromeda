@@ -51,13 +51,14 @@ fn eval_predicate(pred: &Predicate, obj: &Map<String, Value>) -> bool {
         // Clause 4.9: existence holds when the entity contains the target
         // element, whatever attribute family it belongs to.
         Predicate::Exists(path) => !resolve_values(obj, path).is_empty(),
-        Predicate::Compare { path, op, rhs } => resolve_values(obj, path).iter().any(|target| {
+        Predicate::Equality { path, membership, rhs } => resolve_values(obj, path).iter().any(|target| eval_equality(&target.value, *membership, rhs)),
+        Predicate::Ordering { path, op, rhs } => resolve_values(obj, path).iter().any(|target| {
             // Clause 4.9: an ordering comparison against a Relationship shall
             // not match — a URI has no `<`/`>` order the query can mean.
-            if target.is_relationship && is_ordering(*op) {
+            if target.is_relationship {
                 return false;
             }
-            eval_compare(&target.value, *op, rhs)
+            eval_cmp_scalar(&target.value, op.as_cmp_op(), rhs)
         }),
         // Clause 4.9: a pattern operator applies only to a String target; a
         // non-String value is considered as not matching, so a number or
@@ -74,11 +75,6 @@ fn eval_predicate(pred: &Predicate, obj: &Map<String, Value>) -> bool {
             .filter_map(|target| target.value.as_str())
             .any(|value| !pattern.is_match(value)),
     }
-}
-
-/// Whether an operator is one of the four ordering comparisons.
-const fn is_ordering(op: CmpOp) -> bool {
-    matches!(op, CmpOp::Greater | CmpOp::GreaterEq | CmpOp::Less | CmpOp::LessEq)
 }
 
 /// The expanded value members a `q` target can terminate at: the member IRI,
@@ -191,29 +187,27 @@ fn terminal_value(node: &Value) -> Option<(&Value, bool)> {
     node.get("@id").map(|raw| (raw, false))
 }
 
-/// Evaluate a comparison against a scalar, a range, or a value list.
-fn eval_compare(entity_val: &Value, op: CmpOp, rhs: &CompareValue) -> bool {
+/// Evaluate an equality comparison (`==`/`!=`) against a scalar, a range, or a
+/// value list.
+///
+/// "Outside" is the exact complement of "within" — for a range as for a value
+/// list — so a target incomparable with the bounds is outside the range, not
+/// neither in nor out.
+fn eval_equality(entity_val: &Value, membership: SetMembership, rhs: &CompareValue) -> bool {
     match rhs {
-        CompareValue::Scalar(scalar) => eval_cmp_scalar(entity_val, op, scalar),
-        // Clause 4.9 admits a compound operand only after `==` and `!=`, which
-        // `set_membership` states once for every backend; an ineligible
-        // operator simply cannot hold here. "Outside" is the exact complement
-        // of "within" — as it is for a value list — so a target incomparable
-        // with the bounds is outside the range, not neither in nor out.
+        CompareValue::Scalar(scalar) => eval_cmp_scalar(entity_val, membership.as_cmp_op(), scalar),
         CompareValue::Range { min, max } => {
             let within = eval_cmp_scalar(entity_val, CmpOp::GreaterEq, min) && eval_cmp_scalar(entity_val, CmpOp::LessEq, max);
-            match op.set_membership() {
-                Some(SetMembership::Within) => within,
-                Some(SetMembership::Outside) => !within,
-                None => false,
+            match membership {
+                SetMembership::Within => within,
+                SetMembership::Outside => !within,
             }
         }
         CompareValue::ValueList(values) => {
             let any_match = values.iter().any(|v| eval_cmp_scalar(entity_val, CmpOp::Equal, v));
-            match op.set_membership() {
-                Some(SetMembership::Within) => any_match,
-                Some(SetMembership::Outside) => !any_match,
-                None => false,
+            match membership {
+                SetMembership::Within => any_match,
+                SetMembership::Outside => !any_match,
             }
         }
     }

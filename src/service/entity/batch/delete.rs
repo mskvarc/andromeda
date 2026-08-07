@@ -9,6 +9,7 @@
 
 use crate::{
     core::error::AndromedaError,
+    event::change_event::{ChangeEvent, ChangeOrigin},
     service::entity::{
         EntityService,
         atomic_write::AtomicWrite,
@@ -23,8 +24,9 @@ use crate::{
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::{
     expanded::entity_member::extract_types,
-    notification::{ChangeEvent, NotificationTrigger, SysAttrsSnapshot},
+    notification::{NotificationTrigger, SysAttrsSnapshot},
 };
+use chrono::Utc;
 use serde_json::Value;
 use std::sync::Arc;
 
@@ -121,18 +123,30 @@ fn deletion_events(id: &str, payload: &Value, sys_attrs: Option<&SysAttrsSnapsho
     let mut events = Vec::with_capacity(2);
     if !attr_keys.is_empty() {
         events.push(
-            ChangeEvent::new(entity_uri.clone(), entity_types.clone(), NotificationTrigger::AttributeDeleted) // clone: value also needed by the EntityDeleted event
-                .with_changed_attributes(attr_keys)
-                .with_snapshot(payload.clone()) // clone: the event owns its snapshot
-                .with_previous(payload.clone()) // clone: the event owns its previous payload
-                .with_sys_attrs(sys_attrs.cloned()),
+            ChangeEvent::builder()
+                .entity_id(entity_uri.clone()) // clone: value also needed by the EntityDeleted event
+                .entity_types(entity_types.clone()) // clone: value also needed by the EntityDeleted event
+                .trigger_reason(NotificationTrigger::AttributeDeleted)
+                .occurred_at(Utc::now())
+                .origin(ChangeOrigin::Local)
+                .changed_attributes(attr_keys)
+                .entity_snapshot(Some(payload.clone())) // clone: the event owns its snapshot
+                .previous_attributes(Some(payload.clone())) // clone: the event owns its previous payload
+                .sys_attrs_snapshot(sys_attrs.cloned())
+                .build(),
         );
     }
     events.push(
-        ChangeEvent::new(entity_uri, entity_types, NotificationTrigger::EntityDeleted)
-            .with_snapshot(payload.clone()) // clone: the event owns its snapshot
-            .with_previous(payload.clone()) // clone: the event owns its previous payload
-            .with_sys_attrs(sys_attrs.cloned()),
+        ChangeEvent::builder()
+            .entity_id(entity_uri)
+            .entity_types(entity_types)
+            .trigger_reason(NotificationTrigger::EntityDeleted)
+            .occurred_at(Utc::now())
+            .origin(ChangeOrigin::Local)
+            .entity_snapshot(Some(payload.clone())) // clone: the event owns its snapshot
+            .previous_attributes(Some(payload.clone())) // clone: the event owns its previous payload
+            .sys_attrs_snapshot(sys_attrs.cloned())
+            .build(),
     );
     events
 }

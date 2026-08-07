@@ -69,10 +69,15 @@ const fn needs_parentheses(term: &Expr, separator: char) -> bool {
 fn write_predicate(buf: &mut String, pred: &Predicate) {
     match pred {
         Predicate::Exists(path) => write_attr_path(buf, path),
-        Predicate::Compare { path, op, rhs } => {
+        Predicate::Equality { path, membership, rhs } => {
+            write_attr_path(buf, path);
+            buf.push_str(membership.ngsi_token());
+            write_compare_value(buf, rhs);
+        }
+        Predicate::Ordering { path, op, rhs } => {
             write_attr_path(buf, path);
             buf.push_str(op.ngsi_token());
-            write_compare_value(buf, rhs);
+            write_scalar(buf, rhs);
         }
         Predicate::MatchPattern { path, pattern } => {
             write_attr_path(buf, path);
@@ -162,7 +167,7 @@ fn write_quoted(buf: &mut String, s: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::filter::{parser::parse, predicate::CmpOp};
+    use crate::filter::{parser::parse, predicate::OrderingOp};
 
     #[test]
     fn roundtrip_simple_compare() {
@@ -273,10 +278,10 @@ mod tests {
     #[test]
     fn serialize_expanded_iri() {
         // After expansion, attrs become full IRIs with dots
-        let expr = Expr::Pred(Predicate::Compare {
+        let expr = Expr::Pred(Predicate::Ordering {
             path: AttrPath::simple("https://example.com/speed".parse().expect("valid attribute name")),
-            op: CmpOp::Greater,
-            rhs: CompareValue::Scalar(Scalar::Number(50.into())),
+            op: OrderingOp::Greater,
+            rhs: Scalar::Number(50.into()),
         });
         let s = serialize(&expr);
         // The IRI must be quoted because it contains a dot
@@ -284,10 +289,10 @@ mod tests {
         // And it should parse back
         let parsed = parse(&s).unwrap();
         match parsed {
-            Expr::Pred(Predicate::Compare { path, .. }) => {
+            Expr::Pred(Predicate::Ordering { path, .. }) => {
                 pretty_assertions::assert_eq!(path.attr.as_str(), "https://example.com/speed");
             }
-            other => unreachable!("expected Compare, got {other:?}"),
+            other => unreachable!("expected Ordering, got {other:?}"),
         }
     }
 }

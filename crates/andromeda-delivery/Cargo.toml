@@ -9,10 +9,10 @@ workspace = true
 
 [dependencies]
 andromeda-health.workspace = true
-andromeda-jsonld.workspace = true
 andromeda-ngsi-ld-http-headers.workspace = true
 andromeda-ngsi-ld-lexicon.workspace = true
 andromeda-ngsi-ld-model.workspace = true
+andromeda-ngsi-ld-vocabulary.workspace = true
 async-trait = "0.1.89"
 backon = "1.6.0"
 bytes = "1.11.1"

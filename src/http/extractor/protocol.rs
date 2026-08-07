@@ -47,20 +47,18 @@ pub struct NgsiLdProtocolHeaders {
 }
 
 impl NgsiLdProtocolHeaders {
-    /// The clause 6.3.x extension headers, reduced to the values a request
-    /// model can be merged with.
+    /// The clause 6.3.x extension headers, handed to the request model as the
+    /// typed values they decoded to.
     ///
-    /// The conversion lives here because it is where both sides are visible:
-    /// the typed headers on one, and the value shapes
-    /// `andromeda-ngsi-ld-request` merges on the other.
+    /// The header crate already parsed and validated each one, so this passes
+    /// the typed values straight through -- the scope, the format and the
+    /// dataset ids by reference, the join by its owner enum -- rather than
+    /// re-stringifying them for the merge to re-parse.
     pub fn extensions(&self) -> ProtocolExtensions<'_> {
         ProtocolExtensions {
-            scope: self.scope.as_ref().map(NgsiLdScope::as_str),
-            response_format: self.response_format.as_ref().map(|format| <&'static str>::from(*format)),
-            dataset_ids: self
-                .dataset_id
-                .as_ref()
-                .map(|dataset| dataset.as_slice().iter().map(ToString::to_string).collect::<Vec<_>>().join(",")),
+            scope: self.scope.as_ref(),
+            response_format: self.response_format,
+            dataset_ids: self.dataset_id.as_ref(),
             join: self.join.map(NgsiLdJoin::into_inner),
             join_level: self.join_level.map(NgsiLdJoinLevel::into_inner),
         }

@@ -109,7 +109,6 @@ impl TransportDispatcher {
             Ok(DeliveryOutcome::Success { status_code, duration }) => debug!(
                 subscription_id = %request.subscription_id,
                 endpoint = %request.endpoint_uri,
-                attempt = request.attempt,
                 ?status_code,
                 ?duration,
                 "notification delivered"
@@ -117,7 +116,6 @@ impl TransportDispatcher {
             Ok(DeliveryOutcome::Rejected { reason, retryable }) => warn!(
                 subscription_id = %request.subscription_id,
                 endpoint = %request.endpoint_uri,
-                attempt = request.attempt,
                 reason,
                 retryable,
                 "notification rejected by endpoint"
@@ -125,7 +123,6 @@ impl TransportDispatcher {
             Err(error) => warn!(
                 subscription_id = %request.subscription_id,
                 endpoint = %request.endpoint_uri,
-                attempt = request.attempt,
                 error = %error,
                 "notification delivery failed"
             ),
@@ -175,9 +172,10 @@ impl TransportDispatcher {
         &self.ws_registry
     }
 
-    /// Gracefully shut down every transport that holds a connection.
+    /// Gracefully shut down every transport that holds a persistent connection.
+    ///
+    /// Only MQTT does; the HTTP client cleans its pool up on drop.
     pub async fn shutdown(&self) {
-        self.http.shutdown().await;
         self.mqtt_pool.shutdown_all().await;
     }
 }
@@ -212,13 +210,6 @@ impl NotificationTransport for TransportHandle<'_> {
         match self {
             TransportHandle::Http(transport) => transport.deliver(delivery).await,
             TransportHandle::Mqtt(transport) => transport.deliver(delivery).await,
-        }
-    }
-
-    async fn shutdown(&self) {
-        match self {
-            TransportHandle::Http(transport) => transport.shutdown().await,
-            TransportHandle::Mqtt(transport) => transport.shutdown().await,
         }
     }
 }

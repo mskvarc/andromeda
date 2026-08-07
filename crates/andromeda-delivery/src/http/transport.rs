@@ -194,7 +194,6 @@ impl NotificationTransport for HttpTransport {
             endpoint = %req.endpoint_uri,
             content_type = %req.content_type,
             subscription_id = %req.subscription_id,
-            attempt = req.attempt,
             "delivering HTTP notification"
         );
 
@@ -261,10 +260,6 @@ impl NotificationTransport for HttpTransport {
                 retryable: status >= 500 || status == 429,
             })
         }
-    }
-
-    async fn shutdown(&self) {
-        // `reqwest::Client` cleans its connection pool up on drop.
     }
 }
 

@@ -57,11 +57,11 @@ mod boundary {
         /// Anything else is an upward or sideways edge.
         const ALLOWED_IN_WORKSPACE: &[&str] = &[
             "andromeda-health",
-            "andromeda-jsonld",
             "andromeda-layer-guard",
             "andromeda-ngsi-ld-http-headers",
             "andromeda-ngsi-ld-lexicon",
             "andromeda-ngsi-ld-model",
+            "andromeda-ngsi-ld-vocabulary",
         ];
 
         andromeda_layer_guard::manifest::assert_layer(env!("CARGO_MANIFEST_DIR"), FORBIDDEN, ALLOWED_IN_WORKSPACE);

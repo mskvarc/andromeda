@@ -14,10 +14,14 @@ const DIALECT: &[&str] = &[
     "::numeric",
     "::boolean",
     "::timestamptz",
-    "::lquery",
     "::geography",
+    // Word-boundary rather than cast-only: `lquery` and `jsonb` name a type or a
+    // function family a store spells in more than one syntactic position
+    // (`::lquery`, a bare `lquery` operand; `::jsonb`, `jsonb_path_query`), and a
+    // cast-only fragment let the others through.
+    "lquery",
+    "jsonb",
     "ST_",
-    "jsonb_",
     "= ANY(",
     "SELECT ",
     "IS NULL",
@@ -115,13 +119,20 @@ fn rust_sources(root: &Path) -> Vec<(String, String)> {
 /// The kept lines are rejoined with newlines rather than concatenated: fusing
 /// the end of one line to the start of the next invents fragments neither line
 /// contains.
+///
+/// Comment lines are removed *before* the `#[cfg(test)]` split, not after: a
+/// comment that merely mentions `#[cfg(test)]` would otherwise truncate the
+/// scan there and hide every real fragment below it.
 fn code_of(source: &str) -> String {
-    let shipped = source.split_once("#[cfg(test)]").map_or(source, |(before, _)| before);
-    shipped
+    let without_comments = source
         .lines()
         .filter(|line| !line.trim_start().starts_with("//"))
         .collect::<Vec<&str>>()
-        .join("\n")
+        .join("\n");
+    match without_comments.split_once("#[cfg(test)]") {
+        Some((before, _)) => before.to_string(),
+        None => without_comments,
+    }
 }
 
 #[cfg(test)]
@@ -168,5 +179,23 @@ mod tests {
         // space and invent a fragment neither line contains.
         let source = "let keyword = \"SELECT\";\n    let subject = value;";
         assert!(!code_of(source).contains("SELECT "));
+    }
+
+    #[test]
+    fn a_jsonb_cast_and_a_bare_lquery_operand_are_both_caught() {
+        // The cast-only fragments used to let `::jsonb` and a bare `lquery`
+        // operand through while catching only `jsonb_...` and `::lquery`.
+        assert!(contains_fragment("let sql = \"value::jsonb\";", "jsonb"));
+        assert!(contains_fragment("let sql = \"jsonb_path_query(x)\";", "jsonb"));
+        assert!(contains_fragment("let sql = \"path ~ 'a.b'::lquery\";", "lquery"));
+        assert!(contains_fragment("let sql = \"lquery(col)\";", "lquery"));
+    }
+
+    #[test]
+    fn a_comment_that_mentions_cfg_test_does_not_truncate_the_scan() {
+        // The comment names `#[cfg(test)]`; the real dialer below it must still
+        // be scanned, which the split-before-strip order used to skip.
+        let source = "// this is not the #[cfg(test)] module\nlet cast = \"value::jsonb\";";
+        assert!(code_of(source).contains("::jsonb"));
     }
 }

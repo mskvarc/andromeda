@@ -9,10 +9,13 @@ use crate::{
 };
 use andromeda_ngsi_ld_query::{
     error::QueryError,
+    filter::parser as filter_parser,
     ordering::{
         collation::IcuCollation,
         term::{OrderDirection, OrderTerm},
     },
+    scope::query::ScopeQuery,
+    type_selection::parser as type_parser,
 };
 use andromeda_ngsi_ld_representation::{response_format::ResponseFormat, sys_attrs::SysAttrsInclusion};
 use serde::Deserialize;
@@ -279,6 +282,22 @@ impl EntityQueryParameters {
 
         if let Some(ref collation) = self.collation {
             IcuCollation::parse(collation).map_err(|source| ParameterError::Query(QueryError::from(source)))?;
+        }
+
+        // Parse the selection expressions at the boundary so a malformed `type`,
+        // `scopeQ` or `q` is a 400 here rather than a failure once the query is
+        // compiled (clause 5.7.2). Expansion still happens later against the
+        // active `@context`; this checks only that the grammar holds.
+        if let Some(ref entity_type) = self.entity_type {
+            type_parser::parse(entity_type).map_err(ParameterError::Query)?;
+        }
+        if let Some(ref scope_q) = self.scope_q {
+            ScopeQuery::parse(scope_q).map_err(ParameterError::Query)?;
+        }
+        if let Some(ref q) = self.q
+            && !q.trim().is_empty()
+        {
+            filter_parser::parse(q).map_err(ParameterError::Query)?;
         }
 
         // drop and keep are mutually exclusive (S5.6.21)
@@ -795,6 +814,15 @@ mod tests {
         assert!(params.join_level.is_none());
         assert!(params.scope_q.is_none());
         assert!(params.dataset_id.is_none());
+    }
+
+    #[test]
+    fn validate_rejects_a_malformed_selection_expression_at_the_boundary() {
+        // Clause 5.7.2: a malformed `type`, `scopeQ` or `q` is a 400 at
+        // validation, not a failure once the query reaches compilation.
+        assert!(matches!(params_from_query("type=(Building").validate(), Err(ParameterError::Query(_))));
+        assert!(matches!(params_from_query("scopeQ=(/A;/B").validate(), Err(ParameterError::Query(_))));
+        assert!(params_from_query("type=Vehicle&scopeQ=/A;/B&q=speed%3E50").validate().is_ok());
     }
 
     #[test]

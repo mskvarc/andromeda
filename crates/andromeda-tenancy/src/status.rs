@@ -9,8 +9,6 @@
 pub enum TenantStatus {
     /// Tenant is active and accepting requests.
     Active,
-    /// Tenant is suspended and should not serve requests.
-    Suspended,
 }
 
 #[cfg(test)]
@@ -19,11 +17,9 @@ mod tests {
     use std::str::FromStr;
 
     #[test]
-    fn every_status_round_trips_through_its_lowercase_spelling() {
-        for status in [TenantStatus::Active, TenantStatus::Suspended] {
-            let rendered = status.to_string();
-            assert_eq!(rendered, rendered.to_lowercase());
-            pretty_assertions::assert_eq!(TenantStatus::from_str(&rendered).expect("parses"), status);
-        }
+    fn the_active_status_round_trips_through_its_lowercase_spelling() {
+        let rendered = TenantStatus::Active.to_string();
+        assert_eq!(rendered, rendered.to_lowercase());
+        pretty_assertions::assert_eq!(TenantStatus::from_str(&rendered).expect("parses"), TenantStatus::Active);
     }
 }

@@ -1,6 +1,7 @@
 pub(crate) mod payload;
 
 use crate::{
+    event::{change_event::ChangeEvent, subscription_change::SubscriptionChange},
     repository::subscription::repo::SubscriptionRepository,
     service::{
         compiled_subscription::CompiledSubscription,
@@ -19,7 +20,7 @@ use andromeda_ngsi_ld_lexicon::{
 };
 use andromeda_ngsi_ld_model::{
     expanded::geo_property::extract_geo_property_geometry,
-    notification::{ChangeEvent, Notification, NotificationTrigger, NotificationType, SubscriptionChange},
+    notification::{Notification, NotificationTrigger, NotificationType},
 };
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 use andromeda_ngsi_ld_vocabulary::expanded::{classes as expanded_classes, properties as expanded_properties};
@@ -451,12 +452,9 @@ impl NotificationWorker {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::service::subscription_matching::matches_subscription;
+    use crate::{event::change_event::ChangeOrigin, service::subscription_matching::matches_subscription};
     use andromeda_delivery::endpoint::transport::EndpointTransport;
-    use andromeda_ngsi_ld_model::{
-        notification::ChangeOrigin,
-        subscription::{EntitySelector, SubscriptionStatus},
-    };
+    use andromeda_ngsi_ld_model::subscription::{EntitySelector, SubscriptionStatus};
     use andromeda_ngsi_ld_query::{filter::parser, scope::query::ScopeQuery};
     use payload::filter_entity_attributes;
     use url::Url;

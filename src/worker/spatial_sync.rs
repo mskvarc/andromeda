@@ -14,9 +14,9 @@
 //! itself. Events without a payload (background expiration sweeps) still
 //! fall back to fetching from the entity store.
 
-use crate::service::entity::store::EntityStore;
+use crate::{event::change_event::ChangeEvent, service::entity::store::EntityStore};
 use andromeda_ngsi_ld_geometry::geometry::Geometry;
-use andromeda_ngsi_ld_model::notification::{ChangeEvent, NotificationTrigger};
+use andromeda_ngsi_ld_model::notification::NotificationTrigger;
 use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
 use andromeda_spatial_index::{entity::index::SpatialEntityIndex, key::SpatialKey};
 use andromeda_tenancy::tenant_ref::TenantRef;
@@ -263,13 +263,13 @@ fn parse_geometry(raw: &str) -> Option<Geometry> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::repository::{
-        attribute_current::materializer::AttributeCurrentMaterializer,
-        attribute_names::AttributeNameCache,
-        entity::repo::EntityRepository,
+    use crate::{
+        event::change_event::ChangeOrigin,
+        repository::{attribute_current::materializer::AttributeCurrentMaterializer, attribute_names::AttributeNameCache, entity::repo::EntityRepository},
     };
     use andromeda_ngsi_ld_geometry::geo_rel::GeoRel;
     use andromeda_ngsi_ld_lexicon::uri::Uri;
+    use chrono::Utc;
     use geo::{Coord, LineString, Polygon};
     use iri_rs::iri;
     use serde_json::json;
@@ -307,9 +307,15 @@ mod tests {
     fn create_event(id: &str, lon: f64, lat: f64) -> ChangeEvent {
         let uri: Uri = id.parse().expect("valid URI");
         let payload = entity_payload(id, lon, lat);
-        ChangeEvent::new(uri, vec![TYPE_IRI.parse().expect("valid test type name")], NotificationTrigger::EntityCreated)
-            .with_changed_attributes(vec![LOCATION_IRI.parse().expect("valid test attribute name")])
-            .with_current_payload(Arc::new(payload))
+        ChangeEvent::builder()
+            .entity_id(uri)
+            .entity_types(vec![TYPE_IRI.parse().expect("valid test type name")])
+            .trigger_reason(NotificationTrigger::EntityCreated)
+            .occurred_at(Utc::now())
+            .origin(ChangeOrigin::Local)
+            .changed_attributes(vec![LOCATION_IRI.parse().expect("valid test attribute name")])
+            .current_payload(Some(Arc::new(payload)))
+            .build()
     }
 
     fn delete_event(id: &str) -> ChangeEvent {

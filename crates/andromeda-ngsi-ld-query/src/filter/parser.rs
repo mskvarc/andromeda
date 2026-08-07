@@ -20,7 +20,7 @@ use crate::{
         expression::Expr,
         lexer::{Token, tokenize},
         path::AttrPath,
-        predicate::{CmpOp, Predicate},
+        predicate::{OrderingOp, Predicate, SetMembership},
         scalar::{CompareValue, Scalar, parse_date, parse_date_time, parse_time},
     },
     pattern::Pattern,
@@ -157,36 +157,56 @@ impl<'a> Parser<'a> {
             Some(Token::Eq) => {
                 self.advance();
                 let rhs = self.parse_compare_value()?;
-                Ok(Predicate::Compare { path, op: CmpOp::Equal, rhs })
+                Ok(Predicate::Equality {
+                    path,
+                    membership: SetMembership::Within,
+                    rhs,
+                })
             }
             Some(Token::Neq) => {
                 self.advance();
                 let rhs = self.parse_compare_value()?;
-                Ok(Predicate::Compare { path, op: CmpOp::Unequal, rhs })
+                Ok(Predicate::Equality {
+                    path,
+                    membership: SetMembership::Outside,
+                    rhs,
+                })
             }
             Some(Token::Gt) => {
                 self.advance();
-                let rhs = CompareValue::Scalar(self.parse_scalar()?);
-                Ok(Predicate::Compare { path, op: CmpOp::Greater, rhs })
+                let rhs = self.parse_scalar()?;
+                Ok(Predicate::Ordering {
+                    path,
+                    op: OrderingOp::Greater,
+                    rhs,
+                })
             }
             Some(Token::Ge) => {
                 self.advance();
-                let rhs = CompareValue::Scalar(self.parse_scalar()?);
-                Ok(Predicate::Compare {
+                let rhs = self.parse_scalar()?;
+                Ok(Predicate::Ordering {
                     path,
-                    op: CmpOp::GreaterEq,
+                    op: OrderingOp::GreaterEq,
                     rhs,
                 })
             }
             Some(Token::Lt) => {
                 self.advance();
-                let rhs = CompareValue::Scalar(self.parse_scalar()?);
-                Ok(Predicate::Compare { path, op: CmpOp::Less, rhs })
+                let rhs = self.parse_scalar()?;
+                Ok(Predicate::Ordering {
+                    path,
+                    op: OrderingOp::Less,
+                    rhs,
+                })
             }
             Some(Token::Le) => {
                 self.advance();
-                let rhs = CompareValue::Scalar(self.parse_scalar()?);
-                Ok(Predicate::Compare { path, op: CmpOp::LessEq, rhs })
+                let rhs = self.parse_scalar()?;
+                Ok(Predicate::Ordering {
+                    path,
+                    op: OrderingOp::LessEq,
+                    rhs,
+                })
             }
             Some(Token::Match) => {
                 self.advance();
@@ -394,12 +414,12 @@ mod tests {
     fn parse_equality_number() {
         let expr = parse("temperature==20").unwrap();
         match expr {
-            Expr::Pred(Predicate::Compare { path, op, rhs }) => {
+            Expr::Pred(Predicate::Equality { path, membership, rhs }) => {
                 pretty_assertions::assert_eq!(path.attr.as_str(), "temperature");
-                pretty_assertions::assert_eq!(op, CmpOp::Equal);
+                pretty_assertions::assert_eq!(membership, SetMembership::Within);
                 pretty_assertions::assert_eq!(rhs, CompareValue::Scalar(Scalar::Number(20.into())));
             }
-            other => unreachable!("expected Compare, got {other:?}"),
+            other => unreachable!("expected Equality, got {other:?}"),
         }
     }
 
@@ -424,12 +444,12 @@ mod tests {
     fn parse_inequality_string() {
         let expr = parse("brandName!=\"Mercedes\"").unwrap();
         match expr {
-            Expr::Pred(Predicate::Compare { path, op, rhs }) => {
+            Expr::Pred(Predicate::Equality { path, membership, rhs }) => {
                 pretty_assertions::assert_eq!(path.attr.as_str(), "brandName");
-                pretty_assertions::assert_eq!(op, CmpOp::Unequal);
+                pretty_assertions::assert_eq!(membership, SetMembership::Outside);
                 pretty_assertions::assert_eq!(rhs, CompareValue::Scalar(Scalar::Str("Mercedes".to_string())));
             }
-            other => unreachable!("expected Compare, got {other:?}"),
+            other => unreachable!("expected Equality, got {other:?}"),
         }
     }
 
@@ -437,12 +457,12 @@ mod tests {
     fn parse_greater_than() {
         let expr = parse("speed>50").unwrap();
         match expr {
-            Expr::Pred(Predicate::Compare { path, op, rhs }) => {
+            Expr::Pred(Predicate::Ordering { path, op, rhs }) => {
                 pretty_assertions::assert_eq!(path.attr.as_str(), "speed");
-                pretty_assertions::assert_eq!(op, CmpOp::Greater);
-                pretty_assertions::assert_eq!(rhs, CompareValue::Scalar(Scalar::Number(50.into())));
+                pretty_assertions::assert_eq!(op, OrderingOp::Greater);
+                pretty_assertions::assert_eq!(rhs, Scalar::Number(50.into()));
             }
-            other => unreachable!("expected Compare, got {other:?}"),
+            other => unreachable!("expected Ordering, got {other:?}"),
         }
     }
 
@@ -498,14 +518,14 @@ mod tests {
     fn parse_range() {
         let expr = parse("temperature==10..20").unwrap();
         match expr {
-            Expr::Pred(Predicate::Compare { rhs, .. }) => match rhs {
+            Expr::Pred(Predicate::Equality { rhs, .. }) => match rhs {
                 CompareValue::Range { min, max } => {
                     pretty_assertions::assert_eq!(min, Scalar::Number(10.into()));
                     pretty_assertions::assert_eq!(max, Scalar::Number(20.into()));
                 }
                 other => unreachable!("expected Range, got {other:?}"),
             },
-            other => unreachable!("expected Compare, got {other:?}"),
+            other => unreachable!("expected Equality, got {other:?}"),
         }
     }
 
@@ -513,13 +533,13 @@ mod tests {
     fn parse_value_list() {
         let expr = parse("color==\"red\",\"blue\",\"green\"").unwrap();
         match expr {
-            Expr::Pred(Predicate::Compare { rhs, .. }) => match rhs {
+            Expr::Pred(Predicate::Equality { rhs, .. }) => match rhs {
                 CompareValue::ValueList(vals) => {
                     pretty_assertions::assert_eq!(vals.len(), 3);
                 }
                 other => unreachable!("expected ValueList, got {other:?}"),
             },
-            other => unreachable!("expected Compare, got {other:?}"),
+            other => unreachable!("expected Equality, got {other:?}"),
         }
     }
 
@@ -553,10 +573,7 @@ mod tests {
         // that has the shape of one but is not a real instant is a malformed
         // request rather than a string that quietly compares as text.
         match parse("observed>=2017-12-24T12:00:00Z").expect("parses") {
-            Expr::Pred(Predicate::Compare {
-                rhs: CompareValue::Scalar(Scalar::DateTime(_)),
-                ..
-            }) => {}
+            Expr::Pred(Predicate::Ordering { rhs: Scalar::DateTime(_), .. }) => {}
             other => unreachable!("expected a date-time operand, got {other:?}"),
         }
 
@@ -583,18 +600,18 @@ mod tests {
     fn parse_dotted_attr_path() {
         let expr = parse("temperature.observedAt>=2017-12-24T12:00:00Z").unwrap();
         match expr {
-            Expr::Pred(Predicate::Compare { path, op, rhs }) => {
+            Expr::Pred(Predicate::Ordering { path, op, rhs }) => {
                 pretty_assertions::assert_eq!(path.attr.as_str(), "temperature");
                 pretty_assertions::assert_eq!(path.sub_attrs.iter().map(AttributeName::as_str).collect::<Vec<_>>(), vec!["observedAt"]);
-                pretty_assertions::assert_eq!(op, CmpOp::GreaterEq);
+                pretty_assertions::assert_eq!(op, OrderingOp::GreaterEq);
                 match rhs {
-                    CompareValue::Scalar(Scalar::DateTime(dt)) => {
+                    Scalar::DateTime(dt) => {
                         pretty_assertions::assert_eq!(dt.to_rfc3339_opts(SecondsFormat::Secs, true), "2017-12-24T12:00:00Z");
                     }
                     other => unreachable!("expected DateTime scalar, got {other:?}"),
                 }
             }
-            other => unreachable!("expected Compare, got {other:?}"),
+            other => unreachable!("expected Ordering, got {other:?}"),
         }
     }
 
@@ -602,11 +619,11 @@ mod tests {
     fn parse_compound_value_path() {
         let expr = parse("address[city]==\"Berlin\"").unwrap();
         match expr {
-            Expr::Pred(Predicate::Compare { path, .. }) => {
+            Expr::Pred(Predicate::Equality { path, .. }) => {
                 pretty_assertions::assert_eq!(path.attr.as_str(), "address");
                 pretty_assertions::assert_eq!(path.value_path, vec!["city"]);
             }
-            other => unreachable!("expected Compare, got {other:?}"),
+            other => unreachable!("expected Equality, got {other:?}"),
         }
     }
 
@@ -614,12 +631,12 @@ mod tests {
     fn parse_nested_compound_value_path() {
         let expr = parse("sensor.rawdata[airquality.particulate]==40").unwrap();
         match expr {
-            Expr::Pred(Predicate::Compare { path, .. }) => {
+            Expr::Pred(Predicate::Equality { path, .. }) => {
                 pretty_assertions::assert_eq!(path.attr.as_str(), "sensor");
                 pretty_assertions::assert_eq!(path.sub_attrs.iter().map(AttributeName::as_str).collect::<Vec<_>>(), vec!["rawdata"]);
                 pretty_assertions::assert_eq!(path.value_path, vec!["airquality", "particulate"]);
             }
-            other => unreachable!("expected Compare, got {other:?}"),
+            other => unreachable!("expected Equality, got {other:?}"),
         }
     }
 
@@ -627,10 +644,10 @@ mod tests {
     fn parse_less_equal() {
         let expr = parse("capacity<=10").unwrap();
         match expr {
-            Expr::Pred(Predicate::Compare { op, .. }) => {
-                pretty_assertions::assert_eq!(op, CmpOp::LessEq);
+            Expr::Pred(Predicate::Ordering { op, .. }) => {
+                pretty_assertions::assert_eq!(op, OrderingOp::LessEq);
             }
-            other => unreachable!("expected Compare, got {other:?}"),
+            other => unreachable!("expected Ordering, got {other:?}"),
         }
     }
 
@@ -653,13 +670,13 @@ mod tests {
     fn parse_uri_equality() {
         let expr = parse("isParked==\"urn:ngsi-ld:OffStreetParking:Downtown1\"").unwrap();
         match expr {
-            Expr::Pred(Predicate::Compare { rhs, .. }) => match rhs {
+            Expr::Pred(Predicate::Equality { rhs, .. }) => match rhs {
                 CompareValue::Scalar(Scalar::Str(s)) => {
                     pretty_assertions::assert_eq!(s, "urn:ngsi-ld:OffStreetParking:Downtown1");
                 }
                 other => unreachable!("expected Str, got {other:?}"),
             },
-            other => unreachable!("expected Compare, got {other:?}"),
+            other => unreachable!("expected Equality, got {other:?}"),
         }
     }
 
@@ -667,13 +684,13 @@ mod tests {
     fn parse_negative_number() {
         let expr = parse("temperature>-5").unwrap();
         match expr {
-            Expr::Pred(Predicate::Compare { rhs, .. }) => match rhs {
-                CompareValue::Scalar(Scalar::Number(n)) => {
+            Expr::Pred(Predicate::Ordering { rhs, .. }) => match rhs {
+                Scalar::Number(n) => {
                     pretty_assertions::assert_eq!(n.as_f64(), Some(-5.0));
                 }
                 other => unreachable!("expected Number, got {other:?}"),
             },
-            other => unreachable!("expected Compare, got {other:?}"),
+            other => unreachable!("expected Ordering, got {other:?}"),
         }
     }
 
@@ -681,13 +698,13 @@ mod tests {
     fn parse_float_number() {
         let expr = parse("temperature==23.5").unwrap();
         match expr {
-            Expr::Pred(Predicate::Compare { rhs, .. }) => match rhs {
+            Expr::Pred(Predicate::Equality { rhs, .. }) => match rhs {
                 CompareValue::Scalar(Scalar::Number(n)) => {
                     pretty_assertions::assert_eq!(n.as_f64(), Some(23.5));
                 }
                 other => unreachable!("expected Number, got {other:?}"),
             },
-            other => unreachable!("expected Compare, got {other:?}"),
+            other => unreachable!("expected Equality, got {other:?}"),
         }
     }
 
@@ -695,10 +712,10 @@ mod tests {
     fn parse_boolean_value() {
         let expr = parse("active==true").unwrap();
         match expr {
-            Expr::Pred(Predicate::Compare { rhs, .. }) => {
+            Expr::Pred(Predicate::Equality { rhs, .. }) => {
                 pretty_assertions::assert_eq!(rhs, CompareValue::Scalar(Scalar::Bool(true)));
             }
-            other => unreachable!("expected Compare, got {other:?}"),
+            other => unreachable!("expected Equality, got {other:?}"),
         }
     }
 

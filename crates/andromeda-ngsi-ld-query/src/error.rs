@@ -154,16 +154,6 @@ pub enum QueryError {
     NearWithoutDistance,
 
     // -----------------------------------------------------------------------
-    // Operator eligibility (NGSI-LD 4.9)
-    // -----------------------------------------------------------------------
-    /// A range operand followed an operator that clause 4.9 does not admit one after.
-    #[error("Q expression: range values are only supported with == and !=")]
-    RangeOperatorUnsupported,
-    /// A value list followed an operator that clause 4.9 does not admit one after.
-    #[error("Q expression: value lists are only supported with == and !=")]
-    ValueListOperatorUnsupported,
-
-    // -----------------------------------------------------------------------
     // Ordering (NGSI-LD 4.23)
     // -----------------------------------------------------------------------
     /// A distance ordering was requested with no geometry to measure from.

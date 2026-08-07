@@ -12,6 +12,7 @@ use andromeda_ngsi_ld_model::{
     attribute::instance::{Attribute, AttributeValue},
     entity::Entity,
 };
+use andromeda_ngsi_ld_representation::entity_members::ENTITY_MEMBERS;
 use serde_json::{Map, Value};
 use std::str::FromStr;
 
@@ -49,9 +50,6 @@ fn simplify_instance(attr: &Attribute) -> Value {
         value
     }
 }
-
-/// Entity members that are not attributes and pass through untouched.
-const ENTITY_MEMBERS: &[&str] = &["id", "type", "scope", "@context"];
 
 /// Render an entity in the clause 4.5.4 simplified (`keyValues`) form.
 ///

@@ -7,6 +7,11 @@
 use crate::{
     api::state::AndromedaState,
     core::{batch_activity::BatchActivityTracker, config::RuntimeConfig, error::AndromedaError},
+    event::{
+        change_event::ChangeEvent,
+        csr_change_event::CsrChangeEvent,
+        subscription_change::{CsourceSubscriptionChange, SubscriptionChange},
+    },
     repository::{
         atomic_write::anchor::PostgresAnchorStore,
         attribute_current::materializer::AttributeCurrentMaterializer,
@@ -63,7 +68,6 @@ use andromeda_delivery::{
     mqtt::{config::MqttPoolConfig, pool::MqttTransportPool},
     stream::{registry::ConnectionRegistry, sse::SseNotificationEvent, ws::WsNotificationMessage},
 };
-use andromeda_ngsi_ld_model::notification::{ChangeEvent, CsourceSubscriptionChange, CsrChangeEvent, SubscriptionChange};
 use andromeda_spatial_index::entity::index::SpatialEntityIndex;
 use andromeda_tenancy::{
     database_name::TenantDatabaseName,

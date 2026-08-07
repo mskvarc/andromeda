@@ -264,11 +264,8 @@ fn context_reference(context: &ContextSpec) -> Result<RemoteContextReference<Iri
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        context_spec::ContextSpec,
-        core_context::{NGSI_LD_CORE_CONTEXT_URL, NGSI_LD_CORE_CONTEXT_V16_URL},
-        engine::processor::JsonLdEngine,
-    };
+    use crate::{context_spec::ContextSpec, core_context::NGSI_LD_CORE_CONTEXT_V16_URL, engine::processor::JsonLdEngine};
+    use andromeda_ngsi_ld_vocabulary::NGSI_LD_CORE_CONTEXT_URL;
     use serde_json::json;
 
     /// An engine that resolves only what is embedded, never the network.

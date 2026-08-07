@@ -5,9 +5,13 @@
 //! themselves, so this module defines a parallel shape using plain field
 //! types and converts to/from the domain form at the repository boundary.
 
-use crate::{core::error::AndromedaError, service::entity::side_effect::BatchSideEffectJob};
+use crate::{
+    core::error::AndromedaError,
+    event::change_event::{ChangeEvent, ChangeOrigin},
+    service::entity::side_effect::BatchSideEffectJob,
+};
 use andromeda_ngsi_ld_lexicon::uri::Uri;
-use andromeda_ngsi_ld_model::notification::{ChangeEvent, ChangeOrigin, NotificationTrigger, SysAttrsSnapshot};
+use andromeda_ngsi_ld_model::notification::{NotificationTrigger, SysAttrsSnapshot};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -161,8 +165,8 @@ impl TryFrom<PersistedChangeEvent> for ChangeEvent {
             .trigger_reason(trigger_reason)
             .changed_attributes(changed_attributes)
             .occurred_at(persisted.occurred_at)
-            .entity_snapshot(persisted.entity_snapshot.map(Arc::new))
-            .previous_attributes(persisted.previous_attributes.map(Arc::new))
+            .entity_snapshot(persisted.entity_snapshot)
+            .previous_attributes(persisted.previous_attributes)
             .sys_attrs_snapshot(persisted.sys_attrs_snapshot.map(SysAttrsSnapshot::from))
             .origin(origin)
             .build())

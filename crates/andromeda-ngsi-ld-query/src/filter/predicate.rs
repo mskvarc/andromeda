@@ -1,23 +1,43 @@
 //! Leaf predicates of a `q` filter and the operators they carry (clause 4.9).
 
 use crate::{
-    filter::{path::AttrPath, scalar::CompareValue},
+    filter::{
+        path::AttrPath,
+        scalar::{CompareValue, Scalar},
+        token,
+    },
     pattern::Pattern,
 };
 
 /// A single filter predicate within a `q` expression.
+///
+/// Clause 4.9 Table 4.9-1 admits a range or a value list only after `==`/`!=`;
+/// the four ordering operators take a single scalar. The two comparison
+/// variants encode that split at the type level, so a range or a list can never
+/// attach to an ordering operator and no rendering has to re-check eligibility.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Predicate {
     /// Attribute existence check (e.g. `temperature`).
     Exists(AttrPath),
-    /// Comparison of an attribute value against a scalar, range, or value list.
-    Compare {
+    /// Equality comparison (`==`/`!=`) of an attribute value against a scalar,
+    /// a range, or a value list.
+    Equality {
         /// The attribute path to compare.
         path: AttrPath,
-        /// The comparison operator.
-        op: CmpOp,
+        /// Whether the value must lie inside (`==`) or outside (`!=`) the operand.
+        membership: SetMembership,
         /// The right-hand side value(s).
         rhs: CompareValue,
+    },
+    /// Ordering comparison (`>`/`>=`/`<`/`<=`) of an attribute value against a
+    /// single scalar.
+    Ordering {
+        /// The attribute path to compare.
+        path: AttrPath,
+        /// The ordering operator.
+        op: OrderingOp,
+        /// The single scalar operand; clause 4.9 admits no compound operand here.
+        rhs: Scalar,
     },
     /// Regex match: attribute value must match the pattern (e.g. `name~="A.*"`).
     MatchPattern {
@@ -36,10 +56,16 @@ pub enum Predicate {
     },
 }
 
-/// Comparison operators in `q` filter expressions.
+/// The internal comparison primitive: any of the six clause 4.9 comparison
+/// operators.
+///
+/// Not carried by [`Predicate`] — its two comparison variants carry the
+/// parser-facing [`SetMembership`] and [`OrderingOp`] instead. This is the
+/// operator an evaluator or a backend renders a single scalar comparison with,
+/// including the internal `>=`/`<=`/`=` a range or a value list expands into.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CmpOp {
-    /// Equal (`==`).
+    /// Equal (`=`).
     Equal,
     /// Not equal (`!=`).
     Unequal,
@@ -53,20 +79,40 @@ pub enum CmpOp {
     LessEq,
 }
 
-impl CmpOp {
+/// The four clause 4.9 ordering operators.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OrderingOp {
+    /// Greater than (`>`).
+    Greater,
+    /// Greater than or equal (`>=`).
+    GreaterEq,
+    /// Less than (`<`).
+    Less,
+    /// Less than or equal (`<=`).
+    LessEq,
+}
+
+impl OrderingOp {
     /// Clause 4.9 token this comparison was written as.
     ///
     /// The inverse of what the parser consumes, used to serialise a filter back
-    /// into query-string form. How a backend spells the same comparison is that
-    /// backend's business and is rendered there.
+    /// into query-string form.
     pub const fn ngsi_token(self) -> &'static str {
         match self {
-            CmpOp::Equal => "==",
-            CmpOp::Unequal => "!=",
-            CmpOp::Greater => ">",
-            CmpOp::GreaterEq => ">=",
-            CmpOp::Less => "<",
-            CmpOp::LessEq => "<=",
+            OrderingOp::Greater => token::GREATER,
+            OrderingOp::GreaterEq => token::GREATER_EQ,
+            OrderingOp::Less => token::LESS,
+            OrderingOp::LessEq => token::LESS_EQ,
+        }
+    }
+
+    /// The comparison primitive this ordering operator renders as.
+    pub const fn as_cmp_op(self) -> CmpOp {
+        match self {
+            OrderingOp::Greater => CmpOp::Greater,
+            OrderingOp::GreaterEq => CmpOp::GreaterEq,
+            OrderingOp::Less => CmpOp::Less,
+            OrderingOp::LessEq => CmpOp::LessEq,
         }
     }
 }
@@ -80,19 +126,22 @@ pub enum SetMembership {
     Outside,
 }
 
-impl CmpOp {
-    /// How this operator reads a compound operand, or `None` when clause 4.9
-    /// admits none after it.
-    ///
-    /// Table 4.9-1 puts a range and a value list only after `==` and `!=`; the
-    /// four ordering operators take a single scalar. Every rendering asks this
-    /// rather than re-reading the clause, so an operator cannot become eligible
-    /// against one backend and not another.
-    pub const fn set_membership(self) -> Option<SetMembership> {
+impl SetMembership {
+    /// Clause 4.9 token this equality comparison was written as.
+    pub const fn ngsi_token(self) -> &'static str {
         match self {
-            CmpOp::Equal => Some(SetMembership::Within),
-            CmpOp::Unequal => Some(SetMembership::Outside),
-            CmpOp::Greater | CmpOp::GreaterEq | CmpOp::Less | CmpOp::LessEq => None,
+            SetMembership::Within => token::EQUAL,
+            SetMembership::Outside => token::UNEQUAL,
+        }
+    }
+
+    /// The comparison primitive a single scalar operand renders as under this
+    /// membership: `==` for [`SetMembership::Within`], `!=` for
+    /// [`SetMembership::Outside`].
+    pub const fn as_cmp_op(self) -> CmpOp {
+        match self {
+            SetMembership::Within => CmpOp::Equal,
+            SetMembership::Outside => CmpOp::Unequal,
         }
     }
 }
@@ -111,12 +160,27 @@ mod tests {
     use super::*;
 
     #[test]
-    fn only_equality_operators_admit_a_compound_operand() {
-        // Clause 4.9 Table 4.9-1.
-        assert_eq!(CmpOp::Equal.set_membership(), Some(SetMembership::Within));
-        assert_eq!(CmpOp::Unequal.set_membership(), Some(SetMembership::Outside));
-        for op in [CmpOp::Greater, CmpOp::GreaterEq, CmpOp::Less, CmpOp::LessEq] {
-            assert_eq!(op.set_membership(), None, "{op:?}");
+    fn set_membership_maps_to_the_equality_comparison_primitive() {
+        // Clause 4.9 Table 4.9-1: `==`/`!=` are the only operators over a
+        // compound operand, and a single scalar under them compares by equality.
+        assert_eq!(SetMembership::Within.as_cmp_op(), CmpOp::Equal);
+        assert_eq!(SetMembership::Outside.as_cmp_op(), CmpOp::Unequal);
+        assert_eq!(SetMembership::Within.ngsi_token(), "==");
+        assert_eq!(SetMembership::Outside.ngsi_token(), "!=");
+    }
+
+    #[test]
+    fn ordering_operators_map_to_their_comparison_primitive_and_token() {
+        // Clause 4.9 Table 4.9-1: the four ordering operators take a single
+        // scalar, which a backend renders with the matching primitive.
+        for (op, primitive, token) in [
+            (OrderingOp::Greater, CmpOp::Greater, ">"),
+            (OrderingOp::GreaterEq, CmpOp::GreaterEq, ">="),
+            (OrderingOp::Less, CmpOp::Less, "<"),
+            (OrderingOp::LessEq, CmpOp::LessEq, "<="),
+        ] {
+            assert_eq!(op.as_cmp_op(), primitive, "{op:?}");
+            assert_eq!(op.ngsi_token(), token, "{op:?}");
         }
     }
 }

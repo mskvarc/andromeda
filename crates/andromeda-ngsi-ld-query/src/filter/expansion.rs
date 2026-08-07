@@ -95,7 +95,12 @@ where
 async fn expand_pred_terms(pred: Predicate, expander: &impl TermExpander) -> Result<Predicate, QueryError> {
     match pred {
         Predicate::Exists(path) => Ok(Predicate::Exists(expand_attr_path(path, expander).await?)),
-        Predicate::Compare { path, op, rhs } => Ok(Predicate::Compare {
+        Predicate::Equality { path, membership, rhs } => Ok(Predicate::Equality {
+            path: expand_attr_path(path, expander).await?,
+            membership,
+            rhs,
+        }),
+        Predicate::Ordering { path, op, rhs } => Ok(Predicate::Ordering {
             path: expand_attr_path(path, expander).await?,
             op,
             rhs,
@@ -139,34 +144,45 @@ async fn expand_all(terms: &[AttributeName], expander: &impl TermExpander) -> Re
 /// `expandValues`.
 async fn expand_compare_values(pred: Predicate, expand_attrs: &HashSet<AttributeName>, expander: &impl TermExpander) -> Result<Predicate, QueryError> {
     match pred {
-        Predicate::Compare { path, op, rhs } if expand_attrs.contains(path.attr.as_str()) => Ok(Predicate::Compare {
+        Predicate::Equality { path, membership, rhs } if expand_attrs.contains(path.attr.as_str()) => Ok(Predicate::Equality {
             path,
-            op,
+            membership,
             rhs: expand_rhs_values(rhs, expander).await?,
         }),
-        Predicate::Exists(_) | Predicate::Compare { .. } | Predicate::MatchPattern { .. } | Predicate::NotMatchPattern { .. } => Ok(pred),
+        Predicate::Ordering { path, op, rhs } if expand_attrs.contains(path.attr.as_str()) => Ok(Predicate::Ordering {
+            path,
+            op,
+            rhs: expand_scalar(rhs, expander).await?,
+        }),
+        Predicate::Exists(_) | Predicate::Equality { .. } | Predicate::Ordering { .. } | Predicate::MatchPattern { .. } | Predicate::NotMatchPattern { .. } => {
+            Ok(pred)
+        }
     }
 }
 
-/// Expand the string operands of a comparison; every other scalar kind is
-/// already a value, not a term.
+/// Expand a single scalar operand: a string is a term to expand, every other
+/// scalar kind is already a value.
+async fn expand_scalar(scalar: Scalar, expander: &impl TermExpander) -> Result<Scalar, QueryError> {
+    match scalar {
+        Scalar::Str(s) => Ok(Scalar::Str(expander.expand_term(&s).await?.to_string())),
+        other @ (Scalar::Number(_) | Scalar::Bool(_) | Scalar::DateTime(_) | Scalar::Date(_) | Scalar::Time(_)) => Ok(other),
+    }
+}
+
+/// Expand the string operands of an equality comparison; every other scalar
+/// kind is already a value, not a term.
 async fn expand_rhs_values(rhs: CompareValue, expander: &impl TermExpander) -> Result<CompareValue, QueryError> {
     match rhs {
-        CompareValue::Scalar(Scalar::Str(s)) => Ok(CompareValue::Scalar(Scalar::Str(expander.expand_term(&s).await?.to_string()))),
+        CompareValue::Scalar(scalar) => Ok(CompareValue::Scalar(expand_scalar(scalar, expander).await?)),
         CompareValue::ValueList(values) => {
             let mut expanded = Vec::with_capacity(values.len());
             for value in values {
-                match value {
-                    Scalar::Str(s) => expanded.push(Scalar::Str(expander.expand_term(&s).await?.to_string())),
-                    other @ (Scalar::Number(_) | Scalar::Bool(_) | Scalar::DateTime(_) | Scalar::Date(_) | Scalar::Time(_)) => expanded.push(other),
-                }
+                expanded.push(expand_scalar(value, expander).await?);
             }
             Ok(CompareValue::ValueList(expanded))
         }
         // A range is bounded by two ordered values; neither can be a term.
-        CompareValue::Scalar(Scalar::Number(_) | Scalar::Bool(_) | Scalar::DateTime(_) | Scalar::Date(_) | Scalar::Time(_)) | CompareValue::Range { .. } => {
-            Ok(rhs)
-        }
+        CompareValue::Range { .. } => Ok(rhs),
     }
 }
 
@@ -175,7 +191,12 @@ async fn expand_rhs_values(rhs: CompareValue, expander: &impl TermExpander) -> R
 async fn expand_json_keys_sub_attrs(pred: Predicate, json_keys_attrs: &HashSet<AttributeName>, expander: &impl TermExpander) -> Result<Predicate, QueryError> {
     match pred {
         Predicate::Exists(path) if json_keys_attrs.contains(path.attr.as_str()) => Ok(Predicate::Exists(expand_sub_attrs(path, expander).await?)),
-        Predicate::Compare { path, op, rhs } if json_keys_attrs.contains(path.attr.as_str()) => Ok(Predicate::Compare {
+        Predicate::Equality { path, membership, rhs } if json_keys_attrs.contains(path.attr.as_str()) => Ok(Predicate::Equality {
+            path: expand_sub_attrs(path, expander).await?,
+            membership,
+            rhs,
+        }),
+        Predicate::Ordering { path, op, rhs } if json_keys_attrs.contains(path.attr.as_str()) => Ok(Predicate::Ordering {
             path: expand_sub_attrs(path, expander).await?,
             op,
             rhs,
@@ -188,14 +209,16 @@ async fn expand_json_keys_sub_attrs(pred: Predicate, json_keys_attrs: &HashSet<A
             path: expand_sub_attrs(path, expander).await?,
             pattern,
         }),
-        Predicate::Exists(_) | Predicate::Compare { .. } | Predicate::MatchPattern { .. } | Predicate::NotMatchPattern { .. } => Ok(pred),
+        Predicate::Exists(_) | Predicate::Equality { .. } | Predicate::Ordering { .. } | Predicate::MatchPattern { .. } | Predicate::NotMatchPattern { .. } => {
+            Ok(pred)
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::filter::predicate::CmpOp;
+    use crate::filter::predicate::OrderingOp;
     use iri_rs::IriBuf;
 
     /// An expander that prefixes every term, so a test can see exactly which
@@ -216,10 +239,17 @@ mod tests {
         names.iter().map(|name| name.parse().expect("valid attribute name")).collect()
     }
 
-    fn compare(expr: &Expr) -> (&AttrPath, &CompareValue) {
+    fn path_of(expr: &Expr) -> &AttrPath {
         match expr {
-            Expr::Pred(Predicate::Compare { path, rhs, .. }) => (path, rhs),
+            Expr::Pred(Predicate::Equality { path, .. }) | Expr::Pred(Predicate::Ordering { path, .. }) => path,
             other => unreachable!("expected a comparison, got {other:?}"),
+        }
+    }
+
+    fn equality_rhs(expr: &Expr) -> &CompareValue {
+        match expr {
+            Expr::Pred(Predicate::Equality { rhs, .. }) => rhs,
+            other => unreachable!("expected an equality comparison, got {other:?}"),
         }
     }
 
@@ -238,9 +268,9 @@ mod tests {
         let Expr::And(terms) = expanded else {
             unreachable!("expected a conjunction");
         };
-        let (first, _) = compare(&terms[0]);
+        let first = path_of(&terms[0]);
         assert_eq!(first.attr.as_str(), "https://example.com/speed");
-        let (second, _) = compare(&terms[1]);
+        let second = path_of(&terms[1]);
         assert_eq!(second.attr.as_str(), "https://example.com/temperature");
         assert_eq!(
             second.sub_attrs.iter().map(AttributeName::as_str).collect::<Vec<_>>(),
@@ -256,8 +286,11 @@ mod tests {
         let Expr::And(terms) = expanded else {
             unreachable!("expected a conjunction");
         };
-        assert_eq!(compare(&terms[0]).1, &CompareValue::Scalar(Scalar::Str("https://example.com/red".to_string())));
-        assert_eq!(compare(&terms[1]).1, &CompareValue::Scalar(Scalar::Str("red".to_string())));
+        assert_eq!(
+            equality_rhs(&terms[0]),
+            &CompareValue::Scalar(Scalar::Str("https://example.com/red".to_string()))
+        );
+        assert_eq!(equality_rhs(&terms[1]), &CompareValue::Scalar(Scalar::Str("red".to_string())));
     }
 
     #[tokio::test]
@@ -266,7 +299,7 @@ mod tests {
         let opted_in = opted_in(&["speed"]);
         let expanded = apply_expand_values(expr, &opted_in, &PrefixExpander).await.expect("expands");
         assert_eq!(
-            compare(&expanded).1,
+            equality_rhs(&expanded),
             &CompareValue::Range {
                 min: Scalar::Number(10.into()),
                 max: Scalar::Number(20.into()),
@@ -280,7 +313,7 @@ mod tests {
         let opted_in = opted_in(&["colour"]);
         let expanded = apply_expand_values(expr, &opted_in, &PrefixExpander).await.expect("expands");
         assert_eq!(
-            compare(&expanded).1,
+            equality_rhs(&expanded),
             &CompareValue::ValueList(vec![
                 Scalar::Str("https://example.com/red".to_string()),
                 Scalar::Str("https://example.com/blue".to_string()),
@@ -293,7 +326,7 @@ mod tests {
         let expr = parser::parse("address.city==\"Berlin\"").expect("parses");
         let opted_in = opted_in(&["address"]);
         let expanded = apply_json_keys(expr, &opted_in, &PrefixExpander).await.expect("expands");
-        let (path, _) = compare(&expanded);
+        let path = path_of(&expanded);
         assert_eq!(path.attr.as_str(), "address", "jsonKeys names an attribute, it does not expand it");
         assert_eq!(
             path.sub_attrs.iter().map(AttributeName::as_str).collect::<Vec<_>>(),
@@ -306,7 +339,7 @@ mod tests {
         let expr = parser::parse("address.city==\"Berlin\"").expect("parses");
         let opted_in = opted_in(&["somethingElse"]);
         let expanded = apply_json_keys(expr, &opted_in, &PrefixExpander).await.expect("expands");
-        let (path, _) = compare(&expanded);
+        let path = path_of(&expanded);
         assert_eq!(path.sub_attrs.iter().map(AttributeName::as_str).collect::<Vec<_>>(), vec!["city"]);
     }
 
@@ -332,7 +365,7 @@ mod tests {
             .expect("expands")
             .expect("present");
         match expanded {
-            Expr::Pred(Predicate::Compare { op, .. }) => assert_eq!(op, CmpOp::GreaterEq),
+            Expr::Pred(Predicate::Ordering { op, .. }) => assert_eq!(op, OrderingOp::GreaterEq),
             other => unreachable!("expected a comparison, got {other:?}"),
         }
     }

@@ -14,6 +14,7 @@
 pub mod csr;
 pub mod entity;
 pub mod order_geography;
+pub mod snapshot_listing;
 pub mod snapshot_purge;
 
 #[cfg(test)]
@@ -40,7 +41,6 @@ mod boundary {
             "andromeda-ngsi-ld-lexicon",
             "andromeda-ngsi-ld-model",
             "andromeda-ngsi-ld-query",
-            "andromeda-ngsi-ld-representation",
             "andromeda-ngsi-ld-vocabulary",
             "andromeda-postgresql-encoding",
             "andromeda-postgresql-query",

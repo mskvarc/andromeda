@@ -8,9 +8,10 @@
 //! [`crate::document_context`].
 
 use crate::{
-    core_context::{ANDROMEDA_CORE_CONTEXT_URL, NGSI_LD_CORE_CONTEXT_URL, is_ngsi_ld_core_context_url},
+    core_context::{ANDROMEDA_CORE_CONTEXT_URL, is_ngsi_ld_core_context_url},
     document_context::resolve_context_value,
 };
+use andromeda_ngsi_ld_vocabulary::NGSI_LD_CORE_CONTEXT_URL;
 use serde_json::Value;
 use std::{collections::HashSet, sync::OnceLock};
 
@@ -217,8 +218,9 @@ impl Default for ContextSpec {
 mod tests {
     use crate::{
         context_spec::{ContextSpec, CoreContextPolicy},
-        core_context::{ANDROMEDA_CORE_CONTEXT_URL, NGSI_LD_CORE_CONTEXT_URL, NGSI_LD_CORE_CONTEXT_V16_URL},
+        core_context::{ANDROMEDA_CORE_CONTEXT_URL, NGSI_LD_CORE_CONTEXT_V16_URL},
     };
+    use andromeda_ngsi_ld_vocabulary::NGSI_LD_CORE_CONTEXT_URL;
     use serde_json::json;
 
     #[test]

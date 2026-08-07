@@ -4,13 +4,12 @@
 //! a compiled subscription. Used by the notification worker (event-driven
 //! delivery) and the subscription cache (outbox entry generation).
 
-use crate::service::{compiled_subscription::CompiledSubscription, geo_filter::matches_geo_query};
-use andromeda_ngsi_ld_lexicon::entity_type_name::EntityTypeName;
-use andromeda_ngsi_ld_model::{
-    expanded::entity_member::extract_scopes,
-    notification::{ChangeEvent, ChangeOrigin},
-    subscription::SubscriptionStatus,
+use crate::{
+    event::change_event::{ChangeEvent, ChangeOrigin},
+    service::{compiled_subscription::CompiledSubscription, geo_filter::matches_geo_query},
 };
+use andromeda_ngsi_ld_lexicon::entity_type_name::EntityTypeName;
+use andromeda_ngsi_ld_model::{expanded::entity_member::extract_scopes, subscription::SubscriptionStatus};
 use andromeda_ngsi_ld_query::{filter::eval, scope::query::ScopeQuery};
 use chrono::Utc;
 use serde_json::Value;
@@ -165,11 +164,9 @@ pub fn matches_scope_query(query: &ScopeQuery, entity_data: &Value) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::event::change_event::{ChangeEvent, ChangeOrigin};
     use andromeda_delivery::endpoint::transport::EndpointTransport;
-    use andromeda_ngsi_ld_model::{
-        notification::{ChangeEvent, ChangeOrigin, NotificationTrigger},
-        subscription::SubscriptionStatus,
-    };
+    use andromeda_ngsi_ld_model::{notification::NotificationTrigger, subscription::SubscriptionStatus};
     use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
     use url::Url;
 
@@ -204,12 +201,14 @@ mod tests {
     }
 
     fn make_event() -> ChangeEvent {
-        ChangeEvent::new(
-            "urn:ngsi-ld:Entity:001".parse().expect("valid test URI"),
-            vec!["Building".parse().expect("valid test type name")],
-            NotificationTrigger::EntityCreated,
-        )
-        .with_changed_attributes(vec!["temperature".parse().expect("valid test attribute name")])
+        ChangeEvent::builder()
+            .entity_id("urn:ngsi-ld:Entity:001".parse().expect("valid test URI"))
+            .entity_types(vec!["Building".parse().expect("valid test type name")])
+            .trigger_reason(NotificationTrigger::EntityCreated)
+            .occurred_at(Utc::now())
+            .origin(ChangeOrigin::Local)
+            .changed_attributes(vec!["temperature".parse().expect("valid test attribute name")])
+            .build()
     }
 
     /// Resolves every term to the NGSI-LD `location` GeoProperty, which is what

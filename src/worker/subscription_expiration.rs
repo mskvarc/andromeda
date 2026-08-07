@@ -1,9 +1,9 @@
 use crate::{
+    event::subscription_change::{CsourceSubscriptionChange, SubscriptionChange},
     repository::{csource_subscription::repo::CsourceSubscriptionRepository, subscription::repo::SubscriptionRepository},
     service::subscription::store::SubscriptionStore,
 };
 use andromeda_ngsi_ld_lexicon::uri::Uri;
-use andromeda_ngsi_ld_model::notification::{CsourceSubscriptionChange, SubscriptionChange};
 use std::time::Duration;
 use tokio::sync::broadcast;
 use tracing::{error, info};

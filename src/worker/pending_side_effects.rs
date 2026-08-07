@@ -11,6 +11,7 @@
 
 use crate::{
     core::error::AndromedaError,
+    event::change_event::ChangeEvent,
     service::entity::{
         atomic_write::AtomicWrite,
         entity_mutation::EntityMutation,
@@ -20,7 +21,6 @@ use crate::{
         write_coordinator::WriteCoordinator,
     },
 };
-use andromeda_ngsi_ld_model::notification::ChangeEvent;
 use chrono::Utc;
 use std::{sync::Arc, time::Duration};
 use tokio::sync::broadcast;

@@ -3,7 +3,7 @@
 use crate::{
     service::entity::store::EntityStore,
 };
-use andromeda_ngsi_ld_model::notification::ChangeEvent;
+use crate::event::change_event::ChangeEvent;
 use andromeda_ngsi_ld_model::notification::NotificationTrigger;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use std::time::Duration;

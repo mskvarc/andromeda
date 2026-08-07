@@ -18,7 +18,7 @@ use crate::{
 use andromeda_delivery::{dispatch::TransportDispatcher, endpoint::transport::EndpointTransport, request::NotificationDelivery};
 use andromeda_ngsi_ld_lexicon::{ngsi_ld_urn::SnapshotId, uri::Uri};
 use andromeda_ngsi_ld_model::{
-    snapshot::{Snapshot, SnapshotInput, SnapshotPatch, SnapshotPriority, SnapshotStatus},
+    snapshot::{Snapshot, SnapshotInput, SnapshotPatch, SnapshotStatus},
     snapshot_filter::SnapshotPurgeFilter,
 };
 use andromeda_ngsi_ld_problem_details::{batch_operation::BatchEntityError, error_type::NgsiLdErrorType};
@@ -77,10 +77,7 @@ impl SnapshotService {
             return Err(AndromedaError::snapshot_already_exists(format!("Snapshot {} already exists", id)));
         }
 
-        let priority = match input.snapshot_priority {
-            Some(value) => SnapshotPriority::try_from(value).map_err(|e| AndromedaError::snapshot_validation(format!("{}", e)))?,
-            None => SnapshotPriority::default(),
-        };
+        let priority = input.snapshot_priority.unwrap_or_default();
 
         let now = Utc::now();
         let expires_at = compute_snapshot_expires_at(now, input.snapshot_lifetime.as_ref())?;
@@ -152,10 +149,7 @@ impl SnapshotService {
     pub async fn update(&self, id: &SnapshotId, patch: SnapshotPatch) -> Result<Snapshot, AndromedaError> {
         let existing = self.get(id).await?;
 
-        let patch_priority = match patch.snapshot_priority {
-            Some(value) => Some(SnapshotPriority::try_from(value).map_err(|e| AndromedaError::snapshot_validation(format!("{}", e)))?),
-            None => None,
-        };
+        let patch_priority = patch.snapshot_priority;
 
         // Recalculate expiresAt if lifetime changed
         let new_expires_at = if let Some(ref lt) = patch.snapshot_lifetime {

@@ -68,6 +68,14 @@ mod boundary {
         ];
 
         andromeda_layer_guard::manifest::assert_layer(env!("CARGO_MANIFEST_DIR"), FORBIDDEN, ALLOWED_IN_WORKSPACE);
+
+        // Section 8 restricts the model→representation edge to tests: this crate
+        // builds its fastpath-vs-processor equivalence tests against
+        // `andromeda-ngsi-ld-representation` but must never ship it. The
+        // allow-list above permits an edge in any table, so the dev-only
+        // restriction is pinned separately — promoting it to a normal
+        // dependency fails here.
+        andromeda_layer_guard::manifest::assert_dev_only(env!("CARGO_MANIFEST_DIR"), "andromeda-ngsi-ld-representation");
     }
 }
 

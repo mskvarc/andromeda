@@ -8,8 +8,12 @@ use async_trait::async_trait;
 /// Implemented by the HTTP and MQTT transports and by the dispatcher's
 /// internal handle. The streaming transports do not implement it: SSE and
 /// WebSocket deliver by pushing into a connection registry rather than by
-/// opening one, so they have no `shutdown` of their own and no outcome beyond
-/// "a client was listening".
+/// opening one, so they have no outcome beyond "a client was listening".
+///
+/// Graceful shutdown is not part of this abstraction: the only transport that
+/// holds persistent connections is MQTT, whose pool is closed directly through
+/// [`MqttTransportPool::shutdown_all`](crate::mqtt::pool::MqttTransportPool::shutdown_all),
+/// and the HTTP client cleans its pool up on drop.
 ///
 /// Spelled with `async_trait` because the dispatcher holds transports behind a
 /// borrowed handle whose variants have different lifetimes, which a native
@@ -18,7 +22,4 @@ use async_trait::async_trait;
 pub trait NotificationTransport: Send + Sync {
     /// Deliver a notification to the endpoint the request names.
     async fn deliver(&self, delivery: &DeliveryRequest) -> Result<DeliveryOutcome, TransportError>;
-
-    /// Gracefully close connections. Called during shutdown.
-    async fn shutdown(&self);
 }

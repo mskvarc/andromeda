@@ -10,6 +10,7 @@
 use crate::{
     context_spec::ContextSpec,
     engine::{
+        context_url::is_full_iri,
         options::{CompactOptions, ContextStripping},
         processor::JsonLdEngine,
     },
@@ -27,7 +28,7 @@ const TERM_ONLY: CompactOptions = CompactOptions {
 /// Answers the IRI verbatim when it does not compact, or when it is not one
 /// of the schemes an NGSI-LD type can use.
 pub async fn compact_type_iri(engine: &JsonLdEngine, iri: &str, context: &ContextSpec) -> String {
-    if !is_compactable(iri) {
+    if !is_full_iri(iri) {
         return iri.to_string();
     }
     let document = serde_json::json!({ "@id": "urn:ngsi-ld:_:dummy", "@type": [iri] });
@@ -46,7 +47,7 @@ pub async fn compact_type_iri(engine: &JsonLdEngine, iri: &str, context: &Contex
 /// Answers the IRI verbatim when it does not compact, or when it is not one
 /// of the schemes an NGSI-LD attribute name can use.
 pub async fn compact_attr_iri(engine: &JsonLdEngine, iri: &str, context: &ContextSpec) -> String {
-    if !is_compactable(iri) {
+    if !is_full_iri(iri) {
         return iri.to_string();
     }
     let document = serde_json::json!([{ "@id": "urn:ngsi-ld:_:dummy", iri: [{ "@value": "dummy" }] }]);
@@ -63,11 +64,6 @@ pub async fn compact_attr_iri(engine: &JsonLdEngine, iri: &str, context: &Contex
             iri.to_string()
         }
     }
-}
-
-/// Whether a name is an IRI compaction could act on at all.
-fn is_compactable(iri: &str) -> bool {
-    iri.starts_with("http") || iri.starts_with("urn:")
 }
 
 #[cfg(test)]

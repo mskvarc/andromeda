@@ -3,6 +3,7 @@ pub mod store;
 
 use crate::{
     core::error::AndromedaError,
+    event::subscription_change::SubscriptionChange,
     repository::{jsonld_context::repo::JsonLdContextRepository, subscription::repo::SubscriptionRepository},
     service::{
         subscription_base::{SubscriptionServiceCore, SubscriptionVariant},
@@ -11,7 +12,7 @@ use crate::{
 };
 use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
 use andromeda_ngsi_ld_lexicon::uri::Uri;
-use andromeda_ngsi_ld_model::{notification::SubscriptionChange, subscription::Subscription};
+use andromeda_ngsi_ld_model::subscription::Subscription;
 use async_trait::async_trait;
 use serde_json::Value;
 use sqlx::postgres::PgPool;

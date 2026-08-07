@@ -5,12 +5,15 @@
 //! backed by `DashMap`. Used by both the notification worker (event
 //! matching) and the entity service (outbox entry generation).
 
-use crate::service::{compiled_subscription::CompiledSubscription, subscription::store::SubscriptionStore, subscription_matching::find_matching};
+use crate::{
+    event::{change_event::ChangeEvent, subscription_change::SubscriptionChange},
+    service::{compiled_subscription::CompiledSubscription, subscription::store::SubscriptionStore, subscription_matching::find_matching},
+};
 use andromeda_delivery::endpoint::transport::parse_endpoint_transport;
 use andromeda_ngsi_ld_geometry::geometry::Geometry;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::{
-    notification::{ChangeEvent, NotificationTrigger, SubscriptionChange},
+    notification::NotificationTrigger,
     subscription::{EntitySelector, Subscription, SubscriptionStatus},
 };
 use andromeda_ngsi_ld_query::geo::query::GeoQuery;

@@ -3,6 +3,7 @@ pub mod store;
 
 use crate::{
     core::error::AndromedaError,
+    event::csr_change_event::CsrChangeEvent,
     service::{
         csource_extract::unwrap_geo_property_to_geometry,
         csource_merge::apply_fragment,
@@ -21,10 +22,7 @@ use andromeda_ngsi_ld_lexicon::{
     time_rel::TimeRel,
     uri::{NGSI_LD_URN_NID, Uri},
 };
-use andromeda_ngsi_ld_model::{
-    notification::{CsrChangeEvent, CsrTriggerReason},
-    registration::ForwardingMode,
-};
+use andromeda_ngsi_ld_model::{notification::CsrTriggerReason, registration::ForwardingMode};
 use andromeda_ngsi_ld_query::{
     csr::compiled::{CompiledCsrQuery, CompiledCsrTemporalFilter},
     filter::parser,

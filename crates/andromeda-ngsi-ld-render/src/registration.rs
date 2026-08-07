@@ -8,9 +8,11 @@ use serde_json::Value;
 
 /// Renders a context source registration payload for HTTP response.
 ///
-/// When [`SysAttrsInclusion::Strip`] is configured, removes `status`,
-/// `timesSent`, `timesFailed`, `lastSuccess`, `lastFailure`, `createdAt`,
-/// and `modifiedAt`.
+/// Strips the clause 4.8 system timestamps (`createdAt`, `modifiedAt`) unless
+/// `sysAttrs` was requested. The registration status members (`status`,
+/// `timesSent`, `timesFailed`, `lastSuccess`, `lastFailure`) are read-only
+/// auto-generated members (clause 5.2.9 Table 5.2.9-2) returned when known;
+/// `sysAttrs` does not govern them, so they are never stripped.
 #[derive(Debug)]
 pub struct RegistrationRenderer {
     /// The registration payload to scrub.
@@ -40,19 +42,17 @@ impl RegistrationRenderer {
     /// than a `Result` no caller could act on.
     pub fn render(self) -> Value {
         let RegistrationRenderer { mut payload, sys_attrs } = self;
-        if sys_attrs == SysAttrsInclusion::Include {
-            return payload;
-        }
         let Some(obj) = payload.as_object_mut() else {
             return payload;
         };
-        obj.remove("status");
-        obj.remove("timesSent");
-        obj.remove("timesFailed");
-        obj.remove("lastSuccess");
-        obj.remove("lastFailure");
-        obj.remove("createdAt");
-        obj.remove("modifiedAt");
+        // Clause 4.8: `sysAttrs` governs only the system timestamps. The
+        // registration status members are read-only auto-generated members
+        // (clause 5.2.9 Table 5.2.9-2) returned when known regardless of
+        // `sysAttrs`, so they are not stripped here.
+        if sys_attrs == SysAttrsInclusion::Strip {
+            obj.remove("createdAt");
+            obj.remove("modifiedAt");
+        }
         payload
     }
 }
@@ -67,7 +67,10 @@ mod tests {
     }
 
     #[test]
-    fn render_registration_strips_sys_attrs_when_not_included() {
+    fn render_registration_strips_only_the_timestamps_when_sys_attrs_not_included() {
+        // Clause 4.8: `sysAttrs` withholds only createdAt/modifiedAt. The
+        // read-only status members (clause 5.2.9 Table 5.2.9-2) are returned
+        // when known, regardless.
         let value = json!({
             "id": "urn:ngsi-ld:ContextSourceRegistration:1",
             "type": "ContextSourceRegistration",
@@ -81,14 +84,14 @@ mod tests {
             "endpoint": "https://example.org"
         });
         let rendered = render(value, SysAttrsInclusion::Strip);
-        assert!(rendered.get("status").is_none());
-        assert!(rendered.get("timesSent").is_none());
-        assert!(rendered.get("timesFailed").is_none());
-        assert!(rendered.get("lastSuccess").is_none());
-        assert!(rendered.get("lastFailure").is_none());
-        assert!(rendered.get("createdAt").is_none());
-        assert!(rendered.get("modifiedAt").is_none());
-        assert!(rendered.get("endpoint").is_some());
+        assert!(rendered.get("createdAt").is_none(), "{rendered}");
+        assert!(rendered.get("modifiedAt").is_none(), "{rendered}");
+        pretty_assertions::assert_eq!(rendered.get("status").and_then(Value::as_str), Some("ok"));
+        pretty_assertions::assert_eq!(rendered.get("timesSent").and_then(Value::as_i64), Some(10));
+        assert!(rendered.get("timesFailed").is_some(), "{rendered}");
+        assert!(rendered.get("lastSuccess").is_some(), "{rendered}");
+        assert!(rendered.get("lastFailure").is_some(), "{rendered}");
+        assert!(rendered.get("endpoint").is_some(), "{rendered}");
     }
 
     #[test]

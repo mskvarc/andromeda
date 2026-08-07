@@ -70,15 +70,6 @@ pub fn encode(geometry: &Geometry) -> Result<Ewkb, EwkbError> {
     Ewkb::try_from(geometry)
 }
 
-/// [`encode`] over an absent-or-present geometry, for the nullable columns.
-///
-/// # Errors
-///
-/// Returns [`EwkbError`] if the geometry cannot be encoded.
-pub fn encode_optional(geometry: Option<&Geometry>) -> Result<Option<Ewkb>, EwkbError> {
-    geometry.map(encode).transpose()
-}
-
 /// A geometry in PostGIS EWKB: little-endian, XY, SRID 4326.
 ///
 /// Constructed only by encoding a [`Geometry`] or by validating bytes that came

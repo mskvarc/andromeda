@@ -67,7 +67,7 @@ const fn operator(op: SnapshotOp) -> &'static str {
 fn bind_value(value: &SnapshotValue) -> BindValue<'static> {
     match value {
         SnapshotValue::Id(id) => BindValue::String(Cow::Owned(id.as_str().to_string())),
-        SnapshotValue::Priority(priority) => BindValue::I16(priority.as_i16()),
+        SnapshotValue::Priority(priority) => BindValue::I16(i16::from(priority.as_u8())),
         SnapshotValue::Status(status) => BindValue::String(Cow::Owned(<&str>::from(*status).to_string())),
         SnapshotValue::Endpoint(url) => BindValue::String(Cow::Owned(url.as_str().to_string())),
         SnapshotValue::DateTime(instant) => BindValue::Timestamp(*instant),

@@ -12,7 +12,7 @@ use serde_json::{Map, Value};
 
 /// Output shape selector for [`GeoJsonRenderer`].
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub enum GeoJsonShape {
+pub(crate) enum GeoJsonShape {
     /// Render a single entity as a GeoJSON Feature.
     #[default]
     Feature,
@@ -22,7 +22,7 @@ pub enum GeoJsonShape {
 
 /// Renders NGSI-LD JSON objects into GeoJSON Features or FeatureCollections.
 #[derive(Debug)]
-pub struct GeoJsonRenderer<'a> {
+pub(crate) struct GeoJsonRenderer<'a> {
     /// The entity or entity array to wrap.
     payload: Value,
     /// The `@context` to inject into the envelope, if it goes in the body.

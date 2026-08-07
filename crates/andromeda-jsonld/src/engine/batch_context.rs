@@ -15,6 +15,7 @@ use crate::{
     context_spec::{ContextSpec, CoreContextPolicy},
     document_context::resolve_context_value,
     engine::{
+        context_url::is_full_iri,
         fast_entity::expand_document,
         processor::JsonLdEngine,
         term_map::{BatchTermMap, build_batch_term_map},
@@ -258,28 +259,27 @@ fn relative_url_policy_of(context: &Value) -> RelativeUrlPolicy {
 }
 
 /// Whether any string anywhere in a context value is not an absolute IRI.
+///
+/// A context value names its URLs in one of the schemes [`is_full_iri`]
+/// recognises (`http`, `https`, `urn`); a string in none of them is a relative
+/// reference that needs a base to resolve.
 fn has_relative_url(value: &Value) -> bool {
     match value {
-        Value::String(text) => !is_absolute_iri(text),
+        Value::String(text) => !is_full_iri(text),
         Value::Array(items) => items.iter().any(has_relative_url),
         Value::Object(map) => map.values().any(has_relative_url),
         Value::Null | Value::Bool(_) | Value::Number(_) => false,
     }
 }
 
-/// Whether a string is an absolute IRI in one of the schemes a resolved batch
-/// context can name.
-fn is_absolute_iri(text: &str) -> bool {
-    text.starts_with("http://") || text.starts_with("https://") || text.starts_with("urn:")
-}
-
 #[cfg(test)]
 mod tests {
     use crate::{
         context_spec::{ContextSpec, CoreContextPolicy},
-        core_context::{ANDROMEDA_CORE_CONTEXT_URL, NGSI_LD_CORE_CONTEXT_URL},
+        core_context::ANDROMEDA_CORE_CONTEXT_URL,
         engine::{batch_context::RelativeUrlPolicy, processor::JsonLdEngine, term_map::BatchTermMap},
     };
+    use andromeda_ngsi_ld_vocabulary::NGSI_LD_CORE_CONTEXT_URL;
     use serde_json::{Value, json};
     use std::sync::Arc;
 

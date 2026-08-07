@@ -73,10 +73,14 @@ mod tests {
 
     #[test]
     fn equality_is_the_one_operator_sql_spells_differently_from_clause_4_9() {
-        assert_eq!(comparison(CmpOp::Equal), "=");
-        assert_eq!(CmpOp::Equal.ngsi_token(), "==");
-        for op in [CmpOp::Unequal, CmpOp::Greater, CmpOp::GreaterEq, CmpOp::Less, CmpOp::LessEq] {
-            assert_eq!(comparison(op), op.ngsi_token(), "{op:?}");
+        use andromeda_ngsi_ld_query::filter::predicate::{OrderingOp, SetMembership};
+        // The comparison primitive spells `==` as SQL `=`; every other
+        // operator's SQL spelling matches its clause 4.9 token.
+        assert_eq!(comparison(SetMembership::Within.as_cmp_op()), "=");
+        assert_eq!(SetMembership::Within.ngsi_token(), "==");
+        assert_eq!(comparison(SetMembership::Outside.as_cmp_op()), SetMembership::Outside.ngsi_token());
+        for op in [OrderingOp::Greater, OrderingOp::GreaterEq, OrderingOp::Less, OrderingOp::LessEq] {
+            assert_eq!(comparison(op.as_cmp_op()), op.ngsi_token(), "{op:?}");
         }
     }
 

@@ -61,7 +61,6 @@ mod boundary {
             "andromeda-ngsi-ld-geometry",
             "andromeda-ngsi-ld-lexicon",
             "andromeda-ngsi-ld-query",
-            "andromeda-ngsi-ld-representation",
             "andromeda-ngsi-ld-vocabulary",
             "andromeda-postgresql-encoding",
         ];

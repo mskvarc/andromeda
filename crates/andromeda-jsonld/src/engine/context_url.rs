@@ -1,6 +1,7 @@
 //! Reading and rewriting the URLs a document's `@context` names.
 
-use crate::core_context::{NGSI_LD_CORE_CONTEXT_URL, is_ngsi_ld_core_context_url};
+use crate::core_context::is_ngsi_ld_core_context_url;
+use andromeda_ngsi_ld_vocabulary::NGSI_LD_CORE_CONTEXT_URL;
 use serde_json::Value;
 use std::collections::HashSet;
 
@@ -152,9 +153,10 @@ pub(crate) fn strip_context(value: &mut Value) {
 #[cfg(test)]
 mod tests {
     use crate::{
-        core_context::{NGSI_LD_CORE_CONTEXT_URL, NGSI_LD_CORE_CONTEXT_V16_URL},
+        core_context::NGSI_LD_CORE_CONTEXT_V16_URL,
         engine::context_url::{canonical_context_urls, context_urls_of, is_absolute_iri, is_full_iri, resolve_relative_context_urls, strip_context},
     };
+    use andromeda_ngsi_ld_vocabulary::NGSI_LD_CORE_CONTEXT_URL;
     use serde_json::json;
 
     #[test]
@@ -164,6 +166,12 @@ mod tests {
         assert!(is_full_iri("urn:ngsi-ld:Type"));
         assert!(!is_full_iri("Vehicle"));
         assert!(!is_full_iri("ex:Vehicle"));
+        // A term that merely starts with `http` but carries no scheme is not a
+        // full IRI. Compaction's own gate is this predicate, so an attribute
+        // named `httpEndpoint` is no longer mistaken for one it could shorten.
+        assert!(!is_full_iri("httpEndpoint"));
+        // A made-up scheme is not one of the three the short-circuit admits.
+        assert!(!is_full_iri("httpfoo:x"));
     }
 
     #[test]

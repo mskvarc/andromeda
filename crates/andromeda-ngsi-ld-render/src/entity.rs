@@ -52,12 +52,9 @@ impl<'a> EntityRenderer<'a> {
     }
 
     /// Set the language filter for language property negotiation.
-    pub const fn with_language_filter(mut self, filter: &'a LanguageFilter) -> Self {
-        self.language_filter = Some(filter);
-        self
-    }
-
-    /// Convenience: set the language filter from an `Option`, doing nothing if `None`.
+    ///
+    /// Takes an `Option` so a caller that may or may not have negotiated a
+    /// language has one spelling to reach for; `None` leaves the filter unset.
     pub const fn with_optional_language_filter(mut self, filter: Option<&'a LanguageFilter>) -> Self {
         self.language_filter = filter;
         self
@@ -288,7 +285,10 @@ mod tests {
         }));
         let filter = LanguageFilter::parse("fr").expect("language filter");
 
-        let rendered = EntityRenderer::new(&entity).with_language_filter(&filter).render().expect("rendered entity");
+        let rendered = EntityRenderer::new(&entity)
+            .with_optional_language_filter(Some(&filter))
+            .render()
+            .expect("rendered entity");
 
         pretty_assertions::assert_eq!(rendered["street"]["type"], "Property");
         pretty_assertions::assert_eq!(rendered["street"]["value"], "Grand Place");
@@ -310,7 +310,10 @@ mod tests {
         }));
         let filter = LanguageFilter::parse("*").expect("language filter");
 
-        let rendered = EntityRenderer::new(&entity).with_language_filter(&filter).render().expect("rendered entity");
+        let rendered = EntityRenderer::new(&entity)
+            .with_optional_language_filter(Some(&filter))
+            .render()
+            .expect("rendered entity");
 
         pretty_assertions::assert_eq!(rendered["street"]["type"], "Property");
         pretty_assertions::assert_eq!(rendered["street"]["value"], "Grand Place");
@@ -333,7 +336,7 @@ mod tests {
         let filter = LanguageFilter::parse("fr").expect("language filter");
 
         let simplified = EntityRenderer::new(&entity)
-            .with_language_filter(&filter)
+            .with_optional_language_filter(Some(&filter))
             .with_mode(ResponseFormat::Simplified)
             .render()
             .expect("rendered entity");

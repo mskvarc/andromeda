@@ -7,11 +7,9 @@
 //! `AttributeType` rather than restated here.
 
 use andromeda_ngsi_ld_lexicon::attribute_type::AttributeType;
+use andromeda_ngsi_ld_representation::entity_members::ENTITY_MEMBERS;
 use serde_json::{Map, Value};
 use std::str::FromStr;
-
-/// Entity members that are not attributes and pass through untouched.
-const ENTITY_MEMBERS: &[&str] = &["id", "type", "scope", "@context", "createdAt", "modifiedAt", "deletedAt", "expiresAt"];
 
 /// Attribute members that are metadata rather than sub-attributes.
 ///

@@ -162,11 +162,11 @@ name = "andromeda-delivery"
 version = "0.1.0"
 dependencies = [
  "andromeda-health",
- "andromeda-jsonld",
  "andromeda-layer-guard",
  "andromeda-ngsi-ld-http-headers",
  "andromeda-ngsi-ld-lexicon",
  "andromeda-ngsi-ld-model",
+ "andromeda-ngsi-ld-vocabulary",
  "async-trait",
  "backon",
  "bytes",
@@ -405,9 +405,12 @@ name = "andromeda-ngsi-ld-request"
 version = "0.1.0"
 dependencies = [
  "andromeda-layer-guard",
+ "andromeda-ngsi-ld-http-headers",
  "andromeda-ngsi-ld-lexicon",
  "andromeda-ngsi-ld-query",
  "andromeda-ngsi-ld-representation",
+ "headers",
+ "http",
  "pretty_assertions",
  "serde",
  "serde_json",

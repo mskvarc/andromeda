@@ -1,5 +1,6 @@
 use crate::{
     core::error::AndromedaError,
+    event::subscription_change::CsourceSubscriptionChange,
     repository::csource_subscription::repo::CsourceSubscriptionRepository,
     service::{
         subscription_base::{SubscriptionServiceCore, SubscriptionVariant},
@@ -8,7 +9,7 @@ use crate::{
 };
 use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
 use andromeda_ngsi_ld_lexicon::uri::Uri;
-use andromeda_ngsi_ld_model::{notification::CsourceSubscriptionChange, subscription::Subscription};
+use andromeda_ngsi_ld_model::subscription::Subscription;
 use async_trait::async_trait;
 use serde_json::Value;
 use sqlx::postgres::PgPool;

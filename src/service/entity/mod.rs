@@ -59,6 +59,7 @@ pub mod write_outcome;
 
 use crate::{
     core::batch_activity::BatchActivityTracker,
+    event::change_event::{ChangeEvent, ChangeOrigin},
     repository::temporal::recorder::TemporalRecorder,
     service::{
         entity::{
@@ -73,7 +74,8 @@ use crate::{
 };
 use andromeda_jsonld::engine::processor::JsonLdEngine;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, uri::Uri};
-use andromeda_ngsi_ld_model::notification::{ChangeEvent, NotificationTrigger};
+use andromeda_ngsi_ld_model::notification::NotificationTrigger;
+use chrono::Utc;
 use dashmap::DashMap;
 use serde_json::Value;
 use std::sync::Arc;
@@ -184,13 +186,18 @@ impl EntityService {
         previous: Option<Value>,
         current_payload: Option<Arc<Value>>,
     ) {
-        let mut event = ChangeEvent::new(entity_id, entity_types, trigger)
-            .with_changed_attributes(changed_attributes)
-            .with_optional_previous(previous);
-        if let Some(payload) = current_payload {
-            event = event.with_current_payload(payload);
-        }
-        self.emit_change(event);
+        self.emit_change(
+            ChangeEvent::builder()
+                .entity_id(entity_id)
+                .entity_types(entity_types)
+                .trigger_reason(trigger)
+                .occurred_at(Utc::now())
+                .origin(ChangeOrigin::Local)
+                .changed_attributes(changed_attributes)
+                .previous_attributes(previous)
+                .current_payload(current_payload)
+                .build(),
+        );
     }
 
     /// Emit a chunk's buffered change events inline.

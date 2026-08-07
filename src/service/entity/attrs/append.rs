@@ -2,6 +2,7 @@
 
 use crate::{
     core::error::AndromedaError,
+    event::change_event::{ChangeEvent, ChangeOrigin},
     service::entity::{
         EntityService,
         attribute_envelope::validate_attribute_envelopes,
@@ -17,9 +18,10 @@ use andromeda_ngsi_ld_model::{
         entity_member::extract_types,
         mutation::{entity::append_entity_attrs, selection::OverwritePolicy},
     },
-    notification::{ChangeEvent, NotificationTrigger},
+    notification::NotificationTrigger,
 };
 use andromeda_ngsi_ld_representation::normalization::normalize_entity_attributes;
+use chrono::Utc;
 use serde_json::Value;
 use std::sync::Arc;
 use urn_rs::Urn;
@@ -62,9 +64,15 @@ impl EntityService {
         let entity_types = extract_types(&merged);
         let attr_keys = extract_attribute_keys(&merged);
         self.emit_change(
-            ChangeEvent::new(entity_uri, entity_types, NotificationTrigger::AttributeCreated)
-                .with_changed_attributes(attr_keys.clone()) // clone: the same names are also this operation's return value
-                .with_current_payload(merged),
+            ChangeEvent::builder()
+                .entity_id(entity_uri)
+                .entity_types(entity_types)
+                .trigger_reason(NotificationTrigger::AttributeCreated)
+                .occurred_at(Utc::now())
+                .origin(ChangeOrigin::Local)
+                .changed_attributes(attr_keys.clone()) // clone: the same names are also this operation's return value
+                .current_payload(Some(merged))
+                .build(),
         );
 
         Ok((attr_keys, not_appended))

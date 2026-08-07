@@ -26,6 +26,15 @@ jsonld::vocab! {
     contexts: ["context/ngsi-ld-core-context-v1.9.jsonld", "context/andromeda-core-context.jsonld"]
 }
 
+/// The version-less NGSI-LD core context URL (ETSI GS CIM 009 clause 4.3.6.8).
+///
+/// The alias that resolves to the latest released core context. A sibling of
+/// the `https://uri.etsi.org/ngsi-ld/` term IRIs this crate owns, it is a plain
+/// URL string rather than an [`iri_rs::Iri`] because every consumer — the
+/// JSON-LD loader's version map, the delivery `Link` header builder — reads it
+/// as text.
+pub const NGSI_LD_CORE_CONTEXT_URL: &str = "https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context.jsonld";
+
 #[cfg(test)]
 mod tests {
     use crate::{

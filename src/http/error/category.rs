@@ -26,7 +26,6 @@ pub const fn of(kind: &ErrorKind) -> NgsiLdErrorType {
         | ErrorKind::SnapshotAlreadyExists(_)
         | ErrorKind::DatabaseUniqueViolation(_) => NgsiLdErrorType::AlreadyExists,
 
-        ErrorKind::Conflict(_) => NgsiLdErrorType::Conflict,
         ErrorKind::OperationNotSupported(_) => NgsiLdErrorType::OperationNotSupported,
         ErrorKind::ContextNotAvailable(_) => NgsiLdErrorType::LdContextNotAvailable,
 
@@ -97,7 +96,6 @@ mod tests {
             (ErrorKind::EntityValidation("x".into()), NgsiLdErrorType::BadRequestData),
             (ErrorKind::EntityNotFound("x".into()), NgsiLdErrorType::ResourceNotFound),
             (ErrorKind::EntityAlreadyExists("x".into()), NgsiLdErrorType::AlreadyExists),
-            (ErrorKind::Conflict("x".into()), NgsiLdErrorType::Conflict),
             (ErrorKind::OperationNotSupported("x".into()), NgsiLdErrorType::OperationNotSupported),
             (ErrorKind::ContextNotAvailable("x".into()), NgsiLdErrorType::LdContextNotAvailable),
             (ErrorKind::Tenancy(TenancyError::MultiTenancyDisabled), NgsiLdErrorType::NoMultiTenantSupport),

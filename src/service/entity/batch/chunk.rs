@@ -7,6 +7,7 @@
 
 use crate::{
     core::error::AndromedaError,
+    event::change_event::{ChangeEvent, ChangeOrigin},
     service::entity::{
         EntityService,
         atomic_write::AtomicWrite,
@@ -19,7 +20,8 @@ use crate::{
     },
 };
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, uri::Uri};
-use andromeda_ngsi_ld_model::notification::{ChangeEvent, NotificationTrigger};
+use andromeda_ngsi_ld_model::notification::NotificationTrigger;
+use chrono::Utc;
 use serde_json::Value;
 use std::sync::Arc;
 
@@ -166,9 +168,15 @@ fn error_of(id: &str, outcome: &WriteOutcome) -> Option<AndromedaError> {
 fn change_event(id: &str, types: Vec<EntityTypeName>, changed: Vec<AttributeName>, payload: Arc<Value>, trigger: NotificationTrigger) -> Option<ChangeEvent> {
     match id.parse::<Uri>() {
         Ok(entity_uri) => Some(
-            ChangeEvent::new(entity_uri, types, trigger)
-                .with_changed_attributes(changed)
-                .with_current_payload(payload),
+            ChangeEvent::builder()
+                .entity_id(entity_uri)
+                .entity_types(types)
+                .trigger_reason(trigger)
+                .occurred_at(Utc::now())
+                .origin(ChangeOrigin::Local)
+                .changed_attributes(changed)
+                .current_payload(Some(payload))
+                .build(),
         ),
         Err(_error) => {
             // The row is still written: the store accepts identifiers the

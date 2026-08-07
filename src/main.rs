@@ -1,5 +1,6 @@
 mod api;
 mod core;
+mod event;
 mod http;
 mod repository;
 mod server;

@@ -66,11 +66,6 @@ impl SnapshotPriority {
     pub const fn as_u8(self) -> u8 {
         self.0
     }
-
-    /// Returns the integer representation as i16.
-    pub const fn as_i16(self) -> i16 {
-        self.0 as i16
-    }
 }
 
 // Hand-written because no derive can express it: `#[derive(Default)]` on a
@@ -85,27 +80,14 @@ impl Default for SnapshotPriority {
 
 // `derive_more::TryFrom` reads an enum's discriminants; this is a newtype whose
 // validity is a range rather than a variant set, so the bound check is written
-// out. Both integer widths are accepted because clause 5.2.41 states the range
-// in decimal while the store column is `SMALLINT`.
+// out. Clause 5.2.41 states the range as `1..=10`, which fits a `u8`; the
+// persistence layer widens the value to the `SMALLINT` its column stores.
 impl TryFrom<u8> for SnapshotPriority {
     type Error = SnapshotPriorityParseError;
 
     fn try_from(value: u8) -> Result<Self, Self::Error> {
         if (Self::MIN..=Self::MAX).contains(&value) {
             Ok(SnapshotPriority(value))
-        } else {
-            Err(SnapshotPriorityParseError::OutOfRange(value.into()))
-        }
-    }
-}
-
-// See the note on the `u8` conversion above.
-impl TryFrom<i16> for SnapshotPriority {
-    type Error = SnapshotPriorityParseError;
-
-    fn try_from(value: i16) -> Result<Self, Self::Error> {
-        if (i16::from(Self::MIN)..=i16::from(Self::MAX)).contains(&value) {
-            Ok(SnapshotPriority(value as u8))
         } else {
             Err(SnapshotPriorityParseError::OutOfRange(value.into()))
         }
@@ -264,9 +246,11 @@ pub struct SnapshotInput {
     /// How long the snapshot should stay usable.
     #[serde(default)]
     pub snapshot_lifetime: Option<Iso8601Duration>,
-    /// Requested execution priority, validated into [`SnapshotPriority`].
+    /// Requested execution priority. Deserialising rejects a value outside the
+    /// `1..=10` range clause 5.2.41 allows, so an out-of-range `snapshotPriority`
+    /// in the request body is a `BadRequestData` at parse.
     #[serde(default)]
-    pub snapshot_priority: Option<i16>,
+    pub snapshot_priority: Option<SnapshotPriority>,
     /// Endpoint to notify on status changes.
     #[serde(default)]
     pub endpoint: Option<Url>,
@@ -282,9 +266,10 @@ pub struct SnapshotPatch {
     /// New lifetime, when the patch changes it.
     #[serde(default)]
     pub snapshot_lifetime: Option<Iso8601Duration>,
-    /// New priority, when the patch changes it.
+    /// New priority, when the patch changes it. Deserialising rejects a value
+    /// outside the `1..=10` range clause 5.2.41 allows.
     #[serde(default)]
-    pub snapshot_priority: Option<i16>,
+    pub snapshot_priority: Option<SnapshotPriority>,
 }
 
 #[cfg(test)]

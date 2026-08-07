@@ -63,6 +63,30 @@ pub fn assert_layer(crate_root: &str, forbidden: &[&str], allowed_in_workspace: 
     assert_permitted(&declarations(&manifest), forbidden, allowed_in_workspace);
 }
 
+/// Assert that an in-workspace dependency is declared only for tests.
+///
+/// [`assert_layer`]'s allow-list permits an edge in *any* table, so it cannot
+/// express an edge that a layer admits for its tests but must never ship — the
+/// section 8 model→representation edge is one such: `andromeda-jsonld` builds
+/// its tests against `andromeda-ngsi-ld-representation` but must not depend on
+/// it. A crate that restricts an edge to `[dev-dependencies]` pins that here, so
+/// promoting the edge to a normal dependency fails the crate's own boundary test.
+///
+/// # Panics
+///
+/// Panics when `dependency` is declared under any non-development table, or when
+/// the manifest cannot be read.
+pub fn assert_dev_only(crate_root: &str, dependency: &str) {
+    let path = Path::new(crate_root).join("Cargo.toml");
+    let manifest = fs::read_to_string(&path).unwrap_or_else(|error| unreachable!("{} is readable: {error}", path.display()));
+    for (kind, name) in declarations(&manifest) {
+        assert!(
+            name != dependency || kind == DependencyKind::Development,
+            "{dependency} must be a dev-only edge, but it is declared as a {kind:?} dependency"
+        );
+    }
+}
+
 /// The rule itself, over declarations already read.
 ///
 /// Separate from [`assert_layer`] so that what the rule rejects can be
@@ -121,12 +145,20 @@ fn declarations(manifest: &str) -> Vec<(DependencyKind, &str)> {
             (Some(kind), [name]) => declared.push((kind, name.trim_matches('"'))),
             // `[dependencies]`
             (Some(kind), []) => section = Some(kind),
-            // `[target.'cfg(unix)'.dependencies]`
-            (_, segments) => {
-                if let Some(last) = segments.last() {
-                    section = DependencyKind::of_table(last);
+            // A dotted table. `[target.'cfg(unix)'.dependencies]` opens a
+            // dependency table — its last segment is the kind. The same shape
+            // with a trailing name — `[target.'cfg(unix)'.dependencies.sqlx]` —
+            // names one dependency whose kind is the penultimate segment; the
+            // reader used to fall through this and record nothing at all.
+            (_, segments) => match segments {
+                [.., last] if DependencyKind::of_table(last).is_some() => section = DependencyKind::of_table(last),
+                [.., penultimate, name] => {
+                    if let Some(kind) = DependencyKind::of_table(penultimate) {
+                        declared.push((kind, name.trim_matches('"')));
+                    }
                 }
-            }
+                [_] | [] => {}
+            },
         }
     }
 
@@ -224,6 +256,15 @@ workspace = true
     fn a_target_qualified_dependency_table_is_read() {
         let manifest = "[target.'cfg(unix)'.dev-dependencies]\nnix = \"0.29.0\"\n";
         assert_eq!(declarations(manifest), vec![(DependencyKind::Development, "nix")]);
+    }
+
+    #[test]
+    fn a_target_qualified_single_dependency_table_is_read() {
+        // The shape the reader used to drop on the floor: a single dependency
+        // named as its own target-qualified table, where the kind is the
+        // penultimate segment rather than the last.
+        let manifest = "[target.'cfg(unix)'.dependencies.sqlx]\nversion = \"0.8.6\"\n";
+        assert_eq!(declarations(manifest), vec![(DependencyKind::Normal, "sqlx")]);
     }
 
     #[test]

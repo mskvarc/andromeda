@@ -189,13 +189,6 @@ impl MqttTransportPool {
         self.reconnect.remove(key);
     }
 
-    /// Close the connection an endpoint was using, if the pool still has it.
-    pub async fn disconnect(&self, key: &MqttConnectionKey) {
-        if let Some((_, connection)) = self.connections.remove(key) {
-            connection.close().await;
-        }
-    }
-
     /// Drop the connection that has been idle longest, making room in the pool.
     async fn evict_stalest(&self) {
         let mut stalest_key: Option<MqttConnectionKey> = None;

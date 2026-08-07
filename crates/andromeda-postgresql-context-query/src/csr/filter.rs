@@ -3,14 +3,11 @@
 //! Registrations carry no attribute projection, so every predicate reads the
 //! JSONB document directly.
 
-use andromeda_ngsi_ld_query::{
-    error::QueryError,
-    filter::{
-        expression::Expr,
-        path::AttrPath,
-        predicate::{CmpOp, PatternPolarity, Predicate, SetMembership},
-        scalar::CompareValue,
-    },
+use andromeda_ngsi_ld_query::filter::{
+    expression::Expr,
+    path::AttrPath,
+    predicate::{CmpOp, OrderingOp, PatternPolarity, Predicate, SetMembership},
+    scalar::{CompareValue, Scalar},
 };
 use andromeda_postgresql_query::{
     error::RenderError,
@@ -33,7 +30,8 @@ pub fn csr_expr_to_condition(expr: &Expr) -> Result<Condition, RenderError> {
 fn csr_pred_to_condition(pred: &Predicate) -> Result<Condition, RenderError> {
     match pred {
         Predicate::Exists(path) => Ok(Condition::all().add(SeaExpr::cust_with_values("\"additional_properties\" ? $1", [path.attr.as_str().to_string()]))),
-        Predicate::Compare { path, op, rhs } => csr_compare_to_condition(path, *op, rhs),
+        Predicate::Equality { path, membership, rhs } => Ok(csr_equality_condition(path, *membership, rhs)),
+        Predicate::Ordering { path, op, rhs } => Ok(csr_ordering_condition(path, *op, rhs)),
         Predicate::MatchPattern { path, pattern } => Ok(csr_pattern_condition(path, pattern.as_str(), PatternPolarity::Match)),
         Predicate::NotMatchPattern { path, pattern } => Ok(csr_pattern_condition(path, pattern.as_str(), PatternPolarity::NotMatch)),
     }
@@ -86,71 +84,67 @@ fn unwrap_property(expr: &str) -> String {
     format!("(SELECT CASE WHEN (j->>'type') = 'Property' THEN j->'value' ELSE j END FROM (SELECT {expr} AS j) s)")
 }
 
-/// Compile a comparison predicate against `additional_properties`.
-fn csr_compare_to_condition(path: &AttrPath, op: CmpOp, rhs: &CompareValue) -> Result<Condition, RenderError> {
+/// Build the present-guarded SQL and its bind for a single-scalar comparison
+/// against `additional_properties`.
+fn csr_scalar_comparison(extract: &str, scalar: &Scalar, op: CmpOp) -> (String, String) {
+    let (cast, value) = comparison_operand(scalar);
+    let value_sql = format!("(({extract}) #>> '{{}}'){cast} {op_str} $1{cast}", op_str = comparison(op));
+    (present_and(&format!("({extract}) IS NOT NULL"), &value_sql), value)
+}
+
+/// Compile an equality predicate (`==`/`!=`) against `additional_properties`.
+fn csr_equality_condition(path: &AttrPath, membership: SetMembership, rhs: &CompareValue) -> Condition {
     let extract = csr_value_extract(path);
 
     match rhs {
         CompareValue::Scalar(scalar) => {
-            let (cast, value) = comparison_operand(scalar);
-            let value_sql = format!(
-                "(({extract}) #>> '{{}}'){cast} {op_str} $1{cast}",
-                extract = extract,
-                cast = cast,
-                op_str = comparison(op),
-            );
-            Ok(Condition::all().add(SeaExpr::cust_with_values(present_and(&format!("({extract}) IS NOT NULL"), &value_sql), [value])))
+            let (sql, value) = csr_scalar_comparison(&extract, scalar, membership.as_cmp_op());
+            Condition::all().add(SeaExpr::cust_with_values(sql, [value]))
         }
         CompareValue::Range { min, max } => {
             let (cast, min_val) = comparison_operand(min);
             let (_, max_val) = comparison_operand(max);
-            let value_sql = match op.set_membership().ok_or(QueryError::RangeOperatorUnsupported)? {
-                SetMembership::Within => format!(
-                    "(({extract}) #>> '{{}}'){cast} >= $1{cast} AND (({extract}) #>> '{{}}'){cast} <= $2{cast}",
-                    extract = extract,
-                    cast = cast,
-                ),
-                SetMembership::Outside => format!(
-                    "((({extract}) #>> '{{}}'){cast} < $1{cast} OR (({extract}) #>> '{{}}'){cast} > $2{cast})",
-                    extract = extract,
-                    cast = cast,
-                ),
+            let value_sql = match membership {
+                SetMembership::Within => format!("(({extract}) #>> '{{}}'){cast} >= $1{cast} AND (({extract}) #>> '{{}}'){cast} <= $2{cast}"),
+                SetMembership::Outside => format!("((({extract}) #>> '{{}}'){cast} < $1{cast} OR (({extract}) #>> '{{}}'){cast} > $2{cast})"),
             };
-            Ok(Condition::all().add(SeaExpr::cust_with_values(
+            Condition::all().add(SeaExpr::cust_with_values(
                 present_and(&format!("({extract}) IS NOT NULL"), &value_sql),
                 [min_val, max_val],
-            )))
+            ))
         }
         CompareValue::ValueList(values) => {
             let mut parts = Vec::with_capacity(values.len());
             let mut bind_values = Vec::with_capacity(values.len());
             for (i, v) in values.iter().enumerate() {
                 let (cast, val) = comparison_operand(v);
-                parts.push(format!(
-                    "(({extract}) #>> '{{}}'){cast} = ${idx}{cast}",
-                    extract = extract,
-                    cast = cast,
-                    idx = i + 1
-                ));
+                parts.push(format!("(({extract}) #>> '{{}}'){cast} = ${idx}{cast}", idx = i + 1));
                 bind_values.push(val);
             }
             let joined = parts.join(" OR ");
-            let value_sql = match op.set_membership().ok_or(QueryError::ValueListOperatorUnsupported)? {
+            let value_sql = match membership {
                 SetMembership::Within => format!("({joined})"),
                 SetMembership::Outside => format!("NOT ({joined})"),
             };
-            Ok(Condition::all().add(SeaExpr::cust_with_values(
+            Condition::all().add(SeaExpr::cust_with_values(
                 present_and(&format!("({extract}) IS NOT NULL"), &value_sql),
                 bind_values,
-            )))
+            ))
         }
     }
+}
+
+/// Compile an ordering predicate (`>`/`>=`/`<`/`<=`) against `additional_properties`.
+fn csr_ordering_condition(path: &AttrPath, op: OrderingOp, rhs: &Scalar) -> Condition {
+    let extract = csr_value_extract(path);
+    let (sql, value) = csr_scalar_comparison(&extract, rhs, op.as_cmp_op());
+    Condition::all().add(SeaExpr::cust_with_values(sql, [value]))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use andromeda_ngsi_ld_query::filter::{eval::evaluate, parser, scalar::Scalar};
+    use andromeda_ngsi_ld_query::filter::{eval::evaluate, parser};
     use andromeda_postgresql_query::{
         attribute_name_id::AttributeNameId,
         q_predicate::{attribute_names::ResolvedAttributeNames, projection::compile, target::QFilterTarget},
@@ -205,23 +199,13 @@ mod tests {
         assert_eq!(sql.matches('\'').count() % 2, 0, "unbalanced SQL literal: {sql}");
     }
 
+    /// Clause 4.9 Table 4.9-1 admits a range only after `==`/`!=`; `>` takes a
+    /// single scalar. `temperature>10..20` therefore does not parse, and the
+    /// split [`Predicate`] variants make a range-after-ordering predicate
+    /// unrepresentable, so it can never reach the compiler.
     #[test]
-    fn a_range_after_an_ordering_operator_is_rejected() {
-        let expr = parser::parse("temperature>10..20").ok();
-        // `>` takes a scalar in the grammar, so the range form only reaches the
-        // compiler when built directly.
-        assert!(
-            expr.is_none()
-                || csr_expr_to_condition(&Expr::Pred(Predicate::Compare {
-                    path: AttrPath::simple("temperature".parse().expect("valid attribute name")),
-                    op: CmpOp::Greater,
-                    rhs: CompareValue::Range {
-                        min: Scalar::Number(10.into()),
-                        max: Scalar::Number(20.into()),
-                    },
-                }))
-                .is_err()
-        );
+    fn a_range_after_an_ordering_operator_does_not_parse() {
+        assert!(parser::parse("temperature>10..20").is_err());
     }
 
     /// Clause 4.9: `notPatternOp` requires the entity to contain the target

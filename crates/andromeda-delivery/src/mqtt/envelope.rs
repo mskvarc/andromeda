@@ -48,9 +48,9 @@ mod tests {
         mqtt::envelope::build_envelope,
         request::{DeliveryRequest, NotificationDelivery},
     };
-    use andromeda_jsonld::core_context::NGSI_LD_CORE_CONTEXT_URL;
     use andromeda_ngsi_ld_lexicon::{tenant::TenantName, uri::Uri};
     use andromeda_ngsi_ld_model::key_value_pair::KeyValuePair;
+    use andromeda_ngsi_ld_vocabulary::NGSI_LD_CORE_CONTEXT_URL;
     use mediatype::MediaTypeBuf;
     use serde_json::{Value, json};
     use std::str::FromStr;

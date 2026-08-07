@@ -32,7 +32,8 @@ pub fn response_context(context: &ContextSpec) -> ResponseContext {
 #[cfg(test)]
 mod tests {
     use crate::http::response::render::response_context;
-    use andromeda_jsonld::{context_spec::ContextSpec, core_context::NGSI_LD_CORE_CONTEXT_URL};
+    use andromeda_jsonld::context_spec::ContextSpec;
+    use andromeda_ngsi_ld_vocabulary::NGSI_LD_CORE_CONTEXT_URL;
 
     #[test]
     fn the_body_value_and_the_link_urls_come_from_one_presentation_reading() {

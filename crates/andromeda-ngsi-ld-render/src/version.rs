@@ -5,7 +5,9 @@
 //! reformat fields that did not exist in the requested version.
 
 use andromeda_ngsi_ld_http_headers::version::NgsiLdVersion;
+use andromeda_ngsi_ld_lexicon::attribute_type::AttributeType;
 use serde_json::Value;
+use std::str::FromStr;
 
 /// Whether version adaptation was applied to a response payload.
 ///
@@ -137,16 +139,16 @@ fn adapt_attribute_instance(instance: &mut Value, target: NgsiLdVersion) {
         return;
     };
 
-    let attr_type = obj.get("type").and_then(|t| t.as_str()).map(String::from);
+    let attr_type = obj.get("type").and_then(|t| t.as_str()).and_then(|raw| AttributeType::from_str(raw).ok());
 
-    match attr_type.as_deref() {
-        Some("Property") | Some("GeoProperty") => {
+    match attr_type {
+        Some(AttributeType::Property | AttributeType::GeoProperty) => {
             adapt_property_fields(obj, target);
         }
-        Some("Relationship") => {
+        Some(AttributeType::Relationship) => {
             adapt_relationship_fields(obj, target);
         }
-        Some("LanguageProperty") => {
+        Some(AttributeType::LanguageProperty) => {
             if target < NgsiLdVersion::V1_4 {
                 // Reformat LanguageProperty as Property: move languageMap to value
                 if let Some(lang_map) = obj.remove("languageMap") {
@@ -156,7 +158,7 @@ fn adapt_attribute_instance(instance: &mut Value, target: NgsiLdVersion) {
             }
             adapt_property_fields(obj, target);
         }
-        Some("VocabProperty") => {
+        Some(AttributeType::VocabProperty) => {
             if target < NgsiLdVersion::V1_8 {
                 // Reformat VocabProperty as Property: vocab -> value
                 if let Some(vocab) = obj.remove("vocab") {
@@ -166,7 +168,7 @@ fn adapt_attribute_instance(instance: &mut Value, target: NgsiLdVersion) {
             }
             adapt_property_fields(obj, target);
         }
-        Some("JsonProperty") => {
+        Some(AttributeType::JsonProperty) => {
             if target < NgsiLdVersion::V1_8 {
                 // Reformat JsonProperty as Property: json -> value
                 if let Some(json_val) = obj.remove("json") {
@@ -176,7 +178,7 @@ fn adapt_attribute_instance(instance: &mut Value, target: NgsiLdVersion) {
             }
             adapt_property_fields(obj, target);
         }
-        Some("ListProperty") => {
+        Some(AttributeType::ListProperty) => {
             if target < NgsiLdVersion::V1_8 {
                 // Reformat ListProperty as Property: valueList -> value
                 if let Some(list) = obj.remove("valueList") {
@@ -186,7 +188,7 @@ fn adapt_attribute_instance(instance: &mut Value, target: NgsiLdVersion) {
             }
             adapt_property_fields(obj, target);
         }
-        Some("ListRelationship") => {
+        Some(AttributeType::ListRelationship) => {
             if target < NgsiLdVersion::V1_8 {
                 // Reformat ListRelationship as Relationship: objectList -> object (first element)
                 if let Some(Value::Array(list)) = obj.remove("objectList") {
@@ -197,8 +199,8 @@ fn adapt_attribute_instance(instance: &mut Value, target: NgsiLdVersion) {
             }
             adapt_relationship_fields(obj, target);
         }
-        // Unknown attribute type -- no adaptation needed
-        Some(_) | None => {}
+        // An unrecognised type string needs no adaptation.
+        None => {}
     }
 }
 

@@ -258,8 +258,8 @@ mod tests {
             expression::Expr,
             parser,
             path::AttrPath,
-            predicate::{CmpOp, Predicate},
-            scalar::{CompareValue, Scalar},
+            predicate::{OrderingOp, Predicate},
+            scalar::Scalar,
         },
         pagination::CountPolicy,
         pattern::Pattern,
@@ -443,10 +443,10 @@ mod tests {
     #[test]
     fn build_with_q_comparison() {
         let mut cq = empty_query();
-        cq.selection.q_expr = Some(Expr::Pred(Predicate::Compare {
+        cq.selection.q_expr = Some(Expr::Pred(Predicate::Ordering {
             path: AttrPath::simple("https://example.com/temperature".parse().expect("valid attribute name")),
-            op: CmpOp::Greater,
-            rhs: CompareValue::Scalar(Scalar::Number(50.into())),
+            op: OrderingOp::Greater,
+            rhs: Scalar::Number(50.into()),
         }));
         let built = build_query(&cq, &temperature_is_known()).unwrap();
         assert!(built.sql.contains("EXISTS"), "{}", built.sql);
@@ -465,10 +465,10 @@ mod tests {
         // parameters the count query omits.
         let mut cq = empty_query();
         cq.pagination.count = CountPolicy::Emit;
-        cq.selection.q_expr = Some(Expr::Pred(Predicate::Compare {
+        cq.selection.q_expr = Some(Expr::Pred(Predicate::Ordering {
             path: AttrPath::simple("https://example.com/temperature".parse().expect("valid attribute name")),
-            op: CmpOp::Greater,
-            rhs: CompareValue::Scalar(Scalar::Number(50.into())),
+            op: OrderingOp::Greater,
+            rhs: Scalar::Number(50.into()),
         }));
         let built = build_query(&cq, &temperature_is_known()).unwrap();
         let count_sql = built.count_sql.expect("count sql");

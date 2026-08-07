@@ -46,8 +46,9 @@ mod boundary {
     /// once, in `andromeda-layer-guard`, which every crate carries as a
     /// dev-dependency and which declares nothing of its own.
     /// A request is expressible in terms of the lexical, query and
-    /// representation layers, so nothing above them -- a resource, a store, a
-    /// web framework -- may be named here.
+    /// representation layers, plus the typed HTTP header values a protocol
+    /// extension carries (clause 6.3.x), so nothing above those -- a resource, a
+    /// store, a web framework -- may be named here.
     #[test]
     fn this_crate_declares_only_what_its_layer_permits() {
         /// Third-party crates this layer must never ship.
@@ -56,11 +57,10 @@ mod boundary {
         /// Anything else is an upward or sideways edge.
         const ALLOWED_IN_WORKSPACE: &[&str] = &[
             "andromeda-layer-guard",
-            "andromeda-ngsi-ld-geometry",
+            "andromeda-ngsi-ld-http-headers",
             "andromeda-ngsi-ld-lexicon",
             "andromeda-ngsi-ld-query",
             "andromeda-ngsi-ld-representation",
-            "andromeda-ngsi-ld-vocabulary",
         ];
 
         andromeda_layer_guard::manifest::assert_layer(env!("CARGO_MANIFEST_DIR"), FORBIDDEN, ALLOWED_IN_WORKSPACE);

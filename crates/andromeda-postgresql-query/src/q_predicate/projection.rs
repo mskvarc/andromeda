@@ -8,17 +8,16 @@ use crate::{
     operator::{comparison, pattern_match},
     q_predicate::{
         attribute_names::ResolvedAttributeNames,
-        fallback::{fallback_compare, fallback_exists, fallback_pattern},
+        fallback::{fallback_equality, fallback_exists, fallback_ordering, fallback_pattern},
         target::QFilterTarget,
     },
 };
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_query::{
-    error::QueryError,
     filter::{
         expression::Expr,
         path::AttrPath,
-        predicate::{CmpOp, PatternPolarity, Predicate, SetMembership},
+        predicate::{CmpOp, OrderingOp, PatternPolarity, Predicate, SetMembership},
         scalar::{CompareValue, Scalar},
     },
     pattern::Pattern,
@@ -52,9 +51,11 @@ pub fn referenced_attribute_names(expr: &Expr, out: &mut Vec<AttributeName>) {
         }
         Expr::Pred(pred) => {
             let path = match pred {
-                Predicate::Exists(path) | Predicate::Compare { path, .. } | Predicate::MatchPattern { path, .. } | Predicate::NotMatchPattern { path, .. } => {
-                    path
-                }
+                Predicate::Exists(path)
+                | Predicate::Equality { path, .. }
+                | Predicate::Ordering { path, .. }
+                | Predicate::MatchPattern { path, .. }
+                | Predicate::NotMatchPattern { path, .. } => path,
             };
             // clone: the caller owns the resolved list, which outlives the expression
             out.push(path.attr.clone());
@@ -66,14 +67,24 @@ pub fn referenced_attribute_names(expr: &Expr, out: &mut Vec<AttributeName>) {
 fn compile_predicate(pred: &Predicate, target: &QFilterTarget<'_>, names: &ResolvedAttributeNames) -> Result<Condition, RenderError> {
     match pred {
         Predicate::Exists(path) => Ok(compile_exists(path, target, names)),
-        Predicate::Compare { path, op, rhs } => {
-            if is_projection_eligible(path) && !exceeds_projection_precision(rhs) {
+        Predicate::Equality { path, membership, rhs } => {
+            if is_projection_eligible(path) && !compare_value_exceeds_precision(rhs) {
                 match names.get(&path.attr) {
-                    Some(id) => compile_compare_on_projection(id, *op, rhs, target),
+                    Some(id) => Ok(compile_equality_on_projection(id, *membership, rhs, target)),
                     None => Ok(unsatisfiable()),
                 }
             } else {
-                fallback_compare(path, *op, rhs, target)
+                Ok(fallback_equality(path, *membership, rhs, target))
+            }
+        }
+        Predicate::Ordering { path, op, rhs } => {
+            if is_projection_eligible(path) && !scalar_exceeds_precision(rhs) {
+                match names.get(&path.attr) {
+                    Some(id) => Ok(compile_ordering_on_projection(id, *op, rhs, target)),
+                    None => Ok(unsatisfiable()),
+                }
+            } else {
+                Ok(fallback_ordering(path, *op, rhs, target))
             }
         }
         Predicate::MatchPattern { path, pattern } => Ok(compile_pattern(path, pattern, PatternPolarity::Match, target, names)),
@@ -102,25 +113,27 @@ const F64_EXACT_INTEGER_LIMIT: i128 = 1 << 53;
 /// Such predicates go to the JSONB fallback instead, which reads the payload and
 /// compares as `numeric`. That is slower and unindexed, but it is the only
 /// source that still holds the value the client wrote.
-fn exceeds_projection_precision(rhs: &CompareValue) -> bool {
-    fn scalar_exceeds(scalar: &Scalar) -> bool {
-        let Scalar::Number(number) = scalar else {
-            return false;
-        };
-        // Only integers can exceed f64's exact range while still being written
-        // precisely in JSON; a value the client wrote as a float is already an
-        // f64-shaped quantity.
-        number
-            .as_i64()
-            .map(|value| i128::from(value).abs() > F64_EXACT_INTEGER_LIMIT)
-            .or_else(|| number.as_u64().map(|value| i128::from(value) > F64_EXACT_INTEGER_LIMIT))
-            .unwrap_or(false)
-    }
+fn scalar_exceeds_precision(scalar: &Scalar) -> bool {
+    let Scalar::Number(number) = scalar else {
+        return false;
+    };
+    // Only integers can exceed f64's exact range while still being written
+    // precisely in JSON; a value the client wrote as a float is already an
+    // f64-shaped quantity.
+    number
+        .as_i64()
+        .map(|value| i128::from(value).abs() > F64_EXACT_INTEGER_LIMIT)
+        .or_else(|| number.as_u64().map(|value| i128::from(value) > F64_EXACT_INTEGER_LIMIT))
+        .unwrap_or(false)
+}
 
+/// Whether any operand of an equality comparison is outside the projection's
+/// precision.
+fn compare_value_exceeds_precision(rhs: &CompareValue) -> bool {
     match rhs {
-        CompareValue::Scalar(scalar) => scalar_exceeds(scalar),
-        CompareValue::Range { min, max } => scalar_exceeds(min) || scalar_exceeds(max),
-        CompareValue::ValueList(values) => values.iter().any(scalar_exceeds),
+        CompareValue::Scalar(scalar) => scalar_exceeds_precision(scalar),
+        CompareValue::Range { min, max } => scalar_exceeds_precision(min) || scalar_exceeds_precision(max),
+        CompareValue::ValueList(values) => values.iter().any(scalar_exceeds_precision),
     }
 }
 
@@ -188,16 +201,23 @@ fn compile_exists(path: &AttrPath, target: &QFilterTarget<'_>, names: &ResolvedA
 /// correct than a per-arm one.
 const TOMBSTONE_GUARD: &str = "\"ac\".\"value_string\" IS DISTINCT FROM 'urn:ngsi-ld:null'";
 
-/// Compile a comparison against the typed columns of `attribute_current`.
-fn compile_compare_on_projection(id: AttributeNameId, op: CmpOp, rhs: &CompareValue, target: &QFilterTarget<'_>) -> Result<Condition, RenderError> {
+/// Wrap a rendered value predicate — already accompanied by its binds — in the
+/// correlated `attribute_current` probe.
+fn projection_condition(attr: String, value_sql: String, binds: BindBuilder<SeaValue>, target: &QFilterTarget<'_>) -> Condition {
+    Condition::all().add(SeaExpr::cust_with_values(exists_on_projection(&attr, &value_sql, target), binds.into_values()))
+}
+
+/// Compile an equality comparison (`==`/`!=`) against the typed columns of
+/// `attribute_current`.
+fn compile_equality_on_projection(id: AttributeNameId, membership: SetMembership, rhs: &CompareValue, target: &QFilterTarget<'_>) -> Condition {
     // The markers are local to one `cust_with_values` fragment; sea-query
     // renumbers them when the enclosing statement is rendered.
     let mut binds: BindBuilder<SeaValue> = BindBuilder::default();
     let attr = binds.bind(id.get());
 
     let value_sql = match rhs {
-        CompareValue::Scalar(scalar) => scalar_condition(scalar, op, &mut binds),
-        CompareValue::Range { min, max } => match op.set_membership().ok_or(QueryError::RangeOperatorUnsupported)? {
+        CompareValue::Scalar(scalar) => scalar_condition(scalar, membership.as_cmp_op(), &mut binds),
+        CompareValue::Range { min, max } => match membership {
             SetMembership::Within => {
                 let lower = scalar_condition(min, CmpOp::GreaterEq, &mut binds);
                 let upper = scalar_condition(max, CmpOp::LessEq, &mut binds);
@@ -212,14 +232,23 @@ fn compile_compare_on_projection(id: AttributeNameId, op: CmpOp, rhs: &CompareVa
         CompareValue::ValueList(values) => {
             let arms: Vec<String> = values.iter().map(|value| scalar_condition(value, CmpOp::Equal, &mut binds)).collect();
             let joined = arms.join(" OR ");
-            match op.set_membership().ok_or(QueryError::ValueListOperatorUnsupported)? {
+            match membership {
                 SetMembership::Within => format!("({joined})"),
                 SetMembership::Outside => format!("NOT ({joined})"),
             }
         }
     };
 
-    Ok(Condition::all().add(SeaExpr::cust_with_values(exists_on_projection(&attr, &value_sql, target), binds.into_values())))
+    projection_condition(attr, value_sql, binds, target)
+}
+
+/// Compile an ordering comparison (`>`/`>=`/`<`/`<=`) against the typed columns
+/// of `attribute_current`.
+fn compile_ordering_on_projection(id: AttributeNameId, op: OrderingOp, rhs: &Scalar, target: &QFilterTarget<'_>) -> Condition {
+    let mut binds: BindBuilder<SeaValue> = BindBuilder::default();
+    let attr = binds.bind(id.get());
+    let value_sql = scalar_condition(rhs, op.as_cmp_op(), &mut binds);
+    projection_condition(attr, value_sql, binds, target)
 }
 
 /// Wrap a value predicate in the correlated `attribute_current` probe.

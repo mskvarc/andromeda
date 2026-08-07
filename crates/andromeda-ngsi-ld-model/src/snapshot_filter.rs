@@ -11,6 +11,7 @@
 
 use crate::snapshot::{SnapshotPriority, SnapshotPriorityParseError, SnapshotStatus};
 use andromeda_ngsi_ld_lexicon::ngsi_ld_urn::{SnapshotId, SnapshotIdParseError};
+use andromeda_ngsi_ld_query::filter::token;
 use chrono::{DateTime, Utc};
 use compact_str::CompactString;
 use std::str::FromStr;
@@ -242,14 +243,16 @@ fn split_unquoted(input: &str, sep: char) -> Vec<&str> {
 
 /// Parses one `<field><op><value>` term.
 fn parse_term(input: &str) -> Result<SnapshotPurgeTerm, SnapshotQParseError> {
-    // Longest operators first so `<=` matches before `<`.
+    // Longest operators first so `<=` matches before `<`. The token strings
+    // have one owner in andromeda-ngsi-ld-query (clause 4.9); the snapshot
+    // purge filter is a restricted subset over the same operators.
     let ops: [(&str, SnapshotOp); 6] = [
-        ("==", SnapshotOp::Eq),
-        ("!=", SnapshotOp::Neq),
-        ("<=", SnapshotOp::Lte),
-        (">=", SnapshotOp::Gte),
-        ("<", SnapshotOp::Lt),
-        (">", SnapshotOp::Gt),
+        (token::EQUAL, SnapshotOp::Eq),
+        (token::UNEQUAL, SnapshotOp::Neq),
+        (token::LESS_EQ, SnapshotOp::Lte),
+        (token::GREATER_EQ, SnapshotOp::Gte),
+        (token::LESS, SnapshotOp::Lt),
+        (token::GREATER, SnapshotOp::Gt),
     ];
 
     let (field_str, op, value_str) = ops
@@ -331,6 +334,22 @@ fn strip_quotes(s: &str) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Clause 4.9: the snapshot purge filter is a restricted subset of the
+    /// NGSI-LD query language, so its operator and conjunction spellings must be
+    /// exactly those the query crate owns. This pins the strum `Display` tokens
+    /// to that single owner, so the two cannot drift.
+    #[test]
+    fn snapshot_operator_and_conjunction_tokens_match_the_shared_query_tokens() {
+        pretty_assertions::assert_eq!(SnapshotOp::Eq.to_string(), token::EQUAL);
+        pretty_assertions::assert_eq!(SnapshotOp::Neq.to_string(), token::UNEQUAL);
+        pretty_assertions::assert_eq!(SnapshotOp::Lt.to_string(), token::LESS);
+        pretty_assertions::assert_eq!(SnapshotOp::Lte.to_string(), token::LESS_EQ);
+        pretty_assertions::assert_eq!(SnapshotOp::Gt.to_string(), token::GREATER);
+        pretty_assertions::assert_eq!(SnapshotOp::Gte.to_string(), token::GREATER_EQ);
+        pretty_assertions::assert_eq!(Conjunction::And.to_string(), token::AND);
+        pretty_assertions::assert_eq!(Conjunction::Or.to_string(), token::OR);
+    }
 
     /// Clause 5.16.7: a purge `q` may compare `endpoint` against a quoted URL
     /// that itself contains `;` or `|`. The top-level split must treat those as

@@ -7,11 +7,12 @@ use crate::{
     },
 };
 use andromeda_jsonld::{
-    core_context::{NGSI_LD_CORE_CONTEXT_URL, NGSI_LD_CORE_CONTEXT_V19, is_ngsi_ld_core_context_url},
+    core_context::{NGSI_LD_CORE_CONTEXT_V19, is_ngsi_ld_core_context_url},
     engine::processor::JsonLdEngine,
 };
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::jsonld_context::{ContextGetResult, ContextKind, ContextListResult, ContextMetadata};
+use andromeda_ngsi_ld_vocabulary::NGSI_LD_CORE_CONTEXT_URL;
 use chrono::Utc;
 use serde_json::Value;
 use sqlx::postgres::PgPool;

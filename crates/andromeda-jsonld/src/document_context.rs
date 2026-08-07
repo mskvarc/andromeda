@@ -139,9 +139,10 @@ fn dedupe_contexts(contexts: Vec<Value>) -> Vec<Value> {
 mod tests {
     use crate::{
         context_spec::ContextSpec,
-        core_context::{ANDROMEDA_CORE_CONTEXT_URL, NGSI_LD_CORE_CONTEXT_URL, NGSI_LD_CORE_CONTEXT_V16_URL},
+        core_context::{ANDROMEDA_CORE_CONTEXT_URL, NGSI_LD_CORE_CONTEXT_V16_URL},
         document_context::{apply_context, resolve_context_value},
     };
+    use andromeda_ngsi_ld_vocabulary::NGSI_LD_CORE_CONTEXT_URL;
     use serde_json::json;
 
     #[test]

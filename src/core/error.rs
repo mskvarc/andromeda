@@ -81,11 +81,6 @@ pub enum ErrorKind {
     #[error("Snapshot {0} already exists")]
     SnapshotAlreadyExists(String),
 
-    // -- Resource conflict ---------------------------------------------------
-    /// A state conflict prevented the operation.
-    #[error("{0}")]
-    Conflict(String),
-
     // -- Unsupported operation -----------------------------------------------
     /// The requested operation is not supported by this broker.
     #[error("{0}")]
@@ -623,8 +618,6 @@ impl From<QueryError> for AndromedaError {
             | QueryError::GeoCoordinatesInvalid(_)
             | QueryError::ReferenceGeometry(_)
             | QueryError::NearWithoutDistance
-            | QueryError::RangeOperatorUnsupported
-            | QueryError::ValueListOperatorUnsupported
             | QueryError::DistanceOrderWithoutReference => ErrorKind::QueryValidation(err.to_string()),
             // Neither the client nor the request shape caused these: a term the
             // processor accepted failed to expand, or an expanded IRI turned

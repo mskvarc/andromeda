@@ -3,14 +3,7 @@
 use crate::{
     endpoint::mqtt::{MqttEndpointConfig, MqttQoS},
     error::TransportError,
-    mqtt::{
-        ack::AckKind,
-        connection::MqttClientVariant,
-        connection_key::MqttConnectionKey,
-        envelope::build_envelope,
-        metadata::transported_headers,
-        pool::MqttTransportPool,
-    },
+    mqtt::{ack::AckKind, connection::MqttClientVariant, envelope::build_envelope, metadata::transported_headers, pool::MqttTransportPool},
     outcome::DeliveryOutcome,
     request::DeliveryRequest,
     transport::NotificationTransport,
@@ -164,9 +157,5 @@ impl NotificationTransport for MqttTransportHandle {
                 duration: self.pool.publish_ack_timeout(),
             }),
         }
-    }
-
-    async fn shutdown(&self) {
-        self.pool.disconnect(&MqttConnectionKey::from_config(&self.config)).await;
     }
 }

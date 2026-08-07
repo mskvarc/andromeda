@@ -5,6 +5,7 @@
 
 use crate::{
     core::error::AndromedaError,
+    event::change_event::{ChangeEvent, ChangeOrigin},
     service::entity::{
         EntityService,
         atomic_write::AtomicWrite,
@@ -21,9 +22,10 @@ use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name:
 use andromeda_ngsi_ld_model::{
     entity::{Entity, EntityPatch},
     expanded::{entity_member::extract_types, mutation::entity::merge_entity},
-    notification::{ChangeEvent, NotificationTrigger},
+    notification::NotificationTrigger,
 };
 use andromeda_ngsi_ld_representation::normalization::normalize_entity_attributes;
+use chrono::Utc;
 use serde_json::Value;
 use std::{collections::HashSet, sync::Arc};
 use urn_rs::Urn;
@@ -79,9 +81,15 @@ impl EntityService {
         }
 
         self.emit_change(
-            ChangeEvent::new(entity.id.clone(), types, NotificationTrigger::EntityCreated) // clone: owned Uri for event
-                .with_changed_attributes(changed_attrs)
-                .with_current_payload(payload),
+            ChangeEvent::builder()
+                .entity_id(entity.id.clone()) // clone: owned Uri for event
+                .entity_types(types)
+                .trigger_reason(NotificationTrigger::EntityCreated)
+                .occurred_at(Utc::now())
+                .origin(ChangeOrigin::Local)
+                .changed_attributes(changed_attrs)
+                .current_payload(Some(payload))
+                .build(),
         );
 
         Ok(id.parse::<Urn>()?)
@@ -234,9 +242,15 @@ impl EntityService {
             .await?;
 
         self.emit_change(
-            ChangeEvent::new(entity_uri, types, NotificationTrigger::EntityUpdated)
-                .with_changed_attributes(changed_attrs)
-                .with_current_payload(payload),
+            ChangeEvent::builder()
+                .entity_id(entity_uri)
+                .entity_types(types)
+                .trigger_reason(NotificationTrigger::EntityUpdated)
+                .occurred_at(Utc::now())
+                .origin(ChangeOrigin::Local)
+                .changed_attributes(changed_attrs)
+                .current_payload(Some(payload))
+                .build(),
         );
         Ok(())
     }
@@ -295,19 +309,31 @@ impl EntityService {
         // One event per deleted attribute so `attributeDeleted` subscriptions fire.
         if !attr_keys.is_empty() {
             self.emit_change(
-                ChangeEvent::new(entity_uri.clone(), entity_types.clone(), NotificationTrigger::AttributeDeleted) // clone: value also needed by subsequent EntityDeleted emit
-                    .with_changed_attributes(attr_keys)
-                    .with_snapshot(entity_snapshot.clone()) // clone: value also needed by subsequent EntityDeleted emit
-                    .with_previous(entity_snapshot.clone()) // clone: value also needed by subsequent EntityDeleted emit
-                    .with_sys_attrs(sys_attrs_snapshot.clone()), // clone: value also needed by subsequent EntityDeleted emit
+                ChangeEvent::builder()
+                    .entity_id(entity_uri.clone()) // clone: value also needed by subsequent EntityDeleted emit
+                    .entity_types(entity_types.clone()) // clone: value also needed by subsequent EntityDeleted emit
+                    .trigger_reason(NotificationTrigger::AttributeDeleted)
+                    .occurred_at(Utc::now())
+                    .origin(ChangeOrigin::Local)
+                    .changed_attributes(attr_keys)
+                    .entity_snapshot(Some(entity_snapshot.clone())) // clone: value also needed by subsequent EntityDeleted emit
+                    .previous_attributes(Some(entity_snapshot.clone())) // clone: value also needed by subsequent EntityDeleted emit
+                    .sys_attrs_snapshot(sys_attrs_snapshot.clone()) // clone: value also needed by subsequent EntityDeleted emit
+                    .build(),
             );
         }
 
         self.emit_change(
-            ChangeEvent::new(entity_uri, entity_types, NotificationTrigger::EntityDeleted)
-                .with_snapshot(entity_snapshot.clone()) // clone: separate ownership for snapshot and previous fields
-                .with_previous(entity_snapshot)
-                .with_sys_attrs(sys_attrs_snapshot),
+            ChangeEvent::builder()
+                .entity_id(entity_uri)
+                .entity_types(entity_types)
+                .trigger_reason(NotificationTrigger::EntityDeleted)
+                .occurred_at(Utc::now())
+                .origin(ChangeOrigin::Local)
+                .entity_snapshot(Some(entity_snapshot.clone())) // clone: separate ownership for snapshot and previous fields
+                .previous_attributes(Some(entity_snapshot))
+                .sys_attrs_snapshot(sys_attrs_snapshot)
+                .build(),
         );
 
         Ok(())

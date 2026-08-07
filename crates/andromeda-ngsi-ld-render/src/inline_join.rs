@@ -8,15 +8,20 @@
 
 use crate::{entity::EntityRenderer, error::RepresentationError};
 use andromeda_ngsi_ld_http_headers::language::LanguageFilter;
+use andromeda_ngsi_ld_lexicon::attribute_type::AttributeType;
 use andromeda_ngsi_ld_model::entity::Entity;
 use serde_json::{Map, Value};
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{HashMap, HashSet},
+    str::FromStr,
+};
 
 /// Apply `join=inline` expansion to an already-rendered entity response.
 ///
-/// Public because it applies to a `Value` as readily as to an [`Entity`]:
-/// [`crate::snapshot::SnapshotRenderer`] runs it over a payload that arrived
-/// already compacted, and [`EntityRenderer`] runs it over one it just built.
+/// Exposed within the crate (`pub(crate)`) because it applies to a `Value` as
+/// readily as to an [`Entity`]: [`crate::snapshot::SnapshotRenderer`] runs it
+/// over a payload that arrived already compacted, and [`EntityRenderer`] runs it
+/// over one it just built.
 ///
 /// The `linked` map legitimately contains entities that reference one another,
 /// so the recursion is bounded by the set of ids already open on the current
@@ -90,29 +95,44 @@ fn inline_join_attribute_instance(
     language_filter: Option<&LanguageFilter>,
     ancestors: &mut HashSet<String>,
 ) -> Result<(), RepresentationError> {
-    let attr_type = attr_obj.get("type").and_then(Value::as_str).map(ToOwned::to_owned);
-    if attr_type.as_deref() == Some("Relationship") {
-        if let Some(object_uri) = attr_obj.get("object").and_then(Value::as_str).map(ToOwned::to_owned)
-            && let Some(linked_entity) = linked.get(&object_uri)
-        {
-            let linked_val = render_linked(linked_entity, &object_uri, linked, language_filter, ancestors)?;
-            attr_obj.insert("entity".to_string(), linked_val);
-        }
-    } else if attr_type.as_deref() == Some("ListRelationship")
-        && let Some(object_list) = attr_obj.get("objectList").and_then(Value::as_array)
-    {
-        // Collect the URIs first so the borrow of `attr_obj` is released before
-        // the recursive expansion, which needs the mutable ancestor set.
-        let uris: Vec<String> = object_list.iter().filter_map(Value::as_str).map(ToOwned::to_owned).collect();
-        let mut entity_list = Vec::new();
-        for uri in &uris {
-            if let Some(linked_entity) = linked.get(uri) {
-                entity_list.push(render_linked(linked_entity, uri, linked, language_filter, ancestors)?);
+    let attr_type = attr_obj.get("type").and_then(Value::as_str).and_then(|raw| AttributeType::from_str(raw).ok());
+    match attr_type {
+        Some(AttributeType::Relationship) => {
+            if let Some(object_uri) = attr_obj.get("object").and_then(Value::as_str).map(ToOwned::to_owned)
+                && let Some(linked_entity) = linked.get(&object_uri)
+            {
+                let linked_val = render_linked(linked_entity, &object_uri, linked, language_filter, ancestors)?;
+                attr_obj.insert("entity".to_string(), linked_val);
             }
         }
-        if !entity_list.is_empty() {
-            attr_obj.insert("entityList".to_string(), Value::Array(entity_list));
+        Some(AttributeType::ListRelationship) => {
+            if let Some(object_list) = attr_obj.get("objectList").and_then(Value::as_array) {
+                // Collect the URIs first so the borrow of `attr_obj` is released
+                // before the recursive expansion, which needs the mutable
+                // ancestor set.
+                let uris: Vec<String> = object_list.iter().filter_map(Value::as_str).map(ToOwned::to_owned).collect();
+                let mut entity_list = Vec::new();
+                for uri in &uris {
+                    if let Some(linked_entity) = linked.get(uri) {
+                        entity_list.push(render_linked(linked_entity, uri, linked, language_filter, ancestors)?);
+                    }
+                }
+                if !entity_list.is_empty() {
+                    attr_obj.insert("entityList".to_string(), Value::Array(entity_list));
+                }
+            }
         }
+        // Only a Relationship or a ListRelationship names a linked entity; every
+        // other attribute kind, and an unrecognised type, is left untouched.
+        Some(
+            AttributeType::Property
+            | AttributeType::GeoProperty
+            | AttributeType::VocabProperty
+            | AttributeType::LanguageProperty
+            | AttributeType::JsonProperty
+            | AttributeType::ListProperty,
+        )
+        | None => {}
     }
     Ok(())
 }
@@ -127,11 +147,7 @@ fn render_linked(
     language_filter: Option<&LanguageFilter>,
     ancestors: &mut HashSet<String>,
 ) -> Result<Value, RepresentationError> {
-    let mut rendered = EntityRenderer::new(linked_entity);
-    if let Some(filter) = language_filter {
-        rendered = rendered.with_language_filter(filter);
-    }
-    let mut linked_val = rendered.render()?;
+    let mut linked_val = EntityRenderer::new(linked_entity).with_optional_language_filter(language_filter).render()?;
     if !ancestors.contains(object_uri) {
         apply_inline_join_guarded(&mut linked_val, linked, language_filter, ancestors)?;
     }

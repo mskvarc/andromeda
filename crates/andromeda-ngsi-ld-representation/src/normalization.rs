@@ -15,23 +15,10 @@
 //! LanguageProperty, a bare GeoJSON geometry a GeoProperty, and so on — only a
 //! value with no such marker becomes an implicit Property.
 
+use crate::entity_members::ENTITY_MEMBERS;
 use andromeda_ngsi_ld_lexicon::attribute_type::AttributeType;
 use serde_json::{Map, Value};
 use std::str::FromStr;
-
-/// The entity members clause 5.2.4 defines, which are never attributes.
-const ENTITY_MEMBERS: &[&str] = &[
-    "id",
-    "type",
-    "scope",
-    "@context",
-    "@id",
-    "@type",
-    "expiresAt",
-    "createdAt",
-    "modifiedAt",
-    "deletedAt",
-];
 
 /// Rewrite every attribute of an entity into its normalized form.
 ///

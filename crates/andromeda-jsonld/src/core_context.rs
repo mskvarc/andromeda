@@ -7,6 +7,7 @@
 //! The embedded payloads are compiled into the binary via [`include_str!`] so
 //! they are available without any network access.
 
+use andromeda_ngsi_ld_vocabulary::NGSI_LD_CORE_CONTEXT_URL;
 use std::{collections::HashMap, ptr, sync::LazyLock};
 
 /// Core Context v1.3 URL.
@@ -43,9 +44,6 @@ pub const NGSI_LD_CORE_CONTEXT_V18: &str = include_str!("context/ngsi-ld-core-co
 pub const NGSI_LD_CORE_CONTEXT_V19_URL: &str = "https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.9.jsonld";
 /// Core Context v1.9 embedded payload.
 pub const NGSI_LD_CORE_CONTEXT_V19: &str = include_str!("context/ngsi-ld-core-context-v1.9.jsonld");
-
-/// Version-less alias that resolves to the latest core context.
-pub const NGSI_LD_CORE_CONTEXT_URL: &str = "https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context.jsonld";
 
 /// All known NGSI-LD core context URLs (aliases + versioned).
 pub const NGSI_LD_CORE_CONTEXT_URL_LIST: [&str; 8] = [

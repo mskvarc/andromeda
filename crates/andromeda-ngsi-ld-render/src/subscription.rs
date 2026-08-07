@@ -22,10 +22,12 @@ pub enum SubscriptionFlavor {
 
 /// Renders a subscription payload for HTTP response.
 ///
-/// Conditionally strips system attributes (`createdAt`, `modifiedAt`),
-/// defaulted runtime fields (`isActive` when `true`, `localOnly` when `false`),
-/// and -- for the [`SubscriptionFlavor::ContextSource`] flavor --
-/// `jsonldContext` plus notification runtime fields.
+/// Strips the clause 4.8 system timestamps (`createdAt`, `modifiedAt`) unless
+/// `sysAttrs` was requested. Independently of `sysAttrs`, it always hides
+/// defaulted fields (`isActive` when `true`, `localOnly` when `false`) and, for
+/// the [`SubscriptionFlavor::ContextSource`] flavor, always removes the internal
+/// `jsonldContext` and the notification runtime fields — none of which
+/// `sysAttrs` governs.
 #[derive(Debug)]
 pub struct SubscriptionRenderer {
     /// The subscription payload to scrub.
@@ -62,14 +64,17 @@ impl SubscriptionRenderer {
             flavor,
             sys_attrs,
         } = self;
-        if sys_attrs == SysAttrsInclusion::Include {
-            return payload;
-        }
         let Some(obj) = payload.as_object_mut() else {
             return payload;
         };
-        obj.remove("createdAt");
-        obj.remove("modifiedAt");
+        // Clause 4.8: `sysAttrs` governs only the system timestamps. Every other
+        // policy below — default-value hiding, `jsonldContext` removal, CSR
+        // notification-runtime scrubbing — is independent of it, so `sysAttrs`
+        // must not resurrect an internal or defaulted field.
+        if sys_attrs == SysAttrsInclusion::Strip {
+            obj.remove("createdAt");
+            obj.remove("modifiedAt");
+        }
         // isActive is only shown when explicitly false (paused); true is the default
         if obj.get("isActive").and_then(|v| v.as_bool()) == Some(true) {
             obj.remove("isActive");
@@ -169,8 +174,11 @@ mod tests {
     }
 
     #[test]
-    fn render_subscription_preserves_all_when_sys_attrs_included() {
-        let original = json!({
+    fn render_subscription_keeps_timestamps_but_still_hides_defaults_when_sys_attrs_included() {
+        // Clause 4.8: `sysAttrs` keeps the timestamps, but default-value hiding
+        // is a separate policy it does not switch off — an `isActive: true` or
+        // `localOnly: false` default is still omitted.
+        let value = json!({
             "id": "urn:ngsi-ld:Subscription:1",
             "type": "Subscription",
             "createdAt": "2025-01-01T00:00:00Z",
@@ -178,8 +186,11 @@ mod tests {
             "isActive": true,
             "localOnly": false
         });
-        let rendered = render_local(original.clone(), SysAttrsInclusion::Include);
-        pretty_assertions::assert_eq!(rendered, original);
+        let rendered = render_local(value, SysAttrsInclusion::Include);
+        pretty_assertions::assert_eq!(rendered.get("createdAt").and_then(Value::as_str), Some("2025-01-01T00:00:00Z"));
+        pretty_assertions::assert_eq!(rendered.get("modifiedAt").and_then(Value::as_str), Some("2025-01-01T00:00:00Z"));
+        assert!(rendered.get("isActive").is_none(), "the isActive default is still hidden: {rendered}");
+        assert!(rendered.get("localOnly").is_none(), "the localOnly default is still hidden: {rendered}");
     }
 
     #[test]
@@ -235,15 +246,37 @@ mod tests {
     }
 
     #[test]
-    fn render_csource_subscription_preserves_all_when_sys_attrs_included() {
-        let original = json!({
+    fn render_csource_subscription_keeps_timestamps_but_still_scrubs_context_and_runtime_when_sys_attrs_included() {
+        // Clause 4.8: `sysAttrs` keeps createdAt/modifiedAt, but it does not
+        // govern the internal `jsonldContext` or the notification runtime
+        // fields, which are scrubbed regardless. `GET ...?options=sysAttrs`
+        // used to short-circuit and leak all three.
+        let value = json!({
             "id": "urn:ngsi-ld:Subscription:1",
             "type": "Subscription",
             "createdAt": "2025-01-01T00:00:00Z",
-            "notification": {"timesSent": 42}
+            "modifiedAt": "2025-01-01T00:00:00Z",
+            "jsonldContext": "https://example.org/ctx",
+            "notification": {
+                "endpoint": {"uri": "https://example.org"},
+                "timesSent": 42,
+                "lastNotification": "2025-01-01T00:00:00Z"
+            }
         });
-        let rendered = render_csource(original.clone(), SysAttrsInclusion::Include);
-        pretty_assertions::assert_eq!(rendered, original);
+        let rendered = render_csource(value, SysAttrsInclusion::Include);
+        pretty_assertions::assert_eq!(rendered.get("createdAt").and_then(Value::as_str), Some("2025-01-01T00:00:00Z"));
+        pretty_assertions::assert_eq!(rendered.get("modifiedAt").and_then(Value::as_str), Some("2025-01-01T00:00:00Z"));
+        assert!(rendered.get("jsonldContext").is_none(), "jsonldContext must never leak in the body: {rendered}");
+        let notif = rendered.get("notification").expect("notification");
+        assert!(notif.get("endpoint").is_some(), "the endpoint stays: {rendered}");
+        assert!(
+            notif.get("timesSent").is_none(),
+            "runtime fields are scrubbed regardless of sysAttrs: {rendered}"
+        );
+        assert!(
+            notif.get("lastNotification").is_none(),
+            "runtime fields are scrubbed regardless of sysAttrs: {rendered}"
+        );
     }
 
     #[test]

@@ -5,7 +5,7 @@
 //! respond-async`. Either they run inline in the request that caused them, or
 //! they are persisted alongside the entity write and drained by a worker.
 
-use andromeda_ngsi_ld_model::notification::ChangeEvent;
+use crate::event::change_event::ChangeEvent;
 use serde_json::Value;
 use std::sync::Arc;
 

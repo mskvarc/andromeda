@@ -11,7 +11,10 @@ use andromeda_ngsi_ld_model::{
     snapshot::{ExecutionResultDetails, Snapshot, SnapshotPriority, SnapshotStatus},
     snapshot_filter::SnapshotPurgeFilter,
 };
-use andromeda_postgresql_context_query::snapshot_purge::build_match_query;
+use andromeda_postgresql_context_query::{
+    snapshot_listing::{SnapshotListingParams, build_get_row_query, build_listing_query},
+    snapshot_purge::build_match_query,
+};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use iso8601_duration::Duration as Iso8601Duration;
@@ -97,7 +100,7 @@ impl SnapshotStore for SnapshotRepository {
         )
         .bind(id.as_str())
         .bind(lifetime.map(ToString::to_string))
-        .bind(priority.map(SnapshotPriority::as_i16))
+        .bind(priority.map(|p| i16::from(p.as_u8())))
         .bind(new_expires_at)
         .execute(&self.pool)
         .await?;
@@ -371,58 +374,24 @@ impl SnapshotStore for SnapshotRepository {
 }
 
 async fn query_snapshot_table(params: &SnapshotQueryParams<'_>) -> Result<(Vec<Value>, i64), AndromedaError> {
-    use sea_query::{Alias, Asterisk, Expr, Order, PostgresQueryBuilder, Query};
-    use sea_query_binder::SqlxBinder;
-
-    let SnapshotQueryParams {
-        pool,
-        table,
-        data_column,
-        snapshot_id,
-        entity_type,
-        entity_ids,
-        limit,
-        offset,
-    } = params;
-
-    let table_ident = Alias::new(*table);
-    let data_ident = Alias::new(*data_column);
-    let snapshot_col = Alias::new("snapshot_id");
-    let entity_id_col = Alias::new("entity_id");
-
-    let apply_where = |q: &mut sea_query::SelectStatement| {
-        q.and_where(Expr::col(snapshot_col.clone()).eq(snapshot_id.as_str()));
-        if let Some(t) = entity_type {
-            let fragment = format!("{}->>'type' LIKE '%' || $1 || '%'", data_column);
-            q.and_where(Expr::cust_with_values(&fragment, [*t]));
-        }
-        if let Some(ids) = entity_ids
-            && !ids.is_empty()
-        {
-            let owned: Vec<String> = ids.to_vec(); // clone: sea_query requires owned values
-            q.and_where(Expr::col(entity_id_col.clone()).is_in(owned));
-        }
+    let built = build_listing_query(&SnapshotListingParams {
+        table: params.table,
+        data_column: params.data_column,
+        snapshot_id: params.snapshot_id.as_str(),
+        entity_type: params.entity_type,
+        entity_ids: params.entity_ids,
+        limit: params.limit,
+        offset: params.offset,
+    });
+    let Some(count_sql) = built.count_sql.as_deref() else {
+        return Err(AndromedaError::internal("snapshot listing query must carry a count statement"));
     };
 
-    let mut count_builder = Query::select();
-    count_builder
-        .expr_as(Expr::count(Expr::col(Asterisk)), Alias::new("cnt"))
-        .from(table_ident.clone());
-    apply_where(&mut count_builder);
-    let (count_sql, count_values) = count_builder.build_sqlx(PostgresQueryBuilder);
-    let count_row = sqlx::query_with(&count_sql, count_values).fetch_one(*pool).await?;
+    let count_row = bind_values!(sqlx::query(count_sql), &built.bind_values).fetch_one(params.pool).await?;
     let total: i64 = count_row.try_get("cnt")?;
 
-    let mut data_builder = Query::select();
-    data_builder.column(data_ident.clone()).from(table_ident);
-    apply_where(&mut data_builder);
-    data_builder
-        .order_by(entity_id_col, Order::Asc)
-        .limit(u64::try_from(*limit).unwrap_or(0))
-        .offset(u64::try_from(*offset).unwrap_or(0));
-    let (data_sql, data_values) = data_builder.build_sqlx(PostgresQueryBuilder);
-    let rows = sqlx::query_with(&data_sql, data_values).fetch_all(*pool).await?;
-    let entities: Vec<Value> = rows.iter().map(|r| r.try_get(*data_column)).collect::<Result<Vec<_>, _>>()?;
+    let rows = bind_values!(sqlx::query(&built.sql), &built.bind_values).fetch_all(params.pool).await?;
+    let entities: Vec<Value> = rows.iter().map(|r| r.try_get(params.data_column)).collect::<Result<Vec<_>, _>>()?;
 
     Ok((entities, total))
 }
@@ -456,17 +425,8 @@ async fn batch_insert_snapshot_rows(
 }
 
 async fn get_snapshot_row(pool: &PgPool, table: &str, data_column: &str, snapshot_id: &SnapshotId, entity_id: &str) -> Result<Option<Value>, AndromedaError> {
-    use sea_query::{Alias, Expr, PostgresQueryBuilder, Query};
-    use sea_query_binder::SqlxBinder;
-
-    let mut select = Query::select();
-    select
-        .column(Alias::new(data_column))
-        .from(Alias::new(table))
-        .and_where(Expr::col(Alias::new("snapshot_id")).eq(snapshot_id.as_str()))
-        .and_where(Expr::col(Alias::new("entity_id")).eq(entity_id));
-    let (sql, values) = select.build_sqlx(PostgresQueryBuilder);
-    let row = sqlx::query_with(&sql, values).fetch_optional(pool).await?;
+    let built = build_get_row_query(table, data_column, snapshot_id.as_str(), entity_id);
+    let row = bind_values!(sqlx::query(&built.sql), &built.bind_values).fetch_optional(pool).await?;
 
     match row {
         Some(row) => {

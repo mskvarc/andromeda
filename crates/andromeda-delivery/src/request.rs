@@ -1,10 +1,10 @@
 //! One notification, ready to hand to a transport.
 
 use crate::error::TransportError;
-use andromeda_jsonld::core_context::NGSI_LD_CORE_CONTEXT_URL;
 use andromeda_ngsi_ld_http_headers::{link::header::Link, media_type::ResponseMediaType, ngsild_tenant::NgsiLdTenant};
 use andromeda_ngsi_ld_lexicon::{tenant::TenantName, uri::Uri};
 use andromeda_ngsi_ld_model::key_value_pair::KeyValuePair;
+use andromeda_ngsi_ld_vocabulary::NGSI_LD_CORE_CONTEXT_URL;
 use bytes::Bytes;
 use mediatype::MediaTypeBuf;
 use serde_json::Value;
@@ -35,8 +35,6 @@ pub struct DeliveryRequest {
     pub receiver_info: Vec<KeyValuePair>,
     /// Subscription identifier, for logging and stream routing.
     pub subscription_id: Uri,
-    /// Delivery attempt number.
-    pub attempt: u32,
 }
 
 impl DeliveryRequest {
@@ -95,7 +93,6 @@ impl NotificationDelivery<'_> {
             tenant: self.tenant.map(|name| NgsiLdTenant::new(name.clone())),
             receiver_info: self.receiver_info.unwrap_or_default().to_vec(),
             subscription_id: self.subscription_id.clone(), // clone: the request outlives this borrow of the subscription
-            attempt: 0,
         })
     }
 }
@@ -121,10 +118,10 @@ pub fn notification_media_type(accept: Option<&MediaTypeBuf>) -> ResponseMediaTy
 #[cfg(test)]
 mod tests {
     use crate::request::{DeliveryRequest, NotificationDelivery, notification_media_type};
-    use andromeda_jsonld::core_context::NGSI_LD_CORE_CONTEXT_URL;
     use andromeda_ngsi_ld_http_headers::{media_type::ResponseMediaType, ngsild_tenant::NgsiLdTenant};
     use andromeda_ngsi_ld_lexicon::{tenant::TenantName, uri::Uri};
     use andromeda_ngsi_ld_model::key_value_pair::KeyValuePair;
+    use andromeda_ngsi_ld_vocabulary::NGSI_LD_CORE_CONTEXT_URL;
     use mediatype::MediaTypeBuf;
     use serde_json::json;
     use std::str::FromStr;

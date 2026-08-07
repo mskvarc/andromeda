@@ -3,6 +3,7 @@
 
 use crate::{
     core::{batch_activity::BatchActivityTracker, error::AndromedaError},
+    event::change_event::ChangeEvent,
     service::entity::{
         atomic_write::AtomicWrite,
         entity_mutation::{EntityMutation, EntityRecord},
@@ -16,7 +17,7 @@ use crate::{
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::{
     expanded::{instance_key::removed_attribute_instances, mutation::expiry::remove_expired_attribute_instances},
-    notification::{ChangeEvent, NotificationTrigger},
+    notification::NotificationTrigger,
 };
 use chrono::Utc;
 use std::{sync::Arc, time::Duration};
