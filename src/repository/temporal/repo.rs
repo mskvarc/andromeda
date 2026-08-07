@@ -3,6 +3,7 @@
 use crate::{
     core::{config::BulkWriteMode, error::AndromedaError},
     repository::{
+        attribute_current::queue::AttributeCurrentBarrier,
         attribute_names::AttributeNameCache,
         ewkb_binding::geometry_bytes,
         temporal::{
@@ -34,9 +35,15 @@ use std::{
 pub struct TemporalRepository {
     pool: PgPool,
     /// Shared `attribute_names` dictionary cache.
-    attribute_names: Arc<AttributeNameCache>,
+    pub(crate) attribute_names: Arc<AttributeNameCache>,
+    /// Barrier for pending `attribute_current` materialiser writes.
+    ///
+    /// `None` until the materialiser is started and the barrier is wired in
+    /// via [`Self::with_barrier`]. When `None` the reader skips the wait,
+    /// which is safe during the startup window before the first write.
+    pub(crate) attribute_current: Option<AttributeCurrentBarrier>,
     /// TSL capability probe.
-    timescale_features: TimescaleFeatures,
+    pub(crate) timescale_features: TimescaleFeatures,
     /// Dispatch mode for bulk history INSERTs.
     bulk_write_mode: BulkWriteMode,
 }
@@ -51,9 +58,20 @@ impl TemporalRepository {
         TemporalRepository {
             pool: pool.clone(), // clone: Arc ref-count bump
             attribute_names,
+            attribute_current: None,
             timescale_features: TimescaleFeatures::empty(),
             bulk_write_mode,
         }
+    }
+
+    /// Attach the `attribute_current` materialiser barrier.
+    ///
+    /// The barrier is constructed after the repository (the materialiser
+    /// needs the pool first), so this builder method lets the factory wire
+    /// it in once both exist. Follows the same pattern as [`Self::with_features`].
+    pub fn with_barrier(mut self, barrier: AttributeCurrentBarrier) -> TemporalRepository {
+        self.attribute_current = Some(barrier);
+        self
     }
 
     /// Replace the repository's TimescaleDB feature set.
@@ -82,7 +100,7 @@ impl TemporalRepository {
     }
 
     /// Distinct attribute names recorded for the given temporal entity.
-    pub async fn get_attribute_names_for_entity(&self, entity_id: &str) -> Result<Vec<String>, AndromedaError> {
+    pub(crate) async fn get_attribute_names_for_entity(&self, entity_id: &str) -> Result<Vec<String>, AndromedaError> {
         let rows = sqlx::query(
             r#"
             SELECT DISTINCT an.name AS attribute_name
@@ -99,7 +117,7 @@ impl TemporalRepository {
     }
 
     /// Check if any temporal data exists for an entity.
-    pub async fn tea_exists_for_entity(&self, entity_id: &str) -> Result<bool, AndromedaError> {
+    pub(crate) async fn tea_exists_for_entity(&self, entity_id: &str) -> Result<bool, AndromedaError> {
         let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM temporal_entity_attributes WHERE entity_id = $1)")
             .bind(entity_id)
             .fetch_one(&self.pool)
@@ -109,7 +127,7 @@ impl TemporalRepository {
     }
 
     /// Delete all TEAs for an entity (cascades to history). Returns rows affected.
-    pub async fn delete_teas_for_entity(&self, entity_id: &str) -> Result<u64, AndromedaError> {
+    pub(crate) async fn delete_teas_for_entity(&self, entity_id: &str) -> Result<u64, AndromedaError> {
         let result = sqlx::query("DELETE FROM temporal_entity_attributes WHERE entity_id = $1")
             .bind(entity_id)
             .execute(&self.pool)
@@ -119,7 +137,7 @@ impl TemporalRepository {
     }
 
     /// Delete specific TEA entry.
-    pub async fn delete_tea(&self, entity_id: &str, attribute_name: &str, dataset_id: Option<&str>, scope: DeleteScope) -> Result<u64, AndromedaError> {
+    pub(crate) async fn delete_tea(&self, entity_id: &str, attribute_name: &str, dataset_id: Option<&str>, scope: DeleteScope) -> Result<u64, AndromedaError> {
         let result = match scope {
             DeleteScope::All => {
                 sqlx::query(
@@ -172,8 +190,8 @@ impl TemporalRepository {
         Ok(result.rows_affected())
     }
 
-    /// Execute a dynamically-built temporal query. Returns raw rows for the service to map.
-    pub async fn execute_temporal_query(&self, sql: &str, binds: &[BindValue<'_>]) -> Result<Vec<sqlx::postgres::PgRow>, AndromedaError> {
+    /// Execute a dynamically-built temporal query. Returns raw rows for the reader to decode.
+    pub(crate) async fn execute_temporal_query(&self, sql: &str, binds: &[BindValue<'_>]) -> Result<Vec<sqlx::postgres::PgRow>, AndromedaError> {
         let query = crate::bind_values!(sqlx::query(sql), binds);
         let rows = query.fetch_all(&self.pool).await?;
         Ok(rows)
@@ -186,7 +204,7 @@ impl TemporalRepository {
     /// same transaction: refilled from the newest surviving history row, or
     /// dropped entirely when none survives. Without this the projection keeps
     /// serving the value that was just deleted.
-    pub async fn delete_instance(&self, instance_id: &str, entity_id: &str, attribute_name: &str) -> Result<(), AndromedaError> {
+    pub(crate) async fn delete_instance(&self, instance_id: &str, entity_id: &str, attribute_name: &str) -> Result<(), AndromedaError> {
         let mut tx = self.pool.begin().await?;
 
         let deleted = sqlx::query(
@@ -225,7 +243,7 @@ impl TemporalRepository {
     /// transaction. Without this a `PATCH` of the newest instance leaves the
     /// projection holding the superseded value, and `q` filters compiled against
     /// `attribute_current` answer from it.
-    pub async fn update_instance(&self, params: UpdateInstanceParams<'_>) -> Result<(), AndromedaError> {
+    pub(crate) async fn update_instance(&self, params: UpdateInstanceParams<'_>) -> Result<(), AndromedaError> {
         let mut tx = self.pool.begin().await?;
 
         let updated = sqlx::query(UPDATE_INSTANCE_SQL)
@@ -259,7 +277,7 @@ impl TemporalRepository {
     }
 
     /// Fetch a single instance for validation. Returns the row if found.
-    pub async fn get_instance(&self, instance_id: &str, entity_id: &str, attribute_name: &str) -> Result<Option<sqlx::postgres::PgRow>, AndromedaError> {
+    pub(crate) async fn get_instance(&self, instance_id: &str, entity_id: &str, attribute_name: &str) -> Result<Option<sqlx::postgres::PgRow>, AndromedaError> {
         let row = sqlx::query(
             r#"
             SELECT ah.*, an.name AS attribute_name, tea.attribute_type, tea.value_type

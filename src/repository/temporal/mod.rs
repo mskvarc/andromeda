@@ -6,10 +6,16 @@ pub mod attribute_instance;
 pub mod attribute_value;
 pub mod copy;
 pub mod entry;
+/// Decoding `PgRow` into the backend-neutral temporal row types.
+pub mod history_row_decode;
 pub mod mapper;
+/// [`TemporalMutator`] implementation on [`TemporalRepository`].
+pub mod mutator;
 /// Turning expanded entity payloads into the rows one temporal write commits.
 pub mod observation;
 pub mod params;
+/// [`TemporalHistoryReader`] implementation on [`TemporalRepository`].
+pub mod reader;
 /// Writing attribute history whenever entities are created or modified.
 pub mod recorder;
 pub mod repo;

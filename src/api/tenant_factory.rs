@@ -251,9 +251,6 @@ async fn build_tenant_state(
     {
         tracing::warn!(error = %error, event = "attribute_names_preload_failed");
     }
-    let temporal_repo =
-        Arc::new(TemporalRepository::new(&pool, config.performance.bulk_write_mode, Arc::clone(&attribute_name_cache)).with_features(timescale_features));
-
     let pool_arc = Arc::new(pool.clone()); // clone: Arc-wrap the per-tenant pool for the materializer worker
     let (materializer, attribute_current_queue, attribute_current_barrier) = AttributeCurrentMaterializer::new(
         Arc::clone(&pool_arc),
@@ -263,6 +260,12 @@ async fn build_tenant_state(
         tracing::warn!(error = %e, event = "attribute_current_reconcile_failed");
     }
     worker_handles.push(tokio::spawn(materializer.run()));
+
+    let temporal_repo = Arc::new(
+        TemporalRepository::new(&pool, config.performance.bulk_write_mode, Arc::clone(&attribute_name_cache))
+            .with_features(timescale_features)
+            .with_barrier(attribute_current_barrier.clone()), // clone: shared with entity store and temporal service
+    );
 
     // One entity store per tenant. It owns the attribute-name dictionary and
     // the projection barrier because both describe how *this* store pushes a
@@ -342,13 +345,12 @@ async fn build_tenant_state(
     ));
     let temporal_service = Arc::new(TemporalService::new(
         Arc::clone(&entity_store),
-        Arc::clone(&temporal_repo),
+        Arc::clone(&temporal_repo) as Arc<dyn crate::service::temporal::store::TemporalHistoryReader>,
+        Arc::clone(&temporal_repo) as Arc<dyn crate::service::temporal::store::TemporalMutator>,
         Arc::clone(&temporal_recorder),
         Arc::clone(&writes),
         engine.clone(),
         config.temporal.default_last_n,
-        attribute_current_barrier.clone(),
-        Arc::clone(&attribute_name_cache),
     ));
     let context_service = Arc::new(JsonLdContextService::new(&pool, engine.clone()));
     let subscription_service = Arc::new(SubscriptionService::new(&pool, engine.clone(), Some(sub_change_tx.clone())));

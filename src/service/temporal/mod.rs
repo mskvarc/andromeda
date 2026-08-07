@@ -1,13 +1,11 @@
 //! Service layer for the NGSI-LD Temporal API.
 
+pub mod store;
+
 use crate::{
     core::error::AndromedaError,
     http::response::content_range::build_content_range,
-    repository::{
-        attribute_current::queue::AttributeCurrentBarrier,
-        attribute_names::AttributeNameCache,
-        temporal::{params::DeleteScope, recorder::TemporalRecorder, repo::TemporalRepository},
-    },
+    repository::temporal::{params::DeleteScope, recorder::TemporalRecorder},
     service::{
         csource_forwarding::{ForwardedTemporalEntities, merge_temporal_query_results},
         entity::{
@@ -18,6 +16,7 @@ use crate::{
             store::EntityStore,
             write_coordinator::WriteCoordinator,
         },
+        temporal::store::{TemporalHistoryReader, TemporalMutator},
     },
     temporal_render::{
         aggregation::TemporalAggregationRenderer,
@@ -43,7 +42,6 @@ use andromeda_ngsi_ld_query::{
         path::expanded_attribute_name,
     },
     geo::{compile as geo_compile, query::GeoQuery},
-    identifier::parse_id,
     pagination::{CountPolicy, Pagination},
     projection::expansion::expand_attrs,
     temporal::{
@@ -57,12 +55,9 @@ use andromeda_ngsi_ld_query::{
 use andromeda_ngsi_ld_representation::{normalization::normalize_entity_attributes, sys_attrs::SysAttrsInclusion};
 use andromeda_ngsi_ld_request::query::{SharedQueryParams, temporal::TemporalQueryParameters};
 use andromeda_ngsi_ld_vocabulary::expanded::classes as expanded_classes;
-use andromeda_postgresql_query::q_predicate::{attribute_names::ResolvedAttributeNames, projection::referenced_attribute_names};
-use andromeda_postgresql_temporal_query::{history::build_temporal_history_query, stage1::build_stage1_entity_ids};
 use chrono::{DateTime, Utc};
 use iri_rs::IriBuf;
 use serde_json::{Value, json};
-use sqlx::Row;
 use std::{collections::HashSet, sync::Arc};
 
 /// Return short IRI token from fragment or last path segment.
@@ -133,14 +128,13 @@ fn normalize_temporal_payload_without_context(value: &mut Value) {
 
 /// Service layer for NGSI-LD Temporal Entity operations (read and write).
 pub struct TemporalService {
-    repo: Arc<TemporalRepository>,
+    reader: Arc<dyn TemporalHistoryReader>,
+    mutator: Arc<dyn TemporalMutator>,
     recorder: Arc<TemporalRecorder>,
     writes: Arc<dyn WriteCoordinator>,
     entity_repo: Arc<dyn EntityStore>,
     engine: JsonLdEngine,
     default_last_n: u32,
-    attribute_current: AttributeCurrentBarrier,
-    attribute_names: Arc<AttributeNameCache>,
 }
 
 /// Result of create_or_update operation.
@@ -184,51 +178,39 @@ pub struct TemporalQueryResult {
 }
 
 impl TemporalService {
-    /// Create a new temporal service with the given connection pool, shared temporal repository, unit-of-work factory, JSON-LD engine, and default lastN cap.
+    /// Create a new temporal service.
+    ///
+    /// The reader and mutator ports decouple the service from the concrete
+    /// store implementation. The recorder and write coordinator handle the
+    /// bulk-write path, while entity_repo provides base entity lookups.
     pub fn new(
         entity_repo: Arc<dyn EntityStore>,
-        temporal_repo: Arc<TemporalRepository>,
+        reader: Arc<dyn TemporalHistoryReader>,
+        mutator: Arc<dyn TemporalMutator>,
         recorder: Arc<TemporalRecorder>,
         writes: Arc<dyn WriteCoordinator>,
         engine: JsonLdEngine,
         default_last_n: u32,
-        attribute_current: AttributeCurrentBarrier,
-        attribute_names: Arc<AttributeNameCache>,
     ) -> TemporalService {
         TemporalService {
-            repo: temporal_repo,
+            reader,
+            mutator,
             recorder,
             writes,
             entity_repo,
             engine,
             default_last_n,
-            attribute_current,
-            attribute_names,
         }
-    }
-
-    /// Resolve the attribute IRIs a temporal `q` filter references and wait for
-    /// the `attribute_current` projection if any of them will be read from it.
-    ///
-    /// Mirrors the entity query path; see
-    /// [`crate::service::entity::query::EntityQueryService`] for why resolution
-    /// is per execution rather than per compilation.
-    async fn resolve_q_attributes(&self, compiled: &CompiledTemporalQuery) -> Result<ResolvedAttributeNames, AndromedaError> {
-        let Some(q_expr) = &compiled.entities.q_expr else {
-            return Ok(ResolvedAttributeNames::default());
-        };
-        let mut names = Vec::new();
-        referenced_attribute_names(q_expr, &mut names);
-        let resolved = self.attribute_names.lookup(&names).await?;
-        if !resolved.is_empty() {
-            self.attribute_current.wait_for_pending_writes().await;
-        }
-        Ok(resolved)
     }
 
     /// Return a reference to the underlying JSON-LD engine.
     pub const fn engine(&self) -> &JsonLdEngine {
         &self.engine
+    }
+
+    /// The capability descriptor of the underlying temporal store.
+    pub fn storage_profile(&self) -> store::TemporalStorageProfile {
+        self.reader.profile()
     }
 
     // -------------------------------------------------------------------------
@@ -269,7 +251,7 @@ impl TemporalService {
 
         // Per the specification, temporal entities can be created independently
         // of the entity table, so the entity is not required to exist first.
-        let exists = self.repo.tea_exists_for_entity(&entity_id).await?;
+        let exists = self.mutator.entity_exists(&entity_id).await?;
 
         let payload = Arc::new(expanded);
 
@@ -298,7 +280,7 @@ impl TemporalService {
 
     /// Add temporal attributes to an existing temporal entity.
     pub async fn add_attrs(&self, entity_id: &str, mut payload: Value, context: &ContextSpec) -> Result<(), AndromedaError> {
-        if !self.repo.tea_exists_for_entity(entity_id).await? {
+        if !self.mutator.entity_exists(entity_id).await? {
             return Err(AndromedaError::temporal_not_found(entity_id.to_string()));
         }
 
@@ -334,15 +316,15 @@ impl TemporalService {
         let prepared_context = self.engine.prepare_term_context(context);
         let expanded_attr = self.engine.expand_term(attr_id, &prepared_context).await?.to_string();
 
-        if !self.repo.get_teas_for_entity_attr(entity_id, &expanded_attr).await?.is_empty() {
+        if !self.mutator.attribute_entries(entity_id, &expanded_attr).await?.is_empty() {
             return Ok(expanded_attr);
         }
 
-        if expanded_attr != attr_id && !self.repo.get_teas_for_entity_attr(entity_id, attr_id).await?.is_empty() {
+        if expanded_attr != attr_id && !self.mutator.attribute_entries(entity_id, attr_id).await?.is_empty() {
             return Ok(attr_id.to_string());
         }
 
-        let attr_names = self.repo.get_attribute_names_for_entity(entity_id).await?;
+        let attr_names = self.mutator.attribute_names_for_entity(entity_id).await?;
         let mut matches = attr_names
             .into_iter()
             .filter(|name| iri_short_name(name).is_some_and(|short| short == attr_id))
@@ -359,10 +341,10 @@ impl TemporalService {
 
     /// Delete all temporal data for an entity.
     pub async fn delete(&self, entity_id: &str) -> Result<(), AndromedaError> {
-        if !self.repo.tea_exists_for_entity(entity_id).await? {
+        if !self.mutator.entity_exists(entity_id).await? {
             return Err(AndromedaError::temporal_not_found(entity_id.to_string()));
         }
-        self.repo.delete_teas_for_entity(entity_id).await?;
+        self.mutator.delete_all_for_entity(entity_id).await?;
         Ok(())
     }
 
@@ -377,11 +359,11 @@ impl TemporalService {
     ) -> Result<(), AndromedaError> {
         let attr_iri = self.resolve_attr_iri_for_entity(entity_id, attr_id, context).await?;
 
-        if !self.repo.tea_exists_for_entity(entity_id).await? {
+        if !self.mutator.entity_exists(entity_id).await? {
             return Err(AndromedaError::temporal_not_found(entity_id.to_string()));
         }
 
-        let teas = self.repo.get_teas_for_entity_attr(entity_id, &attr_iri).await?;
+        let teas = self.mutator.attribute_entries(entity_id, &attr_iri).await?;
         if teas.is_empty() {
             return Err(AndromedaError::temporal_not_found(format!(
                 "Attribute {} not found on entity {}",
@@ -389,7 +371,7 @@ impl TemporalService {
             )));
         }
 
-        let deleted = self.repo.delete_tea(entity_id, &attr_iri, dataset_id, scope).await?;
+        let deleted = self.mutator.delete_attribute(entity_id, &attr_iri, dataset_id, scope).await?;
         if deleted == 0 {
             let target = match dataset_id {
                 Some(ds_id) => format!("Attribute {} with datasetId {} not found on entity {}", attr_iri, ds_id, entity_id),
@@ -411,11 +393,11 @@ impl TemporalService {
     ) -> Result<(), AndromedaError> {
         let attr_iri = self.resolve_attr_iri_for_entity(entity_id, attr_id, context).await?;
 
-        if !self.repo.tea_exists_for_entity(entity_id).await? {
+        if !self.mutator.entity_exists(entity_id).await? {
             return Err(AndromedaError::temporal_not_found(format!("Entity {} not found", entity_id)));
         }
 
-        let teas = self.repo.get_teas_for_entity_attr(entity_id, &attr_iri).await?;
+        let teas = self.mutator.attribute_entries(entity_id, &attr_iri).await?;
         if teas.is_empty() {
             return Err(AndromedaError::temporal_not_found(format!(
                 "Attribute {} not found on entity {}",
@@ -423,7 +405,7 @@ impl TemporalService {
             )));
         }
 
-        if self.repo.get_instance(instance_id, entity_id, &attr_iri).await?.is_none() {
+        if !self.mutator.get_instance(instance_id, entity_id, &attr_iri).await? {
             return Err(AndromedaError::temporal_not_found(format!("Attribute instance {} not found", instance_id)));
         }
 
@@ -439,11 +421,11 @@ impl TemporalService {
     pub async fn delete_attr_instance(&self, entity_id: &str, attr_id: &str, instance_id: &str, context: &ContextSpec) -> Result<(), AndromedaError> {
         let attr_iri = self.resolve_attr_iri_for_entity(entity_id, attr_id, context).await?;
 
-        if !self.repo.tea_exists_for_entity(entity_id).await? {
+        if !self.mutator.entity_exists(entity_id).await? {
             return Err(AndromedaError::temporal_not_found(format!("Entity {} not found", entity_id)));
         }
 
-        let teas = self.repo.get_teas_for_entity_attr(entity_id, &attr_iri).await?;
+        let teas = self.mutator.attribute_entries(entity_id, &attr_iri).await?;
         if teas.is_empty() {
             return Err(AndromedaError::temporal_not_found(format!(
                 "Attribute {} not found on entity {}",
@@ -451,11 +433,12 @@ impl TemporalService {
             )));
         }
 
-        if self.repo.get_instance(instance_id, entity_id, &attr_iri).await?.is_none() {
+        if !self.mutator.get_instance(instance_id, entity_id, &attr_iri).await? {
             return Err(AndromedaError::temporal_not_found(format!("Attribute instance {} not found", instance_id)));
         }
 
-        self.repo.delete_instance(instance_id, entity_id, &attr_iri).await
+        self.mutator.delete_instance(instance_id, entity_id, &attr_iri).await?;
+        Ok(())
     }
 
     // -------------------------------------------------------------------------
@@ -466,7 +449,7 @@ impl TemporalService {
     pub async fn get(&self, entity_id: &str, params: &TemporalQueryParameters, context: &ContextSpec) -> Result<TemporalReadResult, AndromedaError> {
         params.validate(false)?;
 
-        if !self.repo.tea_exists_for_entity(entity_id).await? {
+        if !self.mutator.entity_exists(entity_id).await? {
             return Err(AndromedaError::temporal_not_found(entity_id.to_string()));
         }
 
@@ -477,28 +460,28 @@ impl TemporalService {
 
         let compiled = self.compile_temporal_query(params, context).await?;
 
-        let stage2 = build_temporal_history_query(&parse_id(entity_id)?, &compiled)?;
-        let rows = self.repo.execute_temporal_query(&stage2.sql, &stage2.bind_values).await?;
-
-        // When an attrs filter is specified and nothing matches, return 404
-        if rows.is_empty() && !compiled.instances.attr_filter.is_empty() {
-            return Err(AndromedaError::temporal_not_found(format!(
-                "No temporal data found for the specified attributes on entity {}",
-                entity_id
-            )));
-        }
-
         let format = compiled.representation.format;
 
         if format == TemporalFormat::AggregatedValues {
-            let result = self.build_aggregated_compacted(entity_id, &entity_types, &rows, &compiled, context).await?;
+            let agg_rows = self.reader.query_entity_aggregation(entity_id, &compiled).await?;
+            let result = self.build_aggregated_compacted(entity_id, &entity_types, &agg_rows, &compiled, context).await?;
             return Ok(TemporalReadResult {
                 value: result,
                 content_range: None,
             });
         }
 
-        let result = TemporalEntityRenderer::new(entity_id, &entity_types, &rows, &compiled).render()?;
+        let outcome = self.reader.query_entity_history(entity_id, &compiled).await?;
+
+        // When an attrs filter is specified and nothing matches, return 404
+        if outcome.rows.is_empty() && !compiled.instances.attr_filter.is_empty() {
+            return Err(AndromedaError::temporal_not_found(format!(
+                "No temporal data found for the specified attributes on entity {}",
+                entity_id
+            )));
+        }
+
+        let result = TemporalEntityRenderer::new(entity_id, &entity_types, &outcome.rows, &compiled).render();
         let compacted = self.engine.compact(result.entity, context, CompactOptions::default()).await?;
         let mut compacted = TemporalArrayNormalizer::new(compacted).render();
         if !has_explicit_context(context) {
@@ -526,20 +509,9 @@ impl TemporalService {
 
         let compiled = self.compile_temporal_query(params, context).await?;
 
-        let attribute_names = self.resolve_q_attributes(&compiled).await?;
-        let stage1 = build_stage1_entity_ids(&compiled, &attribute_names)?;
-
-        let entity_id_rows = self.repo.execute_temporal_query(&stage1.sql, &stage1.bind_values).await?;
-
-        let entity_ids: Vec<String> = entity_id_rows.iter().filter_map(|r| r.try_get("entity_id").ok()).collect();
-
-        let total_count = if compiled.pagination.count == CountPolicy::Emit {
-            let count_sql = stage1.count_sql.as_ref().ok_or_else(|| AndromedaError::internal("Count SQL not built"))?;
-            let count_rows = self.repo.execute_temporal_query(count_sql, &stage1.bind_values).await?;
-            count_rows.first().and_then(|r| r.try_get::<i64, _>("count").ok())
-        } else {
-            None
-        };
+        let id_outcome = self.reader.query_entity_ids(&compiled).await?;
+        let entity_ids = id_outcome.entity_ids;
+        let total_count = id_outcome.total_count;
 
         // Batch-fetch entity payloads to extract types (avoids N+1 queries).
         // Stage 1 read these ids out of `entities.id`, so any that fails to parse
@@ -560,49 +532,35 @@ impl TemporalService {
         let is_aggregated = compiled.representation.format == TemporalFormat::AggregatedValues;
         for entity_id in entity_ids {
             let entity_types = entity_types_map.get(&entity_id).cloned().unwrap_or_default(); // clone: owned copy needed; map is borrowed while loop continues
-            // Stage 1 read these ids out of `entities.id`, so they were valid
-            // URIs on the way in; a failure here means the row is corrupt and is
-            // reported alongside the statement-building failures below.
-            let stage2 = match parse_id(&entity_id)
-                .map_err(AndromedaError::from)
-                .and_then(|id| build_temporal_history_query(&id, &compiled).map_err(AndromedaError::from))
-            {
-                Ok(s) => s,
-                Err(e) => {
-                    tracing::warn!(error = %e, entity_id = %entity_id, "Failed to build temporal history query");
-                    warnings.push(TemporalQueryWarning {
-                        entity_id: entity_id.clone(), // clone: entity_id is used by subsequent loop iterations
-                        message: e.to_string(),
-                    });
-                    continue;
-                }
-            };
-            let rows = match self.repo.execute_temporal_query(&stage2.sql, &stage2.bind_values).await {
-                Ok(r) => r,
-                Err(e) => {
-                    tracing::warn!(error = %e, entity_id = %entity_id, "Failed to execute temporal query");
-                    warnings.push(TemporalQueryWarning {
-                        entity_id: entity_id.clone(), // clone: entity_id is used by subsequent loop iterations
-                        message: e.to_string(),
-                    });
-                    continue;
-                }
-            };
-            if !rows.is_empty() {
-                if is_aggregated {
-                    match self.build_aggregated_compacted(&entity_id, &entity_types, &rows, &compiled, context).await {
-                        Ok(result) => entities.push(result),
-                        Err(e) => {
-                            tracing::warn!(error = %e, entity_id = %entity_id, "Failed to build aggregated temporal result");
-                            warnings.push(TemporalQueryWarning {
-                                entity_id: entity_id.clone(), // clone: entity_id is used by subsequent loop iterations
-                                message: e.to_string(),
-                            });
+            if is_aggregated {
+                match self.reader.query_entity_aggregation(&entity_id, &compiled).await {
+                    Ok(agg_rows) => {
+                        if !agg_rows.is_empty() {
+                            match self.build_aggregated_compacted(&entity_id, &entity_types, &agg_rows, &compiled, context).await {
+                                Ok(result) => entities.push(result),
+                                Err(e) => {
+                                    tracing::warn!(error = %e, entity_id = %entity_id, "Failed to build aggregated temporal result");
+                                    warnings.push(TemporalQueryWarning {
+                                        entity_id: entity_id.clone(), // clone: entity_id is used by subsequent loop iterations
+                                        message: e.to_string(),
+                                    });
+                                }
+                            }
                         }
                     }
-                } else {
-                    match TemporalEntityRenderer::new(&entity_id, &entity_types, &rows, &compiled).render() {
-                        Ok(result) => {
+                    Err(e) => {
+                        tracing::warn!(error = %e, entity_id = %entity_id, "Failed to query temporal aggregation");
+                        warnings.push(TemporalQueryWarning {
+                            entity_id: entity_id.clone(), // clone: entity_id is used by subsequent loop iterations
+                            message: e.to_string(),
+                        });
+                    }
+                }
+            } else {
+                match self.reader.query_entity_history(&entity_id, &compiled).await {
+                    Ok(outcome) => {
+                        if !outcome.rows.is_empty() {
+                            let result = TemporalEntityRenderer::new(&entity_id, &entity_types, &outcome.rows, &compiled).render();
                             if result.truncated {
                                 any_truncated = true;
                             }
@@ -635,13 +593,13 @@ impl TemporalService {
                                 }
                             }
                         }
-                        Err(e) => {
-                            tracing::warn!(error = %e, entity_id = %entity_id, "Failed to build temporal entity response");
-                            warnings.push(TemporalQueryWarning {
-                                entity_id: entity_id.clone(), // clone: entity_id is used by subsequent loop iterations
-                                message: e.to_string(),
-                            });
-                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!(error = %e, entity_id = %entity_id, "Failed to query temporal history");
+                        warnings.push(TemporalQueryWarning {
+                            entity_id: entity_id.clone(), // clone: entity_id is used by subsequent loop iterations
+                            message: e.to_string(),
+                        });
                     }
                 }
             }
@@ -673,12 +631,12 @@ impl TemporalService {
         &self,
         entity_id: &str,
         entity_types: &[EntityTypeName],
-        rows: &[sqlx::postgres::PgRow],
+        rows: &[store::TemporalAggregationRow],
         compiled: &CompiledTemporalQuery,
         context: &ContextSpec,
     ) -> Result<Value, AndromedaError> {
         // Build aggregation data keyed by attribute IRI
-        let aggr_data = TemporalAggregationRenderer::new(rows, compiled).render()?;
+        let aggr_data = TemporalAggregationRenderer::new(rows, compiled).render();
 
         // Compact each attribute IRI individually by building a 1-key skeleton and compacting it
         let mut iri_to_short: std::collections::HashMap<String, String> = std::collections::HashMap::new();
@@ -770,10 +728,8 @@ impl TemporalService {
     pub async fn query_ids(&self, params: &TemporalQueryParameters, context: &ContextSpec) -> Result<Vec<String>, AndromedaError> {
         params.validate(true)?;
         let compiled = self.compile_temporal_query(params, context).await?;
-        let attribute_names = self.resolve_q_attributes(&compiled).await?;
-        let stage1 = build_stage1_entity_ids(&compiled, &attribute_names)?;
-        let entity_id_rows = self.repo.execute_temporal_query(&stage1.sql, &stage1.bind_values).await?;
-        Ok(entity_id_rows.iter().filter_map(|r| r.try_get("entity_id").ok()).collect())
+        let outcome = self.reader.query_entity_ids(&compiled).await?;
+        Ok(outcome.entity_ids)
     }
 
     /// Merge local temporal query results with forwarded context source results.

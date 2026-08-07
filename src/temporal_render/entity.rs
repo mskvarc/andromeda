@@ -1,16 +1,15 @@
 //! Temporal entity assembly: [`TemporalEntityRenderer`] assembles a temporal
-//! entity representation from database rows (NGSI-LD clause 6.3.10).
+//! entity representation from decoded history rows (NGSI-LD clause 6.3.10).
 
 use crate::{
-    core::error::AndromedaError,
-    temporal_render::history_row::{TimeRange, history_row_to_expanded_instance, parse_tea_entry},
+    service::temporal::store::TemporalHistoryRow,
+    temporal_render::history_row::{TimeRange, neutral_row_to_expanded_instance},
 };
 use andromeda_ngsi_ld_lexicon::entity_type_name::EntityTypeName;
 use andromeda_ngsi_ld_query::temporal::compiled::CompiledTemporalQuery;
 use chrono::{DateTime, Utc};
 use indexmap::IndexMap;
 use serde_json::{Value, json};
-use sqlx::{Row, postgres::PgRow};
 
 type TemporalAttributeInstances = Vec<(Option<DateTime<Utc>>, Value)>;
 type TemporalAttrMap = IndexMap<String, TemporalAttributeInstances>;
@@ -29,7 +28,7 @@ pub struct TemporalEntityBuildResult {
     pub max_partition_total: Option<i64>,
 }
 
-/// Assembles a temporal entity representation from database rows.
+/// Assembles a temporal entity representation from decoded history rows.
 ///
 /// Groups attribute instances by attribute name, applies time range cutting
 /// for unsynchronized attributes (NGSI-LD clause 6.3.10), and emits the
@@ -38,7 +37,7 @@ pub struct TemporalEntityBuildResult {
 pub struct TemporalEntityRenderer<'a> {
     entity_id: &'a str,
     entity_types: &'a [EntityTypeName],
-    rows: &'a [PgRow],
+    rows: &'a [TemporalHistoryRow],
     compiled: &'a CompiledTemporalQuery,
 }
 
@@ -47,7 +46,7 @@ impl<'a> TemporalEntityRenderer<'a> {
     pub const fn new(
         entity_id: &'a str,
         entity_types: &'a [EntityTypeName],
-        rows: &'a [PgRow],
+        rows: &'a [TemporalHistoryRow],
         compiled: &'a CompiledTemporalQuery,
     ) -> TemporalEntityRenderer<'a> {
         TemporalEntityRenderer {
@@ -61,11 +60,7 @@ impl<'a> TemporalEntityRenderer<'a> {
 
 impl<'a> TemporalEntityRenderer<'a> {
     /// Assemble the temporal entity and the pagination metadata around it.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when a history row cannot be read or decoded.
-    pub fn render(self) -> Result<TemporalEntityBuildResult, AndromedaError> {
+    pub fn render(self) -> TemporalEntityBuildResult {
         let TemporalEntityRenderer {
             entity_id,
             entity_types,
@@ -80,12 +75,11 @@ impl<'a> TemporalEntityRenderer<'a> {
         let mut max_partition_total: Option<i64> = None;
 
         for row in rows {
-            let tea = parse_tea_entry(row)?;
-            let attr_name = tea.attribute_name.as_str().to_string();
+            let attr_name = row.attribute_name.as_str().to_string();
 
             if compiled.instances.last_n_origin.is_system_capped()
                 && let Some(last_n) = compiled.instances.last_n
-                && let Ok(total) = row.try_get::<i64, _>("partition_total")
+                && let Some(total) = row.partition_total
             {
                 max_partition_total = Some(max_partition_total.map_or(total, |m: i64| m.max(total)));
                 if total > last_n as i64 {
@@ -93,17 +87,13 @@ impl<'a> TemporalEntityRenderer<'a> {
                 }
             }
 
-            let obs = row
-                .try_get::<Option<DateTime<Utc>>, _>("observed_at")
-                .ok()
-                .flatten()
-                .or_else(|| row.try_get::<DateTime<Utc>, _>("time").ok());
+            let obs = row.observed_at.or(Some(row.time));
             if let Some(t) = obs {
                 min_time = Some(min_time.map_or(t, |m: DateTime<Utc>| m.min(t)));
                 max_time = Some(max_time.map_or(t, |m: DateTime<Utc>| m.max(t)));
             }
 
-            let instance = history_row_to_expanded_instance(row, &tea, compiled.representation.sys_attrs)?;
+            let instance = neutral_row_to_expanded_instance(row, compiled.representation.sys_attrs);
             attrs.entry(attr_name).or_default().push((obs, instance));
         }
 
@@ -151,11 +141,11 @@ impl<'a> TemporalEntityRenderer<'a> {
         }
 
         let time_range = min_time.zip(max_time);
-        Ok(TemporalEntityBuildResult {
+        TemporalEntityBuildResult {
             entity: Value::Object(entity),
             truncated,
             time_range,
             max_partition_total,
-        })
+        }
     }
 }

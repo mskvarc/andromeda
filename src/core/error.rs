@@ -7,6 +7,7 @@
 //! [`AndromedaError`] wraps an [`ErrorKind`] with an optional request URI
 //! (`instance`) that handlers attach for RFC 7807 Problem Details responses.
 
+use crate::service::temporal::store::TemporalStoreError;
 use andromeda_jsonld::error::JsonLdError;
 use andromeda_ngsi_ld_lexicon::ngsi_ld_urn::{AttributeListIdParseError, EntityMapIdParseError, EntityTypeListIdParseError, SnapshotIdParseError};
 use andromeda_ngsi_ld_query::error::QueryError;
@@ -406,6 +407,11 @@ impl AndromedaError {
     pub fn internal(message: impl Into<String>) -> AndromedaError {
         ErrorKind::Internal(message.into()).into()
     }
+
+    /// A temporal store operation failed.
+    pub fn temporal_store(error: TemporalStoreError) -> AndromedaError {
+        ErrorKind::Internal(error.to_string()).into()
+    }
 }
 
 /// Extension methods for attaching HTTP request URI context to fallible results.
@@ -636,6 +642,14 @@ impl From<RenderError> for AndromedaError {
 impl From<ReqwestError> for AndromedaError {
     fn from(error: ReqwestError) -> AndromedaError {
         ErrorKind::ExternalRequest(error).into()
+    }
+}
+
+/// A temporal store failure is an infrastructure error whose detail is
+/// sanitised before reaching API clients.
+impl From<TemporalStoreError> for AndromedaError {
+    fn from(error: TemporalStoreError) -> AndromedaError {
+        AndromedaError::temporal_store(error)
     }
 }
 

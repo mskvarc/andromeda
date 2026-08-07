@@ -1,67 +1,64 @@
-//! Temporal aggregation: [`TemporalAggregationRenderer`] groups database rows
-//! by `(attribute_name, dataset_id)` and extracts aggregation method values
-//! (NGSI-LD aggregation methods: avg, min, max, sum, sumsq, stddev,
-//! totalCount, distinctCount).
+//! Temporal aggregation: [`TemporalAggregationRenderer`] groups decoded
+//! aggregation rows by `(attribute_name, dataset_id)` and extracts
+//! aggregation method values (NGSI-LD aggregation methods: avg, min, max,
+//! sum, sumsq, stddev, totalCount, distinctCount).
 
-use crate::{core::error::AndromedaError, repository::temporal::value_type::ValueType, temporal_render::history_row::extract_typed_agg};
+use crate::service::temporal::store::{AggregationMinMax, TemporalAggregationRow};
 use andromeda_ngsi_ld_lexicon::{aggr_method::AggrMethod, rfc3339::whole_seconds};
 use andromeda_ngsi_ld_query::temporal::compiled::CompiledTemporalQuery;
-use chrono::{DateTime, Utc};
 use indexmap::IndexMap;
 use serde_json::{Value, json};
-use sqlx::{Row, postgres::PgRow};
-use std::str::FromStr;
 
-/// Builds aggregated temporal data from database rows.
+/// Builds aggregated temporal data from decoded aggregation rows.
 ///
 /// Groups rows by `(attribute_name, dataset_id)` and extracts aggregation
 /// method values (avg, min, max, sum, etc.) with their bucket time ranges.
 /// Returns an ordered map of attribute name to aggregated instance(s).
 #[derive(Debug)]
 pub struct TemporalAggregationRenderer<'a> {
-    rows: &'a [PgRow],
+    rows: &'a [TemporalAggregationRow],
     compiled: &'a CompiledTemporalQuery,
 }
 
 impl<'a> TemporalAggregationRenderer<'a> {
     /// Create a renderer for the given row set.
-    pub const fn new(rows: &'a [PgRow], compiled: &'a CompiledTemporalQuery) -> TemporalAggregationRenderer<'a> {
+    pub const fn new(rows: &'a [TemporalAggregationRow], compiled: &'a CompiledTemporalQuery) -> TemporalAggregationRenderer<'a> {
         TemporalAggregationRenderer { rows, compiled }
     }
 }
 
+/// Render an [`AggregationMinMax`] as a JSON value.
+fn aggregation_min_max_to_json(value: &Option<AggregationMinMax>) -> Value {
+    match value {
+        Some(AggregationMinMax::Number(v)) => json!(v),
+        Some(AggregationMinMax::String(v)) => json!(v),
+        Some(AggregationMinMax::DateTime(dt)) => json!(whole_seconds(*dt)),
+        None => Value::Null,
+    }
+}
+
 impl<'a> TemporalAggregationRenderer<'a> {
-    /// Group the bucketed rows and extract each requested aggregation method.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when a row cannot be read or declares a value type the
-    /// store does not define.
-    pub fn render(self) -> Result<IndexMap<String, Value>, AndromedaError> {
+    /// Group the rows and extract each requested aggregation method.
+    pub fn render(self) -> IndexMap<String, Value> {
         let TemporalAggregationRenderer { rows, compiled } = self;
 
         type GroupKey = (String, Option<String>);
-        let mut groups: IndexMap<GroupKey, Vec<&PgRow>> = IndexMap::with_capacity(rows.len().min(64));
+        let mut groups: IndexMap<GroupKey, Vec<&TemporalAggregationRow>> = IndexMap::with_capacity(rows.len().min(64));
 
         for row in rows {
-            let attr_name: String = row.try_get("attribute_name")?;
-            let dataset_id: Option<String> = row.try_get("dataset_id")?;
-            groups.entry((attr_name, dataset_id)).or_default().push(row);
+            groups.entry((row.attribute_name.clone(), row.dataset_id.clone())).or_default().push(row);
         }
 
         let mut attrs: IndexMap<String, Vec<Value>> = IndexMap::with_capacity(groups.len());
 
         for ((attr_name, dataset_id), bucket_rows) in &groups {
-            let first_row = bucket_rows
-                .first()
-                .ok_or_else(|| AndromedaError::internal("Empty bucket rows in aggregation".to_string()))?;
-            let attr_type_raw: String = first_row.try_get("attribute_type")?;
-            let value_type_raw: String = first_row.try_get("value_type")?;
-            let value_type =
-                ValueType::from_str(&value_type_raw).map_err(|e| AndromedaError::internal(format!("Invalid value type '{}': {}", value_type_raw, e)))?;
+            let first_row = match bucket_rows.first() {
+                Some(r) => r,
+                None => continue,
+            };
 
             let mut instance = serde_json::Map::with_capacity(2 + compiled.representation.aggr_methods.len());
-            instance.insert("type".to_string(), json!(attr_type_raw));
+            instance.insert("type".to_string(), json!(&first_row.attribute_type));
 
             if let Some(ds_id) = dataset_id {
                 instance.insert("datasetId".to_string(), json!(ds_id));
@@ -82,20 +79,18 @@ impl<'a> TemporalAggregationRenderer<'a> {
                 let mut triples: Vec<Value> = Vec::with_capacity(bucket_rows.len());
                 for row in bucket_rows {
                     let val: Value = match method {
-                        AggrMethod::TotalCount => row.try_get::<i64, _>("agg_total_count").map_or(Value::Null, |v| json!(v)),
-                        AggrMethod::DistinctCount => row.try_get::<i64, _>("agg_distinct_count").map_or(Value::Null, |v| json!(v)),
-                        AggrMethod::Min => extract_typed_agg(row, value_type, "agg_min", "agg_min_str", "agg_min_dt"),
-                        AggrMethod::Max => extract_typed_agg(row, value_type, "agg_max", "agg_max_str", "agg_max_dt"),
-                        AggrMethod::Avg => row.try_get::<f64, _>("agg_avg").map_or(Value::Null, |v| json!(v)),
-                        AggrMethod::Sum => row.try_get::<f64, _>("agg_sum").map_or(Value::Null, |v| json!(v)),
-                        AggrMethod::SumSq => row.try_get::<f64, _>("agg_sumsq").map_or(Value::Null, |v| json!(v)),
-                        AggrMethod::StdDev => row.try_get::<f64, _>("agg_stddev").map_or(Value::Null, |v| json!(v)),
+                        AggrMethod::TotalCount => row.total_count.map_or(Value::Null, |v| json!(v)),
+                        AggrMethod::DistinctCount => row.distinct_count.map_or(Value::Null, |v| json!(v)),
+                        AggrMethod::Min => aggregation_min_max_to_json(&row.min),
+                        AggrMethod::Max => aggregation_min_max_to_json(&row.max),
+                        AggrMethod::Avg => row.avg.map_or(Value::Null, |v| json!(v)),
+                        AggrMethod::Sum => row.sum.map_or(Value::Null, |v| json!(v)),
+                        AggrMethod::SumSq => row.sumsq.map_or(Value::Null, |v| json!(v)),
+                        AggrMethod::StdDev => row.stddev.map_or(Value::Null, |v| json!(v)),
                     };
 
-                    let bucket_start: Value = row
-                        .try_get::<DateTime<Utc>, _>("bucket_start")
-                        .map_or(Value::Null, |dt| json!(whole_seconds(dt)));
-                    let bucket_end: Value = row.try_get::<DateTime<Utc>, _>("bucket_end").map_or(Value::Null, |dt| json!(whole_seconds(dt)));
+                    let bucket_start = row.bucket_start.map_or(Value::Null, |dt| json!(whole_seconds(dt)));
+                    let bucket_end = row.bucket_end.map_or(Value::Null, |dt| json!(whole_seconds(dt)));
 
                     triples.push(json!([val, bucket_start, bucket_end]));
                 }
@@ -117,6 +112,6 @@ impl<'a> TemporalAggregationRenderer<'a> {
             }
         }
 
-        Ok(result)
+        result
     }
 }
