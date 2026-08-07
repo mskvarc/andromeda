@@ -1,7 +1,12 @@
 //! Removing entities and attribute instances whose `expiresAt` has passed
 //! (clause 4.22).
 
-use crate::{core::error::AndromedaError, repository::entity::repo::EntityRepository, service::entity::store::EntitySnapshot};
+use crate::{
+    core::error::AndromedaError,
+    repository::entity::{mapper::stored_uri, repo::EntityRepository},
+    service::entity::store::EntitySnapshot,
+};
+use andromeda_ngsi_ld_lexicon::uri::Uri;
 use sqlx::Row;
 
 /// Every entity carrying at least one past-due attribute instance, with the
@@ -32,31 +37,29 @@ WHERE EXISTS (
 
 impl EntityRepository {
     /// Delete entities whose `expiresAt` has passed, returning their identifiers.
-    pub async fn expire_due_entities(&self) -> Result<Vec<String>, AndromedaError> {
+    pub async fn expire_due_entities(&self) -> Result<Vec<Uri>, AndromedaError> {
         let rows: Vec<(String,)> = sqlx::query_as("DELETE FROM entities WHERE expires_at IS NOT NULL AND expires_at <= NOW() RETURNING id")
             .fetch_all(&self.pool)
             .await?;
 
-        Ok(rows.into_iter().map(|(id,)| id).collect())
+        rows.into_iter().map(|(id,)| stored_uri(id)).collect()
     }
 
     /// Read every entity that holds a past-due attribute instance.
-    pub async fn entities_with_expired_attributes(&self) -> Result<Vec<(String, EntitySnapshot)>, AndromedaError> {
+    pub async fn entities_with_expired_attributes(&self) -> Result<Vec<(Uri, EntitySnapshot)>, AndromedaError> {
         let rows = sqlx::query(ENTITIES_WITH_EXPIRED_ATTRIBUTES_SQL).fetch_all(&self.pool).await?;
 
-        let candidates = rows
-            .into_iter()
+        rows.into_iter()
             .map(|row| {
-                (
-                    row.get("id"),
+                Ok((
+                    stored_uri(row.get("id"))?,
                     EntitySnapshot {
                         payload: row.get("payload"),
                         modified_at: row.get("modified_at"),
                     },
-                )
+                ))
             })
-            .collect();
-        Ok(candidates)
+            .collect()
     }
 }
 

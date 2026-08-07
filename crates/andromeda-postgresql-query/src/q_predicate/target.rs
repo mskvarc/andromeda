@@ -1,11 +1,7 @@
 //! The two column references a compiled `q` predicate is attached through.
 
-use crate::{
-    column_reference::{qualified, quoted},
-    schema::Entities,
-};
-use sea_query::Iden;
-use std::borrow::Cow;
+use crate::{column_reference::ColumnReference, schema::Entities};
+use sea_query::IntoIden;
 
 /// Where a compiled `q` predicate reads the row it is filtering.
 ///
@@ -15,48 +11,50 @@ use std::borrow::Cow;
 /// statement rather than enumerated here, so this crate names no relation it
 /// does not itself select from — a temporal statement's aliases belong to the
 /// temporal crate, and a second backend's to that backend.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct QFilterTarget<'a> {
-    /// SQL reference to the entity id an `EXISTS` probe correlates against.
-    entity_id_column: Cow<'a, str>,
-    /// SQL reference to the JSONB payload column the fallback reads.
-    payload_column: Cow<'a, str>,
+///
+/// The references are held as the [`ColumnReference`] idens they are built from,
+/// not as pre-quoted strings, so a renamed relation or column moves every
+/// reference with it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct QFilterTarget {
+    /// Reference to the entity id an `EXISTS` probe correlates against.
+    entity_id_column: ColumnReference,
+    /// Reference to the JSONB payload column the fallback reads.
+    payload_column: ColumnReference,
 }
 
-impl QFilterTarget<'_> {
+impl QFilterTarget {
     /// The target of a statement selecting directly from `entities`.
     ///
     /// Derived from the schema identifiers rather than written out, so renaming
     /// the relation or the column moves this with it.
-    pub fn entities() -> QFilterTarget<'static> {
+    pub fn entities() -> QFilterTarget {
         QFilterTarget {
-            entity_id_column: Cow::Owned(qualified(Entities::Table, Entities::Id)),
-            payload_column: Cow::Owned(quoted(Entities::Payload)),
+            entity_id_column: ColumnReference::qualified(Entities::Table, Entities::Id),
+            payload_column: ColumnReference::bare(Entities::Payload),
         }
     }
 
-    /// SQL reference to the entity id an `EXISTS` probe correlates against.
-    pub fn entity_id_column(&self) -> &str {
-        &self.entity_id_column
-    }
-
-    /// SQL reference to the JSONB payload column used by the fallback.
-    pub fn payload_column(&self) -> &str {
-        &self.payload_column
-    }
-}
-
-impl QFilterTarget<'static> {
     /// The target of a statement that reaches the entity through an alias.
     ///
-    /// Each column is named by the `(alias, column)` [`Iden`]s the caller's
-    /// statement already declares, so renaming a relation or a column moves this
-    /// reference with it rather than leaving a hand-quoted string behind.
-    pub fn correlated(entity_id_column: (impl Iden, impl Iden), payload_column: (impl Iden, impl Iden)) -> QFilterTarget<'static> {
+    /// Each column is named by the `(alias, column)` idens the caller's statement
+    /// already declares, so renaming a relation or a column moves this reference
+    /// with it rather than leaving a hand-quoted string behind.
+    pub fn correlated(entity_id_column: (impl IntoIden, impl IntoIden), payload_column: (impl IntoIden, impl IntoIden)) -> QFilterTarget {
         QFilterTarget {
-            entity_id_column: Cow::Owned(qualified(entity_id_column.0, entity_id_column.1)),
-            payload_column: Cow::Owned(qualified(payload_column.0, payload_column.1)),
+            entity_id_column: ColumnReference::qualified(entity_id_column.0, entity_id_column.1),
+            payload_column: ColumnReference::qualified(payload_column.0, payload_column.1),
         }
+    }
+
+    /// Quoted SQL reference to the entity id an `EXISTS` probe correlates against.
+    pub fn entity_id_column(&self) -> String {
+        self.entity_id_column.render()
+    }
+
+    /// Quoted SQL reference to the JSONB payload column used by the fallback.
+    pub fn payload_column(&self) -> String {
+        self.payload_column.render()
     }
 }
 

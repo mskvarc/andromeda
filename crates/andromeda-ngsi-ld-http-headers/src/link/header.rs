@@ -8,6 +8,7 @@ use crate::link::{
 };
 use headers::HeaderMapExt;
 use http::{HeaderMap, HeaderName, HeaderValue};
+use iri_rs::IriRefBuf;
 use std::{fmt, str::FromStr};
 
 /// Typed `Link` header (RFC 8288).
@@ -39,13 +40,13 @@ impl Link {
     }
 
     /// A single-value JSON-LD context `Link` header.
-    pub fn jsonld_context(context_url: &str) -> Link {
+    pub fn jsonld_context(context_url: IriRefBuf) -> Link {
         Link::new(vec![LinkValue::jsonld_context(context_url)])
     }
 
     /// Insert JSON-LD context links into a header map as one `Link` header.
-    pub fn insert_jsonld_contexts(headers: &mut HeaderMap, urls: &[String]) {
-        if let Some(link) = Link::from_values(urls.iter().map(|url| LinkValue::jsonld_context(url)).collect()) {
+    pub fn insert_jsonld_contexts(headers: &mut HeaderMap, urls: impl IntoIterator<Item = IriRefBuf>) {
+        if let Some(link) = Link::from_values(urls.into_iter().map(LinkValue::jsonld_context).collect()) {
             headers.typed_insert(link);
         }
     }
@@ -61,7 +62,7 @@ impl Link {
     }
 
     /// The target IRIs of every JSON-LD context link-value.
-    pub fn context_urls(&self) -> impl Iterator<Item = &str> {
+    pub fn context_urls(&self) -> impl Iterator<Item = &IriRefBuf> {
         self.values().iter().filter(|value| value.is_context_link()).map(LinkValue::link)
     }
 
@@ -97,7 +98,8 @@ impl FromStr for Link {
         for segment in SplitAsciiUnquoted::new(raw, ";,") {
             let trimmed = segment.trim();
             if trimmed.starts_with('<') {
-                values.push(LinkValue::new(verify_and_trim(trimmed, b'<', b'>')?.to_owned()));
+                let target = verify_and_trim(trimmed, b'<', b'>')?.parse::<IriRefBuf>().map_err(|_| LinkParseError)?;
+                values.push(LinkValue::new(target));
             } else {
                 values.last_mut().ok_or(LinkParseError)?.apply_param(segment)?;
             }
@@ -147,7 +149,13 @@ mod tests {
     use crate::link::{header::Link, relation_type::RelationType, value::LinkValue};
     use headers::Header;
     use http::HeaderValue;
+    use iri_rs::{IriBuf, IriRefBuf};
     use mediatype::MediaTypeBuf;
+
+    /// A validated IRI reference, for building link targets in tests.
+    fn iri_ref(value: &str) -> IriRefBuf {
+        IriRefBuf::new(value).expect("valid IRI reference")
+    }
 
     /// Decode a `Link` from a raw header string through the `headers` trait.
     fn decode_link(raw: &str) -> Option<Link> {
@@ -159,7 +167,7 @@ mod tests {
     #[test]
     fn a_single_link_value_parses_with_its_parameters() {
         let expected = Link::new(vec![
-            LinkValue::new("http://example.com/TheBook/chapter2")
+            LinkValue::new(iri_ref("http://example.com/TheBook/chapter2"))
                 .push_rel(RelationType::Prev)
                 .set_media_type("text/html".parse::<MediaTypeBuf>().expect("valid media type")),
         ]);
@@ -171,8 +179,8 @@ mod tests {
     #[test]
     fn comma_separated_link_values_parse_as_separate_links() {
         let expected = Link::new(vec![
-            LinkValue::new("/page/2").push_rel(RelationType::Next),
-            LinkValue::new("/page/0").push_rel(RelationType::Prev),
+            LinkValue::new(iri_ref("/page/2")).push_rel(RelationType::Next),
+            LinkValue::new(iri_ref("/page/0")).push_rel(RelationType::Prev),
         ]);
 
         pretty_assertions::assert_eq!(decode_link(r#"</page/2>; rel="next", </page/0>; rel="prev""#), Some(expected));
@@ -183,7 +191,7 @@ mod tests {
         let raw = r#"<http://json-ld.org/contexts/person.jsonld>; rel="http://www.w3.org/ns/json-ld#context"; type="application/ld+json""#;
         let parsed = decode_link(raw).expect("should parse");
 
-        pretty_assertions::assert_eq!(parsed.values()[0].link(), "http://json-ld.org/contexts/person.jsonld");
+        pretty_assertions::assert_eq!(parsed.values()[0].link().as_str(), "http://json-ld.org/contexts/person.jsonld");
         pretty_assertions::assert_eq!(
             parsed.values()[0].rel().expect("has rel")[0].to_string(),
             "http://www.w3.org/ns/json-ld#context"
@@ -197,14 +205,14 @@ mod tests {
         // costing a request.
         let parsed = decode_link(r#"<http://example.com/>; rel="next"; title="Chapter 2"; hreflang=en"#).expect("should parse");
         pretty_assertions::assert_eq!(parsed.values().len(), 1);
-        pretty_assertions::assert_eq!(parsed.values()[0].link(), "http://example.com/");
+        pretty_assertions::assert_eq!(parsed.values()[0].link().as_str(), "http://example.com/");
     }
 
     #[test]
     fn a_link_renders_its_values_comma_separated() {
         let link = Link::new(vec![
-            LinkValue::new("/next").push_rel(RelationType::Next),
-            LinkValue::new("/prev").push_rel(RelationType::Prev),
+            LinkValue::new(iri_ref("/next")).push_rel(RelationType::Next),
+            LinkValue::new(iri_ref("/prev")).push_rel(RelationType::Prev),
         ]);
         pretty_assertions::assert_eq!(link.to_string(), r#"</next>; rel="next", </prev>; rel="prev""#);
     }
@@ -228,7 +236,9 @@ mod tests {
 
     #[test]
     fn a_json_ld_context_header_encodes_with_relation_and_media_type() {
-        let raw = Link::jsonld_context("https://example.com/context.jsonld").to_header_string().expect("encodes");
+        let raw = Link::jsonld_context(iri_ref("https://example.com/context.jsonld"))
+            .to_header_string()
+            .expect("encodes");
         pretty_assertions::assert_eq!(
             raw,
             r#"<https://example.com/context.jsonld>; rel="http://www.w3.org/ns/json-ld#context"; type="application/ld+json""#
@@ -238,8 +248,8 @@ mod tests {
     #[test]
     fn several_link_values_encode_into_one_header() {
         let link = Link::from_values(vec![
-            LinkValue::with_params("https://example.com/one", Some("prev"), None),
-            LinkValue::with_params("https://example.com/two", Some("next"), None),
+            LinkValue::with_params(iri_ref("https://example.com/one"), Some(RelationType::Prev), None),
+            LinkValue::with_params(iri_ref("https://example.com/two"), Some(RelationType::Next), None),
         ])
         .expect("non-empty");
         let raw = link.to_header_string().expect("encodes");
@@ -250,9 +260,9 @@ mod tests {
     #[test]
     fn a_pagination_link_carries_the_negotiated_media_type() {
         let link = Link::new(vec![LinkValue::with_params(
-            "/entities?offset=20&limit=10",
-            Some("next"),
-            Some("application/json"),
+            iri_ref("/entities?offset=20&limit=10"),
+            Some(RelationType::Next),
+            Some("application/json".parse::<MediaTypeBuf>().expect("valid media type")),
         )]);
         pretty_assertions::assert_eq!(
             link.to_header_string().expect("encodes"),
@@ -262,7 +272,7 @@ mod tests {
 
     #[test]
     fn the_encoding_decodes_back_to_the_same_header() {
-        let link = Link::jsonld_context("https://example.com/ctx.jsonld");
+        let link = Link::jsonld_context(iri_ref("https://example.com/ctx.jsonld"));
         let mut encoded = Vec::new();
         link.encode(&mut encoded);
         pretty_assertions::assert_eq!(encoded.len(), 1);
@@ -274,24 +284,24 @@ mod tests {
     #[test]
     fn context_urls_returns_only_the_context_links() {
         let link = Link::new(vec![
-            LinkValue::new("https://example.com/ctx.jsonld").push_rel(RelationType::jsonld_context()),
-            LinkValue::new("/page/2").push_rel(RelationType::Next),
-            LinkValue::new("https://example.com/other.jsonld").push_rel(RelationType::jsonld_context()),
+            LinkValue::new(iri_ref("https://example.com/ctx.jsonld")).push_rel(RelationType::jsonld_context()),
+            LinkValue::new(iri_ref("/page/2")).push_rel(RelationType::Next),
+            LinkValue::new(iri_ref("https://example.com/other.jsonld")).push_rel(RelationType::jsonld_context()),
         ]);
 
-        let urls: Vec<&str> = link.context_urls().collect();
+        let urls: Vec<&str> = link.context_urls().map(IriRefBuf::as_str).collect();
         pretty_assertions::assert_eq!(urls, vec!["https://example.com/ctx.jsonld", "https://example.com/other.jsonld"]);
     }
 
     #[test]
     fn find_by_rel_returns_every_value_with_that_relation() {
         let link = Link::new(vec![
-            LinkValue::new("/page/2").push_rel(RelationType::Next),
-            LinkValue::new("https://example.com/ctx.jsonld").push_rel(RelationType::jsonld_context()),
-            LinkValue::new("/page/3").push_rel(RelationType::Next),
+            LinkValue::new(iri_ref("/page/2")).push_rel(RelationType::Next),
+            LinkValue::new(iri_ref("https://example.com/ctx.jsonld")).push_rel(RelationType::jsonld_context()),
+            LinkValue::new(iri_ref("/page/3")).push_rel(RelationType::Next),
         ]);
 
-        let targets: Vec<&str> = link.find_by_rel(RelationType::Next).map(LinkValue::link).collect();
+        let targets: Vec<&str> = link.find_by_rel(RelationType::Next).map(|value| value.link().as_str()).collect();
         pretty_assertions::assert_eq!(targets, vec!["/page/2", "/page/3"]);
     }
 
@@ -309,7 +319,10 @@ mod tests {
     fn a_profile_parameter_survives_the_round_trip() {
         let raw = r#"<http://example.com/ctx.jsonld>; rel="http://www.w3.org/ns/json-ld#context"; type="application/ld+json"; profile="https://uri.etsi.org/ngsi-ld/profile/version""#;
         let parsed = decode_link(raw).expect("should parse");
-        pretty_assertions::assert_eq!(parsed.values()[0].profile(), Some("https://uri.etsi.org/ngsi-ld/profile/version"));
+        pretty_assertions::assert_eq!(
+            parsed.values()[0].profile().map(IriBuf::as_str),
+            Some("https://uri.etsi.org/ngsi-ld/profile/version")
+        );
         pretty_assertions::assert_eq!(parsed.to_string().parse::<Link>().expect("reparses"), parsed);
     }
 }

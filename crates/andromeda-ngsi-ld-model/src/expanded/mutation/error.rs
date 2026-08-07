@@ -1,6 +1,8 @@
 //! Failures raised by the entity- and attribute-level mutation operations.
 
+use iri_rs::IriBuf;
 use thiserror::Error;
+use urn_rs::Urn;
 
 /// Failures of the entity-level mutation operations.
 ///
@@ -9,9 +11,11 @@ use thiserror::Error;
 /// each one onto the ProblemDetails type NGSI-LD clause 5.5.2 requires instead
 /// of reporting one undifferentiated failure.
 ///
-/// The identifiers are plain strings because that is what the expanded payload
-/// itself uses for attribute keys; when the attribute map gains an IRI key
-/// type, these fields follow it.
+/// The attribute IRI is an [`IriBuf`] and the `datasetId` a [`Urn`], the domain
+/// types they carry across the API boundary. The type lists in
+/// [`ExpandedEntityError::AttributeTypeMismatch`] stay plain strings: they are a
+/// diagnostic rendering of the two `@type` arrays, read only to build the
+/// mismatch message.
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum ExpandedEntityError {
     /// The entity value was not an expanded JSON-LD node (nor an array wrapping one).
@@ -27,33 +31,33 @@ pub enum ExpandedEntityError {
     #[error("attribute {attribute} not found")]
     AttributeNotFound {
         /// Expanded IRI of the attribute that was looked up.
-        attribute: String,
+        attribute: IriBuf,
     },
     /// The attribute exists but holds no instance array to target.
     #[error("attribute {attribute} has no instances")]
     AttributeHasNoInstances {
         /// Expanded IRI of the attribute that was looked up.
-        attribute: String,
+        attribute: IriBuf,
     },
     /// The attribute exists but has no instance with the requested `datasetId`.
     #[error("attribute {attribute} with datasetId {dataset_id} not found")]
     DatasetNotFound {
         /// Expanded IRI of the attribute that was looked up.
-        attribute: String,
+        attribute: IriBuf,
         /// The `datasetId` that selected no instance.
-        dataset_id: String,
+        dataset_id: Urn,
     },
     /// The attribute exists but has no default (no-`datasetId`) instance.
     #[error("attribute {attribute} default instance not found")]
     DefaultInstanceNotFound {
         /// Expanded IRI of the attribute that was looked up.
-        attribute: String,
+        attribute: IriBuf,
     },
     /// The fragment declares a type that the stored instance does not share.
     #[error("attribute type mismatch for {attribute}: fragment declares {fragment_types:?}, instance is {instance_types:?}")]
     AttributeTypeMismatch {
         /// Expanded IRI of the attribute that was looked up.
-        attribute: String,
+        attribute: IriBuf,
         /// Expanded type IRIs declared by the incoming fragment.
         fragment_types: Vec<String>,
         /// Expanded type IRIs carried by the stored instance.

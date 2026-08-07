@@ -47,35 +47,15 @@ pub fn validate_ngsi_ld_name(value: &str) -> Result<(), NgsiLdReferenceError> {
     Err(NgsiLdReferenceError::Invalid(value.to_string()))
 }
 
-/// NGSI-LD reference value used by `vocab`, `valueType`, and `objectType` members.
-///
-/// The compact wire form can be a short name, a compact IRI, or an expanded IRI/URI.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Display, AsRef, Deref, From, Into)]
-#[serde(try_from = "String", into = "String")]
-#[as_ref(str, CompactString)]
-#[display("{_0}")]
-#[into(String)]
-pub struct NgsiLdReference(CompactString);
-
-// Validating parser: the grammar check in `validate_ngsi_ld_name` is what makes
-// the newtype worth having, and no derive expresses a fallible parse.
-impl FromStr for NgsiLdReference {
-    type Err = NgsiLdReferenceError;
-
-    fn from_str(value: &str) -> Result<NgsiLdReference, NgsiLdReferenceError> {
-        validate_ngsi_ld_name(value)?;
-        Ok(NgsiLdReference(CompactString::from(value)))
-    }
-}
-
-// Parsing lives in `FromStr` so borrowed call sites do not allocate; this
-// adapter exists only because `#[serde(try_from = "String")]` requires it.
-impl TryFrom<String> for NgsiLdReference {
-    type Error = NgsiLdReferenceError;
-
-    fn try_from(value: String) -> Result<NgsiLdReference, NgsiLdReferenceError> {
-        value.parse()
-    }
+validated_ngsi_name! {
+    /// NGSI-LD reference value used by `vocab`, `valueType`, and `objectType`
+    /// members.
+    ///
+    /// The compact wire form can be a short name, a compact IRI, or an expanded
+    /// IRI/URI.
+    NgsiLdReference,
+    derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Display, AsRef, Deref, From, Into),
+    as_ref(str, CompactString)
 }
 
 #[cfg(test)]

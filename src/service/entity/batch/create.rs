@@ -48,17 +48,16 @@ impl EntityService {
             return Ok(BatchResult { success: Vec::new(), errors });
         }
 
-        let chunk_ids: Vec<String> = prepared.iter().map(|entity| entity.id.clone()).collect(); // clone: the guards outlive the prepared entities
-        let _id_guards = self.acquire_id_locks(&chunk_ids).await;
+        let lock_ids: Vec<String> = prepared.iter().map(|entity| entity.id.to_string()).collect(); // the id-lock registry is keyed by text
+        let _id_guards = self.acquire_id_locks(&lock_ids).await;
 
         let mut seen: HashSet<String> = HashSet::with_capacity(prepared.len());
         let mut writes = Vec::with_capacity(prepared.len());
         for entity in prepared {
-            if seen.insert(entity.id.clone()) {
-                // clone: the identifier stays on the write
+            if seen.insert(entity.id.to_string()) {
                 writes.push(ChunkWrite::insert(entity, Precondition::MustNotExist));
             } else {
-                errors.push((entity.id.clone(), AndromedaError::entity_already_exists(&entity.id))); // clone: reported and formatted
+                errors.push((entity.id.to_string(), AndromedaError::entity_already_exists(entity.id.as_str()))); // reported and formatted as text
             }
         }
 

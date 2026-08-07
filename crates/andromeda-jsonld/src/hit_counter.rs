@@ -38,16 +38,16 @@ impl HitCounter {
             .fetch_add(1, Ordering::Relaxed);
     }
 
-    /// Swap every pending count to zero and answer with the drained deltas.
-    ///
-    /// URLs with nothing accumulated are omitted; their map entries are kept,
-    /// so a later access stays on the read-and-add path.
+    /// Remove every pending count and answer with the drained deltas.
     pub fn drain(&self) -> Vec<(String, u64)> {
-        let mut drained = Vec::with_capacity(self.pending.len());
-        for entry in self.pending.iter() {
-            let delta = entry.value().swap(0, Ordering::Relaxed);
-            if delta > 0 {
-                drained.push((entry.key().clone(), delta)); // clone: the drained key goes to the caller
+        let keys: Vec<_> = self.pending.iter().map(|entry| entry.key().clone()).collect();
+        let mut drained = Vec::with_capacity(keys.len());
+        for key in keys {
+            if let Some((url, count)) = self.pending.remove(&key) {
+                let delta = count.into_inner();
+                if delta > 0 {
+                    drained.push((url, delta));
+                }
             }
         }
         drained
@@ -59,7 +59,7 @@ mod tests {
     use crate::hit_counter::HitCounter;
 
     #[test]
-    fn counts_accumulate_per_url_and_a_drain_resets_them_to_zero() {
+    fn counts_accumulate_per_url_and_a_drain_removes_their_entries() {
         let counter = HitCounter::new();
         let url_a = "https://example.com/ctx-a";
         let url_b = "https://example.com/ctx-b";

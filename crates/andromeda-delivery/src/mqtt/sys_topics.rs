@@ -6,10 +6,52 @@
 //! fire-and-forget — a broker that does not publish `$SYS`, or does not allow
 //! subscribing to it, simply reports nothing.
 
-/// `$SYS` topics subscribed to for broker metadata.
-pub const SYS_TOPICS: &[&str] = &["$SYS/broker/uptime", "$SYS/broker/version", "$SYS/broker/clients/connected"];
+use strum::EnumIter;
+
+/// A `$SYS` metric topic this broker subscribes to.
+///
+/// A closed enum rather than a list of topic strings: the set of metrics read
+/// is fixed, so modelling it this way makes the topic-to-field mapping total and
+/// removes the string comparison that decided it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, EnumIter)]
+pub enum SysTopic {
+    /// `$SYS/broker/uptime`.
+    BrokerUptime,
+    /// `$SYS/broker/version`.
+    BrokerVersion,
+    /// `$SYS/broker/clients/connected`.
+    ClientsConnected,
+}
+
+impl SysTopic {
+    /// The `$SYS` topic string this metric is published on, for the subscribe
+    /// call that takes one.
+    pub const fn topic(self) -> &'static str {
+        match self {
+            SysTopic::BrokerUptime => "$SYS/broker/uptime",
+            SysTopic::BrokerVersion => "$SYS/broker/version",
+            SysTopic::ClientsConnected => "$SYS/broker/clients/connected",
+        }
+    }
+
+    /// The metric a published `$SYS` topic names, or `None` for a topic this
+    /// broker does not read.
+    pub fn from_topic(topic: &str) -> Option<SysTopic> {
+        match topic {
+            "$SYS/broker/uptime" => Some(SysTopic::BrokerUptime),
+            "$SYS/broker/version" => Some(SysTopic::BrokerVersion),
+            "$SYS/broker/clients/connected" => Some(SysTopic::ClientsConnected),
+            _unsubscribed => None,
+        }
+    }
+}
 
 /// Broker metadata collected from `$SYS` topics.
+///
+/// The values are free-form telemetry text as the broker publishes them — a
+/// human-readable uptime, a version banner, a client count — so they stay
+/// `String` rather than being parsed into a shape this broker never reasons
+/// about.
 #[derive(Debug, Default)]
 pub struct SysTopicData {
     /// Value of `$SYS/broker/uptime`.
@@ -21,27 +63,27 @@ pub struct SysTopicData {
 }
 
 impl SysTopicData {
-    /// Record a `$SYS` publish, ignoring topics this broker does not read.
-    pub fn record(&mut self, topic: &str, payload: String) {
+    /// Record a `$SYS` publish under the metric it belongs to.
+    pub fn record(&mut self, topic: SysTopic, value: String) {
         match topic {
-            "$SYS/broker/uptime" => self.broker_uptime = Some(payload),
-            "$SYS/broker/version" => self.broker_version = Some(payload),
-            "$SYS/broker/clients/connected" => self.clients_connected = Some(payload),
-            _unsubscribed => {}
+            SysTopic::BrokerUptime => self.broker_uptime = Some(value),
+            SysTopic::BrokerVersion => self.broker_version = Some(value),
+            SysTopic::ClientsConnected => self.clients_connected = Some(value),
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::mqtt::sys_topics::{SYS_TOPICS, SysTopicData};
+    use crate::mqtt::sys_topics::{SysTopic, SysTopicData};
+    use strum::IntoEnumIterator;
 
     #[test]
-    fn every_subscribed_topic_lands_in_its_own_field() {
+    fn every_metric_records_into_its_own_field() {
         let mut data = SysTopicData::default();
-        data.record("$SYS/broker/uptime", "12 seconds".to_owned());
-        data.record("$SYS/broker/version", "mosquitto 2.0".to_owned());
-        data.record("$SYS/broker/clients/connected", "3".to_owned());
+        data.record(SysTopic::BrokerUptime, "12 seconds".to_owned());
+        data.record(SysTopic::BrokerVersion, "mosquitto 2.0".to_owned());
+        data.record(SysTopic::ClientsConnected, "3".to_owned());
 
         pretty_assertions::assert_eq!(data.broker_uptime.as_deref(), Some("12 seconds"));
         pretty_assertions::assert_eq!(data.broker_version.as_deref(), Some("mosquitto 2.0"));
@@ -49,21 +91,14 @@ mod tests {
     }
 
     #[test]
-    fn a_topic_outside_the_subscribed_set_is_ignored() {
-        let mut data = SysTopicData::default();
-        data.record("$SYS/broker/messages/sent", "9000".to_owned());
-        assert!(data.broker_uptime.is_none() && data.broker_version.is_none() && data.clients_connected.is_none());
+    fn a_topic_outside_the_known_set_maps_to_no_metric() {
+        assert!(SysTopic::from_topic("$SYS/broker/messages/sent").is_none());
     }
 
     #[test]
-    fn every_topic_subscribed_to_is_one_the_recorder_reads() {
-        for topic in SYS_TOPICS {
-            let mut data = SysTopicData::default();
-            data.record(topic, "value".to_owned());
-            assert!(
-                data.broker_uptime.is_some() || data.broker_version.is_some() || data.clients_connected.is_some(),
-                "{topic} is subscribed to and then discarded"
-            );
+    fn every_metric_topic_round_trips_through_from_topic() {
+        for sys in SysTopic::iter() {
+            pretty_assertions::assert_eq!(SysTopic::from_topic(sys.topic()), Some(sys));
         }
     }
 }

@@ -1,7 +1,8 @@
 //! Comparison operands of a `q` predicate (clause 4.9).
 
 use crate::error::QueryError;
-use chrono::{DateTime, NaiveDate, NaiveTime, SecondsFormat, Utc};
+use andromeda_ngsi_ld_lexicon::rfc3339::whole_seconds;
+use chrono::{DateTime, NaiveDate, NaiveTime, Utc};
 use serde_json::Number;
 
 /// The right-hand side of a comparison predicate.
@@ -94,7 +95,7 @@ impl Scalar {
             Scalar::Bool(value) => value.to_string(),
             // clone: callers own the rendered literal
             Scalar::Str(value) => value.clone(),
-            Scalar::DateTime(value) => value.to_rfc3339_opts(SecondsFormat::AutoSi, true),
+            Scalar::DateTime(value) => whole_seconds(*value),
             Scalar::Date(value) => value.to_string(),
             Scalar::Time(value) => value.format(TIME_FORMAT).to_string(),
         }
@@ -122,7 +123,7 @@ mod tests {
         // Clause 4.6.3: a date-time operand is an RFC 3339 date-time, so it is
         // resolved to an instant here rather than re-read on every rendering.
         let parsed = parse_date_time("2017-12-24T12:00:00Z").expect("valid date-time");
-        assert_eq!(parsed.to_rfc3339_opts(SecondsFormat::Secs, true), "2017-12-24T12:00:00Z");
+        assert_eq!(parsed.to_rfc3339_opts(chrono::SecondsFormat::Secs, true), "2017-12-24T12:00:00Z");
     }
 
     #[test]
@@ -152,8 +153,8 @@ mod tests {
     }
 
     #[test]
-    fn fractional_seconds_survive_the_canonical_rendering() {
-        assert_eq!(date_time("2024-01-01T00:00:00.250Z").literal_text(), "2024-01-01T00:00:00.250Z");
+    fn fractional_seconds_parse_but_render_at_whole_seconds() {
+        assert_eq!(date_time("2024-01-01T00:00:00.250Z").literal_text(), "2024-01-01T00:00:00Z");
         assert_eq!(Scalar::Time(parse_time("12:00:00.250Z").unwrap()).literal_text(), "12:00:00.250Z");
     }
 }

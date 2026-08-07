@@ -3,6 +3,7 @@
 //! Uses IANA Warning Codes to signal non-fatal issues encountered during
 //! distributed operations (forwarding to context sources).
 
+use crate::link::quoting::SplitAsciiUnquoted;
 use http::{HeaderName, HeaderValue};
 
 /// The header name, as a `HeaderName` the `headers` trait can hand back.
@@ -61,29 +62,6 @@ fn parse_warning(s: &str) -> Option<NgsiLdWarning> {
     }
 }
 
-/// Split a string on commas that are not inside double-quoted segments.
-///
-/// Warning values contain quoted text (e.g. `199 - "timeout"`) and commas
-/// inside quotes must not be treated as separators.
-fn split_unquoted_commas(s: &str) -> Vec<&str> {
-    let mut segments = Vec::new();
-    let mut start = 0;
-    let mut in_quotes = false;
-
-    for (i, c) in s.char_indices() {
-        match c {
-            '"' => in_quotes = !in_quotes,
-            ',' if !in_quotes => {
-                segments.push(&s[start..i]);
-                start = i + 1;
-            }
-            _ => {}
-        }
-    }
-    segments.push(&s[start..]);
-    segments
-}
-
 impl headers::Header for NgsiLdWarningHeader {
     fn name() -> &'static HeaderName {
         &NGSILD_WARNING
@@ -97,8 +75,9 @@ impl headers::Header for NgsiLdWarningHeader {
         for value in values {
             let s = value.to_str().map_err(|_| headers::Error::invalid())?;
             // Each header value may contain multiple comma-separated warnings,
-            // but warning text itself may contain commas inside quotes.
-            for segment in split_unquoted_commas(s) {
+            // but warning text itself may contain commas inside quotes, and an
+            // RFC 9110 quoted-pair (`\"`) inside the text must not end the quote.
+            for segment in SplitAsciiUnquoted::new(s, ",") {
                 if let Some(w) = parse_warning(segment) {
                     warnings.push(w);
                 }
@@ -239,5 +218,19 @@ mod tests {
         let header = NgsiLdWarningHeader::decode(&mut iter).expect("should decode");
         pretty_assertions::assert_eq!(header.0.len(), 1);
         pretty_assertions::assert_eq!(header.0[0], NgsiLdWarning::MiscellaneousWarning("timeout, retry later".to_string()));
+    }
+
+    #[test]
+    fn decode_warning_with_an_escaped_quote_before_a_comma_is_not_split() {
+        // RFC 9110 warn-text is a quoted-string admitting quoted-pairs, so an
+        // escaped quote (`\"`) must not end the quoted run and let the following
+        // comma split the value into two malformed warnings. The old comma
+        // splitter had no escape handling and split this in two; routing through
+        // `SplitAsciiUnquoted` fixes it.
+        let raw = r#"110 - "a\", b""#;
+        let val = HeaderValue::from_str(raw).expect("valid header value");
+        let mut iter = std::iter::once(&val);
+        let header = NgsiLdWarningHeader::decode(&mut iter).expect("should decode as one warning");
+        pretty_assertions::assert_eq!(header.0.len(), 1);
     }
 }

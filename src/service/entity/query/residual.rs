@@ -9,6 +9,7 @@ use crate::{
     core::error::AndromedaError,
     service::entity::{pagination_outcome::PaginationOutcome, query::EntityQueryService, query_outcome::QueryOutcome, residual_filter::ResidualFilter},
 };
+use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_query::pagination::{CountPolicy, Pagination};
 use serde_json::Value;
 
@@ -82,7 +83,7 @@ impl EntityQueryService {
     /// one costs a payload read for every identifier the store returned. That is
     /// the honest price of an entity-map query against a store that could not
     /// push the predicate down.
-    pub(super) async fn finish_ids(&self, outcome: QueryOutcome<String>, pagination: Pagination) -> Result<Vec<String>, AndromedaError> {
+    pub(super) async fn finish_ids(&self, outcome: QueryOutcome<Uri>, pagination: Pagination) -> Result<Vec<String>, AndromedaError> {
         let QueryOutcome {
             rows,
             unapplied,
@@ -92,21 +93,27 @@ impl EntityQueryService {
         match applied {
             PaginationOutcome::Applied { total: _ } => {
                 if unapplied.is_empty() {
-                    Ok(rows)
+                    Ok(rows.iter().map(Uri::to_string).collect())
                 } else {
                     Err(incoherent(&unapplied))
                 }
             }
             PaginationOutcome::Deferred => {
                 if unapplied.is_empty() {
-                    return Ok(rows.into_iter().skip(pagination.offset as usize).take(pagination.limit as usize).collect());
+                    return Ok(rows
+                        .iter()
+                        .skip(pagination.offset as usize)
+                        .take(pagination.limit as usize)
+                        .map(Uri::to_string)
+                        .collect());
                 }
                 let payloads = self.repo.get_batch(&rows).await?;
                 Ok(rows
-                    .into_iter()
-                    .filter(|id| payloads.get(id).is_some_and(|payload| unapplied.matches(payload)))
+                    .iter()
+                    .filter(|id| payloads.get(*id).is_some_and(|payload| unapplied.matches(payload)))
                     .skip(pagination.offset as usize)
                     .take(pagination.limit as usize)
+                    .map(Uri::to_string)
                     .collect())
             }
         }

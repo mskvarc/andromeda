@@ -1,11 +1,12 @@
 //! The RFC 3339 rendering of the timestamp members Andromeda writes itself.
 //!
 //! Chrono's own `Serialize` emits sub-second precision that varies with the
-//! stored value; NGSI-LD timestamps are compared as strings by clients, so the
-//! members that Andromeda generates go through [`whole_seconds`] to fix the
-//! rendering at whole seconds with a `Z` suffix. The serde adapters below are
-//! that same rendering reached through `#[serde(with = …)]`; a caller building
-//! a timestamp into a JSON value by hand calls the function directly.
+//! stored value. Andromeda's stable outbound policy is whole-second UTC
+//! rendering for every timestamp it generates; this is a broker policy, not an
+//! ETSI requirement about stored or accepted timestamp precision. The serde
+//! adapters below are that same rendering reached through `#[serde(with = …)]`;
+//! a caller building a timestamp into a JSON value by hand calls the function
+//! directly.
 
 use chrono::{DateTime, SecondsFormat, Utc};
 

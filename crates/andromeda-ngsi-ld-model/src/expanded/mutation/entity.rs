@@ -74,7 +74,7 @@ fn apply_instance_patch(entity_obj: &mut Map<String, Value>, key: &str, patch_in
     for patch_instance in patch_instances {
         if instance_is_null_sentinel(patch_instance) {
             let dataset_id = get_instance_dataset_id(patch_instance);
-            remove_instances_by_dataset(entity_obj, key, dataset_id.as_deref());
+            remove_instances_by_dataset(entity_obj, key, dataset_id);
         } else {
             deep_merge_attribute(entity_obj, key, from_ref(patch_instance));
         }
@@ -254,7 +254,7 @@ pub fn update_entity_attrs(entity: &mut Value, attrs: &Value) -> Result<Vec<Stri
 #[cfg(test)]
 mod tests {
     use crate::expanded::mutation::{
-        entity::{append_entity_attrs, merge_entity},
+        entity::{append_entity_attrs, merge_entity, update_entity_attrs},
         error::ExpandedEntityError,
         selection::OverwritePolicy,
         speed_entity,
@@ -325,6 +325,31 @@ mod tests {
 
         let instances = speed_instances(&entity);
         pretty_assertions::assert_eq!(instances.len(), 1, "the default instance is gone, B is kept");
+        pretty_assertions::assert_eq!(instances[0]["https://uri.etsi.org/ngsi-ld/datasetId"][0]["@id"], json!("urn:ngsi-ld:Dataset:B"));
+        pretty_assertions::assert_eq!(instances[0]["https://uri.etsi.org/ngsi-ld/hasValue"][0]["@value"], json!(20));
+    }
+
+    #[test]
+    fn update_attributes_deletes_the_default_instance_and_keeps_the_named_update() {
+        // ETSI GS CIM 009 v1.9.1 clause 5.6.2 updates each supplied instance;
+        // the default-instance deletion sentinel cannot discard a named update
+        // later in the same attribute array.
+        let mut entity = entity_with_speed(vec![
+            property_instance(json!(10), None),
+            property_instance(json!(15), Some("urn:ngsi-ld:Dataset:B")),
+        ]);
+        let patch = serde_json::json!({
+            "https://example.com/speed": [
+                property_instance(json!("urn:ngsi-ld:null"), None),
+                property_instance(json!(20), Some("urn:ngsi-ld:Dataset:B"))
+            ]
+        });
+
+        let not_updated = update_entity_attrs(&mut entity, &patch).expect("update succeeds");
+
+        assert!(not_updated.is_empty());
+        let instances = speed_instances(&entity);
+        pretty_assertions::assert_eq!(instances.len(), 1);
         pretty_assertions::assert_eq!(instances[0]["https://uri.etsi.org/ngsi-ld/datasetId"][0]["@id"], json!("urn:ngsi-ld:Dataset:B"));
         pretty_assertions::assert_eq!(instances[0]["https://uri.etsi.org/ngsi-ld/hasValue"][0]["@value"], json!(20));
     }

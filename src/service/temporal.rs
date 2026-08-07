@@ -29,7 +29,7 @@ use crate::{
 use andromeda_jsonld::{
     compaction::compact_attr_iri,
     context_spec::ContextSpec,
-    engine::{options::CompactOptions, processor::JsonLdEngine},
+    engine::{options::CompactOptions, processor::JsonLdEngine, term_lookup::PreparedTermContext},
     term_expansion::ContextualExpander,
 };
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, temporal_format::TemporalFormat, uri::Uri};
@@ -39,15 +39,14 @@ use andromeda_ngsi_ld_query::{
     entity_selection::EntitySelection,
     error::QueryError,
     filter::{
-        expansion::{apply_expand_values, apply_json_keys, expand_q_expression},
+        expansion::{apply_expand_values, apply_json_keys, expand_q_expr},
         path::expanded_attribute_name,
     },
     geo::{compile as geo_compile, query::GeoQuery},
+    identifier::parse_id,
     pagination::{CountPolicy, Pagination},
     projection::expansion::expand_attrs,
-    scope::query::ScopeQuery,
     temporal::{
-        aggregation_period::AggregationPeriod,
         compiled::CompiledTemporalQuery,
         instance_selection::InstanceSelection,
         last_n::LastNOrigin,
@@ -259,7 +258,7 @@ impl TemporalService {
                 .and_then(|v| v.as_str())
                 .ok_or_else(|| AndromedaError::temporal_validation("Entity missing @id"))?;
 
-            if entity_id.is_empty() || url::Url::parse(entity_id).is_err() {
+            if entity_id.parse::<Uri>().is_err() {
                 return Err(AndromedaError::temporal_validation("Invalid entity id"));
             }
             if entity_obj.get("@type").and_then(|v| v.as_array()).is_none_or(|types| types.is_empty()) {
@@ -332,7 +331,8 @@ impl TemporalService {
     }
 
     async fn resolve_attr_iri_for_entity(&self, entity_id: &str, attr_id: &str, context: &ContextSpec) -> Result<String, AndromedaError> {
-        let expanded_attr = self.engine.expand_term(attr_id, context).await?;
+        let prepared_context = self.engine.prepare_term_context(context);
+        let expanded_attr = self.engine.expand_term(attr_id, &prepared_context).await?.to_string();
 
         if !self.repo.get_teas_for_entity_attr(entity_id, &expanded_attr).await?.is_empty() {
             return Ok(expanded_attr);
@@ -470,18 +470,14 @@ impl TemporalService {
             return Err(AndromedaError::temporal_not_found(entity_id.to_string()));
         }
 
-        let entity_types = if let Some(entity_payload) = self.entity_repo.get(entity_id).await? {
-            extract_types(&entity_payload)
-        } else {
-            Vec::new()
+        let entity_types = match entity_id.parse::<Uri>() {
+            Ok(entity_uri) => self.entity_repo.get(&entity_uri).await?.as_ref().map(extract_types).unwrap_or_default(),
+            Err(_) => Vec::new(),
         };
 
         let compiled = self.compile_temporal_query(params, context).await?;
 
-        let stage2 = build_temporal_history_query(
-            &entity_id.parse::<Uri>().map_err(|source| QueryError::ParamIdInvalid(source.to_string()))?,
-            &compiled,
-        )?;
+        let stage2 = build_temporal_history_query(&parse_id(entity_id)?, &compiled)?;
         let rows = self.repo.execute_temporal_query(&stage2.sql, &stage2.bind_values).await?;
 
         // When an attrs filter is specified and nothing matches, return 404
@@ -545,11 +541,14 @@ impl TemporalService {
             None
         };
 
-        // Batch-fetch entity payloads to extract types (avoids N+1 queries)
-        let entity_payloads = self.entity_repo.get_batch(&entity_ids).await?;
+        // Batch-fetch entity payloads to extract types (avoids N+1 queries).
+        // Stage 1 read these ids out of `entities.id`, so any that fails to parse
+        // is a corrupt row and is simply absent from the type map below.
+        let entity_uris: Vec<Uri> = entity_ids.iter().filter_map(|id| id.parse::<Uri>().ok()).collect();
+        let entity_payloads = self.entity_repo.get_batch(&entity_uris).await?;
         let entity_types_map: std::collections::HashMap<String, Vec<EntityTypeName>> = entity_payloads
             .iter()
-            .map(|(id, payload)| (id.clone(), extract_types(payload))) // clone: owned key for HashMap entry
+            .map(|(id, payload)| (id.to_string(), extract_types(payload))) // key by text: the loop below carries String ids from stage 1
             .collect();
 
         let mut entities = Vec::new();
@@ -564,9 +563,8 @@ impl TemporalService {
             // Stage 1 read these ids out of `entities.id`, so they were valid
             // URIs on the way in; a failure here means the row is corrupt and is
             // reported alongside the statement-building failures below.
-            let stage2 = match entity_id
-                .parse::<Uri>()
-                .map_err(|source| AndromedaError::from(QueryError::ParamIdInvalid(source.to_string())))
+            let stage2 = match parse_id(&entity_id)
+                .map_err(AndromedaError::from)
                 .and_then(|id| build_temporal_history_query(&id, &compiled).map_err(AndromedaError::from))
             {
                 Ok(s) => s,
@@ -795,40 +793,45 @@ impl TemporalService {
     /// Expands terms, resolves IRIs, parses temporal/geo/q filters, and computes
     /// effective lastN and pagination values.
     pub async fn compile_temporal_query(&self, params: &TemporalQueryParameters, context: &ContextSpec) -> Result<CompiledTemporalQuery, AndromedaError> {
+        let prepared_context = self.engine.prepare_term_context(context);
+        let expander = ContextualExpander::new(&self.engine, &prepared_context);
         // Clause 5.2.11: a POST temporal query body's `entities[]` is a union of
         // selectors, compiled by the same helper the entity path uses so the two
         // cannot disagree on what a selection means.
         let selectors = compile_entity_selectors(
             &self.engine,
-            context,
+            &prepared_context,
             &params.entity_selectors,
-            params.parse_ids().unwrap_or_default(),
-            params.id_pattern.as_deref(),
-            params.entity_type.as_deref(),
+            params.id.clone().unwrap_or_default(),
+            params.id_pattern.as_ref(),
+            params.entity_type.as_ref(),
         )
         .await?;
 
-        let attr_filter = expand_attrs(&params.parse_attrs(), &ContextualExpander::new(&self.engine, context)).await?;
+        let attr_filter = expand_attrs(params.attrs.as_deref().unwrap_or_default(), &expander).await?;
 
         let dataset_id_filter = params
-            .parse_dataset_ids()
-            .iter()
-            .map(|raw| DatasetSelector::parse(raw))
-            .collect::<Result<Vec<DatasetSelector>, QueryError>>()?;
+            .dataset_id
+            .as_deref()
+            .map(|dataset_ids| dataset_ids.iter().cloned().map(DatasetSelector::Id).collect())
+            .unwrap_or_default();
 
-        let timerel = params.parse_timerel().transpose()?;
+        let timerel = params.timerel;
 
-        let aggr_period_duration = params.aggr_period_duration.as_deref().map(AggregationPeriod::parse).transpose()?.flatten();
+        let aggr_period_duration = params.aggr_period_duration;
 
-        let q_expr = expand_q_expression(params.q.as_deref(), &ContextualExpander::new(&self.engine, context)).await?;
+        // Expansion consumes the AST while the caller retains its request parameters.
+        let q_expr = match params.q.clone() {
+            Some(expr) => Some(expand_q_expr(expr, &expander).await?),
+            None => None,
+        };
 
         // Apply expandValues: expand string RHS values for specified attributes (spec temporal params)
         let q_expr = if let Some(q_expr) = q_expr {
             if let Some(ref ev) = params.expand_values {
-                let ev_attrs: Vec<String> = ev.split(',').map(|s| s.trim().to_string()).collect();
-                let ev_iris = expand_attrs(&ev_attrs, &ContextualExpander::new(&self.engine, context)).await?;
+                let ev_iris = expand_attrs(ev, &expander).await?;
                 let ev_set = opted_in_attribute_names(&ev_iris)?;
-                Some(apply_expand_values(q_expr, &ev_set, &ContextualExpander::new(&self.engine, context)).await?)
+                Some(apply_expand_values(q_expr, &ev_set, &expander).await?)
             } else {
                 Some(q_expr)
             }
@@ -839,10 +842,9 @@ impl TemporalService {
         // Apply jsonKeys: expand sub-path keys for specified attributes (spec 6.4.3.2)
         let q_expr = if let Some(q_expr) = q_expr {
             if let Some(ref jk) = params.json_keys {
-                let jk_attrs: Vec<String> = jk.split(',').map(|s| s.trim().to_string()).collect();
-                let jk_iris = expand_attrs(&jk_attrs, &ContextualExpander::new(&self.engine, context)).await?;
+                let jk_iris = expand_attrs(jk, &expander).await?;
                 let jk_set = opted_in_attribute_names(&jk_iris)?;
-                Some(apply_json_keys(q_expr, &jk_set, &ContextualExpander::new(&self.engine, context)).await?)
+                Some(apply_json_keys(q_expr, &jk_set, &expander).await?)
             } else {
                 Some(q_expr)
             }
@@ -850,7 +852,7 @@ impl TemporalService {
             None
         };
 
-        let geo = self.compile_geo_query(params, context).await?;
+        let geo = self.compile_geo_query(params, &prepared_context).await?;
 
         let format = params.parse_format();
         let last_n_cap = self.default_last_n;
@@ -874,32 +876,19 @@ impl TemporalService {
             params.last_n
         };
 
-        let parse_instant = |raw: Option<&str>, field: &str| -> Result<Option<DateTime<Utc>>, AndromedaError> {
-            raw.map(|value| {
-                DateTime::parse_from_rfc3339(value)
-                    .map(|parsed| parsed.with_timezone(&Utc))
-                    .map_err(|source| AndromedaError::temporal_validation(format!("Invalid {field}: {source}")))
-            })
-            .transpose()
-        };
-
         Ok(CompiledTemporalQuery::builder()
             .entities(
                 EntitySelection::builder()
                     .selectors(selectors)
                     .q_expr(q_expr)
                     .geo(geo)
-                    .scope_q(params.scope_q.as_deref().map(ScopeQuery::parse).transpose()?)
+                    .scope_q(params.scope_q.clone())
                     .build(),
             )
             .window(
                 TemporalWindow::builder()
-                    .interval(TimeInterval::from_parts(
-                        timerel,
-                        parse_instant(params.time_at.as_deref(), "timeAt")?,
-                        parse_instant(params.end_time_at.as_deref(), "endTimeAt")?,
-                    )?)
-                    .timeproperty(params.parse_timeproperty()?)
+                    .interval(TimeInterval::from_parts(timerel, params.time_at, params.end_time_at)?)
+                    .timeproperty(params.timeproperty_or_default())
                     .build(),
             )
             .instances(
@@ -913,7 +902,7 @@ impl TemporalService {
             .representation(
                 Representation::builder()
                     .format(format)
-                    .aggr_methods(params.parse_aggr_methods()?)
+                    .aggr_methods(params.aggr_methods.clone().unwrap_or_default())
                     .aggr_period_duration(aggr_period_duration)
                     .sys_attrs(if params.has_sys_attrs() {
                         SysAttrsInclusion::Include
@@ -933,16 +922,10 @@ impl TemporalService {
             .build())
     }
 
-    async fn compile_geo_query(&self, params: &TemporalQueryParameters, context: &ContextSpec) -> Result<Option<GeoQuery>, AndromedaError> {
-        geo_compile::compile_geo_query(
-            params.georel.as_deref(),
-            params.geometry.as_deref(),
-            params.coordinates.as_deref(),
-            params.geoproperty.as_deref(),
-            &ContextualExpander::new(&self.engine, context),
-        )
-        .await
-        .map_err(AndromedaError::from)
+    async fn compile_geo_query(&self, params: &TemporalQueryParameters, context: &PreparedTermContext) -> Result<Option<GeoQuery>, AndromedaError> {
+        geo_compile::compile_geo_query(params.geo.0.as_ref(), &ContextualExpander::new(&self.engine, context))
+            .await
+            .map_err(AndromedaError::from)
     }
 }
 

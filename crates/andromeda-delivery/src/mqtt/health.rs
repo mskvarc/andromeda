@@ -1,6 +1,6 @@
 //! How healthy one pooled broker connection is.
 
-use crate::endpoint::mqtt::MqttVersion;
+use crate::{endpoint::mqtt::MqttVersion, host_port::HostPort};
 use std::sync::atomic::{AtomicU8, Ordering};
 
 /// Health of a single pooled MQTT connection.
@@ -74,10 +74,8 @@ impl HealthCell {
 /// Summary of a single MQTT connection's health state.
 #[derive(Debug, Clone)]
 pub struct MqttConnectionHealthSummary {
-    /// Broker hostname.
-    pub host: String,
-    /// Broker port.
-    pub port: u16,
+    /// The broker authority (host and port).
+    pub authority: HostPort,
     /// MQTT protocol version.
     pub version: MqttVersion,
     /// Current health of this connection.

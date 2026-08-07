@@ -1,10 +1,6 @@
 //! Running every registered indicator and reporting the worst answer.
 
-use crate::{
-    component::{ComponentDetail, ComponentName},
-    indicator::HealthIndicator,
-    status::HealthStatus,
-};
+use crate::{indicator::HealthIndicator, report::HealthCheckDetails, status::HealthStatus};
 use std::{collections::BTreeMap, sync::Arc};
 
 /// Aggregate health checker that runs all registered [`HealthIndicator`]s.
@@ -19,12 +15,13 @@ pub struct Health {
 
 impl Health {
     /// Create a new [`HealthBuilder`] for registering indicators.
-    pub fn builder() -> HealthBuilder {
+    pub const fn builder() -> HealthBuilder {
         HealthBuilder { indicators: Vec::new() }
     }
 
-    /// Run all registered indicators and return the worst status alongside
-    /// per-component details.
+    /// Run all registered indicators and report the worst status alongside
+    /// per-component details, in the [`HealthCheckDetails`] shape the response
+    /// carries.
     ///
     /// Sequential rather than concurrent: a broker runs a handful of
     /// indicators, each of which is a round trip to a pool it already holds,
@@ -33,7 +30,7 @@ impl Health {
     /// [`HealthStatus::Up`] and an empty map — nothing to ask is not the same
     /// as nothing answering, but it is the only thing a broker with no
     /// subsystems can honestly say.
-    pub async fn check_all(&self) -> (HealthStatus, BTreeMap<ComponentName, ComponentDetail>) {
+    pub async fn check_all(&self) -> HealthCheckDetails {
         let mut components = BTreeMap::new();
         let mut worst = HealthStatus::Up;
 
@@ -45,7 +42,7 @@ impl Health {
             components.insert(indicator.name(), detail);
         }
 
-        (worst, components)
+        HealthCheckDetails { status: worst, components }
     }
 }
 
@@ -106,9 +103,9 @@ mod tests {
     #[tokio::test]
     async fn a_broker_with_no_indicators_reports_up_and_names_no_components() {
         let health = Health::builder().build();
-        let (status, components) = health.check_all().await;
-        pretty_assertions::assert_eq!(status, HealthStatus::Up);
-        assert!(components.is_empty());
+        let details = health.check_all().await;
+        pretty_assertions::assert_eq!(details.status, HealthStatus::Up);
+        assert!(details.components.is_empty());
     }
 
     #[tokio::test]
@@ -120,9 +117,9 @@ mod tests {
             })
             .build();
 
-        let (status, components) = health.check_all().await;
-        pretty_assertions::assert_eq!(status, HealthStatus::Up);
-        pretty_assertions::assert_eq!(components[&ComponentName::PostgreSql].status, HealthStatus::Up);
+        let details = health.check_all().await;
+        pretty_assertions::assert_eq!(details.status, HealthStatus::Up);
+        pretty_assertions::assert_eq!(details.components[&ComponentName::PostgreSql].status, HealthStatus::Up);
     }
 
     #[tokio::test]
@@ -138,10 +135,10 @@ mod tests {
             })
             .build();
 
-        let (status, components) = health.check_all().await;
-        pretty_assertions::assert_eq!(status, HealthStatus::Down);
-        pretty_assertions::assert_eq!(components[&ComponentName::Mqtt].status, HealthStatus::Up);
-        pretty_assertions::assert_eq!(components[&ComponentName::PostgreSql].status, HealthStatus::Down);
+        let details = health.check_all().await;
+        pretty_assertions::assert_eq!(details.status, HealthStatus::Down);
+        pretty_assertions::assert_eq!(details.components[&ComponentName::Mqtt].status, HealthStatus::Up);
+        pretty_assertions::assert_eq!(details.components[&ComponentName::PostgreSql].status, HealthStatus::Down);
     }
 
     #[test]

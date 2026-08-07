@@ -105,7 +105,7 @@ pub(crate) fn remove_instances_by_dataset(entity_obj: &mut Map<String, Value>, k
     let before = instances.len();
     match dataset_id {
         Some(ds_id) => {
-            instances.retain(|inst| get_instance_dataset_id(inst).as_deref() != Some(ds_id));
+            instances.retain(|inst| get_instance_dataset_id(inst) != Some(ds_id));
         }
         None => {
             // The default instance is the one carrying no datasetId at all.

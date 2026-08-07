@@ -2,7 +2,7 @@
 
 use crate::{
     api::tenant::{TenantState, TenantStateOrCreate},
-    core::error::{AndromedaError, ResultInstanceExt},
+    core::error::ResultInstanceExt,
     http::{
         error::problem::NgsiLdError,
         extractor::{accept::AcceptFormatNoGeo, context::ContextUrl, jsonld::JsonLd, prefer::PreferHeader, query::ValidatedQuery},
@@ -86,31 +86,12 @@ pub async fn query(
     let options = parse_list_options(params.options.as_deref(), &uri)?;
 
     let limit = params.limit.unwrap_or(100);
-    if limit <= 0 {
-        return Err(NgsiLdError::from(
-            AndromedaError::query_validation("limit must be greater than 0").with_instance(&uri),
-        ));
-    }
-    if let Some(page) = params.page
-        && page <= 0
-    {
-        return Err(NgsiLdError::from(
-            AndromedaError::query_validation("page must be greater than 0").with_instance(&uri),
-        ));
-    }
-    let offset = if let Some(page) = params.page {
-        (page - 1) * limit
-    } else {
-        let offset = params.offset.unwrap_or(0);
-        if offset < 0 {
-            return Err(NgsiLdError::from(
-                AndromedaError::query_validation("offset must be greater than or equal to 0").with_instance(&uri),
-            ));
-        }
-        offset
-    };
+    let offset = params.offset.unwrap_or(0);
 
-    let (subscriptions, total) = service.list_for_response(Some(limit), Some(offset), &context).await.with_instance(&uri)?;
+    let (subscriptions, total) = service
+        .list_for_response(Some(i64::from(limit)), Some(i64::from(offset)), &context)
+        .await
+        .with_instance(&uri)?;
 
     let subscriptions = subscriptions
         .into_iter()
@@ -134,8 +115,8 @@ pub async fn query(
     append_pagination_links(
         &mut response,
         &uri,
-        limit,
-        offset,
+        i64::from(limit),
+        i64::from(offset),
         total,
         PaginationStyle::PagePrevNext,
         PaginationMediaType::JsonLd,

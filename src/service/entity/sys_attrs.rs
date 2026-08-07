@@ -4,11 +4,12 @@
 //! any representation that asks for them (`options=sysAttrs`) has them put back
 //! before rendering.
 
+use andromeda_ngsi_ld_lexicon::rfc3339::whole_seconds;
 use andromeda_ngsi_ld_vocabulary::{
     expanded::{classes as expanded_classes, properties as expanded_properties},
     prefix,
 };
-use chrono::{DateTime, SecondsFormat, Utc};
+use chrono::{DateTime, Utc};
 use serde_json::{Map, Value};
 
 /// Return a mutable reference to the top-level JSON object of an expanded entity.
@@ -30,11 +31,11 @@ pub(crate) fn inject_sys_attrs(entity: &mut Value, created_at: DateTime<Utc>, mo
 
     let created_at_value = serde_json::json!([{
         "@type": expanded_classes::DATE_TIME.as_str(),
-        "@value": created_at.to_rfc3339_opts(SecondsFormat::Millis, true)
+        "@value": whole_seconds(created_at)
     }]);
     let modified_at_value = serde_json::json!([{
         "@type": expanded_classes::DATE_TIME.as_str(),
-        "@value": modified_at.to_rfc3339_opts(SecondsFormat::Millis, true)
+        "@value": whole_seconds(modified_at)
     }]);
 
     obj.entry(expanded_properties::CREATED_AT.as_str().to_string())
@@ -45,7 +46,7 @@ pub(crate) fn inject_sys_attrs(entity: &mut Value, created_at: DateTime<Utc>, mo
     if let Some(expires_at) = expires_at.into() {
         let expires_at_value = serde_json::json!([{
             "@type": expanded_classes::DATE_TIME.as_str(),
-            "@value": expires_at.to_rfc3339_opts(SecondsFormat::Millis, true)
+            "@value": whole_seconds(expires_at)
         }]);
         obj.entry(expanded_properties::EXPIRES_AT.as_str().to_string()).or_insert(expires_at_value);
     }

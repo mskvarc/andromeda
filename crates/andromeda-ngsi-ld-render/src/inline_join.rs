@@ -6,7 +6,7 @@
 //! typed entity, because the same expansion applies to a payload that reached
 //! the broker as JSON-LD and was never a `Entity` at all.
 
-use crate::{entity::EntityRenderer, error::RepresentationError};
+use crate::{entity::EntityRenderer, error::RenderError};
 use andromeda_ngsi_ld_http_headers::language::LanguageFilter;
 use andromeda_ngsi_ld_lexicon::attribute_type::AttributeType;
 use andromeda_ngsi_ld_model::entity::Entity;
@@ -28,11 +28,7 @@ use std::{
 /// path: a linked entity that references itself, or forms a cycle with another,
 /// is rendered once and not descended into again. Without that guard a cyclic
 /// linked entity recurses without end and overflows the stack from a request.
-pub(crate) fn apply_inline_join(
-    entity: &mut Value,
-    linked: &HashMap<String, Entity>,
-    language_filter: Option<&LanguageFilter>,
-) -> Result<(), RepresentationError> {
+pub(crate) fn apply_inline_join(entity: &mut Value, linked: &HashMap<String, Entity>, language_filter: Option<&LanguageFilter>) -> Result<(), RenderError> {
     let mut ancestors = HashSet::new();
     apply_inline_join_guarded(entity, linked, language_filter, &mut ancestors)
 }
@@ -44,7 +40,7 @@ fn apply_inline_join_guarded(
     linked: &HashMap<String, Entity>,
     language_filter: Option<&LanguageFilter>,
     ancestors: &mut HashSet<String>,
-) -> Result<(), RepresentationError> {
+) -> Result<(), RenderError> {
     let self_id = entity.get("id").and_then(Value::as_str).map(ToOwned::to_owned);
     // Track this entity's id on the current path so a self-reference is caught.
     let seeded = self_id.as_ref().is_some_and(|id| ancestors.insert(id.clone()));
@@ -63,7 +59,7 @@ fn inline_join_object(
     linked: &HashMap<String, Entity>,
     language_filter: Option<&LanguageFilter>,
     ancestors: &mut HashSet<String>,
-) -> Result<(), RepresentationError> {
+) -> Result<(), RenderError> {
     let Some(obj) = entity.as_object_mut() else { return Ok(()) };
     for attr_val in obj.values_mut() {
         match attr_val {
@@ -94,7 +90,7 @@ fn inline_join_attribute_instance(
     linked: &HashMap<String, Entity>,
     language_filter: Option<&LanguageFilter>,
     ancestors: &mut HashSet<String>,
-) -> Result<(), RepresentationError> {
+) -> Result<(), RenderError> {
     let attr_type = attr_obj.get("type").and_then(Value::as_str).and_then(|raw| AttributeType::from_str(raw).ok());
     match attr_type {
         Some(AttributeType::Relationship) => {
@@ -146,7 +142,7 @@ fn render_linked(
     linked: &HashMap<String, Entity>,
     language_filter: Option<&LanguageFilter>,
     ancestors: &mut HashSet<String>,
-) -> Result<Value, RepresentationError> {
+) -> Result<Value, RenderError> {
     let mut linked_val = EntityRenderer::new(linked_entity).with_optional_language_filter(language_filter).render()?;
     if !ancestors.contains(object_uri) {
         apply_inline_join_guarded(&mut linked_val, linked, language_filter, ancestors)?;

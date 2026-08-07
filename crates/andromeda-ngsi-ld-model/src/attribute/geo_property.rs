@@ -2,7 +2,7 @@
 
 use crate::attribute::common_fields::CommonAttributeFields;
 use andromeda_ngsi_ld_geometry::geometry::Geometry;
-use compact_str::CompactString;
+use andromeda_ngsi_ld_lexicon::reference::NgsiLdReference;
 use jsonld::Expandable;
 use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
@@ -21,7 +21,7 @@ pub struct GeoProperty {
     pub value: Geometry,
     /// Optional JSON-LD datatype for `value`.
     #[jsonld(property = "ngsi:hasValueType", coerce = "@id")]
-    pub value_type: Option<CompactString>,
+    pub value_type: Option<NgsiLdReference>,
     /// Previous geometry value emitted in notifications when `showChanges` is active.
     #[jsonld(property = "ngsi:hasPreviousValue", coerce = "@json")]
     pub previous_value: Option<Geometry>,

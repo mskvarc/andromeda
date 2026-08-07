@@ -116,7 +116,7 @@ impl EntityService {
             deleted_attrs,
             previous_attributes,
         } = self
-            .commit_computed_write(&id, |previous| {
+            .commit_computed_write(&entity_uri, |previous| {
                 let attrs_before: HashSet<AttributeName> = extract_attribute_keys(previous).into_iter().collect();
                 let previous_attributes = self.change_tx.as_ref().map(|_| previous.clone()); // clone: snapshot before mutation for showChanges diff
 
@@ -210,7 +210,7 @@ impl EntityService {
 
         // Read before expanding so a request against a missing entity reports
         // 404 rather than a payload-validation error.
-        if self.repo.get_snapshot(&id).await?.is_none() {
+        if self.repo.get_snapshot(&entity_uri).await?.is_none() {
             return Err(AndromedaError::entity_not_found(&id));
         }
 
@@ -227,7 +227,7 @@ impl EntityService {
         // payload the replacement actually superseded rather than off an earlier
         // attempt's.
         let types = self
-            .commit_computed_write(&id, |previous| {
+            .commit_computed_write(&entity_uri, |previous| {
                 let types = extract_types(previous);
                 let history = replacement_history(&payload, previous, &payload);
                 let outbox = self.build_outbox_entries(&entity_uri, &types, NotificationTrigger::EntityUpdated, &changed_attrs, Some(&payload), None);
@@ -260,12 +260,12 @@ impl EntityService {
         let entity_uri = Uri::from(id.clone()); // clone: owned Urn for Uri conversion; id is &Urn
         let id = id.to_string();
 
-        let entity_snapshot = self.repo.get(&id).await?.ok_or_else(|| AndromedaError::entity_not_found(&id))?;
+        let entity_snapshot = self.repo.get(&entity_uri).await?.ok_or_else(|| AndromedaError::entity_not_found(&id))?;
         let entity_types = extract_types(&entity_snapshot);
 
         // Captured before the delete so the notification can carry them: once
         // the row is gone they are unreadable.
-        let sys_attrs_snapshot = match self.repo.get_sys_attrs(&id).await {
+        let sys_attrs_snapshot = match self.repo.get_sys_attrs(&entity_uri).await {
             Ok(attrs) => attrs,
             Err(e) => {
                 tracing::warn!("Failed to fetch sys_attrs before delete for {}: {}", id, e);

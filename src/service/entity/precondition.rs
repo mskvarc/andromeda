@@ -89,7 +89,7 @@ mod tests {
     fn deleted() -> WriteOutcome {
         let now = Utc::now();
         WriteOutcome::Deleted(DeletedEntity {
-            id: "urn:ngsi-ld:A".to_string(),
+            id: "urn:ngsi-ld:A".parse().expect("valid uri"),
             payload: json!([{}]),
             created_at: now,
             modified_at: now,

@@ -6,6 +6,7 @@
 //! than on the hostname, because a name a client controls can resolve
 //! anywhere.
 
+use crate::host_port::HostPort;
 use ip_network::{Ipv4Network, Ipv6Network};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
@@ -17,7 +18,7 @@ pub enum PrivateIpCheck {
     /// The host resolved to a private or reserved address.
     Blocked {
         /// The address that triggered the guard.
-        ip: String,
+        ip: IpAddr,
     },
     /// The host could not be resolved.
     DnsFailed {
@@ -26,13 +27,13 @@ pub enum PrivateIpCheck {
     },
 }
 
-/// Resolve `host:port` and decide whether delivery may proceed.
-pub async fn resolve_private_ip_outcome(addr: &str) -> PrivateIpCheck {
-    match tokio::net::lookup_host(addr).await {
+/// Resolve an authority and decide whether delivery may proceed.
+pub async fn resolve_private_ip_outcome(authority: &HostPort) -> PrivateIpCheck {
+    match tokio::net::lookup_host(authority.to_string()).await {
         Ok(addrs) => {
             for resolved in addrs {
                 if is_private_ip(&resolved.ip()) {
-                    return PrivateIpCheck::Blocked { ip: resolved.ip().to_string() };
+                    return PrivateIpCheck::Blocked { ip: resolved.ip() };
                 }
             }
             PrivateIpCheck::Allowed

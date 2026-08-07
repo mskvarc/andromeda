@@ -146,7 +146,7 @@ impl PostgresAnchorStore {
         let mut deleted: HashMap<String, DeletedEntity> = EntityRepository::delete_batch_in_tx(tx, &ids, &expected)
             .await?
             .into_iter()
-            .map(|entity| (entity.id.clone(), entity)) // clone: the identifier keys the map and stays on the value the caller receives
+            .map(|entity| (entity.id.to_string(), entity)) // the identifier keys the map as text and stays typed on the value the caller receives
             .collect();
         for (index, write) in deletes {
             outcomes[*index] = Some(delete_outcome(write.precondition, deleted.remove(write.entity_id.as_ref())));

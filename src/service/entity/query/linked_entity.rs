@@ -2,6 +2,7 @@
 
 use crate::{core::error::AndromedaError, service::entity::query::EntityQueryService};
 use andromeda_jsonld::context_spec::ContextSpec;
+use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::{
     attribute::instance::{Attribute, AttributeValue},
     entity::Entity,
@@ -14,7 +15,7 @@ use std::{
 };
 
 /// The entities one join level resolved, keyed by identifier.
-type ResolveLinkedResult = Result<HashMap<String, Entity>, AndromedaError>;
+type ResolveLinkedResult = Result<HashMap<Uri, Entity>, AndromedaError>;
 /// The boxed future the recursive walk returns.
 type ResolveLinkedFuture<'a> = Pin<Box<dyn Future<Output = ResolveLinkedResult> + Send + 'a>>;
 
@@ -31,18 +32,18 @@ impl EntityQueryService {
     /// in place as each level adds the identifiers it has just resolved, so no
     /// per-level set copy occurs and the walk holds `&Entity` rather than
     /// cloning entities.
-    pub fn resolve_linked_entities<'a>(
-        &'a self,
-        entities: &'a [Entity],
+    pub async fn resolve_linked_entities(
+        &self,
+        entities: &[Entity],
         join_level: u32,
         sys_attrs: SysAttrsInclusion,
-        context: &'a ContextSpec,
-        contained_by: &HashSet<String>,
-    ) -> ResolveLinkedFuture<'a> {
+        context: &ContextSpec,
+        contained_by: &HashSet<Uri>,
+    ) -> Result<HashMap<String, Entity>, AndromedaError> {
         let join_level = join_level.min(MAX_JOIN_LEVEL);
-        let refs: Vec<&'a Entity> = entities.iter().collect();
-        let owned = contained_by.clone(); // clone: the recursion owns and mutates the set across levels
-        Box::pin(self.resolve_linked_inner(refs, join_level, sys_attrs, context, owned))
+        let refs: Vec<&Entity> = entities.iter().collect();
+        let resolved = self.resolve_linked_inner(refs, join_level, sys_attrs, context, contained_by.clone()).await?;
+        Ok(resolved.into_iter().map(|(id, entity)| (id.to_string(), entity)).collect())
     }
 
     fn resolve_linked_inner<'a>(
@@ -51,22 +52,22 @@ impl EntityQueryService {
         join_level: u32,
         sys_attrs: SysAttrsInclusion,
         context: &'a ContextSpec,
-        mut contained_by: HashSet<String>,
+        mut contained_by: HashSet<Uri>,
     ) -> ResolveLinkedFuture<'a> {
         Box::pin(async move {
             if join_level == 0 {
                 return Ok(HashMap::new());
             }
 
-            let mut linked_ids: HashSet<String> = HashSet::new();
-            let entity_ids: HashSet<String> = entities.iter().map(|entity| entity.id.to_string()).collect();
+            let mut linked_ids: HashSet<Uri> = HashSet::new();
+            let entity_ids: HashSet<Uri> = entities.iter().map(|entity| entity.id.clone()).collect(); // clone: owned identifiers for the cycle guard
 
             for entity in &entities {
                 collect_relationship_objects(entity, &mut linked_ids);
             }
             linked_ids.retain(|id| !entity_ids.contains(id) && !contained_by.contains(id));
 
-            let linked_id_vec: Vec<String> = linked_ids.into_iter().collect();
+            let linked_id_vec: Vec<Uri> = linked_ids.into_iter().collect();
             let batch_payloads = self.repo.get_batch(&linked_id_vec).await?;
 
             let batch_sys_attrs = if sys_attrs == SysAttrsInclusion::Include {
@@ -77,7 +78,7 @@ impl EntityQueryService {
 
             let mut linked_map = HashMap::new();
             for (linked_id, expanded) in batch_payloads {
-                match self.compact_to_entity(expanded, context, Some(&linked_id)).await {
+                match self.compact_to_entity(expanded, context, Some(linked_id.as_str())).await {
                     Ok(mut entity) => {
                         if sys_attrs == SysAttrsInclusion::Include
                             && let Some(snapshot) = batch_sys_attrs.get(&linked_id)
@@ -109,7 +110,7 @@ impl EntityQueryService {
 }
 
 /// Collect every identifier the entity's relationships point at.
-fn collect_relationship_objects(entity: &Entity, ids: &mut HashSet<String>) {
+fn collect_relationship_objects(entity: &Entity, ids: &mut HashSet<Uri>) {
     for attr_val in entity.attrs.values() {
         match attr_val {
             AttributeValue::Single(attr) => collect_from_attribute(attr.as_ref(), ids),
@@ -124,14 +125,16 @@ fn collect_relationship_objects(entity: &Entity, ids: &mut HashSet<String>) {
 }
 
 /// Collect the identifiers one attribute instance points at.
-fn collect_from_attribute(attr: &Attribute, ids: &mut HashSet<String>) {
+fn collect_from_attribute(attr: &Attribute, ids: &mut HashSet<Uri>) {
     match attr {
         Attribute::Relationship(relationship) => {
-            ids.insert(relationship.object.to_string());
+            for object in relationship.object.iter() {
+                ids.insert(object.clone()); // clone: the cycle guard owns the identifiers it collects
+            }
         }
         Attribute::ListRelationship(list) => {
             for object in &list.object_list {
-                ids.insert(object.to_string());
+                ids.insert(object.clone()); // clone: the cycle guard owns the identifiers it collects
             }
         }
         Attribute::Property(_)

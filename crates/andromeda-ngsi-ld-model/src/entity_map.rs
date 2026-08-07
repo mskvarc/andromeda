@@ -3,7 +3,6 @@
 use andromeda_ngsi_ld_lexicon::{constant_string, ngsi_ld_urn::EntityMapId, uri::Uri};
 use andromeda_ngsi_ld_query::dataset::DatasetSelector;
 use chrono::{DateTime, Utc};
-use compact_str::CompactString;
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 use typed_builder::TypedBuilder;
@@ -34,8 +33,11 @@ pub struct EntityMap {
     #[builder(default)]
     pub entity_map: IndexMap<Uri, Vec<DatasetSelector>>,
     /// Maps held by context sources that contributed to the same query.
+    ///
+    /// Keyed by the identifier of the contributing context source, as it
+    /// appears in the registration that named it (clause 4.6.2).
     #[builder(default)]
-    pub linked_maps: IndexMap<CompactString, EntityMapId>,
+    pub linked_maps: IndexMap<Uri, EntityMapId>,
 }
 
 impl EntityMap {

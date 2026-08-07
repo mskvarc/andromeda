@@ -9,7 +9,7 @@ use crate::{
         query::{EntityQueryService, selector_compilation::compile_entity_selectors},
     },
 };
-use andromeda_jsonld::{context_spec::ContextSpec, term_expansion::ContextualExpander};
+use andromeda_jsonld::{context_spec::ContextSpec, engine::term_lookup::PreparedTermContext, term_expansion::ContextualExpander};
 use andromeda_ngsi_ld_geometry::geometry::Geometry;
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_query::{
@@ -17,13 +17,12 @@ use andromeda_ngsi_ld_query::{
     entity_selection::EntitySelection,
     error::QueryError,
     filter::{
-        expansion::{apply_expand_values, apply_json_keys, expand_q_expression},
+        expansion::{apply_expand_values, apply_json_keys, expand_q_expr},
         expression::Expr,
         path::expanded_attribute_name,
     },
     geo::{compile as geo_compile, query::GeoQuery},
     ordering::{
-        collation::IcuCollation,
         compiled::ResultOrdering,
         geometry::OrderingGeometry,
         term::{CompiledOrderTerm, OrderTarget, RawOrderTarget},
@@ -33,7 +32,6 @@ use andromeda_ngsi_ld_query::{
         compiled::Projection,
         expansion::{expand_attrs, expand_projection_terms},
     },
-    scope::query::ScopeQuery,
 };
 use andromeda_ngsi_ld_request::query::{SharedQueryParams, entity::EntityQueryParameters};
 use iri_rs::IriBuf;
@@ -67,25 +65,27 @@ impl EntityQueryService {
     }
 
     async fn compile_query(&self, params: &EntityQueryParameters, context: &ContextSpec, limit_cap: LimitCap) -> Result<CompiledEntityQuery, AndromedaError> {
+        let prepared_context = self.engine().prepare_term_context(context);
         let selectors = compile_entity_selectors(
             self.engine(),
-            context,
+            &prepared_context,
             &params.entity_selectors,
-            params.parse_ids().unwrap_or_default(),
-            params.id_pattern.as_deref(),
-            params.entity_type.as_deref(),
+            params.id.clone().unwrap_or_default(),
+            params.id_pattern.as_ref(),
+            params.entity_type.as_ref(),
         )
         .await?;
 
-        let attrs = expand_attrs(&params.parse_attrs(), &ContextualExpander::new(self.engine(), context)).await?;
-        let q_expr = self.compile_q_expression(params, context).await?;
-        let geo = self.compile_geo_query(params, context).await?;
+        let expander = ContextualExpander::new(self.engine(), &prepared_context);
+        let attrs = expand_attrs(params.attrs.as_deref().unwrap_or_default(), &expander).await?;
+        let q_expr = self.compile_q_expression(params, &prepared_context).await?;
+        let geo = self.compile_geo_query(params, &prepared_context).await?;
         let opts = params.parse_options();
 
-        let pick = expand_projection_terms(&params.parse_pick(), &ContextualExpander::new(self.engine(), context)).await?;
-        let omit = expand_projection_terms(&params.parse_omit(), &ContextualExpander::new(self.engine(), context)).await?;
+        let pick = expand_projection_terms(params.pick.as_deref().unwrap_or_default(), &expander).await?;
+        let omit = expand_projection_terms(params.omit.as_deref().unwrap_or_default(), &expander).await?;
 
-        let order_by = self.compile_order_terms(params, context).await?;
+        let order_by = self.compile_order_terms(params, &prepared_context).await?;
         let ordering_geometry = compile_ordering_geometry(params)?;
 
         // Clause 5.7.2.4: distance ordering has no reference point without a
@@ -113,7 +113,7 @@ impl EntityQueryService {
                     .attrs(attrs)
                     .q_expr(q_expr)
                     .geo(geo)
-                    .scope_q(params.scope_q.as_deref().map(ScopeQuery::parse).transpose()?)
+                    .scope_q(params.scope_q.clone())
                     .build(),
             )
             .projection(Projection::builder().pick(pick).omit(omit).build())
@@ -128,23 +128,26 @@ impl EntityQueryService {
 
     /// Expand the `q` filter, then apply the clause 6.4.3.2 `expandValues` and
     /// `jsonKeys` opt-ins to it.
-    async fn compile_q_expression(&self, params: &EntityQueryParameters, context: &ContextSpec) -> Result<Option<Expr>, AndromedaError> {
-        let Some(q_expr) = expand_q_expression(params.q.as_deref(), &ContextualExpander::new(self.engine(), context)).await? else {
+    async fn compile_q_expression(&self, params: &EntityQueryParameters, prepared_context: &PreparedTermContext) -> Result<Option<Expr>, AndromedaError> {
+        let expander = ContextualExpander::new(self.engine(), prepared_context);
+        // Expansion consumes its AST; the cache-owned request remains immutable across lookups.
+        let Some(q_expr) = params.q.clone() else {
             return Ok(None);
         };
+        let q_expr = expand_q_expr(q_expr, &expander).await?;
 
         let q_expr = match params.expand_values {
             Some(ref raw) => {
-                let opted_in = self.opted_in_attributes(raw, context).await?;
-                apply_expand_values(q_expr, &opted_in, &ContextualExpander::new(self.engine(), context)).await?
+                let opted_in = self.opted_in_attributes(raw, prepared_context).await?;
+                apply_expand_values(q_expr, &opted_in, &expander).await?
             }
             None => q_expr,
         };
 
         let q_expr = match params.json_keys {
             Some(ref raw) => {
-                let opted_in = self.opted_in_attributes(raw, context).await?;
-                apply_json_keys(q_expr, &opted_in, &ContextualExpander::new(self.engine(), context)).await?
+                let opted_in = self.opted_in_attributes(raw, prepared_context).await?;
+                apply_json_keys(q_expr, &opted_in, &expander).await?
             }
             None => q_expr,
         };
@@ -154,27 +157,26 @@ impl EntityQueryService {
 
     /// Expand a comma-separated opt-in list into the attribute names a `q`
     /// filter is keyed by (clause 6.4.3.2).
-    async fn opted_in_attributes(&self, raw: &str, context: &ContextSpec) -> Result<HashSet<AttributeName>, AndromedaError> {
-        let names: Vec<String> = raw.split(',').map(|term| term.trim().to_string()).collect();
-        let iris = expand_attrs(&names, &ContextualExpander::new(self.engine(), context)).await?;
+    async fn opted_in_attributes(&self, names: &[AttributeName], context: &PreparedTermContext) -> Result<HashSet<AttributeName>, AndromedaError> {
+        let iris = expand_attrs(names, &ContextualExpander::new(self.engine(), context)).await?;
         Ok(opted_in_attribute_names(&iris)?)
     }
 
     /// Compile the `orderBy` terms against the active context (clause 4.23).
-    async fn compile_order_terms(&self, params: &EntityQueryParameters, context: &ContextSpec) -> Result<Vec<CompiledOrderTerm>, AndromedaError> {
-        let collation = params
-            .collation
-            .as_deref()
-            .map(IcuCollation::parse)
-            .transpose()
-            .map_err(|error| AndromedaError::entity_validation(error.to_string()))?;
+    async fn compile_order_terms(&self, params: &EntityQueryParameters, context: &PreparedTermContext) -> Result<Vec<CompiledOrderTerm>, AndromedaError> {
+        // Parsed and validated at the query boundary (clause 4.23).
+        let collation = params.collation.clone();
 
         let mut compiled = Vec::new();
-        for term in &params.parse_order_by()? {
+        let order_terms = match params.order_by.as_deref() {
+            Some(terms) => terms,
+            None => &[],
+        };
+        for term in order_terms {
             let target = match RawOrderTarget::classify(&term.attr) {
                 RawOrderTarget::Id => OrderTarget::Id,
                 RawOrderTarget::Type => OrderTarget::Type,
-                RawOrderTarget::Attribute(name) => OrderTarget::Attribute(self.expanded_key(name, context).await?),
+                RawOrderTarget::Attribute(name) => OrderTarget::Attribute(self.engine().expand_term(name, context).await?),
             };
             compiled.push(CompiledOrderTerm {
                 target,
@@ -186,16 +188,10 @@ impl EntityQueryService {
     }
 
     /// Compile the `georel` / `geometry` / `coordinates` triple (clause 4.10).
-    async fn compile_geo_query(&self, params: &EntityQueryParameters, context: &ContextSpec) -> Result<Option<GeoQuery>, AndromedaError> {
-        geo_compile::compile_geo_query(
-            params.georel.as_deref(),
-            params.geometry.as_deref(),
-            params.coordinates.as_deref(),
-            params.geoproperty.as_deref(),
-            &ContextualExpander::new(self.engine(), context),
-        )
-        .await
-        .map_err(AndromedaError::from)
+    async fn compile_geo_query(&self, params: &EntityQueryParameters, context: &PreparedTermContext) -> Result<Option<GeoQuery>, AndromedaError> {
+        geo_compile::compile_geo_query(params.geo.0.as_ref(), &ContextualExpander::new(self.engine(), context))
+            .await
+            .map_err(AndromedaError::from)
     }
 }
 

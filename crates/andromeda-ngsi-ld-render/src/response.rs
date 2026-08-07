@@ -17,14 +17,15 @@
 
 use crate::{
     context::{ContextLocation, ResponseContext},
-    error::RepresentationError,
+    error::RenderError,
     geojson::{GeoJsonRenderer, GeoJsonShape},
     uri_decoding::decode_percent_encoded_uris,
     version::{VersionAdaptation, VersionRenderer},
 };
 use andromeda_ngsi_ld_http_headers::{geo_json_body::GeoJsonBodyPreference, media_type::ResponseMediaType, version::NgsiLdVersion};
+use iri_rs::IriRefBuf;
 use serde_json::Value;
-use std::{mem::replace, sync::Arc};
+use std::sync::Arc;
 
 /// Payload fed to [`ResponseRenderer`]: the three NGSI-LD response shapes.
 ///
@@ -73,11 +74,15 @@ impl ResponsePayload {
     }
 }
 
-/// Builder for the response rendering pipeline.
+/// Configuration for the response rendering pipeline, before the payload.
 ///
 /// Configured by whoever answered the request, from the negotiated media type,
 /// the resolved `@context`, the client's `Prefer` tokens and — for GeoJSON —
-/// the attribute the geometry is taken from.
+/// the attribute the geometry is taken from. It cannot be rendered on its own:
+/// only [`ResponseRenderer::with_payload`] produces a [`ReadyResponse`], and
+/// only that carries [`ReadyResponse::render`]. A caller therefore cannot forget
+/// the payload — the type system will not let it — which is why the payload is
+/// not an optional field defaulted to a JSON null.
 #[derive(Debug)]
 pub struct ResponseRenderer<'a> {
     /// The negotiated media type, which decides the envelope and the carrier.
@@ -90,6 +95,17 @@ pub struct ResponseRenderer<'a> {
     requested_version: Option<NgsiLdVersion>,
     /// The attribute a GeoJSON geometry is taken from.
     geometry_property: Option<&'a str>,
+}
+
+/// A fully-configured renderer with its payload attached, ready to run.
+///
+/// The only value that carries [`ReadyResponse::render`]; it exists solely
+/// because a [`ResponseRenderer`] gained its payload, so a response body can
+/// never be rendered without one.
+#[derive(Debug)]
+pub struct ReadyResponse<'a> {
+    /// The configuration the payload was attached to.
+    renderer: ResponseRenderer<'a>,
     /// What is being answered.
     payload: ResponsePayload,
 }
@@ -100,7 +116,7 @@ pub struct RenderedOutput {
     /// The fully-rendered JSON value, with `@context` injected if applicable.
     pub value: Value,
     /// The context URLs a `Link` header should advertise.
-    pub context_links: Vec<String>,
+    pub context_links: Vec<IriRefBuf>,
     /// The media type this response is written as.
     pub media_type: ResponseMediaType,
     /// Where the JSON-LD `@context` ended up.
@@ -111,9 +127,6 @@ pub struct RenderedOutput {
 
 impl<'a> ResponseRenderer<'a> {
     /// Create a renderer for the given media type and resolved `@context`.
-    ///
-    /// The payload defaults to [`ResponsePayload::Single`] with a JSON null;
-    /// call [`ResponseRenderer::with_payload`] to supply the real payload.
     pub const fn new(media_type: ResponseMediaType, context: ResponseContext) -> ResponseRenderer<'a> {
         ResponseRenderer {
             media_type,
@@ -121,7 +134,6 @@ impl<'a> ResponseRenderer<'a> {
             geo_json_body: GeoJsonBodyPreference::LdJson,
             requested_version: None,
             geometry_property: None,
-            payload: ResponsePayload::Single(Value::Null),
         }
     }
 
@@ -144,73 +156,12 @@ impl<'a> ResponseRenderer<'a> {
         self
     }
 
-    /// Set the payload to render.
-    pub fn with_payload(mut self, payload: ResponsePayload) -> Self {
-        self.payload = payload;
-        self
-    }
-
-    /// Run the pipeline.
+    /// Attach the payload to render, producing a runnable [`ReadyResponse`].
     ///
-    /// # Errors
-    ///
-    /// Returns [`RepresentationError::Serialization`] when the GeoJSON envelope cannot
-    /// be turned into a JSON value.
-    pub fn render(mut self) -> Result<RenderedOutput, RepresentationError> {
-        let payload = replace(&mut self.payload, ResponsePayload::Single(Value::Null));
-        let geo_json_shape = match self.media_type {
-            ResponseMediaType::Json | ResponseMediaType::JsonLd => None,
-            ResponseMediaType::GeoJson => payload.geo_json_shape(),
-        };
-        let context_location = self.context_location(geo_json_shape);
-
-        let carries_relationships = payload.carries_relationships();
-        let mut value = payload.into_value();
-
-        // Decode percent-encoded Relationship/ListRelationship URIs before any
-        // GeoJSON wrapping, so the policy is media-type-independent: the walk
-        // runs while the payload is still a plain entity object, and the Feature
-        // envelope is built afterwards from the already-decoded value.
-        if carries_relationships {
-            decode_percent_encoded_uris(&mut value);
-        }
-
-        // Version adaptation drives the 203 status, so the flag comes from
-        // whether the renderer actually adapted -- a conformant-or-newer target
-        // short-circuits and leaves the payload authoritative (200).
-        let version_adaptation = match self.requested_version {
-            Some(target) => {
-                let (adapted, adaptation) = VersionRenderer::new(target).with_payload(value).render();
-                value = adapted;
-                adaptation
-            }
-            None => VersionAdaptation::None,
-        };
-
-        let context_value = match context_location {
-            ContextLocation::Body => self.context.take_body_value(),
-            ContextLocation::LinkHeader => None,
-        };
-
-        value = match geo_json_shape {
-            Some(shape) => GeoJsonRenderer::new(value)
-                .with_context(context_value)
-                .with_geometry_property(self.geometry_property)
-                .with_shape(shape)
-                .render()?,
-            None => {
-                inject_context(&mut value, context_value);
-                value
-            }
-        };
-
-        Ok(RenderedOutput {
-            value,
-            context_links: self.context.link_urls().to_vec(),
-            media_type: self.media_type,
-            context_location,
-            version_adaptation,
-        })
+    /// The only way to reach [`ReadyResponse::render`], so a response body
+    /// cannot be produced without a payload.
+    pub const fn with_payload(self, payload: ResponsePayload) -> ReadyResponse<'a> {
+        ReadyResponse { renderer: self, payload }
     }
 
     /// Where this response carries its `@context`.
@@ -233,6 +184,71 @@ impl<'a> ResponseRenderer<'a> {
                 }
             }
         }
+    }
+}
+
+impl ReadyResponse<'_> {
+    /// Run the pipeline.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RenderError::Serialization`] when the GeoJSON envelope cannot
+    /// be turned into a JSON value.
+    pub fn render(self) -> Result<RenderedOutput, RenderError> {
+        let ReadyResponse { mut renderer, payload } = self;
+        let geo_json_shape = match renderer.media_type {
+            ResponseMediaType::Json | ResponseMediaType::JsonLd => None,
+            ResponseMediaType::GeoJson => payload.geo_json_shape(),
+        };
+        let context_location = renderer.context_location(geo_json_shape);
+
+        let carries_relationships = payload.carries_relationships();
+        let mut value = payload.into_value();
+
+        // Decode percent-encoded Relationship/ListRelationship URIs before any
+        // GeoJSON wrapping, so the policy is media-type-independent: the walk
+        // runs while the payload is still a plain entity object, and the Feature
+        // envelope is built afterwards from the already-decoded value.
+        if carries_relationships {
+            decode_percent_encoded_uris(&mut value);
+        }
+
+        // Version adaptation drives the 203 status, so the flag comes from
+        // whether the renderer actually adapted -- a conformant-or-newer target
+        // short-circuits and leaves the payload authoritative (200).
+        let version_adaptation = match renderer.requested_version {
+            Some(target) => {
+                let (adapted, adaptation) = VersionRenderer::new(target).with_payload(value).render();
+                value = adapted;
+                adaptation
+            }
+            None => VersionAdaptation::None,
+        };
+
+        let context_value = match context_location {
+            ContextLocation::Body => renderer.context.take_body_value(),
+            ContextLocation::LinkHeader => None,
+        };
+
+        value = match geo_json_shape {
+            Some(shape) => GeoJsonRenderer::new(value)
+                .with_context(context_value)
+                .with_geometry_property(renderer.geometry_property)
+                .with_shape(shape)
+                .render()?,
+            None => {
+                inject_context(&mut value, context_value);
+                value
+            }
+        };
+
+        Ok(RenderedOutput {
+            value,
+            context_links: renderer.context.link_urls().to_vec(),
+            media_type: renderer.media_type,
+            context_location,
+            version_adaptation,
+        })
     }
 }
 
@@ -271,10 +287,16 @@ mod tests {
         version::VersionAdaptation,
     };
     use andromeda_ngsi_ld_http_headers::{geo_json_body::GeoJsonBodyPreference, media_type::ResponseMediaType, version::NgsiLdVersion};
+    use iri_rs::IriRefBuf;
     use serde_json::{Value, json};
 
+    /// A context URL as the [`IriRefBuf`] a `Link` header carries.
+    fn iri_ref(url: &str) -> IriRefBuf {
+        IriRefBuf::new(url.to_string()).expect("a valid IRI reference")
+    }
+
     fn a_context() -> ResponseContext {
-        ResponseContext::new(Some(json!("https://example.org/ctx")), vec!["https://example.org/ctx".to_string()])
+        ResponseContext::new(Some(json!("https://example.org/ctx")), vec![iri_ref("https://example.org/ctx")])
     }
 
     fn an_entity() -> Value {
@@ -457,7 +479,7 @@ mod tests {
                 .expect("render");
             pretty_assertions::assert_eq!(
                 rendered.context_links,
-                vec!["https://example.org/ctx".to_string()],
+                vec![iri_ref("https://example.org/ctx")],
                 "link URLs lost for {media_type:?}"
             );
         }

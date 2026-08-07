@@ -8,7 +8,7 @@ use crate::{
         csource_registration::store::{CreateCsrParams, RegistrationStore},
     },
 };
-use andromeda_ngsi_ld_lexicon::tenant::TenantName;
+use andromeda_ngsi_ld_lexicon::{tenant::TenantName, uri::Uri};
 use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
 use andromeda_ngsi_ld_query::csr::compiled::CompiledCsrQuery;
 use andromeda_postgresql_context_query::csr::{
@@ -16,6 +16,7 @@ use andromeda_postgresql_context_query::csr::{
     statement as csr_sql,
 };
 use async_trait::async_trait;
+use iri_rs::IriBuf;
 use sea_query::{Alias, Expr as SeaExpr, Order, PostgresQueryBuilder, Query, SelectStatement};
 use sea_query_binder::SqlxBinder;
 use sqlx::postgres::PgPool;
@@ -254,10 +255,15 @@ impl RegistrationStore for CsourceRegistrationRepository {
         select.cond_where(not_expired);
 
         if let Some(entity_type) = entity_type {
-            select.and_where(entity_type_coverage(entity_type));
+            let expanded = IriBuf::new(entity_type.to_string())
+                .map_err(|error| AndromedaError::internal(format!("Registration match received a malformed entity type IRI '{entity_type}': {error}")))?;
+            select.and_where(entity_type_coverage(&expanded));
         }
         if let Some(entity_id) = entity_id {
-            select.and_where(entity_id_coverage(entity_id));
+            let entity_uri: Uri = entity_id
+                .parse()
+                .map_err(|error| AndromedaError::internal(format!("Registration match received a malformed entity id '{entity_id}': {error}")))?;
+            select.and_where(entity_id_coverage(&entity_uri));
         }
 
         select.order_by(Alias::new("created_at"), Order::Asc);

@@ -6,59 +6,21 @@ use derive_more::{AsRef, Deref, Display, Into};
 use serde::{Deserialize, Serialize};
 use std::{borrow::Borrow, str::FromStr};
 
-/// Name under which an attribute is keyed in an entity or in another
-/// attribute's sub-attribute map (ETSI GS CIM 009 clause 5.2.4).
-///
-/// Compact payloads key attributes by term or compact IRI; expanded payloads
-/// key them by full IRI. Both are accepted, because both reach this type
-/// depending on which side of JSON-LD expansion the payload sits on. The
-/// grammar is exactly the one [`NgsiLdReference`] uses — see
-/// [`validate_ngsi_ld_name`].
-///
-/// [`NgsiLdReference`]: crate::reference::NgsiLdReference
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize, AsRef, Display, Deref, Into)]
-#[serde(try_from = "String", into = "String")]
-#[as_ref(str)]
-#[display("{_0}")]
-#[into(String)]
-pub struct AttributeName(CompactString);
-
-impl AttributeName {
-    /// Borrow the name as a string slice.
-    pub fn as_str(&self) -> &str {
-        self.0.as_str()
-    }
-}
-
-// Validating parser: the grammar check in `validate_ngsi_ld_name` is what makes
-// the newtype worth having, and no derive expresses a fallible parse.
-impl FromStr for AttributeName {
-    type Err = NgsiLdReferenceError;
-
-    fn from_str(value: &str) -> Result<AttributeName, NgsiLdReferenceError> {
-        validate_ngsi_ld_name(value)?;
-        Ok(AttributeName(CompactString::from(value)))
-    }
-}
-
-// Parsing lives in `FromStr` so borrowed call sites do not allocate; this
-// adapter exists only because `#[serde(try_from = "String")]` requires it.
-impl TryFrom<String> for AttributeName {
-    type Error = NgsiLdReferenceError;
-
-    fn try_from(value: String) -> Result<AttributeName, NgsiLdReferenceError> {
-        value.parse()
-    }
-}
-
-// No derive produces `Borrow` for a target other than the field's own type,
-// and this one is what lets `IndexMap<AttributeName, _>` be looked up by `&str`
-// without allocating a name per lookup. Sound because the derived `Hash`
-// forwards to `CompactString`, which hashes exactly as its `str` does.
-impl Borrow<str> for AttributeName {
-    fn borrow(&self) -> &str {
-        self.0.as_str()
-    }
+validated_ngsi_name! {
+    /// Name under which an attribute is keyed in an entity or in another
+    /// attribute's sub-attribute map (ETSI GS CIM 009 clause 5.2.4).
+    ///
+    /// Compact payloads key attributes by term or compact IRI; expanded payloads
+    /// key them by full IRI. Both are accepted, because both reach this type
+    /// depending on which side of JSON-LD expansion the payload sits on. The
+    /// grammar is exactly the one [`NgsiLdReference`] uses — see
+    /// [`validate_ngsi_ld_name`].
+    ///
+    /// [`NgsiLdReference`]: crate::reference::NgsiLdReference
+    AttributeName,
+    derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize, AsRef, Display, Deref, Into),
+    as_ref(str),
+    borrow_str
 }
 
 #[cfg(test)]

@@ -22,6 +22,7 @@ use crate::{
         write_outcome::{WriteOutcome, single},
     },
 };
+use andromeda_ngsi_ld_lexicon::uri::Uri;
 use serde_json::Value;
 
 impl EntityService {
@@ -39,7 +40,7 @@ impl EntityService {
     ///
     /// Propagates whatever `build` or the coordinator returns, and reports
     /// [`AndromedaError::internal`] once the attempt budget is spent.
-    pub(crate) async fn commit_read_modify_write<B>(&self, id: &str, mut build: B) -> Result<Option<WriteOutcome>, AndromedaError>
+    pub(crate) async fn commit_read_modify_write<B>(&self, id: &Uri, mut build: B) -> Result<Option<WriteOutcome>, AndromedaError>
     where
         B: FnMut(&Value) -> Result<Option<AtomicWrite>, AndromedaError>,
     {
@@ -80,7 +81,7 @@ impl EntityService {
     ///
     /// Reports [`AndromedaError::entity_not_found`] when the entity is absent,
     /// and otherwise propagates whatever `build` or the coordinator returns.
-    pub(crate) async fn commit_computed_write<B, T>(&self, id: &str, mut build: B) -> Result<T, AndromedaError>
+    pub(crate) async fn commit_computed_write<B, T>(&self, id: &Uri, mut build: B) -> Result<T, AndromedaError>
     where
         B: FnMut(&Value) -> Result<(AtomicWrite, T), AndromedaError>,
     {
@@ -94,7 +95,7 @@ impl EntityService {
             .await?;
 
         if landed.is_none() {
-            return Err(AndromedaError::entity_not_found(id));
+            return Err(AndromedaError::entity_not_found(id.as_str()));
         }
         produced.ok_or_else(|| AndromedaError::internal(format!("read-modify-write for {id} landed without producing a result")))
     }
@@ -105,6 +106,6 @@ impl EntityService {
 /// NGSI-LD 5.5.2 has no ProblemDetails type for "the broker lost a
 /// compare-and-set", and answering 409 would tell the client to retry a request
 /// the broker has already retried [`WRITE_ATTEMPTS`] times.
-fn exhausted(id: &str) -> AndromedaError {
+fn exhausted(id: &Uri) -> AndromedaError {
     AndromedaError::internal(format!("entity {id} was modified by another writer on every one of {WRITE_ATTEMPTS} attempts"))
 }

@@ -27,6 +27,7 @@
 pub mod dispatch;
 pub mod endpoint;
 pub mod error;
+pub mod host_port;
 pub mod http;
 pub mod mqtt;
 pub mod outcome;
@@ -51,8 +52,6 @@ mod boundary {
     /// decision stays above it.
     #[test]
     fn this_crate_declares_only_what_its_layer_permits() {
-        /// Third-party crates this layer must never ship.
-        const FORBIDDEN: &[&str] = &["sqlx", "sea-query", "geozero", "axum", "clap", "confique"];
         /// In-workspace crates this one may name, in any dependency table.
         /// Anything else is an upward or sideways edge.
         const ALLOWED_IN_WORKSPACE: &[&str] = &[
@@ -64,7 +63,10 @@ mod boundary {
             "andromeda-ngsi-ld-vocabulary",
         ];
 
-        andromeda_layer_guard::manifest::assert_layer(env!("CARGO_MANIFEST_DIR"), FORBIDDEN, ALLOWED_IN_WORKSPACE);
+        // Delivery is the transport layer: it ships the async runtime, the HTTP
+        // client's buffer, and the MQTT client the baseline forbids everywhere else.
+        let forbidden = andromeda_layer_guard::manifest::baseline_forbidden_except(&["bytes", "reqwest", "rumqttc", "tokio"]);
+        andromeda_layer_guard::manifest::assert_layer(env!("CARGO_MANIFEST_DIR"), &forbidden, ALLOWED_IN_WORKSPACE);
     }
 }
 

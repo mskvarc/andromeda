@@ -1,7 +1,7 @@
 //! The JsonProperty attribute family (ETSI GS CIM 009 clause 5.2.38).
 
 use crate::attribute::common_fields::CommonAttributeFields;
-use compact_str::CompactString;
+use andromeda_ngsi_ld_lexicon::reference::NgsiLdReference;
 use jsonld::Expandable;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -21,7 +21,7 @@ pub struct JsonProperty {
     pub json: Value,
     /// Optional JSON-LD datatype for `json`.
     #[jsonld(property = "ngsi:hasValueType", coerce = "@id")]
-    pub value_type: Option<CompactString>,
+    pub value_type: Option<NgsiLdReference>,
     /// Previous JSON payload emitted in notifications when `showChanges` is active.
     #[jsonld(property = "ngsi:hasPreviousJson", coerce = "@json")]
     pub previous_json: Option<Value>,

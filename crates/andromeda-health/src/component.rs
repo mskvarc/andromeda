@@ -10,15 +10,13 @@ use std::collections::BTreeMap;
 /// variant changes the response shape. It is deliberately a closed set rather
 /// than a free string: a component that cannot name itself here has no
 /// business claiming a place in the report.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash, strum::Display, strum::EnumString)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum ComponentName {
     /// MQTT notification transport.
     #[serde(rename = "mqtt")]
-    #[strum(serialize = "mqtt")]
     Mqtt,
     /// PostgreSQL database backend.
     #[serde(rename = "postgresql")]
-    #[strum(serialize = "postgresql")]
     PostgreSql,
 }
 

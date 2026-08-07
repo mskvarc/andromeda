@@ -30,6 +30,7 @@ mod tests {
     };
     use andromeda_jsonld::engine::processor::JsonLdEngine;
     use andromeda_ngsi_ld_geometry::{geo_rel::GeoRel, geometry::Geometry, relation::matches_geo};
+    use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, uri::Uri};
     use andromeda_ngsi_ld_model::{
         expanded::{
             entity_member::{extract_id, extract_scopes, extract_types},
@@ -103,7 +104,7 @@ mod tests {
 
         /// The identifiers this store's own predicates admit, and what it could
         /// not apply.
-        fn run(&self, compiled: &CompiledEntityQuery) -> QueryOutcome<String> {
+        fn run(&self, compiled: &CompiledEntityQuery) -> QueryOutcome<Uri> {
             let unapplied = self.profile.unapplied(&compiled.selection);
             let mut pushed = compiled.selection.clone(); // clone: the store runs a narrowed copy of the caller's query
             unapplied.strip_from(&mut pushed);
@@ -112,10 +113,10 @@ mod tests {
                 .entities
                 .iter()
                 .filter(|entity| reference_matches(&pushed, entity))
-                .filter_map(|entity| extract_id(entity).map(str::to_string));
+                .filter_map(|entity| extract_id(entity).and_then(|id| id.parse::<Uri>().ok()));
 
             if unapplied.is_empty() {
-                let all: Vec<String> = admitted.collect();
+                let all: Vec<Uri> = admitted.collect();
                 let total = match compiled.pagination.count {
                     CountPolicy::Emit => Some(i64::try_from(all.len()).unwrap_or(i64::MAX)),
                     CountPolicy::Omit => None,
@@ -151,58 +152,62 @@ mod tests {
             &self.profile
         }
 
-        async fn get(&self, id: &str) -> Result<Option<Value>, AndromedaError> {
+        async fn get(&self, id: &Uri) -> Result<Option<Value>, AndromedaError> {
             // clone: the double hands out owned payloads, as a real store does
-            Ok(self.entities.iter().find(|entity| extract_id(entity) == Some(id)).cloned())
+            Ok(self.entities.iter().find(|entity| extract_id(entity) == Some(id.as_str())).cloned())
         }
 
-        async fn get_batch(&self, ids: &[String]) -> Result<HashMap<String, Value>, AndromedaError> {
+        async fn get_batch(&self, ids: &[Uri]) -> Result<HashMap<Uri, Value>, AndromedaError> {
             Ok(self
                 .entities
                 .iter()
-                .filter_map(|entity| extract_id(entity).map(|id| (id.to_string(), entity)))
+                .filter_map(|entity| extract_id(entity).and_then(|id| id.parse::<Uri>().ok()).map(|id| (id, entity)))
                 .filter(|(id, _)| ids.contains(id))
                 .map(|(id, entity)| (id, entity.clone())) // clone: as above
                 .collect())
         }
 
-        async fn get_snapshot(&self, _id: &str) -> Result<Option<EntitySnapshot>, AndromedaError> {
+        async fn get_snapshot(&self, _id: &Uri) -> Result<Option<EntitySnapshot>, AndromedaError> {
             Err(unused("get_snapshot"))
         }
 
-        async fn get_snapshot_batch(&self, _ids: &[String]) -> Result<HashMap<String, EntitySnapshot>, AndromedaError> {
+        async fn get_snapshot_batch(&self, _ids: &[Uri]) -> Result<HashMap<Uri, EntitySnapshot>, AndromedaError> {
             Err(unused("get_snapshot_batch"))
         }
 
-        async fn entities_with_expired_attributes(&self) -> Result<Vec<(String, EntitySnapshot)>, AndromedaError> {
+        async fn entities_with_expired_attributes(&self) -> Result<Vec<(Uri, EntitySnapshot)>, AndromedaError> {
             Err(unused("entities_with_expired_attributes"))
         }
 
-        async fn get_sys_attrs(&self, _id: &str) -> Result<Option<SysAttrsSnapshot>, AndromedaError> {
+        async fn get_sys_attrs(&self, _id: &Uri) -> Result<Option<SysAttrsSnapshot>, AndromedaError> {
             Err(unused("get_sys_attrs"))
         }
 
-        async fn get_sys_attrs_batch(&self, _ids: &[String]) -> Result<HashMap<String, SysAttrsSnapshot>, AndromedaError> {
+        async fn get_sys_attrs_batch(&self, _ids: &[Uri]) -> Result<HashMap<Uri, SysAttrsSnapshot>, AndromedaError> {
             Err(unused("get_sys_attrs_batch"))
         }
 
-        async fn types(&self) -> Result<Vec<String>, AndromedaError> {
+        async fn types(&self) -> Result<Vec<EntityTypeName>, AndromedaError> {
             Err(unused("types"))
         }
 
-        async fn get_entity_type_summaries(&self, _after: Option<&str>, _limit: u32) -> Result<Vec<(String, Vec<String>)>, AndromedaError> {
+        async fn get_entity_type_summaries(
+            &self,
+            _after: Option<&EntityTypeName>,
+            _limit: u32,
+        ) -> Result<Vec<(EntityTypeName, Vec<AttributeName>)>, AndromedaError> {
             Err(unused("get_entity_type_summaries"))
         }
 
-        async fn get_attribute_summary(&self, _after: Option<&str>, _limit: u32) -> Result<Vec<AttributeSummary>, AndromedaError> {
+        async fn get_attribute_summary(&self, _after: Option<&AttributeName>, _limit: u32) -> Result<Vec<AttributeSummary>, AndromedaError> {
             Err(unused("get_attribute_summary"))
         }
 
-        async fn get_attribute_info(&self, _attr_iri: &str) -> Result<Option<AttributeSummary>, AndromedaError> {
+        async fn get_attribute_info(&self, _attr_iri: &AttributeName) -> Result<Option<AttributeSummary>, AndromedaError> {
             Err(unused("get_attribute_info"))
         }
 
-        async fn get_entities_by_type(&self, _entity_type: &str, _limit: Option<i64>, _offset: Option<i64>) -> Result<Vec<Value>, AndromedaError> {
+        async fn get_entities_by_type(&self, _entity_type: &EntityTypeName, _limit: Option<i64>, _offset: Option<i64>) -> Result<Vec<Value>, AndromedaError> {
             Err(unused("get_entities_by_type"))
         }
 
@@ -210,7 +215,7 @@ mod tests {
             Err(unused("get_all_entities"))
         }
 
-        async fn count_by_type(&self, _entity_type: &str) -> Result<i64, AndromedaError> {
+        async fn count_by_type(&self, _entity_type: &EntityTypeName) -> Result<i64, AndromedaError> {
             Err(unused("count_by_type"))
         }
 
@@ -218,11 +223,11 @@ mod tests {
             Err(unused("query_compiled"))
         }
 
-        async fn query_ids(&self, compiled: &CompiledEntityQuery) -> Result<QueryOutcome<String>, AndromedaError> {
+        async fn query_ids(&self, compiled: &CompiledEntityQuery) -> Result<QueryOutcome<Uri>, AndromedaError> {
             Ok(self.run(compiled))
         }
 
-        async fn expire_due_entities(&self) -> Result<Vec<String>, AndromedaError> {
+        async fn expire_due_entities(&self) -> Result<Vec<Uri>, AndromedaError> {
             Err(unused("expire_due_entities"))
         }
     }

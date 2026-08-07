@@ -7,6 +7,7 @@
 
 use crate::{
     context_cache::ContextCache,
+    core_context::NGSI_LD_CORE_CONTEXT_V19_URL,
     engine::{builder::JsonLdEngineBuilder, processor::JsonLdEngine},
     error::JsonLdError,
 };
@@ -18,6 +19,7 @@ use std::{
     sync::Arc,
 };
 use thiserror::Error;
+use url::Url;
 
 /// A setting that must be positive and was not.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
@@ -65,7 +67,7 @@ pub struct JsonLdConfig {
 
     /// Contexts to read from disk at startup, as URL to file path.
     #[config(env = "ANDROMEDA_JSONLD_PRELOAD_CONTEXTS", parse_env = parse_url_to_path_map, default = {})]
-    pub preload_contexts: HashMap<String, String>,
+    pub preload_contexts: HashMap<Url, PathBuf>,
 }
 
 impl JsonLdConfig {
@@ -100,11 +102,11 @@ impl JsonLdConfig {
     /// a relative path to point.
     pub fn resolve_preload_paths(&mut self, config_dir: &Path) {
         for path in self.preload_contexts.values_mut() {
-            let candidate = PathBuf::from(path.as_str());
+            let candidate = path.clone(); // clone: the map entry is replaced only for a relative path
             if candidate.is_absolute() || candidate.exists() {
                 continue;
             }
-            *path = config_dir.join(candidate).to_string_lossy().into_owned();
+            *path = config_dir.join(candidate);
         }
     }
 
@@ -116,6 +118,11 @@ impl JsonLdConfig {
     /// context that will not parse, a preloaded file that cannot be read or
     /// parsed, or an HTTP client that cannot be built.
     pub fn build_engine(&self, l2_cache: Arc<impl ContextCache + 'static>) -> Result<JsonLdEngine, JsonLdError> {
+        // Pin the deployment to the latest released core context (v1.9), the
+        // version the compile-time vocabulary table is derived from, so the
+        // fastpath term table and the deployment agree (clause 4.3.6.8). This
+        // replaces the process-global the engine used to read; the pin now lives
+        // on the engine each tenant builds.
         let mut builder = JsonLdEngineBuilder::new()
             .allow_remote(self.allow_remote_contexts)
             .timeout_seconds(self.timeout_seconds)
@@ -123,6 +130,7 @@ impl JsonLdConfig {
             .cache_capacity(self.cache_capacity)
             .cache_ttl_seconds(self.cache_ttl_seconds)
             .max_context_bytes(self.max_context_bytes)
+            .default_core_url(NGSI_LD_CORE_CONTEXT_V19_URL)
             .with_l2_cache(l2_cache);
         if !self.preload_contexts.is_empty() {
             builder = builder.preload_contexts(self.preload_contexts.clone()); // clone: the configuration is borrowed and stays valid
@@ -132,14 +140,22 @@ impl JsonLdConfig {
 }
 
 /// Read the preload map from an environment variable holding JSON.
-fn parse_url_to_path_map(input: &str) -> Result<HashMap<String, String>, serde_json::Error> {
+fn parse_url_to_path_map(input: &str) -> Result<HashMap<Url, PathBuf>, serde_json::Error> {
     serde_json::from_str(input)
 }
 
 #[cfg(test)]
 mod tests {
     use crate::config::{JsonLdConfig, JsonLdConfigError, parse_url_to_path_map};
-    use std::{collections::HashMap, path::Path};
+    use std::{
+        collections::HashMap,
+        path::{Path, PathBuf},
+    };
+    use url::Url;
+
+    fn context_url() -> Url {
+        Url::parse("https://example.com/context.jsonld").expect("valid context URL")
+    }
 
     /// Settings that pass validation, for the tests that vary one field.
     fn valid_config() -> JsonLdConfig {
@@ -181,40 +197,35 @@ mod tests {
     #[test]
     fn a_relative_preload_path_resolves_against_the_configuration_directory() {
         let mut config = valid_config();
-        config
-            .preload_contexts
-            .insert("https://example.com/context.jsonld".to_string(), "contexts/test.jsonld".to_string());
+        config.preload_contexts.insert(context_url(), PathBuf::from("contexts/test.jsonld"));
 
         config.resolve_preload_paths(Path::new("/etc/andromeda"));
 
         pretty_assertions::assert_eq!(
-            config.preload_contexts.get("https://example.com/context.jsonld").map(String::as_str),
-            Some("/etc/andromeda/contexts/test.jsonld")
+            config.preload_contexts.get(&context_url()),
+            Some(&PathBuf::from("/etc/andromeda/contexts/test.jsonld"))
         );
     }
 
     #[test]
     fn an_absolute_preload_path_is_left_alone() {
         let mut config = valid_config();
-        config
-            .preload_contexts
-            .insert("https://example.com/context.jsonld".to_string(), "/opt/contexts/test.jsonld".to_string());
+        config.preload_contexts.insert(context_url(), PathBuf::from("/opt/contexts/test.jsonld"));
 
         config.resolve_preload_paths(Path::new("/etc/andromeda"));
 
-        pretty_assertions::assert_eq!(
-            config.preload_contexts.get("https://example.com/context.jsonld").map(String::as_str),
-            Some("/opt/contexts/test.jsonld")
-        );
+        pretty_assertions::assert_eq!(config.preload_contexts.get(&context_url()), Some(&PathBuf::from("/opt/contexts/test.jsonld")));
     }
 
     #[test]
     fn the_preload_map_is_read_from_json_in_the_environment() {
         let parsed = parse_url_to_path_map(r#"{"https://example.com/context.jsonld":"contexts/test.jsonld"}"#).expect("valid JSON");
 
-        pretty_assertions::assert_eq!(
-            parsed.get("https://example.com/context.jsonld").map(String::as_str),
-            Some("contexts/test.jsonld")
-        );
+        pretty_assertions::assert_eq!(parsed.get(&context_url()), Some(&PathBuf::from("contexts/test.jsonld")));
+    }
+
+    #[test]
+    fn a_preload_map_with_a_malformed_context_url_is_rejected() {
+        assert!(parse_url_to_path_map(r#"{"not a URL":"contexts/test.jsonld"}"#).is_err());
     }
 }

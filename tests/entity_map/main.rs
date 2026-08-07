@@ -59,7 +59,7 @@ fn vehicle_entity_with_speed(id: &str, speed: i64) -> Value {
 
 async fn clean_database() {
     let pool = PgPool::connect(DATABASE_URL).await.expect("failed to connect to database for cleanup");
-    sqlx::query(TRUNCATE_ALL).execute(&pool).await.expect("failed to truncate tables");
+    sqlx::query(&TRUNCATE_ALL).execute(&pool).await.expect("failed to truncate tables");
     pool.close().await;
 }
 

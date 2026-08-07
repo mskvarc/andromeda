@@ -30,14 +30,17 @@ impl EntityService {
         &self,
         id: &Urn,
         attr_name: &str,
-        dataset_id: Option<&str>,
+        dataset_id: Option<&Urn>,
         fragment: Value,
         context: &ContextSpec,
     ) -> Result<(), AndromedaError> {
         let entity_uri = Uri::from(id.clone()); // clone: owned Urn for Uri conversion; id is &Urn
         let id = id.to_string();
 
-        let attr_iri = self.engine.expand_term(attr_name, context).await?;
+        let prepared_context = self.engine.prepare_term_context(context);
+        let attr_iri = self.engine.expand_term(attr_name, &prepared_context).await?;
+        // The tombstone catalogue records a datasetId as its raw string form.
+        let dataset_id_str = dataset_id.map(Urn::to_string);
 
         let expanded = Arc::new(self.engine.expand(fragment, context).await?);
         validate_attribute_envelopes(&expanded)?;
@@ -47,7 +50,7 @@ impl EntityService {
             previous: previous_attributes,
             trigger,
         } = self
-            .commit_computed_write(&id, |previous| {
+            .commit_computed_write(&entity_uri, |previous| {
                 let previous_attributes = self.change_tx.as_ref().map(|_| previous.clone()); // clone: snapshot before mutation for showChanges diff
                 let attrs_before: HashSet<AttributeName> = extract_attribute_keys(previous).into_iter().collect();
 
@@ -60,7 +63,10 @@ impl EntityService {
                 let was_deleted = attrs_before.contains(attr_iri.as_str()) && !attrs_after.contains(attr_iri.as_str());
 
                 let (history, trigger) = if was_deleted {
-                    (vec![tombstone(&attr_iri, dataset_id)?], NotificationTrigger::AttributeDeleted)
+                    (
+                        vec![tombstone(attr_iri.as_str(), dataset_id_str.as_deref())?],
+                        NotificationTrigger::AttributeDeleted,
+                    )
                 } else {
                     (
                         vec![HistoryRecord::Observations(Arc::clone(&expanded))], // clone: Arc ref-count bump
@@ -86,7 +92,7 @@ impl EntityService {
             entity_uri,
             entity_types,
             trigger,
-            vec![attr_name_of(&attr_iri)?],
+            vec![attr_name_of(attr_iri.as_str())?],
             previous_attributes,
             Some(merged),
         );

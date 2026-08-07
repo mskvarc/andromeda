@@ -1,52 +1,22 @@
-//! The R-tree of entity geometries.
+//! The entity half of the spatial index: which entities a `georel` matches.
 
-use crate::{entity::entry::SpatialEntry, key::SpatialKey};
+use crate::{entity::entry::SpatialEntry, key::SpatialKey, partitioned_rtree::PartitionedRTree};
 use andromeda_ngsi_ld_geometry::{geo_rel::GeoRel, geometry::Geometry, relation::matches_geo};
-use dashmap::DashMap;
 use geo::algorithm::BoundingRect;
-use parking_lot::RwLock;
 use rstar::{AABB, RTree};
-use std::{
-    collections::HashSet,
-    sync::{
-        Arc,
-        atomic::{AtomicU64, Ordering},
-    },
-};
+use std::collections::HashSet;
 use urn_rs::Urn;
-
-/// One partition's R-tree, tagged with the generation at which it was last
-/// modified.
-///
-/// The generation is what lets a bulk rebuild refuse to overwrite a partition
-/// that a live write has touched since the rebuild's snapshot was taken: the
-/// index is only ever an optimisation, so it must never lose the newer of two
-/// writes to the tree.
-#[derive(Debug)]
-struct Partition {
-    /// The [`SpatialEntityIndex`] clock value at this partition's most recent
-    /// mutation.
-    generation: u64,
-    /// The R-tree of entity geometries in this partition.
-    tree: RTree<SpatialEntry>,
-}
 
 /// Thread-safe R-tree cache of entity geometries.
 ///
-/// Each `(tenant, type, geoproperty)` partition has its own tree behind its
-/// own lock, so a write to one tenant does not stall a read of another. A
-/// secondary map records every partition an entity was last indexed under, so
-/// removal is proportional to that entity's geoproperties rather than to the
-/// number of partitions.
+/// A thin reading over the shared [`PartitionedRTree`]: the storage,
+/// back-index, and rebuild machinery all live there, and this type adds only
+/// the one thing that is entity-specific — evaluating a caller-supplied
+/// `georel` against a partition.
 #[derive(Debug, Default)]
 pub struct SpatialEntityIndex {
-    /// One tree per partition.
-    buckets: DashMap<SpatialKey, Arc<RwLock<Partition>>>,
-    /// Which partitions each entity currently appears in.
-    by_entity: DashMap<Urn, Vec<SpatialKey>>,
-    /// Monotonic clock stamping every mutation, so a bulk rebuild can tell
-    /// whether a partition has changed since its snapshot was taken.
-    clock: AtomicU64,
+    /// Entity geometries, partitioned by `(tenant, type, geoproperty)`.
+    tree: PartitionedRTree<SpatialEntry>,
 }
 
 impl SpatialEntityIndex {
@@ -59,12 +29,7 @@ impl SpatialEntityIndex {
     /// reads its source snapshot so that any write landing during the read is
     /// stamped with a later generation and cannot be clobbered by the rebuild.
     pub fn current_generation(&self) -> u64 {
-        self.clock.load(Ordering::SeqCst)
-    }
-
-    /// Advance the clock and return the fresh generation to stamp a mutation.
-    fn next_generation(&self) -> u64 {
-        self.clock.fetch_add(1, Ordering::SeqCst) + 1
+        self.tree.current_generation()
     }
 
     /// Evaluate a `georel` filter against one partition.
@@ -73,135 +38,26 @@ impl SpatialEntityIndex {
     /// empty set: the caller falls through to the store rather than reporting
     /// that nothing matched.
     pub fn query(&self, key: &SpatialKey, georel: &GeoRel, reference: &geo::Geometry<f64>) -> Option<HashSet<Urn>> {
-        let bucket = self.buckets.get(key)?;
-        let partition = bucket.value().read();
-        Some(evaluate(&partition.tree, georel, reference))
+        self.tree.read_partition(key, |tree| evaluate(tree, georel, reference))
     }
 
     /// Insert or overwrite the entry for one entity under one partition.
     pub fn insert(&self, key: SpatialKey, entity_id: Urn, geometry: Geometry) {
-        let Some(entry) = SpatialEntry::new(entity_id.clone(), geometry) else {
-            // clone: the entry owns its identifier and the caller keeps one
+        let Some(entry) = SpatialEntry::new(entity_id, geometry) else {
             return;
         };
-
-        self.remove_from_key(&entity_id, &key);
-
-        let generation = self.next_generation();
-        {
-            let bucket = self
-                .buckets
-                .entry(key.clone()) // clone: the bucket key and the ownership record are separate
-                .or_insert_with(|| {
-                    Arc::new(RwLock::new(Partition {
-                        generation,
-                        tree: RTree::new(),
-                    }))
-                });
-            let mut partition = bucket.value().write();
-            partition.tree.insert(entry);
-            partition.generation = generation;
-        }
-
-        let mut owned_keys = self.by_entity.entry(entity_id).or_default();
-        if !owned_keys.value().contains(&key) {
-            owned_keys.value_mut().push(key);
-        }
+        self.tree.insert(key, entry);
     }
 
     /// Remove every entry belonging to an entity, across every partition.
     pub fn remove(&self, entity_id: &Urn) {
-        let Some((_, keys)) = self.by_entity.remove(entity_id) else {
-            return;
-        };
-        for key in keys {
-            self.remove_from_bucket(entity_id, &key);
-        }
+        self.tree.remove(entity_id);
     }
 
     /// Replace one partition's contents wholesale, unless a newer write got
-    /// there first.
-    ///
-    /// `snapshot_generation` is the clock value the rebuild worker captured
-    /// before reading its source (see [`current_generation`]). If the partition
-    /// has been mutated since — its generation exceeds the snapshot's — the
-    /// rebuild is stale for it and the swap is refused, so a live insert newer
-    /// than the snapshot is never lost. Otherwise the tree is bulk-loaded (a
-    /// far better layout than one-at-a-time inserts) under the existing lock, so
-    /// a reader sees either the old tree or the new one and never a partial
-    /// state, and any entity that was in the partition but not in the new
-    /// snapshot is pruned from `by_entity` so its ownership record cannot leak.
-    ///
-    /// [`current_generation`]: SpatialEntityIndex::current_generation
+    /// there first. See [`PartitionedRTree::bulk_load`].
     pub fn bulk_load(&self, key: SpatialKey, entries: Vec<SpatialEntry>, snapshot_generation: u64) {
-        // clone: the ownership records outlive the entry list, which the tree consumes
-        let incoming: HashSet<Urn> = entries.iter().map(|entry| entry.entity_id.clone()).collect();
-        let tree = RTree::bulk_load(entries);
-
-        let departed: Vec<Urn> = {
-            let bucket = self.buckets.entry(key.clone()).or_insert_with(|| {
-                Arc::new(RwLock::new(Partition {
-                    generation: 0,
-                    tree: RTree::new(),
-                }))
-            });
-            let mut partition = bucket.value().write();
-            if partition.generation > snapshot_generation {
-                // A write newer than the snapshot already changed this
-                // partition; keeping it is what makes the index only ever an
-                // optimisation rather than a source of stale answers.
-                return;
-            }
-            // clone: the departed set outlives the tree borrow it is read from
-            let departed = partition
-                .tree
-                .iter()
-                .map(|entry| entry.entity_id.clone())
-                .filter(|id| !incoming.contains(id))
-                .collect();
-            partition.tree = tree;
-            partition.generation = snapshot_generation;
-            departed
-        };
-
-        for entity_id in &incoming {
-            let mut owned = self.by_entity.entry(entity_id.clone()).or_default(); // clone: one ownership record per entity in the snapshot
-            if !owned.value().contains(&key) {
-                owned.value_mut().push(key.clone()); // clone: one record per partition the entity appears in
-            }
-        }
-        for entity_id in departed {
-            if let Some(mut owned) = self.by_entity.get_mut(&entity_id) {
-                owned.value_mut().retain(|held| held != &key);
-            }
-        }
-    }
-
-    /// Drop an entity from one partition, and forget that it was there.
-    fn remove_from_key(&self, entity_id: &Urn, key: &SpatialKey) {
-        self.remove_from_bucket(entity_id, key);
-        if let Some(mut owned) = self.by_entity.get_mut(entity_id) {
-            owned.value_mut().retain(|held| held != key);
-        }
-    }
-
-    /// Drop an entity's entries from one partition's tree, advancing that
-    /// partition's generation when anything was actually removed.
-    fn remove_from_bucket(&self, entity_id: &Urn, key: &SpatialKey) {
-        let Some(bucket) = self.buckets.get(key) else {
-            return;
-        };
-        let mut partition = bucket.value().write();
-        // clone: `RTree::remove` takes the entry by reference and the borrow of
-        // the tree it came from cannot outlive the removal
-        let to_remove: Vec<SpatialEntry> = partition.tree.iter().filter(|entry| entry.entity_id == *entity_id).cloned().collect();
-        if to_remove.is_empty() {
-            return;
-        }
-        for entry in to_remove {
-            partition.tree.remove(&entry);
-        }
-        partition.generation = self.next_generation();
+        self.tree.bulk_load(key, entries, snapshot_generation);
     }
 }
 

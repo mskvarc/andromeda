@@ -14,6 +14,7 @@ use crate::{
     },
 };
 use andromeda_delivery::stream::{registry::ConnectionRegistry, sse::SseNotificationEvent, ws::WsNotificationMessage};
+use andromeda_ngsi_ld_lexicon::ngsi_ld_urn::ContextSourceId;
 use andromeda_tenancy::runtime::TenantRuntimeManager;
 use std::sync::Arc;
 
@@ -45,5 +46,5 @@ pub struct AndromedaState {
 #[derive(Clone)]
 pub struct AppState {
     pub tenants: Arc<TenantRuntimeManager<PostgresTenantRegistry, BrokerTenantFactory>>,
-    pub source_identity: String,
+    pub source_identity: ContextSourceId,
 }

@@ -6,7 +6,15 @@
 //! and `LIMIT`, so the pagination caps transport volume rather than server-side
 //! work. It exists to bound the response, not to make the aggregate cheaper.
 
-use crate::{core::error::AndromedaError, repository::entity::repo::EntityRepository, service::entity::store::AttributeSummary};
+use crate::{
+    core::error::AndromedaError,
+    repository::entity::{
+        mapper::{stored_attribute_name, stored_type_name},
+        repo::EntityRepository,
+    },
+    service::entity::store::AttributeSummary,
+};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, entity_type_name::EntityTypeName};
 use serde_json::Value;
 use sqlx::{Row, postgres::PgRow};
 
@@ -54,15 +62,16 @@ const ATTRIBUTE_INFO_SQL: &str = attribute_summary_sql!("key = $1", "");
 
 impl EntityRepository {
     /// Return all distinct entity type IRIs present in the store.
-    pub async fn types(&self) -> Result<Vec<String>, AndromedaError> {
-        Ok(sqlx::query_scalar("SELECT DISTINCT unnest(types) FROM entities").fetch_all(&self.pool).await?)
+    pub async fn types(&self) -> Result<Vec<EntityTypeName>, AndromedaError> {
+        let raw: Vec<String> = sqlx::query_scalar("SELECT DISTINCT unnest(types) FROM entities").fetch_all(&self.pool).await?;
+        raw.into_iter().map(stored_type_name).collect()
     }
 
     /// Retrieve entity payloads filtered by type with optional pagination.
-    pub async fn get_entities_by_type(&self, entity_type: &str, limit: Option<i64>, offset: Option<i64>) -> Result<Vec<Value>, AndromedaError> {
+    pub async fn get_entities_by_type(&self, entity_type: &EntityTypeName, limit: Option<i64>, offset: Option<i64>) -> Result<Vec<Value>, AndromedaError> {
         Ok(
             sqlx::query_scalar("SELECT payload FROM entities WHERE $1 = ANY(types) ORDER BY id LIMIT $2 OFFSET $3")
-                .bind(entity_type)
+                .bind(entity_type.as_str())
                 .bind(limit)
                 .bind(offset.unwrap_or(0))
                 .fetch_all(&self.pool)
@@ -80,15 +89,19 @@ impl EntityRepository {
     }
 
     /// Count entities that have the given type IRI.
-    pub async fn count_by_type(&self, entity_type: &str) -> Result<i64, AndromedaError> {
+    pub async fn count_by_type(&self, entity_type: &EntityTypeName) -> Result<i64, AndromedaError> {
         Ok(sqlx::query_scalar("SELECT COUNT(*) FROM entities WHERE $1 = ANY(types)")
-            .bind(entity_type)
+            .bind(entity_type.as_str())
             .fetch_one(&self.pool)
             .await?)
     }
 
     /// Per-type attribute summaries, keyset-paginated on the aggregated type IRI.
-    pub async fn get_entity_type_summaries(&self, after: Option<&str>, limit: u32) -> Result<Vec<(String, Vec<String>)>, AndromedaError> {
+    pub async fn get_entity_type_summaries(
+        &self,
+        after: Option<&EntityTypeName>,
+        limit: u32,
+    ) -> Result<Vec<(EntityTypeName, Vec<AttributeName>)>, AndromedaError> {
         let rows = sqlx::query(
             r#"
             SELECT t AS type_iri,
@@ -105,51 +118,59 @@ impl EntityRepository {
             LIMIT $2
             "#,
         )
-        .bind(after)
+        .bind(after.map(EntityTypeName::as_str))
         .bind(i64::from(limit))
         .fetch_all(&self.pool)
         .await?;
 
-        let results = rows
-            .into_iter()
+        rows.into_iter()
             .map(|row| {
-                let type_iri: String = row.get("type_iri");
+                let type_iri = stored_type_name(row.get("type_iri"))?;
                 let attr_keys: Vec<String> = row.get("attr_keys");
-                (type_iri, attr_keys)
+                let attr_names = attr_keys.into_iter().map(stored_attribute_name).collect::<Result<_, _>>()?;
+                Ok((type_iri, attr_names))
             })
-            .collect();
-        Ok(results)
+            .collect()
     }
 
     /// Attribute metadata aggregated at the SQL level, keyset-paginated on the
     /// attribute IRI.
-    pub async fn get_attribute_summary(&self, after: Option<&str>, limit: u32) -> Result<Vec<AttributeSummary>, AndromedaError> {
+    pub async fn get_attribute_summary(&self, after: Option<&AttributeName>, limit: u32) -> Result<Vec<AttributeSummary>, AndromedaError> {
         let rows = sqlx::query(ATTRIBUTE_SUMMARY_SQL)
-            .bind(after)
+            .bind(after.map(AttributeName::as_str))
             .bind(i64::from(limit))
             .fetch_all(&self.pool)
             .await?;
 
-        Ok(rows.iter().map(row_to_attribute_summary).collect())
+        rows.iter().map(row_to_attribute_summary).collect()
     }
 
     /// Attribute metadata for a single attribute IRI.
-    pub async fn get_attribute_info(&self, attr_iri: &str) -> Result<Option<AttributeSummary>, AndromedaError> {
-        let row = sqlx::query(ATTRIBUTE_INFO_SQL).bind(attr_iri).fetch_optional(&self.pool).await?;
-        Ok(row.as_ref().map(row_to_attribute_summary))
+    pub async fn get_attribute_info(&self, attr_iri: &AttributeName) -> Result<Option<AttributeSummary>, AndromedaError> {
+        let row = sqlx::query(ATTRIBUTE_INFO_SQL).bind(attr_iri.as_str()).fetch_optional(&self.pool).await?;
+        row.as_ref().map(row_to_attribute_summary).transpose()
     }
 }
 
 /// An attribute has no `@type` when no instance of it declares one, which the
 /// aggregate reports as `NULL` rather than an empty array.
-fn row_to_attribute_summary(row: &PgRow) -> AttributeSummary {
+///
+/// The `@type` IRIs the payload carried are mapped to the eight NGSI-LD
+/// attribute family names (clause 5.2.28); any value that is not one of them is
+/// dropped, which is what the discovery response asks for.
+fn row_to_attribute_summary(row: &PgRow) -> Result<AttributeSummary, AndromedaError> {
     let attribute_types: Option<Vec<String>> = row.get("attribute_types");
-    AttributeSummary {
-        attr_iri: row.get("attr_key"),
+    let entity_types: Vec<String> = row.get("entity_types");
+    Ok(AttributeSummary {
+        attr_iri: stored_attribute_name(row.get("attr_key"))?,
         entity_count: row.get("entity_count"),
-        entity_types: row.get("entity_types"),
-        attribute_types: attribute_types.unwrap_or_default(),
-    }
+        entity_types: entity_types.into_iter().map(stored_type_name).collect::<Result<_, _>>()?,
+        attribute_types: attribute_types
+            .unwrap_or_default()
+            .iter()
+            .filter_map(|iri| AttributeType::from_iri_suffix(iri))
+            .collect(),
+    })
 }
 
 #[cfg(test)]

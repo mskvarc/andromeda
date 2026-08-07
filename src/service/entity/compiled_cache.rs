@@ -11,7 +11,14 @@
 //! and does not need to be part of the key.
 
 use andromeda_jsonld::context_spec::ContextSpec;
-use andromeda_ngsi_ld_query::entity::compiled::CompiledEntityQuery;
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
+use andromeda_ngsi_ld_query::{
+    entity::compiled::CompiledEntityQuery,
+    ordering::{
+        collation::IcuCollation,
+        term::{OrderDirection, OrderTerm},
+    },
+};
 use andromeda_ngsi_ld_request::query::entity::EntityQueryParameters;
 use moka::future::Cache;
 use std::{
@@ -65,30 +72,30 @@ impl CompiledQueryKey {
     /// [`EntityQueryService::compile_query`](crate::service::entity::query::EntityQueryService::compile_query).
     pub fn from_params(params: &EntityQueryParameters, context: &ContextSpec, limit_cap: LimitCap) -> CompiledQueryKey {
         let mut parameters = String::new();
+        let id_pattern = params.id_pattern.as_ref().map(ToString::to_string);
+        let q = params.q.as_ref().map(ToString::to_string);
+        let entity_type = params.entity_type.as_ref().map(ToString::to_string);
+        push_uri_list(&mut parameters, params.id.as_deref());
+        push_attribute_list(&mut parameters, params.attrs.as_deref());
+        push_attribute_list(&mut parameters, params.pick.as_deref());
+        push_attribute_list(&mut parameters, params.omit.as_deref());
+        push_attribute_list(&mut parameters, params.expand_values.as_deref());
+        push_attribute_list(&mut parameters, params.json_keys.as_deref());
+        push_dataset_list(&mut parameters, params.dataset_id.as_deref());
+        push_geo_query(&mut parameters, params.geo.0.as_ref());
         for field in [
-            params.id.as_deref(),
-            params.entity_type.as_deref(),
-            params.id_pattern.as_deref(),
-            params.attrs.as_deref(),
-            params.q.as_deref(),
-            params.georel.as_deref(),
-            params.geometry.as_deref(),
-            params.coordinates.as_deref(),
-            params.geoproperty.as_deref(),
-            params.scope_q.as_deref(),
-            params.order_by.as_deref(),
+            entity_type.as_deref(),
+            id_pattern.as_deref(),
+            q.as_deref(),
+            params.scope_q.as_ref().map(ToString::to_string).as_deref(),
             params.order_from.as_deref(),
             params.order_geometry.as_deref(),
-            params.collation.as_deref(),
-            params.pick.as_deref(),
-            params.omit.as_deref(),
-            params.expand_values.as_deref(),
-            params.json_keys.as_deref(),
-            params.dataset_id.as_deref(),
+            params.collation.as_ref().map(IcuCollation::as_str),
             params.options.as_deref(),
         ] {
             push_field(&mut parameters, field);
         }
+        push_order_terms(&mut parameters, params.order_by.as_deref());
         for field in [params.limit, params.offset] {
             push_field(&mut parameters, field.map(|value| value.to_string()).as_deref());
         }
@@ -101,9 +108,10 @@ impl CompiledQueryKey {
         // impersonate the boundary between two selectors.
         push_field(&mut parameters, Some(&params.entity_selectors.len().to_string()));
         for selector in &params.entity_selectors {
-            push_field(&mut parameters, selector.id.as_deref());
-            push_field(&mut parameters, selector.id_pattern.as_deref());
-            push_field(&mut parameters, selector.type_.as_deref());
+            let id_pattern = selector.id_pattern.as_ref().map(ToString::to_string);
+            push_uri_list(&mut parameters, selector.id.as_deref());
+            push_field(&mut parameters, id_pattern.as_deref());
+            push_field(&mut parameters, selector.type_.as_ref().map(ToString::to_string).as_deref());
         }
 
         CompiledQueryKey {
@@ -111,6 +119,76 @@ impl CompiledQueryKey {
             limit_cap,
             parameters: parameters.into_boxed_str(),
         }
+    }
+}
+
+/// Append an ordered attribute-name list in its canonical rendering.
+fn push_attribute_list(buffer: &mut String, value: Option<&[AttributeName]>) {
+    match value {
+        Some(values) => {
+            let rendered = values.iter().map(AttributeName::as_str).collect::<Vec<_>>().join(",");
+            push_field(buffer, Some(&rendered));
+        }
+        None => push_field(buffer, None),
+    }
+}
+
+/// Append a typed entity identifier list in its canonical URI rendering.
+fn push_uri_list(buffer: &mut String, value: Option<&[Uri]>) {
+    match value {
+        Some(values) => {
+            let rendered = values.iter().map(Uri::as_str).collect::<Vec<_>>().join(",");
+            push_field(buffer, Some(&rendered));
+        }
+        None => push_field(buffer, None),
+    }
+}
+
+/// Append an ordered dataset-URN list in canonical rendering.
+fn push_dataset_list(buffer: &mut String, value: Option<&[urn_rs::Urn]>) {
+    match value {
+        Some(values) => {
+            let rendered = values.iter().map(ToString::to_string).collect::<Vec<_>>().join(",");
+            push_field(buffer, Some(&rendered));
+        }
+        None => push_field(buffer, None),
+    }
+}
+
+/// Append a parsed geo-query without retaining URL component strings.
+fn push_geo_query(buffer: &mut String, value: Option<&andromeda_ngsi_ld_query::geo::input::GeoQueryInput>) {
+    match value {
+        Some(value) => {
+            push_field(buffer, Some(&value.georel.to_string()));
+            let geometry = value.geometry.to_geojson().to_string();
+            push_field(buffer, Some(&geometry));
+            push_field(buffer, value.geoproperty.as_ref().map(AsRef::<str>::as_ref));
+        }
+        None => {
+            push_field(buffer, None);
+            push_field(buffer, None);
+            push_field(buffer, None);
+        }
+    }
+}
+
+/// Append parsed ordering terms without reconstructing a request query string.
+fn push_order_terms(buffer: &mut String, terms: Option<&[OrderTerm]>) {
+    match terms {
+        Some(terms) => {
+            push_field(buffer, Some(&terms.len().to_string()));
+            for term in terms {
+                push_field(buffer, Some(&term.attr));
+                let direction = match term.direction {
+                    OrderDirection::Asc => "asc",
+                    OrderDirection::Desc => "desc",
+                    OrderDirection::DistAsc => "dist-asc",
+                    OrderDirection::DistDesc => "dist-desc",
+                };
+                push_field(buffer, Some(direction));
+            }
+        }
+        None => push_field(buffer, None),
     }
 }
 
@@ -207,17 +285,16 @@ mod tests {
         assert_ne!(key("q=speed>50", LimitCap::Capped), key("q=speed>50", LimitCap::Uncapped));
     }
 
-    /// The rendering is length-prefixed precisely so a parameter value cannot
-    /// impersonate the boundary between two parameters. Without that, `attrs`
-    /// and `q` here would render identically to a query that swapped them.
+    /// The rendering is length-prefixed precisely so adjacent parameter values
+    /// cannot impersonate a different parameter boundary.
     #[test]
     fn a_value_containing_the_separator_cannot_impersonate_another_parameter() {
-        assert_ne!(key("attrs=a;q=b", LimitCap::Capped), key("attrs=a&q=b", LimitCap::Capped));
+        assert_ne!(key("attrs=ab&q=c", LimitCap::Capped), key("attrs=a&q=bc", LimitCap::Capped));
     }
 
     #[test]
-    fn an_absent_parameter_differs_from_an_empty_one() {
-        assert_ne!(key("", LimitCap::Capped), key("q=", LimitCap::Capped));
+    fn an_empty_filter_is_rejected_before_cache_key_construction() {
+        assert!(serde_urlencoded::from_str::<EntityQueryParameters>("q=").is_err());
     }
 
     #[test]

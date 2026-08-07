@@ -23,6 +23,7 @@ pub mod config;
 pub mod creation_policy;
 pub mod database;
 pub mod database_name;
+pub mod db_name_prefix;
 pub mod error;
 pub mod runtime;
 pub mod state_factory;
@@ -45,13 +46,14 @@ mod boundary {
     /// [`crate::database::TenantDatabase`] is that they are not.
     #[test]
     fn this_crate_declares_only_what_its_layer_permits() {
-        /// Third-party crates this layer must never ship.
-        const FORBIDDEN: &[&str] = &["sqlx", "sea-query", "geozero", "bytes", "axum", "reqwest", "rumqttc", "clap"];
         /// In-workspace crates this one may name, in any dependency table.
         /// Anything else is an upward or sideways edge.
         const ALLOWED_IN_WORKSPACE: &[&str] = &["andromeda-layer-guard", "andromeda-ngsi-ld-lexicon"];
 
-        andromeda_layer_guard::manifest::assert_layer(env!("CARGO_MANIFEST_DIR"), FORBIDDEN, ALLOWED_IN_WORKSPACE);
+        // Tenancy reads its registry configuration and single-flights cold
+        // starts, so it ships `confique` and a `tokio` sync/time slice.
+        let forbidden = andromeda_layer_guard::manifest::baseline_forbidden_except(&["confique", "tokio"]);
+        andromeda_layer_guard::manifest::assert_layer(env!("CARGO_MANIFEST_DIR"), &forbidden, ALLOWED_IN_WORKSPACE);
     }
 }
 

@@ -23,7 +23,7 @@ fn unique_registration_id(scenario: &str) -> String {
 
 async fn clean_database() {
     let pool = PgPool::connect(DATABASE_URL).await.expect("failed to connect to database for cleanup");
-    sqlx::query(TRUNCATE_ALL).execute(&pool).await.expect("failed to truncate tables");
+    sqlx::query(&TRUNCATE_ALL).execute(&pool).await.expect("failed to truncate tables");
     pool.close().await;
 }
 

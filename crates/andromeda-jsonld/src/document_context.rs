@@ -26,8 +26,9 @@ pub fn resolve_context_value(document_context: Option<&Value>, spec: &ContextSpe
         combined.extend(extract_context_items(Some(body_context)));
     }
     // Document context first, then the Link header's: clause 5.5.7 gives the
-    // header the last word among the request's own contexts.
-    combined.extend(spec.link_contexts().iter().cloned().map(Value::String)); // clone: the spec is borrowed and stays valid
+    // header the last word among the request's own contexts. Each typed context
+    // URL is written as the JSON-LD document string it becomes in an `@context`.
+    combined.extend(spec.link_contexts().iter().map(|url| Value::String(url.as_str().to_owned())));
     let mut combined = dedupe_contexts(combined);
 
     match spec.core_policy() {
@@ -143,11 +144,17 @@ mod tests {
         document_context::{apply_context, resolve_context_value},
     };
     use andromeda_ngsi_ld_vocabulary::NGSI_LD_CORE_CONTEXT_URL;
+    use iri_rs::IriRefBuf;
     use serde_json::json;
+
+    /// A context URL as the [`IriRefBuf`] a `Link` header carries.
+    fn iri_ref(url: &str) -> IriRefBuf {
+        IriRefBuf::new(url.to_string()).expect("a valid IRI reference")
+    }
 
     #[test]
     fn the_document_context_comes_first_and_the_core_contexts_last() {
-        let spec = ContextSpec::from_links(vec!["https://example.com/a".to_string()]);
+        let spec = ContextSpec::from_links(vec![iri_ref("https://example.com/a")]);
         let document_context = json!(["https://example.com/doc", "https://example.com/a"]);
 
         let resolved = resolve_context_value(Some(&document_context), &spec).expect("a context value");

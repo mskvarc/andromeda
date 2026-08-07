@@ -1,15 +1,17 @@
 //! JSON-fixture loader for integration tests.
 //!
-//! Canonical payloads live on disk under `lib/andromeda-test-common/fixtures/`.
-//! This module resolves paths relative to the crate's `CARGO_MANIFEST_DIR`,
-//! reads the file once per process, applies placeholder substitution, and
-//! returns a fresh [`Value`] per call so tests can mutate the result
-//! without contaminating the cache.
+//! Loads canonical payloads placed on disk under
+//! `lib/andromeda-test-common/fixtures/`: it resolves paths relative to the
+//! crate's `CARGO_MANIFEST_DIR`, reads the file once per process, applies
+//! placeholder substitution, and returns a fresh [`Value`] per call so tests
+//! can mutate the result without contaminating the cache. The `fixtures/` tree
+//! is available but currently unpopulated — suites still inline their payloads —
+//! so the loader is here for suites that want to move payloads out of Rust
+//! source, not a directory every suite already reads from.
 //!
-//! Placeholder substitution uses `{{identifier}}` tokens. The loader
-//! accepts a [`Bindings`] table — a flat key-value list — and replaces
-//! every occurrence of `{{key}}` in the raw JSON text with the escaped
-//! JSON representation of `value`.
+//! Placeholder substitution uses `{{identifier}}` tokens. The loader accepts a
+//! [`Bindings`] table — a flat key-value list — and replaces every occurrence
+//! of `{{key}}` in the raw JSON text with the binding's value.
 
 pub mod csr;
 pub mod entity;
@@ -68,9 +70,10 @@ pub fn load(fixture_path: &str) -> Result<Value, FixtureError> {
 /// Load `fixture_path` and substitute every `{{key}}` placeholder using
 /// `bindings` before parsing.
 ///
-/// Substituted values are inserted as JSON strings (wrapped in quotes) when
-/// the key is prefixed with `str:`. Raw substitutions — useful for nested
-/// arrays — use the bare key.
+/// Each `{{key}}` is replaced with its binding's value verbatim, so a binding
+/// supplies whatever JSON text belongs at that position — a quoted string, a
+/// number, or a nested array. The value is not quoted or otherwise escaped by
+/// the loader.
 pub fn load_with(fixture_path: &str, bindings: Bindings<'_>) -> Result<Value, FixtureError> {
     let raw = read_cached(fixture_path)?;
     let substituted = substitute(&raw, bindings);

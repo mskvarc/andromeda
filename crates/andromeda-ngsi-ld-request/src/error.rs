@@ -72,4 +72,10 @@ pub enum ParameterError {
     /// (clause 4.5.19).
     #[error("aggrMethods is required when format is 'aggregatedValues'")]
     AggrMethodsRequired,
+    /// A POST query body named a resource type other than `Query`.
+    ///
+    /// Clause 5.2.23 fixes the body's `type` as `Query`; a different value is a
+    /// malformed request rather than one the broker reinterprets.
+    #[error("the query body type must be 'Query', not '{0}'")]
+    RequestTypeInvalid(String),
 }

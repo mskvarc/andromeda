@@ -20,7 +20,7 @@ use andromeda_jsonld::{
     engine::{batch_context::BatchContextHandle, processor::JsonLdEngine},
 };
 use andromeda_ngsi_ld_geometry::geometry::Geometry;
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, scope::grammar::ScopeBuf};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, scope::grammar::ScopeBuf, uri::Uri};
 use andromeda_ngsi_ld_model::{
     entity::Entity,
     expanded::{
@@ -41,8 +41,8 @@ use tokio::{sync::Semaphore, task::JoinSet};
 /// normalization, JSON-LD expansion, validation — so the write path never has
 /// to walk the payload again.
 pub(super) struct PreparedEntity {
-    /// Entity identifier string.
-    pub id: String,
+    /// Entity identifier.
+    pub id: Uri,
     /// Expanded JSON-LD payload (the canonical stored form).
     pub expanded: Value,
     /// Entity type names extracted from the expanded payload.
@@ -66,7 +66,7 @@ pub(super) struct PreparedEntity {
 /// regardless of which pool processed the entry.
 pub(super) struct ClassifiedEntry {
     pub(super) idx: usize,
-    pub(super) id: String,
+    pub(super) id: Uri,
     pub(super) value: Value,
 }
 
@@ -131,8 +131,8 @@ impl EntityService {
         )
     }
 
-    fn build_prepared_entity(id: String, expanded: Value) -> PreparedSlot {
-        validate_attribute_envelopes(&expanded).map_err(|err| (id.clone(), err))?;
+    fn build_prepared_entity(id: Uri, expanded: Value) -> PreparedSlot {
+        validate_attribute_envelopes(&expanded).map_err(|err| (id.to_string(), err))?;
         let changed_attributes = extract_attribute_keys(&expanded);
         let types = extract_types(&expanded);
         let scopes = extract_scopes(&expanded);
@@ -237,8 +237,8 @@ impl EntityService {
         // batch handle's `@context`. Entries whose inline `@context`
         // diverges from the handle keep their own context and require
         // per-entity expansion; the rest can ride a single bulk expand call.
-        let mut hit_pending: Vec<(usize, String, Value)> = Vec::new();
-        let mut miss_pending: Vec<(usize, String, Value)> = Vec::new();
+        let mut hit_pending: Vec<(usize, Uri, Value)> = Vec::new();
+        let mut miss_pending: Vec<(usize, Uri, Value)> = Vec::new();
         for ClassifiedEntry { idx, id, mut value } in slow {
             normalize_entity_attributes(&mut value);
             match self.engine.entity_context_matches_handle(&value, handle) {
@@ -263,7 +263,7 @@ impl EntityService {
             for ((idx, id, _), expanded) in hit_pending.into_iter().zip(bulk) {
                 let result = match expanded {
                     Ok(v) => Self::build_prepared_entity(id, v),
-                    Err(err) => Err((id, err.into())),
+                    Err(err) => Err((id.to_string(), err.into())),
                 };
                 results.push((idx, result));
             }
@@ -279,7 +279,7 @@ impl EntityService {
                 .map(|(idx, id, value)| async move {
                     let expanded = match self.engine.expand(value, handle.spec()).await {
                         Ok(v) => v,
-                        Err(err) => return (idx, Err((id, err.into()))),
+                        Err(err) => return (idx, Err((id.to_string(), err.into()))),
                     };
                     (idx, Self::build_prepared_entity(id, expanded))
                 })
@@ -301,10 +301,10 @@ impl EntityService {
         let mut entries: Vec<ClassifiedEntry> = Vec::with_capacity(len);
         let mut errors: Vec<(String, AndromedaError)> = Vec::new();
         for (idx, entity) in entities.iter().enumerate() {
-            let id = entity.id.to_string();
+            let id = entity.id.clone(); // clone: owned identifier for the classified entry
             match serde_json::to_value(*entity) {
                 Ok(value) => entries.push(ClassifiedEntry { idx, id, value }),
-                Err(err) => errors.push((id, AndromedaError::entity_validation(format!("Invalid entity payload: {}", err)))),
+                Err(err) => errors.push((id.to_string(), AndromedaError::entity_validation(format!("Invalid entity payload: {}", err)))),
             }
         }
 
@@ -368,7 +368,7 @@ mod tests {
     fn entry(idx: usize, value: serde_json::Value) -> ClassifiedEntry {
         ClassifiedEntry {
             idx,
-            id: format!("urn:test:{idx}"),
+            id: format!("urn:test:{idx}").parse().expect("valid test uri"),
             value,
         }
     }

@@ -251,16 +251,17 @@ mod tests {
         )
         .expect("the subscription geoQ compiles");
 
-        let from_request = andromeda_ngsi_ld_query::geo::compile::compile_geo_query(
-            Some("near;maxDistance==1000"),
-            Some("Point"),
-            Some("[13.4,52.5]"),
-            Some("location"),
-            &LocationExpander,
+        let request_geo = andromeda_ngsi_ld_query::geo::input::GeoQueryInput::from_wire(
+            "near;maxDistance==1000".to_string(),
+            "Point".to_string(),
+            serde_json::json!([13.4, 52.5]),
+            Some("location".parse().expect("valid geoproperty")),
         )
-        .await
-        .expect("the request geo query compiles")
-        .expect("all three parameters were present");
+        .expect("valid request geo query");
+        let from_request = andromeda_ngsi_ld_query::geo::compile::compile_geo_query(Some(&request_geo), &LocationExpander)
+            .await
+            .expect("the request geo query compiles")
+            .expect("all three parameters were present");
 
         pretty_assertions::assert_eq!(from_subscription, from_request);
     }

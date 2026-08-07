@@ -8,7 +8,7 @@
 
 use crate::{
     concise::concise_value,
-    error::{RenderedShape, RepresentationError},
+    error::{RenderError, RenderedShape},
     inline_join::apply_inline_join,
     language_negotiation::render_attribute_value,
     simplify::{simplify_entity, simplify_value},
@@ -18,7 +18,7 @@ use andromeda_ngsi_ld_lexicon::rfc3339::whole_seconds;
 use andromeda_ngsi_ld_model::entity::Entity;
 use andromeda_ngsi_ld_representation::response_format::ResponseFormat;
 use serde::Serialize;
-use serde_json::{Map, Value};
+use serde_json::Value;
 use std::collections::HashMap;
 
 /// Render an entity to a response value, applying the optional NGSI-LD `lang`
@@ -85,13 +85,13 @@ impl<'a> EntityRenderer<'a> {
 ///
 /// # Errors
 ///
-/// Returns [`RepresentationError::Serialization`] when any entity cannot be
+/// Returns [`RenderError::Serialization`] when any entity cannot be
 /// turned into a JSON value.
 pub fn render_flat_join<'a>(
     entities: impl IntoIterator<Item = &'a Entity>,
     language_filter: Option<&'a LanguageFilter>,
     mode: ResponseFormat,
-) -> Result<Vec<Value>, RepresentationError> {
+) -> Result<Vec<Value>, RenderError> {
     entities
         .into_iter()
         .map(|entity| {
@@ -113,37 +113,31 @@ impl<'a> EntityRenderer<'a> {
     ///
     /// # Errors
     ///
-    /// Returns [`RepresentationError::Serialization`] when the entity cannot be turned
+    /// Returns [`RenderError::Serialization`] when the entity cannot be turned
     /// into a JSON value.
-    pub fn render(self) -> Result<Value, RepresentationError> {
+    pub fn render(self) -> Result<Value, RenderError> {
         // Fast path: simplified without language filter or inline join can use
         // the domain-level simplify() directly, avoiding a full serialize round-trip.
         if self.mode.is_simplified() && self.language_filter.is_none() && self.inline_linked_entities.is_none() {
             return Ok(simplify_entity(self.entity));
         }
 
-        // Step 1: serialize (with optional language negotiation)
-        let mut value = if self.language_filter.is_none() {
-            serialize_value(self.entity)?
-        } else {
-            let mut map = Map::new();
-            map.insert("id".to_string(), serialize_value(&self.entity.id)?);
-            map.insert("type".to_string(), serialize_value(&self.entity.type_)?);
-
-            if let Some(scope) = &self.entity.scope {
-                map.insert("scope".to_string(), serialize_value(scope)?);
-            }
+        // Step 1: serialize the whole entity, then -- when a language filter is
+        // set -- re-render only the members the filter touches. The
+        // serialization already carries every entity member (id, type, scope,
+        // the system timestamps, and anything the model later gains), so a new
+        // member cannot be silently dropped here the way a hand-listed rebuild
+        // would drop it. The rebuild that this replaces was the drop hazard: it
+        // enumerated the members it knew and nothing else.
+        let mut value = serialize_value(self.entity)?;
+        if self.language_filter.is_some()
+            && let Value::Object(map) = &mut value
+        {
+            // The four clause-4.8 timestamps keep the whole-second spelling the
+            // rest of the render crate uses; unifying timestamp spellings across
+            // paths is a separate concern and is not decided here.
             if let Some(expires_at) = &self.entity.expires_at {
                 map.insert("expiresAt".to_string(), Value::String(whole_seconds(*expires_at)));
-            }
-            if let Some(location) = &self.entity.location {
-                map.insert("location".to_string(), render_attribute_value(location, self.language_filter)?);
-            }
-            if let Some(observation_space) = &self.entity.observation_space {
-                map.insert("observationSpace".to_string(), render_attribute_value(observation_space, self.language_filter)?);
-            }
-            if let Some(operation_space) = &self.entity.operation_space {
-                map.insert("operationSpace".to_string(), render_attribute_value(operation_space, self.language_filter)?);
             }
             if let Some(created_at) = &self.entity.created_at {
                 map.insert("createdAt".to_string(), Value::String(whole_seconds(*created_at)));
@@ -154,13 +148,22 @@ impl<'a> EntityRenderer<'a> {
             if let Some(deleted_at) = &self.entity.deleted_at {
                 map.insert("deletedAt".to_string(), Value::String(whole_seconds(*deleted_at)));
             }
-
+            // The geo-properties and every other attribute are re-rendered so a
+            // language map inside them is negotiated; a non-language attribute
+            // renders identically to its serialization.
+            if let Some(location) = &self.entity.location {
+                map.insert("location".to_string(), render_attribute_value(location, self.language_filter)?);
+            }
+            if let Some(observation_space) = &self.entity.observation_space {
+                map.insert("observationSpace".to_string(), render_attribute_value(observation_space, self.language_filter)?);
+            }
+            if let Some(operation_space) = &self.entity.operation_space {
+                map.insert("operationSpace".to_string(), render_attribute_value(operation_space, self.language_filter)?);
+            }
             for (key, attr) in &self.entity.attrs {
                 map.insert(key.to_string(), render_attribute_value(attr, self.language_filter)?);
             }
-
-            Value::Object(map)
-        };
+        }
 
         // Step 2: inline join
         if let Some(linked) = self.inline_linked_entities {
@@ -186,13 +189,13 @@ impl<'a> EntityRenderer<'a> {
 /// Serialize a value into its entity rendering.
 ///
 /// Every rendering here ends in `serde_json`, and this is the one place the
-/// failure is turned into a [`RepresentationError`] so the shape is not restated at
+/// failure is turned into a [`RenderError`] so the shape is not restated at
 /// each call.
-pub(crate) fn serialize_value<T>(value: &T) -> Result<Value, RepresentationError>
+pub(crate) fn serialize_value<T>(value: &T) -> Result<Value, RenderError>
 where
     T: Serialize,
 {
-    serde_json::to_value(value).map_err(|error| RepresentationError::serialization(RenderedShape::Entity, error))
+    serde_json::to_value(value).map_err(|error| RenderError::serialization(RenderedShape::Entity, error))
 }
 
 #[cfg(test)]
@@ -451,5 +454,41 @@ mod tests {
 
         let rendered = EntityRenderer::new(&entity).with_mode(ResponseFormat::Concise).render().expect("concise");
         pretty_assertions::assert_eq!(rendered["name"]["collate"]["value"], "tower");
+    }
+
+    #[test]
+    fn language_filtering_preserves_every_system_member_alongside_the_negotiated_property() {
+        // The filtered rendering serializes the whole entity and re-renders only
+        // the members a language filter touches, so every system member the
+        // entity carries -- scope and the clause-4.8 timestamps -- survives the
+        // filter, and a member the model later gains survives too. A hand-listed
+        // member set is the silent-drop hazard this guards against.
+        let entity = parse_entity(json!({
+            "id": "urn:ngsi-ld:Building:lang-members",
+            "type": "Building",
+            "scope": "/Madrid/Centro",
+            "createdAt": "2025-01-01T00:00:00Z",
+            "modifiedAt": "2025-01-02T00:00:00Z",
+            "deletedAt": "2025-01-03T00:00:00Z",
+            "expiresAt": "2030-01-01T00:00:00Z",
+            "street": { "type": "LanguageProperty", "languageMap": { "fr": "Grand Place", "nl": "Grote Markt" } }
+        }));
+        let filter = LanguageFilter::parse("fr").expect("language filter");
+
+        let rendered = EntityRenderer::new(&entity)
+            .with_optional_language_filter(Some(&filter))
+            .render()
+            .expect("rendered entity");
+        let object = rendered.as_object().expect("an entity object");
+
+        for member in ["id", "type", "scope", "createdAt", "modifiedAt", "deletedAt", "expiresAt"] {
+            assert!(object.contains_key(member), "the language filter dropped the {member} member");
+        }
+        // The language property was still negotiated down to the requested tag.
+        pretty_assertions::assert_eq!(rendered["street"]["type"], "Property");
+        pretty_assertions::assert_eq!(rendered["street"]["value"], "Grand Place");
+        pretty_assertions::assert_eq!(rendered["street"]["lang"], "fr");
+        // The clause-4.8 timestamps keep the whole-second spelling.
+        pretty_assertions::assert_eq!(rendered["createdAt"], "2025-01-01T00:00:00Z");
     }
 }

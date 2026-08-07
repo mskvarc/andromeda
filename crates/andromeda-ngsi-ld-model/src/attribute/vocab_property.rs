@@ -1,7 +1,7 @@
 //! The VocabProperty attribute family (ETSI GS CIM 009 clause 5.2.35).
 
 use crate::attribute::{common_fields::CommonAttributeFields, one_or_many::OneOrMany};
-use compact_str::CompactString;
+use andromeda_ngsi_ld_lexicon::reference::NgsiLdReference;
 use jsonld::Expandable;
 use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
@@ -17,13 +17,13 @@ use serde_with::skip_serializing_none;
 pub struct VocabProperty {
     /// One or more vocabulary references.
     #[jsonld(property = "ngsi:hasVocab", passthrough)]
-    pub vocab: OneOrMany<CompactString>,
+    pub vocab: OneOrMany<NgsiLdReference>,
     /// Optional JSON-LD datatype for `vocab`.
     #[jsonld(property = "ngsi:hasValueType", coerce = "@id")]
-    pub value_type: Option<CompactString>,
+    pub value_type: Option<NgsiLdReference>,
     /// Previous vocabulary reference emitted in notifications when `showChanges` is active.
     #[jsonld(property = "ngsi:hasPreviousVocab", passthrough)]
-    pub previous_vocab: Option<OneOrMany<CompactString>>,
+    pub previous_vocab: Option<OneOrMany<NgsiLdReference>>,
     /// Members shared with every other attribute family.
     #[serde(flatten)]
     #[jsonld(flatten)]

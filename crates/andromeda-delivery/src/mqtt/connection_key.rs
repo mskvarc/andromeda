@@ -1,6 +1,9 @@
 //! What makes two MQTT endpoints the same connection.
 
-use crate::endpoint::mqtt::{MqttEndpointConfig, MqttVersion};
+use crate::{
+    endpoint::mqtt::{MqttEndpointConfig, MqttVersion},
+    host_port::HostPort,
+};
 use secrecy::ExposeSecret;
 use std::hash::{DefaultHasher, Hash, Hasher};
 
@@ -14,10 +17,8 @@ use std::hash::{DefaultHasher, Hash, Hasher};
 /// without holding the secret.
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
 pub struct MqttConnectionKey {
-    /// Broker hostname.
-    pub host: String,
-    /// Broker port.
-    pub port: u16,
+    /// The broker authority (host and port).
+    pub authority: HostPort,
     /// Whether the connection is TLS.
     pub use_tls: bool,
     /// The protocol version, which decides which client is built.
@@ -37,8 +38,7 @@ impl MqttConnectionKey {
             hasher.finish()
         });
         MqttConnectionKey {
-            host: config.host.clone(), // clone: the key outlives the endpoint it was read from
-            port: config.port,
+            authority: config.authority.clone(), // clone: the key outlives the endpoint it was read from
             use_tls: config.use_tls,
             version: config.version,
             username: config.username.clone(), // clone: same

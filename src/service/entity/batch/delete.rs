@@ -42,16 +42,20 @@ impl EntityService {
         // reads them off the delete.
         let prior = match mode {
             BatchSideEffectMode::Inline => None,
-            BatchSideEffectMode::Enqueue => Some((self.repo.get_batch(chunk).await?, self.repo.get_sys_attrs_batch(chunk).await?)),
+            BatchSideEffectMode::Enqueue => {
+                let chunk_uris: Vec<Uri> = chunk.iter().filter_map(|id| id.parse::<Uri>().ok()).collect();
+                Some((self.repo.get_batch(&chunk_uris).await?, self.repo.get_sys_attrs_batch(&chunk_uris).await?))
+            }
         };
 
         let mut writes = Vec::with_capacity(chunk.len());
         for id in chunk {
             let side_effects = prior.as_ref().and_then(|(payloads, sys_attrs)| {
-                let payload = payloads.get(id)?;
+                let uri = id.parse::<Uri>().ok()?;
+                let payload = payloads.get(&uri)?;
                 Some(BatchSideEffectJob {
                     temporal_entities: Vec::new(),
-                    change_events: deletion_events(id, payload, sys_attrs.get(id)),
+                    change_events: deletion_events(&uri, payload, sys_attrs.get(&uri)),
                 })
             });
             writes.push(
@@ -82,7 +86,7 @@ impl EntityService {
                     if matches!(mode, BatchSideEffectMode::Inline) {
                         events.extend(inline_deletion_events(&deleted));
                     }
-                    success.push(deleted.id);
+                    success.push(deleted.id.to_string());
                 }
                 WriteOutcome::NotFound
                 | WriteOutcome::AlreadyExists
@@ -109,22 +113,15 @@ impl EntityService {
 ///
 /// Two events, not one: an `attributeDeleted` subscription has to hear about
 /// every attribute the entity took with it.
-fn deletion_events(id: &str, payload: &Value, sys_attrs: Option<&SysAttrsSnapshot>) -> Vec<ChangeEvent> {
+fn deletion_events(id: &Uri, payload: &Value, sys_attrs: Option<&SysAttrsSnapshot>) -> Vec<ChangeEvent> {
     let entity_types = extract_types(payload);
     let attr_keys = extract_attribute_keys(payload);
-
-    let Ok(entity_uri) = id.parse::<Uri>() else {
-        // The row is still deleted: the store accepts identifiers the
-        // notification path cannot parse.
-        tracing::error!(entity_id = %id, event = "entity_uri_parse_failed");
-        return Vec::new();
-    };
 
     let mut events = Vec::with_capacity(2);
     if !attr_keys.is_empty() {
         events.push(
             ChangeEvent::builder()
-                .entity_id(entity_uri.clone()) // clone: value also needed by the EntityDeleted event
+                .entity_id(id.clone()) // clone: the event owns its identifier
                 .entity_types(entity_types.clone()) // clone: value also needed by the EntityDeleted event
                 .trigger_reason(NotificationTrigger::AttributeDeleted)
                 .occurred_at(Utc::now())
@@ -138,7 +135,7 @@ fn deletion_events(id: &str, payload: &Value, sys_attrs: Option<&SysAttrsSnapsho
     }
     events.push(
         ChangeEvent::builder()
-            .entity_id(entity_uri)
+            .entity_id(id.clone()) // clone: the event owns its identifier
             .entity_types(entity_types)
             .trigger_reason(NotificationTrigger::EntityDeleted)
             .occurred_at(Utc::now())

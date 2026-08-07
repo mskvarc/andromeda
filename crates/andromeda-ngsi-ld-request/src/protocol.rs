@@ -17,8 +17,9 @@ use crate::{
     query::{entity::EntityQueryParameters, temporal::TemporalQueryParameters},
 };
 use andromeda_ngsi_ld_http_headers::{ngsild_dataset_id::NgsiLdDatasetId, ngsild_response_format::NgsiLdResponseFormat, ngsild_scope::NgsiLdScope};
+use andromeda_ngsi_ld_lexicon::temporal_format::TemporalFormat;
 use andromeda_ngsi_ld_representation::{join_mode::JoinMode, response_format::ResponseFormat};
-use std::str::FromStr;
+use std::{num::NonZeroU32, str::FromStr};
 
 /// The extension headers a request carried, as the typed values they decoded to.
 ///
@@ -35,7 +36,7 @@ pub struct ProtocolExtensions<'a> {
     /// `NGSILD-Join`.
     pub join: Option<JoinMode>,
     /// `NGSILD-Join-Level`.
-    pub join_level: Option<u32>,
+    pub join_level: Option<NonZeroU32>,
 }
 
 /// Whether a query parameter's `format`/`options` token names an entity
@@ -76,7 +77,9 @@ impl<'a> ProtocolExtensions<'a> {
         if params.scope_q.is_none()
             && let Some(scope) = self.scope
         {
-            params.scope_q = Some(scope.as_str().to_string());
+            // The header is borrowed by the extractor; the request outlives
+            // that borrow, so owning its already-validated AST is necessary.
+            params.scope_q = Some(scope.query().clone());
         }
         self.apply_format(&mut params.format, params.options.as_deref())?;
         self.apply_dataset_ids(&mut params.dataset_id);
@@ -97,7 +100,13 @@ impl<'a> ProtocolExtensions<'a> {
             if !header_is_temporal_format(response_format) {
                 return Err(ParameterError::FormatInvalid(<&'static str>::from(response_format).to_string()));
             }
-            params.format = Some(<&'static str>::from(response_format).to_string());
+            params.format = Some(match response_format {
+                NgsiLdResponseFormat::TemporalValues => TemporalFormat::TemporalValues,
+                NgsiLdResponseFormat::AggregatedValues => TemporalFormat::AggregatedValues,
+                NgsiLdResponseFormat::Normalized | NgsiLdResponseFormat::KeyValues | NgsiLdResponseFormat::Simplified | NgsiLdResponseFormat::Concise => {
+                    return Err(ParameterError::FormatInvalid(<&'static str>::from(response_format).to_string()));
+                }
+            });
         }
         self.apply_dataset_ids(&mut params.dataset_id);
         Ok(())
@@ -107,9 +116,8 @@ impl<'a> ProtocolExtensions<'a> {
     ///
     /// `format` and the legacy `options` are two spellings of the same choice,
     /// so a rendering named in either one silences the header.
-    fn apply_format(&self, format: &mut Option<String>, options: Option<&str>) -> Result<(), ParameterError> {
-        let query_chose_a_format =
-            format.as_deref().is_some_and(is_entity_format) || options.is_some_and(|options| options.split(',').any(|token| is_entity_format(token.trim())));
+    fn apply_format(&self, format: &mut Option<ResponseFormat>, options: Option<&str>) -> Result<(), ParameterError> {
+        let query_chose_a_format = format.is_some() || options.is_some_and(|options| options.split(',').any(|token| is_entity_format(token.trim())));
         if query_chose_a_format {
             return Ok(());
         }
@@ -121,7 +129,14 @@ impl<'a> ProtocolExtensions<'a> {
         if header_is_temporal_format(response_format) {
             return Err(ParameterError::FormatInvalid(<&'static str>::from(response_format).to_string()));
         }
-        *format = Some(<&'static str>::from(response_format).to_string());
+        *format = Some(match response_format {
+            NgsiLdResponseFormat::Normalized => ResponseFormat::Normalized,
+            NgsiLdResponseFormat::KeyValues | NgsiLdResponseFormat::Simplified => ResponseFormat::Simplified,
+            NgsiLdResponseFormat::Concise => ResponseFormat::Concise,
+            NgsiLdResponseFormat::TemporalValues | NgsiLdResponseFormat::AggregatedValues => {
+                return Err(ParameterError::FormatInvalid(<&'static str>::from(response_format).to_string()));
+            }
+        });
         Ok(())
     }
 
@@ -129,20 +144,20 @@ impl<'a> ProtocolExtensions<'a> {
     ///
     /// The header carried the ids as validated URNs; they are joined into the
     /// comma-separated form the `datasetId` parameter takes only here, once.
-    fn apply_dataset_ids(&self, target: &mut Option<String>) {
+    fn apply_dataset_ids(&self, target: &mut Option<Vec<urn_rs::Urn>>) {
         if target.is_none()
             && let Some(dataset_ids) = self.dataset_ids
         {
-            *target = Some(dataset_ids.as_slice().iter().map(ToString::to_string).collect::<Vec<_>>().join(","));
+            *target = Some(dataset_ids.as_slice().to_vec());
         }
     }
 
     /// Apply `NGSILD-Join` and `NGSILD-Join-Level`, each independently.
-    fn apply_join(&self, join: &mut Option<String>, join_level: &mut Option<u32>) {
+    const fn apply_join(&self, join: &mut Option<JoinMode>, join_level: &mut Option<NonZeroU32>) {
         if join.is_none()
             && let Some(mode) = self.join
         {
-            *join = Some(mode.to_string());
+            *join = Some(mode);
         }
         if join_level.is_none()
             && let Some(level) = self.join_level
@@ -161,9 +176,11 @@ mod tests {
         query::{entity::EntityQueryParameters, temporal::TemporalQueryParameters},
     };
     use andromeda_ngsi_ld_http_headers::{ngsild_dataset_id::NgsiLdDatasetId, ngsild_response_format::NgsiLdResponseFormat, ngsild_scope::NgsiLdScope};
-    use andromeda_ngsi_ld_representation::join_mode::JoinMode;
+    use andromeda_ngsi_ld_lexicon::temporal_format::TemporalFormat;
+    use andromeda_ngsi_ld_representation::{join_mode::JoinMode, response_format::ResponseFormat};
     use headers::Header;
     use http::HeaderValue;
+    use std::num::NonZeroU32;
 
     fn get_params() -> GetEntityParams {
         serde_urlencoded::from_str("").expect("empty query parses")
@@ -201,14 +218,14 @@ mod tests {
             response_format: Some(NgsiLdResponseFormat::Concise),
             dataset_ids: Some(&ds),
             join: Some(JoinMode::Flat),
-            join_level: Some(7),
+            join_level: NonZeroU32::new(7),
         };
         extensions.apply_to_entity_get(&mut params).expect("headers apply");
 
-        pretty_assertions::assert_eq!(params.format.as_deref(), Some("keyValues"));
-        pretty_assertions::assert_eq!(params.dataset_id.as_deref(), Some("urn:ds:1"));
-        pretty_assertions::assert_eq!(params.join.as_deref(), Some("inline"));
-        pretty_assertions::assert_eq!(params.join_level, Some(2));
+        pretty_assertions::assert_eq!(params.format, Some(ResponseFormat::Simplified));
+        pretty_assertions::assert_eq!(params.dataset_id.as_deref().map(|ids| ids[0].as_str()), Some("urn:ds:1"));
+        pretty_assertions::assert_eq!(params.join, Some(JoinMode::Inline));
+        pretty_assertions::assert_eq!(params.join_level.map(NonZeroU32::get), Some(2));
     }
 
     #[test]
@@ -220,14 +237,14 @@ mod tests {
             response_format: Some(NgsiLdResponseFormat::Concise),
             dataset_ids: Some(&ds),
             join: Some(JoinMode::Flat),
-            join_level: Some(7),
+            join_level: NonZeroU32::new(7),
         };
         extensions.apply_to_entity_get(&mut params).expect("headers apply");
 
-        pretty_assertions::assert_eq!(params.format.as_deref(), Some("concise"));
-        pretty_assertions::assert_eq!(params.dataset_id.as_deref(), Some("urn:ds:9"));
-        pretty_assertions::assert_eq!(params.join.as_deref(), Some("flat"));
-        pretty_assertions::assert_eq!(params.join_level, Some(7));
+        pretty_assertions::assert_eq!(params.format, Some(ResponseFormat::Concise));
+        pretty_assertions::assert_eq!(params.dataset_id.as_deref().map(|ids| ids[0].as_str()), Some("urn:ds:9"));
+        pretty_assertions::assert_eq!(params.join, Some(JoinMode::Flat));
+        pretty_assertions::assert_eq!(params.join_level.map(NonZeroU32::get), Some(7));
     }
 
     #[test]
@@ -250,7 +267,7 @@ mod tests {
             ..ProtocolExtensions::default()
         };
         extensions.apply_to_entity_query(&mut params).expect("headers apply");
-        pretty_assertions::assert_eq!(params.scope_q.as_deref(), Some("/A;/B"));
+        pretty_assertions::assert_eq!(params.scope_q, Some("/A;/B".parse().expect("valid scope query")));
     }
 
     #[test]
@@ -261,7 +278,7 @@ mod tests {
             ..ProtocolExtensions::default()
         };
         extensions.apply_to_temporal_query(&mut params).expect("headers apply");
-        pretty_assertions::assert_eq!(params.format.as_deref(), Some("temporalValues"));
+        pretty_assertions::assert_eq!(params.format, Some(TemporalFormat::TemporalValues));
     }
 
     #[test]

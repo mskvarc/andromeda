@@ -89,7 +89,11 @@ pub async fn create_router(config: Arc<RuntimeConfig>) -> Result<Router, Androme
 
     let app_state = AppState {
         tenants,
-        source_identity: config.info.source_identity.clone(),
+        source_identity: config
+            .info
+            .source_identity
+            .parse()
+            .map_err(|e| AndromedaError::internal(format!("info.source_identity is not a valid context source id: {e}")))?,
     };
     let max_body = config.performance.max_request_body_bytes;
     let router = Router::new()

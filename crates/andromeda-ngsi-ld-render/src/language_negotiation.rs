@@ -7,7 +7,7 @@
 //! other attribute type is unaffected, which is why the dispatch below
 //! enumerates the eight types rather than testing for a language map.
 
-use crate::{entity::serialize_value, error::RepresentationError};
+use crate::{entity::serialize_value, error::RenderError};
 use andromeda_ngsi_ld_http_headers::language::{LanguageFilter, LanguageRange};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, rfc3339};
 use andromeda_ngsi_ld_model::attribute::{
@@ -23,7 +23,7 @@ use std::ops::Deref;
 use urn_rs::Urn;
 
 /// Render one attribute value, negotiating any language map inside it.
-pub(crate) fn render_attribute_value(attr: &AttributeValue, language_filter: Option<&LanguageFilter>) -> Result<Value, RepresentationError> {
+pub(crate) fn render_attribute_value(attr: &AttributeValue, language_filter: Option<&LanguageFilter>) -> Result<Value, RenderError> {
     match attr {
         AttributeValue::Single(attribute) => render_attribute(attribute.deref(), language_filter),
         AttributeValue::Multiple(attributes) => attributes
@@ -36,7 +36,7 @@ pub(crate) fn render_attribute_value(attr: &AttributeValue, language_filter: Opt
 }
 
 /// Render one attribute instance, negotiating a language map if it is one.
-fn render_attribute(attribute: &Attribute, language_filter: Option<&LanguageFilter>) -> Result<Value, RepresentationError> {
+fn render_attribute(attribute: &Attribute, language_filter: Option<&LanguageFilter>) -> Result<Value, RenderError> {
     match attribute {
         Attribute::LanguageProperty(language_property) => render_language_property(language_property, language_filter),
         Attribute::Property(_)
@@ -56,7 +56,7 @@ fn render_attribute(attribute: &Attribute, language_filter: Option<&LanguageFilt
 /// clause 4.15 states the broker *shall* default to a supported language rather
 /// than return the raw language map. Only the empty language map, or the absence
 /// of a filter, leaves the property as itself.
-fn render_language_property(language_property: &LanguageProperty, language_filter: Option<&LanguageFilter>) -> Result<Value, RepresentationError> {
+fn render_language_property(language_property: &LanguageProperty, language_filter: Option<&LanguageFilter>) -> Result<Value, RenderError> {
     if let Some(filter) = language_filter {
         let selected = negotiate_language_property(language_property, filter).or_else(|| default_language_property(language_property));
         if let Some(negotiated) = selected {

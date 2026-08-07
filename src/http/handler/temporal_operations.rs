@@ -42,8 +42,9 @@ pub async fn query(
     // ETSI GS CIM 009 clause 5.5.15.
     if let Some(snapshot_id) = snapshot_id {
         state.snapshots.validate_for_scoping(&snapshot_id).await.with_instance(&uri)?;
-        let entity_type = params.entity_type.as_deref();
-        let entity_ids: Option<Vec<String>> = params.id.as_deref().map(|s| s.split(',').map(|id| id.trim().to_string()).collect());
+        let entity_type = params.entity_type.as_ref().map(ToString::to_string);
+        let entity_type = entity_type.as_deref();
+        let entity_ids = params.id.clone();
         let limit = i64::from(params.limit.unwrap_or(1000));
         let offset = i64::from(params.offset.unwrap_or(0));
         let (entities, _total) = state
@@ -75,8 +76,9 @@ pub async fn query(
         (local_entities, Vec::new())
     } else {
         let context_url = context.link_contexts().first().map(|s| s.as_str());
-        let entity_type = params.entity_type.as_deref();
-        let entity_ids: Option<Vec<String>> = params.id.as_deref().map(|s| s.split(',').map(|id| id.trim().to_string()).collect());
+        let entity_type = params.entity_type.as_ref().map(ToString::to_string);
+        let entity_type = entity_type.as_deref();
+        let entity_ids = params.id.clone();
         let entity_ids_ref = entity_ids.as_deref();
 
         let forwarded = state

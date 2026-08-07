@@ -1,6 +1,13 @@
 //! HTTP request model types for entity map query endpoints.
 
-use crate::query::{entity::EntityQueryParameters, entity_selector::EntitySelectorParams};
+use crate::query::{
+    deserialization::{OptionalGeoQuery, deserialize_optional_filter_expr},
+    entity::EntityQueryParameters,
+    entity_selector::EntitySelectorParams,
+};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
+use andromeda_ngsi_ld_query::{filter::expression::Expr, pattern::Pattern, scope::query::ScopeQuery, type_selection::grammar::TypeExprRaw};
+use chrono::{DateTime, Utc};
 use serde::Deserialize;
 use serde_json::Value;
 
@@ -10,20 +17,16 @@ pub struct QueryRequestBody {
     /// Entity selectors constraining the query.
     pub entities: Option<Vec<EntitySelector>>,
     /// Attribute names to include.
-    pub attrs: Option<Vec<String>>,
+    pub attrs: Option<Vec<AttributeName>>,
     /// NGSI-LD query expression.
-    pub q: Option<String>,
-    /// Geo-relationship for geo-queries.
-    pub georel: Option<String>,
-    /// Geometry type for geo-queries.
-    pub geometry: Option<String>,
-    /// Coordinates for geo-queries.
-    pub coordinates: Option<String>,
-    /// Geo-property for geo-queries.
-    pub geoproperty: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_optional_filter_expr")]
+    pub q: Option<Expr>,
+    /// Complete clause-4.10 geo-query parsed at body extraction.
+    #[serde(flatten)]
+    pub geo: OptionalGeoQuery,
     /// Scope query expression.
     #[serde(rename = "scopeQ")]
-    pub scope_q: Option<String>,
+    pub scope_q: Option<ScopeQuery>,
     /// Requested entity map lifetime as ISO 8601 duration.
     #[serde(rename = "entityMapLifetime")]
     pub entity_map_lifetime: Option<String>,
@@ -33,13 +36,14 @@ pub struct QueryRequestBody {
 #[derive(Debug, Deserialize)]
 pub struct EntitySelector {
     /// Entity IDs to match.
-    pub id: Option<Vec<String>>,
+    pub id: Option<Vec<Uri>>,
     /// ID pattern to match.
     #[serde(rename = "idPattern")]
-    pub id_pattern: Option<String>,
+    #[serde(default, deserialize_with = "crate::query::deserialization::deserialize_optional_pattern")]
+    pub id_pattern: Option<Pattern>,
     /// Entity type to match.
     #[serde(rename = "type")]
-    pub type_: Option<String>,
+    pub type_: Option<TypeExprRaw>,
 }
 
 /// Request body for PATCH entity map (section 5.14.2).
@@ -47,7 +51,7 @@ pub struct EntitySelector {
 pub struct UpdateEntityMapBody {
     /// New expiration time.
     #[serde(rename = "expiresAt")]
-    pub expires_at: Option<String>,
+    pub expires_at: Option<DateTime<Utc>>,
     /// Output-only field -- accepted but ignored (section 5.14.2.4).
     #[serde(rename = "entityMap")]
     #[allow(dead_code)]
@@ -78,11 +82,10 @@ pub struct UpdateEntityMapBody {
 /// broker, so `local` is set.
 pub fn query_body_to_params(body: &QueryRequestBody) -> EntityQueryParameters {
     let (id, entity_type, id_pattern) = if let Some(entities) = &body.entities {
-        let ids: Vec<&str> = entities.iter().flat_map(|e| e.id.iter().flatten()).map(String::as_str).collect();
-        let types: Vec<&str> = entities.iter().filter_map(|e| e.type_.as_deref()).collect();
+        let ids: Vec<Uri> = entities.iter().flat_map(|entity| entity.id.iter().flatten().cloned()).collect();
         (
-            if ids.is_empty() { None } else { Some(ids.join(",")) },
-            if types.is_empty() { None } else { Some(types.join(",")) },
+            if ids.is_empty() { None } else { Some(ids) },
+            None,
             entities.iter().find_map(|e| e.id_pattern.clone()),
         )
     } else {
@@ -99,7 +102,7 @@ pub fn query_body_to_params(body: &QueryRequestBody) -> EntityQueryParameters {
             entities
                 .iter()
                 .map(|selector| EntitySelectorParams {
-                    id: selector.id.as_ref().map(|ids| ids.join(",")),
+                    id: selector.id.clone(),
                     id_pattern: selector.id_pattern.clone(),
                     type_: selector.type_.clone(),
                 })
@@ -112,12 +115,9 @@ pub fn query_body_to_params(body: &QueryRequestBody) -> EntityQueryParameters {
         entity_type,
         id_pattern,
         entity_selectors,
-        attrs: body.attrs.as_ref().map(|a| a.join(",")),
+        attrs: body.attrs.clone(),
         q: body.q.clone(),
-        georel: body.georel.clone(),
-        geometry: body.geometry.clone(),
-        coordinates: body.coordinates.clone(),
-        geoproperty: body.geoproperty.clone(),
+        geo: body.geo.clone(),
         limit: None,
         offset: None,
         count: None,
@@ -153,6 +153,11 @@ pub fn query_body_to_params(body: &QueryRequestBody) -> EntityQueryParameters {
 mod tests {
     use super::*;
 
+    fn geo_query() -> OptionalGeoQuery {
+        serde_urlencoded::from_str("georel=near%3BmaxDistance%3D%3D2000&geometry=Point&coordinates=%5B13.4%2C52.5%5D&geoproperty=location")
+            .expect("valid geo query")
+    }
+
     #[test]
     fn query_body_maps_every_selection_member_without_a_lossy_fallback() {
         // The POST body form of a query maps field for field onto the GET
@@ -162,29 +167,26 @@ mod tests {
         // parse hiccup.
         let body = QueryRequestBody {
             entities: Some(vec![EntitySelector {
-                id: Some(vec!["urn:ngsi-ld:Vehicle:1".to_string()]),
+                id: Some(vec!["urn:ngsi-ld:Vehicle:1".parse().expect("valid URI")]),
                 id_pattern: None,
-                type_: Some("Vehicle".to_string()),
+                type_: Some("Vehicle".parse().unwrap()),
             }]),
-            attrs: Some(vec!["speed".to_string(), "brandName".to_string()]),
-            q: Some("speed>50".to_string()),
-            georel: Some("near;maxDistance==2000".to_string()),
-            geometry: Some("Point".to_string()),
-            coordinates: Some("[13.4,52.5]".to_string()),
-            geoproperty: Some("location".to_string()),
-            scope_q: Some("/Madrid/Gardens".to_string()),
+            attrs: Some(vec!["speed".parse().unwrap(), "brandName".parse().unwrap()]),
+            q: Some("speed>50".parse().unwrap()),
+            geo: geo_query(),
+            scope_q: Some("/Madrid/Gardens".parse().expect("valid scope query")),
             entity_map_lifetime: Some("PT1H".to_string()),
         };
         let params = query_body_to_params(&body);
-        pretty_assertions::assert_eq!(params.id.as_deref(), Some("urn:ngsi-ld:Vehicle:1"));
-        pretty_assertions::assert_eq!(params.entity_type.as_deref(), Some("Vehicle"));
-        pretty_assertions::assert_eq!(params.attrs.as_deref(), Some("speed,brandName"));
-        pretty_assertions::assert_eq!(params.q.as_deref(), Some("speed>50"));
-        pretty_assertions::assert_eq!(params.georel.as_deref(), Some("near;maxDistance==2000"));
-        pretty_assertions::assert_eq!(params.geometry.as_deref(), Some("Point"));
-        pretty_assertions::assert_eq!(params.coordinates.as_deref(), Some("[13.4,52.5]"));
-        pretty_assertions::assert_eq!(params.geoproperty.as_deref(), Some("location"));
-        pretty_assertions::assert_eq!(params.scope_q.as_deref(), Some("/Madrid/Gardens"));
+        pretty_assertions::assert_eq!(params.id.as_deref().map(|ids| ids[0].as_str()), Some("urn:ngsi-ld:Vehicle:1"));
+        assert!(params.entity_type.is_none());
+        pretty_assertions::assert_eq!(
+            params.attrs.as_deref().map(|names| names.iter().map(AttributeName::as_str).collect::<Vec<_>>()),
+            Some(vec!["speed", "brandName"])
+        );
+        pretty_assertions::assert_eq!(params.q.as_ref().map(ToString::to_string).as_deref(), Some("speed>50"));
+        assert!(params.geo.0.is_some());
+        pretty_assertions::assert_eq!(params.scope_q, Some("/Madrid/Gardens".parse().expect("valid scope query")));
         pretty_assertions::assert_eq!(params.entity_map_lifetime.as_deref(), Some("PT1H"));
         pretty_assertions::assert_eq!(params.local, Some(true));
     }
@@ -194,18 +196,15 @@ mod tests {
         let body = QueryRequestBody {
             entities: None,
             attrs: None,
-            q: Some("speed>50".to_string()),
-            georel: None,
-            geometry: None,
-            coordinates: None,
-            geoproperty: None,
+            q: Some("speed>50".parse().unwrap()),
+            geo: OptionalGeoQuery::default(),
             scope_q: None,
             entity_map_lifetime: None,
         };
         let params = query_body_to_params(&body);
         assert!(params.id.is_none());
         assert!(params.entity_type.is_none());
-        pretty_assertions::assert_eq!(params.q.as_deref(), Some("speed>50"));
+        pretty_assertions::assert_eq!(params.q.as_ref().map(ToString::to_string).as_deref(), Some("speed>50"));
         pretty_assertions::assert_eq!(params.local, Some(true));
     }
 }

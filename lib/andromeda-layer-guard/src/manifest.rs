@@ -44,6 +44,60 @@ impl DependencyKind {
     }
 }
 
+/// The third-party crates the workspace forbids by default, in one place.
+///
+/// Every layer derives its denylist from this list rather than restating its
+/// own, so no crate's can be quietly weaker than another's: the drivers and
+/// dialects (`sqlx`, `sea-query`, `sea-query-binder`, `geozero`), the transports
+/// and async runtime (`axum`, `reqwest`, `rumqttc`, `tokio`), the wire buffer
+/// (`bytes`), the configuration and CLI front ends (`confique`, `clap`), the
+/// alternate JSON parser (`sonic-rs`) and the global allocator (`mimalloc`) are
+/// all things a specification or storage-neutral crate has no business shipping.
+/// A crate that legitimately ships one subtracts it through
+/// [`baseline_forbidden_except`]; nothing adds to the list.
+pub const BASELINE_FORBIDDEN: &[&str] = &[
+    "axum",
+    "bytes",
+    "clap",
+    "confique",
+    "geozero",
+    "mimalloc",
+    "reqwest",
+    "rumqttc",
+    "sea-query",
+    "sea-query-binder",
+    "sonic-rs",
+    "sqlx",
+    "tokio",
+];
+
+/// [`BASELINE_FORBIDDEN`] without the crates a particular layer is entitled to
+/// ship.
+///
+/// A storage adapter ships `sea-query`; the delivery crate ships `tokio` and
+/// `rumqttc`. Such a crate names what it is entitled to here rather than
+/// hand-copying the rest of the baseline, so its denylist stays a strict
+/// derivation of the shared one and cannot drift below it.
+///
+/// # Panics
+///
+/// Panics when `permitted` names a crate the baseline does not forbid: carving
+/// out a crate that was never on the list is a silent no-op, so it is almost
+/// certainly a typo or a stale exception.
+pub fn baseline_forbidden_except(permitted: &[&str]) -> Vec<&'static str> {
+    for allowed in permitted {
+        assert!(
+            BASELINE_FORBIDDEN.contains(allowed),
+            "{allowed} is not in the baseline denylist, so carving it out does nothing"
+        );
+    }
+    BASELINE_FORBIDDEN
+        .iter()
+        .copied()
+        .filter(|dependency| !permitted.contains(dependency))
+        .collect()
+}
+
 /// Assert that a crate declares only what its layer permits.
 ///
 /// `forbidden` is the third-party denylist, applied to everything the crate
@@ -167,7 +221,7 @@ fn declarations(manifest: &str) -> Vec<(DependencyKind, &str)> {
 
 #[cfg(test)]
 mod tests {
-    use crate::manifest::{DependencyKind, assert_permitted, declarations};
+    use crate::manifest::{BASELINE_FORBIDDEN, DependencyKind, assert_permitted, baseline_forbidden_except, declarations};
 
     /// The layer a specification crate sits at, for the rejection tests below.
     const FORBIDDEN: &[&str] = &["sqlx", "sea-query", "tokio"];
@@ -284,5 +338,29 @@ workspace = true
             vec![(DependencyKind::Development, "tokio"), (DependencyKind::Development, "andromeda-ngsi-ld-model"),]
         );
         assert!(declared.iter().all(|(kind, _)| kind.admits_forbidden()));
+    }
+
+    #[test]
+    fn the_baseline_forbids_the_runtime_transport_dialect_and_allocator_gaps() {
+        // The four the per-crate template omitted, which is what let an async
+        // runtime into a passive crate and a dialect binder past every guard.
+        for gap in ["rumqttc", "sea-query-binder", "sonic-rs", "mimalloc"] {
+            assert!(BASELINE_FORBIDDEN.contains(&gap), "{gap} must be forbidden by default");
+        }
+    }
+
+    #[test]
+    fn a_carve_out_removes_only_the_named_crate_and_keeps_the_rest_of_the_baseline() {
+        let forbidden = baseline_forbidden_except(&["sea-query"]);
+        assert!(!forbidden.contains(&"sea-query"), "the carved-out crate is still forbidden");
+        assert!(forbidden.contains(&"sqlx"), "an uncarved baseline crate was dropped");
+        assert_eq!(forbidden.len(), BASELINE_FORBIDDEN.len() - 1);
+    }
+
+    #[test]
+    #[should_panic(expected = "is not in the baseline denylist")]
+    fn carving_out_a_crate_the_baseline_never_forbade_is_rejected() {
+        // A carve-out that subtracts nothing is a mistake, not a permission.
+        let _ = baseline_forbidden_except(&["serde"]);
     }
 }

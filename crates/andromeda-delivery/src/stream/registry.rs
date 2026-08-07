@@ -1,5 +1,6 @@
 //! The live client connections one streaming protocol is holding open.
 
+use andromeda_ngsi_ld_lexicon::uri::Uri;
 use dashmap::DashMap;
 use std::{
     fmt,
@@ -59,7 +60,7 @@ pub enum StreamSendError {
         /// The protocol that had nobody listening.
         kind: StreamKind,
         /// The subscription that was being delivered to.
-        subscription_id: String,
+        subscription_id: Uri,
     },
     /// Every connected client's channel buffer is full.
     #[error("{kind} channel buffer full for all clients on subscription {subscription_id}")]
@@ -67,7 +68,7 @@ pub enum StreamSendError {
         /// The protocol whose clients are all behind.
         kind: StreamKind,
         /// The subscription that was being delivered to.
-        subscription_id: String,
+        subscription_id: Uri,
     },
 }
 
@@ -81,7 +82,7 @@ pub enum StreamSendError {
 #[derive(Debug)]
 pub struct ConnectionRegistry<P: StreamPayload> {
     /// Live connections, keyed by subscription and then by connection.
-    connections: DashMap<String, DashMap<ConnectionId, (mpsc::Sender<P>, CancellationToken)>>,
+    connections: DashMap<Uri, DashMap<ConnectionId, (mpsc::Sender<P>, CancellationToken)>>,
 }
 
 impl<P: StreamPayload> Default for ConnectionRegistry<P> {
@@ -101,12 +102,12 @@ impl<P: StreamPayload> ConnectionRegistry<P> {
     /// Returns the connection identifier, the receiving end of the payload
     /// channel, and a cancellation token that fires when the subscription is
     /// deleted.
-    pub fn register(&self, subscription_id: &str, buffer_size: usize) -> (ConnectionId, mpsc::Receiver<P>, CancellationToken) {
+    pub fn register(&self, subscription_id: &Uri, buffer_size: usize) -> (ConnectionId, mpsc::Receiver<P>, CancellationToken) {
         let connection_id = ConnectionId::next();
         let (tx, rx) = mpsc::channel(buffer_size);
         let token = CancellationToken::new();
         self.connections
-            .entry(subscription_id.to_string())
+            .entry(subscription_id.clone()) // clone: the map owns the key and the caller keeps its borrow
             .or_default()
             .insert(connection_id, (tx, token.clone())); // clone: CancellationToken is Arc-based
         (connection_id, rx, token)
@@ -114,7 +115,7 @@ impl<P: StreamPayload> ConnectionRegistry<P> {
 
     /// Remove one client connection, leaving the subscription's other clients
     /// untouched.
-    pub fn unregister(&self, subscription_id: &str, connection_id: ConnectionId) {
+    pub fn unregister(&self, subscription_id: &Uri, connection_id: ConnectionId) {
         if let Some(inner) = self.connections.get(subscription_id) {
             inner.remove(&connection_id);
         }
@@ -127,10 +128,10 @@ impl<P: StreamPayload> ConnectionRegistry<P> {
     /// only when every live client is behind, which is what distinguishes a
     /// slow consumer from an absent one — the caller retries the first and
     /// gives up on the second.
-    pub fn try_send(&self, subscription_id: &str, payload: P) -> Result<(), StreamSendError> {
+    pub fn try_send(&self, subscription_id: &Uri, payload: P) -> Result<(), StreamSendError> {
         let inner = self.connections.get(subscription_id).ok_or_else(|| StreamSendError::NoClient {
             kind: P::KIND,
-            subscription_id: subscription_id.to_string(),
+            subscription_id: subscription_id.clone(), // clone: the error owns the subscription it names
         })?;
 
         let mut any_sent = false;
@@ -145,7 +146,7 @@ impl<P: StreamPayload> ConnectionRegistry<P> {
                 Err(mpsc::error::TrySendError::Full(_)) => {
                     any_full = true;
                     debug!(
-                        subscription_id,
+                        subscription_id = %subscription_id,
                         connection_id = ?entry.key(),
                         kind = %P::KIND,
                         "stream channel buffer full for client, skipping"
@@ -170,19 +171,19 @@ impl<P: StreamPayload> ConnectionRegistry<P> {
         } else if any_full {
             Err(StreamSendError::BufferFull {
                 kind: P::KIND,
-                subscription_id: subscription_id.to_string(),
+                subscription_id: subscription_id.clone(), // clone: the error owns the subscription it names
             })
         } else {
             Err(StreamSendError::NoClient {
                 kind: P::KIND,
-                subscription_id: subscription_id.to_string(),
+                subscription_id: subscription_id.clone(), // clone: same
             })
         }
     }
 
     /// Close every connection for a subscription, signalling each stream to
     /// end.
-    pub fn close(&self, subscription_id: &str) {
+    pub fn close(&self, subscription_id: &Uri) {
         if let Some((_, inner)) = self.connections.remove(subscription_id) {
             for (_, (_, token)) in inner {
                 token.cancel();
@@ -203,26 +204,33 @@ macro_rules! registry_conformance_tests {
     ($module:ident, $payload:ty, $sample:expr, $kind:expr) => {
         mod $module {
             use crate::stream::registry::{ConnectionRegistry, StreamPayload, StreamSendError};
+            use andromeda_ngsi_ld_lexicon::uri::Uri;
+            use std::str::FromStr;
 
             fn sample() -> $payload {
                 $sample
             }
 
+            /// A well-formed subscription identifier from a short name.
+            fn sub(name: &str) -> Uri {
+                Uri::from_str(&format!("urn:ngsi-ld:Subscription:{name}")).expect("a valid subscription id")
+            }
+
             #[tokio::test]
             async fn each_registration_gets_its_own_identifier() {
                 let registry: ConnectionRegistry<$payload> = ConnectionRegistry::new();
-                let (first, _rx_a, _token_a) = registry.register("sub1", 8);
-                let (second, _rx_b, _token_b) = registry.register("sub1", 8);
+                let (first, _rx_a, _token_a) = registry.register(&sub("sub1"), 8);
+                let (second, _rx_b, _token_b) = registry.register(&sub("sub1"), 8);
                 assert_ne!(first, second);
             }
 
             #[tokio::test]
             async fn a_payload_reaches_every_client_of_the_subscription() {
                 let registry: ConnectionRegistry<$payload> = ConnectionRegistry::new();
-                let (_, mut rx_a, _token_a) = registry.register("sub1", 8);
-                let (_, mut rx_b, _token_b) = registry.register("sub1", 8);
+                let (_, mut rx_a, _token_a) = registry.register(&sub("sub1"), 8);
+                let (_, mut rx_b, _token_b) = registry.register(&sub("sub1"), 8);
 
-                registry.try_send("sub1", sample()).expect("a client took it");
+                registry.try_send(&sub("sub1"), sample()).expect("a client took it");
 
                 pretty_assertions::assert_eq!(rx_a.recv().await.expect("a payload"), sample());
                 pretty_assertions::assert_eq!(rx_b.recv().await.expect("a payload"), sample());
@@ -231,22 +239,22 @@ macro_rules! registry_conformance_tests {
             #[tokio::test]
             async fn unregistering_one_client_leaves_the_others_receiving() {
                 let registry: ConnectionRegistry<$payload> = ConnectionRegistry::new();
-                let (first, _rx_a, _token_a) = registry.register("sub1", 8);
-                let (_, mut rx_b, _token_b) = registry.register("sub1", 8);
+                let (first, _rx_a, _token_a) = registry.register(&sub("sub1"), 8);
+                let (_, mut rx_b, _token_b) = registry.register(&sub("sub1"), 8);
 
-                registry.unregister("sub1", first);
+                registry.unregister(&sub("sub1"), first);
 
-                registry.try_send("sub1", sample()).expect("the surviving client took it");
+                registry.try_send(&sub("sub1"), sample()).expect("the surviving client took it");
                 pretty_assertions::assert_eq!(rx_b.recv().await.expect("a payload"), sample());
             }
 
             #[tokio::test]
             async fn closing_a_subscription_cancels_every_stream_and_ends_every_channel() {
                 let registry: ConnectionRegistry<$payload> = ConnectionRegistry::new();
-                let (_, mut rx_a, token_a) = registry.register("sub1", 8);
-                let (_, mut rx_b, token_b) = registry.register("sub1", 8);
+                let (_, mut rx_a, token_a) = registry.register(&sub("sub1"), 8);
+                let (_, mut rx_b, token_b) = registry.register(&sub("sub1"), 8);
 
-                registry.close("sub1");
+                registry.close(&sub("sub1"));
 
                 assert!(token_a.is_cancelled());
                 assert!(token_b.is_cancelled());
@@ -257,40 +265,49 @@ macro_rules! registry_conformance_tests {
             #[tokio::test]
             async fn a_subscription_nobody_is_streaming_reports_no_client() {
                 let registry: ConnectionRegistry<$payload> = ConnectionRegistry::new();
-                let error = registry.try_send("nonexistent", sample()).expect_err("nobody is listening");
+                let error = registry.try_send(&sub("nonexistent"), sample()).expect_err("nobody is listening");
                 assert!(matches!(error, StreamSendError::NoClient { .. }));
-                pretty_assertions::assert_eq!(error.to_string(), format!("no {} client connected for subscription nonexistent", $kind));
+                pretty_assertions::assert_eq!(
+                    error.to_string(),
+                    format!("no {} client connected for subscription {}", $kind, sub("nonexistent"))
+                );
             }
 
             #[tokio::test]
             async fn a_subscription_whose_last_client_left_reports_no_client() {
                 let registry: ConnectionRegistry<$payload> = ConnectionRegistry::new();
-                let (only, _rx, _token) = registry.register("sub1", 8);
+                let (only, _rx, _token) = registry.register(&sub("sub1"), 8);
 
-                registry.unregister("sub1", only);
-                assert!(matches!(registry.try_send("sub1", sample()), Err(StreamSendError::NoClient { .. })));
+                registry.unregister(&sub("sub1"), only);
+                assert!(matches!(registry.try_send(&sub("sub1"), sample()), Err(StreamSendError::NoClient { .. })));
             }
 
             #[tokio::test]
             async fn a_client_that_cannot_keep_up_reports_a_full_buffer() {
                 let registry: ConnectionRegistry<$payload> = ConnectionRegistry::new();
-                let (_conn, _rx, _token) = registry.register("sub1", 1);
+                let (_conn, _rx, _token) = registry.register(&sub("sub1"), 1);
 
-                registry.try_send("sub1", sample()).expect("the first payload fits");
-                assert!(matches!(registry.try_send("sub1", sample()), Err(StreamSendError::BufferFull { .. })));
+                registry.try_send(&sub("sub1"), sample()).expect("the first payload fits");
+                assert!(matches!(
+                    registry.try_send(&sub("sub1"), sample()),
+                    Err(StreamSendError::BufferFull { .. })
+                ));
             }
 
             #[tokio::test]
             async fn one_full_client_and_one_gone_client_reports_full_rather_than_absent() {
                 let registry: ConnectionRegistry<$payload> = ConnectionRegistry::new();
 
-                let (_full, _rx_full, _token_full) = registry.register("sub1", 1);
-                registry.try_send("sub1", sample()).expect("the first payload fits");
+                let (_full, _rx_full, _token_full) = registry.register(&sub("sub1"), 1);
+                registry.try_send(&sub("sub1"), sample()).expect("the first payload fits");
 
-                let (_gone, rx_gone, _token_gone) = registry.register("sub1", 1);
+                let (_gone, rx_gone, _token_gone) = registry.register(&sub("sub1"), 1);
                 drop(rx_gone);
 
-                assert!(matches!(registry.try_send("sub1", sample()), Err(StreamSendError::BufferFull { .. })));
+                assert!(matches!(
+                    registry.try_send(&sub("sub1"), sample()),
+                    Err(StreamSendError::BufferFull { .. })
+                ));
             }
 
             #[test]

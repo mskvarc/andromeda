@@ -13,6 +13,10 @@ use andromeda_ngsi_ld_http_headers::media_type::ResponseMediaType;
 use andromeda_ngsi_ld_render::{context::ResponseContext, response::ResponseRenderer};
 
 /// Configure a response renderer from a handler's media type, context and preferences.
+///
+/// Returns the renderer before its payload; the caller attaches that with
+/// [`ResponseRenderer::with_payload`], which is the only route to a runnable
+/// response, so a handler cannot render a body without one.
 pub fn start_rendering<'a>(media_type: ResponseMediaType, context: &ContextSpec, prefer: PreferHeader) -> ResponseRenderer<'a> {
     ResponseRenderer::new(media_type, response_context(context))
         .with_geo_json_body(prefer.geo_json_body)
@@ -34,13 +38,19 @@ mod tests {
     use crate::http::response::render::response_context;
     use andromeda_jsonld::context_spec::ContextSpec;
     use andromeda_ngsi_ld_vocabulary::NGSI_LD_CORE_CONTEXT_URL;
+    use iri_rs::IriRefBuf;
+
+    /// A context URL as the [`IriRefBuf`] a `Link` header carries.
+    fn iri_ref(url: &str) -> IriRefBuf {
+        IriRefBuf::new(url.to_string()).expect("a valid IRI reference")
+    }
 
     #[test]
     fn the_body_value_and_the_link_urls_come_from_one_presentation_reading() {
         // Two `for_presentation()` calls used to resolve this, one in the
         // renderer and one in the header builder. They agree here by
         // construction rather than by both being written the same way.
-        let spec = ContextSpec::from_links(vec!["https://example.com/context.jsonld".to_string()]);
+        let spec = ContextSpec::from_links(vec![iri_ref("https://example.com/context.jsonld")]);
         let presentation = spec.for_presentation();
         let mut resolved = response_context(&spec);
 
@@ -52,7 +62,7 @@ mod tests {
     fn a_spec_with_no_explicit_context_still_advertises_the_core_context() {
         let resolved = response_context(&ContextSpec::none());
         assert!(
-            resolved.link_urls().iter().any(|url| url == NGSI_LD_CORE_CONTEXT_URL),
+            resolved.link_urls().iter().any(|url| url.as_str() == NGSI_LD_CORE_CONTEXT_URL),
             "the core context is missing from {:?}",
             resolved.link_urls()
         );

@@ -1,4 +1,5 @@
 use crate::{
+    core::error::AndromedaError,
     repository::subscription::repo::SubscriptionRepository,
     service::{
         entity::{store::EntityStore, sys_attrs::inject_sys_attrs},
@@ -14,7 +15,10 @@ use andromeda_jsonld::{
     },
 };
 use andromeda_ngsi_ld_http_headers::media_type::APPLICATION_LD_JSON;
-use andromeda_ngsi_ld_lexicon::uri::{NGSI_LD_URN_NID, Uri};
+use andromeda_ngsi_ld_lexicon::{
+    entity_type_name::EntityTypeName,
+    uri::{NGSI_LD_URN_NID, Uri},
+};
 use andromeda_ngsi_ld_model::{entity::Entity, notification::Notification, subscription::Subscription};
 use andromeda_ngsi_ld_query::filter::eval;
 use andromeda_ngsi_ld_render::simplify::simplify_entity;
@@ -166,7 +170,7 @@ impl IntervalWorker {
                         }
                     };
 
-                    let request = match (NotificationDelivery {
+                    let request = (NotificationDelivery {
                         payload: &payload,
                         endpoint_uri: &sub.notification.endpoint.uri,
                         accept: sub.notification.endpoint.accept.as_ref(),
@@ -175,14 +179,7 @@ impl IntervalWorker {
                         tenant: this.tenant.tenant_name(),
                         subscription_id: &sub.id,
                     })
-                    .assemble()
-                    {
-                        Ok(r) => r,
-                        Err(e) => {
-                            debug!("IntervalWorker: failed to build delivery request for {}: {}", sub.id, e);
-                            return;
-                        }
-                    };
+                    .assemble();
 
                     let success = this.transport.deliver(&endpoint_transport, &request).await.is_delivered();
 
@@ -245,7 +242,12 @@ impl IntervalWorker {
         let mut offset = 0_i64;
         loop {
             let page = match type_iri {
-                Some(iri) => self.entity_repo.get_entities_by_type(iri, Some(limit), Some(offset)).await?,
+                Some(iri) => {
+                    let type_name = iri
+                        .parse::<EntityTypeName>()
+                        .map_err(|error| AndromedaError::internal(format!("subscription type is not a valid NGSI-LD name: {error}")))?;
+                    self.entity_repo.get_entities_by_type(&type_name, Some(limit), Some(offset)).await?
+                }
                 None => self.entity_repo.get_all_entities(Some(limit), Some(offset)).await?,
             };
             let exhausted = page.len() < usize::from(INTERVAL_ENTITY_PAGE);
@@ -354,12 +356,13 @@ fn entity_id_of(entity: &Value) -> &str {
     entity_node(entity).and_then(|node| node.get("@id")).and_then(Value::as_str).unwrap_or_default()
 }
 
-fn extract_entity_id(entity: &Value) -> Option<String> {
-    match entity {
-        Value::Array(arr) => arr.first().and_then(|v| v.get("@id").and_then(|v| v.as_str()).map(String::from)),
-        Value::Object(obj) => obj.get("@id").and_then(|v| v.as_str()).map(String::from),
+fn extract_entity_id(entity: &Value) -> Option<Uri> {
+    let raw = match entity {
+        Value::Array(arr) => arr.first().and_then(|v| v.get("@id")).and_then(|v| v.as_str()),
+        Value::Object(obj) => obj.get("@id").and_then(|v| v.as_str()),
         _ => None,
-    }
+    }?;
+    raw.parse::<Uri>().ok()
 }
 
 /// Apply q, geoQ, and scopeQ filters from a subscription to a list of expanded entities.

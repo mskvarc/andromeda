@@ -7,7 +7,6 @@ use crate::{
     repository::jsonld_context::params::DetailLevel,
 };
 use andromeda_jsonld::core_context::is_ngsi_ld_core_context_url;
-use andromeda_ngsi_ld_model::jsonld_context::ContextKind;
 use andromeda_ngsi_ld_request::jsonld_context::{DeleteParams, ListParams, ServeParams};
 use axum::{
     Json,
@@ -37,14 +36,7 @@ pub async fn query(
     ValidatedQuery(params): ValidatedQuery<ListParams>,
 ) -> Result<Response, NgsiLdError> {
     let service = &state.contexts;
-    let kind = params
-        .kind
-        .map(|k| {
-            k.parse::<ContextKind>()
-                .map_err(|_| AndromedaError::query_validation(format!("Invalid kind: {}. Must be one of: Cached, Hosted, ImplicitlyCreated", k)))
-        })
-        .transpose()
-        .with_instance(&uri)?;
+    let kind = params.kind;
 
     let detail_level = if params.details.unwrap_or(false) {
         DetailLevel::Full

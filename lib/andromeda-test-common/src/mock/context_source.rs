@@ -6,16 +6,14 @@
 
 use crate::config::callback_url;
 use axum::{Router, extract::Request, response::IntoResponse};
+use dashmap::DashMap;
 use reqwest::Method;
 use serde_json::Value;
-use std::{
-    collections::HashMap,
-    sync::{
-        Arc,
-        atomic::{AtomicUsize, Ordering},
-    },
+use std::sync::{
+    Arc,
+    atomic::{AtomicUsize, Ordering},
 };
-use tokio::sync::{RwLock, oneshot};
+use tokio::sync::oneshot;
 
 struct StubEntry {
     status_code: u16,
@@ -24,37 +22,39 @@ struct StubEntry {
     count: AtomicUsize,
 }
 
-struct MockState {
-    stubs: HashMap<(String, String), StubEntry>,
-    total_count: AtomicUsize,
-}
+/// The registered stubs, keyed by the method and path they answer.
+///
+/// A `DashMap` rather than a locked map: registration and lookup take only a
+/// shard lock, so two suites registering stubs on the same mock never contend
+/// on one writer's guard. The request method is kept as a typed
+/// [`reqwest::Method`] rather than a stringified copy.
+type StubMap = DashMap<(Method, String), StubEntry>;
 
 /// Context Source stub. Registers method/path stubs returning canned status
 /// codes and optional bodies, and counts how many requests each stub served.
 pub struct ContextSourceMock {
     port: u16,
-    state: Arc<RwLock<MockState>>,
+    stubs: Arc<StubMap>,
+    total_count: Arc<AtomicUsize>,
     shutdown: Option<oneshot::Sender<()>>,
 }
 
 impl ContextSourceMock {
     /// Bind to an ephemeral port and spawn the axum task.
     pub async fn start() -> ContextSourceMock {
-        let state = Arc::new(RwLock::new(MockState {
-            stubs: HashMap::new(),
-            total_count: AtomicUsize::new(0),
-        }));
+        let stubs: Arc<StubMap> = Arc::new(DashMap::new());
+        let total_count = Arc::new(AtomicUsize::new(0));
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
-        let handler_state = state.clone();
+        let handler_stubs = stubs.clone();
+        let handler_total = total_count.clone();
         let app = Router::new().fallback(move |request: Request| {
-            let state = handler_state.clone();
+            let stubs = handler_stubs.clone();
+            let total_count = handler_total.clone();
             async move {
-                let method = request.method().to_string();
+                let method = request.method().clone();
                 let path = request.uri().path().to_string();
-                let guard = state.read().await;
-                guard.total_count.fetch_add(1, Ordering::Relaxed);
-                let key = (method, path);
-                match guard.stubs.get(&key) {
+                total_count.fetch_add(1, Ordering::Relaxed);
+                match stubs.get(&(method, path)) {
                     Some(entry) => {
                         entry.count.fetch_add(1, Ordering::Relaxed);
                         let status = axum::http::StatusCode::from_u16(entry.status_code).unwrap_or(axum::http::StatusCode::INTERNAL_SERVER_ERROR);
@@ -93,16 +93,16 @@ impl ContextSourceMock {
 
         ContextSourceMock {
             port,
-            state,
+            stubs,
+            total_count,
             shutdown: Some(shutdown_tx),
         }
     }
 
     /// Register a stub that returns `status_code` with an empty body.
     pub async fn set_stub(&self, method: Method, path: &str, status_code: u16) {
-        let mut guard = self.state.write().await;
-        guard.stubs.insert(
-            (method.to_string(), path.to_owned()),
+        self.stubs.insert(
+            (method, path.to_owned()),
             StubEntry {
                 status_code,
                 body: None,
@@ -114,7 +114,6 @@ impl ContextSourceMock {
 
     /// Register a stub that returns `status_code` and a JSON body.
     pub async fn set_stub_with_body(&self, method: Method, path: &str, status_code: u16, body: &Value) {
-        let mut guard = self.state.write().await;
         let serialized = match serde_json::to_string(body) {
             Ok(serialized) => serialized,
             Err(error) => {
@@ -122,8 +121,8 @@ impl ContextSourceMock {
                 std::process::exit(2);
             }
         };
-        guard.stubs.insert(
-            (method.to_string(), path.to_owned()),
+        self.stubs.insert(
+            (method, path.to_owned()),
             StubEntry {
                 status_code,
                 body: Some(serialized),
@@ -136,9 +135,8 @@ impl ContextSourceMock {
     /// Register a stub that returns a raw string body with a caller-chosen
     /// content type.
     pub async fn set_stub_with_raw_body(&self, method: Method, path: &str, status_code: u16, body: &str, content_type: &str) {
-        let mut guard = self.state.write().await;
-        guard.stubs.insert(
-            (method.to_string(), path.to_owned()),
+        self.stubs.insert(
+            (method, path.to_owned()),
             StubEntry {
                 status_code,
                 body: Some(body.to_owned()),
@@ -151,17 +149,14 @@ impl ContextSourceMock {
     /// Return the number of times the stub registered for `(method, path)`
     /// was served.
     pub async fn get_count(&self, method: Method, path: &str) -> usize {
-        let guard = self.state.read().await;
-        guard
-            .stubs
-            .get(&(method.to_string(), path.to_owned()))
+        self.stubs
+            .get(&(method, path.to_owned()))
             .map_or(0, |entry| entry.count.load(Ordering::Relaxed))
     }
 
     /// Total number of requests the mock saw, including unmatched fallbacks.
     pub async fn get_total_count(&self) -> usize {
-        let guard = self.state.read().await;
-        guard.total_count.load(Ordering::Relaxed)
+        self.total_count.load(Ordering::Relaxed)
     }
 
     /// Resolve the external URL the broker will dial, built from
@@ -182,5 +177,33 @@ impl ContextSourceMock {
 impl Drop for ContextSourceMock {
     fn drop(&mut self) {
         self.stop();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::mock::context_source::ContextSourceMock;
+    use reqwest::Method;
+
+    #[tokio::test]
+    async fn two_writers_register_stubs_concurrently_and_both_are_served() {
+        let mock = ContextSourceMock::start().await;
+
+        // Concurrent registration: the old single `RwLock` serialised these two
+        // writers on one guard; a `DashMap` lets each take only its own shard.
+        tokio::join!(mock.set_stub(Method::GET, "/alpha", 204), mock.set_stub(Method::GET, "/beta", 200));
+
+        let client = reqwest::Client::new();
+        let alpha = client
+            .get(format!("http://127.0.0.1:{}/alpha", mock.port))
+            .send()
+            .await
+            .expect("alpha reachable");
+        let beta = client.get(format!("http://127.0.0.1:{}/beta", mock.port)).send().await.expect("beta reachable");
+
+        assert_eq!(alpha.status().as_u16(), 204);
+        assert_eq!(beta.status().as_u16(), 200);
+        assert_eq!(mock.get_count(Method::GET, "/alpha").await, 1);
+        assert_eq!(mock.get_count(Method::GET, "/beta").await, 1);
     }
 }

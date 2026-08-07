@@ -10,13 +10,28 @@ use andromeda_ngsi_ld_model::snapshot::{SnapshotInput, SnapshotPatch};
 use andromeda_ngsi_ld_problem_details::{batch_operation::BatchOperationResult, error_type::NgsiLdErrorType};
 use axum::{
     Json,
-    extract::{OriginalUri, Path},
-    http::{HeaderMap, HeaderValue, StatusCode},
+    extract::{OriginalUri, Path, rejection::JsonRejection},
+    http::{HeaderMap, HeaderValue, StatusCode, Uri},
     response::{IntoResponse, Response},
 };
 
+/// Map an axum JSON body rejection to a clause-5.5.2 `InvalidRequest` (400).
+///
+/// The snapshot bodies are extracted as a `Result` so that bad JSON, or a
+/// well-formed value the typed fields reject -- an out-of-range
+/// `snapshotPriority`, say -- is a 400 rather than axum's default 422, a status
+/// NGSI-LD does not use.
+fn invalid_snapshot_body(rejection: JsonRejection, uri: &Uri) -> AndromedaError {
+    AndromedaError::malformed_request(rejection.body_text()).with_instance(uri)
+}
+
 /// POST /ngsi-ld/v1/snapshots -- Create a new snapshot.
-pub async fn create(TenantState(state): TenantState, OriginalUri(uri): OriginalUri, Json(input): Json<SnapshotInput>) -> Result<Response, NgsiLdError> {
+pub async fn create(
+    TenantState(state): TenantState,
+    OriginalUri(uri): OriginalUri,
+    input: Result<Json<SnapshotInput>, JsonRejection>,
+) -> Result<Response, NgsiLdError> {
+    let Json(input) = input.map_err(|rejection| invalid_snapshot_body(rejection, &uri))?;
     let snapshot = state.snapshots.create(input).await.with_instance(&uri)?;
 
     let location = format!("/ngsi-ld/v1/snapshots/{}", snapshot.id);
@@ -45,8 +60,9 @@ pub async fn update(
     TenantState(state): TenantState,
     OriginalUri(uri): OriginalUri,
     Path(snapshot_id): Path<String>,
-    Json(patch): Json<SnapshotPatch>,
+    patch: Result<Json<SnapshotPatch>, JsonRejection>,
 ) -> Result<Response, NgsiLdError> {
+    let Json(patch) = patch.map_err(|rejection| invalid_snapshot_body(rejection, &uri))?;
     let snapshot_id = parse_snapshot_id(&snapshot_id, &uri)?;
     let updated = state.snapshots.update(&snapshot_id, patch).await.with_instance(&uri)?;
 

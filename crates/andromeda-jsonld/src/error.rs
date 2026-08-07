@@ -225,3 +225,180 @@ fn context_error_of_processing(error: &context_processing::Error<LoaderError>) -
         None
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::{
+        error::{JsonLdError, context_error_of_compaction, context_error_of_expansion, context_error_of_processing, is_protected_term_redefinition},
+        loader::error::{LoaderError, LoaderErrorKind},
+    };
+    use iri_rs::IriBuf;
+    use jsonld::{CompactError, ContextLoadError, ExpandError, ExtractContextError, LoadError, compaction, context_processing, expansion};
+    use reqwest::StatusCode;
+
+    fn url() -> String {
+        "https://example.com/ctx.jsonld".to_string()
+    }
+
+    fn loader_error() -> LoaderError {
+        LoaderError {
+            url: url(),
+            kind: LoaderErrorKind::Invalid("not valid JSON-LD".to_string()),
+        }
+    }
+
+    fn load_error() -> LoadError<LoaderError> {
+        LoadError::new(IriBuf::new(url()).expect("a well-formed IRI"), loader_error())
+    }
+
+    #[test]
+    fn only_the_five_loading_variants_are_reportable_as_context_not_available() {
+        let available = [
+            JsonLdError::ContextFetchDisabled { url: url() },
+            JsonLdError::ContextHttp {
+                url: url(),
+                status: StatusCode::NOT_FOUND,
+            },
+            JsonLdError::ContextLoad {
+                url: url(),
+                message: "boom".to_string(),
+            },
+            JsonLdError::ContextTooLarge { url: url(), size: 10, max: 5 },
+            JsonLdError::ContextInvalid {
+                url: url(),
+                message: "boom".to_string(),
+            },
+        ];
+        for error in &available {
+            assert!(error.is_context_not_available(), "{error} must report as LdContextNotAvailable");
+        }
+
+        let internal = [
+            JsonLdError::EmbeddedContextInvalid("boom".to_string()),
+            JsonLdError::InvalidIri("boom".to_string()),
+            JsonLdError::InvalidDocument("boom".to_string()),
+        ];
+        for error in &internal {
+            assert!(!error.is_context_not_available(), "{error} must not report as a loading failure");
+        }
+    }
+
+    #[test]
+    fn only_the_protected_term_redefinition_variant_is_classified_as_one() {
+        assert!(is_protected_term_redefinition(&context_processing::Error::ProtectedTermRedefinition));
+        assert!(!is_protected_term_redefinition(&context_processing::Error::InvalidBaseIri));
+        assert!(!is_protected_term_redefinition(&context_processing::Error::ContextLoadingFailed(load_error())));
+    }
+
+    #[test]
+    fn a_protected_term_redefinition_is_recognised_through_every_nesting() {
+        let cases: [CompactError<LoaderError>; 4] = [
+            CompactError::ContextProcessing(context_processing::Error::ProtectedTermRedefinition),
+            CompactError::Expand(ExpandError::ContextProcessing(context_processing::Error::ProtectedTermRedefinition)),
+            CompactError::Compaction(compaction::Error::ContextProcessing(context_processing::Error::ProtectedTermRedefinition)),
+            CompactError::Expand(ExpandError::Expansion(expansion::Error::ContextProcessing(
+                context_processing::Error::ProtectedTermRedefinition,
+            ))),
+        ];
+        for case in &cases {
+            assert!(JsonLdError::is_protected_term_error(case), "must detect the redefinition in {case}");
+        }
+    }
+
+    #[test]
+    fn a_loading_or_unrelated_failure_is_not_a_protected_term_error() {
+        let cases: [CompactError<LoaderError>; 8] = [
+            CompactError::Loading(load_error()),
+            CompactError::ContextLoading(ContextLoadError::LoadingDocumentFailed(load_error())),
+            CompactError::Expand(ExpandError::Loading(load_error())),
+            CompactError::Expand(ExpandError::ContextLoading(ContextLoadError::LoadingDocumentFailed(load_error()))),
+            CompactError::ContextProcessing(context_processing::Error::InvalidBaseIri),
+            CompactError::Compaction(compaction::Error::ContextProcessing(context_processing::Error::InvalidBaseIri)),
+            CompactError::Compaction(compaction::Error::IriConfusedWithPrefix),
+            CompactError::Expand(ExpandError::Expansion(expansion::Error::InvalidTypeValue)),
+        ];
+        for case in &cases {
+            assert!(!JsonLdError::is_protected_term_error(case), "must not treat {case} as a protected-term error");
+        }
+    }
+
+    #[test]
+    fn context_error_of_expansion_recovers_only_the_loader_failures() {
+        assert!(
+            context_error_of_expansion(&ExpandError::Loading(load_error())).is_some_and(|error| error.is_context_not_available()),
+            "a direct load failure is a context error"
+        );
+        assert!(
+            context_error_of_expansion(&ExpandError::ContextLoading(ContextLoadError::LoadingDocumentFailed(load_error()))).is_some(),
+            "a failed context document load is a context error"
+        );
+        assert!(
+            context_error_of_expansion(&ExpandError::ContextLoading(ContextLoadError::ContextExtractionFailed(
+                ExtractContextError::NoContext
+            )))
+            .is_none(),
+            "a missing @context is a document defect, not a load failure"
+        );
+        assert!(
+            context_error_of_expansion(&ExpandError::ContextProcessing(context_processing::Error::ContextLoadingFailed(load_error()))).is_some(),
+            "a load failure nested in context processing is still a context error"
+        );
+        assert!(
+            context_error_of_expansion(&ExpandError::ContextProcessing(context_processing::Error::ProtectedTermRedefinition)).is_none(),
+            "a protected-term redefinition is not a load failure"
+        );
+        assert!(
+            context_error_of_expansion(&ExpandError::Expansion(expansion::Error::ContextProcessing(
+                context_processing::Error::ContextLoadingFailed(load_error())
+            )))
+            .is_some(),
+            "a load failure nested in expansion's context processing is a context error"
+        );
+        assert!(
+            context_error_of_expansion(&ExpandError::Expansion(expansion::Error::InvalidTypeValue)).is_none(),
+            "a pure expansion defect is not a context error"
+        );
+    }
+
+    #[test]
+    fn context_error_of_compaction_recovers_only_the_loader_failures() {
+        assert!(context_error_of_compaction(&CompactError::Loading(load_error())).is_some());
+        assert!(context_error_of_compaction(&CompactError::ContextLoading(ContextLoadError::LoadingDocumentFailed(load_error()))).is_some());
+        assert!(
+            context_error_of_compaction(&CompactError::ContextLoading(ContextLoadError::ContextExtractionFailed(
+                ExtractContextError::NoContext
+            )))
+            .is_none()
+        );
+        assert!(context_error_of_compaction(&CompactError::ContextProcessing(context_processing::Error::ContextLoadingFailed(load_error()))).is_some());
+        assert!(
+            context_error_of_compaction(&CompactError::Expand(ExpandError::Loading(load_error()))).is_some(),
+            "compaction delegates its Expand arm to the expansion rule"
+        );
+        assert!(context_error_of_compaction(&CompactError::Compaction(compaction::Error::IriConfusedWithPrefix)).is_none());
+    }
+
+    #[test]
+    fn context_error_of_processing_maps_only_the_loading_failure() {
+        assert!(context_error_of_processing(&context_processing::Error::ContextLoadingFailed(load_error())).is_some());
+        assert!(context_error_of_processing(&context_processing::Error::ProtectedTermRedefinition).is_none());
+    }
+
+    #[test]
+    fn from_expand_error_maps_a_loader_failure_and_boxes_everything_else() {
+        let mapped = JsonLdError::from(ExpandError::Loading(load_error()));
+        assert!(mapped.is_context_not_available(), "a load failure surfaces as a context error, got {mapped}");
+
+        let boxed = JsonLdError::from(ExpandError::Expansion(expansion::Error::InvalidTypeValue));
+        assert!(matches!(boxed, JsonLdError::Expansion(_)), "a pure expansion failure is boxed, got {boxed}");
+    }
+
+    #[test]
+    fn from_compact_error_maps_a_loader_failure_and_boxes_everything_else() {
+        let mapped = JsonLdError::from(CompactError::Loading(load_error()));
+        assert!(mapped.is_context_not_available(), "a load failure surfaces as a context error, got {mapped}");
+
+        let boxed = JsonLdError::from(CompactError::Compaction(compaction::Error::IriConfusedWithPrefix));
+        assert!(matches!(boxed, JsonLdError::Compaction(_)), "a pure compaction failure is boxed, got {boxed}");
+    }
+}

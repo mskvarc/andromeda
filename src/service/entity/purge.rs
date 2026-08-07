@@ -40,12 +40,13 @@ impl EntityService {
     ///
     /// Returns the number of entities modified.
     pub async fn purge_attrs(&self, entity_ids: &[String], mode: &PurgeMode, context: &ContextSpec) -> Result<u32, AndromedaError> {
+        let prepared_context = self.engine.prepare_term_context(context);
         let attr_iris: Vec<String> = match mode {
             PurgeMode::DeleteEntities => return Ok(0),
             PurgeMode::Drop(attrs) | PurgeMode::Keep(attrs) => {
                 let mut expanded = Vec::with_capacity(attrs.len());
                 for attr in attrs {
-                    expanded.push(self.engine.expand_term(attr.as_str(), context).await?);
+                    expanded.push(self.engine.expand_term(attr.as_str(), &prepared_context).await?.to_string());
                 }
                 expanded
             }
@@ -54,10 +55,17 @@ impl EntityService {
         let mut modified_count = 0u32;
 
         for entity_id in entity_ids {
+            // The store is keyed by `Uri`, so an identifier that is not one names
+            // no entity and is skipped -- the same outcome the read-modify-write
+            // would have reached against an absent row.
+            let Ok(entity_uri) = entity_id.parse::<Uri>() else {
+                tracing::error!(entity_id = %entity_id, event = "entity_uri_parse_failed");
+                continue;
+            };
             let mut purged: Option<PurgedEntity> = None;
             let outcome = self
-                .commit_read_modify_write(entity_id, |previous| {
-                    let Some((write, removed)) = build_purge_write(entity_id, previous, mode, &attr_iris)? else {
+                .commit_read_modify_write(&entity_uri, |previous| {
+                    let Some((write, removed)) = build_purge_write(entity_uri.as_str(), previous, mode, &attr_iris)? else {
                         return Ok(None);
                     };
                     purged = Some(removed);
@@ -79,19 +87,14 @@ impl EntityService {
                 previous,
                 removed_names,
             } = purged;
-            match entity_id.parse::<Uri>() {
-                Ok(entity_uri) => self.emit_attr_change(
-                    entity_uri,
-                    extract_types(&merged),
-                    NotificationTrigger::AttributeDeleted,
-                    removed_names,
-                    previous,
-                    Some(merged),
-                ),
-                Err(_error) => {
-                    tracing::error!(entity_id = %entity_id, event = "entity_uri_parse_failed");
-                }
-            }
+            self.emit_attr_change(
+                entity_uri,
+                extract_types(&merged),
+                NotificationTrigger::AttributeDeleted,
+                removed_names,
+                previous,
+                Some(merged),
+            );
         }
 
         Ok(modified_count)

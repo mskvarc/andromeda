@@ -16,6 +16,7 @@
 
 use crate::{event::change_event::ChangeEvent, service::entity::store::EntityStore};
 use andromeda_ngsi_ld_geometry::geometry::Geometry;
+use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::notification::NotificationTrigger;
 use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
 use andromeda_spatial_index::{entity::index::SpatialEntityIndex, key::SpatialKey};
@@ -134,8 +135,8 @@ impl SpatialSyncWorker {
         let payload: Arc<Value> = match &event.current_payload {
             Some(p) => Arc::clone(p),
             None => {
-                let id_str = urn.to_string();
-                match self.repo.get(&id_str).await {
+                let uri = Uri::from(urn.clone()); // clone: owned Urn -> Uri; the store is keyed by Uri
+                match self.repo.get(&uri).await {
                     Ok(Some(v)) => Arc::new(v),
                     Ok(None) => {
                         self.index.remove(urn);

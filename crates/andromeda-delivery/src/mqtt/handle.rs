@@ -54,11 +54,6 @@ impl MqttTransportHandle {
         MqttTransportHandle { pool, config }
     }
 
-    /// The endpoint as a `host:port/topic` label for error messages.
-    fn endpoint_label(&self) -> String {
-        format!("{}:{}/{}", self.config.host, self.config.port, self.config.topic)
-    }
-
     /// The acknowledgement a publish at this endpoint's QoS is completed by, or
     /// `None` for QoS 0, which is fire-and-forget and never acknowledged.
     const fn completing_ack(&self) -> Option<AckKind> {
@@ -73,8 +68,7 @@ impl MqttTransportHandle {
     fn succeeded(&self, start: Instant) -> DeliveryOutcome {
         info!(
             version = %self.config.version,
-            host = %self.config.host,
-            port = self.config.port,
+            endpoint = %self.config.endpoint_uri,
             topic = %self.config.topic,
             "MQTT publish succeeded"
         );
@@ -106,14 +100,14 @@ impl NotificationTransport for MqttTransportHandle {
                 properties.user_properties = transported_headers(request);
 
                 client
-                    .publish_with_properties(&self.config.topic, self.config.qos.as_v5(), false, envelope, properties)
+                    .publish_with_properties(self.config.topic.as_str(), self.config.qos.as_v5(), false, envelope, properties)
                     .await
                     .map_err(|error| error.to_string())
             }
             // MQTT 3.1.1 has no user properties, so the envelope is the only
             // place the metadata can go.
             MqttClientVariant::V311 { client } => client
-                .publish(&self.config.topic, self.config.qos.as_v311(), false, envelope)
+                .publish(self.config.topic.as_str(), self.config.qos.as_v311(), false, envelope)
                 .await
                 .map_err(|error| error.to_string()),
         };
@@ -127,7 +121,7 @@ impl NotificationTransport for MqttTransportHandle {
             }
             connection.state.mark_unhealthy();
             return Err(TransportError::ConnectionFailed {
-                endpoint: self.endpoint_label(),
+                endpoint: self.config.endpoint_uri.clone(), // clone: the error owns the endpoint it names
                 detail,
             });
         }
@@ -147,13 +141,13 @@ impl NotificationTransport for MqttTransportHandle {
             Ok(Ok(())) => Ok(self.succeeded(start)),
             // The connection failed before the acknowledgement arrived.
             Ok(Err(_cancelled)) => Err(TransportError::ConnectionFailed {
-                endpoint: self.endpoint_label(),
+                endpoint: self.config.endpoint_uri.clone(), // clone: the error owns the endpoint it names
                 detail: "connection lost before the broker acknowledged the publish".to_string(),
             }),
             // The broker did not acknowledge within the allowed time; the outbox
             // retransmits rather than assuming it arrived.
             Err(_elapsed) => Err(TransportError::Timeout {
-                endpoint: self.endpoint_label(),
+                endpoint: self.config.endpoint_uri.clone(), // clone: same
                 duration: self.pool.publish_ack_timeout(),
             }),
         }

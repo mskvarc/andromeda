@@ -25,7 +25,7 @@ use andromeda_ngsi_ld_query::{
 use sea_query::{Condition, Expr as SeaExpr, Value as SeaValue};
 
 /// Compile a parsed `q` expression into a sea-query [`Condition`].
-pub fn compile(expr: &Expr, target: &QFilterTarget<'_>, names: &ResolvedAttributeNames) -> Result<Condition, RenderError> {
+pub fn compile(expr: &Expr, target: &QFilterTarget, names: &ResolvedAttributeNames) -> Result<Condition, RenderError> {
     match expr {
         Expr::And(terms) => terms
             .iter()
@@ -64,7 +64,7 @@ pub fn referenced_attribute_names(expr: &Expr, out: &mut Vec<AttributeName>) {
 }
 
 /// Compile one leaf predicate, routing it to the projection or the fallback.
-fn compile_predicate(pred: &Predicate, target: &QFilterTarget<'_>, names: &ResolvedAttributeNames) -> Result<Condition, RenderError> {
+fn compile_predicate(pred: &Predicate, target: &QFilterTarget, names: &ResolvedAttributeNames) -> Result<Condition, RenderError> {
     match pred {
         Predicate::Exists(path) => Ok(compile_exists(path, target, names)),
         Predicate::Equality { path, membership, rhs } => {
@@ -162,7 +162,7 @@ fn unsatisfiable() -> Condition {
 /// describe — deleting an attribute writes a tombstone rather than dropping the
 /// catalogue row — so catalogue presence alone would report deleted attributes
 /// as present.
-fn compile_exists(path: &AttrPath, target: &QFilterTarget<'_>, names: &ResolvedAttributeNames) -> Condition {
+fn compile_exists(path: &AttrPath, target: &QFilterTarget, names: &ResolvedAttributeNames) -> Condition {
     if !is_projection_eligible(path) {
         return fallback_exists(path, target);
     }
@@ -203,13 +203,13 @@ const TOMBSTONE_GUARD: &str = "\"ac\".\"value_string\" IS DISTINCT FROM 'urn:ngs
 
 /// Wrap a rendered value predicate — already accompanied by its binds — in the
 /// correlated `attribute_current` probe.
-fn projection_condition(attr: String, value_sql: String, binds: BindBuilder<SeaValue>, target: &QFilterTarget<'_>) -> Condition {
+fn projection_condition(attr: String, value_sql: String, binds: BindBuilder<SeaValue>, target: &QFilterTarget) -> Condition {
     Condition::all().add(SeaExpr::cust_with_values(exists_on_projection(&attr, &value_sql, target), binds.into_values()))
 }
 
 /// Compile an equality comparison (`==`/`!=`) against the typed columns of
 /// `attribute_current`.
-fn compile_equality_on_projection(id: AttributeNameId, membership: SetMembership, rhs: &CompareValue, target: &QFilterTarget<'_>) -> Condition {
+fn compile_equality_on_projection(id: AttributeNameId, membership: SetMembership, rhs: &CompareValue, target: &QFilterTarget) -> Condition {
     // The markers are local to one `cust_with_values` fragment; sea-query
     // renumbers them when the enclosing statement is rendered.
     let mut binds: BindBuilder<SeaValue> = BindBuilder::default();
@@ -244,7 +244,7 @@ fn compile_equality_on_projection(id: AttributeNameId, membership: SetMembership
 
 /// Compile an ordering comparison (`>`/`>=`/`<`/`<=`) against the typed columns
 /// of `attribute_current`.
-fn compile_ordering_on_projection(id: AttributeNameId, op: OrderingOp, rhs: &Scalar, target: &QFilterTarget<'_>) -> Condition {
+fn compile_ordering_on_projection(id: AttributeNameId, op: OrderingOp, rhs: &Scalar, target: &QFilterTarget) -> Condition {
     let mut binds: BindBuilder<SeaValue> = BindBuilder::default();
     let attr = binds.bind(id.get());
     let value_sql = scalar_condition(rhs, op.as_cmp_op(), &mut binds);
@@ -252,7 +252,7 @@ fn compile_ordering_on_projection(id: AttributeNameId, op: OrderingOp, rhs: &Sca
 }
 
 /// Wrap a value predicate in the correlated `attribute_current` probe.
-fn exists_on_projection(attr_placeholder: &str, value_sql: &str, target: &QFilterTarget<'_>) -> String {
+fn exists_on_projection(attr_placeholder: &str, value_sql: &str, target: &QFilterTarget) -> String {
     format!(
         "EXISTS (SELECT 1 FROM \"attribute_current\" AS \"ac\" \
          WHERE \"ac\".\"attribute_name_id\" = {attr} AND ({value}) AND {guard} \
@@ -325,7 +325,7 @@ fn scalar_condition(scalar: &Scalar, op: CmpOp, binds: &mut BindBuilder<SeaValue
 /// 9.3) whenever the pattern yields extractable trigrams — `urn:ngsi-ld:.*`
 /// does, an anchored `^A.*` does not. Either way the probe is narrowed by the
 /// `attribute_name_id` prefix of `idx_ac_attr_str` before any regex is evaluated.
-fn compile_pattern(path: &AttrPath, pattern: &Pattern, polarity: PatternPolarity, target: &QFilterTarget<'_>, names: &ResolvedAttributeNames) -> Condition {
+fn compile_pattern(path: &AttrPath, pattern: &Pattern, polarity: PatternPolarity, target: &QFilterTarget, names: &ResolvedAttributeNames) -> Condition {
     if !is_projection_eligible(path) {
         return fallback_pattern(path, pattern, polarity, target);
     }
@@ -386,7 +386,7 @@ mod tests {
         render_with(q, &names(), &QFilterTarget::entities())
     }
 
-    fn render_with(q: &str, names: &ResolvedAttributeNames, target: &QFilterTarget<'_>) -> (String, Vec<BindValue<'static>>) {
+    fn render_with(q: &str, names: &ResolvedAttributeNames, target: &QFilterTarget) -> (String, Vec<BindValue<'static>>) {
         let expr = parser::parse(q).expect("parse q");
         let condition = compile(&expr, target, names).expect("compile q");
         let (sql, values) = Query::select()

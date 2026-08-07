@@ -1,6 +1,7 @@
 //! Query parameter types for JSON-LD context management endpoints.
 
 use crate::case_insensitive_bool::deserialize_option_bool_case_insensitive;
+use andromeda_ngsi_ld_model::jsonld_context::ContextKind;
 use serde::Deserialize;
 
 /// Query parameters for `GET /jsonldContexts` (list contexts).
@@ -8,7 +9,7 @@ use serde::Deserialize;
 #[serde(deny_unknown_fields)]
 pub struct ListParams {
     /// The kind of context to list (`kind`).
-    pub kind: Option<String>,
+    pub kind: Option<ContextKind>,
     /// Whether the response uses the detailed representation (`details`).
     #[serde(default, deserialize_with = "deserialize_option_bool_case_insensitive")]
     pub details: Option<bool>,

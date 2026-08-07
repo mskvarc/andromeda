@@ -6,7 +6,7 @@ use crate::{
     repository::snapshot::{mapper::row_to_snapshot, params::SnapshotQueryParams},
     service::snapshot::store::{InsertSnapshotParams, SnapshotEntityInput, SnapshotStore},
 };
-use andromeda_ngsi_ld_lexicon::ngsi_ld_urn::SnapshotId;
+use andromeda_ngsi_ld_lexicon::{ngsi_ld_urn::SnapshotId, uri::Uri};
 use andromeda_ngsi_ld_model::{
     snapshot::{ExecutionResultDetails, Snapshot, SnapshotPriority, SnapshotStatus},
     snapshot_filter::SnapshotPurgeFilter,
@@ -18,6 +18,7 @@ use andromeda_postgresql_context_query::{
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use iso8601_duration::Duration as Iso8601Duration;
+use sea_query::Alias;
 use serde_json::Value;
 use sqlx::{Row, postgres::PgPool};
 use url::Url;
@@ -229,7 +230,7 @@ impl SnapshotStore for SnapshotRepository {
     }
 
     /// Retrieve a single entity from `snapshot_entities`.
-    async fn get_entity(&self, snapshot_id: &SnapshotId, entity_id: &str) -> Result<Option<Value>, AndromedaError> {
+    async fn get_entity(&self, snapshot_id: &SnapshotId, entity_id: &Uri) -> Result<Option<Value>, AndromedaError> {
         get_snapshot_row(&self.pool, "snapshot_entities", "entity_data", snapshot_id, entity_id).await
     }
 
@@ -238,7 +239,7 @@ impl SnapshotStore for SnapshotRepository {
         &self,
         snapshot_id: &SnapshotId,
         entity_type: Option<&str>,
-        entity_ids: Option<&[String]>,
+        entity_ids: Option<&[Uri]>,
         limit: i64,
         offset: i64,
     ) -> Result<(Vec<Value>, i64), AndromedaError> {
@@ -256,7 +257,7 @@ impl SnapshotStore for SnapshotRepository {
     }
 
     /// Retrieve a single temporal entity.
-    async fn get_temporal_entity(&self, snapshot_id: &SnapshotId, entity_id: &str) -> Result<Option<Value>, AndromedaError> {
+    async fn get_temporal_entity(&self, snapshot_id: &SnapshotId, entity_id: &Uri) -> Result<Option<Value>, AndromedaError> {
         get_snapshot_row(&self.pool, "snapshot_temporal_entities", "temporal_data", snapshot_id, entity_id).await
     }
 
@@ -355,7 +356,7 @@ impl SnapshotStore for SnapshotRepository {
         &self,
         snapshot_id: &SnapshotId,
         entity_type: Option<&str>,
-        entity_ids: Option<&[String]>,
+        entity_ids: Option<&[Uri]>,
         limit: i64,
         offset: i64,
     ) -> Result<(Vec<Value>, i64), AndromedaError> {
@@ -424,8 +425,8 @@ async fn batch_insert_snapshot_rows(
     Ok(())
 }
 
-async fn get_snapshot_row(pool: &PgPool, table: &str, data_column: &str, snapshot_id: &SnapshotId, entity_id: &str) -> Result<Option<Value>, AndromedaError> {
-    let built = build_get_row_query(table, data_column, snapshot_id.as_str(), entity_id);
+async fn get_snapshot_row(pool: &PgPool, table: &str, data_column: &str, snapshot_id: &SnapshotId, entity_id: &Uri) -> Result<Option<Value>, AndromedaError> {
+    let built = build_get_row_query(Alias::new(table), Alias::new(data_column), snapshot_id, entity_id);
     let row = bind_values!(sqlx::query(&built.sql), &built.bind_values).fetch_optional(pool).await?;
 
     match row {

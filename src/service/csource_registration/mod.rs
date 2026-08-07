@@ -18,18 +18,13 @@ use andromeda_jsonld::{
 };
 use andromeda_ngsi_ld_lexicon::{
     tenant::TenantName,
-    time_prop::TimeProp,
-    time_rel::TimeRel,
     uri::{NGSI_LD_URN_NID, Uri},
 };
 use andromeda_ngsi_ld_model::{notification::CsrTriggerReason, registration::ForwardingMode};
 use andromeda_ngsi_ld_query::{
     csr::compiled::{CompiledCsrQuery, CompiledCsrTemporalFilter},
-    filter::parser,
     geo::compile as geo_compile,
-    identifier::parse_id_list,
     pagination::{CountPolicy, Pagination},
-    pattern::Pattern,
     projection::expansion::expand_attrs,
     temporal::window::TimeInterval,
     term_expander::TermExpander,
@@ -375,26 +370,23 @@ impl CsourceRegistrationService {
     }
 
     async fn compile_csr_query(&self, params: &CsrQueryParameters, context: &ContextSpec) -> Result<CompiledCsrQuery, AndromedaError> {
-        let expander = ContextualExpander::new(&self.engine, context);
+        let prepared_context = self.engine.prepare_term_context(context);
+        let expander = ContextualExpander::new(&self.engine, &prepared_context);
 
         // Expand type
-        let expanded_type = match params.entity_type.as_deref() {
-            Some(entity_type) => Some(expander.expand_type(entity_type).await?),
+        let expanded_type = match params.entity_type.as_ref() {
+            Some(entity_type) => match entity_type.as_single_type() {
+                Some(entity_type) => Some(expander.expand_type(entity_type).await?),
+                None => return Err(AndromedaError::csr_validation("CSR discovery requires a single entity type".to_string())),
+            },
             None => None,
         };
 
         // Expand attrs
-        let expanded_attrs = expand_attrs(&params.parse_attrs(), &expander).await?;
+        let expanded_attrs = expand_attrs(params.attrs.as_deref().unwrap_or_default(), &expander).await?;
 
         // Parse geo filter
-        let geo = geo_compile::compile_geo_query(
-            params.georel.as_deref(),
-            params.geometry.as_deref(),
-            params.coordinates.as_deref(),
-            None,
-            &ContextualExpander::new(&self.engine, context),
-        )
-        .await?;
+        let geo = geo_compile::compile_geo_query(params.geo.0.as_ref(), &expander).await?;
 
         // Parse temporal filter
         let temporal = if let (Some(timerel), Some(time_at)) = (&params.timerel, &params.time_at) {
@@ -410,15 +402,10 @@ impl CsourceRegistrationService {
                         .map_err(|_| AndromedaError::csr_validation("Invalid endTimeAt: must be ISO 8601 date-time"))
                 })
                 .transpose()?;
-            let parsed_timerel = timerel
-                .parse::<TimeRel>()
-                .map_err(|e| AndromedaError::csr_validation(format!("Invalid timerel: {}", e)))?;
-            let parsed_timeprop = params
-                .timeproperty
-                .as_deref()
-                .map(|s| s.parse::<TimeProp>())
-                .transpose()
-                .map_err(|e| AndromedaError::csr_validation(format!("Invalid timeproperty: {}", e)))?;
+            // `timerel` and `timeproperty` were validated as their enums at the
+            // query boundary.
+            let parsed_timerel = *timerel;
+            let parsed_timeprop = params.timeproperty;
             Some(
                 CompiledCsrTemporalFilter::builder()
                     .interval(TimeInterval::from_parts(Some(parsed_timerel), Some(parsed_time_at), parsed_end_time_at)?)
@@ -429,28 +416,13 @@ impl CsourceRegistrationService {
             None
         };
 
-        // Parse q expression
-        let q_expr = if let Some(ref q) = params.q {
-            if !q.is_empty() {
-                Some(parser::parse(q).map_err(|e| AndromedaError::csr_validation(format!("Invalid q parameter: {}", e)))?)
-            } else {
-                None
-            }
-        } else {
-            None
-        };
+        // The query extractor has already parsed clause 4.9 syntax.
+        let q_expr = params.q.clone(); // clone: compiled output owns its expression while parameters remain borrowed.
 
         Ok(CompiledCsrQuery::builder()
-            .ids(parse_id_list(&params.parse_ids().unwrap_or_default())?)
+            .ids(params.id.clone().unwrap_or_default())
             .entity_type(expanded_type)
-            .id_pattern(
-                params
-                    .id_pattern
-                    .as_deref()
-                    .map(Pattern::parse)
-                    .transpose()
-                    .map_err(|e| AndromedaError::csr_validation(e.to_string()))?,
-            )
+            .id_pattern(params.id_pattern.clone())
             .attrs(expanded_attrs)
             .q_expr(q_expr)
             .geo(geo)
@@ -565,6 +537,7 @@ impl CsourceRegistrationService {
 
     /// Expand entity types and attribute names in the `information` array in-place.
     async fn expand_information(&self, information: &mut Value, context: &ContextSpec) -> Result<(), AndromedaError> {
+        let prepared_context = self.engine.prepare_term_context(context);
         if let Some(info_arr) = information.as_array_mut() {
             for info in info_arr.iter_mut() {
                 // Expand entity types
@@ -573,7 +546,7 @@ impl CsourceRegistrationService {
                 {
                     for entity in entities_arr.iter_mut() {
                         if let Some(type_val) = entity.get("type").and_then(|v| v.as_str()) {
-                            let expanded = self.engine.expand_type(type_val, context).await?;
+                            let expanded = self.engine.expand_type(type_val, &prepared_context).await?.to_string();
                             if let Some(obj) = entity.as_object_mut() {
                                 obj.insert("type".to_string(), Value::String(expanded));
                             }
@@ -588,7 +561,7 @@ impl CsourceRegistrationService {
                     let mut expanded_names = Vec::new();
                     for name in names_arr {
                         if let Some(n) = name.as_str() {
-                            expanded_names.push(Value::String(self.engine.expand_term(n, context).await?));
+                            expanded_names.push(Value::String(self.engine.expand_term(n, &prepared_context).await?.to_string()));
                         }
                     }
                     if let Some(obj) = info.as_object_mut() {
@@ -603,7 +576,7 @@ impl CsourceRegistrationService {
                     let mut expanded_names = Vec::new();
                     for name in names_arr {
                         if let Some(n) = name.as_str() {
-                            expanded_names.push(Value::String(self.engine.expand_term(n, context).await?));
+                            expanded_names.push(Value::String(self.engine.expand_term(n, &prepared_context).await?.to_string()));
                         }
                     }
                     if let Some(obj) = info.as_object_mut() {

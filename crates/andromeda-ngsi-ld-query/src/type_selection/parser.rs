@@ -9,6 +9,7 @@
 //! `Home` and `Vehicle` types, or entities with `Motorhome` type.
 
 use crate::{error::QueryError, type_selection::grammar::TypeExprRaw};
+use andromeda_ngsi_ld_lexicon::entity_type_name::EntityTypeName;
 
 /// Parses a type selection expression string into a raw AST.
 ///
@@ -18,6 +19,9 @@ pub fn parse(input: &str) -> Result<TypeExprRaw, QueryError> {
     let trimmed = input.trim();
     if trimmed.is_empty() {
         return Err(QueryError::TypeExprEmpty);
+    }
+    if trimmed == "*" {
+        return Ok(TypeExprRaw::Wildcard);
     }
 
     let mut parser = Parser::new(trimmed);
@@ -137,7 +141,11 @@ impl<'a> Parser<'a> {
         if name.is_empty() {
             return Err(QueryError::TypeExprEmptyName(start));
         }
-        Ok(TypeExprRaw::Type(name.to_string()))
+        let name = name.parse::<EntityTypeName>().map_err(|_| QueryError::TypeExprInvalidName {
+            name: name.to_string(),
+            position: start,
+        })?;
+        Ok(TypeExprRaw::Type(name))
     }
 
     /// Skip over any run of whitespace.
@@ -162,67 +170,59 @@ const fn is_type_char(c: char) -> bool {
 mod tests {
     use super::*;
 
+    fn t(name: &str) -> TypeExprRaw {
+        TypeExprRaw::Type(name.parse().expect("valid type name"))
+    }
+
     #[test]
     fn parse_single_type() {
         let expr = parse("Vehicle").unwrap();
-        pretty_assertions::assert_eq!(expr, TypeExprRaw::Type("Vehicle".to_string()));
+        pretty_assertions::assert_eq!(expr, t("Vehicle"));
     }
 
     #[test]
     fn parse_or_with_pipe() {
         let expr = parse("Building|House").unwrap();
-        pretty_assertions::assert_eq!(
-            expr,
-            TypeExprRaw::Or(vec![TypeExprRaw::Type("Building".to_string()), TypeExprRaw::Type("House".to_string()),])
-        );
+        pretty_assertions::assert_eq!(expr, TypeExprRaw::Or(vec![t("Building"), t("House"),]));
     }
 
     #[test]
     fn parse_or_with_comma() {
         let expr = parse("Building,House").unwrap();
-        pretty_assertions::assert_eq!(
-            expr,
-            TypeExprRaw::Or(vec![TypeExprRaw::Type("Building".to_string()), TypeExprRaw::Type("House".to_string()),])
-        );
+        pretty_assertions::assert_eq!(expr, TypeExprRaw::Or(vec![t("Building"), t("House"),]));
     }
 
     #[test]
     fn parse_and_with_semicolon() {
         let expr = parse("Home;Vehicle").unwrap();
-        pretty_assertions::assert_eq!(
-            expr,
-            TypeExprRaw::And(vec![TypeExprRaw::Type("Home".to_string()), TypeExprRaw::Type("Vehicle".to_string()),])
-        );
+        pretty_assertions::assert_eq!(expr, TypeExprRaw::And(vec![t("Home"), t("Vehicle"),]));
     }
 
     #[test]
     fn parse_mixed_and_or_with_grouping() {
         let expr = parse("(Home;Vehicle)|Motorhome").unwrap();
-        pretty_assertions::assert_eq!(
-            expr,
-            TypeExprRaw::Or(vec![
-                TypeExprRaw::And(vec![TypeExprRaw::Type("Home".to_string()), TypeExprRaw::Type("Vehicle".to_string()),]),
-                TypeExprRaw::Type("Motorhome".to_string()),
-            ])
-        );
+        pretty_assertions::assert_eq!(expr, TypeExprRaw::Or(vec![TypeExprRaw::And(vec![t("Home"), t("Vehicle"),]), t("Motorhome"),]));
     }
 
     #[test]
     fn parse_nested_parens() {
         let expr = parse("((A;B)|C)").unwrap();
-        pretty_assertions::assert_eq!(
-            expr,
-            TypeExprRaw::Or(vec![
-                TypeExprRaw::And(vec![TypeExprRaw::Type("A".to_string()), TypeExprRaw::Type("B".to_string()),]),
-                TypeExprRaw::Type("C".to_string()),
-            ])
-        );
+        pretty_assertions::assert_eq!(expr, TypeExprRaw::Or(vec![TypeExprRaw::And(vec![t("A"), t("B"),]), t("C"),]));
     }
 
     #[test]
     fn parse_uri_type_name() {
         let expr = parse("https://example.com/Vehicle").unwrap();
-        pretty_assertions::assert_eq!(expr, TypeExprRaw::Type("https://example.com/Vehicle".to_string()));
+        pretty_assertions::assert_eq!(expr, t("https://example.com/Vehicle"));
+    }
+
+    #[test]
+    fn a_type_name_outside_the_clause_4_6_2_grammar_is_rejected() {
+        // A leaf must satisfy the NGSI-LD name grammar, so a name that is neither
+        // a term, a compact IRI, nor an absolute IRI/URI is a parse error rather
+        // than a silently accepted `Type` node.
+        assert!(matches!(parse("42bad"), Err(QueryError::TypeExprInvalidName { .. })));
+        assert!(matches!(parse("%%%"), Err(QueryError::TypeExprInvalidName { .. })));
     }
 
     #[test]
@@ -253,25 +253,12 @@ mod tests {
     fn and_higher_precedence_than_or() {
         // A|B;C should parse as A | (B AND C)
         let expr = parse("A|B;C").unwrap();
-        pretty_assertions::assert_eq!(
-            expr,
-            TypeExprRaw::Or(vec![
-                TypeExprRaw::Type("A".to_string()),
-                TypeExprRaw::And(vec![TypeExprRaw::Type("B".to_string()), TypeExprRaw::Type("C".to_string()),]),
-            ])
-        );
+        pretty_assertions::assert_eq!(expr, TypeExprRaw::Or(vec![t("A"), TypeExprRaw::And(vec![t("B"), t("C"),]),]));
     }
 
     #[test]
     fn multiple_or_terms() {
         let expr = parse("A|B|C").unwrap();
-        pretty_assertions::assert_eq!(
-            expr,
-            TypeExprRaw::Or(vec![
-                TypeExprRaw::Type("A".to_string()),
-                TypeExprRaw::Type("B".to_string()),
-                TypeExprRaw::Type("C".to_string()),
-            ])
-        );
+        pretty_assertions::assert_eq!(expr, TypeExprRaw::Or(vec![t("A"), t("B"), t("C"),]));
     }
 }

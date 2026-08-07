@@ -24,6 +24,10 @@ const BYTE_ORDER_LITTLE_ENDIAN: u8 = 0x01;
 
 /// Bit set in the EWKB type word when a SRID follows it.
 const EWKB_SRID_FLAG: u32 = 0x2000_0000;
+/// Bit set in the EWKB type word when Z coordinates are present.
+const EWKB_Z_FLAG: u32 = 0x8000_0000;
+/// Bit set in the EWKB type word when M coordinates are present.
+const EWKB_M_FLAG: u32 = 0x4000_0000;
 
 /// Smallest buffer that can carry a byte-order marker, a type word and a SRID.
 const MIN_EWKB_LEN: usize = 9;
@@ -55,6 +59,12 @@ pub enum EwkbError {
     UnexpectedSrid {
         /// The SRID actually embedded in the buffer.
         srid: i32,
+    },
+    /// The geometry carries dimensions the domain model cannot preserve.
+    #[error("EWKB geometry carries unsupported {dimension} coordinates")]
+    UnsupportedDimension {
+        /// The first unsupported coordinate dimension encoded by the buffer.
+        dimension: &'static str,
     },
 }
 
@@ -134,6 +144,12 @@ impl TryFrom<&[u8]> for Ewkb {
         if type_word & EWKB_SRID_FLAG == 0 {
             return Err(EwkbError::MissingSrid);
         }
+        if type_word & EWKB_Z_FLAG != 0 {
+            return Err(EwkbError::UnsupportedDimension { dimension: "Z" });
+        }
+        if type_word & EWKB_M_FLAG != 0 {
+            return Err(EwkbError::UnsupportedDimension { dimension: "M" });
+        }
         let srid = i32::from_le_bytes([header[5], header[6], header[7], header[8]]);
         if srid != SRID_WGS84 {
             return Err(EwkbError::UnexpectedSrid { srid });
@@ -168,6 +184,22 @@ mod tests {
         .expect("polygon parses")
     }
 
+    fn geometry_cases() -> Vec<Geometry> {
+        [
+            serde_json::json!({ "type": "Point", "coordinates": [13.38, 52.52] }),
+            serde_json::json!({ "type": "LineString", "coordinates": [[1.0, 2.0], [3.0, 4.0]] }),
+            serde_json::json!({ "type": "Polygon", "coordinates": [[[1.0, 2.0], [5.0, 2.0], [5.0, 8.0], [1.0, 8.0], [1.0, 2.0]]] }),
+            serde_json::json!({ "type": "MultiPoint", "coordinates": [[1.0, 2.0], [3.0, 4.0]] }),
+            serde_json::json!({ "type": "MultiLineString", "coordinates": [[[1.0, 2.0], [3.0, 4.0]], [[5.0, 6.0], [7.0, 8.0]]] }),
+            serde_json::json!({ "type": "MultiPolygon", "coordinates": [[[[1.0, 2.0], [5.0, 2.0], [5.0, 8.0], [1.0, 8.0], [1.0, 2.0]]]] }),
+            serde_json::json!({ "type": "GeometryCollection", "geometries": [{ "type": "Point", "coordinates": [1.0, 2.0] }, { "type": "LineString", "coordinates": [[3.0, 4.0], [5.0, 6.0]] }] }),
+            serde_json::json!({ "type": "GeometryCollection", "geometries": [{ "type": "GeometryCollection", "geometries": [{ "type": "Point", "coordinates": [1.0, 2.0] }] }] }),
+        ]
+        .into_iter()
+        .map(|value| Geometry::from_geojson_value(&value).expect("valid two-dimensional GeoJSON"))
+        .collect()
+    }
+
     #[test]
     fn a_geometry_encodes_to_little_endian_ewkb_with_srid_4326() {
         let ewkb = Ewkb::try_from(&point()).expect("encodes");
@@ -190,6 +222,14 @@ mod tests {
         let original = polygon();
         let ewkb = Ewkb::try_from(&original).expect("encodes");
         pretty_assertions::assert_eq!(Geometry::try_from(&ewkb).expect("decodes"), original);
+    }
+
+    #[test]
+    fn every_supported_two_dimensional_geometry_round_trips_through_ewkb() {
+        for original in geometry_cases() {
+            let ewkb = Ewkb::try_from(&original).expect("encodes");
+            pretty_assertions::assert_eq!(Geometry::try_from(&ewkb).expect("decodes"), original);
+        }
     }
 
     #[test]
@@ -227,5 +267,19 @@ mod tests {
         bytes[5..9].copy_from_slice(&3857_i32.to_le_bytes());
         let error = Ewkb::try_from(bytes.as_slice()).expect_err("must reject");
         assert!(matches!(error, EwkbError::UnexpectedSrid { srid: 3857 }), "got {error:?}");
+    }
+
+    #[test]
+    fn z_and_m_ewkb_are_rejected_before_geozero_decoding() {
+        for (flag, dimension) in [(EWKB_Z_FLAG, "Z"), (EWKB_M_FLAG, "M"), (EWKB_Z_FLAG | EWKB_M_FLAG, "Z")] {
+            let mut bytes = Ewkb::try_from(&point()).expect("encodes").to_vec();
+            let type_word = u32::from_le_bytes([bytes[1], bytes[2], bytes[3], bytes[4]]) | flag;
+            bytes[1..5].copy_from_slice(&type_word.to_le_bytes());
+            let error = Ewkb::try_from(bytes.as_slice()).expect_err("must reject");
+            assert!(
+                matches!(error, EwkbError::UnsupportedDimension { dimension: actual } if actual == dimension),
+                "got {error:?}"
+            );
+        }
     }
 }

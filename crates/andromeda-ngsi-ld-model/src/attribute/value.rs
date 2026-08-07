@@ -4,9 +4,10 @@ use crate::attribute::expansion::serde_json_value_to_json_value;
 use andromeda_ngsi_ld_geometry::geometry::Geometry;
 use andromeda_ngsi_ld_lexicon::{
     date_time::{NgsiLdDate, NgsiLdTime},
+    rfc3339::whole_seconds,
     uri::Uri,
 };
-use chrono::{DateTime, SecondsFormat, Utc};
+use chrono::{DateTime, Utc};
 use jsonld_expandable_core::{JsonValue, ToJsonValue};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
@@ -88,7 +89,7 @@ impl<V: JsonValue> ToJsonValue<V> for NgsiLdValue {
         match self {
             NgsiLdValue::Json(value) => serde_json_value_to_json_value::<V>(value),
             NgsiLdValue::Uri(uri) => V::string(uri.as_ref()),
-            NgsiLdValue::DateTime(dt) => V::from_string(dt.to_rfc3339_opts(SecondsFormat::Millis, true)),
+            NgsiLdValue::DateTime(dt) => V::from_string(whole_seconds(*dt)),
             NgsiLdValue::Date(d) => V::string(d.as_str()),
             NgsiLdValue::Time(t) => V::string(t.as_str()),
             NgsiLdValue::Geometry(g) => g.to_json_value(),

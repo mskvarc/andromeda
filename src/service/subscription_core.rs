@@ -177,6 +177,8 @@ pub fn validate_notification_fragment(payload: &Value) -> Result<(), AndromedaEr
 /// in a subscription payload. Context hosting is NOT handled here — the
 /// entity-subscription service adds that on top.
 pub async fn expand_common_subscription_terms(engine: &JsonLdEngine, payload: &mut Value, context: &ContextSpec) -> Result<(), AndromedaError> {
+    let prepared_context = engine.prepare_term_context(context);
+    let expander = ContextualExpander::new(engine, &prepared_context);
     // Expand entities[].type
     if let Some(entities) = payload.get_mut("entities")
         && let Some(arr) = entities.as_array_mut()
@@ -187,10 +189,10 @@ pub async fn expand_common_subscription_terms(engine: &JsonLdEngine, payload: &m
                 if type_val.contains('|') || (type_val.contains('(') && type_val.contains(')')) {
                     continue;
                 }
-                match engine.expand_type(type_val, context).await {
+                match engine.expand_type(type_val, &prepared_context).await {
                     Ok(expanded) => {
                         if let Some(obj) = entity_sel.as_object_mut() {
-                            obj.insert("type".to_string(), Value::String(expanded));
+                            obj.insert("type".to_string(), Value::String(expanded.to_string()));
                         }
                     }
                     Err(e) => {
@@ -210,9 +212,9 @@ pub async fn expand_common_subscription_terms(engine: &JsonLdEngine, payload: &m
     {
         for attr in arr.iter_mut() {
             if let Some(term) = attr.as_str() {
-                match engine.expand_term(term, context).await {
+                match engine.expand_term(term, &prepared_context).await {
                     Ok(expanded) => {
-                        *attr = Value::String(expanded);
+                        *attr = Value::String(expanded.to_string());
                     }
                     Err(e) => {
                         if e.is_context_not_available() {
@@ -232,9 +234,9 @@ pub async fn expand_common_subscription_terms(engine: &JsonLdEngine, payload: &m
     {
         for attr in arr.iter_mut() {
             if let Some(term) = attr.as_str() {
-                match engine.expand_term(term, context).await {
+                match engine.expand_term(term, &prepared_context).await {
                     Ok(expanded) => {
-                        *attr = Value::String(expanded);
+                        *attr = Value::String(expanded.to_string());
                     }
                     Err(e) => {
                         if e.is_context_not_available() {
@@ -250,7 +252,7 @@ pub async fn expand_common_subscription_terms(engine: &JsonLdEngine, payload: &m
     // Expand q expression attribute terms
     if let Some(q_str) = payload.get("q").and_then(|v| v.as_str()).map(String::from)
         && let Ok(expr) = parser::parse(&q_str)
-        && let Ok(expanded) = expand_q_expr(expr, &ContextualExpander::new(engine, context)).await
+        && let Ok(expanded) = expand_q_expr(expr, &expander).await
     {
         let expanded_str = serialize::serialize(&expanded);
         if let Some(obj) = payload.as_object_mut() {
@@ -262,10 +264,10 @@ pub async fn expand_common_subscription_terms(engine: &JsonLdEngine, payload: &m
     if let Some(geo_q) = payload.get_mut("geoQ")
         && let Some(geoprop) = geo_q.get("geoproperty").and_then(|v| v.as_str()).map(String::from)
     {
-        match engine.expand_term(&geoprop, context).await {
+        match engine.expand_term(&geoprop, &prepared_context).await {
             Ok(expanded) => {
                 if let Some(obj) = geo_q.as_object_mut() {
-                    obj.insert("geoproperty".to_string(), Value::String(expanded));
+                    obj.insert("geoproperty".to_string(), Value::String(expanded.to_string()));
                 }
             }
             Err(e) => {

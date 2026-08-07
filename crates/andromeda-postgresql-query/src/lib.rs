@@ -25,7 +25,7 @@
 pub mod attribute_name_id;
 pub mod bind;
 pub mod built;
-pub(crate) mod column_reference;
+pub mod column_reference;
 pub mod error;
 pub mod geo_predicate;
 pub mod jsonb;
@@ -52,8 +52,6 @@ mod boundary {
     /// would mean a statement fragment had taken a job that belongs above it.
     #[test]
     fn this_crate_declares_only_what_its_layer_permits() {
-        /// Third-party crates this layer must never ship.
-        const FORBIDDEN: &[&str] = &["sqlx", "axum", "reqwest", "confique", "clap", "tokio"];
         /// In-workspace crates this one may name, in any dependency table.
         /// Anything else is an upward or sideways edge.
         const ALLOWED_IN_WORKSPACE: &[&str] = &[
@@ -65,6 +63,9 @@ mod boundary {
             "andromeda-postgresql-encoding",
         ];
 
-        andromeda_layer_guard::manifest::assert_layer(env!("CARGO_MANIFEST_DIR"), FORBIDDEN, ALLOWED_IN_WORKSPACE);
+        // This is the SQL statement layer, so it ships `sea-query`; every other
+        // driver, transport and runtime on the baseline stays forbidden.
+        let forbidden = andromeda_layer_guard::manifest::baseline_forbidden_except(&["sea-query"]);
+        andromeda_layer_guard::manifest::assert_layer(env!("CARGO_MANIFEST_DIR"), &forbidden, ALLOWED_IN_WORKSPACE);
     }
 }

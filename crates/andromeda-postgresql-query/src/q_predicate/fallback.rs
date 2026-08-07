@@ -27,7 +27,7 @@ use sea_query::{Condition, Expr as SeaExpr, Value as SeaValue};
 /// A sub-path existence check asks whether a nested element is present, which
 /// only the payload can answer. An earlier compiler silently dropped the
 /// sub-path here and tested the top-level attribute instead.
-pub fn fallback_exists(path: &AttrPath, target: &QFilterTarget<'_>) -> Condition {
+pub fn fallback_exists(path: &AttrPath, target: &QFilterTarget) -> Condition {
     let jsonpath = value_extraction_jsonpath(path, VALUE.as_str());
     let sql = format!("jsonb_path_exists({}, '{}')", target.payload_column(), escape_jsonpath(&jsonpath));
     Condition::all().add(SeaExpr::cust(sql))
@@ -35,7 +35,7 @@ pub fn fallback_exists(path: &AttrPath, target: &QFilterTarget<'_>) -> Condition
 
 /// The `jsonb_path_query_first` extraction reaching one payload member of this
 /// attribute.
-fn payload_extraction(path: &AttrPath, terminal_iri: &str, target: &QFilterTarget<'_>) -> String {
+fn payload_extraction(path: &AttrPath, terminal_iri: &str, target: &QFilterTarget) -> String {
     let jsonpath = value_extraction_jsonpath(path, terminal_iri);
     format!("jsonb_path_query_first({}, '{}')", target.payload_column(), escape_jsonpath(&jsonpath))
 }
@@ -52,7 +52,7 @@ fn scalar_comparison(extract_value: &str, extract_object: &str, scalar: &Scalar,
 }
 
 /// Compile an equality predicate (`==`/`!=`) against the payload.
-pub fn fallback_equality(path: &AttrPath, membership: SetMembership, rhs: &CompareValue, target: &QFilterTarget<'_>) -> Condition {
+pub fn fallback_equality(path: &AttrPath, membership: SetMembership, rhs: &CompareValue, target: &QFilterTarget) -> Condition {
     let extract_value = payload_extraction(path, VALUE.as_str(), target);
 
     match rhs {
@@ -92,7 +92,7 @@ pub fn fallback_equality(path: &AttrPath, membership: SetMembership, rhs: &Compa
 }
 
 /// Compile an ordering predicate (`>`/`>=`/`<`/`<=`) against the payload.
-pub fn fallback_ordering(path: &AttrPath, op: OrderingOp, rhs: &Scalar, target: &QFilterTarget<'_>) -> Condition {
+pub fn fallback_ordering(path: &AttrPath, op: OrderingOp, rhs: &Scalar, target: &QFilterTarget) -> Condition {
     let extract_value = payload_extraction(path, VALUE.as_str(), target);
     let extract_object = payload_extraction(path, OBJECT.as_str(), target);
     let (sql, value) = scalar_comparison(&extract_value, &extract_object, rhs, op.as_cmp_op());
@@ -103,7 +103,7 @@ pub fn fallback_ordering(path: &AttrPath, op: OrderingOp, rhs: &Scalar, target: 
 ///
 /// Both polarities require the element to be present (clause 4.9), which is
 /// what [`present_and`] states once for every backend.
-pub fn fallback_pattern(path: &AttrPath, pattern: &Pattern, polarity: PatternPolarity, target: &QFilterTarget<'_>) -> Condition {
+pub fn fallback_pattern(path: &AttrPath, pattern: &Pattern, polarity: PatternPolarity, target: &QFilterTarget) -> Condition {
     let payload = target.payload_column();
     let value_path = escape_jsonpath(&value_extraction_jsonpath(path, VALUE.as_str()));
     let object_path = escape_jsonpath(&value_extraction_jsonpath(path, OBJECT.as_str()));

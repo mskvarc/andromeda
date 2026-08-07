@@ -48,7 +48,7 @@ impl EntityService {
             deleted: deleted_attrs,
             not_updated,
         } = self
-            .commit_computed_write(&id, |previous| {
+            .commit_computed_write(&entity_uri, |previous| {
                 let previous_attributes = self.change_tx.as_ref().map(|_| previous.clone()); // clone: snapshot before mutation for showChanges diff
                 let attrs_before: HashSet<AttributeName> = extract_attribute_keys(previous).into_iter().collect();
 

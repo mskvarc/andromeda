@@ -6,7 +6,7 @@
 
 use crate::core::{config::SynchronousCommit, error::AndromedaError};
 use andromeda_ngsi_ld_lexicon::tenant::TenantName;
-use andromeda_tenancy::database_name::TenantDatabaseName;
+use andromeda_tenancy::{database_name::TenantDatabaseName, db_name_prefix::DbNamePrefix};
 use sqlx::{Connection, Executor, PgConnection, postgres::PgPoolOptions};
 use std::hash::{DefaultHasher, Hash, Hasher};
 use url::Url;
@@ -72,7 +72,8 @@ const POSTGRES_IDENT_MAX: usize = 63;
 /// `{prefix}_{sanitized}_{hash}` while ensuring the result fits within
 /// Postgres's identifier length limit. Uniqueness is preserved by the
 /// fixed-length hash suffix even when the sanitized label is truncated.
-pub(crate) fn generate_db_name(prefix: &str, tenant_name: &TenantName) -> TenantDatabaseName {
+pub(crate) fn generate_db_name(prefix: &DbNamePrefix, tenant_name: &TenantName) -> TenantDatabaseName {
+    let prefix = prefix.as_str();
     let sanitized = sanitize_identifier(tenant_name.as_str());
     let mut hasher = DefaultHasher::new();
     tenant_name.hash(&mut hasher);

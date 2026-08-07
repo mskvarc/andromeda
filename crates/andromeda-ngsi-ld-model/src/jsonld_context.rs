@@ -50,7 +50,7 @@ pub struct ContextMetadata {
 #[derive(Debug)]
 pub enum ContextListResult {
     /// List of context URLs or IDs.
-    Urls(Vec<String>),
+    Urls(Vec<Url>),
     /// List of context metadata records with full details.
     Detailed(Vec<ContextMetadata>),
 }

@@ -3,7 +3,8 @@
 use crate::key_value_pair::KeyValuePair;
 use andromeda_ngsi_ld_lexicon::{
     constant_string,
-    ngsi_ld_urn::{SnapshotId, SnapshotNotificationId, SnapshotNotificationIdParseError},
+    ngsi_ld_urn::{SnapshotId, SnapshotNotificationId},
+    rfc3339::{datetime, optional_datetime},
 };
 use chrono::{DateTime, Utc};
 use derive_more::{Display, Into};
@@ -135,13 +136,17 @@ pub struct Snapshot {
     #[builder(default)]
     pub temporal_queries_details: Option<Vec<ExecutionResultDetails>>,
     /// When the snapshot was requested.
+    #[serde(with = "datetime")]
     pub created_at: DateTime<Utc>,
     /// When it was last changed.
+    #[serde(with = "datetime")]
     pub modified_at: DateTime<Utc>,
     /// When it stops being usable.
+    #[serde(with = "datetime")]
     pub expires_at: DateTime<Utc>,
     /// When it was last read, if it ever was.
     #[builder(default)]
+    #[serde(with = "optional_datetime")]
     pub last_used_at: Option<DateTime<Utc>>,
 }
 
@@ -168,8 +173,10 @@ pub struct SnapshotNotification {
     #[builder(default)]
     pub type_: SnapshotNotificationType,
     /// Expiration time for the snapshot.
+    #[serde(with = "datetime")]
     pub expires_at: DateTime<Utc>,
     /// Timestamp corresponding to the instant when the notification is generated.
+    #[serde(with = "datetime")]
     pub notified_at: DateTime<Utc>,
     /// Identifier of the snapshot whose status change triggered the notification.
     pub snapshot_id: SnapshotId,
@@ -183,14 +190,6 @@ pub struct SnapshotNotification {
     /// Per-temporal-query execution details, if available.
     #[builder(default)]
     pub temporal_snapshot_queries_details: Option<Vec<ExecutionResultDetails>>,
-}
-
-/// Errors produced while building snapshot notifications.
-#[derive(Debug, Error)]
-pub enum SnapshotNotificationBuildError {
-    /// The generated notification URN did not satisfy its own grammar.
-    #[error("invalid generated snapshot notification id URN: {0}")]
-    InvalidNotificationId(SnapshotNotificationIdParseError),
 }
 
 impl SnapshotStatus {
@@ -211,13 +210,11 @@ impl SnapshotStatus {
 
 impl Snapshot {
     /// Build a [`SnapshotNotification`] from the snapshot state.
-    pub fn build_notification(&self) -> Result<SnapshotNotification, SnapshotNotificationBuildError> {
-        let id = format!("urn:ngsi-ld:SnapshotNotification:{}", Uuid::new_v4())
-            .parse::<SnapshotNotificationId>()
-            .map_err(SnapshotNotificationBuildError::InvalidNotificationId)?;
+    pub fn build_notification(&self) -> SnapshotNotification {
+        let id = SnapshotNotificationId::from_uuid(Uuid::new_v4());
         // clone: the notification owns its copy of the snapshot's id and
         // execution details, and the snapshot itself is only borrowed here.
-        Ok(SnapshotNotification::builder()
+        SnapshotNotification::builder()
             .id(id)
             .expires_at(self.expires_at)
             .notified_at(Utc::now())
@@ -226,7 +223,7 @@ impl Snapshot {
             .snapshot_queries_details(self.queries_details.clone())
             .snapshot_status(self.status)
             .temporal_snapshot_queries_details(self.temporal_queries_details.clone())
-            .build())
+            .build()
     }
 }
 
@@ -402,6 +399,24 @@ mod tests {
         assert!(snapshot.snapshot_lifetime.is_none() && snapshot.endpoint.is_none() && snapshot.receiver_info.is_none());
         assert!(snapshot.queries_details.is_none() && snapshot.temporal_queries_details.is_none());
         assert!(snapshot.last_used_at.is_none());
+    }
+
+    #[test]
+    fn snapshot_timestamps_serialize_with_whole_second_precision() {
+        let instant = "2024-01-01T00:00:00.750Z".parse::<DateTime<Utc>>().expect("valid instant");
+        let snapshot = Snapshot::builder()
+            .id("urn:ngsi-ld:Snapshot:1".parse::<SnapshotId>().expect("valid snapshot id"))
+            .snapshot_priority(SnapshotPriority::DEFAULT)
+            .status(SnapshotStatus::Preparing)
+            .created_at(instant)
+            .modified_at(instant)
+            .expires_at(instant)
+            .build();
+
+        let rendered = serde_json::to_value(snapshot).expect("snapshot serializes");
+        pretty_assertions::assert_eq!(rendered["createdAt"], "2024-01-01T00:00:00Z");
+        pretty_assertions::assert_eq!(rendered["modifiedAt"], "2024-01-01T00:00:00Z");
+        pretty_assertions::assert_eq!(rendered["expiresAt"], "2024-01-01T00:00:00Z");
     }
 
     #[test]

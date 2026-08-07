@@ -6,7 +6,7 @@ use andromeda_ngsi_ld_lexicon::{ngsi_ld_urn::EntityMapId, uri::Uri};
 use andromeda_ngsi_ld_model::entity_map::EntityMap;
 use chrono::{DateTime, Utc};
 use iso8601_duration::Duration as Iso8601Duration;
-use std::{collections::HashSet, str::FromStr, sync::Arc};
+use std::{collections::HashSet, sync::Arc};
 
 /// Service for managing NGSI-LD entity maps.
 pub struct EntityMapService {
@@ -90,16 +90,6 @@ pub fn parse_iso8601_duration(input: Option<&str>) -> Result<Iso8601Duration, An
     }
 }
 
-/// Parse a comma-separated list of URI identifiers.
-pub fn parse_uri_csv(input: &str) -> Result<Vec<Uri>, AndromedaError> {
-    input
-        .split(',')
-        .map(str::trim)
-        .filter(|segment| !segment.is_empty())
-        .map(|segment| Uri::from_str(segment).map_err(|_| AndromedaError::entity_map_validation(format!("Invalid URI '{}': expected URN or URL", segment))))
-        .collect()
-}
-
 fn build_entity_map_id() -> Result<EntityMapId, AndromedaError> {
     let value = format!("urn:ngsi-ld:EntityMap:{}", uuid::Uuid::new_v4());
     let id = value.parse::<EntityMapId>()?;
@@ -123,7 +113,7 @@ fn compute_entity_map_expires_at(created_at: DateTime<Utc>, lifetime: Option<&Is
 mod tests {
     use crate::{
         repository::entity_map::InMemoryEntityMapStore,
-        service::entity_map::{parse_entity_map_urn, parse_iso8601_duration, parse_uri_csv},
+        service::entity_map::{parse_entity_map_urn, parse_iso8601_duration},
     };
     use andromeda_ngsi_ld_lexicon::uri::Uri;
     use std::{str::FromStr, sync::Arc};
@@ -187,12 +177,6 @@ mod tests {
         let ok = parse_entity_map_urn("urn:ngsi-ld:EntityMap:1").expect("urn");
         pretty_assertions::assert_eq!(ok.as_str(), "urn:ngsi-ld:EntityMap:1");
         assert!(parse_entity_map_urn("urn:ngsi-ld:Snapshot:1").is_err());
-    }
-
-    #[test]
-    fn parse_uri_csv_rejects_invalid() {
-        assert!(parse_uri_csv("urn:ngsi-ld:Thing:1,https://example.com/e/2").is_ok());
-        assert!(parse_uri_csv("not-a-uri").is_err());
     }
 
     #[test]

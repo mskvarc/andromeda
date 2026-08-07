@@ -1,25 +1,25 @@
-//! The R-tree of subscription reference geometries.
+//! The subscription half of the spatial index: which subscriptions an entity
+//! change is a candidate for.
 
-use crate::{key::SpatialKey, subscription::entry::SubEntry};
+use crate::{key::SpatialKey, partitioned_rtree::PartitionedRTree, subscription::entry::SubEntry};
 use andromeda_ngsi_ld_geometry::{geo_rel::GeoRel, relation::matches_geo};
 use andromeda_ngsi_ld_lexicon::uri::Uri;
-use dashmap::DashMap;
 use geo::algorithm::BoundingRect;
-use parking_lot::RwLock;
 use rstar::{AABB, Envelope, RTree};
-use std::sync::Arc;
 
 /// Thread-safe R-tree cache of subscription reference geometries.
 ///
 /// The inverse of the entity index: one entity change is matched against
 /// O(log n) candidate subscriptions instead of every geo-enabled subscription
-/// the broker holds.
+/// the broker holds. A thin reading over the shared [`PartitionedRTree`] that
+/// adds only the candidate evaluation, which is where the two indexes differ:
+/// each entry carries its own `georel`, so the match is applied per entry
+/// rather than against one caller-supplied relation.
 #[derive(Debug, Default)]
 pub struct SpatialSubscriptionIndex {
-    /// One tree per partition.
-    buckets: DashMap<SpatialKey, Arc<RwLock<RTree<SubEntry>>>>,
-    /// Which partitions each subscription appears in.
-    by_sub: DashMap<Uri, Vec<SpatialKey>>,
+    /// Subscription reference geometries, partitioned by
+    /// `(tenant, type, geoproperty)`.
+    tree: PartitionedRTree<SubEntry>,
 }
 
 impl SpatialSubscriptionIndex {
@@ -35,39 +35,14 @@ impl SpatialSubscriptionIndex {
     /// 4.10 predicate before it is returned, so the caller needs no second
     /// pass.
     pub fn candidates(&self, key: &SpatialKey, entity_geometry: &geo::Geometry<f64>) -> Vec<Uri> {
-        let Some(bucket) = self.buckets.get(key) else {
-            return Vec::new();
-        };
-        let tree = bucket.value().read();
         let Some(rect) = entity_geometry.bounding_rect() else {
             return Vec::new();
         };
         let envelope = AABB::from_corners([rect.min().x, rect.min().y], [rect.max().x, rect.max().y]);
 
-        let mut matched = Vec::new();
-        for entry in tree.locate_in_envelope_intersecting(&envelope) {
-            if matches_geo(&entry.georel, entity_geometry, &entry.ref_geometry) {
-                matched.push(entry.subscription_id.clone()); // clone: the answer outlives the tree borrow
-            }
-        }
-
-        // `disjoint` and every `near` variant match entries the envelope test
-        // discards: `disjoint` matches away from the reference, and a `near`
-        // with only a `minDistance` (or one whose grown envelope still falls
-        // short) matches arbitrarily far from it. Both need the whole
-        // partition, mirroring the entity index's `candidates_for`. The scan
-        // only touches entries the envelope pass missed, so no entry is
-        // considered twice.
-        for entry in tree.iter() {
-            if matches!(entry.georel, GeoRel::Disjoint | GeoRel::Near { .. })
-                && !entry.envelope.intersects(&envelope)
-                && matches_geo(&entry.georel, entity_geometry, &entry.ref_geometry)
-            {
-                matched.push(entry.subscription_id.clone()); // clone: same
-            }
-        }
-
-        matched
+        self.tree
+            .read_partition(key, |tree| candidates_in(tree, entity_geometry, &envelope))
+            .unwrap_or_default()
     }
 
     /// Insert or replace one subscription's entry under one partition.
@@ -77,49 +52,42 @@ impl SpatialSubscriptionIndex {
     /// selectors is indexed once per selector, so a global removal here would
     /// leave only the last selector's partition standing.
     pub fn insert(&self, key: SpatialKey, entry: SubEntry) {
-        self.remove_from_key(&entry.subscription_id, &key);
-
-        let subscription_id = entry.subscription_id.clone(); // clone: the ownership record outlives the entry
-        let bucket = self.buckets.entry(key.clone()).or_insert_with(|| Arc::new(RwLock::new(RTree::new()))); // clone: bucket key and ownership record are separate
-        bucket.value().write().insert(entry);
-
-        let mut owned_keys = self.by_sub.entry(subscription_id).or_default();
-        if !owned_keys.value().contains(&key) {
-            owned_keys.value_mut().push(key);
-        }
+        self.tree.insert(key, entry);
     }
 
     /// Remove every entry belonging to a subscription, across every partition.
     pub fn remove(&self, subscription_id: &Uri) {
-        let Some((_, keys)) = self.by_sub.remove(subscription_id) else {
-            return;
-        };
-        for key in keys {
-            self.remove_from_bucket(subscription_id, &key);
+        self.tree.remove(subscription_id);
+    }
+}
+
+/// Every subscription in one partition's tree whose geo filter the entity
+/// geometry satisfies.
+fn candidates_in(tree: &RTree<SubEntry>, entity_geometry: &geo::Geometry<f64>, envelope: &AABB<[f64; 2]>) -> Vec<Uri> {
+    let mut matched = Vec::new();
+    for entry in tree.locate_in_envelope_intersecting(envelope) {
+        if matches_geo(&entry.georel, entity_geometry, &entry.ref_geometry) {
+            matched.push(entry.subscription_id.clone()); // clone: the answer outlives the tree borrow
         }
     }
 
-    /// Drop a subscription from one partition, and forget that it was there.
-    fn remove_from_key(&self, subscription_id: &Uri, key: &SpatialKey) {
-        self.remove_from_bucket(subscription_id, key);
-        if let Some(mut owned) = self.by_sub.get_mut(subscription_id) {
-            owned.value_mut().retain(|held| held != key);
+    // `disjoint` and every `near` variant match entries the envelope test
+    // discards: `disjoint` matches away from the reference, and a `near`
+    // with only a `minDistance` (or one whose grown envelope still falls
+    // short) matches arbitrarily far from it. Both need the whole
+    // partition, mirroring the entity index's `candidates_for`. The scan
+    // only touches entries the envelope pass missed, so no entry is
+    // considered twice.
+    for entry in tree.iter() {
+        if matches!(entry.georel, GeoRel::Disjoint | GeoRel::Near { .. })
+            && !entry.envelope.intersects(envelope)
+            && matches_geo(&entry.georel, entity_geometry, &entry.ref_geometry)
+        {
+            matched.push(entry.subscription_id.clone()); // clone: same
         }
     }
 
-    /// Drop a subscription's entries from one partition's tree.
-    fn remove_from_bucket(&self, subscription_id: &Uri, key: &SpatialKey) {
-        let Some(bucket) = self.buckets.get(key) else {
-            return;
-        };
-        let mut tree = bucket.value().write();
-        // clone: `RTree::remove` takes the entry by reference and the borrow of
-        // the tree it came from cannot outlive the removal
-        let to_remove: Vec<SubEntry> = tree.iter().filter(|entry| &entry.subscription_id == subscription_id).cloned().collect();
-        for entry in to_remove {
-            tree.remove(&entry);
-        }
-    }
+    matched
 }
 
 #[cfg(test)]

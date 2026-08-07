@@ -54,7 +54,7 @@ async fn reset_broker_state() {
     // free slots.
     evict_broker_orphans().await;
     drop_orphan_tenant_databases(&pool).await;
-    sqlx::query(TRUNCATE_ALL).execute(&pool).await.expect("truncate test tables");
+    sqlx::query(&TRUNCATE_ALL).execute(&pool).await.expect("truncate test tables");
 }
 
 /// POST `/tenants/evictOrphans` and assert the broker accepted it.

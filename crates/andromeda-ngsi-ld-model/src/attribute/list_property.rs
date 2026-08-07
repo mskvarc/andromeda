@@ -1,7 +1,7 @@
 //! The ListProperty attribute family (ETSI GS CIM 009 clause 5.2.36).
 
 use crate::attribute::{common_fields::CommonAttributeFields, value::NgsiLdValue};
-use compact_str::CompactString;
+use andromeda_ngsi_ld_lexicon::reference::NgsiLdReference;
 use jsonld::Expandable;
 use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
@@ -20,7 +20,7 @@ pub struct ListProperty {
     pub value_list: Vec<NgsiLdValue>,
     /// Optional JSON-LD datatype for `valueList`.
     #[jsonld(property = "ngsi:hasValueType", coerce = "@id")]
-    pub value_type: Option<CompactString>,
+    pub value_type: Option<NgsiLdReference>,
     /// Previous value list emitted in notifications when `showChanges` is active.
     #[jsonld(property = "ngsi:hasPreviousValueList", container = "list")]
     pub previous_value_list: Option<Vec<NgsiLdValue>>,

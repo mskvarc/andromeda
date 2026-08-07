@@ -19,20 +19,19 @@ use crate::{
     repository::temporal::params::DeleteScope,
     service::{
         csource_forwarding::{CsrModeFilter, ForwardTemporalQueryRequest, ForwardingOperation, collect_temporal_warnings, merge_temporal_retrieve_results},
-        entity_map::{parse_entity_map_urn, parse_iso8601_duration, parse_uri_csv},
+        entity_map::{parse_entity_map_urn, parse_iso8601_duration},
         geo_filter::matches_geo_query,
-        subscription_cache::compile_geo_q,
         subscription_matching::matches_scope_query,
         temporal::{CreateOrUpdateResult, TemporalQueryResult, TemporalService},
     },
     temporal_render::simplify::{TemporalSimplifyPayload, TemporalSimplifyRenderer},
 };
 use andromeda_jsonld::{context_spec::ContextSpec, term_expansion::ContextualExpander};
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::{time_rel::TimeRel, uri::Uri};
 use andromeda_ngsi_ld_model::registration::ForwardingMode;
 use andromeda_ngsi_ld_query::{
-    filter::{eval::evaluate, expansion::expand_q_expression},
-    scope::query::ScopeQuery,
+    filter::{eval::evaluate, expansion::expand_q_expr},
+    geo::compile::compile_geo_query,
 };
 use andromeda_ngsi_ld_render::response::ResponsePayload;
 use andromeda_ngsi_ld_request::{
@@ -101,9 +100,10 @@ pub async fn get(
     if let Some(snapshot_id) = snapshot.into_inner() {
         let _snap = state.snapshots.validate_for_scoping(&snapshot_id).await.with_instance(&uri)?;
 
+        let entity_uri = Uri::from(id.clone()); // clone: owned Urn -> Uri; the snapshot store is keyed by Uri
         let entity_data = state
             .snapshots
-            .get_snapshot_temporal_entity(&snapshot_id, id.as_ref())
+            .get_snapshot_temporal_entity(&snapshot_id, &entity_uri)
             .await
             .with_instance(&uri)?
             .ok_or_else(|| NgsiLdError::from(AndromedaError::temporal_not_found(id.to_string()).with_instance(&uri)))?;
@@ -235,8 +235,9 @@ pub async fn query(
     if let Some(snapshot_id) = snapshot.into_inner() {
         let _snap = state.snapshots.validate_for_scoping(&snapshot_id).await.with_instance(&uri)?;
 
-        let entity_type = params.entity_type.as_deref();
-        let entity_ids: Option<Vec<String>> = params.id.as_deref().map(|s| s.split(',').map(|id| id.trim().to_string()).collect());
+        let entity_type = params.entity_type.as_ref().map(ToString::to_string);
+        let entity_type = entity_type.as_deref();
+        let entity_ids = params.id.clone();
         let limit = params.limit.unwrap_or(100) as i64;
         let offset = params.offset.unwrap_or(0) as i64;
 
@@ -268,15 +269,19 @@ pub async fn query(
     // scope the query to only the entity IDs in the map.
     if let Some(ref map_id) = entity_map_header {
         let map_urn = parse_entity_map_urn(map_id.as_str()).with_instance(&uri)?;
-        let scoped_input = params.id.as_deref().map(parse_uri_csv).transpose().with_instance(&uri)?;
+        let scoped_input = params.id.clone();
         let scoped = state.entity_maps.scope_query_ids(&map_urn, scoped_input.as_deref()).await.with_instance(&uri)?;
-        params.id = Some(scoped.iter().map(ToString::to_string).collect::<Vec<_>>().join(","));
+        params.id = Some(scoped);
 
         // EntityMap-scoped temporal queries may omit temporal bounds; default to
         // an "all history up to far future" window so scoped follow-up queries succeed.
         if params.timerel.is_none() && params.time_at.is_none() {
-            params.timerel = Some("before".to_string());
-            params.time_at = Some("9999-12-31T23:59:59Z".to_string());
+            params.timerel = Some(TimeRel::Before);
+            params.time_at = Some(
+                chrono::DateTime::parse_from_rfc3339("9999-12-31T23:59:59Z")
+                    .map(|instant| instant.with_timezone(&chrono::Utc))
+                    .map_err(|source| AndromedaError::temporal_validation(format!("Invalid entity-map temporal horizon: {source}")).with_instance(&uri))?,
+            );
         }
     }
 
@@ -288,10 +293,7 @@ pub async fn query(
     let deferred = if split_entities {
         DeferredSplitFilters {
             q: params.q.take(),
-            georel: params.georel.take(),
-            geometry: params.geometry.take(),
-            coordinates: params.coordinates.take(),
-            geoproperty: params.geoproperty.take(),
+            geo: params.geo.0.take(),
             scope_q: params.scope_q.take(),
         }
     } else {
@@ -316,8 +318,9 @@ pub async fn query(
         (local_entities, Vec::new())
     } else {
         let context_url = context.link_contexts().first().map(|s| s.as_str());
-        let entity_type = params.entity_type.as_deref();
-        let entity_ids: Option<Vec<String>> = params.id.as_deref().map(|s| s.split(',').map(|id| id.trim().to_string()).collect());
+        let entity_type = params.entity_type.as_ref().map(ToString::to_string);
+        let entity_type = entity_type.as_deref();
+        let entity_ids = params.id.clone();
         let entity_ids_ref = entity_ids.as_deref();
         let query_string = uri.query().unwrap_or("");
 
@@ -365,35 +368,17 @@ pub async fn query(
 
     // splitEntities post-merge filtering: apply deferred q/geoQ/scopeQ (spec 5.7.4.4)
     if split_entities {
-        let q_expr = if let Some(ref q_str) = deferred.q {
-            expand_q_expression(Some(q_str), &ContextualExpander::new(service.engine(), &context))
-                .await
-                .ok()
-                .flatten()
+        let q_expr = if let Some(q_expr) = deferred.q {
+            let prepared_context = service.engine().prepare_term_context(&context);
+            let expander = ContextualExpander::new(service.engine(), &prepared_context);
+            Some(expand_q_expr(q_expr, &expander).await.with_instance(&uri)?)
         } else {
             None
         };
-        let geo_val = if let (Some(georel), Some(geometry), Some(coordinates)) = (&deferred.georel, &deferred.geometry, &deferred.coordinates) {
-            let mut value = serde_json::json!({
-                "georel": georel,
-                "geometry": geometry,
-                "coordinates": coordinates,
-            });
-            if let Some(ref geoprop) = deferred.geoproperty {
-                value["geoproperty"] = Value::String(geoprop.clone());
-            }
-            Some(value)
-        } else {
-            None
-        };
-        let compiled_scope = deferred
-            .scope_q
-            .as_deref()
-            .map(ScopeQuery::parse)
-            .transpose()
-            .map_err(AndromedaError::from)
-            .with_instance(&uri)?;
-        let compiled_geo = geo_val.as_ref().and_then(|v| compile_geo_q(v, "split-entities"));
+        let prepared_geo_context = service.engine().prepare_term_context(&context);
+        let geo_expander = ContextualExpander::new(service.engine(), &prepared_geo_context);
+        let compiled_geo = compile_geo_query(deferred.geo.as_ref(), &geo_expander).await.with_instance(&uri)?;
+        let compiled_scope = deferred.scope_q;
 
         let mut filtered = Vec::with_capacity(entities.len());
         for entity in entities {

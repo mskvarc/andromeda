@@ -15,12 +15,16 @@ use serde_json::Value;
 ///
 /// Postgres stores URIs as-is, but some clients percent-encode characters in
 /// entity IDs (e.g. colons). This function decodes them for human-readable
-/// response output, walking a Relationship's single `object` and a
-/// ListRelationship's ordered `objectList`.
+/// output, walking a Relationship's single `object` and a ListRelationship's
+/// ordered `objectList` — and only those, so a Property value that happens to
+/// contain a `%` (e.g. `"50%"`) is left untouched.
 ///
 /// A pipeline stage of [`crate::response::ResponseRenderer`], run over the plain
-/// entity before any GeoJSON envelope is built.
-pub(crate) fn decode_percent_encoded_uris(value: &mut Value) {
+/// entity before any GeoJSON envelope is built. It is `pub` because the
+/// notification worker composes its payloads outside this crate and must decode
+/// by exactly this rule, so a query response and a notification of the same
+/// entity carry the same URIs rather than two drifting readings of them.
+pub fn decode_percent_encoded_uris(value: &mut Value) {
     match value {
         Value::Object(obj) => {
             // Read the discriminant out as booleans before taking a mutable
@@ -85,6 +89,25 @@ mod tests {
         let original = value.clone();
         decode_percent_encoded_uris(&mut value);
         pretty_assertions::assert_eq!(value, original);
+    }
+
+    #[test]
+    fn only_relationship_targets_are_decoded_so_a_property_percent_survives() {
+        // The single rule both the query response and the notification worker
+        // now share: a Relationship's `object` is a percent-encoded entity id
+        // and is decoded, while a Property value carrying a `%` (a literal, not
+        // a URI) is left as written. The notification worker used to decode
+        // every string, corrupting the latter.
+        let mut value = json!({
+            "id": "urn:x", "type": "T",
+            "ref": { "type": "Relationship", "object": "urn%3Ay" },
+            "ratio": { "type": "Property", "value": "50%" },
+            "encoded": { "type": "Property", "value": "a%20b" }
+        });
+        decode_percent_encoded_uris(&mut value);
+        pretty_assertions::assert_eq!(value["ref"]["object"], "urn:y", "the relationship target must be decoded");
+        pretty_assertions::assert_eq!(value["ratio"]["value"], "50%", "a property percent must not be decoded");
+        pretty_assertions::assert_eq!(value["encoded"]["value"], "a%20b", "a property escape must not be decoded");
     }
 
     #[test]

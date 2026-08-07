@@ -16,12 +16,12 @@ pub(super) fn filter_entity_by_dataset_id(entity: &mut Entity, dataset_ids: &[St
     for (key, attr_val) in entity.attrs.iter_mut() {
         match attr_val {
             AttributeValue::Single(attr) => {
-                if !selected(attr.as_ref().dataset_id_string().as_deref(), dataset_ids) {
+                if !selected(attr.as_ref().dataset_id().map(|dataset_id| dataset_id.as_str()), dataset_ids) {
                     keys_to_remove.push(key.clone()); // clone: owned key to avoid borrowing entity.attrs during removal
                 }
             }
             AttributeValue::Multiple(list) => {
-                list.retain(|attr| selected(attr.dataset_id_string().as_deref(), dataset_ids));
+                list.retain(|attr| selected(attr.dataset_id().map(|dataset_id| dataset_id.as_str()), dataset_ids));
                 if list.is_empty() {
                     keys_to_remove.push(key.clone()); // clone: owned key to avoid borrowing entity.attrs during removal
                 } else if list.len() == 1 {

@@ -35,6 +35,7 @@ impl TypesColumn {
 /// Render a type expression against the given `types` column.
 pub fn condition(expr: &TypeExpr, column: TypesColumn) -> Condition {
     match expr {
+        TypeExpr::Wildcard => Condition::all(),
         TypeExpr::Type(iri) => Condition::all().add(any_eq(SeaExpr::val(iri.as_str()).into(), column.expr())),
         TypeExpr::And(children) => children.iter().fold(Condition::all(), |cond, child| cond.add(condition(child, column))),
         TypeExpr::Or(children) => children.iter().fold(Condition::any(), |cond, child| cond.add(condition(child, column))),

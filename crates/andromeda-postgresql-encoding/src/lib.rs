@@ -31,12 +31,13 @@ mod boundary {
     /// being a codec.
     #[test]
     fn this_crate_declares_only_what_its_layer_permits() {
-        /// Third-party crates this layer must never ship.
-        const FORBIDDEN: &[&str] = &["sqlx", "axum", "reqwest", "confique", "clap", "tokio"];
         /// In-workspace crates this one may name, in any dependency table.
         /// Anything else is an upward or sideways edge.
         const ALLOWED_IN_WORKSPACE: &[&str] = &["andromeda-layer-guard", "andromeda-ngsi-ld-geometry"];
 
-        andromeda_layer_guard::manifest::assert_layer(env!("CARGO_MANIFEST_DIR"), FORBIDDEN, ALLOWED_IN_WORKSPACE);
+        // The encoding layer reads and writes EWKB, so it ships the geometry
+        // codec `geozero` and the `bytes` buffer it works over.
+        let forbidden = andromeda_layer_guard::manifest::baseline_forbidden_except(&["bytes", "geozero"]);
+        andromeda_layer_guard::manifest::assert_layer(env!("CARGO_MANIFEST_DIR"), &forbidden, ALLOWED_IN_WORKSPACE);
     }
 }

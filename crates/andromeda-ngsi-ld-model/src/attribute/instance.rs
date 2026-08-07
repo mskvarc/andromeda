@@ -2,6 +2,7 @@
 //! entity's attribute map (ETSI GS CIM 009 clauses 5.2.5 and 4.5.5).
 
 use crate::attribute::{
+    common_fields::CommonAttributeFields,
     expansion::serde_json_value_to_json_value,
     geo_property::GeoProperty,
     json_property::JsonProperty,
@@ -19,6 +20,7 @@ use jsonld_expandable_core::{JsonValue, ToJsonValue};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::iter::once;
+use urn_rs::Urn;
 
 /// One instance of any NGSI-LD attribute family, discriminated by its `type` member.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -82,33 +84,32 @@ impl Attribute {
         }
     }
 
-    /// Returns the `expiresAt` value of the underlying attribute instance, if set.
-    pub const fn expires_at(&self) -> Option<DateTime<Utc>> {
+    /// The system members every attribute family carries.
+    ///
+    /// Every family struct embeds the same [`CommonAttributeFields`], so an
+    /// accessor for a shared member reaches it through this one match rather
+    /// than re-matching all eight families itself.
+    pub const fn common(&self) -> &CommonAttributeFields {
         match self {
-            Attribute::Property(p) => p.common.expires_at,
-            Attribute::Relationship(r) => r.common.expires_at,
-            Attribute::VocabProperty(v) => v.common.expires_at,
-            Attribute::GeoProperty(g) => g.common.expires_at,
-            Attribute::LanguageProperty(l) => l.common.expires_at,
-            Attribute::JsonProperty(j) => j.common.expires_at,
-            Attribute::ListProperty(lp) => lp.common.expires_at,
-            Attribute::ListRelationship(lr) => lr.common.expires_at,
+            Attribute::Property(p) => &p.common,
+            Attribute::Relationship(r) => &r.common,
+            Attribute::VocabProperty(v) => &v.common,
+            Attribute::GeoProperty(g) => &g.common,
+            Attribute::LanguageProperty(l) => &l.common,
+            Attribute::JsonProperty(j) => &j.common,
+            Attribute::ListProperty(lp) => &lp.common,
+            Attribute::ListRelationship(lr) => &lr.common,
         }
     }
 
-    /// Returns the instance's `datasetId` rendered as a string, if set.
-    pub fn dataset_id_string(&self) -> Option<String> {
-        let uri = match self {
-            Attribute::Property(p) => p.common.dataset_id.as_ref(),
-            Attribute::Relationship(r) => r.common.dataset_id.as_ref(),
-            Attribute::VocabProperty(v) => v.common.dataset_id.as_ref(),
-            Attribute::GeoProperty(g) => g.common.dataset_id.as_ref(),
-            Attribute::LanguageProperty(l) => l.common.dataset_id.as_ref(),
-            Attribute::JsonProperty(j) => j.common.dataset_id.as_ref(),
-            Attribute::ListProperty(lp) => lp.common.dataset_id.as_ref(),
-            Attribute::ListRelationship(lr) => lr.common.dataset_id.as_ref(),
-        };
-        uri.map(|u| u.to_string())
+    /// Returns the `expiresAt` value of the underlying attribute instance, if set.
+    pub const fn expires_at(&self) -> Option<DateTime<Utc>> {
+        self.common().expires_at
+    }
+
+    /// Borrows the instance's `datasetId`, if set.
+    pub const fn dataset_id(&self) -> Option<&Urn> {
+        self.common().dataset_id.as_ref()
     }
 }
 
@@ -499,6 +500,21 @@ mod tests {
                 Attribute::ListRelationship(lr) => &lr.common.sub_attributes,
             };
             pretty_assertions::assert_eq!(sub_attributes.len(), 1, "{attribute:?}");
+        }
+    }
+
+    #[test]
+    fn common_reaches_the_shared_fields_of_every_family() {
+        // `common()` must land on the same `CommonAttributeFields` the family
+        // struct embeds, for every one of the eight families: each
+        // fully-populated instance carries exactly one sub-attribute there, and
+        // the `expires_at`/`dataset_id` accessors read through it.
+        for original in fully_populated_instances() {
+            let attribute: Attribute = serde_json::from_value(original).expect("attribute parses");
+            let common = attribute.common();
+            pretty_assertions::assert_eq!(common.sub_attributes.len(), 1, "{attribute:?}");
+            pretty_assertions::assert_eq!(attribute.expires_at(), common.expires_at);
+            pretty_assertions::assert_eq!(attribute.dataset_id(), common.dataset_id.as_ref());
         }
     }
 

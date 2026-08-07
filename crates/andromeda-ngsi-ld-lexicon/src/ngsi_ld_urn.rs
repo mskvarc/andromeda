@@ -2,10 +2,11 @@
 
 use crate::uri::Uri;
 use derive_more::{AsRef, Deref, Display};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, Serializer};
 use std::str::FromStr;
 use thiserror::Error;
 use urn_rs::Urn;
+use uuid::Uuid;
 
 /// Declares one `urn:ngsi-ld:<Kind>:<id>` newtype over [`Urn`] together with its
 /// parse-error enum.
@@ -131,15 +132,45 @@ macro_rules! ngsi_ld_urn_id {
 }
 
 ngsi_ld_urn_id!(SnapshotId, SnapshotIdParseError, "Snapshot");
-ngsi_ld_urn_id!(SnapshotNotificationId, SnapshotNotificationIdParseError, "SnapshotNotification");
 ngsi_ld_urn_id!(EntityMapId, EntityMapIdParseError, "EntityMap");
 ngsi_ld_urn_id!(EntityTypeListId, EntityTypeListIdParseError, "EntityTypeList");
 ngsi_ld_urn_id!(AttributeListId, AttributeListIdParseError, "AttributeList");
+ngsi_ld_urn_id!(NotificationId, NotificationIdParseError, "Notification");
+ngsi_ld_urn_id!(ContextSourceId, ContextSourceIdParseError, "ContextSourceIdentity");
+
+/// Identifier generated for a snapshot status notification.
+///
+/// Snapshot notification identifiers are broker-generated values, so retaining
+/// their UUID rather than reparsing a string makes construction infallible.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Display)]
+#[display("urn:ngsi-ld:SnapshotNotification:{_0}")]
+pub struct SnapshotNotificationId(#[serde(serialize_with = "serialize_snapshot_notification_uuid")] Uuid);
+
+impl SnapshotNotificationId {
+    /// Create an identifier from the UUID generated for a notification.
+    pub const fn from_uuid(uuid: Uuid) -> SnapshotNotificationId {
+        SnapshotNotificationId(uuid)
+    }
+
+    /// Borrow the UUID that uniquely identifies this notification.
+    pub const fn as_uuid(&self) -> &Uuid {
+        &self.0
+    }
+}
+
+/// Serialize the UUID payload with the snapshot-notification URN prefix.
+fn serialize_snapshot_notification_uuid<S>(uuid: &Uuid, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    serializer.collect_str(&SnapshotNotificationId::from_uuid(*uuid))
+}
 
 #[cfg(test)]
 mod tests {
-    use crate::ngsi_ld_urn::{AttributeListId, EntityMapId, EntityTypeListId, SnapshotId, SnapshotNotificationId};
+    use crate::ngsi_ld_urn::{AttributeListId, ContextSourceId, EntityMapId, EntityTypeListId, NotificationId, SnapshotId, SnapshotNotificationId};
     use urn_rs::Urn;
+    use uuid::Uuid;
 
     #[test]
     fn snapshot_id_accepts_valid_value() {
@@ -182,7 +213,26 @@ mod tests {
 
     #[test]
     fn all_types_parse() {
-        assert!("urn:ngsi-ld:SnapshotNotification:n1".parse::<SnapshotNotificationId>().is_ok());
         assert!("urn:ngsi-ld:EntityTypeList:t1".parse::<EntityTypeListId>().is_ok());
+        assert!("urn:ngsi-ld:Notification:n1".parse::<NotificationId>().is_ok());
+        assert!("urn:ngsi-ld:ContextSourceIdentity:cs1".parse::<ContextSourceId>().is_ok());
+    }
+
+    #[test]
+    fn snapshot_notification_id_renders_the_uuid_urn() {
+        let uuid = Uuid::parse_str("123e4567-e89b-12d3-a456-426614174000").expect("valid UUID fixture");
+        let id = SnapshotNotificationId::from_uuid(uuid);
+
+        pretty_assertions::assert_eq!(id.to_string(), "urn:ngsi-ld:SnapshotNotification:123e4567-e89b-12d3-a456-426614174000");
+        pretty_assertions::assert_eq!(
+            serde_json::to_value(id).expect("serializable identifier"),
+            "urn:ngsi-ld:SnapshotNotification:123e4567-e89b-12d3-a456-426614174000"
+        );
+    }
+
+    #[test]
+    fn notification_and_context_source_reject_wrong_constant() {
+        assert!("urn:ngsi-ld:Snapshot:x".parse::<NotificationId>().is_err());
+        assert!("urn:ngsi-ld:Notification:x".parse::<ContextSourceId>().is_err());
     }
 }

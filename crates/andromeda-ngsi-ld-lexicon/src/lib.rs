@@ -15,6 +15,9 @@
 #![deny(missing_docs)]
 #![deny(clippy::missing_docs_in_private_items)]
 
+#[macro_use]
+mod validated_name;
+
 pub mod aggr_method;
 pub mod attribute_name;
 pub mod attribute_path;
@@ -44,13 +47,15 @@ mod boundary {
     /// dev-dependency and which declares nothing of its own.
     #[test]
     fn this_crate_declares_only_what_its_layer_permits() {
-        /// Third-party crates this layer must never ship.
-        const FORBIDDEN: &[&str] = &["sqlx", "sea-query", "geozero", "bytes", "axum", "reqwest", "confique", "clap", "tokio"];
         /// In-workspace crates this one may name, in any dependency table.
         /// Anything else is an upward or sideways edge.
         const ALLOWED_IN_WORKSPACE: &[&str] = &["andromeda-layer-guard", "andromeda-ngsi-ld-vocabulary"];
 
-        andromeda_layer_guard::manifest::assert_layer(env!("CARGO_MANIFEST_DIR"), FORBIDDEN, ALLOWED_IN_WORKSPACE);
+        andromeda_layer_guard::manifest::assert_layer(
+            env!("CARGO_MANIFEST_DIR"),
+            andromeda_layer_guard::manifest::BASELINE_FORBIDDEN,
+            ALLOWED_IN_WORKSPACE,
+        );
     }
 }
 

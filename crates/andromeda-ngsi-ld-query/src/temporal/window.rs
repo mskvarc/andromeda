@@ -51,6 +51,33 @@ impl TimeInterval {
         }
     }
 
+    /// Reject the `timerel`/`timeAt`/`endTimeAt` combinations clause 5.7.3
+    /// forbids, from the presence of each parameter alone.
+    ///
+    /// The two pair-faults belong to this module: [`from_parts`](TimeInterval::from_parts)
+    /// raises them when it builds an interval from parsed values, and a request
+    /// layer that has only established which parameters arrived — not yet parsed
+    /// them — asks here rather than re-deriving the same rule and minting the
+    /// same errors at the request seam, where they had drifted out of step with
+    /// this one (a CSR check that rejected `timerel` without `timeAt` but let
+    /// `timeAt` without `timerel` through).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`QueryError::ParamTimerelTimeatPair`] when exactly one of
+    /// `timerel` and `timeAt` is present, and
+    /// [`QueryError::ParamEndTimeAtRequired`] when `timerel` is `between` and no
+    /// `endTimeAt` came with it.
+    pub const fn check_time_bounds(timerel_present: bool, time_at_present: bool, is_between: bool, end_time_at_present: bool) -> Result<(), QueryError> {
+        if timerel_present != time_at_present {
+            return Err(QueryError::ParamTimerelTimeatPair);
+        }
+        if is_between && !end_time_at_present {
+            return Err(QueryError::ParamEndTimeAtRequired);
+        }
+        Ok(())
+    }
+
     /// The reference instant, which every bounded interval carries.
     pub const fn reference(&self) -> Option<&DateTime<Utc>> {
         match self {
@@ -95,6 +122,30 @@ mod tests {
     #[test]
     fn no_parameters_at_all_is_an_unbounded_interval() {
         assert_eq!(TimeInterval::from_parts(None, None, None).expect("valid"), TimeInterval::Unbounded);
+    }
+
+    #[test]
+    fn check_time_bounds_is_the_presence_only_reading_of_the_pair_rule() {
+        // The request seam calls this before it has parsed instants, so it
+        // matches `from_parts` on presence alone: both `timerel` and `timeAt`,
+        // or neither, and `endTimeAt` present when `timerel` is `between`.
+        assert!(TimeInterval::check_time_bounds(false, false, false, false).is_ok());
+        assert!(TimeInterval::check_time_bounds(true, true, false, false).is_ok());
+        assert!(TimeInterval::check_time_bounds(true, true, true, true).is_ok());
+        // Either half alone is rejected, in both directions.
+        assert!(matches!(
+            TimeInterval::check_time_bounds(true, false, false, false),
+            Err(QueryError::ParamTimerelTimeatPair)
+        ));
+        assert!(matches!(
+            TimeInterval::check_time_bounds(false, true, false, false),
+            Err(QueryError::ParamTimerelTimeatPair)
+        ));
+        // `between` without an `endTimeAt` is the second fault.
+        assert!(matches!(
+            TimeInterval::check_time_bounds(true, true, true, false),
+            Err(QueryError::ParamEndTimeAtRequired)
+        ));
     }
 
     #[test]

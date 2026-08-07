@@ -3,17 +3,18 @@
 //! Carries join depth equivalent to the `joinLevel` query parameter.
 
 use http::{HeaderName, HeaderValue};
+use std::num::NonZeroU32;
 
 /// The header name, as a `HeaderName` the `headers` trait can hand back.
 static NGSILD_JOIN_LEVEL: HeaderName = HeaderName::from_static("ngsild-joinlevel");
 
 /// Typed `NGSILD-Join-Level` header containing traversal depth.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct NgsiLdJoinLevel(u32);
+pub struct NgsiLdJoinLevel(NonZeroU32);
 
 impl NgsiLdJoinLevel {
     /// Return the parsed join level.
-    pub const fn into_inner(self) -> u32 {
+    pub const fn into_inner(self) -> NonZeroU32 {
         self.0
     }
 }
@@ -33,12 +34,15 @@ impl headers::Header for NgsiLdJoinLevel {
         if trimmed.is_empty() {
             return Err(headers::Error::invalid());
         }
-        let join_level = trimmed.parse::<u32>().map_err(|_| headers::Error::invalid())?;
+        let join_level = trimmed
+            .parse::<u32>()
+            .map_err(|_| headers::Error::invalid())
+            .and_then(|value| NonZeroU32::new(value).ok_or_else(headers::Error::invalid))?;
         Ok(NgsiLdJoinLevel(join_level))
     }
 
     fn encode<E: Extend<HeaderValue>>(&self, values: &mut E) {
-        match HeaderValue::from_str(&self.0.to_string()) {
+        match HeaderValue::from_str(&self.0.get().to_string()) {
             Ok(val) => values.extend(std::iter::once(val)),
             Err(err) => tracing::warn!(error = %err, "failed to encode NGSILD-Join-Level header"),
         }
@@ -58,11 +62,16 @@ mod tests {
 
     #[test]
     fn decode_valid_number() {
-        pretty_assertions::assert_eq!(decode_from("3").expect("valid").into_inner(), 3);
+        pretty_assertions::assert_eq!(decode_from("3").expect("valid").into_inner().get(), 3);
     }
 
     #[test]
     fn decode_rejects_invalid_number() {
         assert!(decode_from("x").is_err());
+    }
+
+    #[test]
+    fn decode_rejects_zero() {
+        assert!(decode_from("0").is_err());
     }
 }

@@ -14,9 +14,11 @@ use crate::{
     hit_counter::HitCounter,
     loader::http::HttpContextLoader,
 };
+use andromeda_ngsi_ld_vocabulary::NGSI_LD_CORE_CONTEXT_URL;
 use jsonld_syntax::Parse;
-use std::{collections::HashMap, fs, sync::Arc};
+use std::{collections::HashMap, fs, path::PathBuf, sync::Arc};
 use tracing::info;
+use url::Url;
 
 /// The W3C Data Integrity companion context the ETSI v1.9 core artefact names
 /// as the scoped context of its `ngsildproof` term.
@@ -53,7 +55,10 @@ pub struct JsonLdEngineBuilder {
     /// The size beyond which a remote context is refused.
     max_context_bytes: u64,
     /// Contexts to read from disk at build time, by URL.
-    preload_contexts: Option<HashMap<String, String>>,
+    preload_contexts: Option<HashMap<Url, PathBuf>>,
+    /// The released core context a versionless reference expands against
+    /// (clause 4.3.6.8), or `None` for the versionless core context.
+    default_core_url: Option<String>,
 }
 
 impl JsonLdEngineBuilder {
@@ -69,7 +74,19 @@ impl JsonLdEngineBuilder {
             cache_ttl_seconds: 3600,
             max_context_bytes: 2_000_000,
             preload_contexts: None,
+            default_core_url: None,
         }
+    }
+
+    /// Pin which released core context a versionless reference expands against.
+    ///
+    /// Clause 4.3.6.8 admits any released core context; a deployment picks one,
+    /// and the fastpath term table is derived from it. Left unset, a versionless
+    /// reference expands against the versionless core context.
+    #[must_use]
+    pub fn default_core_url(mut self, url: impl Into<String>) -> JsonLdEngineBuilder {
+        self.default_core_url = Some(url.into());
+        self
     }
 
     /// Whether the engine may fetch contexts over HTTP.
@@ -123,7 +140,7 @@ impl JsonLdEngineBuilder {
 
     /// Contexts to read from disk at build time, as URL to file path.
     #[must_use]
-    pub fn preload_contexts(mut self, contexts: HashMap<String, String>) -> JsonLdEngineBuilder {
+    pub fn preload_contexts(mut self, contexts: HashMap<Url, PathBuf>) -> JsonLdEngineBuilder {
         self.preload_contexts = Some(contexts);
         self
     }
@@ -176,10 +193,14 @@ impl JsonLdEngineBuilder {
             loader = loader.with_l2_cache(durable);
         }
 
+        // The pin defaults to the versionless core context, which the registry
+        // resolves to whatever version this deployment embedded.
+        let default_core_url: Arc<str> = self.default_core_url.map_or_else(|| Arc::from(NGSI_LD_CORE_CONTEXT_URL), Arc::from);
         Ok(JsonLdEngine::assembled(
             loader,
             TermCache::new(self.cache_capacity, self.cache_ttl_seconds),
             hit_counter,
+            default_core_url,
         ))
     }
 }
@@ -205,7 +226,7 @@ fn parse_embedded(payload: &str, url: &str) -> Result<jsonld_syntax::Value, Json
 }
 
 /// Read the preloaded contexts from disk and register them.
-fn register_preloaded(entries: Option<&HashMap<String, String>>, registry: &ContextRegistry) -> Result<Vec<(String, String)>, JsonLdError> {
+fn register_preloaded(entries: Option<&HashMap<Url, PathBuf>>, registry: &ContextRegistry) -> Result<Vec<(Url, PathBuf)>, JsonLdError> {
     let Some(entries) = entries else {
         return Ok(Vec::new());
     };
@@ -213,14 +234,14 @@ fn register_preloaded(entries: Option<&HashMap<String, String>>, registry: &Cont
     let mut loaded = Vec::with_capacity(entries.len());
     for (url, file) in entries {
         let raw = fs::read_to_string(file).map_err(|error| JsonLdError::ContextLoad {
-            url: url.clone(), // clone: the configuration map is borrowed and stays valid
-            message: format!("Failed reading preloaded context file '{file}': {error}"),
+            url: url.to_string(),
+            message: format!("Failed reading preloaded context file '{}': {error}", file.display()),
         })?;
         let (value, _) = jsonld_syntax::Value::parse_str(&raw).map_err(|error| JsonLdError::ContextInvalid {
-            url: url.clone(), // clone: the configuration map is borrowed and stays valid
-            message: format!("Invalid preloaded context file '{file}': {error}"),
+            url: url.to_string(),
+            message: format!("Invalid preloaded context file '{}': {error}", file.display()),
         })?;
-        registry.register(url.clone(), value); // clone: the configuration map is borrowed and stays valid
+        registry.register(url.as_str(), value);
         loaded.push((url.clone(), file.clone())); // clone: the configuration map is borrowed and stays valid
     }
     Ok(loaded)
@@ -228,7 +249,13 @@ fn register_preloaded(entries: Option<&HashMap<String, String>>, registry: &Cont
 
 #[cfg(test)]
 mod tests {
-    use crate::{context_spec::ContextSpec, engine::processor::JsonLdEngine, error::JsonLdError};
+    use crate::{
+        context_spec::ContextSpec,
+        core_context::{NGSI_LD_CORE_CONTEXT_V16_URL, NGSI_LD_CORE_CONTEXT_V19_URL},
+        engine::processor::JsonLdEngine,
+        error::JsonLdError,
+    };
+    use andromeda_ngsi_ld_vocabulary::NGSI_LD_CORE_CONTEXT_URL;
     use serde_json::json;
     use std::{
         collections::HashMap,
@@ -236,6 +263,11 @@ mod tests {
         path::PathBuf,
         time::{SystemTime, UNIX_EPOCH},
     };
+    use url::Url;
+
+    fn context_url(raw: &str) -> Url {
+        Url::parse(raw).expect("valid context URL")
+    }
 
     /// A temporary file holding a context, named so parallel tests cannot
     /// collide.
@@ -264,7 +296,7 @@ mod tests {
     async fn a_preloaded_context_resolves_offline() {
         let path = preloaded_file("vocab-only", r#"{"@context":{"@vocab":"https://example.com/vocab#"}}"#);
         let mut preloads = HashMap::new();
-        preloads.insert("https://example.com/context.jsonld".to_string(), path.to_string_lossy().to_string());
+        preloads.insert(context_url("https://example.com/context.jsonld"), path.clone());
 
         let engine = JsonLdEngine::builder()
             .allow_remote(false)
@@ -290,6 +322,10 @@ mod tests {
 
     #[tokio::test]
     async fn a_preloaded_context_that_imports_the_core_context_still_expands() {
+        // Clause 5.5.7: the broker gives the Core @context absolute precedence
+        // by appending it last, so a user context that redundantly imports the
+        // Core still expands rather than failing on a protected-term clash with
+        // the Core the broker adds.
         let path = preloaded_file(
             "core-importing",
             r#"{"@context":["https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.9.jsonld",
@@ -298,7 +334,7 @@ mod tests {
         );
         let url = "https://example.com/core-importing-context.jsonld";
         let mut preloads = HashMap::new();
-        preloads.insert(url.to_string(), path.to_string_lossy().to_string());
+        preloads.insert(context_url(url), path.clone());
 
         let engine = JsonLdEngine::builder()
             .allow_remote(false)
@@ -323,7 +359,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_preloaded_context_redefining_a_core_term_expands_after_the_core_import_is_stripped() {
+    async fn a_user_context_redefining_a_core_term_resolves_to_the_core_definition() {
+        // Clause 5.5.7: the Core @context "shall always [have] absolute
+        // precedence, regardless of the position of the Core @context in the
+        // @context array". A user context that redefines the core term
+        // `location` therefore expands to the Core's IRI, not the user's — the
+        // Core wins — and the request is not rejected.
         let path = preloaded_file(
             "location-redefining",
             r#"{"@context":["https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.9.jsonld",
@@ -332,7 +373,7 @@ mod tests {
         );
         let url = "https://example.com/location-redefining-context.jsonld";
         let mut preloads = HashMap::new();
-        preloads.insert(url.to_string(), path.to_string_lossy().to_string());
+        preloads.insert(context_url(url), path.clone());
 
         let engine = JsonLdEngine::builder()
             .allow_remote(false)
@@ -350,9 +391,18 @@ mod tests {
                 }),
                 &ContextSpec::none(),
             )
-            .await;
+            .await
+            .expect("a redefinition of a core term expands, with the core winning");
 
-        assert!(expanded.is_ok(), "expansion failed: {:?}", expanded.err());
+        let rendered = expanded.to_string();
+        assert!(
+            rendered.contains("https://uri.etsi.org/ngsi-ld/location"),
+            "the core definition of `location` must win: {rendered}"
+        );
+        assert!(
+            !rendered.contains("https://example.com/vocab#location"),
+            "the user redefinition of `location` must not survive: {rendered}"
+        );
         let _ = fs::remove_file(path);
     }
 
@@ -360,8 +410,8 @@ mod tests {
     fn a_preloaded_context_whose_file_is_missing_fails_the_build() {
         let mut preloads = HashMap::new();
         preloads.insert(
-            "https://example.com/context.jsonld".to_string(),
-            "/nonexistent/andromeda-jsonld-missing.jsonld".to_string(),
+            context_url("https://example.com/context.jsonld"),
+            PathBuf::from("/nonexistent/andromeda-jsonld-missing.jsonld"),
         );
 
         let built = JsonLdEngine::builder().preload_contexts(preloads).build();
@@ -373,7 +423,7 @@ mod tests {
     fn a_preloaded_context_that_is_not_json_fails_the_build() {
         let path = preloaded_file("invalid", "{not-json");
         let mut preloads = HashMap::new();
-        preloads.insert("https://example.com/context.jsonld".to_string(), path.to_string_lossy().to_string());
+        preloads.insert(context_url("https://example.com/context.jsonld"), path.clone());
 
         let built = JsonLdEngine::builder().preload_contexts(preloads).build();
 
@@ -385,5 +435,31 @@ mod tests {
     fn an_engine_without_a_durable_cache_keeps_no_hit_counter() {
         let engine = JsonLdEngine::builder().allow_remote(false).build().expect("engine builds");
         assert!(engine.hit_counter().is_none(), "there is nothing to flush accumulated hits into");
+    }
+
+    #[test]
+    fn two_engines_carry_their_own_core_context_pin_independently() {
+        // The pin lives on the engine, not a process global: two engines built
+        // with different pins keep them both, where the removed `OnceLock` let
+        // the first setter win for the whole process (clause 4.3.6.8).
+        let older = JsonLdEngine::builder()
+            .allow_remote(false)
+            .default_core_url(NGSI_LD_CORE_CONTEXT_V16_URL)
+            .build()
+            .expect("engine builds");
+        let newer = JsonLdEngine::builder()
+            .allow_remote(false)
+            .default_core_url(NGSI_LD_CORE_CONTEXT_V19_URL)
+            .build()
+            .expect("engine builds");
+
+        pretty_assertions::assert_eq!(older.default_core_url(), NGSI_LD_CORE_CONTEXT_V16_URL);
+        pretty_assertions::assert_eq!(newer.default_core_url(), NGSI_LD_CORE_CONTEXT_V19_URL);
+    }
+
+    #[test]
+    fn an_engine_without_a_pin_defaults_to_the_versionless_core_context() {
+        let engine = JsonLdEngine::builder().allow_remote(false).build().expect("engine builds");
+        pretty_assertions::assert_eq!(engine.default_core_url(), NGSI_LD_CORE_CONTEXT_URL);
     }
 }

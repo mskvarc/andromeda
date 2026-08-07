@@ -25,6 +25,7 @@
 #![deny(clippy::missing_docs_in_private_items)]
 
 pub mod accept;
+pub mod context_source_pseudonym;
 pub mod geo_json_body;
 pub mod language;
 pub mod link;
@@ -44,6 +45,7 @@ pub mod prefer;
 pub mod preference;
 pub mod preference_applied;
 pub mod quality;
+pub mod received_protocol;
 pub mod version;
 pub mod via;
 
@@ -56,18 +58,25 @@ mod boundary {
     /// be forgotten by a table it was never added to. The rule itself is read
     /// once, in `andromeda-layer-guard`, which every crate carries as a
     /// dev-dependency and which declares nothing of its own.
-    /// A header is expressible in terms of the lexical and representation
-    /// layers alone, so nothing above them -- a resource, a query, a store, a
-    /// web framework -- may be named here.
+    /// A header is expressible in terms of the lexical, query and
+    /// representation layers alone. `NGSILD-Scope` deliberately carries the
+    /// query crate's single authoritative scope grammar.
     #[test]
     fn this_crate_declares_only_what_its_layer_permits() {
-        /// Third-party crates this layer must never ship.
-        const FORBIDDEN: &[&str] = &["sqlx", "sea-query", "geozero", "bytes", "axum", "reqwest", "confique", "clap", "tokio"];
         /// In-workspace crates this one may name, in any dependency table.
         /// Anything else is an upward or sideways edge.
-        const ALLOWED_IN_WORKSPACE: &[&str] = &["andromeda-layer-guard", "andromeda-ngsi-ld-lexicon", "andromeda-ngsi-ld-representation"];
+        const ALLOWED_IN_WORKSPACE: &[&str] = &[
+            "andromeda-layer-guard",
+            "andromeda-ngsi-ld-lexicon",
+            "andromeda-ngsi-ld-query",
+            "andromeda-ngsi-ld-representation",
+        ];
 
-        andromeda_layer_guard::manifest::assert_layer(env!("CARGO_MANIFEST_DIR"), FORBIDDEN, ALLOWED_IN_WORKSPACE);
+        andromeda_layer_guard::manifest::assert_layer(
+            env!("CARGO_MANIFEST_DIR"),
+            andromeda_layer_guard::manifest::BASELINE_FORBIDDEN,
+            ALLOWED_IN_WORKSPACE,
+        );
     }
 }
 

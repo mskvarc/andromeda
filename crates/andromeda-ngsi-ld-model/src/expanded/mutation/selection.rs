@@ -1,6 +1,8 @@
 //! The named choices that steer a mutation: what it overwrites and which
 //! instances of a multi-attribute it touches.
 
+use urn_rs::Urn;
+
 /// Whether an append replaces an attribute instance that already exists
 /// (NGSI-LD clause 5.6.3, `noOverwrite` option).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -21,7 +23,7 @@ pub enum DatasetSelection<'a> {
     /// Every instance, regardless of `datasetId`.
     All,
     /// The single instance carrying this `datasetId`.
-    Single(&'a str),
+    Single(&'a Urn),
     /// The default instance, the one with no `datasetId`.
     Default,
 }

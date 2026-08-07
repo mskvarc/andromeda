@@ -272,14 +272,19 @@ impl UserTermTableCache {
 }
 
 /// Build the term table for one [`ContextSpec`].
-pub(crate) async fn build_batch_term_map(spec: &ContextSpec, loader: &HttpContextLoader, cache: &UserTermTableCache) -> BatchTermMap {
+///
+/// `default_core_url` is the released core context this engine expands a
+/// versionless reference against (clause 4.3.6.8); the coercion, container and
+/// scoped-context flags below are read from that version's document, so two
+/// engines pinned to different versions build different tables.
+pub(crate) async fn build_batch_term_map(spec: &ContextSpec, loader: &HttpContextLoader, cache: &UserTermTableCache, default_core_url: &str) -> BatchTermMap {
     // The IRI of every core term comes from the compile-time table the vocab
     // macro derived from the core context; its coercion, container and
     // scoped-context flag come from the same context document, parsed for the
     // version this deployment pinned (clause 4.3.6.8). Both halves are read
     // from the context rather than restated, so the fastpath cannot drift from
     // what the processor does.
-    let core_url = spec.effective_core_url();
+    let core_url = default_core_url;
     let semantics = core_term_semantics(core_url);
     let mut terms: HashMap<Box<str>, ResolvedTerm> = COMPACT_TO_EXPANDED
         .iter()
@@ -314,6 +319,7 @@ pub(crate) async fn build_batch_term_map(spec: &ContextSpec, loader: &HttpContex
     }
 
     for url in spec.link_contexts() {
+        let url = url.as_str();
         if is_ngsi_ld_core_context_url(url) || url == ANDROMEDA_CORE_CONTEXT_URL {
             continue;
         }
@@ -492,6 +498,7 @@ fn merge_user_table(
 #[cfg(test)]
 mod tests {
     use crate::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
+    use iri_rs::IriRefBuf;
     use serde_json::{Value, json};
     use std::{
         collections::HashMap,
@@ -499,10 +506,16 @@ mod tests {
         path::PathBuf,
         time::{SystemTime, UNIX_EPOCH},
     };
+    use url::Url;
 
     /// An engine that resolves only what is embedded, never the network.
     fn offline_engine() -> JsonLdEngine {
         JsonLdEngine::builder().allow_remote(false).build().expect("engine builds")
+    }
+
+    /// A context URL as the [`IriRefBuf`] a `Link` header carries.
+    fn iri_ref(url: &str) -> IriRefBuf {
+        IriRefBuf::new(url.to_string()).expect("a valid IRI reference")
     }
 
     /// A spec carrying one inline body context.
@@ -511,11 +524,12 @@ mod tests {
     }
 
     /// A temporary context file and the URL it is preloaded under.
-    fn preloaded_context(label: &str, payload: &str) -> (PathBuf, String) {
+    fn preloaded_context(label: &str, payload: &str) -> (PathBuf, Url) {
         let unique = SystemTime::now().duration_since(UNIX_EPOCH).expect("a clock after the epoch").as_nanos();
         let path = std::env::temp_dir().join(format!("andromeda-jsonld-{label}-{unique}.jsonld"));
         fs::write(&path, payload).expect("the temporary directory is writable");
-        (path, format!("https://example.com/{label}-{unique}.jsonld"))
+        let url = Url::parse(&format!("https://example.com/{label}-{unique}.jsonld")).expect("valid context URL");
+        (path, url)
     }
 
     /// Object member order carries no meaning in JSON-LD, so comparisons sort
@@ -546,10 +560,7 @@ mod tests {
         assert!(handle.fast_eligible(), "a custom term is not a redefinition");
 
         let document = json!({ "id": "urn:ngsi-ld:Device:gen1", "type": "X", "mySpeed": { "type": "Property", "value": 42 } });
-        let fast = engine
-            .expand_with_handle(document.clone(), &handle) // clone: expanded again below
-            .await
-            .expect("the fastpath expands");
+        let fast = engine.try_fast_expand(&document, &handle).expect("the fastpath expands");
         let slow = engine.expand(document, &spec).await.expect("the processor expands");
 
         assert!(
@@ -563,22 +574,19 @@ mod tests {
     async fn a_custom_term_in_a_context_named_by_url_reaches_the_fastpath_output() {
         let (path, url) = preloaded_context("user-context", r#"{"@context":{"mySpeed":"http://ex.com/speed"}}"#);
         let mut preloads = HashMap::new();
-        preloads.insert(url.clone(), path.to_string_lossy().to_string()); // clone: the URL also builds the spec
+        preloads.insert(url.clone(), path.clone()); // clone: the URL also builds the spec
         let engine = JsonLdEngine::builder()
             .allow_remote(false)
             .preload_contexts(preloads)
             .build()
             .expect("engine builds");
 
-        let spec = ContextSpec::from_links(vec![url]);
+        let spec = ContextSpec::from_links(vec![iri_ref(url.as_str())]);
         let handle = engine.batch_context_handle(&spec).await;
         assert!(handle.fast_eligible(), "a resolvable context of custom terms stays eligible");
 
         let document = json!({ "id": "urn:ngsi-ld:Device:gen2", "type": "X", "mySpeed": { "type": "Property", "value": 42 } });
-        let fast = engine
-            .expand_with_handle(document.clone(), &handle) // clone: expanded again below
-            .await
-            .expect("the fastpath expands");
+        let fast = engine.try_fast_expand(&document, &handle).expect("the fastpath expands");
         let slow = engine.expand(document, &spec).await.expect("the processor expands");
 
         assert_canonically_equal(&fast, &slow);
@@ -602,10 +610,7 @@ mod tests {
             "type": "X",
             "ts": { "type": "Property", "value": "2025-01-01T00:00:00Z", "timestamp": "2025-01-02T00:00:00Z" }
         });
-        let fast = engine
-            .expand_with_handle(document.clone(), &handle) // clone: expanded again below
-            .await
-            .expect("the fastpath expands");
+        let fast = engine.try_fast_expand(&document, &handle).expect("the fastpath expands");
         let slow = engine.expand(document, &spec).await.expect("the processor expands");
 
         assert_canonically_equal(&fast, &slow);
@@ -623,13 +628,14 @@ mod tests {
             "type": "X",
             "speed": { "type": "Property", "value": 42, "observedAt": "2025-01-01T00:00:00Z" }
         });
-        let fast = engine
-            .expand_with_handle(document.clone(), &handle) // clone: expanded again below
-            .await
-            .expect("the fallback expands");
-        let slow = engine.expand(document, &spec).await.expect("the processor expands");
-
-        assert_canonically_equal(&fast, &slow);
+        // The fastpath refuses (the handle is ineligible above), so production
+        // routes the entity to the slow pool -- the processor -- which must
+        // still expand it.
+        assert!(
+            engine.try_fast_expand(&document, &handle).is_none(),
+            "a redefined core term must keep the fastpath from expanding"
+        );
+        engine.expand(document, &spec).await.expect("the processor expands");
     }
 
     #[tokio::test]
@@ -670,10 +676,7 @@ mod tests {
         assert!(handle.fast_eligible());
 
         let document = json!({ "id": "urn:ngsi-ld:Device:gen8", "type": "X", "foo": { "type": "Property", "value": 1 } });
-        let fast = engine
-            .expand_with_handle(document.clone(), &handle) // clone: expanded again below
-            .await
-            .expect("the fastpath expands");
+        let fast = engine.try_fast_expand(&document, &handle).expect("the fastpath expands");
         let slow = engine.expand(document, &spec).await.expect("the processor expands");
 
         assert!(
@@ -687,13 +690,13 @@ mod tests {
     async fn a_context_url_is_parsed_once_and_reused_by_every_later_batch() {
         let (path, url) = preloaded_context("user-cache", r#"{"@context":{"foo":"http://ex.com/foo"}}"#);
         let mut preloads = HashMap::new();
-        preloads.insert(url.clone(), path.to_string_lossy().to_string()); // clone: the URL also builds the spec
+        preloads.insert(url.clone(), path.clone()); // clone: the URL also builds the spec
         let engine = JsonLdEngine::builder()
             .allow_remote(false)
             .preload_contexts(preloads)
             .build()
             .expect("engine builds");
-        let spec = ContextSpec::from_links(vec![url]);
+        let spec = ContextSpec::from_links(vec![iri_ref(url.as_str())]);
 
         let _first = engine.batch_context_handle(&spec).await;
         pretty_assertions::assert_eq!(engine.user_term_tables().len(), 1, "the first batch parses the context");
@@ -710,18 +713,18 @@ mod tests {
         // batch re-resolves it (clause 5.13.3).
         let (path, url) = preloaded_context("user-invalidate", r#"{"@context":{"foo":"http://ex.com/foo"}}"#);
         let mut preloads = HashMap::new();
-        preloads.insert(url.clone(), path.to_string_lossy().to_string()); // clone: the URL also builds the spec
+        preloads.insert(url.clone(), path.clone()); // clone: the URL also builds the spec
         let engine = JsonLdEngine::builder()
             .allow_remote(false)
             .preload_contexts(preloads)
             .build()
             .expect("engine builds");
-        let spec = ContextSpec::from_links(vec![url.clone()]); // clone: also passed to invalidate below
+        let spec = ContextSpec::from_links(vec![iri_ref(url.as_str())]); // url is also passed to invalidate below
 
         let _handle = engine.batch_context_handle(&spec).await;
         pretty_assertions::assert_eq!(engine.user_term_tables().len(), 1, "the batch parses the context");
 
-        engine.invalidate_context(&url).await;
+        engine.invalidate_context(url.as_str()).await;
         pretty_assertions::assert_eq!(engine.user_term_tables().len(), 0, "invalidation drops the parsed table");
 
         let _ = fs::remove_file(path);
@@ -738,10 +741,7 @@ mod tests {
         assert!(handle.fast_eligible(), "a user @vocab is recognised and ignored, not a refusal");
 
         let document = json!({ "id": "urn:ngsi-ld:Device:vocab1", "type": "X", "undefinedMember": { "type": "Property", "value": 1 } });
-        let fast = engine
-            .expand_with_handle(document.clone(), &handle) // clone: expanded again below
-            .await
-            .expect("the fastpath expands");
+        let fast = engine.try_fast_expand(&document, &handle).expect("the fastpath expands");
         let slow = engine.expand(document, &spec).await.expect("the processor expands");
 
         let keys: Vec<&String> = fast[0].as_object().expect("an entity object").keys().collect();
@@ -764,12 +764,13 @@ mod tests {
         assert!(!handle.fast_eligible(), "an unmodelled context keyword disables the fastpath");
 
         let document = json!({ "id": "urn:ngsi-ld:Device:lang1", "type": "X", "label": { "type": "Property", "value": "hi" } });
-        let fast = engine
-            .expand_with_handle(document.clone(), &handle) // clone: expanded again below
-            .await
-            .expect("the fallback expands");
-        let slow = engine.expand(document, &spec).await.expect("the processor expands");
-        assert_canonically_equal(&fast, &slow);
+        // The unmodelled `@language` keyword makes the fastpath refuse, so the
+        // entity takes the processor path, which must still expand it.
+        assert!(
+            engine.try_fast_expand(&document, &handle).is_none(),
+            "an unmodelled context keyword must keep the fastpath from expanding"
+        );
+        engine.expand(document, &spec).await.expect("the processor expands");
     }
 
     #[tokio::test]

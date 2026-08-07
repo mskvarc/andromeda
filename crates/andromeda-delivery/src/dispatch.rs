@@ -10,9 +10,10 @@ use crate::{
     stream::{registry::ConnectionRegistry, sse::SseNotificationEvent, ws::WsNotificationMessage},
     transport::NotificationTransport,
 };
+use andromeda_ngsi_ld_lexicon::uri::Uri;
 use async_trait::async_trait;
 use serde_json::Value;
-use std::{error::Error, sync::Arc};
+use std::{error::Error, str::FromStr, sync::Arc};
 use tracing::{debug, warn};
 
 /// Unified dispatcher routing to HTTP, MQTT, SSE or WebSocket.
@@ -83,7 +84,7 @@ impl TransportDispatcher {
     ) -> Result<TransportDispatcher, TransportError> {
         Ok(TransportDispatcher {
             http: HttpTransport::new(http_config)?,
-            mqtt_pool: Arc::new(MqttTransportPool::new(mqtt_config)),
+            mqtt_pool: Arc::new(MqttTransportPool::new(mqtt_config, Arc::new(crate::mqtt::dial::RumqttcDialer))),
             sse_registry,
             ws_registry,
         })
@@ -136,24 +137,26 @@ impl TransportDispatcher {
     /// reconnecting with `Last-Event-ID` names something meaningful; a payload
     /// without one falls back to the subscription identifier.
     fn deliver_sse(&self, request: &DeliveryRequest) -> DeliveryResult {
-        let data = String::from_utf8_lossy(&request.payload).into_owned();
-        let event_id = serde_json::from_slice::<Value>(&request.payload)
-            .ok()
-            .and_then(|payload| payload.get("id")?.as_str().map(String::from))
-            .unwrap_or_else(|| request.subscription_id.to_string()); // the fallback is owned by the event
+        let data = request.payload.to_string();
+        let event_id = request
+            .payload
+            .get("id")
+            .and_then(Value::as_str)
+            .and_then(|id| Uri::from_str(id).ok())
+            // clone: the event owns its id, and the payload's own is used when it names a valid one
+            .unwrap_or_else(|| request.subscription_id.clone());
         report_stream(
-            request.subscription_id.as_ref(),
-            self.sse_registry
-                .try_send(request.subscription_id.as_ref(), SseNotificationEvent { event_id, data }),
+            &request.subscription_id,
+            self.sse_registry.try_send(&request.subscription_id, SseNotificationEvent { event_id, data }),
         )
     }
 
     /// Push a notification to whichever WebSocket clients are streaming it.
     fn deliver_ws(&self, request: &DeliveryRequest) -> DeliveryResult {
-        let data = String::from_utf8_lossy(&request.payload).into_owned();
+        let data = request.payload.to_string();
         report_stream(
-            request.subscription_id.as_ref(),
-            self.ws_registry.try_send(request.subscription_id.as_ref(), WsNotificationMessage { data }),
+            &request.subscription_id,
+            self.ws_registry.try_send(&request.subscription_id, WsNotificationMessage { data }),
         )
     }
 
@@ -181,14 +184,14 @@ impl TransportDispatcher {
 }
 
 /// Log and translate the outcome of a push to a streaming client.
-fn report_stream<E: Error>(subscription_id: &str, outcome: Result<(), E>) -> DeliveryResult {
+fn report_stream<E: Error>(subscription_id: &Uri, outcome: Result<(), E>) -> DeliveryResult {
     match outcome {
         Ok(()) => {
-            debug!(subscription_id, "streaming notification delivered");
+            debug!(subscription_id = %subscription_id, "streaming notification delivered");
             DeliveryResult::Delivered
         }
         Err(error) => {
-            debug!(subscription_id, error = %error, "streaming notification delivery failed");
+            debug!(subscription_id = %subscription_id, error = %error, "streaming notification delivery failed");
             // A stream push has no outbox to retry through — the client must
             // reconnect — so a failed push is terminal, not retryable.
             DeliveryResult::TerminalFailure
@@ -217,7 +220,11 @@ impl NotificationTransport for TransportHandle<'_> {
 #[cfg(test)]
 mod tests {
     use crate::{dispatch::classify, error::TransportError, outcome::DeliveryOutcome};
-    use std::time::Duration;
+    use std::{
+        net::{IpAddr, Ipv4Addr},
+        time::Duration,
+    };
+    use url::Url;
 
     #[test]
     fn a_success_is_delivered_and_not_retried() {
@@ -250,16 +257,17 @@ mod tests {
 
     #[test]
     fn a_timeout_is_retryable_but_a_blocked_endpoint_and_an_oversized_payload_are_terminal() {
+        let endpoint = Url::parse("https://receiver.example.com/notify").expect("a valid endpoint URI");
         // An MQTT ack timeout and a slow endpoint both surface as Timeout.
         let timeout = classify(Err(TransportError::Timeout {
-            endpoint: "e".to_string(),
+            endpoint: endpoint.clone(),
             duration: Duration::from_secs(1),
         }));
         assert!(timeout.should_retry());
 
         let blocked = classify(Err(TransportError::PrivateIpBlocked {
-            endpoint: "e".to_string(),
-            ip: "127.0.0.1".to_string(),
+            endpoint,
+            ip: IpAddr::V4(Ipv4Addr::LOCALHOST),
         }));
         assert!(!blocked.should_retry());
 

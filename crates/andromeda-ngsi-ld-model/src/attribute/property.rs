@@ -1,8 +1,8 @@
 //! The Property attribute family (ETSI GS CIM 009 clause 5.2.5).
 
 use crate::attribute::{common_fields::CommonAttributeFields, value::NgsiLdValue};
+use andromeda_ngsi_ld_lexicon::reference::NgsiLdReference;
 use cefact_units::UnitCode;
-use compact_str::CompactString;
 use derive_more::{Deref, From, Into};
 use jsonld::Expandable;
 use serde::{Deserialize, Serialize};
@@ -41,7 +41,7 @@ pub struct Property {
     pub unit_code: Option<UnitCodeRef>,
     /// Optional JSON-LD datatype for `value`.
     #[jsonld(property = "ngsi:hasValueType", coerce = "@id")]
-    pub value_type: Option<CompactString>,
+    pub value_type: Option<NgsiLdReference>,
     /// Previous value emitted in notifications when `showChanges` is active.
     #[jsonld(property = "ngsi:hasPreviousValue")]
     pub previous_value: Option<NgsiLdValue>,
@@ -72,7 +72,7 @@ mod tests {
             unreachable!("expected Property");
         };
         assert!(matches!(property.value, NgsiLdValue::DateTime(_)));
-        pretty_assertions::assert_eq!(property.value_type.as_deref(), Some("DateTime"));
+        pretty_assertions::assert_eq!(property.value_type.as_deref().map(|value| value.as_str()), Some("DateTime"));
         assert!(property.previous_value.is_some());
         assert!(property.common.instance_id.is_some());
     }
@@ -90,7 +90,7 @@ mod tests {
         let Attribute::Property(property) = attr else {
             unreachable!("expected Property");
         };
-        pretty_assertions::assert_eq!(property.value_type.as_deref(), Some("Integer"));
+        pretty_assertions::assert_eq!(property.value_type.as_deref().map(|value| value.as_str()), Some("Integer"));
         let expanded = property.expand::<serde_json::Value>();
         let obj = expanded.as_object().expect("object");
         assert!(obj.contains_key(expanded_properties::VALUE_TYPE.as_str()));

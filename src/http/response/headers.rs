@@ -10,6 +10,7 @@ use andromeda_ngsi_ld_lexicon::ngsi_ld_urn::SnapshotId;
 use andromeda_ngsi_ld_render::context::ContextLocation;
 use axum::http::{HeaderMap, HeaderValue};
 use headers::HeaderMapExt;
+use iri_rs::IriRefBuf;
 use urn_rs::Urn;
 
 /// Options for applying common NGSI-LD headers to a response.
@@ -31,7 +32,7 @@ pub struct CommonHeadersOptions<'a> {
 /// `context_links` is what the rendering already resolved; it is advertised
 /// only when the rendering put the `@context` in the headers rather than in
 /// the body, which is what `options.context_location` reports.
-pub fn apply_common_headers(headers: &mut HeaderMap, context_links: &[String], options: CommonHeadersOptions<'_>) {
+pub fn apply_common_headers(headers: &mut HeaderMap, context_links: &[IriRefBuf], options: CommonHeadersOptions<'_>) {
     if let Some(loc) = options.location
         && let Ok(val) = HeaderValue::from_str(loc)
     {
@@ -53,6 +54,6 @@ pub fn apply_common_headers(headers: &mut HeaderMap, context_links: &[String], o
     }
 
     if options.context_location == ContextLocation::LinkHeader {
-        Link::insert_jsonld_contexts(headers, context_links);
+        Link::insert_jsonld_contexts(headers, context_links.iter().cloned());
     }
 }

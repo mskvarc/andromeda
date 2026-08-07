@@ -4,6 +4,7 @@
 //! client wrote, [`TypeExpr`] carries the IRIs they expand to.
 
 use crate::{error::QueryError, type_selection::parser};
+use andromeda_ngsi_ld_lexicon::entity_type_name::EntityTypeName;
 use iri_rs::IriBuf;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -24,8 +25,10 @@ use std::{
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
 pub enum TypeExprRaw {
-    /// A single compact type name.
-    Type(String),
+    /// The clause-4.17 wildcard, selecting every entity type.
+    Wildcard,
+    /// A single compact type name, validated against the clause 4.6.2 grammar.
+    Type(EntityTypeName),
     /// All children must match (semicolon-separated).
     And(Vec<TypeExprRaw>),
     /// Any child may match (comma/pipe-separated).
@@ -40,7 +43,8 @@ impl TypeExprRaw {
     /// also matched an entity typed `MyBuilding`.
     pub fn matches<S: AsRef<str>>(&self, types: &[S]) -> bool {
         match self {
-            TypeExprRaw::Type(name) => types.iter().any(|candidate| candidate.as_ref() == name),
+            TypeExprRaw::Wildcard => true,
+            TypeExprRaw::Type(name) => types.iter().any(|candidate| candidate.as_ref() == name.as_str()),
             TypeExprRaw::And(children) => children.iter().all(|child| child.matches(types)),
             TypeExprRaw::Or(children) => children.iter().any(|child| child.matches(types)),
         }
@@ -53,7 +57,8 @@ impl TypeExprRaw {
     /// a boolean expression has no single key to file it under.
     pub fn as_single_type(&self) -> Option<&str> {
         match self {
-            TypeExprRaw::Type(name) => Some(name),
+            TypeExprRaw::Wildcard => None,
+            TypeExprRaw::Type(name) => Some(name.as_str()),
             TypeExprRaw::And(_) | TypeExprRaw::Or(_) => None,
         }
     }
@@ -109,7 +114,8 @@ impl fmt::Display for TypeExprRaw {
 /// is nested inside another group (clause 4.17).
 fn render(node: &TypeExprRaw, formatter: &mut fmt::Formatter<'_>, nesting: Nesting) -> fmt::Result {
     match node {
-        TypeExprRaw::Type(name) => formatter.write_str(name),
+        TypeExprRaw::Wildcard => formatter.write_char('*'),
+        TypeExprRaw::Type(name) => formatter.write_str(name.as_str()),
         TypeExprRaw::And(children) => {
             formatter.write_char('(')?;
             write_separated(formatter, children, ';')?;
@@ -155,6 +161,8 @@ impl From<TypeExprRaw> for String {
 /// grammar and expanding compact type names to full IRIs.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TypeExpr {
+    /// The clause-4.17 wildcard, selecting every expanded entity type.
+    Wildcard,
     /// Matches entities whose types include this specific IRI.
     Type(IriBuf),
     /// Matches entities whose types satisfy all children (semicolon-separated).
@@ -174,6 +182,7 @@ impl TypeExpr {
     /// them against.
     pub fn matches<S: AsRef<str>>(&self, type_iris: &[S]) -> bool {
         match self {
+            TypeExpr::Wildcard => true,
             TypeExpr::Type(iri) => type_iris.iter().any(|candidate| candidate.as_ref() == iri.as_str()),
             TypeExpr::And(children) => children.iter().all(|child| child.matches(type_iris)),
             TypeExpr::Or(children) => children.iter().any(|child| child.matches(type_iris)),

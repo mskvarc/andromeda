@@ -2,10 +2,8 @@
 //!
 //! Every entity of a batch normally makes the engine rebuild the same
 //! resolved `@context` and hand the same contexts to the processor again.
-//! [`BatchContextHandle`] does that work once. It carries the resolved value,
-//! the [`BatchTermMap`] the fastpath reads, and whether the resolved value can
-//! contain a relative URL at all — which is what lets per-entity expansion
-//! skip the rewriting walk on the common case.
+//! [`BatchContextHandle`] does that work once. It carries the resolved value
+//! and the [`BatchTermMap`] the fastpath reads.
 //!
 //! Clause 5.5.7 lets an individual entity carry its own `@context`. An entity
 //! whose context diverges from the batch's is routed to the per-entity path
@@ -15,7 +13,6 @@ use crate::{
     context_spec::{ContextSpec, CoreContextPolicy},
     document_context::resolve_context_value,
     engine::{
-        context_url::is_full_iri,
         fast_entity::expand_document,
         processor::JsonLdEngine,
         term_map::{BatchTermMap, build_batch_term_map},
@@ -24,19 +21,6 @@ use crate::{
 };
 use serde_json::{Map, Value};
 use std::sync::Arc;
-
-/// Whether the resolved batch `@context` may contain a relative URL.
-///
-/// Computed once, at handle construction, so per-entity expansion can skip
-/// [`crate::engine::context_url::resolve_relative_context_urls`] when the
-/// context is provably absolute.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum RelativeUrlPolicy {
-    /// Every string in the context is an absolute IRI; skip the rewriter.
-    Absent,
-    /// At least one is not, or is not known to be; run the rewriter.
-    MaybePresent,
-}
 
 /// A batch's `@context`, resolved.
 #[derive(Clone, Debug)]
@@ -47,8 +31,6 @@ pub struct BatchContextHandle {
     resolved_context: Option<Arc<Value>>,
     /// The term table the fastpath resolves against.
     term_map: Arc<BatchTermMap>,
-    /// Whether relative URLs must be rewritten before expansion.
-    relative_url_policy: RelativeUrlPolicy,
 }
 
 impl BatchContextHandle {
@@ -71,27 +53,11 @@ impl BatchContextHandle {
         &self.term_map
     }
 
-    /// The relative-URL verdict, for tests that assert it.
-    #[cfg(test)]
-    pub(crate) const fn relative_url_policy(&self) -> RelativeUrlPolicy {
-        self.relative_url_policy
-    }
-
     /// The shared resolved context, for tests that assert it is shared.
     #[cfg(test)]
     pub(crate) const fn resolved_context(&self) -> Option<&Arc<Value>> {
         self.resolved_context.as_ref()
     }
-}
-
-/// Whether attaching the batch handle to a document is enough to expand it.
-enum HandleFit {
-    /// The document had no `@context`, or exactly the handle's; the resolved
-    /// context is now on it.
-    Applied,
-    /// The document carries a different `@context` and needs the per-entity
-    /// path.
-    Divergent,
 }
 
 impl JsonLdEngine {
@@ -103,38 +69,12 @@ impl JsonLdEngine {
     /// batch naming the same URL pays a map read.
     pub async fn batch_context_handle(&self, context: &ContextSpec) -> BatchContextHandle {
         let resolved_context = resolve_context_value(None, context);
-        let relative_url_policy = match resolved_context.as_ref() {
-            Some(resolved) => relative_url_policy_of(resolved),
-            None => RelativeUrlPolicy::Absent,
-        };
-        let term_map = build_batch_term_map(context, self.loader(), self.user_term_tables()).await;
+        let term_map = build_batch_term_map(context, self.loader(), self.user_term_tables(), self.default_core_url()).await;
 
         BatchContextHandle {
             spec: context.clone(), // clone: the handle outlives the caller's borrow
             resolved_context: resolved_context.map(Arc::new),
             term_map: Arc::new(term_map),
-            relative_url_policy,
-        }
-    }
-
-    /// Expand one entity of a batch against a shared handle.
-    ///
-    /// Tries the fastpath first, then attaching the resolved context, then
-    /// the full per-entity path — so clause 5.5.7's per-entity context
-    /// override is preserved exactly.
-    ///
-    /// # Errors
-    ///
-    /// Returns whatever the expansion the document ends up taking returns.
-    pub async fn expand_with_handle(&self, mut document: Value, handle: &BatchContextHandle) -> Result<Value, JsonLdError> {
-        if handle.term_map.is_eligible()
-            && let Some(expanded) = expand_document(&document, &handle.term_map)
-        {
-            return Ok(expanded);
-        }
-        match apply_handle(&mut document, handle) {
-            HandleFit::Applied => self.expand_prepared(document, handle.spec.core_policy(), handle.relative_url_policy).await,
-            HandleFit::Divergent => self.expand(document, &handle.spec).await,
         }
     }
 
@@ -154,7 +94,7 @@ impl JsonLdEngine {
         let count = documents.len();
 
         let bulk = Value::Array(documents.clone()); // clone: the per-entity retry needs the originals
-        match self.expand_prepared(bulk, core_policy, RelativeUrlPolicy::MaybePresent).await {
+        match self.expand_prepared(bulk, core_policy).await {
             // Each node object is re-wrapped as a one-element array so a
             // caller cannot tell a bulk expansion from a single one.
             Ok(Value::Array(items)) if items.len() == count => items.into_iter().map(|item| Ok(Value::Array(vec![item]))).collect(),
@@ -173,7 +113,7 @@ impl JsonLdEngine {
     async fn expand_each(&self, documents: Vec<Value>, core_policy: CoreContextPolicy) -> Vec<Result<Value, JsonLdError>> {
         let mut results = Vec::with_capacity(documents.len());
         for document in documents {
-            results.push(self.expand_prepared(document, core_policy, RelativeUrlPolicy::MaybePresent).await);
+            results.push(self.expand_prepared(document, core_policy).await);
         }
         results
     }
@@ -214,74 +154,22 @@ fn context_agrees(object: &Map<String, Value>, handle: &BatchContextHandle) -> b
     }
 }
 
-/// Attach the handle's resolved context to a document, unless the document
-/// declares a different one.
-fn apply_handle(document: &mut Value, handle: &BatchContextHandle) -> HandleFit {
-    match document {
-        Value::Object(object) => apply_handle_to_object(object, handle),
-        Value::Array(items) => {
-            for item in items {
-                if let Value::Object(object) = item
-                    && matches!(apply_handle_to_object(object, handle), HandleFit::Divergent)
-                {
-                    return HandleFit::Divergent;
-                }
-            }
-            HandleFit::Applied
-        }
-        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => HandleFit::Divergent,
-    }
-}
-
-/// [`apply_handle`] for one object.
-fn apply_handle_to_object(object: &mut Map<String, Value>, handle: &BatchContextHandle) -> HandleFit {
-    match object.get("@context") {
-        None => {
-            if let Some(resolved) = handle.resolved_context.as_ref() {
-                // The one deep copy per entity that has no context of its
-                // own; every other path shares the Arc.
-                object.insert("@context".to_string(), (**resolved).clone());
-            }
-            HandleFit::Applied
-        }
-        Some(existing) if Some(existing) == handle.resolved_context.as_deref() => HandleFit::Applied,
-        Some(_divergent) => HandleFit::Divergent,
-    }
-}
-
-/// Whether a resolved `@context` contains any non-absolute string.
-fn relative_url_policy_of(context: &Value) -> RelativeUrlPolicy {
-    if has_relative_url(context) {
-        RelativeUrlPolicy::MaybePresent
-    } else {
-        RelativeUrlPolicy::Absent
-    }
-}
-
-/// Whether any string anywhere in a context value is not an absolute IRI.
-///
-/// A context value names its URLs in one of the schemes [`is_full_iri`]
-/// recognises (`http`, `https`, `urn`); a string in none of them is a relative
-/// reference that needs a base to resolve.
-fn has_relative_url(value: &Value) -> bool {
-    match value {
-        Value::String(text) => !is_full_iri(text),
-        Value::Array(items) => items.iter().any(has_relative_url),
-        Value::Object(map) => map.values().any(has_relative_url),
-        Value::Null | Value::Bool(_) | Value::Number(_) => false,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use crate::{
         context_spec::{ContextSpec, CoreContextPolicy},
         core_context::ANDROMEDA_CORE_CONTEXT_URL,
-        engine::{batch_context::RelativeUrlPolicy, processor::JsonLdEngine, term_map::BatchTermMap},
+        engine::{processor::JsonLdEngine, term_map::BatchTermMap},
     };
     use andromeda_ngsi_ld_vocabulary::NGSI_LD_CORE_CONTEXT_URL;
+    use iri_rs::IriRefBuf;
     use serde_json::{Value, json};
     use std::sync::Arc;
+
+    /// A context URL as the [`IriRefBuf`] a `Link` header carries.
+    fn iri_ref(url: &str) -> IriRefBuf {
+        IriRefBuf::new(url.to_string()).expect("a valid IRI reference")
+    }
 
     /// An engine that resolves only what is embedded, never the network.
     fn offline_engine() -> JsonLdEngine {
@@ -304,7 +192,7 @@ mod tests {
         for spec in [
             ContextSpec::none(),
             ContextSpec::core_only(),
-            ContextSpec::from_links(vec![NGSI_LD_CORE_CONTEXT_URL.to_string(), ANDROMEDA_CORE_CONTEXT_URL.to_string()]),
+            ContextSpec::from_links(vec![iri_ref(NGSI_LD_CORE_CONTEXT_URL), iri_ref(ANDROMEDA_CORE_CONTEXT_URL)]),
         ] {
             assert!(
                 engine.batch_context_handle(&spec).await.fast_eligible(),
@@ -333,7 +221,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_context_url_that_does_not_resolve_disables_the_fastpath() {
-        let spec = ContextSpec::from_links(vec!["https://example.com/custom.jsonld".to_string()]);
+        let spec = ContextSpec::from_links(vec![iri_ref("https://example.com/custom.jsonld")]);
 
         let handle = offline_engine().batch_context_handle(&spec).await;
 
@@ -347,22 +235,6 @@ mod tests {
         let handle = offline_engine().batch_context_handle(&spec).await;
 
         assert!(!handle.fast_eligible(), "the term map is seeded from the core context this spec omits");
-    }
-
-    #[tokio::test]
-    async fn a_canonical_core_only_context_needs_no_relative_url_rewriting() {
-        let handle = offline_engine().batch_context_handle(&ContextSpec::core_only()).await;
-
-        pretty_assertions::assert_eq!(handle.relative_url_policy(), RelativeUrlPolicy::Absent);
-    }
-
-    #[tokio::test]
-    async fn a_context_naming_a_non_absolute_url_is_rewritten_per_entity() {
-        let spec = ContextSpec::none().with_body_context(Some(json!(["foo"])));
-
-        let handle = offline_engine().batch_context_handle(&spec).await;
-
-        pretty_assertions::assert_eq!(handle.relative_url_policy(), RelativeUrlPolicy::MaybePresent);
     }
 
     #[tokio::test]

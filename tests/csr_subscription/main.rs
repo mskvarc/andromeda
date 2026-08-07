@@ -26,7 +26,7 @@ fn unique_subscription_id(scenario: &str) -> String {
 
 pub async fn clean_database() {
     let pool = PgPool::connect(DATABASE_URL).await.expect("failed to connect to database for cleanup");
-    sqlx::query(TRUNCATE_ALL).execute(&pool).await.expect("failed to truncate tables");
+    sqlx::query(&TRUNCATE_ALL).execute(&pool).await.expect("failed to truncate tables");
     pool.close().await;
 }
 
@@ -251,4 +251,23 @@ pub async fn raw_get(client: &Client, path_and_query: &str) -> (StatusCode, Valu
 pub fn assert_problem_detail_type(body: &Value, expected_type: &str) {
     pretty_assertions::assert_eq!(body["type"], expected_type, "unexpected problem detail type: {body}");
     assert!(body["title"].is_string(), "problem details title should be present: {body}");
+}
+
+#[tokio::test]
+async fn csr_subscription_sys_attrs_does_not_leak_the_internal_jsonld_context() {
+    // R2-76 (clause 5.2.9, Table 5.2.9-2): `?options=sysAttrs` adds createdAt and
+    // modifiedAt, but must not stop scrubbing the internal `jsonldContext` the
+    // broker stores. Gating five unrelated scrubbing policies on one sysAttrs
+    // flag leaked it.
+    let client = client();
+    let id = "urn:ngsi-ld:Subscription:r2-76-sysattrs-leak";
+    let (status, _, _) = create_csource_subscription(&client, &csource_subscription_payload(id)).await;
+    assert_eq!(status, StatusCode::CREATED);
+
+    let (status, body) = retrieve_csource_subscription(&client, id, Some("sysAttrs")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(body.get("jsonldContext").is_none(), "sysAttrs must not leak the internal jsonldContext: {body}");
+    assert!(body.get("createdAt").is_some(), "sysAttrs must still add createdAt");
+
+    delete_csource_subscription(&client, id).await;
 }

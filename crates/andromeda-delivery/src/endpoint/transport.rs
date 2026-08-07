@@ -1,11 +1,16 @@
 //! Which transport a subscription's endpoint URI names.
 
-use crate::endpoint::{
-    error::EndpointParseError,
-    mqtt::{MqttEndpointConfig, MqttQoS, MqttVersion},
+use crate::{
+    endpoint::{
+        error::EndpointParseError,
+        mqtt::{MqttEndpointConfig, MqttQoS, MqttVersion},
+        topic::MqttTopic,
+    },
+    host_port::HostPort,
 };
 use andromeda_ngsi_ld_model::key_value_pair::KeyValuePair;
 use secrecy::SecretString;
+use std::str::FromStr;
 use url::Url;
 
 /// Default MQTT port for a plaintext connection.
@@ -76,13 +81,18 @@ pub fn parse_endpoint_transport(uri: &str, notifier_info: Option<&[KeyValuePair]
 /// Read the broker, topic and credentials out of an `mqtt` or `mqtts` URI.
 fn parse_mqtt_endpoint(parsed: &Url, notifier_info: Option<&[KeyValuePair]>) -> Result<MqttEndpointConfig, EndpointParseError> {
     let use_tls = parsed.scheme() == "mqtts";
-    let host = parsed.host_str().ok_or(EndpointParseError::MissingHost)?.to_string();
+    let host = parsed.host().ok_or(EndpointParseError::MissingHost)?.to_owned();
     let default_port = if use_tls { MQTTS_DEFAULT_PORT } else { MQTT_DEFAULT_PORT };
     let port = parsed.port().unwrap_or(default_port);
-    let topic = parsed.path().trim_start_matches('/').to_string();
-    if topic.is_empty() {
+    let authority = HostPort::new(host, port);
+
+    // The empty path is its own error, kept distinct from a path that is present
+    // but not a valid publish topic.
+    let topic_path = parsed.path().trim_start_matches('/');
+    if topic_path.is_empty() {
         return Err(EndpointParseError::MissingTopic);
     }
+    let topic = MqttTopic::from_str(topic_path)?;
 
     let username = if parsed.username().is_empty() {
         None
@@ -102,10 +112,17 @@ fn parse_mqtt_endpoint(parsed: &Url, notifier_info: Option<&[KeyValuePair]>) -> 
     }
     let (version, qos) = (version, qos);
 
+    // Rebuilt from the validated parts rather than cloned from `parsed`, so the
+    // stored endpoint URI never carries the userinfo the original may have
+    // embedded. The authority and topic came from a URI that already parsed, so
+    // the canonical form parses too.
+    let scheme = if use_tls { "mqtts" } else { "mqtt" };
+    let endpoint_uri = Url::parse(&format!("{scheme}://{authority}/{topic}"))?;
+
     Ok(MqttEndpointConfig {
-        host,
-        port,
+        authority,
         topic,
+        endpoint_uri,
         use_tls,
         version,
         qos,
@@ -156,9 +173,8 @@ mod tests {
     #[test]
     fn an_mqtt_uri_yields_its_broker_topic_and_defaults() {
         let config = mqtt_config("mqtt://broker.example.com:1883/test/topic", None);
-        pretty_assertions::assert_eq!(config.host, "broker.example.com");
-        pretty_assertions::assert_eq!(config.port, 1883);
-        pretty_assertions::assert_eq!(config.topic, "test/topic");
+        pretty_assertions::assert_eq!(config.authority.to_string(), "broker.example.com:1883");
+        pretty_assertions::assert_eq!(config.topic.as_str(), "test/topic");
         assert!(!config.use_tls);
         pretty_assertions::assert_eq!(config.version, MqttVersion::V5);
         pretty_assertions::assert_eq!(config.qos, MqttQoS::AtMost);
@@ -166,12 +182,12 @@ mod tests {
 
     #[test]
     fn an_mqtt_uri_without_a_port_takes_1883_and_an_mqtts_uri_takes_8883() {
-        pretty_assertions::assert_eq!(mqtt_config("mqtt://broker.example.com/topic", None).port, 1883);
+        pretty_assertions::assert_eq!(mqtt_config("mqtt://broker.example.com/topic", None).authority.port(), 1883);
 
         let secure = mqtt_config("mqtts://broker.example.com/secure/topic", None);
-        pretty_assertions::assert_eq!(secure.port, 8883);
+        pretty_assertions::assert_eq!(secure.authority.port(), 8883);
         assert!(secure.use_tls);
-        pretty_assertions::assert_eq!(secure.topic, "secure/topic");
+        pretty_assertions::assert_eq!(secure.topic.as_str(), "secure/topic");
     }
 
     #[test]
@@ -200,6 +216,18 @@ mod tests {
         assert!(matches!(
             parse_endpoint_transport("mqtt://broker:1883/", None),
             Err(EndpointParseError::MissingTopic)
+        ));
+    }
+
+    #[test]
+    fn an_mqtt_uri_whose_topic_carries_a_publish_wildcard_is_rejected() {
+        // `+` is legal in a URL path but not in an MQTT publish topic, so it
+        // reaches the topic validator and is refused there. (`#` cannot be
+        // tested through a URI: the URL parser reads it as the fragment
+        // delimiter, so the topic newtype's own tests cover it.)
+        assert!(matches!(
+            parse_endpoint_transport("mqtt://broker:1883/sensors/+/data", None),
+            Err(EndpointParseError::InvalidTopic { .. })
         ));
     }
 
@@ -253,7 +281,7 @@ mod tests {
         let both = mqtt_config("mqtt://myuser:mypass@broker:1883/topic", None);
         pretty_assertions::assert_eq!(both.username.as_deref(), Some("myuser"));
         pretty_assertions::assert_eq!(both.password.as_ref().map(|secret| secret.expose_secret()), Some("mypass"));
-        pretty_assertions::assert_eq!(both.host, "broker");
+        pretty_assertions::assert_eq!(both.authority.to_string(), "broker:1883");
 
         let username_only = mqtt_config("mqtt://myuser@broker/topic", None);
         pretty_assertions::assert_eq!(username_only.username.as_deref(), Some("myuser"));

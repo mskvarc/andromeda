@@ -1,10 +1,11 @@
 //! The contexts that resolve without a network.
 //!
 //! Holds the embedded core contexts and whatever the operator preloaded from
-//! disk. Documents are normalised once, at registration, so a lookup on the
-//! expansion path is a map read and nothing else.
+//! disk. Documents are normalised once, at registration — a redundant embedded
+//! Core @context reference is dropped per [`crate::core_context_precedence`] —
+//! so a lookup on the expansion path is a map read and nothing else.
 
-use crate::loader::url_normalization::normalize_loaded_context_document;
+use crate::core_context_precedence::without_embedded_core_context;
 use dashmap::DashMap;
 use std::sync::Arc;
 
@@ -23,12 +24,14 @@ impl ContextRegistry {
 
     /// Register a context document under a URL.
     ///
-    /// Normalisation happens here rather than per lookup, so a registered
-    /// document is already free of the embedded core-context references the
-    /// processor would otherwise resolve a second time.
+    /// A redundant embedded Core @context reference is dropped at registration
+    /// (see [`without_embedded_core_context`]), so the broker's authoritative
+    /// Core — appended last per clause 5.5.7 — stays the single occurrence and a
+    /// registered user context that redefines a core term resolves to the Core's
+    /// definition rather than failing.
     pub fn register(&self, url: impl Into<String>, value: jsonld_syntax::Value) {
         let url = url.into();
-        let normalized = normalize_loaded_context_document(&url, value);
+        let normalized = without_embedded_core_context(&url, value);
         self.contexts.insert(url, Arc::new(normalized));
     }
 
@@ -44,7 +47,12 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn a_registered_user_context_loses_its_core_context_import_at_registration_time() {
+    fn a_registered_user_context_drops_its_redundant_core_import() {
+        // Clause 5.5.7: the broker appends the authoritative Core last, giving
+        // it absolute precedence regardless of position. A registered user
+        // context's own embedded Core reference is therefore redundant and is
+        // dropped, so the Core stays the single occurrence; the user context's
+        // own new terms are kept.
         let registry = ContextRegistry::new();
         registry.register(
             "https://example.com/user.jsonld",

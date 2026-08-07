@@ -10,21 +10,22 @@ use crate::service::{
 };
 use andromeda_delivery::request::notification_media_type;
 use andromeda_jsonld::{
-    context_spec::ContextSpec,
+    context_spec::{ContextSpec, CoreContextPolicy},
     engine::{
         options::{CompactOptions, ContextStripping},
         processor::JsonLdEngine,
     },
 };
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, rfc3339::whole_seconds};
 use andromeda_ngsi_ld_model::{entity::Entity, notification::NotificationTrigger};
-use andromeda_ngsi_ld_render::{simplify::simplify_entity, snapshot::SnapshotRenderer};
+use andromeda_ngsi_ld_render::{simplify::simplify_entity, snapshot::SnapshotRenderer, uri_decoding::decode_percent_encoded_uris};
 use andromeda_ngsi_ld_representation::{response_format::ResponseFormat, sys_attrs::SysAttrsInclusion};
 use andromeda_ngsi_ld_vocabulary::{
     expanded::{classes as expanded_classes, properties as expanded_properties},
     prefix,
 };
-use chrono::{DateTime, SecondsFormat, Utc};
+use chrono::{DateTime, Utc};
+use iri_rs::IriRefBuf;
 use serde_json::Value;
 use std::{
     collections::HashSet,
@@ -295,7 +296,12 @@ pub async fn build_notification_data(params: NotificationBuildParams<'_>) -> Vec
             item
         };
         let mut formatted = formatted;
-        decode_percent_encoded_strings(&mut formatted);
+        // The same targeted walk the query response uses (clause 4.5.1): only a
+        // Relationship's `object` and a ListRelationship's `objectList` are
+        // percent-encoded entity ids to decode, so a Property value carrying a
+        // `%` is not corrupted, and a notification decodes exactly as a GET of
+        // the same entity does.
+        decode_percent_encoded_uris(&mut formatted);
         result.push(formatted);
     }
 
@@ -463,19 +469,21 @@ pub fn context_for_subscription(sub: &CompiledSubscription) -> ContextSpec {
 /// Build a ContextSpec from an optional jsonldContext string.
 /// Shared by both notification_worker and interval_worker.
 pub fn context_for_subscription_raw(jsonld_context: Option<&str>) -> ContextSpec {
-    if let Some(url) = jsonld_context {
-        let trimmed = url.trim();
-        if ((trimmed.starts_with('{') && trimmed.ends_with('}')) || (trimmed.starts_with('[') && trimmed.ends_with(']')))
-            && let Ok(value) = serde_json::from_str::<Value>(trimmed)
-        {
-            return ContextSpec::none()
-                .with_body_context(Some(value))
-                .with_core_policy(andromeda_jsonld::context_spec::CoreContextPolicy::Append);
-        }
-        ContextSpec::from_links(vec![url.to_string()]).with_core_policy(andromeda_jsonld::context_spec::CoreContextPolicy::Append)
-    } else {
-        ContextSpec::none().with_core_policy(andromeda_jsonld::context_spec::CoreContextPolicy::Append)
+    let Some(url) = jsonld_context else {
+        return ContextSpec::none().with_core_policy(CoreContextPolicy::Append);
+    };
+    let trimmed = url.trim();
+    if ((trimmed.starts_with('{') && trimmed.ends_with('}')) || (trimmed.starts_with('[') && trimmed.ends_with(']')))
+        && let Ok(value) = serde_json::from_str::<Value>(trimmed)
+    {
+        return ContextSpec::none().with_body_context(Some(value)).with_core_policy(CoreContextPolicy::Append);
     }
+    // A jsonldContext that parses as an IRI reference is a context URL; an inline
+    // object or array is a body context, handled above.
+    if let Ok(iri) = IriRefBuf::new(url.to_string()) {
+        return ContextSpec::from_links(vec![iri]).with_core_policy(CoreContextPolicy::Append);
+    }
+    ContextSpec::none().with_core_policy(CoreContextPolicy::Append)
 }
 
 pub fn normalize_compacted_entity(mut entity: Value) -> Value {
@@ -496,29 +504,6 @@ pub fn normalize_compacted_entity(mut entity: Value) -> Value {
         }
     }
     entity
-}
-
-fn decode_percent_encoded_strings(value: &mut Value) {
-    match value {
-        Value::String(s) => {
-            if s.contains('%')
-                && let Ok(decoded) = percent_encoding::percent_decode_str(s).decode_utf8()
-            {
-                *s = decoded.into_owned();
-            }
-        }
-        Value::Object(obj) => {
-            for v in obj.values_mut() {
-                decode_percent_encoded_strings(v);
-            }
-        }
-        Value::Array(arr) => {
-            for v in arr {
-                decode_percent_encoded_strings(v);
-            }
-        }
-        _ => {}
-    }
 }
 
 pub fn strip_to_structural_keys(entity: &Value, sys_attrs: SysAttrsInclusion) -> Value {
@@ -699,7 +684,7 @@ fn inject_deleted_at_on_instance(instance: &mut Value, ts: DateTime<Utc>) {
             expanded_properties::DELETED_AT.as_str().to_string(),
             serde_json::json!([{
                 "@type": expanded_classes::DATE_TIME.as_str(),
-                "@value": ts.to_rfc3339_opts(SecondsFormat::Millis, true)
+                "@value": whole_seconds(ts)
             }]),
         );
     }
@@ -767,9 +752,13 @@ async fn inject_previous_values(current: &mut Value, previous: &Value, changed_a
     let changed_set: HashSet<&str> = changed_attributes.iter().map(AttributeName::as_str).collect();
     let keys: Vec<String> = curr_obj.keys().filter(|k| !k.starts_with('@') && *k != "id" && *k != "type").cloned().collect();
 
+    let prepared_context = engine.prepare_term_context(context);
     for key in keys {
         if !changed_attributes.is_empty() {
-            let expanded_key = engine.expand_term(&key, context).await.unwrap_or_else(|_| key.clone());
+            let expanded_key = engine
+                .expand_term(&key, &prepared_context)
+                .await
+                .map_or_else(|_| key.clone(), |iri| iri.to_string());
             if !changed_set.contains(expanded_key.as_str()) && !changed_set.contains(key.as_str()) {
                 continue;
             }

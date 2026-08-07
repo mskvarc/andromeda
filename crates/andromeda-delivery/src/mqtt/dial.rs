@@ -14,7 +14,7 @@ use crate::{
         config::MqttPoolConfig,
         connection::{ConnectionState, MqttClientVariant},
         connection_key::MqttConnectionKey,
-        sys_topics::SYS_TOPICS,
+        sys_topics::SysTopic,
     },
 };
 use rumqttc::{
@@ -33,24 +33,59 @@ use rumqttc::{
     },
 };
 use secrecy::ExposeSecret;
-use std::{str, sync::Arc};
+use std::{future::Future, pin::Pin, str, sync::Arc};
+use strum::IntoEnumIterator;
 use tokio::{task::JoinHandle, time::timeout};
 use tracing::{debug, info, warn};
+use url::Url;
 use uuid::Uuid;
 
 /// Inbound queue depth for a broker connection's event loop.
 const EVENT_LOOP_CAPACITY: usize = 64;
 
-/// The broker a log line is about.
+/// The asynchronous result of opening one MQTT session.
+pub(crate) type DialFuture<'a> = Pin<Box<dyn Future<Output = Result<(MqttClientVariant, JoinHandle<()>), TransportError>> + Send + 'a>>;
+
+/// Capability for opening one MQTT transport connection.
+///
+/// The pool owns this narrow boundary so its lifecycle policy is testable
+/// without making a socket connection. Production uses [`RumqttcDialer`].
+pub trait MqttDialer: Send + Sync {
+    /// Open a broker connection for this key and state holder.
+    fn dial<'a>(
+        &'a self,
+        key: &'a MqttConnectionKey,
+        endpoint: &'a MqttEndpointConfig,
+        pool: &'a MqttPoolConfig,
+        state: &'a Arc<ConnectionState>,
+    ) -> DialFuture<'a>;
+}
+
+/// The production dialer backed by `rumqttc`.
+#[derive(Debug, Default)]
+pub struct RumqttcDialer;
+
+impl MqttDialer for RumqttcDialer {
+    fn dial<'a>(
+        &'a self,
+        key: &'a MqttConnectionKey,
+        endpoint: &'a MqttEndpointConfig,
+        pool: &'a MqttPoolConfig,
+        state: &'a Arc<ConnectionState>,
+    ) -> DialFuture<'a> {
+        Box::pin(dial(key, endpoint, pool, state))
+    }
+}
+
+/// The broker a log line or error is about.
 ///
 /// Carried into the spawned event loop, which outlives every borrow of the
-/// endpoint it came from.
+/// endpoint it came from. Holds the credential-free endpoint URI so a failure it
+/// becomes names the endpoint without leaking the broker password.
 #[derive(Debug, Clone)]
 struct BrokerLabel {
-    /// Broker hostname.
-    host: String,
-    /// Broker port.
-    port: u16,
+    /// The endpoint URI, with any credentials already stripped.
+    endpoint_uri: Url,
     /// The protocol version in use.
     version: MqttVersion,
 }
@@ -64,8 +99,7 @@ pub async fn dial(
 ) -> Result<(MqttClientVariant, JoinHandle<()>), TransportError> {
     let client_id = format!("andromeda-{}", Uuid::new_v4());
     let label = BrokerLabel {
-        host: key.host.clone(), // clone: the label outlives this borrow of the key
-        port: key.port,
+        endpoint_uri: endpoint.endpoint_uri.clone(), // clone: the label outlives this borrow of the endpoint
         version: key.version,
     };
 
@@ -78,7 +112,7 @@ pub async fn dial(
 /// The failure a connect attempt that did not complete becomes.
 fn connect_failed(label: &BrokerLabel, detail: String) -> TransportError {
     TransportError::ConnectionFailed {
-        endpoint: format!("{}:{}", label.host, label.port),
+        endpoint: label.endpoint_uri.clone(), // clone: the error owns the endpoint label it names
         detail: format!("MQTT {} connection failed: {detail}", label.version),
     }
 }
@@ -86,7 +120,7 @@ fn connect_failed(label: &BrokerLabel, detail: String) -> TransportError {
 /// The failure a connect attempt that ran out of time becomes.
 fn connect_timed_out(label: &BrokerLabel, pool: &MqttPoolConfig) -> TransportError {
     TransportError::Timeout {
-        endpoint: format!("{}:{}", label.host, label.port),
+        endpoint: label.endpoint_uri.clone(), // clone: same
         duration: pool.connect_timeout,
     }
 }
@@ -100,7 +134,7 @@ async fn dial_v5(
     state: &Arc<ConnectionState>,
     label: BrokerLabel,
 ) -> Result<(MqttClientVariant, JoinHandle<()>), TransportError> {
-    let mut options = MqttOptionsV5::new(client_id, &key.host, key.port);
+    let mut options = MqttOptionsV5::new(client_id, key.authority.host_str(), key.authority.port());
     options.set_keep_alive(pool.keepalive);
     if key.use_tls {
         options.set_transport(Transport::tls_with_default_config());
@@ -113,14 +147,14 @@ async fn dial_v5(
     let (client, mut eventloop) = AsyncClientV5::new(options, EVENT_LOOP_CAPACITY);
 
     match timeout(pool.connect_timeout, eventloop.poll()).await {
-        Ok(Ok(_connected)) => info!(version = %label.version, host = %label.host, port = label.port, "MQTT connected"),
+        Ok(Ok(_connected)) => info!(version = %label.version, endpoint = %label.endpoint_uri, "MQTT connected"),
         Ok(Err(error)) => return Err(connect_failed(&label, error.to_string())),
         Err(_elapsed) => return Err(connect_timed_out(&label, pool)),
     }
 
-    for topic in SYS_TOPICS {
-        if let Err(error) = client.subscribe(*topic, QoSV5::AtMostOnce).await {
-            debug!(topic, error = %error, "failed to subscribe to $SYS topic");
+    for sys in SysTopic::iter() {
+        if let Err(error) = client.subscribe(sys.topic(), QoSV5::AtMostOnce).await {
+            debug!(topic = sys.topic(), error = %error, "failed to subscribe to $SYS topic");
         }
     }
 
@@ -141,17 +175,16 @@ async fn dial_v5(
                         loop_state.acks().on_pubcomp(pubcomp.pkid);
                     } else if let EventV5::Incoming(PacketV5::Publish(publish)) = &event
                         && let Ok(topic) = str::from_utf8(&publish.topic)
-                        && topic.starts_with("$SYS/")
+                        && let Some(sys) = SysTopic::from_topic(topic)
                     {
-                        let payload = String::from_utf8_lossy(&publish.payload).into_owned();
-                        loop_state.sys_data.write().await.record(topic, payload);
+                        let value = String::from_utf8_lossy(&publish.payload).into_owned();
+                        loop_state.sys_data.write().await.record(sys, value);
                     }
                 }
                 Err(error) => {
                     warn!(
                         version = %label.version,
-                        host = %label.host,
-                        port = label.port,
+                        endpoint = %label.endpoint_uri,
                         error = %error,
                         "MQTT event loop error — marking unhealthy"
                     );
@@ -177,7 +210,7 @@ async fn dial_v311(
     state: &Arc<ConnectionState>,
     label: BrokerLabel,
 ) -> Result<(MqttClientVariant, JoinHandle<()>), TransportError> {
-    let mut options = MqttOptions::new(client_id, &key.host, key.port);
+    let mut options = MqttOptions::new(client_id, key.authority.host_str(), key.authority.port());
     options.set_keep_alive(pool.keepalive);
     if key.use_tls {
         options.set_transport(Transport::tls_with_default_config());
@@ -190,14 +223,14 @@ async fn dial_v311(
     let (client, mut eventloop) = AsyncClient::new(options, EVENT_LOOP_CAPACITY);
 
     match timeout(pool.connect_timeout, eventloop.poll()).await {
-        Ok(Ok(_connected)) => info!(version = %label.version, host = %label.host, port = label.port, "MQTT connected"),
+        Ok(Ok(_connected)) => info!(version = %label.version, endpoint = %label.endpoint_uri, "MQTT connected"),
         Ok(Err(error)) => return Err(connect_failed(&label, error.to_string())),
         Err(_elapsed) => return Err(connect_timed_out(&label, pool)),
     }
 
-    for topic in SYS_TOPICS {
-        if let Err(error) = client.subscribe(*topic, QoS::AtMostOnce).await {
-            debug!(topic, error = %error, "failed to subscribe to $SYS topic");
+    for sys in SysTopic::iter() {
+        if let Err(error) = client.subscribe(sys.topic(), QoS::AtMostOnce).await {
+            debug!(topic = sys.topic(), error = %error, "failed to subscribe to $SYS topic");
         }
     }
 
@@ -217,17 +250,16 @@ async fn dial_v311(
                     } else if let Event::Incoming(Packet::PubComp(pubcomp)) = &event {
                         loop_state.acks().on_pubcomp(pubcomp.pkid);
                     } else if let Event::Incoming(Packet::Publish(publish)) = &event
-                        && publish.topic.starts_with("$SYS/")
+                        && let Some(sys) = SysTopic::from_topic(&publish.topic)
                     {
-                        let payload = String::from_utf8_lossy(&publish.payload).into_owned();
-                        loop_state.sys_data.write().await.record(&publish.topic, payload);
+                        let value = String::from_utf8_lossy(&publish.payload).into_owned();
+                        loop_state.sys_data.write().await.record(sys, value);
                     }
                 }
                 Err(error) => {
                     warn!(
                         version = %label.version,
-                        host = %label.host,
-                        port = label.port,
+                        endpoint = %label.endpoint_uri,
                         error = %error,
                         "MQTT event loop error — marking unhealthy"
                     );

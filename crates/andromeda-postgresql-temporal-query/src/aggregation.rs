@@ -40,20 +40,24 @@ pub fn build_aggregation_query_sql(
     // (clause 4.5.19).
     let time_col = history_column(compiled.window.timeproperty);
 
+    let mut origin_join = String::new();
     let (group_expr, order_expr) = if let Some(period) = period {
         let period_marker = binds.bind(BindValue::String(Cow::Owned(period.as_iso8601())));
 
         // Use time_at as bucket origin when provided; otherwise use the earliest
         // data point so buckets align to the actual data range (not epoch).
         let bucket_expr = if let Some(time_at) = compiled.window.interval.reference() {
-            let origin_marker = binds.bind(BindValue::String(Cow::Owned(time_at.to_rfc3339())));
-            format!("time_bucket({period_marker}::interval, {time_col}, {origin_marker}::timestamptz)")
+            let origin_marker = binds.bind(BindValue::Timestamp(*time_at));
+            format!("time_bucket({period_marker}::interval, {time_col}, {origin_marker})")
         } else {
-            // Subquery origin: earliest value of the same axis in this entity's data set
+            // The origin is derived once per selected entity and reused for
+            // both bucket bounds, rather than evaluating the same aggregate
+            // expression once for each rendered column.
             let origin_axis = history_column_for_alias(compiled.window.timeproperty, "ah2");
-            format!(
-                "time_bucket({period_marker}::interval, {time_col}, (SELECT MIN({origin_axis}) FROM attribute_history ah2 JOIN temporal_entity_attributes tea2 ON tea2.id = ah2.tea_id WHERE tea2.entity_id = \"tea\".\"entity_id\"))"
-            )
+            origin_join = format!(
+                "\nCROSS JOIN LATERAL (SELECT MIN({origin_axis}) AS origin FROM attribute_history ah2 JOIN temporal_entity_attributes tea2 ON tea2.id = ah2.tea_id WHERE tea2.entity_id = \"tea\".\"entity_id\") AS bucket_origin"
+            );
+            format!("time_bucket({period_marker}::interval, {time_col}, bucket_origin.origin)")
         };
 
         (
@@ -133,10 +137,11 @@ pub fn build_aggregation_query_sql(
 FROM "attribute_history" AS "ah"
 JOIN "temporal_entity_attributes" AS "tea" ON "tea"."id" = "ah"."tea_id"
 JOIN "attribute_names" AS "an" ON "an"."id" = "tea"."attribute_name_id"
+{}
 WHERE {}
 GROUP BY {}
 ORDER BY {}"#,
-        group_expr, agg_select, where_clause, group_by, order_expr
+        group_expr, agg_select, origin_join, where_clause, group_by, order_expr
     );
 
     Ok(BuiltQuery {
@@ -191,6 +196,7 @@ mod tests {
         let built = build_aggregation_query_sql(&compiled, "\"tea\".\"entity_id\" = $1", BindBuilder::default()).unwrap();
         assert!(built.sql.contains("COALESCE(\"ah\".\"observed_at\", \"ah\".\"time\")"), "{}", built.sql);
         assert!(built.sql.contains("COALESCE(\"ah2\".\"observed_at\", \"ah2\".\"time\")"), "{}", built.sql);
+        pretty_assertions::assert_eq!(built.sql.matches("SELECT MIN(").count(), 1, "{}", built.sql);
     }
 
     /// Clause 4.5.19: an empty or zero period aggregates the whole range into

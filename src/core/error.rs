@@ -8,17 +8,11 @@
 //! (`instance`) that handlers attach for RFC 7807 Problem Details responses.
 
 use andromeda_jsonld::error::JsonLdError;
-use andromeda_ngsi_ld_lexicon::ngsi_ld_urn::{
-    AttributeListIdParseError,
-    EntityMapIdParseError,
-    EntityTypeListIdParseError,
-    SnapshotIdParseError,
-    SnapshotNotificationIdParseError,
-};
+use andromeda_ngsi_ld_lexicon::ngsi_ld_urn::{AttributeListIdParseError, EntityMapIdParseError, EntityTypeListIdParseError, SnapshotIdParseError};
 use andromeda_ngsi_ld_query::error::QueryError;
-use andromeda_ngsi_ld_render::error::RepresentationError;
+use andromeda_ngsi_ld_render::error::RenderError;
 use andromeda_ngsi_ld_request::error::ParameterError;
-use andromeda_postgresql_query::error::RenderError;
+use andromeda_postgresql_query::error::RenderError as StatementRenderError;
 use andromeda_tenancy::error::TenancyError;
 use axum::http::Uri;
 use confique::Error as ConfigError;
@@ -162,10 +156,6 @@ pub enum ErrorKind {
     #[error("Invalid snapshot id: {0}")]
     InvalidSnapshotId(#[source] SnapshotIdParseError),
 
-    /// A snapshot-notification identifier has invalid NGSI-LD URN format.
-    #[error("Invalid snapshot notification id: {0}")]
-    InvalidSnapshotNotificationId(#[source] SnapshotNotificationIdParseError),
-
     /// An entity-map identifier has invalid NGSI-LD URN format.
     #[error("Invalid entity map id: {0}")]
     InvalidEntityMapId(#[source] EntityMapIdParseError),
@@ -217,7 +207,7 @@ pub enum ErrorKind {
 
     /// A response representation could not be built.
     #[error("Response rendering failed")]
-    Rendering(#[from] RepresentationError),
+    Rendering(#[from] RenderError),
 
     /// An internal error that does not fit another category.
     #[error("{0}")]
@@ -397,11 +387,6 @@ impl AndromedaError {
         ErrorKind::EntityMapValidation(message.into()).into()
     }
 
-    /// Query parameter validation failed.
-    pub fn query_validation(message: impl Into<String>) -> AndromedaError {
-        ErrorKind::QueryValidation(message.into()).into()
-    }
-
     // -- Request structure ---------------------------------------------------
 
     /// The request is structurally malformed.
@@ -532,12 +517,6 @@ impl From<SnapshotIdParseError> for AndromedaError {
     }
 }
 
-impl From<SnapshotNotificationIdParseError> for AndromedaError {
-    fn from(error: SnapshotNotificationIdParseError) -> AndromedaError {
-        ErrorKind::InvalidSnapshotNotificationId(error).into()
-    }
-}
-
 impl From<EntityMapIdParseError> for AndromedaError {
     fn from(error: EntityMapIdParseError) -> AndromedaError {
         ErrorKind::InvalidEntityMapId(error).into()
@@ -580,7 +559,8 @@ impl From<ParameterError> for AndromedaError {
             | ParameterError::TimerelTimeatRequired
             | ParameterError::AggrMethodInvalid(_)
             | ParameterError::SelectorRequired(_)
-            | ParameterError::AggrMethodsRequired => ErrorKind::QueryValidation(message),
+            | ParameterError::AggrMethodsRequired
+            | ParameterError::RequestTypeInvalid(_) => ErrorKind::QueryValidation(message),
         };
         kind.into()
     }
@@ -600,6 +580,7 @@ impl From<QueryError> for AndromedaError {
             | QueryError::TypeExprUnbalanced(_)
             | QueryError::TypeExprUnexpected { .. }
             | QueryError::TypeExprEmptyName(_)
+            | QueryError::TypeExprInvalidName { .. }
             | QueryError::GeoIncomplete => ErrorKind::MalformedRequest(err.to_string()),
             QueryError::QInvalidNumber(_)
             | QueryError::QInvalidDateTime { .. }
@@ -630,15 +611,15 @@ impl From<QueryError> for AndromedaError {
     }
 }
 
-impl From<RenderError> for AndromedaError {
-    fn from(err: RenderError) -> AndromedaError {
+impl From<StatementRenderError> for AndromedaError {
+    fn from(err: StatementRenderError) -> AndromedaError {
         match err {
             // The query itself was at fault; it is classified where it is defined.
-            RenderError::Query(query) => query.into(),
+            StatementRenderError::Query(query) => query.into(),
             // Neither the client nor the request shape caused these: a geometry
             // that already parsed failed to encode, or sea-query produced a
             // value with no typed bind. They are broker faults.
-            RenderError::BindConversion(_) | RenderError::ReferenceGeometryEncoding(_) => ErrorKind::Internal(err.to_string()).into(),
+            StatementRenderError::BindConversion(_) | StatementRenderError::ReferenceGeometryEncoding(_) => ErrorKind::Internal(err.to_string()).into(),
         }
     }
 }
@@ -646,8 +627,8 @@ impl From<RenderError> for AndromedaError {
 /// A rendering failure is never client-caused: the resource was validated on
 /// the way in and the representation options are typed, so a failure here is a
 /// broker fault.
-impl From<RepresentationError> for AndromedaError {
-    fn from(error: RepresentationError) -> AndromedaError {
+impl From<RenderError> for AndromedaError {
+    fn from(error: RenderError) -> AndromedaError {
         ErrorKind::Rendering(error).into()
     }
 }

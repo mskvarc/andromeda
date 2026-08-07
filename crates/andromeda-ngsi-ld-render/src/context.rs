@@ -12,6 +12,7 @@
 //! policy and on what it has cached. The caller resolves that once and hands
 //! the answer down as a [`ResponseContext`].
 
+use iri_rs::IriRefBuf;
 use serde_json::Value;
 
 /// Where the JSON-LD `@context` appears in a response.
@@ -34,17 +35,17 @@ pub struct ResponseContext {
     /// The value to embed when the context goes in the body, if there is one.
     body_value: Option<Value>,
     /// The context URLs to advertise when it goes in the headers.
-    link_urls: Vec<String>,
+    link_urls: Vec<IriRefBuf>,
 }
 
 impl ResponseContext {
     /// Build a response context from its two resolved spellings.
-    pub const fn new(body_value: Option<Value>, link_urls: Vec<String>) -> ResponseContext {
+    pub const fn new(body_value: Option<Value>, link_urls: Vec<IriRefBuf>) -> ResponseContext {
         ResponseContext { body_value, link_urls }
     }
 
     /// The context URLs a `Link` header should advertise.
-    pub fn link_urls(&self) -> &[String] {
+    pub fn link_urls(&self) -> &[IriRefBuf] {
         &self.link_urls
     }
 
@@ -64,7 +65,13 @@ impl ResponseContext {
 #[cfg(test)]
 mod tests {
     use crate::context::ResponseContext;
+    use iri_rs::IriRefBuf;
     use serde_json::json;
+
+    /// A context URL as the [`IriRefBuf`] a `Link` header carries.
+    fn iri_ref(url: &str) -> IriRefBuf {
+        IriRefBuf::new(url.to_string()).expect("a valid IRI reference")
+    }
 
     #[test]
     fn a_single_context_is_embedded_as_a_string_not_a_one_element_array() {
@@ -81,16 +88,16 @@ mod tests {
 
     #[test]
     fn an_absent_context_stays_absent() {
-        let mut context = ResponseContext::new(None, vec!["https://example.com/a".to_string()]);
+        let mut context = ResponseContext::new(None, vec![iri_ref("https://example.com/a")]);
         pretty_assertions::assert_eq!(context.take_body_value(), None);
-        pretty_assertions::assert_eq!(context.link_urls(), ["https://example.com/a".to_string()]);
+        pretty_assertions::assert_eq!(context.link_urls(), [iri_ref("https://example.com/a")]);
     }
 
     #[test]
     fn the_body_value_is_taken_once_and_the_link_urls_survive_it() {
-        let mut context = ResponseContext::new(Some(json!("https://example.com/a")), vec!["https://example.com/a".to_string()]);
+        let mut context = ResponseContext::new(Some(json!("https://example.com/a")), vec![iri_ref("https://example.com/a")]);
         assert!(context.take_body_value().is_some());
         pretty_assertions::assert_eq!(context.take_body_value(), None);
-        pretty_assertions::assert_eq!(context.link_urls(), ["https://example.com/a".to_string()]);
+        pretty_assertions::assert_eq!(context.link_urls(), [iri_ref("https://example.com/a")]);
     }
 }

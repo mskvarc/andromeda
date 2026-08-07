@@ -164,7 +164,7 @@ mod tests {
     fn deleted_entity() -> DeletedEntity {
         let now = Utc::now();
         DeletedEntity {
-            id: "urn:ngsi-ld:A".to_string(),
+            id: "urn:ngsi-ld:A".parse().expect("valid uri"),
             payload: json!([{"@id": "urn:ngsi-ld:A"}]),
             created_at: now,
             modified_at: now,

@@ -165,20 +165,18 @@ mod tests {
     /// The claim this whole module makes: the fastpath answers exactly what
     /// the processor answers.
     ///
-    /// Both sides are driven from the same document. When the fastpath
-    /// refuses, `expand_with_handle` falls through to the processor, so this
-    /// still asserts something — that the refusal produced the right answer.
+    /// Driven from the production fastpath entry, `try_fast_expand`. When it
+    /// produces a result that result must equal the processor's; when it refuses
+    /// (`None`) production routes the entity to the slow pool, which is the
+    /// processor itself, so there is nothing left to disagree.
     async fn assert_both_paths_agree(document: Value) {
         let engine = offline_engine();
         let handle = core_handle(&engine).await;
 
-        let fast = engine
-            .expand_with_handle(document.clone(), &handle) // clone: both paths consume a document
-            .await
-            .expect("the fastpath or its fallback expands");
-        let slow = engine.expand(document, handle.spec()).await.expect("the processor expands");
-
-        pretty_assertions::assert_eq!(fast, slow);
+        let slow = engine.expand(document.clone(), handle.spec()).await.expect("the processor expands");
+        if let Some(fast) = engine.try_fast_expand(&document, &handle) {
+            pretty_assertions::assert_eq!(fast, slow, "the fastpath disagreed with the processor");
+        }
     }
 
     /// The fastpath alone, with no fallback: `None` means it refused.
@@ -209,6 +207,18 @@ mod tests {
             "temperature": { "type": "Property", "value": 21 }
         }))
         .await;
+    }
+
+    #[tokio::test]
+    async fn property_scalar_arrays_expand_identically_on_both_paths() {
+        for value in [json!([1, 2]), json!(["one", "two"]), json!([true, false]), json!([1, "two", true, null])] {
+            assert_fastpath_expands_and_agrees(json!({
+                "id": "urn:ngsi-ld:Device:scalar-array",
+                "type": "Device",
+                "readings": { "type": "Property", "value": value }
+            }))
+            .await;
+        }
     }
 
     #[tokio::test]
@@ -404,7 +414,7 @@ mod tests {
         let mut normalized = concise.clone(); // clone: the concise form drives the fastpath below
         normalize_entity_attributes(&mut normalized);
         let slow = engine.expand(normalized, handle.spec()).await.expect("the processor expands");
-        let fast = engine.expand_with_handle(concise, &handle).await.expect("the fastpath expands");
+        let fast = engine.try_fast_expand(&concise, &handle).expect("the fastpath expands");
 
         pretty_assertions::assert_eq!(fast, slow);
     }
@@ -432,7 +442,7 @@ mod tests {
         }
 
         let slow = engine.expand(normalized, handle.spec()).await.expect("the processor expands");
-        let fast = engine.expand_with_handle(concise, &handle).await.expect("the fastpath expands");
+        let fast = engine.try_fast_expand(&concise, &handle).expect("the fastpath expands");
 
         pretty_assertions::assert_eq!(fast, slow);
     }

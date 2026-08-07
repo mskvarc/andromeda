@@ -1,5 +1,7 @@
 //! Filters held back from the local query when `splitEntities` is in effect.
 
+use andromeda_ngsi_ld_query::{filter::expression::Expr, geo::input::GeoQueryInput, scope::query::ScopeQuery};
+
 /// The `q`, `geoQ` and `scopeQ` parameters a `splitEntities` request removes
 /// from the query it runs locally, so they can be evaluated once against the
 /// merged local-plus-forwarded result instead (NGSI-LD 5.7.2.4 for entities,
@@ -13,16 +15,10 @@
 /// request without `splitEntities` needs.
 #[derive(Debug, Default)]
 pub struct DeferredSplitFilters {
-    /// Deferred `q` query expression, still in compacted form.
-    pub q: Option<String>,
-    /// Deferred `georel` spatial relationship.
-    pub georel: Option<String>,
-    /// Deferred `geometry` type.
-    pub geometry: Option<String>,
-    /// Deferred `coordinates`, as the raw parameter text.
-    pub coordinates: Option<String>,
-    /// Deferred `geoproperty` the geo-query applies to.
-    pub geoproperty: Option<String>,
+    /// Deferred `q` query expression parsed at request extraction.
+    pub q: Option<Expr>,
+    /// Deferred complete geo-query.
+    pub geo: Option<GeoQueryInput>,
     /// Deferred `scopeQ` scope query.
-    pub scope_q: Option<String>,
+    pub scope_q: Option<ScopeQuery>,
 }

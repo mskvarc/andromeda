@@ -32,6 +32,7 @@ pub mod context_registry;
 pub mod context_spec;
 pub mod context_validation;
 pub mod core_context;
+pub mod core_context_precedence;
 pub mod document_context;
 pub mod engine;
 pub mod error;
@@ -55,8 +56,6 @@ mod boundary {
     /// and answering a request are one thing again.
     #[test]
     fn this_crate_declares_only_what_its_layer_permits() {
-        /// Third-party crates this layer must never ship.
-        const FORBIDDEN: &[&str] = &["sqlx", "sea-query", "geozero", "bytes", "axum", "clap"];
         /// In-workspace crates this one may name, in any dependency table.
         /// Anything else is an upward or sideways edge.
         const ALLOWED_IN_WORKSPACE: &[&str] = &[
@@ -67,7 +66,10 @@ mod boundary {
             "andromeda-ngsi-ld-vocabulary",
         ];
 
-        andromeda_layer_guard::manifest::assert_layer(env!("CARGO_MANIFEST_DIR"), FORBIDDEN, ALLOWED_IN_WORKSPACE);
+        // The engine resolves contexts over HTTP and reads its pinned core URL
+        // from configuration, so it ships `reqwest` and `confique`.
+        let forbidden = andromeda_layer_guard::manifest::baseline_forbidden_except(&["confique", "reqwest"]);
+        andromeda_layer_guard::manifest::assert_layer(env!("CARGO_MANIFEST_DIR"), &forbidden, ALLOWED_IN_WORKSPACE);
 
         // Section 8 restricts the model→representation edge to tests: this crate
         // builds its fastpath-vs-processor equivalence tests against

@@ -38,13 +38,15 @@ mod boundary {
     /// probe lives with the pool, not with the word.
     #[test]
     fn this_crate_declares_only_what_its_layer_permits() {
-        /// Third-party crates this layer must never ship.
-        const FORBIDDEN: &[&str] = &["sqlx", "sea-query", "geozero", "bytes", "axum", "reqwest", "rumqttc", "clap"];
         /// In-workspace crates this one may name, in any dependency table.
         /// Anything else is an upward or sideways edge.
         const ALLOWED_IN_WORKSPACE: &[&str] = &["andromeda-layer-guard", "andromeda-ngsi-ld-lexicon"];
 
-        andromeda_layer_guard::manifest::assert_layer(env!("CARGO_MANIFEST_DIR"), FORBIDDEN, ALLOWED_IN_WORKSPACE);
+        andromeda_layer_guard::manifest::assert_layer(
+            env!("CARGO_MANIFEST_DIR"),
+            andromeda_layer_guard::manifest::BASELINE_FORBIDDEN,
+            ALLOWED_IN_WORKSPACE,
+        );
     }
 }
 

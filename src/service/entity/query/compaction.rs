@@ -56,7 +56,8 @@ impl EntityQueryService {
 
     /// Expand an attribute key of a compacted entity to the IRI it names.
     pub(super) async fn expanded_key(&self, key: &str, context: &ContextSpec) -> Result<IriBuf, AndromedaError> {
-        ContextualExpander::new(self.engine(), context)
+        let prepared_context = self.engine().prepare_term_context(context);
+        ContextualExpander::new(self.engine(), &prepared_context)
             .expand_term(key)
             .await
             .map_err(AndromedaError::from)

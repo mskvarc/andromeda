@@ -1,12 +1,8 @@
 //! Background worker that periodically deletes entities whose expiresAt has passed (§4.22).
 
-use crate::{
-    service::entity::store::EntityStore,
-};
-use crate::event::change_event::ChangeEvent;
+use crate::{event::change_event::ChangeEvent, service::entity::store::EntityStore};
 use andromeda_ngsi_ld_model::notification::NotificationTrigger;
-use andromeda_ngsi_ld_lexicon::uri::Uri;
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
 use tokio::sync::broadcast;
 use tracing::{error, info};
 
@@ -46,14 +42,7 @@ impl EntityExpirationWorker {
                         info!("Expired {} entity/entities", expired_ids.len());
                         if let Some(ref tx) = self.change_tx {
                             for id in expired_ids {
-                                match id.parse::<Uri>() {
-                                    Ok(entity_uri) => {
-                                        let _ = tx.send(ChangeEvent::new(entity_uri, Vec::new(), NotificationTrigger::EntityDeleted));
-                                    }
-                                    Err(_) => {
-                                        error!(entity_id = %id, event = "entity_uri_parse_failed");
-                                    }
-                                }
+                                let _ = tx.send(ChangeEvent::new(id, Vec::new(), NotificationTrigger::EntityDeleted));
                             }
                         }
                     }

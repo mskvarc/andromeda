@@ -9,12 +9,25 @@
 
 use crate::error::ParameterError;
 use andromeda_ngsi_ld_representation::response_format::ResponseFormat;
+use serde::{Deserialize, Deserializer};
+
+/// Deserialize an entity `format` query parameter into its protocol value.
+pub(crate) fn deserialize_option_response_format<'de, D>(deserializer: D) -> Result<Option<ResponseFormat>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let raw = Option::<String>::deserialize(deserializer)?;
+    raw.map(|value| match value.as_str() {
+        "keyValues" | "simplified" => Ok(ResponseFormat::Simplified),
+        "concise" => Ok(ResponseFormat::Concise),
+        "normalized" => Ok(ResponseFormat::Normalized),
+        other => Err(serde::de::Error::custom(format!("invalid entity format: {other}"))),
+    })
+    .transpose()
+}
 
 /// The `options` tokens the broker defines for an entity representation.
 const VALID_OPTION_TOKENS: [&str; 5] = ["keyValues", "simplified", "sysAttrs", "concise", "normalized"];
-
-/// The `format` values the broker defines for an entity representation.
-const VALID_FORMAT_VALUES: [&str; 4] = ["normalized", "keyValues", "simplified", "concise"];
 
 /// Resolve the [`ResponseFormat`] from the `format` and `options` parameters.
 ///
@@ -24,17 +37,9 @@ const VALID_FORMAT_VALUES: [&str; 4] = ["normalized", "keyValues", "simplified",
 /// two spellings of the simplified representation. Option values are matched as
 /// whole comma-separated tokens, never as substrings, so `options=mykeyValues`
 /// is not mistaken for `keyValues`.
-pub fn resolve_response_format(format: Option<&str>, options: Option<&str>) -> ResponseFormat {
-    if let Some(f) = format {
-        match f {
-            "keyValues" | "simplified" => return ResponseFormat::Simplified,
-            "concise" => return ResponseFormat::Concise,
-            "normalized" => return ResponseFormat::Normalized,
-            // `&str` is unbounded, so a catch-all is the only way to close this
-            // match. An unrecognised `format` is a rejected request once
-            // validation runs; falling through keeps resolution total.
-            _ => {}
-        }
+pub fn resolve_response_format(format: Option<ResponseFormat>, options: Option<&str>) -> ResponseFormat {
+    if let Some(format) = format {
+        return format;
     }
     if let Some(opts) = options {
         for token in opts.split(',').map(str::trim) {
@@ -56,12 +61,7 @@ pub fn resolve_response_format(format: Option<&str>, options: Option<&str>) -> R
 /// 6.3.1 has a broker refuse a request it does not fully understand. `format`
 /// must name a defined representation and each comma-separated `options` token
 /// must be one the broker defines.
-pub fn validate_representation_params(format: Option<&str>, options: Option<&str>) -> Result<(), ParameterError> {
-    if let Some(fmt) = format
-        && !VALID_FORMAT_VALUES.contains(&fmt)
-    {
-        return Err(ParameterError::FormatInvalid(fmt.to_string()));
-    }
+pub fn validate_representation_params(_format: Option<ResponseFormat>, options: Option<&str>) -> Result<(), ParameterError> {
     if let Some(opts) = options {
         for opt in opts.split(',').map(str::trim) {
             if !VALID_OPTION_TOKENS.contains(&opt) {
@@ -78,9 +78,18 @@ mod tests {
 
     #[test]
     fn format_wins_over_a_conflicting_options() {
-        pretty_assertions::assert_eq!(resolve_response_format(Some("normalized"), Some("keyValues")), ResponseFormat::Normalized);
-        pretty_assertions::assert_eq!(resolve_response_format(Some("concise"), Some("keyValues")), ResponseFormat::Concise);
-        pretty_assertions::assert_eq!(resolve_response_format(Some("keyValues"), Some("concise")), ResponseFormat::Simplified);
+        pretty_assertions::assert_eq!(
+            resolve_response_format(Some(ResponseFormat::Normalized), Some("keyValues")),
+            ResponseFormat::Normalized
+        );
+        pretty_assertions::assert_eq!(
+            resolve_response_format(Some(ResponseFormat::Concise), Some("keyValues")),
+            ResponseFormat::Concise
+        );
+        pretty_assertions::assert_eq!(
+            resolve_response_format(Some(ResponseFormat::Simplified), Some("concise")),
+            ResponseFormat::Simplified
+        );
     }
 
     #[test]
@@ -107,11 +116,8 @@ mod tests {
     }
 
     #[test]
-    fn validation_rejects_an_unknown_format() {
-        assert!(matches!(
-            validate_representation_params(Some("bananas"), None),
-            Err(ParameterError::FormatInvalid(_))
-        ));
+    fn deserialization_rejects_an_unknown_format() {
+        assert!(serde_urlencoded::from_str::<crate::entity::GetEntityParams>("format=bananas").is_err());
     }
 
     #[test]
@@ -124,7 +130,7 @@ mod tests {
 
     #[test]
     fn validation_accepts_defined_values() {
-        assert!(validate_representation_params(Some("concise"), Some("sysAttrs")).is_ok());
-        assert!(validate_representation_params(Some("normalized"), Some("keyValues,sysAttrs")).is_ok());
+        assert!(validate_representation_params(Some(ResponseFormat::Concise), Some("sysAttrs")).is_ok());
+        assert!(validate_representation_params(Some(ResponseFormat::Normalized), Some("keyValues,sysAttrs")).is_ok());
     }
 }

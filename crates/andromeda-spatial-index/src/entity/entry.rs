@@ -1,7 +1,8 @@
 //! One entity's geometry, as the tree holds it.
 
+use crate::partitioned_rtree::Indexed;
 use andromeda_ngsi_ld_geometry::geometry::Geometry;
-use rstar::{AABB, PointDistance, RTreeObject};
+use rstar::{AABB, RTreeObject};
 use urn_rs::Urn;
 
 /// A single entity's geometry, indexed under one
@@ -34,16 +35,18 @@ impl SpatialEntry {
     }
 }
 
+impl Indexed for SpatialEntry {
+    type Id = Urn;
+
+    fn id(&self) -> &Urn {
+        &self.entity_id
+    }
+}
+
 impl RTreeObject for SpatialEntry {
     type Envelope = AABB<[f64; 2]>;
 
     fn envelope(&self) -> AABB<[f64; 2]> {
         self.envelope
-    }
-}
-
-impl PointDistance for SpatialEntry {
-    fn distance_2(&self, point: &[f64; 2]) -> f64 {
-        self.envelope.distance_2(point)
     }
 }

@@ -4,7 +4,7 @@ use andromeda_ngsi_ld_vocabulary::expanded::properties;
 use serde_json::Value;
 
 /// Extract the `datasetId` (`@id` value) from an expanded attribute instance.
-pub fn get_instance_dataset_id(instance: &Value) -> Option<String> {
+pub fn get_instance_dataset_id(instance: &Value) -> Option<&str> {
     instance
         .get(properties::DATASET_ID.as_str())
         .and_then(|v| v.as_array())
@@ -12,13 +12,11 @@ pub fn get_instance_dataset_id(instance: &Value) -> Option<String> {
         .and_then(|v| v.as_object())
         .and_then(|o| o.get("@id"))
         .and_then(|v| v.as_str())
-        .map(String::from)
 }
 
 /// Whether an expanded attribute instance carries a `datasetId`.
 ///
-/// Presence-only sibling of [`get_instance_dataset_id`] that allocates no
-/// `String`: default-instance selection (clause 4.5.16.1) only needs to know
+/// Presence-only sibling of [`get_instance_dataset_id`]: default-instance selection (clause 4.5.16.1) only needs to know
 /// which instance lacks a `datasetId`, not what the others' identifiers are.
 pub fn instance_has_dataset_id(instance: &Value) -> bool {
     instance
@@ -41,7 +39,7 @@ mod tests {
         let instance = json!({
             "https://uri.etsi.org/ngsi-ld/datasetId": [{"@id": "urn:ngsi-ld:Dataset:A"}]
         });
-        pretty_assertions::assert_eq!(get_instance_dataset_id(&instance).as_deref(), Some("urn:ngsi-ld:Dataset:A"));
+        pretty_assertions::assert_eq!(get_instance_dataset_id(&instance), Some("urn:ngsi-ld:Dataset:A"));
     }
 
     #[test]

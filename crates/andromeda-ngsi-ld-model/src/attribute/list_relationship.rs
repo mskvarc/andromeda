@@ -1,7 +1,7 @@
 //! The ListRelationship attribute family (ETSI GS CIM 009 clause 5.2.37).
 
 use crate::attribute::{common_fields::CommonAttributeFields, inline_entity::InlineEntity, object_list::RelationshipObjectList, one_or_many::OneOrMany};
-use compact_str::CompactString;
+use andromeda_ngsi_ld_lexicon::reference::NgsiLdReference;
 use jsonld::Expandable;
 use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
@@ -20,7 +20,7 @@ pub struct ListRelationship {
     pub object_list: RelationshipObjectList,
     /// Optional target node type(s).
     #[jsonld(property = "ngsi:hasObjectType", passthrough)]
-    pub object_type: Option<OneOrMany<CompactString>>,
+    pub object_type: Option<OneOrMany<NgsiLdReference>>,
     /// Inline linked entities returned for `join=inline`.
     #[jsonld(property = "ngsi:entityList", passthrough)]
     pub entity_list: Option<InlineEntity>,

@@ -5,7 +5,7 @@
 //! crate for type-safe construction; `@context` is injected post-serialization
 //! because it is an NGSI-LD extension absent from the GeoJSON spec.
 
-use crate::error::{RenderedShape, RepresentationError};
+use crate::error::{RenderError, RenderedShape};
 use andromeda_ngsi_ld_vocabulary::{compact::properties as compact_properties, expanded::properties as expanded_properties};
 use geojson::{Feature, FeatureCollection, feature::Id};
 use serde_json::{Map, Value};
@@ -68,13 +68,13 @@ impl<'a> GeoJsonRenderer<'a> {
     ///
     /// # Errors
     ///
-    /// Returns [`RepresentationError::Serialization`] when the assembled Feature or
+    /// Returns [`RenderError::Serialization`] when the assembled Feature or
     /// FeatureCollection cannot be turned into a JSON value.
-    pub fn render(self) -> Result<Value, RepresentationError> {
+    pub fn render(self) -> Result<Value, RenderError> {
         let mut value = match self.shape {
             GeoJsonShape::Feature => {
                 let feature = entity_to_feature(&self.payload, self.geometry_property);
-                serde_json::to_value(feature).map_err(|error| RepresentationError::serialization(RenderedShape::GeoJsonFeature, error))?
+                serde_json::to_value(feature).map_err(|error| RenderError::serialization(RenderedShape::GeoJsonFeature, error))?
             }
             GeoJsonShape::FeatureCollection => {
                 let features = match &self.payload {
@@ -86,7 +86,7 @@ impl<'a> GeoJsonRenderer<'a> {
                     features,
                     foreign_members: None,
                 };
-                serde_json::to_value(collection).map_err(|error| RepresentationError::serialization(RenderedShape::GeoJsonFeatureCollection, error))?
+                serde_json::to_value(collection).map_err(|error| RenderError::serialization(RenderedShape::GeoJsonFeatureCollection, error))?
             }
         };
         if let Some(ctx) = self.context_value

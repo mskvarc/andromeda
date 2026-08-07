@@ -2,7 +2,6 @@
 
 use crate::attribute::expansion::id_object;
 use andromeda_ngsi_ld_lexicon::{reference::NgsiLdReference, uri::Uri};
-use compact_str::CompactString;
 use jsonld::Expandable;
 use jsonld_expandable_core::{JsonValue, ToJsonValue};
 use serde::{Deserialize, Serialize};
@@ -77,18 +76,6 @@ impl Expandable for OneOrMany<NgsiLdReference> {
 }
 
 impl<V: JsonValue> ToJsonValue<V> for OneOrMany<NgsiLdReference> {
-    fn to_json_value(&self) -> V {
-        Expandable::expand::<V>(self)
-    }
-}
-
-impl Expandable for OneOrMany<CompactString> {
-    fn expand<V: JsonValue>(&self) -> V {
-        V::array(self.iter().map(|value| id_object::<V>(value.as_str())))
-    }
-}
-
-impl<V: JsonValue> ToJsonValue<V> for OneOrMany<CompactString> {
     fn to_json_value(&self) -> V {
         Expandable::expand::<V>(self)
     }

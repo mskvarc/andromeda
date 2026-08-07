@@ -8,20 +8,20 @@ use iri_rs::IriBuf;
 /// Used for every attribute selection list the API accepts: `attrs` on entity
 /// and temporal queries, the CSR property/relationship names, and the
 /// `expandValues` / `jsonKeys` extensions.
-pub async fn expand_attrs(raw: &[String], expander: &impl TermExpander) -> Result<Vec<IriBuf>, QueryError> {
+pub async fn expand_attrs<S: AsRef<str>>(raw: &[S], expander: &impl TermExpander) -> Result<Vec<IriBuf>, QueryError> {
     let mut expanded = Vec::with_capacity(raw.len());
     for term in raw {
-        expanded.push(expander.expand_term(term).await?);
+        expanded.push(expander.expand_term(term.as_ref()).await?);
     }
     Ok(expanded)
 }
 
 /// Expand a `pick` / `omit` term list, keeping the clause 6.3.15 keywords
 /// `id`, `type` and `scope` as written.
-pub async fn expand_projection_terms(raw: &[String], expander: &impl TermExpander) -> Result<Vec<ProjectionTerm>, QueryError> {
+pub async fn expand_projection_terms<S: AsRef<str>>(raw: &[S], expander: &impl TermExpander) -> Result<Vec<ProjectionTerm>, QueryError> {
     let mut expanded = Vec::with_capacity(raw.len());
     for term in raw {
-        expanded.push(match term.as_str() {
+        expanded.push(match term.as_ref() {
             // Clause 6.3.15: these name structural members of the
             // representation, not attributes, so they have no IRI to expand to.
             ProjectionTerm::ID_KEYWORD => ProjectionTerm::Id,
@@ -30,7 +30,7 @@ pub async fn expand_projection_terms(raw: &[String], expander: &impl TermExpande
             // `&str` is unbounded, so a catch-all is the only way to close this
             // match; anything that is not one of the three keywords is an
             // attribute term.
-            _ => ProjectionTerm::Attribute(expander.expand_term(term).await?),
+            _ => ProjectionTerm::Attribute(expander.expand_term(term.as_ref()).await?),
         });
     }
     Ok(expanded)

@@ -2,7 +2,7 @@
 
 use crate::{
     api::tenant::{TenantState, TenantStateOrCreate},
-    core::error::{AndromedaError, ResultInstanceExt},
+    core::error::ResultInstanceExt,
     http::{
         error::problem::NgsiLdError,
         extractor::{accept::AcceptFormatNoGeo, context::ContextUrl, jsonld::JsonLd, prefer::PreferHeader, query::ValidatedQuery},
@@ -26,6 +26,7 @@ use axum::{
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
 };
+use iri_rs::IriRefBuf;
 use serde_json::Value;
 
 /// POST /ngsi-ld/v1/subscriptions -- Create a new subscription.
@@ -70,8 +71,16 @@ pub async fn get(
 
     // Extract jsonldContext from body and use it for the response context
     let strip = JsonldContextStripRenderer::new(subscription).render();
-    let response_context = match strip.extracted.as_ref().and_then(|v| v.as_str()) {
-        Some(url) => ContextSpec::from_links(vec![url.to_string()]),
+    // The extracted jsonldContext is a context URL when it parses as an IRI
+    // reference; a body-embedded inline context (an object or array) is not one
+    // and leaves the request's own context in force.
+    let response_context = match strip
+        .extracted
+        .as_ref()
+        .and_then(|v| v.as_str())
+        .and_then(|url| IriRefBuf::new(url.to_string()).ok())
+    {
+        Some(url) => ContextSpec::from_links(vec![url]),
         None => context,
     };
     let subscription = strip.payload;
@@ -97,18 +106,11 @@ pub async fn query(
 
     let limit = params.limit.unwrap_or(100);
     let offset = params.offset.unwrap_or(0);
-    if limit <= 0 {
-        return Err(NgsiLdError::from(
-            AndromedaError::query_validation("limit must be greater than 0").with_instance(&uri),
-        ));
-    }
-    if offset < 0 {
-        return Err(NgsiLdError::from(
-            AndromedaError::query_validation("offset must be greater than or equal to 0").with_instance(&uri),
-        ));
-    }
 
-    let (subscriptions, total) = service.list_for_response(Some(limit), Some(offset), &context).await.with_instance(&uri)?;
+    let (subscriptions, total) = service
+        .list_for_response(Some(i64::from(limit)), Some(i64::from(offset)), &context)
+        .await
+        .with_instance(&uri)?;
 
     let subscriptions = subscriptions
         .into_iter()
@@ -134,8 +136,8 @@ pub async fn query(
     append_pagination_links(
         &mut response,
         &uri,
-        limit,
-        offset,
+        i64::from(limit),
+        i64::from(offset),
         total,
         PaginationStyle::OffsetPrevNext,
         PaginationMediaType::JsonLd,

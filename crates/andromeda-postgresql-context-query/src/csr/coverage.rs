@@ -11,20 +11,23 @@
 //! asks the same "does any entry declare this type" question, so the two cannot
 //! drift on what a type registration means.
 
+use andromeda_ngsi_ld_lexicon::uri::Uri;
+use iri_rs::IriBuf;
 use sea_query::{Expr as SeaExpr, SimpleExpr};
 
 /// Whether a registration's `information[].entities[]` covers `entity_type`.
 ///
 /// A registration whose `information` entry declares no `entities`, or an empty
 /// list, places no type constraint and covers every type; otherwise at least
-/// one entry must declare the type.
-pub fn entity_type_coverage(entity_type: &str) -> SimpleExpr {
+/// one entry must declare the type. The type is the expanded entity-type IRI the
+/// query was compiled against.
+pub fn entity_type_coverage(entity_type: &IriBuf) -> SimpleExpr {
     SeaExpr::cust_with_values(
         "EXISTS (SELECT 1 FROM jsonb_array_elements(\"information\") AS info \
          WHERE NOT jsonb_exists(info, 'entities') \
             OR info->'entities' = '[]'::jsonb \
             OR EXISTS (SELECT 1 FROM jsonb_array_elements(info->'entities') AS ent WHERE ent->>'type' = $1))",
-        [entity_type.to_string()],
+        [entity_type.as_str().to_string()],
     )
 }
 
@@ -37,7 +40,7 @@ pub fn entity_type_coverage(entity_type: &str) -> SimpleExpr {
 /// ids its pattern admits, not every id — the trap a bare `NOT jsonb_exists(ent,
 /// 'id')` disjunct falls into, since an entry that carries an `idPattern` but no
 /// `id` would otherwise match every entity.
-pub fn entity_id_coverage(entity_id: &str) -> SimpleExpr {
+pub fn entity_id_coverage(entity_id: &Uri) -> SimpleExpr {
     SeaExpr::cust_with_values(
         "EXISTS (SELECT 1 FROM jsonb_array_elements(\"information\") AS info \
          WHERE NOT jsonb_exists(info, 'entities') \
@@ -46,7 +49,7 @@ pub fn entity_id_coverage(entity_id: &str) -> SimpleExpr {
                    (NOT jsonb_exists(ent, 'id') AND NOT jsonb_exists(ent, 'idPattern')) \
                 OR ent->>'id' = $1 \
                 OR (jsonb_exists(ent, 'idPattern') AND $1 ~ (ent->>'idPattern'))))",
-        [entity_id.to_string()],
+        [entity_id.as_str().to_string()],
     )
 }
 
@@ -54,6 +57,14 @@ pub fn entity_id_coverage(entity_id: &str) -> SimpleExpr {
 mod tests {
     use super::*;
     use sea_query::{PostgresQueryBuilder, Query};
+
+    fn iri(value: &str) -> IriBuf {
+        IriBuf::new(value.to_string()).expect("valid IRI")
+    }
+
+    fn uri(value: &str) -> Uri {
+        value.parse().expect("valid URI")
+    }
 
     fn render(predicate: SimpleExpr) -> String {
         Query::select()
@@ -67,7 +78,7 @@ mod tests {
     fn type_coverage_matches_a_type_only_registration_and_a_declared_type() {
         // A registration with no `entities` (the first two disjuncts) covers any
         // type, and one that declares entities covers a type it names.
-        let sql = render(entity_type_coverage("https://example.com/Vehicle"));
+        let sql = render(entity_type_coverage(&iri("https://example.com/Vehicle")));
         assert!(sql.contains("NOT jsonb_exists(info, 'entities')"), "{sql}");
         assert!(sql.contains("ent->>'type' ="), "{sql}");
     }
@@ -77,7 +88,7 @@ mod tests {
         // Clause 5.10.2: a type-only entry covers any id, an `id` covers itself,
         // an `idPattern` covers only the ids it matches. The regex disjunct is
         // what stops an idPattern-only entry from covering every id.
-        let sql = render(entity_id_coverage("urn:ngsi-ld:Vehicle:1"));
+        let sql = render(entity_id_coverage(&uri("urn:ngsi-ld:Vehicle:1")));
         assert!(sql.contains("NOT jsonb_exists(ent, 'id') AND NOT jsonb_exists(ent, 'idPattern')"), "{sql}");
         assert!(sql.contains("ent->>'id' ="), "{sql}");
         assert!(sql.contains("jsonb_exists(ent, 'idPattern') AND"), "{sql}");

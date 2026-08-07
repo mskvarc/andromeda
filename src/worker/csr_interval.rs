@@ -115,7 +115,7 @@ impl CsrIntervalWorker {
                     }
                 };
 
-                let request = match (NotificationDelivery {
+                let request = (NotificationDelivery {
                     payload: &payload,
                     endpoint_uri: &sub.notification.endpoint.uri,
                     accept: sub.notification.endpoint.accept.as_ref(),
@@ -124,14 +124,7 @@ impl CsrIntervalWorker {
                     tenant: self.tenant.tenant_name(),
                     subscription_id: &sub.id,
                 })
-                .assemble()
-                {
-                    Ok(r) => r,
-                    Err(e) => {
-                        debug!("CsrIntervalWorker: failed to build delivery request for {}: {}", sub.id, e);
-                        continue;
-                    }
-                };
+                .assemble();
 
                 let success = self.transport.deliver(&endpoint_transport, &request).await.is_delivered();
 

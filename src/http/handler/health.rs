@@ -3,7 +3,7 @@
 use crate::{core::error::AndromedaError, http::error::problem::NgsiLdError};
 use andromeda_health::{
     aggregate::Health,
-    report::{HealthCheckDetails, HealthCheckResponse, HealthCheckType},
+    report::{HealthCheckResponse, HealthCheckType},
     status::HealthStatus,
 };
 use andromeda_ngsi_ld_lexicon::uri::{NGSI_LD_URN_NID, Uri};
@@ -17,17 +17,18 @@ pub async fn check(Extension(health): Extension<Health>) -> Result<impl IntoResp
         .build()
         .map_err(AndromedaError::from)?;
 
-    let (status, components) = health.check_all().await;
+    let health_check = health.check_all().await;
 
-    let status_code = match status {
+    let status_code = match health_check.status {
         HealthStatus::Up => StatusCode::OK,
+        HealthStatus::Degraded => StatusCode::OK,
         HealthStatus::Down => StatusCode::SERVICE_UNAVAILABLE,
     };
 
     let response = HealthCheckResponse {
         id: Uri::Urn(id),
         type_: HealthCheckType,
-        health_check: HealthCheckDetails { status, components },
+        health_check,
     };
 
     Ok((status_code, Json(response)))

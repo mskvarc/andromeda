@@ -70,14 +70,7 @@ impl DataExpirationWorker {
                         info!("Expired {} entity/entities", expired_ids.len());
                         if let Some(ref tx) = self.change_tx {
                             for id in expired_ids {
-                                match id.parse::<Uri>() {
-                                    Ok(entity_uri) => {
-                                        let _ = tx.send(ChangeEvent::new(entity_uri, Vec::new(), NotificationTrigger::EntityDeleted));
-                                    }
-                                    Err(_) => {
-                                        error!(entity_id = %id, event = "entity_uri_parse_failed");
-                                    }
-                                }
+                                let _ = tx.send(ChangeEvent::new(id, Vec::new(), NotificationTrigger::EntityDeleted));
                             }
                         }
                     }
@@ -116,7 +109,7 @@ impl DataExpirationWorker {
         let mut writes = Vec::with_capacity(candidates.len());
         let mut purged_ids = Vec::with_capacity(candidates.len());
         for (id, snapshot) in candidates {
-            let Some(write) = purge_write(&id, snapshot, cutoff) else {
+            let Some(write) = purge_write(id.as_str(), snapshot, cutoff) else {
                 continue;
             };
             writes.push(write);
@@ -136,14 +129,7 @@ impl DataExpirationWorker {
         info!("Removed expired attribute instances from {} entity/entities", purged.len());
         if let Some(ref tx) = self.change_tx {
             for id in purged {
-                match id.parse::<Uri>() {
-                    Ok(entity_uri) => {
-                        let _ = tx.send(ChangeEvent::new(entity_uri, Vec::new(), NotificationTrigger::EntityUpdated));
-                    }
-                    Err(_) => {
-                        error!(entity_id = %id, event = "entity_uri_parse_failed");
-                    }
-                }
+                let _ = tx.send(ChangeEvent::new(id, Vec::new(), NotificationTrigger::EntityUpdated));
             }
         }
         Ok(())
@@ -157,7 +143,7 @@ impl DataExpirationWorker {
 /// it must neither be counted nor notified — the entity is still past due and
 /// the next sweep picks it up. Notifying for it would tell every matching
 /// subscriber about a change that did not happen.
-fn landed_ids(purged_ids: Vec<String>, outcomes: &[WriteOutcome]) -> Vec<String> {
+fn landed_ids(purged_ids: Vec<Uri>, outcomes: &[WriteOutcome]) -> Vec<Uri> {
     purged_ids
         .into_iter()
         .zip(outcomes)
@@ -197,11 +183,12 @@ fn purge_write(id: &str, snapshot: EntitySnapshot, cutoff: chrono::DateTime<Utc>
 mod tests {
     use super::{landed_ids, purge_write};
     use crate::service::entity::{history_record::HistoryRecord, store::EntitySnapshot, write_outcome::WriteOutcome};
+    use andromeda_ngsi_ld_lexicon::uri::Uri;
     use chrono::{DateTime, Utc};
     use serde_json::{Value, json};
 
-    fn ids(raw: &[&str]) -> Vec<String> {
-        raw.iter().map(|id| (*id).to_string()).collect()
+    fn ids(raw: &[&str]) -> Vec<Uri> {
+        raw.iter().map(|id| id.parse().expect("valid test uri")).collect()
     }
 
     #[test]

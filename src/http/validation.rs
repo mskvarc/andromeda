@@ -8,11 +8,11 @@ use crate::{core::error::AndromedaError, http::error::problem::NgsiLdError};
 use andromeda_ngsi_ld_lexicon::{
     name::grammar::Name,
     ngsi_ld_urn::{EntityMapId, SnapshotId},
+    uri::Uri as ResourceUri,
 };
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 use andromeda_ngsi_ld_request::query::entity::EntityQueryParameters;
 use axum::http::Uri;
-use url::Url;
 use urn_rs::Urn;
 
 /// Parse and validate an entity ID as a URN.
@@ -21,6 +21,20 @@ use urn_rs::Urn;
 pub fn parse_entity_id(id: &str, uri: &Uri) -> Result<Urn, NgsiLdError> {
     id.parse::<Urn>()
         .map_err(|_| NgsiLdError::from(AndromedaError::entity_validation("Invalid entity id: not a valid URI").with_instance(uri)))
+}
+
+/// Parse an optional `datasetId` query parameter as the URI it must be.
+///
+/// Absent leaves the target instance unselected; a present value that is not a
+/// valid URI is a clause 5.6 `BadRequestData`, since a `datasetId` is a URI
+/// (clause 4.5.5).
+pub fn parse_dataset_id(raw: Option<&str>, uri: &Uri) -> Result<Option<Urn>, NgsiLdError> {
+    raw.map(|value| {
+        value
+            .parse::<Urn>()
+            .map_err(|_| NgsiLdError::from(AndromedaError::malformed_request("Invalid datasetId: not a valid URI").with_instance(uri)))
+    })
+    .transpose()
 }
 
 /// Validate that a string is a valid NGSI-LD Name (clause 4.6.2) or a valid IRI.
@@ -82,9 +96,10 @@ pub fn validate_attr_name(name: &str, uri: &Uri) -> Result<(), NgsiLdError> {
 
 /// Validate an attribute instance ID path parameter.
 ///
-/// Instance IDs must be valid URIs (parseable by `url::Url`).
+/// Instance IDs must be a clause 4.6.2 URI — a URN or a URL — which the lexicon
+/// [`ResourceUri`] admits and an empty string does not.
 pub fn validate_instance_id(id: &str, uri: &Uri) -> Result<(), NgsiLdError> {
-    if id.is_empty() || Url::parse(id).is_err() {
+    if id.parse::<ResourceUri>().is_err() {
         return Err(NgsiLdError::from(
             AndromedaError::entity_validation("Invalid instance id: not a valid URI").with_instance(uri),
         ));
@@ -94,15 +109,12 @@ pub fn validate_instance_id(id: &str, uri: &Uri) -> Result<(), NgsiLdError> {
 
 /// Validate a context source registration ID.
 ///
-/// CSR IDs may be either URNs (starting with `urn:`) or URLs. Returns
-/// `BadRequestData` if the string is neither.
+/// CSR IDs must be a clause 4.6.2 URI — a URN or a URL — which the one lexicon
+/// [`ResourceUri`] parser admits without the caller branching on the scheme
+/// itself. Returns `BadRequestData` if the string is neither.
 pub fn parse_csr_id(id: &str, uri: &Uri) -> Result<(), NgsiLdError> {
-    if id.starts_with("urn:") {
-        id.parse::<Urn>()
-            .map_err(|_| NgsiLdError::from(AndromedaError::entity_validation("Invalid registration id: not a valid URI").with_instance(uri)))?;
-    } else {
-        Url::parse(id).map_err(|_| NgsiLdError::from(AndromedaError::entity_validation("Invalid registration id: not a valid URI").with_instance(uri)))?;
-    }
+    id.parse::<ResourceUri>()
+        .map_err(|_| NgsiLdError::from(AndromedaError::entity_validation("Invalid registration id: not a valid URI").with_instance(uri)))?;
     Ok(())
 }
 
@@ -172,9 +184,9 @@ pub fn validate_entity_map_has_filter(query: &EntityQueryParameters, uri: &Uri) 
         || query.id.is_some()
         || query.id_pattern.is_some()
         || query.attrs.is_some()
-        || query.georel.is_some()
+        || query.geo.0.is_some()
         || query.scope_q.is_some()
-        || query.q.as_ref().is_some_and(|expression| !expression.is_empty());
+        || query.q.is_some();
 
     if has_filter {
         return Ok(());
@@ -207,6 +219,23 @@ mod tests {
     fn parse_entity_id_invalid() {
         let result = parse_entity_id("not-a-urn", &test_uri());
         assert!(result.is_err());
+    }
+
+    // -- validate_instance_id / parse_csr_id (clause 4.6.2 URI) --
+
+    #[test]
+    fn an_instance_id_accepts_a_urn_and_a_url_and_rejects_a_bare_name() {
+        assert!(validate_instance_id("urn:ngsi-ld:Attribute:instance:1", &test_uri()).is_ok());
+        assert!(validate_instance_id("https://example.com/instance/1", &test_uri()).is_ok());
+        assert!(validate_instance_id("", &test_uri()).is_err());
+        assert!(validate_instance_id("not a uri", &test_uri()).is_err());
+    }
+
+    #[test]
+    fn a_csr_id_admits_both_a_urn_and_a_url_through_one_parser() {
+        assert!(parse_csr_id("urn:ngsi-ld:ContextSourceRegistration:1", &test_uri()).is_ok());
+        assert!(parse_csr_id("https://example.com/csr/1", &test_uri()).is_ok());
+        assert!(parse_csr_id("not a uri", &test_uri()).is_err());
     }
 
     // -- validate_name_or_iri --

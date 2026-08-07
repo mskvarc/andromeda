@@ -8,10 +8,12 @@
 //! serves both the entity snapshot table and the temporal snapshot table; they
 //! are trusted identifiers the repository supplies, never request input.
 
+use andromeda_ngsi_ld_lexicon::{ngsi_ld_urn::SnapshotId, uri::Uri};
 use andromeda_postgresql_query::{
     bind::{BindBuilder, BindValue},
     built::BuiltQuery,
 };
+use sea_query::Iden;
 use std::borrow::Cow;
 
 /// The inputs that select one page of a snapshot's entities.
@@ -26,7 +28,7 @@ pub struct SnapshotListingParams<'a> {
     /// Restrict to entities of this NGSI-LD type, when the request names one.
     pub entity_type: Option<&'a str>,
     /// Restrict to these entity identifiers, when the request names any.
-    pub entity_ids: Option<&'a [String]>,
+    pub entity_ids: Option<&'a [Uri]>,
     /// Page size (clause 5.5.9 pagination).
     pub limit: i64,
     /// Page offset (clause 5.5.9 pagination).
@@ -54,7 +56,8 @@ pub fn build_listing_query(params: &SnapshotListingParams<'_>) -> BuiltQuery<'st
     if let Some(ids) = params.entity_ids
         && !ids.is_empty()
     {
-        let marker = binds.bind(BindValue::StringVec(Cow::Owned(ids.to_vec())));
+        let ids = ids.iter().map(Uri::to_string).collect();
+        let marker = binds.bind(BindValue::StringVec(Cow::Owned(ids)));
         predicates.push(format!("entity_id = ANY({marker})"));
     }
 
@@ -75,12 +78,16 @@ pub fn build_listing_query(params: &SnapshotListingParams<'_>) -> BuiltQuery<'st
 
 /// Build the statement that fetches one entity's representation from a snapshot.
 ///
-/// `table` and `data_column` are trusted identifiers the repository supplies.
-pub fn build_get_row_query(table: &str, data_column: &str, snapshot_id: &str, entity_id: &str) -> BuiltQuery<'static> {
+/// `table` and `data_column` are the SQL identifiers the repository supplies,
+/// named through [`Iden`] so a rename moves the reference with them; the snapshot
+/// and the entity are named by their domain identifiers.
+pub fn build_get_row_query(table: impl Iden, data_column: impl Iden, snapshot_id: &SnapshotId, entity_id: &Uri) -> BuiltQuery<'static> {
     let mut binds: BindBuilder<BindValue<'static>> = BindBuilder::default();
     let snapshot_marker = binds.bind(BindValue::String(Cow::Owned(snapshot_id.to_string())));
     let entity_marker = binds.bind(BindValue::String(Cow::Owned(entity_id.to_string())));
 
+    let table = table.to_string();
+    let data_column = data_column.to_string();
     BuiltQuery {
         sql: format!("SELECT {data_column} FROM {table} WHERE snapshot_id = {snapshot_marker} AND entity_id = {entity_marker}"),
         count_sql: None,
@@ -91,8 +98,9 @@ pub fn build_get_row_query(table: &str, data_column: &str, snapshot_id: &str, en
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sea_query::Alias;
 
-    fn params<'a>(entity_type: Option<&'a str>, entity_ids: Option<&'a [String]>) -> SnapshotListingParams<'a> {
+    fn params<'a>(entity_type: Option<&'a str>, entity_ids: Option<&'a [Uri]>) -> SnapshotListingParams<'a> {
         SnapshotListingParams {
             table: "snapshot_entities",
             data_column: "entity_data",
@@ -136,7 +144,7 @@ mod tests {
 
     #[test]
     fn an_id_filter_renders_an_array_membership_test() {
-        let ids = vec!["urn:ngsi-ld:A:1".to_string(), "urn:ngsi-ld:A:2".to_string()];
+        let ids = vec!["urn:ngsi-ld:A:1".parse().expect("valid URI"), "urn:ngsi-ld:A:2".parse().expect("valid URI")];
         let built = build_listing_query(&params(None, Some(&ids)));
         assert!(built.sql.contains("entity_id = ANY($2)"), "{}", built.sql);
         assert_eq!(built.bind_values.len(), 2);
@@ -144,7 +152,7 @@ mod tests {
 
     #[test]
     fn an_empty_id_list_adds_no_predicate() {
-        let ids: Vec<String> = Vec::new();
+        let ids: Vec<Uri> = Vec::new();
         let built = build_listing_query(&params(None, Some(&ids)));
         assert!(!built.sql.contains("ANY"), "{}", built.sql);
         assert_eq!(built.bind_values.len(), 1);
@@ -152,7 +160,9 @@ mod tests {
 
     #[test]
     fn a_single_row_fetch_keys_on_snapshot_and_entity() {
-        let built = build_get_row_query("snapshot_entities", "entity_data", "urn:ngsi-ld:Snapshot:1", "urn:ngsi-ld:A:1");
+        let snapshot_id: SnapshotId = "urn:ngsi-ld:Snapshot:1".parse().expect("valid snapshot id");
+        let entity_id: Uri = "urn:ngsi-ld:A:1".parse().expect("valid entity id");
+        let built = build_get_row_query(Alias::new("snapshot_entities"), Alias::new("entity_data"), &snapshot_id, &entity_id);
         assert_eq!(built.sql, "SELECT entity_data FROM snapshot_entities WHERE snapshot_id = $1 AND entity_id = $2");
         assert!(built.count_sql.is_none());
         assert_eq!(built.bind_values.len(), 2);

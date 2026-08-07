@@ -29,7 +29,7 @@ pub enum RenderedShape {
 
 /// A rendering that could not be built.
 #[derive(Debug, Error)]
-pub enum RepresentationError {
+pub enum RenderError {
     /// `serde_json` refused to build the value for a rendering.
     #[error("the {shape} rendering could not be serialised: {source}")]
     Serialization {
@@ -40,16 +40,16 @@ pub enum RepresentationError {
     },
 }
 
-impl RepresentationError {
+impl RenderError {
     /// A serialisation failure under the given rendering.
-    pub const fn serialization(shape: RenderedShape, source: serde_json::Error) -> RepresentationError {
-        RepresentationError::Serialization { shape, source }
+    pub const fn serialization(shape: RenderedShape, source: serde_json::Error) -> RenderError {
+        RenderError::Serialization { shape, source }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::error::{RenderedShape, RepresentationError};
+    use crate::error::{RenderError, RenderedShape};
 
     /// A `serde_json::Error`, obtained the only way one can be: by asking
     /// `serde_json` to do something it refuses.
@@ -59,7 +59,7 @@ mod tests {
 
     #[test]
     fn the_message_names_the_rendering_that_failed() {
-        let error = RepresentationError::serialization(RenderedShape::GeoJsonFeatureCollection, a_serde_error());
+        let error = RenderError::serialization(RenderedShape::GeoJsonFeatureCollection, a_serde_error());
         assert!(
             error
                 .to_string()

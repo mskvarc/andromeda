@@ -1,5 +1,16 @@
+//! The Andromeda NGSI-LD context broker binary.
+//!
+//! This crate is the apex that assembles the broker: it wires the HTTP API, the
+//! PostgreSQL persistence layer, the notification delivery transports, and the
+//! background workers around the specification crates under `crates/`, and it
+//! owns the runtime, the CLI and the configuration. It exposes no public API of
+//! its own — every module is private — so the whole crate is internal wiring.
+
+#![deny(missing_docs)]
+
 mod api;
 mod core;
+mod enforcement;
 mod event;
 mod http;
 mod repository;
@@ -9,10 +20,6 @@ mod temporal_render;
 mod version;
 mod worker;
 
-use andromeda_jsonld::{
-    context_spec::{default_core_context_url, set_default_core_context_url},
-    core_context::NGSI_LD_CORE_CONTEXT_V19_URL,
-};
 use clap::Parser;
 use core::{
     cli::{Cli, Command, ConfigCommand, OutputFormat},
@@ -43,11 +50,9 @@ async fn main() -> Result<(), AndromedaError> {
             let subscriber = fmt().compact().with_max_level(config.observability.log_level.as_tracing_level()).finish();
             tracing::subscriber::set_global_default(subscriber)?;
 
-            // Pin the deployment to the latest released core context (v1.9), the
-            // version the compile-time vocabulary table is derived from, so the
-            // fastpath term table and the deployment agree (clause 4.3.6.8).
-            set_default_core_context_url(NGSI_LD_CORE_CONTEXT_V19_URL);
-            info!("JSON-LD core context URL: {}", default_core_context_url());
+            // The deployment core-context pin (clause 4.3.6.8) now lives on each
+            // tenant's engine, set in `JsonLdConfig::build_engine`, not a process
+            // global read at startup.
             info!(
                 host = %config.server.host,
                 port = config.server.port,

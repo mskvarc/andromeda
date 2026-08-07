@@ -63,7 +63,17 @@ impl JsonLdContextService {
                     .collect();
                 ContextListResult::Detailed(metas?)
             }
-            ListedContexts::Summary(rows) => ContextListResult::Urls(rows.into_iter().map(|r| r.url.unwrap_or(r.id)).collect()),
+            ListedContexts::Summary(rows) => {
+                let urls = rows
+                    .into_iter()
+                    .map(|r| {
+                        let raw = r.url.unwrap_or(r.id);
+                        raw.parse::<Url>()
+                            .map_err(|e| AndromedaError::internal(format!("Stored context identifier is not a valid URL: {e}")))
+                    })
+                    .collect::<Result<Vec<Url>, AndromedaError>>()?;
+                ContextListResult::Urls(urls)
+            }
         };
 
         match dto {
@@ -75,7 +85,11 @@ impl JsonLdContextService {
             }
             ContextListResult::Urls(mut urls) => {
                 if include_core {
-                    urls.push(NGSI_LD_CORE_CONTEXT_URL.to_string());
+                    urls.push(
+                        NGSI_LD_CORE_CONTEXT_URL
+                            .parse()
+                            .map_err(|e| AndromedaError::internal(format!("Core context URL is invalid: {e}")))?,
+                    );
                 }
                 Ok(serde_json::to_value(urls)?)
             }

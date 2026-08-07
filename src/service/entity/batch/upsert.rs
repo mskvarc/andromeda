@@ -25,7 +25,7 @@ use crate::{
     },
 };
 use andromeda_jsonld::context_spec::ContextSpec;
-use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
 use andromeda_ngsi_ld_model::{
     entity::Entity,
     expanded::{instance_key::removed_attribute_instances, mutation::entity::merge_entity},
@@ -74,11 +74,12 @@ impl EntityService {
             ));
         }
 
-        let chunk_ids: Vec<String> = prepared.iter().map(|entity| entity.id.clone()).collect(); // clone: the guards outlive the prepared entities
-        let _id_guards = self.acquire_id_locks(&chunk_ids).await;
+        let chunk_ids: Vec<Uri> = prepared.iter().map(|entity| entity.id.clone()).collect(); // clone: the guards outlive the prepared entities
+        let lock_ids: Vec<String> = chunk_ids.iter().map(Uri::to_string).collect(); // the id-lock registry is keyed by text
+        let _id_guards = self.acquire_id_locks(&lock_ids).await;
 
         let snapshots = self.repo.get_snapshot_batch(&chunk_ids).await?;
-        let mut payloads: HashMap<String, Arc<Value>> = HashMap::with_capacity(prepared.len());
+        let mut payloads: HashMap<Uri, Arc<Value>> = HashMap::with_capacity(prepared.len());
         let mut writes = Vec::with_capacity(prepared.len());
         for entity in prepared {
             let write = match snapshots.get(&entity.id) {
@@ -103,16 +104,16 @@ impl EntityService {
             created.extend(std::mem::take(&mut outcome.created));
             errors.extend(std::mem::take(&mut outcome.errors));
 
-            let retry: Vec<(String, AndromedaError)> = std::mem::take(&mut outcome.retryable);
+            let retry: Vec<(Uri, AndromedaError)> = std::mem::take(&mut outcome.retryable);
             if retry.is_empty() {
                 break;
             }
             if attempt == WRITE_ATTEMPTS {
-                errors.extend(retry);
+                errors.extend(retry.into_iter().map(|(id, error)| (id.to_string(), error)));
                 break;
             }
 
-            let retry_ids: Vec<String> = retry.into_iter().map(|(id, _error)| id).collect();
+            let retry_ids: Vec<Uri> = retry.into_iter().map(|(id, _error)| id).collect();
             let snapshots = self.repo.get_snapshot_batch(&retry_ids).await?;
             let mut retry_writes = Vec::with_capacity(retry_ids.len());
             for id in retry_ids {
@@ -153,11 +154,12 @@ impl EntityService {
             ));
         }
 
-        let prepared_ids: Vec<String> = prepared.iter().map(|entity| entity.id.clone()).collect(); // clone: the guards outlive the prepared entities
+        let prepared_ids: Vec<Uri> = prepared.iter().map(|entity| entity.id.clone()).collect(); // clone: the guards outlive the prepared entities
+        let lock_ids: Vec<String> = prepared_ids.iter().map(Uri::to_string).collect(); // the id-lock registry is keyed by text
         // Hold the per-id locks across the read-modify-write window: concurrent
         // upsert-update calls for the same id must not race the snapshot read,
         // the merge, and the write.
-        let _id_guards = self.acquire_id_locks(&prepared_ids).await;
+        let _id_guards = self.acquire_id_locks(&lock_ids).await;
         let existing_map = self.repo.get_batch(&prepared_ids).await?;
 
         let mut writes = Vec::with_capacity(prepared.len());
@@ -174,7 +176,7 @@ impl EntityService {
             let mut merged = existing.clone(); // clone: the merge mutates its own copy of the stored payload
             let id = entity.id;
             if let Err(error) = merge_entity(&mut merged, &entity.expanded) {
-                errors.push((id, error.into()));
+                errors.push((id.to_string(), error.into()));
                 continue;
             }
 
@@ -202,7 +204,7 @@ impl EntityService {
 
 /// The write that replaces `previous` with `payload`, tombstoning whatever the
 /// replacement drops (NGSI-LD 5.6.8).
-fn replacement_write(id: String, payload: &Arc<Value>, previous: &Value, modified_at: DateTime<Utc>, changed_attributes: Vec<AttributeName>) -> ChunkWrite {
+fn replacement_write(id: Uri, payload: &Arc<Value>, previous: &Value, modified_at: DateTime<Utc>, changed_attributes: Vec<AttributeName>) -> ChunkWrite {
     // clone: `Arc` ref-count bumps; the same payload is stored and observed.
     let mut write = ChunkWrite::update(
         id,

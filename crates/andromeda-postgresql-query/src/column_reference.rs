@@ -6,19 +6,54 @@
 //! for it — references it by the same iden the query builder uses, so a renamed
 //! column moves the reference with it rather than leaving a hand-quoted string.
 
-use sea_query::Iden;
+use sea_query::{DynIden, Iden, IntoIden};
 
 /// Quote one identifier: `"name"`.
-pub(crate) fn quoted(identifier: impl Iden) -> String {
+pub(crate) fn quoted(identifier: &dyn Iden) -> String {
     let name = identifier.to_string();
     format!("\"{name}\"")
 }
 
 /// Quote a `relation.column` reference: `"relation"."column"`.
-pub(crate) fn qualified(relation: impl Iden, column: impl Iden) -> String {
+pub(crate) fn qualified(relation: &dyn Iden, column: &dyn Iden) -> String {
     let relation = relation.to_string();
     let column = column.to_string();
     format!("\"{relation}\".\"{column}\"")
+}
+
+/// A reference to one SQL column, carried as the identifiers it is built from.
+///
+/// A `q` or `scopeQ` predicate reads a column that the driving statement — not
+/// this crate — names. Rather than store the rendered `"relation"."column"`
+/// string, the reference keeps the [`Iden`]s themselves, so a renamed relation
+/// or column moves every reference to it and the quoting is decided in exactly
+/// one place, [`ColumnReference::render`].
+#[derive(Debug, Clone, PartialEq)]
+pub enum ColumnReference {
+    /// A bare column, rendered `"column"`.
+    Bare(DynIden),
+    /// A `relation.column` reference, rendered `"relation"."column"`.
+    Qualified(DynIden, DynIden),
+}
+
+impl ColumnReference {
+    /// A bare column reference, named by `column`.
+    pub fn bare(column: impl IntoIden) -> ColumnReference {
+        ColumnReference::Bare(column.into_iden())
+    }
+
+    /// A `relation.column` reference, named by `relation` and `column`.
+    pub fn qualified(relation: impl IntoIden, column: impl IntoIden) -> ColumnReference {
+        ColumnReference::Qualified(relation.into_iden(), column.into_iden())
+    }
+
+    /// Render the reference as the quoted SQL text a custom fragment interpolates.
+    pub fn render(&self) -> String {
+        match self {
+            ColumnReference::Bare(column) => quoted(&**column),
+            ColumnReference::Qualified(relation, column) => qualified(&**relation, &**column),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -28,11 +63,21 @@ mod tests {
 
     #[test]
     fn one_identifier_is_double_quoted() {
-        assert_eq!(quoted(Entities::Payload), "\"payload\"");
+        assert_eq!(quoted(&Entities::Payload), "\"payload\"");
     }
 
     #[test]
     fn a_qualified_reference_quotes_both_halves() {
-        assert_eq!(qualified(E, Entities::Id), "\"e\".\"id\"");
+        assert_eq!(qualified(&E, &Entities::Id), "\"e\".\"id\"");
+    }
+
+    #[test]
+    fn a_bare_column_reference_renders_the_single_quoted_column() {
+        assert_eq!(ColumnReference::bare(Entities::Payload).render(), "\"payload\"");
+    }
+
+    #[test]
+    fn a_qualified_column_reference_renders_both_halves() {
+        assert_eq!(ColumnReference::qualified(E, Entities::Id).render(), "\"e\".\"id\"");
     }
 }

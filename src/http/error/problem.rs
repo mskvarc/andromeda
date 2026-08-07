@@ -9,7 +9,7 @@
 
 use crate::{core::error::AndromedaError, http::error::category};
 use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
-use andromeda_ngsi_ld_render::error::RepresentationError;
+use andromeda_ngsi_ld_render::error::RenderError;
 use axum::{
     http::Uri,
     response::{IntoResponse, Response},
@@ -73,14 +73,14 @@ impl From<AndromedaError> for NgsiLdError {
     }
 }
 
-impl From<RepresentationError> for NgsiLdError {
+impl From<RenderError> for NgsiLdError {
     /// Answer a rendering failure as a problem detail.
     ///
     /// Routed through [`AndromedaError`] rather than mapped here, so a
     /// rendering failure is categorised, logged and sanitised exactly as every
     /// other internal failure is. The impl exists because `?` applies one
     /// `From`, not two.
-    fn from(error: RepresentationError) -> NgsiLdError {
+    fn from(error: RenderError) -> NgsiLdError {
         NgsiLdError::from(AndromedaError::from(error))
     }
 }

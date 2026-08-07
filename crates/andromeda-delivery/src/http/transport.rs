@@ -2,6 +2,7 @@
 
 use crate::{
     error::TransportError,
+    host_port::HostPort,
     http::{
         config::{HttpTransportConfig, PrivateIpBlocking},
         private_ip::{PrivateIpCheck, resolve_private_ip_outcome},
@@ -41,11 +42,12 @@ pub struct HttpTransport {
     client: reqwest::Client,
     /// Timeout, size limit and SSRF policy.
     config: HttpTransportConfig,
-    /// Short-TTL cache of private-IP guard outcomes keyed by `host:port`.
+    /// Short-TTL cache of private-IP guard outcomes keyed by the endpoint
+    /// [`HostPort`].
     ///
     /// Collapses repeated `lookup_host` round trips for fan-out deliveries
     /// without undermining the guard.
-    dns_cache: Cache<String, PrivateIpCheck>,
+    dns_cache: Cache<HostPort, PrivateIpCheck>,
 }
 
 impl HttpTransport {
@@ -64,19 +66,7 @@ impl HttpTransport {
             // reqwest's own.
             .dns_resolver(PrivateIpResolver::new(config.private_ip_blocking))
             .build()
-            .map_err(|error| {
-                if chain_indicates_tls(&error) {
-                    TransportError::TlsError {
-                        endpoint: "http-client-init".to_string(),
-                        detail: error.to_string(),
-                    }
-                } else {
-                    TransportError::ConnectionFailed {
-                        endpoint: "http-client-init".to_string(),
-                        detail: error.to_string(),
-                    }
-                }
-            })?;
+            .map_err(|error| TransportError::ClientInitializationFailed { detail: error.to_string() })?;
         let dns_cache = Cache::builder().max_capacity(DNS_CHECK_CAPACITY).time_to_live(DNS_CHECK_TTL).build();
         Ok(HttpTransport { client, config, dns_cache })
     }
@@ -84,22 +74,24 @@ impl HttpTransport {
     /// Refuse delivery when the endpoint host resolves into address space the
     /// broker will not reach on a client's behalf.
     ///
-    /// Results are cached for [`DNS_CHECK_TTL`] per `host:port` so a fan-out to
-    /// the same endpoint skips the DNS round trip.
+    /// Results are cached for [`DNS_CHECK_TTL`] per endpoint [`HostPort`] so a
+    /// fan-out to the same endpoint skips the DNS round trip.
     async fn check_private_ip(&self, endpoint_uri: &Url) -> Result<(), TransportError> {
-        let host = endpoint_uri.host_str().ok_or_else(|| TransportError::ConnectionFailed {
-            endpoint: endpoint_uri.to_string(),
-            detail: "URL has no host".to_string(),
-        })?;
-
+        let host = endpoint_uri
+            .host()
+            .ok_or_else(|| TransportError::ConnectionFailed {
+                endpoint: endpoint_uri.clone(), // clone: the error owns the endpoint it names
+                detail: "URL has no host".to_string(),
+            })?
+            .to_owned();
         let port = endpoint_uri.port_or_known_default().unwrap_or(DEFAULT_HTTP_PORT);
-        let addr = format!("{host}:{port}");
+        let authority = HostPort::new(host, port);
 
-        let outcome = match self.dns_cache.get(&addr).await {
+        let outcome = match self.dns_cache.get(&authority).await {
             Some(cached) => cached,
             None => {
-                let computed = resolve_private_ip_outcome(&addr).await;
-                self.dns_cache.insert(addr, computed.clone()).await; // clone: the cache takes one and the caller reads the other
+                let computed = resolve_private_ip_outcome(&authority).await;
+                self.dns_cache.insert(authority, computed.clone()).await; // clone: the cache takes one and the caller reads the other
                 computed
             }
         };
@@ -107,18 +99,18 @@ impl HttpTransport {
         match outcome {
             PrivateIpCheck::Allowed => Ok(()),
             PrivateIpCheck::Blocked { ip } => Err(TransportError::PrivateIpBlocked {
-                endpoint: endpoint_uri.to_string(),
+                endpoint: endpoint_uri.clone(), // clone: the error owns the endpoint it names
                 ip,
             }),
             PrivateIpCheck::DnsFailed { detail } => Err(TransportError::DnsResolutionFailed {
-                endpoint: endpoint_uri.to_string(),
+                endpoint: endpoint_uri.clone(), // clone: same
                 detail,
             }),
         }
     }
 
     /// Turn a `reqwest` send failure into the transport failure it was.
-    fn send_failure(&self, endpoint: String, error: &reqwest::Error) -> TransportError {
+    fn send_failure(&self, endpoint: Url, error: &reqwest::Error) -> TransportError {
         if error.is_timeout() {
             return TransportError::Timeout {
                 endpoint,
@@ -179,9 +171,15 @@ fn chain_mentions_tls_terms(error: &(dyn std::error::Error + 'static)) -> bool {
 #[async_trait]
 impl NotificationTransport for HttpTransport {
     async fn deliver(&self, req: &DeliveryRequest) -> Result<DeliveryOutcome, TransportError> {
-        if req.payload.len() > self.config.max_payload_size {
+        // The body is serialised here, once, so the size limit is checked
+        // against the bytes actually sent rather than an estimate.
+        let body = serde_json::to_vec(req.payload.as_ref()).map_err(|source| TransportError::PayloadSerialization {
+            endpoint: req.endpoint_uri.clone(), // clone: the error owns the endpoint it names
+            source,
+        })?;
+        if body.len() > self.config.max_payload_size {
             return Err(TransportError::PayloadTooLarge {
-                size: req.payload.len(),
+                size: body.len(),
                 limit: self.config.max_payload_size,
             });
         }
@@ -202,7 +200,7 @@ impl NotificationTransport for HttpTransport {
             // clone: `reqwest` takes the `Url` by value, and cloning a parsed URL is cheaper than reparsing the string
             .post(req.endpoint_uri.clone())
             .header(CONTENT_TYPE, req.content_type.as_str())
-            .body(req.payload.clone()); // clone: `Bytes` is refcounted, and the body takes ownership
+            .body(body); // the serialised notification, moved into the request
 
         if let Some(link) = req.context_link()
             && let Some(value) = link.to_header_value()
@@ -234,7 +232,7 @@ impl NotificationTransport for HttpTransport {
         }
 
         let start = Instant::now();
-        let response = request.send().await.map_err(|error| self.send_failure(req.endpoint_uri.to_string(), &error))?; // the error path owns the endpoint label it names
+        let response = request.send().await.map_err(|error| self.send_failure(req.endpoint_uri.clone(), &error))?; // clone: the error path owns the endpoint it names
         let status = response.status().as_u16();
         let duration = start.elapsed();
 

@@ -32,8 +32,6 @@ mod boundary {
     /// its counterpart: neither port group may name the other.
     #[test]
     fn this_crate_declares_only_what_its_layer_permits() {
-        /// Third-party crates this layer must never ship.
-        const FORBIDDEN: &[&str] = &["sqlx", "axum", "reqwest", "confique", "clap", "tokio", "andromeda-postgresql-context-query"];
         /// In-workspace crates this one may name, in any dependency table.
         /// Anything else is an upward or sideways edge.
         const ALLOWED_IN_WORKSPACE: &[&str] = &[
@@ -45,6 +43,11 @@ mod boundary {
             "andromeda-postgresql-query",
         ];
 
-        andromeda_layer_guard::manifest::assert_layer(env!("CARGO_MANIFEST_DIR"), FORBIDDEN, ALLOWED_IN_WORKSPACE);
+        // A SQL statement layer, so it ships `sea-query`; and it must not name
+        // its sibling context adapter, a sideways edge the allow-list already
+        // excludes and this spells out.
+        let mut forbidden = andromeda_layer_guard::manifest::baseline_forbidden_except(&["sea-query"]);
+        forbidden.push("andromeda-postgresql-context-query");
+        andromeda_layer_guard::manifest::assert_layer(env!("CARGO_MANIFEST_DIR"), &forbidden, ALLOWED_IN_WORKSPACE);
     }
 }

@@ -33,7 +33,7 @@ fn unique_id(prefix: &str) -> String {
 
 async fn clean_database() {
     let pool = PgPool::connect(DATABASE_URL).await.expect("connect test database");
-    sqlx::query(TRUNCATE_ALL).execute(&pool).await.expect("truncate test tables");
+    sqlx::query(&TRUNCATE_ALL).execute(&pool).await.expect("truncate test tables");
     pool.close().await;
 }
 

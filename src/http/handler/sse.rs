@@ -12,6 +12,7 @@ use std::{
     time::Duration,
 };
 
+use andromeda_ngsi_ld_lexicon::uri::Uri;
 use axum::{
     extract::{OriginalUri, Path},
     response::{
@@ -39,7 +40,7 @@ use andromeda_delivery::{
 
 /// RAII guard that unregisters an SSE connection when the stream ends.
 struct SseConnectionGuard {
-    subscription_id: String,
+    subscription_id: Uri,
     connection_id: ConnectionId,
     registry: Arc<ConnectionRegistry<SseNotificationEvent>>,
 }
@@ -72,7 +73,7 @@ impl Stream for SseEventStream {
 
         match self.rx.poll_recv(cx) {
             Poll::Ready(Some(notification)) => {
-                let event = Event::default().id(notification.event_id).event("notification").data(notification.data);
+                let event = Event::default().id(&notification.event_id).event("notification").data(notification.data);
                 Poll::Ready(Some(Ok(event)))
             }
             Poll::Ready(None) => Poll::Ready(None),
@@ -87,8 +88,12 @@ impl Stream for SseEventStream {
 /// persistent connection that streams notification events as they are dispatched
 /// by the notification worker.
 pub async fn stream(TenantState(state): TenantState, OriginalUri(uri): OriginalUri, Path(subscription_id): Path<String>) -> Result<Response, NgsiLdError> {
+    let subscription_id: Uri = subscription_id
+        .parse()
+        .map_err(|_| AndromedaError::malformed_request(format!("Invalid subscription id: {subscription_id}")))
+        .with_instance(&uri)?;
     // Validate subscription exists.
-    let subscription = state.subscriptions.get(&subscription_id).await.with_instance(&uri)?;
+    let subscription = state.subscriptions.get(subscription_id.as_str()).await.with_instance(&uri)?;
 
     // Validate subscription uses SSE transport via the canonical parser
     // (handles case-insensitive URI schemes like SSE://).

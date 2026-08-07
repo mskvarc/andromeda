@@ -5,7 +5,10 @@
 //! side of the boundary, which is what keeps the query language free of
 //! JSON-LD.
 
-use crate::{context_spec::ContextSpec, engine::processor::JsonLdEngine, error::JsonLdError};
+use crate::{
+    engine::{processor::JsonLdEngine, term_lookup::PreparedTermContext},
+    error::JsonLdError,
+};
 use andromeda_ngsi_ld_query::{error::QueryError, term_expander::TermExpander};
 use iri_rs::IriBuf;
 use std::future::Future;
@@ -14,17 +17,17 @@ use std::future::Future;
 ///
 /// Borrowed rather than owned: it lives for one query compilation and both
 /// halves outlive it.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct ContextualExpander<'a> {
     /// The processor that performs the expansion.
     engine: &'a JsonLdEngine,
-    /// The context every term is expanded against.
-    context: &'a ContextSpec,
+    /// The prepared context every term is expanded against.
+    context: &'a PreparedTermContext,
 }
 
 impl<'a> ContextualExpander<'a> {
     /// Bind an engine to a context for one compilation.
-    pub const fn new(engine: &'a JsonLdEngine, context: &'a ContextSpec) -> ContextualExpander<'a> {
+    pub const fn new(engine: &'a JsonLdEngine, context: &'a PreparedTermContext) -> ContextualExpander<'a> {
         ContextualExpander { engine, context }
     }
 }
@@ -37,35 +40,25 @@ impl<'a> ContextualExpander<'a> {
 impl TermExpander for ContextualExpander<'_> {
     fn expand_term(&self, term: &str) -> impl Future<Output = Result<IriBuf, QueryError>> + Send {
         let (engine, context) = (self.engine, self.context);
-        async move {
-            let expanded = engine.expand_term(term, context).await.map_err(|error| expansion_failed(term, &error))?;
-            as_iri(term, expanded)
-        }
+        async move { engine.expand_term(term, context).await.map_err(|error| expansion_failed(term, &error)) }
     }
 
     fn expand_type(&self, term: &str) -> impl Future<Output = Result<IriBuf, QueryError>> + Send {
         let (engine, context) = (self.engine, self.context);
-        async move {
-            let expanded = engine.expand_type(term, context).await.map_err(|error| expansion_failed(term, &error))?;
-            as_iri(term, expanded)
-        }
+        async move { engine.expand_type(term, context).await.map_err(|error| expansion_failed(term, &error)) }
     }
 }
 
 /// The query-language failure a JSON-LD expansion failure becomes.
+///
+/// The engine already yields an [`IriBuf`], so a term that expands to something
+/// that is not an absolute IRI surfaces here as an expansion failure rather than
+/// through a separate re-parse.
 fn expansion_failed(term: &str, error: &JsonLdError) -> QueryError {
     QueryError::TermExpansion {
         term: term.to_string(),
         message: error.to_string(),
     }
-}
-
-/// Validate an expansion result as an absolute IRI.
-fn as_iri(term: &str, expanded: String) -> Result<IriBuf, QueryError> {
-    IriBuf::new(expanded).map_err(|error| QueryError::TermNotAnIri {
-        term: term.to_string(),
-        expanded: error.0,
-    })
 }
 
 #[cfg(test)]
@@ -77,7 +70,8 @@ mod tests {
     async fn a_core_context_term_expands_to_an_absolute_iri() {
         let engine = JsonLdEngine::builder().allow_remote(false).build().expect("engine builds");
         let context = ContextSpec::none();
-        let expander = ContextualExpander::new(&engine, &context);
+        let prepared = engine.prepare_term_context(&context);
+        let expander = ContextualExpander::new(&engine, &prepared);
 
         let attribute = expander.expand_term("speed").await.expect("a term expands");
         let entity_type = expander.expand_type("Vehicle").await.expect("a type expands");

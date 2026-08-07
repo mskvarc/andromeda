@@ -10,7 +10,7 @@
 //!    an inline-join expansion and/or concise/simplified transformation before
 //!    being delivered.
 
-use crate::{concise::concise_value, error::RepresentationError, inline_join::apply_inline_join, simplify::simplify_value};
+use crate::{concise::concise_value, error::RenderError, inline_join::apply_inline_join, simplify::simplify_value};
 use andromeda_ngsi_ld_model::entity::Entity;
 use andromeda_ngsi_ld_representation::response_format::ResponseFormat;
 use serde_json::Value;
@@ -63,9 +63,9 @@ impl<'a> SnapshotRenderer<'a> {
     ///
     /// # Errors
     ///
-    /// Returns [`RepresentationError::Serialization`] when a linked entity brought in
+    /// Returns [`RenderError::Serialization`] when a linked entity brought in
     /// by `join=inline` cannot be turned into a JSON value.
-    pub fn render(self) -> Result<Value, RepresentationError> {
+    pub fn render(self) -> Result<Value, RenderError> {
         let SnapshotRenderer {
             mut payload,
             attrs_filter,

@@ -21,7 +21,6 @@ use axum::{
     http::StatusCode,
     response::{IntoResponse, Response},
 };
-use chrono::DateTime;
 use std::str::FromStr;
 
 /// GET /ngsi-ld/v1/entityMaps/{entityMapId} -- Retrieve an entity map (section 5.14.1).
@@ -53,13 +52,9 @@ pub async fn update(
 ) -> Result<Response, NgsiLdError> {
     let entity_map_id = parse_entity_map_id(&entity_map_id, &uri)?;
 
-    let expires_at_str = body
+    let expires_at = body
         .expires_at
         .ok_or_else(|| AndromedaError::entity_map_validation("expiresAt is required").with_instance(&uri))?;
-
-    let expires_at = DateTime::parse_from_rfc3339(&expires_at_str)
-        .map(|dt| dt.with_timezone(&chrono::Utc))
-        .map_err(|_| AndromedaError::entity_map_validation(format!("Invalid expiresAt datetime: {}", expires_at_str)).with_instance(&uri))?;
 
     if expires_at <= chrono::Utc::now() {
         return Err(NgsiLdError::from(

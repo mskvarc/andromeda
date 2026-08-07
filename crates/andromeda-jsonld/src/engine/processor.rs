@@ -7,7 +7,6 @@ use crate::{
     context_spec::{ContextSpec, CoreContextPolicy},
     document_context::apply_context,
     engine::{
-        batch_context::RelativeUrlPolicy,
         builder::JsonLdEngineBuilder,
         context_url::{canonical_context_urls, context_urls_of, resolve_relative_context_urls, strip_context},
         options::{CompactOptions, ContextStripping},
@@ -16,7 +15,7 @@ use crate::{
     },
     error::JsonLdError,
     hit_counter::HitCounter,
-    loader::{http::HttpContextLoader, url_normalization::normalize_local_hosted_context_url},
+    loader::http::HttpContextLoader,
 };
 use contextual::WithContext;
 use jsonld::{
@@ -40,22 +39,43 @@ pub struct JsonLdEngine {
     hit_counter: Option<Arc<HitCounter>>,
     /// Parsed request contexts, kept per URL for the life of the engine.
     user_term_tables: Arc<UserTermTableCache>,
+    /// The released core context a versionless reference expands against
+    /// (clause 4.3.6.8). The fastpath term table is derived from this version,
+    /// so two engines built with different pins expand a versionless request
+    /// differently, and this is where that decision lives rather than in a
+    /// process-global.
+    default_core_url: Arc<str>,
 }
 
 impl JsonLdEngine {
     /// Assemble an engine. Reached through [`JsonLdEngineBuilder`].
-    pub(crate) fn assembled(loader: HttpContextLoader, term_cache: TermCache, hit_counter: Option<Arc<HitCounter>>) -> JsonLdEngine {
+    pub(crate) fn assembled(
+        loader: HttpContextLoader,
+        term_cache: TermCache,
+        hit_counter: Option<Arc<HitCounter>>,
+        default_core_url: Arc<str>,
+    ) -> JsonLdEngine {
         JsonLdEngine {
             loader: Arc::new(loader),
             term_cache,
             hit_counter,
             user_term_tables: Arc::new(UserTermTableCache::default()),
+            default_core_url,
         }
     }
 
     /// Start configuring an engine.
     pub fn builder() -> JsonLdEngineBuilder {
         JsonLdEngineBuilder::new()
+    }
+
+    /// The released core context a versionless reference expands against.
+    ///
+    /// The version this deployment pinned (clause 4.3.6.8); the fastpath term
+    /// table is built from it. Defaults to the versionless core context when no
+    /// pin was configured.
+    pub fn default_core_url(&self) -> &str {
+        &self.default_core_url
     }
 
     /// The shared access counter, when one is attached.
@@ -83,15 +103,10 @@ impl JsonLdEngine {
     /// tables, so a context that was just deleted or reloaded is re-resolved on
     /// next use rather than served from memory. The durable L2 cache is the
     /// caller's to update (a delete removes its row, a reload replaces its
-    /// payload). Both the URL as written and its normalised form are cleared,
-    /// since the term tables key on whichever form the request carried.
+    /// payload).
     pub async fn invalidate_context(&self, url: &str) {
         self.loader.invalidate(url).await;
         self.user_term_tables.remove(url);
-        let normalized = normalize_local_hosted_context_url(url);
-        if normalized != url {
-            self.user_term_tables.remove(&normalized);
-        }
     }
 
     /// The single-term expansion cache.
@@ -110,7 +125,7 @@ impl JsonLdEngine {
     /// context-loading variant when a context did not resolve.
     pub async fn expand(&self, document: Value, context: &ContextSpec) -> Result<Value, JsonLdError> {
         let document = apply_context(document, context)?;
-        self.expand_prepared(document, context.core_policy(), RelativeUrlPolicy::MaybePresent).await
+        self.expand_prepared(document, context.core_policy()).await
     }
 
     /// Expand a document that already carries its effective `@context`.
@@ -119,15 +134,8 @@ impl JsonLdEngine {
     ///
     /// Returns [`JsonLdError::Expansion`] on an expansion failure, or a
     /// context-loading variant when a context did not resolve.
-    pub(crate) async fn expand_prepared(
-        &self,
-        mut document: Value,
-        core_policy: CoreContextPolicy,
-        relative_url_policy: RelativeUrlPolicy,
-    ) -> Result<Value, JsonLdError> {
-        if relative_url_policy == RelativeUrlPolicy::MaybePresent {
-            resolve_relative_context_urls(&mut document);
-        }
+    pub(crate) async fn expand_prepared(&self, mut document: Value, core_policy: CoreContextPolicy) -> Result<Value, JsonLdError> {
+        resolve_relative_context_urls(&mut document);
 
         // The diagnostic needs the document's `@context` and the conversion
         // below consumes the document, so the context alone is kept — the
@@ -314,18 +322,19 @@ mod tests {
 
     #[tokio::test]
     async fn a_term_that_is_already_an_iri_expands_to_itself() {
-        let iri = offline_engine()
-            .expand_type("http://example.com/Type", &ContextSpec::none())
-            .await
-            .expect("an IRI needs no context");
+        let engine = offline_engine();
+        let context = engine.prepare_term_context(&ContextSpec::none());
+        let iri = engine.expand_type("http://example.com/Type", &context).await.expect("an IRI needs no context");
 
-        pretty_assertions::assert_eq!(iri, "http://example.com/Type");
+        pretty_assertions::assert_eq!(iri.as_str(), "http://example.com/Type");
     }
 
     #[tokio::test]
     async fn a_core_context_type_term_expands_through_the_default_vocabulary() {
-        let iri = offline_engine().expand_type("Vehicle", &ContextSpec::none()).await.expect("expansion");
+        let engine = offline_engine();
+        let context = engine.prepare_term_context(&ContextSpec::none());
+        let iri = engine.expand_type("Vehicle", &context).await.expect("expansion");
 
-        assert!(iri.contains("Vehicle"), "expected the term in the expanded IRI, got {iri}");
+        assert!(iri.as_str().contains("Vehicle"), "expected the term in the expanded IRI, got {iri}");
     }
 }

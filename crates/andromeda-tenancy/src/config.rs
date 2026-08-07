@@ -1,6 +1,7 @@
 //! The tunables that decide how many tenant runtimes stay open, and for how
 //! long.
 
+use crate::db_name_prefix::DbNamePrefix;
 use confique::Config;
 use serde::Serialize;
 
@@ -18,7 +19,7 @@ pub struct TenancyConfig {
 
     /// Prefix for the per-tenant database names the store provisions.
     #[config(env = "ANDROMEDA_TENANCY_TENANT_DB_PREFIX", default = "andromeda_tenant")]
-    pub tenant_db_prefix: String,
+    pub tenant_db_prefix: DbNamePrefix,
 
     /// Maximum number of connections in per-tenant database pools.
     ///

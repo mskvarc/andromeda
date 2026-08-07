@@ -155,7 +155,7 @@ fn build_entity_conditions(query: &CompiledEntityQuery, attribute_names: &Resolv
     }
 
     if let Some(scope_q) = &query.selection.scope_q {
-        condition = condition.add(scope_condition(scope_q, &ScopeTarget::current_paths(Entities::ScopePaths))?);
+        condition = condition.add(scope_condition(scope_q, &ScopeTarget::current_paths(Entities::ScopePaths)));
     }
 
     Ok(condition)

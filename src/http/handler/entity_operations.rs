@@ -22,9 +22,11 @@ use crate::{
     },
 };
 use andromeda_ngsi_ld_http_headers::{preference::RespondMode, preference_applied::PreferenceApplied};
+use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_model::{entity_type::EntityTypeValue, expanded::mutation::selection::OverwritePolicy};
 use andromeda_ngsi_ld_problem_details::batch_operation::BatchOperationResult;
 use andromeda_ngsi_ld_render::{entity::EntityRenderer, response::ResponsePayload};
+use andromeda_ngsi_ld_representation::join_mode::JoinMode;
 use andromeda_ngsi_ld_request::{
     body::query::QueryRequest,
     entity_operations::{PostQueryParams, UpdateParams, UpsertParams},
@@ -38,7 +40,7 @@ use axum::{
 };
 use headers::HeaderMapExt;
 use serde_json::Value;
-use std::collections::HashSet;
+use std::{collections::HashSet, num::NonZeroU32};
 
 fn apply_preference_applied(mut response: Response, mode: BatchSideEffectMode) -> Response {
     if matches!(mode, BatchSideEffectMode::Enqueue) {
@@ -64,6 +66,10 @@ pub async fn query(
     let service = &state.entity_query;
     let context = context.merge(body_context);
 
+    // Clause 5.2.23: the POST query body's resource type is `Query`; reject a
+    // body that names a different one rather than treating it as a query.
+    request.validate_type().with_instance(&uri).map_err(NgsiLdError::from)?;
+
     // Convert POST query body to EntityQueryParameters using From impl
     let mut params: EntityQueryParameters = request.into();
 
@@ -71,8 +77,9 @@ pub async fn query(
     // data and skip both the live pipeline and CSR forwarding.
     if let Some(snapshot_id) = snapshot_id {
         state.snapshots.validate_for_scoping(&snapshot_id).await.with_instance(&uri)?;
-        let entity_type = params.entity_type.as_deref();
-        let entity_ids: Option<Vec<String>> = params.id.as_deref().map(|s| s.split(',').map(|id| id.trim().to_string()).collect());
+        let entity_type = params.entity_type.as_ref().map(ToString::to_string);
+        let entity_type = entity_type.as_deref();
+        let entity_ids = params.id.clone();
         let limit = i64::from(params.limit.unwrap_or(1000));
         let offset = i64::from(params.offset.unwrap_or(0));
         let (entities, _total) = state
@@ -104,9 +111,9 @@ pub async fn query(
     params.validate().with_instance(&uri).map_err(NgsiLdError::from)?;
 
     let opts = params.parse_options();
-    let join_mode = params.join.clone();
-    let join_level = params.join_level.unwrap_or(1);
-    let geometry_property = params.geometry_property.as_deref();
+    let join_mode = params.join;
+    let join_level = params.join_level.map_or(1, NonZeroU32::get);
+    let geometry_property = params.geometry_property.as_ref().map(AttributeName::as_str);
 
     let is_local = params.local.unwrap_or(false);
     let (local_entities, total_count) = service.query(&params, &context).await.with_instance(&uri)?;
@@ -116,8 +123,9 @@ pub async fn query(
         (local_entities, Vec::new())
     } else {
         let context_url = context.link_contexts().first().map(|s| s.as_str());
-        let entity_type = params.entity_type.as_deref();
-        let entity_ids: Option<Vec<String>> = params.id.as_deref().map(|s| s.split(',').map(|id| id.trim().to_string()).collect());
+        let entity_type = params.entity_type.as_ref().map(ToString::to_string);
+        let entity_type = entity_type.as_deref();
+        let entity_ids = params.id.clone();
         let entity_ids_ref = entity_ids.as_deref();
 
         let forwarded = state
@@ -148,13 +156,13 @@ pub async fn query(
     };
 
     // Handle join
-    if matches!(join_mode.as_deref(), Some("inline") | Some("flat")) {
+    if join_mode.is_some() {
         let linked = service
             .resolve_linked_entities(&entities, join_level, opts.sys_attrs, &context, &HashSet::new())
             .await
             .with_instance(&uri)?;
 
-        if join_mode.as_deref() == Some("flat") {
+        if join_mode == Some(JoinMode::Flat) {
             let mut all_values: Vec<Value> = Vec::new();
             for entity in &entities {
                 all_values.push(

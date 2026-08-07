@@ -109,7 +109,7 @@ fn simplify_attribute_value(attr: &AttributeValue) -> Value {
             // Clause 4.5.4 dataset map: {"dataset": {"<datasetId>": v, "@none": v}}.
             let mut dataset_map = Map::new();
             for attr in list {
-                let ds_key = attr.dataset_id_string().unwrap_or_else(|| "@none".to_string());
+                let ds_key = attr.dataset_id().map_or_else(|| "@none".to_string(), ToString::to_string);
                 dataset_map.insert(ds_key, simplify_instance(attr));
             }
             serde_json::json!({"dataset": dataset_map})

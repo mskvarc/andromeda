@@ -6,6 +6,7 @@
 
 use std::{sync::Arc, time::Duration};
 
+use andromeda_ngsi_ld_lexicon::uri::Uri;
 use axum::{
     extract::{
         OriginalUri,
@@ -34,7 +35,7 @@ use andromeda_delivery::{
 
 /// RAII guard that unregisters a WebSocket connection when the stream ends.
 struct WsConnectionGuard {
-    subscription_id: String,
+    subscription_id: Uri,
     connection_id: ConnectionId,
     registry: Arc<ConnectionRegistry<WsNotificationMessage>>,
 }
@@ -56,8 +57,12 @@ pub async fn stream(
     Path(subscription_id): Path<String>,
     ws: axum::extract::WebSocketUpgrade,
 ) -> Result<Response, NgsiLdError> {
+    let subscription_id: Uri = subscription_id
+        .parse()
+        .map_err(|_| AndromedaError::malformed_request(format!("Invalid subscription id: {subscription_id}")))
+        .with_instance(&uri)?;
     // Validate subscription exists.
-    let subscription = state.subscriptions.get(&subscription_id).await.with_instance(&uri)?;
+    let subscription = state.subscriptions.get(subscription_id.as_str()).await.with_instance(&uri)?;
 
     // Validate subscription uses WebSocket transport via the canonical parser.
     let is_ws = parse_endpoint_transport(
@@ -83,7 +88,7 @@ pub async fn stream(
     // Register connection.
     let (connection_id, rx, cancellation_token) = ws_registry.register(&subscription_id, buffer_size);
 
-    debug!(subscription_id, ?connection_id, "WebSocket client connected");
+    debug!(%subscription_id, ?connection_id, "WebSocket client connected");
 
     let guard = WsConnectionGuard {
         subscription_id,

@@ -86,6 +86,7 @@ dependencies = [
  "andromeda-delivery",
  "andromeda-health",
  "andromeda-jsonld",
+ "andromeda-layer-guard",
  "andromeda-ngsi-ld-geometry",
  "andromeda-ngsi-ld-http-headers",
  "andromeda-ngsi-ld-lexicon",
@@ -171,8 +172,10 @@ dependencies = [
  "backon",
  "bytes",
  "dashmap",
+ "derive_more",
  "headers",
  "ip_network",
+ "iri-rs",
  "mediatype",
  "moka",
  "pretty_assertions",
@@ -200,7 +203,6 @@ dependencies = [
  "pretty_assertions",
  "serde",
  "serde_json",
- "strum",
  "tokio",
  "urn-rs",
 ]
@@ -261,10 +263,12 @@ version = "0.1.0"
 dependencies = [
  "andromeda-layer-guard",
  "andromeda-ngsi-ld-lexicon",
+ "andromeda-ngsi-ld-query",
  "andromeda-ngsi-ld-representation",
  "derive_more",
  "headers",
  "http",
+ "iri-rs",
  "langtag",
  "mediatype",
  "pretty_assertions",
@@ -293,6 +297,7 @@ dependencies = [
  "thiserror 2.0.19",
  "url",
  "urn-rs",
+ "uuid",
 ]
 
 [[package]]
@@ -378,6 +383,7 @@ dependencies = [
  "chrono",
  "geojson",
  "indexmap 2.14.0",
+ "iri-rs",
  "langtag",
  "percent-encoding",
  "pretty_assertions",
@@ -407,8 +413,10 @@ dependencies = [
  "andromeda-layer-guard",
  "andromeda-ngsi-ld-http-headers",
  "andromeda-ngsi-ld-lexicon",
+ "andromeda-ngsi-ld-model",
  "andromeda-ngsi-ld-query",
  "andromeda-ngsi-ld-representation",
+ "chrono",
  "headers",
  "http",
  "pretty_assertions",
@@ -416,6 +424,7 @@ dependencies = [
  "serde_json",
  "serde_urlencoded",
  "thiserror 2.0.19",
+ "urn-rs",
 ]
 
 [[package]]
@@ -528,6 +537,7 @@ dependencies = [
  "derive_more",
  "pretty_assertions",
  "serde",
+ "serde_json",
  "strum",
  "thiserror 2.0.19",
  "tokio",
@@ -538,6 +548,7 @@ dependencies = [
 name = "andromeda-test-common"
 version = "0.1.0"
 dependencies = [
+ "andromeda-layer-guard",
  "axum",
  "dashmap",
  "pretty_assertions",

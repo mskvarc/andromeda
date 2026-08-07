@@ -91,14 +91,14 @@ impl EntityDiscoveryService {
         // Keyset-paginate the aggregation so a very large set of distinct
         // types does not require a single large result set.
         const PAGE: u32 = 500;
-        let mut summaries: Vec<(String, Vec<String>)> = Vec::new();
-        let mut cursor: Option<String> = None;
+        let mut summaries: Vec<(EntityTypeName, Vec<AttributeName>)> = Vec::new();
+        let mut cursor: Option<EntityTypeName> = None;
         loop {
-            let page = self.repo.get_entity_type_summaries(cursor.as_deref(), PAGE).await?;
+            let page = self.repo.get_entity_type_summaries(cursor.as_ref(), PAGE).await?;
             if page.is_empty() {
                 break;
             }
-            cursor = page.last().map(|(t, _)| t.clone()); // clone: own cursor string for next loop iteration
+            cursor = page.last().map(|(t, _)| t.clone()); // clone: own cursor for next loop iteration
             let page_len = page.len();
             summaries.extend(page);
             if page_len < usize::try_from(PAGE).unwrap_or(usize::MAX) {
@@ -110,10 +110,10 @@ impl EntityDiscoveryService {
             .into_iter()
             .map(|(type_iri, attrs)| {
                 Ok(EntityType {
-                    type_name: parse_type_name(&type_iri)?,
-                    id: parse_discovery_iri(type_iri)?,
+                    id: parse_discovery_iri(type_iri.to_string())?,
+                    type_name: type_iri,
                     type_: EntityTypeType,
-                    attribute_names: attrs.iter().map(|attr| parse_attribute_name(attr)).collect::<Result<_, _>>()?,
+                    attribute_names: attrs,
                 })
             })
             .collect::<Result<_, AndromedaError>>()?;
@@ -135,18 +135,21 @@ impl EntityDiscoveryService {
     /// Return detailed information for a single entity type, including attribute details and entity count.
     pub async fn type_info(&self, type_name: &str, context: &ContextSpec) -> Result<Value, AndromedaError> {
         // Expand the type name first — DB stores expanded IRIs
-        let type_iri = self.engine.expand_type(type_name, context).await?;
+        let prepared_context = self.engine.prepare_term_context(context);
+        let type_iri = self.engine.expand_type(type_name, &prepared_context).await?;
+        let type_key = parse_type_name(type_iri.as_str())?;
 
-        let entities = self.repo.get_entities_by_type(&type_iri, None, None).await?;
-        let count = self.repo.count_by_type(&type_iri).await?;
+        let entities = self.repo.get_entities_by_type(&type_key, None, None).await?;
+        let count = self.repo.count_by_type(&type_key).await?;
 
         if count == 0 {
             return Err(AndromedaError::entity_not_found(type_name.to_string()));
         }
 
-        // Extract unique attributes from all entities
-        // Key: expanded IRI, Value: set of attribute types (Property, Relationship, etc.)
-        let mut attributes: HashMap<String, HashSet<AttributeType>> = HashMap::with_capacity(entities.len().saturating_mul(4));
+        // Extract unique attributes from all entities, keyed by their expanded
+        // attribute IRI. A key that is not a valid attribute name is not an
+        // attribute and is skipped.
+        let mut attributes: HashMap<AttributeName, HashSet<AttributeType>> = HashMap::with_capacity(entities.len().saturating_mul(4));
 
         for entity in &entities {
             // Handle array wrapper from expanded JSON-LD (expand always returns an array)
@@ -162,9 +165,12 @@ impl EntityDiscoveryService {
                     if key.starts_with('@') {
                         continue;
                     }
+                    let Ok(attr_name) = AttributeName::from_str(key) else {
+                        continue;
+                    };
                     // Extract attribute type from @type field
                     if let Some(attr_types) = extract_attribute_types(value) {
-                        attributes.entry(key.clone()).or_default().extend(attr_types); // clone: owned key for HashMap entry
+                        attributes.entry(attr_name).or_default().extend(attr_types);
                     }
                 }
             }
@@ -172,12 +178,11 @@ impl EntityDiscoveryService {
 
         // Build typed attribute details
         let mut attribute_details: Vec<AttributeDetail> = Vec::new();
-        for (uri, types) in &attributes {
+        for (name, types) in &attributes {
             attribute_details.push(AttributeDetail {
-                // clone: the map key is borrowed and the record owns its id
-                id: parse_discovery_iri(uri.clone())?,
+                id: parse_discovery_iri(name.to_string())?,
                 type_: AttributeResourceType,
-                attribute_name: parse_attribute_name(uri)?,
+                attribute_name: name.clone(), // clone: the map owns the key and the record owns its name
                 attribute_types: types.iter().copied().collect(),
             });
         }
@@ -187,7 +192,7 @@ impl EntityDiscoveryService {
 
         // Build typed response
         let type_info = EntityTypeInfo::builder()
-            .id(parse_discovery_iri(type_iri)?)
+            .id(type_iri)
             .type_(EntityTypeInfoType)
             .type_name(parse_type_name(type_name)?)
             .entity_count(count)
@@ -209,13 +214,13 @@ impl EntityDiscoveryService {
         // Keyset-paginate attribute summary aggregation.
         const PAGE: u32 = 500;
         let mut summary_rows: Vec<AttributeSummary> = Vec::new();
-        let mut cursor: Option<String> = None;
+        let mut cursor: Option<AttributeName> = None;
         loop {
-            let page = self.repo.get_attribute_summary(cursor.as_deref(), PAGE).await?;
+            let page = self.repo.get_attribute_summary(cursor.as_ref(), PAGE).await?;
             if page.is_empty() {
                 break;
             }
-            cursor = page.last().map(|r| r.attr_iri.clone()); // clone: own cursor string for next loop iteration
+            cursor = page.last().map(|r| r.attr_iri.clone()); // clone: own cursor for next loop iteration
             let page_len = page.len();
             summary_rows.extend(page);
             if page_len < usize::try_from(PAGE).unwrap_or(usize::MAX) {
@@ -224,12 +229,12 @@ impl EntityDiscoveryService {
         }
 
         // Build the same HashMap structure from SQL aggregation results
-        let mut attr_data: HashMap<String, AttributeMetadata> = HashMap::with_capacity(summary_rows.len());
+        let mut attr_data: HashMap<AttributeName, AttributeMetadata> = HashMap::with_capacity(summary_rows.len());
         for row in &summary_rows {
             attr_data.insert(
                 row.attr_iri.clone(), // clone: owned key for HashMap entry
                 AttributeMetadata {
-                    entity_types: row.entity_types.iter().cloned().collect(), // clone: owned strings from borrowed Vec
+                    entity_types: row.entity_types.iter().cloned().collect(), // clone: owned names from borrowed Vec
                 },
             );
         }
@@ -239,15 +244,14 @@ impl EntityDiscoveryService {
             // id, type, attributeName, typeNames (no attributeTypes/attributeCount)
             let mut attributes = Vec::new();
             for (iri, meta) in attr_data {
-                let iri: String = iri;
                 attributes.push(
                     AttributeInfo::builder()
-                        .attribute_name(parse_attribute_name(&iri)?)
-                        .id(parse_discovery_iri(iri)?)
+                        .attribute_name(iri.clone()) // clone: the record owns its name and its id is derived from the same value
+                        .id(parse_discovery_iri(iri.to_string())?)
                         .type_(AttributeResourceType)
                         .attribute_types(Vec::new())
                         .attribute_count(None)
-                        .type_names(Some(meta.entity_types.iter().map(|name| parse_type_name(name)).collect::<Result<_, _>>()?))
+                        .type_names(Some(meta.entity_types.into_iter().collect()))
                         .build(),
                 );
             }
@@ -277,14 +281,14 @@ impl EntityDiscoveryService {
             ensure_array_fields(&mut compacted, &["attributeTypes", "typeNames"]);
             Ok(compacted)
         } else {
-            let attr_iris: Vec<String> = attr_data.into_keys().collect();
+            let attr_iris: Vec<AttributeName> = attr_data.into_keys().collect();
 
             // Compact each attribute IRI using a synthetic expanded doc
             let mut compacted_names: Vec<AttributeName> = Vec::new();
             for iri in &attr_iris {
                 let doc = serde_json::json!([{
                     "@id": "urn:ngsi-ld:_:dummy",
-                    iri: [{"@value": "dummy"}]
+                    (iri.as_str()): [{"@value": "dummy"}]
                 }]);
                 let name = match self
                     .engine
@@ -302,12 +306,12 @@ impl EntityDiscoveryService {
                             obj.keys()
                                 .find(|k| k.as_str() != "id" && k.as_str() != "type" && !k.starts_with('@'))
                                 .cloned() // clone: owned String from borrowed map key
-                                .unwrap_or_else(|| iri.clone()) // clone: fallback owned copy when no matching key found
+                                .unwrap_or_else(|| iri.to_string()) // fallback to the IRI itself when no matching key found
                         } else {
-                            iri.clone() // clone: fallback owned copy when compacted is not an object
+                            iri.to_string() // fallback to the IRI itself when compacted is not an object
                         }
                     }
-                    Err(_) => iri.clone(), // clone: fallback owned copy when compaction fails
+                    Err(_) => iri.to_string(), // fallback to the IRI itself when compaction fails
                 };
                 compacted_names.push(parse_attribute_name(&name)?);
             }
@@ -328,7 +332,9 @@ impl EntityDiscoveryService {
 
     /// Return detailed information for a single attribute, including its types and entity count.
     pub async fn attribute_info(&self, attr_id: &str, context: &ContextSpec) -> Result<Value, AndromedaError> {
-        let attr_iri = self.engine.expand_term(attr_id, context).await?;
+        let prepared_context = self.engine.prepare_term_context(context);
+        let attr_iri_buf = self.engine.expand_term(attr_id, &prepared_context).await?;
+        let attr_iri = parse_attribute_name(attr_iri_buf.as_str())?;
 
         let row = self
             .repo
@@ -336,14 +342,14 @@ impl EntityDiscoveryService {
             .await?
             .ok_or_else(|| AndromedaError::entity_not_found(attr_id))?;
 
-        // Clause 5.2.28 fixes `attributeTypes` to the attribute family names, while
-        // the store holds the expanded `@type` IRIs the payload carried.
+        // Clause 5.2.28 fixes `attributeTypes` to the attribute family names; the
+        // store already mapped the payload's expanded `@type` IRIs to them.
         let attr = AttributeInfo::builder()
-            .attribute_name(parse_attribute_name(&attr_iri)?)
-            .id(parse_discovery_iri(attr_iri)?)
-            .attribute_types(row.attribute_types.iter().filter_map(|iri| AttributeType::from_iri_suffix(iri)).collect())
+            .attribute_name(attr_iri)
+            .id(attr_iri_buf)
+            .attribute_types(row.attribute_types)
             .attribute_count(Some(row.entity_count))
-            .type_names(Some(row.entity_types.iter().map(|name| parse_type_name(name)).collect::<Result<_, _>>()?))
+            .type_names(Some(row.entity_types))
             .build();
 
         let mut expanded_obj = attr.expand::<serde_json::Value>();
@@ -363,7 +369,7 @@ impl EntityDiscoveryService {
 }
 
 struct AttributeMetadata {
-    entity_types: HashSet<String>,
+    entity_types: HashSet<EntityTypeName>,
 }
 
 /// Strip the `ngsi-ld:` prefix from compacted JSON keys.

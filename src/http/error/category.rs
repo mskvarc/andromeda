@@ -61,7 +61,6 @@ pub const fn of(kind: &ErrorKind) -> NgsiLdErrorType {
         | ErrorKind::JsonParse(_)
         | ErrorKind::InvalidUrn(_)
         | ErrorKind::InvalidSnapshotId(_)
-        | ErrorKind::InvalidSnapshotNotificationId(_)
         | ErrorKind::InvalidEntityMapId(_)
         | ErrorKind::InvalidEntityTypeListId(_)
         | ErrorKind::InvalidAttributeListId(_)
@@ -86,7 +85,7 @@ mod tests {
     use andromeda_jsonld::error::JsonLdError;
     use andromeda_ngsi_ld_lexicon::tenant::TenantName;
     use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
-    use andromeda_ngsi_ld_render::error::{RenderedShape, RepresentationError};
+    use andromeda_ngsi_ld_render::error::{RenderError, RenderedShape};
     use andromeda_tenancy::error::TenancyError;
 
     #[test]
@@ -111,7 +110,7 @@ mod tests {
             ),
             (ErrorKind::Internal("x".into()), NgsiLdErrorType::InternalError),
             (
-                ErrorKind::Rendering(RepresentationError::serialization(
+                ErrorKind::Rendering(RenderError::serialization(
                     RenderedShape::Entity,
                     serde_json::from_str::<u8>("not a number").expect_err("the input is not a u8"),
                 )),

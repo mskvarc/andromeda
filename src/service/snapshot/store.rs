@@ -7,7 +7,7 @@
 //! still answers the same questions.
 
 use crate::core::error::AndromedaError;
-use andromeda_ngsi_ld_lexicon::ngsi_ld_urn::SnapshotId;
+use andromeda_ngsi_ld_lexicon::{ngsi_ld_urn::SnapshotId, uri::Uri};
 use andromeda_ngsi_ld_model::{
     snapshot::{ExecutionResultDetails, Snapshot, SnapshotPriority, SnapshotStatus},
     snapshot_filter::SnapshotPurgeFilter,
@@ -122,27 +122,27 @@ pub trait SnapshotStore: Send + Sync + 'static {
     async fn insert_temporal_entities(&self, snapshot_id: &SnapshotId, entities: &[SnapshotEntityInput<'_>]) -> Result<(), AndromedaError>;
 
     /// Retrieve one frozen entity.
-    async fn get_entity(&self, snapshot_id: &SnapshotId, entity_id: &str) -> Result<Option<Value>, AndromedaError>;
+    async fn get_entity(&self, snapshot_id: &SnapshotId, entity_id: &Uri) -> Result<Option<Value>, AndromedaError>;
 
     /// Query frozen entities, with optional type and identifier filters.
     async fn query_entities(
         &self,
         snapshot_id: &SnapshotId,
         entity_type: Option<&str>,
-        entity_ids: Option<&[String]>,
+        entity_ids: Option<&[Uri]>,
         limit: i64,
         offset: i64,
     ) -> Result<(Vec<Value>, i64), AndromedaError>;
 
     /// Retrieve one frozen temporal entity.
-    async fn get_temporal_entity(&self, snapshot_id: &SnapshotId, entity_id: &str) -> Result<Option<Value>, AndromedaError>;
+    async fn get_temporal_entity(&self, snapshot_id: &SnapshotId, entity_id: &Uri) -> Result<Option<Value>, AndromedaError>;
 
     /// Query frozen temporal entities, with optional type and identifier filters.
     async fn query_temporal_entities(
         &self,
         snapshot_id: &SnapshotId,
         entity_type: Option<&str>,
-        entity_ids: Option<&[String]>,
+        entity_ids: Option<&[Uri]>,
         limit: i64,
         offset: i64,
     ) -> Result<(Vec<Value>, i64), AndromedaError>;

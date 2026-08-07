@@ -22,6 +22,7 @@ use crate::{
     core::error::AndromedaError,
     service::entity::{query_outcome::QueryOutcome, storage_profile::StorageProfile},
 };
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, entity_type_name::EntityTypeName, uri::Uri};
 use andromeda_ngsi_ld_model::notification::SysAttrsSnapshot;
 use andromeda_ngsi_ld_query::entity::compiled::CompiledEntityQuery;
 use async_trait::async_trait;
@@ -36,7 +37,7 @@ use std::collections::HashMap;
 #[derive(Debug)]
 pub struct DeletedEntity {
     /// Entity identifier.
-    pub id: String,
+    pub id: Uri,
     /// The expanded JSON-LD payload at the time of deletion.
     pub payload: Value,
     /// Timestamp when the entity was originally created.
@@ -68,14 +69,14 @@ pub struct EntitySnapshot {
 /// Backs the clause 5.7.3 attribute discovery endpoints.
 #[derive(Debug)]
 pub struct AttributeSummary {
-    /// The expanded IRI of the attribute.
-    pub attr_iri: String,
+    /// The expanded IRI of the attribute, named as an attribute reference.
+    pub attr_iri: AttributeName,
     /// Number of distinct entities that carry this attribute.
     pub entity_count: i64,
     /// Entity type IRIs that contain this attribute.
-    pub entity_types: Vec<String>,
+    pub entity_types: Vec<EntityTypeName>,
     /// NGSI-LD attribute types observed for this attribute.
-    pub attribute_types: Vec<String>,
+    pub attribute_types: Vec<AttributeType>,
 }
 
 /// Reading entities, and the two bulk removals that stand alone.
@@ -89,19 +90,19 @@ pub trait EntityStore: Send + Sync + 'static {
     fn profile(&self) -> &StorageProfile;
 
     /// The expanded payload of one entity, if it exists.
-    async fn get(&self, id: &str) -> Result<Option<Value>, AndromedaError>;
+    async fn get(&self, id: &Uri) -> Result<Option<Value>, AndromedaError>;
 
     /// The expanded payloads of several entities, keyed by identifier.
     ///
     /// Identifiers with no entity are simply absent from the map.
-    async fn get_batch(&self, ids: &[String]) -> Result<HashMap<String, Value>, AndromedaError>;
+    async fn get_batch(&self, ids: &[Uri]) -> Result<HashMap<Uri, Value>, AndromedaError>;
 
     /// One entity's payload and the version token a read-modify-write states
     /// back to the store.
-    async fn get_snapshot(&self, id: &str) -> Result<Option<EntitySnapshot>, AndromedaError>;
+    async fn get_snapshot(&self, id: &Uri) -> Result<Option<EntitySnapshot>, AndromedaError>;
 
     /// The same for several entities, keyed by identifier.
-    async fn get_snapshot_batch(&self, ids: &[String]) -> Result<HashMap<String, EntitySnapshot>, AndromedaError>;
+    async fn get_snapshot_batch(&self, ids: &[Uri]) -> Result<HashMap<Uri, EntitySnapshot>, AndromedaError>;
 
     /// Every entity carrying at least one attribute instance whose `expiresAt`
     /// has passed (clause 4.22), with the version token needed to rewrite it.
@@ -110,38 +111,38 @@ pub trait EntityStore: Send + Sync + 'static {
     /// expired and what a payload looks like without them is specification
     /// semantics, and the tombstones the removal implies have to commit with
     /// the rewritten payload.
-    async fn entities_with_expired_attributes(&self) -> Result<Vec<(String, EntitySnapshot)>, AndromedaError>;
+    async fn entities_with_expired_attributes(&self) -> Result<Vec<(Uri, EntitySnapshot)>, AndromedaError>;
 
     /// The clause 4.8 system attributes of one entity.
-    async fn get_sys_attrs(&self, id: &str) -> Result<Option<SysAttrsSnapshot>, AndromedaError>;
+    async fn get_sys_attrs(&self, id: &Uri) -> Result<Option<SysAttrsSnapshot>, AndromedaError>;
 
     /// The clause 4.8 system attributes of several entities, keyed by identifier.
-    async fn get_sys_attrs_batch(&self, ids: &[String]) -> Result<HashMap<String, SysAttrsSnapshot>, AndromedaError>;
+    async fn get_sys_attrs_batch(&self, ids: &[Uri]) -> Result<HashMap<Uri, SysAttrsSnapshot>, AndromedaError>;
 
     /// Every entity type IRI the broker currently holds an entity for.
-    async fn types(&self) -> Result<Vec<String>, AndromedaError>;
+    async fn types(&self) -> Result<Vec<EntityTypeName>, AndromedaError>;
 
     /// One page of `(type IRI, attribute IRIs)` pairs, ordered by type IRI.
     ///
     /// `after` is the last type IRI of the previous page, exclusive.
-    async fn get_entity_type_summaries(&self, after: Option<&str>, limit: u32) -> Result<Vec<(String, Vec<String>)>, AndromedaError>;
+    async fn get_entity_type_summaries(&self, after: Option<&EntityTypeName>, limit: u32) -> Result<Vec<(EntityTypeName, Vec<AttributeName>)>, AndromedaError>;
 
     /// One page of attribute summaries, ordered by attribute IRI.
     ///
     /// `after` is the last attribute IRI of the previous page, exclusive.
-    async fn get_attribute_summary(&self, after: Option<&str>, limit: u32) -> Result<Vec<AttributeSummary>, AndromedaError>;
+    async fn get_attribute_summary(&self, after: Option<&AttributeName>, limit: u32) -> Result<Vec<AttributeSummary>, AndromedaError>;
 
     /// The summary for one attribute IRI, if any entity carries it.
-    async fn get_attribute_info(&self, attr_iri: &str) -> Result<Option<AttributeSummary>, AndromedaError>;
+    async fn get_attribute_info(&self, attr_iri: &AttributeName) -> Result<Option<AttributeSummary>, AndromedaError>;
 
     /// Every entity of one type, paginated.
-    async fn get_entities_by_type(&self, entity_type: &str, limit: Option<i64>, offset: Option<i64>) -> Result<Vec<Value>, AndromedaError>;
+    async fn get_entities_by_type(&self, entity_type: &EntityTypeName, limit: Option<i64>, offset: Option<i64>) -> Result<Vec<Value>, AndromedaError>;
 
     /// Every entity the broker holds, paginated.
     async fn get_all_entities(&self, limit: Option<i64>, offset: Option<i64>) -> Result<Vec<Value>, AndromedaError>;
 
     /// How many entities carry one type IRI.
-    async fn count_by_type(&self, entity_type: &str) -> Result<i64, AndromedaError>;
+    async fn count_by_type(&self, entity_type: &EntityTypeName) -> Result<i64, AndromedaError>;
 
     /// Run a compiled entity query, returning payloads together with whatever
     /// the store could not apply.
@@ -157,8 +158,8 @@ pub trait EntityStore: Send + Sync + 'static {
     /// Carries the same residual contract as [`EntityStore::query_compiled`],
     /// which costs the caller a payload read: a predicate cannot be evaluated
     /// against an identifier.
-    async fn query_ids(&self, compiled: &CompiledEntityQuery) -> Result<QueryOutcome<String>, AndromedaError>;
+    async fn query_ids(&self, compiled: &CompiledEntityQuery) -> Result<QueryOutcome<Uri>, AndromedaError>;
 
     /// Delete every entity whose `expiresAt` has passed, returning their identifiers.
-    async fn expire_due_entities(&self) -> Result<Vec<String>, AndromedaError>;
+    async fn expire_due_entities(&self) -> Result<Vec<Uri>, AndromedaError>;
 }

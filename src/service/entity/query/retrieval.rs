@@ -15,10 +15,11 @@ use crate::{
     },
 };
 use andromeda_jsonld::context_spec::ContextSpec;
+use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::entity::Entity;
 use andromeda_ngsi_ld_query::{entity::compiled::CompiledEntityQuery, pagination::CountPolicy};
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
-use andromeda_ngsi_ld_request::query::{SharedQueryParams, entity::EntityQueryParameters};
+use andromeda_ngsi_ld_request::query::entity::EntityQueryParameters;
 use serde_json::Value;
 use std::collections::HashMap;
 use urn_rs::Urn;
@@ -34,15 +35,15 @@ impl EntityQueryService {
         dataset_ids: &[String],
         context: &ContextSpec,
     ) -> Result<Entity, AndromedaError> {
-        let id_str = id.to_string();
-        let Some(expanded_entity) = self.repo.get(&id_str).await? else {
-            return Err(AndromedaError::entity_not_found(id_str));
+        let entity_uri = Uri::from(id.clone()); // clone: owned Urn -> Uri; the store is keyed by Uri
+        let Some(expanded_entity) = self.repo.get(&entity_uri).await? else {
+            return Err(AndromedaError::entity_not_found(entity_uri.as_str()));
         };
 
-        let mut entity = self.compact_to_entity(expanded_entity, context, Some(&id_str)).await?;
+        let mut entity = self.compact_to_entity(expanded_entity, context, Some(entity_uri.as_str())).await?;
 
         if sys_attrs == SysAttrsInclusion::Include
-            && let Some(snapshot) = self.repo.get_sys_attrs(&id_str).await?
+            && let Some(snapshot) = self.repo.get_sys_attrs(&entity_uri).await?
         {
             entity = entity.with_sys_attrs(&snapshot);
         }
@@ -55,7 +56,7 @@ impl EntityQueryService {
             self.filter_entity_attrs(&mut entity, &wanted_iris, context).await?;
 
             if entity.attrs.is_empty() {
-                return Err(AndromedaError::entity_not_found(id_str));
+                return Err(AndromedaError::entity_not_found(entity_uri.as_str()));
             }
         }
 
@@ -94,7 +95,7 @@ impl EntityQueryService {
 
         // One batch read rather than one per entity.
         let sys_attrs_map = if sys_attrs == SysAttrsInclusion::Include {
-            let ids: Vec<String> = page
+            let ids: Vec<Uri> = page
                 .rows
                 .iter()
                 .filter_map(|row| {
@@ -102,7 +103,7 @@ impl EntityQueryService {
                         .as_object()
                         .and_then(|obj| obj.get("@id"))
                         .and_then(Value::as_str)
-                        .map(str::to_string)
+                        .and_then(|id| id.parse::<Uri>().ok())
                 })
                 .collect();
             self.repo.get_sys_attrs_batch(&ids).await?
@@ -116,7 +117,7 @@ impl EntityQueryService {
                 .as_object()
                 .and_then(|obj| obj.get("@id"))
                 .and_then(Value::as_str)
-                .map(str::to_string);
+                .and_then(|id| id.parse::<Uri>().ok());
 
             let mut entity = self.compact_to_entity(value, context, None).await?;
 
@@ -132,8 +133,8 @@ impl EntityQueryService {
 
         let mut entities = self.apply_projection(entities, &compiled, context).await?;
 
-        let dataset_ids = query.parse_dataset_ids();
-        if !dataset_ids.is_empty() {
+        if let Some(dataset_ids) = query.dataset_id.as_deref() {
+            let dataset_ids = dataset_ids.iter().map(ToString::to_string).collect::<Vec<_>>();
             for entity in &mut entities {
                 filter_entity_by_dataset_id(entity, &dataset_ids);
             }

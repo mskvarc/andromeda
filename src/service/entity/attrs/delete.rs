@@ -32,13 +32,14 @@ impl EntityService {
         let entity_uri = Uri::from(id.clone()); // clone: owned Urn for Uri conversion; id is &Urn
         let id = id.to_string();
 
-        let attr_iri = self.engine.expand_term(attr_name, context).await?;
+        let prepared_context = self.engine.prepare_term_context(context);
+        let attr_iri = self.engine.expand_term(attr_name, &prepared_context).await?;
 
         // Resolve target dataset ids for tombstones before mutating the entity
         // payload. The catalogue outlives the attributes it describes, so this
         // does not have to be re-read per attempt.
         let tombstone_targets: Vec<Option<String>> = match selection {
-            DatasetSelection::All => match self.temporal_recorder.get_teas_for_entity_attr(&id, &attr_iri).await {
+            DatasetSelection::All => match self.temporal_recorder.get_teas_for_entity_attr(&id, attr_iri.as_str()).await {
                 Ok(teas) => teas.iter().map(|tea| tea.dataset_id.as_ref().map(ToString::to_string)).collect(),
                 Err(e) => {
                     tracing::warn!(error = %e, entity_id = %id, event = "tea_lookup_failed_for_deletion");
@@ -54,7 +55,7 @@ impl EntityService {
             previous: previous_attributes,
             trigger,
         } = self
-            .commit_computed_write(&id, |previous| {
+            .commit_computed_write(&entity_uri, |previous| {
                 let previous_attributes = self.change_tx.as_ref().map(|_| previous.clone()); // clone: snapshot before mutation for showChanges diff
 
                 let mut existing = previous.clone(); // clone: the deletion mutates its own copy of the stored payload
@@ -62,7 +63,7 @@ impl EntityService {
 
                 let mut history = Vec::with_capacity(tombstone_targets.len());
                 for target in &tombstone_targets {
-                    history.push(tombstone(&attr_iri, target.as_deref())?);
+                    history.push(tombstone(attr_iri.as_str(), target.as_deref())?);
                 }
 
                 let merged = Arc::new(existing);
@@ -83,7 +84,7 @@ impl EntityService {
             entity_uri,
             entity_types,
             trigger,
-            vec![attr_name_of(&attr_iri)?],
+            vec![attr_name_of(attr_iri.as_str())?],
             previous_attributes,
             Some(merged),
         );

@@ -29,7 +29,7 @@ use std::sync::Arc;
 /// implies once it lands.
 pub(super) struct ChunkWrite {
     /// Entity identifier.
-    pub id: String,
+    pub id: Uri,
     /// What happens to the entity row.
     pub entity: EntityMutation,
     /// The payload whose attributes were observed. For a partial update this
@@ -58,14 +58,15 @@ pub(super) struct ChunkOutcome {
     /// Refusals a caller that read the entity first can fix by reading again:
     /// the entity moved on, or an identifier it read as absent now exists.
     /// A caller that read nothing has no reason to retry and folds these into
-    /// [`Self::errors`] with [`Self::settled`].
-    pub retryable: Vec<(String, AndromedaError)>,
+    /// [`Self::errors`] with [`Self::settled`]. Typed because the retry path
+    /// reads the store again by identifier, which the port keys on [`Uri`].
+    pub retryable: Vec<(Uri, AndromedaError)>,
 }
 
 impl ChunkOutcome {
     /// Treat every refusal as final.
     pub(super) fn settled(mut self) -> ChunkOutcome {
-        self.errors.append(&mut self.retryable);
+        self.errors.extend(self.retryable.drain(..).map(|(id, error)| (id.to_string(), error)));
         self
     }
 }
@@ -106,7 +107,7 @@ impl ChunkWrite {
 
     /// The write that stores `payload` as a new entity, deriving its columns
     /// from the payload rather than from a preparation pass.
-    pub(super) fn insert_payload(id: String, payload: Arc<Value>, changed_attributes: Vec<AttributeName>, precondition: Precondition) -> ChunkWrite {
+    pub(super) fn insert_payload(id: Uri, payload: Arc<Value>, changed_attributes: Vec<AttributeName>, precondition: Precondition) -> ChunkWrite {
         let record = EntityRecord::from_expanded(Arc::clone(&payload)); // clone: Arc ref-count bump; the same payload is the observation
         ChunkWrite {
             id,
@@ -121,13 +122,7 @@ impl ChunkWrite {
 
     /// The write that overwrites an existing entity with `merged`, having
     /// observed `observed`.
-    pub(super) fn update(
-        id: String,
-        merged: Arc<Value>,
-        observed: Arc<Value>,
-        changed_attributes: Vec<AttributeName>,
-        precondition: Precondition,
-    ) -> ChunkWrite {
+    pub(super) fn update(id: Uri, merged: Arc<Value>, observed: Arc<Value>, changed_attributes: Vec<AttributeName>, precondition: Precondition) -> ChunkWrite {
         let record = EntityRecord::from_expanded(merged);
         ChunkWrite {
             id,
@@ -164,28 +159,17 @@ fn error_of(id: &str, outcome: &WriteOutcome) -> Option<AndromedaError> {
     }
 }
 
-/// The change event this entity raises, if its identifier is a URI.
-fn change_event(id: &str, types: Vec<EntityTypeName>, changed: Vec<AttributeName>, payload: Arc<Value>, trigger: NotificationTrigger) -> Option<ChangeEvent> {
-    match id.parse::<Uri>() {
-        Ok(entity_uri) => Some(
-            ChangeEvent::builder()
-                .entity_id(entity_uri)
-                .entity_types(types)
-                .trigger_reason(trigger)
-                .occurred_at(Utc::now())
-                .origin(ChangeOrigin::Local)
-                .changed_attributes(changed)
-                .current_payload(Some(payload))
-                .build(),
-        ),
-        Err(_error) => {
-            // The row is still written: the store accepts identifiers the
-            // notification path cannot parse, and dropping the write would be a
-            // larger surprise than dropping the notification.
-            tracing::error!(entity_id = %id, event = "entity_uri_parse_failed");
-            None
-        }
-    }
+/// The change event this entity raises.
+fn change_event(id: &Uri, types: Vec<EntityTypeName>, changed: Vec<AttributeName>, payload: Arc<Value>, trigger: NotificationTrigger) -> ChangeEvent {
+    ChangeEvent::builder()
+        .entity_id(id.clone()) // clone: the event owns its identifier
+        .entity_types(types)
+        .trigger_reason(trigger)
+        .occurred_at(Utc::now())
+        .origin(ChangeOrigin::Local)
+        .changed_attributes(changed)
+        .current_payload(Some(payload))
+        .build()
 }
 
 impl EntityService {
@@ -202,7 +186,7 @@ impl EntityService {
         }
 
         let mut writes = Vec::with_capacity(entries.len());
-        let mut settled: Vec<(String, bool, Option<ChangeEvent>)> = Vec::with_capacity(entries.len());
+        let mut settled: Vec<(Uri, bool, Option<ChangeEvent>)> = Vec::with_capacity(entries.len());
 
         for entry in entries {
             let ChunkWrite {
@@ -215,7 +199,7 @@ impl EntityService {
                 tombstones,
             } = entry;
             let creates = entity.is_insert();
-            let event = change_event(&id, types, changed_attributes, Arc::clone(&observed), trigger_of(&entity)); // clone: Arc ref-count bump
+            let event = Some(change_event(&id, types, changed_attributes, Arc::clone(&observed), trigger_of(&entity))); // clone: Arc ref-count bump
             let entity_id: Arc<str> = Arc::from(id.as_str());
 
             let builder = AtomicWrite::builder()
@@ -259,10 +243,10 @@ impl EntityService {
         let mut chunk = ChunkOutcome::default();
         let mut events = Vec::with_capacity(settled.len());
         for ((id, creates, event), outcome) in settled.into_iter().zip(&outcomes) {
-            if let Some(error) = error_of(&id, outcome) {
+            if let Some(error) = error_of(id.as_str(), outcome) {
                 match after_attempt(outcome) {
                     AfterAttempt::Reread => chunk.retryable.push((id, error)),
-                    AfterAttempt::Settled | AfterAttempt::Vanished => chunk.errors.push((id, error)),
+                    AfterAttempt::Settled | AfterAttempt::Vanished => chunk.errors.push((id.to_string(), error)),
                 }
                 continue;
             }
@@ -270,9 +254,9 @@ impl EntityService {
                 continue;
             }
             if creates {
-                chunk.created.push(id.clone()); // clone: the identifier is reported in both lists
+                chunk.created.push(id.to_string()); // the identifier is reported in both lists as text
             }
-            chunk.success.push(id);
+            chunk.success.push(id.to_string());
             events.extend(event);
         }
 

@@ -253,7 +253,7 @@ impl SnapshotService {
     }
 
     /// Retrieve a single entity from a snapshot's frozen data.
-    pub async fn get_snapshot_entity(&self, snapshot_id: &SnapshotId, entity_id: &str) -> Result<Option<Value>, AndromedaError> {
+    pub async fn get_snapshot_entity(&self, snapshot_id: &SnapshotId, entity_id: &Uri) -> Result<Option<Value>, AndromedaError> {
         self.repo.get_entity(snapshot_id, entity_id).await
     }
 
@@ -262,7 +262,7 @@ impl SnapshotService {
         &self,
         snapshot_id: &SnapshotId,
         entity_type: Option<&str>,
-        entity_ids: Option<&[String]>,
+        entity_ids: Option<&[Uri]>,
         limit: i64,
         offset: i64,
     ) -> Result<(Vec<Value>, i64), AndromedaError> {
@@ -294,7 +294,7 @@ impl SnapshotService {
     }
 
     /// Retrieve a single temporal entity from a snapshot's frozen data.
-    pub async fn get_snapshot_temporal_entity(&self, snapshot_id: &SnapshotId, entity_id: &str) -> Result<Option<Value>, AndromedaError> {
+    pub async fn get_snapshot_temporal_entity(&self, snapshot_id: &SnapshotId, entity_id: &Uri) -> Result<Option<Value>, AndromedaError> {
         self.repo.get_temporal_entity(snapshot_id, entity_id).await
     }
 
@@ -303,7 +303,7 @@ impl SnapshotService {
         &self,
         snapshot_id: &SnapshotId,
         entity_type: Option<&str>,
-        entity_ids: Option<&[String]>,
+        entity_ids: Option<&[Uri]>,
         limit: i64,
         offset: i64,
     ) -> Result<(Vec<Value>, i64), AndromedaError> {
@@ -341,17 +341,7 @@ impl SnapshotService {
             None => return,
         };
 
-        let notification = match snapshot.build_notification() {
-            Ok(value) => value,
-            Err(e) => {
-                tracing::error!(
-                    error = %e,
-                    snapshot_id = %snapshot.id,
-                    "Failed to build snapshot notification payload"
-                );
-                return;
-            }
-        };
+        let notification = snapshot.build_notification();
 
         let payload = match serde_json::to_value(&notification) {
             Ok(v) => v,
@@ -369,7 +359,7 @@ impl SnapshotService {
         // routing and logging label the delivery carries. clone: the conversion
         // consumes the id and the snapshot is borrowed here.
         let subscription_id = Uri::from(snapshot.id.clone());
-        let request = match (NotificationDelivery {
+        let request = (NotificationDelivery {
             payload: &payload,
             endpoint_uri: endpoint,
             accept: None,
@@ -378,18 +368,7 @@ impl SnapshotService {
             tenant: None,
             subscription_id: &subscription_id,
         })
-        .assemble()
-        {
-            Ok(r) => r,
-            Err(e) => {
-                tracing::error!(
-                    error = %e,
-                    snapshot_id = %snapshot.id,
-                    "Failed to build snapshot notification delivery request"
-                );
-                return;
-            }
-        };
+        .assemble();
 
         if transport.deliver(&EndpointTransport::Http, &request).await.is_delivered() {
             tracing::debug!(snapshot_id = %snapshot.id, "Snapshot notification delivered");

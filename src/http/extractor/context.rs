@@ -37,7 +37,7 @@ where
                 continue;
             };
             if let Ok(parsed) = Link::from_str(link_str) {
-                links.extend(parsed.context_urls().map(|url| url.to_owned()));
+                links.extend(parsed.context_urls().cloned());
             }
         }
 
@@ -54,6 +54,12 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use iri_rs::IriRefBuf;
+
+    /// A context URL as the [`IriRefBuf`] a `Link` header carries.
+    fn iri_ref(url: &str) -> IriRefBuf {
+        IriRefBuf::new(url.to_string()).expect("a valid IRI reference")
+    }
 
     #[test]
     fn parse_with_valid_context_link() {
@@ -84,7 +90,7 @@ mod tests {
 
         pretty_assertions::assert_eq!(
             context.link_contexts(),
-            &["https://example.com/a.jsonld".to_string(), "https://example.com/b.jsonld".to_string()]
+            &[iri_ref("https://example.com/a.jsonld"), iri_ref("https://example.com/b.jsonld")]
         );
     }
 

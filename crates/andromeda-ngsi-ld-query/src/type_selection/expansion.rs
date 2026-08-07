@@ -11,7 +11,8 @@ use std::{future::Future, pin::Pin};
 /// with their fully expanded IRIs.
 pub async fn expand_type_expression(raw: &TypeExprRaw, expander: &impl TermExpander) -> Result<TypeExpr, QueryError> {
     match raw {
-        TypeExprRaw::Type(name) => Ok(TypeExpr::Type(expander.expand_type(name).await?)),
+        TypeExprRaw::Wildcard => Ok(TypeExpr::Wildcard),
+        TypeExprRaw::Type(name) => Ok(TypeExpr::Type(expander.expand_type(name.as_str()).await?)),
         TypeExprRaw::And(children) => Ok(TypeExpr::And(expand_children(children, expander).await?)),
         TypeExprRaw::Or(children) => Ok(TypeExpr::Or(expand_children(children, expander).await?)),
     }
@@ -57,8 +58,11 @@ mod tests {
     #[tokio::test]
     async fn a_nested_type_expression_expands_at_every_leaf() {
         let raw = TypeExprRaw::Or(vec![
-            TypeExprRaw::And(vec![TypeExprRaw::Type("Home".to_string()), TypeExprRaw::Type("Vehicle".to_string())]),
-            TypeExprRaw::Type("Motorhome".to_string()),
+            TypeExprRaw::And(vec![
+                TypeExprRaw::Type("Home".parse().expect("valid type name")),
+                TypeExprRaw::Type("Vehicle".parse().expect("valid type name")),
+            ]),
+            TypeExprRaw::Type("Motorhome".parse().expect("valid type name")),
         ]);
         let expanded = expand_type_expression(&raw, &PrefixExpander).await.expect("expands");
         assert_eq!(

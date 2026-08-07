@@ -303,6 +303,7 @@ mod tests {
         creation_policy::TenantCreationPolicy,
         database::TenantDatabase,
         database_name::TenantDatabaseName,
+        db_name_prefix::DbNamePrefix,
         error::TenancyError,
         runtime::TenantRuntimeManager,
         state_factory::{TenantRuntime, TenantStateFactory},
@@ -327,7 +328,7 @@ mod tests {
     fn config(enabled: bool, max_cached: usize) -> TenancyConfig {
         TenancyConfig {
             enabled,
-            tenant_db_prefix: "andromeda_tenant".to_string(),
+            tenant_db_prefix: DbNamePrefix::try_from("andromeda_tenant").expect("valid default db name prefix"),
             tenant_max_connections: 16,
             runtime_idle_ttl_seconds: 900,
             runtime_max_cached: max_cached,

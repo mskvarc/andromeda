@@ -52,7 +52,7 @@ impl EntityService {
         validate_attribute_envelopes(&expanded)?;
 
         let (merged, not_appended) = self
-            .commit_computed_write(&id, |previous| {
+            .commit_computed_write(&entity_uri, |previous| {
                 let mut existing = previous.clone(); // clone: the append mutates its own copy of the stored payload
                 let not_appended = append_entity_attrs(&mut existing, unwrap_expanded_ref(&expanded), overwrite)?;
                 let merged = Arc::new(existing);

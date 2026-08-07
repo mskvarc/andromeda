@@ -1,5 +1,6 @@
 //! One subscription's geo filter, as the tree holds it.
 
+use crate::partitioned_rtree::Indexed;
 use andromeda_ngsi_ld_geometry::{distance::grow_lonlat_bounds_metres, geo_rel::GeoRel};
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use geo::algorithm::BoundingRect;
@@ -57,6 +58,14 @@ impl SubEntry {
             georel,
             envelope: AABB::from_corners(min, max),
         })
+    }
+}
+
+impl Indexed for SubEntry {
+    type Id = Uri;
+
+    fn id(&self) -> &Uri {
+        &self.subscription_id
     }
 }
 

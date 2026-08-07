@@ -15,23 +15,21 @@ const CONTENT_TYPE_KEY: &str = "Content-Type";
 
 /// Build the envelope a notification is published as.
 ///
-/// A body that does not parse becomes `null` rather than failing the delivery:
-/// the payload was serialised from a `Value` one step earlier, so this cannot
-/// happen without the serialiser having contradicted itself, and refusing to
-/// notify would be a worse answer than notifying with an empty body.
+/// The body is the notification [`Value`] the request carries, wrapped in the
+/// `{metadata, body}` envelope and serialised once here — the transport never
+/// parses a pre-serialised body back out.
 pub fn build_envelope(request: &DeliveryRequest) -> Vec<u8> {
-    let body: Value = serde_json::from_slice(request.payload.as_ref()).unwrap_or(Value::Null);
-
     let mut metadata = Map::new();
     metadata.insert(CONTENT_TYPE_KEY.to_string(), Value::String(request.content_type.as_str().to_string()));
     for (key, value) in transported_headers(request) {
         metadata.insert(key, Value::String(value));
     }
 
-    let envelope = serde_json::json!({
-        "metadata": Value::Object(metadata),
-        "body": body,
-    });
+    let mut envelope = Map::new();
+    envelope.insert("metadata".to_string(), Value::Object(metadata));
+    // clone: the envelope owns its body, and the request keeps the notification
+    envelope.insert("body".to_string(), (*request.payload).clone());
+    let envelope = Value::Object(envelope);
 
     match serde_json::to_vec(&envelope) {
         Ok(bytes) => bytes,
@@ -70,7 +68,6 @@ mod tests {
             subscription_id: &subscription,
         }
         .assemble()
-        .expect("the notification serialises")
     }
 
     fn envelope(request: &DeliveryRequest) -> Value {
@@ -82,6 +79,16 @@ mod tests {
         let rendered = envelope(&request("application/json", None, None));
         pretty_assertions::assert_eq!(rendered["body"]["id"], json!("urn:ngsi-ld:Notification:1"));
         pretty_assertions::assert_eq!(rendered["metadata"]["Content-Type"], json!("application/json"));
+    }
+
+    #[test]
+    fn the_envelope_carries_the_notification_value_verbatim_as_its_body() {
+        // The body is the notification `Value` the request holds, not a re-parse
+        // of pre-serialised bytes, so it round-trips through the envelope
+        // unchanged — the same output the old parse-then-wrap produced.
+        let req = request("application/json", None, None);
+        let rendered = envelope(&req);
+        pretty_assertions::assert_eq!(rendered["body"], (*req.payload).clone());
     }
 
     #[test]

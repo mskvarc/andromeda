@@ -1,0 +1,86 @@
+//! The shared shape of a validated, `CompactString`-backed NGSI-LD name.
+
+/// Declare a `CompactString`-backed newtype whose only constructor validates its
+/// value against the NGSI-LD compacted-name grammar.
+///
+/// The three named-member types — an entity type name, an attribute name, and a
+/// reference — are the same shape: a `CompactString` behind a newtype, a
+/// grammar check in [`validate_ngsi_ld_name`](crate::reference::validate_ngsi_ld_name)
+/// that no derive can express, and the `FromStr`/`TryFrom<String>` pair that
+/// routes every construction through it. This macro is that shape once.
+///
+/// It expands to the struct (with the caller's `derive` list and `AsRef`
+/// targets, plus the shared `serde`, `Display` and `Into<String>` attributes),
+/// an `as_str` accessor, and the validating `FromStr` and `TryFrom<String>`
+/// impls. Append `borrow_str` to also emit `Borrow<str>`, which lets a set or
+/// map keyed by the name be probed with a `&str` without allocating.
+///
+/// The expansion refers to `CompactString`, the `derive_more`/`serde` derives,
+/// `FromStr`, `Borrow`, `validate_ngsi_ld_name` and `NgsiLdReferenceError` by
+/// their short names, so each invoking module imports them exactly as a
+/// hand-written newtype would.
+macro_rules! validated_ngsi_name {
+    (
+        $(#[$attr:meta])*
+        $name:ident, derive($($derive:ident),+ $(,)?), as_ref($($as_ref:tt),+ $(,)?), borrow_str
+    ) => {
+        validated_ngsi_name!(@define $(#[$attr])* $name, derive($($derive),+), as_ref($($as_ref),+));
+
+        // No derive produces `Borrow` for a target other than the field's own
+        // type. Sound because the derived `Hash` forwards to `CompactString`,
+        // which hashes exactly as its `str` does.
+        impl Borrow<str> for $name {
+            fn borrow(&self) -> &str {
+                self.0.as_str()
+            }
+        }
+    };
+    (
+        $(#[$attr:meta])*
+        $name:ident, derive($($derive:ident),+ $(,)?), as_ref($($as_ref:tt),+ $(,)?)
+    ) => {
+        validated_ngsi_name!(@define $(#[$attr])* $name, derive($($derive),+), as_ref($($as_ref),+));
+    };
+    (@define
+        $(#[$attr:meta])*
+        $name:ident, derive($($derive:ident),+), as_ref($($as_ref:tt),+)
+    ) => {
+        $(#[$attr])*
+        #[derive($($derive),+)]
+        #[serde(try_from = "String", into = "String")]
+        #[as_ref($($as_ref),+)]
+        #[display("{_0}")]
+        #[into(String)]
+        pub struct $name(CompactString);
+
+        impl $name {
+            /// Borrow the name as a string slice.
+            pub fn as_str(&self) -> &str {
+                self.0.as_str()
+            }
+        }
+
+        // Validating parser: the grammar check in `validate_ngsi_ld_name` is what
+        // makes the newtype worth having, and no derive expresses a fallible
+        // parse.
+        impl FromStr for $name {
+            type Err = NgsiLdReferenceError;
+
+            fn from_str(value: &str) -> Result<$name, NgsiLdReferenceError> {
+                validate_ngsi_ld_name(value)?;
+                Ok($name(CompactString::from(value)))
+            }
+        }
+
+        // Parsing lives in `FromStr` so borrowed call sites do not allocate; this
+        // adapter exists only because `#[serde(try_from = "String")]` requires
+        // it.
+        impl TryFrom<String> for $name {
+            type Error = NgsiLdReferenceError;
+
+            fn try_from(value: String) -> Result<$name, NgsiLdReferenceError> {
+                value.parse()
+            }
+        }
+    };
+}

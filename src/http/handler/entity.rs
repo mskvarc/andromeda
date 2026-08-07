@@ -16,7 +16,7 @@ use crate::{
             via::IncomingVia,
         },
         response::{collection::NgsiLdCollectionResponse, render::start_rendering, single::NgsiLdResponse},
-        validation::{parse_entity_id, validate_attr_name},
+        validation::{parse_dataset_id, parse_entity_id, validate_attr_name},
     },
     service::{
         csource_forwarding::{
@@ -34,9 +34,8 @@ use crate::{
             provision_forwarding::{ForwardingModes, build_multi_status_body, first_forwarded_status, has_remote_errors},
             query::EntityQueryService,
         },
-        entity_map::{parse_entity_map_urn, parse_iso8601_duration, parse_uri_csv},
+        entity_map::{parse_entity_map_urn, parse_iso8601_duration},
         geo_filter::matches_geo_query,
-        subscription_cache::compile_geo_q,
         subscription_matching::matches_scope_query,
     },
 };
@@ -49,9 +48,9 @@ use andromeda_ngsi_ld_model::{
 };
 use andromeda_ngsi_ld_problem_details::batch_operation::BatchOperationResult;
 use andromeda_ngsi_ld_query::{
-    filter::{eval::evaluate, expansion::expand_q_expression},
-    projection::purge::{PurgeMode, parse_attribute_list},
-    scope::query::ScopeQuery,
+    filter::{eval::evaluate, expansion::expand_q_expr},
+    geo::compile::compile_geo_query,
+    projection::purge::PurgeMode,
 };
 use andromeda_ngsi_ld_render::{
     entity::{EntityRenderer, render_flat_join},
@@ -72,7 +71,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use serde_json::Value;
-use std::{collections::HashSet, str::FromStr};
+use std::{collections::HashSet, num::NonZeroU32, str::FromStr};
 
 pub async fn patch_no_id(OriginalUri(uri): OriginalUri) -> Result<Response, NgsiLdError> {
     Err(NgsiLdError::from(
@@ -195,22 +194,23 @@ pub async fn get(
     if let Some(snapshot_id) = snapshot.into_inner() {
         let _snap = state.snapshots.validate_for_scoping(&snapshot_id).await.with_instance(&uri)?;
 
+        let entity_uri = Uri::from(id.clone()); // clone: owned Urn -> Uri; the snapshot store is keyed by Uri
         let entity_data = state
             .snapshots
-            .get_snapshot_entity(&snapshot_id, id.as_ref())
+            .get_snapshot_entity(&snapshot_id, &entity_uri)
             .await
             .with_instance(&uri)?
             .ok_or_else(|| NgsiLdError::from(AndromedaError::entity_not_found(id.to_string()).with_instance(&uri)))?;
 
         let mode = params.resolve_render_mode();
-        let attrs: Option<Vec<&str>> = params.attrs.as_deref().map(|s| s.split(',').map(str::trim).collect());
+        let attrs: Option<Vec<&str>> = params.attrs.as_deref().map(|names| names.iter().map(AttributeName::as_str).collect());
         let result = SnapshotRenderer::new(entity_data)
             .with_attrs_filter(attrs.as_deref())
             .with_mode(mode)
             .render()?;
 
         let rendered = start_rendering(accept.media_type(), &context, prefer)
-            .with_geometry_property(params.geometry_property.as_deref())
+            .with_geometry_property(params.geometry_property.as_ref().map(AttributeName::as_str))
             .with_payload(ResponsePayload::Single(result))
             .render()?;
         return Ok(NgsiLdResponse::ok(rendered).with_snapshot_uri(snapshot_id).into_response());
@@ -219,7 +219,7 @@ pub async fn get(
     let attrs: Vec<String> = params
         .attrs
         .as_deref()
-        .map(|s| s.split(',').map(str::trim).map(String::from).collect())
+        .map(|names| names.iter().map(ToString::to_string).collect())
         .unwrap_or_default();
 
     let sys_attrs = if options.contains("sysAttrs") {
@@ -230,7 +230,7 @@ pub async fn get(
     let dataset_ids: Vec<String> = params
         .dataset_id
         .as_deref()
-        .map(|s| s.split(',').map(str::trim).map(String::from).collect())
+        .map(|ids| ids.iter().map(ToString::to_string).collect())
         .unwrap_or_default();
     let local_result = service.get_inner(&id, &attrs, sys_attrs, &dataset_ids, &context).await;
 
@@ -298,15 +298,11 @@ pub async fn get(
 
     let mode = params.resolve_render_mode();
 
-    // Handle join parameter (clause 4.5.23), typed rather than string-matched.
-    let join_mode = params.join.as_deref().and_then(|join| JoinMode::from_str(join).ok());
-    let join_level = params.join_level.unwrap_or(1);
+    // Join mode (clause 4.5.23) is parsed at the query boundary.
+    let join_mode = params.join;
+    let join_level = params.join_level.map_or(1, NonZeroU32::get);
 
-    let contained_by: HashSet<String> = params
-        .contained_by
-        .as_deref()
-        .map(|s| s.split(',').map(|id| id.trim().to_string()).collect())
-        .unwrap_or_default();
+    let contained_by: HashSet<Uri> = params.contained_by.as_deref().map(|ids| ids.iter().cloned().collect()).unwrap_or_default();
 
     if let Some(join) = join_mode {
         let linked = service
@@ -332,7 +328,7 @@ pub async fn get(
                     .render()
                     .with_instance(&uri)?;
                 let rendered = start_rendering(accept.media_type(), &context, prefer)
-                    .with_geometry_property(params.geometry_property.as_deref())
+                    .with_geometry_property(params.geometry_property.as_ref().map(AttributeName::as_str))
                     .with_payload(ResponsePayload::Single(entity_value))
                     .render()?;
                 return Ok(NgsiLdResponse::ok(rendered).with_warnings(warnings).into_response());
@@ -346,7 +342,7 @@ pub async fn get(
         .render()
         .with_instance(&uri)?;
     let rendered = start_rendering(accept.media_type(), &context, prefer)
-        .with_geometry_property(params.geometry_property.as_deref())
+        .with_geometry_property(params.geometry_property.as_ref().map(AttributeName::as_str))
         .with_payload(ResponsePayload::Single(entity_value))
         .render()?;
     Ok(NgsiLdResponse::ok(rendered).with_warnings(warnings).into_response())
@@ -460,8 +456,9 @@ pub async fn query(
         if let Some(snapshot_id) = snapshot.into_inner() {
             let _snap = state.snapshots.validate_for_scoping(&snapshot_id).await.with_instance(&uri)?;
 
-            let entity_type = query.entity_type.as_deref();
-            let entity_ids: Option<Vec<String>> = query.id.as_deref().map(|s| s.split(',').map(|id| id.trim().to_string()).collect());
+            let entity_type = query.entity_type.as_ref().map(ToString::to_string);
+            let entity_type = entity_type.as_deref();
+            let entity_ids = query.id.clone();
             let limit = query.limit.unwrap_or(100) as i64;
             let offset = query.offset.unwrap_or(0) as i64;
 
@@ -472,7 +469,7 @@ pub async fn query(
                 .with_instance(&uri)?;
 
             let opts = query.parse_options();
-            let attrs: Option<Vec<&str>> = query.attrs.as_deref().map(|s| s.split(',').map(str::trim).collect());
+            let attrs: Option<Vec<&str>> = query.attrs.as_deref().map(|names| names.iter().map(AttributeName::as_str).collect());
             let filtered: Vec<Value> = entities
                 .into_iter()
                 .map(|v| {
@@ -484,7 +481,7 @@ pub async fn query(
                 .collect::<Result<Vec<_>, _>>()?;
 
             let rendered = start_rendering(accept.media_type(), &context, prefer)
-                .with_geometry_property(query.geometry_property.as_deref())
+                .with_geometry_property(query.geometry_property.as_ref().map(AttributeName::as_str))
                 .with_payload(ResponsePayload::Collection(filtered))
                 .render()?;
             let response = NgsiLdCollectionResponse::ok(rendered)
@@ -497,9 +494,9 @@ pub async fn query(
         // §5.5.9.3: If NGSILD-EntityMap header present, scope query to that map's entity IDs
         if let Some(ref map_id) = entity_map_header {
             let map_urn = parse_entity_map_urn(map_id.as_str()).with_instance(&uri)?;
-            let scoped_input = query.id.as_deref().map(parse_uri_csv).transpose().with_instance(&uri)?;
+            let scoped_input = query.id.clone();
             let scoped = state.entity_maps.scope_query_ids(&map_urn, scoped_input.as_deref()).await.with_instance(&uri)?;
-            query.id = Some(scoped.iter().map(ToString::to_string).collect::<Vec<_>>().join(","));
+            query.id = Some(scoped);
         }
 
         let opts = query.parse_options();
@@ -511,10 +508,7 @@ pub async fn query(
         let deferred = if split_entities {
             DeferredSplitFilters {
                 q: query.q.take(),
-                georel: query.georel.take(),
-                geometry: query.geometry.take(),
-                coordinates: query.coordinates.take(),
-                geoproperty: query.geoproperty.take(),
+                geo: query.geo.0.take(),
                 scope_q: query.scope_q.take(),
             }
         } else {
@@ -529,14 +523,18 @@ pub async fn query(
             (local_entities, Vec::new())
         } else {
             let context_url = context.link_contexts().first().map(|s| s.as_str());
-            let entity_type = query.entity_type.as_deref();
-            let entity_ids: Option<Vec<String>> = query.id.as_deref().map(|s| s.split(',').map(|id| id.trim().to_string()).collect());
+            let entity_type = query.entity_type.as_ref().map(ToString::to_string);
+            let entity_type = entity_type.as_deref();
+            let entity_ids = query.id.clone();
             let entity_ids_ref = entity_ids.as_deref();
 
-            // Parse csf for CSR filtering during forwarding
-            let csf_expr = expand_q_expression(query.csf.as_deref(), &ContextualExpander::new(state.entity_query.engine(), &context))
-                .await
-                .with_instance(&uri)?;
+            // The CSR filter was parsed while extracting the request.
+            let prepared_context = state.entity_query.engine().prepare_term_context(&context);
+            let csf_expander = ContextualExpander::new(state.entity_query.engine(), &prepared_context);
+            let csf_expr = match query.csf.take() {
+                Some(expr) => Some(expand_q_expr(expr, &csf_expander).await.with_instance(&uri)?),
+                None => None,
+            };
 
             // Phase 1: forward to primary (non-auxiliary) CSRs
             let forwarded = state
@@ -592,35 +590,17 @@ pub async fn query(
 
         // splitEntities post-merge filtering: apply deferred q/geoQ/scopeQ (spec 5.7.2.4)
         if split_entities {
-            let q_expr = if let Some(ref q_str) = deferred.q {
-                expand_q_expression(Some(q_str), &ContextualExpander::new(service.engine(), &context))
-                    .await
-                    .ok()
-                    .flatten()
+            let q_expr = if let Some(q_expr) = deferred.q {
+                let prepared_context = service.engine().prepare_term_context(&context);
+                let expander = ContextualExpander::new(service.engine(), &prepared_context);
+                Some(expand_q_expr(q_expr, &expander).await.with_instance(&uri)?)
             } else {
                 None
             };
-            let geo_val = if let (Some(georel), Some(geometry), Some(coordinates)) = (&deferred.georel, &deferred.geometry, &deferred.coordinates) {
-                let mut value = serde_json::json!({
-                    "georel": georel,
-                    "geometry": geometry,
-                    "coordinates": coordinates,
-                });
-                if let Some(ref geoprop) = deferred.geoproperty {
-                    value["geoproperty"] = Value::String(geoprop.clone());
-                }
-                Some(value)
-            } else {
-                None
-            };
-            let compiled_scope = deferred
-                .scope_q
-                .as_deref()
-                .map(ScopeQuery::parse)
-                .transpose()
-                .map_err(AndromedaError::from)
-                .with_instance(&uri)?;
-            let compiled_geo = geo_val.as_ref().and_then(|v| compile_geo_q(v, "split-entities"));
+            let prepared_geo_context = service.engine().prepare_term_context(&context);
+            let geo_expander = ContextualExpander::new(service.engine(), &prepared_geo_context);
+            let compiled_geo = compile_geo_query(deferred.geo.as_ref(), &geo_expander).await.with_instance(&uri)?;
+            let compiled_scope = deferred.scope_q;
 
             let mut filtered = Vec::with_capacity(entities.len());
             for entity in entities {
@@ -674,14 +654,10 @@ pub async fn query(
 
         let status = if entity_map_requested { StatusCode::CREATED } else { StatusCode::OK };
 
-        // Handle join (clause 4.5.23), typed rather than string-matched.
-        let join_mode = query.join.as_deref().and_then(|join| JoinMode::from_str(join).ok());
-        let join_level = query.join_level.unwrap_or(1);
-        let contained_by: HashSet<String> = query
-            .contained_by
-            .as_deref()
-            .map(|s| s.split(',').map(|id| id.trim().to_string()).collect())
-            .unwrap_or_default();
+        // Join mode (clause 4.5.23) is parsed at the query boundary.
+        let join_mode = query.join;
+        let join_level = query.join_level.map_or(1, NonZeroU32::get);
+        let contained_by: HashSet<Uri> = query.contained_by.as_deref().map(|ids| ids.iter().cloned().collect()).unwrap_or_default();
 
         if let Some(join) = join_mode {
             let linked = service
@@ -696,7 +672,7 @@ pub async fn query(
                     let all_values =
                         render_flat_join(entities.iter().chain(linked.values()), language_filter.as_ref(), opts.render_mode).with_instance(&uri)?;
                     let rendered = start_rendering(accept.media_type(), &context, prefer)
-                        .with_geometry_property(query.geometry_property.as_deref())
+                        .with_geometry_property(query.geometry_property.as_ref().map(AttributeName::as_str))
                         .with_payload(ResponsePayload::Collection(all_values))
                         .render()?;
                     let mut response = NgsiLdCollectionResponse::ok(rendered).with_status(status).with_warnings(warnings);
@@ -722,7 +698,7 @@ pub async fn query(
                         );
                     }
                     let rendered = start_rendering(accept.media_type(), &context, prefer)
-                        .with_geometry_property(query.geometry_property.as_deref())
+                        .with_geometry_property(query.geometry_property.as_ref().map(AttributeName::as_str))
                         .with_payload(ResponsePayload::Collection(entity_values))
                         .render()?;
                     let mut response = NgsiLdCollectionResponse::ok(rendered).with_status(status).with_warnings(warnings);
@@ -739,7 +715,7 @@ pub async fn query(
 
         let rendered = render_flat_join(entities.iter(), language_filter.as_ref(), opts.render_mode).with_instance(&uri)?;
         let rendered_output = start_rendering(accept.media_type(), &context, prefer)
-            .with_geometry_property(query.geometry_property.as_deref())
+            .with_geometry_property(query.geometry_property.as_ref().map(AttributeName::as_str))
             .with_payload(ResponsePayload::Collection(rendered))
             .render()?;
         let mut response = NgsiLdCollectionResponse::ok(rendered_output).with_status(status).with_warnings(warnings);
@@ -1088,6 +1064,7 @@ pub async fn partial_update_attr(
     let service = &state.entities;
     let id = parse_entity_id(&id, &uri)?;
     validate_attr_name(&attr_id, &uri)?;
+    let dataset_id = parse_dataset_id(params.dataset_id.as_deref(), &uri)?;
     let context = context.merge(body_context);
 
     // Forward to matching context sources
@@ -1118,7 +1095,7 @@ pub async fn partial_update_attr(
     if forwarded.is_empty() {
         // No matching CSRs — update locally
         service
-            .partial_update_attr(&id, &attr_id, params.dataset_id.as_deref(), fragment, &context)
+            .partial_update_attr(&id, &attr_id, dataset_id.as_ref(), fragment, &context)
             .await
             .with_instance(&uri)?;
         return Ok(StatusCode::NO_CONTENT.into_response());
@@ -1138,10 +1115,7 @@ pub async fn partial_update_attr(
 
     // Inclusive: apply locally and return 204.
     // Local errors are non-fatal — the remote already succeeded.
-    if let Err(e) = service
-        .partial_update_attr(&id, &attr_id, params.dataset_id.as_deref(), fragment, &context)
-        .await
-    {
+    if let Err(e) = service.partial_update_attr(&id, &attr_id, dataset_id.as_ref(), fragment, &context).await {
         tracing::warn!(error = %e, entity_id = %id, attr_id = %attr_id, "Failed to apply inclusive partial_update_attr locally");
     }
     Ok(StatusCode::NO_CONTENT.into_response())
@@ -1160,12 +1134,13 @@ pub async fn delete_attr(
     validate_attr_name(&attr_id, &uri)?;
     let context: ContextSpec = context.into_inner();
     let delete_all = params.delete_all.unwrap_or(false);
+    let dataset_id = parse_dataset_id(params.dataset_id.as_deref(), &uri)?;
     // NGSI-LD clause 5.6.5: `deleteAll` wins over `datasetId`, and with neither
     // present the default (no-datasetId) instance is the target.
     let selection = if delete_all {
         DatasetSelection::All
     } else {
-        match params.dataset_id.as_deref() {
+        match dataset_id.as_ref() {
             Some(dataset_id) => DatasetSelection::Single(dataset_id),
             None => DatasetSelection::Default,
         }
@@ -1239,10 +1214,11 @@ pub async fn replace_attr(
     let service = &state.entities;
     let id = parse_entity_id(&id, &uri)?;
     validate_attr_name(&attr_id, &uri)?;
+    let dataset_id = parse_dataset_id(params.dataset_id.as_deref(), &uri)?;
     let context = context.merge(body_context);
 
     service
-        .replace_attr(&id, &attr_id, params.dataset_id.as_deref(), fragment, &context)
+        .replace_attr(&id, &attr_id, dataset_id.as_ref(), fragment, &context)
         .await
         .with_instance(&uri)?;
 
@@ -1262,9 +1238,9 @@ pub async fn delete_by_query(
 
     // Determine purge mode from drop/keep parameters (S5.6.21)
     let purge_mode = if let Some(ref drop_attrs) = query.drop {
-        PurgeMode::Drop(parse_attribute_list(drop_attrs).with_instance(&uri)?)
+        PurgeMode::Drop(drop_attrs.clone())
     } else if let Some(ref keep_attrs) = query.keep {
-        PurgeMode::Keep(parse_attribute_list(keep_attrs).with_instance(&uri)?)
+        PurgeMode::Keep(keep_attrs.clone())
     } else {
         PurgeMode::DeleteEntities
     };

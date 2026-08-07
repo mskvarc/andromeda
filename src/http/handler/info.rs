@@ -9,7 +9,7 @@ use crate::{
         response::{render::start_rendering, single::NgsiLdResponse},
     },
 };
-use andromeda_ngsi_ld_model::context_source_identity::ContextSourceIdentity;
+use andromeda_ngsi_ld_model::context_source_identity::{ContextSourceIdentity, ContextSourceIdentityType};
 use andromeda_ngsi_ld_render::response::ResponsePayload;
 use axum::{
     extract::{OriginalUri, State},
@@ -20,7 +20,7 @@ use axum::{
 pub async fn get(State(state): State<AppState>, OriginalUri(uri): OriginalUri, accept: AcceptFormat, context: ContextUrl) -> Result<Response, NgsiLdError> {
     let identity = ContextSourceIdentity {
         id: state.source_identity,
-        type_: "ContextSourceIdentity",
+        type_: ContextSourceIdentityType,
     };
     let context = context.into_inner();
     let value = serde_json::to_value(&identity)

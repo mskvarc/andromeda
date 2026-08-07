@@ -4,6 +4,7 @@
 //! and recipients between the user agent and the server. Used for loop
 //! detection in distributed NGSI-LD forwarding.
 
+use crate::{context_source_pseudonym::ContextSourcePseudonym, received_protocol::ReceivedProtocol};
 use http::{HeaderName, HeaderValue};
 use thiserror::Error;
 
@@ -20,7 +21,8 @@ pub enum ViaParseError {
     /// The element was empty.
     #[error("Via element is empty")]
     Empty,
-    /// The element carried no token that could name an intermediary.
+    /// The element carried no token that could name an intermediary, or the
+    /// token it carried was not a usable [`ContextSourcePseudonym`].
     #[error("Via element names no intermediary")]
     MissingPseudonym,
 }
@@ -28,18 +30,22 @@ pub enum ViaParseError {
 /// A single entry in a Via header chain.
 ///
 /// Each entry represents an intermediate protocol hop in the form
-/// `"protocol-version pseudonym (optional comment)"`.
+/// `"protocol-version pseudonym (optional comment)"`. The protocol is optional
+/// because a non-conformant element with a lone token still names an
+/// intermediary and is kept for loop detection.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ViaEntry {
-    /// The protocol version (e.g., `"1.1"` or `"HTTP/1.1"`).
-    pub protocol_version: String,
+    /// The received-protocol of the hop (e.g. `1.1` or `HTTP/1.1`), absent when
+    /// the element carried only a bare pseudonym.
+    pub protocol: Option<ReceivedProtocol>,
     /// The pseudonym/identity of the intermediary.
-    pub pseudonym: String,
-    /// Optional comment enclosed in parentheses.
+    pub pseudonym: ContextSourcePseudonym,
+    /// Optional comment enclosed in parentheses. Free-form per RFC 9110, so it
+    /// stays unstructured text.
     pub comment: Option<String>,
 }
 
-/// Typed `Via` header (RFC 7230, clause 6.3.18).
+/// Typed `Via` header (RFC 9110 clause 7.6.3, ETSI GS CIM 009 clause 6.3.18).
 ///
 /// Contains a chain of intermediary pseudonyms used for forwarding loop
 /// detection in distributed NGSI-LD operations.
@@ -48,19 +54,19 @@ pub struct Via(Vec<ViaEntry>);
 
 impl Via {
     /// Create a `Via` header with a single entry.
-    pub fn with_entry(protocol_version: impl Into<String>, pseudonym: impl Into<String>) -> Via {
+    pub fn with_entry(protocol: ReceivedProtocol, pseudonym: ContextSourcePseudonym) -> Via {
         Via(vec![ViaEntry {
-            protocol_version: protocol_version.into(),
-            pseudonym: pseudonym.into(),
+            protocol: Some(protocol),
+            pseudonym,
             comment: None,
         }])
     }
 
     /// Append an entry to the Via chain, returning the modified header.
-    pub fn append(mut self, protocol_version: impl Into<String>, pseudonym: impl Into<String>) -> Via {
+    pub fn append(mut self, protocol: ReceivedProtocol, pseudonym: ContextSourcePseudonym) -> Via {
         self.0.push(ViaEntry {
-            protocol_version: protocol_version.into(),
-            pseudonym: pseudonym.into(),
+            protocol: Some(protocol),
+            pseudonym,
             comment: None,
         });
         self
@@ -71,7 +77,7 @@ impl Via {
     /// Used for loop detection per clause 6.3.18: compares against each
     /// discrete pseudonym, not substring match.
     pub fn contains_pseudonym(&self, identity: &str) -> bool {
-        self.0.iter().any(|e| e.pseudonym == identity)
+        self.0.iter().any(|entry| entry.pseudonym.as_str() == identity)
     }
 }
 
@@ -105,16 +111,17 @@ fn parse_via_entry(s: &str) -> Result<ViaEntry, ViaParseError> {
     // pseudonym rather than discarded (fail closed for loop detection).
     let mut tokens = head.split_whitespace();
     let first = tokens.next().ok_or(ViaParseError::MissingPseudonym)?;
-    let (protocol_version, pseudonym) = match tokens.next() {
-        Some(second) => (first.to_string(), second.to_string()),
-        None => (String::new(), first.to_string()),
+    let (protocol, pseudonym) = match tokens.next() {
+        // A first token that does not parse as a received-protocol is dropped
+        // rather than costing the hop; only the pseudonym is load-bearing.
+        Some(second) => (
+            ReceivedProtocol::new(first).ok(),
+            ContextSourcePseudonym::new(second).map_err(|_| ViaParseError::MissingPseudonym)?,
+        ),
+        None => (None, ContextSourcePseudonym::new(first).map_err(|_| ViaParseError::MissingPseudonym)?),
     };
 
-    Ok(ViaEntry {
-        protocol_version,
-        pseudonym,
-        comment,
-    })
+    Ok(ViaEntry { protocol, pseudonym, comment })
 }
 
 impl headers::Header for Via {
@@ -150,9 +157,15 @@ impl headers::Header for Via {
         let s: String = self
             .0
             .iter()
-            .map(|e| match &e.comment {
-                Some(c) => format!("{} {} ({})", e.protocol_version, e.pseudonym, c),
-                None => format!("{} {}", e.protocol_version, e.pseudonym),
+            .map(|entry| {
+                let received = match &entry.protocol {
+                    Some(protocol) => format!("{protocol} {}", entry.pseudonym),
+                    None => entry.pseudonym.to_string(),
+                };
+                match &entry.comment {
+                    Some(comment) => format!("{received} ({comment})"),
+                    None => received,
+                }
             })
             .collect::<Vec<_>>()
             .join(", ");
@@ -165,14 +178,25 @@ impl headers::Header for Via {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::{context_source_pseudonym::ContextSourcePseudonym, received_protocol::ReceivedProtocol, via::Via};
     use headers::Header;
+    use http::HeaderValue;
 
     impl Via {
         /// Iterate over the pseudonyms in the Via chain (test-only).
         fn pseudonyms(&self) -> impl Iterator<Item = &str> {
-            self.0.iter().map(|e| e.pseudonym.as_str())
+            self.0.iter().map(|entry| entry.pseudonym.as_str())
         }
+    }
+
+    /// A valid received-protocol, for building outgoing entries in tests.
+    fn protocol(value: &str) -> ReceivedProtocol {
+        ReceivedProtocol::new(value).expect("valid received-protocol")
+    }
+
+    /// A valid pseudonym, for building outgoing entries in tests.
+    fn pseudonym(value: &str) -> ContextSourcePseudonym {
+        ContextSourcePseudonym::new(value).expect("valid pseudonym")
     }
 
     fn decode_from(raw: &str) -> Result<Via, headers::Error> {
@@ -185,8 +209,8 @@ mod tests {
     fn decode_single_entry() {
         let via = decode_from("1.1 broker-a").expect("should decode");
         pretty_assertions::assert_eq!(via.0.len(), 1);
-        pretty_assertions::assert_eq!(via.0[0].protocol_version, "1.1");
-        pretty_assertions::assert_eq!(via.0[0].pseudonym, "broker-a");
+        pretty_assertions::assert_eq!(via.0[0].protocol.as_ref().map(ReceivedProtocol::as_str), Some("1.1"));
+        pretty_assertions::assert_eq!(via.0[0].pseudonym.as_str(), "broker-a");
         pretty_assertions::assert_eq!(via.0[0].comment, None);
     }
 
@@ -194,21 +218,21 @@ mod tests {
     fn decode_multi_entry() {
         let via = decode_from("1.1 broker-a, 1.1 broker-b").expect("should decode");
         pretty_assertions::assert_eq!(via.0.len(), 2);
-        pretty_assertions::assert_eq!(via.0[0].pseudonym, "broker-a");
-        pretty_assertions::assert_eq!(via.0[1].pseudonym, "broker-b");
+        pretty_assertions::assert_eq!(via.0[0].pseudonym.as_str(), "broker-a");
+        pretty_assertions::assert_eq!(via.0[1].pseudonym.as_str(), "broker-b");
     }
 
     #[test]
     fn decode_with_full_protocol() {
         let via = decode_from("HTTP/1.1 proxy").expect("should decode");
-        pretty_assertions::assert_eq!(via.0[0].protocol_version, "HTTP/1.1");
-        pretty_assertions::assert_eq!(via.0[0].pseudonym, "proxy");
+        pretty_assertions::assert_eq!(via.0[0].protocol.as_ref().map(ReceivedProtocol::as_str), Some("HTTP/1.1"));
+        pretty_assertions::assert_eq!(via.0[0].pseudonym.as_str(), "proxy");
     }
 
     #[test]
     fn decode_with_comment() {
         let via = decode_from("1.1 proxy (Apache)").expect("should decode");
-        pretty_assertions::assert_eq!(via.0[0].pseudonym, "proxy");
+        pretty_assertions::assert_eq!(via.0[0].pseudonym.as_str(), "proxy");
         pretty_assertions::assert_eq!(via.0[0].comment, Some("Apache".to_string()));
     }
 
@@ -234,6 +258,7 @@ mod tests {
         // intermediary, so it is kept rather than dropped -- fail closed, so
         // loop detection can still match it.
         let via = decode_from("brokerX").expect("should decode");
+        pretty_assertions::assert_eq!(via.0[0].protocol, None);
         assert!(via.contains_pseudonym("brokerX"));
     }
 
@@ -277,15 +302,15 @@ mod tests {
 
     #[test]
     fn append_adds_to_chain() {
-        let via = Via::with_entry("1.1", "broker-a").append("1.1", "broker-b");
+        let via = Via::with_entry(protocol("1.1"), pseudonym("broker-a")).append(protocol("1.1"), pseudonym("broker-b"));
         pretty_assertions::assert_eq!(via.0.len(), 2);
-        pretty_assertions::assert_eq!(via.0[0].pseudonym, "broker-a");
-        pretty_assertions::assert_eq!(via.0[1].pseudonym, "broker-b");
+        pretty_assertions::assert_eq!(via.0[0].pseudonym.as_str(), "broker-a");
+        pretty_assertions::assert_eq!(via.0[1].pseudonym.as_str(), "broker-b");
     }
 
     #[test]
     fn encode_roundtrip() {
-        let original = Via::with_entry("1.1", "broker-a").append("1.1", "broker-b");
+        let original = Via::with_entry(protocol("1.1"), pseudonym("broker-a")).append(protocol("1.1"), pseudonym("broker-b"));
         let mut encoded = Vec::new();
         original.encode(&mut encoded);
         pretty_assertions::assert_eq!(encoded.len(), 1);
@@ -298,7 +323,7 @@ mod tests {
     #[test]
     fn via_loop_no_header_means_no_loop() {
         // No Via header -> no loop (handled by Option<Via> being None at call site)
-        let via = Via::with_entry("1.1", "broker-a");
+        let via = Via::with_entry(protocol("1.1"), pseudonym("broker-a"));
         assert!(!via.contains_pseudonym("broker-b"));
     }
 

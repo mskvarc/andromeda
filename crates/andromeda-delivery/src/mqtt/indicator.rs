@@ -39,13 +39,18 @@ impl HealthIndicator for MqttHealthIndicator {
     async fn check(&self) -> ComponentDetail {
         let summaries = self.pool.connection_health_summaries().await;
         let total = summaries.len();
-        let unhealthy = summaries.iter().filter(|summary| summary.health != ConnectionHealth::Healthy).count();
-
-        let status = if self.pool.all_healthy() { HealthStatus::Up } else { HealthStatus::Down };
+        let unhealthy = summaries.iter().filter(|summary| summary.health == ConnectionHealth::Unhealthy).count();
+        let degraded = summaries.iter().filter(|summary| summary.health == ConnectionHealth::Degraded).count();
+        let status = match (unhealthy, degraded) {
+            (0, 0) => HealthStatus::Up,
+            (0, _) => HealthStatus::Degraded,
+            (_, _) => HealthStatus::Down,
+        };
 
         let mut details = BTreeMap::new();
         details.insert("activeConnections".to_owned(), Value::from(total));
         details.insert("unhealthyConnections".to_owned(), Value::from(unhealthy));
+        details.insert("degradedConnections".to_owned(), Value::from(degraded));
         if !summaries.is_empty() {
             details.insert("connections".to_owned(), Value::Array(summaries.into_iter().map(describe).collect()));
         }
@@ -57,8 +62,8 @@ impl HealthIndicator for MqttHealthIndicator {
 /// One connection, as it appears in the health response.
 fn describe(summary: MqttConnectionHealthSummary) -> Value {
     let mut connection = Map::new();
-    connection.insert("host".to_owned(), Value::String(summary.host));
-    connection.insert("port".to_owned(), Value::from(summary.port));
+    connection.insert("host".to_owned(), Value::String(summary.authority.host_str().into_owned()));
+    connection.insert("port".to_owned(), Value::from(summary.authority.port()));
     connection.insert("version".to_owned(), Value::String(summary.version.to_string()));
     connection.insert("health".to_owned(), Value::String(summary.health.to_string()));
     connection.insert("secondsSinceHealthy".to_owned(), Value::from(summary.seconds_since_healthy));
@@ -80,8 +85,10 @@ fn describe(summary: MqttConnectionHealthSummary) -> Value {
 mod tests {
     use crate::{
         endpoint::mqtt::MqttVersion,
+        host_port::HostPort,
         mqtt::{
             config::MqttPoolConfig,
+            dial::RumqttcDialer,
             health::{ConnectionHealth, MqttConnectionHealthSummary},
             indicator::{MqttHealthIndicator, describe},
             pool::MqttTransportPool,
@@ -89,10 +96,10 @@ mod tests {
     };
     use andromeda_health::{component::ComponentName, indicator::HealthIndicator, status::HealthStatus};
     use serde_json::{Value, json};
-    use std::sync::Arc;
+    use std::{str::FromStr, sync::Arc};
 
     fn indicator() -> MqttHealthIndicator {
-        MqttHealthIndicator::new(Arc::new(MqttTransportPool::new(MqttPoolConfig::default())))
+        MqttHealthIndicator::new(Arc::new(MqttTransportPool::new(MqttPoolConfig::default(), Arc::new(RumqttcDialer))))
     }
 
     #[test]
@@ -106,14 +113,14 @@ mod tests {
         pretty_assertions::assert_eq!(detail.status, HealthStatus::Up);
         pretty_assertions::assert_eq!(detail.details["activeConnections"], Value::from(0));
         pretty_assertions::assert_eq!(detail.details["unhealthyConnections"], Value::from(0));
+        pretty_assertions::assert_eq!(detail.details["degradedConnections"], Value::from(0));
         assert!(!detail.details.contains_key("connections"));
     }
 
     #[test]
     fn a_degraded_connection_reports_its_health_by_name_rather_than_as_a_number() {
         let rendered = describe(MqttConnectionHealthSummary {
-            host: "broker".to_owned(),
-            port: 1883,
+            authority: HostPort::from_str("broker:1883").expect("a valid authority"),
             version: MqttVersion::V5,
             health: ConnectionHealth::Degraded,
             seconds_since_healthy: 90,
@@ -122,6 +129,8 @@ mod tests {
             clients_connected: None,
         });
 
+        pretty_assertions::assert_eq!(rendered["host"], json!("broker"));
+        pretty_assertions::assert_eq!(rendered["port"], json!(1883));
         pretty_assertions::assert_eq!(rendered["health"], json!("degraded"));
         pretty_assertions::assert_eq!(rendered["version"], json!("v5"));
         pretty_assertions::assert_eq!(rendered["secondsSinceHealthy"], json!(90));

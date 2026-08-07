@@ -121,10 +121,11 @@ fn json_literal(value: &Value) -> Value {
     Value::Array(vec![Value::Object(node)])
 }
 
-/// The expanded form of a `Property` value, which must be a JSON scalar here.
+/// The expanded form of a `Property` value when it is scalar or an array of
+/// scalars.
 ///
-/// Objects and arrays bail: expanding them depends on term definitions this
-/// walker does not apply below the attribute level.
+/// Object-valued values still bail because expanding them depends on term
+/// definitions this walker does not apply below the attribute level.
 fn scalar_value(value: &Value) -> Option<Value> {
     match value {
         Value::String(_) | Value::Number(_) | Value::Bool(_) => {
@@ -132,7 +133,22 @@ fn scalar_value(value: &Value) -> Option<Value> {
             node.insert("@value".to_owned(), value.clone()); // clone: the source document is borrowed and stays valid
             Some(Value::Array(vec![Value::Object(node)]))
         }
-        Value::Null | Value::Object(_) | Value::Array(_) => None,
+        Value::Array(values) => {
+            let mut expanded = Vec::with_capacity(values.len());
+            for scalar in values {
+                match scalar {
+                    Value::String(_) | Value::Number(_) | Value::Bool(_) => {
+                        let mut node = Map::with_capacity(1);
+                        node.insert("@value".to_owned(), scalar.clone()); // clone: the source document is borrowed and stays valid
+                        expanded.push(Value::Object(node));
+                    }
+                    Value::Null => {}
+                    Value::Object(_) | Value::Array(_) => return None,
+                }
+            }
+            Some(Value::Array(expanded))
+        }
+        Value::Null | Value::Object(_) => None,
     }
 }
 

@@ -16,6 +16,7 @@ use andromeda_jsonld::engine::processor::JsonLdEngine;
 use andromeda_ngsi_ld_geometry::geometry::Geometry;
 use andromeda_ngsi_ld_lexicon::{
     entity_type_name::EntityTypeName,
+    rfc3339::whole_seconds,
     uri::{NGSI_LD_URN_NID, Uri},
 };
 use andromeda_ngsi_ld_model::{
@@ -25,7 +26,7 @@ use andromeda_ngsi_ld_model::{
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 use andromeda_ngsi_ld_vocabulary::expanded::{classes as expanded_classes, properties as expanded_properties};
 use andromeda_tenancy::tenant_ref::TenantRef;
-use chrono::{SecondsFormat, Utc};
+use chrono::Utc;
 use futures::{StreamExt, stream};
 use serde_json::Value;
 use std::sync::Arc;
@@ -136,23 +137,21 @@ impl NotificationWorker {
     async fn handle_subscription_change(&self, change: SubscriptionChange) {
         // Close any active SSE/WebSocket connections when a subscription is deleted.
         if let SubscriptionChange::Deleted(ref id) = change {
-            let id_str = id.to_string();
-            self.transport.sse_registry().close(&id_str);
-            self.transport.ws_registry().close(&id_str);
+            self.transport.sse_registry().close(id);
+            self.transport.ws_registry().close(id);
         }
         self.cache.handle_change(&change, &self.sub_repo).await;
 
         // After cache update, close lingering SSE/WebSocket connections if
         // transport was changed away from the streaming type.
-        if let SubscriptionChange::Upserted(ref id) = change {
-            let id_str = id.to_string();
-            if let Some(compiled) = self.cache.get(id) {
-                if !matches!(compiled.endpoint_transport, EndpointTransport::Sse) {
-                    self.transport.sse_registry().close(&id_str);
-                }
-                if !matches!(compiled.endpoint_transport, EndpointTransport::WebSocket) {
-                    self.transport.ws_registry().close(&id_str);
-                }
+        if let SubscriptionChange::Upserted(ref id) = change
+            && let Some(compiled) = self.cache.get(id)
+        {
+            if !matches!(compiled.endpoint_transport, EndpointTransport::Sse) {
+                self.transport.sse_registry().close(id);
+            }
+            if !matches!(compiled.endpoint_transport, EndpointTransport::WebSocket) {
+                self.transport.ws_registry().close(id);
             }
         }
     }
@@ -170,11 +169,9 @@ impl NotificationWorker {
         }
         debug!("Found {} matching subscriptions for event {}", matching.len(), event.entity_id);
 
-        let entity_id_str = event.entity_id.to_string(); // convert once: repository methods take &str
-
         // Fetch entity data once for all matching subscriptions
         let entity_data = if !matches!(event.trigger_reason, NotificationTrigger::EntityDeleted | NotificationTrigger::AttributeDeleted) {
-            match self.entity_repo.get(&entity_id_str).await {
+            match self.entity_repo.get(&event.entity_id).await {
                 Ok(Some(data)) => Some(data),
                 Ok(None) => {
                     debug!("Entity {} no longer exists, skipping notification", event.entity_id);
@@ -186,7 +183,7 @@ impl NotificationWorker {
                 }
             }
         } else if matches!(event.trigger_reason, NotificationTrigger::AttributeDeleted) {
-            match self.entity_repo.get(&entity_id_str).await {
+            match self.entity_repo.get(&event.entity_id).await {
                 Ok(Some(data)) => Some(data),
                 _ => {
                     if let Some(ref snapshot) = event.entity_snapshot {
@@ -202,7 +199,7 @@ impl NotificationWorker {
                                 expanded_properties::DELETED_AT.as_str().to_string(),
                                 serde_json::json!([{
                                     "@type": expanded_classes::DATE_TIME.as_str(),
-                                    "@value": event.occurred_at.to_rfc3339_opts(SecondsFormat::Millis, true)
+                                    "@value": whole_seconds(event.occurred_at)
                                 }]),
                             );
                         }
@@ -215,7 +212,7 @@ impl NotificationWorker {
         } else if let Some(snapshot) = event.entity_snapshot.as_deref() {
             let deleted_at_value = serde_json::json!([{
                 "@type": expanded_classes::DATE_TIME.as_str(),
-                "@value": event.occurred_at.to_rfc3339_opts(SecondsFormat::Millis, true)
+                "@value": whole_seconds(event.occurred_at)
             }]);
             let mut data = match snapshot {
                 Value::Array(arr) => arr.first().cloned().unwrap_or_else(|| snapshot.clone()),
@@ -231,7 +228,7 @@ impl NotificationWorker {
                 "@type": event.entity_types,
                 (expanded_properties::DELETED_AT.as_str()): [{
                     "@type": expanded_classes::DATE_TIME.as_str(),
-                    "@value": event.occurred_at.to_rfc3339_opts(SecondsFormat::Millis, true)
+                    "@value": whole_seconds(event.occurred_at)
                 }]
             }]))
         };
@@ -258,7 +255,7 @@ impl NotificationWorker {
             if matches!(event.trigger_reason, NotificationTrigger::EntityDeleted) {
                 fallback_sys_attrs
             } else {
-                match self.entity_repo.get_sys_attrs(&entity_id_str).await {
+                match self.entity_repo.get_sys_attrs(&event.entity_id).await {
                     Ok(Some(attrs)) => Some(attrs),
                     Ok(None) => fallback_sys_attrs,
                     Err(e) => {
@@ -348,7 +345,7 @@ impl NotificationWorker {
                         }
                     };
 
-                    let request = match (NotificationDelivery {
+                    let request = (NotificationDelivery {
                         payload: &notification_payload,
                         endpoint_uri: &compiled_sub.endpoint_uri,
                         accept: compiled_sub.endpoint_accept.as_ref(),
@@ -357,14 +354,7 @@ impl NotificationWorker {
                         tenant: self.tenant.tenant_name(),
                         subscription_id: &sub_id,
                     })
-                    .assemble()
-                    {
-                        Ok(r) => r,
-                        Err(e) => {
-                            debug!("Failed to build delivery request for {}: {}", sub_id, e);
-                            return;
-                        }
-                    };
+                    .assemble();
                     let success = self.transport.deliver(&compiled_sub.endpoint_transport, &request).await.is_delivered();
 
                     if success {

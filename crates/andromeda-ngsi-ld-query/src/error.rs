@@ -126,6 +126,14 @@ pub enum QueryError {
     /// A type name production produced an empty name.
     #[error("Type expression: empty type name at position {0}")]
     TypeExprEmptyName(usize),
+    /// A type name did not satisfy the clause 4.6.2 name grammar.
+    #[error("Type expression: invalid type name {name:?} at position {position}")]
+    TypeExprInvalidName {
+        /// The offending name.
+        name: String,
+        /// Zero-based byte offset of the name in the input.
+        position: usize,
+    },
 
     // -----------------------------------------------------------------------
     // Regular expressions (clause 4.9 `q` patterns, clause 5.7.2 `idPattern`)

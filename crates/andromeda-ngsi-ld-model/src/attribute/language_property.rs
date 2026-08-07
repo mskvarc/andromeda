@@ -1,7 +1,7 @@
 //! The LanguageProperty attribute family and its language map (ETSI GS CIM 009 clause 5.2.32).
 
 use crate::attribute::common_fields::CommonAttributeFields;
-use compact_str::CompactString;
+use andromeda_ngsi_ld_lexicon::reference::NgsiLdReference;
 use derive_more::{Deref, DerefMut, From};
 use indexmap::IndexMap;
 use jsonld::{Expandable, ExpandableLanguageMap};
@@ -109,7 +109,7 @@ pub struct LanguageProperty {
     pub language_map: LanguageMap,
     /// Fixed JSON-LD datatype for language-tagged strings.
     #[jsonld(property = "ngsi:hasValueType", coerce = "@id")]
-    pub value_type: Option<CompactString>,
+    pub value_type: Option<NgsiLdReference>,
     /// Previous language map emitted in notifications when `showChanges` is active.
     #[jsonld(property = "ngsi:hasPreviousLanguageMap", container = "language")]
     pub previous_language_map: Option<LanguageMap>,
@@ -153,7 +153,7 @@ mod tests {
             unreachable!("expected LanguageProperty");
         };
         assert!(property.previous_language_map.is_some());
-        pretty_assertions::assert_eq!(property.value_type.as_deref(), Some("langString"));
+        pretty_assertions::assert_eq!(property.value_type.as_deref().map(|value| value.as_str()), Some("langString"));
     }
 
     #[test]

@@ -31,7 +31,7 @@ impl EntityService {
         &self,
         id: &Urn,
         attr_name: &str,
-        dataset_id: Option<&str>,
+        dataset_id: Option<&Urn>,
         fragment: Value,
         context: &ContextSpec,
     ) -> Result<(), AndromedaError> {
@@ -42,9 +42,10 @@ impl EntityService {
             return Err(AndromedaError::entity_validation("Invalid attribute name"));
         }
 
-        let attr_iri = self.engine.expand_term(attr_name, context).await?;
+        let prepared_context = self.engine.prepare_term_context(context);
+        let attr_iri = self.engine.expand_term(attr_name, &prepared_context).await?;
 
-        if attr_iri == expanded_properties::SCOPE.as_str() {
+        if attr_iri.as_str() == expanded_properties::SCOPE.as_str() {
             return Err(AndromedaError::entity_validation("Scope is not a replaceable attribute"));
         }
 
@@ -56,7 +57,7 @@ impl EntityService {
             previous: previous_attributes,
             trigger,
         } = self
-            .commit_computed_write(&id, |previous| {
+            .commit_computed_write(&entity_uri, |previous| {
                 let previous_attributes = self.change_tx.as_ref().map(|_| previous.clone()); // clone: snapshot before mutation for showChanges diff
 
                 let mut existing = previous.clone(); // clone: the replacement mutates its own copy of the stored payload
@@ -80,7 +81,7 @@ impl EntityService {
             entity_uri,
             entity_types,
             trigger,
-            vec![attr_name_of(&attr_iri)?],
+            vec![attr_name_of(attr_iri.as_str())?],
             previous_attributes,
             Some(merged),
         );

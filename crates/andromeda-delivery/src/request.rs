@@ -1,25 +1,27 @@
 //! One notification, ready to hand to a transport.
 
-use crate::error::TransportError;
 use andromeda_ngsi_ld_http_headers::{link::header::Link, media_type::ResponseMediaType, ngsild_tenant::NgsiLdTenant};
 use andromeda_ngsi_ld_lexicon::{tenant::TenantName, uri::Uri};
 use andromeda_ngsi_ld_model::key_value_pair::KeyValuePair;
 use andromeda_ngsi_ld_vocabulary::NGSI_LD_CORE_CONTEXT_URL;
-use bytes::Bytes;
+use iri_rs::IriRefBuf;
 use mediatype::MediaTypeBuf;
 use serde_json::Value;
+use std::sync::Arc;
 use url::Url;
 
 /// Everything a transport needs to deliver a single notification.
 ///
-/// Assembled once by [`NotificationDelivery::assemble`] and then read-only:
-/// the payload is already serialised, the media type already resolved, and the
-/// `@context` decision already made. A transport that had to make any of those
-/// would be making it once per protocol.
+/// Assembled once by [`NotificationDelivery::assemble`] and then read-only: the
+/// media type is already resolved and the `@context` decision already made. The
+/// notification body travels as a structured [`Value`], not as bytes, so each
+/// transport serialises it in the one shape it needs — the HTTP body once, the
+/// MQTT `{metadata, body}` envelope once — rather than the assembler
+/// serialising it and one transport parsing it straight back.
 #[derive(Debug, Clone)]
 pub struct DeliveryRequest {
-    /// Serialised notification payload.
-    pub payload: Bytes,
+    /// The notification document, shared by every transport that delivers it.
+    pub payload: Arc<Value>,
     /// Target endpoint URL, carried as a [`Url`] so no transport re-parses the
     /// string the model already validated.
     pub endpoint_uri: Url,
@@ -49,7 +51,13 @@ impl DeliveryRequest {
         if self.content_type.include_context_in_body() {
             return None;
         }
-        Some(Link::jsonld_context(self.context_url.as_ref().map_or(NGSI_LD_CORE_CONTEXT_URL, Url::as_str)))
+        // The `@context` a notification advertises is an IRI reference, so the
+        // Link header carries it as a typed [`IriRefBuf`] rather than a bare
+        // string; a subscription that named no context falls back to the core
+        // context. A URL and the core-context constant are both valid IRI
+        // references, so the construction does not fail in practice.
+        let context = self.context_url.as_ref().map_or(NGSI_LD_CORE_CONTEXT_URL, Url::as_str);
+        IriRefBuf::new(context).ok().map(Link::jsonld_context)
     }
 }
 
@@ -77,15 +85,15 @@ pub struct NotificationDelivery<'a> {
 }
 
 impl NotificationDelivery<'_> {
-    /// Serialise the notification and resolve everything a transport reads.
-    pub fn assemble(&self) -> Result<DeliveryRequest, TransportError> {
-        let payload = serde_json::to_vec(self.payload).map_err(|source| TransportError::PayloadSerialization {
-            endpoint: self.endpoint_uri.to_string(),
-            source,
-        })?;
-
-        Ok(DeliveryRequest {
-            payload: Bytes::from(payload),
+    /// Resolve everything a transport reads, carrying the notification body
+    /// through as a shared [`Value`] for each transport to serialise once.
+    ///
+    /// Infallible: serialisation, the only step that could fail, now happens in
+    /// each transport against the body shape it sends.
+    pub fn assemble(&self) -> DeliveryRequest {
+        DeliveryRequest {
+            // clone: the request owns the notification body the borrow points at, and the `Arc` lets each transport read it without another copy
+            payload: Arc::new(self.payload.clone()),
             endpoint_uri: self.endpoint_uri.clone(), // clone: the request outlives this borrow of the subscription
             content_type: notification_media_type(self.accept),
             context_url: self.jsonld_context.cloned(), // clone: same
@@ -93,7 +101,7 @@ impl NotificationDelivery<'_> {
             tenant: self.tenant.map(|name| NgsiLdTenant::new(name.clone())),
             receiver_info: self.receiver_info.unwrap_or_default().to_vec(),
             subscription_id: self.subscription_id.clone(), // clone: the request outlives this borrow of the subscription
-        })
+        }
     }
 }
 
@@ -153,7 +161,6 @@ mod tests {
             subscription_id: &subscription,
         }
         .assemble()
-        .expect("the notification serialises")
     }
 
     #[test]
@@ -229,8 +236,7 @@ mod tests {
             tenant: None,
             subscription_id: &subscription,
         }
-        .assemble()
-        .expect("the notification serialises");
+        .assemble();
         pretty_assertions::assert_eq!(request.receiver_info, pairs);
     }
 
@@ -248,8 +254,7 @@ mod tests {
             tenant: Some(&name),
             subscription_id: &subscription,
         }
-        .assemble()
-        .expect("the notification serialises");
+        .assemble();
         pretty_assertions::assert_eq!(request.tenant.as_ref().map(NgsiLdTenant::as_str), Some("acme"));
     }
 }

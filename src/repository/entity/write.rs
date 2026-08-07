@@ -13,7 +13,7 @@
 
 use crate::{
     core::error::AndromedaError,
-    repository::entity::{params::PreparedEntityColumns, repo::EntityRepository},
+    repository::entity::{mapper::stored_uri, params::PreparedEntityColumns, repo::EntityRepository},
     service::entity::store::DeletedEntity,
 };
 use chrono::{DateTime, Utc};
@@ -173,17 +173,17 @@ impl EntityRepository {
 
         let rows = sqlx::query(ENTITY_DELETE_SQL).bind(ids).bind(expected_modified_at).fetch_all(&mut **tx).await?;
 
-        let result = rows
-            .into_iter()
-            .map(|row| DeletedEntity {
-                id: row.get("id"),
-                payload: row.get("payload"),
-                created_at: row.get("created_at"),
-                modified_at: row.get("modified_at"),
-                expires_at: row.get("expires_at"),
+        rows.into_iter()
+            .map(|row| {
+                Ok(DeletedEntity {
+                    id: stored_uri(row.get("id"))?,
+                    payload: row.get("payload"),
+                    created_at: row.get("created_at"),
+                    modified_at: row.get("modified_at"),
+                    expires_at: row.get("expires_at"),
+                })
             })
-            .collect();
-        Ok(result)
+            .collect()
     }
 }
 

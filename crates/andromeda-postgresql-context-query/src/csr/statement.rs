@@ -10,20 +10,83 @@ use andromeda_postgresql_query::{
     geo_predicate as geo_sql,
     geo_predicate::{GeometrySource, NullGeometryPolicy},
 };
-use sea_query::{Alias, Condition, Expr as SeaExpr, Order, PostgresQueryBuilder, Query};
+use sea_query::{Condition, Expr as SeaExpr, Iden, Order, PostgresQueryBuilder, Query};
 
-/// Every column a registration row projects, with geometries rendered as GeoJSON.
-const CSR_COLUMNS: &str = concat!(
-    "\"id\", \"type\", \"registration_name\", \"description\", \"information\", \"tenant\", ",
-    "\"observation_interval\", \"management_interval\", ",
-    "ST_AsGeoJSON(\"location\")::JSONB AS \"location\", ",
-    "ST_AsGeoJSON(\"observation_space\")::JSONB AS \"observation_space\", ",
-    "ST_AsGeoJSON(\"operation_space\")::JSONB AS \"operation_space\", ",
-    "\"expires_at\", \"endpoint\", \"accept\", \"mode\"::text AS \"mode\", \"operations\", \"scope\", ",
-    "\"refresh_rate\", \"management\", \"context_source_info\", \"jsonld_context\", \"context_source_alias\", ",
-    "\"status\"::text AS \"status\", \"times_sent\", \"times_failed\", \"last_success\", \"last_failure\", ",
-    "\"created_at\", \"modified_at\", \"additional_properties\""
-);
+/// The `context_source_registrations` relation and its columns.
+///
+/// Named through an [`Iden`] enum rather than hand-quoted strings, mirroring the
+/// `Entities` schema enum: a column rename moves every reference with it, and a
+/// typo becomes a compile error instead of a query that silently selects
+/// nothing. The three geometry columns and the two enum columns still project
+/// through a cast sea-query cannot express — `ST_AsGeoJSON(...)::JSONB` and
+/// `::text` — but even those name their column and their output alias through
+/// this enum.
+#[derive(Iden, Clone, Copy)]
+enum Csr {
+    /// The `context_source_registrations` table.
+    #[iden = "context_source_registrations"]
+    Table,
+    /// Primary key: the registration's URI identifier.
+    Id,
+    /// The registration type discriminator.
+    Type,
+    /// Human-readable registration name.
+    RegistrationName,
+    /// Free-text description.
+    Description,
+    /// The `information` array of registered entity/attribute coverage.
+    Information,
+    /// Owning tenant.
+    Tenant,
+    /// The `observationInterval` temporal bounds.
+    ObservationInterval,
+    /// The `managementInterval` temporal bounds.
+    ManagementInterval,
+    /// PostGIS geometry of the registration `location`.
+    Location,
+    /// PostGIS geometry of the `observationSpace`.
+    ObservationSpace,
+    /// PostGIS geometry of the `operationSpace`.
+    OperationSpace,
+    /// Expiry instant, after which the registration is gone.
+    ExpiresAt,
+    /// The context source endpoint URI.
+    Endpoint,
+    /// The endpoint's `accept` media type.
+    Accept,
+    /// The forwarding mode enum.
+    Mode,
+    /// The operations the source serves.
+    Operations,
+    /// The registration's scope paths.
+    Scope,
+    /// The refresh rate the source advertises.
+    RefreshRate,
+    /// Management endpoint metadata.
+    Management,
+    /// The `contextSourceInfo` key-value pairs.
+    ContextSourceInfo,
+    /// The registration's JSON-LD context.
+    JsonldContext,
+    /// The context source alias.
+    ContextSourceAlias,
+    /// The forwarding status enum.
+    Status,
+    /// Count of notifications sent.
+    TimesSent,
+    /// Count of notification failures.
+    TimesFailed,
+    /// Instant of the last successful contact.
+    LastSuccess,
+    /// Instant of the last failed contact.
+    LastFailure,
+    /// Creation instant (clause 4.8 system attribute).
+    CreatedAt,
+    /// Last-modification instant (clause 4.8 system attribute).
+    ModifiedAt,
+    /// The `additionalProperties` JSONB bag of unmodelled members.
+    AdditionalProperties,
+}
 
 /// Builds a parameterized SQL query to discover Context Source Registrations.
 ///
@@ -36,15 +99,44 @@ pub fn build_csr_query(query: &CompiledCsrQuery) -> Result<BuiltQuery<'static>, 
 
     let mut select = Query::select();
     select
-        .expr(SeaExpr::cust(CSR_COLUMNS))
-        .from(Alias::new("context_source_registrations"))
+        .column(Csr::Id)
+        .column(Csr::Type)
+        .column(Csr::RegistrationName)
+        .column(Csr::Description)
+        .column(Csr::Information)
+        .column(Csr::Tenant)
+        .column(Csr::ObservationInterval)
+        .column(Csr::ManagementInterval)
+        .expr_as(SeaExpr::cust("ST_AsGeoJSON(\"location\")::JSONB"), Csr::Location)
+        .expr_as(SeaExpr::cust("ST_AsGeoJSON(\"observation_space\")::JSONB"), Csr::ObservationSpace)
+        .expr_as(SeaExpr::cust("ST_AsGeoJSON(\"operation_space\")::JSONB"), Csr::OperationSpace)
+        .column(Csr::ExpiresAt)
+        .column(Csr::Endpoint)
+        .column(Csr::Accept)
+        .expr_as(SeaExpr::cust("\"mode\"::text"), Csr::Mode)
+        .column(Csr::Operations)
+        .column(Csr::Scope)
+        .column(Csr::RefreshRate)
+        .column(Csr::Management)
+        .column(Csr::ContextSourceInfo)
+        .column(Csr::JsonldContext)
+        .column(Csr::ContextSourceAlias)
+        .expr_as(SeaExpr::cust("\"status\"::text"), Csr::Status)
+        .column(Csr::TimesSent)
+        .column(Csr::TimesFailed)
+        .column(Csr::LastSuccess)
+        .column(Csr::LastFailure)
+        .column(Csr::CreatedAt)
+        .column(Csr::ModifiedAt)
+        .column(Csr::AdditionalProperties)
+        .from(Csr::Table)
         // clone: the count statement filters on the same condition
         .cond_where(condition.clone())
         // `id` breaks ties on `created_at`: two registrations minted in the same
         // microsecond would otherwise straddle a page boundary inconsistently
         // across executions (clause 5.5.9 requires a stable order).
-        .order_by(Alias::new("created_at"), Order::Asc)
-        .order_by(Alias::new("id"), Order::Asc)
+        .order_by(Csr::CreatedAt, Order::Asc)
+        .order_by(Csr::Id, Order::Asc)
         .limit(query.pagination.limit as u64)
         .offset(query.pagination.offset as u64);
 
@@ -53,10 +145,7 @@ pub fn build_csr_query(query: &CompiledCsrQuery) -> Result<BuiltQuery<'static>, 
 
     // Count query always generated for CSR
     let mut count_select = Query::select();
-    count_select
-        .expr(SeaExpr::cust("COUNT(*)"))
-        .from(Alias::new("context_source_registrations"))
-        .cond_where(condition);
+    count_select.expr(SeaExpr::cust("COUNT(*)")).from(Csr::Table).cond_where(condition);
     let (count_sql, _) = count_select.build(PostgresQueryBuilder);
 
     Ok(BuiltQuery {
@@ -74,13 +163,13 @@ fn build_csr_conditions(query: &CompiledCsrQuery) -> Result<Condition, RenderErr
     // with the clause-5.10.2 forwarding match so the two read a type
     // registration the same way.
     if let Some(entity_type) = &query.entity_type {
-        condition = condition.add(entity_type_coverage(entity_type.as_str()));
+        condition = condition.add(entity_type_coverage(entity_type));
     }
 
     // ID filter
     if !query.ids.is_empty() {
         let ids: Vec<&str> = query.ids.iter().map(AsRef::as_ref).collect();
-        condition = condition.add(SeaExpr::col(Alias::new("id")).is_in(ids));
+        condition = condition.add(SeaExpr::col(Csr::Id).is_in(ids));
     }
 
     // ID pattern filter: match against information[].entities[].idPattern
@@ -209,6 +298,25 @@ mod tests {
         assert!(built.sql.contains("context_source_registrations"));
         assert!(built.sql.contains("LIMIT"));
         assert!(built.sql.contains("OFFSET"));
+    }
+
+    #[test]
+    fn the_projection_names_every_column_quoted_and_casts_geometry_and_enum_columns() {
+        // The `Iden` enum must render byte-identically to the hand-quoted column
+        // list it replaced: plain columns quoted, geometry columns as GeoJSON,
+        // and the enum columns cast to text, each with the same output alias.
+        let built = build_csr_query(&empty_query()).unwrap();
+        for column in ["\"id\"", "\"type\"", "\"registration_name\"", "\"jsonld_context\"", "\"additional_properties\""] {
+            assert!(built.sql.contains(column), "missing {column}: {}", built.sql);
+        }
+        assert!(built.sql.contains("ST_AsGeoJSON(\"location\")::JSONB AS \"location\""), "{}", built.sql);
+        assert!(
+            built.sql.contains("ST_AsGeoJSON(\"observation_space\")::JSONB AS \"observation_space\""),
+            "{}",
+            built.sql
+        );
+        assert!(built.sql.contains("\"mode\"::text AS \"mode\""), "{}", built.sql);
+        assert!(built.sql.contains("\"status\"::text AS \"status\""), "{}", built.sql);
     }
 
     #[test]

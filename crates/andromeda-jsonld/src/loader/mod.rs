@@ -5,9 +5,7 @@
 //! in-process moka cache, the [`crate::context_registry::ContextRegistry`] of
 //! embedded and preloaded documents, the
 //! [`crate::context_cache::ContextCache`] the broker attaches, and finally an
-//! HTTP fetch when one is permitted — and every document that arrives from
-//! outside the registry passes through [`url_normalization`] first.
+//! HTTP fetch when one is permitted.
 
 pub mod error;
 pub mod http;
-pub mod url_normalization;

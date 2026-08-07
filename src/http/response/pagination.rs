@@ -3,8 +3,13 @@
 //! Provides common logic for building pagination `Link` headers across
 //! subscription, CSR subscription, and CSR query endpoints.
 
-use andromeda_ngsi_ld_http_headers::link::{header::Link, value::LinkValue};
+use andromeda_ngsi_ld_http_headers::{
+    link::{header::Link, relation_type::RelationType, value::LinkValue},
+    media_type::APPLICATION_LD_JSON,
+};
 use axum::{http::Uri, response::Response};
+use iri_rs::IriRefBuf;
+use mediatype::MediaTypeBuf;
 use url::form_urlencoded;
 
 /// Pagination link style controlling which link relations are included.
@@ -74,8 +79,8 @@ pub fn append_pagination_links(
         return;
     }
 
-    let mt = match media_type {
-        PaginationMediaType::JsonLd => Some(LinkValue::JSON_LD_MEDIA_TYPE),
+    let mt: Option<MediaTypeBuf> = match media_type {
+        PaginationMediaType::JsonLd => Some(MediaTypeBuf::from(&APPLICATION_LD_JSON)),
         PaginationMediaType::None => None,
     };
 
@@ -117,7 +122,18 @@ pub fn append_pagination_links(
 
     let values = links
         .into_iter()
-        .map(|(rel, target)| LinkValue::with_params(&target, Some(rel), mt))
+        .filter_map(|(rel, target)| {
+            let relation = match rel {
+                "prev" => RelationType::Prev,
+                "next" => RelationType::Next,
+                "first" => RelationType::First,
+                "last" => RelationType::Last,
+                _ => return None,
+            };
+            IriRefBuf::new(target)
+                .ok()
+                .map(|target| LinkValue::with_params(target, Some(relation), mt.clone()))
+        })
         .collect::<Vec<_>>();
     if let Some(link) = Link::from_values(values)
         && let Some(value) = link.to_header_value()

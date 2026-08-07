@@ -7,7 +7,7 @@ use crate::{
         config::MqttPoolConfig,
         connection::{ConnectionState, MqttConnection, ReconnectState},
         connection_key::MqttConnectionKey,
-        dial::dial,
+        dial::MqttDialer,
         handle::MqttTransportHandle,
         health::MqttConnectionHealthSummary,
     },
@@ -42,16 +42,19 @@ pub struct MqttTransportPool {
     dial_locks: DashMap<MqttConnectionKey, Arc<Mutex<()>>>,
     /// Limits and timings.
     config: MqttPoolConfig,
+    /// Capability that opens a broker session.
+    dialer: Arc<dyn MqttDialer>,
 }
 
 impl MqttTransportPool {
     /// An empty pool.
-    pub fn new(config: MqttPoolConfig) -> MqttTransportPool {
+    pub fn new(config: MqttPoolConfig, dialer: Arc<dyn MqttDialer>) -> MqttTransportPool {
         MqttTransportPool {
             connections: DashMap::new(),
             reconnect: DashMap::new(),
             dial_locks: DashMap::new(),
             config,
+            dialer,
         }
     }
 
@@ -82,14 +85,14 @@ impl MqttTransportPool {
                 tokio::select! {
                     _ = shutdown_rx.changed() => break,
                     _ = tick.tick() => {
-                        for entry in pool.connections.iter() {
-                            let connection = entry.value();
+                        let connections: Vec<_> = pool.connections.iter().map(|entry| (entry.key().clone(), Arc::clone(entry.value()))).collect();
+                        for (key, connection) in connections {
                             let last = *connection.state.last_healthy.read().await;
                             if last.elapsed().as_secs() > quiet_threshold && connection.state.is_healthy() {
                                 connection.state.mark_degraded();
                                 debug!(
-                                    host = %entry.key().host,
-                                    port = entry.key().port,
+                                    host = %key.authority.host(),
+                                    port = key.authority.port(),
                                     "MQTT connection marked degraded (no activity beyond 2x keepalive)"
                                 );
                             }
@@ -130,7 +133,7 @@ impl MqttTransportPool {
         // connection was removed and on a broker that was never reached at all.
         if !self.may_dial(&key) {
             return Err(TransportError::ConnectionFailed {
-                endpoint: format!("{}:{}", config.host, config.port),
+                endpoint: config.endpoint_uri.clone(), // clone: the error owns the endpoint it names
                 detail: "connection unhealthy, backoff active".to_string(),
             });
         }
@@ -194,11 +197,12 @@ impl MqttTransportPool {
         let mut stalest_key: Option<MqttConnectionKey> = None;
         let mut stalest_time = Instant::now();
 
-        for entry in self.connections.iter() {
-            let last = *entry.value().state.last_healthy.read().await;
+        let connections: Vec<_> = self.connections.iter().map(|entry| (entry.key().clone(), Arc::clone(entry.value()))).collect();
+        for (key, connection) in connections {
+            let last = *connection.state.last_healthy.read().await;
             if last < stalest_time {
                 stalest_time = last;
-                stalest_key = Some(entry.key().clone()); // clone: the key outlives the iteration that found it
+                stalest_key = Some(key);
             }
         }
 
@@ -206,8 +210,8 @@ impl MqttTransportPool {
             && let Some((_, connection)) = self.connections.remove(&key)
         {
             info!(
-                host = %key.host,
-                port = key.port,
+                host = %key.authority.host(),
+                port = key.authority.port(),
                 "evicted stalest MQTT connection to make room in pool"
             );
             connection.close().await;
@@ -217,7 +221,7 @@ impl MqttTransportPool {
     /// Open a connection to the broker the key names.
     async fn create_connection(&self, key: &MqttConnectionKey, config: &MqttEndpointConfig) -> Result<MqttConnection, TransportError> {
         let state = Arc::new(ConnectionState::connected());
-        let (client, event_loop) = dial(key, config, &self.config, &state).await?;
+        let (client, event_loop) = self.dialer.dial(key, config, &self.config, &state).await?;
 
         Ok(MqttConnection {
             client,
@@ -229,14 +233,13 @@ impl MqttTransportPool {
 
     /// Health summaries for every pooled connection.
     pub async fn connection_health_summaries(&self) -> Vec<MqttConnectionHealthSummary> {
-        let mut summaries = Vec::with_capacity(self.connections.len());
-        for entry in self.connections.iter() {
-            let connection = entry.value();
+        let connections: Vec<_> = self.connections.iter().map(|entry| Arc::clone(entry.value())).collect();
+        let mut summaries = Vec::with_capacity(connections.len());
+        for connection in connections {
             let last = *connection.state.last_healthy.read().await;
             let sys = connection.state.sys_data.read().await;
             summaries.push(MqttConnectionHealthSummary {
-                host: connection.key.host.clone(), // clone: the summary outlives the pool entry it was read from
-                port: connection.key.port,
+                authority: connection.key.authority.clone(), // clone: the summary outlives the pool entry it was read from
                 version: connection.key.version,
                 health: connection.state.health.load(),
                 seconds_since_healthy: last.elapsed().as_secs(),
@@ -256,8 +259,9 @@ impl MqttTransportPool {
 
     /// Disconnect every pooled connection.
     pub async fn shutdown_all(&self) {
-        for entry in self.connections.iter() {
-            entry.value().close().await;
+        let connections: Vec<_> = self.connections.iter().map(|entry| Arc::clone(entry.value())).collect();
+        for connection in connections {
+            connection.close().await;
         }
         self.connections.clear();
     }
@@ -266,25 +270,38 @@ impl MqttTransportPool {
 #[cfg(test)]
 mod tests {
     use crate::{
-        endpoint::mqtt::{MqttEndpointConfig, MqttQoS, MqttVersion},
+        endpoint::{
+            mqtt::{MqttEndpointConfig, MqttQoS, MqttVersion},
+            topic::MqttTopic,
+        },
+        host_port::HostPort,
         mqtt::{
             ack::AckKind,
             config::MqttPoolConfig,
             connection::{ConnectionState, MqttClientVariant, MqttConnection},
             connection_key::MqttConnectionKey,
+            dial::{DialFuture, MqttDialer, RumqttcDialer},
             pool::MqttTransportPool,
         },
     };
     use backon::ExponentialBuilder;
-    use std::{sync::Arc, time::Duration};
+    use std::{
+        str::FromStr,
+        sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+        },
+        time::Duration,
+    };
+    use url::Url;
 
     /// An endpoint whose broker refuses connections: port 1 on the loopback is
     /// never listening, so a dial fails fast rather than timing out.
     fn refused_endpoint() -> MqttEndpointConfig {
         MqttEndpointConfig {
-            host: "127.0.0.1".to_string(),
-            port: 1,
-            topic: "andromeda/test".to_string(),
+            authority: HostPort::from_str("127.0.0.1:1").expect("a valid authority"),
+            topic: MqttTopic::from_str("andromeda/test").expect("a valid topic"),
+            endpoint_uri: Url::parse("mqtt://127.0.0.1:1/andromeda/test").expect("a valid endpoint URI"),
             use_tls: false,
             version: MqttVersion::V311,
             qos: MqttQoS::AtMost,
@@ -296,8 +313,7 @@ mod tests {
     /// A key for a hand-built connection that never dials.
     fn test_key() -> MqttConnectionKey {
         MqttConnectionKey {
-            host: "127.0.0.1".to_string(),
-            port: 1883,
+            authority: HostPort::from_str("127.0.0.1:1883").expect("a valid authority"),
             use_tls: false,
             version: MqttVersion::V311,
             username: None,
@@ -305,15 +321,57 @@ mod tests {
         }
     }
 
+    /// A deterministic dial capability that creates inert clients without a socket.
+    struct ScriptedDialer {
+        /// Number of calls made through the pool.
+        calls: AtomicUsize,
+    }
+
+    impl ScriptedDialer {
+        /// A dialer whose every scripted dial succeeds.
+        const fn succeeding() -> ScriptedDialer {
+            ScriptedDialer { calls: AtomicUsize::new(0) }
+        }
+    }
+
+    impl MqttDialer for ScriptedDialer {
+        fn dial<'a>(
+            &'a self,
+            _key: &'a MqttConnectionKey,
+            _endpoint: &'a MqttEndpointConfig,
+            _pool: &'a MqttPoolConfig,
+            _state: &'a Arc<ConnectionState>,
+        ) -> DialFuture<'a> {
+            self.calls.fetch_add(1, Ordering::Relaxed);
+            Box::pin(async {
+                let (client, _eventloop) = rumqttc::AsyncClient::new(rumqttc::MqttOptions::new("scripted", "127.0.0.1", 1883), 8);
+                Ok((MqttClientVariant::V311 { client }, tokio::spawn(std::future::pending())))
+            })
+        }
+    }
+
     #[tokio::test]
     async fn a_pool_that_has_opened_nothing_reports_no_connections() {
-        let pool = MqttTransportPool::new(MqttPoolConfig::default());
+        let pool = MqttTransportPool::new(MqttPoolConfig::default(), Arc::new(RumqttcDialer));
         assert!(pool.connection_health_summaries().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_scripted_dial_is_reused_for_the_same_connection_key() {
+        let dialer = Arc::new(ScriptedDialer::succeeding());
+        let pool = MqttTransportPool::new(MqttPoolConfig::default(), Arc::clone(&dialer) as Arc<dyn MqttDialer>);
+        let endpoint = refused_endpoint();
+
+        let first = pool.get_or_create_connection(&endpoint).await.expect("scripted dial succeeds");
+        let second = pool.get_or_create_connection(&endpoint).await.expect("healthy connection is reused");
+
+        assert!(Arc::ptr_eq(&first, &second));
+        assert_eq!(dialer.calls.load(Ordering::Relaxed), 1);
     }
 
     #[test]
     fn a_pool_that_has_opened_nothing_is_healthy() {
-        let pool = MqttTransportPool::new(MqttPoolConfig::default());
+        let pool = MqttTransportPool::new(MqttPoolConfig::default(), Arc::new(RumqttcDialer));
         assert!(pool.all_healthy());
     }
 
@@ -328,7 +386,7 @@ mod tests {
                 .without_max_times(),
             ..MqttPoolConfig::default()
         };
-        let pool = MqttTransportPool::new(config);
+        let pool = MqttTransportPool::new(config, Arc::new(RumqttcDialer));
         let endpoint = refused_endpoint();
 
         // First dial: the broker refuses, so the connection fails and the backoff

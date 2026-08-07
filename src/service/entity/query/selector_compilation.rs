@@ -6,12 +6,15 @@
 //! would match a `(id, type)` pairing no single selector named.
 
 use crate::core::error::AndromedaError;
-use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine, term_expansion::ContextualExpander};
+use andromeda_jsonld::{
+    engine::{processor::JsonLdEngine, term_lookup::PreparedTermContext},
+    term_expansion::ContextualExpander,
+};
+use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_query::{
     entity_selection::EntitySelector,
-    identifier::parse_id_list,
     pattern::Pattern,
-    type_selection::{expansion::expand_type_expression, parser as type_parser},
+    type_selection::{expansion::expand_type_expression, grammar::TypeExprRaw},
 };
 use andromeda_ngsi_ld_request::query::entity_selector::EntitySelectorParams;
 
@@ -24,19 +27,19 @@ use andromeda_ngsi_ld_request::query::entity_selector::EntitySelectorParams;
 /// into a cross product.
 pub async fn compile_entity_selectors(
     engine: &JsonLdEngine,
-    context: &ContextSpec,
+    context: &PreparedTermContext,
     entity_selectors: &[EntitySelectorParams],
-    flat_ids: Vec<String>,
-    flat_id_pattern: Option<&str>,
-    flat_type: Option<&str>,
+    flat_ids: Vec<Uri>,
+    flat_id_pattern: Option<&Pattern>,
+    flat_type: Option<&TypeExprRaw>,
 ) -> Result<Vec<EntitySelector>, AndromedaError> {
     if entity_selectors.is_empty() {
         return Ok(vec![compile_one(engine, context, flat_ids, flat_id_pattern, flat_type).await?]);
     }
     let mut selectors = Vec::with_capacity(entity_selectors.len());
     for raw in entity_selectors {
-        let ids = raw.id.as_deref().map(split_id_list).unwrap_or_default();
-        selectors.push(compile_one(engine, context, ids, raw.id_pattern.as_deref(), raw.type_.as_deref()).await?);
+        let ids = raw.id.clone().unwrap_or_default();
+        selectors.push(compile_one(engine, context, ids, raw.id_pattern.as_ref(), raw.type_.as_ref()).await?);
     }
     Ok(selectors)
 }
@@ -45,27 +48,15 @@ pub async fn compile_entity_selectors(
 /// expression against the active context.
 async fn compile_one(
     engine: &JsonLdEngine,
-    context: &ContextSpec,
-    ids: Vec<String>,
-    id_pattern: Option<&str>,
-    type_raw: Option<&str>,
+    context: &PreparedTermContext,
+    ids: Vec<Uri>,
+    id_pattern: Option<&Pattern>,
+    type_raw: Option<&TypeExprRaw>,
 ) -> Result<EntitySelector, AndromedaError> {
-    let ids = parse_id_list(&ids)?;
-    let id_pattern = id_pattern
-        .map(Pattern::parse)
-        .transpose()
-        .map_err(|error| AndromedaError::entity_validation(error.to_string()))?;
+    let id_pattern = id_pattern.cloned();
     let type_expr = match type_raw {
-        Some(raw_types) => {
-            let raw = type_parser::parse(raw_types)?;
-            Some(expand_type_expression(&raw, &ContextualExpander::new(engine, context)).await?)
-        }
+        Some(raw) => Some(expand_type_expression(raw, &ContextualExpander::new(engine, context)).await?),
         None => None,
     };
     Ok(EntitySelector::builder().ids(ids).id_pattern(id_pattern).type_expr(type_expr).build())
-}
-
-/// Split a comma-separated `id` list into its trimmed, non-empty members.
-fn split_id_list(raw: &str) -> Vec<String> {
-    raw.split(',').map(str::trim).filter(|id| !id.is_empty()).map(str::to_string).collect()
 }

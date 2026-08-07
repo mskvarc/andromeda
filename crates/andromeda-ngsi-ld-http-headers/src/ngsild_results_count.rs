@@ -19,6 +19,11 @@ impl NgsiLdResultsCount {
     pub const fn new(count: usize) -> NgsiLdResultsCount {
         NgsiLdResultsCount(count)
     }
+
+    /// The total number of matching entities this header reports (clause 6.3.13).
+    pub const fn count(&self) -> usize {
+        self.0
+    }
 }
 
 impl headers::Header for NgsiLdResultsCount {
@@ -88,5 +93,11 @@ mod tests {
     fn decode_zero() {
         let header = decode_from("0").expect("should decode zero");
         pretty_assertions::assert_eq!(header.0, 0);
+    }
+
+    #[test]
+    fn the_count_getter_returns_the_wrapped_total() {
+        pretty_assertions::assert_eq!(NgsiLdResultsCount::new(7).count(), 7);
+        pretty_assertions::assert_eq!(decode_from("42").expect("should decode").count(), 42);
     }
 }

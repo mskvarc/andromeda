@@ -257,13 +257,7 @@ impl CsrNotificationWorker {
             }
         };
 
-        let request = match self.delivery_for(compiled_sub, &payload, sub_id).assemble() {
-            Ok(r) => r,
-            Err(e) => {
-                debug!("Failed to build delivery request for CSR sub {}: {}", sub_id, e);
-                return;
-            }
-        };
+        let request = self.delivery_for(compiled_sub, &payload, sub_id).assemble();
         let success = self.transport.deliver(&compiled_sub.endpoint_transport, &request).await.is_delivered();
 
         if success {
@@ -363,13 +357,7 @@ impl CsrNotificationWorker {
                         }
                     };
 
-                    let request = match self.delivery_for(&compiled_sub, &payload, &sub_id).assemble() {
-                        Ok(r) => r,
-                        Err(e) => {
-                            debug!("Failed to build delivery request for CSR sub {}: {}", sub_id, e);
-                            return;
-                        }
-                    };
+                    let request = self.delivery_for(&compiled_sub, &payload, &sub_id).assemble();
                     let success = self.transport.deliver(&compiled_sub.endpoint_transport, &request).await.is_delivered();
 
                     if success {
@@ -492,13 +480,7 @@ impl CsrNotificationWorker {
             }
         };
 
-        let request = match self.delivery_for(compiled_sub, &payload, sub_id).assemble() {
-            Ok(r) => r,
-            Err(e) => {
-                debug!("Failed to build delivery request for CSR sub {}: {}", sub_id, e);
-                return;
-            }
-        };
+        let request = self.delivery_for(compiled_sub, &payload, sub_id).assemble();
         let success = self.transport.deliver(&compiled_sub.endpoint_transport, &request).await.is_delivered();
 
         if success {

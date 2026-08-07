@@ -107,7 +107,7 @@ fn rust_sources(root: &Path) -> Vec<(String, String)> {
 }
 
 /// The code a source file ships: everything before its first `#[cfg(test)]`,
-/// with comment lines removed.
+/// with comments removed.
 ///
 /// A doc comment may name the counterpart a backend renders — that is how two
 /// readings of one clause stay comparable. A test may name one too, and for the
@@ -116,23 +116,192 @@ fn rust_sources(root: &Path) -> Vec<(String, String)> {
 /// contains reaches a caller. Cutting at the first `#[cfg(test)]` is also the
 /// measure this project already uses for its file-length rule.
 ///
-/// The kept lines are rejoined with newlines rather than concatenated: fusing
-/// the end of one line to the start of the next invents fragments neither line
-/// contains.
-///
-/// Comment lines are removed *before* the `#[cfg(test)]` split, not after: a
-/// comment that merely mentions `#[cfg(test)]` would otherwise truncate the
-/// scan there and hide every real fragment below it.
+/// Comments are removed *before* the `#[cfg(test)]` split, not after: a comment
+/// that merely mentions `#[cfg(test)]` would otherwise truncate the scan there
+/// and hide every real fragment below it.
 fn code_of(source: &str) -> String {
-    let without_comments = source
-        .lines()
-        .filter(|line| !line.trim_start().starts_with("//"))
-        .collect::<Vec<&str>>()
-        .join("\n");
+    let without_comments = strip_comments(source);
     match without_comments.split_once("#[cfg(test)]") {
         Some((before, _)) => before.to_string(),
         None => without_comments,
     }
+}
+
+/// Remove `//` line comments and `/* … */` block comments — the latter nested
+/// to any depth — from Rust source, leaving string and character literals
+/// intact.
+///
+/// A line-based filter cannot do this: it misses a block comment that names a
+/// backend fragment (a false positive), and it cannot tell a `/*` inside a real
+/// string from one that opens a comment. String and character literals are
+/// therefore copied verbatim, so a dialect fragment written as a genuine value
+/// (`"::jsonb"`) is still scanned while a `//` or `/*` inside a literal never
+/// opens a comment. Raw strings (`r"…"`, `r#"…"#`, byte-raw `br"…"`) are honoured
+/// so an embedded `"` does not end the literal early. Each block comment
+/// collapses to a single space so the tokens on either side are not fused into a
+/// fragment neither of them contains.
+fn strip_comments(source: &str) -> String {
+    let chars: Vec<char> = source.chars().collect();
+    let mut out = String::with_capacity(source.len());
+    let mut i = 0;
+    while i < chars.len() {
+        let rest = &chars[i..];
+        if rest.starts_with(&['/', '/']) {
+            i += 2;
+            while i < chars.len() && chars[i] != '\n' {
+                i += 1;
+            }
+        } else if rest.starts_with(&['/', '*']) {
+            i = skip_block_comment(&chars, i + 2);
+            // A separator, so the tokens on either side are not fused.
+            out.push(' ');
+        } else if chars[i] == '"' {
+            i = copy_string(&chars, i, &mut out);
+        } else if is_raw_string_start(&chars, i) {
+            i = copy_raw_string(&chars, i, &mut out);
+        } else if chars[i] == '\'' {
+            i = copy_char_or_lifetime(&chars, i, &mut out);
+        } else {
+            out.push(chars[i]);
+            i += 1;
+        }
+    }
+    out
+}
+
+/// The index just past the `*/` closing a block comment opened before `start`,
+/// counting nested `/* … */` pairs so the whole comment is consumed.
+fn skip_block_comment(chars: &[char], start: usize) -> usize {
+    let mut depth = 1usize;
+    let mut i = start;
+    while i < chars.len() && depth > 0 {
+        if chars[i..].starts_with(&['/', '*']) {
+            depth += 1;
+            i += 2;
+        } else if chars[i..].starts_with(&['*', '/']) {
+            depth -= 1;
+            i += 2;
+        } else {
+            i += 1;
+        }
+    }
+    i
+}
+
+/// Copy the double-quoted string literal at `i` verbatim into `out`, and return
+/// the index just past its closing quote. A backslash escapes the next
+/// character, so an escaped quote does not end the literal.
+fn copy_string(chars: &[char], i: usize, out: &mut String) -> usize {
+    out.push(chars[i]);
+    let mut j = i + 1;
+    while j < chars.len() {
+        let current = chars[j];
+        out.push(current);
+        if current == '\\' && j + 1 < chars.len() {
+            out.push(chars[j + 1]);
+            j += 2;
+            continue;
+        }
+        j += 1;
+        if current == '"' {
+            break;
+        }
+    }
+    j
+}
+
+/// Whether a raw string literal — `r"…"`, `r#"…"#`, or a byte-raw `br"…"` — opens
+/// at `i`, rather than an identifier that merely begins with `r` or `b`.
+fn is_raw_string_start(chars: &[char], i: usize) -> bool {
+    if i > 0 && is_ident_char(chars[i - 1]) {
+        return false;
+    }
+    let mut j = i;
+    if chars.get(j) == Some(&'b') {
+        j += 1;
+    }
+    if chars.get(j) != Some(&'r') {
+        return false;
+    }
+    j += 1;
+    while chars.get(j) == Some(&'#') {
+        j += 1;
+    }
+    chars.get(j) == Some(&'"')
+}
+
+/// Copy the raw string literal at `i` verbatim into `out`, and return the index
+/// just past the closing quote and its matching `#`s. Nothing inside a raw
+/// string escapes, so only a `"` followed by exactly the opening number of `#`s
+/// closes it.
+fn copy_raw_string(chars: &[char], i: usize, out: &mut String) -> usize {
+    let mut j = i;
+    if chars[j] == 'b' {
+        out.push(chars[j]);
+        j += 1;
+    }
+    out.push(chars[j]); // the `r`
+    j += 1;
+    let mut hashes = 0usize;
+    while chars.get(j) == Some(&'#') {
+        out.push('#');
+        hashes += 1;
+        j += 1;
+    }
+    out.push(chars[j]); // the opening quote
+    j += 1;
+    while j < chars.len() {
+        if chars[j] == '"' && closing_hashes_match(chars, j + 1, hashes) {
+            out.push('"');
+            for _ in 0..hashes {
+                out.push('#');
+            }
+            return j + 1 + hashes;
+        }
+        out.push(chars[j]);
+        j += 1;
+    }
+    j
+}
+
+/// Whether `hashes` `#` characters begin at `start`, the tail a raw string's
+/// closing quote needs to match its opening `#`s.
+fn closing_hashes_match(chars: &[char], start: usize, hashes: usize) -> bool {
+    (0..hashes).all(|offset| chars.get(start + offset) == Some(&'#'))
+}
+
+/// Copy the character literal at `i` verbatim, or emit the lone `'` of a
+/// lifetime, and return the next index to scan.
+///
+/// The distinction matters only so a character literal holding a quote (`'"'`)
+/// does not open a phantom string; a lifetime's `'` is emitted as an ordinary
+/// character.
+fn copy_char_or_lifetime(chars: &[char], i: usize, out: &mut String) -> usize {
+    if chars.get(i + 1) == Some(&'\\') {
+        out.push(chars[i]);
+        let mut j = i + 1;
+        while j < chars.len() {
+            out.push(chars[j]);
+            if chars[j] == '\'' && chars[j - 1] != '\\' {
+                return j + 1;
+            }
+            j += 1;
+        }
+        return j;
+    }
+    if chars.get(i + 2) == Some(&'\'') {
+        out.push(chars[i]);
+        out.push(chars[i + 1]);
+        out.push(chars[i + 2]);
+        return i + 3;
+    }
+    out.push(chars[i]);
+    i + 1
+}
+
+/// Whether a character can appear inside a Rust identifier.
+fn is_ident_char(character: char) -> bool {
+    character.is_alphanumeric() || character == '_'
 }
 
 #[cfg(test)]
@@ -197,5 +366,38 @@ mod tests {
         // be scanned, which the split-before-strip order used to skip.
         let source = "// this is not the #[cfg(test)] module\nlet cast = \"value::jsonb\";";
         assert!(code_of(source).contains("::jsonb"));
+    }
+
+    #[test]
+    fn a_block_comment_naming_a_backend_fragment_is_ignored() {
+        // A line-based filter kept a `/* … */` block whole, so a fragment named
+        // only in one would have failed the guard.
+        let source = "let subject = value; /* ST_Within(subject, reference) */";
+        assert!(!code_of(source).contains("ST_"));
+    }
+
+    #[test]
+    fn a_fragment_inside_a_string_literal_is_still_caught() {
+        // A real rendering written as a string value must survive the stripping.
+        let code = code_of("let sql = \"value::jsonb\";");
+        assert!(contains_fragment(&code, "jsonb"));
+    }
+
+    #[test]
+    fn a_block_comment_opener_inside_a_string_does_not_swallow_the_code_after_it() {
+        // `"/*"` is a string, not the start of a comment, so the dialect after
+        // it is still scanned.
+        let source = "let opener = \"/*\"; let cast = \"::numeric\";";
+        assert!(contains_fragment(&code_of(source), "::numeric"));
+    }
+
+    #[test]
+    fn a_nested_block_comment_is_stripped_to_its_outermost_close() {
+        // The depth counter must not stop at the first `*/`, or the code after a
+        // nested comment would be dropped and its dialect never seen.
+        let source = "let a = 1; /* outer /* ST_Within */ still comment */ let cast = \"::timestamptz\";";
+        let code = code_of(source);
+        assert!(!code.contains("ST_"));
+        assert!(contains_fragment(&code, "::timestamptz"));
     }
 }

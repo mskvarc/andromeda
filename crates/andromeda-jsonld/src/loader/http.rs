@@ -15,14 +15,11 @@
 use crate::{
     context_cache::ContextCache,
     context_registry::ContextRegistry,
-    core_context::is_ngsi_ld_core_context_url,
+    core_context_precedence::without_embedded_core_context,
     engine::options::RemoteContextFetch,
     error::JsonLdError,
     hit_counter::HitCounter,
-    loader::{
-        error::{LoaderError, LoaderErrorKind},
-        url_normalization::{normalize_loaded_context_document, normalize_local_hosted_context_url},
-    },
+    loader::error::{LoaderError, LoaderErrorKind},
 };
 use iri_rs::{Iri, IriBuf};
 use jsonld::{LoadError, Loader, RemoteDocument};
@@ -36,6 +33,18 @@ use tracing::trace;
 /// What a context fetch asks the server for.
 const ACCEPT_HEADER: &str = "application/ld+json, application/json";
 
+/// A loaded context together with the backing-store ownership of its hit count.
+///
+/// Only contexts that have a durable cache row participate in clause 5.13.3.5
+/// accounting. Registry and preloaded contexts have no row to update.
+#[derive(Debug, Clone)]
+struct LoadedContext {
+    /// The parsed JSON-LD context payload supplied to the processor.
+    value: Arc<jsonld_syntax::Value>,
+    /// Whether this payload came from a durable hosted-context row.
+    has_durable_row: bool,
+}
+
 /// Resolves a context URL to a context document.
 ///
 /// Not `Clone`: wrap in `Arc` to share across tasks.
@@ -44,7 +53,7 @@ pub struct HttpContextLoader {
     /// The HTTP client remote fetches go through.
     client: Client,
     /// The in-process cache in front of every other step.
-    cache: Cache<String, Arc<jsonld_syntax::Value>>,
+    cache: Cache<String, LoadedContext>,
     /// Embedded and preloaded documents, available without network access.
     registry: Arc<ContextRegistry>,
     /// The caller's durable cache, when one is attached.
@@ -117,12 +126,9 @@ impl HttpContextLoader {
     ///
     /// The durable L2 cache is the repository's lifecycle to manage (a delete or
     /// a reload writes it directly), so this invalidates only the moka layer the
-    /// loader owns. The URL is normalised the same way the load path keys it, so
-    /// a self-referencing hosted URL is matched whichever prefix form it arrives
-    /// in.
+    /// loader owns.
     pub async fn invalidate(&self, url: &str) {
-        let url_string = normalize_local_hosted_context_url(url);
-        self.cache.invalidate(&url_string).await;
+        self.cache.invalidate(url).await;
     }
 
     /// Resolve a context URL through the full pipeline.
@@ -141,10 +147,7 @@ impl HttpContextLoader {
     /// `Clone + Send + Sync`. The [`Loader`] implementation needs this form,
     /// since the trait fixes the error type.
     pub(crate) async fn load_value_raw(&self, url: &str) -> Result<Arc<jsonld_syntax::Value>, Arc<LoaderError>> {
-        let url_string = normalize_local_hosted_context_url(url);
-        if url_string != url {
-            trace!("Normalized hosted context URL for lookup: {} -> {}", url, url_string);
-        }
+        let url_string = url.to_string(); // owned: the moka key and the cache-fill future both need it
         let registry = Arc::clone(&self.registry); // clone: Arc ref-count bump into the cache-fill future
         let client = self.client.clone(); // clone: reqwest::Client is an Arc handle
         let allow_remote = self.allow_remote;
@@ -155,7 +158,7 @@ impl HttpContextLoader {
             .cache
             .try_get_with(url_string.clone(), async move {
                 if let Some(value) = registry.get(&url_string) {
-                    return Ok(value);
+                    return Ok(LoadedContext { value, has_durable_row: false });
                 }
 
                 if let Some(ref cache) = l2_cache
@@ -169,7 +172,10 @@ impl HttpContextLoader {
                     // `from_serde_json` is the direct, infallible inverse of the
                     // `into_serde_json` the write path used.
                     let parsed = jsonld_syntax::Value::from_serde_json(payload);
-                    return Ok(Arc::new(normalize_loaded_context_document(&url_string, parsed)));
+                    return Ok(LoadedContext {
+                        value: Arc::new(without_embedded_core_context(&url_string, parsed)),
+                        has_durable_row: true,
+                    });
                 }
 
                 if allow_remote == RemoteContextFetch::Deny {
@@ -178,7 +184,7 @@ impl HttpContextLoader {
 
                 match fetch_and_parse(&client, &url_string, max_bytes).await {
                     Ok(value) => {
-                        let normalized = normalize_loaded_context_document(&url_string, value);
+                        let normalized = without_embedded_core_context(&url_string, value);
                         // Written to L2 only here, on the first remote-fetch
                         // success: the row carries no counter, because hit
                         // accounting is the HitCounter's job.
@@ -187,26 +193,26 @@ impl HttpContextLoader {
                             cache.put(&url_string, serde_value).await;
                             trace!("Persisted context to L2 cache: {}", url_string);
                         }
-                        Ok(Arc::new(normalized))
+                        Ok(LoadedContext {
+                            value: Arc::new(normalized),
+                            has_durable_row: l2_cache.is_some(),
+                        })
                     }
                     Err(error) => match registry.get(&url_string) {
-                        Some(value) => Ok(value),
+                        Some(value) => Ok(LoadedContext { value, has_durable_row: false }),
                         None => Err(error),
                     },
                 }
             })
             .await;
 
-        let value = result?;
-        // Core contexts live in the registry and never have a stored row, so
-        // counting a hit against one would accumulate a delta nothing reads.
-        let counted_url = normalize_local_hosted_context_url(url);
+        let loaded = result?;
         if let Some(ref counter) = self.hit_counter
-            && !is_ngsi_ld_core_context_url(&counted_url)
+            && loaded.has_durable_row
         {
-            counter.bump(&counted_url);
+            counter.bump(url);
         }
-        Ok(value)
+        Ok(loaded.value)
     }
 
     /// Fetch a context from its source, bypassing both caches.
@@ -219,12 +225,11 @@ impl HttpContextLoader {
     /// Returns a [`LoaderError`] when remote fetch is disabled or the request
     /// fails.
     pub(crate) async fn fetch_remote_value(&self, url: &str) -> Result<Arc<jsonld_syntax::Value>, LoaderError> {
-        let url_string = normalize_local_hosted_context_url(url);
         if self.allow_remote == RemoteContextFetch::Deny {
-            return Err(LoaderError::fetch_disabled(url_string));
+            return Err(LoaderError::fetch_disabled(url.to_string()));
         }
-        let value = fetch_and_parse(&self.client, &url_string, self.max_context_bytes).await?;
-        Ok(Arc::new(normalize_loaded_context_document(&url_string, value)))
+        let value = fetch_and_parse(&self.client, url, self.max_context_bytes).await?;
+        Ok(Arc::new(without_embedded_core_context(url, value)))
     }
 }
 
@@ -232,18 +237,18 @@ impl Loader for HttpContextLoader {
     type Error = LoaderError;
 
     async fn load(&self, url: Iri<&str>) -> Result<RemoteDocument<IriBuf>, LoadError<Self::Error>> {
-        let normalized_url = normalize_local_hosted_context_url(url.as_str());
-        let value = self.load_value_raw(&normalized_url).await.map_err(|error| {
-            let iri = IriBuf::new(normalized_url.clone()).unwrap_or_else(|_| fallback_iri()); // clone: the IRI is also needed below
+        let url_string = url.as_str().to_string();
+        let value = self.load_value_raw(&url_string).await.map_err(|error| {
+            let iri = IriBuf::new(url_string.clone()).unwrap_or_else(|_| fallback_iri()); // clone: the IRI is also needed below
             LoadError::new(iri, (*error).clone()) // clone: the Arc is shared with the moka cache
         })?;
 
-        let iri = IriBuf::new(normalized_url.clone()).map_err(|error| {
+        let iri = IriBuf::new(url_string.clone()).map_err(|error| {
             // clone: the URL is also reported in the error
             LoadError::new(
                 fallback_iri(),
                 LoaderError {
-                    url: normalized_url,
+                    url: url_string,
                     kind: LoaderErrorKind::Invalid(format!("invalid IRI: {error}")),
                 },
             )
@@ -405,20 +410,6 @@ mod tests {
         let iri = IriBuf::new("https://example.com/context.jsonld".to_string()).expect("valid IRI");
 
         let document = loader.load(iri.as_ref()).await.expect("registry hit");
-
-        assert!(document.document.is_object());
-    }
-
-    #[tokio::test]
-    async fn a_doubled_api_prefix_still_finds_the_registry_entry_keyed_by_the_canonical_url() {
-        let registry = registry_with(
-            "http://localhost:1056/ngsi-ld/v1/jsonldContexts/urn:ngsi-ld:Context:abc",
-            json!({ "@context": { "A1": "https://example.com/A1" } }),
-        );
-        let loader = offline_loader(registry);
-        let iri = IriBuf::new("http://localhost:1056/ngsi-ld/v1/ngsi-ld/v1/jsonldContexts/urn:ngsi-ld:Context:abc".to_string()).expect("valid IRI");
-
-        let document = loader.load(iri.as_ref()).await.expect("registry hit after normalization");
 
         assert!(document.document.is_object());
     }

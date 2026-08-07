@@ -8,40 +8,13 @@
 //! [`crate::document_context`].
 
 use crate::{
-    core_context::{ANDROMEDA_CORE_CONTEXT_URL, is_ngsi_ld_core_context_url},
+    core_context::{ANDROMEDA_CORE_CONTEXT_IRI, ANDROMEDA_CORE_CONTEXT_URL, is_ngsi_ld_core_context_url},
     document_context::resolve_context_value,
 };
-use andromeda_ngsi_ld_vocabulary::NGSI_LD_CORE_CONTEXT_URL;
+use andromeda_ngsi_ld_vocabulary::{NGSI_LD_CORE_CONTEXT_IRI, NGSI_LD_CORE_CONTEXT_URL};
+use iri_rs::{Iri, IriBuf, IriRefBuf};
 use serde_json::Value;
-use std::{collections::HashSet, sync::OnceLock};
-
-/// The deployment-wide core context URL, set once at startup.
-static DEFAULT_CORE_CONTEXT_URL: OnceLock<String> = OnceLock::new();
-
-/// Pin which core context version a versionless reference resolves to.
-///
-/// Clause 4.3.6.8 admits any released core context; a deployment picks one.
-/// The first call wins — a second is ignored with a warning, because a
-/// process that changed the answer halfway would expand two otherwise
-/// identical requests differently.
-pub fn set_default_core_context_url(url: impl Into<String>) {
-    if DEFAULT_CORE_CONTEXT_URL.set(url.into()).is_err() {
-        tracing::warn!(
-            "set_default_core_context_url called more than once; keeping the original value '{}'",
-            DEFAULT_CORE_CONTEXT_URL.get().map_or("<unknown>", String::as_str)
-        );
-    }
-}
-
-/// The pinned core context URL, or the versionless one if none was pinned.
-pub fn default_core_context_url() -> &'static str {
-    DEFAULT_CORE_CONTEXT_URL.get().map_or(NGSI_LD_CORE_CONTEXT_URL, String::as_str)
-}
-
-/// The pinned core context URL, if one was pinned.
-fn global_default_core_url() -> Option<String> {
-    DEFAULT_CORE_CONTEXT_URL.get().cloned() // clone: the spec owns its copy for the process lifetime
-}
+use std::collections::HashSet;
 
 /// How the NGSI-LD core context joins the contexts a request supplied.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -60,43 +33,38 @@ pub enum CoreContextPolicy {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ContextSpec {
     /// Context URLs the request carried in `Link` headers, in order.
-    link_contexts: Vec<String>,
+    link_contexts: Vec<IriRefBuf>,
     /// The `@context` the request body carried, if any.
     body_context: Option<Value>,
     /// How the core context joins them.
     core_policy: CoreContextPolicy,
-    /// The core context URL this spec resolves versionless references to.
-    default_core_url: Option<String>,
 }
 
 impl ContextSpec {
     /// A spec carrying nothing, with the core context appended.
-    pub fn none() -> ContextSpec {
+    pub const fn none() -> ContextSpec {
         ContextSpec {
             link_contexts: Vec::new(),
             body_context: None,
             core_policy: CoreContextPolicy::Append,
-            default_core_url: global_default_core_url(),
         }
     }
 
     /// A spec that resolves to the core context alone.
-    pub fn core_only() -> ContextSpec {
+    pub const fn core_only() -> ContextSpec {
         ContextSpec {
             link_contexts: Vec::new(),
             body_context: None,
             core_policy: CoreContextPolicy::Only,
-            default_core_url: global_default_core_url(),
         }
     }
 
     /// A spec built from the `Link` header context URLs of a request.
-    pub fn from_links(links: Vec<String>) -> ContextSpec {
+    pub const fn from_links(links: Vec<IriRefBuf>) -> ContextSpec {
         ContextSpec {
             link_contexts: links,
             body_context: None,
             core_policy: CoreContextPolicy::Append,
-            default_core_url: global_default_core_url(),
         }
     }
 
@@ -118,7 +86,7 @@ impl ContextSpec {
     }
 
     /// The `Link` header context URLs, in the order the request gave them.
-    pub fn link_contexts(&self) -> &[String] {
+    pub fn link_contexts(&self) -> &[IriRefBuf] {
         &self.link_contexts
     }
 
@@ -134,9 +102,16 @@ impl ContextSpec {
         self.core_policy
     }
 
-    /// The core context URL this spec resolves to.
-    pub fn effective_core_url(&self) -> &str {
-        self.default_core_url.as_deref().unwrap_or(NGSI_LD_CORE_CONTEXT_URL)
+    /// The core context URL a response names for this spec.
+    ///
+    /// Always the versionless clause-4.3.6.8 core context: a response advertises
+    /// the stable identifier so a client is not tied to the version this
+    /// deployment happens to have pinned. Which released version a *versionless*
+    /// reference expands against is a separate, engine-internal decision (the
+    /// fastpath term table, [`crate::engine::JsonLdEngine::default_core_url`]),
+    /// and it is not leaked here.
+    pub const fn effective_core_url(&self) -> &str {
+        NGSI_LD_CORE_CONTEXT_URL
     }
 
     /// The same spec, as it applies to a response rather than a request.
@@ -149,7 +124,6 @@ impl ContextSpec {
             link_contexts: self.link_contexts.clone(), // clone: the source spec is borrowed and stays valid
             body_context: self.body_context.clone(),   // clone: the source spec is borrowed and stays valid
             core_policy: CoreContextPolicy::AppendIfNoExplicit,
-            default_core_url: self.default_core_url.clone(), // clone: the source spec is borrowed and stays valid
         }
     }
 
@@ -163,11 +137,9 @@ impl ContextSpec {
     /// Core-context aliases the request supplied are dropped and re-appended
     /// canonically, so a client that asked with v1.6 and a client that asked
     /// versionless receive the same header.
-    pub fn to_link_headers(&self) -> Vec<String> {
-        let core_url = self.effective_core_url().to_string();
-
+    pub fn to_link_headers(&self) -> Vec<IriRefBuf> {
         match self.core_policy {
-            CoreContextPolicy::Only => return vec![core_url],
+            CoreContextPolicy::Only => return vec![core_context_iri_ref(NGSI_LD_CORE_CONTEXT_IRI)],
             CoreContextPolicy::Omit | CoreContextPolicy::Append | CoreContextPolicy::AppendIfNoExplicit => {}
         }
 
@@ -176,7 +148,7 @@ impl ContextSpec {
         let mut seen = HashSet::new();
 
         for url in &self.link_contexts {
-            if should_strip_core && (is_ngsi_ld_core_context_url(url) || url == ANDROMEDA_CORE_CONTEXT_URL) {
+            if should_strip_core && (is_ngsi_ld_core_context_url(url.as_str()) || url.as_str() == ANDROMEDA_CORE_CONTEXT_URL) {
                 continue;
             }
             if seen.insert(url.clone()) {
@@ -193,11 +165,12 @@ impl ContextSpec {
         };
 
         if should_append_core {
-            let andromeda_url = ANDROMEDA_CORE_CONTEXT_URL.to_string();
+            let andromeda_url = core_context_iri_ref(ANDROMEDA_CORE_CONTEXT_IRI);
             if seen.insert(andromeda_url.clone()) {
                 // clone: the set keeps a copy, the list keeps a copy
                 urls.push(andromeda_url);
             }
+            let core_url = core_context_iri_ref(NGSI_LD_CORE_CONTEXT_IRI);
             if seen.insert(core_url.clone()) {
                 // clone: the set keeps a copy, the list keeps a copy
                 urls.push(core_url);
@@ -206,6 +179,15 @@ impl ContextSpec {
 
         urls
     }
+}
+
+/// The header form of a compile-time-valid core context IRI.
+///
+/// The core context URLs a response advertises are compile-time constants, so
+/// this conversion is infallible; it bridges the `Iri` a constant carries to the
+/// owned [`IriRefBuf`] a `Link` header value holds.
+fn core_context_iri_ref(iri: Iri<&'static str>) -> IriRefBuf {
+    IriRefBuf::from(IriBuf::from(iri))
 }
 
 impl Default for ContextSpec {
@@ -221,7 +203,13 @@ mod tests {
         core_context::{ANDROMEDA_CORE_CONTEXT_URL, NGSI_LD_CORE_CONTEXT_V16_URL},
     };
     use andromeda_ngsi_ld_vocabulary::NGSI_LD_CORE_CONTEXT_URL;
+    use iri_rs::IriRefBuf;
     use serde_json::json;
+
+    /// A context URL as the [`IriRefBuf`] the `Link` header carries.
+    fn iri_ref(url: &str) -> IriRefBuf {
+        IriRefBuf::new(url.to_string()).expect("a valid IRI reference")
+    }
 
     #[test]
     fn an_empty_spec_resolves_to_the_andromeda_and_core_contexts() {
@@ -231,21 +219,21 @@ mod tests {
 
     #[test]
     fn link_headers_carry_the_request_context_first_and_the_core_contexts_last() {
-        let links = ContextSpec::from_links(vec!["https://example.com/context.jsonld".to_string()]).to_link_headers();
+        let links = ContextSpec::from_links(vec![iri_ref("https://example.com/context.jsonld")]).to_link_headers();
         pretty_assertions::assert_eq!(
             links,
             vec![
-                "https://example.com/context.jsonld".to_string(),
-                ANDROMEDA_CORE_CONTEXT_URL.to_string(),
-                NGSI_LD_CORE_CONTEXT_URL.to_string(),
+                iri_ref("https://example.com/context.jsonld"),
+                iri_ref(ANDROMEDA_CORE_CONTEXT_URL),
+                iri_ref(NGSI_LD_CORE_CONTEXT_URL),
             ]
         );
     }
 
     #[test]
     fn the_only_policy_discards_every_context_the_request_supplied() {
-        let spec = ContextSpec::from_links(vec!["https://example.com/context.jsonld".to_string()]).with_core_policy(CoreContextPolicy::Only);
-        pretty_assertions::assert_eq!(spec.to_link_headers(), vec![NGSI_LD_CORE_CONTEXT_URL.to_string()]);
+        let spec = ContextSpec::from_links(vec![iri_ref("https://example.com/context.jsonld")]).with_core_policy(CoreContextPolicy::Only);
+        pretty_assertions::assert_eq!(spec.to_link_headers(), vec![iri_ref(NGSI_LD_CORE_CONTEXT_URL)]);
     }
 
     #[test]
@@ -257,14 +245,14 @@ mod tests {
 
     #[test]
     fn a_core_context_alias_the_request_supplied_comes_back_canonical() {
-        let links = ContextSpec::from_links(vec!["https://example.com/context.jsonld".to_string(), NGSI_LD_CORE_CONTEXT_V16_URL.to_string()]).to_link_headers();
+        let links = ContextSpec::from_links(vec![iri_ref("https://example.com/context.jsonld"), iri_ref(NGSI_LD_CORE_CONTEXT_V16_URL)]).to_link_headers();
 
         pretty_assertions::assert_eq!(
             links,
             vec![
-                "https://example.com/context.jsonld".to_string(),
-                ANDROMEDA_CORE_CONTEXT_URL.to_string(),
-                NGSI_LD_CORE_CONTEXT_URL.to_string(),
+                iri_ref("https://example.com/context.jsonld"),
+                iri_ref(ANDROMEDA_CORE_CONTEXT_URL),
+                iri_ref(NGSI_LD_CORE_CONTEXT_URL),
             ]
         );
     }
@@ -274,10 +262,10 @@ mod tests {
         let bare = ContextSpec::none().for_presentation();
         pretty_assertions::assert_eq!(
             bare.to_link_headers(),
-            vec![ANDROMEDA_CORE_CONTEXT_URL.to_string(), NGSI_LD_CORE_CONTEXT_URL.to_string()]
+            vec![iri_ref(ANDROMEDA_CORE_CONTEXT_URL), iri_ref(NGSI_LD_CORE_CONTEXT_URL)]
         );
 
-        let explicit = ContextSpec::from_links(vec!["https://example.com/context.jsonld".to_string()]).for_presentation();
-        pretty_assertions::assert_eq!(explicit.to_link_headers(), vec!["https://example.com/context.jsonld".to_string()]);
+        let explicit = ContextSpec::from_links(vec![iri_ref("https://example.com/context.jsonld")]).for_presentation();
+        pretty_assertions::assert_eq!(explicit.to_link_headers(), vec![iri_ref("https://example.com/context.jsonld")]);
     }
 }

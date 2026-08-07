@@ -22,6 +22,8 @@
 #![deny(missing_docs)]
 #![deny(clippy::missing_docs_in_private_items)]
 
+use iri_rs::{Iri, iri};
+
 jsonld::vocab! {
     contexts: ["context/ngsi-ld-core-context-v1.9.jsonld", "context/andromeda-core-context.jsonld"]
 }
@@ -30,10 +32,17 @@ jsonld::vocab! {
 ///
 /// The alias that resolves to the latest released core context. A sibling of
 /// the `https://uri.etsi.org/ngsi-ld/` term IRIs this crate owns, it is a plain
-/// URL string rather than an [`iri_rs::Iri`] because every consumer — the
-/// JSON-LD loader's version map, the delivery `Link` header builder — reads it
-/// as text.
+/// URL string rather than an [`iri_rs::Iri`] because many consumers — the
+/// JSON-LD loader's version map, the registry's document keys — read it as text.
 pub const NGSI_LD_CORE_CONTEXT_URL: &str = "https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context.jsonld";
+
+/// The version-less NGSI-LD core context URL as a validated IRI.
+///
+/// The typed sibling of [`NGSI_LD_CORE_CONTEXT_URL`], for the places that carry
+/// the core context as a domain value rather than as text — the `Link` header
+/// a response advertises (clause 6.3.5) is built from typed IRI references, not
+/// strings.
+pub const NGSI_LD_CORE_CONTEXT_IRI: Iri<&'static str> = iri!("https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context.jsonld");
 
 #[cfg(test)]
 mod tests {
@@ -171,13 +180,15 @@ mod boundary {
     /// document, so it names nothing and nothing but the derivation can change it.
     #[test]
     fn this_crate_declares_only_what_its_layer_permits() {
-        /// Third-party crates this layer must never ship.
-        const FORBIDDEN: &[&str] = &["sqlx", "sea-query", "geozero", "bytes", "axum", "reqwest", "confique", "clap", "tokio"];
         /// In-workspace crates this one may name, in any dependency table.
         /// Anything else is an upward or sideways edge.
         const ALLOWED_IN_WORKSPACE: &[&str] = &["andromeda-layer-guard"];
 
-        andromeda_layer_guard::manifest::assert_layer(env!("CARGO_MANIFEST_DIR"), FORBIDDEN, ALLOWED_IN_WORKSPACE);
+        andromeda_layer_guard::manifest::assert_layer(
+            env!("CARGO_MANIFEST_DIR"),
+            andromeda_layer_guard::manifest::BASELINE_FORBIDDEN,
+            ALLOWED_IN_WORKSPACE,
+        );
     }
 }
 

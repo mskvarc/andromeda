@@ -8,6 +8,7 @@
 //! they are available without any network access.
 
 use andromeda_ngsi_ld_vocabulary::NGSI_LD_CORE_CONTEXT_URL;
+use iri_rs::{Iri, iri};
 use std::{collections::HashMap, ptr, sync::LazyLock};
 
 /// Core Context v1.3 URL.
@@ -80,6 +81,11 @@ pub static NGSI_LD_CORE_CONTEXT_MAP: LazyLock<HashMap<&str, &str>> = LazyLock::n
 /// Always included alongside the ETSI core context during compaction so that
 /// broker-generated metadata compacts to short names.
 pub const ANDROMEDA_CORE_CONTEXT_URL: &str = "https://andromeda.internal/context/andromeda-core-context.jsonld";
+/// Andromeda broker-specific context URL as a validated IRI.
+///
+/// The typed sibling of [`ANDROMEDA_CORE_CONTEXT_URL`], for building the `Link`
+/// header a response advertises (clause 6.3.5) from typed IRI references.
+pub const ANDROMEDA_CORE_CONTEXT_IRI: Iri<&'static str> = iri!("https://andromeda.internal/context/andromeda-core-context.jsonld");
 /// Andromeda broker-specific context embedded payload.
 pub const ANDROMEDA_CORE_CONTEXT: &str = include_str!("context/andromeda-core-context.jsonld");
 

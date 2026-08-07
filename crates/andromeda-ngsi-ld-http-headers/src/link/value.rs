@@ -1,46 +1,51 @@
 //! A single `link-value` within a `Link` header (RFC 8288 section 3).
 
-use crate::link::{error::LinkParseError, quoting::verify_and_trim, relation_type::RelationType};
+use crate::{
+    link::{error::LinkParseError, quoting::verify_and_trim, relation_type::RelationType},
+    media_type::APPLICATION_LD_JSON,
+};
+use iri_rs::{IriBuf, IriRefBuf};
 use mediatype::MediaTypeBuf;
-use std::{borrow::Cow, fmt};
+use std::fmt;
 
 /// One `link-value`: a target IRI and the parameters NGSI-LD reads from it.
 ///
 /// Carries `rel` (forward relation types), `type` (media type hint) and
 /// `profile` (RFC 8288 section 3.4, clause 6.3.21). Every other RFC 8288
 /// parameter is discarded during parsing.
+///
+/// The target is an [`IriRefBuf`] rather than an absolute IRI because a
+/// `link-value` legitimately carries a relative reference: NGSI-LD pagination
+/// links (clause 6.3.10) are path-and-query references such as
+/// `/entities?offset=20&limit=10`, while `@context` links are absolute. The
+/// `profile` is an absolute [`IriBuf`], the URI form RFC 8288 section 3.4
+/// mandates for it.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct LinkValue {
-    /// Target IRI.
-    link: Cow<'static, str>,
+    /// Target IRI reference.
+    link: IriRefBuf,
     /// Forward relation types: `rel`.
     rel: Option<Vec<RelationType>>,
     /// Hint on the media type of the result: `type`.
     media_type: Option<MediaTypeBuf>,
     /// Profile URI: `profile`.
-    profile: Option<Cow<'static, str>>,
+    profile: Option<IriBuf>,
 }
 
 impl LinkValue {
-    /// `application/ld+json`, the media type of a JSON-LD context link.
-    pub const JSON_LD_MEDIA_TYPE: &str = "application/ld+json";
-
-    /// A link-value naming `uri`, with no parameters.
-    pub fn new<T>(uri: T) -> LinkValue
-    where
-        T: Into<Cow<'static, str>>,
-    {
+    /// A link-value naming `link`, with no parameters.
+    pub const fn new(link: IriRefBuf) -> LinkValue {
         LinkValue {
-            link: uri.into(),
+            link,
             rel: None,
             media_type: None,
             profile: None,
         }
     }
 
-    /// The target IRI.
-    pub fn link(&self) -> &str {
-        self.link.as_ref()
+    /// The target IRI reference.
+    pub const fn link(&self) -> &IriRefBuf {
+        &self.link
     }
 
     /// The `rel` parameter, if present.
@@ -49,8 +54,8 @@ impl LinkValue {
     }
 
     /// The `profile` parameter, if present.
-    pub fn profile(&self) -> Option<&str> {
-        self.profile.as_deref()
+    pub const fn profile(&self) -> Option<&IriBuf> {
+        self.profile.as_ref()
     }
 
     /// Add a relation type to the `rel` parameter.
@@ -66,39 +71,28 @@ impl LinkValue {
     }
 
     /// Set the `profile` parameter (RFC 8288 section 3.4, clause 6.3.21).
-    pub fn set_profile<T: Into<Cow<'static, str>>>(mut self, profile: T) -> LinkValue {
-        self.profile = Some(profile.into());
+    pub fn set_profile(mut self, profile: IriBuf) -> LinkValue {
+        self.profile = Some(profile);
         self
     }
 
     /// Build a link-value with optional `rel` and `type` parameters.
-    ///
-    /// A `media_type` that does not parse is dropped rather than reported: the
-    /// `type` parameter is a hint, and RFC 8288 section 3.4.1 has a recipient
-    /// ignore a parameter it cannot use.
-    pub fn with_params(target: &str, rel: Option<&str>, media_type: Option<&str>) -> LinkValue {
-        let mut value = LinkValue::new(target.to_owned());
+    pub fn with_params(target: IriRefBuf, rel: Option<RelationType>, media_type: Option<MediaTypeBuf>) -> LinkValue {
+        let mut value = LinkValue::new(target);
         if let Some(rel) = rel {
-            match rel.parse::<RelationType>() {
-                Ok(rel) => value = value.push_rel(rel),
-                Err(infallible) => match infallible {},
-            }
+            value = value.push_rel(rel);
         }
-        if let Some(media_type) = media_type
-            && let Ok(parsed) = media_type.parse::<MediaTypeBuf>()
-        {
-            value = value.set_media_type(parsed);
+        if let Some(media_type) = media_type {
+            value = value.set_media_type(media_type);
         }
         value
     }
 
     /// A JSON-LD context link-value with the standard relation and media type.
-    pub fn jsonld_context(target: &str) -> LinkValue {
-        let mut value = LinkValue::new(target.to_owned()).push_rel(RelationType::jsonld_context());
-        if let Ok(media_type) = Self::JSON_LD_MEDIA_TYPE.parse::<MediaTypeBuf>() {
-            value = value.set_media_type(media_type);
-        }
-        value
+    pub fn jsonld_context(context_url: IriRefBuf) -> LinkValue {
+        LinkValue::new(context_url)
+            .push_rel(RelationType::jsonld_context())
+            .set_media_type(MediaTypeBuf::from(&APPLICATION_LD_JSON))
     }
 
     /// Whether this link-value carries the given relation type.
@@ -121,8 +115,9 @@ impl LinkValue {
     ///
     /// # Errors
     ///
-    /// Returns [`LinkParseError`] when the segment has no parameter name, or
-    /// when a recognised parameter has an empty or unquotable value.
+    /// Returns [`LinkParseError`] when the segment has no parameter name, when a
+    /// recognised parameter has an empty or unquotable value, or when `type` is
+    /// not a media type or `profile` is not an absolute IRI.
     pub fn apply_param(&mut self, segment: &str) -> Result<(), LinkParseError> {
         let mut parts = segment.splitn(2, '=');
         let name = match parts.next() {
@@ -139,7 +134,7 @@ impl LinkValue {
                 self.media_type = Some(quoted_value(parts.next())?.parse().map_err(|_| LinkParseError)?);
             }
         } else if "profile".eq_ignore_ascii_case(name) && self.profile.is_none() {
-            self.profile = Some(Cow::Owned(quoted_value(parts.next())?.to_owned()));
+            self.profile = Some(quoted_value(parts.next())?.parse::<IriBuf>().map_err(|_| LinkParseError)?);
         }
 
         Ok(())
@@ -192,27 +187,38 @@ impl fmt::Display for LinkValue {
 #[cfg(test)]
 mod tests {
     use crate::link::{relation_type::RelationType, value::LinkValue};
+    use iri_rs::{IriBuf, IriRefBuf};
     use mediatype::MediaTypeBuf;
+
+    /// A validated IRI reference, for building link targets in tests.
+    fn iri_ref(value: &str) -> IriRefBuf {
+        IriRefBuf::new(value).expect("valid IRI reference")
+    }
+
+    /// A validated absolute IRI, for building profile values in tests.
+    fn iri(value: &str) -> IriBuf {
+        IriBuf::new(value).expect("valid IRI")
+    }
 
     #[test]
     fn a_relation_a_link_value_carries_is_reported_and_others_are_not() {
-        let value = LinkValue::new("/page").push_rel(RelationType::Next);
+        let value = LinkValue::new(iri_ref("/page")).push_rel(RelationType::Next);
         assert!(value.has_rel(&RelationType::Next));
         assert!(!value.has_rel(&RelationType::Prev));
     }
 
     #[test]
     fn only_the_json_ld_relation_makes_a_context_link() {
-        let context = LinkValue::new("https://example.com/ctx.jsonld").push_rel(RelationType::jsonld_context());
+        let context = LinkValue::new(iri_ref("https://example.com/ctx.jsonld")).push_rel(RelationType::jsonld_context());
         assert!(context.is_context_link());
 
-        let pagination = LinkValue::new("/page/2").push_rel(RelationType::Next);
+        let pagination = LinkValue::new(iri_ref("/page/2")).push_rel(RelationType::Next);
         assert!(!pagination.is_context_link());
     }
 
     #[test]
     fn a_json_ld_context_value_carries_the_standard_relation_and_media_type() {
-        let value = LinkValue::jsonld_context("https://example.com/ctx.jsonld");
+        let value = LinkValue::jsonld_context(iri_ref("https://example.com/ctx.jsonld"));
         pretty_assertions::assert_eq!(
             value.to_string(),
             r#"<https://example.com/ctx.jsonld>; rel="http://www.w3.org/ns/json-ld#context"; type="application/ld+json""#
@@ -220,17 +226,38 @@ mod tests {
     }
 
     #[test]
+    fn a_relative_pagination_reference_is_accepted_as_a_target() {
+        // Clause 6.3.10 pagination links are relative references, so the target
+        // type must accept them alongside the absolute `@context` URLs.
+        let value = LinkValue::new(iri_ref("/entities?offset=20&limit=10")).push_rel(RelationType::Next);
+        pretty_assertions::assert_eq!(value.link().as_str(), "/entities?offset=20&limit=10");
+    }
+
+    #[test]
     fn every_parameter_set_appears_in_the_rendering() {
-        let value = LinkValue::new("http://example.com/ctx.jsonld")
+        let value = LinkValue::new(iri_ref("http://example.com/ctx.jsonld"))
             .push_rel(RelationType::jsonld_context())
             .set_media_type("application/ld+json".parse::<MediaTypeBuf>().expect("valid media type"))
-            .set_profile("https://uri.etsi.org/ngsi-ld/profile/version");
+            .set_profile(iri("https://uri.etsi.org/ngsi-ld/profile/version"));
         assert!(value.to_string().contains(r#"profile="https://uri.etsi.org/ngsi-ld/profile/version""#));
     }
 
     #[test]
+    fn with_params_applies_only_the_parameters_given() {
+        let bare = LinkValue::with_params(iri_ref("/page"), Some(RelationType::Next), None);
+        pretty_assertions::assert_eq!(bare.to_string(), r#"</page>; rel="next""#);
+
+        let typed = LinkValue::with_params(
+            iri_ref("/page"),
+            Some(RelationType::Next),
+            Some("application/json".parse::<MediaTypeBuf>().expect("valid media type")),
+        );
+        pretty_assertions::assert_eq!(typed.to_string(), r#"</page>; rel="next"; type="application/json""#);
+    }
+
+    #[test]
     fn a_parameter_already_set_is_not_overwritten() {
-        let mut value = LinkValue::new("/page");
+        let mut value = LinkValue::new(iri_ref("/page"));
         value.apply_param(r#"rel="next""#).expect("first rel applies");
         value.apply_param(r#"rel="prev""#).expect("second rel is ignored");
         pretty_assertions::assert_eq!(value.rel(), Some([RelationType::Next].as_slice()));
@@ -238,7 +265,7 @@ mod tests {
 
     #[test]
     fn a_parameter_this_broker_does_not_read_is_ignored() {
-        let mut value = LinkValue::new("/page");
+        let mut value = LinkValue::new(iri_ref("/page"));
         value.apply_param("hreflang=en").expect("unknown parameter is ignored");
         value.apply_param(r#"title="Chapter 2""#).expect("unknown parameter is ignored");
         pretty_assertions::assert_eq!(value.rel(), None);
@@ -246,15 +273,23 @@ mod tests {
 
     #[test]
     fn a_parameter_with_no_name_or_no_value_is_rejected() {
-        let mut value = LinkValue::new("/page");
+        let mut value = LinkValue::new(iri_ref("/page"));
         assert!(value.apply_param(r#"="next""#).is_err());
         assert!(value.apply_param("rel=").is_err());
         assert!(value.apply_param("profile=").is_err());
     }
 
     #[test]
-    fn a_media_type_hint_that_does_not_parse_is_dropped_rather_than_reported() {
-        let value = LinkValue::with_params("/page", Some("next"), Some("not a media type"));
-        pretty_assertions::assert_eq!(value.to_string(), r#"</page>; rel="next""#);
+    fn a_profile_that_is_not_an_absolute_iri_is_rejected() {
+        // RFC 8288 section 3.4 requires the `profile` value to be a URI, so a
+        // relative reference is not a usable profile and fails the parameter.
+        let mut value = LinkValue::new(iri_ref("/page"));
+        assert!(value.apply_param(r#"profile="/relative""#).is_err());
+
+        let mut value = LinkValue::new(iri_ref("/page"));
+        value
+            .apply_param(r#"profile="https://uri.etsi.org/ngsi-ld/profile/version""#)
+            .expect("an absolute profile IRI is accepted");
+        pretty_assertions::assert_eq!(value.profile().map(IriBuf::as_str), Some("https://uri.etsi.org/ngsi-ld/profile/version"));
     }
 }

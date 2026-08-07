@@ -1,8 +1,7 @@
 //! The Relationship attribute family (ETSI GS CIM 009 clause 5.2.6).
 
 use crate::attribute::{common_fields::CommonAttributeFields, inline_entity::InlineEntity, one_or_many::OneOrMany};
-use andromeda_ngsi_ld_lexicon::uri::Uri;
-use compact_str::CompactString;
+use andromeda_ngsi_ld_lexicon::{reference::NgsiLdReference, uri::Uri};
 use jsonld::Expandable;
 use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
@@ -21,7 +20,7 @@ pub struct Relationship {
     pub object: OneOrMany<Uri>,
     /// Optional target node type(s).
     #[jsonld(property = "ngsi:hasObjectType", passthrough)]
-    pub object_type: Option<OneOrMany<CompactString>>,
+    pub object_type: Option<OneOrMany<NgsiLdReference>>,
     /// Previous target object emitted in notifications when `showChanges` is active.
     #[jsonld(property = "ngsi:hasPreviousObject", passthrough)]
     pub previous_object: Option<OneOrMany<Uri>>,

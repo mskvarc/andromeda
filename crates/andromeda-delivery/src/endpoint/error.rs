@@ -1,5 +1,7 @@
 //! Why an endpoint URI could not be read.
 
+use crate::endpoint::topic::MqttTopicError;
+
 /// Errors that can occur when parsing an endpoint URI.
 #[derive(Debug, thiserror::Error)]
 pub enum EndpointParseError {
@@ -16,6 +18,13 @@ pub enum EndpointParseError {
     /// An `mqtt` URI named no topic, so there is nothing to publish to.
     #[error("MQTT URI must include a topic path")]
     MissingTopic,
+    /// An `mqtt` URI's topic path is not a valid publish topic.
+    #[error("MQTT URI has an invalid topic: {source}")]
+    InvalidTopic {
+        /// Why the topic was rejected.
+        #[from]
+        source: MqttTopicError,
+    },
     /// The scheme names a protocol this broker does not deliver over.
     #[error("unsupported endpoint URI scheme: {scheme}")]
     UnsupportedScheme {

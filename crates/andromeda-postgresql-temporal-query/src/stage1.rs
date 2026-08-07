@@ -23,7 +23,7 @@ use andromeda_postgresql_query::{
     type_predicate::{TypesColumn, condition as type_condition},
 };
 use iri_rs::IriBuf;
-use sea_query::{Alias, Condition, Expr as SeaExpr, Func, JoinType, Order, PostgresQueryBuilder, Query};
+use sea_query::{Condition, Expr as SeaExpr, Func, JoinType, Order, PostgresQueryBuilder, Query, SelectStatement};
 use urn_rs::Urn;
 
 /// Build Stage 1 query: find entity IDs matching entity-level filters.
@@ -31,51 +31,18 @@ pub fn build_stage1_entity_ids(compiled: &CompiledTemporalQuery, attribute_names
     // Build entity-level conditions (applied to entities table via alias "e")
     let entity_conditions = build_entity_conditions_for_temporal(compiled, attribute_names)?;
 
-    // Build temporal-specific conditions
-    let temporal_conditions = build_temporal_stage1_conditions(compiled)?;
-
-    // Combine all conditions
-    let mut all_conditions = entity_conditions;
-    if !temporal_conditions.is_empty() {
-        all_conditions = all_conditions.add(temporal_conditions);
-    }
+    let temporal_match = temporal_match_subquery(compiled)?;
 
     // Build the main SELECT
     let mut select = Query::select();
     select
-        .distinct()
-        .expr_as(SeaExpr::col((Tea, TemporalEntityAttributes::EntityId)), Alias::new("entity_id"))
-        .from_as(TemporalEntityAttributes::Table, Tea)
-        .join_as(
-            JoinType::Join,
-            AttributeNames::Table,
-            An,
-            SeaExpr::col((An, AttributeNames::Id)).equals((Tea, TemporalEntityAttributes::AttributeNameId)),
-        )
-        .join_as(
-            JoinType::LeftJoin,
-            Entities::Table,
-            E,
-            SeaExpr::col((E, Entities::Id)).equals((Tea, TemporalEntityAttributes::EntityId)),
-        );
-
-    // Conditional JOIN to attribute_history when timerel is present
-    let needs_ah_join = compiled.window.interval.is_bounded();
-    if needs_ah_join {
-        select.join_as(
-            JoinType::Join,
-            AttributeHistory::Table,
-            Ah,
-            SeaExpr::col((Ah, AttributeHistory::TeaId)).equals((Tea, TemporalEntityAttributes::Id)),
-        );
-    }
+        .expr_as(SeaExpr::col((E, Entities::Id)), TemporalEntityAttributes::EntityId)
+        .from_as(Entities::Table, E);
 
     select
-        // clone: the count statement filters on the same condition
-        .cond_where(all_conditions.clone())
-        // Stable page order (clause 5.5.9): a `DISTINCT entity_id` projection
-        // with no ORDER BY lets LIMIT/OFFSET repeat and skip ids across pages.
-        .order_by((Tea, TemporalEntityAttributes::EntityId), Order::Asc)
+        .cond_where(entity_conditions.clone()) // clone: count query applies the same entity predicate
+        .cond_where(SeaExpr::exists(temporal_match))
+        .order_by((E, Entities::Id), Order::Asc)
         .limit(compiled.pagination.limit as u64)
         .offset(compiled.pagination.offset as u64);
 
@@ -87,31 +54,10 @@ pub fn build_stage1_entity_ids(compiled: &CompiledTemporalQuery, attribute_names
     let count_sql = if compiled.pagination.count == CountPolicy::Emit {
         let mut count_select = Query::select();
         count_select
-            .expr(Func::count(SeaExpr::cust("DISTINCT \"tea\".\"entity_id\"")))
-            .from_as(TemporalEntityAttributes::Table, Tea)
-            .join_as(
-                JoinType::Join,
-                AttributeNames::Table,
-                An,
-                SeaExpr::col((An, AttributeNames::Id)).equals((Tea, TemporalEntityAttributes::AttributeNameId)),
-            )
-            .join_as(
-                JoinType::LeftJoin,
-                Entities::Table,
-                E,
-                SeaExpr::col((E, Entities::Id)).equals((Tea, TemporalEntityAttributes::EntityId)),
-            );
-
-        if needs_ah_join {
-            count_select.join_as(
-                JoinType::Join,
-                AttributeHistory::Table,
-                Ah,
-                SeaExpr::col((Ah, AttributeHistory::TeaId)).equals((Tea, TemporalEntityAttributes::Id)),
-            );
-        }
-
-        count_select.cond_where(all_conditions);
+            .expr(Func::count(SeaExpr::col((E, Entities::Id))))
+            .from_as(Entities::Table, E)
+            .cond_where(entity_conditions)
+            .cond_where(SeaExpr::exists(temporal_match_subquery(compiled)?));
         let (count_sql_str, _) = count_select.build(PostgresQueryBuilder);
         Some(count_sql_str)
     } else {
@@ -119,6 +65,33 @@ pub fn build_stage1_entity_ids(compiled: &CompiledTemporalQuery, attribute_names
     };
 
     Ok(BuiltQuery { sql, count_sql, bind_values })
+}
+
+/// Build the correlated catalogue/history predicate shared by result and count.
+fn temporal_match_subquery(compiled: &CompiledTemporalQuery) -> Result<SelectStatement, RenderError> {
+    let temporal_conditions = build_temporal_stage1_conditions(compiled)?;
+    let mut select = Query::select();
+    select
+        .expr(SeaExpr::val(1))
+        .from_as(TemporalEntityAttributes::Table, Tea)
+        .join_as(
+            JoinType::Join,
+            AttributeNames::Table,
+            An,
+            SeaExpr::col((An, AttributeNames::Id)).equals((Tea, TemporalEntityAttributes::AttributeNameId)),
+        )
+        .cond_where(SeaExpr::col((Tea, TemporalEntityAttributes::EntityId)).equals((E, Entities::Id)))
+        .cond_where(temporal_conditions);
+
+    if compiled.window.interval.is_bounded() {
+        select.join_as(
+            JoinType::Join,
+            AttributeHistory::Table,
+            Ah,
+            SeaExpr::col((Ah, AttributeHistory::TeaId)).equals((Tea, TemporalEntityAttributes::Id)),
+        );
+    }
+    Ok(select.to_owned())
 }
 
 /// Build entity-level conditions for temporal queries (using "e" alias for entities table).
@@ -205,16 +178,15 @@ fn build_temporal_stage1_conditions(compiled: &CompiledTemporalQuery) -> Result<
 
     // Temporal filters (timerel + time_at)
     let time_col = history_column(compiled.window.timeproperty);
-    let bound = |sql: &'static str, instant: &chrono::DateTime<chrono::Utc>| {
-        SeaExpr::cust_with_exprs(sql, [SeaExpr::cust(time_col), SeaExpr::val(instant.to_rfc3339()).into()])
-    };
+    let bound =
+        |sql: &'static str, instant: &chrono::DateTime<chrono::Utc>| SeaExpr::cust_with_exprs(sql, [SeaExpr::cust(time_col), SeaExpr::val(*instant).into()]);
     match &compiled.window.interval {
         TimeInterval::Unbounded => {}
-        TimeInterval::Before(instant) => condition = condition.add(bound("$1 < $2::timestamptz", instant)),
-        TimeInterval::After(instant) => condition = condition.add(bound("$1 >= $2::timestamptz", instant)),
+        TimeInterval::Before(instant) => condition = condition.add(bound("$1 < $2", instant)),
+        TimeInterval::After(instant) => condition = condition.add(bound("$1 >= $2", instant)),
         TimeInterval::Between { from, to } => {
-            let lower = bound("$1 >= $2::timestamptz", from);
-            let upper = bound("$1 < $2::timestamptz", to);
+            let lower = bound("$1 >= $2", from);
+            let upper = bound("$1 < $2", to);
             condition = condition.add(lower).add(upper);
         }
     }
@@ -222,7 +194,7 @@ fn build_temporal_stage1_conditions(compiled: &CompiledTemporalQuery) -> Result<
     // Historical scope filtering via EXISTS subquery against scope_history
     if let Some(scope_q) = &compiled.entities.scope_q {
         let target = ScopeTarget::history((Tea, TemporalEntityAttributes::EntityId), compiled.window.interval);
-        condition = condition.add(scope_condition(scope_q, &target)?);
+        condition = condition.add(scope_condition(scope_q, &target));
     }
 
     Ok(condition)
@@ -242,7 +214,7 @@ mod tests {
         type_selection::grammar::TypeExpr,
     };
     use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
-    use andromeda_postgresql_query::attribute_name_id::AttributeNameId;
+    use andromeda_postgresql_query::{attribute_name_id::AttributeNameId, bind::BindValue};
     use chrono::{DateTime, Utc};
 
     fn instant(raw: &str) -> DateTime<Utc> {
@@ -287,18 +259,19 @@ mod tests {
                 .build(),
         ];
         let result = build_stage1_entity_ids(&compiled, &ResolvedAttributeNames::default()).unwrap();
-        assert!(result.sql.contains("SELECT DISTINCT"));
+        assert!(!result.sql.contains("SELECT DISTINCT"));
+        assert!(result.sql.contains("EXISTS(SELECT"));
         assert!(result.sql.contains("\"e\".\"types\""));
         assert!(result.sql.contains("JOIN \"attribute_names\""));
     }
 
     #[test]
     fn entity_id_selection_orders_by_id_for_stable_pagination() {
-        // Clause 5.5.9: a `SELECT DISTINCT entity_id` with no ORDER BY lets
-        // LIMIT/OFFSET repeat and skip ids across pages.
+        // The driving entities table emits one row per id, and ordered paging
+        // keeps clause 5.5.9 result pages stable.
         let compiled = minimal_compiled();
         let result = build_stage1_entity_ids(&compiled, &ResolvedAttributeNames::default()).unwrap();
-        assert!(result.sql.contains("ORDER BY \"tea\".\"entity_id\""), "{}", result.sql);
+        assert!(result.sql.contains("ORDER BY \"e\".\"id\""), "{}", result.sql);
     }
 
     #[test]
@@ -310,13 +283,27 @@ mod tests {
         let result = build_stage1_entity_ids(&compiled, &ResolvedAttributeNames::default()).unwrap();
 
         assert!(
-            !result.sql.contains("< $1::timestamptz"),
+            !result.sql.contains("< $1"),
             "time placeholder must not collide with earlier id-filter placeholders"
         );
-        assert!(
-            result.sql.contains("::timestamptz"),
-            "temporal comparison should cast bind value to timestamptz"
-        );
+        assert!(!result.sql.contains("::timestamptz"));
+        assert!(result.bind_values.iter().any(|bind| matches!(bind, BindValue::Timestamp(_))));
+    }
+
+    #[test]
+    fn stage1_count_reuses_the_result_predicate_bind_order() {
+        let mut compiled = minimal_compiled();
+        compiled.pagination.count = CountPolicy::Emit;
+        compiled.entities.selectors = vec![EntitySelector::builder().ids(ids(&["urn:ngsi-ld:Vehicle:1"])).build()];
+        compiled.window.interval = TimeInterval::Before(instant("2030-01-01T00:00:00Z"));
+
+        let result = build_stage1_entity_ids(&compiled, &ResolvedAttributeNames::default()).unwrap();
+        let count_sql = result.count_sql.expect("count SQL is requested");
+
+        assert!(count_sql.contains("EXISTS(SELECT"), "{count_sql}");
+        assert!(count_sql.contains("$1"), "{count_sql}");
+        assert!(count_sql.contains("$2"), "{count_sql}");
+        assert!(result.bind_values.iter().any(|bind| matches!(bind, BindValue::Timestamp(_))));
     }
 
     #[test]
@@ -375,9 +362,10 @@ mod tests {
         // /A;/B -> AND, ,/C -> OR
         assert!(result.sql.contains("AND"), "Semicolon scopes produce AND");
         assert!(result.sql.contains("OR"), "Comma scopes produce OR");
-        // Each scope term should have its own EXISTS subquery
+        // Each scope term has its own EXISTS subquery, inside the catalogue
+        // EXISTS predicate.
         let exists_count = result.sql.matches("EXISTS").count();
-        pretty_assertions::assert_eq!(exists_count, 3, "Three scope terms should produce three EXISTS subqueries");
+        pretty_assertions::assert_eq!(exists_count, 4, "The catalogue predicate wraps three scope predicates");
     }
 
     #[test]

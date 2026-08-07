@@ -134,15 +134,19 @@ async fn language_retrieve_ranked_preferences_select_highest_quality_match() {
 }
 
 #[tokio::test]
-async fn language_retrieve_no_match_returns_language_property_unchanged() {
+async fn language_retrieve_no_match_falls_back_to_a_supported_language() {
     let scope = TestScope::new("language");
     let client = NgsiLdClient::new(&scope).await;
     let id = scope.id("Building:lang-nomatch");
     create(&client, &building_fr_nl(&id)).await;
     let (status, body) = get_entity(&client, &id, Some("ja"), None, None).await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["street"]["type"], "LanguageProperty");
-    assert!(body["street"]["languageMap"].is_object());
+    // Clause 4.15: no requested language matches, so the broker shall fall back
+    // to a supported language (the first tagged entry) rather than return the
+    // raw language map -- a `Property` carrying that entry and its `lang`.
+    assert_eq!(body["street"]["type"], "Property");
+    assert_eq!(body["street"]["value"], "Grand Place");
+    assert_eq!(body["street"]["lang"], "fr");
     scope.cleanup().await.expect("cleanup failed");
 }
 
@@ -263,8 +267,10 @@ async fn language_retrieve_key_values_without_lang_returns_language_map() {
     create(&client, &building_fr_nl(&id)).await;
     let (status, body) = get_entity(&client, &id, None, None, Some("keyValues")).await;
     assert_eq!(status, StatusCode::OK);
-    assert!(body["street"].is_object());
-    assert_eq!(body["street"]["fr"], "Grand Place");
+    // Clause 4.5.4 (Example 4): the simplified form of a LanguageProperty keeps
+    // the `languageMap` member rather than inlining the map at the attribute.
+    assert!(body["street"]["languageMap"].is_object());
+    assert_eq!(body["street"]["languageMap"]["fr"], "Grand Place");
     scope.cleanup().await.expect("cleanup failed");
 }
 

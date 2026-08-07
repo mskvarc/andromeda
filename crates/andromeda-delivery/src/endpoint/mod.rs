@@ -2,4 +2,5 @@
 
 pub mod error;
 pub mod mqtt;
+pub mod topic;
 pub mod transport;

@@ -1,7 +1,14 @@
 use crate::{core::error::AndromedaError, service::csource_registration::store::RegistrationStore};
 use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
-use andromeda_ngsi_ld_http_headers::{link::header::Link, ngsild_tenant::NgsiLdTenant, ngsild_warning::NgsiLdWarning, via::Via};
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, tenant::TenantName};
+use andromeda_ngsi_ld_http_headers::{
+    context_source_pseudonym::ContextSourcePseudonym,
+    link::header::Link,
+    ngsild_tenant::NgsiLdTenant,
+    ngsild_warning::NgsiLdWarning,
+    received_protocol::ReceivedProtocol,
+    via::Via,
+};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, tenant::TenantName, uri::Uri};
 use andromeda_ngsi_ld_model::{
     entity::Entity,
     registration::{ContextSourceRegistration, CsrOperation, ForwardingMode},
@@ -9,6 +16,7 @@ use andromeda_ngsi_ld_model::{
 use andromeda_ngsi_ld_query::filter::{eval::evaluate as eval_q_expr, expression::Expr};
 use futures::{StreamExt, stream};
 use headers::Header;
+use iri_rs::IriRefBuf;
 use serde_json::Value;
 use std::sync::Arc;
 use tracing::{debug, warn};
@@ -226,7 +234,7 @@ pub struct ForwardTemporalQueryRequest<'a> {
     /// Compact entity type for CSR matching.
     pub entity_type_compact: Option<&'a str>,
     /// Entity IDs to filter by.
-    pub entity_ids: Option<&'a [String]>,
+    pub entity_ids: Option<&'a [Uri]>,
     /// Full query string including temporal parameters.
     pub query_string: &'a str,
     /// JSON-LD context URL for the Link header.
@@ -252,7 +260,7 @@ pub struct ForwardQueryRequest<'a> {
     /// Compact entity type for CSR matching.
     pub entity_type_compact: Option<&'a str>,
     /// Entity IDs to filter by.
-    pub entity_ids: Option<&'a [String]>,
+    pub entity_ids: Option<&'a [Uri]>,
     /// JSON-LD context URL for the Link header.
     pub context_url: Option<&'a str>,
     /// JSON-LD context specification for term expansion.
@@ -337,14 +345,15 @@ impl CsourceForwardingService {
         }
 
         // Expand entity type for CSR matching (CSRs store expanded IRIs)
+        let prepared_context = self.engine.prepare_term_context(context);
         let expanded_type = if let Some(t) = entity_type_compact {
-            Some(self.engine.expand_type(t, context).await?)
+            Some(self.engine.expand_type(t, &prepared_context).await?.to_string())
         } else {
             None
         };
 
         // For CSR matching, also pass entity IDs if available
-        let first_id = entity_ids.and_then(|ids| ids.first().map(|s| s.as_str()));
+        let first_id = entity_ids.and_then(|ids| ids.first().map(Uri::as_str));
         let csrs = self.csr_repo.find_matching(expanded_type.as_deref(), first_id).await?;
         let matching_csrs: Vec<_> = csrs
             .into_iter()
@@ -577,8 +586,9 @@ impl CsourceForwardingService {
             return Ok((Vec::new(), Vec::new()));
         }
 
+        let prepared_context = self.engine.prepare_term_context(request.context);
         let expanded_type = if let Some(t) = request.entity_type_compact {
-            Some(self.engine.expand_type(t, request.context).await?)
+            Some(self.engine.expand_type(t, &prepared_context).await?.to_string())
         } else {
             None
         };
@@ -681,8 +691,9 @@ impl CsourceForwardingService {
             return Ok(Vec::new());
         }
 
+        let prepared_context = self.engine.prepare_term_context(request.context);
         let expanded_type = if let Some(t) = request.entity_type_compact {
-            Some(self.engine.expand_type(t, request.context).await?)
+            Some(self.engine.expand_type(t, &prepared_context).await?.to_string())
         } else {
             None
         };
@@ -833,8 +844,10 @@ impl CsourceForwardingService {
     ) -> reqwest::RequestBuilder {
         let mut request = self.http_client.request(method, url).header("Connection", "close");
 
-        if let Some(ctx) = context_url {
-            let link = Link::jsonld_context(ctx);
+        if let Some(ctx) = context_url
+            && let Ok(context_iri) = IriRefBuf::new(ctx.to_string())
+        {
+            let link = Link::jsonld_context(context_iri);
             if let Some(value) = link.to_header_value() {
                 request = request.header("Link", value);
             }
@@ -845,15 +858,23 @@ impl CsourceForwardingService {
             request = request.header(NgsiLdTenant::name().as_str(), tenant_header.as_str());
         }
 
-        // Append our identity to the Via header chain (section 6.3.18)
-        let new_via = match incoming_via {
-            Some(existing) => existing.clone().append("1.1", &self.source_identity), // clone: need owned Via to append our identity
-            None => Via::with_entry("1.1", &self.source_identity),
-        };
-        let mut via_values = Vec::new();
-        headers::Header::encode(&new_via, &mut via_values);
-        if let Some(val) = via_values.into_iter().next() {
-            request = request.header("via", val);
+        // Append our identity to the Via header chain (section 6.3.18). The
+        // protocol token and our identity are both fixed for a valid deployment,
+        // so this construction cannot fail in practice; were either malformed the
+        // chain is forwarded without our hop rather than the request aborted.
+        if let (Ok(protocol), Ok(pseudonym)) = (
+            ReceivedProtocol::try_from("1.1".to_string()),
+            ContextSourcePseudonym::try_from(self.source_identity.clone()), // clone: the pseudonym owns its string
+        ) {
+            let new_via = match incoming_via {
+                Some(existing) => existing.clone().append(protocol, pseudonym), // clone: need owned Via to append our identity
+                None => Via::with_entry(protocol, pseudonym),
+            };
+            let mut via_values = Vec::new();
+            headers::Header::encode(&new_via, &mut via_values);
+            if let Some(val) = via_values.into_iter().next() {
+                request = request.header("via", val);
+            }
         }
 
         request
@@ -982,13 +1003,14 @@ impl CsourceForwardingService {
             return Ok(Vec::new());
         }
 
+        let prepared_context = self.engine.prepare_term_context(context);
         let expanded_type = if let Some(t) = entity_type_compact {
-            Some(self.engine.expand_type(t, context).await?)
+            Some(self.engine.expand_type(t, &prepared_context).await?.to_string())
         } else {
             None
         };
 
-        let first_id = entity_ids.and_then(|ids| ids.first().map(|s| s.as_str()));
+        let first_id = entity_ids.and_then(|ids| ids.first().map(Uri::as_str));
         let csrs = self.csr_repo.find_matching(expanded_type.as_deref(), first_id).await?;
         let matching_csrs: Vec<_> = csrs
             .into_iter()
@@ -1204,12 +1226,13 @@ impl CsourceForwardingService {
 }
 
 /// Build a minimal forwarding query string with only type and id params.
-fn build_forwarding_query_string(entity_type: Option<&str>, entity_ids: Option<&[String]>) -> String {
+fn build_forwarding_query_string(entity_type: Option<&str>, entity_ids: Option<&[Uri]>) -> String {
     let mut parts = Vec::new();
     if let Some(ids) = entity_ids
         && !ids.is_empty()
     {
-        parts.push(format!("id={}", ids.join(",")));
+        let ids = ids.iter().map(Uri::as_str).collect::<Vec<_>>().join(",");
+        parts.push(format!("id={ids}"));
     }
     if let Some(t) = entity_type {
         parts.push(format!("type={}", t));

@@ -465,9 +465,6 @@ fn validate_config(config: &RuntimeConfig) -> Result<(), AndromedaError> {
     if config.temporal.expiration_check_interval_secs == 0 {
         return Err(AndromedaError::internal("temporal.expiration_check_interval_secs must be at least 1"));
     }
-    if config.tenancy.tenant_db_prefix.is_empty() {
-        return Err(AndromedaError::internal("tenancy.tenant_db_prefix must not be empty"));
-    }
     if config.tenancy.tenant_max_connections == 0 {
         return Err(AndromedaError::internal("tenancy.tenant_max_connections must be at least 1"));
     }
@@ -599,10 +596,11 @@ mod tests {
     };
 
     use super::*;
+    use andromeda_tenancy::db_name_prefix::DbNamePrefix;
 
     fn test_runtime_config_with_preload(path: &str) -> RuntimeConfig {
         let mut preloads = HashMap::new();
-        preloads.insert("https://example.com/context.jsonld".to_string(), path.to_string());
+        preloads.insert("https://example.com/context.jsonld".parse().expect("test URL"), path.into());
         RuntimeConfig {
             server: ServerConfig {
                 host: "127.0.0.1".parse().unwrap(),
@@ -634,7 +632,7 @@ mod tests {
             },
             tenancy: TenancyConfig {
                 enabled: true,
-                tenant_db_prefix: "andromeda_tenant".to_string(),
+                tenant_db_prefix: DbNamePrefix::try_from("andromeda_tenant").expect("valid default db name prefix"),
                 tenant_max_connections: 16,
                 runtime_idle_ttl_seconds: 900,
                 runtime_max_cached: 64,
@@ -708,7 +706,7 @@ mod tests {
         let path = config
             .jsonld
             .preload_contexts
-            .get("https://example.com/context.jsonld")
+            .get(&"https://example.com/context.jsonld".parse().expect("test URL"))
             .expect("preload path missing");
         pretty_assertions::assert_eq!(path, "/tmp/andromeda/config/contexts/test.jsonld");
     }
@@ -720,7 +718,7 @@ mod tests {
         let path = config
             .jsonld
             .preload_contexts
-            .get("https://example.com/context.jsonld")
+            .get(&"https://example.com/context.jsonld".parse().expect("test URL"))
             .expect("preload path missing");
         pretty_assertions::assert_eq!(path, "/opt/contexts/test.jsonld");
     }
@@ -791,8 +789,11 @@ mod tests {
         let config = RuntimeConfig::builder().env().load().expect("config should load");
         unsafe { std::env::remove_var("ANDROMEDA_JSONLD_PRELOAD_CONTEXTS") };
         pretty_assertions::assert_eq!(
-            config.jsonld.preload_contexts.get("https://example.com/context.jsonld"),
-            Some(&"contexts/test.jsonld".to_string())
+            config
+                .jsonld
+                .preload_contexts
+                .get(&"https://example.com/context.jsonld".parse().expect("test URL")),
+            Some(&"contexts/test.jsonld".into())
         );
     }
 

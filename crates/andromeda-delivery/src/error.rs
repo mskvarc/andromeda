@@ -1,6 +1,7 @@
 //! What can go wrong between this broker and a notification endpoint.
 
-use std::time::Duration;
+use std::{net::IpAddr, time::Duration};
+use url::Url;
 
 /// Transport-level errors that prevent delivery from completing.
 ///
@@ -14,7 +15,7 @@ pub enum TransportError {
     #[error("connection to {endpoint} failed: {detail}")]
     ConnectionFailed {
         /// The endpoint that could not be reached.
-        endpoint: String,
+        endpoint: Url,
         /// What the transport reported.
         detail: String,
     },
@@ -23,7 +24,7 @@ pub enum TransportError {
     #[error("request to {endpoint} timed out after {duration:?}")]
     Timeout {
         /// The endpoint that did not answer.
-        endpoint: String,
+        endpoint: Url,
         /// How long the transport waited.
         duration: Duration,
     },
@@ -32,7 +33,7 @@ pub enum TransportError {
     #[error("TLS handshake with {endpoint} failed: {detail}")]
     TlsError {
         /// The endpoint whose certificate or handshake was rejected.
-        endpoint: String,
+        endpoint: Url,
         /// What the TLS stack reported.
         detail: String,
     },
@@ -51,16 +52,16 @@ pub enum TransportError {
     #[error("delivery to {endpoint} blocked: resolves to private/reserved IP {ip}")]
     PrivateIpBlocked {
         /// The endpoint whose host was rejected.
-        endpoint: String,
+        endpoint: Url,
         /// The address that triggered the guard.
-        ip: String,
+        ip: IpAddr,
     },
 
     /// The endpoint host could not be resolved at all.
     #[error("failed to resolve host for {endpoint}: {detail}")]
     DnsResolutionFailed {
         /// The endpoint whose host could not be resolved.
-        endpoint: String,
+        endpoint: Url,
         /// What the resolver reported.
         detail: String,
     },
@@ -69,10 +70,20 @@ pub enum TransportError {
     #[error("failed to serialize the notification for {endpoint}: {source}")]
     PayloadSerialization {
         /// The endpoint the notification was destined for.
-        endpoint: String,
+        endpoint: Url,
         /// The serialisation failure.
         #[source]
         source: serde_json::Error,
+    },
+
+    /// The HTTP client could not be constructed.
+    ///
+    /// Carries no endpoint: it fails once, at startup, before any endpoint is
+    /// known, so there is no URI to name and no placeholder is invented for one.
+    #[error("HTTP client initialization failed: {detail}")]
+    ClientInitializationFailed {
+        /// What the client builder reported.
+        detail: String,
     },
 }
 
@@ -82,14 +93,19 @@ impl TransportError {
     /// Reaching the endpoint failed transiently for connection, timeout, TLS and
     /// DNS errors, so a later attempt may connect. A payload over the limit, a
     /// blocked endpoint, or a payload that cannot be serialised will fail the
-    /// same way on every attempt, so retrying only wastes the budget.
+    /// same way on every attempt, so retrying only wastes the budget. A client
+    /// that could not be built is a startup misconfiguration, not a per-delivery
+    /// condition, so it is likewise not retryable.
     pub const fn is_retryable(&self) -> bool {
         match self {
             TransportError::ConnectionFailed { .. }
             | TransportError::Timeout { .. }
             | TransportError::TlsError { .. }
             | TransportError::DnsResolutionFailed { .. } => true,
-            TransportError::PayloadTooLarge { .. } | TransportError::PrivateIpBlocked { .. } | TransportError::PayloadSerialization { .. } => false,
+            TransportError::PayloadTooLarge { .. }
+            | TransportError::PrivateIpBlocked { .. }
+            | TransportError::PayloadSerialization { .. }
+            | TransportError::ClientInitializationFailed { .. } => false,
         }
     }
 }

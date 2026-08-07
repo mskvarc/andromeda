@@ -39,18 +39,18 @@ pub fn build_temporal_history_query(entity_id: &Uri, compiled: &CompiledTemporal
     match compiled.window.interval {
         TimeInterval::Unbounded => {}
         TimeInterval::Before(instant) => {
-            let marker = binds.bind(BindValue::String(Cow::Owned(instant.to_rfc3339())));
-            conditions.push(format!("{time_col} < {marker}::timestamptz"));
+            let marker = binds.bind(BindValue::Timestamp(instant));
+            conditions.push(format!("{time_col} < {marker}"));
         }
         TimeInterval::After(instant) => {
-            let marker = binds.bind(BindValue::String(Cow::Owned(instant.to_rfc3339())));
-            conditions.push(format!("{time_col} >= {marker}::timestamptz"));
+            let marker = binds.bind(BindValue::Timestamp(instant));
+            conditions.push(format!("{time_col} >= {marker}"));
         }
         TimeInterval::Between { from, to } => {
-            let start = binds.bind(BindValue::String(Cow::Owned(from.to_rfc3339())));
-            conditions.push(format!("{time_col} >= {start}::timestamptz"));
-            let end = binds.bind(BindValue::String(Cow::Owned(to.to_rfc3339())));
-            conditions.push(format!("{time_col} < {end}::timestamptz"));
+            let start = binds.bind(BindValue::Timestamp(from));
+            conditions.push(format!("{time_col} >= {start}"));
+            let end = binds.bind(BindValue::Timestamp(to));
+            conditions.push(format!("{time_col} < {end}"));
         }
     }
 
@@ -203,7 +203,8 @@ mod tests {
         let mut compiled = minimal_compiled();
         compiled.window.interval = TimeInterval::Before(instant("2024-01-15T10:00:00Z"));
         let result = build_temporal_history_query(&vehicle_id(), &compiled).unwrap();
-        assert!(result.sql.contains("< $2::timestamptz"));
+        assert!(result.sql.contains("< $2"));
+        assert!(matches!(result.bind_values[1], BindValue::Timestamp(_)));
     }
 
     #[test]
@@ -211,7 +212,8 @@ mod tests {
         let mut compiled = minimal_compiled();
         compiled.window.interval = TimeInterval::After(instant("2024-01-15T10:00:00Z"));
         let result = build_temporal_history_query(&vehicle_id(), &compiled).unwrap();
-        assert!(result.sql.contains(">= $2::timestamptz"));
+        assert!(result.sql.contains(">= $2"));
+        assert!(matches!(result.bind_values[1], BindValue::Timestamp(_)));
     }
 
     #[test]

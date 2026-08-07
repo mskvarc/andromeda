@@ -2,9 +2,10 @@
 
 use crate::{
     core::error::AndromedaError,
-    repository::entity::{pushdown, repo::EntityRepository},
+    repository::entity::{mapper::stored_uri, pushdown, repo::EntityRepository},
     service::entity::{query_outcome::QueryOutcome, store::EntitySnapshot},
 };
+use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::notification::SysAttrsSnapshot;
 use andromeda_ngsi_ld_query::entity::compiled::CompiledEntityQuery;
 use andromeda_postgresql_context_query::entity as entity_sql;
@@ -18,9 +19,9 @@ use std::collections::HashMap;
 
 impl EntityRepository {
     /// Retrieve an entity's expanded payload by identifier.
-    pub async fn get(&self, id: &str) -> Result<Option<Value>, AndromedaError> {
+    pub async fn get(&self, id: &Uri) -> Result<Option<Value>, AndromedaError> {
         let result: Option<Value> = sqlx::query_scalar("SELECT payload FROM entities WHERE id = $1")
-            .bind(id)
+            .bind(id.as_str())
             .fetch_optional(&self.pool)
             .await?;
 
@@ -28,18 +29,19 @@ impl EntityRepository {
     }
 
     /// Fetch expanded payloads for multiple entities in one query.
-    pub async fn get_batch(&self, ids: &[String]) -> Result<HashMap<String, Value>, AndromedaError> {
+    pub async fn get_batch(&self, ids: &[Uri]) -> Result<HashMap<Uri, Value>, AndromedaError> {
         if ids.is_empty() {
             return Ok(HashMap::new());
         }
+        let id_strs: Vec<&str> = ids.iter().map(Uri::as_str).collect();
         let rows = sqlx::query("SELECT id, payload FROM entities WHERE id = ANY($1)")
-            .bind(ids)
+            .bind(&id_strs)
             .fetch_all(&self.pool)
             .await?;
 
         let mut result = HashMap::with_capacity(ids.len());
         for row in rows {
-            let id: String = row.get("id");
+            let id = stored_uri(row.get("id"))?;
             let payload: Value = row.get("payload");
             result.insert(id, payload);
         }
@@ -47,9 +49,9 @@ impl EntityRepository {
     }
 
     /// Retrieve an entity's payload together with its `modified_at`.
-    pub async fn get_snapshot(&self, id: &str) -> Result<Option<EntitySnapshot>, AndromedaError> {
+    pub async fn get_snapshot(&self, id: &Uri) -> Result<Option<EntitySnapshot>, AndromedaError> {
         let row = sqlx::query("SELECT payload, modified_at FROM entities WHERE id = $1")
-            .bind(id)
+            .bind(id.as_str())
             .fetch_optional(&self.pool)
             .await?;
 
@@ -60,18 +62,19 @@ impl EntityRepository {
     }
 
     /// Retrieve payloads and `modified_at` for several entities in one query.
-    pub async fn get_snapshot_batch(&self, ids: &[String]) -> Result<HashMap<String, EntitySnapshot>, AndromedaError> {
+    pub async fn get_snapshot_batch(&self, ids: &[Uri]) -> Result<HashMap<Uri, EntitySnapshot>, AndromedaError> {
         if ids.is_empty() {
             return Ok(HashMap::new());
         }
+        let id_strs: Vec<&str> = ids.iter().map(Uri::as_str).collect();
         let rows = sqlx::query("SELECT id, payload, modified_at FROM entities WHERE id = ANY($1)")
-            .bind(ids)
+            .bind(&id_strs)
             .fetch_all(&self.pool)
             .await?;
 
         let mut result = HashMap::with_capacity(ids.len());
         for row in rows {
-            let id: String = row.get("id");
+            let id = stored_uri(row.get("id"))?;
             result.insert(
                 id,
                 EntitySnapshot {
@@ -84,9 +87,9 @@ impl EntityRepository {
     }
 
     /// Retrieve system attributes for a single entity.
-    pub async fn get_sys_attrs(&self, id: &str) -> Result<Option<SysAttrsSnapshot>, AndromedaError> {
+    pub async fn get_sys_attrs(&self, id: &Uri) -> Result<Option<SysAttrsSnapshot>, AndromedaError> {
         let row = sqlx::query("SELECT created_at, modified_at, expires_at FROM entities WHERE id = $1")
-            .bind(id)
+            .bind(id.as_str())
             .fetch_optional(&self.pool)
             .await?;
 
@@ -98,29 +101,28 @@ impl EntityRepository {
     }
 
     /// Fetch system attributes for multiple entities in one query.
-    pub async fn get_sys_attrs_batch(&self, ids: &[String]) -> Result<HashMap<String, SysAttrsSnapshot>, AndromedaError> {
+    pub async fn get_sys_attrs_batch(&self, ids: &[Uri]) -> Result<HashMap<Uri, SysAttrsSnapshot>, AndromedaError> {
         if ids.is_empty() {
             return Ok(HashMap::new());
         }
+        let id_strs: Vec<&str> = ids.iter().map(Uri::as_str).collect();
         let rows = sqlx::query("SELECT id, created_at, modified_at, expires_at FROM entities WHERE id = ANY($1)")
-            .bind(ids)
+            .bind(&id_strs)
             .fetch_all(&self.pool)
             .await?;
 
-        let result = rows
-            .into_iter()
-            .map(|row| {
-                let id: String = row.get("id");
-                (
-                    id,
-                    SysAttrsSnapshot {
-                        created_at: row.get("created_at"),
-                        modified_at: row.get("modified_at"),
-                        expires_at: row.get("expires_at"),
-                    },
-                )
-            })
-            .collect();
+        let mut result = HashMap::with_capacity(rows.len());
+        for row in rows {
+            let id = stored_uri(row.get("id"))?;
+            result.insert(
+                id,
+                SysAttrsSnapshot {
+                    created_at: row.get("created_at"),
+                    modified_at: row.get("modified_at"),
+                    expires_at: row.get("expires_at"),
+                },
+            );
+        }
         Ok(result)
     }
 
@@ -155,7 +157,7 @@ impl EntityRepository {
     ///
     /// Planned the same way [`EntityRepository::query_compiled`] is; the
     /// statement never counts, so the outcome carries no total either way.
-    pub async fn query_ids(&self, compiled: &CompiledEntityQuery) -> Result<QueryOutcome<String>, AndromedaError> {
+    pub async fn query_ids(&self, compiled: &CompiledEntityQuery) -> Result<QueryOutcome<Uri>, AndromedaError> {
         let planned = pushdown::plan(compiled, &EntityRepository::PROFILE);
         let attribute_names = self.resolve_q_attributes(&planned.query).await?;
         let built = entity_sql::build_ids_query(&planned.query, &attribute_names)?;
@@ -165,7 +167,7 @@ impl EntityRepository {
         let query = crate::bind_values!(sqlx::query(&built.sql), &built.bind_values);
 
         let rows = query.fetch_all(&self.pool).await?;
-        let ids: Vec<String> = rows.iter().map(|row| row.get("id")).collect();
+        let ids: Vec<Uri> = rows.iter().map(|row| stored_uri(row.get("id"))).collect::<Result<_, _>>()?;
         Ok(planned.outcome(ids, None))
     }
 
